@@ -111,6 +111,8 @@ type CharacterCatalogItem = {
 
 - pinned character と chat avatar の見た目を揃える
 - 右面だけ浮いた別デザインにならないよう、共通の portrait スタイルを持たせる
+- API キー未設定時は、完全非表示ではなく縮退表示を第一候補とする
+- 縮退表示では、独り言機能が API 利用前提であることを明示する
 
 ### Launch Dialog
 
@@ -131,6 +133,7 @@ type CharacterCatalogItem = {
 - `Work Chat` は assistant 側だけ avatar + character name + tone を常時表示し、キャラ会話感を強めた
 - `Recent Sessions` `Current Session Header` `Character Stream` `Launch Dialog` も同じ avatar 表現へ統一した
 - Vite dev では `/@fs/` 経由で画像を読み、`vite.config.ts` の `server.fs.allow` で `C:/Users/zgmfx/.codex/characters` を許可した
+- 独り言の provider / auth / Memory 方針は `docs/design/monologue-provider-policy.md` を参照する
 
 ## Open Points
 

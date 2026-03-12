@@ -52,6 +52,8 @@
 - 作業の精度ではなく、キャラクターが横で反応し続ける体験を担う
 - `Activity` の代替にはしない
 - 実行ログやファイル変更の説明責務を持たせない
+- coding agent 本体の `AgentEvent` とは別 plane の生成結果として扱う
+- MVP では OpenAI API による独立生成を前提にする
 
 ## Layout Direction
 
@@ -86,6 +88,8 @@
 - Main Process 側に `CodexAdapter` を置き、SDK / CLI の差異はそこで吸収する
 - Renderer 側は `AgentEvent` からターン単位の `artifact summary` を生成して描画する
 - モック段階でも、会話本文と artifact 情報は型として分けておく
+- `Character Stream` は `CodexAdapter` とは別の monologue provider 境界を持つ
+- 認証、コスト、Memory 入力の方針は `docs/design/monologue-provider-policy.md` に従う
 
 ## Next Steps
 

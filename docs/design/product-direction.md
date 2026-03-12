@@ -72,6 +72,20 @@ CLI parity の上に、WithMate 固有の層として次を追加する。
 
 これらは coding agent の基本操作を置き換えるのではなく、上から重ねる。
 
+## Provider Split
+
+WithMate は provider を 1 つに統一しない。
+
+- coding agent 本体
+  - `Codex CLI / SDK`
+  - CLI ログイン前提
+- `Character Stream`
+  - OpenAI API
+  - API キー前提
+
+この分離により、本体の CLI parity を保ったまま、独り言機能のコスト管理と利用条件を独立して扱う。
+詳細は `docs/design/monologue-provider-policy.md` を参照する。
+
 ## VTuber Character UI Direction
 
 現在の主対象が VTuber キャラクターである以上、UI もその前提に合わせる。
