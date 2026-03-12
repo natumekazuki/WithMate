@@ -89,6 +89,29 @@ button {
   appearance: none;
 }
 
+.page-shell {
+  display: grid;
+  gap: 20px;
+  height: 100dvh;
+  padding: 22px;
+  overflow: hidden;
+}
+
+.home-page {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.session-page {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.home-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 0.88fr) minmax(0, 1.12fr);
+  gap: 20px;
+  min-height: 0;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 380px minmax(0, 1fr);
@@ -100,6 +123,7 @@ button {
 
 .sidebar,
 .workspace,
+.home-layout,
 .home-status-card,
 .catalog-panel,
 .sessions-panel,
@@ -125,6 +149,13 @@ button {
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow);
   backdrop-filter: blur(22px);
+}
+
+.empty-session-card {
+  display: grid;
+  align-content: center;
+  gap: 10px;
+  padding: 28px;
 }
 
 .app-badge,

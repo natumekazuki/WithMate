@@ -1,11 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 
-import HomeApp from "./HomeApp.js";
+import App from "./App.js";
 import "./styles.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <HomeApp />
+    <App />
   </React.StrictMode>,
 );

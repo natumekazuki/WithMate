@@ -4,6 +4,14 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      input: {
+        home: path.resolve(process.cwd(), "index.html"),
+        session: path.resolve(process.cwd(), "session.html"),
+      },
+    },
+  },
   server: {
     fs: {
       allow: [

@@ -11,7 +11,7 @@
 
 ## Scope
 
-- React + Vite による画面モック
+- React + Vite による複数 entry の画面モック
 - セッション選択時の表示切り替え
 - Character Stream のダミー更新表現
 - assistant message 内に表示する `Turn Summary` のダミー表示
@@ -51,17 +51,17 @@
 
 ## Current Mock Snapshot
 
-- 現在の React 実装は `Home Window` と `Session Window` を同一ブラウザ内に並べて preview する
-- Electron の実 multi-window ではないが、責務分離は見える状態になっている
-- `Recent Sessions` は左の `Home Window` へ移り、右側は session 1 件の作業面に集中している
+- 現在の React 実装は `index.html` を `Home Window`、`session.html` を `Session Window` とする別 entry 構成
+- Electron の実 `BrowserWindow` ではないが、URL と entry の分離で起動面は分かれている
+- session data は `localStorage` 共有の mock data として扱う
 
-### 現在の 2-Window Preview
+### 現在の Entry Split
 
 - `Home Window`
   - `Recent Sessions`
-  - `Opened Session Windows`
   - `Character Catalog`
   - `New Session` dialog 起動
+  - `Session Window` を開く link / button
 - `Session Window`
   - `Current Session Header`
   - `Work Chat`
@@ -96,14 +96,14 @@
 
 ## Interaction Notes
 
-- `Home Window` でセッションカードを押すと、その session を `Opened Session Windows` へ追加し、右側の `Session Window` を切り替える
+- `Home Window` でセッションカードを押すと `session.html?sessionId=...` を開く
 - `Recent Sessions` の役割は「最近の会話を見る」ことよりも、「どの workspace とタスクを再開するか選ぶ」ことに寄せる
 - `New Session` dialog は `cd -> codex` 側、`Recent Sessions` は `codex resume` 側として責務を分ける
-- `Session Window` のセッション切り替え UI は持たず、対象 session 1 件に集中する
+- `Session Window` は query string の `sessionId` を受け取り、対象 session 1 件に集中する
 - assistant message にぶら下がる `Turn Summary` の内容は、その `Session Window` の turn にのみ紐づく
 - `Open Diff` を押すと、別ウインドウではなく `Session Window` 内の split diff overlay が開く
-- 入力欄の送信ボタンは、少なくとも現在選択中 session の user message と stream を更新する
-- `New Session` は空の session を開き、最初の依頼は `Session Window` のメインチャットから送る
+- 入力欄の送信ボタンは、現在選択中 session の user message と stream を `localStorage` 上で更新する
+- `New Session` は Home 側で session record を保存してから `Session Window` を開く
 - `New Session` dialog の character choice も同じ avatar を使い、session 開始前からキャラ選択を視覚化する
 - Character Stream は 2 から 3 種類のカードスタイルを混ぜて温度差を表現する
 - Character Stream 側にも入力起点とは別の情報の流れを見せ、単なるサマリー欄に見えないようにする
@@ -128,10 +128,15 @@
 
 ## Deliverables
 
+- `src/HomeApp.tsx`
 - `src/main.tsx`
+- `src/session-main.tsx`
 - `src/App.tsx`
+- `src/mock-data.ts`
+- `src/mock-ui.tsx`
 - `src/styles.css`
 - `index.html`
+- `session.html`
 - `vite.config.ts`
 
 ## Runbook
@@ -140,6 +145,11 @@
 npm install
 npm run dev
 ```
+
+起動先:
+
+- Home: `http://localhost:4173/`
+- Session: `http://localhost:4173/session.html?sessionId=melt-main`
 
 確認済み:
 
