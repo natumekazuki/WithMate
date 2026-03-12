@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "noEmit": false,
+    "outDir": "dist-electron",
+    "rootDir": ".",
+    "types": ["node"],
+    "sourceMap": true
+  },
+  "include": [
+    "src-electron/**/*.ts",
+    "src/withmate-window.ts"
+  ]
+}

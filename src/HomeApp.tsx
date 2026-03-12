@@ -11,7 +11,12 @@ import {
 } from "./mock-data.js";
 import { CharacterAvatar, statusLabel } from "./mock-ui.js";
 
-function openSessionWindow(sessionId: string) {
+async function openSessionWindow(sessionId: string) {
+  if (window.withmate) {
+    await window.withmate.openSession(sessionId);
+    return;
+  }
+
   const url = buildSessionUrl(sessionId);
   const opened = window.open(url, "_blank", "popup,width=1440,height=940");
 
@@ -61,7 +66,7 @@ export default function HomeApp() {
     setLaunchWorkspaceId(workspacePresets[nextIndex].id);
   };
 
-  const handleStartSession = () => {
+  const handleStartSession = async () => {
     if (!selectedWorkspace) {
       return;
     }
@@ -76,7 +81,7 @@ export default function HomeApp() {
     saveMockSessions(nextSessions);
     setSessions(nextSessions);
     setLaunchOpen(false);
-    openSessionWindow(createdSession.id);
+    await openSessionWindow(createdSession.id);
   };
 
   return (
@@ -135,7 +140,7 @@ export default function HomeApp() {
                   key={session.id}
                   className="session-card"
                   type="button"
-                  onClick={() => openSessionWindow(session.id)}
+                  onClick={() => void openSessionWindow(session.id)}
                 >
                   <CharacterAvatar character={sessionCharacter} size="small" className="session-avatar" />
                   <div className="session-main">
@@ -322,7 +327,7 @@ export default function HomeApp() {
                   </article>
                 </div>
 
-                <button className="start-session-button" type="button" disabled={!selectedWorkspace} onClick={handleStartSession}>
+                <button className="start-session-button" type="button" disabled={!selectedWorkspace} onClick={() => void handleStartSession()}>
                   Start New Session
                 </button>
               </section>

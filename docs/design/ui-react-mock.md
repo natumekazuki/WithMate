@@ -20,7 +20,7 @@
 
 ## Out Of Scope
 
-- Electron 統合
+- Electron の IPC / session store 本実装
 - Codex SDK 接続
 - 永続化
 - 実際のストリーミング
@@ -97,6 +97,7 @@
 ## Interaction Notes
 
 - `Home Window` でセッションカードを押すと `session.html?sessionId=...` を開く
+- Electron 実行時は `window.withmate.openSession(sessionId)` を優先し、browser preview 時だけ `window.open` へフォールバックする
 - `Recent Sessions` の役割は「最近の会話を見る」ことよりも、「どの workspace とタスクを再開するか選ぶ」ことに寄せる
 - `New Session` dialog は `cd -> codex` 側、`Recent Sessions` は `codex resume` 側として責務を分ける
 - `Session Window` は query string の `sessionId` を受け取り、対象 session 1 件に集中する
@@ -138,6 +139,8 @@
 - `index.html`
 - `session.html`
 - `vite.config.ts`
+- `src-electron/main.ts`
+- `src-electron/preload.ts`
 
 ## Runbook
 
@@ -150,6 +153,14 @@ npm run dev
 
 - Home: `http://localhost:4173/`
 - Session: `http://localhost:4173/session.html?sessionId=melt-main`
+
+Electron で確認する場合:
+
+```bash
+npm run dev
+# 別ターミナル
+npm run electron:dev
+```
 
 確認済み:
 
