@@ -34,7 +34,7 @@
   - `New Session`
   - character 管理導線
 - `Session Window`
-  - 小さく圧縮した `Current Session Header`
+  - 必須情報だけ残した最小構成
   - `Work Chat`
   - 発話中心の `Character Stream`
   - `Diff Viewer`
@@ -82,8 +82,6 @@
 
 ### Session Window
 
-- `Current Session Header`
-  - `workspace / provider / branch / run / approval` を細く確認するだけの帯
 - `Work Chat`
   - assistant message ごとに `Turn Summary`
   - `What Changed / Run Summary / Activity Notes`
@@ -91,7 +89,7 @@
 - `Character Stream`
   - キャラの発話そのものを読む面
   - メタ情報カードは置かず、発話だけを流す
-  - 面の役割が明白なら、見出しや名前ラベルも省略してよい
+  - 面の役割が明白なら、見出しや名前ラベルは置かない
 - `Diff Viewer`
   - アプリ内 overlay で split diff を開く
 
@@ -103,6 +101,7 @@
 - `Recent Sessions` の役割は「最近の会話を見る」ことよりも、「どの workspace とタスクを再開するか選ぶ」ことに寄せる
 - `New Session` dialog は `cd -> codex` 側、`Recent Sessions` は `codex resume` 側として責務を分ける
 - `Session Window` は query string の `sessionId` を受け取り、対象 session 1 件に集中する
+- `Session Window` 内のラベルは原則削り、操作や判断に必須なものだけ残す
 - assistant message にぶら下がる `Turn Summary` の内容は、その `Session Window` の turn にのみ紐づく
 - `Open Diff` を押すと、別ウインドウではなく `Session Window` 内の split diff overlay が開く
 - 入力欄の送信ボタンは、現在選択中 session の user message と stream を `localStorage` 上で更新する

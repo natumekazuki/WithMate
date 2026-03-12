@@ -102,7 +102,7 @@ button {
 }
 
 .session-page {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .home-layout {
@@ -163,7 +163,6 @@ button {
 .catalog-panel,
 .sessions-panel,
 .session-window-bar,
-.workspace-header,
 .chat-panel,
 .stream-panel {
   padding: 22px;
@@ -204,17 +203,9 @@ button {
 .app-brand-copy h1,
 .home-status-card h2,
 .catalog-panel h2,
-.session-window-bar h2,
 .sessions-panel h2,
-.workspace-header h2,
-.chat-panel h2,
-.stream-panel h2,
 .session-card h3,
-.stream-stage h3,
-.character-lock h3,
-.artifact-section h3,
 .diff-titlebar h2,
-.header-character-copy h3,
 .launch-dialog h2,
 .choice-card-copy strong {
   font-family: "BIZ UDPMincho", "Yu Mincho", serif;
@@ -228,15 +219,10 @@ button {
 
 .app-brand-copy p:last-child,
 .catalog-copy p,
-.workspace-header .header-copy p:last-child,
 .session-card-summary,
 .artifact-file-item p,
-.stream-stage-copy p:last-child,
-.character-lock p,
 .summary-list li,
-.artifact-preview span,
 .message-body,
-.header-character-copy p:last-child,
 .choice-card-copy span {
   color: var(--muted);
   line-height: 1.6;
@@ -701,10 +687,8 @@ button {
 }
 
 .session-main,
-.header-copy,
-.stream-stage-copy,
 .artifact-head-copy,
-.header-character-copy {
+.session-identity-copy {
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -714,11 +698,8 @@ button {
 .session-card-summary,
 .session-meta-row,
 .session-character-row,
-.artifact-preview,
 .artifact-file-meta code,
-.header-copy p:last-child,
-.header-rail strong,
-.header-character-copy p:last-child {
+.session-window-title {
   min-width: 0;
 }
 
@@ -726,9 +707,8 @@ button {
 .session-card-summary,
 .session-meta-row span,
 .session-character-row span,
-.header-rail strong,
 .artifact-file-meta code,
-.header-character-copy p:last-child {
+.session-window-title {
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -736,8 +716,7 @@ button {
 .session-card h3,
 .session-meta-row span,
 .session-character-row span,
-.header-rail strong,
-.header-character-copy p:last-child {
+.session-window-title {
   white-space: nowrap;
 }
 
@@ -776,70 +755,6 @@ button {
   -webkit-line-clamp: 2;
 }
 
-.workspace-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px 18px;
-  padding-block: 16px;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.85), rgba(255, 246, 239, 0.94)),
-    var(--surface);
-}
-
-.session-identity,
-.session-meta-strip {
-  display: flex;
-  align-items: center;
-  gap: 10px 12px;
-  min-width: 0;
-}
-
-.session-identity {
-  flex: 0 1 auto;
-}
-
-.session-identity-copy {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.session-identity-copy h2 {
-  font-size: 1.05rem;
-}
-
-.session-meta-strip {
-  flex: 1 1 auto;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-}
-
-.session-mini-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 7px 10px;
-  border: 1px solid rgba(32, 36, 55, 0.08);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.76);
-  color: var(--muted);
-  font-size: 0.76rem;
-  white-space: nowrap;
-}
-
-.session-path-inline {
-  min-width: 0;
-  max-width: 320px;
-  padding: 7px 10px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  border: 1px solid rgba(32, 36, 55, 0.08);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.64);
-  color: var(--muted);
-}
-
 .content-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
@@ -849,7 +764,7 @@ button {
 
 .chat-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 .stream-panel {
@@ -947,20 +862,8 @@ button {
   background: rgba(255, 255, 255, 0.7);
 }
 
-.artifact-head-copy p:last-child {
-  color: var(--muted);
-  font-size: 0.86rem;
-}
-
 .artifact-toggle {
   padding: 10px 14px;
-}
-
-.artifact-preview {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 18px;
-  padding: 0 4px 4px;
 }
 
 .artifact-block {
@@ -1270,7 +1173,6 @@ button {
   .catalog-panel,
   .sessions-panel,
   .session-window-bar,
-  .workspace-header,
   .chat-panel,
   .stream-panel {
     padding: 18px;
@@ -1322,21 +1224,6 @@ button {
   .catalog-grid,
   .choice-card-list {
     grid-template-columns: 1fr;
-  }
-
-  .workspace-header,
-  .session-identity,
-  .session-meta-strip {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .session-meta-strip {
-    justify-content: flex-start;
-  }
-
-  .session-path-inline {
-    max-width: 100%;
   }
 
   .workspace-chip-list,
