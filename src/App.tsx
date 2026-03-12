@@ -93,7 +93,7 @@ function makeDiffRows(rows: Array<[DiffRow["kind"], number | undefined, string |
 }
 
 function toViteFsPath(filePath: string): string {
-  return `/@fs/\${encodeURI(filePath.replace(/\\\\/g, "/"))}`;
+  return `/@fs/${encodeURI(filePath.replace(/\\/g, "/"))}`;
 }
 
 function fallbackLabel(name: string): string {
@@ -387,7 +387,7 @@ function CharacterAvatar({ character, size = "medium", className = "" }: Charact
   const src = toViteFsPath(character.iconPath);
 
   return (
-    <div className={`character-avatar \${size} \${className}`.trim()} aria-hidden="true">
+    <div className={`character-avatar ${size} ${className}`.trim()} aria-hidden="true">
       <span className="avatar-fallback">{fallbackLabel(character.name)}</span>
       {imageFailed ? null : <img src={src} alt="" onError={() => setImageFailed(true)} />}
     </div>
@@ -396,11 +396,10 @@ function CharacterAvatar({ character, size = "medium", className = "" }: Charact
 
 export default function App() {
   const [sessions, setSessions] = useState(initialSessions);
-  const [drawerOpen, setDrawerOpen] = useState(true);
+  const [openedSessionIds, setOpenedSessionIds] = useState<string[]>([initialSessions[0].id]);
   const [launchOpen, setLaunchOpen] = useState(false);
   const [selectedId, setSelectedId] = useState(initialSessions[0].id);
   const [draft, setDraft] = useState("次は実イベントをこの UI に流して、turn summary を自動生成できるか見たい");
-  const [sentCount, setSentCount] = useState(0);
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<{ title: string; file: ChangedFile } | null>(null);
   const [launchWorkspaceId, setLaunchWorkspaceId] = useState("");
@@ -417,6 +416,14 @@ export default function App() {
     [selectedSession.character],
   );
 
+  const openedSessions = useMemo(
+    () =>
+      openedSessionIds
+        .map((sessionId) => sessions.find((session) => session.id === sessionId))
+        .filter((session): session is Session => Boolean(session)),
+    [openedSessionIds, sessions],
+  );
+
   const selectedWorkspace = useMemo(
     () => workspacePresets.find((workspace) => workspace.id === launchWorkspaceId) ?? null,
     [launchWorkspaceId],
@@ -427,20 +434,41 @@ export default function App() {
     [launchCharacter],
   );
 
-  const draftMessage: Message | null =
-    sentCount === 0
-      ? null
-      : {
-          role: "user",
-          text: draft || "送信後のダミー入力",
-        };
+  const displayedMessages = selectedSession.messages;
 
-  const displayedMessages = draftMessage
-    ? [...selectedSession.messages, draftMessage]
-    : selectedSession.messages;
+  const handleOpenSession = (sessionId: string) => {
+    setSelectedId(sessionId);
+    setOpenedSessionIds((current) => (current.includes(sessionId) ? current : [sessionId, ...current]));
+  };
 
   const handleSend = () => {
-    setSentCount((count) => count + 1);
+    const nextMessage = draft.trim();
+    if (!nextMessage) {
+      return;
+    }
+
+    setSessions((current) =>
+      current.map((session) =>
+        session.id === selectedSession.id
+          ? {
+              ...session,
+              updatedAt: "just now",
+              status: "running",
+              runState: "running",
+              messages: [...session.messages, { role: "user", text: nextMessage }],
+              stream: [
+                {
+                  mood: "spark" as const,
+                  time: "just now",
+                  text: `${session.character} として次の依頼を受け取った。どこに温度を乗せるか、横でちょっと考えてる。`,
+                },
+                ...session.stream,
+              ].slice(0, 4),
+            }
+          : session,
+      ),
+    );
+    setDraft("");
   };
 
   const toggleArtifact = (artifactKey: string) => {
@@ -470,11 +498,11 @@ export default function App() {
       return;
     }
 
-    const sessionId = `launch-\${Date.now()}`;
+    const sessionId = `launch-${Date.now()}`;
     const createdSession: Session = {
       id: sessionId,
-      taskTitle: `\${selectedWorkspace.label} で新規作業を開始する`,
-      taskSummary: `\${selectedWorkspace.label} で新規セッションを開始。\${selectedCharacter.name} のロールを保ったまま、ここから最初の指示を待つ。`,
+      taskTitle: `${selectedWorkspace.label} で新規作業を開始する`,
+      taskSummary: `${selectedWorkspace.label} で新規セッションを開始。${selectedCharacter.name} のロールを保ったまま、ここから最初の指示を待つ。`,
       status: "running",
       updatedAt: "just now",
       provider: "Codex",
@@ -492,120 +520,144 @@ export default function App() {
         {
           mood: "spark",
           time: "just now",
-          text: `新しい workspace で始まるの、ちょっとテンション上がる。まずは \${selectedWorkspace.label} の空気つかもう。`,
+          text: `新しい workspace で始まるの、ちょっとテンション上がる。まずは ${selectedWorkspace.label} の空気つかもう。`,
         },
         {
           mood: "warm",
           time: "just now",
-          text: `\${selectedCharacter.name} のロールはこのセッションで固定。作業は chat 側、本音はこっちで流していく。`,
+          text: `${selectedCharacter.name} のロールはこのセッションで固定。作業は chat 側、本音はこっちで流していく。`,
         },
       ],
     };
 
     setSessions((current) => [createdSession, ...current]);
+    setOpenedSessionIds((current) => [sessionId, ...current]);
     setSelectedId(sessionId);
     setDraft("");
-    setSentCount(0);
     setLaunchOpen(false);
   };
 
   return (
-    <div className={`app-shell \${drawerOpen ? "drawer-open" : "drawer-closed"}`}>
-      <aside className={`sidebar \${drawerOpen ? "open" : "closed"}`}>
+    <div className="app-shell">
+      <aside className="sidebar home-window">
         <div className="panel app-badge rise-1">
           <div className="app-icon" aria-hidden="true">
             WM
           </div>
           <div className="app-brand-copy">
-            <p className="kicker">WithMate</p>
-            <h1>VTuber Coding Agent</h1>
-            <p>TUI の作業感を残したまま、キャラの気配を横に流す。</p>
+            <p className="kicker">Home Window</p>
+            <h1>WithMate Session Manager</h1>
+            <p>session と character を管理して、右側の Session Window を開く。</p>
           </div>
-          <button
-            className="drawer-toggle"
-            type="button"
-            aria-label={drawerOpen ? "Close sessions" : "Open sessions"}
-            onClick={() => setDrawerOpen((open) => !open)}
-          >
-            {drawerOpen ? "Hide" : "Menu"}
+          <button className="launch-toggle" type="button" onClick={() => setLaunchOpen(true)}>
+            New Session
           </button>
         </div>
 
-        {drawerOpen ? (
-          <section className="panel sessions-panel rise-2">
-            <div className="panel-head compact-head">
-              <div>
-                <p className="kicker">Resume Picker</p>
-                <h2>Recent Sessions</h2>
-              </div>
-              <div className="tag-row">
-                <span className="pill">{sessions.length}</span>
-                <button className="launch-toggle" type="button" onClick={() => setLaunchOpen(true)}>
-                  New Session
-                </button>
-              </div>
+        <section className="panel home-status-card rise-2">
+          <div className="panel-head compact-head">
+            <div>
+              <p className="kicker">Opened Session Windows</p>
+              <h2>Open Windows</h2>
             </div>
+            <span className="pill">{openedSessions.length}</span>
+          </div>
 
-            <div className="session-list">
-              {sessions.map((session) => {
-                const active = session.id === selectedSession.id;
-                const sessionCharacter = getCharacterCatalogItem(session.character);
+          <div className="window-chip-list">
+            {openedSessions.map((session) => (
+              <button
+                key={session.id}
+                className={`window-chip${session.id === selectedSession.id ? " active" : ""}`}
+                type="button"
+                onClick={() => handleOpenSession(session.id)}
+              >
+                <span>{session.workspaceLabel}</span>
+                <strong>{session.taskTitle}</strong>
+              </button>
+            ))}
+          </div>
+        </section>
 
-                return (
-                  <button
-                    key={session.id}
-                    className={`session-card\${active ? " active" : ""}`}
-                    type="button"
-                    onClick={() => setSelectedId(session.id)}
-                  >
-                    <CharacterAvatar character={sessionCharacter} size="small" className="session-avatar" />
+        <section className="panel sessions-panel rise-3">
+          <div className="panel-head compact-head">
+            <div>
+              <p className="kicker">Resume Picker</p>
+              <h2>Recent Sessions</h2>
+            </div>
+            <span className="pill">{sessions.length}</span>
+          </div>
 
-                    <div className="session-main">
-                      <div className="session-card-head">
-                        <h3>{session.taskTitle}</h3>
-                        <span className={`session-status \${session.status}`}>{statusLabel(session.status)}</span>
-                      </div>
+          <div className="session-list">
+            {sessions.map((session) => {
+              const active = session.id === selectedSession.id;
+              const sessionCharacter = getCharacterCatalogItem(session.character);
 
-                      <div className="session-meta-row">
-                        <span>{session.workspaceLabel}</span>
-                        <span>{session.provider}</span>
-                        <span>{session.updatedAt}</span>
-                      </div>
+              return (
+                <button
+                  key={session.id}
+                  className={`session-card${active ? " active" : ""}`}
+                  type="button"
+                  onClick={() => handleOpenSession(session.id)}
+                >
+                  <CharacterAvatar character={sessionCharacter} size="small" className="session-avatar" />
 
-                      <p className="session-card-summary">{session.taskSummary}</p>
-
-                      <div className="session-character-row">
-                        <span>{session.character}</span>
-                        <span>{session.threadLabel}</span>
-                      </div>
+                  <div className="session-main">
+                    <div className="session-card-head">
+                      <h3>{session.taskTitle}</h3>
+                      <span className={`session-status ${session.status}`}>{statusLabel(session.status)}</span>
                     </div>
-                  </button>
-                );
-              })}
+
+                    <div className="session-meta-row">
+                      <span>{session.workspaceLabel}</span>
+                      <span>{session.provider}</span>
+                      <span>{session.updatedAt}</span>
+                    </div>
+
+                    <p className="session-card-summary">{session.taskSummary}</p>
+
+                    <div className="session-character-row">
+                      <span>{session.character}</span>
+                      <span>{openedSessionIds.includes(session.id) ? "window open" : session.threadLabel}</span>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="panel catalog-panel rise-4">
+          <div className="panel-head compact-head">
+            <div>
+              <p className="kicker">Character Catalog</p>
+              <h2>Loaded Characters</h2>
             </div>
-          </section>
-        ) : (
-          <section className="panel drawer-summary rise-2">
-            <p className="kicker">Current</p>
-            <CharacterAvatar character={selectedSessionCharacter} size="small" className="drawer-avatar" />
-            <h2>{selectedSession.workspaceLabel}</h2>
-            <p>{selectedSession.character}</p>
-            <p>{statusLabel(selectedSession.status)}</p>
-            <button
-              className="launch-toggle compact"
-              type="button"
-              onClick={() => {
-                setDrawerOpen(true);
-                setLaunchOpen(true);
-              }}
-            >
-              New
-            </button>
-          </section>
-        )}
+            <span className="pill">{characterCatalog.length}</span>
+          </div>
+
+          <div className="catalog-grid">
+            {characterCatalog.map((character) => (
+              <article key={character.id} className="catalog-card">
+                <CharacterAvatar character={character} size="small" className="catalog-avatar" />
+                <div className="catalog-copy">
+                  <strong>{character.name}</strong>
+                  <p>{character.tone}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
       </aside>
 
-      <main className="workspace">
+      <main className="workspace session-window">
+        <div className="panel session-window-bar rise-1">
+          <div>
+            <p className="kicker">Session Window</p>
+            <h2>{selectedSession.threadLabel}</h2>
+          </div>
+          <span className="pill">{selectedSession.workspaceLabel}</span>
+        </div>
+
         <header className="panel workspace-header rise-2">
           <div className="header-copy">
             <p className="kicker">Current Session</p>
@@ -680,17 +732,17 @@ export default function App() {
                 </article>
               ) : (
                 displayedMessages.map((message, index) => {
-                  const artifactKey = `\${selectedSession.id}-\${index}`;
+                  const artifactKey = `${selectedSession.id}-${index}`;
                   const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
                   const isAssistant = message.role === "assistant";
 
                   return (
                     <article
-                      key={`\${message.role}-\${index}`}
-                      className={`message-row \${message.role}\${message.accent ? " accent" : ""}`}
+                      key={`${message.role}-${index}`}
+                      className={`message-row ${message.role}${message.accent ? " accent" : ""}`}
                     >
                       {isAssistant ? <CharacterAvatar character={selectedSessionCharacter} size="small" className="message-avatar" /> : null}
-                      <div className={`message-card \${message.role}\${message.accent ? " accent" : ""}`}>
+                      <div className={`message-card ${message.role}${message.accent ? " accent" : ""}`}>
                         <div className="message-head">
                           <div className="message-speaker">
                             <p className="message-role">{isAssistant ? selectedSession.character : "You"}</p>
@@ -725,9 +777,9 @@ export default function App() {
                                     <div className="artifact-file-list">
                                       {message.artifact.changedFiles.length > 0 ? (
                                         message.artifact.changedFiles.map((file) => (
-                                          <article key={`\${file.kind}-\${file.path}`} className="artifact-file-item">
+                                          <article key={`${file.kind}-${file.path}`} className="artifact-file-item">
                                             <div className="artifact-file-meta">
-                                              <span className={`file-kind \${file.kind}`}>{fileKindLabel(file.kind)}</span>
+                                              <span className={`file-kind ${file.kind}`}>{fileKindLabel(file.kind)}</span>
                                               <code>{file.path}</code>
                                             </div>
                                             <p>{file.summary}</p>
@@ -773,7 +825,7 @@ export default function App() {
                             ) : (
                               <div className="artifact-preview">
                                 <span>{message.artifact.changedFiles.length} files changed</span>
-                                <span>{message.artifact.runChecks.map((check) => `\${check.label}: \${check.value}`).join(" / ")}</span>
+                                <span>{message.artifact.runChecks.map((check) => `${check.label}: ${check.value}`).join(" / ")}</span>
                               </div>
                             )}
                           </section>
@@ -830,7 +882,7 @@ export default function App() {
 
             <div className="stream-list">
               {selectedSession.stream.map((entry, index) => (
-                <article key={`\${entry.time}-\${index}`} className={`stream-card \${entry.mood}`}>
+                <article key={`${entry.time}-${index}`} className={`stream-card ${entry.mood}`}>
                   <div className="stream-card-head">
                     <div className="stream-speaker">
                       <CharacterAvatar character={selectedSessionCharacter} size="tiny" className="stream-entry-avatar" />
@@ -876,7 +928,7 @@ export default function App() {
 
             <div className="diff-subbar">
               <span className="file-kind edit">{selectedDiff.title}</span>
-              <span className={`file-kind \${selectedDiff.file.kind}`}>{fileKindLabel(selectedDiff.file.kind)}</span>
+              <span className={`file-kind ${selectedDiff.file.kind}`}>{fileKindLabel(selectedDiff.file.kind)}</span>
             </div>
 
             <div className="diff-columns-head">
@@ -886,7 +938,7 @@ export default function App() {
 
             <div className="diff-grid">
               {selectedDiff.file.diffRows.map((row, index) => (
-                <div key={`\${selectedDiff.file.path}-\${index}`} className={`diff-row \${row.kind}`}>
+                <div key={`${selectedDiff.file.path}-${index}`} className={`diff-row ${row.kind}`}>
                   <span className="diff-line-number">{row.leftNumber ?? ""}</span>
                   <code className="diff-cell before">{row.leftText ?? ""}</code>
                   <span className="diff-line-number">{row.rightNumber ?? ""}</span>
@@ -931,7 +983,7 @@ export default function App() {
                   {workspacePresets.map((workspace) => (
                     <button
                       key={workspace.id}
-                      className={`workspace-chip\${workspace.id === launchWorkspaceId ? " active" : ""}`}
+                      className={`workspace-chip${workspace.id === launchWorkspaceId ? " active" : ""}`}
                       type="button"
                       onClick={() => setLaunchWorkspaceId(workspace.id)}
                     >
@@ -958,7 +1010,7 @@ export default function App() {
                       {characterCatalog.map((character) => (
                         <button
                           key={character.id}
-                          className={`choice-card\${character.name === launchCharacter ? " active" : ""}`}
+                          className={`choice-card${character.name === launchCharacter ? " active" : ""}`}
                           type="button"
                           onClick={() => setLaunchCharacter(character.name)}
                         >
@@ -982,7 +1034,7 @@ export default function App() {
                       ].map((approval) => (
                         <button
                           key={approval.id}
-                          className={`choice-chip\${approval.id === launchApproval ? " active" : ""}`}
+                          className={`choice-chip${approval.id === launchApproval ? " active" : ""}`}
                           type="button"
                           onClick={() => setLaunchApproval(approval.id)}
                         >
@@ -1011,7 +1063,7 @@ export default function App() {
                     <p className="kicker">Launch Summary</p>
                     <h3>この条件で開始</h3>
                   </div>
-                  <span className={`launch-state\${selectedWorkspace ? " ready" : ""}`}>
+                  <span className={`launch-state${selectedWorkspace ? " ready" : ""}`}>
                     {selectedWorkspace ? "Ready" : "Workspace Required"}
                   </span>
                 </div>
@@ -1046,4 +1098,3 @@ export default function App() {
     </div>
   );
 }
-
