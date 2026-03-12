@@ -67,6 +67,7 @@ CLI parity の上に、WithMate 固有の層として次を追加する。
 
 - `character definition management`
 - `stable prompt composition`
+- `memory architecture`
 - `Character Stream`
 - 将来的なキャラクター切り替えや固定
 
