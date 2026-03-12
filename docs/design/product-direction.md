@@ -47,19 +47,22 @@ WithMate が最低限維持すべき体験は次のとおり。
 
 ### UI への落とし込み
 
-- `Session Drawer`
-  - `codex resume` picker 相当
-  - workspace と task の再開判断を担う
+- `Home Window`
+  - `codex resume` picker と新規起動前判断を担う管理面
+- `Recent Sessions`
+  - `Home Window` 内で workspace と task の再開判断を担う
 - `New Session Launch`
-  - `cd -> codex` に相当する起動前判断を担う
+  - `Home Window` 内の dialog として `cd -> codex` を置き換える
+- `Session Window`
+  - TUI に相当する本体作業面
 - `Current Session Header`
-  - 現在の workspace、provider、run state、approval を示す
+  - `Session Window` で現在の workspace、provider、run state、approval を示す
 - `Work Chat`
-  - TUI 本体に相当する作業面
+  - `Session Window` の主面
 - `Artifact Summary`
-  - そのターンで起きた変更と実行結果を要約する
+  - turn 単位で起きた変更と実行結果を要約する
 - `Diff Viewer`
-  - 深掘り確認のための on-demand 面
+  - `Session Window` で必要時に開く深掘り面
 
 ## WithMate Specific Extension
 
@@ -112,6 +115,8 @@ WithMate は provider を 1 つに統一しない。
 
 ### 1. 作業面とキャラ面を分離する
 
+- `Home Window` は管理面
+- `Session Window` は作業面
 - `Work Chat` は作業結果を読む面
 - `Character Stream` は気配や感情を感じる面
 - この2つの責務は混ぜない
@@ -119,7 +124,7 @@ WithMate は provider を 1 つに統一しない。
 ### 2. キャラ性は構造で出す
 
 - セッションにキャラクターが紐づいている
-- 右面で独り言が流れる
+- `Session Window` 右面で独り言が流れる
 - ヘッダーやカードで現在のキャラが分かる
 
 色や装飾だけで VTuber 感を作ろうとしない。
@@ -132,8 +137,8 @@ WithMate は provider を 1 つに統一しない。
 
 ### 4. TUI と違う導線を増やしすぎない
 
-- session resume の判断は Drawer に寄せる
-- run 状態や approval は header に寄せる
+- session resume の判断は `Home Window` に寄せる
+- run 状態や approval は `Session Window` の header に寄せる
 - 変更結果は message 単位 summary に寄せる
 
 ## What To Remove
@@ -149,7 +154,7 @@ WithMate は provider を 1 つに統一しない。
 
 今後も守るべきものは次のとおり。
 
-- `Session Drawer` の resume 導線としての分かりやすさ
+- `Home Window` の resume 導線としての分かりやすさ
 - `Work Chat` の読みやすさ
 - `Artifact Summary` の実務的な有用性
 - `Character Stream` の存在感
@@ -159,13 +164,15 @@ WithMate は provider を 1 つに統一しない。
 
 現在の React モックでは、次の方向で継続調整する。
 
-- `Recent Sessions` を resume picker として再設計する
-- `Work Chat` は TUI 本体寄りに保つ
-- `Character Stream` は VTuber キャラの存在感を出す主面として磨く
+- 単一 window mock は暫定状態とし、最終的には `Home Window` と `Session Window` に分離する
+- `Recent Sessions` は `Home Window` の resume picker として再設計する
+- `Session Window` の `Work Chat` は TUI 本体寄りに保つ
+- `Character Stream` は `Session Window` 内で VTuber キャラの存在感を出す主面として磨く
 - 見た目はキャラクターに合わせていくが、構造は coding agent 優先で崩さない
 
 ## Next Step
 
-- `Recent Sessions` のカード構造を再設計する
+- `Home Window` と `Session Window` のモック分離を行う
+- `Recent Sessions` のカード構造を Home 前提で詰める
 - `Character Stream` を VTuber キャラ前提の面としてさらに詰める
 - 実イベント接続時も `CLI parity` と `WithMate 固有拡張` を分離して実装する
