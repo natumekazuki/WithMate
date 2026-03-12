@@ -4,9 +4,12 @@ import {
   buildNewSession,
   buildSessionUrl,
   characterCatalog,
-  ensureMockSessions,
+  ensureBrowserMockSessions,
   getCharacterCatalogItem,
-  saveMockSessions,
+  saveBrowserMockSessions,
+  type CreateSessionInput,
+  type Session,
+  type WorkspacePreset,
   workspacePresets,
 } from "./mock-data.js";
 import { CharacterAvatar, statusLabel } from "./mock-ui.js";
@@ -25,61 +28,118 @@ async function openSessionWindow(sessionId: string) {
   }
 }
 
+async function listSessionsForRenderer(): Promise<Session[]> {
+  if (window.withmate) {
+    return window.withmate.listSessions();
+  }
+
+  return ensureBrowserMockSessions();
+}
+
+function inferWorkspaceFromPath(selectedPath: string): WorkspacePreset {
+  const normalized = selectedPath.replace(/[\\/]+$/, "");
+  const segments = normalized.split(/[/\\]/).filter(Boolean);
+  const label = segments.at(-1) ?? normalized;
+
+  return {
+    id: `custom-${label.toLowerCase()}-${Date.now()}`,
+    label,
+    path: selectedPath,
+    hint: "Browse で選択したカスタム workspace",
+    branch: "main",
+  };
+}
+
 export default function HomeApp() {
-  const [sessions, setSessions] = useState(() => ensureMockSessions());
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [launchOpen, setLaunchOpen] = useState(false);
-  const [launchWorkspaceId, setLaunchWorkspaceId] = useState("");
+  const [launchWorkspace, setLaunchWorkspace] = useState<WorkspacePreset | null>(null);
   const [launchCharacter, setLaunchCharacter] = useState(characterCatalog[0].name);
   const [launchApproval, setLaunchApproval] = useState("on-request");
 
   useEffect(() => {
+    let active = true;
+
+    void listSessionsForRenderer().then((nextSessions) => {
+      if (active) {
+        setSessions(nextSessions);
+      }
+    });
+
+    if (window.withmate) {
+      return window.withmate.subscribeSessions((nextSessions) => {
+        if (active) {
+          setSessions(nextSessions);
+        }
+      });
+    }
+
     const handleStorage = () => {
-      setSessions(ensureMockSessions());
+      if (active) {
+        setSessions(ensureBrowserMockSessions());
+      }
     };
 
     window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
+    return () => {
+      active = false;
+      window.removeEventListener("storage", handleStorage);
+    };
   }, []);
-
-  const selectedWorkspace = useMemo(
-    () => workspacePresets.find((workspace) => workspace.id === launchWorkspaceId) ?? null,
-    [launchWorkspaceId],
-  );
 
   const selectedCharacter = useMemo(
     () => getCharacterCatalogItem(launchCharacter),
     [launchCharacter],
   );
 
-  const handleBrowseWorkspace = () => {
-    if (workspacePresets.length === 0) {
+  const handleBrowseWorkspace = async () => {
+    if (!window.withmate) {
+      if (workspacePresets.length === 0) {
+        return;
+      }
+
+      if (!launchWorkspace) {
+        setLaunchWorkspace(workspacePresets[0]);
+        return;
+      }
+
+      const currentIndex = workspacePresets.findIndex((workspace) => workspace.id === launchWorkspace.id);
+      const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % workspacePresets.length;
+      setLaunchWorkspace(workspacePresets[nextIndex]);
       return;
     }
 
-    if (!launchWorkspaceId) {
-      setLaunchWorkspaceId(workspacePresets[0].id);
+    const selectedPath = await window.withmate.pickDirectory();
+    if (!selectedPath) {
       return;
     }
 
-    const currentIndex = workspacePresets.findIndex((workspace) => workspace.id === launchWorkspaceId);
-    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % workspacePresets.length;
-    setLaunchWorkspaceId(workspacePresets[nextIndex].id);
+    setLaunchWorkspace(inferWorkspaceFromPath(selectedPath));
   };
 
   const handleStartSession = async () => {
-    if (!selectedWorkspace) {
+    if (!launchWorkspace) {
       return;
     }
 
-    const createdSession = buildNewSession({
-      workspace: selectedWorkspace,
-      character: selectedCharacter,
+    const sessionInput: CreateSessionInput = {
+      workspaceLabel: launchWorkspace.label,
+      workspacePath: launchWorkspace.path,
+      branch: launchWorkspace.branch,
+      character: selectedCharacter.name,
       approvalMode: launchApproval,
-    });
+    };
 
-    const nextSessions = [createdSession, ...sessions];
-    saveMockSessions(nextSessions);
-    setSessions(nextSessions);
+    const createdSession = window.withmate
+      ? await window.withmate.createSession(sessionInput)
+      : buildNewSession(sessionInput);
+
+    if (!window.withmate) {
+      const nextSessions = [createdSession, ...sessions];
+      saveBrowserMockSessions(nextSessions);
+      setSessions(nextSessions);
+    }
+
     setLaunchOpen(false);
     await openSessionWindow(createdSession.id);
   };
@@ -210,24 +270,24 @@ export default function HomeApp() {
                 <div className="section-head">
                   <div>
                     <p className="kicker">Workspace Picker</p>
-                    <h3>{selectedWorkspace ? selectedWorkspace.label : "workspace を選ぶ"}</h3>
+                    <h3>{launchWorkspace ? launchWorkspace.label : "workspace を選ぶ"}</h3>
                   </div>
-                  <button className="browse-button" type="button" onClick={handleBrowseWorkspace}>
+                  <button className="browse-button" type="button" onClick={() => void handleBrowseWorkspace()}>
                     Browse
                   </button>
                 </div>
 
                 <p className="launch-path">
-                  {selectedWorkspace ? selectedWorkspace.path : "作業ディレクトリがまだ選ばれてない。Browse か下の候補から選ぶ。"}
+                  {launchWorkspace ? launchWorkspace.path : "作業ディレクトリがまだ選ばれてない。Browse か下の候補から選ぶ。"}
                 </p>
 
                 <div className="workspace-chip-list">
                   {workspacePresets.map((workspace) => (
                     <button
                       key={workspace.id}
-                      className={`workspace-chip${workspace.id === launchWorkspaceId ? " active" : ""}`}
+                      className={`workspace-chip${workspace.id === launchWorkspace?.id ? " active" : ""}`}
                       type="button"
-                      onClick={() => setLaunchWorkspaceId(workspace.id)}
+                      onClick={() => setLaunchWorkspace(workspace)}
                     >
                       <strong>{workspace.label}</strong>
                       <span>{workspace.hint}</span>
@@ -303,15 +363,15 @@ export default function HomeApp() {
                     <p className="kicker">Launch Summary</p>
                     <h3>この条件で開始</h3>
                   </div>
-                  <span className={`launch-state${selectedWorkspace ? " ready" : ""}`}>
-                    {selectedWorkspace ? "Ready" : "Workspace Required"}
+                  <span className={`launch-state${launchWorkspace ? " ready" : ""}`}>
+                    {launchWorkspace ? "Ready" : "Workspace Required"}
                   </span>
                 </div>
 
                 <div className="summary-grid">
                   <article>
                     <span className="profile-label">Workspace</span>
-                    <strong>{selectedWorkspace ? selectedWorkspace.label : "未選択"}</strong>
+                    <strong>{launchWorkspace ? launchWorkspace.label : "未選択"}</strong>
                   </article>
                   <article>
                     <span className="profile-label">Character</span>
@@ -327,7 +387,7 @@ export default function HomeApp() {
                   </article>
                 </div>
 
-                <button className="start-session-button" type="button" disabled={!selectedWorkspace} onClick={() => void handleStartSession()}>
+                <button className="start-session-button" type="button" disabled={!launchWorkspace} onClick={() => void handleStartSession()}>
                   Start New Session
                 </button>
               </section>

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
-  ensureMockSessions,
+  ensureBrowserMockSessions,
   getCharacterCatalogItem,
   getSessionIdFromLocation,
-  saveMockSessions,
+  saveBrowserMockSessions,
   type ChangedFile,
   type Message,
   type Session,
@@ -12,21 +12,59 @@ import {
 import { CharacterAvatar, fileKindLabel } from "./mock-ui.js";
 
 export default function App() {
-  const [sessions, setSessions] = useState<Session[]>(() => ensureMockSessions());
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [draft, setDraft] = useState("次は実イベントをこの UI に流して、turn summary を自動生成できるか見たい");
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<{ title: string; file: ChangedFile } | null>(null);
 
+  const selectedId = useMemo(() => getSessionIdFromLocation(), []);
+
   useEffect(() => {
+    let active = true;
+
+    if (window.withmate) {
+      if (selectedId) {
+        void window.withmate.getSession(selectedId).then((session) => {
+          if (active && session) {
+            setSessions([session]);
+          }
+        });
+      } else {
+        void window.withmate.listSessions().then((nextSessions) => {
+          if (active) {
+            setSessions(nextSessions);
+          }
+        });
+      }
+
+      return window.withmate.subscribeSessions((nextSessions) => {
+        if (!active) {
+          return;
+        }
+
+        if (selectedId) {
+          const matched = nextSessions.find((session) => session.id === selectedId);
+          setSessions(matched ? [matched] : []);
+          return;
+        }
+
+        setSessions(nextSessions);
+      });
+    }
+
     const handleStorage = () => {
-      setSessions(ensureMockSessions());
+      if (active) {
+        setSessions(ensureBrowserMockSessions());
+      }
     };
 
+    setSessions(ensureBrowserMockSessions());
     window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, []);
-
-  const selectedId = useMemo(() => getSessionIdFromLocation(), []);
+    return () => {
+      active = false;
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, [selectedId]);
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedId) ?? sessions[0] ?? null,
@@ -40,7 +78,7 @@ export default function App() {
 
   const displayedMessages: Message[] = selectedSession ? selectedSession.messages : [];
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!selectedSession) {
       return;
     }
@@ -50,28 +88,31 @@ export default function App() {
       return;
     }
 
-    const nextSessions = sessions.map((session) =>
-      session.id === selectedSession.id
-        ? {
-            ...session,
-            updatedAt: "just now",
-            status: "running" as const,
-            runState: "running",
-            messages: [...session.messages, { role: "user" as const, text: nextMessage }],
-            stream: [
-              {
-                mood: "spark" as const,
-                time: "just now",
-                text: `${session.character} として次の依頼を受け取った。どこに温度を乗せるか、横でちょっと考えてる。`,
-              },
-              ...session.stream,
-            ].slice(0, 4),
-          }
-        : session,
-    );
+    const updatedSession: Session = {
+      ...selectedSession,
+      updatedAt: "just now",
+      status: "running",
+      runState: "running",
+      messages: [...selectedSession.messages, { role: "user", text: nextMessage }],
+      stream: [
+        {
+          mood: "spark" as const,
+          time: "just now",
+          text: `${selectedSession.character} として次の依頼を受け取った。どこに温度を乗せるか、横でちょっと考えてる。`,
+        },
+        ...selectedSession.stream,
+      ].slice(0, 4),
+    };
 
-    saveMockSessions(nextSessions);
-    setSessions(nextSessions);
+    if (window.withmate) {
+      const savedSession = await window.withmate.updateSession(updatedSession);
+      setSessions([savedSession]);
+    } else {
+      const nextSessions = sessions.map((session) => (session.id === selectedSession.id ? updatedSession : session));
+      saveBrowserMockSessions(nextSessions);
+      setSessions(nextSessions);
+    }
+
     setDraft("");
   };
 
@@ -294,7 +335,7 @@ export default function App() {
                 <p>{selectedSession.character} のロールは保持したまま、coding task を継続する。</p>
               </div>
               <textarea value={draft} onChange={(event) => setDraft(event.target.value)} />
-              <button type="button" onClick={handleSend}>
+              <button type="button" onClick={() => void handleSend()}>
                 Send
               </button>
             </label>

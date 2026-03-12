@@ -52,8 +52,8 @@
 ## Current Mock Snapshot
 
 - 現在の React 実装は `index.html` を `Home Window`、`session.html` を `Session Window` とする別 entry 構成
-- Electron の実 `BrowserWindow` ではないが、URL と entry の分離で起動面は分かれている
-- session data は `localStorage` 共有の mock data として扱う
+- Electron では実 `BrowserWindow` で起動し、Home / Session の分離も Main Process が担う
+- browser-only preview 時だけ `localStorage` 共有の mock data を fallback として使う
 
 ### 現在の Entry Split
 
@@ -98,6 +98,7 @@
 
 - `Home Window` でセッションカードを押すと `session.html?sessionId=...` を開く
 - Electron 実行時は `window.withmate.openSession(sessionId)` を優先し、browser preview 時だけ `window.open` へフォールバックする
+- Electron 実行時の session 一覧と作成は Main Process store 経由で処理する
 - `Recent Sessions` の役割は「最近の会話を見る」ことよりも、「どの workspace とタスクを再開するか選ぶ」ことに寄せる
 - `New Session` dialog は `cd -> codex` 側、`Recent Sessions` は `codex resume` 側として責務を分ける
 - `Session Window` は query string の `sessionId` を受け取り、対象 session 1 件に集中する
@@ -105,6 +106,7 @@
 - `Open Diff` を押すと、別ウインドウではなく `Session Window` 内の split diff overlay が開く
 - 入力欄の送信ボタンは、現在選択中 session の user message と stream を `localStorage` 上で更新する
 - `New Session` は Home 側で session record を保存してから `Session Window` を開く
+- `Browse` は Electron 実行時だけ OS の directory picker を開く
 - `New Session` dialog の character choice も同じ avatar を使い、session 開始前からキャラ選択を視覚化する
 - Character Stream は 2 から 3 種類のカードスタイルを混ぜて温度差を表現する
 - Character Stream 側にも入力起点とは別の情報の流れを見せ、単なるサマリー欄に見えないようにする

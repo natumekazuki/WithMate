@@ -74,7 +74,33 @@ export type CharacterCatalogItem = {
   streamMode: string;
 };
 
+export type CreateSessionInput = {
+  workspaceLabel: string;
+  workspacePath: string;
+  branch: string;
+  character: string;
+  approvalMode: string;
+};
+
 export const MOCK_SESSION_STORAGE_KEY = "withmate.mock.sessions.v1";
+
+type BrowserRuntimeWindow = {
+  localStorage: {
+    getItem(key: string): string | null;
+    setItem(key: string, value: string): void;
+  };
+  location: {
+    search: string;
+  };
+};
+
+function getBrowserWindow(): BrowserRuntimeWindow | null {
+  if (typeof globalThis === "undefined" || !("window" in globalThis)) {
+    return null;
+  }
+
+  return (globalThis as typeof globalThis & { window?: BrowserRuntimeWindow }).window ?? null;
+}
 
 export function makeDiffRows(
   rows: Array<[DiffRow["kind"], number | undefined, string | undefined, number | undefined, string | undefined]>,
@@ -348,12 +374,13 @@ export function cloneSessions(sessions: Session[]): Session[] {
   return JSON.parse(JSON.stringify(sessions)) as Session[];
 }
 
-export function loadMockSessions(): Session[] {
-  if (typeof window === "undefined") {
+export function loadBrowserMockSessions(): Session[] {
+  const browserWindow = getBrowserWindow();
+  if (!browserWindow) {
     return cloneSessions(initialSessions);
   }
 
-  const stored = window.localStorage.getItem(MOCK_SESSION_STORAGE_KEY);
+  const stored = browserWindow.localStorage.getItem(MOCK_SESSION_STORAGE_KEY);
   if (!stored) {
     return cloneSessions(initialSessions);
   }
@@ -365,54 +392,58 @@ export function loadMockSessions(): Session[] {
   }
 }
 
-export function saveMockSessions(sessions: Session[]): void {
-  if (typeof window === "undefined") {
+export function saveBrowserMockSessions(sessions: Session[]): void {
+  const browserWindow = getBrowserWindow();
+  if (!browserWindow) {
     return;
   }
 
-  window.localStorage.setItem(MOCK_SESSION_STORAGE_KEY, JSON.stringify(sessions));
+  browserWindow.localStorage.setItem(MOCK_SESSION_STORAGE_KEY, JSON.stringify(sessions));
 }
 
-export function ensureMockSessions(): Session[] {
-  const sessions = loadMockSessions();
-  if (typeof window !== "undefined" && !window.localStorage.getItem(MOCK_SESSION_STORAGE_KEY)) {
-    saveMockSessions(sessions);
+export function ensureBrowserMockSessions(): Session[] {
+  const browserWindow = getBrowserWindow();
+  const sessions = loadBrowserMockSessions();
+  if (browserWindow && !browserWindow.localStorage.getItem(MOCK_SESSION_STORAGE_KEY)) {
+    saveBrowserMockSessions(sessions);
   }
   return sessions;
 }
 
-export function buildNewSession(params: {
-  workspace: WorkspacePreset;
-  character: CharacterCatalogItem;
-  approvalMode: string;
-}): Session {
+function inferCharacterAttributes(name: string): CharacterCatalogItem {
+  return getCharacterCatalogItem(name);
+}
+
+export function buildNewSession(input: CreateSessionInput): Session {
+  const character = inferCharacterAttributes(input.character);
+
   return {
     id: `launch-${Date.now()}`,
-    taskTitle: `${params.workspace.label} で新規作業を開始する`,
-    taskSummary: `${params.workspace.label} で新規セッションを開始。${params.character.name} のロールを保ったまま、ここから最初の指示を待つ。`,
+    taskTitle: `${input.workspaceLabel} で新規作業を開始する`,
+    taskSummary: `${input.workspaceLabel} で新規セッションを開始。${character.name} のロールを保ったまま、ここから最初の指示を待つ。`,
     status: "running",
     updatedAt: "just now",
     provider: "Codex",
-    workspaceLabel: params.workspace.label,
-    workspacePath: params.workspace.path,
-    branch: params.workspace.branch,
-    character: params.character.name,
-    characterTone: params.character.tone,
-    streamMode: params.character.streamMode,
+    workspaceLabel: input.workspaceLabel,
+    workspacePath: input.workspacePath,
+    branch: input.branch,
+    character: character.name,
+    characterTone: character.tone,
+    streamMode: character.streamMode,
     runState: "running",
-    approvalMode: params.approvalMode,
+    approvalMode: input.approvalMode,
     threadLabel: "thread: new-session",
     messages: [],
     stream: [
       {
         mood: "spark",
         time: "just now",
-        text: `新しい workspace で始まるの、ちょっとテンション上がる。まずは ${params.workspace.label} の空気つかもう。`,
+        text: `新しい workspace で始まるの、ちょっとテンション上がる。まずは ${input.workspaceLabel} の空気つかもう。`,
       },
       {
         mood: "warm",
         time: "just now",
-        text: `${params.character.name} のロールはこのセッションで固定。作業は chat 側、本音はこっちで流していく。`,
+        text: `${character.name} のロールはこのセッションで固定。作業は chat 側、本音はこっちで流していく。`,
       },
     ],
   };
@@ -423,9 +454,10 @@ export function buildSessionUrl(sessionId: string): string {
 }
 
 export function getSessionIdFromLocation(): string | null {
-  if (typeof window === "undefined") {
+  const browserWindow = getBrowserWindow();
+  if (!browserWindow) {
     return null;
   }
 
-  return new URLSearchParams(window.location.search).get("sessionId");
+  return new URLSearchParams(browserWindow.location.search).get("sessionId");
 }

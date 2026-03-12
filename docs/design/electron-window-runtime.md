@@ -59,6 +59,12 @@ flowchart LR
 ```ts
 type WithMateWindowApi = {
   openSession(sessionId: string): Promise<void>;
+  listSessions(): Promise<Session[]>;
+  getSession(sessionId: string): Promise<Session | null>;
+  createSession(input: CreateSessionInput): Promise<Session>;
+  updateSession(session: Session): Promise<Session>;
+  pickDirectory(): Promise<string | null>;
+  subscribeSessions(listener: (sessions: Session[]) => void): () => void;
 };
 ```
 
@@ -66,7 +72,7 @@ type WithMateWindowApi = {
 
 - Renderer は Electron 固有 API を直接触らない
 - `window.withmate` の有無で実行環境を判定する
-- 将来 `launchSession` `pickDirectory` `listCharacters` を足しても、この preload 境界を拡張していく
+- `launchSession` `pickDirectory` `listCharacters` などの機能追加も、この preload 境界を拡張していく
 
 ## URL Resolution
 
@@ -95,6 +101,8 @@ query string を保ったまま `loadFile(..., { search })` で sessionId を渡
   - window の責務分離と lifecycle の上位設計
 - [ui-react-mock.md](./ui-react-mock.md)
   - 現状の mock entry 構成
+- [electron-session-store.md](./electron-session-store.md)
+  - session metadata を Main Process が持つ設計
 
 ## Open Questions
 

@@ -97,7 +97,7 @@ flowchart LR
 MVP では、保存責務を次のように切る。
 
 - `Session Metadata`
-  - アプリ側 storage
+  - Electron Main Process 側 store
 - `Execution Continuity`
   - アプリ側 storage + Codex thread id
 - `Session Memory`

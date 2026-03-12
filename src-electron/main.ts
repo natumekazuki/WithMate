@@ -1,9 +1,18 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 
-import { WITHMATE_OPEN_SESSION_CHANNEL } from "../src/withmate-window.js";
+import { buildNewSession, cloneSessions, initialSessions, type CreateSessionInput, type Session } from "../src/mock-data.js";
+import {
+  WITHMATE_CREATE_SESSION_CHANNEL,
+  WITHMATE_GET_SESSION_CHANNEL,
+  WITHMATE_LIST_SESSIONS_CHANNEL,
+  WITHMATE_OPEN_SESSION_CHANNEL,
+  WITHMATE_PICK_DIRECTORY_CHANNEL,
+  WITHMATE_SESSIONS_CHANGED_EVENT,
+  WITHMATE_UPDATE_SESSION_CHANNEL,
+} from "../src/withmate-window.js";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const preloadPath = path.resolve(currentDir, "preload.js");
@@ -12,6 +21,7 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 
 let homeWindow: BrowserWindow | null = null;
 const sessionWindows = new Map<string, BrowserWindow>();
+let sessions = cloneSessions(initialSessions);
 
 function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0]): BrowserWindow {
   return new BrowserWindow({
@@ -26,6 +36,36 @@ function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0
     },
     ...options,
   });
+}
+
+function listSessions(): Session[] {
+  return cloneSessions(sessions);
+}
+
+function getSession(sessionId: string): Session | null {
+  return cloneSessions(sessions).find((session) => session.id === sessionId) ?? null;
+}
+
+function broadcastSessions(): void {
+  const payload = listSessions();
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(WITHMATE_SESSIONS_CHANGED_EVENT, payload);
+    }
+  }
+}
+
+function createSession(input: CreateSessionInput): Session {
+  const created = buildNewSession(input);
+  sessions = [created, ...sessions];
+  broadcastSessions();
+  return cloneSessions([created])[0];
+}
+
+function updateSession(nextSession: Session): Session {
+  sessions = sessions.map((session) => (session.id === nextSession.id ? cloneSessions([nextSession])[0] : session));
+  broadcastSessions();
+  return cloneSessions([nextSession])[0];
 }
 
 async function loadHomeEntry(window: BrowserWindow): Promise<void> {
@@ -113,6 +153,43 @@ app.whenReady().then(async () => {
     }
 
     await openSessionWindow(sessionId);
+  });
+
+  ipcMain.handle(WITHMATE_LIST_SESSIONS_CHANNEL, () => listSessions());
+
+  ipcMain.handle(WITHMATE_GET_SESSION_CHANNEL, (_event, sessionId: string) => {
+    if (!sessionId) {
+      return null;
+    }
+
+    return getSession(sessionId);
+  });
+
+  ipcMain.handle(WITHMATE_CREATE_SESSION_CHANNEL, (_event, input: CreateSessionInput) => {
+    return createSession(input);
+  });
+
+  ipcMain.handle(WITHMATE_UPDATE_SESSION_CHANNEL, (_event, session: Session) => {
+    return updateSession(session);
+  });
+
+  ipcMain.handle(WITHMATE_PICK_DIRECTORY_CHANNEL, async (event) => {
+    const targetWindow = BrowserWindow.fromWebContents(event.sender) ?? homeWindow ?? undefined;
+    const result = targetWindow
+      ? await dialog.showOpenDialog(targetWindow, {
+          properties: ["openDirectory"],
+          title: "作業ディレクトリを選択",
+        })
+      : await dialog.showOpenDialog({
+        properties: ["openDirectory"],
+        title: "作業ディレクトリを選択",
+      });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    return result.filePaths[0];
   });
 
   await createHomeWindow();
