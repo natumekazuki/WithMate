@@ -34,9 +34,9 @@
   - `New Session`
   - character 管理導線
 - `Session Window`
-  - `Current Session Header`
+  - 小さく圧縮した `Current Session Header`
   - `Work Chat`
-  - `Character Stream`
+  - 発話中心の `Character Stream`
   - `Diff Viewer`
 - session 一覧では各項目にキャラクターアイコンを持たせつつ、`taskTitle / workspace / updatedAt / status` を優先して表示する
 - キャラクターアイコンは `C:\Users\zgmfx\.codex\characters` 配下の `character.png` を前提にし、assistant message にも同じ avatar を出す
@@ -83,14 +83,14 @@
 ### Session Window
 
 - `Current Session Header`
-  - `workspacePath / provider / branch / run / approval`
+  - `workspace / provider / branch / run / approval` を細く確認するだけの帯
 - `Work Chat`
   - assistant message ごとに `Turn Summary`
   - `What Changed / Run Summary / Activity Notes`
   - avatar + character name + bubble
 - `Character Stream`
-  - `On-Air Stream`
-  - ピン留めキャラ、stream mode、独り言の流れ
+  - キャラの発話そのものを読む面
+  - メタ情報カードは置かず、発話だけを流す
 - `Diff Viewer`
   - アプリ内 overlay で split diff を開く
 

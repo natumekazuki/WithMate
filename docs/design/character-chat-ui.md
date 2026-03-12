@@ -111,6 +111,8 @@ type CharacterCatalogItem = {
 
 - pinned character と chat avatar の見た目を揃える
 - 右面だけ浮いた別デザインにならないよう、共通の portrait スタイルを持たせる
+- 右面の価値は `キャラがいま何をしゃべっているか` に絞る
+- stream mode / mood badge / 説明テキストのようなメタ情報は最小限に抑える
 - API キー未設定時は、完全非表示ではなく縮退表示を第一候補とする
 - 縮退表示では、独り言機能が API 利用前提であることを明示する
 

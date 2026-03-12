@@ -151,7 +151,7 @@ export default function App() {
       <header className="panel session-window-bar rise-1">
         <div>
           <p className="kicker">Session Window</p>
-          <h2>{selectedSession.threadLabel}</h2>
+          <h2>{selectedSession.taskTitle}</h2>
         </div>
         <button className="drawer-toggle" type="button" onClick={handleCloseWindow}>
           Close Window
@@ -159,46 +159,23 @@ export default function App() {
       </header>
 
       <header className="panel workspace-header rise-2">
-        <div className="header-copy">
-          <p className="kicker">Current Session</p>
-          <h2>{selectedSession.taskTitle}</h2>
-          <p>{selectedSession.taskSummary}</p>
-        </div>
-
-        <div className="header-side">
-          <section className="header-character-card">
-            <CharacterAvatar character={selectedSessionCharacter} size="medium" className="header-avatar" />
-            <div className="header-character-copy">
-              <p className="kicker">Character Locked</p>
-              <h3>{selectedSession.character}</h3>
-              <p>{selectedSession.characterTone}</p>
-            </div>
-          </section>
-
-          <div className="header-rails">
-            <div className="header-rail primary">
-              <span className="rail-label">workspace</span>
-              <strong>{selectedSession.workspacePath}</strong>
-            </div>
-            <div className="header-rail-grid">
-              <div className="header-rail">
-                <span className="rail-label">provider</span>
-                <strong>{selectedSession.provider}</strong>
-              </div>
-              <div className="header-rail">
-                <span className="rail-label">branch</span>
-                <strong>{selectedSession.branch}</strong>
-              </div>
-              <div className="header-rail">
-                <span className="rail-label">run</span>
-                <strong>{selectedSession.runState}</strong>
-              </div>
-              <div className="header-rail">
-                <span className="rail-label">approval</span>
-                <strong>{selectedSession.approvalMode}</strong>
-              </div>
-            </div>
+        <section className="session-identity">
+          <CharacterAvatar character={selectedSessionCharacter} size="small" className="header-avatar" />
+          <div className="session-identity-copy">
+            <p className="kicker">Current Session</p>
+            <h2>{selectedSession.taskTitle}</h2>
           </div>
+        </section>
+
+        <div className="session-meta-strip">
+          <span className="session-mini-chip">{selectedSession.workspaceLabel}</span>
+          <span className="session-mini-chip">{selectedSession.provider}</span>
+          <span className="session-mini-chip">{selectedSession.branch}</span>
+          <span className="session-mini-chip">{selectedSession.runState}</span>
+          <span className="session-mini-chip">{selectedSession.approvalMode}</span>
+          <code className="session-path-inline" title={selectedSession.workspacePath}>
+            {selectedSession.workspacePath}
+          </code>
         </div>
       </header>
 
@@ -346,30 +323,9 @@ export default function App() {
           <div className="panel-head compact-head">
             <div>
               <p className="kicker">Character Stream</p>
-              <h2>On-Air Stream</h2>
+              <h2>{selectedSession.character}</h2>
             </div>
-            <span className="emotion-pill">{selectedSession.characterTone}</span>
           </div>
-
-          <section className="stream-stage">
-            <div className="stream-stage-copy">
-              <p className="kicker">Pinned Character</p>
-              <h3>{selectedSession.character}</h3>
-              <p>
-                coding agent の実行面とは別に、同じキャラが横で見ていて、思ったことをぽろっと流し続ける。
-                暇なときに目をやると、作業と並走している感じが出る面。
-              </p>
-            </div>
-
-            <div className="stream-stage-side">
-              <CharacterAvatar character={selectedSessionCharacter} size="large" className="stream-stage-avatar" />
-              <div className="stage-pills">
-                <span className="tag active">{selectedSession.streamMode}</span>
-                <span className="tag">{selectedSession.updatedAt}</span>
-                <span className="tag">{selectedSession.workspaceLabel}</span>
-              </div>
-            </div>
-          </section>
 
           <div className="stream-list">
             {selectedSession.stream.map((entry, index) => (
@@ -377,29 +333,16 @@ export default function App() {
                 <div className="stream-card-head">
                   <div className="stream-speaker">
                     <CharacterAvatar character={selectedSessionCharacter} size="tiny" className="stream-entry-avatar" />
-                    <div>
-                      <p className="stream-time">{entry.time}</p>
+                    <div className="stream-message-copy">
                       <strong>{selectedSession.character}</strong>
+                      <p className="stream-time">{entry.time}</p>
                     </div>
                   </div>
-                  <span className="stream-mood">{entry.mood}</span>
                 </div>
-                <p>{entry.text}</p>
+                <p className="stream-message-body">{entry.text}</p>
               </article>
             ))}
           </div>
-
-          <section className="character-lock">
-            <CharacterAvatar character={selectedSessionCharacter} size="medium" className="lock-avatar" />
-            <div>
-              <p className="kicker">Roleplay Injection</p>
-              <h3>{selectedSession.character}</h3>
-              <p>
-                system prompt にはこのキャラ定義を安定注入する前提。Work Chat は実務を崩さず、
-                こっちはキャラの温度と距離感を持続させる役割に寄せる。
-              </p>
-            </div>
-          </section>
         </aside>
       </section>
 

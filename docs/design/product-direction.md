@@ -56,7 +56,7 @@ WithMate が最低限維持すべき体験は次のとおり。
 - `Session Window`
   - TUI に相当する本体作業面
 - `Current Session Header`
-  - `Session Window` で現在の workspace、provider、run state、approval を示す
+  - `Session Window` で現在の workspace と run 条件を最小限に示す細い確認バー
 - `Work Chat`
   - `Session Window` の主面
 - `Artifact Summary`
@@ -118,14 +118,14 @@ WithMate は provider を 1 つに統一しない。
 - `Home Window` は管理面
 - `Session Window` は作業面
 - `Work Chat` は作業結果を読む面
-- `Character Stream` は気配や感情を感じる面
+- `Character Stream` はキャラクターの発話そのものを読む面
 - この2つの責務は混ぜない
 
 ### 2. キャラ性は構造で出す
 
 - セッションにキャラクターが紐づいている
 - `Session Window` 右面で独り言が流れる
-- ヘッダーやカードで現在のキャラが分かる
+- 独り言そのものが主役で、補足メタは最小限に抑える
 
 色や装飾だけで VTuber 感を作ろうとしない。
 
