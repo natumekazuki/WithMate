@@ -854,7 +854,7 @@ button {
 
 .stream-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   background:
     linear-gradient(180deg, rgba(255, 246, 239, 0.96), rgba(250, 252, 255, 0.92));
 }
@@ -1109,15 +1109,6 @@ button {
 .stream-speaker {
   justify-content: flex-start;
   align-items: center;
-}
-
-.stream-message-copy {
-  display: grid;
-  gap: 2px;
-}
-
-.stream-speaker strong {
-  display: block;
 }
 
 .stream-message-body {

@@ -91,6 +91,7 @@
 - `Character Stream`
   - キャラの発話そのものを読む面
   - メタ情報カードは置かず、発話だけを流す
+  - 面の役割が明白なら、見出しや名前ラベルも省略してよい
 - `Diff Viewer`
   - アプリ内 overlay で split diff を開く
 

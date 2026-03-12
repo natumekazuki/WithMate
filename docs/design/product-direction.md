@@ -134,6 +134,7 @@ WithMate は provider を 1 つに統一しない。
 - 普段見る: chat, status, stream
 - 必要時に開く: artifact summary
 - 深掘り時だけ開く: diff viewer
+- 役割が自明な面では、見出しや名前ラベルも冗長なら出さない
 
 ### 4. TUI と違う導線を増やしすぎない
 

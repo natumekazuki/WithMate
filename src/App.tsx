@@ -320,23 +320,13 @@ export default function App() {
         </section>
 
         <aside className="panel stream-panel rise-4">
-          <div className="panel-head compact-head">
-            <div>
-              <p className="kicker">Character Stream</p>
-              <h2>{selectedSession.character}</h2>
-            </div>
-          </div>
-
           <div className="stream-list">
             {selectedSession.stream.map((entry, index) => (
               <article key={`${entry.time}-${index}`} className={`stream-card ${entry.mood}`}>
                 <div className="stream-card-head">
                   <div className="stream-speaker">
                     <CharacterAvatar character={selectedSessionCharacter} size="tiny" className="stream-entry-avatar" />
-                    <div className="stream-message-copy">
-                      <strong>{selectedSession.character}</strong>
-                      <p className="stream-time">{entry.time}</p>
-                    </div>
+                    <p className="stream-time">{entry.time}</p>
                   </div>
                 </div>
                 <p className="stream-message-body">{entry.text}</p>
