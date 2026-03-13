@@ -22,31 +22,29 @@
 
 - Electron の IPC / session store 本実装
 - Codex SDK 接続
-- 永続化
+- session 永続化
 - 実際のストリーミング
 
 ## Layout Direction
 
 - `brand-card` は置かない
 - `Home Window`
-  - アプリアイコン + プロジェクト名のヘッダー
+  - アプリアイコンと `Add Character` / `New Session` の上部バー
   - `Recent Sessions`
-  - `New Session`
-  - character 管理導線
+  - `Characters` list
+  - character / session の empty state
+  - `New Session` dialog
 - `Session Window`
   - 必須情報だけ残した最小構成
   - `Work Chat`
-  - 発話中心の `Character Stream`
   - `Diff Viewer`
+  - `Diff Window` への popout 導線
 - session 一覧では各項目にキャラクターアイコンを持たせつつ、`taskTitle / workspace / updatedAt / status` を優先して表示する
-- キャラクターアイコンは `C:\Users\zgmfx\.codex\characters` 配下の `character.png` を前提にし、assistant message にも同じ avatar を出す
+- キャラクターアイコンは WithMate 管理の character storage 配下にある `character.png` を前提にし、assistant message にも同じ avatar を出す
 - Work Chat は作業用の整理された面として保つ
 - assistant の返答カード内に `What Changed` `Run Summary` `Activity Notes` を表示し、そのターンで起きたことを読めるようにする
-- assistant 側は `avatar + character name + tone + bubble` で、キャラがしゃべっている見え方を優先する
+- assistant 側は `avatar + bubble` を軸にして、キャラがしゃべっている見え方を優先する
 - `Turn Summary` はデフォルト折りたたみにして、必要なときだけ開けるようにする
-- Character Stream は補助カラムではなく、アプリ固有価値を担う主画面として扱う
-- 画面の主従は `Work Chat > Character Stream` ではなく、`Work Chat || Character Stream` の並列関係に寄せる
-- Character Stream 側には現在のムード、反応密度、ピン留めキャラクター情報をまとめて表示する
 - 見た目は VTuber キャラの温度感に寄せるが、作業面は coding agent としての読みやすさを優先する
 
 ## Current Mock Snapshot
@@ -54,42 +52,51 @@
 - 現在の React 実装は `index.html` を `Home Window`、`session.html` を `Session Window` とする別 entry 構成
 - Electron では実 `BrowserWindow` で起動し、Home / Session の分離も Main Process が担う
 - browser-only preview 時だけ `localStorage` 共有の mock data を fallback として使う
+- character catalog は Electron 実行時に `userData/characters` を正本として読む
 
 ### 現在の Entry Split
 
 - `Home Window`
   - `Recent Sessions`
-  - `Character Catalog`
+  - `Characters` list
   - `New Session` dialog 起動
-  - `Session Window` を開く link / button
+  - `Character Editor Window` を開く button
+  - `Session Window` を開く button
 - `Session Window`
-  - `Current Session Header`
   - `Work Chat`
-  - `Character Stream`
   - `Diff Viewer`
+  - `Diff Window` への `Open In Window`
+  - composer 下の `Model / Depth`
+  - session title の rename
+  - session 削除
+  - `interrupted` 時の再送導線
 
 ## Target Window Split
 
 ### Home Window
 
 - `Recent Sessions`
-  - `Resume Picker` として表示
-  - 各カードは `taskTitle / workspace / updatedAt / status / character / threadLabel` の順で判断材料を出す
+  - `Resume Picker` として表示する
+  - 各カードは `taskTitle / workspace / updatedAt / status / taskSummary` に絞る
+- `Characters`
+  - `avatar / name / short description / Edit` の最小カードで表示する
+  - 0 件なら `Add Character` だけ残した empty state を出す
 - `New Session`
-  - `workspace / character / approval` を dialog で確認して開始する
-- `Character Catalog`
-  - 利用可能キャラの確認と将来的な管理導線を置く
+  - `Browse` で選んだ workspace path と `character / approval` を最小 dialog で確認して開始する
+- `Character Editor Window`
+  - create / edit / delete を集中して扱う
+  - metadata form と `character.md` editor を分離する
+  - `Role` を `character.md` の正本として編集する
+  - 右面は editor-like な markdown 面として広く確保する
+  - icon は image picker から選ぶ
 
 ### Session Window
 
 - `Work Chat`
   - assistant message ごとに `Turn Summary`
   - `What Changed / Run Summary / Activity Notes`
-  - avatar + character name + bubble
-- `Character Stream`
-  - キャラの発話そのものを読む面
-  - メタ情報カードは置かず、発話だけを流す
-  - 面の役割が明白なら、見出しや名前ラベルは置かない
+  - avatar + bubble
+  - composer 下に `Model / Depth` controls を置く
 - `Diff Viewer`
   - アプリ内 overlay で split diff を開く
 
@@ -97,19 +104,31 @@
 
 - `Home Window` でセッションカードを押すと `session.html?sessionId=...` を開く
 - Electron 実行時は `window.withmate.openSession(sessionId)` を優先し、browser preview 時だけ `window.open` へフォールバックする
+- browser fallback の `session.html` / `character.html` URL は `file://` 実行でも壊れないよう html 相対パスで組み立てる
 - Electron 実行時の session 一覧と作成は Main Process store 経由で処理する
 - `Recent Sessions` の役割は「最近の会話を見る」ことよりも、「どの workspace とタスクを再開するか選ぶ」ことに寄せる
 - `New Session` dialog は `cd -> codex` 側、`Recent Sessions` は `codex resume` 側として責務を分ける
+- `New Session` dialog の workspace は候補一覧を持たず、picker と選択済み path 表示だけに絞る
 - `Session Window` は query string の `sessionId` を受け取り、対象 session 1 件に集中する
 - `Session Window` 内のラベルは原則削り、操作や判断に必須なものだけ残す
+- session title は `Session Window` の header で rename できる
+- session 削除も `Session Window` の header から行う
+- approval mode は `Session Window` のヘッダーから後で変更できる
+- model は datalist 付き input で変更できる
+- depth は bundled catalog の候補だけを chip で変更できる
+- `New Session` dialog では model / depth を出さず、default 値で session を作る
+- `interrupted` session は composer の上に最小の再送 banner を出し、直前 user message を同じ内容で送り直せる
 - assistant message にぶら下がる `Turn Summary` の内容は、その `Session Window` の turn にのみ紐づく
-- `Open Diff` を押すと、別ウインドウではなく `Session Window` 内の split diff overlay が開く
+- `Open Diff` を押すと、まず `Session Window` 内の split diff overlay が開く
+- `Open Diff` は diff rows を持つ file だけに出し、`add / edit / delete` すべてで side-by-side の `Before / After` を見られる
+- Diff Viewer は同一ウインドウ内 overlay を維持しつつ、左右ペインごとの横スクロール同期と縦スクロール同期を持つ
+- overlay から `Open In Window` を押すと、専用 `Diff Window` へ同じ split diff を popout 表示する
 - 入力欄の送信ボタンは、現在選択中 session の user message と stream を `localStorage` 上で更新する
 - `New Session` は Home 側で session record を保存してから `Session Window` を開く
 - `Browse` は Electron 実行時だけ OS の directory picker を開く
-- `New Session` dialog の character choice も同じ avatar を使い、session 開始前からキャラ選択を視覚化する
-- Character Stream は 2 から 3 種類のカードスタイルを混ぜて温度差を表現する
-- Character Stream 側にも入力起点とは別の情報の流れを見せ、単なるサマリー欄に見えないようにする
+- `New Session` dialog の character choice も同じ avatar を使い、必要な選択だけ残す
+- character 0 件なら `New Session` dialog は start を無効化し、`Add Character` 導線だけを出す
+- character の作成 / 編集 / 削除は別 entry の `Character Editor Window` へ逃がす
 - character PNG は Vite の `@fs` 経由で参照する
 
 ## TUI Comparison
@@ -121,25 +140,26 @@
   - どの workspace と task を再開するかを決める
 - `Session Window`
   - TUI に入った後の本体作業面
-- `Current Session Header`
-  - `cd` 後に、今どの workspace / run state / approval mode で動いているかを示す面
+- `Session Window` はラベルを原則持たず、必要な操作だけ見せる
 - `Work Chat`
   - 一覧で使う判断材料と、作業中に読む情報を混ぜない
-- `Character Stream`
-  - TUI にはない WithMate 固有の継続体験
-  - 再開導線ではなく、作業継続中の存在感を担う
 
 ## Deliverables
 
 - `src/HomeApp.tsx`
 - `src/main.tsx`
 - `src/session-main.tsx`
+- `src/character-main.tsx`
 - `src/App.tsx`
+- `src/DiffApp.tsx`
+- `src/DiffViewer.tsx`
 - `src/mock-data.ts`
 - `src/mock-ui.tsx`
 - `src/styles.css`
 - `index.html`
 - `session.html`
+- `character.html`
+- `diff.html`
 - `vite.config.ts`
 - `src-electron/main.ts`
 - `src-electron/preload.ts`
@@ -154,7 +174,7 @@ npm run dev
 起動先:
 
 - Home: `http://localhost:4173/`
-- Session: `http://localhost:4173/session.html?sessionId=melt-main`
+- Session: `http://localhost:4173/session.html?sessionId=<sessionId>`
 
 Electron で確認する場合:
 

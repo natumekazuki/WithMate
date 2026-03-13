@@ -37,6 +37,9 @@ WithMate では、永続化対象を 3 層に分ける。
 - workspace path
 - provider
 - character id
+- model
+- reasoning depth
+- character name
 - status
 - created at / updated at
 - last active at
@@ -53,7 +56,10 @@ WithMate では、永続化対象を 3 層に分ける。
 
 - codex thread id
 - approval mode
+- selected model
+- selected reasoning depth
 - run state の最後の確定値
+- crash recovery 用の `interrupted` 補正対象
 - 最新 turn summary
 - 最新 changed files summary
 
@@ -61,6 +67,7 @@ WithMate では、永続化対象を 3 層に分ける。
 
 - `resumeThread()` 相当の再開
 - 直前状態の UI 復元
+- Main Process の provider adapter が thread 再開に使う
 
 ### Session Memory
 
@@ -97,9 +104,9 @@ flowchart LR
 MVP では、保存責務を次のように切る。
 
 - `Session Metadata`
-  - Electron Main Process 側 store
+  - Electron Main Process 側 SQLite
 - `Execution Continuity`
-  - アプリ側 storage + Codex thread id
+  - 同じ SQLite row + Codex thread id
 - `Session Memory`
   - LangGraph checkpointer を中心に管理する第一候補
 - `Character Memory`
@@ -110,6 +117,7 @@ MVP では、保存責務を次のように切る。
 - Session 一覧の表示はアプリ側で高速に引ける必要がある
 - Codex thread の正本は Codex 側にあり、アプリは thread id を保持すればよい
 - Memory は独り言生成の入力最適化責務があるため、LangGraph 境界で扱う方が整理しやすい
+- session metadata と execution continuity は MVP のうちは 1 row にまとめてよい
 
 ### TTL Direction
 
@@ -142,6 +150,7 @@ MVP では TTL の具体値は固定せず、実運用で決める。
 - turn 完了時
 - approval mode 変更時
 - changed files / run summary 確定時
+- アプリ再起動時の recovery 判定時
 
 ### Session Memory
 
@@ -157,8 +166,16 @@ MVP では TTL の具体値は固定せず、実運用で決める。
 2. Session Metadata を読み込み `Recent Sessions` を表示
 3. セッション選択
 4. `thread id` と Execution Continuity を復元
-5. 必要なら `resumeThread()` を呼ぶ
+5. 前回が `running` のまま残っていた場合は `interrupted` へ補正する
 6. Session Memory を読み込み、Character Stream 用の基礎状態も復元する
+
+## Crash Recovery
+
+- アプリが強制終了した場合、SQLite 上に `runState = running` が残ることがある
+- 次回起動時は、その session を `runState = interrupted` / `status = idle` へ補正する
+- 補正時には assistant message として「前回の実行は中断された可能性がある」旨を 1 回だけ追記する
+
+この補正により、UI 上で永続的に `running` のまま取り残されるのを避ける。
 
 ## Monologue Integration
 
@@ -178,7 +195,6 @@ Session Persistence は、Character Stream のために次の責務を持つ。
 
 ## Open Questions
 
-- Session Metadata の保存先を SQLite に固定するか
 - turn summary の正本をどこに置くか
 - Session Memory 更新の粒度を every turn にするか checkpoint にするか
 - LangGraph backend とアプリ storage の境界をどこで切るか

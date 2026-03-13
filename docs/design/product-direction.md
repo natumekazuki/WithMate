@@ -5,8 +5,8 @@
 
 ## Goal
 
-WithMate を「キャラ付きチャットアプリ」ではなく、`Codex CLI / GitHub Copilot CLI` 相当の coding agent 体験をベースに、  
-安定したキャラクターロールプレイと `Character Stream` を追加したアプリとして定義する。
+WithMate を「キャラ付きチャットアプリ」ではなく、`Codex CLI / GitHub Copilot CLI` 相当の coding agent 体験をベースに、
+安定したキャラクターロールプレイを追加したアプリとして定義する。
 
 ## Product Thesis
 
@@ -17,12 +17,15 @@ WithMate で実現したい体験は次の三層で構成される。
 - workspace、session resume、run state、approval、変更ファイル、diff などの主要操作で違和感がないこと
 
 2. `stable roleplay injection`
-- system prompt へキャラクター定義を安定して注入し、ターンをまたいでも人格が崩れにくいこと
+- `character.md` を system prompt 合成へ安定注入し、ターンをまたいでも人格が崩れにくいこと
 - ユーザーが「このキャラで Codex を動かしている」と自然に感じられること
 
 3. `parallel character stream`
 - 作業本体とは別枠で、キャラクターの独り言や内心が流れ続けること
 - 作業の合間に眺めて楽しめるが、本体の coding agent 体験を邪魔しないこと
+
+ただし Issue `#5` により、現段階ではこの 3 層目の UI 適用は pending とする。
+つまり価値仮説としては維持しつつ、実際の Session UI には表示しない。
 
 ## Priority Order
 
@@ -41,8 +44,9 @@ WithMate が最低限維持すべき体験は次のとおり。
 - どの workspace で動くかが明確
 - どの session を再開しているかが明確
 - `runState` と `approvalMode` が明確
+- model と reasoning depth が明確
 - そのターンで何が変わったかを把握できる
-- diff を必要時に深掘りできる
+- diff を必要時に GitHub Desktop ライクな split viewer で深掘りできる
 - 実行の流れが追える
 
 ### UI への落とし込み
@@ -55,10 +59,11 @@ WithMate が最低限維持すべき体験は次のとおり。
   - `Home Window` 内の dialog として `cd -> codex` を置き換える
 - `Session Window`
   - TUI に相当する本体作業面
-- `Current Session Header`
-  - `Session Window` で現在の workspace と run 条件を最小限に示す細い確認バー
+- `Session Header`
+  - `Session Window` で approval 変更など最小限の操作だけを置く細いバー
 - `Work Chat`
   - `Session Window` の主面
+  - composer 下で model / depth を調整できる
 - `Artifact Summary`
   - turn 単位で起きた変更と実行結果を要約する
 - `Diff Viewer`
@@ -71,7 +76,6 @@ CLI parity の上に、WithMate 固有の層として次を追加する。
 - `character definition management`
 - `stable prompt composition`
 - `memory architecture`
-- `Character Stream`
 - 将来的なキャラクター切り替えや固定
 
 これらは coding agent の基本操作を置き換えるのではなく、上から重ねる。
@@ -83,7 +87,7 @@ WithMate は provider を 1 つに統一しない。
 - coding agent 本体
   - `Codex CLI / SDK`
   - CLI ログイン前提
-- `Character Stream`
+- 将来的な `Character Stream`
   - OpenAI API
   - API キー前提
 
@@ -94,12 +98,12 @@ WithMate は provider を 1 つに統一しない。
 
 現在の主対象が VTuber キャラクターである以上、UI もその前提に合わせる。
 
-ただし、`VTuber っぽい見た目` を増やすことが目的ではなく、  
+ただし、`VTuber っぽい見た目` を増やすことが目的ではなく、
 `VTuber キャラがそこで生きているように感じるが、作業はちゃんとしやすい` ことを目的にする。
 
 ### 必要な方向
 
-- キャラクターの存在感は `Character Stream` とセッション単位の識別で出す
+- キャラクターの存在感はセッション単位の識別と assistant 側の発話表現で出す
 - キャラクターアイコン、名前、トーン、ムードが継続して感じられる UI にする
 - 無機質な業務ツール感には寄せすぎない
 - ただし、作業面は読みやすさと情報密度を優先する
@@ -115,17 +119,16 @@ WithMate は provider を 1 つに統一しない。
 
 ### 1. 作業面とキャラ面を分離する
 
-- `Home Window` は管理面
+- `Home Window` は resume / new session / character selection を担う管理面
 - `Session Window` は作業面
 - `Work Chat` は作業結果を読む面
-- `Character Stream` はキャラクターの発話そのものを読む面
-- この2つの責務は混ぜない
+- 独り言 UI は current milestone では置かない
 
 ### 2. キャラ性は構造で出す
 
 - セッションにキャラクターが紐づいている
-- `Session Window` 右面で独り言が流れる
-- 独り言そのものが主役で、補足メタは最小限に抑える
+- 将来的には `Session Window` の別面で独り言を扱う
+- ただし現段階では UI へは出さない
 
 色や装飾だけで VTuber 感を作ろうとしない。
 
@@ -140,7 +143,7 @@ WithMate は provider を 1 つに統一しない。
 ### 4. TUI と違う導線を増やしすぎない
 
 - session resume の判断は `Home Window` に寄せる
-- run 状態や approval は `Session Window` の header に寄せる
+- approval は `Session Window` の header で変更できるようにする
 - 変更結果は message 単位 summary に寄せる
 
 ## What To Remove
@@ -158,10 +161,11 @@ WithMate は provider を 1 つに統一しない。
 今後も守るべきものは次のとおり。
 
 - `Home Window` の resume 導線としての分かりやすさ
+- Home 側でも要素名ラベルを増やしすぎないこと
 - `Work Chat` の読みやすさ
 - `Artifact Summary` の実務的な有用性
-- `Character Stream` の存在感
 - キャラクター定義の安定注入前提
+- 独り言 UI を premature に本実装済みへ見せないこと
 
 ## Impact On Current Mock
 
@@ -170,12 +174,12 @@ WithMate は provider を 1 つに統一しない。
 - 単一 window mock は暫定状態とし、最終的には `Home Window` と `Session Window` に分離する
 - `Recent Sessions` は `Home Window` の resume picker として再設計する
 - `Session Window` の `Work Chat` は TUI 本体寄りに保つ
-- `Character Stream` は `Session Window` 内で VTuber キャラの存在感を出す主面として磨く
+- 独り言 UI は current milestone では `Session Window` に出さない
 - 見た目はキャラクターに合わせていくが、構造は coding agent 優先で崩さない
 
 ## Next Step
 
 - `Home Window` と `Session Window` のモック分離を行う
 - `Recent Sessions` のカード構造を Home 前提で詰める
-- `Character Stream` を VTuber キャラ前提の面としてさらに詰める
+- 独り言 UI は pending のまま、土台となる provider / memory を先に詰める
 - 実イベント接続時も `CLI parity` と `WithMate 固有拡張` を分離して実装する

@@ -30,6 +30,7 @@ WithMate では、`Recent Sessions` が 2 の `resume` 側を担う。
 - Provider の確認
 - Approval / sandbox など起動条件の確認
 - 新規セッション開始
+- model / depth は default 値で初期化する
 
 ### 担わないもの
 
@@ -37,6 +38,7 @@ WithMate では、`Recent Sessions` が 2 の `resume` 側を担う。
 - 詳細な session 管理
 - Character Stream の内容確認
 - 実行後の diff / activity 閲覧
+- model / depth の細かい調整
 
 ## MVP Information Design
 
@@ -45,7 +47,6 @@ MVP では、次の 4 ブロックで十分。
 1. `Workspace Picker`
 - 現在選択中の directory
 - `Browse` ボタン
-- 最近使った workspace 候補があると良い
 
 2. `Launch Profile`
 - Provider (`Codex`)
@@ -86,7 +87,6 @@ MVP では、次の 4 ブロックで十分。
 ### 2. workspace 選択済み
 
 - launch profile が有効
-- 最近使った workspace なら軽い補足を出してよい
 
 ### 3. 開始直前
 
@@ -121,16 +121,21 @@ React モックでは次の形がよい。
 - 現在の React モックでは `Session Drawer` header に `New Session` を置いている
 - target architecture では、この導線は `Home Window` 上部へ移す
 - `Launch Panel` 自体は modal dialog で維持できる
-- `Browse` はモック上では workspace 候補を順送りで切り替える
-- workspace 候補は quick select chip でも選べる
+- `Browse` は Electron 実行時に OS の directory picker を開く
+- browser preview では簡易 path 入力で代替する
 - `Character` と `Approval` は chip で切り替える
 - `Character` は portrait 付きカードで切り替える
+- model / depth は launch dialog には出さず、session 作成時に default 値を入れる
 - `Start New Session` を押すと、空の新規 session record を作って `Session Window` を開く
 - 最初の依頼は Launch Dialog ではなく `Session Window` のメインチャットから入力する
 
+## Future Direction
+
+- 将来的にはアプリ設定で `workspace root directory` を持てるようにし、その配下へ UUID ディレクトリを自動作成して空 workspace から session を起動できるようにする
+- この方式は `既存ディレクトリを選ぶ` 導線とは別扱いにし、`New Session` dialog の別 action か `Settings` 由来の launch preset として扱う
+
 ## Open Questions
 
-- workspace picker を OS ダイアログ前提にするか、最近使った一覧からも選ばせるか
 - sandbox を MVP で見せるか、approval のみ見せるか
 - Character は固定選択にするか、launch 時に変えられるようにするか
 
@@ -138,4 +143,4 @@ React モックでは次の形がよい。
 
 - `Home Window` 内で `Recent Sessions` と視線競合しない配置に調整する
 - `Start New Session` 後に `Session Window` を開く lifecycle を実装設計へ落とす
-- 将来は OS directory dialog と実 workspace 履歴へ接続する
+- 将来は OS directory dialog と empty workspace 自動生成を並立させる
