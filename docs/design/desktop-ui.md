@@ -82,6 +82,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 ## Character Editor Window
 
 - `Profile / character.md` の 2 モード切り替え
+- Home と同じ dark base を使う
 - 画面下部固定の action bar に `Save / Delete`
 - `Name`
 - `Icon`

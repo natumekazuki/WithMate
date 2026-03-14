@@ -115,8 +115,26 @@
 - 日時: 2026-03-15
 - チェックポイント: Character Editor top preview 固定化
 - 実施内容: 低い window 向け media query で avatar サイズと preview グリッドを変えていたルールを撤去し、top preview のレイアウトを常に固定にした。
-- 検証: 予定
+- 検証: `npm run typecheck`, `npm run build`
 - メモ: 高さ不足は content スクロールで吸収し、preview 自体の配置は動かさない方針に戻した
+- 関連コミット: 
+
+### 0014
+
+- 日時: 2026-03-15
+- チェックポイント: Character Editor base color を Home に揃える
+- 実施内容: Character Editor page のベース変数を Home と同じ dark tone に寄せ、preview / input / theme card / footer / 補助ボタンの白基調を dark base へ置き換えた。
+- 検証: `npm run typecheck`, `npm run build`
+- メモ: この段階ではキャラカラーを全面に使わず、まず土台だけを Home と共通化している
+- 関連コミット: 
+
+### 0015
+
+- 日時: 2026-03-15
+- チェックポイント: Character Editor 前景色補正
+- 実施内容: dark base で沈んでいたヘッダー名、preview 名、`Theme` の `Main / Sub`、`character.md` 見出しの前景色を補正した。
+- 検証: `npm run typecheck`, `npm run build`
+- メモ: ベース配色変更で発生した可読性崩れだけを先に潰し、アクセント運用は次段に分離する
 - 関連コミット: 
 
 ## Open Items

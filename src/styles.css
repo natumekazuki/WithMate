@@ -2058,6 +2058,20 @@ button {
 .character-editor-page {
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   overflow: hidden;
+  --surface: rgba(25, 29, 38, 0.94);
+  --surface-strong: rgba(28, 33, 43, 0.98);
+  --surface-deep: rgba(18, 22, 30, 0.98);
+  --line: rgba(203, 213, 225, 0.12);
+  --ink: #edf2f7;
+  --muted: #98a2b3;
+  --orange: #6f8cff;
+  --orange-soft: rgba(111, 140, 255, 0.16);
+  --teal: #6fb8c7;
+  --teal-soft: rgba(111, 184, 199, 0.14);
+  --shadow: 0 24px 48px rgba(0, 0, 0, 0.34);
+  background:
+    radial-gradient(circle at top left, rgba(111, 140, 255, 0.12), transparent 28%),
+    linear-gradient(180deg, #0f131a 0%, #151a22 100%);
 }
 
 .character-editor-layout {
@@ -2114,10 +2128,10 @@ button {
   min-height: 100%;
   gap: 6px;
   padding: 16px 18px;
-  border: 1px solid rgba(16, 24, 40, 0.08);
+  border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: var(--radius-lg);
-  background: rgba(255, 255, 255, 0.82);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+  background: rgba(15, 19, 26, 0.94);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
 
 .character-markdown-note {
@@ -2128,6 +2142,7 @@ button {
 .character-markdown-note strong {
   font-family: "Cascadia Code", "Consolas", monospace;
   font-size: 0.9rem;
+  color: var(--ink);
 }
 
 .character-markdown-note p {
@@ -2151,18 +2166,18 @@ button {
 }
 
 .character-editor-tab {
-  border: 1px solid rgba(32, 36, 55, 0.08);
+  border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: 999px;
   padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--muted);
   font-weight: 700;
   cursor: pointer;
 }
 
 .character-editor-tab.active {
-  border-color: rgba(111, 140, 255, 0.22);
-  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(111, 140, 255, 0.28);
+  background: rgba(255, 255, 255, 0.1);
   color: var(--ink);
 }
 
@@ -2172,15 +2187,19 @@ button {
   gap: 16px;
   align-items: center;
   padding: 16px;
-  border: 1px solid rgba(32, 36, 55, 0.08);
+  border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: var(--radius-lg);
-  background: linear-gradient(145deg, var(--character-main-soft), rgba(255, 255, 255, 0.92));
+  background: rgba(15, 19, 26, 0.94);
 }
 
 .character-editor-preview-copy {
   display: grid;
   gap: 6px;
   min-width: 0;
+}
+
+.character-editor-preview-copy strong {
+  color: var(--ink);
 }
 
 .character-editor-preview-copy p {
@@ -2227,13 +2246,17 @@ button {
   text-transform: uppercase;
 }
 
+.theme-fieldset > span {
+  color: var(--ink);
+}
+
 .editor-field input,
 .editor-field textarea {
   width: 100%;
-  border: 1px solid rgba(32, 36, 55, 0.08);
+  border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: 16px;
   padding: 14px;
-  background: rgba(255, 255, 255, 0.82);
+  background: rgba(13, 17, 23, 0.9);
   color: var(--ink);
   line-height: 1.6;
 }
@@ -2252,13 +2275,14 @@ button {
   display: grid;
   gap: 12px;
   padding: 14px;
-  border: 1px solid rgba(32, 36, 55, 0.08);
+  border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(15, 19, 26, 0.9);
 }
 
 .theme-color-card strong {
   font-size: 0.9rem;
+  color: var(--ink);
 }
 
 .theme-color-picker-row {
@@ -2274,7 +2298,7 @@ button {
   flex: 0 0 34px;
   border-radius: 999px;
   background: var(--theme-swatch-color);
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
   cursor: pointer;
 }
 
@@ -2328,10 +2352,10 @@ button {
 
 .theme-rgb-grid input {
   width: 100%;
-  border: 1px solid rgba(32, 36, 55, 0.08);
+  border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: 12px;
   padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.82);
+  background: rgba(13, 17, 23, 0.9);
   color: var(--ink);
 }
 
@@ -2372,7 +2396,7 @@ button {
 }
 
 .character-markdown-textarea {
-  border: 1px solid rgba(32, 36, 55, 0.08);
+  border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: var(--radius-lg);
 }
 
@@ -2387,11 +2411,27 @@ button {
 }
 
 .character-editor-footer {
-  background: rgba(248, 250, 252, 0.92);
+  background: rgba(18, 22, 30, 0.98);
   backdrop-filter: blur(14px);
-  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  border-top: 1px solid rgba(203, 213, 225, 0.12);
   gap: 12px;
   padding: 14px 18px;
+}
+
+.character-editor-page .drawer-toggle,
+.character-editor-page .browse-button {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+  border-color: rgba(203, 213, 225, 0.12);
+}
+
+.character-editor-page .session-window-title {
+  color: var(--ink);
+}
+
+.character-editor-page .drawer-toggle:hover,
+.character-editor-page .browse-button:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .diff-titlebar,
