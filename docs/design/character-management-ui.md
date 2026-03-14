@@ -48,6 +48,7 @@
 - `character.md` は長文前提なので、metadata form と分離した editor 面を持つ
 - `Character Editor` は `Profile / システムプロンプト` の 2 モードで切り替え、長文の `character.md` がフォーム面を圧迫しないようにする
 - Character Editor の基本配色は `Home` と同じ dark base を使い、キャラカラーは次段でアクセント用途へ限定していく
+- Character Editor では `main` を active tab / focus / primary action、`sub` を preview と各カードの補助ラインに使う
 - `Save / Delete` は画面下部の action bar に固定し、本文は header / footer の間だけスクロールする
 - `Profile / システムプロンプト` の tabs は content カードの外に置くが、背景色や固定レールは付けない
 - content カードは header / tabs / footer を除いた残り高さを常に使い切り、`Profile` と `character.md` で高さ感を揃える

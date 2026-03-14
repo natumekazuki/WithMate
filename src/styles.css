@@ -1179,7 +1179,7 @@ button {
 
 .danger-button {
   background: rgba(255, 124, 124, 0.16);
-  color: #933c3c;
+  color: #fda4af;
 }
 
 .session-card.active {
@@ -2132,6 +2132,16 @@ button {
   border-radius: var(--radius-lg);
   background: rgba(15, 19, 26, 0.94);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  position: relative;
+}
+
+.character-markdown-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+  background: var(--character-sub);
 }
 
 .character-markdown-note {
@@ -2176,9 +2186,9 @@ button {
 }
 
 .character-editor-tab.active {
-  border-color: rgba(111, 140, 255, 0.28);
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--ink);
+  border-color: var(--character-main);
+  background: var(--character-main-soft);
+  color: var(--character-main);
 }
 
 .character-editor-preview {
@@ -2190,6 +2200,7 @@ button {
   border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: var(--radius-lg);
   background: rgba(15, 19, 26, 0.94);
+  box-shadow: inset 4px 0 0 var(--character-sub);
 }
 
 .character-editor-preview-copy {
@@ -2261,6 +2272,15 @@ button {
   line-height: 1.6;
 }
 
+.editor-field input:focus,
+.editor-field textarea:focus,
+.theme-hex-field input:focus,
+.theme-rgb-grid input:focus,
+.character-markdown-textarea:focus {
+  border-color: var(--character-main);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--character-main) 22%, transparent);
+}
+
 .theme-fieldset {
   gap: 12px;
 }
@@ -2278,6 +2298,7 @@ button {
   border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: 18px;
   background: rgba(15, 19, 26, 0.9);
+  box-shadow: inset 3px 0 0 var(--character-sub);
 }
 
 .theme-color-card strong {
@@ -2432,6 +2453,12 @@ button {
 .character-editor-page .drawer-toggle:hover,
 .character-editor-page .browse-button:hover {
   background: rgba(255, 255, 255, 0.1);
+}
+
+.character-editor-page .start-session-button {
+  background: var(--character-main);
+  color: var(--character-main-ink);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--character-main) 28%, transparent);
 }
 
 .diff-titlebar,

@@ -52,6 +52,7 @@ npm run electron:start
 | MT-011e | Character Editor action bar | Character Editor を通常サイズと縦に小さいサイズで開く | `Save / Delete` が画面最下部の action bar に固定され、本文はその上だけスクロールする |
 | MT-011f | Character Editor tabs 位置 | Character Editor を開く | `Profile / システムプロンプト` tabs は content カードの外に表示され、余計な背景レールがない |
 | MT-011f-1 | Character Editor base color | Character Editor を開く | Home と同じ dark base で表示され、白基調の panel に戻っていない |
+| MT-011f-2 | Character Editor accent color | Character Editor を開く | active tab / Save に `main`、preview と card 補助ラインに `sub` が使われる |
 | MT-011g | Character Editor content 高さ | Character Editor の縦を大きくした状態で `Profile` と `システムプロンプト` を切り替える | content カードが空き領域を使い切り、`character.md` だけ不自然に低くならない |
 | MT-011h | Character Editor character.md 比率 | Character Editor を縦に伸ばして `character.md` を開く | editor が content 高さに対して大きく広がり、footer との間に不自然な空白が残らない |
 | MT-011i | Character Editor character.md 説明 | Character Editor の `システムプロンプト` タブを開く | `character.md` がキャラクター定義の正本であり、プロンプト合成に使われる説明と editor が同じカード内に表示される |

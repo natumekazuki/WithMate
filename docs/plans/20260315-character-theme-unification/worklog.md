@@ -137,6 +137,15 @@
 - メモ: ベース配色変更で発生した可読性崩れだけを先に潰し、アクセント運用は次段に分離する
 - 関連コミット: `d8f40bf refactor(character-editor): align base palette with home`
 
+### 0016
+
+- 日時: 2026-03-15
+- チェックポイント: Character Editor accent color 初回適用
+- 実施内容: `main` を active tab / focus / Save、`sub` を preview と各カードの補助ラインへ割り当てた。あわせて `Save` と `Delete` の文字色を調整し、footer action の可読性を上げた。
+- 検証: `npm run typecheck`, `npm run build`
+- メモ: `danger` はキャラカラーへ寄せず、引き続き破壊的操作の色を維持する
+- 関連コミット: 
+
 ## Open Items
 
 - Character Editor の theme rule を Home と揃える

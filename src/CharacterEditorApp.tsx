@@ -50,12 +50,24 @@ function toRgba(color: string, alpha: number): string {
   return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
 }
 
+function relativeLuminance(color: string): number {
+  const rgb = hexToRgb(color);
+  const channels = [rgb.r, rgb.g, rgb.b].map((value) => {
+    const normalized = value / 255;
+    return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+  });
+
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
 function buildEditorThemeStyle(theme: CharacterThemeColors): CSSProperties {
+  const mainInk = relativeLuminance(theme.main) > 0.36 ? "#0f172a" : "#f8fafc";
   return {
     "--character-main": theme.main,
     "--character-main-soft": toRgba(theme.main, 0.14),
     "--character-sub": theme.sub,
     "--character-sub-soft": toRgba(theme.sub, 0.14),
+    "--character-main-ink": mainInk,
   } as CSSProperties;
 }
 
