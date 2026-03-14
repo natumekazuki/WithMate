@@ -144,7 +144,7 @@
 - 実施内容: `main` を active tab / focus / Save、`sub` を preview と各カードの補助ラインへ割り当てた。あわせて `Save` と `Delete` の文字色を調整し、footer action の可読性を上げた。
 - 検証: `npm run typecheck`, `npm run build`
 - メモ: `danger` はキャラカラーへ寄せず、引き続き破壊的操作の色を維持する
-- 関連コミット: 
+- 関連コミット: `be8052d fix(character-editor): apply theme accents`
 
 ## Open Items
 
