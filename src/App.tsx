@@ -1,8 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   type AuditLogEntry,
-  type CharacterThemeColors,
   type ComposerAttachmentInput,
   type ComposerPreview,
   currentTimestampLabel,
@@ -30,33 +29,6 @@ import {
   reasoningDepthLabel,
 } from "./ui-utils.js";
 import { MessageRichText } from "./MessageRichText.js";
-
-function hexToRgb(color: string): { r: number; g: number; b: number } {
-  const normalized = /^#[0-9a-fA-F]{6}$/.test(color) ? color : "#6f8cff";
-  return {
-    r: Number.parseInt(normalized.slice(1, 3), 16),
-    g: Number.parseInt(normalized.slice(3, 5), 16),
-    b: Number.parseInt(normalized.slice(5, 7), 16),
-  };
-}
-
-function toRgba(color: string, alpha: number): string {
-  const rgb = hexToRgb(color);
-  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
-}
-
-function buildSessionThemeStyle(theme: CharacterThemeColors | null): CSSProperties {
-  const main = theme?.main ?? "#6f8cff";
-  const sub = theme?.sub ?? "#6fb8c7";
-  return {
-    "--session-main": main,
-    "--session-main-soft": toRgba(main, 0.12),
-    "--session-main-strong": toRgba(main, 0.24),
-    "--session-sub": sub,
-    "--session-sub-soft": toRgba(sub, 0.14),
-    "--session-sub-strong": toRgba(sub, 0.24),
-  } as CSSProperties;
-}
 
 export default function App() {
   const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
@@ -131,11 +103,6 @@ export default function App() {
         ? { name: selectedSession.character, iconPath: selectedSession.characterIconPath }
         : null,
     [selectedSession],
-  );
-
-  const sessionThemeStyle = useMemo(
-    () => buildSessionThemeStyle(selectedSession?.characterThemeColors ?? null),
-    [selectedSession?.characterThemeColors],
   );
 
   useEffect(() => {
@@ -657,7 +624,7 @@ export default function App() {
   }
 
   return (
-    <div className="page-shell session-page" style={sessionThemeStyle}>
+    <div className="page-shell session-page">
       <header className="panel session-window-bar rise-1">
         <div className="session-title-shell">
           {isEditingTitle ? (

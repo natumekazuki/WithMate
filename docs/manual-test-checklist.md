@@ -68,6 +68,8 @@ npm run electron:start
 | MT-014 | New Session 起動 | Home の `New Session` を押す | launch dialog が開く |
 | MT-015 | Workspace picker | launch dialog の `Browse` を押して directory を選ぶ | 選択した path が dialog に表示される |
 | MT-016 | New Session 作成 | workspace と character を選び `Start New Session` を押す | Session Window が開き、Home の session 一覧に追加される |
+| MT-016b | Session base color | Session Window を開く | Home と同じ dark base で表示され、header / chat / composer / artifact が白基調に戻っていない |
+| MT-016c | Session contrast | Session Window を開き、タイトル、approval 選択中、artifact の file path、Audit Log の各ラベルと本文を確認する | 背景色と同化せず、主要テキストと補助テキストが読み分けられる |
 | MT-016a | Empty Session 表示 | 新規 session を作成してまだ送信しない | chat 履歴には初期 assistant メッセージが表示されない |
 | MT-017 | New Session 制約 | character が 0 件の状態で `New Session` を開く | `Start New Session` は実行できず、character 作成導線が表示される |
 | MT-018 | Session title rename | Session Window で `Rename` を押し、タイトルを変更して `Save` を押す | Session title が更新され、Home の一覧にも反映される |
@@ -84,7 +86,7 @@ npm run electron:start
 | MT-027 | Depth 選択 | Session Window の depth select を変更する | 選択した depth が保存される |
 | MT-027a | Model 変更後実行 | thread を持つ既存 session で model を変更して送信する | model mismatch error にならず、新しい thread で実行される |
 | MT-027b | Depth 変更後実行 | thread を持つ既存 session で depth を変更して送信する | reasoning 変更後も新しい thread で実行される |
-| MT-027c | Session Theme 反映 | theme color を設定した character で session を開く | Session Window の assistant bubble や主要 action に character の `main / sub` color が反映される |
+| MT-027c | Session Theme 非反映 | theme color を設定した character で session を開く | Session Window の配色は neutral のままで、character theme を変えても bubble や主要 action の色は変わらない |
 | MT-028 | Turn Summary | assistant message の `Details` を押す | changed files / checks / activity summary が展開される |
 | MT-028a | Rich Text 表示 | inline code / list / markdown link を含む assistant message を表示する | 生テキストの塊ではなく、rich text として読みやすく表示される |
 | MT-028b | Rich Text リンク | `[label](absolute-path-or-url)` を含む assistant message をクリックする | URL かローカルパスが既定の方法で開く |

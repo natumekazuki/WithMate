@@ -62,6 +62,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 
 ## Session Window
 
+- Home と同じ dark base を使う
 - session title の rename / delete
 - `Audit Log` overlay
 - `Work Chat`
