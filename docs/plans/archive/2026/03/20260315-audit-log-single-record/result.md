@@ -2,7 +2,7 @@
 
 ## Status
 
-- 状態: 進行中
+- 状態: 完了
 
 ## Completed
 
@@ -11,18 +11,16 @@
 
 ## Remaining Issues
 
-- `npm run typecheck`
-- `npm run build`
-- コミット作成と archive 移動
+- 旧 `started`/`completed` 2 レコード時代の履歴は DB に残るため、過去ログには重複表示が残る
 
 ## Related Commits
 
-- 未作成
+- `e11c84e fix(audit-log): store one record per turn`
 
 ## Rollback Guide
 
-- 戻し先候補: コミット作成後に記入
-- 理由: まだ作業中
+- 戻し先候補: `e11c84e`
+- 理由: Audit Log の記録単位変更が 1 論理変更として閉じている
 
 ## Related Docs
 

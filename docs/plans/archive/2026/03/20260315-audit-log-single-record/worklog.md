@@ -16,12 +16,10 @@
 - 日時: 2026-03-15
 - チェックポイント: 1 turn = 1 レコード化
 - 実施内容: 開始時に `running` レコードを作成し、完了/失敗時に同じ `id` を `updateAuditLog()` で更新する形へ変更した。UI の phase 表示も `RUNNING / DONE / FAIL` に揃えた
-- 検証: 未実施
+- 検証: `npm run typecheck`, `npm run build`
 - メモ: 旧 `started` レコード互換のため、型と label 側では `started` も `RUNNING` として扱う
-- 関連コミット: 未作成
+- 関連コミット: `e11c84e fix(audit-log): store one record per turn`
 
 ## Open Items
 
-- `npm run typecheck`
-- `npm run build`
-- コミット作成
+- なし
