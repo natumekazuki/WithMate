@@ -1,4 +1,4 @@
-import type { CharacterProfile, CreateCharacterInput, CreateSessionInput, DiffPreviewPayload, Session } from "./mock-data.js";
+import type { CharacterProfile, CreateCharacterInput, CreateSessionInput, DiffPreviewPayload, Session } from "./app-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
 
 export const WITHMATE_OPEN_SESSION_CHANNEL = "withmate:open-session";
@@ -52,3 +52,4 @@ export type WithMateWindowApi = {
   subscribeCharacters(listener: (characters: CharacterProfile[]) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
 };
+

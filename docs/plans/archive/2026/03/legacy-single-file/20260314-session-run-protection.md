@@ -26,7 +26,7 @@
 - `docs/design/recent-sessions-ui.md`
 - `src-electron/main.ts`
 - `src/HomeApp.tsx`
-- `src/mock-ui.tsx`
+- `src/ui-utils.tsx`
 - `src/styles.css`
 
 ## Risks
@@ -54,3 +54,4 @@
 - アプリ終了時は `before-quit` で確認を出し、明示的に `終了する` を選んだ場合のみ実行中処理を中断して quit する。
 - 起動時に `running` のまま残っていた session は `interrupted` へ補正し、assistant message を 1 件だけ追記する。
 - Home では実行中 session を上段の chip で先に開けるようにし、通常一覧とは分けて表示する。
+

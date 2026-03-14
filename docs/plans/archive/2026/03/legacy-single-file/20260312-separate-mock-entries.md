@@ -43,7 +43,7 @@ Vite 上でも別 entry / 別 URL として分離する。
 
 ## Proposed Direction
 
-- `src/mock-data/` のような共有モジュールへ session / character / helper を分離する
+- `src/app-state/` のような共有モジュールへ session / character / helper を分離する
 - `index.html` / `session.html` の 2 entry を用意する
 - `src/main.tsx` と `src/session-main.tsx` を用意する
 - Home 側には `Session Window を開く想定のリンク / ボタン` を置く
@@ -53,6 +53,7 @@ Vite 上でも別 entry / 別 URL として分離する。
 
 - 直前のコミット `249438c` では 1 page 内の疑似 2-window preview まで進めた
 - 今回はその次段階として、preview 自体を別 entry に分ける
-- `src/mock-data.ts` に session / character / helper を切り出し、Home と Session の両方から共有する構成にした
+- `src/app-state.ts` に session / character / helper を切り出し、Home と Session の両方から共有する構成にした
 - `index.html` は Home、`session.html` は Session として分離し、Vite build も multi-page input へ更新した
 - モックの共有状態は `localStorage` ベースにして、Home で作成した session を Session 側からも読めるようにした
+

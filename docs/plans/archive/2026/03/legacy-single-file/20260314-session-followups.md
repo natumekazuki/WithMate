@@ -11,7 +11,7 @@
 # Affected Files
 - `src/App.tsx`
 - `src/HomeApp.tsx`
-- `src/mock-ui.tsx`
+- `src/ui-utils.tsx`
 - `src/styles.css`
 - `src-electron/codex-adapter.ts`
 - `docs/design/session-run-lifecycle.md`
@@ -36,3 +36,4 @@
 - `Home` では `running` と `interrupted` を通常一覧とは別の chip row に分け、再オープン優先の導線にした。
 - Diff は `file_change` から直接本文が取れないため、MVP では `add` のときだけ workspace 上の最新ファイル本文を読んで split diff rows を生成する。
 - 2026-03-14: `npm run typecheck` / `npm run build` / `npm run build:electron` を実行し、通過を確認した。
+

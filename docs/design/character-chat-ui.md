@@ -112,11 +112,11 @@ type CharacterCatalogItem = {
 
 ## Current Implementation Snapshot
 
-- `src/App.tsx` に `characterCatalog` を追加し、モックが使うキャラ名 / 画像パスを一元化した
+- `src/App.tsx` に session の character 情報を集約し、avatar 表示を統一した
 - `characterCatalog` の `iconPath` は WithMate の character storage に保存された画像を指す
 - `Work Chat` は assistant 側だけ avatar を常時表示し、キャラ会話感を強めた
 - `Recent Sessions` `Character Stream` `Launch Dialog` も同じ avatar 表現へ統一した
-- Electron 実行時は Main Process の character storage から icon path を読み、browser preview では mock fallback を使う
+- Electron 実行時は Main Process の character storage から icon path を読む
 - 独り言の provider / auth / Memory 方針は `docs/design/monologue-provider-policy.md` を参照する
 
 ## Open Points

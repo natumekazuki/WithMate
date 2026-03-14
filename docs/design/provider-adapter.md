@@ -135,4 +135,3 @@ diff 本文は turn items からは直接取れないため、MVP では Main Pr
 - `docs/design/prompt-composition.md`
 - `docs/design/session-persistence.md`
 - `docs/design/model-catalog.md`
-- `docs/design/codex-sdk-cli-parity.md`

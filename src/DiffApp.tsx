@@ -1,37 +1,43 @@
 import { useEffect, useState } from "react";
 
+import { getDiffTokenFromLocation, type DiffPreviewPayload } from "./app-state.js";
 import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
-import { getDiffTokenFromLocation, loadBrowserDiffPreview, type DiffPreviewPayload } from "./mock-data.js";
 
 export default function DiffApp() {
+  const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
   const [diffPreview, setDiffPreview] = useState<DiffPreviewPayload | null>(null);
 
   useEffect(() => {
     let active = true;
     const token = getDiffTokenFromLocation();
 
-    if (!token) {
+    if (!window.withmate || !token) {
       setDiffPreview(null);
-      return;
-    }
-
-    if (window.withmate) {
-      void window.withmate.getDiffPreview(token).then((payload) => {
-        if (active) {
-          setDiffPreview(payload);
-        }
-      });
-
       return () => {
         active = false;
       };
     }
 
-    setDiffPreview(loadBrowserDiffPreview(token));
+    void window.withmate.getDiffPreview(token).then((payload) => {
+      if (active) {
+        setDiffPreview(payload);
+      }
+    });
+
     return () => {
       active = false;
     };
   }, []);
+
+  if (!isDesktopRuntime) {
+    return (
+      <div className="page-shell diff-page">
+        <section className="panel empty-session-card rise-1">
+          <p>Diff Viewer は Electron から開いてね。</p>
+        </section>
+      </div>
+    );
+  }
 
   if (!diffPreview) {
     return (

@@ -2,16 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   buildCharacterEditorUrl,
-  buildNewCharacter,
-  ensureBrowserMockCharacters,
   getCharacterIdFromLocation,
   getCharacterProfile,
   isCharacterCreateMode,
-  saveBrowserMockCharacters,
   type CharacterProfile,
   type CreateCharacterInput,
-} from "./mock-data.js";
-import { CharacterAvatar } from "./mock-ui.js";
+} from "./app-state.js";
+import { CharacterAvatar } from "./ui-utils.js";
 
 const emptyDraft: CreateCharacterInput = {
   name: "",
@@ -33,15 +30,8 @@ function toDraft(character: CharacterProfile | null): CreateCharacterInput {
   };
 }
 
-async function listCharactersForRenderer(): Promise<CharacterProfile[]> {
-  if (window.withmate) {
-    return window.withmate.listCharacters();
-  }
-
-  return ensureBrowserMockCharacters();
-}
-
 export default function CharacterEditorApp() {
+  const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [draft, setDraft] = useState<CreateCharacterInput>(emptyDraft);
   const [characterId, setCharacterId] = useState<string | null>(() => getCharacterIdFromLocation());
@@ -51,7 +41,13 @@ export default function CharacterEditorApp() {
   useEffect(() => {
     let active = true;
 
-    void listCharactersForRenderer().then((nextCharacters) => {
+    if (!window.withmate) {
+      return () => {
+        active = false;
+      };
+    }
+
+    void window.withmate.listCharacters().then((nextCharacters) => {
       if (!active) {
         return;
       }
@@ -61,37 +57,21 @@ export default function CharacterEditorApp() {
       setDraft(toDraft(currentCharacter));
     });
 
-    if (window.withmate) {
-      return window.withmate.subscribeCharacters((nextCharacters) => {
-        if (!active) {
-          return;
-        }
-
-        setCharacters(nextCharacters);
-        const currentCharacter = characterId ? getCharacterProfile(characterId, nextCharacters) : null;
-        if (currentCharacter) {
-          setDraft(toDraft(currentCharacter));
-        }
-      });
-    }
-
-    const handleStorage = () => {
+    const unsubscribe = window.withmate.subscribeCharacters((nextCharacters) => {
       if (!active) {
         return;
       }
 
-      const nextCharacters = ensureBrowserMockCharacters();
       setCharacters(nextCharacters);
       const currentCharacter = characterId ? getCharacterProfile(characterId, nextCharacters) : null;
       if (currentCharacter) {
         setDraft(toDraft(currentCharacter));
       }
-    };
+    });
 
-    window.addEventListener("storage", handleStorage);
     return () => {
       active = false;
-      window.removeEventListener("storage", handleStorage);
+      unsubscribe();
     };
   }, [characterId]);
 
@@ -144,51 +124,23 @@ export default function CharacterEditorApp() {
   };
 
   const handleSave = async () => {
-    if (!draft.name.trim()) {
+    if (!window.withmate || !draft.name.trim()) {
       return;
     }
 
-    if (window.withmate) {
-      if (selectedCharacter && !isCreateMode) {
-        const saved = await window.withmate.updateCharacter({
-          ...selectedCharacter,
-          ...draft,
-          updatedAt: "just now",
-        });
-        setCharacterId(saved.id);
-        setIsCreateMode(false);
-        window.history.replaceState({}, "", buildCharacterEditorUrl(saved.id));
-        return;
-      }
-
-      const created = await window.withmate.createCharacter(draft);
-      setCharacterId(created.id);
-      setIsCreateMode(false);
-      setDraft(toDraft(created));
-      window.history.replaceState({}, "", buildCharacterEditorUrl(created.id));
-      return;
-    }
-
-    const nextCharacters = ensureBrowserMockCharacters();
     if (selectedCharacter && !isCreateMode) {
-      const updated = nextCharacters.map((character) =>
-        character.id === selectedCharacter.id
-          ? {
-              ...character,
-              ...draft,
-              updatedAt: "just now",
-            }
-          : character,
-      );
-      saveBrowserMockCharacters(updated);
-      setCharacters(updated);
+      const saved = await window.withmate.updateCharacter({
+        ...selectedCharacter,
+        ...draft,
+        updatedAt: "just now",
+      });
+      setCharacterId(saved.id);
+      setIsCreateMode(false);
+      window.history.replaceState({}, "", buildCharacterEditorUrl(saved.id));
       return;
     }
 
-    const created = buildNewCharacter(draft);
-    const updated = [created, ...nextCharacters];
-    saveBrowserMockCharacters(updated);
-    setCharacters(updated);
+    const created = await window.withmate.createCharacter(draft);
     setCharacterId(created.id);
     setIsCreateMode(false);
     setDraft(toDraft(created));
@@ -196,7 +148,7 @@ export default function CharacterEditorApp() {
   };
 
   const handleDelete = async () => {
-    if (!selectedCharacter) {
+    if (!window.withmate || !selectedCharacter) {
       return;
     }
 
@@ -205,16 +157,21 @@ export default function CharacterEditorApp() {
       return;
     }
 
-    if (window.withmate) {
-      await window.withmate.deleteCharacter(selectedCharacter.id);
-      window.close();
-      return;
-    }
-
-    const nextCharacters = ensureBrowserMockCharacters().filter((character) => character.id !== selectedCharacter.id);
-    saveBrowserMockCharacters(nextCharacters);
+    await window.withmate.deleteCharacter(selectedCharacter.id);
     window.close();
   };
+
+  if (!isDesktopRuntime) {
+    return (
+      <div className="page-shell character-editor-page">
+        <main className="character-editor-layout">
+          <section className="panel empty-list-card rise-1">
+            <p>Character Editor は Electron から開いてね。</p>
+          </section>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="page-shell character-editor-page">
@@ -231,7 +188,7 @@ export default function CharacterEditorApp() {
             <CharacterAvatar character={previewCharacter} size="large" className="character-editor-avatar" />
             <div className="character-editor-preview-copy">
               <strong>{draft.name || "新規キャラクター"}</strong>
-              <p>{draft.description || "ここに短い説明を入れる。"}</p>
+              <p>{draft.description || ""}</p>
             </div>
           </div>
 
@@ -253,10 +210,7 @@ export default function CharacterEditorApp() {
               <label className="editor-field">
                 <span>Icon</span>
                 <div className="editor-inline-field">
-                  <input
-                    value={draft.iconPath}
-                    onChange={(event) => handleChange("iconPath", event.target.value)}
-                  />
+                  <input value={draft.iconPath} onChange={(event) => handleChange("iconPath", event.target.value)} />
                   <button className="browse-button" type="button" onClick={() => void handlePickImage()}>
                     Browse
                   </button>

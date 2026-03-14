@@ -27,7 +27,7 @@
 - `src/withmate-window.ts`
 - `src/HomeApp.tsx`
 - `src/CharacterEditorApp.tsx`
-- `src/mock-data.ts`
+- `src/app-state.ts`
 - `src/styles.css`
 - 必要なら `src/App.tsx`
 
@@ -44,3 +44,4 @@
 - 2026-03-12: 当初は `character-notes.md` も editor 範囲に含めていたが、system prompt として使わないため MVP では不要と判断し撤去した。
 - 2026-03-12: browser fallback に残っていた旧サンプル session / character も legacy id を基準に除外するよう更新。
 - 2026-03-12: `Tone` / `Stream` も `character.md` と責務が重複するため、MVP のキャラ正本から撤去した。
+

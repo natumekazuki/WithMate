@@ -13,7 +13,7 @@
 ## Affected Files
 - `docs/plans/20260314-electron-runtime-fixes.md`
 - `src-electron/main.ts`
-- `src/mock-data.ts`
+- `src/app-state.ts`
 - `docs/design/electron-window-runtime.md`
 - 必要に応じて `docs/design/ui-react-mock.md`
 
@@ -28,3 +28,4 @@
 - 2026-03-14: `electron:start` で `Character Editor` が白画面になる原因は、`loadFile(..., { search })` に `?` 付き文字列を渡していたことだった。
 - 2026-03-14: browser fallback の URL が `/character.html` / `/session.html` になっており、`file://` 実行で `file:///character.html` を指していたため html 相対パスへ修正した。
 - 2026-03-14: Electron 実行時に `window.withmate` が露出されない問題を避けるため、現段階では `sandbox: false` にして preload API の安定動作を優先する。
+

@@ -32,7 +32,7 @@ Electron Main Process が `session metadata` の source of truth を持つ形へ
 - `docs/plans/20260312-session-store-ipc.md`
 - `src/HomeApp.tsx`
 - `src/App.tsx`
-- `src/mock-data.ts`
+- `src/app-state.ts`
 - `src/withmate-window.ts`
 - `src/renderer-env.d.ts`
 - `src-electron/main.ts`
@@ -47,9 +47,10 @@ Electron Main Process が `session metadata` の source of truth を持つ形へ
 
 ## Notes / Logs
 
-- 現状の session data は `src/mock-data.ts` + `localStorage` に閉じている
+- 現状の session data は `src/app-state.ts` + `localStorage` に閉じている
 - `session metadata` だけを Main Process へ寄せて、message / stream の本実装は次段階へ持ち越す想定
 - browser-only preview は開発補助として残す可能性があるが、Electron 実行系を優先する
 - 実装では message / stream も mock `Session` ごと Main Process store に載せている
 - browser preview では fallback として `localStorage` を維持している
 - `npm run typecheck` と `npm run build` は通過済み
+

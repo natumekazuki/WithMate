@@ -24,7 +24,7 @@
 - `src/withmate-window.ts`
 - `src/App.tsx`
 - 新規 adapter 実装ファイル（例: `src-electron/codex-adapter.ts`）
-- `src/mock-data.ts`
+- `src/app-state.ts`
 - `src/HomeApp.tsx`
 - `docs/design/recent-sessions-ui.md`
 
@@ -45,3 +45,4 @@
 - 2026-03-13: SDK は CLI を spawn しており、`CODEX_HOME/Agents.md` を見る挙動は CLI と SDK の両方で実測確認した。
 - 2026-03-13: global `AGENTS.md` 依存は避け、WithMate 側で prompt composition を明示的に管理する方針とする。
 - 2026-03-13: session metadata に `characterId` と `threadId` を持たせ、adapter が role 定義と Codex thread を復元できるようにした。
+

@@ -3,7 +3,7 @@ import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs
 
 import { app } from "electron";
 
-import { type CharacterProfile, type CreateCharacterInput } from "../src/mock-data.js";
+import { type CharacterProfile, type CreateCharacterInput } from "../src/app-state.js";
 
 type StoredCharacterMeta = {
   id: string;
@@ -321,3 +321,4 @@ export async function deleteStoredCharacter(characterId: string): Promise<void> 
 export function getCharacterStorageRootPath(): string {
   return getCharacterRootPath();
 }
+

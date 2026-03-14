@@ -223,8 +223,8 @@ flowchart LR
   - `Recent Sessions` の配置先を Home へ変更する
 - `docs/design/session-launch-ui.md`
   - launch dialog の親を `Home Window` に変更する
-- `docs/design/ui-react-mock.md`
-  - 単一 window mock は暫定状態として扱い、分離後の target layout を明記する
+- `docs/design/desktop-ui.md`
+  - 現行 desktop UI の構成を管理する
 - `docs/design/product-direction.md`
   - UI mapping を 2-window 前提へ更新する
 - `docs/design/session-run-lifecycle.md`
@@ -236,3 +236,4 @@ flowchart LR
 - session 終了時に Home へ戻る導線をどこへ置くか
 - Character Editor で更新した内容を開いている Session へどう反映するか
 - 独り言 UI を再導入するとき、`Session Window` に戻すか別面に分離するか
+

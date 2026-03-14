@@ -1,18 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
-import {
-  buildCharacterEditorUrl,
-  buildNewSession,
-  buildSessionUrl,
-  ensureBrowserMockCharacters,
-  ensureBrowserMockSessions,
-  saveBrowserMockCharacters,
-  saveBrowserMockSessions,
-  type CharacterProfile,
-  type CreateSessionInput,
-  type Session,
-} from "./mock-data.js";
-import { approvalModeOptions, CharacterAvatar, sessionStateClassName, sessionStateLabel } from "./mock-ui.js";
+import { type CharacterProfile, type CreateSessionInput, type Session } from "./app-state.js";
+import { approvalModeOptions, CharacterAvatar, sessionStateClassName, sessionStateLabel } from "./ui-utils.js";
 
 type LaunchWorkspace = {
   label: string;
@@ -20,53 +9,9 @@ type LaunchWorkspace = {
   branch: string;
 };
 
-async function openSessionWindow(sessionId: string) {
-  if (window.withmate) {
-    await window.withmate.openSession(sessionId);
-    return;
-  }
-
-  const url = buildSessionUrl(sessionId);
-  const opened = window.open(url, "_blank", "popup,width=1440,height=940");
-
-  if (!opened) {
-    window.location.href = url;
-  }
-}
-
-async function openCharacterEditor(characterId?: string | null) {
-  if (window.withmate) {
-    await window.withmate.openCharacterEditor(characterId);
-    return;
-  }
-
-  const url = buildCharacterEditorUrl(characterId);
-  const opened = window.open(url, "_blank", "popup,width=980,height=840");
-
-  if (!opened) {
-    window.location.href = url;
-  }
-}
-
-async function listSessionsForRenderer(): Promise<Session[]> {
-  if (window.withmate) {
-    return window.withmate.listSessions();
-  }
-
-  return ensureBrowserMockSessions();
-}
-
-async function listCharactersForRenderer(): Promise<CharacterProfile[]> {
-  if (window.withmate) {
-    return window.withmate.listCharacters();
-  }
-
-  return ensureBrowserMockCharacters();
-}
-
 function inferWorkspaceFromPath(selectedPath: string): LaunchWorkspace {
   const normalized = selectedPath.replace(/[\\/]+$/, "");
-  const segments = normalized.split(/[/\\]/).filter(Boolean);
+  const segments = normalized.split(/[\\/]/).filter(Boolean);
   const label = segments.at(-1) ?? normalized;
 
   return {
@@ -76,80 +21,78 @@ function inferWorkspaceFromPath(selectedPath: string): LaunchWorkspace {
   };
 }
 
+async function openSessionWindow(sessionId: string) {
+  if (!window.withmate) {
+    return;
+  }
+
+  await window.withmate.openSession(sessionId);
+}
+
+async function openCharacterEditor(characterId?: string | null) {
+  if (!window.withmate) {
+    return;
+  }
+
+  await window.withmate.openCharacterEditor(characterId);
+}
+
 export default function HomeApp() {
+  const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
   const [sessions, setSessions] = useState<Session[]>([]);
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsFeedback, setSettingsFeedback] = useState("");
   const [launchOpen, setLaunchOpen] = useState(false);
   const [launchWorkspace, setLaunchWorkspace] = useState<LaunchWorkspace | null>(null);
-  const [launchCharacterId, setLaunchCharacterId] = useState<string>("");
+  const [launchCharacterId, setLaunchCharacterId] = useState("");
   const [launchApproval, setLaunchApproval] = useState("on-request");
 
   useEffect(() => {
     let active = true;
 
-    void listSessionsForRenderer().then((nextSessions) => {
+    if (!window.withmate) {
+      return () => {
+        active = false;
+      };
+    }
+
+    void window.withmate.listSessions().then((nextSessions) => {
       if (active) {
         setSessions(nextSessions);
       }
     });
 
-    void listCharactersForRenderer().then((nextCharacters) => {
-      if (active) {
-        setCharacters(nextCharacters);
-        setLaunchCharacterId((current) => current || nextCharacters[0]?.id || "");
-      }
-    });
-
-    const unsubs: Array<() => void> = [];
-
-    if (window.withmate) {
-      unsubs.push(
-        window.withmate.subscribeSessions((nextSessions) => {
-          if (active) {
-            setSessions(nextSessions);
-          }
-        }),
-      );
-      unsubs.push(
-        window.withmate.subscribeCharacters((nextCharacters) => {
-          if (!active) {
-            return;
-          }
-
-          setCharacters(nextCharacters);
-          if (!nextCharacters.find((character) => character.id === launchCharacterId)) {
-            setLaunchCharacterId(nextCharacters[0]?.id ?? "");
-          }
-        }),
-      );
-
-      return () => {
-        active = false;
-        for (const unsub of unsubs) {
-          unsub();
-        }
-      };
-    }
-
-    const handleStorage = () => {
+    void window.withmate.listCharacters().then((nextCharacters) => {
       if (!active) {
         return;
       }
 
-      setSessions(ensureBrowserMockSessions());
-      const nextCharacters = ensureBrowserMockCharacters();
+      setCharacters(nextCharacters);
+      setLaunchCharacterId((current) => current || nextCharacters[0]?.id || "");
+    });
+
+    const unsubscribeSessions = window.withmate.subscribeSessions((nextSessions) => {
+      if (active) {
+        setSessions(nextSessions);
+      }
+    });
+
+    const unsubscribeCharacters = window.withmate.subscribeCharacters((nextCharacters) => {
+      if (!active) {
+        return;
+      }
+
       setCharacters(nextCharacters);
       if (!nextCharacters.find((character) => character.id === launchCharacterId)) {
         setLaunchCharacterId(nextCharacters[0]?.id ?? "");
       }
-    };
+    });
 
-    window.addEventListener("storage", handleStorage);
     return () => {
       active = false;
-      window.removeEventListener("storage", handleStorage);
+      unsubscribeSessions();
+      unsubscribeCharacters();
     };
   }, [launchCharacterId]);
 
@@ -166,7 +109,6 @@ export default function HomeApp() {
     () => sessions.filter((session) => session.runState === "interrupted"),
     [sessions],
   );
-
   const idleSessions = useMemo(
     () => sessions.filter((session) => session.status !== "running" && session.runState !== "running" && session.runState !== "interrupted"),
     [sessions],
@@ -174,12 +116,6 @@ export default function HomeApp() {
 
   const handleBrowseWorkspace = async () => {
     if (!window.withmate) {
-      const enteredPath = window.prompt("workspace のパスを入力してね", launchWorkspace?.path ?? "");
-      if (!enteredPath?.trim()) {
-        return;
-      }
-
-      setLaunchWorkspace(inferWorkspaceFromPath(enteredPath.trim()));
       return;
     }
 
@@ -192,7 +128,7 @@ export default function HomeApp() {
   };
 
   const handleStartSession = async () => {
-    if (!launchWorkspace || !selectedCharacter) {
+    if (!window.withmate || !launchWorkspace || !selectedCharacter) {
       return;
     }
 
@@ -206,17 +142,9 @@ export default function HomeApp() {
       approvalMode: launchApproval,
     };
 
-    const createdSession = window.withmate
-      ? await window.withmate.createSession(sessionInput)
-      : buildNewSession(sessionInput);
-
-    if (!window.withmate) {
-      const nextSessions = [createdSession, ...sessions];
-      saveBrowserMockSessions(nextSessions);
-      setSessions(nextSessions);
-    }
-
+    const createdSession = await window.withmate.createSession(sessionInput);
     setLaunchOpen(false);
+    setLaunchWorkspace(null);
     await openSessionWindow(createdSession.id);
   };
 
@@ -227,14 +155,9 @@ export default function HomeApp() {
 
     try {
       const snapshot = await window.withmate.importModelCatalogFile();
-      if (!snapshot) {
-        return;
-      }
-
-      setSettingsFeedback(`model catalog を revision ${snapshot.revision} として読み込んだよ。`);
+      setSettingsFeedback(snapshot ? `model catalog revision ${snapshot.revision} を読み込んだよ。` : "読み込みをキャンセルしたよ。");
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setSettingsFeedback(`model catalog の読み込みに失敗したよ。${message}`);
+      setSettingsFeedback(error instanceof Error ? error.message : "model catalog の読み込みに失敗したよ。");
     }
   };
 
@@ -245,98 +168,84 @@ export default function HomeApp() {
 
     try {
       const savedPath = await window.withmate.exportModelCatalogFile();
-      if (!savedPath) {
-        return;
-      }
-
-      setSettingsFeedback(`model catalog を保存したよ。${savedPath}`);
+      setSettingsFeedback(savedPath ? `model catalog を保存したよ: ${savedPath}` : "保存をキャンセルしたよ。");
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setSettingsFeedback(`model catalog の保存に失敗したよ。${message}`);
+      setSettingsFeedback(error instanceof Error ? error.message : "model catalog の保存に失敗したよ。");
     }
   };
 
-  const handleOpenSettings = () => {
-    setSettingsFeedback("");
-    setSettingsOpen(true);
-  };
+  if (!isDesktopRuntime) {
+    return (
+      <div className="page-shell home-page">
+        <main className="home-layout">
+          <section className="panel empty-list-card rise-1">
+            <p>Home は Electron から起動してね。</p>
+          </section>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="page-shell home-page">
-      <header className="panel home-toolbar rise-1">
-        <div className="app-icon" aria-hidden="true">
-          WM
+      <header className="home-toolbar panel rise-1">
+        <div className="home-toolbar-brand">
+          <span className="home-brand-mark">W</span>
         </div>
         <div className="home-toolbar-actions">
-          <button className="launch-toggle" type="button" onClick={handleOpenSettings}>
+          <button className="launch-toggle" type="button" onClick={() => setSettingsOpen(true)}>
             Settings
           </button>
           <button className="launch-toggle" type="button" onClick={() => void openCharacterEditor()}>
             Add Character
           </button>
-          <button className="launch-toggle" type="button" onClick={() => setLaunchOpen(true)}>
+          <button className="start-session-button" type="button" onClick={() => setLaunchOpen(true)}>
             New Session
           </button>
         </div>
       </header>
 
-      <main className="home-layout home-layout-manage">
-        <section className="panel sessions-panel rise-2">
-          {runningSessions.length > 0 ? (
-            <div className="running-session-strip">
-              {runningSessions.map((session) => (
-                <button
-                  key={`running-${session.id}`}
-                  className="running-session-chip"
-                  type="button"
-                  onClick={() => void openSessionWindow(session.id)}
-                >
-                  <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
-                  <span className={`session-status ${sessionStateClassName(session)}`}>{sessionStateLabel(session)}</span>
-                  <span>{session.taskTitle}</span>
-                </button>
-              ))}
+      <main className="home-layout rise-2">
+        <section className="panel session-list-panel rise-3">
+          {(runningSessions.length > 0 || interruptedSessions.length > 0) ? (
+            <div className="session-chip-groups">
+              {runningSessions.length > 0 ? (
+                <div className="session-chip-row">
+                  {runningSessions.map((session) => (
+                    <button key={session.id} className="session-chip running" type="button" onClick={() => void openSessionWindow(session.id)}>
+                      <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
+                      <span>{session.taskTitle}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {interruptedSessions.length > 0 ? (
+                <div className="session-chip-row">
+                  {interruptedSessions.map((session) => (
+                    <button key={session.id} className="session-chip interrupted" type="button" onClick={() => void openSessionWindow(session.id)}>
+                      <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
+                      <span>{session.taskTitle}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
-          {interruptedSessions.length > 0 ? (
-            <div className="running-session-strip interrupted">
-              {interruptedSessions.map((session) => (
-                <button
-                  key={`interrupted-${session.id}`}
-                  className="running-session-chip interrupted"
-                  type="button"
-                  onClick={() => void openSessionWindow(session.id)}
-                >
-                  <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
-                  <span className={`session-status ${sessionStateClassName(session)}`}>{sessionStateLabel(session)}</span>
-                  <span>{session.taskTitle}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-
-          <div className="session-list">
-            {sessions.length > 0 ? (
-              (runningSessions.length > 0 || interruptedSessions.length > 0 ? idleSessions : sessions).map((session) => (
-                <button
-                  key={session.id}
-                  className="session-card"
-                  type="button"
-                  onClick={() => void openSessionWindow(session.id)}
-                >
-                  <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="small" className="session-avatar" />
-                  <div className="session-main">
-                    <div className="session-card-head">
-                      <h3>{session.taskTitle}</h3>
-                      <span className={`session-status ${sessionStateClassName(session)}`}>{sessionStateLabel(session)}</span>
+          <div className="session-card-list">
+            {idleSessions.length > 0 ? (
+              idleSessions.map((session) => (
+                <button key={session.id} className="session-card" type="button" onClick={() => void openSessionWindow(session.id)}>
+                  <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="small" className="session-card-avatar" />
+                  <div className="session-card-copy">
+                    <div className="session-card-topline">
+                      <strong>{session.taskTitle}</strong>
+                      <span className={`session-state ${sessionStateClassName(session)}`}>{sessionStateLabel(session)}</span>
                     </div>
-
-                    <div className="session-meta-row">
+                    <div className="session-card-subline">
                       <span>{session.workspaceLabel}</span>
                       <span>{session.updatedAt}</span>
                     </div>
-
                     <p className="session-card-summary">{session.taskSummary}</p>
                   </div>
                 </button>
@@ -393,9 +302,7 @@ export default function HomeApp() {
                   </button>
                 </div>
 
-                <p className={`launch-path${launchWorkspace ? " selected" : ""}`}>
-                  {launchWorkspace ? launchWorkspace.path : "workspace を選ぶ"}
-                </p>
+                <p className={`launch-path${launchWorkspace ? " selected" : ""}`}>{launchWorkspace ? launchWorkspace.path : "workspace を選ぶ"}</p>
               </section>
 
               <section className="launch-section profile-panel minimal">
@@ -461,16 +368,13 @@ export default function HomeApp() {
             <div className="settings-panel">
               <section className="settings-section">
                 <div className="settings-actions">
-                  <button className="launch-toggle" type="button" disabled={!window.withmate} onClick={() => void handleImportModelCatalog()}>
+                  <button className="launch-toggle" type="button" onClick={() => void handleImportModelCatalog()}>
                     Import Models
                   </button>
-                  <button className="launch-toggle" type="button" disabled={!window.withmate} onClick={() => void handleExportModelCatalog()}>
+                  <button className="launch-toggle" type="button" onClick={() => void handleExportModelCatalog()}>
                     Export Models
                   </button>
                 </div>
-
-                {window.withmate ? null : <p className="settings-note">Electron で開くと使えるよ。</p>}
-
                 {settingsFeedback ? <p className="settings-feedback">{settingsFeedback}</p> : null}
               </section>
             </div>

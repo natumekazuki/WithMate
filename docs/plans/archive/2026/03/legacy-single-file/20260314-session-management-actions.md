@@ -13,8 +13,8 @@ Session の削除機能とタイトル変更機能を追加し、Home / Session 
 ## Affected Files
 - src/HomeApp.tsx
 - src/App.tsx
-- src/mock-data.ts
-- src/mock-ui.tsx
+- src/app-state.ts
+- src/ui-utils.tsx
 - src/withmate-window.ts
 - src/renderer-env.d.ts
 - src-electron/main.ts
@@ -40,3 +40,4 @@ Session の削除機能とタイトル変更機能を追加し、Home / Session 
 - 2026-03-14: Session 削除は `Session Window` からのみ行う形に変更し、実行中 session は UI と Main Process の両方で拒否するようにした。
 - 2026-03-14: `deleteSession()` を SQLite-backed session store と preload / IPC に追加した。
 - 2026-03-14: `npm run typecheck` `npm run build` `npm run build:electron` を通した。
+

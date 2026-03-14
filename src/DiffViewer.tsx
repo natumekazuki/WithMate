@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 
-import { fileKindLabel } from "./mock-ui.js";
-import type { ChangedFile } from "./mock-data.js";
+import { fileKindLabel } from "./ui-utils.js";
+import type { ChangedFile } from "./app-state.js";
 
 type DiffViewerProps = {
   file: ChangedFile;
@@ -145,3 +145,4 @@ export function DiffViewerSubbar({ file }: DiffViewerProps) {
     </div>
   );
 }
+

@@ -167,11 +167,10 @@ WithMate は provider を 1 つに統一しない。
 - キャラクター定義の安定注入前提
 - 独り言 UI を premature に本実装済みへ見せないこと
 
-## Impact On Current Mock
+## Impact On Current UI
 
-現在の React モックでは、次の方向で継続調整する。
+現在の desktop UI では、次の方向で継続調整する。
 
-- 単一 window mock は暫定状態とし、最終的には `Home Window` と `Session Window` に分離する
 - `Recent Sessions` は `Home Window` の resume picker として再設計する
 - `Session Window` の `Work Chat` は TUI 本体寄りに保つ
 - 独り言 UI は current milestone では `Session Window` に出さない
@@ -179,7 +178,7 @@ WithMate は provider を 1 つに統一しない。
 
 ## Next Step
 
-- `Home Window` と `Session Window` のモック分離を行う
+- `Home Window` と `Session Window` の責務分離を維持したまま UI 密度を詰める
 - `Recent Sessions` のカード構造を Home 前提で詰める
 - 独り言 UI は pending のまま、土台となる provider / memory を先に詰める
 - 実イベント接続時も `CLI parity` と `WithMate 固有拡張` を分離して実装する

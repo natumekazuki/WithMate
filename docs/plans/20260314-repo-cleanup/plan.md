@@ -47,3 +47,4 @@
 - 状態: 確認済み
 - 対象候補: `docs/design/provider-adapter.md`, `docs/design/window-architecture.md`, `docs/design/electron-window-runtime.md`, `docs/design/model-catalog.md`, `docs/design/session-persistence.md`, `README.md`, `.ai_context/`
 - メモ: cleanup 後の構成に合わせて、モック前提・スパイク前提の記述を削る
+

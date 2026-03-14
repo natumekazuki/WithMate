@@ -1,21 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
-  buildDiffWindowUrl,
-  ensureBrowserMockSessions,
   getSessionIdFromLocation,
-  saveBrowserDiffPreview,
-  saveBrowserMockSessions,
   type ChangedFile,
   type DiffPreviewPayload,
   type Message,
   type Session,
-} from "./mock-data.js";
+} from "./app-state.js";
 import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
 import {
-  DEFAULT_CATALOG_REVISION,
   getProviderCatalog,
-  parseModelCatalogDocument,
   getReasoningEffortOptionsForModel,
   resolveModelSelection,
   type ModelCatalogProvider,
@@ -28,25 +22,10 @@ import {
   modelDisplayLabel,
   modelOptionLabel,
   reasoningDepthLabel,
-} from "./mock-ui.js";
-
-async function loadBrowserModelCatalog(): Promise<ModelCatalogSnapshot | null> {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const response = await fetch("./model-catalog.json");
-  if (!response.ok) {
-    throw new Error("bundled model catalog の読み込みに失敗したよ。");
-  }
-
-  return {
-    revision: DEFAULT_CATALOG_REVISION,
-    providers: parseModelCatalogDocument(await response.json()).providers,
-  };
-}
+} from "./ui-utils.js";
 
 export default function App() {
+  const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
   const [sessions, setSessions] = useState<Session[]>([]);
   const [draft, setDraft] = useState("");
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
@@ -60,47 +39,43 @@ export default function App() {
   useEffect(() => {
     let active = true;
 
-    if (window.withmate) {
-      if (selectedId) {
-        void window.withmate.getSession(selectedId).then((session) => {
-          if (active && session) {
-            setSessions([session]);
-          }
-        });
-      } else {
-        void window.withmate.listSessions().then((nextSessions) => {
-          if (active) {
-            setSessions(nextSessions);
-          }
-        });
-      }
+    if (!window.withmate) {
+      return () => {
+        active = false;
+      };
+    }
 
-      return window.withmate.subscribeSessions((nextSessions) => {
-        if (!active) {
-          return;
+    if (selectedId) {
+      void window.withmate.getSession(selectedId).then((session) => {
+        if (active && session) {
+          setSessions([session]);
         }
-
-        if (selectedId) {
-          const matched = nextSessions.find((session) => session.id === selectedId);
-          setSessions(matched ? [matched] : []);
-          return;
+      });
+    } else {
+      void window.withmate.listSessions().then((nextSessions) => {
+        if (active) {
+          setSessions(nextSessions);
         }
-
-        setSessions(nextSessions);
       });
     }
 
-    const handleStorage = () => {
-      if (active) {
-        setSessions(ensureBrowserMockSessions());
+    const unsubscribe = window.withmate.subscribeSessions((nextSessions) => {
+      if (!active) {
+        return;
       }
-    };
 
-    setSessions(ensureBrowserMockSessions());
-    window.addEventListener("storage", handleStorage);
+      if (selectedId) {
+        const matched = nextSessions.find((session) => session.id === selectedId);
+        setSessions(matched ? [matched] : []);
+        return;
+      }
+
+      setSessions(nextSessions);
+    });
+
     return () => {
       active = false;
-      window.removeEventListener("storage", handleStorage);
+      unsubscribe();
     };
   }, [selectedId]);
 
@@ -128,42 +103,35 @@ export default function App() {
   useEffect(() => {
     let active = true;
 
-    if (window.withmate) {
-      void window.withmate.getModelCatalog(selectedSession?.catalogRevision ?? null).then((snapshot) => {
-        if (active) {
-          setModelCatalog(snapshot);
-        }
-      });
-
-      return window.withmate.subscribeModelCatalog((snapshot) => {
-        if (!active) {
-          return;
-        }
-
-        if (selectedSession?.catalogRevision && snapshot.revision !== selectedSession.catalogRevision) {
-          return;
-        }
-
-        if (active) {
-          setModelCatalog(snapshot);
-        }
-      });
+    if (!window.withmate) {
+      return () => {
+        active = false;
+      };
     }
 
-    void loadBrowserModelCatalog()
-      .then((snapshot) => {
-        if (active) {
-          setModelCatalog(snapshot);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setModelCatalog(null);
-        }
-      });
+    void window.withmate.getModelCatalog(selectedSession?.catalogRevision ?? null).then((snapshot) => {
+      if (active) {
+        setModelCatalog(snapshot);
+      }
+    });
+
+    const unsubscribe = window.withmate.subscribeModelCatalog((snapshot) => {
+      if (!active) {
+        return;
+      }
+
+      if (selectedSession?.catalogRevision && snapshot.revision !== selectedSession.catalogRevision) {
+        return;
+      }
+
+      if (active) {
+        setModelCatalog(snapshot);
+      }
+    });
 
     return () => {
       active = false;
+      unsubscribe();
     };
   }, [selectedSession?.catalogRevision]);
 
@@ -209,7 +177,7 @@ export default function App() {
   );
 
   const sendMessage = async (messageText: string) => {
-    if (!selectedSession) {
+    if (!window.withmate || !selectedSession) {
       return;
     }
 
@@ -228,23 +196,15 @@ export default function App() {
       messages: [...selectedSession.messages, { role: "user", text: nextMessage }],
     };
 
-    if (window.withmate) {
-      setSessions([updatedSession]);
+    setSessions([updatedSession]);
 
-      try {
-        const savedSession = await window.withmate.runSessionTurn(selectedSession.id, nextMessage);
-        setSessions([savedSession]);
-      } catch (error) {
-        console.error(error);
-        setSessions([selectedSession]);
-      }
-
-      return;
+    try {
+      const savedSession = await window.withmate.runSessionTurn(selectedSession.id, nextMessage);
+      setSessions([savedSession]);
+    } catch (error) {
+      console.error(error);
+      setSessions([selectedSession]);
     }
-
-    const nextSessions = sessions.map((session) => (session.id === selectedSession.id ? updatedSession : session));
-    saveBrowserMockSessions(nextSessions);
-    setSessions(nextSessions);
   };
 
   const handleSend = async () => {
@@ -260,16 +220,28 @@ export default function App() {
     void handleSend();
   };
 
-  const toggleArtifact = (artifactKey: string) => {
-    setExpandedArtifacts((current) => ({
-      ...current,
-      [artifactKey]: !current[artifactKey],
-    }));
+  const persistSession = async (nextSession: Session) => {
+    if (!window.withmate) {
+      throw new Error("Session Window は Electron から開いてね。");
+    }
+
+    const savedSession = await window.withmate.updateSession(nextSession);
+    setSessions([savedSession]);
+    return savedSession;
   };
 
-  const handleCloseWindow = () => {
-    window.close();
-    window.location.href = "/";
+  const handleChangeApproval = async (approvalMode: string) => {
+    if (!selectedSession) {
+      return;
+    }
+
+    const nextSession: Session = {
+      ...selectedSession,
+      approvalMode,
+      updatedAt: "just now",
+    };
+
+    await persistSession(nextSession);
   };
 
   const handleStartTitleEdit = () => {
@@ -309,21 +281,12 @@ export default function App() {
       updatedAt: "just now",
     };
 
-    if (window.withmate) {
-      const savedSession = await window.withmate.updateSession(nextSession);
-      setSessions([savedSession]);
-      setIsEditingTitle(false);
-      return;
-    }
-
-    const nextSessions = sessions.map((session) => (session.id === selectedSession.id ? nextSession : session));
-    saveBrowserMockSessions(nextSessions);
-    setSessions(nextSessions);
+    await persistSession(nextSession);
     setIsEditingTitle(false);
   };
 
   const handleDeleteSession = async () => {
-    if (!selectedSession || selectedSession.runState === "running") {
+    if (!window.withmate || !selectedSession || selectedSession.runState === "running") {
       return;
     }
 
@@ -332,110 +295,60 @@ export default function App() {
       return;
     }
 
-    if (window.withmate) {
-      await window.withmate.deleteSession(selectedSession.id);
-      handleCloseWindow();
-      return;
-    }
-
-    const nextSessions = sessions.filter((session) => session.id !== selectedSession.id);
-    saveBrowserMockSessions(nextSessions);
-    setSessions(nextSessions);
+    await window.withmate.deleteSession(selectedSession.id);
     handleCloseWindow();
   };
 
   const handleOpenDiffWindow = async (diffPreview: DiffPreviewPayload) => {
-    if (window.withmate) {
-      await window.withmate.openDiffWindow(diffPreview);
+    if (!window.withmate) {
       return;
     }
 
-    const token = crypto.randomUUID();
-    saveBrowserDiffPreview(token, diffPreview);
-    const url = buildDiffWindowUrl(token);
-    const opened = window.open(url, "_blank", "popup,width=1680,height=980");
-
-    if (!opened) {
-      window.location.href = url;
-    }
+    await window.withmate.openDiffWindow(diffPreview);
   };
 
-  const persistSession = async (nextSession: Session) => {
-    if (window.withmate) {
-      const savedSession = await window.withmate.updateSession(nextSession);
-      setSessions([savedSession]);
-      return savedSession;
-    }
-
-    const nextSessions = sessions.map((session) => (session.id === nextSession.id ? nextSession : session));
-    saveBrowserMockSessions(nextSessions);
-    setSessions(nextSessions);
-    return nextSession;
-  };
-
-  const handleChangeApproval = async (approvalMode: string) => {
-    if (!selectedSession || selectedSession.approvalMode === approvalMode) {
+  const handleChangeModel = async (model: string) => {
+    if (!selectedSession || !selectedProviderCatalog) {
       return;
     }
 
+    const selection = resolveModelSelection(selectedProviderCatalog, model, selectedSession.reasoningEffort);
     const nextSession: Session = {
       ...selectedSession,
-      approvalMode,
+      model: selection.resolvedModel,
+      reasoningEffort: selection.resolvedReasoningEffort,
       updatedAt: "just now",
     };
 
     await persistSession(nextSession);
   };
 
-  const handleChangeModel = async (model: string) => {
-    if (!selectedSession || !selectedProviderCatalog || !modelCatalog || selectedSession.runState === "running") {
-      return;
-    }
-
-    const nextSelection = resolveModelSelection(selectedProviderCatalog, model, selectedSession.reasoningEffort);
-    const nextReasoningEffort = nextSelection.resolvedReasoningEffort;
-
-    if (
-      selectedSession.model === nextSelection.requestedModel &&
-      selectedSession.reasoningEffort === nextReasoningEffort &&
-      selectedSession.catalogRevision === modelCatalog.revision
-    ) {
-      return;
-    }
-
-    await persistSession({
-      ...selectedSession,
-      provider: selectedProviderCatalog.id,
-      catalogRevision: modelCatalog.revision,
-      model: nextSelection.requestedModel,
-      reasoningEffort: nextReasoningEffort,
-      updatedAt: "just now",
-    });
-  };
-
   const handleChangeReasoningEffort = async (reasoningEffort: Session["reasoningEffort"]) => {
-    if (!selectedSession || !selectedProviderCatalog || !modelCatalog || selectedSession.runState === "running") {
+    if (!selectedSession || !selectedProviderCatalog) {
       return;
     }
 
-    const nextSelection = resolveModelSelection(selectedProviderCatalog, selectedSession.model, reasoningEffort);
-
-    await persistSession({
+    const selection = resolveModelSelection(selectedProviderCatalog, selectedSession.model, reasoningEffort);
+    const nextSession: Session = {
       ...selectedSession,
-      provider: selectedProviderCatalog.id,
-      catalogRevision: modelCatalog.revision,
-      model: selectedSession.model,
-      reasoningEffort: nextSelection.resolvedReasoningEffort,
+      model: selection.resolvedModel,
+      reasoningEffort: selection.resolvedReasoningEffort,
       updatedAt: "just now",
-    });
+    };
+
+    await persistSession(nextSession);
   };
 
   const handleResendLastMessage = async () => {
-    if (!lastUserMessage || selectedSession?.runState === "running") {
+    if (!lastUserMessage) {
       return;
     }
 
     await sendMessage(lastUserMessage.text);
+  };
+
+  const handleCloseWindow = () => {
+    window.close();
   };
 
   const handleTitleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -450,6 +363,23 @@ export default function App() {
       handleCancelTitleEdit();
     }
   };
+
+  const toggleArtifact = (artifactKey: string) => {
+    setExpandedArtifacts((current) => ({
+      ...current,
+      [artifactKey]: !current[artifactKey],
+    }));
+  };
+
+  if (!isDesktopRuntime) {
+    return (
+      <div className="page-shell session-page">
+        <section className="panel empty-session-card rise-2">
+          <p>Session Window は Electron から開いてね。</p>
+        </section>
+      </div>
+    );
+  }
 
   if (!selectedSession || !selectedSessionCharacter) {
     return (
@@ -708,3 +638,4 @@ export default function App() {
     </div>
   );
 }
+

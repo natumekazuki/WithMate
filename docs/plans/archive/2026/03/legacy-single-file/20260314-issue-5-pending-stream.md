@@ -19,7 +19,7 @@
 - `docs/design/ui-react-mock.md`
 - `src/App.tsx`
 - `src-electron/main.ts`
-- `src/mock-data.ts`
+- `src/app-state.ts`
 - 必要に応じて `docs/design/character-chat-ui.md`
 
 ## Risks
@@ -34,3 +34,4 @@
 - 2026-03-14: 現行の `Character Stream` は OpenAI API 連携ではなく、session state へ擬似文言を差し込むだけの実装だった。
 - 2026-03-14: Issue #5 に合わせ、Session UI では pending state を表示し、擬似発話の差し込みは停止した。
 - 2026-03-14: 独り言の本実装は `monologue-provider-policy` と `memory-architecture` の土台整備後に再開する前提へ揃えた。
+

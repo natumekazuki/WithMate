@@ -74,7 +74,6 @@ export class ModelCatalogStorage {
         model_id TEXT NOT NULL,
         label TEXT NOT NULL,
         reasoning_efforts_json TEXT NOT NULL,
-        fallback_model_id TEXT NOT NULL DEFAULT '',
         sort_order INTEGER NOT NULL,
         PRIMARY KEY (revision, provider_id, model_id),
         FOREIGN KEY (revision) REFERENCES model_catalog_revisions(revision) ON DELETE CASCADE

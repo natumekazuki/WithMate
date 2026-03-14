@@ -1,8 +1,8 @@
 # WithMate
 
-WithMate は、`Codex CLI / GitHub Copilot CLI` 相当の coding agent 体験をベースに、キャラクターロールプレイを重ねる Electron アプリの実装スパイクです。
+WithMate は、`Codex CLI / GitHub Copilot CLI` 相当の coding agent 体験をベースに、キャラクターロールプレイを重ねる Electron アプリです。
 
-現状は `Home Window` / `Session Window` / `Character Editor Window` を持つデスクトップ構成で、ワークスペース選択、セッション起動、キャラクター管理、セッション継続の土台を検証しています。
+現状は `Home Window` / `Session Window` / `Character Editor Window` / `Diff Window` を持つデスクトップ構成で、ワークスペース選択、セッション起動、キャラクター管理、差分確認、セッション継続までを扱います。
 
 ## 何を目指すアプリか
 
@@ -107,6 +107,8 @@ npm run typecheck
   - WithMate の優先順位と価値仮説
 - `docs/design/window-architecture.md`
   - Window ごとの責務分離
+- `docs/design/desktop-ui.md`
+  - 現行 UI の構成
 - `docs/design/session-launch-ui.md`
   - 新規セッション起動 UI の考え方
 - `docs/design/character-storage.md`
@@ -116,7 +118,7 @@ npm run typecheck
 
 ## 現在の状態
 
-- 実装段階はスパイク寄りで、UI と実ランタイムの接続を進めている途中です
+- Electron 実行を正本とする desktop アプリ構成です
 - セッション情報は Electron 側で保持され、キャラクター情報はストレージから読み込みます
 - `Character Stream` は価値仮説として保持しているものの、現行 UI では pending 扱いです
 

@@ -132,7 +132,6 @@ export type CharacterDetail = {
 - session が削除済み character を参照しているケースは別途 graceful degradation で扱う。
 
 ## Migration Policy
-- 既存の in-memory mock character data は、browser fallback 用のみに残す。
 - Electron 実行時は file-based storage を正本にする。
 - character root が空でも、そのまま empty state を表示して新規作成を促す。
 

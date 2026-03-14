@@ -116,13 +116,11 @@ React モックでは次の形がよい。
   - provider / character / approval
   - start action
 
-## Current Mock Snapshot
+## Current Snapshot
 
-- 現在の React モックでは `Session Drawer` header に `New Session` を置いている
-- target architecture では、この導線は `Home Window` 上部へ移す
+- 現在の Home UI では上部バーに `New Session` を置いている
 - `Launch Panel` 自体は modal dialog で維持できる
 - `Browse` は Electron 実行時に OS の directory picker を開く
-- browser preview では簡易 path 入力で代替する
 - `Character` と `Approval` は chip で切り替える
 - `Character` は portrait 付きカードで切り替える
 - model / depth は launch dialog には出さず、session 作成時に default 値を入れる

@@ -159,8 +159,8 @@
 - `src/App.tsx`
 - `src/DiffApp.tsx`
 - `src/DiffViewer.tsx`
-- `src/mock-data.ts`
-- `src/mock-ui.tsx`
+- `src/app-state.ts`
+- `src/ui-utils.tsx`
 - `src/styles.css`
 - `index.html`
 - `session.html`
@@ -194,3 +194,4 @@ npm run electron:dev
 
 - `npm run typecheck`
 - `npm run build`
+

@@ -21,7 +21,7 @@
 - `docs/design/ui-react-mock.md`
 - `docs/design/` 配下の prompt composition 関連 doc（新規想定: `prompt-composition.md`）
 - `src/CharacterEditorApp.tsx`
-- `src/mock-data.ts`
+- `src/app-state.ts`
 - `src-electron/character-storage.ts`
 - `src/styles.css`
 - 必要なら `src/App.tsx` と adapter 関連ファイル
@@ -43,3 +43,4 @@
 - 2026-03-12: `Role` は Codex に投げるキャラクター定義の正本に寄せたい。
 - 2026-03-12: 長文編集しやすさのため、Character Editor から markdown editor の切り出しを検討する。
 - 2026-03-13: `promptNotes` は意味が曖昧なため `roleMarkdown` に改名し、`character.md` の本文と一致させた。
+

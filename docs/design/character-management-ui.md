@@ -63,12 +63,10 @@
   - Main Process の file-based character store を正本とする
   - 保存先は `app.getPath("userData")/characters/`
   - Home / Editor 間は IPC で同期する
-- browser preview
-  - `localStorage` を fallback store とする
 - `Role` 入力欄の本文は `character.md` へ保存する
 - `Role` は prompt 合成の主要入力であり、一覧メタとは分離して扱う
 - 画像パスは save 時に app 専用ディレクトリへコピーする
-- 画像選択は browser 標準の file picker を使い、Electron / browser preview のどちらでも同じ導線にする
+- 画像選択は renderer の file picker を使い、保存は Main Process が行う
 - prompt 合成ルール自体は `docs/design/prompt-composition.md` で管理する
 
 ## Next Step

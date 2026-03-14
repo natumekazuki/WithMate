@@ -11,9 +11,17 @@
 - メモ: `mock/`、`ui-static-mock.md`、`ui-react-mock.md`、browser fallback、Codex SDK spike script、単発 Plan 群が主な整理対象候補
 - 関連コミット: 未作成
 
+### 0002
+
+- 日時: 2026-03-14
+- チェックポイント: 現状スナップショット固定
+- 実施内容: cleanup 前の全差分をステージし、現時点の desktop prototype 一式を復元可能な状態でコミットした
+- 検証: `git commit -m "feat(app): checkpoint current desktop prototype"`
+- メモ: cleanup はこのコミットを基点に進める
+- 関連コミット: `1aca726 feat(app): checkpoint current desktop prototype`
+
 ## Open Items
 
 - cleanup 対象の最終確定
-- 現状スナップショットコミット
 - cleanup 実装と docs 同期
 - cleanup 後コミット

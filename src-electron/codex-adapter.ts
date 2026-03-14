@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { Codex, type Thread, type ThreadItem, type Usage } from "@openai/codex-sdk";
 
-import type { ChangedFile, CharacterProfile, DiffRow, MessageArtifact, RunCheck, Session } from "../src/mock-data.js";
+import type { ChangedFile, CharacterProfile, DiffRow, MessageArtifact, RunCheck, Session } from "../src/app-state.js";
 import {
   reasoningEffortLabel,
   resolveModelSelection,
@@ -502,3 +502,4 @@ export class CodexAdapter {
     };
   }
 }
+

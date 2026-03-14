@@ -24,8 +24,8 @@
 - `docs/plans/20260314-model-catalog-db.md`
 - `public/model-catalog.json`
 - `src/model-catalog.ts`
-- `src/mock-data.ts`
-- `src/mock-ui.tsx`
+- `src/app-state.ts`
+- `src/ui-utils.tsx`
 - `src/App.tsx`
 - `src/withmate-window.ts`
 - `src-electron/model-catalog-storage.ts`

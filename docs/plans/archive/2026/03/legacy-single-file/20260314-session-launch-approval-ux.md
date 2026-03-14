@@ -21,8 +21,8 @@
 - 必要に応じて `docs/design/product-direction.md`
 - `src/HomeApp.tsx`
 - `src/App.tsx`
-- `src/mock-ui.tsx` または approval 表示ユーティリティを置くファイル
-- 必要に応じて `src/mock-data.ts`
+- `src/ui-utils.tsx` または approval 表示ユーティリティを置くファイル
+- 必要に応じて `src/app-state.ts`
 
 ## Risks
 - `Session Window` に approval 変更 UI を足すと、最小 UI 方針とぶつかる可能性がある。
@@ -39,3 +39,4 @@
 
 - `New Session` の workspace 候補 UI は撤去し、Electron 実行時は OS directory picker、browser preview では簡易 path 入力を使う形にした。
 - approval mode は日本語ラベルへ置き換え、`Session Window` の header から変更できるようにした。
+

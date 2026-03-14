@@ -11,8 +11,8 @@
 - [x] `npm run typecheck` `npm run build` `npm run build:electron` で確認する
 
 ## Affected Files
-- src/mock-data.ts
-- src/mock-ui.tsx
+- src/app-state.ts
+- src/ui-utils.tsx
 - src/HomeApp.tsx
 - src/App.tsx
 - src/withmate-window.ts
@@ -41,3 +41,4 @@
 - `Session Window` の composer 下に datalist 付き model input と depth chip を置いた
 - `better-sqlite3` ではなく `node:sqlite` 前提の既存 session store に column migration を追加した
 - SQLite の保存復元は built output を使った簡易スモークで `model` / `reasoningEffort` が保持されることを確認した
+

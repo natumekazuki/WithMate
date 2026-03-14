@@ -8,13 +8,12 @@ import {
   buildNewSession,
   cloneCharacterProfiles,
   cloneSessions,
-  initialSessions,
   type CharacterProfile,
   type CreateCharacterInput,
   type CreateSessionInput,
   type DiffPreviewPayload,
   type Session,
-} from "../src/mock-data.js";
+} from "../src/app-state.js";
 import {
   DEFAULT_PROVIDER_ID,
   getProviderCatalog,
@@ -76,7 +75,7 @@ const diffWindows = new Map<string, BrowserWindow>();
 const diffPreviewStore = new Map<string, DiffPreviewPayload>();
 const inFlightSessionRuns = new Set<string>();
 const allowCloseSessionWindows = new Set<string>();
-let sessions = cloneSessions(initialSessions);
+let sessions: Session[] = [];
 let characters: CharacterProfile[] = [];
 let sessionStorage: SessionStorage | null = null;
 let modelCatalogStorage: ModelCatalogStorage | null = null;
@@ -796,3 +795,4 @@ app.on("before-quit", (event) => {
   modelCatalogStorage?.close();
   modelCatalogStorage = null;
 });
+

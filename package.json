@@ -1,14 +1,12 @@
 {
   "name": "withmate",
   "version": "1.0.0",
-  "description": "Codex SDK spike for WithMate",
+  "description": "キャラクターロールプレイ対応 coding agent デスクトップアプリ",
   "private": true,
   "directories": {
     "doc": "docs"
   },
   "scripts": {
-    "codex:file-op": "tsx scripts/codex-sdk-file-op-test.ts",
-    "codex:smoke": "tsx scripts/codex-sdk-smoke-test.ts",
     "dev": "vite",
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json",

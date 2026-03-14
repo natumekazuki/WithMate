@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 
-import { cloneSessions, normalizeSession, type Session } from "../src/mock-data.js";
+import { cloneSessions, normalizeSession, type Session } from "../src/app-state.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
 
 type SessionRow = {
@@ -284,3 +284,4 @@ export class SessionStorage {
     this.db.close();
   }
 }
+

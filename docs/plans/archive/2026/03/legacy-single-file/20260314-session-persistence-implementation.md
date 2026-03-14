@@ -21,7 +21,7 @@
 - `package.json`
 - `src-electron/main.ts`
 - 新規 session storage 実装ファイル（例: `src-electron/session-storage.ts`）
-- 必要に応じて `src/mock-data.ts`
+- 必要に応じて `src/app-state.ts`
 
 ## Risks
 - 保存タイミングを雑にすると、turn 実行中の state と保存内容がずれる。
@@ -39,3 +39,4 @@
 - 2026-03-14: `better-sqlite3` は Electron 41 で rebuild に失敗したため、SQLite driver は Node 標準の `node:sqlite` へ切り替えた。
 - 2026-03-14: `src-electron/session-storage.ts` を追加し、`messages_json` / `stream_json` を含む `sessions` テーブル 1 枚で永続化する形にした。
 - 2026-03-14: 一時 DB を使ったスモークテストで、別インスタンスから同じ session を復元できることを確認した。
+

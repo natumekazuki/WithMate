@@ -5,9 +5,8 @@
 
 ## Goal
 
-Renderer が `localStorage` を正本として扱う状態をやめて、
-Electron Main Process が `session metadata` と mock session 内容の source of truth を持つ形へ移行する。
-この段階では Electron Main Process が SQLite-backed store を持ち、window 間整合と再起動後の復元を両立する。
+Electron Main Process が `session metadata` と session payload の source of truth を持ち、
+SQLite-backed store により window 間整合と再起動後の復元を両立する。
 
 ## Scope
 
@@ -25,11 +24,10 @@ Electron Main Process が `session metadata` と mock session 内容の source o
 ## Decision
 
 - Main Process は SQLite を正本にし、必要時だけ `Session[]` をメモリへ投影する
-- Renderer は `window.withmate` があるとき、直接 `localStorage` を触らない
+- Renderer は `window.withmate` 経由でのみ session に触る
 - 変更通知は `sessions-changed` event で全 window に配信する
 - Session Window は `sessionId` 指定で `getSession(sessionId)` を引き、必要に応じて `updateSession(session)` で保存する
 - Session Window は `deleteSession(sessionId)` で自身の session を削除できる
-- browser-only preview は fallback として残すが、Electron 実行時が優先
 - SQLite driver には Node 標準の `node:sqlite` を採用する
 - session metadata には `model` / `reasoningEffort` も保持する
 
@@ -136,7 +134,6 @@ MVP では `sessions` テーブル 1 枚で管理する。
 
 ## Open Questions
 
-- browser-only preview の fallback をいつまで維持するか
 - `sessions-changed` を差分通知にするか全量通知にするか
 - 実行中 session の削除禁止を今後どこまで厳密にするか
 - `messages_json` / `stream_json` を今後どの粒度で正規化するか

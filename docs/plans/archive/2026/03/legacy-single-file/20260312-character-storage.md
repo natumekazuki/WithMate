@@ -23,7 +23,7 @@
 - `src-electron/main.ts`
 - `src-electron/preload.ts`
 - `src/withmate-window.ts`
-- `src/mock-data.ts`
+- `src/app-state.ts`
 - `src/HomeApp.tsx`
 - `src/CharacterEditorApp.tsx`
 - `src/App.tsx`
@@ -41,3 +41,4 @@
 - 2026-03-12: ユーザー要望により、character catalog は `~/.codex/characters` 直読みではなく、WithMate 専用ディレクトリ管理へ切り替える方針に変更。
 - 2026-03-12: キャラクター定義はファイルとして管理し、UI 向けの軽量メタデータは別ファイルへ分離する方針を採用。
 - 2026-03-12: Electron 実行時は `app.getPath("userData")/characters/` を正本として使用し、初回起動時はサンプル character を自動投入する実装へ更新。
+

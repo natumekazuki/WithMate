@@ -1,13 +1,7 @@
 import { useState } from "react";
 
-import type { CharacterVisual, ChangedFile, Session } from "./mock-data.js";
-import {
-  reasoningEffortLabel,
-  type ModelCatalogItem,
-  type ModelCatalogProvider,
-  type ModelReasoningEffort,
-  type ResolvedModelSelection,
-} from "./model-catalog.js";
+import type { CharacterVisual, ChangedFile, Session } from "./app-state.js";
+import { reasoningEffortLabel, type ModelCatalogItem, type ModelCatalogProvider, type ModelReasoningEffort } from "./model-catalog.js";
 
 export const approvalModeOptions = [
   { id: "on-request", label: "都度確認" },
@@ -37,18 +31,14 @@ export function toAssetPath(filePath: string): string {
     return filePath;
   }
 
-  if (typeof window !== "undefined" && (window.withmate || window.location.protocol === "file:")) {
-    return toFileUrl(filePath);
-  }
-
-  return `/@fs/${encodeURI(filePath.replace(/\\/g, "/"))}`;
+  return toFileUrl(filePath);
 }
 
 function fallbackLabel(name: string): string {
   return name.slice(0, 1);
 }
 
-export function statusLabel(status: Session["status"]): string {
+function statusLabel(status: Session["status"]): string {
   switch (status) {
     case "running":
       return "実行中";
@@ -85,28 +75,8 @@ export function reasoningDepthLabel(reasoningEffort: ModelReasoningEffort): stri
   return reasoningEffortLabel(reasoningEffort);
 }
 
-export function providerDisplayLabel(providerCatalog: ModelCatalogProvider | null): string {
-  return providerCatalog?.label ?? "Provider";
-}
-
 export function modelDisplayLabel(providerCatalog: ModelCatalogProvider | null, model: string): string {
   return providerCatalog?.models.find((entry) => entry.id === model)?.label ?? model;
-}
-
-export function resolvedModelSelectionLabel(
-  providerCatalog: ModelCatalogProvider | null,
-  selection: ResolvedModelSelection,
-): string {
-  const modelLabel =
-    selection.requestedModel === selection.resolvedModel
-      ? modelDisplayLabel(providerCatalog, selection.resolvedModel)
-      : `${selection.requestedModel} -> ${selection.resolvedModel}`;
-  const reasoningLabel =
-    selection.requestedReasoningEffort === selection.resolvedReasoningEffort
-      ? reasoningDepthLabel(selection.resolvedReasoningEffort)
-      : `${reasoningDepthLabel(selection.requestedReasoningEffort)} -> ${reasoningDepthLabel(selection.resolvedReasoningEffort)}`;
-
-  return `${modelLabel} / ${reasoningLabel}`;
 }
 
 export function modelOptionLabel(model: ModelCatalogItem): string {
