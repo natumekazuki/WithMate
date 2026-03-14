@@ -79,6 +79,9 @@ import {
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const preloadPath = path.resolve(currentDir, "preload.js");
 const rendererDistPath = path.resolve(currentDir, "../../dist");
+const appDataPath = app.getPath("appData");
+const fixedUserDataPath = path.join(appDataPath, "WithMate");
+app.setPath("userData", fixedUserDataPath);
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const bundledModelCatalogPath = devServerUrl
   ? path.resolve(currentDir, "../../public/model-catalog.json")

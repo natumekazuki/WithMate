@@ -78,6 +78,7 @@
 - Electron 実行時
   - Main Process の file-based character store を正本とする
   - 保存先は `app.getPath("userData")/characters/`
+  - `userData` は `<appData>/WithMate/` に固定する
   - Home / Editor 間は IPC で同期する
 - `character.md` の本文はそのまま保存する
 - `character.md` は prompt 合成の主要入力であり、一覧メタとは分離して扱う

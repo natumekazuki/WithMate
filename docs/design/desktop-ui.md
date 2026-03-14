@@ -111,6 +111,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - chat message は限定的な rich text renderer で整形表示する
 - Settings overlay の `System Prompt Prefix` は SQLite に保存し、次回 turn から prompt composition へ反映する
 - character は `userData/characters/` を正本とする
+- `userData` は `<appData>/WithMate/` に固定する
 - Session は character の `main / sub` theme color snapshot を保持し、Session UI に反映する
 - session は SQLite を正本とする
 - model catalog は DB の active revision を読む

@@ -64,6 +64,7 @@ npm run electron:start
 | MT-011c | Character Editor 小ウインドウ | Character Editor を縦方向に小さくして開く | preview / form / role / action が崩れず、全体をスクロールして操作できる |
 | MT-012 | Character 削除 | Character Editor Window で `Delete` を押して確認する | character が削除され、Home の Characters 一覧から消える |
 | MT-013 | Character 画像 | Character Editor で画像を設定して保存する | Home の character card と Session の avatar に画像が表示される |
+| MT-013a | App data path 固定 | Electron を起動して character または session を保存する | 保存先が `<appData>/WithMate/` 配下になり、`Electron/` 配下へ新規保存されない |
 | MT-014 | New Session 起動 | Home の `New Session` を押す | launch dialog が開く |
 | MT-015 | Workspace picker | launch dialog の `Browse` を押して directory を選ぶ | 選択した path が dialog に表示される |
 | MT-016 | New Session 作成 | workspace と character を選び `Start New Session` を押す | Session Window が開き、Home の session 一覧に追加される |
