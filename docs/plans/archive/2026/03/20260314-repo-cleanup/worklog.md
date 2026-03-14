@@ -20,8 +20,15 @@
 - メモ: cleanup はこのコミットを基点に進める
 - 関連コミット: `1aca726 feat(app): checkpoint current desktop prototype`
 
+### 0003
+
+- 日時: 2026-03-14
+- チェックポイント: cleanup 完了
+- 実施内容: browser fallback と `mock-*` 命名を撤去し、旧モック／spike docs と単発 Plan を archive へ移し、README と design docs を現行 desktop UI に同期した
+- 検証: `npm run typecheck`、`npm run build`
+- メモ: renderer は Electron 実行を正本とし、browser 単体起動は未対応へ整理した
+- 関連コミット: `383bbba refactor(app): remove prototype remnants`
+
 ## Open Items
 
-- cleanup 対象の最終確定
-- cleanup 実装と docs 同期
-- cleanup 後コミット
+- なし
