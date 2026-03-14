@@ -18,8 +18,8 @@
 - 実施内容: `collectAssistantText()` を追加し、stream 中と最終結果の両方で `agent_message` を arrival 順に空行区切りで連結するように変更した。design doc と実機テスト項目も更新した
 - 検証: `npm run typecheck`, `npm run build`
 - メモ: 現行 UI は 1 turn = 1 assistant message 前提のまま維持し、欠落だけを解消した
-- 関連コミット: 未作成
+- 関連コミット: `5439d86 fix(session): preserve multiple agent messages`
 
 ## Open Items
 
-- 変更コミット作成後にハッシュと要約を追記する
+- なし

@@ -2,7 +2,7 @@
 
 ## Status
 
-- 状態: 進行中
+- 状態: 完了
 
 ## Completed
 
@@ -12,17 +12,16 @@
 
 ## Remaining Issues
 
-- コミット作成後に関連ハッシュを記録する
 - 実機で複数 `agent_message` を返すケースの手触り確認がまだ
 
 ## Related Commits
 
-- 未作成
+- `5439d86 fix(session): preserve multiple agent messages`
 
 ## Rollback Guide
 
-- 戻し先候補: このタスクのコミット作成後に記入
-- 理由: まだ作業中
+- 戻し先候補: `5439d86`
+- 理由: 複数 `agent_message` を 1 本の assistant text に連結する変更単位がここで閉じている
 
 ## Related Docs
 
