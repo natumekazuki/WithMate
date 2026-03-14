@@ -90,8 +90,9 @@ SQLite では次の 4 テーブルで保持する。
 - import 時は既存 revision を破壊更新しない
 - 新 revision を作って `is_active = 1` に切り替える
 - Session には `catalogRevision` を保存する
-- Session Window では、その session が参照している revision を読み込んで model / depth UI を出す
+- Session Window の選択肢は常に current active revision を正本にして表示する
 - Session 内で model / depth を変更した場合は current active revision に乗り換える
+- 既存 session が旧 revision を持っていても、current model が catalog から消えていない限り active revision の候補を選べる
 
 ## Seed Policy
 
@@ -104,7 +105,7 @@ SQLite では次の 4 テーブルで保持する。
 ### Session Window
 
 - textarea 下に `Model` select を出す
-- 候補は current session が参照する provider catalog から出す
+- 候補は current active catalog の provider catalog から出す
 - `Depth` は selected model の `reasoningEfforts` だけを chip で出す
 - current session の model が catalog から消えている場合は、互換用の 1 項目だけ一時表示する
 

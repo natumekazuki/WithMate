@@ -19,6 +19,8 @@ type SessionRow = {
   character_id: string;
   character_name: string;
   character_icon_path: string;
+  character_theme_main: string;
+  character_theme_sub: string;
   run_state: string;
   approval_mode: string;
   model: string;
@@ -47,6 +49,10 @@ function rowToSession(row: SessionRow): Session | null {
     characterId: row.character_id,
     character: row.character_name,
     characterIconPath: row.character_icon_path,
+    characterThemeColors: {
+      main: row.character_theme_main,
+      sub: row.character_theme_sub,
+    },
     runState: row.run_state,
     approvalMode: row.approval_mode,
     model: row.model,
@@ -89,6 +95,8 @@ export class SessionStorage {
         character_id TEXT NOT NULL,
         character_name TEXT NOT NULL,
         character_icon_path TEXT NOT NULL,
+        character_theme_main TEXT NOT NULL DEFAULT '#6f8cff',
+        character_theme_sub TEXT NOT NULL DEFAULT '#6fb8c7',
         run_state TEXT NOT NULL,
         approval_mode TEXT NOT NULL,
         model TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_MODEL_ID)},
@@ -116,6 +124,8 @@ export class SessionStorage {
         character_id,
         character_name,
         character_icon_path,
+        character_theme_main,
+        character_theme_sub,
         run_state,
         approval_mode,
         model,
@@ -142,6 +152,8 @@ export class SessionStorage {
         character_id,
         character_name,
         character_icon_path,
+        character_theme_main,
+        character_theme_sub,
         run_state,
         approval_mode,
         model,
@@ -168,6 +180,8 @@ export class SessionStorage {
         character_id,
         character_name,
         character_icon_path,
+        character_theme_main,
+        character_theme_sub,
         run_state,
         approval_mode,
         model,
@@ -176,7 +190,7 @@ export class SessionStorage {
         messages_json,
         stream_json,
         last_active_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         task_title = excluded.task_title,
         task_summary = excluded.task_summary,
@@ -190,6 +204,8 @@ export class SessionStorage {
         character_id = excluded.character_id,
         character_name = excluded.character_name,
         character_icon_path = excluded.character_icon_path,
+        character_theme_main = excluded.character_theme_main,
+        character_theme_sub = excluded.character_theme_sub,
         run_state = excluded.run_state,
         approval_mode = excluded.approval_mode,
         model = excluded.model,
@@ -225,6 +241,14 @@ export class SessionStorage {
 
     if (!columns.has("catalog_revision")) {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN catalog_revision INTEGER NOT NULL DEFAULT ${DEFAULT_CATALOG_REVISION};`);
+    }
+
+    if (!columns.has("character_theme_main")) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN character_theme_main TEXT NOT NULL DEFAULT '#6f8cff';`);
+    }
+
+    if (!columns.has("character_theme_sub")) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN character_theme_sub TEXT NOT NULL DEFAULT '#6fb8c7';`);
     }
   }
 
@@ -263,6 +287,8 @@ export class SessionStorage {
       normalized.characterId,
       normalized.character,
       normalized.characterIconPath,
+      normalized.characterThemeColors.main,
+      normalized.characterThemeColors.sub,
       normalized.runState,
       normalized.approvalMode,
       normalized.model,

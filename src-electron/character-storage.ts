@@ -3,12 +3,16 @@ import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs
 
 import { app } from "electron";
 
-import { type CharacterProfile, type CreateCharacterInput } from "../src/app-state.js";
+import { DEFAULT_CHARACTER_THEME_COLORS, normalizeCharacterThemeColors, type CharacterProfile, type CreateCharacterInput } from "../src/app-state.js";
 
 type StoredCharacterMeta = {
   id: string;
   name: string;
   description: string;
+  theme: {
+    main: string;
+    sub: string;
+  };
   iconFile: string | null;
   roleFile: string;
   createdAt: string;
@@ -66,6 +70,7 @@ function normalizeMeta(value: unknown): StoredCharacterMeta | null {
     id: candidate.id.trim(),
     name: candidate.name.trim(),
     description: typeof candidate.description === "string" ? candidate.description : "",
+    theme: normalizeCharacterThemeColors(candidate.theme ?? DEFAULT_CHARACTER_THEME_COLORS),
     iconFile: typeof candidate.iconFile === "string" && candidate.iconFile.trim() ? candidate.iconFile : null,
     roleFile: typeof candidate.roleFile === "string" && candidate.roleFile.trim() ? candidate.roleFile : DEFAULT_ROLE_FILE,
     createdAt: typeof candidate.createdAt === "string" && candidate.createdAt.trim() ? candidate.createdAt : nowIso(),
@@ -128,6 +133,7 @@ async function materializeCharacterProfile(characterDirectoryPath: string, meta:
     description: meta.description,
     roleMarkdown,
     updatedAt: formatTimestamp(meta.updatedAt),
+    themeColors: normalizeCharacterThemeColors(meta.theme),
   };
 }
 
@@ -223,6 +229,7 @@ async function writeCharacterFiles(
     id: characterId,
     name: input.name.trim() || "新規キャラクター",
     description: input.description.trim(),
+    theme: normalizeCharacterThemeColors(input.themeColors),
     iconFile,
     roleFile,
     createdAt,
@@ -308,6 +315,7 @@ export async function updateStoredCharacter(character: CharacterProfile): Promis
       iconPath: character.iconPath,
       description: character.description,
       roleMarkdown: character.roleMarkdown,
+      themeColors: character.themeColors,
     },
     existingMeta,
   );

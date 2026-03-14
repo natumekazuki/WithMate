@@ -13,7 +13,7 @@ WithMate のセッション再開体験を成立させるために、
 
 ## Persistence Layers
 
-WithMate では、永続化対象を 3 層に分ける。
+WithMate では、永続化対象を 5 層に分ける。
 
 1. `Session Metadata`
 - セッション一覧や resume picker に必要な情報
@@ -22,7 +22,14 @@ WithMate では、永続化対象を 3 層に分ける。
 - Codex 側の thread 再開に必要な識別子
 - turn summary など UI 継続に必要な情報
 
-3. `Session Memory`
+3. `Audit Log`
+- session 実行の監査と事後精査に必要な履歴
+
+4. `App Settings`
+- app 全体で共有する固定設定
+- prompt prefix のような app 共通指示
+
+5. `Session Memory`
 - セッション単位の継続知識
 - 独り言用 context 抽出の素材
 
@@ -87,6 +94,37 @@ WithMate では、永続化対象を 3 層に分ける。
 - Character Stream 入力の素材
 - 長いセッションでも継続性を保つための要約面
 
+### Audit Log
+
+保持する情報:
+
+- `started / completed / failed`
+- system prompt
+- input prompt
+- composed prompt
+- assistant response
+- 操作要約
+- raw turn items
+- usage
+- error
+
+用途:
+
+- 実行内容の監査
+- セッションごとの事後精査
+- provider 実行失敗時の追跡
+
+### App Settings
+
+保持する情報:
+
+- system prompt prefix
+
+用途:
+
+- app 共通の fixed prompt 管理
+- prompt composition の system レイヤ拡張
+
 ## Identity Mapping
 
 ```mermaid
@@ -95,6 +133,7 @@ flowchart LR
   A --> C[Session Metadata]
   A --> D[Session Memory]
   E[Character ID] --> F[Character Memory]
+  H[App Settings] --> B
   B --> D
   F --> G[Monologue Context Builder]
   D --> G
@@ -110,6 +149,10 @@ MVP では、保存責務を次のように切る。
   - Electron Main Process 側 SQLite
 - `Execution Continuity`
   - 同じ SQLite row + Codex thread id
+- `Audit Log`
+  - Electron Main Process 側 SQLite の独立 table
+- `App Settings`
+  - Electron Main Process 側 SQLite の key-value table
 - `Session Memory`
   - LangGraph checkpointer を中心に管理する第一候補
 - `Character Memory`
@@ -119,20 +162,9 @@ MVP では、保存責務を次のように切る。
 
 - Session 一覧の表示はアプリ側で高速に引ける必要がある
 - Codex thread の正本は Codex 側にあり、アプリは thread id を保持すればよい
+- app 共通の固定 prompt は character 定義と混ぜず、app settings で持った方が運用しやすい
 - Memory は独り言生成の入力最適化責務があるため、LangGraph 境界で扱う方が整理しやすい
 - session metadata と execution continuity は MVP のうちは 1 row にまとめてよい
-
-### TTL Direction
-
-LangGraph の公式 docs では、checkpointer と store の両方に TTL を設定できる。
-WithMate では次を第一候補とする。
-
-- checkpoints / thread state
-  - session 再開要件に合わせて比較的長めに保持する
-- store items / cross-thread memory
-  - Character Memory の鮮度とコストを見ながら個別管理する
-
-MVP では TTL の具体値は固定せず、実運用で決める。
 
 ## Update Triggers
 
@@ -152,8 +184,20 @@ MVP では TTL の具体値は固定せず、実運用で決める。
 - Codex thread 作成時
 - turn 完了時
 - approval mode 変更時
+- model / reasoning depth 変更時
 - changed files / run summary 確定時
 - アプリ再起動時の recovery 判定時
+
+補足:
+
+- model または reasoning depth を変更した時は、既存 `threadId` を破棄して次回 turn を新規 thread で開始する
+- UI 上の chat history は session に残るが、provider 側の継続コンテキストは切り替わる
+
+### App Settings
+
+更新タイミング:
+
+- Settings overlay で保存した時
 
 ### Session Memory
 
@@ -170,11 +214,13 @@ MVP では TTL の具体値は固定せず、実運用で決める。
 3. セッション選択
 4. `thread id` と Execution Continuity を復元
 5. 前回が `running` のまま残っていた場合は `interrupted` へ補正する
-6. Session Memory を読み込み、Character Stream 用の基礎状態も復元する
+6. App Settings を読み込み prompt composition に反映する
+7. Session Memory を読み込み、Character Stream 用の基礎状態も復元する
 
 ## Crash Recovery
 
 - アプリが強制終了した場合、SQLite 上に `runState = running` が残ることがある
+- 実行前後の `started / completed / failed` は SQLite の監査ログにも残る
 - 次回起動時は、その session を `runState = interrupted` / `status = idle` へ補正する
 - 補正時には assistant message として「前回の実行は中断された可能性がある」旨を 1 回だけ追記する
 

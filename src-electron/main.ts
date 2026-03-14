@@ -2,16 +2,21 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 
 import {
+  type AuditLogEntry,
   buildNewSession,
   cloneCharacterProfiles,
   cloneSessions,
   type CharacterProfile,
+  type ComposerAttachmentInput,
+  currentTimestampLabel,
   type CreateCharacterInput,
   type CreateSessionInput,
   type DiffPreviewPayload,
+  type LiveSessionRunState,
+  type RunSessionTurnRequest,
   type Session,
 } from "../src/app-state.js";
 import {
@@ -29,7 +34,10 @@ import {
   listStoredCharacters,
   updateStoredCharacter,
 } from "./character-storage.js";
+import { AuditLogStorage } from "./audit-log-storage.js";
+import { AppSettingsStorage } from "./app-settings-storage.js";
 import { CodexAdapter } from "./codex-adapter.js";
+import { resolveComposerPreview } from "./composer-attachments.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { SessionStorage } from "./session-storage.js";
 import {
@@ -38,24 +46,33 @@ import {
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
+  WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
+  WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
+  WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSIONS_CHANNEL,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
+  WITHMATE_LIVE_SESSION_RUN_EVENT,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
+  WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
+  WITHMATE_PICK_FILE_CHANNEL,
+  WITHMATE_PICK_IMAGE_FILE_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
+  WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SESSIONS_CHANGED_EVENT,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
+  WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
 } from "../src/withmate-window.js";
 
@@ -75,10 +92,13 @@ const diffWindows = new Map<string, BrowserWindow>();
 const diffPreviewStore = new Map<string, DiffPreviewPayload>();
 const inFlightSessionRuns = new Set<string>();
 const allowCloseSessionWindows = new Set<string>();
+const liveSessionRuns = new Map<string, LiveSessionRunState>();
 let sessions: Session[] = [];
 let characters: CharacterProfile[] = [];
 let sessionStorage: SessionStorage | null = null;
 let modelCatalogStorage: ModelCatalogStorage | null = null;
+let auditLogStorage: AuditLogStorage | null = null;
+let appSettingsStorage: AppSettingsStorage | null = null;
 let allowQuitWithInFlightRuns = false;
 
 function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0]): BrowserWindow {
@@ -128,6 +148,22 @@ function requireModelCatalogStorage(): ModelCatalogStorage {
   return modelCatalogStorage;
 }
 
+function requireAuditLogStorage(): AuditLogStorage {
+  if (!auditLogStorage) {
+    throw new Error("audit log storage が初期化されていないよ。");
+  }
+
+  return auditLogStorage;
+}
+
+function requireAppSettingsStorage(): AppSettingsStorage {
+  if (!appSettingsStorage) {
+    throw new Error("app settings storage が初期化されていないよ。");
+  }
+
+  return appSettingsStorage;
+}
+
 function getModelCatalog(revision?: number | null): ModelCatalogSnapshot | null {
   return requireModelCatalogStorage().getCatalog(revision ?? null);
 }
@@ -147,6 +183,10 @@ function resolveProviderCatalog(
 
 function listCharacters(): CharacterProfile[] {
   return cloneCharacterProfiles(characters);
+}
+
+function listSessionAuditLogs(sessionId: string): AuditLogEntry[] {
+  return requireAuditLogStorage().listSessionAuditLogs(sessionId);
 }
 
 function getSession(sessionId: string): Session | null {
@@ -195,6 +235,19 @@ function broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
       window.webContents.send(WITHMATE_MODEL_CATALOG_CHANGED_EVENT, payload);
+    }
+  }
+}
+
+function getLiveSessionRun(sessionId: string): LiveSessionRunState | null {
+  return liveSessionRuns.get(sessionId) ?? null;
+}
+
+function broadcastLiveSessionRun(sessionId: string): void {
+  const state = getLiveSessionRun(sessionId);
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(WITHMATE_LIVE_SESSION_RUN_EVENT, { sessionId, state });
     }
   }
 }
@@ -301,6 +354,25 @@ function upsertSession(nextSession: Session): Session {
   return cloneSessions([stored])[0];
 }
 
+function syncSessionsForCharacter(character: CharacterProfile): void {
+  const touched = sessions.filter((session) => session.characterId === character.id);
+  if (touched.length === 0) {
+    return;
+  }
+
+  for (const session of touched) {
+    requireSessionStorage().upsertSession({
+      ...session,
+      character: character.name,
+      characterIconPath: character.iconPath,
+      characterThemeColors: character.themeColors,
+    });
+  }
+
+  sessions = requireSessionStorage().listSessions();
+  broadcastSessions();
+}
+
 function buildInterruptedSession(session: Session): Session {
   const interruptedMessage = "前回の実行はアプリ終了で中断された可能性があるよ。必要ならもう一度送ってね。";
   const lastMessage = session.messages.at(-1);
@@ -320,7 +392,7 @@ function buildInterruptedSession(session: Session): Session {
     ...session,
     status: "idle",
     runState: "interrupted",
-    updatedAt: "just now",
+    updatedAt: currentTimestampLabel(),
     messages: nextMessages,
   };
 }
@@ -348,6 +420,7 @@ async function createCharacter(input: CreateCharacterInput): Promise<CharacterPr
 async function updateCharacter(nextCharacter: CharacterProfile): Promise<CharacterProfile> {
   const updated = await updateStoredCharacter(nextCharacter);
   await refreshCharactersFromStorage();
+  syncSessionsForCharacter(updated);
   broadcastCharacters();
   return cloneCharacterProfiles([updated])[0];
 }
@@ -377,7 +450,37 @@ async function resolveSessionCharacter(session: Session): Promise<CharacterProfi
   return nextCharacters.find((character) => character.name === session.character) ?? null;
 }
 
-async function runSessionTurn(sessionId: string, userMessage: string): Promise<Session> {
+async function previewComposerInput(
+  sessionId: string,
+  userMessage: string,
+  pickerAttachments: ComposerAttachmentInput[],
+) {
+  const session = getSession(sessionId);
+  if (!session) {
+    throw new Error("対象セッションが見つからないよ。");
+  }
+
+  return resolveComposerPreview(session, userMessage, pickerAttachments);
+}
+
+async function openPathTarget(target: string): Promise<void> {
+  const trimmed = target.trim();
+  if (!trimmed) {
+    throw new Error("開く対象が空だよ。");
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    await shell.openExternal(trimmed);
+    return;
+  }
+
+  const errorMessage = await shell.openPath(trimmed);
+  if (errorMessage) {
+    throw new Error(errorMessage);
+  }
+}
+
+async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {
   const session = getSession(sessionId);
   if (!session) {
     throw new Error("対象セッションが見つからないよ。");
@@ -387,9 +490,14 @@ async function runSessionTurn(sessionId: string, userMessage: string): Promise<S
     throw new Error("このセッションはまだ実行中だよ。");
   }
 
-  const nextMessage = userMessage.trim();
+  const nextMessage = request.userMessage.trim();
   if (!nextMessage) {
     throw new Error("送信するメッセージが空だよ。");
+  }
+
+  const composerPreview = await resolveComposerPreview(session, request.userMessage, request.pickerAttachments);
+  if (composerPreview.errors.length > 0) {
+    throw new Error(composerPreview.errors[0] ?? "添付の解決に失敗したよ。");
   }
 
   const character = await resolveSessionCharacter(session);
@@ -398,10 +506,19 @@ async function runSessionTurn(sessionId: string, userMessage: string): Promise<S
   }
 
   const { provider } = resolveProviderCatalog(session.provider, session.catalogRevision);
+  const appSettings = requireAppSettingsStorage().getSettings();
+  const promptForAudit = codexAdapter.composePrompt({
+    session,
+    character,
+    providerCatalog: provider,
+    userMessage: nextMessage,
+    appSettings,
+    attachments: composerPreview.attachments,
+  });
 
   const runningSession: Session = {
     ...session,
-    updatedAt: "just now",
+    updatedAt: currentTimestampLabel(),
     status: "running",
     runState: "running",
     messages: [...session.messages, { role: "user", text: nextMessage }],
@@ -409,6 +526,34 @@ async function runSessionTurn(sessionId: string, userMessage: string): Promise<S
 
   upsertSession(runningSession);
   inFlightSessionRuns.add(sessionId);
+  liveSessionRuns.set(sessionId, {
+    sessionId,
+    threadId: runningSession.threadId,
+    assistantText: "",
+    steps: [],
+    usage: null,
+    errorMessage: "",
+  });
+  broadcastLiveSessionRun(sessionId);
+
+  requireAuditLogStorage().createAuditLog({
+    sessionId,
+    createdAt: new Date().toISOString(),
+    phase: "started",
+    provider: runningSession.provider,
+    model: runningSession.model,
+    reasoningEffort: runningSession.reasoningEffort,
+    approvalMode: runningSession.approvalMode,
+    threadId: runningSession.threadId,
+    systemPromptText: promptForAudit.systemPromptText,
+    inputPromptText: promptForAudit.inputPromptText,
+    composedPromptText: promptForAudit.composedPromptText,
+    assistantText: "",
+    operations: [],
+    rawItemsJson: "[]",
+    usage: null,
+    errorMessage: "",
+  });
 
   try {
     const result = await codexAdapter.runSessionTurn({
@@ -416,11 +561,35 @@ async function runSessionTurn(sessionId: string, userMessage: string): Promise<S
       character,
       providerCatalog: provider,
       userMessage: nextMessage,
+      appSettings,
+      attachments: composerPreview.attachments,
+    }, (state) => {
+      liveSessionRuns.set(sessionId, state);
+      broadcastLiveSessionRun(sessionId);
+    });
+
+    requireAuditLogStorage().createAuditLog({
+      sessionId,
+      createdAt: new Date().toISOString(),
+      phase: "completed",
+      provider: runningSession.provider,
+      model: runningSession.model,
+      reasoningEffort: runningSession.reasoningEffort,
+      approvalMode: runningSession.approvalMode,
+      threadId: result.threadId ?? runningSession.threadId,
+      systemPromptText: result.systemPromptText,
+      inputPromptText: result.inputPromptText,
+      composedPromptText: result.composedPromptText,
+      assistantText: result.assistantText,
+      operations: result.operations,
+      rawItemsJson: result.rawItemsJson,
+      usage: result.usage,
+      errorMessage: "",
     });
 
     const completedSession: Session = {
       ...runningSession,
-      updatedAt: "just now",
+      updatedAt: currentTimestampLabel(),
       status: "idle",
       runState: "idle",
       threadId: result.threadId ?? runningSession.threadId,
@@ -437,9 +606,27 @@ async function runSessionTurn(sessionId: string, userMessage: string): Promise<S
     return upsertSession(completedSession);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
+    requireAuditLogStorage().createAuditLog({
+      sessionId,
+      createdAt: new Date().toISOString(),
+      phase: "failed",
+      provider: runningSession.provider,
+      model: runningSession.model,
+      reasoningEffort: runningSession.reasoningEffort,
+      approvalMode: runningSession.approvalMode,
+      threadId: runningSession.threadId,
+      systemPromptText: promptForAudit.systemPromptText,
+      inputPromptText: promptForAudit.inputPromptText,
+      composedPromptText: promptForAudit.composedPromptText,
+      assistantText: "",
+      operations: [],
+      rawItemsJson: "[]",
+      usage: null,
+      errorMessage: message,
+    });
     const failedSession: Session = {
       ...runningSession,
-      updatedAt: "just now",
+      updatedAt: currentTimestampLabel(),
       status: "idle",
       runState: "error",
       messages: [
@@ -455,6 +642,8 @@ async function runSessionTurn(sessionId: string, userMessage: string): Promise<S
     return upsertSession(failedSession);
   } finally {
     inFlightSessionRuns.delete(sessionId);
+    liveSessionRuns.delete(sessionId);
+    broadcastLiveSessionRun(sessionId);
   }
 }
 
@@ -651,6 +840,8 @@ app.whenReady().then(async () => {
   modelCatalogStorage = new ModelCatalogStorage(dbPath, bundledModelCatalogPath);
   const activeModelCatalog = modelCatalogStorage.ensureSeeded();
   sessionStorage = new SessionStorage(dbPath);
+  auditLogStorage = new AuditLogStorage(dbPath);
+  appSettingsStorage = new AppSettingsStorage(dbPath);
   sessions = sessionStorage.listSessions();
   recoverInterruptedSessions();
   await refreshCharactersFromStorage();
@@ -671,6 +862,9 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.handle(WITHMATE_LIST_SESSIONS_CHANNEL, () => listSessions());
+  ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => listSessionAuditLogs(sessionId));
+  ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => requireAppSettingsStorage().getSettings());
+  ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => requireAppSettingsStorage().updateSettings(settings));
   ipcMain.handle(WITHMATE_LIST_CHARACTERS_CHANNEL, async () => refreshCharactersFromStorage());
   ipcMain.handle(WITHMATE_GET_MODEL_CATALOG_CHANNEL, (_event, revision: number | null) => getModelCatalog(revision));
   ipcMain.handle(WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL, (_event, document: ModelCatalogDocument) => {
@@ -704,6 +898,13 @@ app.whenReady().then(async () => {
 
     return diffPreviewStore.get(token) ?? null;
   });
+  ipcMain.handle(WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL, (_event, sessionId: string) => {
+    if (!sessionId) {
+      return null;
+    }
+
+    return getLiveSessionRun(sessionId);
+  });
 
   ipcMain.handle(WITHMATE_GET_CHARACTER_CHANNEL, async (_event, characterId: string) => {
     if (!characterId) {
@@ -716,23 +917,30 @@ app.whenReady().then(async () => {
   ipcMain.handle(WITHMATE_CREATE_SESSION_CHANNEL, (_event, input: CreateSessionInput) => createSession(input));
   ipcMain.handle(WITHMATE_UPDATE_SESSION_CHANNEL, (_event, session: Session) => updateSession(session));
   ipcMain.handle(WITHMATE_DELETE_SESSION_CHANNEL, (_event, sessionId: string) => deleteSession(sessionId));
-  ipcMain.handle(WITHMATE_RUN_SESSION_TURN_CHANNEL, async (_event, sessionId: string, userMessage: string) =>
-    runSessionTurn(sessionId, userMessage),
+  ipcMain.handle(
+    WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
+    (_event, sessionId: string, userMessage: string, pickerAttachments: ComposerAttachmentInput[]) =>
+      previewComposerInput(sessionId, userMessage, pickerAttachments),
+  );
+  ipcMain.handle(WITHMATE_RUN_SESSION_TURN_CHANNEL, async (_event, sessionId: string, request: RunSessionTurnRequest) =>
+    runSessionTurn(sessionId, request),
   );
   ipcMain.handle(WITHMATE_CREATE_CHARACTER_CHANNEL, async (_event, input: CreateCharacterInput) => createCharacter(input));
   ipcMain.handle(WITHMATE_UPDATE_CHARACTER_CHANNEL, async (_event, character: CharacterProfile) => updateCharacter(character));
   ipcMain.handle(WITHMATE_DELETE_CHARACTER_CHANNEL, async (_event, characterId: string) => deleteCharacter(characterId));
 
-  ipcMain.handle(WITHMATE_PICK_DIRECTORY_CHANNEL, async (event) => {
+  ipcMain.handle(WITHMATE_PICK_DIRECTORY_CHANNEL, async (event, initialPath: string | null) => {
     const targetWindow = BrowserWindow.fromWebContents(event.sender) ?? homeWindow ?? undefined;
     const result = targetWindow
       ? await dialog.showOpenDialog(targetWindow, {
           properties: ["openDirectory"],
           title: "作業ディレクトリを選択",
+          ...(initialPath ? { defaultPath: initialPath } : {}),
         })
       : await dialog.showOpenDialog({
           properties: ["openDirectory"],
           title: "作業ディレクトリを選択",
+          ...(initialPath ? { defaultPath: initialPath } : {}),
         });
 
     if (result.canceled || result.filePaths.length === 0) {
@@ -741,6 +949,49 @@ app.whenReady().then(async () => {
 
     return result.filePaths[0];
   });
+  ipcMain.handle(WITHMATE_PICK_FILE_CHANNEL, async (event, initialPath: string | null) => {
+    const targetWindow = BrowserWindow.fromWebContents(event.sender) ?? homeWindow ?? undefined;
+    const result = targetWindow
+      ? await dialog.showOpenDialog(targetWindow, {
+          properties: ["openFile"],
+          title: "ファイルを選択",
+          ...(initialPath ? { defaultPath: initialPath } : {}),
+        })
+      : await dialog.showOpenDialog({
+          properties: ["openFile"],
+          title: "ファイルを選択",
+          ...(initialPath ? { defaultPath: initialPath } : {}),
+        });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    return result.filePaths[0];
+  });
+  ipcMain.handle(WITHMATE_PICK_IMAGE_FILE_CHANNEL, async (event, initialPath: string | null) => {
+    const targetWindow = BrowserWindow.fromWebContents(event.sender) ?? homeWindow ?? undefined;
+    const result = targetWindow
+      ? await dialog.showOpenDialog(targetWindow, {
+          properties: ["openFile"],
+          title: "画像を選択",
+          ...(initialPath ? { defaultPath: initialPath } : {}),
+          filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"] }],
+        })
+      : await dialog.showOpenDialog({
+          properties: ["openFile"],
+          title: "画像を選択",
+          ...(initialPath ? { defaultPath: initialPath } : {}),
+          filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"] }],
+        });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    return result.filePaths[0];
+  });
+  ipcMain.handle(WITHMATE_OPEN_PATH_CHANNEL, async (_event, target: string) => openPathTarget(target));
 
   await createHomeWindow();
   broadcastModelCatalog(activeModelCatalog);
@@ -792,6 +1043,10 @@ app.on("before-quit", (event) => {
 
   sessionStorage?.close();
   sessionStorage = null;
+  auditLogStorage?.close();
+  auditLogStorage = null;
+  appSettingsStorage?.close();
+  appSettingsStorage = null;
   modelCatalogStorage?.close();
   modelCatalogStorage = null;
 });

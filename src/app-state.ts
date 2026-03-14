@@ -27,6 +27,91 @@ export type RunCheck = {
   value: string;
 };
 
+export type AuditLogPhase = "started" | "completed" | "failed";
+
+export type AuditLogOperation = {
+  type: string;
+  summary: string;
+  details?: string;
+};
+
+export type AuditLogUsage = {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+};
+
+export type AuditLogEntry = {
+  id: number;
+  sessionId: string;
+  createdAt: string;
+  phase: AuditLogPhase;
+  provider: string;
+  model: string;
+  reasoningEffort: ModelReasoningEffort;
+  approvalMode: string;
+  threadId: string;
+  systemPromptText: string;
+  inputPromptText: string;
+  composedPromptText: string;
+  assistantText: string;
+  operations: AuditLogOperation[];
+  rawItemsJson: string;
+  usage: AuditLogUsage | null;
+  errorMessage: string;
+};
+
+export type LiveRunStep = {
+  id: string;
+  type: string;
+  summary: string;
+  details?: string;
+  status: "in_progress" | "completed" | "failed";
+};
+
+export type LiveSessionRunState = {
+  sessionId: string;
+  threadId: string;
+  assistantText: string;
+  steps: LiveRunStep[];
+  usage: AuditLogUsage | null;
+  errorMessage: string;
+};
+
+export type AppSettings = {
+  systemPromptPrefix: string;
+};
+
+export type ComposerAttachmentKind = "file" | "folder" | "image";
+
+export type ComposerAttachmentSource = "picker" | "text";
+
+export type ComposerAttachmentInput = {
+  path: string;
+  source: ComposerAttachmentSource;
+  kind?: ComposerAttachmentKind;
+};
+
+export type ComposerAttachment = {
+  id: string;
+  kind: ComposerAttachmentKind;
+  source: ComposerAttachmentSource;
+  absolutePath: string;
+  displayPath: string;
+  workspaceRelativePath: string | null;
+  isOutsideWorkspace: boolean;
+};
+
+export type ComposerPreview = {
+  attachments: ComposerAttachment[];
+  errors: string[];
+};
+
+export type RunSessionTurnRequest = {
+  userMessage: string;
+  pickerAttachments: ComposerAttachmentInput[];
+};
+
 export type MessageArtifact = {
   title: string;
   activitySummary: string[];
@@ -52,6 +137,11 @@ export type CharacterVisual = {
   iconPath: string;
 };
 
+export type CharacterThemeColors = {
+  main: string;
+  sub: string;
+};
+
 export type CharacterCatalogItem = CharacterVisual & {
   id: string;
 };
@@ -60,6 +150,7 @@ export type CharacterProfile = CharacterCatalogItem & {
   description: string;
   roleMarkdown: string;
   updatedAt: string;
+  themeColors: CharacterThemeColors;
 };
 
 export type CreateCharacterInput = {
@@ -67,6 +158,7 @@ export type CreateCharacterInput = {
   iconPath: string;
   description: string;
   roleMarkdown: string;
+  themeColors: CharacterThemeColors;
 };
 
 export type Session = {
@@ -83,6 +175,7 @@ export type Session = {
   characterId: string;
   character: string;
   characterIconPath: string;
+  characterThemeColors: CharacterThemeColors;
   runState: string;
   approvalMode: string;
   model: string;
@@ -106,6 +199,7 @@ export type CreateSessionInput = {
   characterId: string;
   character: string;
   characterIconPath: string;
+  characterThemeColors: CharacterThemeColors;
   approvalMode: string;
   model?: string;
   reasoningEffort?: ModelReasoningEffort;
@@ -132,6 +226,58 @@ export function makeDiffRows(
   }));
 }
 
+function padDatePart(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+export function formatTimestampLabel(value: Date | string | number): string {
+  const timestamp = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(timestamp.getTime())) {
+    return typeof value === "string" && value.trim() ? value : "";
+  }
+
+  const year = timestamp.getFullYear();
+  const month = padDatePart(timestamp.getMonth() + 1);
+  const day = padDatePart(timestamp.getDate());
+  const hours = padDatePart(timestamp.getHours());
+  const minutes = padDatePart(timestamp.getMinutes());
+  return `${year}/${month}/${day} ${hours}:${minutes}`;
+}
+
+export function currentTimestampLabel(): string {
+  return formatTimestampLabel(new Date());
+}
+
+export const DEFAULT_CHARACTER_THEME_COLORS: CharacterThemeColors = {
+  main: "#6f8cff",
+  sub: "#6fb8c7",
+};
+
+function normalizeHexColor(value: unknown, fallback: string): string {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const normalized = value.trim();
+  if (!/^#[0-9a-fA-F]{6}$/.test(normalized)) {
+    return fallback;
+  }
+
+  return normalized.toLowerCase();
+}
+
+export function normalizeCharacterThemeColors(value: unknown): CharacterThemeColors {
+  if (!value || typeof value !== "object") {
+    return { ...DEFAULT_CHARACTER_THEME_COLORS };
+  }
+
+  const candidate = value as Partial<CharacterThemeColors>;
+  return {
+    main: normalizeHexColor(candidate.main, DEFAULT_CHARACTER_THEME_COLORS.main),
+    sub: normalizeHexColor(candidate.sub, DEFAULT_CHARACTER_THEME_COLORS.sub),
+  };
+}
+
 export function normalizeSession(value: unknown): Session | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -153,7 +299,12 @@ export function normalizeSession(value: unknown): Session | null {
       candidate.status === "running" || candidate.status === "idle" || candidate.status === "saved"
         ? candidate.status
         : "idle",
-    updatedAt: typeof candidate.updatedAt === "string" && candidate.updatedAt.trim() ? candidate.updatedAt : "just now",
+    updatedAt:
+      typeof candidate.updatedAt === "string" && candidate.updatedAt.trim()
+        ? candidate.updatedAt === "just now"
+          ? currentTimestampLabel()
+          : candidate.updatedAt
+        : currentTimestampLabel(),
     provider: normalizeProviderId(candidate.provider),
     catalogRevision:
       typeof candidate.catalogRevision === "number" && Number.isInteger(candidate.catalogRevision) && candidate.catalogRevision > 0
@@ -176,6 +327,7 @@ export function normalizeSession(value: unknown): Session | null {
       typeof candidate.characterIconPath === "string" && candidate.characterIconPath.trim()
         ? candidate.characterIconPath
         : "",
+    characterThemeColors: normalizeCharacterThemeColors(candidate.characterThemeColors),
     runState: typeof candidate.runState === "string" && candidate.runState.trim() ? candidate.runState : "idle",
     approvalMode:
       typeof candidate.approvalMode === "string" && candidate.approvalMode.trim() ? candidate.approvalMode : "on-request",
@@ -217,7 +369,7 @@ export function buildNewSession(input: CreateSessionInput): Session {
     taskTitle: `${input.workspaceLabel} で新規作業を開始する`,
     taskSummary: `${input.workspaceLabel} で新規セッションを開始。${input.character} のロールを保ったまま、ここから最初の指示を待つ。`,
     status: "idle",
-    updatedAt: "just now",
+    updatedAt: currentTimestampLabel(),
     provider: normalizeProviderId(input.provider ?? DEFAULT_PROVIDER_ID),
     catalogRevision:
       typeof input.catalogRevision === "number" && Number.isInteger(input.catalogRevision) && input.catalogRevision > 0
@@ -229,6 +381,7 @@ export function buildNewSession(input: CreateSessionInput): Session {
     characterId: input.characterId,
     character: input.character,
     characterIconPath: input.characterIconPath,
+    characterThemeColors: normalizeCharacterThemeColors(input.characterThemeColors),
     runState: "idle",
     approvalMode: input.approvalMode,
     model: input.model?.trim() || DEFAULT_MODEL_ID,

@@ -30,6 +30,10 @@
 - `name`
 - `iconPath`
 - `description`
+- `theme colors`
+  - `main`
+  - `sub`
+  - color picker + hex + RGB 入力
 - `roleMarkdown`
 - `Save`
 - `Delete`
@@ -41,7 +45,15 @@
 - `Delete` は破壊的操作なので Home 常設に置かない
 - `Add` は Home から直接始められるようにする
 - 編集画面では、入力の意味が自明でないためラベルを許容する
-- `Role` は長文前提なので、metadata form と分離した markdown editor 面を持つ
+- `character.md` は長文前提なので、metadata form と分離した editor 面を持つ
+- `Character Editor` は `Profile / character.md` の 2 モードで切り替え、長文の `character.md` がフォーム面を圧迫しないようにする
+- `Save / Delete` は画面下部の action bar に固定し、本文は header / footer の間だけスクロールする
+- `Profile / character.md` の tabs は content カードの外に置くが、背景色や固定レールは付けない
+- content カードは header / tabs / footer を除いた残り高さを常に使い切り、`Profile` と `character.md` で高さ感を揃える
+- `character.md` タブも `Profile` と同じ content レイアウト定義を使い、残り高さを editor に割り当てる
+- `character.md` タブには「キャラクター定義の正本であり、プロンプト合成に使われる」説明を表示する
+- `Profile` 側は content カード内でスクロールし、`Theme` などの下部要素がカード外へはみ出さないようにする
+- 高さが低い window では preview avatar を縮めて、説明文へ重ならないようにする
 
 ## Interaction Flow
 
@@ -52,7 +64,7 @@
 
 既存キャラ編集では次の flow を取る。
 
-1. Home の character card で `Edit` を押す
+1. Home の character card 全体を押す
 2. `Character Editor Window` が該当キャラで開く
 3. 保存で一覧へ反映する
 4. 削除は editor 側からのみ行う
@@ -63,8 +75,8 @@
   - Main Process の file-based character store を正本とする
   - 保存先は `app.getPath("userData")/characters/`
   - Home / Editor 間は IPC で同期する
-- `Role` 入力欄の本文は `character.md` へ保存する
-- `Role` は prompt 合成の主要入力であり、一覧メタとは分離して扱う
+- `character.md` の本文はそのまま保存する
+- `character.md` は prompt 合成の主要入力であり、一覧メタとは分離して扱う
 - 画像パスは save 時に app 専用ディレクトリへコピーする
 - 画像選択は renderer の file picker を使い、保存は Main Process が行う
 - prompt 合成ルール自体は `docs/design/prompt-composition.md` で管理する

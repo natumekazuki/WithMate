@@ -1,4 +1,16 @@
-import type { CharacterProfile, CreateCharacterInput, CreateSessionInput, DiffPreviewPayload, Session } from "./app-state.js";
+import type {
+  AuditLogEntry,
+  AppSettings,
+  CharacterProfile,
+  ComposerAttachmentInput,
+  ComposerPreview,
+  CreateCharacterInput,
+  CreateSessionInput,
+  DiffPreviewPayload,
+  LiveSessionRunState,
+  RunSessionTurnRequest,
+  Session,
+} from "./app-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
 
 export const WITHMATE_OPEN_SESSION_CHANNEL = "withmate:open-session";
@@ -21,10 +33,19 @@ export const WITHMATE_CREATE_CHARACTER_CHANNEL = "withmate:create-character";
 export const WITHMATE_UPDATE_CHARACTER_CHANNEL = "withmate:update-character";
 export const WITHMATE_DELETE_CHARACTER_CHANNEL = "withmate:delete-character";
 export const WITHMATE_PICK_DIRECTORY_CHANNEL = "withmate:pick-directory";
+export const WITHMATE_PICK_FILE_CHANNEL = "withmate:pick-file";
+export const WITHMATE_PICK_IMAGE_FILE_CHANNEL = "withmate:pick-image-file";
+export const WITHMATE_OPEN_PATH_CHANNEL = "withmate:open-path";
+export const WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL = "withmate:preview-composer-input";
 export const WITHMATE_RUN_SESSION_TURN_CHANNEL = "withmate:run-session-turn";
+export const WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL = "withmate:list-session-audit-logs";
+export const WITHMATE_GET_APP_SETTINGS_CHANNEL = "withmate:get-app-settings";
+export const WITHMATE_UPDATE_APP_SETTINGS_CHANNEL = "withmate:update-app-settings";
+export const WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL = "withmate:get-live-session-run";
 export const WITHMATE_SESSIONS_CHANGED_EVENT = "withmate:sessions-changed";
 export const WITHMATE_CHARACTERS_CHANGED_EVENT = "withmate:characters-changed";
 export const WITHMATE_MODEL_CATALOG_CHANGED_EVENT = "withmate:model-catalog-changed";
+export const WITHMATE_LIVE_SESSION_RUN_EVENT = "withmate:live-session-run";
 
 export type WithMateWindowApi = {
   openSession(sessionId: string): Promise<void>;
@@ -41,15 +62,24 @@ export type WithMateWindowApi = {
   createSession(input: CreateSessionInput): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
   deleteSession(sessionId: string): Promise<void>;
-  runSessionTurn(sessionId: string, userMessage: string): Promise<Session>;
+  previewComposerInput(sessionId: string, userMessage: string, pickerAttachments: ComposerAttachmentInput[]): Promise<ComposerPreview>;
+  runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
+  listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
+  getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
+  getAppSettings(): Promise<AppSettings>;
+  updateAppSettings(settings: AppSettings): Promise<AppSettings>;
   listCharacters(): Promise<CharacterProfile[]>;
   getCharacter(characterId: string): Promise<CharacterProfile | null>;
   createCharacter(input: CreateCharacterInput): Promise<CharacterProfile>;
   updateCharacter(character: CharacterProfile): Promise<CharacterProfile>;
   deleteCharacter(characterId: string): Promise<void>;
-  pickDirectory(): Promise<string | null>;
+  pickDirectory(initialPath?: string | null): Promise<string | null>;
+  pickFile(initialPath?: string | null): Promise<string | null>;
+  pickImageFile(initialPath?: string | null): Promise<string | null>;
+  openPath(target: string): Promise<void>;
   subscribeSessions(listener: (sessions: Session[]) => void): () => void;
   subscribeCharacters(listener: (characters: CharacterProfile[]) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
+  subscribeLiveSessionRun(listener: (sessionId: string, state: LiveSessionRunState | null) => void): () => void;
 };
 

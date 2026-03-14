@@ -12,14 +12,16 @@
 
 - 設定は独立 window ではなく `Home Window` 上の overlay とする
 - overlay は一時的に開いて閉じる管理面として扱う
-- 初期実装では `Model Catalog` の import / export だけを置く
+- `System Prompt Prefix` は Settings overlay で定義し、prompt composition に渡す
+- `System Prompt Prefix` は保存時に `# System Prompt` 配下へ組み込まれる
+- 初期実装では `System Prompt Prefix` と `Model Catalog` の import / export を置く
 - file picker / save dialog は Main Process 側で開く
 
 ## Interaction
 
 1. ユーザーが Home toolbar の `Settings` を押す
 2. Home の上に overlay が開く
-3. `Import Models` または `Export Models` を実行する
+3. `System Prompt Prefix` を編集して保存する、または `Import Models` / `Export Models` を実行する
 4. 結果は overlay 内の短いフィードバックで返す
 5. `Close` で overlay を閉じる
 
@@ -31,12 +33,16 @@
   - `New Session`
 - Settings overlay
   - `Close`
+  - `System Prompt Prefix`
+  - `# System Prompt` 自動付与の案内
+  - `Save Prefix`
   - `Import Models`
   - `Export Models`
   - 結果フィードバック
 
 ## Current Scope
 
+- `System Prompt Prefix` の編集と保存
 - `model catalog` の import
 - `model catalog` の export
 

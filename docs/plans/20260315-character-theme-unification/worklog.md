@@ -1,0 +1,98 @@
+# Worklog
+
+## Timeline
+
+### 0001
+
+- 日時: 2026-03-15
+- チェックポイント: Plan 作成と Home card theme の初回適用
+- 実施内容: Plan ディレクトリを作成し、Home の session card / character card に `main = 背景 / sub = 左アクセント` を適用した。前景色は helper で自動決定するようにした。
+- 検証: 未実施
+- メモ: 次は Character Editor と Session に同じ rule を広げる
+- 関連コミット: 
+
+### 0002
+
+- 日時: 2026-03-15
+- チェックポイント: Character Editor の小ウインドウ時レイアウト調整
+- 実施内容: Character Editor を外側スクロール優先に変更し、内部スクロールの多重化を減らした。高さが足りない時は preview / form / role を縦積みに寄せるレスポンシブを追加した。
+- 検証: `npm run typecheck`, `npm run build`
+- メモ: 次は配色 rule 自体を `ベース固定 + accent のみ character color` に揃える
+- 関連コミット: 
+
+### 0003
+
+- 日時: 2026-03-15
+- チェックポイント: Character Editor の情報整理
+- 実施内容: 価値の低い `Updated` と `Mode` を削除した。`character.md` の常時表示をやめ、`Profile / character.md` の 2 モードに分離した。
+- 検証: `npm run typecheck`, `npm run build`
+- メモ: `character.md` を分離したことで、小さいウインドウでも metadata 編集が崩れにくくなった
+- 関連コミット: 
+
+### 0004
+
+- 日時: 2026-03-15
+- チェックポイント: Character Editor の action 領域整理
+- 実施内容: `Save / Delete` が別 panel として重なって見えていたため、右側 action 領域から panel の外枠を外した。action は独立領域として最小構成にした。
+- 検証: `npm run typecheck`, `npm run build`
+- メモ: 次は Character Editor 自体の配色を `ベース固定 + accent のみ character color` に寄せる
+- 関連コミット: 
+
+### 0005
+
+- 日時: 2026-03-15
+- チェックポイント: Character Editor の action bar 再配置
+- 実施内容: 右カラム自体をやめて、`Save / Delete` を下部固定の action bar に移した。全画面でも小さいウインドウでも action の位置が一定になるようにした。
+- 検証: `npm run typecheck`, `npm run build`
+- メモ: Character Editor は `Profile / character.md` の本文と action を分離したので、次は配色整理に集中できる
+- 関連コミット: 
+
+### 0006
+
+- 日時: 2026-03-15
+- チェックポイント: Character Editor の footer 固定方式修正
+- 実施内容: sticky footer をやめ、画面全体を `header / content / footer` の 3 段グリッドにした。footer は常に画面最下部、本文はその間だけスクロールする構成に変更した。
+- 検証: `npm run typecheck`, `npm run build`
+- メモ: 重なりの原因は footer の overlay だった。本文側の高さ上限をグリッドで制御する形に寄せた
+- 関連コミット: 
+
+### 0007
+
+- 日時: 2026-03-15
+- チェックポイント: Character Editor の tabs 固定
+- 実施内容: 当初 sticky 固定、その後スクロール領域外への分離を試したが、最終的に `Profile / character.md` の tabs はスクロール領域外へ置きつつ、背景色や固定レールは持たせない形に整理した。
+- 検証: `npm run typecheck`, `npm run build`
+- メモ: tabs の位置は scroll container 外、見た目は素の切り替え行、という切り分けにした
+- 関連コミット: 
+
+### 0008
+
+- 日時: 2026-03-15
+- チェックポイント: Character Editor content 高さ調整
+- 実施内容: 中央の content カードが利用可能高さを常に使い切るようにした。`character.md` 側だけ低く見える状態を解消し、editor も親高さに追従するようにした。
+- 検証: `npm run typecheck`, `npm run build`
+- メモ: 空白の原因は action bar ではなく、content カード自体が stretch されていなかったこと
+- 関連コミット: 
+
+### 0009
+
+- 日時: 2026-03-15
+- チェックポイント: Character Editor `character.md` panel 比率調整
+- 実施内容: 比率指定をやめ、`character.md` タブも `Profile` と同じ content レイアウト定義に揃えた。あわせて、このデータがキャラクター定義の正本であり、プロンプト合成に使われる説明を UI に追加した。
+- 検証: `npm run typecheck`, `npm run build`
+- メモ: `character.md` 側だけ特別な高さルールを持たせるより、`Profile` と同じ content モデルに揃える方が素直
+- 関連コミット: 
+
+### 0010
+
+- 日時: 2026-03-15
+- チェックポイント: Character Editor の小高さ崩れ修正
+- 実施内容: `Profile` 側を card 内スクロールに変更し、`Theme` などの下部要素がカード外へはみ出さないようにした。あわせて、小さい高さでは preview avatar を 72px へ縮小し、説明文へ重ならないようにした。
+- 検証: `npm run typecheck`, `npm run build`
+- メモ: 今回の崩れは `Profile` 側だけスクロール責務が外側に残っていたことと、avatar 実寸が media query に追従していなかったことが原因
+- 関連コミット: 
+
+## Open Items
+
+- Character Editor の theme rule を Home と揃える
+- Session の bubble / primary action の theme rule を Home と揃える

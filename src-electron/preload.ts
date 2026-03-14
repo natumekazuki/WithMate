@@ -7,23 +7,32 @@ import {
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
+  WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
+  WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
+  WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSIONS_CHANNEL,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
+  WITHMATE_LIVE_SESSION_RUN_EVENT,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
+  WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
+  WITHMATE_PICK_FILE_CHANNEL,
+  WITHMATE_PICK_IMAGE_FILE_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
+  WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SESSIONS_CHANGED_EVENT,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
+  WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
   type WithMateWindowApi,
 } from "../src/withmate-window.js";
@@ -71,8 +80,23 @@ const withmateApi: WithMateWindowApi = {
   deleteSession(sessionId: string) {
     return ipcRenderer.invoke(WITHMATE_DELETE_SESSION_CHANNEL, sessionId);
   },
-  runSessionTurn(sessionId: string, userMessage: string) {
-    return ipcRenderer.invoke(WITHMATE_RUN_SESSION_TURN_CHANNEL, sessionId, userMessage);
+  previewComposerInput(sessionId: string, userMessage: string, pickerAttachments) {
+    return ipcRenderer.invoke(WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL, sessionId, userMessage, pickerAttachments);
+  },
+  runSessionTurn(sessionId: string, request) {
+    return ipcRenderer.invoke(WITHMATE_RUN_SESSION_TURN_CHANNEL, sessionId, request);
+  },
+  listSessionAuditLogs(sessionId: string) {
+    return ipcRenderer.invoke(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, sessionId);
+  },
+  getLiveSessionRun(sessionId: string) {
+    return ipcRenderer.invoke(WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL, sessionId);
+  },
+  getAppSettings() {
+    return ipcRenderer.invoke(WITHMATE_GET_APP_SETTINGS_CHANNEL);
+  },
+  updateAppSettings(settings) {
+    return ipcRenderer.invoke(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, settings);
   },
   listCharacters() {
     return ipcRenderer.invoke(WITHMATE_LIST_CHARACTERS_CHANNEL);
@@ -89,8 +113,17 @@ const withmateApi: WithMateWindowApi = {
   deleteCharacter(characterId: string) {
     return ipcRenderer.invoke(WITHMATE_DELETE_CHARACTER_CHANNEL, characterId);
   },
-  pickDirectory() {
-    return ipcRenderer.invoke(WITHMATE_PICK_DIRECTORY_CHANNEL);
+  pickDirectory(initialPath?: string | null) {
+    return ipcRenderer.invoke(WITHMATE_PICK_DIRECTORY_CHANNEL, initialPath ?? null);
+  },
+  pickFile(initialPath?: string | null) {
+    return ipcRenderer.invoke(WITHMATE_PICK_FILE_CHANNEL, initialPath ?? null);
+  },
+  pickImageFile(initialPath?: string | null) {
+    return ipcRenderer.invoke(WITHMATE_PICK_IMAGE_FILE_CHANNEL, initialPath ?? null);
+  },
+  openPath(target: string) {
+    return ipcRenderer.invoke(WITHMATE_OPEN_PATH_CHANNEL, target);
   },
   subscribeSessions(listener) {
     const wrapped = (_event: unknown, sessions: Awaited<ReturnType<WithMateWindowApi["listSessions"]>>) => {
@@ -122,6 +155,19 @@ const withmateApi: WithMateWindowApi = {
     ipcRenderer.on(WITHMATE_MODEL_CATALOG_CHANGED_EVENT, wrapped);
     return () => {
       ipcRenderer.removeListener(WITHMATE_MODEL_CATALOG_CHANGED_EVENT, wrapped);
+    };
+  },
+  subscribeLiveSessionRun(listener) {
+    const wrapped = (
+      _event: unknown,
+      payload: { sessionId: string; state: Awaited<ReturnType<WithMateWindowApi["getLiveSessionRun"]>> },
+    ) => {
+      listener(payload.sessionId, payload.state ?? null);
+    };
+
+    ipcRenderer.on(WITHMATE_LIVE_SESSION_RUN_EVENT, wrapped);
+    return () => {
+      ipcRenderer.removeListener(WITHMATE_LIVE_SESSION_RUN_EVENT, wrapped);
     };
   },
 };

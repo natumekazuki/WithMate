@@ -1,10 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import {
+  type AuditLogEntry,
+  type CharacterThemeColors,
+  type ComposerAttachmentInput,
+  type ComposerPreview,
+  currentTimestampLabel,
   getSessionIdFromLocation,
   type ChangedFile,
   type DiffPreviewPayload,
+  type LiveSessionRunState,
   type Message,
+  type RunSessionTurnRequest,
   type Session,
 } from "./app-state.js";
 import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
@@ -12,7 +19,6 @@ import {
   getProviderCatalog,
   getReasoningEffortOptionsForModel,
   resolveModelSelection,
-  type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
 import {
@@ -23,6 +29,34 @@ import {
   modelOptionLabel,
   reasoningDepthLabel,
 } from "./ui-utils.js";
+import { MessageRichText } from "./MessageRichText.js";
+
+function hexToRgb(color: string): { r: number; g: number; b: number } {
+  const normalized = /^#[0-9a-fA-F]{6}$/.test(color) ? color : "#6f8cff";
+  return {
+    r: Number.parseInt(normalized.slice(1, 3), 16),
+    g: Number.parseInt(normalized.slice(3, 5), 16),
+    b: Number.parseInt(normalized.slice(5, 7), 16),
+  };
+}
+
+function toRgba(color: string, alpha: number): string {
+  const rgb = hexToRgb(color);
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+}
+
+function buildSessionThemeStyle(theme: CharacterThemeColors | null): CSSProperties {
+  const main = theme?.main ?? "#6f8cff";
+  const sub = theme?.sub ?? "#6fb8c7";
+  return {
+    "--session-main": main,
+    "--session-main-soft": toRgba(main, 0.12),
+    "--session-main-strong": toRgba(main, 0.24),
+    "--session-sub": sub,
+    "--session-sub-soft": toRgba(sub, 0.14),
+    "--session-sub-strong": toRgba(sub, 0.24),
+  } as CSSProperties;
+}
 
 export default function App() {
   const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
@@ -33,6 +67,13 @@ export default function App() {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<{ title: string; file: ChangedFile } | null>(null);
+  const [auditLogsOpen, setAuditLogsOpen] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [liveRun, setLiveRun] = useState<LiveSessionRunState | null>(null);
+  const [pickerAttachments, setPickerAttachments] = useState<ComposerAttachmentInput[]>([]);
+  const [composerPreview, setComposerPreview] = useState<ComposerPreview>({ attachments: [], errors: [] });
+  const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
+  const messageListRef = useRef<HTMLDivElement | null>(null);
 
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
 
@@ -92,6 +133,11 @@ export default function App() {
     [selectedSession],
   );
 
+  const sessionThemeStyle = useMemo(
+    () => buildSessionThemeStyle(selectedSession?.characterThemeColors ?? null),
+    [selectedSession?.characterThemeColors],
+  );
+
   useEffect(() => {
     if (!selectedSession || isEditingTitle) {
       return;
@@ -109,7 +155,7 @@ export default function App() {
       };
     }
 
-    void window.withmate.getModelCatalog(selectedSession?.catalogRevision ?? null).then((snapshot) => {
+    void window.withmate.getModelCatalog(null).then((snapshot) => {
       if (active) {
         setModelCatalog(snapshot);
       }
@@ -119,23 +165,116 @@ export default function App() {
       if (!active) {
         return;
       }
-
-      if (selectedSession?.catalogRevision && snapshot.revision !== selectedSession.catalogRevision) {
-        return;
-      }
-
-      if (active) {
-        setModelCatalog(snapshot);
-      }
+      setModelCatalog(snapshot);
     });
 
     return () => {
       active = false;
       unsubscribe();
     };
-  }, [selectedSession?.catalogRevision]);
+  }, [selectedSession?.id]);
 
   const displayedMessages: Message[] = selectedSession ? selectedSession.messages : [];
+
+  useEffect(() => {
+    setDraft("");
+    setPickerAttachments([]);
+    setComposerPreview({ attachments: [], errors: [] });
+    setPickerBaseDirectory(selectedSession?.workspacePath ?? "");
+    setLiveRun(null);
+  }, [selectedSession?.id]);
+
+  useLayoutEffect(() => {
+    if (!messageListRef.current) {
+      return;
+    }
+
+    messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+  }, [selectedSession?.id, displayedMessages.length, liveRun?.assistantText, liveRun?.steps.length]);
+
+  useEffect(() => {
+    let active = true;
+
+    if (!window.withmate || !selectedSession) {
+      if (active) {
+        setAuditLogs([]);
+      }
+      return () => {
+        active = false;
+      };
+    }
+
+    void window.withmate.listSessionAuditLogs(selectedSession.id).then((nextAuditLogs) => {
+      if (active) {
+        setAuditLogs(nextAuditLogs);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedSession?.id, selectedSession?.updatedAt, selectedSession?.runState, displayedMessages.length]);
+
+  useEffect(() => {
+    let active = true;
+
+    if (!window.withmate || !selectedSession) {
+      setLiveRun(null);
+      return () => {
+        active = false;
+      };
+    }
+
+    void window.withmate.getLiveSessionRun(selectedSession.id).then((state) => {
+      if (active) {
+        setLiveRun(state);
+      }
+    });
+
+    const unsubscribe = window.withmate.subscribeLiveSessionRun((sessionId, state) => {
+      if (!active || sessionId !== selectedSession.id) {
+        return;
+      }
+
+      setLiveRun(state);
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [selectedSession?.id]);
+
+  useEffect(() => {
+    let active = true;
+    const withmateApi = window.withmate;
+    if (!withmateApi || !selectedSession) {
+      setComposerPreview({ attachments: [], errors: [] });
+      return () => {
+        active = false;
+      };
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void withmateApi.previewComposerInput(selectedSession.id, draft, pickerAttachments).then((preview) => {
+        if (active) {
+          setComposerPreview(preview);
+        }
+      }).catch((error) => {
+        if (active) {
+          setComposerPreview({
+            attachments: [],
+            errors: [error instanceof Error ? error.message : "添付の解決に失敗したよ。"],
+          });
+        }
+      });
+    }, 120);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [draft, pickerAttachments, selectedSession]);
   const selectedProviderCatalog = useMemo(
     () => (modelCatalog && selectedSession ? getProviderCatalog(modelCatalog.providers, selectedSession.provider) : null),
     [modelCatalog, selectedSession],
@@ -182,15 +321,22 @@ export default function App() {
     }
 
     const nextMessage = messageText.trim();
+    const preview = await window.withmate.previewComposerInput(selectedSession.id, messageText, pickerAttachments);
+    setComposerPreview(preview);
+    if (preview.errors.length > 0) {
+      throw new Error(preview.errors[0] ?? "添付の解決に失敗したよ。");
+    }
+
     if (!nextMessage) {
       return;
     }
 
     setDraft("");
+    setPickerAttachments([]);
 
     const updatedSession: Session = {
       ...selectedSession,
-      updatedAt: "just now",
+      updatedAt: currentTimestampLabel(),
       status: "running",
       runState: "running",
       messages: [...selectedSession.messages, { role: "user", text: nextMessage }],
@@ -199,16 +345,25 @@ export default function App() {
     setSessions([updatedSession]);
 
     try {
-      const savedSession = await window.withmate.runSessionTurn(selectedSession.id, nextMessage);
+      const request: RunSessionTurnRequest = {
+        userMessage: messageText,
+        pickerAttachments,
+      };
+      const savedSession = await window.withmate.runSessionTurn(selectedSession.id, request);
       setSessions([savedSession]);
     } catch (error) {
       console.error(error);
       setSessions([selectedSession]);
+      setPickerAttachments((current) => current);
     }
   };
 
   const handleSend = async () => {
-    await sendMessage(draft);
+    try {
+      await sendMessage(draft);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "送信に失敗したよ。");
+    }
   };
 
   const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -238,7 +393,7 @@ export default function App() {
     const nextSession: Session = {
       ...selectedSession,
       approvalMode,
-      updatedAt: "just now",
+      updatedAt: currentTimestampLabel(),
     };
 
     await persistSession(nextSession);
@@ -278,7 +433,7 @@ export default function App() {
     const nextSession: Session = {
       ...selectedSession,
       taskTitle: nextTitle,
-      updatedAt: "just now",
+      updatedAt: currentTimestampLabel(),
     };
 
     await persistSession(nextSession);
@@ -308,32 +463,36 @@ export default function App() {
   };
 
   const handleChangeModel = async (model: string) => {
-    if (!selectedSession || !selectedProviderCatalog) {
+    if (!selectedSession || !selectedProviderCatalog || !modelCatalog) {
       return;
     }
 
     const selection = resolveModelSelection(selectedProviderCatalog, model, selectedSession.reasoningEffort);
     const nextSession: Session = {
       ...selectedSession,
+      catalogRevision: modelCatalog.revision,
       model: selection.resolvedModel,
       reasoningEffort: selection.resolvedReasoningEffort,
-      updatedAt: "just now",
+      threadId: "",
+      updatedAt: currentTimestampLabel(),
     };
 
     await persistSession(nextSession);
   };
 
   const handleChangeReasoningEffort = async (reasoningEffort: Session["reasoningEffort"]) => {
-    if (!selectedSession || !selectedProviderCatalog) {
+    if (!selectedSession || !selectedProviderCatalog || !modelCatalog) {
       return;
     }
 
     const selection = resolveModelSelection(selectedProviderCatalog, selectedSession.model, reasoningEffort);
     const nextSession: Session = {
       ...selectedSession,
+      catalogRevision: modelCatalog.revision,
       model: selection.resolvedModel,
       reasoningEffort: selection.resolvedReasoningEffort,
-      updatedAt: "just now",
+      threadId: "",
+      updatedAt: currentTimestampLabel(),
     };
 
     await persistSession(nextSession);
@@ -349,6 +508,108 @@ export default function App() {
 
   const handleCloseWindow = () => {
     window.close();
+  };
+
+  const handleOpenInlinePath = async (target: string) => {
+    if (!window.withmate) {
+      return;
+    }
+
+    try {
+      await window.withmate.openPath(target);
+    } catch {
+      // 読みやすさ改善が主目的なので、開けない場合は UI を壊さない
+    }
+  };
+
+  const toDirectoryPath = (selectedPath: string) => {
+    const normalized = selectedPath.replace(/[\\/]+$/, "");
+    const lastSlashIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+    if (lastSlashIndex < 0) {
+      return normalized;
+    }
+
+    return normalized.slice(0, lastSlashIndex);
+  };
+
+  const handlePickFile = async () => {
+    if (!window.withmate) {
+      return;
+    }
+
+    const selectedPath = await window.withmate.pickFile(pickerBaseDirectory || selectedSession?.workspacePath || null);
+    if (!selectedPath) {
+      return;
+    }
+
+    setPickerBaseDirectory(toDirectoryPath(selectedPath));
+
+    setPickerAttachments((current) => {
+      if (current.some((attachment) => attachment.path === selectedPath && attachment.kind === "file")) {
+        return current;
+      }
+
+      return [...current, { path: selectedPath, source: "picker", kind: "file" }];
+    });
+  };
+
+  const handlePickFolder = async () => {
+    if (!window.withmate) {
+      return;
+    }
+
+    const selectedPath = await window.withmate.pickDirectory(pickerBaseDirectory || selectedSession?.workspacePath || null);
+    if (!selectedPath) {
+      return;
+    }
+
+    setPickerBaseDirectory(selectedPath);
+
+    setPickerAttachments((current) => {
+      if (current.some((attachment) => attachment.path === selectedPath && attachment.kind === "folder")) {
+        return current;
+      }
+
+      return [...current, { path: selectedPath, source: "picker", kind: "folder" }];
+    });
+  };
+
+  const handlePickImage = async () => {
+    if (!window.withmate) {
+      return;
+    }
+
+    const selectedPath = await window.withmate.pickImageFile(pickerBaseDirectory || selectedSession?.workspacePath || null);
+    if (!selectedPath) {
+      return;
+    }
+
+    setPickerBaseDirectory(toDirectoryPath(selectedPath));
+
+    setPickerAttachments((current) => {
+      if (current.some((attachment) => attachment.path === selectedPath && attachment.kind === "image")) {
+        return current;
+      }
+
+      return [...current, { path: selectedPath, source: "picker", kind: "image" }];
+    });
+  };
+
+  const handleRemovePickerAttachment = (absolutePath: string, kind: ComposerAttachmentInput["kind"]) => {
+    setPickerAttachments((current) => current.filter((attachment) => !(attachment.path === absolutePath && attachment.kind === kind)));
+  };
+
+  const auditPhaseLabel = (phase: AuditLogEntry["phase"]) => {
+    switch (phase) {
+      case "started":
+        return "START";
+      case "completed":
+        return "DONE";
+      case "failed":
+        return "FAIL";
+      default:
+        return phase;
+    }
   };
 
   const handleTitleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -396,7 +657,7 @@ export default function App() {
   }
 
   return (
-    <div className="page-shell session-page">
+    <div className="page-shell session-page" style={sessionThemeStyle}>
       <header className="panel session-window-bar rise-1">
         <div className="session-title-shell">
           {isEditingTitle ? (
@@ -415,7 +676,7 @@ export default function App() {
             <>
               <span className="session-window-title">{selectedSession.taskTitle}</span>
               <div className="session-title-actions">
-                <button className="drawer-toggle compact secondary" type="button" onClick={handleStartTitleEdit} disabled={selectedSession.runState === "running"}>
+              <button className="drawer-toggle compact secondary" type="button" onClick={handleStartTitleEdit} disabled={selectedSession.runState === "running"}>
                   Rename
                 </button>
                 <button className="drawer-toggle compact danger" type="button" onClick={() => void handleDeleteSession()} disabled={selectedSession.runState === "running"}>
@@ -426,18 +687,9 @@ export default function App() {
           )}
         </div>
         <div className="session-window-controls">
-          <div className="choice-list session-approval-list" role="group" aria-label="承認モード">
-            {approvalModeOptions.map((approval) => (
-              <button
-                key={approval.id}
-                className={`choice-chip${approval.id === selectedSession.approvalMode ? " active" : ""}`}
-                type="button"
-                onClick={() => void handleChangeApproval(approval.id)}
-              >
-                {approval.label}
-              </button>
-            ))}
-          </div>
+          <button className="drawer-toggle compact secondary" type="button" onClick={() => setAuditLogsOpen(true)}>
+            Audit Log
+          </button>
           <button className="drawer-toggle" type="button" onClick={handleCloseWindow}>
             Close Window
           </button>
@@ -446,15 +698,8 @@ export default function App() {
 
       <section className="content-grid session-content-grid">
         <section className="panel chat-panel rise-3">
-          <div className="message-list">
-            {displayedMessages.length === 0 ? (
-              <article className="message-row assistant empty-chat-row">
-                <CharacterAvatar character={selectedSessionCharacter} size="small" className="message-avatar" />
-                <div className="message-card assistant empty-chat">
-                  <p className="message-body">ここから最初の依頼を送ると、この session で作業が始まる。</p>
-                </div>
-              </article>
-            ) : (
+          <div className="message-list" ref={messageListRef}>
+            {displayedMessages.length > 0 ? (
               displayedMessages.map((message, index) => {
                 const artifactKey = `${selectedSession.id}-${index}`;
                 const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
@@ -467,7 +712,7 @@ export default function App() {
                   >
                     {isAssistant ? <CharacterAvatar character={selectedSessionCharacter} size="small" className="message-avatar" /> : null}
                     <div className={`message-card ${message.role}${message.accent ? " accent" : ""}`}>
-                      <p className="message-body">{message.text}</p>
+                      <MessageRichText text={message.text} onOpenPath={handleOpenInlinePath} />
 
                       {message.artifact ? (
                         <section className="artifact-shell">
@@ -532,17 +777,46 @@ export default function App() {
                   </article>
                 );
               })
-            )}
+            ) : null}
 
             {selectedSession.runState === "running" ? (
               <article className="message-row assistant pending-row">
                 <CharacterAvatar character={selectedSessionCharacter} size="small" className="message-avatar" />
                 <div className="message-card assistant pending-message-card" aria-live="polite" aria-busy="true">
-                  <div className="typing-dots" aria-hidden="true">
-                    <span />
-                    <span />
-                    <span />
-                  </div>
+                  {liveRun?.assistantText ? <MessageRichText text={liveRun.assistantText} onOpenPath={handleOpenInlinePath} /> : null}
+                  {!liveRun?.assistantText ? (
+                    <div className="typing-dots" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                  ) : null}
+                  {liveRun && (liveRun.steps.length > 0 || liveRun.errorMessage || liveRun.usage) ? (
+                    <div className="live-run-shell">
+                      {liveRun.steps.length > 0 ? (
+                        <ul className="live-run-step-list">
+                          {liveRun.steps.map((step) => (
+                            <li key={step.id} className={`live-run-step ${step.status}`}>
+                              <div className="live-run-step-head">
+                                <span className={`live-run-step-status ${step.status}`}>{step.status}</span>
+                                <strong>{step.type}</strong>
+                              </div>
+                              <p>{step.summary}</p>
+                              {step.details ? <pre>{step.details}</pre> : null}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {liveRun.usage ? (
+                        <div className="live-run-usage">
+                          <span>input {liveRun.usage.inputTokens}</span>
+                          <span>cached {liveRun.usage.cachedInputTokens}</span>
+                          <span>output {liveRun.usage.outputTokens}</span>
+                        </div>
+                      ) : null}
+                      {liveRun.errorMessage ? <p className="live-run-error">{liveRun.errorMessage}</p> : null}
+                    </div>
+                  ) : null}
                 </div>
               </article>
             ) : null}
@@ -557,6 +831,42 @@ export default function App() {
                 <p>{lastUserMessage.text}</p>
               </div>
             ) : null}
+            <div className="composer-attachments-toolbar">
+              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickFile()} disabled={selectedSession.runState === "running"}>
+                File
+              </button>
+              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickFolder()} disabled={selectedSession.runState === "running"}>
+                Folder
+              </button>
+              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickImage()} disabled={selectedSession.runState === "running"}>
+                Image
+              </button>
+            </div>
+            {composerPreview.attachments.length > 0 ? (
+              <div className="composer-attachment-list">
+                {composerPreview.attachments.map((attachment) => {
+                  const removable = attachment.source === "picker";
+                  return (
+                    <div key={attachment.id} className={`composer-attachment-chip ${attachment.kind}`}>
+                      <span className="composer-attachment-source">{attachment.source === "text" ? "@" : "pick"}</span>
+                      <span className="composer-attachment-path">{attachment.displayPath}</span>
+                      {removable ? (
+                        <button type="button" onClick={() => handleRemovePickerAttachment(attachment.absolutePath, attachment.kind)}>
+                          ×
+                        </button>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+            {composerPreview.errors.length > 0 ? (
+              <div className="composer-error-list" role="alert">
+                {composerPreview.errors.map((error) => (
+                  <p key={error}>{error}</p>
+                ))}
+              </div>
+            ) : null}
             <label className="composer-box">
               <textarea
                 value={draft}
@@ -568,13 +878,29 @@ export default function App() {
                 className={selectedSession.runState === "running" ? "loading" : ""}
                 type="button"
                 onClick={() => void handleSend()}
-                disabled={selectedSession.runState === "running"}
+                disabled={selectedSession.runState === "running" || composerPreview.errors.length > 0}
               >
                 {selectedSession.runState === "running" ? "..." : "Send"}
               </button>
             </label>
 
             <div className="composer-settings">
+              <div className="composer-setting-field composer-setting-approval">
+                <span>Approval</span>
+                <div className="choice-list session-approval-list" role="group" aria-label="承認モード">
+                  {approvalModeOptions.map((approval) => (
+                    <button
+                      key={approval.id}
+                      className={`choice-chip${approval.id === selectedSession.approvalMode ? " active" : ""}`}
+                      type="button"
+                      onClick={() => void handleChangeApproval(approval.id)}
+                    >
+                      {approval.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="composer-setting-field">
                 <span>Model</span>
                 <select
@@ -596,19 +922,18 @@ export default function App() {
 
               <div className="composer-setting-field">
                 <span>Depth</span>
-                <div className="choice-list composer-depth-list" role="group" aria-label="推論の深さ">
+                <select
+                  value={selectedSession.reasoningEffort}
+                  onChange={(event) => void handleChangeReasoningEffort(event.target.value as Session["reasoningEffort"])}
+                  disabled={selectedSession.runState === "running"}
+                  aria-label="推論の深さ"
+                >
                   {availableReasoningEfforts.map((reasoningEffort) => (
-                    <button
-                      key={reasoningEffort}
-                      className={`choice-chip${reasoningEffort === selectedSession.reasoningEffort ? " active" : ""}`}
-                      type="button"
-                      onClick={() => void handleChangeReasoningEffort(reasoningEffort)}
-                      disabled={selectedSession.runState === "running"}
-                    >
+                    <option key={reasoningEffort} value={reasoningEffort}>
                       {reasoningDepthLabel(reasoningEffort)}
-                    </button>
+                    </option>
                   ))}
-                </div>
+                </select>
               </div>
             </div>
           </div>
@@ -632,6 +957,109 @@ export default function App() {
 
             <DiffViewerSubbar file={selectedDiff.file} />
             <DiffViewer file={selectedDiff.file} />
+          </section>
+        </div>
+      ) : null}
+
+      {auditLogsOpen ? (
+        <div className="diff-modal" role="dialog" aria-modal="true" onClick={() => setAuditLogsOpen(false)}>
+          <section className="audit-log-panel panel" onClick={(event) => event.stopPropagation()}>
+            <div className="diff-titlebar">
+              <h2>Audit Log</h2>
+              <div className="diff-titlebar-actions">
+                <button className="diff-close" type="button" onClick={() => setAuditLogsOpen(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div className="audit-log-list">
+              {auditLogs.length > 0 ? (
+                auditLogs.map((entry) => (
+                  <article key={entry.id} className={`audit-log-card ${entry.phase}`}>
+                    <div className="audit-log-head">
+                      <span className={`file-kind ${entry.phase === "completed" ? "add" : entry.phase === "failed" ? "delete" : "edit"}`}>
+                        {auditPhaseLabel(entry.phase)}
+                      </span>
+                      <span className="audit-log-time">{entry.createdAt}</span>
+                    </div>
+
+                    <div className="audit-log-meta">
+                      <span>{entry.provider}</span>
+                      <span>{entry.model}</span>
+                      <span>{entry.reasoningEffort}</span>
+                      <span>{entry.approvalMode}</span>
+                    </div>
+
+                    <section className="audit-log-section">
+                      <strong>System Prompt</strong>
+                      <pre>{entry.systemPromptText || "-"}</pre>
+                    </section>
+
+                    <section className="audit-log-section">
+                      <strong>Input Prompt</strong>
+                      <pre>{entry.inputPromptText || "-"}</pre>
+                    </section>
+
+                    <section className="audit-log-section">
+                      <strong>Composed Prompt</strong>
+                      <pre>{entry.composedPromptText || "-"}</pre>
+                    </section>
+
+                    <section className="audit-log-section">
+                      <strong>Response</strong>
+                      <pre>{entry.assistantText || "-"}</pre>
+                    </section>
+
+                    <section className="audit-log-section">
+                      <strong>Operations</strong>
+                      {entry.operations.length > 0 ? (
+                        <ul className="audit-log-operations">
+                          {entry.operations.map((operation, index) => (
+                            <li key={`${entry.id}-${operation.type}-${index}`}>
+                              <div className="audit-log-operation-head">
+                                <span>{operation.type}</span>
+                                <strong>{operation.summary}</strong>
+                              </div>
+                              {operation.details ? <pre>{operation.details}</pre> : null}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="audit-log-empty">記録された操作はまだないよ。</p>
+                      )}
+                    </section>
+
+                    {entry.usage ? (
+                      <section className="audit-log-section compact">
+                        <strong>Usage</strong>
+                        <div className="audit-log-meta">
+                          <span>input {entry.usage.inputTokens}</span>
+                          <span>cached {entry.usage.cachedInputTokens}</span>
+                          <span>output {entry.usage.outputTokens}</span>
+                        </div>
+                      </section>
+                    ) : null}
+
+                    {entry.errorMessage ? (
+                      <section className="audit-log-section compact">
+                        <strong>Error</strong>
+                        <pre>{entry.errorMessage}</pre>
+                      </section>
+                    ) : null}
+
+                    <details className="audit-log-raw">
+                      <summary>Raw Items</summary>
+                      <pre>{entry.rawItemsJson}</pre>
+                    </details>
+                  </article>
+                ))
+              ) : (
+                <article className="empty-list-card compact">
+                  <p>まだ監査ログはないよ。</p>
+                </article>
+              )}
+            </div>
           </section>
         </div>
       ) : null}

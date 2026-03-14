@@ -20,10 +20,13 @@ WithMate は、`Codex CLI / GitHub Copilot CLI` 相当の coding agent 体験を
   - セッション一覧の確認
   - 新規セッション起動
   - キャラクター一覧の確認
+  - Settings overlay の起点
 - `Session Window`
   - coding agent との作業チャット
   - approval mode の反映
+  - model / depth の反映
   - turn ごとの結果確認
+  - 監査ログ確認
 - `Character Editor Window`
   - キャラクター作成、編集、削除
 
@@ -109,6 +112,14 @@ npm run typecheck
   - Window ごとの責務分離
 - `docs/design/desktop-ui.md`
   - 現行 UI の構成
+- `docs/design/prompt-composition.md`
+  - settings prefix / character role / input prompt の合成方針
+- `docs/design/audit-log.md`
+  - Session 実行の監査ログ設計
+- `docs/manual-test-checklist.md`
+  - 現行実装に対する実機テスト項目表
+- `docs/design/manual-test-checklist.md`
+  - 実機テスト項目表の更新方針
 - `docs/design/session-launch-ui.md`
   - 新規セッション起動 UI の考え方
 - `docs/design/character-storage.md`
@@ -120,6 +131,7 @@ npm run typecheck
 
 - Electron 実行を正本とする desktop アプリ構成です
 - セッション情報は Electron 側で保持され、キャラクター情報はストレージから読み込みます
+- Settings overlay では `System Prompt Prefix` と model catalog を管理します
 - `Character Stream` は価値仮説として保持しているものの、現行 UI では pending 扱いです
 
 ## 補足
