@@ -579,6 +579,29 @@ export default function App() {
     }
   };
 
+  const operationTypeLabel = (type: string) => {
+    switch (type) {
+      case "agent_message":
+        return "Message";
+      case "command_execution":
+        return "Command";
+      case "file_change":
+        return "File";
+      case "mcp_tool_call":
+        return "MCP";
+      case "web_search":
+        return "Web";
+      case "todo_list":
+        return "Todo";
+      case "reasoning":
+        return "Reasoning";
+      case "error":
+        return "Error";
+      default:
+        return type;
+    }
+  };
+
   const handleTitleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -671,6 +694,14 @@ export default function App() {
                 const artifactKey = `${selectedSession.id}-${index}`;
                 const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
                 const isAssistant = message.role === "assistant";
+                const artifactOperations =
+                  message.artifact?.operationTimeline ??
+                  message.artifact?.activitySummary.map((item) => ({
+                    type: "summary",
+                    summary: item,
+                    details: undefined,
+                  })) ??
+                  [];
 
                 return (
                   <article
@@ -730,9 +761,21 @@ export default function App() {
                               </div>
 
                               <section className="artifact-section compact">
-                                <ul className="summary-list">
-                                  {message.artifact.activitySummary.map((item) => (
-                                    <li key={item}>{item}</li>
+                                <ul className="artifact-operation-list">
+                                  {artifactOperations.map((operation, operationIndex) => (
+                                    <li key={`${operation.type}-${operationIndex}`} className={`artifact-operation-item ${operation.type}`}>
+                                      <div className="artifact-operation-head">
+                                        <span className={`artifact-operation-type ${operation.type}`}>{operationTypeLabel(operation.type)}</span>
+                                      </div>
+                                      {operation.type === "agent_message" ? (
+                                        <div className="artifact-operation-message">
+                                          <MessageRichText text={operation.summary} onOpenPath={handleOpenInlinePath} />
+                                        </div>
+                                      ) : (
+                                        <p>{operation.summary}</p>
+                                      )}
+                                      {operation.details ? <pre>{operation.details}</pre> : null}
+                                    </li>
                                   ))}
                                 </ul>
                               </section>

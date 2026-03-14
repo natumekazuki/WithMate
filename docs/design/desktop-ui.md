@@ -70,6 +70,9 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - assistant / user message の markdown-like rich text 表示
 - pending 中の live activity / streaming response
 - assistant message ごとの `Turn Summary`
+  - `Changed Files`
+  - `Run Checks`
+  - turn 内の `agent_message / command_execution / file_change / reasoning` を arrival 順に並べる operation timeline
 - composer 上の添付 toolbar (`File / Folder / Image`)
 - composer の attachment chip
 - textarea 内の `@path` 参照

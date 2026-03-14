@@ -88,7 +88,8 @@ npm run electron:start
 | MT-027a | Model 変更後実行 | thread を持つ既存 session で model を変更して送信する | model mismatch error にならず、新しい thread で実行される |
 | MT-027b | Depth 変更後実行 | thread を持つ既存 session で depth を変更して送信する | reasoning 変更後も新しい thread で実行される |
 | MT-027c | Session Theme 非反映 | theme color を設定した character で session を開く | Session Window の配色は neutral のままで、character theme を変えても bubble や主要 action の色は変わらない |
-| MT-028 | Turn Summary | assistant message の `Details` を押す | changed files / checks / activity summary が展開される |
+| MT-028 | Turn Summary | assistant message の `Details` を押す | changed files / checks / operation timeline が展開される |
+| MT-028c | Turn Summary agent_message 流れ表示 | `command_execution` と複数の `agent_message` を含む turn で `Details` を開く | コマンドや reasoning だけでなく `agent_message` も同じ timeline に入り、応答の流れを追える |
 | MT-028a | Rich Text 表示 | inline code / list / markdown link を含む assistant message を表示する | 生テキストの塊ではなく、rich text として読みやすく表示される |
 | MT-028b | Rich Text リンク | `[label](absolute-path-or-url)` を含む assistant message をクリックする | URL かローカルパスが既定の方法で開く |
 | MT-029 | Diff overlay | `Open Diff` を押す | Session Window 内に Diff overlay が開く |

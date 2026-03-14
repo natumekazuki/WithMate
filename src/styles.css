@@ -1617,6 +1617,13 @@ button {
   background: rgba(255, 255, 255, 0.06);
 }
 
+.session-page .live-run-step,
+.session-page .live-run-step p,
+.session-page .live-run-step-head strong,
+.session-page .live-run-usage {
+  color: var(--ink);
+}
+
 .live-run-step.in_progress {
   border-color: rgba(15, 139, 141, 0.18);
 }
@@ -1656,14 +1663,29 @@ button {
   color: #0c6b6d;
 }
 
+.session-page .live-run-step-status.in_progress {
+  background: rgba(56, 189, 248, 0.16);
+  color: #c8f1ff;
+}
+
 .live-run-step-status.completed {
   background: rgba(66, 133, 99, 0.14);
   color: #276145;
 }
 
+.session-page .live-run-step-status.completed {
+  background: rgba(74, 222, 128, 0.16);
+  color: #d8ffe7;
+}
+
 .live-run-step-status.failed {
   background: rgba(201, 106, 42, 0.14);
   color: #8a4218;
+}
+
+.session-page .live-run-step-status.failed {
+  background: rgba(251, 146, 60, 0.18);
+  color: #ffe2c2;
 }
 
 .live-run-step p,
@@ -1693,6 +1715,10 @@ button {
   font-weight: 600;
 }
 
+.session-page .live-run-error {
+  color: #ffd7bc;
+}
+
 .artifact-shell {
   display: grid;
   gap: 12px;
@@ -1709,6 +1735,7 @@ button {
 .session-page .artifact-file-item,
 .session-page .check-item,
 .session-page .summary-list li,
+.session-page .artifact-operation-item,
 .session-page .composer-box,
 .session-page .composer-attachment-chip,
 .session-page .composer-setting-field input,
@@ -1719,7 +1746,8 @@ button {
 
 .session-page .artifact-file-item,
 .session-page .check-item,
-.session-page .summary-list li {
+.session-page .summary-list li,
+.session-page .artifact-operation-item {
   background: rgba(20, 27, 40, 0.9);
 }
 
@@ -1728,6 +1756,9 @@ button {
 .session-page .artifact-file-meta,
 .session-page .artifact-file-meta code,
 .session-page .summary-list li,
+.session-page .artifact-operation-item p,
+.session-page .artifact-operation-item pre,
+.session-page .artifact-operation-message,
 .session-page .check-item,
 .session-page .check-item strong,
 .session-page .session-window-title,
@@ -1742,6 +1773,7 @@ button {
 
 .session-page .artifact-file-meta,
 .session-page .check-item span,
+.session-page .artifact-operation-type,
 .session-page .composer-attachment-source,
 .session-page .composer-setting-field span,
 .session-page .audit-log-time,
@@ -1849,6 +1881,51 @@ button {
   border-radius: 16px;
   border: 1px solid rgba(32, 36, 55, 0.08);
   background: rgba(255, 255, 255, 0.78);
+}
+
+.artifact-operation-list {
+  display: grid;
+  gap: 10px;
+}
+
+.artifact-operation-item {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(32, 36, 55, 0.08);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.artifact-operation-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.artifact-operation-type {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(32, 36, 55, 0.08);
+  color: var(--muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.artifact-operation-item p,
+.artifact-operation-item pre,
+.artifact-operation-message {
+  margin: 0;
+}
+
+.artifact-operation-item pre {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.92);
+  overflow: auto;
 }
 
 .composer-box {

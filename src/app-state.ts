@@ -115,6 +115,7 @@ export type RunSessionTurnRequest = {
 export type MessageArtifact = {
   title: string;
   activitySummary: string[];
+  operationTimeline?: AuditLogOperation[];
   changedFiles: ChangedFile[];
   runChecks: RunCheck[];
 };

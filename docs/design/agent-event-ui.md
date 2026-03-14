@@ -41,7 +41,7 @@
 
 - assistant message にぶら下がる補助情報として表示する
 - 既定では折りたたみ、必要なときだけ開く
-- `What Changed` `Run Summary` `Activity Notes` の3ブロックを基本とする
+- `What Changed` `Run Summary` `Operation Timeline` の3ブロックを基本とする
 - 常設の時系列ログではなく、「このターンで起きたこと」を要約して見せる
 - `Open Diff` ボタンからアプリ内の split diff overlay を開く
 - diff は `before / after` を左右に並べ、行番号つきで比較する
@@ -74,6 +74,7 @@
 - `artifact.changedFiles[].diffRows`
 - `artifact.runChecks[]`
 - `artifact.activitySummary[]`
+- `artifact.operationTimeline[]`
 - `runState` と `approvalMode` のステータス表示
 
 今回は実装しない。

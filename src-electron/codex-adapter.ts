@@ -652,15 +652,17 @@ async function buildArtifact(
 ): Promise<MessageArtifact | undefined> {
   const changedFiles = buildChangedFilesFromSources(session, items, beforeSnapshot, afterSnapshot);
   const activitySummary = toActivitySummary(items);
+  const operationTimeline = toAuditOperations(items);
   const runChecks = toRunChecks(session, usage, threadId, providerCatalog, selection);
 
-  if (changedFiles.length === 0 && activitySummary.length === 0 && runChecks.length === 0) {
+  if (changedFiles.length === 0 && operationTimeline.length === 0 && runChecks.length === 0) {
     return undefined;
   }
 
   return {
     title: session.taskTitle,
     activitySummary,
+    operationTimeline,
     changedFiles,
     runChecks,
   };
