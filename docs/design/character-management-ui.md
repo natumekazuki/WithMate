@@ -46,14 +46,16 @@
 - `Add` は Home から直接始められるようにする
 - 編集画面では、入力の意味が自明でないためラベルを許容する
 - `character.md` は長文前提なので、metadata form と分離した editor 面を持つ
-- `Character Editor` は `Profile / character.md` の 2 モードで切り替え、長文の `character.md` がフォーム面を圧迫しないようにする
+- `Character Editor` は `Profile / システムプロンプト` の 2 モードで切り替え、長文の `character.md` がフォーム面を圧迫しないようにする
 - `Save / Delete` は画面下部の action bar に固定し、本文は header / footer の間だけスクロールする
-- `Profile / character.md` の tabs は content カードの外に置くが、背景色や固定レールは付けない
+- `Profile / システムプロンプト` の tabs は content カードの外に置くが、背景色や固定レールは付けない
 - content カードは header / tabs / footer を除いた残り高さを常に使い切り、`Profile` と `character.md` で高さ感を揃える
 - `character.md` タブも `Profile` と同じ content レイアウト定義を使い、残り高さを editor に割り当てる
-- `character.md` タブには「キャラクター定義の正本であり、プロンプト合成に使われる」説明を表示する
+- `システムプロンプト` タブでは、`character.md` の説明と editor を同じカードにまとめる
+- `character.md` タブには「キャラクター定義の正本であり、プロンプト合成に使われる」説明を表示し、説明ブロックは `Profile` と同じ文脈で読めるカードとして扱う
 - `Profile` 側は content カード内でスクロールし、`Theme` などの下部要素がカード外へはみ出さないようにする
-- 高さが低い window では preview avatar を縮めて、説明文へ重ならないようにする
+- `Profile` 側のスクロールバー有無で幅が揺れないように、scroll gutter を固定する
+- top の preview は window 高さに関わらず同じレイアウトを維持し、avatar サイズや theme swatch 位置を動かさない
 
 ## Interaction Flow
 

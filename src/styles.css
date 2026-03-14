@@ -2092,6 +2092,7 @@ button {
 .character-editor-main-profile .character-editor-content {
   overflow: auto;
   padding-right: 6px;
+  scrollbar-gutter: stable;
 }
 
 .character-editor-main-character-md {
@@ -2104,13 +2105,24 @@ button {
 }
 
 .character-markdown-content {
+  min-height: 100%;
+}
+
+.character-markdown-card {
+  display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  min-height: 100%;
+  gap: 6px;
+  padding: 16px 18px;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
 }
 
 .character-markdown-note {
   display: grid;
   gap: 6px;
-  padding: 2px 2px 0;
 }
 
 .character-markdown-note strong {
@@ -2121,6 +2133,11 @@ button {
 .character-markdown-note p {
   color: var(--muted);
   line-height: 1.6;
+  margin: 0;
+}
+
+.character-markdown-shell {
+  min-height: 0;
 }
 
 .character-editor-tabs-row {
@@ -2589,23 +2606,8 @@ button {
     grid-template-columns: 1fr;
   }
 
-  .character-editor-preview {
-    grid-template-columns: 72px minmax(0, 1fr);
-    align-items: start;
-  }
-
-  .character-editor-avatar.character-avatar.large {
-    width: 72px;
-    height: 72px;
-  }
-
   .character-editor-footer {
     backdrop-filter: none;
-  }
-
-  .character-theme-preview {
-    grid-column: 1 / -1;
-    justify-content: flex-end;
   }
 
   .markdown-editor-textarea {

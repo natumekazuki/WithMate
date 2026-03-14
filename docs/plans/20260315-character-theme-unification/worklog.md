@@ -92,6 +92,33 @@
 - メモ: 今回の崩れは `Profile` 側だけスクロール責務が外側に残っていたことと、avatar 実寸が media query に追従していなかったことが原因
 - 関連コミット: 
 
+### 0011
+
+- 日時: 2026-03-15
+- チェックポイント: Character Editor `character.md` 説明カード化
+- 実施内容: `character.md` タブの説明文ブロックに背景、枠線、余白を付けて、`Profile` と同じ文脈で読めるカード表示へ揃えた。
+- 検証: `npm run typecheck`, `npm run build`
+- メモ: タブ文言は `システムプロンプト` に寄せ、説明文と editor を同じカード内へまとめた
+- 関連コミット: 
+
+### 0012
+
+- 日時: 2026-03-15
+- チェックポイント: Character Editor scrollbar gutter 固定
+- 実施内容: `Profile` 側の scroll container に `scrollbar-gutter: stable` を追加し、スクロールバーの表示有無で内部レイアウト幅が揺れないようにした。
+- 検証: `npm run typecheck`, `npm run build`
+- メモ: レイアウト差分の原因はコンテンツ量ではなく、スクロールバー出現時の横幅変化だった
+- 関連コミット: 
+
+### 0013
+
+- 日時: 2026-03-15
+- チェックポイント: Character Editor top preview 固定化
+- 実施内容: 低い window 向け media query で avatar サイズと preview グリッドを変えていたルールを撤去し、top preview のレイアウトを常に固定にした。
+- 検証: 予定
+- メモ: 高さ不足は content スクロールで吸収し、preview 自体の配置は動かさない方針に戻した
+- 関連コミット: 
+
 ## Open Items
 
 - Character Editor の theme rule を Home と揃える

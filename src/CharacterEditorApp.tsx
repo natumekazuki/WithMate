@@ -271,7 +271,7 @@ export default function CharacterEditorApp() {
             className={`character-editor-tab${editorTab === "character-md" ? " active" : ""}`}
             onClick={() => setEditorTab("character-md")}
           >
-            character.md
+            システムプロンプト
           </button>
         </div>
       </div>
@@ -396,18 +396,20 @@ export default function CharacterEditorApp() {
             </div>
           ) : (
             <div className="character-editor-content character-markdown-content">
-              <div className="character-markdown-note">
-                <strong>character.md</strong>
-                <p>この内容はキャラクター定義の正本として保存され、セッション実行時のプロンプト合成に使われる。</p>
+              <div className="character-markdown-card">
+                <div className="character-markdown-note">
+                  <strong>character.md</strong>
+                  <p>この内容はキャラクター定義の正本として保存され、セッション実行時のプロンプト合成に使われる。</p>
+                </div>
+                <label className="markdown-editor-shell character-markdown-shell">
+                  <textarea
+                    className="markdown-editor-textarea character-markdown-textarea"
+                    value={draft.roleMarkdown}
+                    onChange={(event) => handleChange("roleMarkdown", event.target.value)}
+                    spellCheck={false}
+                  />
+                </label>
               </div>
-              <label className="markdown-editor-shell character-markdown-shell">
-                <textarea
-                  className="markdown-editor-textarea character-markdown-textarea"
-                  value={draft.roleMarkdown}
-                  onChange={(event) => handleChange("roleMarkdown", event.target.value)}
-                  spellCheck={false}
-                />
-              </label>
             </div>
           )}
         </section>

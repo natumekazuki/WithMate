@@ -48,14 +48,15 @@ npm run electron:start
 | MT-009 | Add Character 起動 | Home の `Add Character` を押す | Character Editor Window が create mode で開く |
 | MT-010 | Character 作成 | Name / Icon / Description / `character.md` を入力して `Save` を押す | character が保存され、Home の Characters 一覧に表示される |
 | MT-011 | Character 編集 | Home の character card を押し、Description または `character.md` を変更して `Save` を押す | Character Editor Window が開き、更新内容が保存され、再度開いても反映される |
-| MT-011d | Character Editor モード切替 | Character Editor で `Profile` と `character.md` を切り替える | `Profile` では metadata が、`character.md` では editor が広く表示される |
+| MT-011d | Character Editor モード切替 | Character Editor で `Profile` と `システムプロンプト` を切り替える | `Profile` では metadata が、`システムプロンプト` では `character.md` editor が広く表示される |
 | MT-011e | Character Editor action bar | Character Editor を通常サイズと縦に小さいサイズで開く | `Save / Delete` が画面最下部の action bar に固定され、本文はその上だけスクロールする |
-| MT-011f | Character Editor tabs 位置 | Character Editor を開く | `Profile / character.md` tabs は content カードの外に表示され、余計な背景レールがない |
-| MT-011g | Character Editor content 高さ | Character Editor の縦を大きくした状態で `Profile` と `character.md` を切り替える | content カードが空き領域を使い切り、`character.md` だけ不自然に低くならない |
+| MT-011f | Character Editor tabs 位置 | Character Editor を開く | `Profile / システムプロンプト` tabs は content カードの外に表示され、余計な背景レールがない |
+| MT-011g | Character Editor content 高さ | Character Editor の縦を大きくした状態で `Profile` と `システムプロンプト` を切り替える | content カードが空き領域を使い切り、`character.md` だけ不自然に低くならない |
 | MT-011h | Character Editor character.md 比率 | Character Editor を縦に伸ばして `character.md` を開く | editor が content 高さに対して大きく広がり、footer との間に不自然な空白が残らない |
-| MT-011i | Character Editor character.md 説明 | Character Editor の `character.md` タブを開く | `character.md` がキャラクター定義の正本であり、プロンプト合成に使われる説明が表示される |
+| MT-011i | Character Editor character.md 説明 | Character Editor の `システムプロンプト` タブを開く | `character.md` がキャラクター定義の正本であり、プロンプト合成に使われる説明と editor が同じカード内に表示される |
 | MT-011j | Character Editor profile overflow | Character Editor の縦を小さくして `Profile` を開く | `Theme` を含む下部要素がカード内スクロールで収まり、カード外にはみ出さない |
-| MT-011k | Character Editor preview avatar | Character Editor の縦を小さくして `Profile` を開く | preview avatar が説明文へ重ならない |
+| MT-011k | Character Editor preview fixed layout | Character Editor の縦を小さくして `Profile` を開く | top preview の avatar サイズと theme swatch 位置が変わらず、同じレイアウトを維持する |
+| MT-011l | Character Editor profile scrollbar gutter | `Profile` タブでスクロールが必要な状態と不要な状態を切り替える | スクロールバーの有無で内部レイアウト幅が揺れない |
 | MT-011a | Character Theme 編集 | Character Editor で `main / sub` color を color picker / hex / RGB 入力で変更して `Save` を押す | 保存後に再度開いても色が保持される |
 | MT-011b | Home Character Theme 反映 | theme color を設定した character を Home で確認する | character card の背景に `main`、左アクセントに `sub` が使われ、文字が読めるコントラストで表示される |
 | MT-011c | Character Editor 小ウインドウ | Character Editor を縦方向に小さくして開く | preview / form / role / action が崩れず、全体をスクロールして操作できる |
