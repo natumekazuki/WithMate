@@ -10,7 +10,6 @@
                     "id": "gpt-5.4",
                     "label": "GPT-5.4",
                     "reasoningEfforts": [
-                        "minimal",
                         "low",
                         "medium",
                         "high",
@@ -61,10 +60,8 @@
                     "id": "gpt-5.1-codex-mini",
                     "label": "GPT-5.1 Codex Mini",
                     "reasoningEfforts": [
-                        "low",
                         "medium",
-                        "high",
-                        "xhigh"
+                        "high"
                     ]
                 }
             ]
