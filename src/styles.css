@@ -2107,6 +2107,16 @@ button {
   border: 1px solid rgba(203, 213, 225, 0.12);
 }
 
+.session-page .diff-titlebar,
+.session-page .diff-subbar,
+.session-page .diff-pane-head {
+  border-bottom-color: rgba(203, 213, 225, 0.12);
+}
+
+.session-page .diff-titlebar h2 {
+  color: var(--ink);
+}
+
 .audit-log-list {
   display: grid;
   gap: 14px;
@@ -2127,6 +2137,11 @@ button {
 .session-page .audit-log-card {
   border-color: rgba(203, 213, 225, 0.12);
   background: rgba(20, 27, 40, 0.92);
+}
+
+.session-page .audit-log-head strong,
+.session-page .audit-log-operation-head strong {
+  color: var(--ink);
 }
 
 .audit-log-card.failed {
@@ -2195,6 +2210,14 @@ button {
   background: rgba(13, 17, 23, 0.92);
 }
 
+.session-page .audit-log-meta span {
+  color: var(--ink);
+}
+
+.session-page .audit-log-time {
+  color: #cbd5e1;
+}
+
 .audit-log-operations {
   display: grid;
   gap: 10px;
@@ -2224,6 +2247,11 @@ button {
 .audit-log-empty {
   margin: 0;
   color: var(--muted);
+}
+
+.session-page .audit-log-empty,
+.session-page .audit-log-raw summary {
+  color: #dbe3ee;
 }
 
 .audit-log-raw {
