@@ -126,7 +126,7 @@
 - 実施内容: Character Editor page のベース変数を Home と同じ dark tone に寄せ、preview / input / theme card / footer / 補助ボタンの白基調を dark base へ置き換えた。
 - 検証: `npm run typecheck`, `npm run build`
 - メモ: この段階ではキャラカラーを全面に使わず、まず土台だけを Home と共通化している
-- 関連コミット: 
+- 関連コミット: `d8f40bf refactor(character-editor): align base palette with home`
 
 ### 0015
 
@@ -135,7 +135,7 @@
 - 実施内容: dark base で沈んでいたヘッダー名、preview 名、`Theme` の `Main / Sub`、`character.md` 見出しの前景色を補正した。
 - 検証: `npm run typecheck`, `npm run build`
 - メモ: ベース配色変更で発生した可読性崩れだけを先に潰し、アクセント運用は次段に分離する
-- 関連コミット: 
+- 関連コミット: `d8f40bf refactor(character-editor): align base palette with home`
 
 ## Open Items
 
