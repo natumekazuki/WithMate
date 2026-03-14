@@ -539,10 +539,10 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
   });
   broadcastLiveSessionRun(sessionId);
 
-  requireAuditLogStorage().createAuditLog({
+  const runningAuditLog = requireAuditLogStorage().createAuditLog({
     sessionId,
     createdAt: new Date().toISOString(),
-    phase: "started",
+    phase: "running",
     provider: runningSession.provider,
     model: runningSession.model,
     reasoningEffort: runningSession.reasoningEffort,
@@ -571,9 +571,9 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
       broadcastLiveSessionRun(sessionId);
     });
 
-    requireAuditLogStorage().createAuditLog({
+    requireAuditLogStorage().updateAuditLog(runningAuditLog.id, {
       sessionId,
-      createdAt: new Date().toISOString(),
+      createdAt: runningAuditLog.createdAt,
       phase: "completed",
       provider: runningSession.provider,
       model: runningSession.model,
@@ -609,9 +609,9 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
     return upsertSession(completedSession);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    requireAuditLogStorage().createAuditLog({
+    requireAuditLogStorage().updateAuditLog(runningAuditLog.id, {
       sessionId,
-      createdAt: new Date().toISOString(),
+      createdAt: runningAuditLog.createdAt,
       phase: "failed",
       provider: runningSession.provider,
       model: runningSession.model,

@@ -28,7 +28,7 @@ type AuditLogRow = {
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
 function toAuditLogPhase(value: string): AuditLogPhase {
-  if (value === "started" || value === "completed" || value === "failed") {
+  if (value === "running" || value === "started" || value === "completed" || value === "failed") {
     return value;
   }
 
@@ -92,6 +92,7 @@ export class AuditLogStorage {
   private readonly db: DatabaseSync;
   private readonly listStatement: StatementSync;
   private readonly insertStatement: StatementSync;
+  private readonly updateStatement: StatementSync;
 
   constructor(dbPath: string) {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
@@ -188,6 +189,46 @@ export class AuditLogStorage {
         usage_json,
         error_message
     `);
+
+    this.updateStatement = this.db.prepare(`
+      UPDATE audit_logs
+      SET
+        phase = ?,
+        provider = ?,
+        model = ?,
+        reasoning_effort = ?,
+        approval_mode = ?,
+        thread_id = ?,
+        prompt_text = ?,
+        user_message = ?,
+        system_prompt_text = ?,
+        input_prompt_text = ?,
+        composed_prompt_text = ?,
+        assistant_text = ?,
+        operations_json = ?,
+        raw_items_json = ?,
+        usage_json = ?,
+        error_message = ?
+      WHERE id = ?
+      RETURNING
+        id,
+        session_id,
+        created_at,
+        phase,
+        provider,
+        model,
+        reasoning_effort,
+        approval_mode,
+        thread_id,
+        system_prompt_text,
+        input_prompt_text,
+        composed_prompt_text,
+        assistant_text,
+        operations_json,
+        raw_items_json,
+        usage_json,
+        error_message
+    `);
   }
 
   private ensureColumns(): void {
@@ -238,6 +279,34 @@ export class AuditLogStorage {
       input.usage ? JSON.stringify(input.usage) : "",
       input.errorMessage,
     ) as AuditLogRow;
+
+    return rowToAuditLogEntry(row);
+  }
+
+  updateAuditLog(id: number, input: CreateAuditLogInput): AuditLogEntry {
+    const row = this.updateStatement.get(
+      input.phase,
+      input.provider,
+      input.model,
+      input.reasoningEffort,
+      input.approvalMode,
+      input.threadId,
+      input.composedPromptText,
+      input.inputPromptText,
+      input.systemPromptText,
+      input.inputPromptText,
+      input.composedPromptText,
+      input.assistantText,
+      JSON.stringify(input.operations),
+      input.rawItemsJson,
+      input.usage ? JSON.stringify(input.usage) : "",
+      input.errorMessage,
+      id,
+    ) as AuditLogRow | undefined;
+
+    if (!row) {
+      throw new Error(`audit log ${id} の更新に失敗したよ。`);
+    }
 
     return rowToAuditLogEntry(row);
   }

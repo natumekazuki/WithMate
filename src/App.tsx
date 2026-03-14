@@ -568,8 +568,9 @@ export default function App() {
 
   const auditPhaseLabel = (phase: AuditLogEntry["phase"]) => {
     switch (phase) {
+      case "running":
       case "started":
-        return "START";
+        return "RUNNING";
       case "completed":
         return "DONE";
       case "failed":

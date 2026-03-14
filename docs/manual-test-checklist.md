@@ -112,10 +112,10 @@ npm run electron:start
 | MT-042 | Catalog 反映 | 既存 session を開いたまま model catalog を import する | 既存 session の model select / depth chip が active catalog の候補に更新される |
 | MT-043 | Audit Log 表示 | Session Window の `Audit Log` を押す | 監査ログ overlay が開く |
 | MT-043a | Audit Log 折りたたみ | Audit Log を開く | `Input Prompt` だけ開いた状態で始まり、他の prompt / response / operations / raw items はカテゴリ単位で閉じた状態から必要なものだけ開ける |
-| MT-044 | Audit Log 成功記録 | 1 回送信して成功させる | `START` と `DONE` の監査ログが追加される |
+| MT-044 | Audit Log 成功記録 | 1 回送信して成功させる | 1 turn につき 1 レコードだけが表示され、phase は `DONE` になる |
 | MT-045 | Audit Log 内容確認 | 成功した監査ログを開く | system prompt / input prompt / composed prompt / response / operations / usage / raw items が確認できる |
 | MT-045a | Audit Log と chat の応答一致 | 複数の `agent_message` を含む turn の監査ログを開く | `Response` は chat UI と同じ連結結果を表示し、個別の `agent_message` は `Operations` または `Raw Items` で追える |
-| MT-046 | Audit Log 失敗記録 | provider 実行が失敗する条件で送信する | `FAIL` の監査ログが追加され、error が確認できる |
+| MT-046 | Audit Log 失敗記録 | provider 実行が失敗する条件で送信する | 1 turn につき 1 レコードだけが表示され、phase は `FAIL` になり、error が確認できる |
 | MT-047 | 添付 picker | Session Window の `File` / `Folder` / `Image` を押す | 選んだ対象が attachment chip として表示される |
 | MT-047a | 添付 picker 初期位置 | session を開いて最初に `File` か `Image` を押す | picker が workspace directory を開く |
 | MT-047b | 添付 picker 再開位置 | 一度 file か image を選んだ後でもう一度 picker を開く | 最後に選んだファイルがある directory から開く |
