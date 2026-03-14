@@ -3,7 +3,7 @@ import path from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 
 import { cloneSessions, normalizeSession, type Session } from "../src/mock-data.js";
-import { DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
+import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
 
 type SessionRow = {
   id: string;
@@ -12,6 +12,7 @@ type SessionRow = {
   status: string;
   updated_at: string;
   provider: string;
+  catalog_revision: number;
   workspace_label: string;
   workspace_path: string;
   branch: string;
@@ -39,6 +40,7 @@ function rowToSession(row: SessionRow): Session | null {
     status: row.status,
     updatedAt: row.updated_at,
     provider: row.provider,
+    catalogRevision: row.catalog_revision,
     workspaceLabel: row.workspace_label,
     workspacePath: row.workspace_path,
     branch: row.branch,
@@ -80,6 +82,7 @@ export class SessionStorage {
         status TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         provider TEXT NOT NULL,
+        catalog_revision INTEGER NOT NULL DEFAULT ${DEFAULT_CATALOG_REVISION},
         workspace_label TEXT NOT NULL,
         workspace_path TEXT NOT NULL,
         branch TEXT NOT NULL,
@@ -106,6 +109,7 @@ export class SessionStorage {
         status,
         updated_at,
         provider,
+        catalog_revision,
         workspace_label,
         workspace_path,
         branch,
@@ -131,6 +135,7 @@ export class SessionStorage {
         status,
         updated_at,
         provider,
+        catalog_revision,
         workspace_label,
         workspace_path,
         branch,
@@ -156,6 +161,7 @@ export class SessionStorage {
         status,
         updated_at,
         provider,
+        catalog_revision,
         workspace_label,
         workspace_path,
         branch,
@@ -170,13 +176,14 @@ export class SessionStorage {
         messages_json,
         stream_json,
         last_active_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         task_title = excluded.task_title,
         task_summary = excluded.task_summary,
         status = excluded.status,
         updated_at = excluded.updated_at,
         provider = excluded.provider,
+        catalog_revision = excluded.catalog_revision,
         workspace_label = excluded.workspace_label,
         workspace_path = excluded.workspace_path,
         branch = excluded.branch,
@@ -215,6 +222,10 @@ export class SessionStorage {
         `ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_REASONING_EFFORT)};`,
       );
     }
+
+    if (!columns.has("catalog_revision")) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN catalog_revision INTEGER NOT NULL DEFAULT ${DEFAULT_CATALOG_REVISION};`);
+    }
   }
 
   listSessions(): Session[] {
@@ -245,6 +256,7 @@ export class SessionStorage {
       normalized.status,
       normalized.updatedAt,
       normalized.provider,
+      normalized.catalogRevision,
       normalized.workspaceLabel,
       normalized.workspacePath,
       normalized.branch,

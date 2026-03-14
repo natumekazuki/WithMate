@@ -5,24 +5,16 @@
 
 ## Goal
 
-`Work Chat` を単なる assistant/message UI ではなく、選択中キャラクターが横にいて、そのキャラが実際にしゃべっていると感じられる面へ寄せる。あわせて、`C:\Users\zgmfx\.codex\characters` 配下にある `character.png` を UI の主要な識別子として扱える構成を定義する。
+`Work Chat` を単なる assistant/message UI ではなく、選択中キャラクターが横にいて、そのキャラが実際にしゃべっていると感じられる面へ寄せる。あわせて、WithMate 管理下の `character.png` を UI の主要な識別子として扱える構成を定義する。
 
 ## Inputs
 
 ### Character Source Directory
 
-現在のキャラ定義は `C:\Users\zgmfx\.codex\characters` 配下にあり、各キャラディレクトリは以下の 3 ファイルを持つ。
+現在のキャラ定義は WithMate 専用 storage 配下にあり、各キャラディレクトリは以下のファイルを持つ。
 
 - `character.md`
-- `character-notes.md`
 - `character.png`
-
-確認済みキャラ:
-
-- `石神のぞみ`
-- `倉持めると`
-- `大空スバル`
-- `戌亥とこ`
 
 ## Problem Statement
 
@@ -36,16 +28,14 @@
 
 - チャットの主目的は coding agent としての指示・結果確認
 - ただし assistant の発話は「選択中キャラが話している」認知を強める
-- キャラ感は装飾過多ではなく、`顔 / 名前 / 吹き出し / 声色補助` の 4 要素で出す
+- キャラ感は装飾過多ではなく、`顔 / 吹き出し / 発話内容` を中心に出す
 
 ### 2. Character Image Usage
 
 キャラ画像は以下で共通利用する。
 
 - `Recent Sessions` のセッションアイコン
-- `Current Session Header` の固定キャラ表示
 - `Work Chat` の assistant message avatar
-- `Character Stream` の pinned character 表示
 - `Launch Dialog` の character choice
 
 ### 3. Chat Bubble Direction
@@ -68,8 +58,6 @@ type CharacterCatalogItem = {
   id: string;
   name: string;
   iconPath: string;
-  tone: string;
-  streamMode: string;
 };
 ```
 
@@ -94,7 +82,6 @@ type CharacterCatalogItem = {
 
 - assistant message に常時 avatar を表示する
 - avatar と吹き出しの距離を詰めて、キャラ会話感を出す
-- character name を message header に出す
 - accent message は「感情が乗った返答」として視覚差をつける
 
 ### Recent Sessions
@@ -102,19 +89,14 @@ type CharacterCatalogItem = {
 - テキストの擬似アイコンを廃止し、キャラ画像の小型サムネイルへ置き換える
 - task 情報より先に「誰の session か」を 0.5 拍で認識できる配置にする
 
-### Current Session Header
-
-- 選択中キャラの小さな portrait を固定表示する
-- coding agent としての情報量は維持しつつ、キャラ固定状態を視覚化する
-
 ### Character Stream
 
 - pinned character と chat avatar の見た目を揃える
 - 右面だけ浮いた別デザインにならないよう、共通の portrait スタイルを持たせる
-- 右面の価値は `キャラがいま何をしゃべっているか` に絞る
-- stream mode / mood badge / 説明テキストのようなメタ情報は最小限に抑える
-- API キー未設定時は、完全非表示ではなく縮退表示を第一候補とする
-- 縮退表示では、独り言機能が API 利用前提であることを明示する
+- 本来の価値は `キャラがいま何をしゃべっているか` に絞る
+- ただし Issue `#5` の current milestone では、独り言 UI の本適用を止めて縮退表示を出す
+- mood badge や説明テキストのようなメタ情報は持ち込まない
+- API キー未設定時だけでなく、pending 期間中も縮退表示を出す
 
 ### Launch Dialog
 
@@ -130,11 +112,11 @@ type CharacterCatalogItem = {
 
 ## Current Implementation Snapshot
 
-- `src/App.tsx` に `characterCatalog` を追加し、モックが使うキャラ名 / 画像パス / tone / stream mode を一元化した
-- `characterCatalog` の `iconPath` は `C:\Users\zgmfx\.codex\characters\<name>\character.png` を指す
-- `Work Chat` は assistant 側だけ avatar + character name + tone を常時表示し、キャラ会話感を強めた
-- `Recent Sessions` `Current Session Header` `Character Stream` `Launch Dialog` も同じ avatar 表現へ統一した
-- Vite dev では `/@fs/` 経由で画像を読み、`vite.config.ts` の `server.fs.allow` で `C:/Users/zgmfx/.codex/characters` を許可した
+- `src/App.tsx` に `characterCatalog` を追加し、モックが使うキャラ名 / 画像パスを一元化した
+- `characterCatalog` の `iconPath` は WithMate の character storage に保存された画像を指す
+- `Work Chat` は assistant 側だけ avatar を常時表示し、キャラ会話感を強めた
+- `Recent Sessions` `Character Stream` `Launch Dialog` も同じ avatar 表現へ統一した
+- Electron 実行時は Main Process の character storage から icon path を読み、browser preview では mock fallback を使う
 - 独り言の provider / auth / Memory 方針は `docs/design/monologue-provider-policy.md` を参照する
 
 ## Open Points
@@ -148,7 +130,7 @@ type CharacterCatalogItem = {
 MVP は以下を採用する。
 
 - 円形 avatar
-- character name label と tone label 付き assistant bubble
+- avatar 中心の assistant bubble
 - session / header / stream / launch の画像表現を共通化
 - 画像参照は catalog 層を通す
 

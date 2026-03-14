@@ -1,4 +1,11 @@
-import { DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT, type ModelReasoningEffort } from "./model-catalog.js";
+import {
+  DEFAULT_CATALOG_REVISION,
+  DEFAULT_MODEL_ID,
+  DEFAULT_PROVIDER_ID,
+  DEFAULT_REASONING_EFFORT,
+  normalizeProviderId,
+  type ModelReasoningEffort,
+} from "./model-catalog.js";
 
 export type DiffRow = {
   kind: "context" | "add" | "delete" | "modify";
@@ -69,6 +76,7 @@ export type Session = {
   status: "running" | "idle" | "saved";
   updatedAt: string;
   provider: string;
+  catalogRevision: number;
   workspaceLabel: string;
   workspacePath: string;
   branch: string;
@@ -90,6 +98,8 @@ export type DiffPreviewPayload = {
 };
 
 export type CreateSessionInput = {
+  provider?: string;
+  catalogRevision?: number;
   workspaceLabel: string;
   workspacePath: string;
   branch: string;
@@ -197,7 +207,11 @@ export function normalizeSession(value: unknown): Session | null {
         ? candidate.status
         : "idle",
     updatedAt: typeof candidate.updatedAt === "string" && candidate.updatedAt.trim() ? candidate.updatedAt : "just now",
-    provider: typeof candidate.provider === "string" && candidate.provider.trim() ? candidate.provider : "Codex",
+    provider: normalizeProviderId(candidate.provider),
+    catalogRevision:
+      typeof candidate.catalogRevision === "number" && Number.isInteger(candidate.catalogRevision) && candidate.catalogRevision > 0
+        ? candidate.catalogRevision
+        : DEFAULT_CATALOG_REVISION,
     workspaceLabel:
       typeof candidate.workspaceLabel === "string" && candidate.workspaceLabel.trim()
         ? candidate.workspaceLabel
@@ -386,7 +400,11 @@ export function buildNewSession(input: CreateSessionInput): Session {
     taskSummary: `${input.workspaceLabel} で新規セッションを開始。${input.character} のロールを保ったまま、ここから最初の指示を待つ。`,
     status: "idle",
     updatedAt: "just now",
-    provider: "Codex",
+    provider: normalizeProviderId(input.provider),
+    catalogRevision:
+      typeof input.catalogRevision === "number" && Number.isInteger(input.catalogRevision) && input.catalogRevision > 0
+        ? input.catalogRevision
+        : DEFAULT_CATALOG_REVISION,
     workspaceLabel: input.workspaceLabel,
     workspacePath: input.workspacePath,
     branch: input.branch,

@@ -13,24 +13,43 @@ import {
 } from "./mock-data.js";
 import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
 import {
-  bundledModelCatalog,
-  DEFAULT_MODEL_ID,
-  didModelSelectionFallback,
+  DEFAULT_CATALOG_REVISION,
+  getProviderCatalog,
+  parseModelCatalogDocument,
   getReasoningEffortOptionsForModel,
   resolveModelSelection,
+  type ModelCatalogProvider,
+  type ModelCatalogSnapshot,
 } from "./model-catalog.js";
 import {
   approvalModeOptions,
   CharacterAvatar,
   fileKindLabel,
+  modelDisplayLabel,
+  modelOptionLabel,
   reasoningDepthLabel,
-  resolvedModelSelectionLabel,
 } from "./mock-ui.js";
+
+async function loadBrowserModelCatalog(): Promise<ModelCatalogSnapshot | null> {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const response = await fetch("./model-catalog.json");
+  if (!response.ok) {
+    throw new Error("bundled model catalog の読み込みに失敗したよ。");
+  }
+
+  return {
+    revision: DEFAULT_CATALOG_REVISION,
+    providers: parseModelCatalogDocument(await response.json()).providers,
+  };
+}
 
 export default function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [draft, setDraft] = useState("");
-  const [modelDraft, setModelDraft] = useState(DEFAULT_MODEL_ID);
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
@@ -107,26 +126,80 @@ export default function App() {
   }, [isEditingTitle, selectedSession]);
 
   useEffect(() => {
-    if (!selectedSession) {
-      return;
+    let active = true;
+
+    if (window.withmate) {
+      void window.withmate.getModelCatalog(selectedSession?.catalogRevision ?? null).then((snapshot) => {
+        if (active) {
+          setModelCatalog(snapshot);
+        }
+      });
+
+      return window.withmate.subscribeModelCatalog((snapshot) => {
+        if (!active) {
+          return;
+        }
+
+        if (selectedSession?.catalogRevision && snapshot.revision !== selectedSession.catalogRevision) {
+          return;
+        }
+
+        if (active) {
+          setModelCatalog(snapshot);
+        }
+      });
     }
 
-    setModelDraft(selectedSession.model);
-  }, [selectedSession?.id, selectedSession?.model]);
+    void loadBrowserModelCatalog()
+      .then((snapshot) => {
+        if (active) {
+          setModelCatalog(snapshot);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setModelCatalog(null);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedSession?.catalogRevision]);
 
   const displayedMessages: Message[] = selectedSession ? selectedSession.messages : [];
-  const composerModel = modelDraft.trim() || selectedSession?.model || DEFAULT_MODEL_ID;
+  const selectedProviderCatalog = useMemo(
+    () => (modelCatalog && selectedSession ? getProviderCatalog(modelCatalog.providers, selectedSession.provider) : null),
+    [modelCatalog, selectedSession],
+  );
   const availableReasoningEfforts = useMemo(
-    () => getReasoningEffortOptionsForModel(composerModel),
-    [composerModel],
-  );
-  const resolvedSelection = useMemo(
     () =>
-      selectedSession
-        ? resolveModelSelection(selectedSession.model, selectedSession.reasoningEffort)
-        : null,
-    [selectedSession],
+      selectedProviderCatalog && selectedSession
+        ? getReasoningEffortOptionsForModel(selectedProviderCatalog, selectedSession.model)
+        : [],
+    [selectedProviderCatalog, selectedSession],
   );
+  const modelOptions = useMemo(() => {
+    if (!selectedProviderCatalog) {
+      return [];
+    }
+
+    const options = [...selectedProviderCatalog.models];
+    if (!selectedSession) {
+      return options;
+    }
+
+    const hasSelectedModel = options.some((model) => model.id === selectedSession.model);
+    if (!hasSelectedModel) {
+      options.unshift({
+        id: selectedSession.model,
+        label: selectedSession.model,
+        reasoningEfforts: availableReasoningEfforts.length > 0 ? [...availableReasoningEfforts] : [selectedSession.reasoningEffort],
+      });
+    }
+
+    return options;
+  }, [availableReasoningEfforts, selectedProviderCatalog, selectedSession]);
   const lastUserMessage = useMemo(
     () =>
       selectedSession
@@ -314,40 +387,44 @@ export default function App() {
     await persistSession(nextSession);
   };
 
-  const handleCommitModel = async () => {
-    if (!selectedSession || selectedSession.runState === "running") {
+  const handleChangeModel = async (model: string) => {
+    if (!selectedSession || !selectedProviderCatalog || !modelCatalog || selectedSession.runState === "running") {
       return;
     }
 
-    const nextModel = modelDraft.trim() || DEFAULT_MODEL_ID;
-    const nextSelection = resolveModelSelection(nextModel, selectedSession.reasoningEffort);
+    const nextSelection = resolveModelSelection(selectedProviderCatalog, model, selectedSession.reasoningEffort);
     const nextReasoningEffort = nextSelection.resolvedReasoningEffort;
 
-    setModelDraft(nextModel);
-
-    if (selectedSession.model === nextModel && selectedSession.reasoningEffort === nextReasoningEffort) {
+    if (
+      selectedSession.model === nextSelection.requestedModel &&
+      selectedSession.reasoningEffort === nextReasoningEffort &&
+      selectedSession.catalogRevision === modelCatalog.revision
+    ) {
       return;
     }
 
     await persistSession({
       ...selectedSession,
-      model: nextModel,
+      provider: selectedProviderCatalog.id,
+      catalogRevision: modelCatalog.revision,
+      model: nextSelection.requestedModel,
       reasoningEffort: nextReasoningEffort,
       updatedAt: "just now",
     });
   };
 
   const handleChangeReasoningEffort = async (reasoningEffort: Session["reasoningEffort"]) => {
-    if (!selectedSession || selectedSession.runState === "running") {
+    if (!selectedSession || !selectedProviderCatalog || !modelCatalog || selectedSession.runState === "running") {
       return;
     }
 
-    const nextModel = modelDraft.trim() || selectedSession.model || DEFAULT_MODEL_ID;
-    const nextSelection = resolveModelSelection(nextModel, reasoningEffort);
+    const nextSelection = resolveModelSelection(selectedProviderCatalog, selectedSession.model, reasoningEffort);
 
     await persistSession({
       ...selectedSession,
-      model: nextModel,
+      provider: selectedProviderCatalog.id,
+      catalogRevision: modelCatalog.revision,
+      model: selectedSession.model,
       reasoningEffort: nextSelection.resolvedReasoningEffort,
       updatedAt: "just now",
     });
@@ -372,15 +449,6 @@ export default function App() {
       event.preventDefault();
       handleCancelTitleEdit();
     }
-  };
-
-  const handleModelInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== "Enter") {
-      return;
-    }
-
-    event.preventDefault();
-    void handleCommitModel();
   };
 
   if (!selectedSession || !selectedSessionCharacter) {
@@ -579,21 +647,21 @@ export default function App() {
             <div className="composer-settings">
               <div className="composer-setting-field">
                 <span>Model</span>
-                <input
-                  list="withmate-model-catalog"
-                  value={modelDraft}
-                  onChange={(event) => setModelDraft(event.target.value)}
-                  onBlur={() => void handleCommitModel()}
-                  onKeyDown={handleModelInputKeyDown}
+                <select
+                  value={selectedSession.model}
+                  onChange={(event) => void handleChangeModel(event.target.value)}
                   disabled={selectedSession.runState === "running"}
-                />
-                <datalist id="withmate-model-catalog">
-                  {bundledModelCatalog.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.label}
-                    </option>
-                  ))}
-                </datalist>
+                >
+                  {modelOptions.length > 0 ? (
+                    modelOptions.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {modelOptionLabel(model)}
+                      </option>
+                    ))
+                  ) : (
+                    <option value={selectedSession.model}>{modelDisplayLabel(selectedProviderCatalog, selectedSession.model)}</option>
+                  )}
+                </select>
               </div>
 
               <div className="composer-setting-field">
@@ -612,10 +680,6 @@ export default function App() {
                   ))}
                 </div>
               </div>
-
-              {resolvedSelection && didModelSelectionFallback(resolvedSelection) ? (
-                <p className="composer-setting-note">{resolvedModelSelectionLabel(resolvedSelection)}</p>
-              ) : null}
             </div>
           </div>
         </section>

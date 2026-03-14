@@ -1,101 +1,145 @@
 # Model Catalog
 
 - 作成日: 2026-03-14
-- 対象: WithMate の model / reasoning depth 選択仕様
+- 更新日: 2026-03-14
+- 対象: WithMate の provider-aware model / reasoning depth catalog
 
 ## Goal
 
-WithMate で `Codex SDK` 実行時に使う model と reasoning depth を、
-アプリ組み込みの catalog を基準に選択できるようにする。
+WithMate の model catalog を SQLite で管理し、Session Window と provider adapter が同じ catalog revision を参照できるようにする。
 
-同時に、最新 model へ完全自動追従するのではなく、
-`アプリ更新で catalog を増やす` 方針と `自由入力` を両立させる。
+外部との入出力は versionless JSON で行い、アプリ内部だけ revision を持つ。
 
 ## Decision
 
-- model catalog はアプリへ組み込む
-- model 名は自由入力も許可する
-- reasoning depth は組み込み catalog で定義した候補だけを UI に出す
-- custom model では、depth の候補表示だけ default profile に寄せる
-- 実行時は adapter 側で `requested -> resolved` を解決する
+- model catalog の正本は SQLite に置く
+- catalog の import / export 形式は versionless JSON にする
+- 初回起動で active catalog が無ければ、アプリ同梱の `public/model-catalog.json` を import して seed する
+- import のたびに内部 revision を新規採番し、active revision を切り替える
+- Session は `provider / model / reasoningEffort / catalogRevision` を保持する
+- Session Window の model 設定は catalog 選択のみとし、自由入力は許可しない
 
-## Bundled Catalog
+## JSON Format
 
-現行 catalog:
+```json
+{
+  "providers": [
+    {
+      "id": "codex",
+      "label": "Codex",
+      "defaultModelId": "gpt-5.4",
+      "defaultReasoningEffort": "high",
+      "models": [
+        {
+          "id": "gpt-5.4",
+          "label": "GPT-5.4",
+          "reasoningEfforts": ["minimal", "low", "medium", "high"]
+        }
+      ]
+    }
+  ]
+}
+```
 
-| Model | Label | Depth |
-| --- | --- | --- |
-| `gpt-5.4` | `GPT-5.4` | `minimal / low / medium / high` |
-| `gpt-5.3-codex` | `GPT-5.3 Codex` | `low / medium / high / xhigh` |
-| `gpt-5.2-codex` | `GPT-5.2 Codex` | `low / medium / high / xhigh` |
+### Rules
 
-既知 alias:
+- top-level に `version` は持たない
+- `providers` は 1 件以上必須
+- provider ごとに
+  - `id`
+  - `label`
+  - `defaultModelId`
+  - `defaultReasoningEffort`
+  - `models`
+  が必須
+- `defaultModelId` はその provider の `models` に存在しなければならない
+- `defaultReasoningEffort` は `defaultModelId` の `reasoningEfforts` に含まれていなければならない
 
-- `gpt-5.1-codex-mini` -> `gpt-5.3-codex`
-- `gpt-5.1-codex-max` -> `gpt-5.2-codex`
+## Internal Storage
 
-## Defaults
+SQLite では次の 4 テーブルで保持する。
 
-- default model: `gpt-5.4`
-- default reasoning depth: `high`
+### `model_catalog_revisions`
 
-これらは session 作成時の初期値としても使う。
+- `revision INTEGER PRIMARY KEY AUTOINCREMENT`
+- `source TEXT NOT NULL`
+- `imported_at TEXT NOT NULL`
+- `is_active INTEGER NOT NULL`
+
+### `model_catalog_providers`
+
+- `revision INTEGER NOT NULL`
+- `provider_id TEXT NOT NULL`
+- `label TEXT NOT NULL`
+- `default_model_id TEXT NOT NULL`
+- `default_reasoning_effort TEXT NOT NULL`
+- `sort_order INTEGER NOT NULL`
+
+### `model_catalog_models`
+
+- `revision INTEGER NOT NULL`
+- `provider_id TEXT NOT NULL`
+- `model_id TEXT NOT NULL`
+- `label TEXT NOT NULL`
+- `reasoning_efforts_json TEXT NOT NULL`
+- `sort_order INTEGER NOT NULL`
+
+## Revision Policy
+
+- active catalog は常に 1 revision
+- import 時は既存 revision を破壊更新しない
+- 新 revision を作って `is_active = 1` に切り替える
+- Session には `catalogRevision` を保存する
+- Session Window では、その session が参照している revision を読み込んで model / depth UI を出す
+- Session 内で model / depth を変更した場合は current active revision に乗り換える
+
+## Seed Policy
+
+- app 起動時に active catalog が無ければ、`public/model-catalog.json` を import する
+- seed で作られた revision は `source = bundled`
+- ユーザー import で作られた revision は `source = imported`
 
 ## UI Policy
 
 ### Session Window
 
-- composer の textarea 下に `Model` 入力欄を置く
-- model は datalist 付き text input で選択 / 自由入力の両方を許可する
-- depth は chip で選択する
-- depth 候補は current model に対応する catalog entry から出す
-- current model が catalog 外なら default profile の depth 候補を出す
+- textarea 下に `Model` select を出す
+- 候補は current session が参照する provider catalog から出す
+- `Depth` は selected model の `reasoningEfforts` だけを chip で出す
+- current session の model が catalog から消えている場合は、互換用の 1 項目だけ一時表示する
 
 ### Home / New Session
 
-- current milestone では model / depth を launch dialog に出さない
-- 新規 session は default model / default depth で作る
-- 詳細な model 調整は Session Window 側へ寄せる
+- Home の `Settings` overlay から `Import Models` / `Export Models` を実行できる
+- file picker / save dialog は Main Process が開く
+- import 成功時は active revision を切り替える
+- current milestone では model / depth を出さない
+- new session は active catalog の provider default で作る
 
 ## Resolution Policy
 
-WithMate では user selection と actual execution setting を分けて扱う。
+adapter 実行時は session が持つ `catalogRevision` と `provider` を使って provider catalog を読む。
 
-### 1. requested
+- `requestedModel` が exact match すればその model を使う
+- model が見つからなければそのままエラーにする
+- depth が model catalog の定義に無ければそのままエラーにする
+- 実 provider 側でさらに拒否された場合も、そのまま実行エラーとして扱う
 
-- `session.model`
-- `session.reasoningEffort`
+## Import / Export Policy
 
-### 2. resolved
-
-adapter 実行前に次を解決する。
-
-- alias model は canonical model へ寄せる
-- selected depth が model 非対応なら近い深さへ落とす
-  - 例: `xhigh` が無いなら `high`
-  - さらに無ければ `medium -> low -> minimal`
-
-custom model で capability が不明な場合は、
-model 名はそのまま使い、depth も selected value をそのまま渡す。
-
-## Visibility Policy
-
-無言 fallback は避ける。
-
-- turn artifact の `runChecks` に
-  - `model`
-  - `reasoning`
-  を出す
-- fallback が起きた場合は `requested -> resolved` の形で表示する
+- export は active revision を versionless JSON に戻す
+- import は JSON を validate して新 revision として保存する
+- partial merge はしない
+- provider / model の追加・削除も revision 単位で扱う
 
 ## Non Goals
 
 - SDK / CLI から model catalog を自動取得すること
-- remote catalog を配布してアプリ外更新だけで追従すること
-- unknown custom model の capability を runtime probe すること
+- remote catalog 配信を前提にすること
+- provider ごとの capability probe を runtime で行うこと
 
 ## References
 
 - `docs/design/provider-adapter.md`
-- `docs/design/electron-session-store.md`
-- `docs/plans/20260314-session-model-controls.md`
+- `docs/design/session-persistence.md`
+- `docs/plans/20260314-model-catalog-db.md`

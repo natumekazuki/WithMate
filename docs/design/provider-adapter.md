@@ -44,9 +44,10 @@ type ProviderTurnResult = {
 2. Main Process が session store から session metadata を引く
 3. `characterId` で `CharacterProfile` を読む
 4. prompt composer が `fixed system prompt + roleMarkdown + session context + userMessage` を合成する
-5. `CodexAdapter` が `model / reasoningEffort` を解決して SDK の `thread.run()` を実行する
-6. Main Process が `threadId` と assistant message を session store に反映する
-7. Renderer は `sessions-changed` を購読して再描画する
+5. Main Process が session の `catalogRevision` と `provider` から provider catalog を解決する
+6. `CodexAdapter` が `model / reasoningEffort` を解決して SDK の `thread.run()` を実行する
+7. Main Process が `threadId` と assistant message を session store に反映する
+8. Renderer は `sessions-changed` を購読して再描画する
 
 ## Prompt Composition Constraint
 
@@ -68,6 +69,8 @@ adapter 実行に最低限必要な session 情報:
 
 - `session.id`
 - `session.workspacePath`
+- `session.catalogRevision`
+- `session.provider`
 - `session.approvalMode`
 - `session.model`
 - `session.reasoningEffort`
@@ -76,11 +79,11 @@ adapter 実行に最低限必要な session 情報:
 
 ## Model Resolution Policy
 
-- session metadata には user selection として `model` / `reasoningEffort` を保存する
-- adapter 実行時に bundled catalog を使って `requested -> resolved` を解決する
-- known alias は canonical model へ寄せる
-- selected depth が非対応なら近い深さへ落とす
-- fallback 結果は artifact の `runChecks` へ表示する
+- session metadata には user selection として `provider / model / reasoningEffort / catalogRevision` を保存する
+- adapter 実行時に session が参照している catalog revision を使って `provider / model / reasoningEffort` を検証する
+- model 自体が見つからない場合はそのままエラーにする
+- selected depth が非対応ならそのままエラーにする
+- provider 実行時に拒否された場合も、そのまま session error として扱う
 
 詳細は `docs/design/model-catalog.md` を参照する。
 
@@ -92,7 +95,7 @@ MVP では Codex SDK の `turn.items` から最小の summary を組み立てる
 - `command_execution` -> activity summary
 - `mcp_tool_call` / `web_search` / `todo_list` / `reasoning` -> activity summary
 - usage -> run checks
-- resolved model / reasoning -> run checks
+- model / reasoning -> run checks
 
 diff 本文は turn items からは直接取れないため、MVP では Main Process 側で `before / after` スナップショットを補完取得する。
 

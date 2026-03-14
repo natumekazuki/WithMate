@@ -2,9 +2,9 @@ import { useState } from "react";
 
 import type { CharacterVisual, ChangedFile, Session } from "./mock-data.js";
 import {
-  bundledModelCatalog,
   reasoningEffortLabel,
   type ModelCatalogItem,
+  type ModelCatalogProvider,
   type ModelReasoningEffort,
   type ResolvedModelSelection,
 } from "./model-catalog.js";
@@ -85,14 +85,21 @@ export function reasoningDepthLabel(reasoningEffort: ModelReasoningEffort): stri
   return reasoningEffortLabel(reasoningEffort);
 }
 
-export function modelDisplayLabel(model: string): string {
-  return bundledModelCatalog.find((entry) => entry.id === model)?.label ?? model;
+export function providerDisplayLabel(providerCatalog: ModelCatalogProvider | null): string {
+  return providerCatalog?.label ?? "Provider";
 }
 
-export function resolvedModelSelectionLabel(selection: ResolvedModelSelection): string {
+export function modelDisplayLabel(providerCatalog: ModelCatalogProvider | null, model: string): string {
+  return providerCatalog?.models.find((entry) => entry.id === model)?.label ?? model;
+}
+
+export function resolvedModelSelectionLabel(
+  providerCatalog: ModelCatalogProvider | null,
+  selection: ResolvedModelSelection,
+): string {
   const modelLabel =
     selection.requestedModel === selection.resolvedModel
-      ? modelDisplayLabel(selection.resolvedModel)
+      ? modelDisplayLabel(providerCatalog, selection.resolvedModel)
       : `${selection.requestedModel} -> ${selection.resolvedModel}`;
   const reasoningLabel =
     selection.requestedReasoningEffort === selection.resolvedReasoningEffort

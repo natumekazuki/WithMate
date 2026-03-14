@@ -5,6 +5,7 @@
 - 関連 Issue:
   - `#1 定期実行はサブスクリプションだと規約違反の可能性がある`
   - `#3 LangGraphを使ってMemoryの永続化と共有`
+  - `#5 独り言システムはペンディング`
 
 ## Goal
 
@@ -130,20 +131,18 @@ MVP では、独り言生成にフル履歴を渡さない。
 
 ## UI Policy
 
+Issue `#5` により、MVP の現段階では `Character Stream` の本適用を pending 扱いにする。
+つまり、独り言の provider / memory / trigger の土台設計は進めるが、Session UI には独り言面を出さない。
+
 ### API Key Available
 
-- `Character Stream` を有効化する
-- 独り言を表示する
+- backend / context 連携の土台実装は許容する
+- ただし UI 適用は pending とし、Session UI には表示しない
 
 ### API Key Missing
 
-- `Character Stream` は完全に消すのではなく、縮退表示を第一候補とする
-- 表示内容:
-  - API キー未設定
-  - 独り言機能は API 利用前提
-  - 有効化手順への導線
-
-これにより、WithMate の固有価値を隠しすぎずに、利用条件を明示できる。
+- current milestone では UI 自体を出さないため、個別の縮退表示は持たない
+- API キー設定 UI は独り言本実装の再開時に合わせて設計する
 
 ## Non Goals
 
@@ -157,10 +156,12 @@ MVP では、独り言生成にフル履歴を渡さない。
 ### Product Direction
 
 - `Character Stream` は WithMate の価値だが、認証とコスト管理は独立させる
+- ただし Issue `#5` により、しばらくは UI へ出さずに土台実装を優先する
 
 ### Agent Event UI
 
 - `Character Stream` は coding agent 本体の event stream ではなく、別 plane の生成物として扱う
+- current UI では独り言面そのものを表示しない
 
 ### Memory Design
 
@@ -172,4 +173,5 @@ MVP では、独り言生成にフル履歴を渡さない。
 - API キーの保存場所と暗号化方針
 - 独り言生成の契機を `送信時` にするか `ターン完了時` にするか
 - 1 ターンにつき独り言を 1 回固定にするか
-- API 未設定時の `Character Stream` を完全非表示にするか、縮退表示にするか
+- API 未設定時に独り言設定をどの画面で案内するか
+- pending 解除の条件をどこで固定するか

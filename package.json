@@ -16,7 +16,8 @@
     "electron:dev": "npm run build:electron && tsx scripts/run-electron-dev.ts",
     "electron:start": "npm run build && electron dist-electron/src-electron/main.js",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "validate:snapshot-ignore": "tsx scripts/validate-snapshot-ignore.ts"
   },
   "keywords": [],
   "author": "",
@@ -24,6 +25,7 @@
   "type": "module",
   "dependencies": {
     "@openai/codex-sdk": "^0.114.0",
+    "ignore": "^7.0.5",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "tsx": "^4.21.0",

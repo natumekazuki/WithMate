@@ -11,14 +11,26 @@ const electronBinary = path.resolve(
   process.platform === "win32" ? "electron.cmd" : "electron",
 );
 
-const child = spawn(electronBinary, ["dist-electron/src-electron/main.js"], {
-  cwd: projectRoot,
-  stdio: "inherit",
-  env: {
-    ...process.env,
-    VITE_DEV_SERVER_URL: process.env.VITE_DEV_SERVER_URL ?? "http://localhost:4173",
-  },
-});
+const electronArgs = ["dist-electron/src-electron/main.js"];
+
+const child =
+  process.platform === "win32"
+    ? spawn("cmd.exe", ["/c", electronBinary, ...electronArgs], {
+        cwd: projectRoot,
+        stdio: "inherit",
+        env: {
+          ...process.env,
+          VITE_DEV_SERVER_URL: process.env.VITE_DEV_SERVER_URL ?? "http://localhost:4173",
+        },
+      })
+    : spawn(electronBinary, electronArgs, {
+        cwd: projectRoot,
+        stdio: "inherit",
+        env: {
+          ...process.env,
+          VITE_DEV_SERVER_URL: process.env.VITE_DEV_SERVER_URL ?? "http://localhost:4173",
+        },
+      });
 
 child.on("exit", (code) => {
   process.exit(code ?? 0);

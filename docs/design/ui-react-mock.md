@@ -29,11 +29,12 @@
 
 - `brand-card` は置かない
 - `Home Window`
-  - アプリアイコンと `Add Character` / `New Session` の上部バー
+  - アプリアイコンと `Settings` / `Add Character` / `New Session` の上部バー
   - `Recent Sessions`
   - `Characters` list
   - character / session の empty state
   - `New Session` dialog
+  - `Settings` overlay
 - `Session Window`
   - 必須情報だけ残した最小構成
   - `Work Chat`
@@ -59,6 +60,7 @@
 - `Home Window`
   - `Recent Sessions`
   - `Characters` list
+  - `Settings` overlay から model catalog import / export
   - `New Session` dialog 起動
   - `Character Editor Window` を開く button
   - `Session Window` を開く button
@@ -83,6 +85,10 @@
   - 0 件なら `Add Character` だけ残した empty state を出す
 - `New Session`
   - `Browse` で選んだ workspace path と `character / approval` を最小 dialog で確認して開始する
+- `Settings`
+  - Home 上の overlay として開く
+  - model catalog import / export を置く
+  - file picker と save dialog は Main Process 側で開く
 - `Character Editor Window`
   - create / edit / delete を集中して扱う
   - metadata form と `character.md` editor を分離する
@@ -114,8 +120,8 @@
 - session title は `Session Window` の header で rename できる
 - session 削除も `Session Window` の header から行う
 - approval mode は `Session Window` のヘッダーから後で変更できる
-- model は datalist 付き input で変更できる
-- depth は bundled catalog の候補だけを chip で変更できる
+- model は session が参照している catalog revision の select で変更できる
+- depth は selected model の候補だけを chip で変更できる
 - `New Session` dialog では model / depth を出さず、default 値で session を作る
 - `interrupted` session は composer の上に最小の再送 banner を出し、直前 user message を同じ内容で送り直せる
 - assistant message にぶら下がる `Turn Summary` の内容は、その `Session Window` の turn にのみ紐づく

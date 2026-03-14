@@ -1,18 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  buildCharacterEditorUrl,
   buildNewSession,
   buildSessionUrl,
-  characterCatalog,
+  ensureBrowserMockCharacters,
   ensureBrowserMockSessions,
-  getCharacterCatalogItem,
+  saveBrowserMockCharacters,
   saveBrowserMockSessions,
+  type CharacterProfile,
   type CreateSessionInput,
   type Session,
-  type WorkspacePreset,
-  workspacePresets,
 } from "./mock-data.js";
-import { CharacterAvatar, statusLabel } from "./mock-ui.js";
+import { approvalModeOptions, CharacterAvatar, sessionStateClassName, sessionStateLabel } from "./mock-ui.js";
+
+type LaunchWorkspace = {
+  label: string;
+  path: string;
+  branch: string;
+};
 
 async function openSessionWindow(sessionId: string) {
   if (window.withmate) {
@@ -28,6 +34,20 @@ async function openSessionWindow(sessionId: string) {
   }
 }
 
+async function openCharacterEditor(characterId?: string | null) {
+  if (window.withmate) {
+    await window.withmate.openCharacterEditor(characterId);
+    return;
+  }
+
+  const url = buildCharacterEditorUrl(characterId);
+  const opened = window.open(url, "_blank", "popup,width=980,height=840");
+
+  if (!opened) {
+    window.location.href = url;
+  }
+}
+
 async function listSessionsForRenderer(): Promise<Session[]> {
   if (window.withmate) {
     return window.withmate.listSessions();
@@ -36,25 +56,34 @@ async function listSessionsForRenderer(): Promise<Session[]> {
   return ensureBrowserMockSessions();
 }
 
-function inferWorkspaceFromPath(selectedPath: string): WorkspacePreset {
+async function listCharactersForRenderer(): Promise<CharacterProfile[]> {
+  if (window.withmate) {
+    return window.withmate.listCharacters();
+  }
+
+  return ensureBrowserMockCharacters();
+}
+
+function inferWorkspaceFromPath(selectedPath: string): LaunchWorkspace {
   const normalized = selectedPath.replace(/[\\/]+$/, "");
   const segments = normalized.split(/[/\\]/).filter(Boolean);
   const label = segments.at(-1) ?? normalized;
 
   return {
-    id: `custom-${label.toLowerCase()}-${Date.now()}`,
     label,
     path: selectedPath,
-    hint: "Browse で選択したカスタム workspace",
     branch: "main",
   };
 }
 
 export default function HomeApp() {
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [characters, setCharacters] = useState<CharacterProfile[]>([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsFeedback, setSettingsFeedback] = useState("");
   const [launchOpen, setLaunchOpen] = useState(false);
-  const [launchWorkspace, setLaunchWorkspace] = useState<WorkspacePreset | null>(null);
-  const [launchCharacter, setLaunchCharacter] = useState(characterCatalog[0].name);
+  const [launchWorkspace, setLaunchWorkspace] = useState<LaunchWorkspace | null>(null);
+  const [launchCharacterId, setLaunchCharacterId] = useState<string>("");
   const [launchApproval, setLaunchApproval] = useState("on-request");
 
   useEffect(() => {
@@ -66,17 +95,54 @@ export default function HomeApp() {
       }
     });
 
+    void listCharactersForRenderer().then((nextCharacters) => {
+      if (active) {
+        setCharacters(nextCharacters);
+        setLaunchCharacterId((current) => current || nextCharacters[0]?.id || "");
+      }
+    });
+
+    const unsubs: Array<() => void> = [];
+
     if (window.withmate) {
-      return window.withmate.subscribeSessions((nextSessions) => {
-        if (active) {
-          setSessions(nextSessions);
+      unsubs.push(
+        window.withmate.subscribeSessions((nextSessions) => {
+          if (active) {
+            setSessions(nextSessions);
+          }
+        }),
+      );
+      unsubs.push(
+        window.withmate.subscribeCharacters((nextCharacters) => {
+          if (!active) {
+            return;
+          }
+
+          setCharacters(nextCharacters);
+          if (!nextCharacters.find((character) => character.id === launchCharacterId)) {
+            setLaunchCharacterId(nextCharacters[0]?.id ?? "");
+          }
+        }),
+      );
+
+      return () => {
+        active = false;
+        for (const unsub of unsubs) {
+          unsub();
         }
-      });
+      };
     }
 
     const handleStorage = () => {
-      if (active) {
-        setSessions(ensureBrowserMockSessions());
+      if (!active) {
+        return;
+      }
+
+      setSessions(ensureBrowserMockSessions());
+      const nextCharacters = ensureBrowserMockCharacters();
+      setCharacters(nextCharacters);
+      if (!nextCharacters.find((character) => character.id === launchCharacterId)) {
+        setLaunchCharacterId(nextCharacters[0]?.id ?? "");
       }
     };
 
@@ -85,27 +151,35 @@ export default function HomeApp() {
       active = false;
       window.removeEventListener("storage", handleStorage);
     };
-  }, []);
+  }, [launchCharacterId]);
 
   const selectedCharacter = useMemo(
-    () => getCharacterCatalogItem(launchCharacter),
-    [launchCharacter],
+    () => characters.find((character) => character.id === launchCharacterId) ?? characters[0] ?? null,
+    [characters, launchCharacterId],
+  );
+
+  const runningSessions = useMemo(
+    () => sessions.filter((session) => session.status === "running" || session.runState === "running"),
+    [sessions],
+  );
+  const interruptedSessions = useMemo(
+    () => sessions.filter((session) => session.runState === "interrupted"),
+    [sessions],
+  );
+
+  const idleSessions = useMemo(
+    () => sessions.filter((session) => session.status !== "running" && session.runState !== "running" && session.runState !== "interrupted"),
+    [sessions],
   );
 
   const handleBrowseWorkspace = async () => {
     if (!window.withmate) {
-      if (workspacePresets.length === 0) {
+      const enteredPath = window.prompt("workspace のパスを入力してね", launchWorkspace?.path ?? "");
+      if (!enteredPath?.trim()) {
         return;
       }
 
-      if (!launchWorkspace) {
-        setLaunchWorkspace(workspacePresets[0]);
-        return;
-      }
-
-      const currentIndex = workspacePresets.findIndex((workspace) => workspace.id === launchWorkspace.id);
-      const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % workspacePresets.length;
-      setLaunchWorkspace(workspacePresets[nextIndex]);
+      setLaunchWorkspace(inferWorkspaceFromPath(enteredPath.trim()));
       return;
     }
 
@@ -118,7 +192,7 @@ export default function HomeApp() {
   };
 
   const handleStartSession = async () => {
-    if (!launchWorkspace) {
+    if (!launchWorkspace || !selectedCharacter) {
       return;
     }
 
@@ -126,7 +200,9 @@ export default function HomeApp() {
       workspaceLabel: launchWorkspace.label,
       workspacePath: launchWorkspace.path,
       branch: launchWorkspace.branch,
+      characterId: selectedCharacter.id,
       character: selectedCharacter.name,
+      characterIconPath: selectedCharacter.iconPath,
       approvalMode: launchApproval,
     };
 
@@ -144,110 +220,158 @@ export default function HomeApp() {
     await openSessionWindow(createdSession.id);
   };
 
+  const handleImportModelCatalog = async () => {
+    if (!window.withmate) {
+      return;
+    }
+
+    try {
+      const snapshot = await window.withmate.importModelCatalogFile();
+      if (!snapshot) {
+        return;
+      }
+
+      setSettingsFeedback(`model catalog を revision ${snapshot.revision} として読み込んだよ。`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSettingsFeedback(`model catalog の読み込みに失敗したよ。${message}`);
+    }
+  };
+
+  const handleExportModelCatalog = async () => {
+    if (!window.withmate) {
+      return;
+    }
+
+    try {
+      const savedPath = await window.withmate.exportModelCatalogFile();
+      if (!savedPath) {
+        return;
+      }
+
+      setSettingsFeedback(`model catalog を保存したよ。${savedPath}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSettingsFeedback(`model catalog の保存に失敗したよ。${message}`);
+    }
+  };
+
+  const handleOpenSettings = () => {
+    setSettingsFeedback("");
+    setSettingsOpen(true);
+  };
+
   return (
     <div className="page-shell home-page">
-      <header className="panel app-badge rise-1">
+      <header className="panel home-toolbar rise-1">
         <div className="app-icon" aria-hidden="true">
           WM
         </div>
-        <div className="app-brand-copy">
-          <p className="kicker">Home Window</p>
-          <h1>WithMate Session Manager</h1>
-          <p>session と character を管理して、ここから Session Window を起動する。</p>
+        <div className="home-toolbar-actions">
+          <button className="launch-toggle" type="button" onClick={handleOpenSettings}>
+            Settings
+          </button>
+          <button className="launch-toggle" type="button" onClick={() => void openCharacterEditor()}>
+            Add Character
+          </button>
+          <button className="launch-toggle" type="button" onClick={() => setLaunchOpen(true)}>
+            New Session
+          </button>
         </div>
-        <button className="launch-toggle" type="button" onClick={() => setLaunchOpen(true)}>
-          New Session
-        </button>
       </header>
 
-      <main className="home-layout">
-        <section className="panel home-status-card rise-2">
-          <div className="panel-head compact-head">
-            <div>
-              <p className="kicker">Mock Status</p>
-              <h2>Window Routing</h2>
+      <main className="home-layout home-layout-manage">
+        <section className="panel sessions-panel rise-2">
+          {runningSessions.length > 0 ? (
+            <div className="running-session-strip">
+              {runningSessions.map((session) => (
+                <button
+                  key={`running-${session.id}`}
+                  className="running-session-chip"
+                  type="button"
+                  onClick={() => void openSessionWindow(session.id)}
+                >
+                  <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
+                  <span className={`session-status ${sessionStateClassName(session)}`}>{sessionStateLabel(session)}</span>
+                  <span>{session.taskTitle}</span>
+                </button>
+              ))}
             </div>
-            <span className="pill">{sessions.length}</span>
-          </div>
+          ) : null}
 
-          <div className="window-chip-list">
-            <article className="window-chip active">
-              <span>home entry</span>
-              <strong>/index.html</strong>
-            </article>
-            <article className="window-chip">
-              <span>session entry</span>
-              <strong>/session.html?sessionId=...</strong>
-            </article>
-          </div>
-        </section>
-
-        <section className="panel sessions-panel rise-3">
-          <div className="panel-head compact-head">
-            <div>
-              <p className="kicker">Resume Picker</p>
-              <h2>Recent Sessions</h2>
+          {interruptedSessions.length > 0 ? (
+            <div className="running-session-strip interrupted">
+              {interruptedSessions.map((session) => (
+                <button
+                  key={`interrupted-${session.id}`}
+                  className="running-session-chip interrupted"
+                  type="button"
+                  onClick={() => void openSessionWindow(session.id)}
+                >
+                  <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
+                  <span className={`session-status ${sessionStateClassName(session)}`}>{sessionStateLabel(session)}</span>
+                  <span>{session.taskTitle}</span>
+                </button>
+              ))}
             </div>
-            <span className="pill">{sessions.length}</span>
-          </div>
+          ) : null}
 
           <div className="session-list">
-            {sessions.map((session) => {
-              const sessionCharacter = getCharacterCatalogItem(session.character);
-
-              return (
+            {sessions.length > 0 ? (
+              (runningSessions.length > 0 || interruptedSessions.length > 0 ? idleSessions : sessions).map((session) => (
                 <button
                   key={session.id}
                   className="session-card"
                   type="button"
                   onClick={() => void openSessionWindow(session.id)}
                 >
-                  <CharacterAvatar character={sessionCharacter} size="small" className="session-avatar" />
+                  <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="small" className="session-avatar" />
                   <div className="session-main">
                     <div className="session-card-head">
                       <h3>{session.taskTitle}</h3>
-                      <span className={`session-status ${session.status}`}>{statusLabel(session.status)}</span>
+                      <span className={`session-status ${sessionStateClassName(session)}`}>{sessionStateLabel(session)}</span>
                     </div>
 
                     <div className="session-meta-row">
                       <span>{session.workspaceLabel}</span>
-                      <span>{session.provider}</span>
                       <span>{session.updatedAt}</span>
                     </div>
 
                     <p className="session-card-summary">{session.taskSummary}</p>
-
-                    <div className="session-character-row">
-                      <span>{session.character}</span>
-                      <span>{session.threadLabel}</span>
-                    </div>
                   </div>
                 </button>
-              );
-            })}
+              ))
+            ) : (
+              <article className="empty-list-card">
+                <p>まだセッションはないよ。</p>
+              </article>
+            )}
           </div>
         </section>
 
-        <section className="panel catalog-panel rise-4">
-          <div className="panel-head compact-head">
-            <div>
-              <p className="kicker">Character Catalog</p>
-              <h2>Loaded Characters</h2>
-            </div>
-            <span className="pill">{characterCatalog.length}</span>
-          </div>
-
-          <div className="catalog-grid">
-            {characterCatalog.map((character) => (
-              <article key={character.id} className="catalog-card">
-                <CharacterAvatar character={character} size="small" className="catalog-avatar" />
-                <div className="catalog-copy">
-                  <strong>{character.name}</strong>
-                  <p>{character.tone}</p>
-                  <span className="tag">{character.streamMode}</span>
-                </div>
+        <section className="panel characters-panel rise-3">
+          <div className="character-list">
+            {characters.length > 0 ? (
+              characters.map((character) => (
+                <article key={character.id} className="character-card">
+                  <CharacterAvatar character={character} size="small" className="character-card-avatar" />
+                  <div className="character-card-copy">
+                    <strong>{character.name}</strong>
+                    <p>{character.description}</p>
+                  </div>
+                  <button className="character-edit-button" type="button" onClick={() => void openCharacterEditor(character.id)}>
+                    Edit
+                  </button>
+                </article>
+              ))
+            ) : (
+              <article className="empty-list-card">
+                <p>まだキャラはないよ。</p>
+                <button className="launch-toggle" type="button" onClick={() => void openCharacterEditor()}>
+                  Add Character
+                </button>
               </article>
-            ))}
+            )}
           </div>
         </section>
       </main>
@@ -255,141 +379,99 @@ export default function HomeApp() {
       {launchOpen ? (
         <div className="launch-modal" role="dialog" aria-modal="true" onClick={() => setLaunchOpen(false)}>
           <section className="launch-dialog panel" onClick={(event) => event.stopPropagation()}>
-            <div className="launch-dialog-head">
-              <div>
-                <p className="kicker">New Session</p>
-                <h2>Launch Panel</h2>
-              </div>
+            <div className="launch-dialog-head minimal">
               <button className="diff-close" type="button" onClick={() => setLaunchOpen(false)}>
                 Close
               </button>
             </div>
 
-            <div className="launch-panel">
-              <section className="launch-section workspace-picker">
-                <div className="section-head">
-                  <div>
-                    <p className="kicker">Workspace Picker</p>
-                    <h3>{launchWorkspace ? launchWorkspace.label : "workspace を選ぶ"}</h3>
-                  </div>
+            <div className="launch-panel minimal">
+              <section className="launch-section workspace-picker minimal">
+                <div className="section-head compact-actions">
                   <button className="browse-button" type="button" onClick={() => void handleBrowseWorkspace()}>
                     Browse
                   </button>
                 </div>
 
-                <p className="launch-path">
-                  {launchWorkspace ? launchWorkspace.path : "作業ディレクトリがまだ選ばれてない。Browse か下の候補から選ぶ。"}
+                <p className={`launch-path${launchWorkspace ? " selected" : ""}`}>
+                  {launchWorkspace ? launchWorkspace.path : "workspace を選ぶ"}
                 </p>
-
-                <div className="workspace-chip-list">
-                  {workspacePresets.map((workspace) => (
-                    <button
-                      key={workspace.id}
-                      className={`workspace-chip${workspace.id === launchWorkspace?.id ? " active" : ""}`}
-                      type="button"
-                      onClick={() => setLaunchWorkspace(workspace)}
-                    >
-                      <strong>{workspace.label}</strong>
-                      <span>{workspace.hint}</span>
-                    </button>
-                  ))}
-                </div>
               </section>
 
-              <section className="launch-section profile-panel">
-                <div className="section-head">
-                  <div>
-                    <p className="kicker">Launch Profile</p>
-                    <h3>起動条件</h3>
-                  </div>
-                  <span className="pill">Codex</span>
-                </div>
-
-                <div className="profile-row">
-                  <span className="profile-label">Character</span>
+              <section className="launch-section profile-panel minimal">
+                {characters.length > 0 ? (
                   <div className="choice-card-list">
-                    {characterCatalog.map((character) => (
+                    {characters.map((character) => (
                       <button
                         key={character.id}
-                        className={`choice-card${character.name === launchCharacter ? " active" : ""}`}
+                        className={`choice-card${character.id === selectedCharacter?.id ? " active" : ""}`}
                         type="button"
-                        onClick={() => setLaunchCharacter(character.name)}
+                        onClick={() => setLaunchCharacterId(character.id)}
                       >
                         <CharacterAvatar character={character} size="small" className="choice-avatar" />
                         <div className="choice-card-copy">
                           <strong>{character.name}</strong>
-                          <span>{character.tone}</span>
+                          <span>{character.description || "キャラクターを選ぶ"}</span>
                         </div>
                       </button>
                     ))}
                   </div>
-                </div>
-
-                <div className="profile-row">
-                  <span className="profile-label">Approval</span>
-                  <div className="choice-list">
-                    {[
-                      { id: "on-request", label: "on-request" },
-                      { id: "never", label: "never" },
-                      { id: "untrusted", label: "untrusted" },
-                    ].map((approval) => (
-                      <button
-                        key={approval.id}
-                        className={`choice-chip${approval.id === launchApproval ? " active" : ""}`}
-                        type="button"
-                        onClick={() => setLaunchApproval(approval.id)}
-                      >
-                        {approval.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="profile-grid">
-                  <article>
-                    <span className="profile-label">Tone</span>
-                    <strong>{selectedCharacter.tone}</strong>
+                ) : (
+                  <article className="empty-list-card compact">
+                    <p>セッションを始める前にキャラを作ってね。</p>
+                    <button className="launch-toggle" type="button" onClick={() => void openCharacterEditor()}>
+                      Add Character
+                    </button>
                   </article>
-                  <article>
-                    <span className="profile-label">Stream</span>
-                    <strong>{selectedCharacter.streamMode}</strong>
-                  </article>
+                )}
+
+                <div className="choice-list">
+                  {approvalModeOptions.map((approval) => (
+                    <button
+                      key={approval.id}
+                      className={`choice-chip${approval.id === launchApproval ? " active" : ""}`}
+                      type="button"
+                      onClick={() => setLaunchApproval(approval.id)}
+                    >
+                      {approval.label}
+                    </button>
+                  ))}
                 </div>
               </section>
+            </div>
 
-              <section className="launch-section launch-summary">
-                <div className="section-head">
-                  <div>
-                    <p className="kicker">Launch Summary</p>
-                    <h3>この条件で開始</h3>
-                  </div>
-                  <span className={`launch-state${launchWorkspace ? " ready" : ""}`}>
-                    {launchWorkspace ? "Ready" : "Workspace Required"}
-                  </span>
+            <div className="launch-dialog-foot minimal">
+              <button className="start-session-button" type="button" disabled={!launchWorkspace || !selectedCharacter} onClick={() => void handleStartSession()}>
+                Start New Session
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {settingsOpen ? (
+        <div className="launch-modal settings-modal" role="dialog" aria-modal="true" onClick={() => setSettingsOpen(false)}>
+          <section className="launch-dialog settings-dialog panel" onClick={(event) => event.stopPropagation()}>
+            <div className="launch-dialog-head minimal">
+              <button className="diff-close" type="button" onClick={() => setSettingsOpen(false)}>
+                Close
+              </button>
+            </div>
+
+            <div className="settings-panel">
+              <section className="settings-section">
+                <div className="settings-actions">
+                  <button className="launch-toggle" type="button" disabled={!window.withmate} onClick={() => void handleImportModelCatalog()}>
+                    Import Models
+                  </button>
+                  <button className="launch-toggle" type="button" disabled={!window.withmate} onClick={() => void handleExportModelCatalog()}>
+                    Export Models
+                  </button>
                 </div>
 
-                <div className="summary-grid">
-                  <article>
-                    <span className="profile-label">Workspace</span>
-                    <strong>{launchWorkspace ? launchWorkspace.label : "未選択"}</strong>
-                  </article>
-                  <article>
-                    <span className="profile-label">Character</span>
-                    <strong>{selectedCharacter.name}</strong>
-                  </article>
-                  <article>
-                    <span className="profile-label">Provider</span>
-                    <strong>Codex</strong>
-                  </article>
-                  <article>
-                    <span className="profile-label">Approval</span>
-                    <strong>{launchApproval}</strong>
-                  </article>
-                </div>
+                {window.withmate ? null : <p className="settings-note">Electron で開くと使えるよ。</p>}
 
-                <button className="start-session-button" type="button" disabled={!launchWorkspace} onClick={() => void handleStartSession()}>
-                  Start New Session
-                </button>
+                {settingsFeedback ? <p className="settings-feedback">{settingsFeedback}</p> : null}
               </section>
             </div>
           </section>

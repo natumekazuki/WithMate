@@ -36,6 +36,7 @@ WithMate では、永続化対象を 3 層に分ける。
 - task title
 - workspace path
 - provider
+- catalog revision
 - character id
 - model
 - reasoning depth
@@ -56,6 +57,8 @@ WithMate では、永続化対象を 3 層に分ける。
 
 - codex thread id
 - approval mode
+- selected provider
+- selected catalog revision
 - selected model
 - selected reasoning depth
 - run state の最後の確定値

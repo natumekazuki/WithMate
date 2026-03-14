@@ -5,9 +5,9 @@ import { Codex, type Thread, type ThreadItem, type Usage } from "@openai/codex-s
 
 import type { ChangedFile, CharacterProfile, DiffRow, MessageArtifact, RunCheck, Session } from "../src/mock-data.js";
 import {
-  didModelSelectionFallback,
   reasoningEffortLabel,
   resolveModelSelection,
+  type ModelCatalogProvider,
   type ModelReasoningEffort,
   type ResolvedModelSelection,
 } from "../src/model-catalog.js";
@@ -16,6 +16,7 @@ import { captureWorkspaceSnapshot, DEFAULT_SNAPSHOT_MAX_FILE_BYTES, type Workspa
 type RunSessionTurnInput = {
   session: Session;
   character: CharacterProfile;
+  providerCatalog: ModelCatalogProvider;
   userMessage: string;
 };
 
@@ -353,25 +354,14 @@ function toRunChecks(
   session: Session,
   usage: Usage | null,
   threadId: string | null,
+  providerCatalog: ModelCatalogProvider,
   selection: ResolvedModelSelection,
 ): RunCheck[] {
   const checks: RunCheck[] = [
-    { label: "provider", value: "Codex SDK" },
+    { label: "provider", value: providerCatalog.label },
     { label: "approval", value: session.approvalMode },
-    {
-      label: "model",
-      value:
-        selection.requestedModel === selection.resolvedModel
-          ? selection.resolvedModel
-          : `${selection.requestedModel} -> ${selection.resolvedModel}`,
-    },
-    {
-      label: "reasoning",
-      value:
-        selection.requestedReasoningEffort === selection.resolvedReasoningEffort
-          ? reasoningEffortLabel(selection.resolvedReasoningEffort)
-          : `${reasoningEffortLabel(selection.requestedReasoningEffort)} -> ${reasoningEffortLabel(selection.resolvedReasoningEffort)}`,
-    },
+    { label: "model", value: selection.resolvedModel },
+    { label: "reasoning", value: reasoningEffortLabel(selection.resolvedReasoningEffort) },
   ];
 
   if (threadId) {
@@ -391,18 +381,15 @@ async function buildArtifact(
   usage: Usage | null,
   threadId: string | null,
   snapshot: WorkspaceSnapshot,
+  providerCatalog: ModelCatalogProvider,
   selection: ResolvedModelSelection,
 ): Promise<MessageArtifact | undefined> {
   const changedFiles = await toChangedFiles(session, items, snapshot);
   const activitySummary = toActivitySummary(items);
-  const runChecks = toRunChecks(session, usage, threadId, selection);
+  const runChecks = toRunChecks(session, usage, threadId, providerCatalog, selection);
 
   if (changedFiles.length === 0 && activitySummary.length === 0 && runChecks.length === 0) {
     return undefined;
-  }
-
-  if (didModelSelectionFallback(selection)) {
-    activitySummary.unshift("選択した model / depth は互換設定に寄せて実行した");
   }
 
   return {
@@ -436,7 +423,7 @@ export class CodexAdapter {
   private readonly codex = new Codex();
   private readonly threads = new Map<string, { thread: Thread; settingsKey: string }>();
 
-  private buildThreadSettings(session: Session): {
+  private buildThreadSettings(session: Session, providerCatalog: ModelCatalogProvider): {
     options: {
       workingDirectory: string;
       skipGitRepoCheck: true;
@@ -448,7 +435,7 @@ export class CodexAdapter {
     selection: ResolvedModelSelection;
     settingsKey: string;
   } {
-    const selection = resolveModelSelection(session.model, session.reasoningEffort);
+    const selection = resolveModelSelection(providerCatalog, session.model, session.reasoningEffort);
     const options = {
       workingDirectory: session.workspacePath,
       skipGitRepoCheck: true as const,
@@ -470,8 +457,8 @@ export class CodexAdapter {
     };
   }
 
-  private getThread(session: Session): { thread: Thread; selection: ResolvedModelSelection } {
-    const nextSettings = this.buildThreadSettings(session);
+  private getThread(session: Session, providerCatalog: ModelCatalogProvider): { thread: Thread; selection: ResolvedModelSelection } {
+    const nextSettings = this.buildThreadSettings(session, providerCatalog);
     const cached = this.threads.get(session.id);
     if (cached && cached.settingsKey === nextSettings.settingsKey) {
       return {
@@ -495,10 +482,18 @@ export class CodexAdapter {
   }
 
   async runSessionTurn(input: RunSessionTurnInput): Promise<RunSessionTurnResult> {
-    const { thread, selection } = this.getThread(input.session);
+    const { thread, selection } = this.getThread(input.session, input.providerCatalog);
     const { snapshot } = await captureWorkspaceSnapshot(input.session.workspacePath);
     const turn = await thread.run(composePrompt(input));
-    const artifact = await buildArtifact(input.session, turn.items, turn.usage, thread.id, snapshot, selection);
+    const artifact = await buildArtifact(
+      input.session,
+      turn.items,
+      turn.usage,
+      thread.id,
+      snapshot,
+      input.providerCatalog,
+      selection,
+    );
 
     return {
       threadId: thread.id,
