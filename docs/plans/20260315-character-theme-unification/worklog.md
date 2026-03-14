@@ -153,7 +153,7 @@
 - 実施内容: Session page のベース変数を Home と同じ dark tone に寄せ、header / message / composer / artifact など白基調の UI を dark base へ置き換えた。あわせて、タイトル、approval 選択中、artifact の file path、Audit Log のラベルと本文など、dark base で沈んでいた前景色を Session 専用の `ink / muted / session-main-contrast` へ振り直した。
 - 検証: `npm run typecheck`, `npm run build`
 - メモ: キャラカラー由来の accent はまだ薄く残しているが、今回の主眼は Session 全体の土台色と可読性を揃えること
-- 関連コミット: 
+- 関連コミット: `959d284 fix(session-ui): reset session tones to neutral`
 
 ### 0018
 
@@ -162,7 +162,7 @@
 - 実施内容: Session Window から character theme 由来の動的色反映を外し、固定 accent も使わない neutral 表現へ戻した。`buildSessionThemeStyle()` と root style 注入を削除し、bubble / action / file kind を無彩色の面と境界線だけで見せる形に整理した。
 - 検証: `npm run typecheck`, `npm run build`
 - メモ: character color は Home card と Character Editor のアクセントに限定し、Session は app 共通の dark base + neutral tone を維持する
-- 関連コミット: 
+- 関連コミット: `959d284 fix(session-ui): reset session tones to neutral`
 
 ## Open Items
 
