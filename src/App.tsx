@@ -958,65 +958,95 @@ export default function App() {
                       <span>{entry.approvalMode}</span>
                     </div>
 
-                    <section className="audit-log-section">
-                      <strong>System Prompt</strong>
-                      <pre>{entry.systemPromptText || "-"}</pre>
-                    </section>
+                    <details className="audit-log-fold">
+                      <summary>
+                        <strong>System Prompt</strong>
+                      </summary>
+                      <section className="audit-log-section">
+                        <pre>{entry.systemPromptText || "-"}</pre>
+                      </section>
+                    </details>
 
-                    <section className="audit-log-section">
-                      <strong>Input Prompt</strong>
-                      <pre>{entry.inputPromptText || "-"}</pre>
-                    </section>
+                    <details className="audit-log-fold" open>
+                      <summary>
+                        <strong>Input Prompt</strong>
+                      </summary>
+                      <section className="audit-log-section">
+                        <pre>{entry.inputPromptText || "-"}</pre>
+                      </section>
+                    </details>
 
-                    <section className="audit-log-section">
-                      <strong>Composed Prompt</strong>
-                      <pre>{entry.composedPromptText || "-"}</pre>
-                    </section>
+                    <details className="audit-log-fold">
+                      <summary>
+                        <strong>Composed Prompt</strong>
+                      </summary>
+                      <section className="audit-log-section">
+                        <pre>{entry.composedPromptText || "-"}</pre>
+                      </section>
+                    </details>
 
-                    <section className="audit-log-section">
-                      <strong>Response</strong>
-                      <pre>{entry.assistantText || "-"}</pre>
-                    </section>
+                    <details className="audit-log-fold">
+                      <summary>
+                        <strong>Response</strong>
+                      </summary>
+                      <section className="audit-log-section">
+                        <pre>{entry.assistantText || "-"}</pre>
+                      </section>
+                    </details>
 
-                    <section className="audit-log-section">
-                      <strong>Operations</strong>
-                      {entry.operations.length > 0 ? (
-                        <ul className="audit-log-operations">
-                          {entry.operations.map((operation, index) => (
-                            <li key={`${entry.id}-${operation.type}-${index}`}>
-                              <div className="audit-log-operation-head">
-                                <span>{operation.type}</span>
-                                <strong>{operation.summary}</strong>
-                              </div>
-                              {operation.details ? <pre>{operation.details}</pre> : null}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="audit-log-empty">記録された操作はまだないよ。</p>
-                      )}
-                    </section>
+                    <details className="audit-log-fold">
+                      <summary>
+                        <strong>Operations</strong>
+                      </summary>
+                      <section className="audit-log-section">
+                        {entry.operations.length > 0 ? (
+                          <ul className="audit-log-operations">
+                            {entry.operations.map((operation, index) => (
+                              <li key={`${entry.id}-${operation.type}-${index}`}>
+                                <div className="audit-log-operation-head">
+                                  <span>{operation.type}</span>
+                                  <strong>{operation.summary}</strong>
+                                </div>
+                                {operation.details ? <pre>{operation.details}</pre> : null}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="audit-log-empty">記録された操作はまだないよ。</p>
+                        )}
+                      </section>
+                    </details>
 
                     {entry.usage ? (
-                      <section className="audit-log-section compact">
-                        <strong>Usage</strong>
-                        <div className="audit-log-meta">
-                          <span>input {entry.usage.inputTokens}</span>
-                          <span>cached {entry.usage.cachedInputTokens}</span>
-                          <span>output {entry.usage.outputTokens}</span>
-                        </div>
-                      </section>
+                      <details className="audit-log-fold compact">
+                        <summary>
+                          <strong>Usage</strong>
+                        </summary>
+                        <section className="audit-log-section compact">
+                          <div className="audit-log-meta">
+                            <span>input {entry.usage.inputTokens}</span>
+                            <span>cached {entry.usage.cachedInputTokens}</span>
+                            <span>output {entry.usage.outputTokens}</span>
+                          </div>
+                        </section>
+                      </details>
                     ) : null}
 
                     {entry.errorMessage ? (
-                      <section className="audit-log-section compact">
-                        <strong>Error</strong>
-                        <pre>{entry.errorMessage}</pre>
-                      </section>
+                      <details className="audit-log-fold compact">
+                        <summary>
+                          <strong>Error</strong>
+                        </summary>
+                        <section className="audit-log-section compact">
+                          <pre>{entry.errorMessage}</pre>
+                        </section>
+                      </details>
                     ) : null}
 
-                    <details className="audit-log-raw">
-                      <summary>Raw Items</summary>
+                    <details className="audit-log-fold audit-log-raw">
+                      <summary>
+                        <strong>Raw Items</strong>
+                      </summary>
                       <pre>{entry.rawItemsJson}</pre>
                     </details>
                   </article>

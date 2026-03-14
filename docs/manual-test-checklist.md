@@ -109,6 +109,7 @@ npm run electron:start
 | MT-041 | Catalog 反映 | model catalog を import 後に新規 session を作る | active catalog の default model / depth が session に反映される |
 | MT-042 | Catalog 反映 | 既存 session を開いたまま model catalog を import する | 既存 session の model select / depth chip が active catalog の候補に更新される |
 | MT-043 | Audit Log 表示 | Session Window の `Audit Log` を押す | 監査ログ overlay が開く |
+| MT-043a | Audit Log 折りたたみ | Audit Log を開く | `Input Prompt` だけ開いた状態で始まり、他の prompt / response / operations / raw items はカテゴリ単位で閉じた状態から必要なものだけ開ける |
 | MT-044 | Audit Log 成功記録 | 1 回送信して成功させる | `START` と `DONE` の監査ログが追加される |
 | MT-045 | Audit Log 内容確認 | 成功した監査ログを開く | system prompt / input prompt / composed prompt / response / operations / usage / raw items が確認できる |
 | MT-046 | Audit Log 失敗記録 | provider 実行が失敗する条件で送信する | `FAIL` の監査ログが追加され、error が確認できる |

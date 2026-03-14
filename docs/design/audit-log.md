@@ -109,6 +109,9 @@ overlay では 1 entry ごとに次を表示する。
 - error
 - raw items
 
+長文になりやすい `system prompt` `input prompt` `composed prompt` `response` `operations` `usage` `error` `raw items` は、entry card 内でカテゴリ単位の折りたたみ表示にする。
+初期状態では `input prompt` だけを開き、他は閉じた状態から必要な箇所だけ個別に開いて読む。
+
 `composed prompt` は text payload だけを表す。画像添付がある場合でも、画像本体はここには含まれない。
 
 ## Non Goals

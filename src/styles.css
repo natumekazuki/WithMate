@@ -2176,6 +2176,30 @@ button {
   gap: 8px;
 }
 
+.audit-log-fold {
+  display: grid;
+  gap: 8px;
+}
+
+.audit-log-fold summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.audit-log-fold summary strong {
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.audit-log-fold summary::-webkit-details-marker {
+  display: none;
+}
+
 .audit-log-section.compact {
   gap: 6px;
 }
@@ -2216,6 +2240,14 @@ button {
 
 .session-page .audit-log-time {
   color: #cbd5e1;
+}
+
+.session-page .audit-log-fold summary strong {
+  color: var(--muted);
+}
+
+.session-page .audit-log-fold summary span {
+  color: var(--ink);
 }
 
 .audit-log-operations {
