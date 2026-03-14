@@ -36,12 +36,13 @@ import {
 } from "./character-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
-import { CodexAdapter } from "./codex-adapter.js";
+import { CodexAdapter, ProviderTurnError } from "./codex-adapter.js";
 import { resolveComposerPreview } from "./composer-attachments.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { SessionStorage } from "./session-storage.js";
 import {
   WITHMATE_CHARACTERS_CHANGED_EVENT,
+  WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
@@ -94,6 +95,7 @@ const characterEditorWindows = new Map<string, BrowserWindow>();
 const diffWindows = new Map<string, BrowserWindow>();
 const diffPreviewStore = new Map<string, DiffPreviewPayload>();
 const inFlightSessionRuns = new Set<string>();
+const sessionRunControllers = new Map<string, AbortController>();
 const allowCloseSessionWindows = new Set<string>();
 const liveSessionRuns = new Map<string, LiveSessionRunState>();
 let sessions: Session[] = [];
@@ -253,6 +255,27 @@ function broadcastLiveSessionRun(sessionId: string): void {
       window.webContents.send(WITHMATE_LIVE_SESSION_RUN_EVENT, { sessionId, state });
     }
   }
+}
+
+function isCanceledRunError(error: unknown): boolean {
+  if (error && typeof error === "object") {
+    const candidate = error as { name?: unknown; code?: unknown };
+    if (candidate.name === "AbortError" || candidate.code === "ABORT_ERR") {
+      return true;
+    }
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return /abort|aborted|cancel|canceled|cancelled/i.test(message);
+}
+
+function cancelSessionRun(sessionId: string): void {
+  const controller = sessionRunControllers.get(sessionId);
+  if (!controller) {
+    return;
+  }
+
+  controller.abort();
 }
 
 async function importModelCatalogFromFile(targetWindow?: BrowserWindow | null): Promise<ModelCatalogSnapshot | null> {
@@ -529,6 +552,8 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
 
   upsertSession(runningSession);
   inFlightSessionRuns.add(sessionId);
+  const runAbortController = new AbortController();
+  sessionRunControllers.set(sessionId, runAbortController);
   liveSessionRuns.set(sessionId, {
     sessionId,
     threadId: runningSession.threadId,
@@ -566,6 +591,7 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
       userMessage: nextMessage,
       appSettings,
       attachments: composerPreview.attachments,
+      signal: runAbortController.signal,
     }, (state) => {
       liveSessionRuns.set(sessionId, state);
       broadcastLiveSessionRun(sessionId);
@@ -608,35 +634,47 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
 
     return upsertSession(completedSession);
   } catch (error: unknown) {
+    const providerTurnError = error instanceof ProviderTurnError ? error : null;
+    const canceled = providerTurnError ? providerTurnError.canceled : isCanceledRunError(error);
     const message = error instanceof Error ? error.message : String(error);
+    const partialResult = providerTurnError?.partialResult;
+    if (canceled) {
+      codexAdapter.invalidateSessionThread(sessionId);
+    }
     requireAuditLogStorage().updateAuditLog(runningAuditLog.id, {
       sessionId,
       createdAt: runningAuditLog.createdAt,
-      phase: "failed",
+      phase: canceled ? "canceled" : "failed",
       provider: runningSession.provider,
       model: runningSession.model,
       reasoningEffort: runningSession.reasoningEffort,
       approvalMode: runningSession.approvalMode,
-      threadId: runningSession.threadId,
-      systemPromptText: promptForAudit.systemPromptText,
-      inputPromptText: promptForAudit.inputPromptText,
-      composedPromptText: promptForAudit.composedPromptText,
-      assistantText: "",
-      operations: [],
-      rawItemsJson: "[]",
-      usage: null,
-      errorMessage: message,
+      threadId: partialResult?.threadId ?? runningSession.threadId,
+      systemPromptText: partialResult?.systemPromptText ?? promptForAudit.systemPromptText,
+      inputPromptText: partialResult?.inputPromptText ?? promptForAudit.inputPromptText,
+      composedPromptText: partialResult?.composedPromptText ?? promptForAudit.composedPromptText,
+      assistantText: partialResult?.assistantText ?? "",
+      operations: partialResult?.operations ?? [],
+      rawItemsJson: partialResult?.rawItemsJson ?? "[]",
+      usage: partialResult?.usage ?? null,
+      errorMessage: canceled ? "ユーザーがキャンセルしたよ。" : message,
     });
+    const fallbackNotice = canceled ? "実行をキャンセルしたよ。" : `実行に失敗したよ。\n${message}`;
+    const assistantText = partialResult?.assistantText.trim()
+      ? `${partialResult.assistantText}\n\n${fallbackNotice}`
+      : fallbackNotice;
     const failedSession: Session = {
       ...runningSession,
       updatedAt: currentTimestampLabel(),
       status: "idle",
-      runState: "error",
+      runState: canceled ? "idle" : "error",
+      threadId: partialResult?.threadId ?? runningSession.threadId,
       messages: [
         ...runningSession.messages,
         {
           role: "assistant",
-          text: `実行に失敗したよ。\n${message}`,
+          text: assistantText,
+          artifact: partialResult?.artifact,
           accent: true,
         },
       ],
@@ -645,6 +683,7 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
     return upsertSession(failedSession);
   } finally {
     inFlightSessionRuns.delete(sessionId);
+    sessionRunControllers.delete(sessionId);
     liveSessionRuns.delete(sessionId);
     broadcastLiveSessionRun(sessionId);
   }
@@ -928,6 +967,9 @@ app.whenReady().then(async () => {
   ipcMain.handle(WITHMATE_RUN_SESSION_TURN_CHANNEL, async (_event, sessionId: string, request: RunSessionTurnRequest) =>
     runSessionTurn(sessionId, request),
   );
+  ipcMain.handle(WITHMATE_CANCEL_SESSION_RUN_CHANNEL, (_event, sessionId: string) => {
+    cancelSessionRun(sessionId);
+  });
   ipcMain.handle(WITHMATE_CREATE_CHARACTER_CHANNEL, async (_event, input: CreateCharacterInput) => createCharacter(input));
   ipcMain.handle(WITHMATE_UPDATE_CHARACTER_CHANNEL, async (_event, character: CharacterProfile) => updateCharacter(character));
   ipcMain.handle(WITHMATE_DELETE_CHARACTER_CHANNEL, async (_event, characterId: string) => deleteCharacter(characterId));

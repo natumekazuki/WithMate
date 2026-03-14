@@ -80,15 +80,19 @@ npm run electron:start
 | MT-022a | Streaming 表示 | command 実行を伴う依頼を送信する | pending bubble 内に assistant text と live activity step が逐次表示される |
 | MT-022c | 複数 agent_message 連結 | provider が 1 turn で複数の `agent_message` を返す依頼を送信する | chat UI の assistant text が最後の 1 件で欠けず、arrival 順に連結されて表示される |
 | MT-022b | Streaming 復元 | 実行中に Session Window を閉じてから同じ session を開き直す | 実行中の live activity が再表示される |
+| MT-022d | Session 実行キャンセル | 実行中に composer の `Cancel` を押す | 実行が止まり、session は `idle` に戻り、assistant message にキャンセル通知が 1 件追加される |
+| MT-022e | Session キャンセル監査ログ | 実行中に `Cancel` を押した turn の Audit Log を開く | 同じ turn record が `CANCELED` で残り、error にユーザーキャンセルが表示される |
+| MT-022f | Session キャンセル partial 記録 | ファイル変更や agent_message が途中まで出た状態で `Cancel` を押す | Audit Log に partial response / operations / raw items が残り、chat の `Details` でも変更済みファイルが見える |
 | MT-023 | ショートカット送信 | Session Window の textarea で `Ctrl+Enter` または `Cmd+Enter` を押す | 送信される |
 | MT-024 | 改行 | Session Window の textarea で `Enter` 単体を押す | 改行され、送信されない |
-| MT-025 | 実行中制御 | 実行中に textarea / Send / model / depth / approval 変更を試す | 実行中に無効化されるべき操作が無効になっている |
+| MT-025 | 実行中制御 | 実行中に textarea / model / depth / approval 変更を試す | 実行中に無効化されるべき操作が無効になっており、composer の主操作は `Send` ではなく `Cancel` に切り替わる |
 | MT-026 | Model 選択 | Session Window の model select を変更する | 選択した model が保存される |
 | MT-027 | Depth 選択 | Session Window の depth select を変更する | 選択した depth が保存される |
 | MT-027a | Model 変更後実行 | thread を持つ既存 session で model を変更して送信する | model mismatch error にならず、新しい thread で実行される |
 | MT-027b | Depth 変更後実行 | thread を持つ既存 session で depth を変更して送信する | reasoning 変更後も新しい thread で実行される |
 | MT-027c | Session Theme 非反映 | theme color を設定した character で session を開く | Session Window の配色は neutral のままで、character theme を変えても bubble や主要 action の色は変わらない |
 | MT-028 | Turn Summary | assistant message の `Details` を押す | changed files / checks / operation timeline が展開される |
+| MT-028d | Turn Summary partial diff | canceled または failed の turn で `Details` を押す | 実行結果が異常終了でも、その時点までの file diff があれば表示される |
 | MT-028c | Turn Summary agent_message 流れ表示 | `command_execution` と複数の `agent_message` を含む turn で `Details` を開く | コマンドや reasoning だけでなく `agent_message` も同じ timeline に入り、応答の流れを追える |
 | MT-028a | Rich Text 表示 | inline code / list / markdown link を含む assistant message を表示する | 生テキストの塊ではなく、rich text として読みやすく表示される |
 | MT-028b | Rich Text リンク | `[label](absolute-path-or-url)` を含む assistant message をクリックする | URL かローカルパスが既定の方法で開く |

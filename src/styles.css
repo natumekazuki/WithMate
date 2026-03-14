@@ -2225,6 +2225,10 @@ button {
   border-color: rgba(255, 124, 124, 0.2);
 }
 
+.audit-log-card.canceled {
+  border-color: rgba(203, 213, 225, 0.2);
+}
+
 .audit-log-head,
 .audit-log-meta,
 .audit-log-operation-head {

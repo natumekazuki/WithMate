@@ -28,6 +28,7 @@ type ProviderAdapter = {
     userMessage: string;
     appSettings: AppSettings;
     attachments: ComposerAttachment[];
+    signal?: AbortSignal;
   }, onProgress?: (state: LiveSessionRunState) => Promise<void>): Promise<ProviderTurnResult>;
 };
 ```
@@ -60,7 +61,7 @@ type ProviderTurnResult = {
 8. `CodexAdapter` が `model / reasoningEffort` を検証し、通常 file/folder は `additionalDirectories` とワーキングディレクトリ、画像は structured input で SDK の `thread.runStreamed()` を実行する
 9. Main Process が stream event から live state を組み立て、IPC で Session Window へ中継する
 10. turn 完了後に Main Process が `threadId` と assistant message を session store に反映する
-11. Main Process が `started / completed / failed` の監査ログを SQLite に保存する
+11. Main Process が `running / completed / canceled / failed` の監査ログを 1 turn 1 record で SQLite に保存する
 12. Renderer は `sessions-changed` と live state 購読を使って再描画する
 
 ## Prompt Composition Constraint
@@ -152,14 +153,18 @@ diff 本文は turn items からは直接取れないため、MVP では Main Pr
 - Raw Items と operations は各 `agent_message` を個別に保持し、監査では元の粒度を失わない
 - live state は Main Process の memory 上だけに持ち、session DB へは保存しない
 - Session Window を開き直した場合は、Main Process が保持している live state を再購読して復元する
+- Session Window から `Cancel` を押した場合は、Main Process が保持している `AbortController` で provider 実行を中断する
 - turn 完了時だけ session 本体と audit log を確定値で更新する
+- canceled / failed でも、途中まで取得できた `agent_message` と `turn.items` は partial result として回収し、Audit Log と `Details` に残す
 
 ## Error Handling
 
 - provider 実行失敗時は Main Process が session を `runState=error` へ更新する
 - Renderer に raw stack trace は出さず、UI 向けの失敗メッセージへ整形する
 - thread id が取得済みなら失敗時も保持する
+- ユーザーキャンセル時は監査ログに `phase=canceled` を記録する
 - 失敗時は監査ログにも `phase=failed` を記録し、`system / input / composed prompt` と error を残す
+- canceled / failed のどちらでも、取得済みの `assistant text` / operations / raw items / artifact があれば捨てずに残す
 
 ## Audit Logging
 

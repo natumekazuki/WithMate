@@ -98,7 +98,7 @@ WithMate では、永続化対象を 5 層に分ける。
 
 保持する情報:
 
-- `started / completed / failed`
+- `running / completed / canceled / failed`
 - system prompt
 - input prompt
 - composed prompt
@@ -220,7 +220,7 @@ MVP では、保存責務を次のように切る。
 ## Crash Recovery
 
 - アプリが強制終了した場合、SQLite 上に `runState = running` が残ることがある
-- 実行前後の `started / completed / failed` は SQLite の監査ログにも残る
+- 実行前後の `running / completed / canceled / failed` は SQLite の監査ログにも残る
 - 次回起動時は、その session を `runState = interrupted` / `status = idle` へ補正する
 - 補正時には assistant message として「前回の実行は中断された可能性がある」旨を 1 回だけ追記する
 

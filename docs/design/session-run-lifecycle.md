@@ -13,6 +13,7 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - session 実行は Main Process が保持する
 - `Session Window` は session 実行の viewer / input surface として扱う
 - 実行中 session の `Session Window` を閉じても、実行自体は継続する
+- `Session Window` から実行中 session を明示キャンセルできる
 - アプリ終了は実行中 session がある場合に確認ダイアログを出す
 - 全 window が閉じても実行中 session がある場合は `Home Window` を再生成して、アプリ全体の終了を避ける
 
@@ -23,6 +24,7 @@ stateDiagram-v2
     [*] --> Idle
     Idle --> Running: runSessionTurn
     Running --> Idle: success
+    Running --> Idle: cancel
     Running --> Error: failure
     Error --> Running: retry
     Error --> Idle: acknowledge
@@ -44,6 +46,7 @@ window は上の状態機械とは分離する。
 
 - 実行中 session の表示
 - ユーザー入力
+- 実行中 session のキャンセル
 - diff / artifact の閲覧
 - session title の変更
 - session 削除
@@ -60,6 +63,13 @@ window は上の状態機械とは分離する。
   - 確認ダイアログを出す
   - `閉じない`: close をキャンセル
   - `閉じて続行`: window は閉じるが session 実行は継続
+
+### Session Run Cancel
+
+- `Session Window` の `Cancel` は Main Process の `AbortController` を通して provider 実行を止める
+- キャンセル後の session は `runState = idle` に戻る
+- chat には `実行をキャンセルしたよ。` を 1 件追加する
+- 監査ログは同じ turn record を `phase = canceled` へ更新し、`errorMessage` にユーザーキャンセルを残す
 
 ### Session Delete
 
@@ -84,7 +94,7 @@ window は上の状態機械とは分離する。
   - `戻る`: quit をキャンセル
   - `終了する`: 実行中 session を中断してアプリを終了する
 
-この段階では graceful cancellation は入れず、明示確認によって accidental quit を防ぐ。
+キャンセルは `Session Window` から明示操作で行い、アプリ終了時の accidental quit 保護とは別責務で扱う。
 
 ## Background Continuation
 
@@ -95,7 +105,7 @@ MVP では tray 常駐までは行わない。
 
 - tray icon による完全バックグラウンド継続
 - 実行中 session の OS notification
-- graceful shutdown / cancellation API
+- graceful shutdown
 
 ## Persistence Expectations
 

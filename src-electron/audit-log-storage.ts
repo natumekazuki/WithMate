@@ -28,7 +28,7 @@ type AuditLogRow = {
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
 function toAuditLogPhase(value: string): AuditLogPhase {
-  if (value === "running" || value === "started" || value === "completed" || value === "failed") {
+  if (value === "running" || value === "started" || value === "completed" || value === "failed" || value === "canceled") {
     return value;
   }
 

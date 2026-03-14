@@ -333,6 +333,18 @@ export default function App() {
     }
   };
 
+  const handleCancelRun = async () => {
+    if (!window.withmate || !selectedSession || selectedSession.runState !== "running") {
+      return;
+    }
+
+    try {
+      await window.withmate.cancelSessionRun(selectedSession.id);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "キャンセルに失敗したよ。");
+    }
+  };
+
   const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || (!event.ctrlKey && !event.metaKey) || selectedSession?.runState === "running") {
       return;
@@ -573,6 +585,8 @@ export default function App() {
         return "RUNNING";
       case "completed":
         return "DONE";
+      case "canceled":
+        return "CANCELED";
       case "failed":
         return "FAIL";
       default:
@@ -886,12 +900,12 @@ export default function App() {
                 disabled={selectedSession.runState === "running"}
               />
               <button
-                className={selectedSession.runState === "running" ? "loading" : ""}
+                className={selectedSession.runState === "running" ? "danger" : ""}
                 type="button"
-                onClick={() => void handleSend()}
-                disabled={selectedSession.runState === "running" || composerPreview.errors.length > 0}
+                onClick={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
+                disabled={selectedSession.runState !== "running" && composerPreview.errors.length > 0}
               >
-                {selectedSession.runState === "running" ? "..." : "Send"}
+                {selectedSession.runState === "running" ? "Cancel" : "Send"}
               </button>
             </label>
 
@@ -989,7 +1003,15 @@ export default function App() {
                 auditLogs.map((entry) => (
                   <article key={entry.id} className={`audit-log-card ${entry.phase}`}>
                     <div className="audit-log-head">
-                      <span className={`file-kind ${entry.phase === "completed" ? "add" : entry.phase === "failed" ? "delete" : "edit"}`}>
+                      <span className={`file-kind ${
+                        entry.phase === "completed"
+                          ? "add"
+                          : entry.phase === "failed"
+                            ? "delete"
+                            : entry.phase === "canceled"
+                              ? "edit"
+                              : "edit"
+                      }`}>
                         {auditPhaseLabel(entry.phase)}
                       </span>
                       <span className="audit-log-time">{entry.createdAt}</span>

@@ -69,6 +69,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
 - pending 中の live activity / streaming response
+- 実行中は `Send` の代わりに `Cancel` を表示
 - assistant message ごとの `Turn Summary`
   - `Changed Files`
   - `Run Checks`
@@ -116,7 +117,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - Settings overlay の `System Prompt Prefix` は SQLite に保存し、次回 turn から prompt composition へ反映する
 - character は `userData/characters/` を正本とする
 - `userData` は `<appData>/WithMate/` に固定する
-- Session は character の `main / sub` theme color snapshot を保持し、Session UI に反映する
+- Session は character の `main / sub` theme color snapshot を保持するが、Session UI 自体は neutral tone を維持する
 - session は SQLite を正本とする
 - model catalog は DB の active revision を読む
 

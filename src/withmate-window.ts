@@ -38,6 +38,7 @@ export const WITHMATE_PICK_IMAGE_FILE_CHANNEL = "withmate:pick-image-file";
 export const WITHMATE_OPEN_PATH_CHANNEL = "withmate:open-path";
 export const WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL = "withmate:preview-composer-input";
 export const WITHMATE_RUN_SESSION_TURN_CHANNEL = "withmate:run-session-turn";
+export const WITHMATE_CANCEL_SESSION_RUN_CHANNEL = "withmate:cancel-session-run";
 export const WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL = "withmate:list-session-audit-logs";
 export const WITHMATE_GET_APP_SETTINGS_CHANNEL = "withmate:get-app-settings";
 export const WITHMATE_UPDATE_APP_SETTINGS_CHANNEL = "withmate:update-app-settings";
@@ -64,6 +65,7 @@ export type WithMateWindowApi = {
   deleteSession(sessionId: string): Promise<void>;
   previewComposerInput(sessionId: string, userMessage: string, pickerAttachments: ComposerAttachmentInput[]): Promise<ComposerPreview>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
+  cancelSessionRun(sessionId: string): Promise<void>;
   listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
   getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
   getAppSettings(): Promise<AppSettings>;

@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 
 import {
   WITHMATE_CHARACTERS_CHANGED_EVENT,
+  WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
@@ -85,6 +86,9 @@ const withmateApi: WithMateWindowApi = {
   },
   runSessionTurn(sessionId: string, request) {
     return ipcRenderer.invoke(WITHMATE_RUN_SESSION_TURN_CHANNEL, sessionId, request);
+  },
+  cancelSessionRun(sessionId: string) {
+    return ipcRenderer.invoke(WITHMATE_CANCEL_SESSION_RUN_CHANNEL, sessionId);
   },
   listSessionAuditLogs(sessionId: string) {
     return ipcRenderer.invoke(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, sessionId);

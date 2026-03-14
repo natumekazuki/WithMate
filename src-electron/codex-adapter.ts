@@ -32,6 +32,7 @@ type RunSessionTurnInput = {
   userMessage: string;
   appSettings: AppSettings;
   attachments: ComposerAttachment[];
+  signal?: AbortSignal;
 };
 
 type RunSessionTurnProgressHandler = (state: LiveSessionRunState) => void | Promise<void>;
@@ -47,6 +48,18 @@ type RunSessionTurnResult = {
   rawItemsJson: string;
   usage: AuditLogUsage | null;
 };
+
+export class ProviderTurnError extends Error {
+  readonly partialResult: RunSessionTurnResult;
+  readonly canceled: boolean;
+
+  constructor(message: string, partialResult: RunSessionTurnResult, canceled: boolean) {
+    super(message);
+    this.name = "ProviderTurnError";
+    this.partialResult = partialResult;
+    this.canceled = canceled;
+  }
+}
 
 type PromptComposition = {
   systemPromptText: string;
@@ -701,12 +714,20 @@ function composePrompt(input: RunSessionTurnInput): PromptComposition {
   };
 }
 
+function isCanceledProviderMessage(message: string): boolean {
+  return /abort|aborted|cancel|canceled|cancelled/i.test(message);
+}
+
 export class CodexAdapter {
   private readonly codex = new Codex();
   private readonly threads = new Map<string, { thread: Thread; settingsKey: string }>();
 
   composePrompt(input: RunSessionTurnInput): PromptComposition {
     return composePrompt(input);
+  }
+
+  invalidateSessionThread(sessionId: string): void {
+    this.threads.delete(sessionId);
   }
 
   private buildThreadSettings(session: Session, providerCatalog: ModelCatalogProvider, attachments: ComposerAttachment[]): {
@@ -777,68 +798,15 @@ export class CodexAdapter {
     };
   }
 
-  async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
-    const { thread, selection } = this.getThread(input.session, input.providerCatalog, input.attachments);
-    const prompt = this.composePrompt(input);
-    const { snapshot: beforeSnapshot } = await captureWorkspaceSnapshot(input.session.workspacePath);
-    const turnInput =
-      prompt.imagePaths.length > 0
-        ? [
-            { type: "text" as const, text: prompt.composedPromptText },
-            ...prompt.imagePaths.map((imagePath) => ({ type: "local_image" as const, path: imagePath })),
-          ]
-        : prompt.composedPromptText;
-    const { events } = await thread.runStreamed(turnInput);
-    const items = new Map<string, ThreadItem>();
-    const liveSteps = new Map<string, LiveRunStep>();
-    let threadId = thread.id;
-    let assistantText = "";
-    let usage: Usage | null = null;
-    let liveUsage: AuditLogUsage | null = null;
-    let streamErrorMessage = "";
-
-    await emitLiveState(onProgress, input.session.id, threadId, liveSteps, assistantText, liveUsage, streamErrorMessage);
-
-    for await (const event of events) {
-      switch (event.type) {
-        case "thread.started":
-          threadId = event.thread_id;
-          break;
-        case "turn.completed":
-          usage = event.usage;
-          liveUsage = toAuditUsage(event.usage);
-          break;
-        case "turn.failed":
-          streamErrorMessage = event.error.message;
-          break;
-        case "error":
-          streamErrorMessage = event.message;
-          break;
-        case "item.started":
-        case "item.updated":
-        case "item.completed": {
-          items.set(event.item.id, event.item);
-          if (event.item.type === "agent_message") {
-            assistantText = collectAssistantText(items.values());
-          }
-
-          const liveStep = buildLiveStep(event.item);
-          if (liveStep) {
-            liveSteps.set(liveStep.id, liveStep);
-          }
-          break;
-        }
-        default:
-          break;
-      }
-
-      await emitLiveState(onProgress, input.session.id, threadId, liveSteps, assistantText, liveUsage, streamErrorMessage);
-    }
-
-    if (streamErrorMessage) {
-      throw new Error(streamErrorMessage);
-    }
-
+  private async buildTurnResult(
+    input: RunSessionTurnInput,
+    prompt: PromptComposition,
+    items: Map<string, ThreadItem>,
+    usage: Usage | null,
+    threadId: string | null,
+    selection: ResolvedModelSelection,
+    beforeSnapshot: WorkspaceSnapshot,
+  ): Promise<RunSessionTurnResult> {
     const finalItems = Array.from(items.values());
     const finalAssistantText = collectAssistantText(finalItems);
     const { snapshot: afterSnapshot } = await captureWorkspaceSnapshot(input.session.workspacePath);
@@ -864,6 +832,93 @@ export class CodexAdapter {
       rawItemsJson: JSON.stringify(finalItems, null, 2),
       usage: toAuditUsage(usage),
     };
+  }
+
+  async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
+    const { thread, selection } = this.getThread(input.session, input.providerCatalog, input.attachments);
+    const prompt = this.composePrompt(input);
+    const { snapshot: beforeSnapshot } = await captureWorkspaceSnapshot(input.session.workspacePath);
+    const turnInput =
+      prompt.imagePaths.length > 0
+        ? [
+            { type: "text" as const, text: prompt.composedPromptText },
+            ...prompt.imagePaths.map((imagePath) => ({ type: "local_image" as const, path: imagePath })),
+          ]
+        : prompt.composedPromptText;
+    const items = new Map<string, ThreadItem>();
+    const liveSteps = new Map<string, LiveRunStep>();
+    let threadId = thread.id;
+    let assistantText = "";
+    let usage: Usage | null = null;
+    let liveUsage: AuditLogUsage | null = null;
+    let streamErrorMessage = "";
+
+    await emitLiveState(onProgress, input.session.id, threadId, liveSteps, assistantText, liveUsage, streamErrorMessage);
+
+    try {
+      const { events } = await thread.runStreamed(turnInput, {
+        signal: input.signal,
+      });
+
+      for await (const event of events) {
+        switch (event.type) {
+          case "thread.started":
+            threadId = event.thread_id;
+            break;
+          case "turn.completed":
+            usage = event.usage;
+            liveUsage = toAuditUsage(event.usage);
+            break;
+          case "turn.failed":
+            streamErrorMessage = event.error.message;
+            break;
+          case "error":
+            streamErrorMessage = event.message;
+            break;
+          case "item.started":
+          case "item.updated":
+          case "item.completed": {
+            items.set(event.item.id, event.item);
+            if (event.item.type === "agent_message") {
+              assistantText = collectAssistantText(items.values());
+            }
+
+            const liveStep = buildLiveStep(event.item);
+            if (liveStep) {
+              liveSteps.set(liveStep.id, liveStep);
+            }
+            break;
+          }
+          default:
+            break;
+        }
+
+        await emitLiveState(onProgress, input.session.id, threadId, liveSteps, assistantText, liveUsage, streamErrorMessage);
+      }
+
+      if (streamErrorMessage) {
+        const partialResult = await this.buildTurnResult(input, prompt, items, usage, threadId, selection, beforeSnapshot);
+        throw new ProviderTurnError(
+          streamErrorMessage,
+          partialResult,
+          Boolean(input.signal?.aborted) || isCanceledProviderMessage(streamErrorMessage),
+        );
+      }
+
+      return this.buildTurnResult(input, prompt, items, usage, threadId, selection, beforeSnapshot);
+    } catch (error) {
+      if (error instanceof ProviderTurnError) {
+        throw error;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      const partialResult = await this.buildTurnResult(input, prompt, items, usage, threadId, selection, beforeSnapshot);
+      throw new ProviderTurnError(
+        message,
+        partialResult,
+        Boolean(input.signal?.aborted) || isCanceledProviderMessage(message),
+      );
+    }
   }
 }
 
