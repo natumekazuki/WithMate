@@ -403,6 +403,24 @@ function toActivitySummary(items: ThreadItem[]): string[] {
   return summary.slice(0, 6);
 }
 
+function collectAssistantText(items: Iterable<ThreadItem>): string {
+  const parts: string[] = [];
+
+  for (const item of items) {
+    if (item.type !== "agent_message") {
+      continue;
+    }
+
+    if (item.text.trim().length === 0) {
+      continue;
+    }
+
+    parts.push(item.text);
+  }
+
+  return parts.join("\n\n");
+}
+
 function stringifyUnknown(value: unknown): string | undefined {
   if (value === undefined) {
     return undefined;
@@ -799,7 +817,7 @@ export class CodexAdapter {
         case "item.completed": {
           items.set(event.item.id, event.item);
           if (event.item.type === "agent_message") {
-            assistantText = event.item.text;
+            assistantText = collectAssistantText(items.values());
           }
 
           const liveStep = buildLiveStep(event.item);
@@ -820,6 +838,7 @@ export class CodexAdapter {
     }
 
     const finalItems = Array.from(items.values());
+    const finalAssistantText = collectAssistantText(finalItems);
     const { snapshot: afterSnapshot } = await captureWorkspaceSnapshot(input.session.workspacePath);
     const artifact = await buildArtifact(
       input.session,
@@ -834,7 +853,7 @@ export class CodexAdapter {
 
     return {
       threadId,
-      assistantText,
+      assistantText: finalAssistantText,
       artifact,
       systemPromptText: prompt.systemPromptText,
       inputPromptText: prompt.inputPromptText,

@@ -78,6 +78,7 @@ npm run electron:start
 | MT-021 | Approval mode | Session Window の composer 下で approval を切り替える | 選択値が更新され、再度開いても保持される |
 | MT-022 | Chat 送信 | Session Window の textarea に入力して `Send` を押す | user message が追加され、pending bubble が表示される |
 | MT-022a | Streaming 表示 | command 実行を伴う依頼を送信する | pending bubble 内に assistant text と live activity step が逐次表示される |
+| MT-022c | 複数 agent_message 連結 | provider が 1 turn で複数の `agent_message` を返す依頼を送信する | chat UI の assistant text が最後の 1 件で欠けず、arrival 順に連結されて表示される |
 | MT-022b | Streaming 復元 | 実行中に Session Window を閉じてから同じ session を開き直す | 実行中の live activity が再表示される |
 | MT-023 | ショートカット送信 | Session Window の textarea で `Ctrl+Enter` または `Cmd+Enter` を押す | 送信される |
 | MT-024 | 改行 | Session Window の textarea で `Enter` 単体を押す | 改行され、送信されない |
@@ -112,6 +113,7 @@ npm run electron:start
 | MT-043a | Audit Log 折りたたみ | Audit Log を開く | `Input Prompt` だけ開いた状態で始まり、他の prompt / response / operations / raw items はカテゴリ単位で閉じた状態から必要なものだけ開ける |
 | MT-044 | Audit Log 成功記録 | 1 回送信して成功させる | `START` と `DONE` の監査ログが追加される |
 | MT-045 | Audit Log 内容確認 | 成功した監査ログを開く | system prompt / input prompt / composed prompt / response / operations / usage / raw items が確認できる |
+| MT-045a | Audit Log と chat の応答一致 | 複数の `agent_message` を含む turn の監査ログを開く | `Response` は chat UI と同じ連結結果を表示し、個別の `agent_message` は `Operations` または `Raw Items` で追える |
 | MT-046 | Audit Log 失敗記録 | provider 実行が失敗する条件で送信する | `FAIL` の監査ログが追加され、error が確認できる |
 | MT-047 | 添付 picker | Session Window の `File` / `Folder` / `Image` を押す | 選んだ対象が attachment chip として表示される |
 | MT-047a | 添付 picker 初期位置 | session を開いて最初に `File` か `Image` を押す | picker が workspace directory を開く |

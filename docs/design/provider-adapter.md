@@ -148,6 +148,8 @@ diff 本文は turn items からは直接取れないため、MVP では Main Pr
   - 実行中 / 完了 / 失敗の step 一覧
   - usage
   - stream 中の error
+- `turn.items` に `agent_message` が複数ある場合、Session UI に表示する assistant text は arrival 順に空行区切りで連結する
+- Raw Items と operations は各 `agent_message` を個別に保持し、監査では元の粒度を失わない
 - live state は Main Process の memory 上だけに持ち、session DB へは保存しない
 - Session Window を開き直した場合は、Main Process が保持している live state を再購読して復元する
 - turn 完了時だけ session 本体と audit log を確定値で更新する

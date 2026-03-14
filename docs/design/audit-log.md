@@ -90,6 +90,8 @@ SQLite の `audit_logs` table を使う。
 - `agent_message`
 
 `raw_items_json` は Codex SDK の `turn.items` をそのまま JSON で残す。
+`assistant_text` は Session UI と同じ表示基準で、複数の `agent_message` を arrival 順に空行区切りで連結した結果を保存する。
+個々の `agent_message` の粒度確認が必要な場合は `operations_json` または `raw_items_json` を使う。
 
 ## UI
 
