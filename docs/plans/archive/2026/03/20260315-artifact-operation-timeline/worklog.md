@@ -18,8 +18,8 @@
 - 実施内容: `MessageArtifact` に `operationTimeline` を追加し、`CodexAdapter` で `turn.items` 由来の operation を保持するようにした。Session `Details` では `agent_message` を含む timeline を表示し、旧 artifact は `activitySummary` からの fallback で読めるようにした
 - 検証: `npm run typecheck`, `npm run build`
 - メモ: `agent_message` は `MessageRichText` で描画し、それ以外は summary/details を順に表示する
-- 関連コミット: 未作成
+- 関連コミット: `974f437 feat(session): show operation timeline in details`
 
 ## Open Items
 
-- コミット作成
+- なし

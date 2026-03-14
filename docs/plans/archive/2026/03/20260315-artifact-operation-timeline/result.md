@@ -2,7 +2,7 @@
 
 ## Status
 
-- 状態: 進行中
+- 状態: 完了
 
 ## Completed
 
@@ -12,16 +12,16 @@
 
 ## Remaining Issues
 
-- コミット作成と archive 移動
+- 実機で operation timeline の情報量が過不足ないか確認する
 
 ## Related Commits
 
-- 未作成
+- `974f437 feat(session): show operation timeline in details`
 
 ## Rollback Guide
 
-- 戻し先候補: コミット作成後に記入
-- 理由: まだ作業中
+- 戻し先候補: `974f437`
+- 理由: `Details` の operation timeline 導入が 1 論理変更として閉じている
 
 ## Related Docs
 
