@@ -28,6 +28,7 @@ import {
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
+  WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SESSIONS_CHANGED_EVENT,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
@@ -83,6 +84,9 @@ const withmateApi: WithMateWindowApi = {
   },
   previewComposerInput(sessionId: string, userMessage: string, pickerAttachments) {
     return ipcRenderer.invoke(WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL, sessionId, userMessage, pickerAttachments);
+  },
+  searchWorkspaceFiles(sessionId: string, query: string) {
+    return ipcRenderer.invoke(WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL, sessionId, query);
   },
   runSessionTurn(sessionId: string, request) {
     return ipcRenderer.invoke(WITHMATE_RUN_SESSION_TURN_CHANNEL, sessionId, request);

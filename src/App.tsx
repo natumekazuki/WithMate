@@ -30,6 +30,33 @@ import {
 } from "./ui-utils.js";
 import { MessageRichText } from "./MessageRichText.js";
 
+type ActivePathReference = {
+  query: string;
+  start: number;
+  end: number;
+};
+
+function getActivePathReference(value: string, caret: number): ActivePathReference | null {
+  const prefix = value.slice(0, caret);
+  const match = /(^|[\s(])@(?:"([^"\r\n]*)|([^\s@"\r\n]*))$/.exec(prefix);
+  if (!match) {
+    return null;
+  }
+
+  const query = (match[2] ?? match[3] ?? "").replace(/\\/g, "/");
+  const start = (match.index ?? 0) + match[1].length;
+
+  return {
+    query,
+    start,
+    end: caret,
+  };
+}
+
+function formatPathReference(path: string): string {
+  return /\s/.test(path) ? `@"${path}"` : `@${path}`;
+}
+
 export default function App() {
   const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -45,7 +72,10 @@ export default function App() {
   const [pickerAttachments, setPickerAttachments] = useState<ComposerAttachmentInput[]>([]);
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>({ attachments: [], errors: [] });
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
+  const [composerCaret, setComposerCaret] = useState(0);
+  const [workspacePathMatches, setWorkspacePathMatches] = useState<string[]>([]);
   const messageListRef = useRef<HTMLDivElement | null>(null);
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
 
@@ -148,6 +178,8 @@ export default function App() {
     setPickerAttachments([]);
     setComposerPreview({ attachments: [], errors: [] });
     setPickerBaseDirectory(selectedSession?.workspacePath ?? "");
+    setComposerCaret(0);
+    setWorkspacePathMatches([]);
     setLiveRun(null);
   }, [selectedSession?.id]);
 
@@ -242,6 +274,35 @@ export default function App() {
       window.clearTimeout(timeoutId);
     };
   }, [draft, pickerAttachments, selectedSession]);
+  useEffect(() => {
+    let active = true;
+    const withmateApi = window.withmate;
+    const activeReference = selectedSession ? getActivePathReference(draft, composerCaret) : null;
+
+    if (!withmateApi || !selectedSession || selectedSession.runState === "running" || !activeReference || !activeReference.query.trim()) {
+      setWorkspacePathMatches([]);
+      return () => {
+        active = false;
+      };
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void withmateApi.searchWorkspaceFiles(selectedSession.id, activeReference.query).then((matches) => {
+        if (active) {
+          setWorkspacePathMatches(matches);
+        }
+      }).catch(() => {
+        if (active) {
+          setWorkspacePathMatches([]);
+        }
+      });
+    }, 100);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [draft, composerCaret, selectedSession]);
   const selectedProviderCatalog = useMemo(
     () => (modelCatalog && selectedSession ? getProviderCatalog(modelCatalog.providers, selectedSession.provider) : null),
     [modelCatalog, selectedSession],
@@ -352,6 +413,26 @@ export default function App() {
 
     event.preventDefault();
     void handleSend();
+  };
+
+  const handleSelectWorkspacePathMatch = (match: string) => {
+    const textarea = composerTextareaRef.current;
+    const activeReference = getActivePathReference(draft, composerCaret);
+    if (!textarea || !activeReference) {
+      return;
+    }
+
+    const replacement = formatPathReference(match);
+    const nextDraft = `${draft.slice(0, activeReference.start)}${replacement}${draft.slice(activeReference.end)}`;
+    const nextCaret = activeReference.start + replacement.length;
+    setDraft(nextDraft);
+    setComposerCaret(nextCaret);
+    setWorkspacePathMatches([]);
+
+    window.requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(nextCaret, nextCaret);
+    });
   };
 
   const persistSession = async (nextSession: Session) => {
@@ -894,9 +975,14 @@ export default function App() {
             ) : null}
             <label className="composer-box">
               <textarea
+                ref={composerTextareaRef}
                 value={draft}
-                onChange={(event) => setDraft(event.target.value)}
+                onChange={(event) => {
+                  setDraft(event.target.value);
+                  setComposerCaret(event.target.selectionStart ?? event.target.value.length);
+                }}
                 onKeyDown={handleComposerKeyDown}
+                onSelect={(event) => setComposerCaret(event.currentTarget.selectionStart ?? 0)}
                 disabled={selectedSession.runState === "running"}
               />
               <button
@@ -908,6 +994,21 @@ export default function App() {
                 {selectedSession.runState === "running" ? "Cancel" : "Send"}
               </button>
             </label>
+            {workspacePathMatches.length > 0 ? (
+              <div className="composer-path-match-list" role="listbox" aria-label="@path 候補">
+                {workspacePathMatches.map((match) => (
+                  <button
+                    key={match}
+                    type="button"
+                    className="composer-path-match"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => handleSelectWorkspacePathMatch(match)}
+                  >
+                    {match}
+                  </button>
+                ))}
+              </div>
+            ) : null}
 
             <div className="composer-settings">
               <div className="composer-setting-field composer-setting-approval">

@@ -78,6 +78,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - composer 上の添付 toolbar (`File / Folder / Image`)
 - composer の attachment chip
 - textarea 内の `@path` 参照
+- `@path` 入力中の workspace file path 候補表示
 - 添付 picker は初回だけ workspace を開き、以後は最後に選んだディレクトリを開く
 - composer 下の `Approval / Model / Depth`
 - `Ctrl+Enter` / `Cmd+Enter` 送信

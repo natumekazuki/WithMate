@@ -40,6 +40,7 @@ import { CodexAdapter, ProviderTurnError } from "./codex-adapter.js";
 import { resolveComposerPreview } from "./composer-attachments.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { SessionStorage } from "./session-storage.js";
+import { searchWorkspaceFilePaths } from "./workspace-file-search.js";
 import {
   WITHMATE_CHARACTERS_CHANGED_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
@@ -68,6 +69,7 @@ import {
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
+  WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SESSIONS_CHANGED_EVENT,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
@@ -487,6 +489,15 @@ async function previewComposerInput(
   }
 
   return resolveComposerPreview(session, userMessage, pickerAttachments);
+}
+
+async function searchWorkspaceFiles(sessionId: string, query: string): Promise<string[]> {
+  const session = getSession(sessionId);
+  if (!session) {
+    throw new Error("対象セッションが見つからないよ。");
+  }
+
+  return searchWorkspaceFilePaths(session.workspacePath, query);
 }
 
 async function openPathTarget(target: string): Promise<void> {
@@ -963,6 +974,9 @@ app.whenReady().then(async () => {
     WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
     (_event, sessionId: string, userMessage: string, pickerAttachments: ComposerAttachmentInput[]) =>
       previewComposerInput(sessionId, userMessage, pickerAttachments),
+  );
+  ipcMain.handle(WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL, (_event, sessionId: string, query: string) =>
+    searchWorkspaceFiles(sessionId, query),
   );
   ipcMain.handle(WITHMATE_RUN_SESSION_TURN_CHANNEL, async (_event, sessionId: string, request: RunSessionTurnRequest) =>
     runSessionTurn(sessionId, request),
