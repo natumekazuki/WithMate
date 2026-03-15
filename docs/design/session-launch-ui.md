@@ -56,6 +56,9 @@ MVP では、次の 4 ブロックで十分。
 3. `Launch Profile`
 - Provider (`Codex`)
 - Character
+  - search input
+    - `name / description`
+    - 部分一致
 
 4. `Primary Action`
 - `Start New Session`
@@ -126,6 +129,7 @@ React モックでは次の形がよい。
 - title は空文字で開き、入力必須
 - `Character` は card で切り替える
 - `Character` は portrait 付きカードで切り替える
+- `Character` には検索入力があり、`name / description` の部分一致で絞り込める
 - launch dialog 内の character card も Home と同じ theme rule を使う
   - background = character `main`
   - left accent bar = character `sub`

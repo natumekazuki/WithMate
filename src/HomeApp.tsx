@@ -51,6 +51,7 @@ export default function HomeApp() {
   const [launchTitle, setLaunchTitle] = useState("");
   const [launchWorkspace, setLaunchWorkspace] = useState<LaunchWorkspace | null>(null);
   const [launchCharacterId, setLaunchCharacterId] = useState("");
+  const [launchCharacterSearchText, setLaunchCharacterSearchText] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -160,6 +161,20 @@ export default function HomeApp() {
       return haystacks.some((value) => value.includes(normalizedCharacterSearch));
     });
   }, [characters, normalizedCharacterSearch]);
+  const normalizedLaunchCharacterSearch = useMemo(
+    () => launchCharacterSearchText.trim().toLocaleLowerCase(),
+    [launchCharacterSearchText],
+  );
+  const filteredLaunchCharacters = useMemo(() => {
+    if (!normalizedLaunchCharacterSearch) {
+      return characters;
+    }
+
+    return characters.filter((character) => {
+      const haystacks = [character.name, character.description].map((value) => value.toLocaleLowerCase());
+      return haystacks.some((value) => value.includes(normalizedLaunchCharacterSearch));
+    });
+  }, [characters, normalizedLaunchCharacterSearch]);
 
   const renderSearchIcon = () => (
     <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
@@ -186,6 +201,7 @@ export default function HomeApp() {
   const openLaunchDialog = () => {
     setLaunchTitle("");
     setLaunchWorkspace(null);
+    setLaunchCharacterSearchText("");
     setLaunchOpen(true);
   };
 
@@ -193,6 +209,7 @@ export default function HomeApp() {
     setLaunchOpen(false);
     setLaunchTitle("");
     setLaunchWorkspace(null);
+    setLaunchCharacterSearchText("");
   };
 
   const handleStartSession = async () => {
@@ -450,23 +467,43 @@ export default function HomeApp() {
 
               <section className="launch-section profile-panel minimal">
                 {characters.length > 0 ? (
-                  <div className="choice-card-list">
-                    {characters.map((character) => (
-                      <button
-                        key={character.id}
-                        className={`choice-card${character.id === selectedCharacter?.id ? " active" : ""}`}
-                        style={buildCardThemeStyle(character.themeColors)}
-                        type="button"
-                        onClick={() => setLaunchCharacterId(character.id)}
-                      >
-                        <CharacterAvatar character={character} size="small" className="choice-avatar" />
-                        <div className="choice-card-copy">
-                          <strong>{character.name}</strong>
-                          <span>{character.description || "キャラクターを選ぶ"}</span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+                  <>
+                    <div className="launch-search-row">
+                      <label className="toolbar-search-field" aria-label="キャラ検索">
+                        <span className="toolbar-search-icon">{renderSearchIcon()}</span>
+                        <input
+                          className="toolbar-search-input"
+                          type="text"
+                          value={launchCharacterSearchText}
+                          onChange={(event) => setLaunchCharacterSearchText(event.target.value)}
+                        />
+                      </label>
+                    </div>
+
+                    {filteredLaunchCharacters.length > 0 ? (
+                      <div className="choice-card-list">
+                        {filteredLaunchCharacters.map((character) => (
+                          <button
+                            key={character.id}
+                            className={`choice-card${character.id === selectedCharacter?.id ? " active" : ""}`}
+                            style={buildCardThemeStyle(character.themeColors)}
+                            type="button"
+                            onClick={() => setLaunchCharacterId(character.id)}
+                          >
+                            <CharacterAvatar character={character} size="small" className="choice-avatar" />
+                            <div className="choice-card-copy">
+                              <strong>{character.name}</strong>
+                              <span>{character.description || "キャラクターを選ぶ"}</span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <article className="empty-list-card compact">
+                        <p>一致するキャラはないよ。</p>
+                      </article>
+                    )}
+                  </>
                 ) : (
                   <article className="empty-list-card compact">
                     <p>セッションを始める前にキャラを作ってね。</p>

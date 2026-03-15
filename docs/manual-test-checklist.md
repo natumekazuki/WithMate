@@ -71,6 +71,7 @@ npm run electron:start
 | MT-015 | Workspace picker | launch dialog の `Browse` を押して directory を選ぶ | 選択した path が dialog に表示される |
 | MT-015a | New Session approval 非表示 | Home の `New Session` を開く | approval 選択 UI は表示されず、session は `on-request` 固定で作成される |
 | MT-015b | New Session character theme | Home の `New Session` を開く | character card が Home と同じ theme rule で表示され、背景に `main`、左アクセントに `sub`、文字は読めるコントラストになる |
+| MT-015c | New Session character 検索 | Home の `New Session` を開き、character 検索入力へ name または description の一部を入れる | `name / description` の部分一致で character card が絞り込まれる |
 | MT-016 | New Session 作成 | title と workspace と character を選び `Start New Session` を押す | Session Window が開き、Home の session 一覧に追加され、タイトル入力値が session title になる |
 | MT-016b | Session base color | Session Window を開く | Home と同じ dark base で表示され、header / chat / composer / artifact が白基調に戻っていない |
 | MT-016c | Session contrast | Session Window を開き、タイトル、approval 選択中、artifact の file path、Audit Log の各ラベルと本文を確認する | 背景色と同化せず、主要テキストと補助テキストが読み分けられる |

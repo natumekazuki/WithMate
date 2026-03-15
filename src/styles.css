@@ -559,6 +559,11 @@ button {
   margin: 14px 6px 22px;
 }
 
+.launch-search-row {
+  display: grid;
+  margin-bottom: 12px;
+}
+
 .toolbar-search-field {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
