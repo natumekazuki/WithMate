@@ -66,8 +66,11 @@ npm run electron:start
 | MT-013 | Character 画像 | Character Editor で画像を設定して保存する | Home の character card と Session の avatar に画像が表示される |
 | MT-013a | App data path 固定 | Electron を起動して character または session を保存する | 保存先が `<appData>/WithMate/` 配下になり、`Electron/` 配下へ新規保存されない |
 | MT-014 | New Session 起動 | Home の `New Session` を押す | launch dialog が開く |
+| MT-014a | New Session title 初期値 | Home の `New Session` を開く | タイトル入力は空文字で表示される |
+| MT-014b | New Session title 必須 | title 未入力のまま dialog を確認する | `Start New Session` は無効のまま |
 | MT-015 | Workspace picker | launch dialog の `Browse` を押して directory を選ぶ | 選択した path が dialog に表示される |
-| MT-016 | New Session 作成 | workspace と character を選び `Start New Session` を押す | Session Window が開き、Home の session 一覧に追加される |
+| MT-015a | New Session approval 非表示 | Home の `New Session` を開く | approval 選択 UI は表示されず、session は `on-request` 固定で作成される |
+| MT-016 | New Session 作成 | title と workspace と character を選び `Start New Session` を押す | Session Window が開き、Home の session 一覧に追加され、タイトル入力値が session title になる |
 | MT-016b | Session base color | Session Window を開く | Home と同じ dark base で表示され、header / chat / composer / artifact が白基調に戻っていない |
 | MT-016c | Session contrast | Session Window を開き、タイトル、approval 選択中、artifact の file path、Audit Log の各ラベルと本文を確認する | 背景色と同化せず、主要テキストと補助テキストが読み分けられる |
 | MT-016a | Empty Session 表示 | 新規 session を作成してまだ送信しない | chat 履歴には初期 assistant メッセージが表示されない |

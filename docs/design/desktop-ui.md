@@ -53,9 +53,10 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
     - left accent bar = character `sub`
     - text color = background とのコントラストから自動決定
 - `New Session` dialog
+  - session title 入力
   - workspace picker
   - character 選択
-  - approval mode 選択
+  - approval mode は `on-request` 固定
 - `Settings` overlay
   - system prompt prefix 編集
   - model catalog import / export

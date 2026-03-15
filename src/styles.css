@@ -696,6 +696,36 @@ button {
   padding: 12px;
 }
 
+.launch-field {
+  display: grid;
+  gap: 10px;
+}
+
+.launch-field-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.launch-field-input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(32, 36, 55, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.88);
+  padding: 14px 16px;
+  color: var(--ink);
+  font: inherit;
+}
+
+.launch-field-input:focus {
+  outline: none;
+  border-color: rgba(15, 139, 141, 0.5);
+  box-shadow: 0 0 0 3px rgba(15, 139, 141, 0.12);
+}
+
 .launch-grid,
 .summary-grid,
 .profile-grid {

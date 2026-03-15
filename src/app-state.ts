@@ -194,6 +194,7 @@ export type DiffPreviewPayload = {
 export type CreateSessionInput = {
   provider?: string;
   catalogRevision?: number;
+  taskTitle: string;
   workspaceLabel: string;
   workspacePath: string;
   branch: string;
@@ -365,9 +366,10 @@ export function getCharacterProfile(characterId: string, characters: CharacterPr
 }
 
 export function buildNewSession(input: CreateSessionInput): Session {
+  const normalizedTaskTitle = input.taskTitle.trim() || `${input.workspaceLabel} で新規作業を開始する`;
   return {
     id: `launch-${Date.now()}`,
-    taskTitle: `${input.workspaceLabel} で新規作業を開始する`,
+    taskTitle: normalizedTaskTitle,
     taskSummary: `${input.workspaceLabel} で新規セッションを開始。${input.character} のロールを保ったまま、ここから最初の指示を待つ。`,
     status: "idle",
     updatedAt: currentTimestampLabel(),

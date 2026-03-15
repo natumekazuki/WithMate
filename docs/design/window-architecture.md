@@ -112,7 +112,7 @@ Diff Window に置かないもの:
 ### New Session
 
 1. ユーザーが `Home Window` で `New Session` を押す
-2. launch dialog で `workspace / character / provider / approval` を決める
+2. launch dialog で `title / workspace / character / provider` を決める
 3. アプリが新しい session record を作る
 4. `Session Window` を新規作成してその session を開く
 5. 最初の prompt は `Session Window` の chat composer から送る

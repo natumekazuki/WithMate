@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { type AppSettings, type CharacterProfile, type CreateSessionInput, type Session } from "./app-state.js";
-import { approvalModeOptions, buildCardThemeStyle, CharacterAvatar } from "./ui-utils.js";
+import { buildCardThemeStyle, CharacterAvatar } from "./ui-utils.js";
 
 type LaunchWorkspace = {
   label: string;
@@ -48,9 +48,9 @@ export default function HomeApp() {
   const [appSettings, setAppSettings] = useState<AppSettings>({ systemPromptPrefix: "" });
   const [systemPromptPrefixDraft, setSystemPromptPrefixDraft] = useState("");
   const [launchOpen, setLaunchOpen] = useState(false);
+  const [launchTitle, setLaunchTitle] = useState("");
   const [launchWorkspace, setLaunchWorkspace] = useState<LaunchWorkspace | null>(null);
   const [launchCharacterId, setLaunchCharacterId] = useState("");
-  const [launchApproval, setLaunchApproval] = useState("on-request");
 
   useEffect(() => {
     let active = true;
@@ -183,12 +183,26 @@ export default function HomeApp() {
     setLaunchWorkspace(inferWorkspaceFromPath(selectedPath));
   };
 
+  const openLaunchDialog = () => {
+    setLaunchTitle("");
+    setLaunchWorkspace(null);
+    setLaunchOpen(true);
+  };
+
+  const closeLaunchDialog = () => {
+    setLaunchOpen(false);
+    setLaunchTitle("");
+    setLaunchWorkspace(null);
+  };
+
   const handleStartSession = async () => {
-    if (!window.withmate || !launchWorkspace || !selectedCharacter) {
+    const normalizedLaunchTitle = launchTitle.trim();
+    if (!window.withmate || !launchWorkspace || !selectedCharacter || !normalizedLaunchTitle) {
       return;
     }
 
     const sessionInput: CreateSessionInput = {
+      taskTitle: normalizedLaunchTitle,
       workspaceLabel: launchWorkspace.label,
       workspacePath: launchWorkspace.path,
       branch: launchWorkspace.branch,
@@ -196,12 +210,11 @@ export default function HomeApp() {
       character: selectedCharacter.name,
       characterIconPath: selectedCharacter.iconPath,
       characterThemeColors: selectedCharacter.themeColors,
-      approvalMode: launchApproval,
+      approvalMode: "on-request",
     };
 
     const createdSession = await window.withmate.createSession(sessionInput);
-    setLaunchOpen(false);
-    setLaunchWorkspace(null);
+    closeLaunchDialog();
     await openSessionWindow(createdSession.id);
   };
 
@@ -277,7 +290,7 @@ export default function HomeApp() {
                 onChange={(event) => setSessionSearchText(event.target.value)}
               />
             </label>
-            <button className="start-session-button" type="button" onClick={() => setLaunchOpen(true)}>
+            <button className="start-session-button" type="button" onClick={() => openLaunchDialog()}>
               New Session
             </button>
           </div>
@@ -401,15 +414,30 @@ export default function HomeApp() {
       </main>
 
       {launchOpen ? (
-        <div className="launch-modal" role="dialog" aria-modal="true" onClick={() => setLaunchOpen(false)}>
+        <div className="launch-modal" role="dialog" aria-modal="true" onClick={() => closeLaunchDialog()}>
           <section className="launch-dialog panel" onClick={(event) => event.stopPropagation()}>
             <div className="launch-dialog-head minimal">
-              <button className="diff-close" type="button" onClick={() => setLaunchOpen(false)}>
+              <button className="diff-close" type="button" onClick={() => closeLaunchDialog()}>
                 Close
               </button>
             </div>
 
             <div className="launch-panel minimal">
+              <section className="launch-section minimal">
+                <div className="launch-field">
+                  <label className="launch-field-label" htmlFor="launch-session-title">
+                    セッションタイトル
+                  </label>
+                  <input
+                    id="launch-session-title"
+                    className="launch-field-input"
+                    type="text"
+                    value={launchTitle}
+                    onChange={(event) => setLaunchTitle(event.target.value)}
+                  />
+                </div>
+              </section>
+
               <section className="launch-section workspace-picker minimal">
                 <div className="section-head compact-actions">
                   <button className="browse-button" type="button" onClick={() => void handleBrowseWorkspace()}>
@@ -447,23 +475,16 @@ export default function HomeApp() {
                   </article>
                 )}
 
-                <div className="choice-list">
-                  {approvalModeOptions.map((approval) => (
-                    <button
-                      key={approval.id}
-                      className={`choice-chip${approval.id === launchApproval ? " active" : ""}`}
-                      type="button"
-                      onClick={() => setLaunchApproval(approval.id)}
-                    >
-                      {approval.label}
-                    </button>
-                  ))}
-                </div>
               </section>
             </div>
 
             <div className="launch-dialog-foot minimal">
-              <button className="start-session-button" type="button" disabled={!launchWorkspace || !selectedCharacter} onClick={() => void handleStartSession()}>
+              <button
+                className="start-session-button"
+                type="button"
+                disabled={!launchTitle.trim() || !launchWorkspace || !selectedCharacter}
+                onClick={() => void handleStartSession()}
+              >
                 Start New Session
               </button>
             </div>

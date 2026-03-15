@@ -22,7 +22,7 @@
 - `Add Character`
   - 新規キャラ作成用の `Character Editor Window` を開く
 - `New Session`
-  - `workspace / character / approval` を選んで session を起動する
+  - `title / workspace / character` を選んで session を起動する
 
 ### Character Editor Window
 
