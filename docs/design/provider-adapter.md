@@ -51,10 +51,10 @@ type ProviderTurnResult = {
 
 ## Session Flow
 
-1. Renderer が `runSessionTurn(sessionId, { userMessage, pickerAttachments })` を IPC で Main Process に送る
+1. Renderer が `runSessionTurn(sessionId, { userMessage })` を IPC で Main Process に送る
 2. Main Process が session store から session metadata を引く
 3. `characterId` で `CharacterProfile` を読む
-4. Main Process が `@path` と picker 添付を解決し、file / folder / image を正規化する
+4. Main Process が textarea 内の `@path` を解決し、file / folder / image を正規化する
 5. Main Process が app settings から `System Prompt Prefix` を読む
 6. prompt composer が `# System Prompt + (system prompt prefix + roleMarkdown) + # User Input Prompt + userMessage` を空行区切りで合成する
 7. Main Process が session の `catalogRevision` と `provider` から provider catalog を解決する
@@ -71,6 +71,8 @@ type ProviderTurnResult = {
 
 - file / folder: `additionalDirectories`
 - image: structured input (`local_image`)
+
+picker で選んだ file / folder / image も renderer 側では textarea に `@path` を挿入するだけで、実行直前の解決対象は textarea の `@path` のみとする。
 
 text prompt 側には `# System Prompt` と `# User Input Prompt` を自動付与し、各レイヤーを空行区切りで結合する。
 

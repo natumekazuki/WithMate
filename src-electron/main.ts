@@ -10,7 +10,6 @@ import {
   cloneCharacterProfiles,
   cloneSessions,
   type CharacterProfile,
-  type ComposerAttachmentInput,
   currentTimestampLabel,
   type CreateCharacterInput,
   type CreateSessionInput,
@@ -481,14 +480,13 @@ async function resolveSessionCharacter(session: Session): Promise<CharacterProfi
 async function previewComposerInput(
   sessionId: string,
   userMessage: string,
-  pickerAttachments: ComposerAttachmentInput[],
 ) {
   const session = getSession(sessionId);
   if (!session) {
     throw new Error("対象セッションが見つからないよ。");
   }
 
-  return resolveComposerPreview(session, userMessage, pickerAttachments);
+  return resolveComposerPreview(session, userMessage);
 }
 
 async function searchWorkspaceFiles(sessionId: string, query: string): Promise<string[]> {
@@ -532,7 +530,7 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
     throw new Error("送信するメッセージが空だよ。");
   }
 
-  const composerPreview = await resolveComposerPreview(session, request.userMessage, request.pickerAttachments);
+  const composerPreview = await resolveComposerPreview(session, request.userMessage);
   if (composerPreview.errors.length > 0) {
     throw new Error(composerPreview.errors[0] ?? "添付の解決に失敗したよ。");
   }
@@ -972,8 +970,8 @@ app.whenReady().then(async () => {
   ipcMain.handle(WITHMATE_DELETE_SESSION_CHANNEL, (_event, sessionId: string) => deleteSession(sessionId));
   ipcMain.handle(
     WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
-    (_event, sessionId: string, userMessage: string, pickerAttachments: ComposerAttachmentInput[]) =>
-      previewComposerInput(sessionId, userMessage, pickerAttachments),
+    (_event, sessionId: string, userMessage: string) =>
+      previewComposerInput(sessionId, userMessage),
   );
   ipcMain.handle(WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL, (_event, sessionId: string, query: string) =>
     searchWorkspaceFiles(sessionId, query),

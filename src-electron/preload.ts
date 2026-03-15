@@ -82,8 +82,8 @@ const withmateApi: WithMateWindowApi = {
   deleteSession(sessionId: string) {
     return ipcRenderer.invoke(WITHMATE_DELETE_SESSION_CHANNEL, sessionId);
   },
-  previewComposerInput(sessionId: string, userMessage: string, pickerAttachments) {
-    return ipcRenderer.invoke(WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL, sessionId, userMessage, pickerAttachments);
+  previewComposerInput(sessionId: string, userMessage: string) {
+    return ipcRenderer.invoke(WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL, sessionId, userMessage);
   },
   searchWorkspaceFiles(sessionId: string, query: string) {
     return ipcRenderer.invoke(WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL, sessionId, query);

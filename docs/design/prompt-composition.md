@@ -63,15 +63,16 @@ Settings overlay から編集する、アプリ共通の追加 system prompt。
 
 ### Attached References
 
-Session Window の composer では、次の 2 経路で参照対象を追加できる。
+Session Window の composer では、参照対象は最終的に textarea 内の `@path` を正本にする。
 
-- picker から追加した file / folder / image
-- textarea で指定した `@path`
+- picker から追加した file / folder / image も textarea に `@path` を挿入する
+- 手入力の `@path` も同じ扱いにする
 
 `@path` は送信時に解決するだけでなく、入力中も workspace 内の file path 候補を表示して補助する。
 
 通常ファイルとフォルダは prompt 内の参照情報として列挙する。画像だけは SDK の structured input (`local_image`) で別送する。
 通常ファイルとフォルダは prompt text へは埋め込まず、`additionalDirectories` とワーキングディレクトリ解決にだけ使う。
+画像は `@path` が textarea に残っている場合にだけ `local_image` として送る。textarea から消えた画像 path は送信対象から外れる。
 
 ## Persisted Prompt Views
 

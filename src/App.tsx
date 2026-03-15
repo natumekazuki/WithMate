@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   type AuditLogEntry,
-  type ComposerAttachmentInput,
   type ComposerPreview,
   currentTimestampLabel,
   getSessionIdFromLocation,
@@ -57,6 +56,21 @@ function formatPathReference(path: string): string {
   return /\s/.test(path) ? `@"${path}"` : `@${path}`;
 }
 
+function normalizePathForReference(filePath: string): string {
+  return filePath.replace(/\\/g, "/");
+}
+
+function toWorkspaceRelativeReference(workspacePath: string, selectedPath: string): string | null {
+  const normalizedWorkspacePath = normalizePathForReference(workspacePath).replace(/\/+$/, "");
+  const normalizedSelectedPath = normalizePathForReference(selectedPath);
+  const workspacePrefix = `${normalizedWorkspacePath}/`;
+  if (!normalizedSelectedPath.toLocaleLowerCase().startsWith(workspacePrefix.toLocaleLowerCase())) {
+    return null;
+  }
+
+  return normalizedSelectedPath.slice(workspacePrefix.length);
+}
+
 export default function App() {
   const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -69,7 +83,6 @@ export default function App() {
   const [auditLogsOpen, setAuditLogsOpen] = useState(false);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [liveRun, setLiveRun] = useState<LiveSessionRunState | null>(null);
-  const [pickerAttachments, setPickerAttachments] = useState<ComposerAttachmentInput[]>([]);
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>({ attachments: [], errors: [] });
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [composerCaret, setComposerCaret] = useState(0);
@@ -175,7 +188,6 @@ export default function App() {
 
   useEffect(() => {
     setDraft("");
-    setPickerAttachments([]);
     setComposerPreview({ attachments: [], errors: [] });
     setPickerBaseDirectory(selectedSession?.workspacePath ?? "");
     setComposerCaret(0);
@@ -255,7 +267,7 @@ export default function App() {
     }
 
     const timeoutId = window.setTimeout(() => {
-      void withmateApi.previewComposerInput(selectedSession.id, draft, pickerAttachments).then((preview) => {
+      void withmateApi.previewComposerInput(selectedSession.id, draft).then((preview) => {
         if (active) {
           setComposerPreview(preview);
         }
@@ -273,7 +285,7 @@ export default function App() {
       active = false;
       window.clearTimeout(timeoutId);
     };
-  }, [draft, pickerAttachments, selectedSession]);
+  }, [draft, selectedSession]);
   useEffect(() => {
     let active = true;
     const withmateApi = window.withmate;
@@ -349,7 +361,7 @@ export default function App() {
     }
 
     const nextMessage = messageText.trim();
-    const preview = await window.withmate.previewComposerInput(selectedSession.id, messageText, pickerAttachments);
+    const preview = await window.withmate.previewComposerInput(selectedSession.id, messageText);
     setComposerPreview(preview);
     if (preview.errors.length > 0) {
       throw new Error(preview.errors[0] ?? "添付の解決に失敗したよ。");
@@ -360,8 +372,6 @@ export default function App() {
     }
 
     setDraft("");
-    setPickerAttachments([]);
-
     const updatedSession: Session = {
       ...selectedSession,
       updatedAt: currentTimestampLabel(),
@@ -375,14 +385,12 @@ export default function App() {
     try {
       const request: RunSessionTurnRequest = {
         userMessage: messageText,
-        pickerAttachments,
       };
       const savedSession = await window.withmate.runSessionTurn(selectedSession.id, request);
       setSessions([savedSession]);
     } catch (error) {
       console.error(error);
       setSessions([selectedSession]);
-      setPickerAttachments((current) => current);
     }
   };
 
@@ -592,6 +600,55 @@ export default function App() {
     return normalized.slice(0, lastSlashIndex);
   };
 
+  const insertReferencePath = (selectedPath: string) => {
+    const textarea = composerTextareaRef.current;
+    const referencePath = selectedSession
+      ? toWorkspaceRelativeReference(selectedSession.workspacePath, selectedPath) ?? normalizePathForReference(selectedPath)
+      : normalizePathForReference(selectedPath);
+    const referenceToken = formatPathReference(referencePath);
+    const currentCaret = textarea?.selectionStart ?? composerCaret;
+    const leadingSpacer = currentCaret > 0 && !/\s/.test(draft[currentCaret - 1] ?? "") ? " " : "";
+    const trailingSpacer = draft.length > currentCaret && !/\s/.test(draft[currentCaret] ?? "") ? " " : "";
+    const insertion = `${leadingSpacer}${referenceToken}${trailingSpacer}`;
+    const nextDraft = `${draft.slice(0, currentCaret)}${insertion}${draft.slice(currentCaret)}`;
+    const nextCaret = currentCaret + insertion.length;
+
+    setDraft(nextDraft);
+    setComposerCaret(nextCaret);
+    setWorkspacePathMatches([]);
+
+    window.requestAnimationFrame(() => {
+      if (!textarea) {
+        return;
+      }
+
+      textarea.focus();
+      textarea.setSelectionRange(nextCaret, nextCaret);
+    });
+  };
+
+  const handleRemoveAttachmentReference = (attachmentPathCandidates: string[]) => {
+    const escapedCandidates = attachmentPathCandidates
+      .map((candidate) => formatPathReference(candidate))
+      .map((candidate) => candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+
+    let nextDraft = draft;
+    for (const escapedCandidate of escapedCandidates) {
+      nextDraft = nextDraft.replace(
+        new RegExp(`(^|[\\s(])${escapedCandidate}(?=\\s|$|[),.;:!?])`),
+        (_match, leadingWhitespace: string) => leadingWhitespace || "",
+      );
+    }
+
+    nextDraft = nextDraft
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/\n{3,}/g, "\n\n");
+
+    setDraft(nextDraft);
+    setComposerCaret(nextDraft.length);
+    setWorkspacePathMatches([]);
+  };
+
   const handlePickFile = async () => {
     if (!window.withmate) {
       return;
@@ -603,14 +660,7 @@ export default function App() {
     }
 
     setPickerBaseDirectory(toDirectoryPath(selectedPath));
-
-    setPickerAttachments((current) => {
-      if (current.some((attachment) => attachment.path === selectedPath && attachment.kind === "file")) {
-        return current;
-      }
-
-      return [...current, { path: selectedPath, source: "picker", kind: "file" }];
-    });
+    insertReferencePath(selectedPath);
   };
 
   const handlePickFolder = async () => {
@@ -624,14 +674,7 @@ export default function App() {
     }
 
     setPickerBaseDirectory(selectedPath);
-
-    setPickerAttachments((current) => {
-      if (current.some((attachment) => attachment.path === selectedPath && attachment.kind === "folder")) {
-        return current;
-      }
-
-      return [...current, { path: selectedPath, source: "picker", kind: "folder" }];
-    });
+    insertReferencePath(selectedPath);
   };
 
   const handlePickImage = async () => {
@@ -645,18 +688,7 @@ export default function App() {
     }
 
     setPickerBaseDirectory(toDirectoryPath(selectedPath));
-
-    setPickerAttachments((current) => {
-      if (current.some((attachment) => attachment.path === selectedPath && attachment.kind === "image")) {
-        return current;
-      }
-
-      return [...current, { path: selectedPath, source: "picker", kind: "image" }];
-    });
-  };
-
-  const handleRemovePickerAttachment = (absolutePath: string, kind: ComposerAttachmentInput["kind"]) => {
-    setPickerAttachments((current) => current.filter((attachment) => !(attachment.path === absolutePath && attachment.kind === kind)));
+    insertReferencePath(selectedPath);
   };
 
   const auditPhaseLabel = (phase: AuditLogEntry["phase"]) => {
@@ -951,16 +983,24 @@ export default function App() {
             {composerPreview.attachments.length > 0 ? (
               <div className="composer-attachment-list">
                 {composerPreview.attachments.map((attachment) => {
-                  const removable = attachment.source === "picker";
                   return (
                     <div key={attachment.id} className={`composer-attachment-chip ${attachment.kind}`}>
-                      <span className="composer-attachment-source">{attachment.source === "text" ? "@" : "pick"}</span>
+                      <span className="composer-attachment-source">@</span>
                       <span className="composer-attachment-path">{attachment.displayPath}</span>
-                      {removable ? (
-                        <button type="button" onClick={() => handleRemovePickerAttachment(attachment.absolutePath, attachment.kind)}>
-                          ×
-                        </button>
-                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleRemoveAttachmentReference(
+                            [
+                              attachment.workspaceRelativePath,
+                              attachment.displayPath,
+                              normalizePathForReference(attachment.absolutePath),
+                            ].filter((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0),
+                          )
+                        }
+                      >
+                        ×
+                      </button>
                     </div>
                   );
                 })}

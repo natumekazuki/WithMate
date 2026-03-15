@@ -2,7 +2,6 @@ import type {
   AuditLogEntry,
   AppSettings,
   CharacterProfile,
-  ComposerAttachmentInput,
   ComposerPreview,
   CreateCharacterInput,
   CreateSessionInput,
@@ -64,7 +63,7 @@ export type WithMateWindowApi = {
   createSession(input: CreateSessionInput): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
   deleteSession(sessionId: string): Promise<void>;
-  previewComposerInput(sessionId: string, userMessage: string, pickerAttachments: ComposerAttachmentInput[]): Promise<ComposerPreview>;
+  previewComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview>;
   searchWorkspaceFiles(sessionId: string, query: string): Promise<string[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   cancelSessionRun(sessionId: string): Promise<void>;

@@ -1,13 +1,7 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
 
-import type {
-  ComposerAttachment,
-  ComposerAttachmentInput,
-  ComposerAttachmentKind,
-  ComposerPreview,
-  Session,
-} from "../src/app-state.js";
+import type { ComposerAttachment, ComposerAttachmentInput, ComposerAttachmentKind, ComposerPreview, Session } from "../src/app-state.js";
 
 const TEXT_PATH_REFERENCE_PATTERN = /(^|[\s(])@(?:"([^"\r\n]+)"|([^\s@]+))/gm;
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"]);
@@ -108,13 +102,12 @@ async function resolveAttachmentCandidate(
 export async function resolveComposerPreview(
   session: Session,
   userMessage: string,
-  pickerAttachments: ComposerAttachmentInput[],
 ): Promise<ComposerPreview> {
   const textCandidates = extractTextReferenceCandidates(userMessage).map<ComposerAttachmentInput>((entry) => ({
     path: entry,
     source: "text",
   }));
-  const candidates = [...pickerAttachments, ...textCandidates];
+  const candidates = [...textCandidates];
   const attachments: ComposerAttachment[] = [];
   const errors: string[] = [];
   const seenIds = new Set<string>();

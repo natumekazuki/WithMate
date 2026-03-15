@@ -83,6 +83,8 @@ npm run electron:start
 | MT-021 | Approval mode | Session Window の composer 下で approval を切り替える | 選択値が更新され、再度開いても保持される |
 | MT-022 | Chat 送信 | Session Window の textarea に入力して `Send` を押す | user message が追加され、pending bubble が表示される |
 | MT-022g | `@path` 候補表示 | Session Window の textarea で `@src/` のように入力する | workspace 内 file path の候補一覧が表示され、候補クリックで textarea に path が挿入される |
+| MT-022h | picker の `@path` 挿入 | Session Window で `File / Folder / Image` picker を使う | 選んだ path が textarea に `@path` として挿入される |
+| MT-022i | 画像 path 削除 | picker または手入力で画像の `@path` を入れた後、textarea からその path を消して送信する | `local_image` としては送られず、preview / chip からも消える |
 | MT-022a | Streaming 表示 | command 実行を伴う依頼を送信する | pending bubble 内に assistant text と live activity step が逐次表示される |
 | MT-022c | 複数 agent_message 連結 | provider が 1 turn で複数の `agent_message` を返す依頼を送信する | chat UI の assistant text が最後の 1 件で欠けず、arrival 順に連結されて表示される |
 | MT-022b | Streaming 復元 | 実行中に Session Window を閉じてから同じ session を開き直す | 実行中の live activity が再表示される |

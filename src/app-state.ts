@@ -84,7 +84,7 @@ export type AppSettings = {
 
 export type ComposerAttachmentKind = "file" | "folder" | "image";
 
-export type ComposerAttachmentSource = "picker" | "text";
+export type ComposerAttachmentSource = "text";
 
 export type ComposerAttachmentInput = {
   path: string;
@@ -109,7 +109,6 @@ export type ComposerPreview = {
 
 export type RunSessionTurnRequest = {
   userMessage: string;
-  pickerAttachments: ComposerAttachmentInput[];
 };
 
 export type MessageArtifact = {
