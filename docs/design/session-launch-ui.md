@@ -126,6 +126,10 @@ React モックでは次の形がよい。
 - title は空文字で開き、入力必須
 - `Character` は card で切り替える
 - `Character` は portrait 付きカードで切り替える
+- launch dialog 内の character card も Home と同じ theme rule を使う
+  - background = character `main`
+  - left accent bar = character `sub`
+  - foreground = background から自動コントラスト決定
 - model / depth は launch dialog には出さず、session 作成時に default 値を入れる
 - approval mode は launch dialog では選ばず、`on-request` 固定で session を作る
 - `Start New Session` を押すと、入力した title を持つ新規 session record を作って `Session Window` を開く

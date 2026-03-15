@@ -455,6 +455,7 @@ export default function HomeApp() {
                       <button
                         key={character.id}
                         className={`choice-card${character.id === selectedCharacter?.id ? " active" : ""}`}
+                        style={buildCardThemeStyle(character.themeColors)}
                         type="button"
                         onClick={() => setLaunchCharacterId(character.id)}
                       >

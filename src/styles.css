@@ -491,21 +491,20 @@ button {
 }
 
 .home-page .choice-card {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(203, 213, 225, 0.12);
+  background: var(--card-main, rgba(255, 255, 255, 0.04));
+  border-color: var(--card-border, rgba(203, 213, 225, 0.12));
 }
 
 .home-page .choice-card.active {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(111, 140, 255, 0.28);
+  border-color: var(--card-sub, rgba(111, 140, 255, 0.28));
 }
 
 .home-page .choice-card-copy strong {
-  color: var(--ink);
+  color: var(--card-ink, var(--ink));
 }
 
 .home-page .choice-card-copy span {
-  color: #a8b4ca;
+  color: var(--card-muted, #a8b4ca);
 }
 
 .home-page .settings-field textarea {
@@ -838,8 +837,8 @@ button {
 
 .choice-chip.active,
 .choice-card.active {
-  border-color: rgba(15, 139, 141, 0.26);
-  background: rgba(44, 106, 120, 0.1);
+  border-color: var(--card-sub, rgba(15, 139, 141, 0.26));
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08);
 }
 
 .choice-chip {
@@ -847,15 +846,22 @@ button {
 }
 
 .choice-card {
+  position: relative;
   display: grid;
   grid-template-columns: 54px minmax(0, 1fr);
   gap: 12px;
   align-items: center;
   padding: 12px;
+  border: 1px solid var(--card-border, rgba(32, 36, 55, 0.08));
+  background: var(--card-main, rgba(255, 255, 255, 0.8));
+  color: var(--card-ink, var(--ink));
   text-align: left;
+  overflow: hidden;
 }
 
 .choice-card-copy {
+  position: relative;
+  z-index: 1;
   display: grid;
   gap: 4px;
   min-width: 0;
@@ -866,6 +872,22 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.choice-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--card-sub, rgba(44, 106, 120, 0.38));
+}
+
+.choice-card-copy strong {
+  color: var(--card-ink, #1f2436);
+}
+
+.choice-card-copy span {
+  color: var(--card-muted, var(--muted));
 }
 
 .empty-chat {
