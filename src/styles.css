@@ -457,6 +457,57 @@ button {
   background: rgba(21, 26, 35, 0.98);
 }
 
+.home-page .launch-dialog {
+  background: rgba(21, 26, 35, 0.98);
+  border-color: rgba(203, 213, 225, 0.1);
+}
+
+.home-page .launch-section {
+  background: rgba(10, 14, 20, 0.82);
+  border-color: rgba(203, 213, 225, 0.12);
+}
+
+.home-page .launch-field-label {
+  color: #a8b4ca;
+}
+
+.home-page .launch-field-input {
+  border-color: rgba(203, 213, 225, 0.14);
+  background: rgba(10, 14, 20, 0.96);
+  color: var(--ink);
+}
+
+.home-page .launch-field-input:focus {
+  border-color: rgba(111, 140, 255, 0.34);
+  box-shadow: 0 0 0 3px rgba(111, 140, 255, 0.14);
+}
+
+.home-page .launch-path {
+  color: #a8b4ca;
+}
+
+.home-page .launch-path.selected {
+  color: var(--ink);
+}
+
+.home-page .choice-card {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(203, 213, 225, 0.12);
+}
+
+.home-page .choice-card.active {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(111, 140, 255, 0.28);
+}
+
+.home-page .choice-card-copy strong {
+  color: var(--ink);
+}
+
+.home-page .choice-card-copy span {
+  color: #a8b4ca;
+}
+
 .home-page .settings-field textarea {
   border-color: rgba(203, 213, 225, 0.14);
   background: rgba(10, 14, 20, 0.96);

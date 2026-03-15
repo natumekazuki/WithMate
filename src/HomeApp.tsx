@@ -445,7 +445,7 @@ export default function HomeApp() {
                   </button>
                 </div>
 
-                <p className={`launch-path${launchWorkspace ? " selected" : ""}`}>{launchWorkspace ? launchWorkspace.path : "workspace を選ぶ"}</p>
+                <p className={`launch-path${launchWorkspace ? " selected" : ""}`}>{launchWorkspace ? launchWorkspace.path : "workspace"}</p>
               </section>
 
               <section className="launch-section profile-panel minimal">
