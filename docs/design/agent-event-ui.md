@@ -3,6 +3,8 @@
 - 作成日: 2026-03-11
 - 対象: React モックと後続 Renderer 実装におけるエージェント実行可視化
 
+> 注記: 本書にある `右主面: Character Stream` は historical draft / future option を含む。current milestone の正本は `product-direction.md` と `monologue-provider-policy.md` であり、現段階の Session UI には Character Stream を表示しない。
+
 ## Goal
 
 `Codex` の TUI で感じられる「エージェントがいま何をしているか」を、WithMate の画面上で把握できるようにする。  

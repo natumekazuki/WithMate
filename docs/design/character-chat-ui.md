@@ -3,6 +3,8 @@
 - 作成日: 2026-03-11
 - 対象: React モックのチャット面とキャラ画像表示
 
+> 注記: 本書は React モック段階の draft を含む。`Character Stream` まわりの記述は future option / historical draft として読み、current milestone の正本仕様としては `product-direction.md` と `monologue-provider-policy.md` を優先する。
+
 ## Goal
 
 `Work Chat` を単なる assistant/message UI ではなく、選択中キャラクターが横にいて、そのキャラが実際にしゃべっていると感じられる面へ寄せる。あわせて、WithMate 管理下の `character.png` を UI の主要な識別子として扱える構成を定義する。
@@ -94,9 +96,9 @@ type CharacterCatalogItem = {
 - pinned character と chat avatar の見た目を揃える
 - 右面だけ浮いた別デザインにならないよう、共通の portrait スタイルを持たせる
 - 本来の価値は `キャラがいま何をしゃべっているか` に絞る
-- ただし Issue `#5` の current milestone では、独り言 UI の本適用を止めて縮退表示を出す
+- historical draft では縮退表示案も含んでいたが、current milestone の正本では Character Stream UI 自体を適用しない
 - mood badge や説明テキストのようなメタ情報は持ち込まない
-- API キー未設定時だけでなく、pending 期間中も縮退表示を出す
+- API キー未設定時の表示方針は future の Settings / monologue 実装と合わせて再定義する
 
 ### Launch Dialog
 
@@ -110,14 +112,11 @@ type CharacterCatalogItem = {
 - Live2D のようなアニメーション表示
 - 実ディレクトリ走査の Main/Renderer 接続
 
-## Current Implementation Snapshot
+## Draft Snapshot / Historical Notes
 
-- `src/App.tsx` に session の character 情報を集約し、avatar 表示を統一した
-- `characterCatalog` の `iconPath` は WithMate の character storage に保存された画像を指す
-- `Work Chat` は assistant 側だけ avatar を常時表示し、キャラ会話感を強めた
-- `Recent Sessions` `Character Stream` `Launch Dialog` も同じ avatar 表現へ統一した
-- Electron 実行時は Main Process の character storage から icon path を読む
-- 独り言の provider / auth / Memory 方針は `docs/design/monologue-provider-policy.md` を参照する
+- 以下はモック作成時の方向メモを含む。
+- `Character Stream` に関する記述は current milestone の実装済み機能を意味しない。
+- current / future の正本境界は `product-direction.md`、`character-storage.md`、`monologue-provider-policy.md` を参照する。
 
 ## Open Points
 
@@ -131,7 +130,7 @@ MVP は以下を採用する。
 
 - 円形 avatar
 - avatar 中心の assistant bubble
-- session / header / stream / launch の画像表現を共通化
+- session / header / launch の画像表現を共通化し、stream 側は future option として扱う
 - 画像参照は catalog 層を通す
 
 これで `キャラがしゃべっている感` を強めつつ、作業 UI の可読性は崩しにくい。

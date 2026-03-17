@@ -7,6 +7,7 @@
 - 表面化しているバグを探索・修正するための実行順序を定義する。
 - 潜在バグは別レポート化し、影響と修正案を残す。
 - 最後に完成に向けた実装計画を作成し、フェーズごとのコミットポイントを明確化する。
+- ユーザーが確定した `PB-001`〜`PB-005` の方針を、既存の plan 成果物と最小限の関連 design docs に矛盾なく反映するための更新方針を整理する。
 
 ## Scope
 
@@ -26,6 +27,7 @@
   - 検証
   - 潜在バグレポート作成
   - 完成ロードマップ作成
+  - ユーザー確定方針に基づく文書更新方針の整理
 - 非対象
   - 今この時点での実装変更
   - 大規模リファクタの即時着手
@@ -90,37 +92,46 @@
 
 ### 現在の主対象
 
-- Phase 5 の潜在バグレポート作成は完了
-- Phase 6 の完成ロードマップ作成は完了
-- 残タスクは quality review とコミット準備
+- 既存の `potential-bug-report.md` / `completion-roadmap.md` は作成済み
+- ユーザー確定の `PB-001`〜`PB-005` 方針は plan hub と最小 design docs へ反映済み
+- 最終 review 前に必要なのは、current 実装と future 方針の書き分けが崩れていないかの整合確認である
+- 今回の追加タスクは文書更新のみとし、実装着手は行わない
+- README / manual test は current 実装の入口であるため、未実装機能を現状機能のように追記しない
 
 ### 潜在バグレポートで優先的に扱う観点
 
-1. 既存 session が削除済み character を参照した場合の再開 UX と保存整合性
-2. model catalog revision 更新後に既存 session の provider / model 解決が壊れるリスク
-3. provider 認証状態が UI から見えず、launch / run failure が不透明になるリスク
-4. workspace snapshot 上限や ignore 境界により artifact summary / diff が欠落するリスク
-5. Character Stream 関連文書の競合により、pending 方針と異なる UI 実装が再混入するリスク
+1. `PB-001`: character を読み込めない session は続行不可だが、過去ログ閲覧は可能という確定方針をどう表現へ落とすか
+2. `PB-002`: model catalog import 時の自動 migrate 前提へ、旧 revision drift 記述をどう読み替えるか
+3. `PB-003`: Settings 上の provider 有効化 / API キー入力前提へ、auth readiness 記述をどう簡素化するか
+4. `PB-004`: 現行推奨対応維持として、既存 triage をどう据え置くか
+5. `PB-005`: Character Stream 着手条件を `Codex / CopilotCLI 対応完了 + CLI / SDK 共通機能網羅後` に固定し、関連文書へどう波及させるか
 
 ### 完成ロードマップで優先的に扱う観点
 
-1. stabilization の完了条件と未解決バグの扱い
-2. Character Stream / provider / memory の仕様正本統一
-3. provider scope と credential 管理の確定
-4. Session Memory / Character Memory の実装方針確定
-5. pending 中機能の再開条件と後続マイルストーン
+1. stabilization の完了条件と、今回の文書同期差分の扱い
+2. `PB-001` / `PB-002` / `PB-003` の確定方針に沿った仕様記述への置換
+3. `PB-005` に基づく Character Stream 着手順序の後ろ倒しと、CLI / SDK parity の前提明記
+4. Session Memory / Character Memory の位置づけを、Character Stream 着手条件との関係で再整理
+5. provider / settings / design docs の最小更新セットを確定する
 
 ### 予定成果物
 
 - `docs/plans/20260317-repo-audit-and-stabilization/potential-bug-report.md`
 - `docs/plans/20260317-repo-audit-and-stabilization/completion-roadmap.md`
-- 必要に応じた `worklog.md` / `result.md` の進捗追記
+- `docs/plans/20260317-repo-audit-and-stabilization/decisions.md`
+- `docs/plans/20260317-repo-audit-and-stabilization/plan.md`
+- `docs/plans/20260317-repo-audit-and-stabilization/worklog.md`
+- `docs/plans/20260317-repo-audit-and-stabilization/result.md`
+- 必要最小限の `docs/design/*.md` 更新
 
 ### 現時点の達成状況
 
 - `potential-bug-report.md` を作成し、未修正リスクを優先度・観測根拠・推奨対応つきで整理した
 - `completion-roadmap.md` を作成し、stabilization 後の実装順序と依存関係を章立てした
 - `worklog.md` / `result.md` に bug fix commit `19761900fcd2a92fbe4593d49f41df231e663d30`、残課題、次アクション、rollback 方針を反映した
+- ユーザー確定の `PB-001`〜`PB-005` により、既存文書の一部記述を `open question` から `確定方針` へ更新する必要があることを確認した
+- design docs についても、current 実装説明と future 方針の境界を保ったまま最小更新する必要があることを確認した
+- `PB-001`〜`PB-005` の確定方針を、plan hub と最小 design docs へ反映した
 
 ### Phase 7. コミット
 
@@ -148,6 +159,14 @@
   - `docs/要件定義_叩き.md`
   - `docs/design/*.md`
   - `docs/manual-test-checklist.md`
+  - `docs/design/character-storage.md`
+  - `docs/design/session-persistence.md`
+  - `docs/design/model-catalog.md`
+  - `docs/design/settings-ui.md`
+  - `docs/design/product-direction.md`
+  - `docs/design/monologue-provider-policy.md`
+  - `docs/design/agent-event-ui.md`
+  - `docs/design/character-chat-ui.md`
 - renderer
   - `src/App.tsx`
   - `src/HomeApp.tsx`
@@ -171,10 +190,13 @@
 ## Risks
 
 - ドキュメントと実装のズレにより、機能の真の状態判定が難しい可能性がある。
+- 既存の潜在バグレポートは `未確定の選択肢比較` を含むため、確定方針へ更新する際に過去の監査文脈を壊す可能性がある。
 - Electron main / renderer / storage をまたぐ不具合は、単一ファイル修正で閉じない可能性が高い。
 - Provider 系は実行環境依存のため、再現性確保に追加条件が必要になる可能性がある。
 - UI バグと設計未達が混在して見える箇所では、修正優先順位の見誤りが起きうる。
 - SQL ツールが使えない場合、SQLite 実データの確認はコードベースの推定に依存する。
+- Character Stream の pending 条件を更新する際、既存 design docs の historical draft と current policy を混同すると再び文書競合を生む可能性がある。
+- future 方針を current README / manual test の説明へ混ぜると、未実装機能を誤って現状機能として見せるリスクがある。
 
 ## Validation
 
@@ -184,6 +206,8 @@
 - 手動スモークテスト
 - 修正後の回帰確認
 - レポートに根拠ファイルと判断理由が記載されていることの確認
+- `PB-001`〜`PB-005` の確定方針が `potential-bug-report.md`、`completion-roadmap.md`、`plan.md`、`decisions.md`、`worklog.md`、`result.md` 間で一貫して読めることの確認
+- current 実装と future 方針の書き分けが、関連 design docs と矛盾なく読めることの確認
 
 ## Commit Point Proposal
 

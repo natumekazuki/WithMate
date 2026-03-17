@@ -18,11 +18,12 @@
 
 - **ID**: PB-001
 - **優先度**: 高
-- **タイトル**: 削除済み character を参照する既存 session の不整合
+- **タイトル**: character 未解決 session の続行不可方針が未反映
 - **症状 / 想定影響**:
   - 既存 session は `characterId / character 名 / icon / theme snapshot` を保持したまま残る一方、実体 character を削除すると次回 turn 実行時にキャラクター解決に失敗する可能性がある。
   - 条件次第では session 一覧上は通常の session に見えても、送信時に `"キャラクター定義が見つからないよ。"` で停止する。
-  - `resolveSessionCharacter()` が `characterId` で見つからない場合に `character.name` で再解決するため、同名キャラクター再作成時に意図しない別個体へ再接続する余地もある。
+  - 現在の実装では `resolveSessionCharacter()` が `characterId` で見つからない場合に `character.name` で再解決するため、同名 character 再作成時に意図しない別個体へ再接続する余地もある。
+  - ユーザー確定方針では、character を解決できない session は **続行不可** であり、許容したいのは **過去ログ / audit / diff の閲覧** のみである。この `browse-only` 相当の扱いが current 実装へまだ反映されていない。
 - **発生条件**:
   - session 作成後、その session が参照する character を Character Editor から削除する。
   - その後、該当 session を再開して送信する、または同名 character を別 ID で再作成する。
@@ -36,18 +37,15 @@
   - `src-electron/session-storage.ts:95-107, 168-217`
     - session row は character snapshot を独立保持しているため、一覧表示だけは継続できる。
 - **なぜ今回は未対応か**:
-  - 「character 削除時に session をどう扱うか」が仕様未確定だったため。
-  - 選択肢として、削除禁止、session 側へ tombstone 化、別 character への再割当、role snapshot 完全保持など複数案があり、表面バグ修正だけでは決め切れない。
+  - 監査時点では削除済み character と session 継続の扱いが未確定で、文書も複数案を比較する段階だったため。
+  - 現在はユーザー方針が確定したが、実装と関連 design docs がまだその方針へ揃っていない。
 - **推奨対応**:
-  1. current milestone の正本仕様として、`character 削除` と `既存 session 継続` の整合ルールを固定する。
-  2. 実装方針は少なくとも次のいずれかに寄せる。
-     - 参照中 session がある character は削除前に警告し、削除を抑止する。
-     - session 作成時に role snapshot を保持し、元 character 削除後も session 実行は継続可能にする。
-     - session を `orphaned character` 状態へ遷移させ、再割当 UI を出す。
-  3. `name` fallback で別個体へ紐づく挙動は、仕様として許容しない限り停止または明示再選択へ変える。
+  1. current milestone の正本仕様として、character 未解決 session は `実行不可 / 閲覧のみ可能` へ固定する。
+  2. Home / Session / storage 設計に `browse-only` または `view-only` 相当の状態を追加し、過去ログ / audit / diff は読めるが新規 turn は送れない導線にする。
+  3. `name` fallback で別個体へ再接続する挙動は廃止し、`characterId` を解決できない場合は未解決として扱う。
 - **検証観点**:
   - 既存 session がある character を削除したときの Home / Session 表示。
-  - 削除後 session の reopen、再送、rename、delete。
+  - 削除後 session の reopen、過去ログ閲覧、audit / diff 閲覧、再送抑止。
   - 同名 character を再作成した場合に誤再接続しないこと。
   - 実行中 session での character 削除可否と close / quit 保護との整合。
 
@@ -55,14 +53,14 @@
 
 - **ID**: PB-002
 - **優先度**: 高
-- **タイトル**: model catalog revision drift による UI と実行解決の乖離
+- **タイトル**: model catalog import 時の自動 migrate 方針が未反映
 - **症状 / 想定影響**:
-  - session は `catalogRevision` を保持している一方、Session Window は active catalog を購読して model / depth 候補を描画しているため、旧 revision session を開いた時に「見えている候補」と「実際に turn 実行時に参照される revision」がずれる可能性がある。
-  - catalog import 後、既存 session は旧 revision のまま実行できるが、UI 上は active revision ベースの選択肢へ寄るため、利用者には revision pin 状態が見えにくい。
-  - model / depth を触った瞬間に session が active revision へ移る設計自体は文書化されているが、その境目が UI から読み取りづらい。
+  - current 実装 / 既存文書では session が旧 `catalogRevision` を保持し続ける前提が強く、catalog import 後も revision drift を許容する記述が残っている。
+  - ユーザー確定方針では、**model catalog は import 時に自動 migrate する**。そのため、リスクの中心は「旧 revision をどう見せるか」ではなく、「import 時自動 migrate が未反映のまま旧 revision を残し続けること」に移る。
+  - 自動 migrate が未実装のままだと、current active catalog と session 側の `catalogRevision` の意味が文書ごとにずれ、import 後の model / depth 解決ルールが読み取りづらくなる。
 - **発生条件**:
   - session 作成後に model catalog を import して active revision を切り替える。
-  - その後、旧 revision を保持した既存 session を開く。
+  - その後、既存 session を開く、または model / depth を変更せず turn 実行する。
 - **観測根拠**:
   - `docs/design/model-catalog.md:89-126`
     - session は `catalogRevision` を保持し、adapter 実行時は session 側 revision を使う設計。
@@ -75,34 +73,30 @@
   - `src/App.tsx:533-560`
     - model / depth 変更時には session の `catalogRevision` を current active revision へ更新する。
 - **なぜ今回は未対応か**:
-  - 実害は UI 認知と migration ルールにまたがるため、単純なバグ修正よりも revision UX の整理が先と判断した。
-  - 「旧 revision を pin 表示するか」「常に migrate を促すか」「変更前後差分を見せるか」は仕様決めが必要。
+  - 監査時点では revision drift をどう扱うか自体が open question で、import 時自動 migrate はまだ方針化されていなかった。
+  - 現在は方針が確定したが、storage / Session UI / design docs がその前提へ揃っていない。
 - **推奨対応**:
-  1. Session Window に `session catalog revision` と `active revision` の差分状態を可視化する。
-  2. 既存 session 表示は active catalog だけでなく、必要に応じて `selectedSession.catalogRevision` の snapshot も読めるようにする。
-  3. revision drift のときに選べる操作を明確化する。
-     - 旧 revision のまま続行
-     - active revision へ migrate
-     - 互換対象が消えている場合の警告
-  4. model / depth 変更時の revision 切替は UI 文言で明示する。
+  1. import 成功時に既存 session を新 active revision へ自動 migrate する方針を、`model-catalog` と `session-persistence` の正本仕様へ明記する。
+  2. `catalogRevision` は「旧 revision を保持し続ける pin」の説明ではなく、「その session に現在反映済みの catalog revision」を示す前提へ整理する。
+  3. 実装時は import 処理と session 正規化を同一フローで扱い、部分反映を残さない。
 - **検証観点**:
-  - import 前後で既存 session の model / depth 表示がどう変わるか。
-  - 旧 revision のまま送信した時と、model 変更後に送信した時で解決結果が想定どおり切り替わるか。
-  - active catalog から削除された model を持つ既存 session の表示とエラー導線。
+  - import 前後で既存 session の `catalogRevision`、model、depth がどう正規化されるか。
+  - import 後に旧 revision 前提の実行経路が残らないこと。
+  - active catalog から削除 / 変更された model を持つ既存 session の migration 失敗時導線が定義されていること。
 
 ## PB-003
 
 - **ID**: PB-003
 - **優先度**: 高
-- **タイトル**: provider 認証状態が UI から不可視
+- **タイトル**: Settings ベース provider 設定方針が未反映
 - **症状 / 想定影響**:
-  - 現行 milestone では Codex 中心実装でも、利用者が「実行前に provider が使える状態か」を確認する面が薄い。
-  - 将来の `Character Stream` では OpenAI API key、要件書では Copilot まで視野に入っており、provider ごとに認証前提が違うが、状態診断 UI が存在しない。
-  - 認証切れや未設定は送信後の失敗としてしか見えず、セットアップ不備と実行エラーの切り分けが難しくなる。
+  - current 実装の Settings は `System Prompt Prefix` と `Model Catalog` import/export が中心で、provider ごとの enable / disable や API キー入力欄を持たない。
+  - 監査時点の文書には provider readiness / preflight を must-have とみなす記述が残るが、ユーザー確定方針では **Settings に provider ごとの有効化チェックボックスを置き、enabled provider は使える前提** とする。
+  - そのため current の主リスクは「認証状態可視化が弱いこと」そのものよりも、`Settings 主導で provider を有効化する` という仕様と既存文書がずれている点にある。
 - **発生条件**:
-  - Codex CLI が未 login / 期限切れ / 利用不能の状態で session を実行する。
-  - 将来の OpenAI API key 未設定状態で Character Stream を再開する。
-  - multi-provider 化の途中で provider ごとの readiness 判定が混在する。
+  - provider を切り替え / 追加する設計を参照する。
+  - Settings に provider 有効化や API キー入力を追加する実装タスクへ着手する。
+  - provider readiness / preflight を current must-have と誤読したまま後続設計を進める。
 - **観測根拠**:
   - `docs/design/monologue-provider-policy.md:17-23, 47-71, 132-177`
     - coding agent plane と monologue plane で auth 前提が異なる。
@@ -115,18 +109,16 @@
   - `docs/plans/20260317-repo-audit-and-stabilization/repo-audit.md`
     - `Provider 認証 / 接続状態の可視化` をズレ項目として整理済み。
 - **なぜ今回は未対応か**:
-  - current milestone では credential storage 自体が未実装で、Codex / OpenAI / Copilot を同じ基盤で扱う仕様も未確定だった。
-  - 表面修正だけで UI を足すと、後で provider split 方針と衝突する可能性が高い。
+  - 監査時点では credential / readiness / provider split の設計が揺れており、preflight 前提の整理も候補に入っていた。
+  - 現在は Settings ベースの最小方針が確定したが、まだ current 実装や design docs の正本へ反映しきれていない。
 - **推奨対応**:
-  1. provider ごとの readiness state を定義する。
-     - 例: `ready / login-required / key-required / unavailable / error`
-  2. Settings か Session Header のどちらを正本導線にするか決め、状態表示と再設定導線を追加する。
-  3. credential 保存方針を明文化し、平文保存を避ける。
-  4. turn 実行前 preflight と、失敗時の診断メッセージを分ける。
+  1. Settings の future scope として、provider ごとの enable / disable チェックボックスと API キー入力欄を正本 docs へ追加する。
+  2. enabled provider は「実行時にエラーが出るまでは使える前提」とし、current milestone では readiness / preflight を must-have から外す。
+  3. provider 実行失敗時のランタイムエラー導線だけは最低限整理し、Settings 起点の有効化方針と矛盾させない。
 - **検証観点**:
-  - Codex 未 login 状態での起動時表示と実行時表示。
-  - provider 切替や future provider 追加時に状態モデルを再利用できるか。
-  - API key 未設定 / 無効 / 期限切れ / ネットワーク不通の区別が UI 上で読めるか。
+  - Settings から provider 有効化 / 無効化と API キー入力の導線が読めること。
+  - enabled provider を選んだ時、実行前 preflight に依存しない設計として一貫していること。
+  - 実行時エラーの扱いが `provider 無効` と `provider 実行失敗` で混同されないこと。
 
 ## PB-004
 
@@ -167,11 +159,11 @@
 
 - **ID**: PB-005
 - **優先度**: 中
-- **タイトル**: Character Stream 文書競合由来の回帰リスク
+- **タイトル**: Character Stream 着手条件の未統一による回帰リスク
 - **症状 / 想定影響**:
   - current milestone では `Character Stream` を Session UI に出さない整理へ寄っている一方、一部文書には右ペイン前提や縮退表示前提の記述が残っている。
-  - 後続実装者が参照文書を取り違えると、pending 期間中に UI を再露出したり、auth / memory 未整備のまま実装を再開したりする回帰を招きやすい。
-  - provider / memory / UI の再開条件が揃わないまま進むと、coding agent 本体と monologue plane を混線させる可能性がある。
+  - 後続実装者が参照文書を取り違えると、pending 期間中に UI を再露出したり、Codex / CopilotCLI の対応完了前に Character Stream 実装へ着手したりする回帰を招きやすい。
+  - ユーザー確定方針では、Character Stream の実装開始は **Codex 対応完了**、**CopilotCLI 対応完了**、**両 CLI と SDK 経由でも使える機能の網羅完了** の後である。ここが roadmap と design docs にまだ十分明文化されていない。
 - **発生条件**:
   - `Character Stream` 再開系の実装や UI 調整で、正本文書が統一されないまま既存 design docs を参照する。
 - **観測根拠**:
@@ -189,9 +181,9 @@
   - 今回は bug fix / stabilization と残ドキュメント整備が主眼で、Character Stream 正本統一そのものは別タスクで扱う前提だった。
   - 単純に 1 文書だけ直すと、関連文書の参照関係まで揃わず、半端な更新になる可能性があった。
 - **推奨対応**:
-  1. current milestone の正本を `product-direction` と `monologue-provider-policy` に寄せるか、別の master doc を立てるか決める。
-  2. 競合する文書には `historical draft` / `future option` / `obsolete` の注記を付ける。
-  3. Character Stream 再開条件を roadmap 側で明示し、auth・memory・UI を同時に満たすまで本適用しない。
+  1. current milestone の正本を `product-direction` と `monologue-provider-policy` に寄せ、Character Stream は current milestone 非着手であることを明記する。
+  2. `agent-event-ui` と `character-chat-ui` の競合箇所には `historical draft` / `future option` 注記を付け、current 実装説明として読まれないようにする。
+  3. roadmap 側で、Character Stream 実装開始条件を `Codex 完了 + CopilotCLI 完了 + CLI / SDK parity 達成 + 関連 docs 更新完了` へ固定する。
 - **検証観点**:
   - `Character Stream` に言及する文書を横断し、current milestone の説明が 1 通りに読めるか。
   - manual test checklist と README に pending 扱いが一貫しているか。
@@ -212,26 +204,24 @@
 ### 直近対応推奨
 
 - **PB-001** 削除済み character を参照する既存 session の不整合
-  - session 継続不可に直結しやすく、仕様未確定でも最低限の保護方針を早めに決めたい。
-- **PB-002** model catalog revision drift
-  - catalog import を使い始めるほど UI と実行の認知差が広がるため、revision pin / migrate の可視化を優先したい。
-- **PB-003** provider 認証状態不可視
-  - current milestone の Codex 診断にも効き、将来の Character Stream / multi-provider 基盤にも直結する。
+  - session 続行不可に直結するため、browse-only 導線と `name` fallback 廃止を優先したい。
+- **PB-002** model catalog import 時の自動 migrate 方針未反映
+  - catalog import を使い始めるほど、自動 migrate 前提と current 実装の差が広がるため早めに揃えたい。
+- **PB-003** Settings ベース provider 設定方針未反映
+  - provider readiness / preflight を must-have と誤読しないよう、Settings 主導の正本仕様を先に固定したい。
 
 ### 仕様整理先行
 
-- **PB-005** Character Stream 文書競合由来の回帰リスク
-  - 実装前に正本を固定しないと、作業者ごとに解釈が割れる可能性が高い。
-- **PB-001** のうち character 削除ポリシー
-  - bug としての表面対処は可能でも、最終的には session と character の責務整理が必要。
+- **PB-005** Character Stream 着手条件の未統一
+  - 実装前に `Codex / CopilotCLI / CLI / SDK parity` のゲートを固定しないと、再開タイミングの解釈が割れる可能性が高い。
 
 ### roadmap 側へ送る論点
 
 - **PB-002**
-  - revision 固定 session をどう migrate させるか。
+  - import 時自動 migrate をどの粒度で session へ反映するか。
 - **PB-003**
-  - provider readiness / credential storage / settings 導線をどの順で整備するか。
+  - provider enable / disable と API キー入力を、Settings 中心でどの順に整備するか。
 - **PB-004**
   - artifact 欠落理由をどのレイヤーで観測可能にするか。
 - **PB-005**
-  - Character Stream 再開条件を provider / memory / UI のどれが満たされた時点に置くか。
+  - Character Stream 実装開始を `Codex / CopilotCLI / CLI / SDK parity` 完了後へどう落とし込むか。

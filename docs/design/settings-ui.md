@@ -46,8 +46,17 @@
 - `model catalog` の import
 - `model catalog` の export
 
+## 確定方針 / 今後反映
+
+- Settings に provider ごとの有効化チェックボックスを追加する
+- provider ごとの API キー入力欄を追加する
+- 有効化済み provider は、実行時にエラーが出るまでは利用可能前提で扱う
+- current milestone では provider readiness / preflight を must-have にしない
+
 ## Future Scope
 
+- provider ごとの enable / disable
+- provider ごとの API キー入力
 - monologue 用 API 設定
 - 新規 workspace の root directory 設定
 - provider ごとの既定値

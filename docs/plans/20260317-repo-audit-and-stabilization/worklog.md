@@ -103,9 +103,41 @@
   - 潜在バグは「今すぐ直す backlog」ではなく、直近 triage と roadmap へ送る論点として整理した
   - completion roadmap では Character Stream / provider / memory を別系統として扱い、仕様整理・基盤整備・機能拡張の区別を明示した
 
+### 0007
+
+- 日時: 2026-03-17
+- チェックポイント: ユーザー確定 `PB-001`〜`PB-005` の文書反映方針整理
+- 実施内容:
+  - `potential-bug-report.md` と `completion-roadmap.md` の現記述を再確認し、確定方針へ置き換える必要がある箇所を抽出
+  - `PB-001` は `session 続行不可 / 過去ログ閲覧可`、`PB-002` は `import 時自動 migrate`、`PB-003` は `Settings で provider enable + API key 入力`、`PB-005` は `Codex / CopilotCLI + CLI / SDK parity 完了後に Character Stream 着手` という反映軸で整理
+  - plan / decisions / worklog / result に、今回タスクが `文書更新のみ` であることと、最小 design docs 更新候補を記録する方針を決定
+- 検証:
+  - 計画整理のみのため追加コマンド実行は未実施
+- メモ:
+  - `PB-004` は現行推奨対応維持のため、表現の補正は最小限でよい
+  - `PB-005` は roadmap 上の依存順序へ影響が大きいため、Character Stream の再開条件章と中長期拡張章の両方を更新対象とする
+  - design docs は全面更新ではなく、矛盾解消に必要な最小セットへ限定する
+
+### 0008
+
+- 日時: 2026-03-17
+- チェックポイント: ユーザー確定 `PB-001`〜`PB-005` の文書同期完了
+- 実施内容:
+  - `potential-bug-report.md` を、未確定な複数案比較から `確定方針 + current 未反映リスク` の記述へ更新
+  - `completion-roadmap.md` を、`PB-003` の Settings 主導方針と `PB-005` の Character Stream 着手条件に合わせて再整理
+  - `plan.md` / `decisions.md` / `worklog.md` / `result.md` に、今回タスクが文書更新のみであることと current / future の書き分け基準を追記
+  - `character-storage.md` / `session-persistence.md` / `model-catalog.md` / `settings-ui.md` / `product-direction.md` / `monologue-provider-policy.md` を最小更新し、必要箇所だけ `future policy` / `current milestone 非対応` を明示
+  - `agent-event-ui.md` / `character-chat-ui.md` には Character Stream の誤読防止注記を追加
+- 検証:
+  - 文書更新のみのため追加コマンド実行は未実施
+  - 既知のコード検証結果として、bug fix フェーズの `node --test --import tsx scripts/tests/open-path.test.ts scripts/tests/workspace-file-search.test.ts`、`npm run typecheck`、`npm run build`、`npm run validate:snapshot-ignore` の pass 記録を保持した
+- メモ:
+  - README / manual test は current 実装入口のため、今回は未更新とした
+  - rollback 整理はユーザー指定に従い、最新コミット `3e11f97` を起点とする
+
 ## Open Items
 
 - Character Stream の正本文書をどこに置くか最終合意する
-- provider readiness / credential 保存方針の ownership と実装順序を確定する
+- provider enable / disable と API キー入力を、Settings 中心でどう実装するかの ownership と順序を確定する
 - memory 基盤を LangGraph 直行にするか段階導入にするか決める
 - 最終 quality review と最終コミットの粒度を確定する

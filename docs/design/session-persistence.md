@@ -52,6 +52,11 @@ WithMate では、永続化対象を 5 層に分ける。
 - created at / updated at
 - last active at
 
+補足:
+
+- current 実装では session row に character の軽量 snapshot と `catalogRevision` が残るため、元データが変わっても一覧表示自体は継続できる場合がある。
+- ただし、この snapshot は将来の実行継続を保証するものではない。
+
 用途:
 
 - `Recent Sessions`
@@ -72,6 +77,11 @@ WithMate では、永続化対象を 5 層に分ける。
 - crash recovery 用の `interrupted` 補正対象
 - 最新 turn summary
 - 最新 changed files summary
+
+補足:
+
+- current 実装では `selected catalog revision` を session 側に保持し、adapter 実行時も参照する。
+- **確定方針 / 今後反映**として、model catalog import 時には session も自動 migrate される前提へ移行するため、`catalogRevision` は「長期に旧 revision を pin し続けるための値」ではなく、「その session に現在反映済みの revision」を示す方向へ変わる。
 
 用途:
 
@@ -192,6 +202,9 @@ MVP では、保存責務を次のように切る。
 
 - model または reasoning depth を変更した時は、既存 `threadId` を破棄して次回 turn を新規 thread で開始する
 - UI 上の chat history は session に残るが、provider 側の継続コンテキストは切り替わる
+- **確定方針 / 今後反映**:
+  - model catalog import 時も session 側の `catalogRevision` は自動 migrate 対象になる
+  - import 後に旧 revision を保持したまま実行し続けることは current milestone の目標にしない
 
 ### App Settings
 
@@ -216,6 +229,16 @@ MVP では、保存責務を次のように切る。
 5. 前回が `running` のまま残っていた場合は `interrupted` へ補正する
 6. App Settings を読み込み prompt composition に反映する
 7. Session Memory を読み込み、Character Stream 用の基礎状態も復元する
+
+## Missing Character の扱い
+
+- **current 実装**:
+  - session 一覧表示は残せても、元 character を解決できないと turn 実行時に失敗する。
+  - 同名 character への fallback が入りうる実装が残っている。
+- **確定方針 / 今後反映**:
+  - character を解決できない session は reopen 自体は許可するが、`browse-only` / `view-only` として扱う。
+  - 過去ログ、audit、diff の閲覧は維持する。
+  - 新規 turn 送信や別 character への自動再接続は行わない。
 
 ## Crash Recovery
 
@@ -247,6 +270,7 @@ Session Persistence は、Character Stream のために次の責務を持つ。
 - turn summary の正本をどこに置くか
 - Session Memory 更新の粒度を every turn にするか checkpoint にするか
 - LangGraph backend とアプリ storage の境界をどこで切るか
+- import 時自動 migrate の具体的な正規化ルールをどこまで session-persistence で持つか
 
 ## References
 

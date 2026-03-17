@@ -2,8 +2,8 @@
 
 ## Status
 
-- 状態: 文書作成フェーズ完了（最終 review / 最終コミット待ち）
-- 現在フェーズ: 最終 review / 最終コミット準備
+- 状態: ユーザー確定 `PB-001`〜`PB-005` の文書同期完了
+- 現在フェーズ: quality review 待ち
 
 ## Completed
 
@@ -27,20 +27,26 @@
 - `potential-bug-report.md` を作成し、未修正リスクを triage 付きで整理した
 - `completion-roadmap.md` を作成し、仕様正本・provider / credential・memory・pending 機能再開条件・中長期拡張・運用品質の順で計画を整理した
 - `worklog.md` と `result.md` に bug fix コミットと最終文書フェーズを反映した
+- ユーザー確定の `PB-001`〜`PB-005` を既存文書へ反映するため、更新対象、表現変更方針、最小 design docs セットを整理した
+- `potential-bug-report.md` の `PB-001`〜`PB-005` を、確定方針ベースの記述へ更新した
+- `completion-roadmap.md` を、Settings 主導 provider 設定と Character Stream 着手条件後ろ倒しに合わせて更新した
+- `plan.md` / `decisions.md` / `worklog.md` / `result.md` に、今回が文書のみ更新であることと current / future の書き分け方針を反映した
+- `character-storage.md` / `session-persistence.md` / `model-catalog.md` / `settings-ui.md` / `product-direction.md` / `monologue-provider-policy.md` を最小更新し、current 実装と future 方針の差、および Character Stream 非着手条件を明示した
+- `agent-event-ui.md` / `character-chat-ui.md` に Character Stream の current milestone 非適用注記を追加した
 
 ## Remaining Issues
 
-- Character Stream の扱いに関する文書間のズレが残っている
-- provider 対応範囲と credential 管理方針の整理が未完了
-- Session Memory / Character Memory の実装方針が未確定
-- 削除済み character 参照 session、model catalog revision drift、provider 認証状態不可視、artifact 欠落表示などの潜在リスクは未対応のまま残っている
+- 今回反映した `PB-001`〜`PB-005` は文書同期までで、コード実装は未着手
+- `PB-001` の browse-only / view-only session 状態、`name` fallback 廃止は実装タスクとして残る
+- `PB-002` の import 時自動 migrate、`PB-003` の Settings での provider enable / API key 入力、`PB-005` の前提条件達成は今後の実装タスクとして残る
+- Session Memory / Character Memory の実装方針自体は未確定のままだが、Character Stream 着手条件との関係は文書上で整理済み
 - 最終 quality review と最終コミットが未完了
 
 ## Next Actions
 
-1. `potential-bug-report.md` と `completion-roadmap.md` の記述が `repo-audit.md` / `README.md` / design docs と矛盾していないか最終 review する
-2. 修正済み 3 件の回帰観点と、未修正潜在リスクの優先度付けが妥当かを quality review に回す
-3. 最終コミットの差分粒度、コミットメッセージ、rollback 先を確定する
+1. quality review で、current 実装と future 方針の書き分けが全更新文書で一貫しているか確認する
+2. 次タスクで `PB-001` browse-only session、`PB-002` import auto-migrate、`PB-003` Settings provider 構成の実装順を確定する
+3. Character Stream については `Codex / CopilotCLI / CLI / SDK parity` 完了後に、関連 docs を前提とした実装計画へ進む
 
 ## Related Commits
 
@@ -50,11 +56,11 @@
 
 ## Rollback Guide
 
-- 戻し先候補: `19761900fcd2a92fbe4593d49f41df231e663d30`
+- 戻し先候補: `3e11f97`
 - 文書のみ戻す場合:
-  - `plan.md` / `decisions.md` / `worklog.md` / `result.md` を bug fix 直後の内容へ戻す
-  - `potential-bug-report.md` / `completion-roadmap.md` を削除する
-- 理由: 今回の差分は bug fix 後に追加した最終文書整備が中心であり、コード安定化済みの地点へ戻せばアプリ本体の修正を保持したまま文書フェーズだけ切り離せる
+  - `docs/plans/20260317-repo-audit-and-stabilization/` 配下と今回更新した design docs を `3e11f97` 時点へ戻す
+  - README / manual test は今回未変更のため rollback 対象に含めない
+- 理由: 今回の差分はユーザー確定方針に合わせた文書同期のみであり、最新コミット `3e11f97` を起点に戻せば current 実装への影響なく切り離せる
 
 ## Related Docs
 

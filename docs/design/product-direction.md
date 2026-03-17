@@ -26,6 +26,7 @@ WithMate で実現したい体験は次の三層で構成される。
 
 ただし Issue `#5` により、現段階ではこの 3 層目の UI 適用は pending とする。
 つまり価値仮説としては維持しつつ、実際の Session UI には表示しない。
+さらにユーザー確定方針として、Character Stream の実装開始は `Codex 対応完了`、`CopilotCLI 対応完了`、`両 CLI / SDK 経由で使える機能の網羅完了` の後に置く。
 
 ## Priority Order
 
@@ -85,11 +86,13 @@ CLI parity の上に、WithMate 固有の層として次を追加する。
 WithMate は provider を 1 つに統一しない。
 
 - coding agent 本体
-  - `Codex CLI / SDK`
-  - CLI ログイン前提
+  - **current 実装**: `Codex` 中心
+  - **target scope**: `Codex` と `CopilotCLI`
+  - CLI / SDK で使える共通機能の網羅を先に進める
 - 将来的な `Character Stream`
   - OpenAI API
   - API キー前提
+  - 着手は coding plane 側の parity 完了後
 
 この分離により、本体の CLI parity を保ったまま、独り言機能のコスト管理と利用条件を独立して扱う。
 詳細は `docs/design/monologue-provider-policy.md` を参照する。
@@ -123,6 +126,7 @@ WithMate は provider を 1 つに統一しない。
 - `Session Window` は作業面
 - `Work Chat` は作業結果を読む面
 - 独り言 UI は current milestone では置かない
+- これは `未実装だから一時的に隠している` のではなく、`Codex / CopilotCLI / CLI / SDK parity` 完了前は着手しない方針による
 
 ### 2. キャラ性は構造で出す
 
@@ -134,9 +138,10 @@ WithMate は provider を 1 つに統一しない。
 
 ### 3. 情報の深さを段階化する
 
-- 普段見る: chat, status, stream
+- 普段見る: chat, status
 - 必要時に開く: artifact summary
 - 深掘り時だけ開く: diff viewer
+- future では Character Stream を別面として追加しうるが、current milestone の通常表示面には含めない
 - 役割が自明な面では、見出しや名前ラベルは原則出さない
 - 表示を正当化できるのは、ユーザー操作か直近判断に必要な情報だけ
 
@@ -180,5 +185,6 @@ WithMate は provider を 1 つに統一しない。
 
 - `Home Window` と `Session Window` の責務分離を維持したまま UI 密度を詰める
 - `Recent Sessions` のカード構造を Home 前提で詰める
-- 独り言 UI は pending のまま、土台となる provider / memory を先に詰める
+- 独り言 UI は pending のまま、まず coding plane の `Codex / CopilotCLI / CLI / SDK parity` を先に詰める
+- その後に Settings / memory / monologue 関連 docs を更新し、Character Stream の実装計画へ進む
 - 実イベント接続時も `CLI parity` と `WithMate 固有拡張` を分離して実装する

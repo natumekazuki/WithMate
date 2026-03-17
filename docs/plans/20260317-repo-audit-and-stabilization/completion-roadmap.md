@@ -13,13 +13,13 @@
 - 監査レポート: `72e4d88` `docs(audit): 監査レポートを追加`
 - bug fix / stabilization: `19761900fcd2a92fbe4593d49f41df231e663d30` `fix(session): 安定化バグを修正`
 - 現時点の repo は、`Home / Session / Character Editor / Diff` の desktop 基盤、Codex 中心の session 実行、audit log、artifact summary、model catalog import/export、character CRUD までは成立している。
-- 一方で、provider scope、credential、memory、Character Stream の current milestone 定義はまだ整理途上。
+- 一方で、`PB-001`〜`PB-005` で確定した方針のうち、character 未解決 session の閲覧専用化、catalog import 時自動 migrate、Settings ベース provider 設定、Character Stream 着手条件はまだ実装・文書への反映途上である。
 
 ### 依存関係の見取り図
 
 1. **Stabilization 完了**
 2. **仕様正本の統一**
-3. **Provider / Credential 基盤**
+3. **Provider / Settings 基盤**
 4. **Memory 基盤**
 5. **Pending 機能の再開条件確定**
 6. **中長期機能拡張**
@@ -133,9 +133,10 @@
 
 - **目的**: 後から「未対応をバグと誤認」しにくくする
 - **主要タスク**:
-  - model catalog revision drift の現仕様
+  - character 未解決 session は `続行不可 / 閲覧のみ可能` とする future 方針
+  - model catalog import 時自動 migrate の確定方針
   - artifact diff の snapshot 制約
-  - character 削除と session 継続の open question
+  - provider 設定は Settings 主導で行い、enabled provider は runtime error が出るまで使える前提とする方針
   を正本 docs の既知制約として記録
 - **成果物**:
   - Known Constraints / Open Questions の更新
@@ -144,17 +145,17 @@
 
 ---
 
-## Provider / Credential 基盤
+## Provider / Settings 基盤
 
 ### 目的
 
-- provider ごとの実行前提と credential 管理を、UI・Main Process・storage の共通基盤として整える。
+- provider ごとの有効化と API キー入力を、Settings 中心の最小構成で整える。
 
 ### 背景
 
-- 現実装は Codex 中心で成立しているが、auth state は不可視。
-- Character Stream は OpenAI API を前提にしており、要件書では Copilot も視野に入っている。
-- 今のままでは provider 拡張前に診断面が先に破綻しやすい。
+- 現実装は Codex 中心で成立しているが、Settings はまだ provider enable / disable や API キー入力を持たない。
+- ユーザー確定方針では、Settings に provider ごとの有効化チェックボックスを追加し、有効な provider は runtime error が出るまでは利用可能前提で扱う。
+- そのため current must-have は readiness / preflight UI ではなく、Settings から provider を構成できることに寄る。
 
 ### 依存関係
 
@@ -162,52 +163,50 @@
 
 ### 主要タスク
 
-#### M2-1. provider readiness state の定義
+#### M2-1. Settings data model の定義
 
-- **目的**: 実行前診断の共通語彙を作る
+- **目的**: provider 有効化と API キー入力の正本を Settings に置く
 - **主要タスク**:
-  - `ready / login-required / key-required / unavailable / error` などの状態モデル定義
-  - provider ごとの判定責務を main process に寄せる
+  - provider ごとの enable / disable 状態を持つ設定モデル定義
+  - provider ごとの API キー入力項目をどこまで Settings に置くか決める
+  - import/export 対象と Settings 内保持項目の境界を整理する
 - **成果物**:
-  - provider readiness spec
+  - provider settings spec
   - preload / IPC contract 案
 - **exit criteria**:
-  - Codex、future OpenAI API、future Copilot を同じ状態モデルで表現できる
+  - `enabled provider は使える前提` という仕様が Settings のデータモデルで表現できる
 
-#### M2-2. credential 保存方針の確定
+#### M2-2. Settings UI の拡張
 
-- **目的**: 認証情報の扱いを後付けではなく基盤として固定する
+- **目的**: provider 設定を Home Settings から完結できるようにする
 - **主要タスク**:
-  - OS keychain / secure storage の候補比較
-  - 平文保存禁止方針の決定
-  - import/export 対象から credential を切り分け
+  - provider ごとの有効化チェックボックス追加
+  - API キー入力欄追加
+  - 保存 / 反映導線追加
 - **成果物**:
-  - credential storage design
-  - migration / reset 方針
-- **exit criteria**:
-  - 保存場所、暗号化方針、消去方法が説明できる
-
-#### M2-3. UI 診断導線の実装
-
-- **目的**: 「送るまで分からない」を避ける
-- **主要タスク**:
-  - Home Settings か Session Header に auth 状態表示を追加
-  - preflight check と run-time error の文言を分離
-  - 再認証 / 再設定導線を置く
-- **成果物**:
-  - provider diagnostics UI
+  - 更新済み Settings UI
   - manual test 項目
-  - 失敗パターン別の表示仕様
 - **exit criteria**:
-  - auth 未完了時に、送信前に不足が分かる
-  - 実行失敗時に auth 不備と provider 側エラーを切り分けて案内できる
+  - provider 有効化と API キー設定を current UI の入口を壊さずに実行できる
+
+#### M2-3. 実行時エラー導線の最小整理
+
+- **目的**: preflight 前提を増やさずに、失敗時だけ読める状態を作る
+- **主要タスク**:
+  - provider 無効時の抑止
+  - enabled provider 実行時の runtime error 表示整理
+  - Session / Settings のどちらで再設定へ戻すか決める
+- **成果物**:
+  - runtime error handling spec
+- **exit criteria**:
+  - Settings ベース構成と runtime error 案内が矛盾しない
 
 #### M2-4. adapter 拡張前提の整理
 
 - **目的**: multi-provider 拡張前に責務境界を固める
 - **主要タスク**:
   - `provider-adapter.md` の current MVP と future adapter 拡張点を明確化
-  - model catalog と provider readiness の関係を整理
+  - model catalog と provider enable / disable の関係を整理
 - **成果物**:
   - 更新済み `provider-adapter.md`
   - adapter extension checklist
@@ -230,7 +229,7 @@
 ### 依存関係
 
 - 仕様正本の統一
-- provider / credential 基盤の状態モデル
+- provider / settings 基盤の状態モデル
 
 ### 主要タスク
 
@@ -304,39 +303,38 @@
 
 ### 依存関係
 
-- Provider / Credential 基盤
+- Provider / Settings 基盤
 - Memory 基盤
 - 仕様正本の統一
 
 ### 主要タスク
 
-#### R1. Character Stream 再開条件
+#### R1. coding plane parity の完了
+
+- **目的**: Character Stream より先に coding agent 本体の対応範囲を揃える
+- **完了条件**:
+  - Codex 対応が current target scope で完了している
+  - CopilotCLI 対応が current target scope で完了している
+  - 両 provider で、CLI / SDK 経由でも使える機能の網羅範囲が明文化されている
+  - 上記を前提に `product-direction` / `monologue-provider-policy` / 関連 UI docs が更新済みである
+- **成果物**:
+  - coding plane parity checklist
+  - provider coverage matrix
+- **exit criteria**:
+  - Character Stream へ進む前提として、coding agent 本体側の対応完了を説明できる
+
+#### R2. Character Stream 実装開始条件
 
 - **目的**: Character Stream を premature に本適用しない
-- **再開条件**:
-  - current milestone 正本が統一済み
-  - OpenAI API key / auth 導線がある
-  - Session Memory / Character Memory の最低限がある
-  - pending 中の縮退表示を出すか、完全非表示を維持するかが決定済み
-  - monologue 実行失敗時の degraded UX が定義済み
+- **実装開始条件**:
+  - `R1. coding plane parity の完了` を満たしている
+  - current milestone 正本 docs が `non-start / future scope` として整理済みである
+  - Character Stream 関連 docs が future scope / historical draft の注記を持ち、current 実装と混同されない
 - **成果物**:
-  - reopen checklist
-  - implementation scope
+  - Character Stream reopen checklist
+  - implementation scope draft
 - **exit criteria**:
-  - 「表示だけ先に出す」状態を避けられる
-
-#### R2. Copilot provider 再開条件
-
-- **目的**: provider 追加を単発実装で終わらせない
-- **再開条件**:
-  - provider readiness state が実装済み
-  - adapter extension point が明文化済み
-  - model catalog に provider 追加時の import/export 仕様が固まっている
-  - セットアップ / login 診断の manual test が書ける
-- **成果物**:
-  - Copilot feasibility / scope doc
-- **exit criteria**:
-  - `要件に書いてある` だけでなく、着手条件が measurable になっている
+  - `表示だけ先に出す`、`docs だけ current 実装のように見せる` 状態を避けられる
 
 #### R3. richer artifact / memory 連携の再開条件
 
@@ -369,10 +367,24 @@
 
 ### 主要タスク
 
-#### E1. Character Stream 本実装
+#### E1. multi-provider 実装
+
+- **目的**: Codex 以外の coding provider を段階追加する
+- **背景**: Character Stream より前に coding plane parity を揃える
+- **主要タスク**:
+  - CopilotCLI adapter
+  - CLI / SDK feature coverage 差分の整理
+  - launch / settings / runtime error handling 更新
+- **成果物**:
+  - provider adapter 拡張
+  - provider ごとの test / docs
+- **exit criteria**:
+  - 少なくとも Codex と CopilotCLI で、定義済み scope の coding session UX 原則を保てる
+
+#### E2. Character Stream 本実装
 
 - **目的**: WithMate 固有価値の第 3 層を成立させる
-- **背景**: 現在は pending
+- **背景**: 現在は pending。着手は `R1` / `R2` 完了後
 - **主要タスク**:
   - monologue trigger 実装
   - Session UI 配置確定
@@ -381,20 +393,6 @@
   - Character Stream UI / provider integration
 - **exit criteria**:
   - coding agent 本体を邪魔せず、継続的な monologue を表示できる
-
-#### E2. multi-provider 実装
-
-- **目的**: Codex 以外の provider を段階追加する
-- **背景**: 要件書とのギャップ解消
-- **主要タスク**:
-  - Copilot adapter
-  - provider 別 capability 差分吸収
-  - launch / settings / diagnostics 更新
-- **成果物**:
-  - provider adapter 拡張
-  - provider ごとの test / docs
-- **exit criteria**:
-  - 少なくとも 2 provider で同じ session UX 原則を保てる
 
 #### E3. artifact / diff の高度化
 
@@ -454,7 +452,7 @@
   - session lifecycle
   - model catalog revision
   - character delete / orphan case
-  - provider readiness
+  - provider enable / disable と runtime error handling
   - memory write / read / fallback
   の自動 test 追加
 - **成果物**:
@@ -478,7 +476,7 @@
 - **主要タスク**:
   - session schema 変更
   - memory schema 追加
-  - credential storage 導入
+  - provider settings / API key storage 導入
   - model catalog revision 遷移
   の migration / rollback 計画
 - **成果物**:
@@ -506,17 +504,17 @@
 
 1. Stabilization 完了
 2. 仕様正本の統一
-3. Provider / Credential 基盤
+3. Provider / Settings 基盤
 4. Memory 基盤
 5. Pending 機能の再開条件確定
-6. Character Stream / multi-provider / artifact 拡張
+6. multi-provider / Character Stream / artifact 拡張
 7. 運用・品質・リリース準備
 
 ## 直近 3 マイルストーンで見ると
 
 - **最優先**: 仕様正本の統一
-  - Character Stream、launch provider、credential 導線の文書競合を止める
-- **次点**: Provider / Credential 基盤
-  - current Codex 診断にも効き、将来機能の前提にもなる
+  - Character Stream、launch provider、Settings 導線の文書競合を止める
+- **次点**: Provider / Settings 基盤
+  - Settings から provider を有効化できる前提を揃え、将来機能の入口を固定する
 - **その次**: Memory 基盤
   - Character Stream 再開の前提であり、継続性の要件達成にも必要

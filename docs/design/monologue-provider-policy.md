@@ -14,12 +14,13 @@
 
 ## Decision Summary
 
-1. coding agent 本体は `Codex CLI / SDK` を使い、CLI ログイン前提で動かす
-2. `Character Stream` / 独り言は OpenAI API を使う
-3. 独り言機能は consumer / subscription 側の自動多重実行では実装しない
-4. MVP の独り言モデルは `gpt-5-mini` 固定にする
-5. 独り言の実行契機はユーザー操作に連動するイベントに限定し、定期実行は行わない
-6. 独り言の文脈は Memory から抽出した軽量コンテキストに限定する
+1. coding agent 本体は current 実装では `Codex` 中心だが、Character Stream 着手前に `Codex` と `CopilotCLI` の target scope を揃える
+2. 上記の前提として、両 CLI / SDK 経由でも使える機能の網羅範囲を先に固める
+3. `Character Stream` / 独り言は OpenAI API を使う
+4. 独り言機能は consumer / subscription 側の自動多重実行では実装しない
+5. MVP の独り言モデルは `gpt-5-mini` 固定にする
+6. 独り言の実行契機はユーザー操作に連動するイベントに限定し、定期実行は行わない
+7. 独り言の文脈は Memory から抽出した軽量コンテキストに限定する
 
 ## Why
 
@@ -46,7 +47,8 @@
 
 ### Coding Agent Plane
 
-- Provider: `Codex CLI / SDK`
+- **current 実装**: `Codex`
+- **target scope**: `Codex` + `CopilotCLI`
 - Auth: CLI login
 - Main UI:
   - `Work Chat`
@@ -132,17 +134,21 @@ MVP では、独り言生成にフル履歴を渡さない。
 ## UI Policy
 
 Issue `#5` により、MVP の現段階では `Character Stream` の本適用を pending 扱いにする。
-つまり、独り言の provider / memory / trigger の土台設計は進めるが、Session UI には独り言面を出さない。
+current milestone では `Character Stream` は **非着手** とし、provider / memory / trigger / backend / context 連携を含む実装作業は進めない。
+さらに Character Stream の実装開始自体を `Codex 対応完了`、`CopilotCLI 対応完了`、`CLI / SDK parity 完了` の後へ置く。
+独り言関連の実装検討を再開するのは、その parity 完了後に reopen したフェーズに限る。
 
 ### API Key Available
 
-- backend / context 連携の土台実装は許容する
-- ただし UI 適用は pending とし、Session UI には表示しない
+- current milestone では API キー有無にかかわらず Character Stream 実装は進めない
+- backend / context 連携の土台実装も parity 完了後の reopen フェーズへ送る
+- UI 適用は pending とし、Session UI には表示しない
+- API キー入力導線は future の Settings 拡張で扱うが、現時点では current 実装済みとして扱わない
 
 ### API Key Missing
 
 - current milestone では UI 自体を出さないため、個別の縮退表示は持たない
-- API キー設定 UI は独り言本実装の再開時に合わせて設計する
+- API キー設定 UI は Settings 拡張の future scope として扱う
 
 ## Non Goals
 
@@ -156,7 +162,8 @@ Issue `#5` により、MVP の現段階では `Character Stream` の本適用を
 ### Product Direction
 
 - `Character Stream` は WithMate の価値だが、認証とコスト管理は独立させる
-- ただし Issue `#5` により、しばらくは UI へ出さずに土台実装を優先する
+- ただし Issue `#5` により、current milestone では UI へ出さず、土台実装も含めて非着手とする
+- coding plane parity 完了後に reopen した段階で、provider / memory / UI の順を再判断する
 
 ### Agent Event UI
 
@@ -174,4 +181,4 @@ Issue `#5` により、MVP の現段階では `Character Stream` の本適用を
 - 独り言生成の契機を `送信時` にするか `ターン完了時` にするか
 - 1 ターンにつき独り言を 1 回固定にするか
 - API 未設定時に独り言設定をどの画面で案内するか
-- pending 解除の条件をどこで固定するか
+- parity 完了後の Character Stream 実装順を provider / memory / UI のどこから切るか
