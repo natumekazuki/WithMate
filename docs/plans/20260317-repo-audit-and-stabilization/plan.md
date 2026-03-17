@@ -84,6 +84,44 @@
 - 設計未確定事項の解像度を上げる。
 - 安定化タスクと機能追加タスクを分けて並べる。
 
+## Remaining Phase Focus
+
+> 前提: `9f676b9` で plan 初期化、`72e4d88` で監査レポート、`19761900fcd2a92fbe4593d49f41df231e663d30` で bug fix / stabilization が完了している。
+
+### 現在の主対象
+
+- Phase 5 の潜在バグレポート作成は完了
+- Phase 6 の完成ロードマップ作成は完了
+- 残タスクは quality review とコミット準備
+
+### 潜在バグレポートで優先的に扱う観点
+
+1. 既存 session が削除済み character を参照した場合の再開 UX と保存整合性
+2. model catalog revision 更新後に既存 session の provider / model 解決が壊れるリスク
+3. provider 認証状態が UI から見えず、launch / run failure が不透明になるリスク
+4. workspace snapshot 上限や ignore 境界により artifact summary / diff が欠落するリスク
+5. Character Stream 関連文書の競合により、pending 方針と異なる UI 実装が再混入するリスク
+
+### 完成ロードマップで優先的に扱う観点
+
+1. stabilization の完了条件と未解決バグの扱い
+2. Character Stream / provider / memory の仕様正本統一
+3. provider scope と credential 管理の確定
+4. Session Memory / Character Memory の実装方針確定
+5. pending 中機能の再開条件と後続マイルストーン
+
+### 予定成果物
+
+- `docs/plans/20260317-repo-audit-and-stabilization/potential-bug-report.md`
+- `docs/plans/20260317-repo-audit-and-stabilization/completion-roadmap.md`
+- 必要に応じた `worklog.md` / `result.md` の進捗追記
+
+### 現時点の達成状況
+
+- `potential-bug-report.md` を作成し、未修正リスクを優先度・観測根拠・推奨対応つきで整理した
+- `completion-roadmap.md` を作成し、stabilization 後の実装順序と依存関係を章立てした
+- `worklog.md` / `result.md` に bug fix commit `19761900fcd2a92fbe4593d49f41df231e663d30`、残課題、次アクション、rollback 方針を反映した
+
 ### Phase 7. コミット
 
 - 各フェーズの区切りで成果物と変更内容をコミットする。

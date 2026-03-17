@@ -49,3 +49,19 @@
 - 判断: `計画確定`, `監査完了`, `表面バグ修正`, `検証完了`, `最終レポート完了` の節目で切る
 - 理由: 差分レビューしやすく、後戻り時の意味単位も明確になる
 - 影響範囲: `worklog.md`, `result.md`, 後続作業手順
+
+### 0006
+
+- 日時: 2026-03-17
+- 論点: bug fix / stabilization 後の残成果物をどう分けるか
+- 判断: `潜在バグレポート` と `完成ロードマップ` は別文書に分離し、前者は未修正リスク、後者は今後の実装順序と完了条件に専念させる
+- 理由: リスク列挙と将来計画を混在させると、未修正バグと機能計画の優先度が曖昧になりやすいため
+- 影響範囲: `potential-bug-report.md`, `completion-roadmap.md`, `worklog.md`, `result.md`
+
+### 0007
+
+- 日時: 2026-03-17
+- 論点: 文書作成フェーズで Character Stream / provider / memory をどう整理するか
+- 判断: `potential-bug-report.md` では未修正リスクを session 整合性・catalog drift・provider 認証可視性・artifact summary / diff 欠落・Character Stream 文書競合に限定し、`completion-roadmap.md` では `仕様正本の統一`、`Provider / Credential 基盤`、`Memory 基盤`、`Pending 機能の再開条件` を別章で整理する
+- 理由: Character Stream、provider、memory を同じ論点として混在させると、今回の未修正リスクと今後の基盤整備の境界が曖昧になるため
+- 影響範囲: `potential-bug-report.md`, `completion-roadmap.md`, `plan.md`, `worklog.md`, `result.md`
