@@ -208,6 +208,43 @@ function clampReasoningEffort(
   throw new Error("selected depth が model catalog の定義と一致してないよ。");
 }
 
+function fallbackReasoningEffort(
+  providerCatalog: ModelCatalogProvider,
+  allowedEfforts: readonly ModelReasoningEffort[],
+): ModelReasoningEffort {
+  if (allowedEfforts.includes(providerCatalog.defaultReasoningEffort)) {
+    return providerCatalog.defaultReasoningEffort;
+  }
+
+  return allowedEfforts[0] ?? providerCatalog.defaultReasoningEffort;
+}
+
+export function coerceModelSelection(
+  providerCatalog: ModelCatalogProvider,
+  requestedModel: string,
+  requestedReasoningEffort: ModelReasoningEffort,
+): ResolvedModelSelection {
+  const normalizedModel = typeof requestedModel === "string" && requestedModel.trim()
+    ? requestedModel.trim()
+    : providerCatalog.defaultModelId;
+  const resolvedEntry =
+    providerCatalog.models.find((entry) => entry.id === normalizedModel) ??
+    providerCatalog.models.find((entry) => entry.id === providerCatalog.defaultModelId) ??
+    providerCatalog.models[0];
+  if (!resolvedEntry) {
+    throw new Error("selected model が model catalog に存在しないよ。");
+  }
+
+  return {
+    requestedModel: normalizedModel,
+    resolvedModel: resolvedEntry.id,
+    requestedReasoningEffort,
+    resolvedReasoningEffort: resolvedEntry.reasoningEfforts.includes(requestedReasoningEffort)
+      ? requestedReasoningEffort
+      : fallbackReasoningEffort(providerCatalog, resolvedEntry.reasoningEfforts),
+  };
+}
+
 export function resolveModelSelection(
   providerCatalog: ModelCatalogProvider,
   requestedModel: string,

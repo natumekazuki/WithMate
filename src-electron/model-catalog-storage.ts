@@ -175,7 +175,10 @@ export class ModelCatalogStorage {
     return provider ? JSON.parse(JSON.stringify(provider)) : null;
   }
 
-  importCatalogDocument(document: ModelCatalogDocument, source: "bundled" | "imported" = "imported"): ModelCatalogSnapshot {
+  importCatalogDocument(
+    document: ModelCatalogDocument,
+    source: "bundled" | "imported" | "rollback" = "imported",
+  ): ModelCatalogSnapshot {
     const normalized = parseModelCatalogDocument(document);
     const importedAt = new Date().toISOString();
 

@@ -2,15 +2,19 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   type AuditLogEntry,
+  createDefaultAppSettings,
   type ComposerPreview,
   currentTimestampLabel,
+  getProviderAppSettings,
   getSessionIdFromLocation,
   type ChangedFile,
+  type CharacterProfile,
   type DiffPreviewPayload,
   type LiveSessionRunState,
   type Message,
   type RunSessionTurnRequest,
   type Session,
+  type AppSettings,
 } from "./app-state.js";
 import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
 import {
@@ -83,6 +87,8 @@ export default function App() {
   const [auditLogsOpen, setAuditLogsOpen] = useState(false);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [liveRun, setLiveRun] = useState<LiveSessionRunState | null>(null);
+  const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
+  const [resolvedCharacter, setResolvedCharacter] = useState<CharacterProfile | null | undefined>(undefined);
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>({ attachments: [], errors: [] });
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [composerCaret, setComposerCaret] = useState(0);
@@ -147,6 +153,37 @@ export default function App() {
         : null,
     [selectedSession],
   );
+  const isSelectedCharacterMissing = useMemo(
+    () => !!selectedSession && !!selectedSession.characterId && resolvedCharacter === null,
+    [resolvedCharacter, selectedSession],
+  );
+  const isCharacterResolutionPending = useMemo(
+    () => !!selectedSession && !!selectedSession.characterId && resolvedCharacter === undefined,
+    [resolvedCharacter, selectedSession],
+  );
+  const isSelectedProviderEnabled = useMemo(
+    () => !!selectedSession && getProviderAppSettings(appSettings, selectedSession.provider).enabled,
+    [appSettings, selectedSession],
+  );
+  const sessionExecutionBlockedReason = useMemo(() => {
+    if (!selectedSession) {
+      return "";
+    }
+
+    if (isCharacterResolutionPending) {
+      return "この session の character 状態を確認しているよ。少し待ってね。";
+    }
+
+    if (isSelectedCharacterMissing) {
+      return "この session は元の character が見つからないため、過去ログの閲覧のみできるよ。";
+    }
+
+    if (!isSelectedProviderEnabled) {
+      return "この provider は Settings で無効になっているよ。Home の Settings で有効化してね。";
+    }
+
+    return "";
+  }, [isCharacterResolutionPending, isSelectedCharacterMissing, isSelectedProviderEnabled, selectedSession]);
 
   useEffect(() => {
     if (!selectedSession || isEditingTitle) {
@@ -183,6 +220,62 @@ export default function App() {
       unsubscribe();
     };
   }, [selectedSession?.id]);
+
+  useEffect(() => {
+    let active = true;
+    if (!window.withmate) {
+      return () => {
+        active = false;
+      };
+    }
+
+    void window.withmate.getAppSettings().then((settings) => {
+      if (active) {
+        setAppSettings(settings);
+      }
+    });
+
+    const unsubscribe = window.withmate.subscribeAppSettings((settings) => {
+      if (active) {
+        setAppSettings(settings);
+      }
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const withmateApi = window.withmate;
+    if (!withmateApi || !selectedSession?.characterId) {
+      setResolvedCharacter(selectedSession ? null : undefined);
+      return () => {
+        active = false;
+      };
+    }
+
+    setResolvedCharacter(undefined);
+    const refreshCharacterResolution = () => {
+      void withmateApi.getCharacter(selectedSession.characterId).then((character) => {
+        if (active) {
+          setResolvedCharacter(character);
+        }
+      });
+    };
+
+    refreshCharacterResolution();
+    const unsubscribe = withmateApi.subscribeCharacters(() => {
+      refreshCharacterResolution();
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [selectedSession?.characterId, selectedSession?.id]);
 
   const displayedMessages: Message[] = selectedSession ? selectedSession.messages : [];
 
@@ -360,6 +453,10 @@ export default function App() {
       return;
     }
 
+    if (sessionExecutionBlockedReason) {
+      throw new Error(sessionExecutionBlockedReason);
+    }
+
     const nextMessage = messageText.trim();
     const preview = await window.withmate.previewComposerInput(selectedSession.id, messageText);
     setComposerPreview(preview);
@@ -415,7 +512,12 @@ export default function App() {
   };
 
   const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== "Enter" || (!event.ctrlKey && !event.metaKey) || selectedSession?.runState === "running") {
+    if (
+      event.key !== "Enter" ||
+      (!event.ctrlKey && !event.metaKey) ||
+      selectedSession?.runState === "running" ||
+      !!sessionExecutionBlockedReason
+    ) {
       return;
     }
 
@@ -567,7 +669,7 @@ export default function App() {
   };
 
   const handleResendLastMessage = async () => {
-    if (!lastUserMessage) {
+    if (!lastUserMessage || sessionExecutionBlockedReason) {
       return;
     }
 
@@ -822,6 +924,8 @@ export default function App() {
                 const artifactKey = `${selectedSession.id}-${index}`;
                 const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
                 const isAssistant = message.role === "assistant";
+                const artifactHasSnapshotRisk =
+                  message.artifact?.runChecks.some((check) => check.label.startsWith("snapshot ")) ?? false;
                 const artifactOperations =
                   message.artifact?.operationTimeline ??
                   message.artifact?.activitySummary.map((item) => ({
@@ -870,7 +974,11 @@ export default function App() {
                                       ))
                                     ) : (
                                       <article className="artifact-file-item empty-state-card">
-                                        <p>まだファイル変更はないよ。</p>
+                                        <p>
+                                          {artifactHasSnapshotRisk
+                                            ? "差分は見つからなかったけど、snapshot の上限や省略で取りこぼしがあるかもしれないよ。"
+                                            : "まだファイル変更はないよ。"}
+                                        </p>
                                       </article>
                                     )}
                                   </div>
@@ -961,22 +1069,27 @@ export default function App() {
           </div>
 
           <div className="composer">
+            {sessionExecutionBlockedReason ? (
+              <div className="resume-banner browse-only-banner">
+                <p>{sessionExecutionBlockedReason}</p>
+              </div>
+            ) : null}
             {selectedSession.runState === "interrupted" && lastUserMessage ? (
               <div className="resume-banner">
-                <button type="button" onClick={() => void handleResendLastMessage()}>
+                <button type="button" onClick={() => void handleResendLastMessage()} disabled={!!sessionExecutionBlockedReason}>
                   同じ依頼を再送
                 </button>
                 <p>{lastUserMessage.text}</p>
               </div>
             ) : null}
             <div className="composer-attachments-toolbar">
-              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickFile()} disabled={selectedSession.runState === "running"}>
+              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickFile()} disabled={selectedSession.runState === "running" || !!sessionExecutionBlockedReason}>
                 File
               </button>
-              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickFolder()} disabled={selectedSession.runState === "running"}>
+              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickFolder()} disabled={selectedSession.runState === "running" || !!sessionExecutionBlockedReason}>
                 Folder
               </button>
-              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickImage()} disabled={selectedSession.runState === "running"}>
+              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickImage()} disabled={selectedSession.runState === "running" || !!sessionExecutionBlockedReason}>
                 Image
               </button>
             </div>
@@ -1023,13 +1136,13 @@ export default function App() {
                 }}
                 onKeyDown={handleComposerKeyDown}
                 onSelect={(event) => setComposerCaret(event.currentTarget.selectionStart ?? 0)}
-                disabled={selectedSession.runState === "running"}
+                disabled={selectedSession.runState === "running" || !!sessionExecutionBlockedReason}
               />
               <button
                 className={selectedSession.runState === "running" ? "danger" : ""}
                 type="button"
                 onClick={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
-                disabled={selectedSession.runState !== "running" && composerPreview.errors.length > 0}
+                disabled={selectedSession.runState !== "running" && (composerPreview.errors.length > 0 || !!sessionExecutionBlockedReason)}
               >
                 {selectedSession.runState === "running" ? "Cancel" : "Send"}
               </button>

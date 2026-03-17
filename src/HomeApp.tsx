@@ -1,6 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { type AppSettings, type CharacterProfile, type CreateSessionInput, type Session } from "./app-state.js";
+import {
+  createDefaultAppSettings,
+  getProviderAppSettings,
+  type AppSettings,
+  type CharacterProfile,
+  type CreateSessionInput,
+  type ProviderAppSettings,
+  type Session,
+} from "./app-state.js";
+import type { ModelCatalogSnapshot } from "./model-catalog.js";
 import { buildCardThemeStyle, CharacterAvatar } from "./ui-utils.js";
 
 type LaunchWorkspace = {
@@ -45,13 +54,25 @@ export default function HomeApp() {
   const [characterSearchText, setCharacterSearchText] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsFeedback, setSettingsFeedback] = useState("");
-  const [appSettings, setAppSettings] = useState<AppSettings>({ systemPromptPrefix: "" });
+  const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [systemPromptPrefixDraft, setSystemPromptPrefixDraft] = useState("");
+  const [providerSettingsDraft, setProviderSettingsDraft] = useState<Record<string, ProviderAppSettings>>({});
   const [launchOpen, setLaunchOpen] = useState(false);
   const [launchTitle, setLaunchTitle] = useState("");
   const [launchWorkspace, setLaunchWorkspace] = useState<LaunchWorkspace | null>(null);
   const [launchCharacterId, setLaunchCharacterId] = useState("");
   const [launchCharacterSearchText, setLaunchCharacterSearchText] = useState("");
+  const settingsDirtyRef = useRef(false);
+  const settingsOpenRef = useRef(false);
+
+  const applyIncomingAppSettings = (settings: AppSettings) => {
+    setAppSettings(settings);
+    if (!settingsOpenRef.current || !settingsDirtyRef.current) {
+      setSystemPromptPrefixDraft(settings.systemPromptPrefix);
+      setProviderSettingsDraft(settings.providerSettings);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -72,8 +93,12 @@ export default function HomeApp() {
         return;
       }
 
-      setAppSettings(settings);
-      setSystemPromptPrefixDraft(settings.systemPromptPrefix);
+      applyIncomingAppSettings(settings);
+    });
+    void window.withmate.getModelCatalog(null).then((snapshot) => {
+      if (active) {
+        setModelCatalog(snapshot);
+      }
     });
 
     void window.withmate.listCharacters().then((nextCharacters) => {
@@ -101,11 +126,23 @@ export default function HomeApp() {
         setLaunchCharacterId(nextCharacters[0]?.id ?? "");
       }
     });
+    const unsubscribeModelCatalog = window.withmate.subscribeModelCatalog((snapshot) => {
+      if (active) {
+        setModelCatalog(snapshot);
+      }
+    });
+    const unsubscribeAppSettings = window.withmate.subscribeAppSettings((settings) => {
+      if (active) {
+        applyIncomingAppSettings(settings);
+      }
+    });
 
     return () => {
       active = false;
       unsubscribeSessions();
       unsubscribeCharacters();
+      unsubscribeModelCatalog();
+      unsubscribeAppSettings();
     };
   }, [launchCharacterId]);
 
@@ -256,14 +293,77 @@ export default function HomeApp() {
     try {
       const nextSettings = await window.withmate.updateAppSettings({
         systemPromptPrefix: systemPromptPrefixDraft,
+        providerSettings: providerSettingsDraft,
       });
       setAppSettings(nextSettings);
       setSystemPromptPrefixDraft(nextSettings.systemPromptPrefix);
+      setProviderSettingsDraft(nextSettings.providerSettings);
       setSettingsFeedback("設定を保存したよ。");
     } catch (error) {
       setSettingsFeedback(error instanceof Error ? error.message : "設定の保存に失敗したよ。");
     }
   };
+
+  const handleChangeProviderEnabled = (providerId: string, enabled: boolean) => {
+    setProviderSettingsDraft((current) => ({
+      ...current,
+      [providerId]: {
+        ...getProviderAppSettings(
+          {
+            systemPromptPrefix: systemPromptPrefixDraft,
+            providerSettings: current,
+          },
+          providerId,
+        ),
+        enabled,
+      },
+    }));
+  };
+
+  const handleChangeProviderApiKey = (providerId: string, apiKey: string) => {
+    setProviderSettingsDraft((current) => ({
+      ...current,
+      [providerId]: {
+        ...getProviderAppSettings(
+          {
+            systemPromptPrefix: systemPromptPrefixDraft,
+            providerSettings: current,
+          },
+          providerId,
+        ),
+        apiKey,
+      },
+    }));
+  };
+
+  const providerSettingRows = useMemo(
+    () =>
+      (modelCatalog?.providers ?? []).map((provider) => ({
+        provider,
+        settings: getProviderAppSettings(
+          {
+            systemPromptPrefix: systemPromptPrefixDraft,
+            providerSettings: providerSettingsDraft,
+          },
+          provider.id,
+        ),
+      })),
+    [modelCatalog, providerSettingsDraft, systemPromptPrefixDraft],
+  );
+  const settingsDirty = useMemo(() => {
+    return (
+      systemPromptPrefixDraft !== appSettings.systemPromptPrefix ||
+      JSON.stringify(providerSettingsDraft) !== JSON.stringify(appSettings.providerSettings)
+    );
+  }, [appSettings.providerSettings, appSettings.systemPromptPrefix, providerSettingsDraft, systemPromptPrefixDraft]);
+
+  useEffect(() => {
+    settingsDirtyRef.current = settingsDirty;
+  }, [settingsDirty]);
+
+  useEffect(() => {
+    settingsOpenRef.current = settingsOpen;
+  }, [settingsOpen]);
 
   const handleExportModelCatalog = async () => {
     if (!window.withmate) {
@@ -550,9 +650,40 @@ export default function HomeApp() {
                     rows={8}
                   />
                 </div>
+                {providerSettingRows.length > 0 ? (
+                  <div className="settings-field">
+                    <strong>Providers</strong>
+                    <p className="settings-help">有効な provider は使える前提で扱う。失敗時は実行時エラーとして返る。</p>
+                    <div className="settings-provider-list">
+                      {providerSettingRows.map(({ provider, settings }) => (
+                        <section key={provider.id} className="settings-provider-card">
+                          <label className="settings-provider-toggle">
+                            <input
+                              type="checkbox"
+                              checked={settings.enabled}
+                              onChange={(event) => handleChangeProviderEnabled(provider.id, event.target.checked)}
+                            />
+                            <span>{provider.label}</span>
+                          </label>
+                          <label className="settings-provider-input">
+                            <span>API Key</span>
+                            <input
+                              type="password"
+                              value={settings.apiKey}
+                              onChange={(event) => handleChangeProviderApiKey(provider.id, event.target.value)}
+                              placeholder={`${provider.label} API key`}
+                              autoComplete="off"
+                              spellCheck={false}
+                            />
+                          </label>
+                        </section>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="settings-actions">
-                  <button className="launch-toggle" type="button" onClick={() => void handleSaveSettings()} disabled={systemPromptPrefixDraft === appSettings.systemPromptPrefix}>
-                    Save Prefix
+                  <button className="launch-toggle" type="button" onClick={() => void handleSaveSettings()} disabled={!settingsDirty}>
+                    Save Settings
                   </button>
                   <button className="launch-toggle" type="button" onClick={() => void handleImportModelCatalog()}>
                     Import Models

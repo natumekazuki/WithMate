@@ -81,7 +81,7 @@ WithMate では、永続化対象を 5 層に分ける。
 補足:
 
 - current 実装では `selected catalog revision` を session 側に保持し、adapter 実行時も参照する。
-- **確定方針 / 今後反映**として、model catalog import 時には session も自動 migrate される前提へ移行するため、`catalogRevision` は「長期に旧 revision を pin し続けるための値」ではなく、「その session に現在反映済みの revision」を示す方向へ変わる。
+- model catalog import 時には session も自動 migrate される前提とし、`catalogRevision` は「長期に旧 revision を pin し続けるための値」ではなく、「その session に現在反映済みの revision」を示す。
 
 用途:
 
@@ -129,6 +129,8 @@ WithMate では、永続化対象を 5 層に分ける。
 保持する情報:
 
 - system prompt prefix
+- provider ごとの enabled state
+- provider ごとの API key
 
 用途:
 
@@ -202,15 +204,15 @@ MVP では、保存責務を次のように切る。
 
 - model または reasoning depth を変更した時は、既存 `threadId` を破棄して次回 turn を新規 thread で開始する
 - UI 上の chat history は session に残るが、provider 側の継続コンテキストは切り替わる
-- **確定方針 / 今後反映**:
-  - model catalog import 時も session 側の `catalogRevision` は自動 migrate 対象になる
-  - import 後に旧 revision を保持したまま実行し続けることは current milestone の目標にしない
+- model catalog import 時も session 側の `catalogRevision` は自動 migrate 対象になる
+- import 後に旧 revision を保持したまま実行し続けることは current milestone の目標にしない
 
 ### App Settings
 
 更新タイミング:
 
 - Settings overlay で保存した時
+- provider 有効化 / API key 更新時も同じ Settings 保存で扱う
 
 ### Session Memory
 
@@ -232,13 +234,9 @@ MVP では、保存責務を次のように切る。
 
 ## Missing Character の扱い
 
-- **current 実装**:
-  - session 一覧表示は残せても、元 character を解決できないと turn 実行時に失敗する。
-  - 同名 character への fallback が入りうる実装が残っている。
-- **確定方針 / 今後反映**:
-  - character を解決できない session は reopen 自体は許可するが、`browse-only` / `view-only` として扱う。
-  - 過去ログ、audit、diff の閲覧は維持する。
-  - 新規 turn 送信や別 character への自動再接続は行わない。
+- character を解決できない session は reopen 自体は許可するが、`browse-only` / `view-only` として扱う。
+- 過去ログ、audit、diff の閲覧は維持する。
+- 新規 turn 送信や別 character への自動再接続は行わない。
 
 ## Crash Recovery
 

@@ -2,8 +2,8 @@
 
 ## Status
 
-- 状態: ユーザー確定 `PB-001`〜`PB-005` の文書同期完了
-- 現在フェーズ: quality review 待ち
+- 状態: `PB-001`〜`PB-004(best-effort)` 実装・blocker 修正・再検証完了
+- 現在フェーズ: quality review 完了 / 最終 commit hash 記録待ち
 
 ## Completed
 
@@ -33,34 +33,45 @@
 - `plan.md` / `decisions.md` / `worklog.md` / `result.md` に、今回が文書のみ更新であることと current / future の書き分け方針を反映した
 - `character-storage.md` / `session-persistence.md` / `model-catalog.md` / `settings-ui.md` / `product-direction.md` / `monologue-provider-policy.md` を最小更新し、current 実装と future 方針の差、および Character Stream 非着手条件を明示した
 - `agent-event-ui.md` / `character-chat-ui.md` に Character Stream の current milestone 非適用注記を追加した
+- `PB-001`〜`PB-004` の次実装フェーズに向け、推奨順序を `PB-001 → PB-002 → PB-003 → PB-004(best-effort)` で固定した
+- `plan.md`, `decisions.md`, `worklog.md`, `result.md` に、今回フェーズの前提、次アクション、コミットポイント案、subagent handoff 骨子を追記した
+- rollback 基点を、PB 方針文書反映済みの `6ae063090cff6b02026e224d57b6f8c6ad6e6654` へ更新する前提を整理した
+- `PB-001` として、character 未解決 session を browse-only にし、`name` fallback を廃止、過去ログ閲覧のみ許可する UI / runtime 制御を追加した
+- `PB-002` として、model catalog import 成功時に既存 session を新 revision へ自動 migrate する処理を import 2 経路へ実装した
+- import auto-migrate は partial apply を避けるため、rollback を伴う一括置換で反映する形へ補強した
+- `PB-003` として、Settings overlay と SQLite-backed app settings に provider enabled / API key を追加し、新規 session 作成と実行時 provider 制約へ反映した
+- provider API key は current state として Codex runtime 接続済みであり、Settings 保存値が adapter 実行時解決へ渡る
+- app settings changed event により、Session / Home の両画面が settings 更新へ追従する状態になった
+- `PB-004` として、workspace snapshot skipped / limit 情報を artifact `runChecks` と empty state 文言へ反映した
+- `scripts/tests/model-catalog-settings.test.ts` と `scripts/tests/app-settings-storage.test.ts` を追加した
+- `node --test --import tsx scripts/tests/open-path.test.ts scripts/tests/workspace-file-search.test.ts scripts/tests/model-catalog-settings.test.ts scripts/tests/app-settings-storage.test.ts`、`npm run typecheck`、`npm run build` が pass した
+- `scripts/tests/session-storage.test.ts` を含む再検証 `node --test --import tsx scripts/tests/open-path.test.ts scripts/tests/workspace-file-search.test.ts scripts/tests/model-catalog-settings.test.ts scripts/tests/app-settings-storage.test.ts scripts/tests/session-storage.test.ts` が pass した
+- `npm run typecheck`、`npm run build`、`npm run validate:snapshot-ignore` の再検証が pass した
+- blocker 修正後の quality review で `blocking issues なし` を確認した
 
 ## Remaining Issues
 
-- 今回反映した `PB-001`〜`PB-005` は文書同期までで、コード実装は未着手
-- `PB-001` の browse-only / view-only session 状態、`name` fallback 廃止は実装タスクとして残る
-- `PB-002` の import 時自動 migrate、`PB-003` の Settings での provider enable / API key 入力、`PB-005` の前提条件達成は今後の実装タスクとして残る
-- Session Memory / Character Memory の実装方針自体は未確定のままだが、Character Stream 着手条件との関係は文書上で整理済み
-- 最終 quality review と最終コミットが未完了
+- この後 main agent が作成する最終 commit hash が、本 result / worklog / 関連記録へ未転記
 
 ## Next Actions
 
-1. quality review で、current 実装と future 方針の書き分けが全更新文書で一貫しているか確認する
-2. 次タスクで `PB-001` browse-only session、`PB-002` import auto-migrate、`PB-003` Settings provider 構成の実装順を確定する
-3. Character Stream については `Codex / CopilotCLI / CLI / SDK parity` 完了後に、関連 docs を前提とした実装計画へ進む
+1. main agent が最終コミットを作成したら、その commit hash を本 `result.md` と `worklog.md` の関連記録へ追記する
 
 ## Related Commits
 
 - `9f676b9` `docs(plan): 監査計画を初期化`
 - `72e4d88` `docs(audit): 監査レポートを追加`
 - `19761900fcd2a92fbe4593d49f41df231e663d30` `fix(session): 安定化バグを修正`
+- `3e11f97` `docs(plan): 潜在バグと完成計画を整理`
+- `6ae063090cff6b02026e224d57b6f8c6ad6e6654` `docs(plan): PB 方針文書を反映`
 
 ## Rollback Guide
 
-- 戻し先候補: `3e11f97`
+- 戻し先候補: `6ae063090cff6b02026e224d57b6f8c6ad6e6654`
 - 文書のみ戻す場合:
-  - `docs/plans/20260317-repo-audit-and-stabilization/` 配下と今回更新した design docs を `3e11f97` 時点へ戻す
-  - README / manual test は今回未変更のため rollback 対象に含めない
-- 理由: 今回の差分はユーザー確定方針に合わせた文書同期のみであり、最新コミット `3e11f97` を起点に戻せば current 実装への影響なく切り離せる
+  - `docs/plans/20260317-repo-audit-and-stabilization/` 配下の今回差分を `6ae063090cff6b02026e224d57b6f8c6ad6e6654` 時点へ戻す
+- 今回タスクでは code / docs / tests に変更が入るため、rollback 時は `src/`, `src-electron/`, `scripts/tests/`, `docs/` をまとめて戻す
+- 理由: `6ae063090cff6b02026e224d57b6f8c6ad6e6654` は PB 方針文書反映済みの最新基点であり、今回差分はその上の実装反映一式だから
 
 ## Related Docs
 

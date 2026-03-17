@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 import {
+  WITHMATE_APP_SETTINGS_CHANGED_EVENT,
   WITHMATE_CHARACTERS_CHANGED_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
@@ -163,6 +164,16 @@ const withmateApi: WithMateWindowApi = {
     ipcRenderer.on(WITHMATE_MODEL_CATALOG_CHANGED_EVENT, wrapped);
     return () => {
       ipcRenderer.removeListener(WITHMATE_MODEL_CATALOG_CHANGED_EVENT, wrapped);
+    };
+  },
+  subscribeAppSettings(listener) {
+    const wrapped = (_event: unknown, settings: Awaited<ReturnType<WithMateWindowApi["getAppSettings"]>>) => {
+      listener(settings);
+    };
+
+    ipcRenderer.on(WITHMATE_APP_SETTINGS_CHANGED_EVENT, wrapped);
+    return () => {
+      ipcRenderer.removeListener(WITHMATE_APP_SETTINGS_CHANGED_EVENT, wrapped);
     };
   },
   subscribeLiveSessionRun(listener) {

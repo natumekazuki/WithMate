@@ -14,13 +14,17 @@ import {
   type CreateCharacterInput,
   type CreateSessionInput,
   type DiffPreviewPayload,
+  getProviderAppSettings,
+  normalizeAppSettings,
   type LiveSessionRunState,
   type RunSessionTurnRequest,
   type Session,
 } from "../src/app-state.js";
 import {
+  coerceModelSelection,
   DEFAULT_PROVIDER_ID,
   getProviderCatalog,
+  parseModelCatalogDocument,
   resolveModelSelection,
   type ModelCatalogDocument,
   type ModelCatalogProvider,
@@ -77,6 +81,7 @@ import {
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
+  WITHMATE_APP_SETTINGS_CHANGED_EVENT,
   type OpenPathOptions,
 } from "../src/withmate-window.js";
 
@@ -247,6 +252,15 @@ function broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): void {
   }
 }
 
+function broadcastAppSettings(settings?: ReturnType<AppSettingsStorage["getSettings"]>): void {
+  const payload = settings ?? requireAppSettingsStorage().getSettings();
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(WITHMATE_APP_SETTINGS_CHANGED_EVENT, payload);
+    }
+  }
+}
+
 function getLiveSessionRun(sessionId: string): LiveSessionRunState | null {
   return liveSessionRuns.get(sessionId) ?? null;
 }
@@ -300,9 +314,7 @@ async function importModelCatalogFromFile(targetWindow?: BrowserWindow | null): 
 
   const raw = await readFile(result.filePaths[0], "utf8");
   const document = JSON.parse(raw) as ModelCatalogDocument;
-  const snapshot = requireModelCatalogStorage().importCatalogDocument(document, "imported");
-  broadcastModelCatalog(snapshot);
-  return snapshot;
+  return importModelCatalogDocument(document);
 }
 
 async function exportModelCatalogToFile(revision: number | null | undefined, targetWindow?: BrowserWindow | null): Promise<string | null> {
@@ -332,7 +344,9 @@ async function exportModelCatalogToFile(revision: number | null | undefined, tar
 }
 
 function createSession(input: CreateSessionInput): Session {
-  const { snapshot, provider } = resolveProviderCatalog(input.provider ?? DEFAULT_PROVIDER_ID);
+  const appSettings = requireAppSettingsStorage().getSettings();
+  const snapshot = getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded();
+  const provider = resolveEnabledProviderCatalog(snapshot, appSettings, input.provider);
   const selection = resolveModelSelection(
     provider,
     input.model ?? provider.defaultModelId,
@@ -346,6 +360,29 @@ function createSession(input: CreateSessionInput): Session {
     reasoningEffort: selection.resolvedReasoningEffort,
   });
   return upsertSession(created);
+}
+
+function resolveEnabledProviderCatalog(
+  snapshot: ModelCatalogSnapshot,
+  appSettings = requireAppSettingsStorage().getSettings(),
+  requestedProviderId?: string | null,
+): ModelCatalogProvider {
+  const requestedProvider = requestedProviderId ? getProviderCatalog(snapshot.providers, requestedProviderId) : null;
+  if (requestedProvider && getProviderAppSettings(appSettings, requestedProvider.id).enabled) {
+    return requestedProvider;
+  }
+
+  const defaultProvider = snapshot.providers.find((provider) => provider.id === DEFAULT_PROVIDER_ID) ?? null;
+  if (defaultProvider && getProviderAppSettings(appSettings, defaultProvider.id).enabled) {
+    return defaultProvider;
+  }
+
+  const firstEnabledProvider = snapshot.providers.find((provider) => getProviderAppSettings(appSettings, provider.id).enabled);
+  if (firstEnabledProvider) {
+    return firstEnabledProvider;
+  }
+
+  throw new Error("有効な provider が Settings に見つからないよ。");
 }
 
 function updateSession(nextSession: Session): Session {
@@ -390,6 +427,28 @@ function upsertSession(nextSession: Session): Session {
   sessions = storage.listSessions();
   broadcastSessions();
   return cloneSessions([stored])[0];
+}
+
+function replaceAllSessions(
+  nextSessions: Session[],
+  options?: {
+    broadcast?: boolean;
+    invalidateSessionIds?: Iterable<string>;
+  },
+): Session[] {
+  const storage = requireSessionStorage();
+  storage.replaceSessions(nextSessions);
+  sessions = storage.listSessions();
+
+  for (const sessionId of options?.invalidateSessionIds ?? []) {
+    codexAdapter.invalidateSessionThread(sessionId);
+  }
+
+  if (options?.broadcast ?? true) {
+    broadcastSessions();
+  }
+
+  return listSessions();
 }
 
 function syncSessionsForCharacter(character: CharacterProfile): void {
@@ -483,9 +542,168 @@ async function resolveSessionCharacter(session: Session): Promise<CharacterProfi
       return matched;
     }
   }
+  return null;
+}
 
-  const nextCharacters = await refreshCharactersFromStorage();
-  return nextCharacters.find((character) => character.name === session.character) ?? null;
+function migrateSessionToCatalog(session: Session, snapshot: ModelCatalogSnapshot): Session {
+  const provider = getProviderCatalog(snapshot.providers, session.provider);
+  if (!provider) {
+    throw new Error("利用できる model catalog provider が見つからないよ。");
+  }
+
+  const selection = coerceModelSelection(provider, session.model, session.reasoningEffort);
+  const shouldResetThread =
+    session.provider !== provider.id ||
+    session.model !== selection.resolvedModel ||
+    session.reasoningEffort !== selection.resolvedReasoningEffort;
+
+  return {
+    ...session,
+    provider: provider.id,
+    catalogRevision: snapshot.revision,
+    model: selection.resolvedModel,
+    reasoningEffort: selection.resolvedReasoningEffort,
+    threadId: shouldResetThread ? "" : session.threadId,
+    updatedAt: shouldResetThread || session.catalogRevision !== snapshot.revision ? currentTimestampLabel() : session.updatedAt,
+  };
+}
+
+function migrateSessionsToCatalog(snapshot: ModelCatalogSnapshot): Session[] {
+  const migratedSessions = sessions.map((session) => migrateSessionToCatalog(session, snapshot));
+  const invalidatedSessionIds = migratedSessions
+    .filter((session) => !session.threadId)
+    .map((session) => session.id);
+  return replaceAllSessions(migratedSessions, {
+    broadcast: false,
+    invalidateSessionIds: invalidatedSessionIds,
+  });
+}
+
+function importModelCatalogDocument(document: ModelCatalogDocument): ModelCatalogSnapshot {
+  if (hasInFlightSessionRuns()) {
+    throw new Error("session 実行中は model catalog を読み込めないよ。");
+  }
+
+  const storage = requireModelCatalogStorage();
+  const previousSnapshot = getModelCatalog(null) ?? storage.ensureSeeded();
+  const previousCatalogDocument = storage.exportCatalogDocument(previousSnapshot.revision);
+  if (!previousCatalogDocument) {
+    throw new Error("rollback 用の model catalog を取得できなかったよ。");
+  }
+
+  const previousSessions = listSessions();
+  const normalizedDocument = parseModelCatalogDocument(document);
+  for (const session of previousSessions) {
+    migrateSessionToCatalog(session, { revision: previousSnapshot.revision, providers: normalizedDocument.providers });
+  }
+
+  let importedSnapshot: ModelCatalogSnapshot | null = null;
+  try {
+    importedSnapshot = storage.importCatalogDocument(normalizedDocument, "imported");
+    migrateSessionsToCatalog(importedSnapshot);
+    broadcastSessions();
+    broadcastModelCatalog(importedSnapshot);
+    return importedSnapshot;
+  } catch (error) {
+    if (!importedSnapshot) {
+      throw error;
+    }
+
+    try {
+      storage.importCatalogDocument(previousCatalogDocument, "rollback");
+      replaceAllSessions(previousSessions, { broadcast: false });
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        "model catalog の import を rollback できなかったよ。",
+      );
+    }
+
+    throw error;
+  }
+}
+
+function getProvidersWithApiKeyChange(previousSettings: ReturnType<AppSettingsStorage["getSettings"]>, nextSettings: ReturnType<AppSettingsStorage["getSettings"]>): string[] {
+  const providerIds = new Set<string>([
+    ...Object.keys(previousSettings.providerSettings),
+    ...Object.keys(nextSettings.providerSettings),
+  ]);
+
+  return Array.from(providerIds).filter(
+    (providerId) =>
+      getProviderAppSettings(previousSettings, providerId).apiKey.trim() !==
+      getProviderAppSettings(nextSettings, providerId).apiKey.trim(),
+  );
+}
+
+function updateAppSettings(nextSettingsInput: ReturnType<AppSettingsStorage["getSettings"]>): ReturnType<AppSettingsStorage["getSettings"]> {
+  const storage = requireAppSettingsStorage();
+  const previousSettings = storage.getSettings();
+  const nextSettings = normalizeAppSettings(nextSettingsInput);
+  const providersWithApiKeyChange = getProvidersWithApiKeyChange(previousSettings, nextSettings);
+
+  if (providersWithApiKeyChange.length > 0) {
+    const blockedSessions = sessions.filter(
+      (session) =>
+        providersWithApiKeyChange.includes(session.provider) &&
+        (isSessionRunInFlight(session.id) || isRunningSession(session)),
+    );
+    if (blockedSessions.length > 0) {
+      throw new Error("API key を変更する provider に実行中の session があるため、完了まで待ってね。");
+    }
+  }
+
+  const previousSessions = listSessions();
+  const providersWithApiKeyChangeSet = new Set(providersWithApiKeyChange);
+  const nextSessions = previousSessions.map((session) => {
+    if (!providersWithApiKeyChangeSet.has(session.provider) || !session.threadId) {
+      return session;
+    }
+
+    return {
+      ...session,
+      threadId: "",
+      updatedAt: currentTimestampLabel(),
+    };
+  });
+  const invalidatedSessionIds = previousSessions
+    .filter((session) => providersWithApiKeyChangeSet.has(session.provider))
+    .map((session) => session.id);
+  const hasSessionThreadReset = nextSessions.some((session, index) => session.threadId !== previousSessions[index]?.threadId);
+
+  let savedSettings: ReturnType<AppSettingsStorage["getSettings"]> | null = null;
+  try {
+    savedSettings = storage.updateSettings(nextSettings);
+    if (hasSessionThreadReset) {
+      replaceAllSessions(nextSessions, {
+        broadcast: false,
+        invalidateSessionIds: invalidatedSessionIds,
+      });
+      broadcastSessions();
+    } else {
+      for (const sessionId of invalidatedSessionIds) {
+        codexAdapter.invalidateSessionThread(sessionId);
+      }
+    }
+    broadcastAppSettings(savedSettings);
+    return savedSettings;
+  } catch (error) {
+    if (!savedSettings) {
+      throw error;
+    }
+
+    try {
+      storage.updateSettings(previousSettings);
+      replaceAllSessions(previousSessions, { broadcast: false });
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        "app settings の更新を rollback できなかったよ。",
+      );
+    }
+
+    throw error;
+  }
 }
 
 async function previewComposerInput(
@@ -547,8 +765,12 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
     throw new Error("キャラクター定義が見つからないよ。");
   }
 
-  const { provider } = resolveProviderCatalog(session.provider, session.catalogRevision);
   const appSettings = requireAppSettingsStorage().getSettings();
+  if (!getProviderAppSettings(appSettings, session.provider).enabled) {
+    throw new Error("この provider は Settings で無効になっているよ。");
+  }
+
+  const { provider } = resolveProviderCatalog(session.provider, session.catalogRevision);
   const promptForAudit = codexAdapter.composePrompt({
     session,
     character,
@@ -923,14 +1145,10 @@ app.whenReady().then(async () => {
   ipcMain.handle(WITHMATE_LIST_SESSIONS_CHANNEL, () => listSessions());
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => listSessionAuditLogs(sessionId));
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => requireAppSettingsStorage().getSettings());
-  ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => requireAppSettingsStorage().updateSettings(settings));
+  ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => updateAppSettings(settings));
   ipcMain.handle(WITHMATE_LIST_CHARACTERS_CHANNEL, async () => refreshCharactersFromStorage());
   ipcMain.handle(WITHMATE_GET_MODEL_CATALOG_CHANNEL, (_event, revision: number | null) => getModelCatalog(revision));
-  ipcMain.handle(WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL, (_event, document: ModelCatalogDocument) => {
-    const snapshot = requireModelCatalogStorage().importCatalogDocument(document, "imported");
-    broadcastModelCatalog(snapshot);
-    return snapshot;
-  });
+  ipcMain.handle(WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL, (_event, document: ModelCatalogDocument) => importModelCatalogDocument(document));
   ipcMain.handle(WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL, async (event) => {
     const targetWindow = BrowserWindow.fromWebContents(event.sender) ?? homeWindow ?? undefined;
     return importModelCatalogFromFile(targetWindow);

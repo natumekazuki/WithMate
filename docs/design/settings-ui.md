@@ -14,14 +14,14 @@
 - overlay は一時的に開いて閉じる管理面として扱う
 - `System Prompt Prefix` は Settings overlay で定義し、prompt composition に渡す
 - `System Prompt Prefix` は保存時に `# System Prompt` 配下へ組み込まれる
-- 初期実装では `System Prompt Prefix` と `Model Catalog` の import / export を置く
+- current 実装では `System Prompt Prefix`、provider ごとの enable / disable、API key 入力、`Model Catalog` の import / export を置く
 - file picker / save dialog は Main Process 側で開く
 
 ## Interaction
 
 1. ユーザーが Home toolbar の `Settings` を押す
 2. Home の上に overlay が開く
-3. `System Prompt Prefix` を編集して保存する、または `Import Models` / `Export Models` を実行する
+3. `System Prompt Prefix` や provider 設定を編集して保存する、または `Import Models` / `Export Models` を実行する
 4. 結果は overlay 内の短いフィードバックで返す
 5. `Close` で overlay を閉じる
 
@@ -35,7 +35,9 @@
   - `Close`
   - `System Prompt Prefix`
   - `# System Prompt` 自動付与の案内
-  - `Save Prefix`
+  - provider ごとの enable checkbox
+  - provider ごとの API key 入力
+  - `Save Settings`
   - `Import Models`
   - `Export Models`
   - 結果フィードバック
@@ -43,20 +45,20 @@
 ## Current Scope
 
 - `System Prompt Prefix` の編集と保存
+- provider ごとの enable / disable
+- provider ごとの API key 入力保存
 - `model catalog` の import
 - `model catalog` の export
 
-## 確定方針 / 今後反映
+## Runtime Policy
 
-- Settings に provider ごとの有効化チェックボックスを追加する
-- provider ごとの API キー入力欄を追加する
 - 有効化済み provider は、実行時にエラーが出るまでは利用可能前提で扱う
 - current milestone では provider readiness / preflight を must-have にしない
+- API key は Settings 保存後すぐ Main Process から各 window へ broadcast し、Session Window の実行可否表示も即時更新する
+- provider 実装は保存済み API key を runtime の SDK client へ渡し、空文字のときだけ従来どおり環境依存 fallback を許可する
 
 ## Future Scope
 
-- provider ごとの enable / disable
-- provider ごとの API キー入力
 - monologue 用 API 設定
 - 新規 workspace の root directory 設定
 - provider ごとの既定値

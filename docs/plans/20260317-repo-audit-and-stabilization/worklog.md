@@ -135,9 +135,72 @@
   - README / manual test は current 実装入口のため、今回は未更新とした
   - rollback 整理はユーザー指定に従い、最新コミット `3e11f97` を起点とする
 
+### 0009
+
+- 日時: 2026-03-17
+- チェックポイント: `PB-001`〜`PB-004` 実装フェーズ向け active plan 更新
+- 実施内容:
+  - 既存 plan hub を前提に、今回タスクを **文書計画のみ** として再確認した
+  - `PB-001 session browse-only`、`PB-002 import auto-migrate`、`PB-003 settings provider config`、`PB-004 artifact omission best-effort` の推奨実装順序と依存理由を整理した
+  - `plan.md` に、実装順序、依存、想定変更面、subagent handoff 骨子、追加コミットポイント案を追記した
+  - `decisions.md` に、次実装フェーズの順序固定と handoff 方針を decision として残した
+  - `result.md` に、実装準備完了状態、次アクション、関連コミット、rollback 基点の更新方針を反映する前提を整理した
+- 検証:
+  - 文書更新のみのため追加コマンド実行は未実施
+  - 既知のコード検証結果は `19761900fcd2a92fbe4593d49f41df231e663d30` フェーズでの pass 記録を維持し、新規コード検証結果は追加していない
+- メモ:
+  - `PB-001` を先行させる理由は、壊れた character 参照を持つ session の扱いを先に安定させないと後続 PB の回帰判定が曖昧になるため
+  - `PB-002` → `PB-003` の順は、catalog 正規化後に Settings provider 構成へ進む方が UI / persistence / runtime の責務を分離しやすいため
+- `PB-004` は best-effort であり、`PB-001`〜`PB-003` の完了条件を阻害しない範囲で扱う
+- rollback 基点は、PB 方針文書反映済みコミット `6ae063090cff6b02026e224d57b6f8c6ad6e6654` を採用するのが自然
+
+### 0010
+
+- 日時: 2026-03-17
+- チェックポイント: `PB-001`〜`PB-004(best-effort)` の実装
+- 実施内容:
+  - `PB-001`: character 未解決 session を browse-only 扱いに変更し、`name` fallback を廃止、Session UI で Send / Resend / 添付操作を無効化
+  - `PB-002`: model catalog import 2 経路へ既存 session の自動 migrate を追加し、provider / model / reasoning / revision を新 catalog へ正規化
+  - `PB-003`: `AppSettings` に provider ごとの enabled / API key を追加し、Settings overlay と session 作成 / 実行時判定へ接続
+  - `PB-004`: workspace snapshot の skipped / limit 情報を artifact `runChecks` に反映し、空の `Changed Files` 表示を誤認しにくく補正
+  - `docs/manual-test-checklist.md` と関連 design docs、plan hub の current 状態を更新
+  - `scripts/tests/` に model catalog / settings helper と app settings storage の targeted test を追加
+- 検証:
+  - `node --test --import tsx scripts/tests/open-path.test.ts scripts/tests/workspace-file-search.test.ts scripts/tests/model-catalog-settings.test.ts scripts/tests/app-settings-storage.test.ts`
+  - `npm run typecheck`
+  - `npm run build`
+- メモ:
+  - model catalog import 中に running session がある場合は migrate 中の不整合を避けるため import 自体を拒否する
+  - provider API key は current Codex runtime へ接続済みで、Settings 保存値が実行時 adapter 解決へ渡る
+
+### 0011
+
+- 日時: 2026-03-17
+- チェックポイント: blocker 修正後の最終再検証と plan hub 同期
+- 実施内容:
+  - quality review の blocker 指摘を反映後、plan hub の current 状態を再確認した
+  - `PB-003` の provider API key が Codex runtime まで接続済みであることを current state として明文化した
+  - app settings changed event により Session / Home が settings 更新へ追従する状態であることを反映した
+  - import auto-migrate が partial apply を避ける rollback / 一括置換を備えた状態であることを反映した
+  - `result.md` の Status / Completed / Remaining Issues / Next Actions を、quality review 完了後の状態へ更新する前提を整理した
+- 検証:
+  - quality review: `blocking issues なし`
+  - `node --test --import tsx scripts/tests/open-path.test.ts scripts/tests/workspace-file-search.test.ts scripts/tests/model-catalog-settings.test.ts scripts/tests/app-settings-storage.test.ts scripts/tests/session-storage.test.ts` pass
+  - `npm run typecheck` pass
+  - `npm run build` pass
+  - `npm run validate:snapshot-ignore` pass
+- メモ:
+  - 現時点で未完了なのは、この後 main agent が作成する commit hash の記録のみ
+  - 既存の broader backlog は継続文脈として残るが、本 plan セッションの完了判定を阻害する open issue ではない
+
 ## Open Items
 
+> current completion 判定を阻害する未完了は commit hash 記録のみ。以下は将来 backlog / 継続論点として残す。
+
 - Character Stream の正本文書をどこに置くか最終合意する
-- provider enable / disable と API キー入力を、Settings 中心でどう実装するかの ownership と順序を確定する
+- `PB-001` の browse-only session で、一覧・詳細・resume ボタン・session title fallback をどこまで一貫制御するかを確定する
+- `PB-002` の自動 migrate で、旧 revision 判定失敗時に reject / warn / partial import のどこまで許容するかを確定する
+- `PB-003` の provider enable / disable と API キー入力を、Settings 中心でどう実装するかの ownership と保存単位を確定する
+- `PB-004` で best-effort 対応する omission 対象を、artifact link / summary / diff のどこまで含めるか切り分ける
 - memory 基盤を LangGraph 直行にするか段階導入にするか決める
-- 最終 quality review と最終コミットの粒度を確定する
+- この後 main agent が作成する最終コミット hash を result 系文書へ記録する

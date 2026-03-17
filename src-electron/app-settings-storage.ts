@@ -2,11 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import type { AppSettings } from "../src/app-state.js";
+import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from "../src/app-state.js";
 
-const DEFAULT_APP_SETTINGS: AppSettings = {
-  systemPromptPrefix: "",
-};
+const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
 
 type AppSettingRow = {
   setting_key: string;
@@ -39,6 +37,13 @@ export class AppSettingsStorage {
         ON CONFLICT(setting_key) DO NOTHING
       `)
       .run("system_prompt_prefix", DEFAULT_APP_SETTINGS.systemPromptPrefix, new Date().toISOString());
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run("provider_settings_json", JSON.stringify(DEFAULT_APP_SETTINGS.providerSettings), new Date().toISOString());
   }
 
   getSettings(): AppSettings {
@@ -49,20 +54,30 @@ export class AppSettingsStorage {
       `)
       .all() as AppSettingRow[];
 
-    const settings = { ...DEFAULT_APP_SETTINGS };
+    const settings = createDefaultAppSettings();
     for (const row of rows) {
       if (row.setting_key === "system_prompt_prefix") {
         settings.systemPromptPrefix = row.setting_value;
+        continue;
+      }
+
+      if (row.setting_key === "provider_settings_json") {
+        try {
+          settings.providerSettings = normalizeAppSettings({
+            ...settings,
+            providerSettings: JSON.parse(row.setting_value),
+          }).providerSettings;
+        } catch {
+          settings.providerSettings = createDefaultAppSettings().providerSettings;
+        }
       }
     }
 
-    return settings;
+    return normalizeAppSettings(settings);
   }
 
   updateSettings(nextSettings: AppSettings): AppSettings {
-    const normalized: AppSettings = {
-      systemPromptPrefix: nextSettings.systemPromptPrefix ?? "",
-    };
+    const normalized = normalizeAppSettings(nextSettings);
     const updatedAt = new Date().toISOString();
 
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
@@ -76,6 +91,15 @@ export class AppSettingsStorage {
             updated_at = excluded.updated_at
         `)
         .run("system_prompt_prefix", normalized.systemPromptPrefix, updatedAt);
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run("provider_settings_json", JSON.stringify(normalized.providerSettings), updatedAt);
       this.db.exec("COMMIT");
       return normalized;
     } catch (error) {

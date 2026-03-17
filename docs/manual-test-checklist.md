@@ -42,9 +42,12 @@ npm run electron:start
 | MT-003b | Characters 検索空状態 | 一致しない文字列を Characters の検索入力へ入れる | character 0 件とは別に「一致するキャラはない」空状態が表示される |
 | MT-004 | Settings overlay | Home の `Settings` を押す | Home 上に overlay が開く |
 | MT-005 | Settings overlay | Settings overlay の `Close` を押す、または overlay 外を押す | Settings overlay が閉じる |
-| MT-006 | System Prompt Prefix | Settings overlay の `System Prompt Prefix` を変更して `Save Prefix` を押す | 保存成功メッセージが表示され、再度開いても値が保持される |
+| MT-006 | System Prompt Prefix | Settings overlay の `System Prompt Prefix` を変更して `Save Settings` を押す | 保存成功メッセージが表示され、再度開いても値が保持される |
+| MT-006a | Provider Settings | Settings overlay で provider の有効/無効を切り替えて `Save Settings` を押す | 保存成功メッセージが表示され、再度開いてもチェック状態が保持される |
+| MT-006b | Provider API Key | Settings overlay で provider の API key を入力して `Save Settings` を押す | 保存成功メッセージが表示され、再度開いても入力値が保持される |
 | MT-007 | Model catalog export | Settings overlay から `Export Models` を押し、保存先を選ぶ | catalog JSON が保存される |
 | MT-008 | Model catalog import | catalog JSON を変更して `Import Models` を実行する | import 成功メッセージが表示され、active catalog が切り替わる |
+| MT-008a | Model catalog auto migrate | 既存 session を開いたまま、選択中 model または depth が新 catalog で無効になる catalog を import する | 既存 session の `catalogRevision / model / depth` が新 catalog に自動 migrate され、必要なら thread はリセットされる |
 | MT-009 | Add Character 起動 | Home の `Add Character` を押す | Character Editor Window が create mode で開く |
 | MT-010 | Character 作成 | Name / Icon / Description / `character.md` を入力して `Save` を押す | character が保存され、Home の Characters 一覧に表示される |
 | MT-011 | Character 編集 | Home の character card を押し、Description または `character.md` を変更して `Save` を押す | Character Editor Window が開き、更新内容が保存され、再度開いても反映される |
@@ -122,8 +125,9 @@ npm run electron:start
 | MT-038 | Quit protection | 実行中にアプリ終了を試みる | 終了確認が出る |
 | MT-039 | Interrupted recovery | 実行中にアプリを強制終了して再起動する | 対象 session が `interrupted` として復旧し、Home に chip 表示される |
 | MT-040 | Interrupted resend | `interrupted` session を開き、`同じ依頼を再送` を押す | 直前の user message が再送される |
+| MT-040a | Missing character browse-only | session 作成後に元 character を削除して session を開く | session 自体は開けて過去ログ / Audit Log / Diff は閲覧できるが、Send / `同じ依頼を再送` は無効になり browse-only の案内が表示される |
 | MT-041 | Catalog 反映 | model catalog を import 後に新規 session を作る | active catalog の default model / depth が session に反映される |
-| MT-042 | Catalog 反映 | 既存 session を開いたまま model catalog を import する | 既存 session の model select / depth chip が active catalog の候補に更新される |
+| MT-042 | Catalog 反映 | 既存 session を開いたまま model catalog を import する | 既存 session の model select / depth chip が active catalog の候補に更新され、session の `catalogRevision` も current active revision へ揃う |
 | MT-043 | Audit Log 表示 | Session Window の `Audit Log` を押す | 監査ログ overlay が開く |
 | MT-043a | Audit Log 折りたたみ | Audit Log を開く | `Input Prompt` だけ開いた状態で始まり、他の prompt / response / operations / raw items はカテゴリ単位で閉じた状態から必要なものだけ開ける |
 | MT-044 | Audit Log 成功記録 | 1 回送信して成功させる | 1 turn につき 1 レコードだけが表示され、phase は `DONE` になる |
@@ -137,9 +141,10 @@ npm run electron:start
 | MT-049 | 添付エラー | 存在しない `@path` を入力する | エラーが表示され、`Send` が無効になる |
 | MT-050 | 画像添付送信 | image を添付して送信する | 送信が成功し、監査ログの input / composed prompt に画像参照が残る |
 | MT-051 | 外部ファイル参照 | workspace 外の file / folder を添付して送信する | 送信が成功し、対象参照を含む依頼が処理される |
+| MT-052 | Artifact omission notice | 2 MiB 超 file や大量 file 変更を含む turn の `Details` を開く | `Changed Files` が 0 件でも snapshot 省略リスクがある場合は empty state が「変更なし」断定にならず、`runChecks` に snapshot warning が表示される |
 
 ## 補足
 
-- catalog が不正でも、アプリは自動補正しない
+- catalog import は成功時に既存 session へ自動 migrate を適用する
 - catalog 上は有効でも provider 側で拒否された場合は session error として扱う
 - `Character Stream` は現行 UI に含まれないため、項目表には含めない

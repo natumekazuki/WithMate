@@ -222,6 +222,34 @@ export class SessionStorage {
     `);
   }
 
+  private writeSession(normalized: Session, lastActiveAt: number): void {
+    this.upsertStatement.run(
+      normalized.id,
+      normalized.taskTitle,
+      normalized.taskSummary,
+      normalized.status,
+      normalized.updatedAt,
+      normalized.provider,
+      normalized.catalogRevision,
+      normalized.workspaceLabel,
+      normalized.workspacePath,
+      normalized.branch,
+      normalized.characterId,
+      normalized.character,
+      normalized.characterIconPath,
+      normalized.characterThemeColors.main,
+      normalized.characterThemeColors.sub,
+      normalized.runState,
+      normalized.approvalMode,
+      normalized.model,
+      normalized.reasoningEffort,
+      normalized.threadId,
+      JSON.stringify(normalized.messages),
+      JSON.stringify(normalized.stream),
+      lastActiveAt,
+    );
+  }
+
   private ensureSchema(): void {
     const columns = new Set(
       (this.db.prepare("PRAGMA table_info(sessions)").all() as TableColumnRow[]).map((column) => column.name),
@@ -273,33 +301,34 @@ export class SessionStorage {
       throw new Error("保存するセッション形式が不正だよ。");
     }
 
-    this.upsertStatement.run(
-      normalized.id,
-      normalized.taskTitle,
-      normalized.taskSummary,
-      normalized.status,
-      normalized.updatedAt,
-      normalized.provider,
-      normalized.catalogRevision,
-      normalized.workspaceLabel,
-      normalized.workspacePath,
-      normalized.branch,
-      normalized.characterId,
-      normalized.character,
-      normalized.characterIconPath,
-      normalized.characterThemeColors.main,
-      normalized.characterThemeColors.sub,
-      normalized.runState,
-      normalized.approvalMode,
-      normalized.model,
-      normalized.reasoningEffort,
-      normalized.threadId,
-      JSON.stringify(normalized.messages),
-      JSON.stringify(normalized.stream),
-      Date.now(),
-    );
+    this.writeSession(normalized, Date.now());
 
     return cloneSessions([normalized])[0];
+  }
+
+  replaceSessions(nextSessions: Session[]): Session[] {
+    const normalizedSessions = nextSessions.map((session) => {
+      const normalized = normalizeSession(session);
+      if (!normalized) {
+        throw new Error("保存するセッション形式が不正だよ。");
+      }
+
+      return normalized;
+    });
+
+    const baseLastActiveAt = Date.now() + normalizedSessions.length;
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      this.db.exec("DELETE FROM sessions");
+      normalizedSessions.forEach((session, index) => {
+        this.writeSession(session, baseLastActiveAt - index);
+      });
+      this.db.exec("COMMIT");
+      return cloneSessions(normalizedSessions);
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   deleteSession(sessionId: string): void {

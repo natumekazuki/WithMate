@@ -46,6 +46,7 @@ export const WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL = "withmate:get-live-session-
 export const WITHMATE_SESSIONS_CHANGED_EVENT = "withmate:sessions-changed";
 export const WITHMATE_CHARACTERS_CHANGED_EVENT = "withmate:characters-changed";
 export const WITHMATE_MODEL_CATALOG_CHANGED_EVENT = "withmate:model-catalog-changed";
+export const WITHMATE_APP_SETTINGS_CHANGED_EVENT = "withmate:app-settings-changed";
 export const WITHMATE_LIVE_SESSION_RUN_EVENT = "withmate:live-session-run";
 
 export type OpenPathOptions = {
@@ -87,6 +88,7 @@ export type WithMateWindowApi = {
   subscribeSessions(listener: (sessions: Session[]) => void): () => void;
   subscribeCharacters(listener: (characters: CharacterProfile[]) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
+  subscribeAppSettings(listener: (settings: AppSettings) => void): () => void;
   subscribeLiveSessionRun(listener: (sessionId: string, state: LiveSessionRunState | null) => void): () => void;
 };
 

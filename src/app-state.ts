@@ -80,6 +80,12 @@ export type LiveSessionRunState = {
 
 export type AppSettings = {
   systemPromptPrefix: string;
+  providerSettings: Record<string, ProviderAppSettings>;
+};
+
+export type ProviderAppSettings = {
+  enabled: boolean;
+  apiKey: string;
 };
 
 export type ComposerAttachmentKind = "file" | "folder" | "image";
@@ -253,6 +259,75 @@ export const DEFAULT_CHARACTER_THEME_COLORS: CharacterThemeColors = {
   main: "#6f8cff",
   sub: "#6fb8c7",
 };
+
+export const DEFAULT_PROVIDER_APP_SETTINGS: ProviderAppSettings = {
+  enabled: false,
+  apiKey: "",
+};
+
+export function createDefaultAppSettings(): AppSettings {
+  return {
+    systemPromptPrefix: "",
+    providerSettings: {
+      [DEFAULT_PROVIDER_ID]: {
+        enabled: true,
+        apiKey: "",
+      },
+    },
+  };
+}
+
+function normalizeProviderAppSettings(value: unknown, defaultEnabled: boolean): ProviderAppSettings {
+  if (!value || typeof value !== "object") {
+    return {
+      enabled: defaultEnabled,
+      apiKey: "",
+    };
+  }
+
+  const candidate = value as Partial<ProviderAppSettings>;
+  return {
+    enabled: typeof candidate.enabled === "boolean" ? candidate.enabled : defaultEnabled,
+    apiKey: typeof candidate.apiKey === "string" ? candidate.apiKey : "",
+  };
+}
+
+export function normalizeAppSettings(value: unknown): AppSettings {
+  const defaults = createDefaultAppSettings();
+  if (!value || typeof value !== "object") {
+    return defaults;
+  }
+
+  const candidate = value as Partial<AppSettings>;
+  const providerSettings: Record<string, ProviderAppSettings> = {};
+  if (candidate.providerSettings && typeof candidate.providerSettings === "object") {
+    for (const [providerId, providerSettingsValue] of Object.entries(candidate.providerSettings)) {
+      const normalizedProviderId = normalizeProviderId(providerId);
+      providerSettings[normalizedProviderId] = normalizeProviderAppSettings(
+        providerSettingsValue,
+        normalizedProviderId === DEFAULT_PROVIDER_ID,
+      );
+    }
+  }
+
+  if (!providerSettings[DEFAULT_PROVIDER_ID]) {
+    providerSettings[DEFAULT_PROVIDER_ID] = { ...defaults.providerSettings[DEFAULT_PROVIDER_ID] };
+  }
+
+  return {
+    systemPromptPrefix: typeof candidate.systemPromptPrefix === "string" ? candidate.systemPromptPrefix : "",
+    providerSettings,
+  };
+}
+
+export function getProviderAppSettings(settings: AppSettings, providerId: string | null | undefined): ProviderAppSettings {
+  const normalizedProviderId = normalizeProviderId(providerId);
+  const resolvedSettings = normalizeAppSettings(settings);
+  return normalizeProviderAppSettings(
+    resolvedSettings.providerSettings[normalizedProviderId],
+    normalizedProviderId === DEFAULT_PROVIDER_ID,
+  );
+}
 
 function normalizeHexColor(value: unknown, fallback: string): string {
   if (typeof value !== "string") {

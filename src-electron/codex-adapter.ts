@@ -16,6 +16,7 @@ import type {
   RunCheck,
   Session,
 } from "../src/app-state.js";
+import { getProviderAppSettings } from "../src/app-state.js";
 import {
   reasoningEffortLabel,
   resolveModelSelection,
@@ -23,7 +24,11 @@ import {
   type ModelReasoningEffort,
   type ResolvedModelSelection,
 } from "../src/model-catalog.js";
-import { captureWorkspaceSnapshot, type WorkspaceSnapshot } from "./snapshot-ignore.js";
+import {
+  captureWorkspaceSnapshot,
+  type SnapshotCaptureStats,
+  type WorkspaceSnapshot,
+} from "./snapshot-ignore.js";
 
 type RunSessionTurnInput = {
   session: Session;
@@ -634,6 +639,8 @@ function toRunChecks(
   threadId: string | null,
   providerCatalog: ModelCatalogProvider,
   selection: ResolvedModelSelection,
+  beforeSnapshotStats: SnapshotCaptureStats,
+  afterSnapshotStats: SnapshotCaptureStats,
 ): RunCheck[] {
   const checks: RunCheck[] = [
     { label: "provider", value: providerCatalog.label },
@@ -650,7 +657,35 @@ function toRunChecks(
     checks.push({ label: "tokens", value: `${usage.input_tokens}/${usage.output_tokens}` });
   }
 
+  const beforeSnapshotWarning = summarizeSnapshotWarning(beforeSnapshotStats);
+  if (beforeSnapshotWarning) {
+    checks.push({ label: "snapshot before", value: beforeSnapshotWarning });
+  }
+
+  const afterSnapshotWarning = summarizeSnapshotWarning(afterSnapshotStats);
+  if (afterSnapshotWarning) {
+    checks.push({ label: "snapshot after", value: afterSnapshotWarning });
+  }
+
   return checks;
+}
+
+function summarizeSnapshotWarning(stats: SnapshotCaptureStats): string {
+  const warnings: string[] = [];
+  if (stats.skippedBinaryOrOversizeFiles > 0) {
+    warnings.push(`binary/oversize ${stats.skippedBinaryOrOversizeFiles}`);
+  }
+  if (stats.skippedByLimitFiles > 0) {
+    warnings.push(`limit skipped ${stats.skippedByLimitFiles}`);
+  }
+  if (stats.hitFileCountLimit) {
+    warnings.push("file limit hit");
+  }
+  if (stats.hitTotalBytesLimit) {
+    warnings.push("size limit hit");
+  }
+
+  return warnings.join(", ");
 }
 
 async function buildArtifact(
@@ -660,13 +695,23 @@ async function buildArtifact(
   threadId: string | null,
   beforeSnapshot: WorkspaceSnapshot,
   afterSnapshot: WorkspaceSnapshot,
+  beforeSnapshotStats: SnapshotCaptureStats,
+  afterSnapshotStats: SnapshotCaptureStats,
   providerCatalog: ModelCatalogProvider,
   selection: ResolvedModelSelection,
 ): Promise<MessageArtifact | undefined> {
   const changedFiles = buildChangedFilesFromSources(session, items, beforeSnapshot, afterSnapshot);
   const activitySummary = toActivitySummary(items);
   const operationTimeline = toAuditOperations(items);
-  const runChecks = toRunChecks(session, usage, threadId, providerCatalog, selection);
+  const runChecks = toRunChecks(
+    session,
+    usage,
+    threadId,
+    providerCatalog,
+    selection,
+    beforeSnapshotStats,
+    afterSnapshotStats,
+  );
 
   if (changedFiles.length === 0 && operationTimeline.length === 0 && runChecks.length === 0) {
     return undefined;
@@ -719,7 +764,7 @@ function isCanceledProviderMessage(message: string): boolean {
 }
 
 export class CodexAdapter {
-  private readonly codex = new Codex();
+  private readonly clients = new Map<string, Codex>();
   private readonly threads = new Map<string, { thread: Thread; settingsKey: string }>();
 
   composePrompt(input: RunSessionTurnInput): PromptComposition {
@@ -730,7 +775,25 @@ export class CodexAdapter {
     this.threads.delete(sessionId);
   }
 
-  private buildThreadSettings(session: Session, providerCatalog: ModelCatalogProvider, attachments: ComposerAttachment[]): {
+  private getClient(providerId: string, appSettings: AppSettings): { client: Codex; clientKey: string } {
+    const apiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
+    const clientKey = JSON.stringify([providerId, apiKey || null]);
+    const cached = this.clients.get(clientKey);
+    if (cached) {
+      return { client: cached, clientKey };
+    }
+
+    const client = apiKey ? new Codex({ apiKey }) : new Codex();
+    this.clients.set(clientKey, client);
+    return { client, clientKey };
+  }
+
+  private buildThreadSettings(
+    session: Session,
+    providerCatalog: ModelCatalogProvider,
+    attachments: ComposerAttachment[],
+    clientKey: string,
+  ): {
     options: {
       workingDirectory: string;
       skipGitRepoCheck: true;
@@ -770,13 +833,15 @@ export class CodexAdapter {
         options.model,
         options.modelReasoningEffort,
         additionalDirectories,
+        clientKey,
       ]),
     };
   }
 
-  private getThread(session: Session, providerCatalog: ModelCatalogProvider, attachments: ComposerAttachment[]): { thread: Thread; selection: ResolvedModelSelection } {
-    const nextSettings = this.buildThreadSettings(session, providerCatalog, attachments);
-    const cached = this.threads.get(session.id);
+  private getThread(input: RunSessionTurnInput): { thread: Thread; selection: ResolvedModelSelection } {
+    const { client, clientKey } = this.getClient(input.providerCatalog.id, input.appSettings);
+    const nextSettings = this.buildThreadSettings(input.session, input.providerCatalog, input.attachments, clientKey);
+    const cached = this.threads.get(input.session.id);
     if (cached && cached.settingsKey === nextSettings.settingsKey) {
       return {
         thread: cached.thread,
@@ -784,11 +849,11 @@ export class CodexAdapter {
       };
     }
 
-    const thread = session.threadId
-      ? this.codex.resumeThread(session.threadId, nextSettings.options)
-      : this.codex.startThread(nextSettings.options);
+    const thread = input.session.threadId
+      ? client.resumeThread(input.session.threadId, nextSettings.options)
+      : client.startThread(nextSettings.options);
 
-    this.threads.set(session.id, {
+    this.threads.set(input.session.id, {
       thread,
       settingsKey: nextSettings.settingsKey,
     });
@@ -806,10 +871,11 @@ export class CodexAdapter {
     threadId: string | null,
     selection: ResolvedModelSelection,
     beforeSnapshot: WorkspaceSnapshot,
+    beforeSnapshotStats: SnapshotCaptureStats,
   ): Promise<RunSessionTurnResult> {
     const finalItems = Array.from(items.values());
     const finalAssistantText = collectAssistantText(finalItems);
-    const { snapshot: afterSnapshot } = await captureWorkspaceSnapshot(input.session.workspacePath);
+    const { snapshot: afterSnapshot, stats: afterSnapshotStats } = await captureWorkspaceSnapshot(input.session.workspacePath);
     const artifact = await buildArtifact(
       input.session,
       finalItems,
@@ -817,6 +883,8 @@ export class CodexAdapter {
       threadId,
       beforeSnapshot,
       afterSnapshot,
+      beforeSnapshotStats,
+      afterSnapshotStats,
       input.providerCatalog,
       selection,
     );
@@ -835,9 +903,9 @@ export class CodexAdapter {
   }
 
   async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
-    const { thread, selection } = this.getThread(input.session, input.providerCatalog, input.attachments);
+    const { thread, selection } = this.getThread(input);
     const prompt = this.composePrompt(input);
-    const { snapshot: beforeSnapshot } = await captureWorkspaceSnapshot(input.session.workspacePath);
+    const { snapshot: beforeSnapshot, stats: beforeSnapshotStats } = await captureWorkspaceSnapshot(input.session.workspacePath);
     const turnInput =
       prompt.imagePaths.length > 0
         ? [
@@ -897,7 +965,16 @@ export class CodexAdapter {
       }
 
       if (streamErrorMessage) {
-        const partialResult = await this.buildTurnResult(input, prompt, items, usage, threadId, selection, beforeSnapshot);
+        const partialResult = await this.buildTurnResult(
+          input,
+          prompt,
+          items,
+          usage,
+          threadId,
+          selection,
+          beforeSnapshot,
+          beforeSnapshotStats,
+        );
         throw new ProviderTurnError(
           streamErrorMessage,
           partialResult,
@@ -905,14 +982,23 @@ export class CodexAdapter {
         );
       }
 
-      return this.buildTurnResult(input, prompt, items, usage, threadId, selection, beforeSnapshot);
+      return this.buildTurnResult(input, prompt, items, usage, threadId, selection, beforeSnapshot, beforeSnapshotStats);
     } catch (error) {
       if (error instanceof ProviderTurnError) {
         throw error;
       }
 
       const message = error instanceof Error ? error.message : String(error);
-      const partialResult = await this.buildTurnResult(input, prompt, items, usage, threadId, selection, beforeSnapshot);
+      const partialResult = await this.buildTurnResult(
+        input,
+        prompt,
+        items,
+        usage,
+        threadId,
+        selection,
+        beforeSnapshot,
+        beforeSnapshotStats,
+      );
       throw new ProviderTurnError(
         message,
         partialResult,

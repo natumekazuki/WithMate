@@ -135,22 +135,16 @@ export type CharacterDetail = {
 ## Delete Rules
 - 削除は character directory 単位で行う。
 - Home からは直接削除せず、Character Editor からのみ実行する。
-- current 実装では、session が削除済み character を参照しているケースを完全には保護できていない。
-- **確定方針 / 今後反映**:
-  - character を解決できない session は新規 turn を続行しない。
-  - ただし session 自体は削除せず、過去ログ / audit / diff を読むための `browse-only` / `view-only` 相当状態を許容する。
-  - 同名 character の再作成時でも、`name` fallback で別 character へ自動再接続させない。
+- character を解決できない session は新規 turn を続行しない。
+- ただし session 自体は削除せず、過去ログ / audit / diff を読むための `browse-only` / `view-only` 相当状態を許容する。
+- 同名 character の再作成時でも、`name` fallback で別 character へ自動再接続させない。
 
 ## Current Implementation と future 方針
 
-- **current 実装**:
-  - session 側に character snapshot が残るため、一覧表示は継続できる場合がある。
-  - 一方で、元 character が消えていると turn 実行時に解決失敗する。
-  - 文書上で想定していた `graceful degradation` は、まだ browse-only 仕様として実装完了していない。
-- **確定方針 / future**:
-  - `characterId` を正本とし、未解決時は `閲覧のみ可能 / 実行不可` として扱う。
-  - `name` だけを使った再接続は行わない。
-  - Home / Session では「過去の session 記録を読む導線」と「今後の実行可否」を分けて表現する。
+- session 側に character snapshot が残るため、一覧表示は継続できる場合がある。
+- `characterId` を正本とし、未解決時は `閲覧のみ可能 / 実行不可` として扱う。
+- `name` だけを使った再接続は行わない。
+- Home / Session では「過去の session 記録を読む導線」と「今後の実行可否」を分けて表現する。
 
 ## Migration Policy
 - Electron 実行時は file-based storage を正本にする。
