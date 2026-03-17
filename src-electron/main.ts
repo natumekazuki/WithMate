@@ -38,8 +38,9 @@ import { AppSettingsStorage } from "./app-settings-storage.js";
 import { CodexAdapter, ProviderTurnError } from "./codex-adapter.js";
 import { resolveComposerPreview } from "./composer-attachments.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
+import { resolveOpenPathTarget } from "./open-path.js";
 import { SessionStorage } from "./session-storage.js";
-import { searchWorkspaceFilePaths } from "./workspace-file-search.js";
+import { clearWorkspaceFileIndex, searchWorkspaceFilePaths } from "./workspace-file-search.js";
 import {
   WITHMATE_CHARACTERS_CHANGED_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
@@ -76,6 +77,7 @@ import {
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
+  type OpenPathOptions,
 } from "../src/withmate-window.js";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
@@ -347,6 +349,15 @@ function createSession(input: CreateSessionInput): Session {
 }
 
 function updateSession(nextSession: Session): Session {
+  const currentSession = getSession(nextSession.id);
+  if (!currentSession) {
+    throw new Error("対象セッションが見つからないよ。");
+  }
+
+  if (isSessionRunInFlight(nextSession.id) || isRunningSession(currentSession)) {
+    throw new Error("実行中のセッションは更新できないよ。");
+  }
+
   return upsertSession(nextSession);
 }
 
@@ -498,18 +509,14 @@ async function searchWorkspaceFiles(sessionId: string, query: string): Promise<s
   return searchWorkspaceFilePaths(session.workspacePath, query);
 }
 
-async function openPathTarget(target: string): Promise<void> {
-  const trimmed = target.trim();
-  if (!trimmed) {
-    throw new Error("開く対象が空だよ。");
-  }
-
-  if (/^https?:\/\//i.test(trimmed)) {
-    await shell.openExternal(trimmed);
+async function openPathTarget(target: string, options?: OpenPathOptions): Promise<void> {
+  const resolved = resolveOpenPathTarget(target, options);
+  if (resolved.type === "external-url") {
+    await shell.openExternal(resolved.target);
     return;
   }
 
-  const errorMessage = await shell.openPath(trimmed);
+  const errorMessage = await shell.openPath(resolved.targetPath);
   if (errorMessage) {
     throw new Error(errorMessage);
   }
@@ -694,6 +701,7 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
     inFlightSessionRuns.delete(sessionId);
     sessionRunControllers.delete(sessionId);
     liveSessionRuns.delete(sessionId);
+    clearWorkspaceFileIndex(session.workspacePath);
     broadcastLiveSessionRun(sessionId);
   }
 }
@@ -1048,7 +1056,9 @@ app.whenReady().then(async () => {
 
     return result.filePaths[0];
   });
-  ipcMain.handle(WITHMATE_OPEN_PATH_CHANNEL, async (_event, target: string) => openPathTarget(target));
+  ipcMain.handle(WITHMATE_OPEN_PATH_CHANNEL, async (_event, target: string, options: OpenPathOptions | null) =>
+    openPathTarget(target, options ?? undefined),
+  );
 
   await createHomeWindow();
   broadcastModelCatalog(activeModelCatalog);

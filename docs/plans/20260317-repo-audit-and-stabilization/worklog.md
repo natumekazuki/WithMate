@@ -50,6 +50,25 @@
   - bug fix backlog は「実バグ候補」を優先し、仕様整理 backlog とは分離した
   - 現時点の launch flow は全体不一致ではなく、主に provider の確認 / 選択の扱いが揺れている整理に改めた
 
+### 0004
+
+- 日時: 2026-03-17
+- チェックポイント: bug fix / stabilization backlog 上位 3 件の実装着手
+- 実施内容:
+  - `Session Window` 実行中の approval UI を無効化し、renderer handler と Main Process `updateSession` に実行中ガードを追加
+  - Session rich text / artifact link クリック時に workspace 相対 path を session workspace 基準で解決し、local path fragment を除去して開く処理を追加
+  - `workspace-file-search` に TTL 付き cache freshness policy を追加し、session run 完了 / 失敗 / cancel 後に invalidate するよう更新
+  - `docs/manual-test-checklist.md` と関連 design docs を今回の修正内容に合わせて更新
+  - pure helper / cache 挙動を確認する test を `scripts/tests/` に追加
+- 検証:
+  - `node --test --import tsx scripts/tests/open-path.test.ts scripts/tests/workspace-file-search.test.ts` pass
+  - `npm run typecheck` pass
+  - `npm run build` pass
+  - `npm run validate:snapshot-ignore` pass
+- メモ:
+  - Main Process 側の session update 制限は renderer 経由更新のみを対象にし、run 中の内部状態遷移は既存 `upsertSession()` を継続利用する
+  - workspace 相対 link は session workspace root 解決を優先し、URL / 絶対 path の既存挙動は維持する
+
 ## Open Items
 
 - Character Stream の正本ドキュメントをどれに揃えるか決める

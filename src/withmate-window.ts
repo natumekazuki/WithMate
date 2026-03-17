@@ -48,6 +48,10 @@ export const WITHMATE_CHARACTERS_CHANGED_EVENT = "withmate:characters-changed";
 export const WITHMATE_MODEL_CATALOG_CHANGED_EVENT = "withmate:model-catalog-changed";
 export const WITHMATE_LIVE_SESSION_RUN_EVENT = "withmate:live-session-run";
 
+export type OpenPathOptions = {
+  baseDirectory?: string | null;
+};
+
 export type WithMateWindowApi = {
   openSession(sessionId: string): Promise<void>;
   openCharacterEditor(characterId?: string | null): Promise<void>;
@@ -79,7 +83,7 @@ export type WithMateWindowApi = {
   pickDirectory(initialPath?: string | null): Promise<string | null>;
   pickFile(initialPath?: string | null): Promise<string | null>;
   pickImageFile(initialPath?: string | null): Promise<string | null>;
-  openPath(target: string): Promise<void>;
+  openPath(target: string, options?: OpenPathOptions): Promise<void>;
   subscribeSessions(listener: (sessions: Session[]) => void): () => void;
   subscribeCharacters(listener: (characters: CharacterProfile[]) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;

@@ -130,8 +130,8 @@ const withmateApi: WithMateWindowApi = {
   pickImageFile(initialPath?: string | null) {
     return ipcRenderer.invoke(WITHMATE_PICK_IMAGE_FILE_CHANNEL, initialPath ?? null);
   },
-  openPath(target: string) {
-    return ipcRenderer.invoke(WITHMATE_OPEN_PATH_CHANNEL, target);
+  openPath(target: string, options) {
+    return ipcRenderer.invoke(WITHMATE_OPEN_PATH_CHANNEL, target, options ?? null);
   },
   subscribeSessions(listener) {
     const wrapped = (_event: unknown, sessions: Awaited<ReturnType<WithMateWindowApi["listSessions"]>>) => {

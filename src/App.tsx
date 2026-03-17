@@ -454,7 +454,7 @@ export default function App() {
   };
 
   const handleChangeApproval = async (approvalMode: string) => {
-    if (!selectedSession) {
+    if (!selectedSession || selectedSession.runState === "running" || approvalMode === selectedSession.approvalMode) {
       return;
     }
 
@@ -584,7 +584,7 @@ export default function App() {
     }
 
     try {
-      await window.withmate.openPath(target);
+      await window.withmate.openPath(target, { baseDirectory: selectedSession?.workspacePath ?? null });
     } catch {
       // 読みやすさ改善が主目的なので、開けない場合は UI を壊さない
     }
@@ -1060,6 +1060,7 @@ export default function App() {
                       className={`choice-chip${approval.id === selectedSession.approvalMode ? " active" : ""}`}
                       type="button"
                       onClick={() => void handleChangeApproval(approval.id)}
+                      disabled={selectedSession.runState === "running"}
                     >
                       {approval.label}
                     </button>

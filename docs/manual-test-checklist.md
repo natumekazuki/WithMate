@@ -80,9 +80,10 @@ npm run electron:start
 | MT-018 | Session title rename | Session Window で `Rename` を押し、タイトルを変更して `Save` を押す | Session title が更新され、Home の一覧にも反映される |
 | MT-019 | Session title cancel | Session Window で `Rename` 後に `Cancel` または `Escape` を押す | タイトル変更が破棄される |
 | MT-020 | Session delete | idle 状態の Session Window で `Delete` を押して確認する | session が削除され、Session Window が閉じて Home 一覧から消える |
-| MT-021 | Approval mode | Session Window の composer 下で approval を切り替える | 選択値が更新され、再度開いても保持される |
+| MT-021 | Approval mode | idle 状態の Session Window の composer 下で approval を切り替える | 選択値が更新され、再度開いても保持される |
 | MT-022 | Chat 送信 | Session Window の textarea に入力して `Send` を押す | user message が追加され、pending bubble が表示される |
 | MT-022g | `@path` 候補表示 | Session Window の textarea で `@src/` のように入力する | workspace 内 file path の候補一覧が表示され、候補クリックで textarea に path が挿入される |
+| MT-022j | `@path` 候補鮮度 | agent 実行で workspace 内に新規 file を作った直後に `@` 入力候補を開く | 新規 file が古い cache に埋もれ続けず、再検索時に候補へ反映される |
 | MT-022h | picker の `@path` 挿入 | Session Window で `File / Folder / Image` picker を使う | 選んだ path が textarea に `@path` として挿入される |
 | MT-022i | 画像 path 削除 | picker または手入力で画像の `@path` を入れた後、textarea からその path を消して送信する | `local_image` としては送られず、preview / chip からも消える |
 | MT-022a | Streaming 表示 | command 実行を伴う依頼を送信する | pending bubble 内に assistant text と live activity step が逐次表示される |
@@ -93,7 +94,7 @@ npm run electron:start
 | MT-022f | Session キャンセル partial 記録 | ファイル変更や agent_message が途中まで出た状態で `Cancel` を押す | Audit Log に partial response / operations / raw items が残り、chat の `Details` でも変更済みファイルが見える |
 | MT-023 | ショートカット送信 | Session Window の textarea で `Ctrl+Enter` または `Cmd+Enter` を押す | 送信される |
 | MT-024 | 改行 | Session Window の textarea で `Enter` 単体を押す | 改行され、送信されない |
-| MT-025 | 実行中制御 | 実行中に textarea / model / depth / approval 変更を試す | 実行中に無効化されるべき操作が無効になっており、composer の主操作は `Send` ではなく `Cancel` に切り替わる |
+| MT-025 | 実行中制御 | 実行中に textarea / model / depth / approval 変更を試す | 実行中に無効化されるべき操作が無効になっており、approval を含む session 設定は変更できず、composer の主操作は `Send` ではなく `Cancel` に切り替わる |
 | MT-026 | Model 選択 | Session Window の model select を変更する | 選択した model が保存される |
 | MT-027 | Depth 選択 | Session Window の depth select を変更する | 選択した depth が保存される |
 | MT-027a | Model 変更後実行 | thread を持つ既存 session で model を変更して送信する | model mismatch error にならず、新しい thread で実行される |
@@ -104,6 +105,7 @@ npm run electron:start
 | MT-028c | Turn Summary agent_message 流れ表示 | `command_execution` と複数の `agent_message` を含む turn で `Details` を開く | コマンドや reasoning だけでなく `agent_message` も同じ timeline に入り、応答の流れを追える |
 | MT-028a | Rich Text 表示 | inline code / list / markdown link を含む assistant message を表示する | 生テキストの塊ではなく、rich text として読みやすく表示される |
 | MT-028b | Rich Text リンク | `[label](absolute-path-or-url)` を含む assistant message をクリックする | URL かローカルパスが既定の方法で開く |
+| MT-028e | Rich Text workspace 相対リンク | `[label](src/App.tsx#L10)` のような workspace 相対 link を含む assistant message または artifact message link をクリックする | session workspace を基準に path が解決され、fragment が付いていても少なくとも対象 file / folder 自体は開く |
 | MT-029 | Diff overlay | `Open Diff` を押す | Session Window 内に Diff overlay が開く |
 | MT-030 | Diff popout | Diff overlay で `Open In Window` を押す | Diff Window が別ウインドウで開く |
 | MT-031 | Diff split 表示 | add / edit / delete を含む turn で Diff を開く | `Before / After` の split diff が表示される |

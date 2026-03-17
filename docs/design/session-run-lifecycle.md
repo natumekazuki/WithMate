@@ -16,6 +16,7 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - `Session Window` から実行中 session を明示キャンセルできる
 - アプリ終了は実行中 session がある場合に確認ダイアログを出す
 - 全 window が閉じても実行中 session がある場合は `Home Window` を再生成して、アプリ全体の終了を避ける
+- 実行中 session の metadata 更新は制限し、少なくとも approval / model / depth / title / delete は UI と Main Process の両方でブロックする
 
 ## Lifecycle Model
 
@@ -70,6 +71,7 @@ window は上の状態機械とは分離する。
 - キャンセル後の session は `runState = idle` に戻る
 - chat には `実行をキャンセルしたよ。` を 1 件追加する
 - 監査ログは同じ turn record を `phase = canceled` へ更新し、`errorMessage` にユーザーキャンセルを残す
+- 実行中は approval を含む session 設定変更を受け付けない
 
 ### Session Delete
 

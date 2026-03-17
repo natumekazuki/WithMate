@@ -3,7 +3,7 @@
 ## Status
 
 - 状態: 進行中
-- 現在フェーズ: 監査レポート作成完了
+- 現在フェーズ: bug fix / stabilization 実装中
 
 ## Completed
 
@@ -17,22 +17,25 @@
 - Session launch 判定の根拠に `docs/design/session-launch-ui.md` を追加し、provider 露出まわりの一致 / 不一致を補正した
 - 既存コミット `9f676b9` を関連コミットとして反映した
 - 基線検証 `npm run typecheck`, `npm run build`, `npm run validate:snapshot-ignore` が着手前 pass 済みという前提を記録した
+- bug fix / stabilization backlog 上位 3 件に対し、実行中 approval 変更禁止、workspace 相対 path link 解決、workspace file search cache 鮮度改善の実装に着手した
+- `docs/manual-test-checklist.md`、`docs/design/session-run-lifecycle.md`、`docs/design/message-rich-text.md`、`docs/design/prompt-composition.md` を今回の修正内容に合わせて更新した
+- pure helper / cache 挙動を確認する test を `scripts/tests/` に追加した
+- `node --test --import tsx scripts/tests/open-path.test.ts scripts/tests/workspace-file-search.test.ts`、`npm run typecheck`、`npm run build`、`npm run validate:snapshot-ignore` が pass した
 
 ## Remaining Issues
 
 - Character Stream の扱いに関する文書間のズレが残っている
 - provider 対応範囲と credential 管理方針の整理が未完了
 - Session Memory / Character Memory の実装方針が未確定
-- 表面バグ探索と修正が未着手
+- bug fix 実装内容の最終検証と review 反映が未完了
 - 潜在バグレポートが未作成
 - 完成ロードマップが未作成
 
 ## Next Actions
 
-1. `repo-audit.md` の bug fix / stabilization backlog から着手対象を確定する
+1. 今回実装した 3 件の bug fix に対して typecheck / build / snapshot ignore / manual test 観点を確認する
 2. Character Stream、provider scope、memory gap の仕様整理 backlog の優先順位を決める
-3. 表面バグ探索の対象導線を現行 manual test と照合して絞り込む
-4. 潜在バグレポートと完成ロードマップの下書きを進める
+3. 潜在バグレポートと完成ロードマップの下書きを進める
 
 ## Related Commits
 

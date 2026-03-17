@@ -3,18 +3,24 @@ import path from "node:path";
 import { scanWorkspacePaths } from "./snapshot-ignore.js";
 
 const DEFAULT_SEARCH_LIMIT = 20;
+export const DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS = 5_000;
 
 type WorkspaceFileIndex = {
   workspacePath: string;
   files: string[];
+  scannedAt: number;
 };
 
 const workspaceFileIndexCache = new Map<string, WorkspaceFileIndex>();
 
+export function isWorkspaceFileIndexFresh(index: WorkspaceFileIndex, now = Date.now()): boolean {
+  return now - index.scannedAt < DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS;
+}
+
 async function getWorkspaceFileIndex(workspacePath: string): Promise<WorkspaceFileIndex> {
   const normalizedWorkspacePath = path.resolve(workspacePath);
   const cached = workspaceFileIndexCache.get(normalizedWorkspacePath);
-  if (cached) {
+  if (cached && isWorkspaceFileIndexFresh(cached)) {
     return cached;
   }
 
@@ -22,6 +28,7 @@ async function getWorkspaceFileIndex(workspacePath: string): Promise<WorkspaceFi
   const nextIndex: WorkspaceFileIndex = {
     workspacePath: normalizedWorkspacePath,
     files: scanned.includedFiles,
+    scannedAt: Date.now(),
   };
   workspaceFileIndexCache.set(normalizedWorkspacePath, nextIndex);
   return nextIndex;
