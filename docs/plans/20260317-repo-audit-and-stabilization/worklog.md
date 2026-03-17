@@ -190,12 +190,14 @@
   - `npm run build` pass
   - `npm run validate:snapshot-ignore` pass
 - メモ:
-  - 現時点で未完了なのは、この後 main agent が作成する commit hash の記録のみ
+  - 当時未完了だった commit hash の記録は、その後反映済み
   - 既存の broader backlog は継続文脈として残るが、本 plan セッションの完了判定を阻害する open issue ではない
+- 関連コミット:
+  - `758e252eae81d6c5f061c67b33af97deefcaefdd` `feat(app): PB-001〜PB-004 を実装`
 
 ## Open Items
 
-> current completion 判定を阻害する未完了は commit hash 記録のみ。以下は将来 backlog / 継続論点として残す。
+> commit hash 記録は反映済み。以下は将来 backlog / 継続論点として残す。
 
 - Character Stream の正本文書をどこに置くか最終合意する
 - `PB-001` の browse-only session で、一覧・詳細・resume ボタン・session title fallback をどこまで一貫制御するかを確定する
@@ -203,4 +205,3 @@
 - `PB-003` の provider enable / disable と API キー入力を、Settings 中心でどう実装するかの ownership と保存単位を確定する
 - `PB-004` で best-effort 対応する omission 対象を、artifact link / summary / diff のどこまで含めるか切り分ける
 - memory 基盤を LangGraph 直行にするか段階導入にするか決める
-- この後 main agent が作成する最終コミット hash を result 系文書へ記録する

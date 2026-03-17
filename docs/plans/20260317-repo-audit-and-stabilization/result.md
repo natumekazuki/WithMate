@@ -2,8 +2,8 @@
 
 ## Status
 
-- 状態: `PB-001`〜`PB-004(best-effort)` 実装・blocker 修正・再検証完了
-- 現在フェーズ: quality review 完了 / 最終 commit hash 記録待ち
+- 状態: `PB-001`〜`PB-004(best-effort)` 実装・blocker 修正・再検証・commit 記録完了
+- 現在フェーズ: 完了
 
 ## Completed
 
@@ -48,14 +48,15 @@
 - `scripts/tests/session-storage.test.ts` を含む再検証 `node --test --import tsx scripts/tests/open-path.test.ts scripts/tests/workspace-file-search.test.ts scripts/tests/model-catalog-settings.test.ts scripts/tests/app-settings-storage.test.ts scripts/tests/session-storage.test.ts` が pass した
 - `npm run typecheck`、`npm run build`、`npm run validate:snapshot-ignore` の再検証が pass した
 - blocker 修正後の quality review で `blocking issues なし` を確認した
+- 最終実装コミット `758e252eae81d6c5f061c67b33af97deefcaefdd` を plan 記録へ反映した
 
 ## Remaining Issues
 
-- この後 main agent が作成する最終 commit hash が、本 result / worklog / 関連記録へ未転記
+- なし
 
 ## Next Actions
 
-1. main agent が最終コミットを作成したら、その commit hash を本 `result.md` と `worklog.md` の関連記録へ追記する
+1. なし（本フェーズ完了。継続論点は `worklog.md` の `Open Items` と `completion-roadmap.md` を参照）
 
 ## Related Commits
 
@@ -64,6 +65,7 @@
 - `19761900fcd2a92fbe4593d49f41df231e663d30` `fix(session): 安定化バグを修正`
 - `3e11f97` `docs(plan): 潜在バグと完成計画を整理`
 - `6ae063090cff6b02026e224d57b6f8c6ad6e6654` `docs(plan): PB 方針文書を反映`
+- `758e252eae81d6c5f061c67b33af97deefcaefdd` `feat(app): PB-001〜PB-004 を実装`
 
 ## Rollback Guide
 
