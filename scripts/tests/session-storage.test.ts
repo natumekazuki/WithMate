@@ -7,6 +7,20 @@ import { describe, it } from "node:test";
 import { buildNewSession } from "../../src/app-state.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";
 
+function createSession(taskTitle: string, workspaceLabel: string, characterId: string, character: string) {
+  return buildNewSession({
+    taskTitle,
+    workspaceLabel,
+    workspacePath: `C:/${workspaceLabel}`,
+    branch: "main",
+    characterId,
+    character,
+    characterIconPath: "",
+    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    approvalMode: "on-request",
+  });
+}
+
 describe("SessionStorage", () => {
   it("replaceSessions で一覧をまとめて置き換えられる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
@@ -14,28 +28,8 @@ describe("SessionStorage", () => {
 
     try {
       const storage = new SessionStorage(dbPath);
-      const firstSession = buildNewSession({
-        taskTitle: "first",
-        workspaceLabel: "workspace-a",
-        workspacePath: "C:/workspace-a",
-        branch: "main",
-        characterId: "char-a",
-        character: "A",
-        characterIconPath: "",
-        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-        approvalMode: "on-request",
-      });
-      const secondSession = buildNewSession({
-        taskTitle: "second",
-        workspaceLabel: "workspace-b",
-        workspacePath: "C:/workspace-b",
-        branch: "main",
-        characterId: "char-b",
-        character: "B",
-        characterIconPath: "",
-        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-        approvalMode: "on-request",
-      });
+      const firstSession = createSession("first", "workspace-a", "char-a", "A");
+      const secondSession = createSession("second", "workspace-b", "char-b", "B");
 
       storage.upsertSession(firstSession);
       storage.upsertSession(secondSession);
@@ -52,6 +46,24 @@ describe("SessionStorage", () => {
         [{ id: replacement.id, taskTitle: "second-updated" }],
       );
 
+      storage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("clearSessions で全 session を削除できる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new SessionStorage(dbPath);
+      storage.upsertSession(createSession("first", "workspace-a", "char-a", "A"));
+      storage.upsertSession(createSession("second", "workspace-b", "char-b", "B"));
+
+      storage.clearSessions();
+
+      assert.deepEqual(storage.listSessions(), []);
       storage.close();
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });

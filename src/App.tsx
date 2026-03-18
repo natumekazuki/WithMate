@@ -179,7 +179,7 @@ export default function App() {
     }
 
     if (!isSelectedProviderEnabled) {
-      return "この provider は Settings で無効になっているよ。Home の Settings で有効化してね。";
+      return "この provider は Settings の Coding Agent Providers で無効になっているよ。Home の Settings で有効化してね。";
     }
 
     return "";

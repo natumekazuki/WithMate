@@ -81,9 +81,11 @@ import {
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
   type OpenPathOptions,
+  type ResetAppDatabaseResult,
 } from "../src/withmate-window.js";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
@@ -260,6 +262,56 @@ function broadcastAppSettings(settings?: ReturnType<AppSettingsStorage["getSetti
       window.webContents.send(WITHMATE_APP_SETTINGS_CHANGED_EVENT, payload);
     }
   }
+}
+
+function hasRunningSessions(): boolean {
+  return sessions.some((session) => isRunningSession(session));
+}
+
+function closeResetTargetWindows(): void {
+  for (const [sessionId, window] of sessionWindows.entries()) {
+    if (!window.isDestroyed()) {
+      allowCloseSessionWindows.add(sessionId);
+      window.close();
+    }
+  }
+  sessionWindows.clear();
+  allowCloseSessionWindows.clear();
+
+  for (const [token, window] of diffWindows.entries()) {
+    if (!window.isDestroyed()) {
+      window.close();
+    }
+    diffPreviewStore.delete(token);
+  }
+  diffWindows.clear();
+}
+
+function resetAppDatabase(): ResetAppDatabaseResult {
+  if (hasInFlightSessionRuns() || hasRunningSessions()) {
+    throw new Error("実行中の session があるため、DB を初期化できないよ。完了またはキャンセル後に試してね。");
+  }
+
+  closeResetTargetWindows();
+  requireSessionStorage().clearSessions();
+  sessions = requireSessionStorage().listSessions();
+  const appSettings = requireAppSettingsStorage().resetSettings();
+  const modelCatalog = requireModelCatalogStorage().resetToBundled();
+
+  liveSessionRuns.clear();
+  sessionRunControllers.clear();
+  inFlightSessionRuns.clear();
+  codexAdapter.invalidateAllSessionThreads();
+
+  broadcastSessions();
+  broadcastAppSettings(appSettings);
+  broadcastModelCatalog(modelCatalog);
+
+  return {
+    sessions: listSessions(),
+    appSettings,
+    modelCatalog,
+  };
 }
 
 function getLiveSessionRun(sessionId: string): LiveSessionRunState | null {
@@ -626,8 +678,8 @@ function importModelCatalogDocument(document: ModelCatalogDocument): ModelCatalo
 
 function getProvidersWithApiKeyChange(previousSettings: ReturnType<AppSettingsStorage["getSettings"]>, nextSettings: ReturnType<AppSettingsStorage["getSettings"]>): string[] {
   const providerIds = new Set<string>([
-    ...Object.keys(previousSettings.providerSettings),
-    ...Object.keys(nextSettings.providerSettings),
+    ...Object.keys(previousSettings.codingProviderSettings),
+    ...Object.keys(nextSettings.codingProviderSettings),
   ]);
 
   return Array.from(providerIds).filter(
@@ -650,7 +702,7 @@ function updateAppSettings(nextSettingsInput: ReturnType<AppSettingsStorage["get
         (isSessionRunInFlight(session.id) || isRunningSession(session)),
     );
     if (blockedSessions.length > 0) {
-      throw new Error("API key を変更する provider に実行中の session があるため、完了まで待ってね。");
+      throw new Error("Coding Agent credential を変更する provider に実行中の session があるため、完了まで待ってね。");
     }
   }
 
@@ -1144,6 +1196,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => listSessionAuditLogs(sessionId));
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => requireAppSettingsStorage().getSettings());
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => updateAppSettings(settings));
+  ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, () => resetAppDatabase());
   ipcMain.handle(WITHMATE_LIST_CHARACTERS_CHANNEL, async () => refreshCharactersFromStorage());
   ipcMain.handle(WITHMATE_GET_MODEL_CATALOG_CHANNEL, (_event, revision: number | null) => getModelCatalog(revision));
   ipcMain.handle(WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL, (_event, document: ModelCatalogDocument) => importModelCatalogDocument(document));
@@ -1333,4 +1386,7 @@ app.on("before-quit", (event) => {
   modelCatalogStorage?.close();
   modelCatalogStorage = null;
 });
+
+
+
 

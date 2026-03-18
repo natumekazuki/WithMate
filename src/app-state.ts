@@ -80,7 +80,7 @@ export type LiveSessionRunState = {
 
 export type AppSettings = {
   systemPromptPrefix: string;
-  providerSettings: Record<string, ProviderAppSettings>;
+  codingProviderSettings: Record<string, ProviderAppSettings>;
 };
 
 export type ProviderAppSettings = {
@@ -268,7 +268,7 @@ export const DEFAULT_PROVIDER_APP_SETTINGS: ProviderAppSettings = {
 export function createDefaultAppSettings(): AppSettings {
   return {
     systemPromptPrefix: "",
-    providerSettings: {
+    codingProviderSettings: {
       [DEFAULT_PROVIDER_ID]: {
         enabled: true,
         apiKey: "",
@@ -299,24 +299,28 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   }
 
   const candidate = value as Partial<AppSettings>;
-  const providerSettings: Record<string, ProviderAppSettings> = {};
-  if (candidate.providerSettings && typeof candidate.providerSettings === "object") {
-    for (const [providerId, providerSettingsValue] of Object.entries(candidate.providerSettings)) {
+  const rawCodingProviderSettings =
+    candidate.codingProviderSettings && typeof candidate.codingProviderSettings === "object"
+      ? candidate.codingProviderSettings
+      : null;
+  const codingProviderSettings: Record<string, ProviderAppSettings> = {};
+  if (rawCodingProviderSettings) {
+    for (const [providerId, providerSettingsValue] of Object.entries(rawCodingProviderSettings)) {
       const normalizedProviderId = normalizeProviderId(providerId);
-      providerSettings[normalizedProviderId] = normalizeProviderAppSettings(
+      codingProviderSettings[normalizedProviderId] = normalizeProviderAppSettings(
         providerSettingsValue,
         normalizedProviderId === DEFAULT_PROVIDER_ID,
       );
     }
   }
 
-  if (!providerSettings[DEFAULT_PROVIDER_ID]) {
-    providerSettings[DEFAULT_PROVIDER_ID] = { ...defaults.providerSettings[DEFAULT_PROVIDER_ID] };
+  if (!codingProviderSettings[DEFAULT_PROVIDER_ID]) {
+    codingProviderSettings[DEFAULT_PROVIDER_ID] = { ...defaults.codingProviderSettings[DEFAULT_PROVIDER_ID] };
   }
 
   return {
     systemPromptPrefix: typeof candidate.systemPromptPrefix === "string" ? candidate.systemPromptPrefix : "",
-    providerSettings,
+    codingProviderSettings,
   };
 }
 
@@ -324,7 +328,7 @@ export function getProviderAppSettings(settings: AppSettings, providerId: string
   const normalizedProviderId = normalizeProviderId(providerId);
   const resolvedSettings = normalizeAppSettings(settings);
   return normalizeProviderAppSettings(
-    resolvedSettings.providerSettings[normalizedProviderId],
+    resolvedSettings.codingProviderSettings[normalizedProviderId],
     normalizedProviderId === DEFAULT_PROVIDER_ID,
   );
 }

@@ -775,15 +775,19 @@ export class CodexAdapter {
     this.threads.delete(sessionId);
   }
 
+  invalidateAllSessionThreads(): void {
+    this.threads.clear();
+  }
+
   private getClient(providerId: string, appSettings: AppSettings): { client: Codex; clientKey: string } {
-    const apiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
-    const clientKey = JSON.stringify([providerId, apiKey || null]);
+    const codingApiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
+    const clientKey = JSON.stringify([providerId, codingApiKey || null]);
     const cached = this.clients.get(clientKey);
     if (cached) {
       return { client: cached, clientKey };
     }
 
-    const client = apiKey ? new Codex({ apiKey }) : new Codex();
+    const client = codingApiKey ? new Codex({ apiKey: codingApiKey }) : new Codex();
     this.clients.set(clientKey, client);
     return { client, clientKey };
   }

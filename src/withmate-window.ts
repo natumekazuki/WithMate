@@ -42,6 +42,7 @@ export const WITHMATE_CANCEL_SESSION_RUN_CHANNEL = "withmate:cancel-session-run"
 export const WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL = "withmate:list-session-audit-logs";
 export const WITHMATE_GET_APP_SETTINGS_CHANNEL = "withmate:get-app-settings";
 export const WITHMATE_UPDATE_APP_SETTINGS_CHANNEL = "withmate:update-app-settings";
+export const WITHMATE_RESET_APP_DATABASE_CHANNEL = "withmate:reset-app-database";
 export const WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL = "withmate:get-live-session-run";
 export const WITHMATE_SESSIONS_CHANGED_EVENT = "withmate:sessions-changed";
 export const WITHMATE_CHARACTERS_CHANGED_EVENT = "withmate:characters-changed";
@@ -51,6 +52,12 @@ export const WITHMATE_LIVE_SESSION_RUN_EVENT = "withmate:live-session-run";
 
 export type OpenPathOptions = {
   baseDirectory?: string | null;
+};
+
+export type ResetAppDatabaseResult = {
+  sessions: Session[];
+  appSettings: AppSettings;
+  modelCatalog: ModelCatalogSnapshot;
 };
 
 export type WithMateWindowApi = {
@@ -76,6 +83,7 @@ export type WithMateWindowApi = {
   getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
+  resetAppDatabase(): Promise<ResetAppDatabaseResult>;
   listCharacters(): Promise<CharacterProfile[]>;
   getCharacter(characterId: string): Promise<CharacterProfile | null>;
   createCharacter(input: CreateCharacterInput): Promise<CharacterProfile>;

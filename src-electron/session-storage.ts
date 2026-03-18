@@ -335,6 +335,10 @@ export class SessionStorage {
     this.deleteStatement.run(sessionId);
   }
 
+  clearSessions(): void {
+    this.db.exec("DELETE FROM sessions;");
+  }
+
   close(): void {
     this.db.close();
   }

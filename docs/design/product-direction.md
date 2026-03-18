@@ -28,6 +28,12 @@ WithMate で実現したい体験は次の三層で構成される。
 つまり価値仮説としては維持しつつ、実際の Session UI には表示しない。
 さらにユーザー確定方針として、Character Stream の実装開始は `Codex 対応完了`、`CopilotCLI 対応完了`、`両 CLI / SDK 経由で使える機能の網羅完了` の後に置く。
 
+## Release Policy
+
+- 初回リリース前のため後方互換性は考慮しない
+- Settings / storage / catalog に非互換変更が入った場合は、Settings の `DB を初期化` を回復手段の正本とする
+- `DB を初期化` は `sessions / audit logs / app settings / model catalog` を初期化し、`characters` は保持する
+
 ## Priority Order
 
 主従関係は次の順序で固定する。
@@ -89,9 +95,12 @@ WithMate は provider を 1 つに統一しない。
   - **current 実装**: `Codex` 中心
   - **target scope**: `Codex` と `CopilotCLI`
   - CLI / SDK で使える共通機能の網羅を先に進める
+  - current Settings は coding plane 専用で、provider enable / disable と coding credential をここで扱う
 - 将来的な `Character Stream`
   - OpenAI API
   - API キー前提
+  - Settings 上も coding plane とは別責務で扱う
+  - current milestone では未着手
   - 着手は coding plane 側の parity 完了後
 
 この分離により、本体の CLI parity を保ったまま、独り言機能のコスト管理と利用条件を独立して扱う。
@@ -171,6 +180,7 @@ WithMate は provider を 1 つに統一しない。
 - `Artifact Summary` の実務的な有用性
 - キャラクター定義の安定注入前提
 - 独り言 UI を premature に本実装済みへ見せないこと
+- 非互換変更時の回復導線として Settings の DB reset を維持すること
 
 ## Impact On Current UI
 
@@ -179,6 +189,7 @@ WithMate は provider を 1 つに統一しない。
 - `Recent Sessions` は `Home Window` の resume picker として再設計する
 - `Session Window` の `Work Chat` は TUI 本体寄りに保つ
 - 独り言 UI は current milestone では `Session Window` に出さない
+- Settings は coding plane 用 provider / credential と DB reset を持つ管理面として扱う
 - 見た目はキャラクターに合わせていくが、構造は coding agent 優先で崩さない
 
 ## Next Step

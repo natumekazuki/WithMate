@@ -21,6 +21,7 @@
 5. MVP の独り言モデルは `gpt-5-mini` 固定にする
 6. 独り言の実行契機はユーザー操作に連動するイベントに限定し、定期実行は行わない
 7. 独り言の文脈は Memory から抽出した軽量コンテキストに限定する
+8. current milestone では Character Stream 実装には着手しない
 
 ## Why
 
@@ -58,6 +59,9 @@
   - coding task execution
   - file changes
   - run state / approval state
+- Settings:
+  - current provider / credential 設定は coding plane 専用
+  - 初回リリース前は後方互換性を前提にせず、非互換変更時は Settings の DB reset で回復する
 
 ### Monologue Plane
 
@@ -70,6 +74,9 @@
   - monologue
   - inner voice
   - mood / reaction continuity
+- Settings:
+  - coding plane の provider / credential と混ぜない
+  - current milestone では設定欄も追加しない
 
 ## Trigger Policy
 
@@ -143,12 +150,12 @@ current milestone では `Character Stream` は **非着手** とし、provider 
 - current milestone では API キー有無にかかわらず Character Stream 実装は進めない
 - backend / context 連携の土台実装も parity 完了後の reopen フェーズへ送る
 - UI 適用は pending とし、Session UI には表示しない
-- API キー入力導線は future の Settings 拡張で扱うが、現時点では current 実装済みとして扱わない
+- Settings の coding credential 欄は Character Stream 用ではなく、API キー入力導線は future の別欄で扱う
 
 ### API Key Missing
 
 - current milestone では UI 自体を出さないため、個別の縮退表示は持たない
-- API キー設定 UI は Settings 拡張の future scope として扱う
+- API キー設定 UI は coding plane 設定と分離した future scope として扱う
 
 ## Non Goals
 

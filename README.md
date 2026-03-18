@@ -131,8 +131,11 @@ npm run typecheck
 
 - Electron 実行を正本とする desktop アプリ構成です
 - セッション情報は Electron 側で保持され、キャラクター情報はストレージから読み込みます
-- Settings overlay では `System Prompt Prefix`、provider の enable / disable、`OpenAI API Key`、model catalog を管理します
-- `Character Stream` は価値仮説として保持しているものの、現行 UI では pending 扱いです
+- Settings overlay では `System Prompt Prefix`、`Coding Agent Providers`、`Coding Agent Credentials`、model catalog、`Danger Zone` の DB 初期化を管理します
+- current Settings の provider / credential は coding plane 専用です。`Character Stream` 用 API 入力欄は current milestone では追加していません
+- 初回リリース前のため後方互換性は考慮しません。互換性のない変更が入った場合は Settings の `DB を初期化` で回復する前提です
+- `DB を初期化` は `sessions / audit logs / app settings / model catalog` を初期状態へ戻し、`characters` は削除しません
+- `Character Stream` は価値仮説として保持しているものの、current milestone では未着手です
 
 ## 補足
 

@@ -60,9 +60,15 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - approval mode は `on-request` 固定
 - `Settings` overlay
   - system prompt prefix 編集
-  - provider ごとの enable / disable
-  - provider label はそのままに `OpenAI API Key` 入力を表示
-  - model catalog import / export
+  - `Coding Agent Providers` で provider ごとの enable / disable
+  - `Coding Agent Credentials` で provider label を維持した `OpenAI API Key (Coding Agent)` 入力を表示
+  - credential 補助文で `Character Stream 用ではない` ことを明示し、future note だけ最小限で置く
+  - `Model Catalog` import / export
+  - `Danger Zone` の `DB を初期化`
+    - reset 対象: `sessions / audit logs / app settings / model catalog`
+    - reset 非対象: `characters`
+    - confirm 後に実行する
+  - 初回リリース前は後方互換性を考慮せず、非互換変更時はここから回復する
   - 縦が小さいときも overlay 内スクロールで末尾まで操作できる
 
 ## Session Window
@@ -122,6 +128,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - Session 実行の監査ログは SQLite に保存し、Session Window から閲覧する
 - chat message は限定的な rich text renderer で整形表示する
 - Settings overlay の `System Prompt Prefix` は SQLite に保存し、次回 turn から prompt composition へ反映する
+- Settings overlay の `DB を初期化` 成功時は Home が reset 後 `appSettings` / `modelCatalog` / `sessions` へ同期し、settings draft の dirty を解消する
 - character は `userData/characters/` を正本とする
 - `userData` は `<appData>/WithMate/` に固定する
 - Session は character の `main / sub` theme color snapshot を保持するが、Session UI 自体は neutral tone を維持する

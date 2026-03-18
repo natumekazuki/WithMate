@@ -139,45 +139,10 @@ export class ModelCatalogStorage {
     return cloneModelCatalogSnapshot({ revision, providers });
   }
 
-  ensureSeeded(): ModelCatalogSnapshot {
-    const activeCatalog = this.getActiveCatalog();
-    if (activeCatalog) {
-      return activeCatalog;
-    }
-
-    return this.importCatalogDocument(this.readBundledCatalogDocument(), "bundled");
-  }
-
-  getActiveCatalog(): ModelCatalogSnapshot | null {
-    const revision = this.getActiveRevision();
-    if (!revision) {
-      return null;
-    }
-
-    return this.toSnapshot(revision);
-  }
-
-  getCatalog(revision?: number | null): ModelCatalogSnapshot | null {
-    if (revision == null) {
-      return this.getActiveCatalog();
-    }
-
-    return this.toSnapshot(revision);
-  }
-
-  getProviderCatalog(revision: number | null | undefined, providerId: string): ModelCatalogProvider | null {
-    const snapshot = this.getCatalog(revision);
-    if (!snapshot) {
-      return null;
-    }
-
-    const provider = getProviderCatalog(snapshot.providers, providerId);
-    return provider ? JSON.parse(JSON.stringify(provider)) : null;
-  }
-
-  importCatalogDocument(
+  private writeCatalogDocument(
     document: ModelCatalogDocument,
-    source: "bundled" | "imported" | "rollback" = "imported",
+    source: "bundled" | "imported" | "rollback",
+    options?: { resetHistory?: boolean },
   ): ModelCatalogSnapshot {
     const normalized = parseModelCatalogDocument(document);
     const importedAt = new Date().toISOString();
@@ -185,7 +150,12 @@ export class ModelCatalogStorage {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
 
     try {
-      this.db.prepare(`UPDATE model_catalog_revisions SET is_active = 0 WHERE is_active = 1`).run();
+      if (options?.resetHistory) {
+        this.db.exec("DELETE FROM model_catalog_revisions;");
+        this.db.exec("DELETE FROM sqlite_sequence WHERE name = 'model_catalog_revisions';");
+      } else {
+        this.db.prepare(`UPDATE model_catalog_revisions SET is_active = 0 WHERE is_active = 1`).run();
+      }
 
       const insertRevision = this.db.prepare(`
         INSERT INTO model_catalog_revisions (source, imported_at, is_active)
@@ -242,6 +212,53 @@ export class ModelCatalogStorage {
       this.db.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  ensureSeeded(): ModelCatalogSnapshot {
+    const activeCatalog = this.getActiveCatalog();
+    if (activeCatalog) {
+      return activeCatalog;
+    }
+
+    return this.writeCatalogDocument(this.readBundledCatalogDocument(), "bundled");
+  }
+
+  getActiveCatalog(): ModelCatalogSnapshot | null {
+    const revision = this.getActiveRevision();
+    if (!revision) {
+      return null;
+    }
+
+    return this.toSnapshot(revision);
+  }
+
+  getCatalog(revision?: number | null): ModelCatalogSnapshot | null {
+    if (revision == null) {
+      return this.getActiveCatalog();
+    }
+
+    return this.toSnapshot(revision);
+  }
+
+  getProviderCatalog(revision: number | null | undefined, providerId: string): ModelCatalogProvider | null {
+    const snapshot = this.getCatalog(revision);
+    if (!snapshot) {
+      return null;
+    }
+
+    const provider = getProviderCatalog(snapshot.providers, providerId);
+    return provider ? JSON.parse(JSON.stringify(provider)) : null;
+  }
+
+  importCatalogDocument(
+    document: ModelCatalogDocument,
+    source: "bundled" | "imported" | "rollback" = "imported",
+  ): ModelCatalogSnapshot {
+    return this.writeCatalogDocument(document, source);
+  }
+
+  resetToBundled(): ModelCatalogSnapshot {
+    return this.writeCatalogDocument(this.readBundledCatalogDocument(), "bundled", { resetHistory: true });
   }
 
   exportCatalogDocument(revision?: number | null): ModelCatalogDocument | null {

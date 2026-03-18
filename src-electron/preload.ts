@@ -36,6 +36,7 @@ import {
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
   type WithMateWindowApi,
 } from "../src/withmate-window.js";
@@ -106,6 +107,9 @@ const withmateApi: WithMateWindowApi = {
   },
   updateAppSettings(settings) {
     return ipcRenderer.invoke(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, settings);
+  },
+  resetAppDatabase() {
+    return ipcRenderer.invoke(WITHMATE_RESET_APP_DATABASE_CHANNEL);
   },
   listCharacters() {
     return ipcRenderer.invoke(WITHMATE_LIST_CHARACTERS_CHANNEL);

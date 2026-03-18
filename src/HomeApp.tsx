@@ -10,7 +10,17 @@ import {
   type Session,
 } from "./app-state.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.js";
-import { SETTINGS_API_KEY_LABEL, SETTINGS_API_KEY_PLACEHOLDER } from "./settings-ui.js";
+import {
+  SETTINGS_API_KEY_LABEL,
+  SETTINGS_API_KEY_PLACEHOLDER,
+  SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE,
+  SETTINGS_CODING_CREDENTIALS_HELP,
+  SETTINGS_RESET_DATABASE_CONFIRM_MESSAGE,
+  SETTINGS_RESET_DATABASE_HELP,
+  SETTINGS_RESET_DATABASE_LABEL,
+  SETTINGS_RESET_DATABASE_SUCCESS_MESSAGE,
+  SETTINGS_RELEASE_COMPATIBILITY_NOTE,
+} from "./settings-ui.js";
 import { buildCardThemeStyle, CharacterAvatar } from "./ui-utils.js";
 
 type LaunchWorkspace = {
@@ -58,7 +68,8 @@ export default function HomeApp() {
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [systemPromptPrefixDraft, setSystemPromptPrefixDraft] = useState("");
-  const [providerSettingsDraft, setProviderSettingsDraft] = useState<Record<string, ProviderAppSettings>>({});
+  const [codingProviderSettingsDraft, setCodingProviderSettingsDraft] = useState<Record<string, ProviderAppSettings>>({});
+  const [resettingDatabase, setResettingDatabase] = useState(false);
   const [launchOpen, setLaunchOpen] = useState(false);
   const [launchTitle, setLaunchTitle] = useState("");
   const [launchWorkspace, setLaunchWorkspace] = useState<LaunchWorkspace | null>(null);
@@ -67,11 +78,11 @@ export default function HomeApp() {
   const settingsDirtyRef = useRef(false);
   const settingsOpenRef = useRef(false);
 
-  const applyIncomingAppSettings = (settings: AppSettings) => {
+  const applyIncomingAppSettings = (settings: AppSettings, options?: { force?: boolean }) => {
     setAppSettings(settings);
-    if (!settingsOpenRef.current || !settingsDirtyRef.current) {
+    if (options?.force || !settingsOpenRef.current || !settingsDirtyRef.current) {
       setSystemPromptPrefixDraft(settings.systemPromptPrefix);
-      setProviderSettingsDraft(settings.providerSettings);
+      setCodingProviderSettingsDraft(settings.codingProviderSettings);
     }
   };
 
@@ -286,6 +297,30 @@ export default function HomeApp() {
     }
   };
 
+  const handleResetAppDatabase = async () => {
+    if (!window.withmate || resettingDatabase) {
+      return;
+    }
+
+    const confirmed = window.confirm(SETTINGS_RESET_DATABASE_CONFIRM_MESSAGE);
+    if (!confirmed) {
+      return;
+    }
+
+    setResettingDatabase(true);
+    try {
+      const result = await window.withmate.resetAppDatabase();
+      setSessions(result.sessions);
+      setModelCatalog(result.modelCatalog);
+      applyIncomingAppSettings(result.appSettings, { force: true });
+      setSettingsFeedback(SETTINGS_RESET_DATABASE_SUCCESS_MESSAGE);
+    } catch (error) {
+      setSettingsFeedback(error instanceof Error ? error.message : "DB の初期化に失敗したよ。");
+    } finally {
+      setResettingDatabase(false);
+    }
+  };
+
   const handleSaveSettings = async () => {
     if (!window.withmate) {
       return;
@@ -294,11 +329,11 @@ export default function HomeApp() {
     try {
       const nextSettings = await window.withmate.updateAppSettings({
         systemPromptPrefix: systemPromptPrefixDraft,
-        providerSettings: providerSettingsDraft,
+        codingProviderSettings: codingProviderSettingsDraft,
       });
       setAppSettings(nextSettings);
       setSystemPromptPrefixDraft(nextSettings.systemPromptPrefix);
-      setProviderSettingsDraft(nextSettings.providerSettings);
+      setCodingProviderSettingsDraft(nextSettings.codingProviderSettings);
       setSettingsFeedback("設定を保存したよ。");
     } catch (error) {
       setSettingsFeedback(error instanceof Error ? error.message : "設定の保存に失敗したよ。");
@@ -306,13 +341,13 @@ export default function HomeApp() {
   };
 
   const handleChangeProviderEnabled = (providerId: string, enabled: boolean) => {
-    setProviderSettingsDraft((current) => ({
+    setCodingProviderSettingsDraft((current) => ({
       ...current,
       [providerId]: {
         ...getProviderAppSettings(
           {
             systemPromptPrefix: systemPromptPrefixDraft,
-            providerSettings: current,
+            codingProviderSettings: current,
           },
           providerId,
         ),
@@ -322,13 +357,13 @@ export default function HomeApp() {
   };
 
   const handleChangeProviderApiKey = (providerId: string, apiKey: string) => {
-    setProviderSettingsDraft((current) => ({
+    setCodingProviderSettingsDraft((current) => ({
       ...current,
       [providerId]: {
         ...getProviderAppSettings(
           {
             systemPromptPrefix: systemPromptPrefixDraft,
-            providerSettings: current,
+            codingProviderSettings: current,
           },
           providerId,
         ),
@@ -344,19 +379,19 @@ export default function HomeApp() {
         settings: getProviderAppSettings(
           {
             systemPromptPrefix: systemPromptPrefixDraft,
-            providerSettings: providerSettingsDraft,
+            codingProviderSettings: codingProviderSettingsDraft,
           },
           provider.id,
         ),
       })),
-    [modelCatalog, providerSettingsDraft, systemPromptPrefixDraft],
+    [codingProviderSettingsDraft, modelCatalog, systemPromptPrefixDraft],
   );
   const settingsDirty = useMemo(() => {
     return (
       systemPromptPrefixDraft !== appSettings.systemPromptPrefix ||
-      JSON.stringify(providerSettingsDraft) !== JSON.stringify(appSettings.providerSettings)
+      JSON.stringify(codingProviderSettingsDraft) !== JSON.stringify(appSettings.codingProviderSettings)
     );
-  }, [appSettings.providerSettings, appSettings.systemPromptPrefix, providerSettingsDraft, systemPromptPrefixDraft]);
+  }, [appSettings.codingProviderSettings, appSettings.systemPromptPrefix, codingProviderSettingsDraft, systemPromptPrefixDraft]);
 
   useEffect(() => {
     settingsDirtyRef.current = settingsDirty;
@@ -642,57 +677,109 @@ export default function HomeApp() {
 
             <div className="settings-panel">
               <section className="settings-section">
-                <div className="settings-field">
-                  <strong>System Prompt Prefix</strong>
-                  <p className="settings-help">保存時に先頭へ <code># System Prompt</code> が自動で付く。</p>
-                  <textarea
-                    value={systemPromptPrefixDraft}
-                    onChange={(event) => setSystemPromptPrefixDraft(event.target.value)}
-                    rows={8}
-                  />
-                </div>
-                {providerSettingRows.length > 0 ? (
+                <p className="settings-note">{SETTINGS_RELEASE_COMPATIBILITY_NOTE}</p>
+
+                <section className="settings-section-card">
                   <div className="settings-field">
-                    <strong>Providers</strong>
-                    <p className="settings-help">有効な provider は使える前提で扱う。失敗時は実行時エラーとして返る。</p>
-                    <div className="settings-provider-list">
-                      {providerSettingRows.map(({ provider, settings }) => (
-                        <section key={provider.id} className="settings-provider-card">
-                          <label className="settings-provider-toggle">
-                            <input
-                              type="checkbox"
-                              checked={settings.enabled}
-                              onChange={(event) => handleChangeProviderEnabled(provider.id, event.target.checked)}
-                            />
-                            <span>{provider.label}</span>
-                          </label>
-                          <label className="settings-provider-input">
-                            <span>{SETTINGS_API_KEY_LABEL}</span>
-                            <input
-                              type="password"
-                              value={settings.apiKey}
-                              onChange={(event) => handleChangeProviderApiKey(provider.id, event.target.value)}
-                              placeholder={SETTINGS_API_KEY_PLACEHOLDER}
-                              autoComplete="off"
-                              spellCheck={false}
-                            />
-                          </label>
-                        </section>
-                      ))}
+                    <strong>System Prompt Prefix</strong>
+                    <p className="settings-help">保存時に先頭へ <code># System Prompt</code> が自動で付く。</p>
+                    <textarea
+                      value={systemPromptPrefixDraft}
+                      onChange={(event) => setSystemPromptPrefixDraft(event.target.value)}
+                      rows={8}
+                    />
+                  </div>
+                  <div className="settings-actions">
+                    <button className="launch-toggle" type="button" onClick={() => void handleSaveSettings()} disabled={!settingsDirty}>
+                      Save Settings
+                    </button>
+                  </div>
+                </section>
+
+                {providerSettingRows.length > 0 ? (
+                  <>
+                    <section className="settings-section-card">
+                      <div className="settings-field">
+                        <strong>Coding Agent Providers</strong>
+                        <p className="settings-help">有効な coding provider は使える前提で扱う。失敗時は実行時エラーとして返る。</p>
+                        <div className="settings-provider-list">
+                          {providerSettingRows.map(({ provider, settings }) => (
+                            <section key={provider.id} className="settings-provider-card">
+                              <label className="settings-provider-toggle">
+                                <input
+                                  type="checkbox"
+                                  checked={settings.enabled}
+                                  onChange={(event) => handleChangeProviderEnabled(provider.id, event.target.checked)}
+                                />
+                                <span>{provider.label}</span>
+                              </label>
+                            </section>
+                          ))}
+                        </div>
+                      </div>
+                    </section>
+
+                    <section className="settings-section-card">
+                      <div className="settings-field">
+                        <strong>Coding Agent Credentials</strong>
+                        <p className="settings-help">{SETTINGS_CODING_CREDENTIALS_HELP}</p>
+                        <div className="settings-provider-list">
+                          {providerSettingRows.map(({ provider, settings }) => (
+                            <section key={provider.id} className="settings-provider-card">
+                              <p className="settings-provider-name">{provider.label}</p>
+                              <label className="settings-provider-input">
+                                <span>{SETTINGS_API_KEY_LABEL}</span>
+                                <input
+                                  type="password"
+                                  value={settings.apiKey}
+                                  onChange={(event) => handleChangeProviderApiKey(provider.id, event.target.value)}
+                                  placeholder={SETTINGS_API_KEY_PLACEHOLDER}
+                                  autoComplete="off"
+                                  spellCheck={false}
+                                />
+                              </label>
+                            </section>
+                          ))}
+                        </div>
+                        <p className="settings-note">{SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE}</p>
+                      </div>
+                    </section>
+                  </>
+                ) : null}
+
+                <section className="settings-section-card">
+                  <div className="settings-field">
+                    <strong>Model Catalog</strong>
+                    <p className="settings-help">
+                      active revision: {modelCatalog?.revision ?? "-"}。DB 初期化を行うと bundled catalog の初期状態へ戻る。
+                    </p>
+                    <div className="settings-actions">
+                      <button className="launch-toggle" type="button" onClick={() => void handleImportModelCatalog()}>
+                        Import Models
+                      </button>
+                      <button className="launch-toggle" type="button" onClick={() => void handleExportModelCatalog()}>
+                        Export Models
+                      </button>
                     </div>
                   </div>
-                ) : null}
-                <div className="settings-actions">
-                  <button className="launch-toggle" type="button" onClick={() => void handleSaveSettings()} disabled={!settingsDirty}>
-                    Save Settings
-                  </button>
-                  <button className="launch-toggle" type="button" onClick={() => void handleImportModelCatalog()}>
-                    Import Models
-                  </button>
-                  <button className="launch-toggle" type="button" onClick={() => void handleExportModelCatalog()}>
-                    Export Models
-                  </button>
-                </div>
+                </section>
+
+                <section className="settings-section-card danger-zone">
+                  <div className="settings-field">
+                    <strong>Danger Zone</strong>
+                    <p className="settings-help">{SETTINGS_RESET_DATABASE_HELP}</p>
+                    <ul className="settings-danger-list">
+                      <li>reset 対象: sessions / audit logs / app settings / model catalog</li>
+                      <li>reset 非対象: characters（DB 外ファイルなので保持）</li>
+                    </ul>
+                    <div className="settings-actions">
+                      <button className="drawer-toggle danger" type="button" onClick={() => void handleResetAppDatabase()} disabled={resettingDatabase}>
+                        {resettingDatabase ? "DB 初期化中..." : SETTINGS_RESET_DATABASE_LABEL}
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
                 {settingsFeedback ? <p className="settings-feedback">{settingsFeedback}</p> : null}
               </section>
             </div>

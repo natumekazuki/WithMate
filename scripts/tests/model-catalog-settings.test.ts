@@ -51,7 +51,7 @@ describe("app settings provider helpers", () => {
   it("provider ごとの enabled と apiKey を保持する", () => {
     const settings = normalizeAppSettings({
       ...createDefaultAppSettings(),
-      providerSettings: {
+      codingProviderSettings: {
         codex: {
           enabled: false,
           apiKey: "codex-key",
@@ -70,6 +70,36 @@ describe("app settings provider helpers", () => {
     assert.deepEqual(getProviderAppSettings(settings, "copilot"), {
       enabled: true,
       apiKey: "copilot-key",
+    });
+  });
+
+  it("canonical な codingProviderSettings だけを正本として扱う", () => {
+    const settings = normalizeAppSettings({
+      systemPromptPrefix: "canonical",
+      codingProviderSettings: {
+        codex: {
+          enabled: false,
+          apiKey: "canonical-key",
+        },
+      },
+      providerSettings: {
+        codex: {
+          enabled: true,
+          apiKey: "legacy-key",
+        },
+      },
+    });
+
+    assert.equal(settings.systemPromptPrefix, "canonical");
+    assert.deepEqual(settings.codingProviderSettings, {
+      codex: {
+        enabled: false,
+        apiKey: "canonical-key",
+      },
+    });
+    assert.deepEqual(getProviderAppSettings(settings, "codex"), {
+      enabled: false,
+      apiKey: "canonical-key",
     });
   });
 });
