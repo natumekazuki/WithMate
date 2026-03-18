@@ -964,8 +964,8 @@ button {
 }
 
 .settings-dialog {
-  width: min(640px, 100%);
-  max-height: min(520px, 86vh);
+  width: min(720px, 100%);
+  max-height: min(760px, calc(100vh - 52px));
 }
 
 .launch-dialog-head {
@@ -1007,6 +1007,9 @@ button {
 
 .settings-panel {
   padding: 0 18px 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .settings-field {

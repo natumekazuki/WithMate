@@ -14,14 +14,15 @@
 - overlay は一時的に開いて閉じる管理面として扱う
 - `System Prompt Prefix` は Settings overlay で定義し、prompt composition に渡す
 - `System Prompt Prefix` は保存時に `# System Prompt` 配下へ組み込まれる
-- current 実装では `System Prompt Prefix`、provider ごとの enable / disable、API key 入力、`Model Catalog` の import / export を置く
+- current 実装では `System Prompt Prefix`、provider ごとの enable / disable、`OpenAI API Key` 入力、`Model Catalog` の import / export を置く
+- Settings overlay は縦方向の余白を少し増やしつつ、内容が増えた場合は overlay 内スクロールで末尾まで操作できるようにする
 - file picker / save dialog は Main Process 側で開く
 
 ## Interaction
 
 1. ユーザーが Home toolbar の `Settings` を押す
 2. Home の上に overlay が開く
-3. `System Prompt Prefix` や provider 設定を編集して保存する、または `Import Models` / `Export Models` を実行する
+3. `System Prompt Prefix` や provider 設定を編集して保存する。overlay が小さいときは内部スクロールで下端まで移動し、`Import Models` / `Export Models` も実行できる
 4. 結果は overlay 内の短いフィードバックで返す
 5. `Close` で overlay を閉じる
 
@@ -36,7 +37,7 @@
   - `System Prompt Prefix`
   - `# System Prompt` 自動付与の案内
   - provider ごとの enable checkbox
-  - provider ごとの API key 入力
+  - provider ごとの `OpenAI API Key` 入力
   - `Save Settings`
   - `Import Models`
   - `Export Models`
@@ -46,7 +47,7 @@
 
 - `System Prompt Prefix` の編集と保存
 - provider ごとの enable / disable
-- provider ごとの API key 入力保存
+- provider ごとの `OpenAI API Key` 入力保存
 - `model catalog` の import
 - `model catalog` の export
 

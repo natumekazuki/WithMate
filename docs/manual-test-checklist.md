@@ -41,10 +41,12 @@ npm run electron:start
 | MT-003a | Characters 検索 | Characters の検索入力に name または description の一部を入れる | 部分一致で character card が絞り込まれる |
 | MT-003b | Characters 検索空状態 | 一致しない文字列を Characters の検索入力へ入れる | character 0 件とは別に「一致するキャラはない」空状態が表示される |
 | MT-004 | Settings overlay | Home の `Settings` を押す | Home 上に overlay が開く |
+| MT-004a | Settings overlay scroll | Settings overlay を開き、Home Window を縦方向に小さめにして下までスクロールする | `Save Settings` / `Import Models` / `Export Models` まで到達でき、overlay 外にはみ出さない |
 | MT-005 | Settings overlay | Settings overlay の `Close` を押す、または overlay 外を押す | Settings overlay が閉じる |
 | MT-006 | System Prompt Prefix | Settings overlay の `System Prompt Prefix` を変更して `Save Settings` を押す | 保存成功メッセージが表示され、再度開いても値が保持される |
 | MT-006a | Provider Settings | Settings overlay で provider の有効/無効を切り替えて `Save Settings` を押す | 保存成功メッセージが表示され、再度開いてもチェック状態が保持される |
-| MT-006b | Provider API Key | Settings overlay で provider の API key を入力して `Save Settings` を押す | 保存成功メッセージが表示され、再度開いても入力値が保持される |
+| MT-006b | Provider OpenAI API Key | Settings overlay で provider の `OpenAI API Key` を入力して `Save Settings` を押す | 保存成功メッセージが表示され、再度開いても入力値が保持される |
+| MT-006c | Provider API Key copy | Settings overlay を開いて provider card の API key 入力欄を確認する | provider 名は維持したまま、入力欄のラベルと placeholder は `OpenAI API Key` 表記になっている |
 | MT-007 | Model catalog export | Settings overlay から `Export Models` を押し、保存先を選ぶ | catalog JSON が保存される |
 | MT-008 | Model catalog import | catalog JSON を変更して `Import Models` を実行する | import 成功メッセージが表示され、active catalog が切り替わる |
 | MT-008a | Model catalog auto migrate | 既存 session を開いたまま、選択中 model または depth が新 catalog で無効になる catalog を import する | 既存 session の `catalogRevision / model / depth` が新 catalog に自動 migrate され、必要なら thread はリセットされる |

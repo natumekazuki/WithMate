@@ -10,6 +10,7 @@ import {
   type Session,
 } from "./app-state.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.js";
+import { SETTINGS_API_KEY_LABEL, SETTINGS_API_KEY_PLACEHOLDER } from "./settings-ui.js";
 import { buildCardThemeStyle, CharacterAvatar } from "./ui-utils.js";
 
 type LaunchWorkspace = {
@@ -666,12 +667,12 @@ export default function HomeApp() {
                             <span>{provider.label}</span>
                           </label>
                           <label className="settings-provider-input">
-                            <span>API Key</span>
+                            <span>{SETTINGS_API_KEY_LABEL}</span>
                             <input
                               type="password"
                               value={settings.apiKey}
                               onChange={(event) => handleChangeProviderApiKey(provider.id, event.target.value)}
-                              placeholder={`${provider.label} API key`}
+                              placeholder={SETTINGS_API_KEY_PLACEHOLDER}
                               autoComplete="off"
                               spellCheck={false}
                             />

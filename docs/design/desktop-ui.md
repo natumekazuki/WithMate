@@ -31,6 +31,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 ## Home Window
 
 - 黒基調の管理ハブとして表示する
+- Settings overlay の操作余白を確保するため、既定サイズは少し大きめにする
 - 右カラム上段の `Settings` rail
 - `Recent Sessions`
   - section action として `New Session`
@@ -59,7 +60,10 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - approval mode は `on-request` 固定
 - `Settings` overlay
   - system prompt prefix 編集
+  - provider ごとの enable / disable
+  - provider label はそのままに `OpenAI API Key` 入力を表示
   - model catalog import / export
+  - 縦が小さいときも overlay 内スクロールで末尾まで操作できる
 
 ## Session Window
 

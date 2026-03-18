@@ -44,6 +44,7 @@ import { resolveComposerPreview } from "./composer-attachments.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { resolveOpenPathTarget } from "./open-path.js";
 import { SessionStorage } from "./session-storage.js";
+import { HOME_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
 import { clearWorkspaceFileIndex, searchWorkspaceFilePaths } from "./workspace-file-search.js";
 import {
   WITHMATE_CHARACTERS_CHANGED_EVENT,
@@ -983,10 +984,7 @@ async function createHomeWindow(): Promise<BrowserWindow> {
   }
 
   const window = createBaseWindow({
-    width: 1320,
-    height: 900,
-    minWidth: 1040,
-    minHeight: 760,
+    ...HOME_WINDOW_DEFAULT_BOUNDS,
     title: "WithMate Home",
   });
 

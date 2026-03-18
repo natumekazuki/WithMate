@@ -131,7 +131,7 @@ npm run typecheck
 
 - Electron 実行を正本とする desktop アプリ構成です
 - セッション情報は Electron 側で保持され、キャラクター情報はストレージから読み込みます
-- Settings overlay では `System Prompt Prefix` と model catalog を管理します
+- Settings overlay では `System Prompt Prefix`、provider の enable / disable、`OpenAI API Key`、model catalog を管理します
 - `Character Stream` は価値仮説として保持しているものの、現行 UI では pending 扱いです
 
 ## 補足
