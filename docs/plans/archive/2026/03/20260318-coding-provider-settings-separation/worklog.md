@@ -49,7 +49,7 @@
   - `node --test --import tsx scripts/tests/settings-ui.test.ts scripts/tests/model-catalog-settings.test.ts scripts/tests/app-settings-storage.test.ts`
   - `npm run typecheck`
   - `npm run build`
-- 関連コミット: 未作成
+- 関連コミット: `2a12cb4 feat(settings): separate coding provider settings`
 
 ## Open Items
 

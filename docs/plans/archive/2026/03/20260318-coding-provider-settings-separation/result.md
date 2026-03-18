@@ -3,7 +3,7 @@
 ## Status
 
 - 状態: 実装完了
-- 現在フェーズ: archive ready
+- 現在フェーズ: archived
 
 ## Completed
 
@@ -27,6 +27,10 @@
 
 ## Next Actions
 
-1. plan を `docs/plans/archive/2026/03/20260318-coding-provider-settings-separation/` へ移動して archive する
-2. 実装差分と archive をコミットし、コミット記録を plan に反映する
-3. review では Settings overlay の Danger Zone 文言、reset 対象 / 非対象、dirty 解消の分かりやすさを確認する
+1. review では Settings overlay の Danger Zone 文言、reset 対象 / 非対象、dirty 解消の分かりやすさを確認する
+2. manual test では running session 拒否、catalog reset、characters 保持を実機で確認する
+3. Character Stream の reopen は coding plane parity 完了後の別フェーズで扱う
+
+## Commit Record
+
+- `2a12cb4 feat(settings): separate coding provider settings`
