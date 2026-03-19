@@ -22,11 +22,12 @@
 - `d8f40bf` `refactor(character-editor): align base palette with home`
 - `be8052d` `fix(character-editor): apply theme accents`
 - `8ddae23` `fix(character-editor): apply theme title accent`
+- `d5f9f5d` `fix(session-ui): finalize character theme accents`
 
 ## Rollback Guide
 
-- 戻し先候補: 未コミット
-- 理由: Session / Diff の最終調整はまだ commit 化していないため、必要なら現 working tree 差分を基準に整理する
+- 戻し先候補: `d5f9f5d`
+- 理由: Session / Diff の最終調整と plan archive を含めた完了状態を直接指せるため
 
 ## Related Docs
 

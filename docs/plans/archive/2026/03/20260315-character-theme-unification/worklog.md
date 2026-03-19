@@ -180,7 +180,7 @@
 - 実施内容: Session に character theme snapshot を再接続し、見た目を詰めた結果、適用先を `session title`、`assistant / pending bubble`、`composer-settings`、`Send / Cancel`、`Details` 展開後の `artifact block` に限定した。`user-bubble` を含む他の主要 UI は neutral を維持した。疎通補助として主要要素へラベルを出す一時表示も追加し、実装中は既定 ON、必要時だけ `debugUi=0` で無効化できるようにした。関連 design doc と manual test checklist も更新した。
 - 検証: `npm run typecheck`, `npm run build`
 - メモ: `debugUi` は一時的な確認補助で、設計正本には含めない。Session のキャラカラーは content 全面ではなく、指定した少数要素だけへ絞っている
-- 関連コミット: 
+- 関連コミット: `d5f9f5d` `fix(session-ui): finalize character theme accents`
 
 ### 0021
 
@@ -189,7 +189,7 @@
 - 実施内容: Session から開く Diff に character theme snapshot を引き継ぎ、`titlebar / subbar / pane header` にだけ薄い accent を追加した。`Before / After` は専用 label chip に変えて、背景 tint に埋もれず読めるようにした。差分行の add / delete / modify 背景色は既存の意味色を維持した。関連 design doc と manual test checklist も更新した。
 - 検証: `npm run typecheck`, `npm run build`
 - メモ: accent は Diff の chrome 限定で、行本文や意味色には広げていない
-- 関連コミット: 
+- 関連コミット: `d5f9f5d` `fix(session-ui): finalize character theme accents`
 
 ### 0022
 
@@ -198,7 +198,7 @@
 - 実施内容: Diff accent の面をフラットな tint に寄せてグラデーションを撤去し、Session 実装中の debug label をコードから削除した。これで Home / Character Editor / Session / Diff それぞれのキャラカラー適用範囲を確定し、追加適用タスクを閉じた。
 - 検証: `npm run typecheck`, `npm run build`
 - メモ: 一時的な確認用 UI は残さず、配色ルールだけを本実装として残す
-- 関連コミット: 
+- 関連コミット: `d5f9f5d` `fix(session-ui): finalize character theme accents`
 
 ## Open Items
 
