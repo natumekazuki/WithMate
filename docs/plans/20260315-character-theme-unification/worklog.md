@@ -171,9 +171,8 @@
 - 実施内容: 当初 create mode 限定の header accent を試したが、要件を整理し直し、最終的に header に出る文字列そのものを `main` 色で表示する実装へ調整した。`Add Character` と既存キャラ名のどちらでも同じルールでタイトル色が反映される。関連 design doc と manual test checklist も更新した。
 - 検証: `npm run typecheck`, `npm run build`
 - メモ: 背景面には広げず、タイトル文字列だけをキャラカラー化した
-- 関連コミット: 
+- 関連コミット: `8ddae23` `fix(character-editor): apply theme title accent`
 
 ## Open Items
 
-- Character Editor の theme rule を Home と揃える
 - Session の bubble / primary action の theme rule を Home と揃える
