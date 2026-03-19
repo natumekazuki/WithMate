@@ -164,6 +164,15 @@
 - メモ: character color は Home card と Character Editor のアクセントに限定し、Session は app 共通の dark base + neutral tone を維持する
 - 関連コミット: `959d284 fix(session-ui): reset session tones to neutral`
 
+### 0019
+
+- 日時: 2026-03-19
+- チェックポイント: Character Editor header title のキャラカラー適用
+- 実施内容: 当初 create mode 限定の header accent を試したが、要件を整理し直し、最終的に header に出る文字列そのものを `main` 色で表示する実装へ調整した。`Add Character` と既存キャラ名のどちらでも同じルールでタイトル色が反映される。関連 design doc と manual test checklist も更新した。
+- 検証: `npm run typecheck`, `npm run build`
+- メモ: 背景面には広げず、タイトル文字列だけをキャラカラー化した
+- 関連コミット: 
+
 ## Open Items
 
 - Character Editor の theme rule を Home と揃える

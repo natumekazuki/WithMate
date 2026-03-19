@@ -3024,8 +3024,9 @@ button {
   border-color: rgba(203, 213, 225, 0.12);
 }
 
-.character-editor-page .session-window-title {
-  color: var(--ink);
+.character-editor-page .character-editor-title-accent {
+  color: var(--character-main);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--character-main) 20%, transparent);
 }
 
 .character-editor-page .drawer-toggle:hover,

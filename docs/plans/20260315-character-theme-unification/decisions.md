@@ -22,3 +22,11 @@
 - 判断: `main` 色の relative luminance から前景色を自動決定する
 - 理由: 色の自由度を落とさずに、Home / Character Editor / Session で同じルールを再利用できる
 - 影響範囲: `src/ui-utils.tsx`, `src/HomeApp.tsx`, `src/styles.css`
+
+### 0003
+
+- 日時: 2026-03-19
+- 論点: Character Editor / Session のキャラカラー適用を継続するか
+- 判断: Character Editor と Session の両方でキャラカラー適用を継続する
+- 理由: Home だけで theme rule を閉じず、create / edit / run の主要面でキャラカラーの一貫性を持たせるため
+- 影響範囲: `src/CharacterEditorApp.tsx`, `src/App.tsx`, `src/styles.css`, `docs/design/character-management-ui.md`

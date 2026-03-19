@@ -259,7 +259,7 @@ export default function CharacterEditorApp() {
   return (
     <div className="page-shell character-editor-page" style={editorThemeStyle}>
       <header className="panel session-window-bar rise-1">
-        <span className="session-window-title">{isCreateMode ? "Add Character" : draft.name || selectedCharacter?.name || "Character Editor"}</span>
+        <span className="session-window-title character-editor-title-accent">{isCreateMode ? "Add Character" : draft.name || selectedCharacter?.name || "Character Editor"}</span>
         <button className="drawer-toggle" type="button" onClick={() => window.close()}>
           Close Window
         </button>

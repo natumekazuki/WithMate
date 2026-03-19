@@ -46,6 +46,7 @@ npm run electron:start
 | MT-018 | Audit Log | Session Window の `Audit Log` を押す | 1 turn 1 record の監査ログが閲覧できる |
 | MT-019 | Diff | artifact の `Open Diff` を押す | inline diff または Diff Window で split diff が開く |
 | MT-020 | Character persistence | character を作成 / 編集 / 削除する | `characters/` 相当の保存内容が Home と Session に反映される |
+| MT-021 | Character editor title theme | Home から Character Editor を開く | header title の文字色が現在のキャラ `main` 色で表示される |
 
 ## 補足
 
