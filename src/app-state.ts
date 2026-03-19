@@ -194,6 +194,7 @@ export type Session = {
 export type DiffPreviewPayload = {
   title: string;
   file: ChangedFile;
+  themeColors: CharacterThemeColors;
 };
 
 export type CreateSessionInput = {

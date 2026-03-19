@@ -1617,8 +1617,9 @@ button {
 }
 
 .session-page .message-card.assistant {
-  background: linear-gradient(145deg, rgba(148, 163, 184, 0.16), rgba(15, 19, 26, 0.98));
-  border-color: rgba(203, 213, 225, 0.18);
+  border-color: color-mix(in srgb, var(--character-sub) 22%, rgba(203, 213, 225, 0.18));
+  background: color-mix(in srgb, var(--character-sub-soft) 42%, rgba(15, 19, 26, 0.98));
+  box-shadow: inset 4px 0 0 color-mix(in srgb, var(--character-sub) 82%, transparent);
 }
 
 .message-card.assistant.accent {
@@ -1774,8 +1775,9 @@ button {
 }
 
 .session-page .pending-message-card {
-  background: linear-gradient(145deg, rgba(148, 163, 184, 0.16), rgba(15, 19, 26, 0.98));
-  border-color: rgba(203, 213, 225, 0.18);
+  border-color: color-mix(in srgb, var(--character-sub) 22%, rgba(203, 213, 225, 0.18));
+  background: color-mix(in srgb, var(--character-sub-soft) 38%, rgba(15, 19, 26, 0.98));
+  box-shadow: inset 4px 0 0 color-mix(in srgb, var(--character-sub) 78%, transparent);
 }
 
 .typing-dots {
@@ -1960,6 +1962,11 @@ button {
   background: rgba(20, 27, 40, 0.9);
 }
 
+.session-page .session-title-accent {
+  color: var(--character-main);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--character-main) 20%, transparent);
+}
+
 .session-page .artifact-head-copy strong,
 .session-page .artifact-file-item p,
 .session-page .artifact-file-meta,
@@ -2001,7 +2008,17 @@ button {
   box-shadow: inset 0 0 0 1px rgba(203, 213, 225, 0.2);
 }
 
+.session-page .artifact-toggle {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px rgba(203, 213, 225, 0.2);
+}
+
 .artifact-toggle:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.session-page .artifact-toggle:hover {
   background: rgba(255, 255, 255, 0.16);
 }
 
@@ -2011,6 +2028,14 @@ button {
   padding: 16px;
   border: 1px solid rgba(32, 36, 55, 0.08);
   background: rgba(255, 255, 255, 0.72);
+}
+
+.session-page .artifact-block {
+  position: static;
+  overflow: visible;
+  border-color: color-mix(in srgb, var(--character-main) 14%, var(--character-sub));
+  background: color-mix(in srgb, var(--character-main-soft) 24%, rgba(15, 19, 26, 0.9));
+  box-shadow: inset 4px 0 0 color-mix(in srgb, var(--character-sub) 80%, transparent);
 }
 
 .artifact-grid {
@@ -2303,6 +2328,11 @@ button {
   background: rgba(255, 255, 255, 0.08);
 }
 
+.session-page .composer-path-match:hover {
+  border-color: rgba(111, 140, 255, 0.28);
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .session-page .composer-attachment-chip.file {
   background: rgba(111, 184, 199, 0.14);
 }
@@ -2335,6 +2365,18 @@ button {
   color: var(--ink);
 }
 
+.session-page .composer-box .session-send-button {
+  background: var(--character-main);
+  color: var(--character-main-ink);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--character-main) 28%, transparent);
+}
+
+.session-page .composer-box .session-send-button.danger {
+  background: color-mix(in srgb, #f87171 82%, var(--character-main));
+  color: #fff5f5;
+  box-shadow: 0 10px 22px rgba(248, 113, 113, 0.24);
+}
+
 .composer-box button.loading {
   min-width: 82px;
 }
@@ -2346,6 +2388,13 @@ button {
   align-items: end;
   margin-top: 12px;
   justify-content: start;
+}
+
+.session-page .composer-settings {
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--character-sub) 20%, rgba(203, 213, 225, 0.12));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--character-sub-soft) 28%, rgba(15, 19, 26, 0.9));
 }
 
 .composer-setting-field {
@@ -2410,6 +2459,13 @@ button {
   grid-template-rows: auto auto minmax(0, 1fr);
   overflow: hidden;
   background: rgba(251, 249, 245, 0.97);
+}
+
+.diff-editor.theme-accent {
+  border: 1px solid color-mix(in srgb, var(--character-sub, #6fb8c7) 22%, rgba(32, 36, 55, 0.08));
+  box-shadow:
+    0 24px 44px rgba(15, 19, 26, 0.28),
+    0 0 0 1px color-mix(in srgb, var(--character-main, #6f8cff) 10%, transparent);
 }
 
 .audit-log-panel {
@@ -3047,6 +3103,19 @@ button {
   border-bottom: 1px solid rgba(32, 36, 55, 0.08);
 }
 
+.diff-editor.theme-accent .diff-titlebar {
+  background: color-mix(in srgb, var(--character-main-soft, rgba(111, 140, 255, 0.14)) 88%, rgba(251, 249, 245, 0.98));
+  box-shadow: inset 4px 0 0 var(--character-main, #6f8cff);
+}
+
+.diff-editor.theme-accent .diff-subbar {
+  background: color-mix(in srgb, var(--character-sub-soft, rgba(111, 184, 199, 0.14)) 88%, rgba(248, 250, 252, 0.97));
+}
+
+.diff-editor.theme-accent .diff-titlebar h2 {
+  color: color-mix(in srgb, var(--character-main, #6f8cff) 66%, #0f172a);
+}
+
 .diff-titlebar-actions {
   display: flex;
   align-items: center;
@@ -3086,7 +3155,7 @@ button {
 }
 
 .diff-pane-head {
-  background: rgba(18, 23, 34, 0.04);
+  background: color-mix(in srgb, var(--character-sub-soft, rgba(111, 184, 199, 0.14)) 55%, rgba(15, 19, 26, 0.94));
   font-size: 0.8rem;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -3112,6 +3181,10 @@ button {
   grid-template-columns: 64px minmax(420px, max-content);
 }
 
+.diff-pane-head-inner {
+  align-items: stretch;
+}
+
 .diff-pane-body {
   min-height: 0;
   overflow: auto;
@@ -3119,8 +3192,20 @@ button {
 }
 
 .diff-head-spacer {
-  background: rgba(255, 255, 255, 0.03);
+  background: color-mix(in srgb, var(--character-main-soft, rgba(111, 140, 255, 0.14)) 28%, rgba(255, 255, 255, 0.03));
   border-right: 1px solid var(--editor-border);
+}
+
+.diff-pane-head-label {
+  display: flex;
+  align-items: center;
+  min-height: 100%;
+  padding: 0 16px;
+  color: #f8fafc;
+  text-shadow: 0 1px 0 rgba(15, 23, 42, 0.6);
+  background: color-mix(in srgb, var(--character-main, #6f8cff) 14%, rgba(15, 19, 26, 0.96));
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .diff-pane-row {

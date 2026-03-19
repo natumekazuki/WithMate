@@ -5,6 +5,7 @@ import {
   createDefaultAppSettings,
   type ComposerPreview,
   currentTimestampLabel,
+  DEFAULT_CHARACTER_THEME_COLORS,
   getProviderAppSettings,
   getSessionIdFromLocation,
   type ChangedFile,
@@ -23,6 +24,7 @@ import {
   resolveModelSelection,
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
+import { buildCharacterThemeStyle } from "./theme-utils.js";
 import {
   approvalModeOptions,
   CharacterAvatar,
@@ -83,7 +85,7 @@ export default function App() {
   const [titleDraft, setTitleDraft] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
-  const [selectedDiff, setSelectedDiff] = useState<{ title: string; file: ChangedFile } | null>(null);
+  const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
   const [auditLogsOpen, setAuditLogsOpen] = useState(false);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [liveRun, setLiveRun] = useState<LiveSessionRunState | null>(null);
@@ -152,6 +154,14 @@ export default function App() {
         ? { name: selectedSession.character, iconPath: selectedSession.characterIconPath }
         : null,
     [selectedSession],
+  );
+  const sessionThemeStyle = useMemo(
+    () => (selectedSession ? buildCharacterThemeStyle(selectedSession.characterThemeColors) : undefined),
+    [selectedSession],
+  );
+  const selectedDiffThemeStyle = useMemo(
+    () => (selectedDiff ? buildCharacterThemeStyle(selectedDiff.themeColors) : undefined),
+    [selectedDiff],
   );
   const isSelectedCharacterMissing = useMemo(
     () => !!selectedSession && !!selectedSession.characterId && resolvedCharacter === null,
@@ -877,7 +887,7 @@ export default function App() {
   }
 
   return (
-    <div className="page-shell session-page">
+    <div className="page-shell session-page" style={sessionThemeStyle}>
       <header className="panel session-window-bar rise-1">
         <div className="session-title-shell">
           {isEditingTitle ? (
@@ -894,7 +904,7 @@ export default function App() {
             </label>
           ) : (
             <>
-              <span className="session-window-title">{selectedSession.taskTitle}</span>
+              <span className="session-window-title session-title-accent">{selectedSession.taskTitle}</span>
               <div className="session-title-actions">
               <button className="drawer-toggle compact secondary" type="button" onClick={handleStartTitleEdit} disabled={selectedSession.runState === "running"}>
                   Rename
@@ -966,7 +976,18 @@ export default function App() {
                                           </div>
                                           <p>{file.summary}</p>
                                           {file.diffRows.length > 0 ? (
-                                            <button className="diff-button" type="button" onClick={() => setSelectedDiff({ title: message.artifact!.title, file })}>
+                                            <button
+                                              className="diff-button"
+                                              type="button"
+                                              onClick={() =>
+                                                setSelectedDiff({
+                                                  title: message.artifact!.title,
+                                                  file,
+                                                  themeColors:
+                                                    selectedSession?.characterThemeColors ?? DEFAULT_CHARACTER_THEME_COLORS,
+                                                })
+                                              }
+                                            >
                                               Open Diff
                                             </button>
                                           ) : null}
@@ -1139,7 +1160,7 @@ export default function App() {
                 disabled={selectedSession.runState === "running" || !!sessionExecutionBlockedReason}
               />
               <button
-                className={selectedSession.runState === "running" ? "danger" : ""}
+                className={selectedSession.runState === "running" ? "danger session-send-button" : "session-send-button"}
                 type="button"
                 onClick={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
                 disabled={selectedSession.runState !== "running" && (composerPreview.errors.length > 0 || !!sessionExecutionBlockedReason)}
@@ -1222,7 +1243,11 @@ export default function App() {
 
       {selectedDiff ? (
         <div className="diff-modal" role="dialog" aria-modal="true" onClick={() => setSelectedDiff(null)}>
-          <section className="diff-editor panel" onClick={(event) => event.stopPropagation()}>
+          <section
+            className="diff-editor panel theme-accent"
+            style={selectedDiffThemeStyle}
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="diff-titlebar">
               <h2>{selectedDiff.file.path}</h2>
               <div className="diff-titlebar-actions">

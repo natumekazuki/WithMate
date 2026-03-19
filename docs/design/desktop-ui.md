@@ -74,6 +74,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 ## Session Window
 
 - Home と同じ dark base を使う
+- キャラカラーは限定的に使い、過度に Session 全体へ広げない
 - session title の rename / delete
 - `Audit Log` overlay
 - `Work Chat`
@@ -92,6 +93,11 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - picker で選んだ file / folder / image も textarea に `@path` を挿入する
 - 添付 picker は初回だけ workspace を開き、以後は最後に選んだディレクトリを開く
 - composer 下の `Approval / Model / Depth`
+- session title は character `main`
+- assistant / pending bubble は `sub` ベースの薄い accent を持つ
+- `composer settings` の背景は `sub` ベースの薄い accent を持つ
+- `Send / Cancel` は character `main`
+- `Details` 展開後の artifact block 背景は `main / sub` の薄い accent を持つ
 - `Ctrl+Enter` / `Cmd+Enter` 送信
 - `interrupted` 時の再送導線
 - inline `Diff Viewer` overlay
@@ -119,6 +125,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - 縦スクロール同期
 - 横スクロール同期
 - 長い行は横スクロールで読む
+- Session から開いた Diff は character theme snapshot を引き継ぎ、`titlebar / subbar / pane header` にだけ薄い accent を持つ
+- `Before / After` 見出しは差分面から独立した label chip として表示し、背景色に埋もれないコントラストを維持する
 
 ## Interaction Notes
 
@@ -131,7 +139,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - Settings overlay の `DB を初期化` 成功時は Home が reset 後 `appSettings` / `modelCatalog` / `sessions` へ同期し、settings draft の dirty を解消する
 - character は `userData/characters/` を正本とする
 - `userData` は `<appData>/WithMate/` に固定する
-- Session は character の `main / sub` theme color snapshot を保持するが、Session UI 自体は neutral tone を維持する
+- Session は character の `main / sub` theme color snapshot を保持し、現在は header title、assistant / pending bubble、composer settings、`Send / Cancel`、artifact block、Session から開く Diff の `titlebar / subbar / pane header` の限定的な accent に使う
 - session は SQLite を正本とする
 - model catalog は DB の active revision を読む
 

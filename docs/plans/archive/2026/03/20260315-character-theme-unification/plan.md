@@ -13,6 +13,7 @@
 - Home の card theme helper
 - Character Editor の title / preview / form accent / primary action
 - Session の bubble / primary action / header accent
+- Session から開く Diff の accent
 - 関連 design doc と実機テスト項目
 
 ## Task List
@@ -22,7 +23,7 @@
 - [x] background から前景色を自動決定する helper を追加する
 - [x] design doc / manual test を更新する
 - [x] Character Editor へ同じ theme rule を適用する
-- [ ] Session へ同じ theme rule を適用する
+- [x] Session へ同じ theme rule を適用する
 
 ## Affected Files
 

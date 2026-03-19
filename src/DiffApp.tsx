@@ -1,11 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { getDiffTokenFromLocation, type DiffPreviewPayload } from "./app-state.js";
 import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
+import { buildCharacterThemeStyle } from "./theme-utils.js";
 
 export default function DiffApp() {
   const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
   const [diffPreview, setDiffPreview] = useState<DiffPreviewPayload | null>(null);
+  const diffThemeStyle = useMemo(
+    () => (diffPreview ? buildCharacterThemeStyle(diffPreview.themeColors) : undefined),
+    [diffPreview],
+  );
 
   useEffect(() => {
     let active = true;
@@ -52,7 +57,7 @@ export default function DiffApp() {
 
   return (
     <div className="page-shell diff-page">
-      <section className="diff-editor diff-window-shell panel rise-1">
+      <section className="diff-editor diff-window-shell panel rise-1 theme-accent" style={diffThemeStyle}>
         <div className="diff-titlebar">
           <h2>{diffPreview.file.path}</h2>
           <button className="diff-close" type="button" onClick={() => window.close()}>

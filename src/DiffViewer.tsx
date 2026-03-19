@@ -101,7 +101,7 @@ export function DiffViewer({ file }: DiffViewerProps) {
         <div className="diff-pane-head" ref={beforeHeadRef}>
           <div className="diff-pane-head-inner">
             <span className="diff-head-spacer" />
-            <span>Before</span>
+            <span className="diff-pane-head-label">Before</span>
           </div>
         </div>
         <div className="diff-pane-body" ref={beforeBodyRef}>
@@ -120,7 +120,7 @@ export function DiffViewer({ file }: DiffViewerProps) {
         <div className="diff-pane-head" ref={afterHeadRef}>
           <div className="diff-pane-head-inner">
             <span className="diff-head-spacer" />
-            <span>After</span>
+            <span className="diff-pane-head-label">After</span>
           </div>
         </div>
         <div className="diff-pane-body" ref={afterBodyRef}>
