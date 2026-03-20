@@ -21,7 +21,7 @@
 - 論点: visibility-first plan で何を再実装対象とみなすか
 - 判断: `operationTypeLabel()` 共有、status/type label、bucket sort、`details` 折りたたみ、usage footer、error block 分離は current baseline として扱い、再設計対象から外す
 - 理由: review で blocking issue はなく、課題は基礎 UI の未実装ではなく plan 側の baseline 認識ズレだと確認できたため
-- 影響範囲: `docs/plans/20260320-live-run-step-visibility-first/plan.md`, `docs/design/desktop-ui.md`, `docs/manual-test-checklist.md`
+- 影響範囲: `docs/plans/archive/2026/03/20260320-live-run-step-visibility-first/plan.md`, `docs/design/desktop-ui.md`, `docs/manual-test-checklist.md`
 
 ### 0003
 

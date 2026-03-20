@@ -37,6 +37,32 @@
 - メモ: backend payload / schema / event は未変更。`file_change` 以外の step は既存 summary 表示を維持している
 - 関連コミット:
 
+### 0004
+
+- 日時: 2026-03-20
+- チェックポイント: final verification / first commit
+- 実施内容:
+  - `npm run typecheck` と `npm run build` を実行し、今回差分で pass することを確認した
+  - review 結果として重大指摘なし、軽微なテストギャップのみであることを確認した
+  - first commit `0fdacf9 fix(session-window): live run step の可視性を改善` を作成した
+- 検証: `npm run typecheck`; `npm run build`; review = 重大指摘なし（軽微なテストギャップのみ）
+- メモ:
+  - manual test 項目は `docs/manual-test-checklist.md` を参照し、archive 記録へ引き継ぐ
+  - docs-sync 判断として `.ai_context/` と `README.md` は更新不要のままとした
+- 関連コミット:
+  - `0fdacf9` `fix(session-window): live run step の可視性を改善`
+
+### 0005
+
+- 日時: 2026-03-20
+- チェックポイント: plan archive
+- 実施内容:
+  - `docs/plans/20260320-live-run-step-visibility-first/` を `docs/plans/archive/2026/03/20260320-live-run-step-visibility-first/` へ移動した
+  - `result.md` / `worklog.md` / `decisions.md` の closing record と plan 参照パスを archive 先へ合わせた
+- 検証: `git status --short` で plan 差分が archive 移動と締め記録だけであることを確認した
+- メモ: manual test follow-up は `docs/manual-test-checklist.md` の live progress 関連項目を参照する
+- 関連コミット:
+
 ## Open Items
 
 - 実機で `file_change` 複数行 summary の scan 性と max-height 制御のバランスを確認する
