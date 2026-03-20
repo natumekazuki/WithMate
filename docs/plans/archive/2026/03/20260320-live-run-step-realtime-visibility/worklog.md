@@ -45,7 +45,31 @@
 - メモ: 実機では `assistantText` 未着のまま completed-only step が残るケースと failed + error block 同居時の見え方を優先確認する
 - 関連コミット:
 
-## Open Items
+### 0005
+
+- 日時: 2026-03-20
+- チェックポイント: first commit 記録と plan 締め準備
+- 実施内容:
+  - 1件目コミット `b33815d` `fix(session-window): live run step のリアルタイム可視性を改善` を作成し、Session Window の可視性改善、関連 docs 更新、新規 plan を論理変更単位として確定した
+  - 最終検証結果として `npm run typecheck` / `npm run build` の pass を result へ反映し、review 結果が「重大指摘なし、実機確認が残る軽微テストギャップのみ」であることを明記した
+  - docs sync 判定として `docs/design/` 更新済み、`.ai_context/` と `README.md` は更新不要を記録し、archive 先を `docs/plans/archive/2026/03/20260320-live-run-step-realtime-visibility/` に確定した
+- 検証: `npm run typecheck` / `npm run build`
+- メモ: 残件は実機確認のみで、archive commit では plan 締め記録とディレクトリ移動だけを行う
+- 関連コミット:
+  - `b33815d` `fix(session-window): live run step のリアルタイム可視性を改善`
+
+### 0006
+
+- 日時: 2026-03-20
+- チェックポイント: plan archive
+- 実施内容:
+  - plan ディレクトリを `docs/plans/archive/2026/03/20260320-live-run-step-realtime-visibility/` へ移動し、repo plan の締め記録を archive 済み状態へ更新した
+  - `result.md` の状態を完了・archive 済みにそろえ、follow-up が実機確認のみであることを明記した
+- 検証: `git status --short` で archive と plan 締め記録のみが差分であることを確認
+- メモ: 今後の確認は manual verification として扱い、追加実装が必要になった場合は別 task として切り出す
+- 関連コミット:
+
+## Follow-up
 
 - 実機で `assistantText` 未着時の step 主体の見え方が十分か
 - 長い `aggregated_output` を展開したときに bubble レイアウトが破綻しないか
