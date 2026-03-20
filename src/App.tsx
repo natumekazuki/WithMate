@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   type AuditLogEntry,
   createDefaultAppSettings,
+  type ComposerAttachment,
   type ComposerPreview,
   currentTimestampLabel,
   DEFAULT_CHARACTER_THEME_COLORS,
@@ -44,6 +45,56 @@ type ActivePathReference = {
   end: number;
 };
 
+type RetryBannerKind = "interrupted" | "failed" | "canceled";
+
+type RetryBannerState = {
+  kind: RetryBannerKind;
+  badge: string;
+  title: string;
+  stopSummary: string;
+  lastRequestText: string;
+};
+
+type SessionOwnedAuditLogs = {
+  ownerSessionId: string | null;
+  entries: AuditLogEntry[];
+};
+
+type SessionOwnedLiveRun = {
+  ownerSessionId: string | null;
+  state: LiveSessionRunState | null;
+};
+
+type ComposerSendabilityState = {
+  isRunning: boolean;
+  isBlankDraft: boolean;
+  blockedReason: string;
+  inputErrors: string[];
+  primaryFeedback: string;
+  secondaryFeedback: string[];
+  feedbackTone: "blocked" | "helper" | null;
+  shouldShowFeedback: boolean;
+  isSendDisabled: boolean;
+};
+
+type ComposerAttachmentDisplay = {
+  kindLabel: string;
+  locationLabel: string;
+  primaryLabel: string;
+  secondaryLabel: string;
+  title: string;
+};
+
+type WorkspacePathMatchDisplay = {
+  primaryLabel: string;
+  secondaryLabel: string;
+  title: string;
+};
+
+function defaultRetryBannerDetailsOpen(kind: RetryBannerKind): boolean {
+  return kind !== "canceled";
+}
+
 function getActivePathReference(value: string, caret: number): ActivePathReference | null {
   const prefix = value.slice(0, caret);
   const match = /(^|[\s(])@(?:"([^"\r\n]*)|([^\s@"\r\n]*))$/.exec(prefix);
@@ -67,6 +118,135 @@ function formatPathReference(path: string): string {
 
 function normalizePathForReference(filePath: string): string {
   return filePath.replace(/\\/g, "/");
+}
+
+function splitPathForDisplay(filePath: string): { basename: string; parentPath: string } {
+  const normalized = normalizePathForReference(filePath).replace(/\/+$/, "");
+  if (!normalized) {
+    return { basename: "", parentPath: "" };
+  }
+
+  const lastSlashIndex = normalized.lastIndexOf("/");
+  if (lastSlashIndex < 0) {
+    return {
+      basename: normalized,
+      parentPath: "",
+    };
+  }
+
+  return {
+    basename: normalized.slice(lastSlashIndex + 1),
+    parentPath: normalized.slice(0, lastSlashIndex),
+  };
+}
+
+function compactPathForDisplay(filePath: string, maxLength = 40): string {
+  if (filePath.length <= maxLength) {
+    return filePath;
+  }
+
+  const headLength = Math.max(10, Math.floor((maxLength - 1) * 0.4));
+  const tailLength = Math.max(14, maxLength - headLength - 1);
+  return `${filePath.slice(0, headLength)}…${filePath.slice(-tailLength)}`;
+}
+
+function attachmentKindLabel(kind: ComposerAttachment["kind"]): string {
+  switch (kind) {
+    case "folder":
+      return "フォルダ";
+    case "image":
+      return "画像";
+    case "file":
+    default:
+      return "ファイル";
+  }
+}
+
+function buildComposerAttachmentDisplay(attachment: ComposerAttachment): ComposerAttachmentDisplay {
+  const preferredPath = attachment.workspaceRelativePath ?? attachment.displayPath ?? normalizePathForReference(attachment.absolutePath);
+  const title = attachment.isOutsideWorkspace
+    ? normalizePathForReference(attachment.absolutePath)
+    : preferredPath;
+  const { basename, parentPath } = splitPathForDisplay(title);
+  const secondaryPath = attachment.isOutsideWorkspace
+    ? parentPath
+      ? compactPathForDisplay(parentPath, 48)
+      : compactPathForDisplay(title, 48)
+    : parentPath
+      ? compactPathForDisplay(parentPath, 42)
+      : "ワークスペース直下";
+
+  return {
+    kindLabel: attachmentKindLabel(attachment.kind),
+    locationLabel: attachment.isOutsideWorkspace ? "ワークスペース外" : "ワークスペース内",
+    primaryLabel: basename || title,
+    secondaryLabel: secondaryPath,
+    title,
+  };
+}
+
+function buildWorkspacePathMatchDisplay(pathMatch: string): WorkspacePathMatchDisplay {
+  const normalizedPath = normalizePathForReference(pathMatch);
+  const { basename, parentPath } = splitPathForDisplay(normalizedPath);
+  return {
+    primaryLabel: basename || normalizedPath,
+    secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 42) : "ワークスペース直下",
+    title: normalizedPath,
+  };
+}
+
+function buildComposerSendabilityState({
+  runState,
+  blockedReason,
+  inputErrors,
+  draftText,
+}: {
+  runState: string | null | undefined;
+  blockedReason: string;
+  inputErrors: string[];
+  draftText: string;
+}): ComposerSendabilityState {
+  const normalizedBlockedReason = blockedReason.trim();
+  const normalizedInputErrors = inputErrors.map((error) => error.trim()).filter(Boolean);
+  const isRunning = runState === "running";
+  const isBlankDraft = draftText.trim().length === 0;
+
+  if (isRunning) {
+    return {
+      isRunning,
+      isBlankDraft,
+      blockedReason: normalizedBlockedReason,
+      inputErrors: normalizedInputErrors,
+      primaryFeedback: "",
+      secondaryFeedback: [],
+      feedbackTone: null,
+      shouldShowFeedback: false,
+      isSendDisabled: true,
+    };
+  }
+
+  const primaryFeedback =
+    normalizedBlockedReason
+    || normalizedInputErrors[0]
+    || (isBlankDraft ? "メッセージを入力してください。" : "");
+  const secondaryFeedback = normalizedBlockedReason ? normalizedInputErrors : normalizedInputErrors.slice(1);
+  const feedbackTone = primaryFeedback
+    ? normalizedBlockedReason || normalizedInputErrors.length > 0
+      ? "blocked"
+      : "helper"
+    : null;
+
+  return {
+    isRunning,
+    isBlankDraft,
+    blockedReason: normalizedBlockedReason,
+    inputErrors: normalizedInputErrors,
+    primaryFeedback,
+    secondaryFeedback,
+    feedbackTone,
+    shouldShowFeedback: !!primaryFeedback || secondaryFeedback.length > 0,
+    isSendDisabled: !!normalizedBlockedReason || normalizedInputErrors.length > 0 || isBlankDraft,
+  };
 }
 
 function toWorkspaceRelativeReference(workspacePath: string, selectedPath: string): string | null {
@@ -194,6 +374,72 @@ function buildDisplayedMessagesScrollSignature(messages: Message[]): string {
     .join("\u001c");
 }
 
+function isTerminalAuditLogPhase(phase: AuditLogEntry["phase"]): boolean {
+  return phase === "completed" || phase === "failed" || phase === "canceled";
+}
+
+function getLastNonEmptyValue(values: Array<string | null | undefined>): string {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    const candidate = values[index]?.trim();
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return "";
+}
+
+function buildRetryStopSummary(
+  kind: RetryBannerKind,
+  liveRun: LiveSessionRunState | null,
+  latestTerminalAuditLog: AuditLogEntry | null,
+  lastAssistantMessage: Message | null,
+): string {
+  const liveRunSummary = getLastNonEmptyValue((liveRun?.steps ?? []).map((step) => step.summary));
+  if (liveRunSummary) {
+    return liveRunSummary;
+  }
+
+  if (kind === "interrupted") {
+    return "停止地点は復元できませんでした。";
+  }
+
+  const auditOperationSummary = getLastNonEmptyValue(
+    (latestTerminalAuditLog?.operations ?? []).map((operation) => operation.summary),
+  );
+  if (auditOperationSummary) {
+    return auditOperationSummary;
+  }
+
+  const artifactOperationSummary = getLastNonEmptyValue(
+    (lastAssistantMessage?.artifact?.operationTimeline ?? []).map((operation) => operation.summary),
+  );
+  if (artifactOperationSummary) {
+    return artifactOperationSummary;
+  }
+
+  const artifactActivitySummary = getLastNonEmptyValue(lastAssistantMessage?.artifact?.activitySummary ?? []);
+  if (artifactActivitySummary) {
+    return artifactActivitySummary;
+  }
+
+  if (kind === "failed") {
+    const errorSummary = latestTerminalAuditLog?.errorMessage.trim() ?? "";
+    if (errorSummary && errorSummary !== "ユーザーがキャンセルしたよ。") {
+      return errorSummary;
+    }
+  }
+
+  switch (kind) {
+    case "failed":
+      return "エラー箇所は復元できませんでした。";
+    case "canceled":
+      return "停止位置は記録されていません。";
+    default:
+      return "";
+  }
+}
+
 function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): string {
   if (!liveRun) {
     return "";
@@ -221,16 +467,20 @@ export default function App() {
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
   const [auditLogsOpen, setAuditLogsOpen] = useState(false);
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
-  const [liveRun, setLiveRun] = useState<LiveSessionRunState | null>(null);
+  const [auditLogsState, setAuditLogsState] = useState<SessionOwnedAuditLogs>({ ownerSessionId: null, entries: [] });
+  const [liveRunState, setLiveRunState] = useState<SessionOwnedLiveRun>({ ownerSessionId: null, state: null });
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [resolvedCharacter, setResolvedCharacter] = useState<CharacterProfile | null | undefined>(undefined);
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>({ attachments: [], errors: [] });
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [composerCaret, setComposerCaret] = useState(0);
   const [workspacePathMatches, setWorkspacePathMatches] = useState<string[]>([]);
+  const [activeWorkspacePathMatchIndex, setActiveWorkspacePathMatchIndex] = useState(-1);
+  const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
   const [isMessageListFollowing, setIsMessageListFollowing] = useState(true);
   const [hasMessageListUnread, setHasMessageListUnread] = useState(false);
+  const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
+  const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageListSignatureRef = useRef("");
@@ -284,6 +534,19 @@ export default function App() {
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedId) ?? sessions[0] ?? null,
     [selectedId, sessions],
+  );
+  const selectedSessionId = selectedSession?.id ?? null;
+  const selectedSessionAuditLogs = useMemo(
+    () => (selectedSessionId !== null && auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.entries : []),
+    [auditLogsState.entries, auditLogsState.ownerSessionId, selectedSessionId],
+  );
+  const selectedSessionLiveRun = useMemo(
+    () => (selectedSessionId !== null && liveRunState.ownerSessionId === selectedSessionId ? liveRunState.state : null),
+    [liveRunState.ownerSessionId, liveRunState.state, selectedSessionId],
+  );
+  const activePathReference = useMemo(
+    () => (selectedSession ? getActivePathReference(draft, composerCaret) : null),
+    [composerCaret, draft, selectedSession],
   );
 
   const selectedSessionCharacter = useMemo(
@@ -430,7 +693,10 @@ export default function App() {
     () => buildDisplayedMessagesScrollSignature(displayedMessages),
     [displayedMessages],
   );
-  const liveRunScrollSignature = useMemo(() => buildLiveRunScrollSignature(liveRun), [liveRun]);
+  const liveRunScrollSignature = useMemo(
+    () => buildLiveRunScrollSignature(selectedSessionLiveRun),
+    [selectedSessionLiveRun],
+  );
   const messageListScrollSignature = useMemo(
     () =>
       [
@@ -448,12 +714,21 @@ export default function App() {
     setPickerBaseDirectory(selectedSession?.workspacePath ?? "");
     setComposerCaret(0);
     setWorkspacePathMatches([]);
-    setLiveRun(null);
-  }, [selectedSession?.id]);
+    setActiveWorkspacePathMatchIndex(-1);
+    setIsComposerImeComposing(false);
+    setAuditLogsState({ ownerSessionId: selectedSessionId, entries: [] });
+    setLiveRunState({ ownerSessionId: selectedSessionId, state: null });
+    setIsRetryDraftReplacePending(false);
+  }, [selectedSessionId]);
+
+  useEffect(() => {
+    if (!draft.trim()) {
+      setIsRetryDraftReplacePending(false);
+    }
+  }, [draft]);
 
   useLayoutEffect(() => {
     const messageListElement = messageListRef.current;
-    const selectedSessionId = selectedSession?.id ?? null;
     const currentSignature = messageListScrollSignature;
     const wasSameSession = messageListSessionIdRef.current === selectedSessionId;
     const hasSignatureChanged = messageListSignatureRef.current !== currentSignature;
@@ -485,44 +760,50 @@ export default function App() {
     }
 
     setHasMessageListUnread(true);
-  }, [isMessageListFollowing, messageListScrollSignature, selectedSession?.id]);
+  }, [isMessageListFollowing, messageListScrollSignature, selectedSessionId]);
 
   useEffect(() => {
     let active = true;
 
     if (!window.withmate || !selectedSession) {
       if (active) {
-        setAuditLogs([]);
+        setAuditLogsState({ ownerSessionId: null, entries: [] });
       }
       return () => {
         active = false;
       };
     }
 
+    setAuditLogsState((current) =>
+      current.ownerSessionId === selectedSession.id
+        ? current
+        : { ownerSessionId: selectedSession.id, entries: [] },
+    );
     void window.withmate.listSessionAuditLogs(selectedSession.id).then((nextAuditLogs) => {
       if (active) {
-        setAuditLogs(nextAuditLogs);
+        setAuditLogsState({ ownerSessionId: selectedSession.id, entries: nextAuditLogs });
       }
     });
 
     return () => {
       active = false;
     };
-  }, [selectedSession?.id, selectedSession?.updatedAt, selectedSession?.runState, displayedMessages.length]);
+  }, [displayedMessages.length, selectedSession?.runState, selectedSession?.updatedAt, selectedSessionId]);
 
   useEffect(() => {
     let active = true;
 
     if (!window.withmate || !selectedSession) {
-      setLiveRun(null);
+      setLiveRunState({ ownerSessionId: null, state: null });
       return () => {
         active = false;
       };
     }
 
+    setLiveRunState({ ownerSessionId: selectedSession.id, state: null });
     void window.withmate.getLiveSessionRun(selectedSession.id).then((state) => {
       if (active) {
-        setLiveRun(state);
+        setLiveRunState({ ownerSessionId: selectedSession.id, state });
       }
     });
 
@@ -531,14 +812,14 @@ export default function App() {
         return;
       }
 
-      setLiveRun(state);
+      setLiveRunState({ ownerSessionId: sessionId, state });
     });
 
     return () => {
       active = false;
       unsubscribe();
     };
-  }, [selectedSession?.id]);
+  }, [selectedSessionId]);
 
   useEffect(() => {
     let active = true;
@@ -573,9 +854,15 @@ export default function App() {
   useEffect(() => {
     let active = true;
     const withmateApi = window.withmate;
-    const activeReference = selectedSession ? getActivePathReference(draft, composerCaret) : null;
 
-    if (!withmateApi || !selectedSession || selectedSession.runState === "running" || !activeReference || !activeReference.query.trim()) {
+    if (
+      !withmateApi
+      || !selectedSession
+      || selectedSession.runState === "running"
+      || !!sessionExecutionBlockedReason
+      || !activePathReference
+      || !activePathReference.query.trim()
+    ) {
       setWorkspacePathMatches([]);
       return () => {
         active = false;
@@ -583,7 +870,7 @@ export default function App() {
     }
 
     const timeoutId = window.setTimeout(() => {
-      void withmateApi.searchWorkspaceFiles(selectedSession.id, activeReference.query).then((matches) => {
+      void withmateApi.searchWorkspaceFiles(selectedSession.id, activePathReference.query).then((matches) => {
         if (active) {
           setWorkspacePathMatches(matches);
         }
@@ -598,7 +885,7 @@ export default function App() {
       active = false;
       window.clearTimeout(timeoutId);
     };
-  }, [draft, composerCaret, selectedSession]);
+  }, [activePathReference, selectedSession, sessionExecutionBlockedReason]);
   const selectedProviderCatalog = useMemo(
     () => (modelCatalog && selectedSession ? getProviderCatalog(modelCatalog.providers, selectedSession.provider) : null),
     [modelCatalog, selectedSession],
@@ -638,8 +925,118 @@ export default function App() {
         : null,
     [selectedSession],
   );
+  const lastAssistantMessage = useMemo(
+    () =>
+      selectedSession
+        ? [...selectedSession.messages].reverse().find((message) => message.role === "assistant") ?? null
+        : null,
+    [selectedSession],
+  );
+  const latestTerminalAuditLog = useMemo(
+    () => selectedSessionAuditLogs.find((entry) => isTerminalAuditLogPhase(entry.phase)) ?? null,
+    [selectedSessionAuditLogs],
+  );
+  const retryBanner = useMemo<RetryBannerState | null>(() => {
+    if (!selectedSession || selectedSession.runState === "running" || !lastUserMessage) {
+      return null;
+    }
 
-  const sendMessage = async (messageText: string) => {
+    let kind: RetryBannerKind | null = null;
+    if (selectedSession.runState === "interrupted") {
+      kind = "interrupted";
+    } else if (selectedSession.runState === "error") {
+      kind = "failed";
+    } else if (selectedSession.runState === "idle" && latestTerminalAuditLog?.phase === "canceled") {
+      kind = "canceled";
+    }
+
+    if (!kind) {
+      return null;
+    }
+
+    const stopSummary = buildRetryStopSummary(kind, selectedSessionLiveRun, latestTerminalAuditLog, lastAssistantMessage);
+    switch (kind) {
+      case "interrupted":
+        return {
+          kind,
+          badge: "中断",
+          title: "前回の依頼は中断されたままです",
+          stopSummary,
+          lastRequestText: lastUserMessage.text,
+        };
+      case "failed":
+        return {
+          kind,
+          badge: "失敗",
+          title: "前回の依頼はエラーで完了できませんでした",
+          stopSummary,
+          lastRequestText: lastUserMessage.text,
+        };
+      case "canceled":
+        return {
+          kind,
+          badge: "キャンセル",
+          title: "この依頼はあなたが途中で停止しました",
+          stopSummary,
+          lastRequestText: lastUserMessage.text,
+        };
+      default:
+        return null;
+    }
+  }, [lastAssistantMessage, lastUserMessage, latestTerminalAuditLog, selectedSession, selectedSessionLiveRun]);
+  const hasDraftText = draft.trim().length > 0;
+  const shouldProtectDraftOnRetryEdit = !!retryBanner && hasDraftText && draft !== retryBanner.lastRequestText;
+  const isComposerDisabled = selectedSession?.runState === "running" || !!sessionExecutionBlockedReason;
+  const composerSendability = useMemo(
+    () =>
+      buildComposerSendabilityState({
+        runState: selectedSession?.runState,
+        blockedReason: sessionExecutionBlockedReason,
+        inputErrors: composerPreview.errors,
+        draftText: draft,
+      }),
+    [composerPreview.errors, draft, selectedSession?.runState, sessionExecutionBlockedReason],
+  );
+  const isSendDisabled = composerSendability.isSendDisabled;
+  const isRetryActionDisabled =
+    !retryBanner || !lastUserMessage || !!sessionExecutionBlockedReason || selectedSession?.runState === "running";
+  const isRetryEditDisabled = isRetryActionDisabled || isComposerDisabled;
+  const retryBannerIdentity = useMemo(() => {
+    if (!retryBanner || !selectedSession || !lastUserMessage) {
+      return null;
+    }
+
+    const lastUserMessageIdentity = `${
+      selectedSession.messages.filter((message) => message.role === "user").length
+    }:${lastUserMessage.text}`;
+    const canceledAuditLogIdentity =
+      retryBanner.kind === "canceled" && latestTerminalAuditLog
+        ? `${latestTerminalAuditLog.id}:${latestTerminalAuditLog.phase}:${latestTerminalAuditLog.createdAt}`
+        : "";
+
+    return [retryBanner.kind, lastUserMessageIdentity, canceledAuditLogIdentity].join("\u001f");
+  }, [lastUserMessage, latestTerminalAuditLog, retryBanner, selectedSession]);
+
+  useEffect(() => {
+    if (!retryBanner) {
+      setIsRetryDraftReplacePending(false);
+    }
+  }, [retryBanner]);
+
+  useLayoutEffect(() => {
+    if (!retryBanner) {
+      setIsRetryDetailsOpen(false);
+      return;
+    }
+
+    setIsRetryDetailsOpen(defaultRetryBannerDetailsOpen(retryBanner.kind));
+  }, [retryBanner?.kind, retryBannerIdentity, selectedSession?.id]);
+
+  useEffect(() => {
+    setActiveWorkspacePathMatchIndex(workspacePathMatches.length > 0 ? 0 : -1);
+  }, [workspacePathMatches]);
+
+  const sendMessage = async (messageText: string, options?: { clearDraft?: boolean }) => {
     if (!window.withmate || !selectedSession) {
       return;
     }
@@ -651,15 +1048,19 @@ export default function App() {
     const nextMessage = messageText.trim();
     const preview = await window.withmate.previewComposerInput(selectedSession.id, messageText);
     setComposerPreview(preview);
-    if (preview.errors.length > 0) {
-      throw new Error(preview.errors[0] ?? "添付の解決に失敗したよ。");
+    const sendability = buildComposerSendabilityState({
+      runState: selectedSession.runState,
+      blockedReason: sessionExecutionBlockedReason,
+      inputErrors: preview.errors,
+      draftText: messageText,
+    });
+    if (sendability.isSendDisabled) {
+      throw new Error(sendability.primaryFeedback || "送信できない状態だよ。");
     }
 
-    if (!nextMessage) {
-      return;
+    if (options?.clearDraft ?? true) {
+      setDraft("");
     }
-
-    setDraft("");
     const updatedSession: Session = {
       ...selectedSession,
       updatedAt: currentTimestampLabel(),
@@ -683,8 +1084,12 @@ export default function App() {
   };
 
   const handleSend = async () => {
+    if (isSendDisabled) {
+      return;
+    }
+
     try {
-      await sendMessage(draft);
+      await sendMessage(draft, { clearDraft: true });
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "送信に失敗したよ。");
     }
@@ -703,16 +1108,54 @@ export default function App() {
   };
 
   const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const canNavigatePathMatches =
+      workspacePathMatches.length > 0
+      && !isComposerImeComposing
+      && !event.nativeEvent.isComposing;
+
+    if (canNavigatePathMatches) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setActiveWorkspacePathMatchIndex((current) => Math.min(current + 1, workspacePathMatches.length - 1));
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setActiveWorkspacePathMatchIndex((current) => Math.max(current - 1, 0));
+        return;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setWorkspacePathMatches([]);
+        setActiveWorkspacePathMatchIndex(-1);
+        return;
+      }
+
+      if ((event.key === "Enter" && !event.ctrlKey && !event.metaKey) || (event.key === "Tab" && !event.shiftKey)) {
+        const activeMatch =
+          workspacePathMatches[activeWorkspacePathMatchIndex] ?? workspacePathMatches[0] ?? null;
+        if (activeMatch) {
+          event.preventDefault();
+          handleSelectWorkspacePathMatch(activeMatch);
+          return;
+        }
+      }
+    }
+
     if (
       event.key !== "Enter" ||
       (!event.ctrlKey && !event.metaKey) ||
-      selectedSession?.runState === "running" ||
-      !!sessionExecutionBlockedReason
+      composerSendability.isRunning
     ) {
       return;
     }
 
     event.preventDefault();
+    if (isSendDisabled) {
+      return;
+    }
     void handleSend();
   };
 
@@ -729,6 +1172,7 @@ export default function App() {
     setDraft(nextDraft);
     setComposerCaret(nextCaret);
     setWorkspacePathMatches([]);
+    setActiveWorkspacePathMatchIndex(-1);
 
     window.requestAnimationFrame(() => {
       textarea.focus();
@@ -864,7 +1308,52 @@ export default function App() {
       return;
     }
 
-    await sendMessage(lastUserMessage.text);
+    await sendMessage(lastUserMessage.text, { clearDraft: false });
+  };
+
+  const restoreLastUserMessageToDraft = (messageText: string) => {
+    const textarea = composerTextareaRef.current;
+    const nextDraft = messageText;
+    const nextCaret = nextDraft.length;
+    setDraft(nextDraft);
+    setComposerCaret(nextCaret);
+    setWorkspacePathMatches([]);
+    setActiveWorkspacePathMatchIndex(-1);
+    setIsRetryDraftReplacePending(false);
+
+    window.requestAnimationFrame(() => {
+      if (!textarea) {
+        return;
+      }
+
+      textarea.focus();
+      textarea.setSelectionRange(nextCaret, nextCaret);
+    });
+  };
+
+  const handleEditLastMessage = () => {
+    if (!retryBanner || !lastUserMessage || isRetryEditDisabled) {
+      return;
+    }
+
+    if (shouldProtectDraftOnRetryEdit) {
+      setIsRetryDraftReplacePending(true);
+      return;
+    }
+
+    restoreLastUserMessageToDraft(lastUserMessage.text);
+  };
+
+  const handleConfirmRetryDraftReplace = () => {
+    if (!retryBanner || !lastUserMessage || isRetryEditDisabled) {
+      return;
+    }
+
+    restoreLastUserMessageToDraft(lastUserMessage.text);
+  };
+
+  const handleCancelRetryDraftReplace = () => {
+    setIsRetryDraftReplacePending(false);
   };
 
   const handleCloseWindow = () => {
@@ -909,6 +1398,7 @@ export default function App() {
     setDraft(nextDraft);
     setComposerCaret(nextCaret);
     setWorkspacePathMatches([]);
+    setActiveWorkspacePathMatchIndex(-1);
 
     window.requestAnimationFrame(() => {
       if (!textarea) {
@@ -940,6 +1430,7 @@ export default function App() {
     setDraft(nextDraft);
     setComposerCaret(nextDraft.length);
     setWorkspacePathMatches([]);
+    setActiveWorkspacePathMatchIndex(-1);
   };
 
   const handlePickFile = async () => {
@@ -1052,7 +1543,7 @@ export default function App() {
 
   const orderedLiveRunSteps = useMemo(
     () =>
-      (liveRun?.steps ?? [])
+      (selectedSessionLiveRun?.steps ?? [])
         .map((step, index) => ({ step, index }))
         .sort((left, right) => {
           const bucketDiff =
@@ -1060,7 +1551,7 @@ export default function App() {
           return bucketDiff !== 0 ? bucketDiff : left.index - right.index;
         })
         .map(({ step }) => step),
-    [liveRun?.steps],
+    [selectedSessionLiveRun?.steps],
   );
 
   const hasInProgressLiveRunStep = useMemo(
@@ -1069,30 +1560,31 @@ export default function App() {
   );
 
   const liveRunUsageEntries = useMemo(() => {
-    if (!liveRun?.usage) {
+    if (!selectedSessionLiveRun?.usage) {
       return [];
     }
 
     const entries = [
-      { key: "input", label: "input", value: liveRun.usage.inputTokens },
-      { key: "output", label: "output", value: liveRun.usage.outputTokens },
+      { key: "input", label: "input", value: selectedSessionLiveRun.usage.inputTokens },
+      { key: "output", label: "output", value: selectedSessionLiveRun.usage.outputTokens },
     ];
 
-    if (liveRun.usage.cachedInputTokens > 0) {
+    if (selectedSessionLiveRun.usage.cachedInputTokens > 0) {
       entries.splice(1, 0, {
         key: "cached",
         label: "cached",
-        value: liveRun.usage.cachedInputTokens,
+        value: selectedSessionLiveRun.usage.cachedInputTokens,
       });
     }
 
     return entries;
-  }, [liveRun?.usage]);
+  }, [selectedSessionLiveRun?.usage]);
 
-  const liveRunAssistantText = liveRun?.assistantText ?? "";
+  const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
   const hasLiveRunAssistantText = liveRunAssistantText.length > 0;
   const hasVisibleLiveRunShell = Boolean(
-    liveRun && (orderedLiveRunSteps.length > 0 || liveRun.errorMessage || liveRunUsageEntries.length > 0),
+    selectedSessionLiveRun
+      && (orderedLiveRunSteps.length > 0 || selectedSessionLiveRun.errorMessage || liveRunUsageEntries.length > 0),
   );
   const pendingIndicatorCharacterName = useMemo(() => {
     const candidateNames = [selectedSessionCharacter?.name, resolvedCharacter?.name]
@@ -1315,7 +1807,7 @@ export default function App() {
                     </span>
                   </div>
                   {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} onOpenPath={handleOpenInlinePath} /> : null}
-                  {liveRun && hasVisibleLiveRunShell ? (
+                  {selectedSessionLiveRun && hasVisibleLiveRunShell ? (
                     <div className="live-run-shell">
                       {orderedLiveRunSteps.length > 0 ? (
                         <ul className="live-run-step-list">
@@ -1361,10 +1853,10 @@ export default function App() {
                           })}
                         </ul>
                       ) : null}
-                      {liveRun.errorMessage ? (
+                      {selectedSessionLiveRun.errorMessage ? (
                         <div className="live-run-error-block" role="alert">
                           <strong>実行エラー</strong>
-                          <p className="live-run-error">{liveRun.errorMessage}</p>
+                          <p className="live-run-error">{selectedSessionLiveRun.errorMessage}</p>
                         </div>
                       ) : null}
                       {liveRunUsageEntries.length > 0 ? (
@@ -1397,17 +1889,60 @@ export default function App() {
           ) : null}
 
           <div className="composer">
-            {sessionExecutionBlockedReason ? (
-              <div className="resume-banner browse-only-banner">
-                <p>{sessionExecutionBlockedReason}</p>
-              </div>
-            ) : null}
-            {selectedSession.runState === "interrupted" && lastUserMessage ? (
-              <div className="resume-banner">
-                <button type="button" onClick={() => void handleResendLastMessage()} disabled={!!sessionExecutionBlockedReason}>
-                  同じ依頼を再送
-                </button>
-                <p>{lastUserMessage.text}</p>
+            {retryBanner ? (
+              <div className={`resume-banner retry-banner ${retryBanner.kind}`}>
+                <div className="resume-banner-head">
+                  <div className="resume-banner-copy">
+                    <span className={`resume-banner-badge ${retryBanner.kind}`}>{retryBanner.badge}</span>
+                    <p className="resume-banner-title">{retryBanner.title}</p>
+                  </div>
+                  <button
+                    className="artifact-toggle resume-banner-details-toggle"
+                    type="button"
+                    onClick={() => setIsRetryDetailsOpen((current) => !current)}
+                    aria-expanded={isRetryDetailsOpen}
+                  >
+                    {isRetryDetailsOpen ? "Hide" : "Details"}
+                  </button>
+                </div>
+                <div className="resume-banner-actions">
+                  <button type="button" onClick={() => void handleResendLastMessage()} disabled={isRetryActionDisabled}>
+                    同じ依頼を再送
+                  </button>
+                  <button
+                    className="drawer-toggle secondary"
+                    type="button"
+                    onClick={handleEditLastMessage}
+                    disabled={isRetryEditDisabled}
+                  >
+                    編集して再送
+                  </button>
+                </div>
+                {isRetryDraftReplacePending ? (
+                  <div className="resume-banner-conflict" role="status" aria-live="polite">
+                    <p>今の下書きは残しています。</p>
+                    <div className="resume-banner-conflict-actions">
+                      <button type="button" onClick={handleConfirmRetryDraftReplace} disabled={isRetryEditDisabled}>
+                        前回の依頼で置き換える
+                      </button>
+                      <button className="drawer-toggle secondary" type="button" onClick={handleCancelRetryDraftReplace}>
+                        今の下書きを続ける
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                {isRetryDetailsOpen ? (
+                  <div className="resume-banner-details">
+                    <p className="resume-banner-summary">
+                      <strong>停止地点</strong>
+                      <span>{retryBanner.stopSummary}</span>
+                    </p>
+                    <div className="resume-banner-request">
+                      <span>前回の依頼</span>
+                      <MessageRichText text={retryBanner.lastRequestText} onOpenPath={handleOpenInlinePath} />
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
             <div className="composer-attachments-toolbar">
@@ -1424,10 +1959,21 @@ export default function App() {
             {composerPreview.attachments.length > 0 ? (
               <div className="composer-attachment-list">
                 {composerPreview.attachments.map((attachment) => {
+                  const attachmentDisplay = buildComposerAttachmentDisplay(attachment);
                   return (
-                    <div key={attachment.id} className={`composer-attachment-chip ${attachment.kind}`}>
-                      <span className="composer-attachment-source">@</span>
-                      <span className="composer-attachment-path">{attachment.displayPath}</span>
+                    <div
+                      key={attachment.id}
+                      className={`composer-attachment-chip ${attachment.kind}`}
+                      title={attachmentDisplay.title}
+                    >
+                      <span className="composer-attachment-kind">{attachmentDisplay.kindLabel}</span>
+                      <span className="composer-attachment-copy">
+                        <span className="composer-attachment-primary">{attachmentDisplay.primaryLabel}</span>
+                        <span className="composer-attachment-meta">
+                          <span className="composer-attachment-location">{attachmentDisplay.locationLabel}</span>
+                          <span className="composer-attachment-secondary">{attachmentDisplay.secondaryLabel}</span>
+                        </span>
+                      </span>
                       <button
                         type="button"
                         onClick={() =>
@@ -1447,14 +1993,7 @@ export default function App() {
                 })}
               </div>
             ) : null}
-            {composerPreview.errors.length > 0 ? (
-              <div className="composer-error-list" role="alert">
-                {composerPreview.errors.map((error) => (
-                  <p key={error}>{error}</p>
-                ))}
-              </div>
-            ) : null}
-            <label className="composer-box">
+            <div className="composer-box">
               <textarea
                 ref={composerTextareaRef}
                 value={draft}
@@ -1464,30 +2003,61 @@ export default function App() {
                 }}
                 onKeyDown={handleComposerKeyDown}
                 onSelect={(event) => setComposerCaret(event.currentTarget.selectionStart ?? 0)}
-                disabled={selectedSession.runState === "running" || !!sessionExecutionBlockedReason}
+                onCompositionStart={() => setIsComposerImeComposing(true)}
+                onCompositionEnd={() => setIsComposerImeComposing(false)}
+                disabled={isComposerDisabled}
+                aria-describedby={composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined}
               />
               <button
                 className={selectedSession.runState === "running" ? "danger session-send-button" : "session-send-button"}
                 type="button"
                 onClick={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
-                disabled={selectedSession.runState !== "running" && (composerPreview.errors.length > 0 || !!sessionExecutionBlockedReason)}
+                disabled={selectedSession.runState !== "running" && isSendDisabled}
               >
                 {selectedSession.runState === "running" ? "Cancel" : "Send"}
               </button>
-            </label>
+              {composerSendability.shouldShowFeedback ? (
+                <div
+                  id="composer-sendability-feedback"
+                  className={`composer-sendability-feedback ${composerSendability.feedbackTone ?? "helper"}`}
+                  role={composerSendability.feedbackTone === "blocked" ? "alert" : "status"}
+                  aria-live={composerSendability.feedbackTone === "blocked" ? "assertive" : "polite"}
+                >
+                  {composerSendability.primaryFeedback ? <p>{composerSendability.primaryFeedback}</p> : null}
+                  {composerSendability.secondaryFeedback.length > 0 ? (
+                    <ul>
+                      {composerSendability.secondaryFeedback.map((feedback) => (
+                        <li key={feedback}>{feedback}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
             {workspacePathMatches.length > 0 ? (
               <div className="composer-path-match-list" role="listbox" aria-label="@path 候補">
-                {workspacePathMatches.map((match) => (
-                  <button
-                    key={match}
-                    type="button"
-                    className="composer-path-match"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => handleSelectWorkspacePathMatch(match)}
-                  >
-                    {match}
-                  </button>
-                ))}
+                {workspacePathMatches.map((match, index) => {
+                  const matchDisplay = buildWorkspacePathMatchDisplay(match);
+                  const isActive = index === activeWorkspacePathMatchIndex;
+
+                  return (
+                    <button
+                      key={match}
+                      type="button"
+                      role="option"
+                      aria-selected={isActive}
+                      className={`composer-path-match${isActive ? " active" : ""}`}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onMouseEnter={() => setActiveWorkspacePathMatchIndex(index)}
+                      onFocus={() => setActiveWorkspacePathMatchIndex(index)}
+                      onClick={() => handleSelectWorkspacePathMatch(match)}
+                      title={matchDisplay.title}
+                    >
+                      <span className="composer-path-match-primary">{matchDisplay.primaryLabel}</span>
+                      <span className="composer-path-match-secondary">{matchDisplay.secondaryLabel}</span>
+                    </button>
+                  );
+                })}
               </div>
             ) : null}
 
@@ -1586,8 +2156,8 @@ export default function App() {
             </div>
 
             <div className="audit-log-list">
-              {auditLogs.length > 0 ? (
-                auditLogs.map((entry) => (
+              {selectedSessionAuditLogs.length > 0 ? (
+                selectedSessionAuditLogs.map((entry) => (
                   <article key={entry.id} className={`audit-log-card ${entry.phase}`}>
                     <div className="audit-log-head">
                       <span className={`file-kind ${

@@ -107,8 +107,13 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - turn 内の `agent_message / command_execution / file_change / reasoning` を arrival 順に並べる operation timeline
 - composer 上の添付 toolbar (`File / Folder / Image`)
 - composer の attachment chip
+  - basename を主表示にし、file / folder / image の kind と `ワークスペース内` / `ワークスペース外` を即判別できる
+  - 補足 path は副次表示へ回し、long path でも basename を先に読める
 - textarea 内の `@path` 参照
 - `@path` 入力中の workspace file path 候補表示
+  - 候補表示条件は `@` 後 query 非空のまま維持する
+  - row は basename 優先 + 親 path 補足で表示する
+  - 候補 open 中だけ `ArrowUp` / `ArrowDown` / `Enter` / `Tab` / `Escape` の keyboard navigation を有効にする
 - picker で選んだ file / folder / image も textarea に `@path` を挿入する
 - 添付 picker は初回だけ workspace を開き、以後は最後に選んだディレクトリを開く
 - composer 下の `Approval / Model / Depth`
@@ -116,9 +121,28 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - assistant / pending bubble は `sub` ベースの薄い accent を持つ
 - `composer settings` の背景は `sub` ベースの薄い accent を持つ
 - `Send / Cancel` は character `main`
+- sendability 判定は `src/App.tsx` の単一導出に寄せ、`sessionExecutionBlockedReason` / `composerPreview.errors` / blank draft helper を Send 近傍の単一 feedback area で扱う
+- Send disabled 条件は submit button / `Ctrl+Enter` / `Cmd+Enter` guard で一致させ、blank / whitespace-only draft の no-op 送信を通さない
+- `runState === "running"` では `Cancel` 主体の既存 UX を維持し、送信不可説明を主表示しない
 - `Details` 展開後の artifact block 背景は `main / sub` の薄い accent を持つ
 - `Ctrl+Enter` / `Cmd+Enter` 送信
 - `interrupted` 時の再送導線
+  - `runState === "running"` 中は retry banner を出さず、既存 pending / `Cancel` を維持する
+  - `runState === "interrupted"` + `lastUserMessage` ありで interruption banner を出し、failed copy に寄せない
+  - `runState === "error"` + `lastUserMessage` ありで failed banner を出す
+  - `runState === "idle"` でも最新 terminal Audit Log `phase === "canceled"` + `lastUserMessage` ありなら canceled banner を出す
+  - `lastUserMessage` がない session では retry 不能のため banner を出さない
+  - 状態識別は badge / title / CTA を主役にし、状態別 body 段落は置かない
+  - retry banner 共通で `Details` / `Hide` toggle を持たせ、badge / title / CTA / draft conflict notice は常時表示に残す
+  - details の default は `canceled` が collapsed、failed / `interrupted` が expanded
+  - 折りたたみ対象は `停止地点` / `前回の依頼` と、その短い summary / fallback を中心にする
+  - details 開閉 state は renderer local state で持ち、session 切替または retry banner identity（kind / `lastUserMessage` / canceled 判定に使う terminal Audit Log entry）変化時だけ default へ reset する
+  - 同一 retry banner 上の draft 編集や軽微な再描画では details 開閉 state を保持する
+  - retry CTA は `同じ依頼を再送` と `編集して再送`
+    - `同じ依頼を再送`: 既存 resend 経路で即時再送し、draft は書き換えない
+    - `編集して再送`: `lastUserMessage.text` を draft へ戻して textarea へ focus し、自動送信しない
+  - 停止地点サマリは live step / artifact / Audit Log operations から 1 行だけ拾い、取れないときは `停止地点は復元できませんでした。` / `エラー箇所は復元できませんでした。` / `停止位置は記録されていません。` の短い fallback を使う
+  - draft が非空のまま `編集して再送` を押したときは silent overwrite をせず、composer 内で `今の下書きは残しています。` と短く示したうえで明示的な置換導線を出す
 - inline `Diff Viewer` overlay
 - `Open In Window` による `Diff Window` popout
 
