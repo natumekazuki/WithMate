@@ -170,6 +170,47 @@ function parseFileChangeSummary(summary: string): ParsedFileChangeSummaryLine[] 
   return parsedLines.every((line) => line !== null) ? parsedLines : null;
 }
 
+function buildDisplayedMessagesScrollSignature(messages: Message[]): string {
+  return messages
+    .map((message) => {
+      const artifact = message.artifact
+        ? [
+            message.artifact.title,
+            message.artifact.activitySummary.join("\u001f"),
+            message.artifact.runChecks.map((check) => `${check.label}=${check.value}`).join("\u001f"),
+            message.artifact.changedFiles
+              .map((file) => `${file.kind}:${file.path}:${file.summary}:${file.diffRows.length}`)
+              .join("\u001f"),
+            message.artifact.operationTimeline
+              ? message.artifact.operationTimeline
+                  .map((operation) => `${operation.type}:${operation.summary}:${operation.details ?? ""}`)
+                  .join("\u001f")
+              : "",
+          ].join("\u001e")
+        : "";
+
+      return [message.role, message.accent ? "1" : "0", message.text, artifact].join("\u001d");
+    })
+    .join("\u001c");
+}
+
+function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): string {
+  if (!liveRun) {
+    return "";
+  }
+
+  return [
+    liveRun.assistantText,
+    liveRun.errorMessage,
+    liveRun.usage
+      ? [liveRun.usage.inputTokens, liveRun.usage.cachedInputTokens, liveRun.usage.outputTokens].join(":")
+      : "",
+    liveRun.steps
+      .map((step) => [step.id, step.type, step.status, step.summary, step.details ?? ""].join("\u001d"))
+      .join("\u001c"),
+  ].join("\u001b");
+}
+
 export default function App() {
   const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -188,8 +229,12 @@ export default function App() {
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [composerCaret, setComposerCaret] = useState(0);
   const [workspacePathMatches, setWorkspacePathMatches] = useState<string[]>([]);
+  const [isMessageListFollowing, setIsMessageListFollowing] = useState(true);
+  const [hasMessageListUnread, setHasMessageListUnread] = useState(false);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const messageListSignatureRef = useRef("");
+  const messageListSessionIdRef = useRef<string | null>(null);
 
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
 
@@ -381,6 +426,21 @@ export default function App() {
   }, [selectedSession?.characterId, selectedSession?.id]);
 
   const displayedMessages: Message[] = selectedSession ? selectedSession.messages : [];
+  const displayedMessagesScrollSignature = useMemo(
+    () => buildDisplayedMessagesScrollSignature(displayedMessages),
+    [displayedMessages],
+  );
+  const liveRunScrollSignature = useMemo(() => buildLiveRunScrollSignature(liveRun), [liveRun]);
+  const messageListScrollSignature = useMemo(
+    () =>
+      [
+        selectedSession?.id ?? "",
+        selectedSession?.runState ?? "",
+        displayedMessagesScrollSignature,
+        liveRunScrollSignature,
+      ].join("\u001a"),
+    [displayedMessagesScrollSignature, liveRunScrollSignature, selectedSession?.id, selectedSession?.runState],
+  );
 
   useEffect(() => {
     setDraft("");
@@ -392,12 +452,40 @@ export default function App() {
   }, [selectedSession?.id]);
 
   useLayoutEffect(() => {
-    if (!messageListRef.current) {
+    const messageListElement = messageListRef.current;
+    const selectedSessionId = selectedSession?.id ?? null;
+    const currentSignature = messageListScrollSignature;
+    const wasSameSession = messageListSessionIdRef.current === selectedSessionId;
+    const hasSignatureChanged = messageListSignatureRef.current !== currentSignature;
+
+    if (!messageListElement) {
+      messageListSessionIdRef.current = selectedSessionId;
+      messageListSignatureRef.current = currentSignature;
       return;
     }
 
-    messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
-  }, [selectedSession?.id, displayedMessages.length, liveRun?.assistantText, liveRun?.steps.length]);
+    if (!wasSameSession) {
+      messageListSessionIdRef.current = selectedSessionId;
+      messageListSignatureRef.current = currentSignature;
+      setIsMessageListFollowing(true);
+      setHasMessageListUnread(false);
+      messageListElement.scrollTop = messageListElement.scrollHeight;
+      return;
+    }
+
+    if (!hasSignatureChanged) {
+      return;
+    }
+
+    messageListSignatureRef.current = currentSignature;
+
+    if (isMessageListFollowing) {
+      messageListElement.scrollTop = messageListElement.scrollHeight;
+      return;
+    }
+
+    setHasMessageListUnread(true);
+  }, [isMessageListFollowing, messageListScrollSignature, selectedSession?.id]);
 
   useEffect(() => {
     let active = true;
@@ -932,6 +1020,36 @@ export default function App() {
     }));
   };
 
+  const scrollMessageListToBottom = () => {
+    const messageListElement = messageListRef.current;
+    if (!messageListElement) {
+      return;
+    }
+
+    messageListElement.scrollTop = messageListElement.scrollHeight;
+  };
+
+  const handleMessageListScroll = () => {
+    const messageListElement = messageListRef.current;
+    if (!messageListElement) {
+      return;
+    }
+
+    const bottomGap = Math.max(0, messageListElement.scrollHeight - messageListElement.clientHeight - messageListElement.scrollTop);
+    const nextFollowing = bottomGap <= 80;
+
+    setIsMessageListFollowing((current) => (current === nextFollowing ? current : nextFollowing));
+    if (nextFollowing) {
+      setHasMessageListUnread(false);
+    }
+  };
+
+  const handleJumpToMessageListBottom = () => {
+    setIsMessageListFollowing(true);
+    setHasMessageListUnread(false);
+    scrollMessageListToBottom();
+  };
+
   const orderedLiveRunSteps = useMemo(
     () =>
       (liveRun?.steps ?? [])
@@ -1037,7 +1155,7 @@ export default function App() {
 
       <section className="content-grid session-content-grid">
         <section className="panel chat-panel rise-3">
-          <div className="message-list" ref={messageListRef}>
+          <div className="message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
             {displayedMessages.length > 0 ? (
               displayedMessages.map((message, index) => {
                 const artifactKey = `${selectedSession.id}-${index}`;
@@ -1244,7 +1362,20 @@ export default function App() {
                 </div>
               </article>
             ) : null}
+
           </div>
+
+          {!isMessageListFollowing ? (
+            <aside className={`message-follow-banner ${hasMessageListUnread ? "has-unread" : "idle"}`} aria-live="polite">
+              <div className="message-follow-banner-copy">
+                <span className="message-follow-banner-badge">{hasMessageListUnread ? "新着あり" : "読み返し中"}</span>
+                <p>{hasMessageListUnread ? "追従を止めている間に新しい表示が来たよ。" : "今は読み返し位置を維持しているよ。"}</p>
+              </div>
+              <button type="button" className="message-follow-banner-button" onClick={handleJumpToMessageListBottom}>
+                末尾へ移動
+              </button>
+            </aside>
+          ) : null}
 
           <div className="composer">
             {sessionExecutionBlockedReason ? (

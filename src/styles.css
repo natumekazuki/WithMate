@@ -1318,6 +1318,58 @@ button {
   padding-right: 6px;
 }
 
+.message-follow-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 16px;
+  background: rgba(15, 19, 26, 0.88);
+}
+
+.message-follow-banner-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.message-follow-banner-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.16);
+  color: #c8f1ff;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.message-follow-banner.has-unread .message-follow-banner-badge {
+  background: rgba(251, 191, 36, 0.18);
+  color: #ffe7bf;
+}
+
+.message-follow-banner p {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.message-follow-banner-button {
+  flex: 0 0 auto;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: var(--character-main);
+  color: var(--character-main-ink);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--character-main) 24%, transparent);
+}
+
 .session-card {
   position: relative;
   display: grid;
@@ -2473,6 +2525,11 @@ button {
 .session-page .browse-only-banner {
   border-color: rgba(203, 213, 225, 0.18);
   background: rgba(42, 52, 68, 0.58);
+}
+
+.session-page .message-follow-banner {
+  border-color: rgba(203, 213, 225, 0.18);
+  background: rgba(20, 27, 40, 0.96);
 }
 
 .resume-banner button {

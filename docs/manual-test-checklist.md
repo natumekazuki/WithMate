@@ -60,6 +60,7 @@ npm run electron:start
 | MT-032 | Live progress error block | provider error または tool error を再現する | `liveRun.errorMessage` が step list と分離した alert block に出て、failed / canceled step と見た目が混線しない |
 | MT-033 | Live progress no false running on completed-only steps | `assistantText` 未着のまま visible step が全件 `completed` になる run を観察する | pending bubble に step list は残っても `実行中 / コーディングエージェントがステップを実行中` 表示は出ない |
 | MT-034 | Live progress failed step and error block separation without assistantText | `assistantText` 未着のまま `failed` step と `liveRun.errorMessage` が同時に出る run を観察する | failed step は step list 内で `エラー` として見え、`liveRun.errorMessage` は別 alert block に出て、`実行中` 表示とも競合しない |
+| MT-035 | Scroll follow mode | long session で 80px を超えて上へスクロールして読み返し中にする。そのまま新着 assistant message / pending 更新 / live run step 更新（status / summary / details 変更を含む）を発生させる。続けて assistantText streaming 中の run も観察する。最後に session を切り替える | 上スクロール中は位置が維持され、追従停止中は `新着あり` または `読み返し中` の導線が出る。follow ON なら assistantText streaming が自然に追従し、step の status / summary / details 変化でも follow mode が反映される。session 切替で follow state と新着導線がリセットされる |
 
 ## 補足
 
