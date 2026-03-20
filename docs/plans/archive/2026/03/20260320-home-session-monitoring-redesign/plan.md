@@ -190,7 +190,7 @@
 - [x] `src/styles.css` を session list と同型の monitor scroll container 構成へ寄せる
 - [x] `docs/manual-test-checklist.md` に empty state / 重複 heading 非表示 / monitor scroll の確認観点を追記する
 - [ ] 2 カラム / right-pane toggle / open session truth source 追加分の manual test を実施し、結果を artefact へ反映する
-- [ ] commit / archive 前の最終クローズ確認を完了する
+- [x] commit / archive 前の最終クローズ確認を完了する
 
 ## Completion State
 
@@ -206,8 +206,8 @@
 - 現 reopen implementation: 完了
 - 現 reopen manual checklist sync: 完了
 - 現 reopen repo 検証: 完了
-- manual test: 未完了
-- commit / archive: 未実施
+- manual test: 未実施
+- commit / archive: 完了
 
 ## Affected Files
 

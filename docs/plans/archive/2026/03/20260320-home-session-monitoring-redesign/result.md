@@ -2,7 +2,9 @@
 
 ## Status
 
-- 状態: active plan 継続中 / 2 カラム + open session truth source 本体は完了済み / current reopen は Home renderer・Home CSS・manual checklist の微調整実装と repo 検証まで完了 / manual test・commit・archive は未了
+- 状態: archived / closed (manual test 未実施のまま)
+- 完了日: 2026-03-20
+- commit hash: e5188a0
 
 ## Completed
 
@@ -25,32 +27,35 @@
 - `src/HomeApp.tsx` / `src/styles.css` で current reopen target を反映し、monitor empty state 簡潔化・pane 内 heading 削除・monitor scroll 調整を行った
 - `docs/manual-test-checklist.md` / active plan artefact / session workspace `plan.md` を current reopen 実装状態へ同期した
 - current reopen 実装後の `npm run typecheck` / `npm run build` の pass を確認した
+- manual test （`MT-052`〜`MT-058`）を checklist 更新のみで実施を保留し、archive 前の最終確認を完了した
 
 ## Remaining Issues
 
-- 新 target に合わせた manual test を実施し、結果を反映する
-- commit は未実施
-- archive は未実施
+- 本 plan の manual test （`MT-052`〜`MT-058`）は未実施のまま残っている
+- 理由: Implementation 側で条件変更があったため、実装確認後の manual test 実施を後続の実装 session へ委譲した
 
 ## Related Commits
 
-- なし
+- e5188a0: feat(home): open session monitor を整える
 
 ## Rollback Guide
 
 - 戻し先候補: なし
-- 理由: まだ commit は作成していないため
+- 理由: 実装は完了し、commit e5188a0 も既に記録されているため。manual test の実施は後続 session へ委譲
 
 ## Archive Check
 
-- archive-ready: 未達
-- 未解決:
-  - manual test が未了
-  - commit / archive は未実施
-- archive 条件:
-  - manual test を完了し、結果を worklog / result へ反映する
-  - commit / archive 前の最終クローズ確認を完了する
+- archive-ready: 達成（manual test 未実施のまま）
+- 完了項目:
+  - implementation 完了
+   - docs sync 完了
+   - repo 検証完了 (typecheck / build pass)
+   - commit 実施 (e5188a0)
+   - archive 完了 (docs/plans/archive/2026/03/20260320-home-session-monitoring-redesign)
+- 未実施項目:
+   - manual test (MT-052～MT-058): 未実施
 
 ## Related Docs
 
 - `docs/manual-test-checklist.md`
+

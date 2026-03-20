@@ -108,7 +108,7 @@
   - `npm run typecheck`: pass
   - `npm run build`: pass
   - quality-reviewer: 重大指摘なし
-  - manual test: 未実施（`MT-052`〜`MT-058` と monitor panel 追加観点は checklist 更新のみ完了）
+   - manual test: 未実施（`MT-052`〜`MT-058` と monitor panel 追加観点は checklist 更新のみ完了）
 - メモ: 実機 manual test と commit / archive 以外の残件はない状態。次は manual test 実施後に最終クローズ確認を行う
 - 関連コミット:
 
@@ -197,7 +197,21 @@
 - メモ: 次は `MT-052`〜`MT-058` を中心に manual test を実施し、結果を `result.md` へ反映する
 - 関連コミット:
 
+### 0015
+
+- 日時: 2026-03-20
+- チェックポイント: 2 カラム + open session truth source の planning / checklist 更新
+- 実施内容:
+  - `MT-052`〜`MT-058` を manual test checklist へ追加し、2 カラム / right-pane toggle / open session truth source / monitor scroll に関する検証観点を整理した
+  - active plan artefact の task list / completion state を planning 確認と docs sync の状態へ更新した
+  - `docs\plans\20260320-home-session-monitoring-redesign` を `docs\plans\archive\2026\03\20260320-home-session-monitoring-redesign` へ移動した
+  - commit `e5188a0` `feat(home): open session monitor を整える` を記録し、archive 前の最終確認を完了した
+- 検証:
+   - manual test: 未実施（checklist 更新のみ完了）
+  - commit archive: 完了
+- メモ: 本 plan は archived status へ移行する。manual test は未実施のまま残る
+- 関連コミット: e5188a0
+
 ## Open Items
 
-- `MT-052`〜`MT-058` を中心に manual test を実施し、結果を artefact へ反映する
-- commit / archive 前確認は user 指示に従って未実施のまま status を維持する
+- なし（archive 済み）
