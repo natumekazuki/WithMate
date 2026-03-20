@@ -44,11 +44,13 @@ export const WITHMATE_GET_APP_SETTINGS_CHANNEL = "withmate:get-app-settings";
 export const WITHMATE_UPDATE_APP_SETTINGS_CHANNEL = "withmate:update-app-settings";
 export const WITHMATE_RESET_APP_DATABASE_CHANNEL = "withmate:reset-app-database";
 export const WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL = "withmate:get-live-session-run";
+export const WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL = "withmate:list-open-session-window-ids";
 export const WITHMATE_SESSIONS_CHANGED_EVENT = "withmate:sessions-changed";
 export const WITHMATE_CHARACTERS_CHANGED_EVENT = "withmate:characters-changed";
 export const WITHMATE_MODEL_CATALOG_CHANGED_EVENT = "withmate:model-catalog-changed";
 export const WITHMATE_APP_SETTINGS_CHANGED_EVENT = "withmate:app-settings-changed";
 export const WITHMATE_LIVE_SESSION_RUN_EVENT = "withmate:live-session-run";
+export const WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT = "withmate:open-session-windows-changed";
 
 export type OpenPathOptions = {
   baseDirectory?: string | null;
@@ -81,6 +83,7 @@ export type WithMateWindowApi = {
   cancelSessionRun(sessionId: string): Promise<void>;
   listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
   getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
+  listOpenSessionWindowIds(): Promise<string[]>;
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
   resetAppDatabase(): Promise<ResetAppDatabaseResult>;
@@ -98,5 +101,6 @@ export type WithMateWindowApi = {
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
   subscribeAppSettings(listener: (settings: AppSettings) => void): () => void;
   subscribeLiveSessionRun(listener: (sessionId: string, state: LiveSessionRunState | null) => void): () => void;
+  subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
 };
 

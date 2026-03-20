@@ -62,10 +62,12 @@ import {
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
+  WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSIONS_CHANNEL,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
+  WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
@@ -264,6 +266,28 @@ function broadcastAppSettings(settings?: ReturnType<AppSettingsStorage["getSetti
   }
 }
 
+function listOpenSessionWindowIds(): string[] {
+  const openSessionIds: string[] = [];
+  for (const [sessionId, window] of sessionWindows.entries()) {
+    if (window.isDestroyed()) {
+      continue;
+    }
+
+    openSessionIds.push(sessionId);
+  }
+
+  return openSessionIds;
+}
+
+function broadcastOpenSessionWindowIds(): void {
+  const payload = listOpenSessionWindowIds();
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, payload);
+    }
+  }
+}
+
 function hasRunningSessions(): boolean {
   return sessions.some((session) => isRunningSession(session));
 }
@@ -277,6 +301,7 @@ function closeResetTargetWindows(): void {
   }
   sessionWindows.clear();
   allowCloseSessionWindows.clear();
+  broadcastOpenSessionWindowIds();
 
   for (const [token, window] of diffWindows.entries()) {
     if (!window.isDestroyed()) {
@@ -471,6 +496,7 @@ function deleteSession(sessionId: string): void {
   }
 
   sessionWindows.delete(sessionId);
+  broadcastOpenSessionWindowIds();
   broadcastSessions();
 }
 
@@ -1070,6 +1096,7 @@ async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {
   });
 
   sessionWindows.set(sessionId, window);
+  broadcastOpenSessionWindowIds();
   window.once("ready-to-show", () => window.show());
   window.on("close", (event) => {
     if (allowQuitWithInFlightRuns) {
@@ -1108,6 +1135,7 @@ async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {
   window.on("closed", () => {
     allowCloseSessionWindows.delete(sessionId);
     sessionWindows.delete(sessionId);
+    broadcastOpenSessionWindowIds();
   });
 
   await loadSessionEntry(window, sessionId);
@@ -1194,6 +1222,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(WITHMATE_LIST_SESSIONS_CHANNEL, () => listSessions());
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => listSessionAuditLogs(sessionId));
+  ipcMain.handle(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL, () => listOpenSessionWindowIds());
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => requireAppSettingsStorage().getSettings());
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => updateAppSettings(settings));
   ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, () => resetAppDatabase());

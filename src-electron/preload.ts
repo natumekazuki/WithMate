@@ -17,10 +17,12 @@ import {
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
+  WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSIONS_CHANNEL,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
+  WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
@@ -101,6 +103,9 @@ const withmateApi: WithMateWindowApi = {
   },
   getLiveSessionRun(sessionId: string) {
     return ipcRenderer.invoke(WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL, sessionId);
+  },
+  listOpenSessionWindowIds() {
+    return ipcRenderer.invoke(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL);
   },
   getAppSettings() {
     return ipcRenderer.invoke(WITHMATE_GET_APP_SETTINGS_CHANNEL);
@@ -191,6 +196,16 @@ const withmateApi: WithMateWindowApi = {
     ipcRenderer.on(WITHMATE_LIVE_SESSION_RUN_EVENT, wrapped);
     return () => {
       ipcRenderer.removeListener(WITHMATE_LIVE_SESSION_RUN_EVENT, wrapped);
+    };
+  },
+  subscribeOpenSessionWindowIds(listener) {
+    const wrapped = (_event: unknown, sessionIds: Awaited<ReturnType<WithMateWindowApi["listOpenSessionWindowIds"]>>) => {
+      listener(sessionIds);
+    };
+
+    ipcRenderer.on(WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, wrapped);
+    return () => {
+      ipcRenderer.removeListener(WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, wrapped);
     };
   },
 };

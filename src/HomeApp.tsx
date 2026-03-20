@@ -21,7 +21,7 @@ import {
   SETTINGS_RESET_DATABASE_SUCCESS_MESSAGE,
   SETTINGS_RELEASE_COMPATIBILITY_NOTE,
 } from "./settings-ui.js";
-import { buildCardThemeStyle, CharacterAvatar } from "./ui-utils.js";
+import { buildCardThemeStyle, CharacterAvatar, sessionStateLabel } from "./ui-utils.js";
 
 type LaunchWorkspace = {
   label: string;
@@ -57,12 +57,56 @@ async function openCharacterEditor(characterId?: string | null) {
   await window.withmate.openCharacterEditor(characterId);
 }
 
+type HomeSessionState = {
+  kind: "running" | "interrupted" | "error" | "neutral";
+  label: string;
+};
+
+type HomeRightPaneView = "monitor" | "characters";
+
+function getHomeSessionState(session: Session): HomeSessionState {
+  if (session.status === "running" || session.runState === "running") {
+    return {
+      kind: "running",
+      label: "実行中",
+    };
+  }
+
+  if (session.runState === "interrupted") {
+    return {
+      kind: "interrupted",
+      label: "中断",
+    };
+  }
+
+  if (session.runState === "error") {
+    return {
+      kind: "error",
+      label: "エラー",
+    };
+  }
+
+  if (session.runState && session.runState !== "idle") {
+    return {
+      kind: "neutral",
+      label: session.runState,
+    };
+  }
+
+  return {
+    kind: "neutral",
+    label: sessionStateLabel(session),
+  };
+}
+
 export default function HomeApp() {
   const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
   const [sessions, setSessions] = useState<Session[]>([]);
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
+  const [openSessionWindowIds, setOpenSessionWindowIds] = useState<string[]>([]);
   const [sessionSearchText, setSessionSearchText] = useState("");
   const [characterSearchText, setCharacterSearchText] = useState("");
+  const [rightPaneView, setRightPaneView] = useState<HomeRightPaneView>("monitor");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsFeedback, setSettingsFeedback] = useState("");
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
@@ -84,6 +128,16 @@ export default function HomeApp() {
       setSystemPromptPrefixDraft(settings.systemPromptPrefix);
       setCodingProviderSettingsDraft(settings.codingProviderSettings);
     }
+  };
+
+  const syncLaunchCharacterId = (nextCharacters: CharacterProfile[]) => {
+    setLaunchCharacterId((current) => {
+      if (nextCharacters.find((character) => character.id === current)) {
+        return current;
+      }
+
+      return nextCharacters[0]?.id ?? "";
+    });
   };
 
   useEffect(() => {
@@ -119,7 +173,7 @@ export default function HomeApp() {
       }
 
       setCharacters(nextCharacters);
-      setLaunchCharacterId((current) => current || nextCharacters[0]?.id || "");
+      syncLaunchCharacterId(nextCharacters);
     });
 
     const unsubscribeSessions = window.withmate.subscribeSessions((nextSessions) => {
@@ -134,9 +188,7 @@ export default function HomeApp() {
       }
 
       setCharacters(nextCharacters);
-      if (!nextCharacters.find((character) => character.id === launchCharacterId)) {
-        setLaunchCharacterId(nextCharacters[0]?.id ?? "");
-      }
+      syncLaunchCharacterId(nextCharacters);
     });
     const unsubscribeModelCatalog = window.withmate.subscribeModelCatalog((snapshot) => {
       if (active) {
@@ -156,25 +208,46 @@ export default function HomeApp() {
       unsubscribeModelCatalog();
       unsubscribeAppSettings();
     };
-  }, [launchCharacterId]);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    let receivedSubscriptionUpdate = false;
+
+    if (!window.withmate) {
+      return () => {
+        active = false;
+      };
+    }
+
+    const unsubscribeOpenSessionWindowIds = window.withmate.subscribeOpenSessionWindowIds((nextSessionIds) => {
+      if (!active) {
+        return;
+      }
+
+      receivedSubscriptionUpdate = true;
+      setOpenSessionWindowIds(nextSessionIds);
+    });
+
+    void window.withmate.listOpenSessionWindowIds().then((nextSessionIds) => {
+      if (!active || receivedSubscriptionUpdate) {
+        return;
+      }
+
+      setOpenSessionWindowIds(nextSessionIds);
+    });
+
+    return () => {
+      active = false;
+      unsubscribeOpenSessionWindowIds();
+    };
+  }, []);
 
   const selectedCharacter = useMemo(
     () => characters.find((character) => character.id === launchCharacterId) ?? characters[0] ?? null,
     [characters, launchCharacterId],
   );
 
-  const runningSessions = useMemo(
-    () => sessions.filter((session) => session.status === "running" || session.runState === "running"),
-    [sessions],
-  );
-  const interruptedSessions = useMemo(
-    () => sessions.filter((session) => session.runState === "interrupted"),
-    [sessions],
-  );
-  const idleSessions = useMemo(
-    () => sessions.filter((session) => session.status !== "running" && session.runState !== "running" && session.runState !== "interrupted"),
-    [sessions],
-  );
   const normalizedSessionSearch = useMemo(() => sessionSearchText.trim().toLocaleLowerCase(), [sessionSearchText]);
   const matchesSessionSearch = (session: Session) => {
     if (!normalizedSessionSearch) {
@@ -185,20 +258,27 @@ export default function HomeApp() {
       .map((value) => value.toLocaleLowerCase());
     return haystacks.some((value) => value.includes(normalizedSessionSearch));
   };
-  const filteredRunningSessions = useMemo(
-    () => runningSessions.filter(matchesSessionSearch),
-    [runningSessions, normalizedSessionSearch],
+  const filteredSessionEntries = useMemo(
+    () =>
+      sessions.filter(matchesSessionSearch).map((session) => ({
+        session,
+        state: getHomeSessionState(session),
+      })),
+    [sessions, normalizedSessionSearch],
   );
-  const filteredInterruptedSessions = useMemo(
-    () => interruptedSessions.filter(matchesSessionSearch),
-    [interruptedSessions, normalizedSessionSearch],
+  const openSessionWindowIdSet = useMemo(() => new Set(openSessionWindowIds), [openSessionWindowIds]);
+  const monitorEntries = useMemo(
+    () => filteredSessionEntries.filter(({ session }) => openSessionWindowIdSet.has(session.id)),
+    [filteredSessionEntries, openSessionWindowIdSet],
   );
-  const filteredIdleSessions = useMemo(
-    () => idleSessions.filter(matchesSessionSearch),
-    [idleSessions, normalizedSessionSearch],
+  const runningMonitorEntries = useMemo(
+    () => monitorEntries.filter(({ state }) => state.kind === "running"),
+    [monitorEntries],
   );
-  const hasFilteredSessions =
-    filteredRunningSessions.length > 0 || filteredInterruptedSessions.length > 0 || filteredIdleSessions.length > 0;
+  const nonRunningMonitorEntries = useMemo(
+    () => monitorEntries.filter(({ state }) => state.kind !== "running"),
+    [monitorEntries],
+  );
   const normalizedCharacterSearch = useMemo(() => characterSearchText.trim().toLocaleLowerCase(), [characterSearchText]);
   const filteredCharacters = useMemo(() => {
     if (!normalizedCharacterSearch) {
@@ -233,6 +313,19 @@ export default function HomeApp() {
       />
     </svg>
   );
+  const hasOpenSessionWindows = openSessionWindowIds.length > 0;
+  const monitorBaseEmptyMessage =
+    filteredSessionEntries.length === 0
+      ? normalizedSessionSearch
+        ? "一致するセッションはないよ。"
+        : "表示できるセッションはまだないよ。"
+      : hasOpenSessionWindows
+        ? "一致する開いているセッションはないよ。"
+        : "開いているセッションはないよ。";
+  const monitorRunningEmptyMessage =
+    monitorEntries.length > 0 ? "実行中はないよ。" : monitorBaseEmptyMessage;
+  const monitorCompletedEmptyMessage =
+    monitorEntries.length > 0 ? "停止・完了はないよ。" : monitorBaseEmptyMessage;
 
   const handleBrowseWorkspace = async () => {
     if (!window.withmate) {
@@ -417,7 +510,7 @@ export default function HomeApp() {
   if (!isDesktopRuntime) {
     return (
       <div className="page-shell home-page">
-        <main className="home-layout">
+        <main className="home-layout home-layout-minimal">
           <section className="panel empty-list-card rise-1">
             <p>Home は Electron から起動してね。</p>
           </section>
@@ -429,7 +522,14 @@ export default function HomeApp() {
   return (
     <div className="page-shell home-page">
       <main className="home-layout rise-2">
-        <section className="panel session-list-panel rise-3">
+
+        <section className="panel session-list-panel home-session-list-panel rise-3">
+          <div className="home-panel-head">
+            <div className="home-panel-copy">
+              <h2>Recent Sessions</h2>
+            </div>
+          </div>
+
           <div className="toolbar-search-row">
             <label className="toolbar-search-field" aria-label="セッション検索">
               <span className="toolbar-search-icon" aria-hidden="true">
@@ -448,122 +548,184 @@ export default function HomeApp() {
             </button>
           </div>
 
-          {(filteredRunningSessions.length > 0 || filteredInterruptedSessions.length > 0) ? (
-            <div className="session-chip-groups">
-              {filteredRunningSessions.length > 0 ? (
-                <div className="session-chip-row">
-                  {filteredRunningSessions.map((session) => (
-                    <button key={session.id} className="session-chip running" type="button" onClick={() => void openSessionWindow(session.id)}>
-                      <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
-                      <span>{session.taskTitle}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-              {filteredInterruptedSessions.length > 0 ? (
-                <div className="session-chip-row">
-                  {filteredInterruptedSessions.map((session) => (
-                    <button key={session.id} className="session-chip interrupted" type="button" onClick={() => void openSessionWindow(session.id)}>
-                      <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
-                      <span>{session.taskTitle}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          <div className="session-card-list">
-            {filteredIdleSessions.length > 0 ? (
-              filteredIdleSessions.map((session) => (
+          <div className="session-card-list home-session-card-list">
+            {filteredSessionEntries.length > 0 ? (
+              filteredSessionEntries.map(({ session, state }) => (
                 <button
                   key={session.id}
-                  className="session-card"
+                  className="session-card home-session-card"
                   type="button"
                   style={buildCardThemeStyle(session.characterThemeColors)}
                   onClick={() => void openSessionWindow(session.id)}
                 >
                   <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="small" className="session-card-avatar" />
                   <div className="session-card-copy">
-                    <div className="session-card-topline">
+                    <div className="session-card-topline home-session-card-topline">
                       <strong>{session.taskTitle}</strong>
+                      <span className={`session-status home-session-status ${state.kind}`.trim()}>{state.label}</span>
                     </div>
-                    <div className="session-card-subline">
-                      <span>{`Workspace : ${session.workspacePath}`}</span>
+                    <div className="session-card-subline home-session-card-meta">
+                      <span>{`Workspace : ${session.workspacePath || session.workspaceLabel}`}</span>
                       <span>{`updatedAt: ${session.updatedAt}`}</span>
                     </div>
+                    {session.taskSummary.trim() ? <p className="session-card-summary home-session-card-summary">{session.taskSummary}</p> : null}
                   </div>
                 </button>
               ))
-            ) : hasFilteredSessions ? null : normalizedSessionSearch ? (
+            ) : normalizedSessionSearch ? (
               <article className="empty-list-card">
                 <p>一致するセッションはないよ。</p>
               </article>
             ) : (
               <article className="empty-list-card">
                 <p>まだセッションはないよ。</p>
+                <button className="start-session-button" type="button" onClick={() => openLaunchDialog()}>
+                  New Session
+                </button>
               </article>
             )}
           </div>
         </section>
 
-        <div className="home-side-column">
+        <section className="panel home-right-pane rise-3">
           <div className="home-settings-rail">
-            <button className="launch-toggle" type="button" onClick={() => setSettingsOpen(true)}>
+            <div className="home-pane-toggle" role="tablist" aria-label="Home right pane">
+              <button
+                className={`home-pane-toggle-button ${rightPaneView === "monitor" ? "active" : ""}`.trim()}
+                type="button"
+                role="tab"
+                aria-selected={rightPaneView === "monitor"}
+                onClick={() => setRightPaneView("monitor")}
+              >
+                Session Monitor
+              </button>
+              <button
+                className={`home-pane-toggle-button ${rightPaneView === "characters" ? "active" : ""}`.trim()}
+                type="button"
+                role="tab"
+                aria-selected={rightPaneView === "characters"}
+                onClick={() => setRightPaneView("characters")}
+              >
+                Characters
+              </button>
+            </div>
+            <button className="launch-toggle home-settings-button" type="button" onClick={() => setSettingsOpen(true)}>
               Settings
             </button>
           </div>
 
-          <section className="panel characters-panel rise-3">
-            <div className="toolbar-search-row">
-              <label className="toolbar-search-field" aria-label="キャラクター検索">
-                <span className="toolbar-search-icon" aria-hidden="true">
-                  {renderSearchIcon()}
-                </span>
-                <input
-                  className="toolbar-search-input"
-                  type="text"
-                  aria-label="キャラクター検索"
-                  value={characterSearchText}
-                  onChange={(event) => setCharacterSearchText(event.target.value)}
-                />
-              </label>
-              <button className="launch-toggle" type="button" onClick={() => void openCharacterEditor()}>
-                Add Character
-              </button>
-            </div>
+          {rightPaneView === "monitor" ? (
+            <section className="home-monitor-panel" role="tabpanel" aria-label="Session Monitor">
+              <div className="home-monitor-body">
+                <section className="home-monitor-section" aria-labelledby="home-monitor-running">
+                  <div className="home-monitor-section-head">
+                    <h3 id="home-monitor-running">実行中</h3>
+                    <span className="home-monitor-count">{runningMonitorEntries.length}</span>
+                  </div>
+                  <div className="home-monitor-list">
+                    {runningMonitorEntries.length > 0 ? (
+                      runningMonitorEntries.map(({ session, state }) => (
+                        <button
+                          key={session.id}
+                          className="home-monitor-row"
+                          type="button"
+                          onClick={() => void openSessionWindow(session.id)}
+                        >
+                          <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
+                          <div className="home-monitor-row-copy">
+                            <strong>{session.taskTitle}</strong>
+                            <span>{session.workspaceLabel || session.workspacePath || "workspace 未設定"}</span>
+                          </div>
+                          <span className={`session-status home-monitor-status ${state.kind}`.trim()}>{state.label}</span>
+                        </button>
+                      ))
+                    ) : (
+                      <p className="home-monitor-empty">{monitorRunningEmptyMessage}</p>
+                    )}
+                  </div>
+                </section>
 
-            <div className="character-list">
-              {filteredCharacters.length > 0 ? (
-                filteredCharacters.map((character) => (
-                  <button
-                    key={character.id}
-                    className="character-card"
-                    type="button"
-                    style={buildCardThemeStyle(character.themeColors)}
-                    onClick={() => void openCharacterEditor(character.id)}
-                  >
-                    <CharacterAvatar character={character} size="small" className="character-card-avatar" />
-                    <div className="character-card-copy">
-                      <strong>{character.name}</strong>
-                    </div>
-                  </button>
-                ))
-              ) : characters.length > 0 && normalizedCharacterSearch ? (
-                <article className="empty-list-card">
-                  <p>一致するキャラはないよ。</p>
-                </article>
-              ) : (
-                <article className="empty-list-card">
-                  <p>まだキャラはないよ。</p>
-                  <button className="launch-toggle" type="button" onClick={() => void openCharacterEditor()}>
-                    Add Character
-                  </button>
-                </article>
-              )}
-            </div>
-          </section>
-        </div>
+                <section className="home-monitor-section" aria-labelledby="home-monitor-inactive">
+                  <div className="home-monitor-section-head">
+                    <h3 id="home-monitor-inactive">停止・完了</h3>
+                    <span className="home-monitor-count">{nonRunningMonitorEntries.length}</span>
+                  </div>
+                  <div className="home-monitor-list">
+                    {nonRunningMonitorEntries.length > 0 ? (
+                      nonRunningMonitorEntries.map(({ session, state }) => (
+                        <button
+                          key={session.id}
+                          className="home-monitor-row"
+                          type="button"
+                          onClick={() => void openSessionWindow(session.id)}
+                        >
+                          <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
+                          <div className="home-monitor-row-copy">
+                            <strong>{session.taskTitle}</strong>
+                            <span>{session.workspaceLabel || session.workspacePath || "workspace 未設定"}</span>
+                          </div>
+                          <span className={`session-status home-monitor-status ${state.kind}`.trim()}>{state.label}</span>
+                        </button>
+                      ))
+                    ) : (
+                      <p className="home-monitor-empty">{monitorCompletedEmptyMessage}</p>
+                    )}
+                  </div>
+                </section>
+              </div>
+            </section>
+          ) : (
+            <section className="characters-panel home-characters-panel" role="tabpanel" aria-label="Characters">
+              <div className="toolbar-search-row home-character-toolbar">
+                <label className="toolbar-search-field" aria-label="キャラクター検索">
+                  <span className="toolbar-search-icon" aria-hidden="true">
+                    {renderSearchIcon()}
+                  </span>
+                  <input
+                    className="toolbar-search-input"
+                    type="text"
+                    aria-label="キャラクター検索"
+                    value={characterSearchText}
+                    onChange={(event) => setCharacterSearchText(event.target.value)}
+                  />
+                </label>
+                <button className="launch-toggle" type="button" onClick={() => void openCharacterEditor()}>
+                  Add Character
+                </button>
+              </div>
+
+              <div className="character-list">
+                {filteredCharacters.length > 0 ? (
+                  filteredCharacters.map((character) => (
+                    <button
+                      key={character.id}
+                      className="character-card"
+                      type="button"
+                      style={buildCardThemeStyle(character.themeColors)}
+                      onClick={() => void openCharacterEditor(character.id)}
+                    >
+                      <CharacterAvatar character={character} size="small" className="character-card-avatar" />
+                      <div className="character-card-copy">
+                        <strong>{character.name}</strong>
+                      </div>
+                    </button>
+                  ))
+                ) : characters.length > 0 && normalizedCharacterSearch ? (
+                  <article className="empty-list-card">
+                    <p>一致するキャラはないよ。</p>
+                  </article>
+                ) : (
+                  <article className="empty-list-card">
+                    <p>まだキャラはないよ。</p>
+                    <button className="launch-toggle" type="button" onClick={() => void openCharacterEditor()}>
+                      Add Character
+                    </button>
+                  </article>
+                )}
+              </div>
+            </section>
+          )}
+        </section>
       </main>
 
       {launchOpen ? (

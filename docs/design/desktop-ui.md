@@ -32,21 +32,46 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 
 - 黒基調の管理ハブとして表示する
 - Settings overlay の操作余白を確保するため、既定サイズは少し大きめにする
-- 右カラム上段の `Settings` rail
+- 2 カラム構成
+  - 左: `Recent Sessions`
+  - 右: `Settings` rail + `Session Monitor` または `Characters`
+- `Recent Sessions` / `Characters` 見出しは dark background 上で十分読める色を明示する
+- `Monitor & Resume` / `Manage Cast` の補助ラベルは置かない
+- `Session Monitor`
+  - right pane 上部の segmented toggle で `Characters` と排他的に切り替える
+  - 初期表示は `Session Monitor`
+  - compact な session row を表示する
+  - source は `src-electron/main.ts` の `sessionWindows: Map<string, BrowserWindow>` を truth source にした open session ids と、`Recent Sessions` と同じ filtered session list の交差集合を使う
+  - section
+    - `実行中`: `running`
+    - `停止・完了`: `interrupted` / `error` / `neutral` を含む non-running
+  - row では `avatar / taskTitle / workspace / state badge` を表示し、クリックで session を開く
+  - interrupted / error は non-running section でも badge で判別できる
+  - open な SessionWindow がないときは、その旨が分かる empty state を出す
 - `Recent Sessions`
   - section action として `New Session`
   - resume picker
   - session search input
     - `taskTitle / workspace`
     - 部分一致
-  - `taskTitle / workspacePath / updatedAt`
+  - card list は全 session を正本として表示し、storage 既定の `last_active_at DESC` を崩さない
+  - card 常時表示情報
+    - `avatar / taskTitle / runState badge / workspacePath / updatedAt`
+    - `taskSummary` は 1 行補助情報として、空なら省略可
+  - Home の state precedence
+    - `status === "running"` または `runState === "running"` を最優先
+    - 次に `runState === "interrupted"`
+    - 次に `runState === "error"`
+    - それ以外は neutral な non-active
+    - 未知 state でも card は欠落させない
   - card theme
     - background = character `main`
     - left accent bar = character `sub`
     - text color = background とのコントラストから自動決定
-- `running / interrupted` session chip
 - `Characters`
-  - search input + `Add Character`
+  - right pane 上部の segmented toggle で `Session Monitor` と排他的に切り替える
+  - expanded 時だけ header action として `Add Character`
+  - 選択中に search input + list を表示
   - `avatar / name`
   - card 全体クリックで `Character Editor` を開く
   - card theme
@@ -176,6 +201,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - Home から Session / Character Editor を開く
 - Session の作成・更新・削除は Main Process 経由で永続化する
 - Session の実行中イベントは Main Process から live state として IPC 中継する
+- Home の `Session Monitor` は Main Process の `sessionWindows` を thin IPC bridge で参照し、開いている `Session Window` の session だけを表示する
 - Session 実行の監査ログは SQLite に保存し、Session Window から閲覧する
 - chat message は限定的な rich text renderer で整形表示する
 - Settings overlay の `System Prompt Prefix` は SQLite に保存し、次回 turn から prompt composition へ反映する
