@@ -16,10 +16,11 @@
 - 日時: 2026-03-20
 - チェックポイント: Copy 実装と docs sync
 - 実施内容: `src/App.tsx` の pending indicator visible text / screen reader text を character 名ベースへ更新した。`resolvedCharacter.name` または session snapshot の character 名を優先して `<キャラ名>が作業を進めています` / `<キャラ名>が返答を続けています` / `<キャラ名>が返答を準備しています` を出し、名前が取れない場合は `作業を進めています` / `返答を続けています` / `返答を準備しています` へ degrade するようにした。長い character 名で pending bubble が崩れにくいよう `src/styles.css` に局所的な折り返し保護を入れ、`docs/design/desktop-ui.md` と `docs/manual-test-checklist.md` を実装方針へ同期した
-- 検証: `npm run typecheck`、`npm run build`
-- メモ: state / type / provider などの system 用語、scroll follow banner、pending indicator の表示条件や runState 制御は変更していない
+- 検証: `npm run typecheck` pass、`npm run build` pass
+- メモ: state / type / provider などの system 用語、scroll follow banner、pending indicator の表示条件や runState 制御は変更していない。review では重大指摘なしで、長い character 名と screen reader 実機確認だけが manual test gap として残った
 - 関連コミット:
+  - `51f9d77` `fix(session-window): pending indicator copy をキャラ名に寄せる`
 
 ## Open Items
 
-- 実機で長い character 名を使った pending bubble の見え方と、screen reader 相当環境での通知量を最終確認する
+- review で残った manual test gap として、実機で長い character 名を使った pending bubble の見え方と、screen reader 実機相当環境での通知量を別工程で最終確認する
