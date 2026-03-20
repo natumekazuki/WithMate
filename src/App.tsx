@@ -1094,14 +1094,25 @@ export default function App() {
   const hasVisibleLiveRunShell = Boolean(
     liveRun && (orderedLiveRunSteps.length > 0 || liveRun.errorMessage || liveRunUsageEntries.length > 0),
   );
+  const pendingIndicatorCharacterName = useMemo(() => {
+    const candidateNames = [selectedSessionCharacter?.name, resolvedCharacter?.name]
+      .map((name) => name?.trim() ?? "")
+      .filter(Boolean);
+
+    return candidateNames[0] ?? "";
+  }, [resolvedCharacter?.name, selectedSessionCharacter?.name]);
   const pendingRunIndicatorText = hasInProgressLiveRunStep
-    ? "コーディングエージェントがステップを実行中"
+    ? pendingIndicatorCharacterName
+      ? `${pendingIndicatorCharacterName}が作業を進めています`
+      : "作業を進めています"
     : hasLiveRunAssistantText
-      ? "本文を表示しながら応答を継続中"
-      : "コーディングエージェントが応答を生成中";
-  const pendingRunIndicatorAnnouncement = hasInProgressLiveRunStep
-    ? "コーディングエージェントがステップを実行中です"
-    : "コーディングエージェントが実行中です";
+      ? pendingIndicatorCharacterName
+        ? `${pendingIndicatorCharacterName}が返答を続けています`
+        : "返答を続けています"
+      : pendingIndicatorCharacterName
+        ? `${pendingIndicatorCharacterName}が返答を準備しています`
+        : "返答を準備しています";
+  const pendingRunIndicatorAnnouncement = pendingRunIndicatorText;
 
   if (!isDesktopRuntime) {
     return (

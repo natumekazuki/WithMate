@@ -92,6 +92,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `assistantText` は pending bubble の会話本文として step list と分離して表示し、`agent_message` を live step row へ戻さない
 - pending bubble の実行中 indicator は本文の代替ではなく `runState === "running"` を示すフラグとして扱い、`assistantText` の出力開始後も run 中は維持する
 - pending bubble の実行中 indicator は `runState !== "running"` になった時点で消し、success 固定の完了表現にはしない
+- pending bubble の実行中 indicator copy は character 名ベースを優先し、例として `<キャラ名>が作業を進めています` / `<キャラ名>が返答を続けています` / `<キャラ名>が返答を準備しています` のように出す
+- character 名を取得できない場合の fallback は `作業を進めています` / `返答を続けています` / `返答を準備しています` のような一般化表現とし、`コーディングエージェントが〜` へは戻さない
 - `assistantText` 未着でも pending bubble の step list を主役にし、`in_progress` step がある時は step 実行中であることが分かる copy を優先する。visible step が `completed / failed / canceled` のみでも、run 中である限り indicator 自体は残す
 - pending bubble の実行中 indicator は本文・step list と同居できる先頭 status row とし、screen reader には bubble 全体ではなく状態変化だけを最小限に通知して再アナウンス過多を避ける
 - `command_execution` step は command 文字列を常時表示し、通常 paragraph ではなく shell command と即判別できる専用の monospace block で表示する

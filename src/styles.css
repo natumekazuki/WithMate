@@ -1859,6 +1859,7 @@ button {
 .pending-run-indicator .live-run-shell-status-text {
   flex: 1 1 220px;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .pending-run-indicator .typing-dots {
