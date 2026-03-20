@@ -2,7 +2,7 @@
 
 ## Status
 
-- 状態: 実装完了
+- 状態: 完了
 - blocking issue: なし
 
 ## Completed
@@ -16,23 +16,25 @@
 - quality review 指摘を受け、`src/App.tsx` の bucket sort を `failed / canceled / in_progress` 先頭、`completed` 後段、`pending / unknown` safe degradation に補正した
 - `README.md` と `docs/design/desktop-ui.md` の manual test 導線を、`docs/design/manual-test-checklist.md` = 運用方針 / `docs/manual-test-checklist.md` = 実機テスト項目表に整理した
 - `npm run typecheck` を実施した
+- `npm run build` を実施した
+- final review で重大指摘なしを確認した
+- first commit `e63c911 feat(session-window): live run step 表示を整理` を作成した
 
 ## Remaining Issues
 
-- 実機で `failed / canceled / cached > 0 / cached = 0` の各表示分岐を確認する
-- cancel 後に pending bubble へ stale な active step が残らないことを再確認する
+- なし
 
 ## Related Commits
 
-- なし
+- `e63c911 feat(session-window): live run step 表示を整理`
 
 ## Rollback Guide
 
-- 戻し先候補: なし
-- 理由: まだ commit は作成していないため
+- 戻し先候補: `e63c911^`
+- 理由: `e63c911` が live run step 表示整理の first commit であり、その直前が今回機能差分の導入前状態のため
 
 ## Related Docs
 
 - `docs/design/desktop-ui.md`
 - `docs/manual-test-checklist.md`
-- `docs/plans/20260320-live-run-step-presentation/plan.md`
+- `docs/plans/archive/2026/03/20260320-live-run-step-presentation/plan.md`

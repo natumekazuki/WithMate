@@ -48,7 +48,19 @@
 - メモ: 自動テスト基盤が未整備のため、unknown status の並び順は実機確認項目で継続監視する
 - 関連コミット:
 
+### 0005
+
+- 日時: 2026-03-20
+- チェックポイント: final verification / first commit
+- 実施内容:
+  - `npm run typecheck` と `npm run build` を実行し、今回差分で pass することを確認した
+  - final review で重大指摘なしを確認した
+  - first commit `e63c911 feat(session-window): live run step 表示を整理` を作成した
+- 検証: `npm run typecheck`; `npm run build`; final review = 重大指摘なし
+- メモ: 次は commit 記録を反映した plan ディレクトリを archive し、plan 完了コミットを作成する
+- 関連コミット:
+  - `e63c911 feat(session-window): live run step 表示を整理`
+
 ## Open Items
 
-- 実装時に live step status の実データで未知値が出た場合、raw fallback が視認性を損なわないことを確認する
-- 長い `details` を completed step でどこまで弱く扱うかは、最終 UI 調整時にデザインと合わせて微調整する
+- なし
