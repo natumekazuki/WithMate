@@ -107,6 +107,68 @@ function liveRunStepToneClassName(status: string): string {
   }
 }
 
+type ParsedFileChangeSummaryLine = {
+  actionLabel: string;
+  toneClassName: "add" | "edit" | "delete" | "rename";
+  path: string;
+};
+
+const FILE_CHANGE_SUMMARY_ACTION_META: Record<string, Pick<ParsedFileChangeSummaryLine, "actionLabel" | "toneClassName">> = {
+  add: { actionLabel: "ADD", toneClassName: "add" },
+  added: { actionLabel: "ADD", toneClassName: "add" },
+  create: { actionLabel: "ADD", toneClassName: "add" },
+  created: { actionLabel: "ADD", toneClassName: "add" },
+  new: { actionLabel: "ADD", toneClassName: "add" },
+  edit: { actionLabel: "EDIT", toneClassName: "edit" },
+  edited: { actionLabel: "EDIT", toneClassName: "edit" },
+  modify: { actionLabel: "EDIT", toneClassName: "edit" },
+  modified: { actionLabel: "EDIT", toneClassName: "edit" },
+  update: { actionLabel: "EDIT", toneClassName: "edit" },
+  updated: { actionLabel: "EDIT", toneClassName: "edit" },
+  delete: { actionLabel: "DEL", toneClassName: "delete" },
+  deleted: { actionLabel: "DEL", toneClassName: "delete" },
+  remove: { actionLabel: "DEL", toneClassName: "delete" },
+  removed: { actionLabel: "DEL", toneClassName: "delete" },
+  move: { actionLabel: "MOVE", toneClassName: "rename" },
+  moved: { actionLabel: "MOVE", toneClassName: "rename" },
+  rename: { actionLabel: "MOVE", toneClassName: "rename" },
+  renamed: { actionLabel: "MOVE", toneClassName: "rename" },
+};
+
+function parseFileChangeSummary(summary: string): ParsedFileChangeSummaryLine[] | null {
+  const lines = summary
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length <= 1) {
+    return null;
+  }
+
+  const parsedLines = lines.map((line) => {
+    const separatorIndex = line.indexOf(": ");
+    if (separatorIndex <= 0) {
+      return null;
+    }
+
+    const actionToken = line.slice(0, separatorIndex).trim().toLowerCase();
+    const path = line.slice(separatorIndex + 2).trim();
+    const actionMeta = FILE_CHANGE_SUMMARY_ACTION_META[actionToken];
+    if (!actionMeta || !path) {
+      return null;
+    }
+
+    return {
+      actionLabel: actionMeta.actionLabel,
+      toneClassName: actionMeta.toneClassName,
+      path,
+    } satisfies ParsedFileChangeSummaryLine;
+  });
+
+  return parsedLines.every((line) => line !== null) ? parsedLines : null;
+}
+
 export default function App() {
   const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -1105,6 +1167,7 @@ export default function App() {
                         <ul className="live-run-step-list">
                           {orderedLiveRunSteps.map((step) => {
                             const toneClassName = liveRunStepToneClassName(step.status);
+                            const parsedFileChangeSummary = step.type === "file_change" ? parseFileChangeSummary(step.summary) : null;
 
                             return (
                               <li key={step.id} className={`live-run-step ${toneClassName}`}>
@@ -1112,7 +1175,20 @@ export default function App() {
                                   <span className={`live-run-step-status ${toneClassName}`}>{liveRunStepStatusLabel(step.status)}</span>
                                   <span className="live-run-step-type">{operationTypeLabel(step.type)}</span>
                                 </div>
-                                <p className="live-run-step-summary">{step.summary}</p>
+                                {parsedFileChangeSummary ? (
+                                  <div className="live-run-step-summary live-run-file-change-summary">
+                                    <ul className="live-run-file-change-list" aria-label="変更対象ファイル">
+                                      {parsedFileChangeSummary.map((change, index) => (
+                                        <li key={`${change.path}-${index}`} className="live-run-file-change-item">
+                                          <span className={`live-run-file-change-kind ${change.toneClassName}`}>{change.actionLabel}</span>
+                                          <code className="live-run-file-change-path">{change.path}</code>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                ) : (
+                                  <p className="live-run-step-summary">{step.summary}</p>
+                                )}
                                 {step.details ? (
                                   <details className="live-run-step-details">
                                     <summary>詳細</summary>
