@@ -81,6 +81,11 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
 - pending 中の live activity / streaming response
+- pending bubble の `live run step` は進捗 UI として表示し、`status / type` は人間向けラベルへ変換する
+- `live run step` は `failed / canceled / in_progress` を先頭、`completed` を後段に並べ、`pending` や未知 status は safe degradation としてさらに後段へ送る。同一 bucket 内では到着順を維持する
+- `in_progress` は最も強く、`completed` は summary 主表示の subdued 表現、`failed / canceled` は alert 系で明確化する
+- `details` は step ごとの二次情報として折りたたみ表示し、`usage` は footer の集約表示だけを出す
+- `liveRun.errorMessage` は step list と分離した alert block として扱う
 - 実行中は `Send` の代わりに `Cancel` を表示
 - assistant message ごとの `Turn Summary`
   - `Changed Files`

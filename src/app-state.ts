@@ -61,12 +61,14 @@ export type AuditLogEntry = {
   errorMessage: string;
 };
 
+export type LiveRunStepStatus = "in_progress" | "completed" | "failed" | "canceled" | "pending" | (string & {});
+
 export type LiveRunStep = {
   id: string;
   type: string;
   summary: string;
   details?: string;
-  status: "in_progress" | "completed" | "failed";
+  status: LiveRunStepStatus;
 };
 
 export type LiveSessionRunState = {

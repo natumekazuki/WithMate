@@ -119,7 +119,7 @@ npm run typecheck
 - `docs/manual-test-checklist.md`
   - 現行実装に対する実機テスト項目表
 - `docs/design/manual-test-checklist.md`
-  - 実機テスト項目表の更新方針
+  - 実機テスト項目表の運用方針
 - `docs/design/session-launch-ui.md`
   - 新規セッション起動 UI の考え方
 - `docs/design/character-storage.md`

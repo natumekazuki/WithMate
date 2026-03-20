@@ -71,6 +71,46 @@ export function approvalModeLabel(approvalMode: string): string {
   return approvalModeOptions.find((option) => option.id === approvalMode)?.label ?? approvalMode;
 }
 
+export function liveRunStepStatusLabel(status: string): string {
+  switch (status) {
+    case "in_progress":
+      return "実行中";
+    case "completed":
+      return "完了";
+    case "failed":
+      return "エラー";
+    case "canceled":
+      return "キャンセル";
+    case "pending":
+      return "待機";
+    default:
+      return status;
+  }
+}
+
+export function operationTypeLabel(type: string): string {
+  switch (type) {
+    case "agent_message":
+      return "Message";
+    case "command_execution":
+      return "Command";
+    case "file_change":
+      return "File";
+    case "mcp_tool_call":
+      return "MCP";
+    case "web_search":
+      return "Web";
+    case "todo_list":
+      return "Todo";
+    case "reasoning":
+      return "Reasoning";
+    case "error":
+      return "Error";
+    default:
+      return type;
+  }
+}
+
 export function reasoningDepthLabel(reasoningEffort: ModelReasoningEffort): string {
   return reasoningEffortLabel(reasoningEffort);
 }

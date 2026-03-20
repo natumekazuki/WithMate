@@ -49,6 +49,10 @@ npm run electron:start
 | MT-021 | Character editor title theme | Home から Character Editor を開く | header title の文字色が現在のキャラ `main` 色で表示される |
 | MT-022 | Session theme accent | Session Window を開く | header title、assistant / pending bubble、composer settings、`Send / Cancel`、Details 展開後の artifact block に character theme の accent が反映され、`user-bubble` は neutral tone を維持する |
 | MT-023 | Diff theme accent | Session から Diff を開く | `titlebar / subbar / pane header` に character theme の薄い accent が反映され、`Before / After` の文字が背景色に埋もれず読める |
+| MT-024 | Live progress sort / emphasis | `in_progress` と `completed` が混在する run を実行し、可能なら `pending` または未知 status 相当の step も観察する | pending bubble で `failed / canceled / in_progress` bucket が先頭、`completed` が後段に並び、`pending` や未知 status は completed より前へ割り込まず safe degradation し、`in_progress` が最も目立つ |
+| MT-025 | Live progress labels | pending bubble と assistant artifact の operation timeline を見比べる | `type` label が両方で一致し、step `status` は `実行中 / 完了 / エラー / キャンセル / 待機` の人間向け表記になる |
+| MT-026 | Live progress details / usage | command output や todo 更新を含む run を実行する | completed step は summary 主表示で `details` が二次情報として折りたたまれ、usage は footer 集約のみで `input / output` 常時表示、`cached` は 0 より大きい時だけ表示される |
+| MT-027 | Live progress error block | provider error または tool error を再現する | `liveRun.errorMessage` が step list と分離した alert block に出て、failed / canceled step と見た目が混線しない |
 
 ## 補足
 

@@ -1804,12 +1804,12 @@ button {
 
 .live-run-shell {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .live-run-step-list {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1817,9 +1817,10 @@ button {
 
 .live-run-step {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   padding: 10px 12px;
   border: 1px solid rgba(32, 36, 55, 0.08);
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.72);
 }
 
@@ -1830,13 +1831,16 @@ button {
 
 .session-page .live-run-step,
 .session-page .live-run-step p,
-.session-page .live-run-step-head strong,
+.session-page .live-run-step-type,
+.session-page .live-run-step-details summary,
 .session-page .live-run-usage {
   color: var(--ink);
 }
 
 .live-run-step.in_progress {
-  border-color: rgba(15, 139, 141, 0.18);
+  border-color: rgba(15, 139, 141, 0.26);
+  background: rgba(230, 249, 248, 0.92);
+  box-shadow: 0 10px 24px rgba(15, 139, 141, 0.08);
 }
 
 .live-run-step.failed {
@@ -1844,9 +1848,33 @@ button {
   background: rgba(255, 243, 237, 0.92);
 }
 
+.live-run-step.canceled {
+  border-color: rgba(179, 91, 54, 0.22);
+  background: rgba(255, 241, 235, 0.92);
+}
+
+.live-run-step.completed {
+  background: rgba(255, 255, 255, 0.56);
+}
+
 .session-page .live-run-step.failed {
   border-color: rgba(255, 171, 119, 0.24);
   background: rgba(76, 39, 25, 0.58);
+}
+
+.session-page .live-run-step.canceled {
+  border-color: rgba(253, 186, 116, 0.24);
+  background: rgba(73, 45, 31, 0.54);
+}
+
+.session-page .live-run-step.in_progress {
+  border-color: rgba(56, 189, 248, 0.32);
+  background: rgba(11, 37, 52, 0.56);
+  box-shadow: 0 10px 28px rgba(8, 47, 73, 0.32);
+}
+
+.session-page .live-run-step.completed {
+  background: rgba(255, 255, 255, 0.035);
 }
 
 .live-run-step-head,
@@ -1855,6 +1883,10 @@ button {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.live-run-step-head {
+  justify-content: space-between;
 }
 
 .live-run-step-status {
@@ -1894,9 +1926,42 @@ button {
   color: #8a4218;
 }
 
+.live-run-step-status.canceled {
+  background: rgba(179, 91, 54, 0.14);
+  color: #8e4c2f;
+}
+
+.live-run-step-status.pending,
+.live-run-step-status.unknown {
+  background: rgba(32, 36, 55, 0.08);
+  color: var(--muted);
+}
+
 .session-page .live-run-step-status.failed {
   background: rgba(251, 146, 60, 0.18);
   color: #ffe2c2;
+}
+
+.session-page .live-run-step-status.canceled {
+  background: rgba(251, 191, 36, 0.18);
+  color: #ffe7bf;
+}
+
+.live-run-step-type {
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.live-run-step-summary {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.live-run-step.completed .live-run-step-summary {
+  color: var(--muted);
 }
 
 .live-run-step p,
@@ -1904,12 +1969,25 @@ button {
   margin: 0;
 }
 
-.live-run-step pre {
+.live-run-step-details {
+  display: grid;
+  gap: 8px;
+}
+
+.live-run-step-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.8rem;
+  user-select: none;
+}
+
+.live-run-step-details pre {
   margin: 0;
-  max-height: 180px;
+  max-height: 160px;
   overflow: auto;
   padding: 10px 12px;
   border: 1px solid rgba(32, 36, 55, 0.08);
+  border-radius: 12px;
   background: rgba(18, 24, 39, 0.92);
   color: rgba(245, 245, 247, 0.92);
   font: 0.82rem/1.55 "IBM Plex Mono", monospace;
@@ -1917,13 +1995,36 @@ button {
 }
 
 .live-run-usage {
+  justify-content: flex-end;
   color: var(--muted);
+  font-size: 0.78rem;
+  opacity: 0.8;
+}
+
+.live-run-error-block {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid rgba(201, 106, 42, 0.22);
+  border-radius: 14px;
+  background: rgba(255, 243, 237, 0.92);
+}
+
+.session-page .live-run-error-block {
+  border-color: rgba(255, 171, 119, 0.24);
+  background: rgba(76, 39, 25, 0.62);
+}
+
+.live-run-error-block strong {
   font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .live-run-error {
   color: #8a4218;
   font-weight: 600;
+  white-space: pre-wrap;
 }
 
 .session-page .live-run-error {

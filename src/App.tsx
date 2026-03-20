@@ -29,8 +29,10 @@ import {
   approvalModeOptions,
   CharacterAvatar,
   fileKindLabel,
+  liveRunStepStatusLabel,
   modelDisplayLabel,
   modelOptionLabel,
+  operationTypeLabel,
   reasoningDepthLabel,
 } from "./ui-utils.js";
 import { MessageRichText } from "./MessageRichText.js";
@@ -75,6 +77,34 @@ function toWorkspaceRelativeReference(workspacePath: string, selectedPath: strin
   }
 
   return normalizedSelectedPath.slice(workspacePrefix.length);
+}
+
+function liveRunStepBucketPriority(status: string): number {
+  switch (status) {
+    case "failed":
+    case "canceled":
+    case "in_progress":
+      return 0;
+    case "completed":
+      return 1;
+    case "pending":
+      return 2;
+    default:
+      return 2;
+  }
+}
+
+function liveRunStepToneClassName(status: string): string {
+  switch (status) {
+    case "in_progress":
+    case "completed":
+    case "failed":
+    case "canceled":
+    case "pending":
+      return status;
+    default:
+      return "unknown";
+  }
 }
 
 export default function App() {
@@ -819,29 +849,6 @@ export default function App() {
     }
   };
 
-  const operationTypeLabel = (type: string) => {
-    switch (type) {
-      case "agent_message":
-        return "Message";
-      case "command_execution":
-        return "Command";
-      case "file_change":
-        return "File";
-      case "mcp_tool_call":
-        return "MCP";
-      case "web_search":
-        return "Web";
-      case "todo_list":
-        return "Todo";
-      case "reasoning":
-        return "Reasoning";
-      case "error":
-        return "Error";
-      default:
-        return type;
-    }
-  };
-
   const handleTitleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -861,6 +868,40 @@ export default function App() {
       [artifactKey]: !current[artifactKey],
     }));
   };
+
+  const orderedLiveRunSteps = useMemo(
+    () =>
+      (liveRun?.steps ?? [])
+        .map((step, index) => ({ step, index }))
+        .sort((left, right) => {
+          const bucketDiff =
+            liveRunStepBucketPriority(left.step.status) - liveRunStepBucketPriority(right.step.status);
+          return bucketDiff !== 0 ? bucketDiff : left.index - right.index;
+        })
+        .map(({ step }) => step),
+    [liveRun?.steps],
+  );
+
+  const liveRunUsageEntries = useMemo(() => {
+    if (!liveRun?.usage) {
+      return [];
+    }
+
+    const entries = [
+      { key: "input", label: "input", value: liveRun.usage.inputTokens },
+      { key: "output", label: "output", value: liveRun.usage.outputTokens },
+    ];
+
+    if (liveRun.usage.cachedInputTokens > 0) {
+      entries.splice(1, 0, {
+        key: "cached",
+        label: "cached",
+        value: liveRun.usage.cachedInputTokens,
+      });
+    }
+
+    return entries;
+  }, [liveRun?.usage]);
 
   if (!isDesktopRuntime) {
     return (
@@ -1058,30 +1099,46 @@ export default function App() {
                       <span />
                     </div>
                   ) : null}
-                  {liveRun && (liveRun.steps.length > 0 || liveRun.errorMessage || liveRun.usage) ? (
+                  {liveRun && (orderedLiveRunSteps.length > 0 || liveRun.errorMessage || liveRunUsageEntries.length > 0) ? (
                     <div className="live-run-shell">
-                      {liveRun.steps.length > 0 ? (
+                      {orderedLiveRunSteps.length > 0 ? (
                         <ul className="live-run-step-list">
-                          {liveRun.steps.map((step) => (
-                            <li key={step.id} className={`live-run-step ${step.status}`}>
-                              <div className="live-run-step-head">
-                                <span className={`live-run-step-status ${step.status}`}>{step.status}</span>
-                                <strong>{step.type}</strong>
-                              </div>
-                              <p>{step.summary}</p>
-                              {step.details ? <pre>{step.details}</pre> : null}
-                            </li>
-                          ))}
+                          {orderedLiveRunSteps.map((step) => {
+                            const toneClassName = liveRunStepToneClassName(step.status);
+
+                            return (
+                              <li key={step.id} className={`live-run-step ${toneClassName}`}>
+                                <div className="live-run-step-head">
+                                  <span className={`live-run-step-status ${toneClassName}`}>{liveRunStepStatusLabel(step.status)}</span>
+                                  <span className="live-run-step-type">{operationTypeLabel(step.type)}</span>
+                                </div>
+                                <p className="live-run-step-summary">{step.summary}</p>
+                                {step.details ? (
+                                  <details className="live-run-step-details">
+                                    <summary>詳細</summary>
+                                    <pre>{step.details}</pre>
+                                  </details>
+                                ) : null}
+                              </li>
+                            );
+                          })}
                         </ul>
                       ) : null}
-                      {liveRun.usage ? (
-                        <div className="live-run-usage">
-                          <span>input {liveRun.usage.inputTokens}</span>
-                          <span>cached {liveRun.usage.cachedInputTokens}</span>
-                          <span>output {liveRun.usage.outputTokens}</span>
+                      {liveRun.errorMessage ? (
+                        <div className="live-run-error-block" role="alert">
+                          <strong>実行エラー</strong>
+                          <p className="live-run-error">{liveRun.errorMessage}</p>
                         </div>
                       ) : null}
-                      {liveRun.errorMessage ? <p className="live-run-error">{liveRun.errorMessage}</p> : null}
+                      {liveRunUsageEntries.length > 0 ? (
+                        <div className="live-run-usage">
+                          {liveRunUsageEntries.map((entry) => (
+                            <span key={entry.key}>
+                              {entry.label} {entry.value}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
