@@ -90,7 +90,10 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `live run step` は `failed / canceled / in_progress` を先頭、`completed` を後段に並べ、`pending` や未知 status は safe degradation としてさらに後段へ送る。同一 bucket 内では到着順を維持する
 - `in_progress` は最も強く、`failed / canceled` は alert 系で明確化する。`completed` は全体のノイズを抑えつつも、`command_execution` の command 文字列は安全確認のため読める濃さを維持する
 - `assistantText` は pending bubble の会話本文として step list と分離して表示し、`agent_message` を live step row へ戻さない
-- `assistantText` 未着でも pending bubble の step list を主役にし、`in_progress` step がある時だけ実行中 indicator を出して「今動いている」ことが分かるようにする。visible step が `completed / failed / canceled` のみなら非実行中を断定しない
+- pending bubble の実行中 indicator は本文の代替ではなく `runState === "running"` を示すフラグとして扱い、`assistantText` の出力開始後も run 中は維持する
+- pending bubble の実行中 indicator は `runState !== "running"` になった時点で消し、success 固定の完了表現にはしない
+- `assistantText` 未着でも pending bubble の step list を主役にし、`in_progress` step がある時は step 実行中であることが分かる copy を優先する。visible step が `completed / failed / canceled` のみでも、run 中である限り indicator 自体は残す
+- pending bubble の実行中 indicator は本文・step list と同居できる先頭 status row とし、screen reader には bubble 全体ではなく状態変化だけを最小限に通知して再アナウンス過多を避ける
 - `command_execution` step は command 文字列を常時表示し、通常 paragraph ではなく shell command と即判別できる専用の monospace block で表示する
 - `file_change` step は summary が複数行かつ `kind: path` 系の読み取り可能な形式なら、path を scan しやすい line item list で表示する。1 行 summary や未知フォーマットは raw summary fallback を維持する
 - `details` は stdout / stderr や raw todo など step ごとの二次情報だけを折りたたみ表示し、`usage` は live run footer の集約表示だけを出す

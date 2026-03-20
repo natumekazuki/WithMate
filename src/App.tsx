@@ -1089,6 +1089,20 @@ export default function App() {
     return entries;
   }, [liveRun?.usage]);
 
+  const liveRunAssistantText = liveRun?.assistantText ?? "";
+  const hasLiveRunAssistantText = liveRunAssistantText.length > 0;
+  const hasVisibleLiveRunShell = Boolean(
+    liveRun && (orderedLiveRunSteps.length > 0 || liveRun.errorMessage || liveRunUsageEntries.length > 0),
+  );
+  const pendingRunIndicatorText = hasInProgressLiveRunStep
+    ? "コーディングエージェントがステップを実行中"
+    : hasLiveRunAssistantText
+      ? "本文を表示しながら応答を継続中"
+      : "コーディングエージェントが応答を生成中";
+  const pendingRunIndicatorAnnouncement = hasInProgressLiveRunStep
+    ? "コーディングエージェントがステップを実行中です"
+    : "コーディングエージェントが実行中です";
+
   if (!isDesktopRuntime) {
     return (
       <div className="page-shell session-page">
@@ -1276,28 +1290,22 @@ export default function App() {
             {selectedSession.runState === "running" ? (
               <article className="message-row assistant pending-row">
                 <CharacterAvatar character={selectedSessionCharacter} size="small" className="message-avatar" />
-                <div className="message-card assistant pending-message-card" aria-live="polite" aria-busy="true">
-                  {liveRun?.assistantText ? <MessageRichText text={liveRun.assistantText} onOpenPath={handleOpenInlinePath} /> : null}
-                  {!liveRun?.assistantText && orderedLiveRunSteps.length === 0 ? (
-                    <div className="typing-dots" aria-hidden="true">
+                <div className="message-card assistant pending-message-card">
+                  <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+                    {pendingRunIndicatorAnnouncement}
+                  </span>
+                  <div className="live-run-shell-status pending-run-indicator" aria-hidden="true">
+                    <span className="live-run-shell-status-badge">実行中</span>
+                    <span className="live-run-shell-status-text">{pendingRunIndicatorText}</span>
+                    <span className="typing-dots pending-run-indicator-dots">
                       <span />
                       <span />
                       <span />
-                    </div>
-                  ) : null}
-                  {liveRun && (orderedLiveRunSteps.length > 0 || liveRun.errorMessage || liveRunUsageEntries.length > 0) ? (
+                    </span>
+                  </div>
+                  {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} onOpenPath={handleOpenInlinePath} /> : null}
+                  {liveRun && hasVisibleLiveRunShell ? (
                     <div className="live-run-shell">
-                      {!liveRun.assistantText && hasInProgressLiveRunStep ? (
-                        <div className="live-run-shell-status" role="status" aria-live="polite">
-                          <span className="live-run-shell-status-badge">実行中</span>
-                          <span className="live-run-shell-status-text">コーディングエージェントがステップを実行中</span>
-                          <span className="live-run-shell-status-dots" aria-hidden="true">
-                            <span />
-                            <span />
-                            <span />
-                          </span>
-                        </div>
-                      ) : null}
                       {orderedLiveRunSteps.length > 0 ? (
                         <ul className="live-run-step-list">
                           {orderedLiveRunSteps.map((step) => {
