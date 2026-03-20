@@ -88,6 +88,19 @@ export function liveRunStepStatusLabel(status: string): string {
   }
 }
 
+export function liveRunStepDetailsLabel(type: string): string {
+  switch (type) {
+    case "command_execution":
+      return "出力詳細";
+    case "todo_list":
+      return "Todo 詳細";
+    case "mcp_tool_call":
+      return "Tool 詳細";
+    default:
+      return "詳細";
+  }
+}
+
 export function operationTypeLabel(type: string): string {
   switch (type) {
     case "agent_message":

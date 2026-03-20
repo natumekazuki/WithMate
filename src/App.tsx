@@ -29,6 +29,7 @@ import {
   approvalModeOptions,
   CharacterAvatar,
   fileKindLabel,
+  liveRunStepDetailsLabel,
   liveRunStepStatusLabel,
   modelDisplayLabel,
   modelOptionLabel,
@@ -944,6 +945,11 @@ export default function App() {
     [liveRun?.steps],
   );
 
+  const hasInProgressLiveRunStep = useMemo(
+    () => orderedLiveRunSteps.some((step) => step.status === "in_progress"),
+    [orderedLiveRunSteps],
+  );
+
   const liveRunUsageEntries = useMemo(() => {
     if (!liveRun?.usage) {
       return [];
@@ -1154,7 +1160,7 @@ export default function App() {
                 <CharacterAvatar character={selectedSessionCharacter} size="small" className="message-avatar" />
                 <div className="message-card assistant pending-message-card" aria-live="polite" aria-busy="true">
                   {liveRun?.assistantText ? <MessageRichText text={liveRun.assistantText} onOpenPath={handleOpenInlinePath} /> : null}
-                  {!liveRun?.assistantText ? (
+                  {!liveRun?.assistantText && orderedLiveRunSteps.length === 0 ? (
                     <div className="typing-dots" aria-hidden="true">
                       <span />
                       <span />
@@ -1163,6 +1169,17 @@ export default function App() {
                   ) : null}
                   {liveRun && (orderedLiveRunSteps.length > 0 || liveRun.errorMessage || liveRunUsageEntries.length > 0) ? (
                     <div className="live-run-shell">
+                      {!liveRun.assistantText && hasInProgressLiveRunStep ? (
+                        <div className="live-run-shell-status" role="status" aria-live="polite">
+                          <span className="live-run-shell-status-badge">実行中</span>
+                          <span className="live-run-shell-status-text">コーディングエージェントがステップを実行中</span>
+                          <span className="live-run-shell-status-dots" aria-hidden="true">
+                            <span />
+                            <span />
+                            <span />
+                          </span>
+                        </div>
+                      ) : null}
                       {orderedLiveRunSteps.length > 0 ? (
                         <ul className="live-run-step-list">
                           {orderedLiveRunSteps.map((step) => {
@@ -1170,7 +1187,7 @@ export default function App() {
                             const parsedFileChangeSummary = step.type === "file_change" ? parseFileChangeSummary(step.summary) : null;
 
                             return (
-                              <li key={step.id} className={`live-run-step ${toneClassName}`}>
+                              <li key={step.id} className={`live-run-step ${toneClassName} ${step.type}`}>
                                 <div className="live-run-step-head">
                                   <span className={`live-run-step-status ${toneClassName}`}>{liveRunStepStatusLabel(step.status)}</span>
                                   <span className="live-run-step-type">{operationTypeLabel(step.type)}</span>
@@ -1186,12 +1203,19 @@ export default function App() {
                                       ))}
                                     </ul>
                                   </div>
+                                ) : step.type === "command_execution" ? (
+                                  <div className="live-run-step-summary live-run-command-summary" aria-label="実行コマンド">
+                                    <span className="live-run-command-prefix" aria-hidden="true">
+                                      $
+                                    </span>
+                                    <code className="live-run-command-text">{step.summary}</code>
+                                  </div>
                                 ) : (
                                   <p className="live-run-step-summary">{step.summary}</p>
                                 )}
                                 {step.details ? (
                                   <details className="live-run-step-details">
-                                    <summary>詳細</summary>
+                                    <summary>{liveRunStepDetailsLabel(step.type)}</summary>
                                     <pre>{step.details}</pre>
                                   </details>
                                 ) : null}
