@@ -6,6 +6,7 @@ import {
   normalizeProviderId,
   type ModelReasoningEffort,
 } from "./model-catalog.js";
+import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from "./approval-mode.js";
 
 export type DiffRow = {
   kind: "context" | "add" | "delete" | "modify";
@@ -49,7 +50,7 @@ export type AuditLogEntry = {
   provider: string;
   model: string;
   reasoningEffort: ModelReasoningEffort;
-  approvalMode: string;
+  approvalMode: ApprovalMode;
   threadId: string;
   systemPromptText: string;
   inputPromptText: string;
@@ -185,7 +186,7 @@ export type Session = {
   characterIconPath: string;
   characterThemeColors: CharacterThemeColors;
   runState: string;
-  approvalMode: string;
+  approvalMode: ApprovalMode;
   model: string;
   reasoningEffort: ModelReasoningEffort;
   threadId: string;
@@ -210,7 +211,7 @@ export type CreateSessionInput = {
   character: string;
   characterIconPath: string;
   characterThemeColors: CharacterThemeColors;
-  approvalMode: string;
+  approvalMode: ApprovalMode;
   model?: string;
   reasoningEffort?: ModelReasoningEffort;
 };
@@ -361,6 +362,136 @@ export function normalizeCharacterThemeColors(value: unknown): CharacterThemeCol
   };
 }
 
+function normalizeDiffRow(value: unknown): DiffRow | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<DiffRow>;
+  if (candidate.kind !== "context" && candidate.kind !== "add" && candidate.kind !== "delete" && candidate.kind !== "modify") {
+    return null;
+  }
+
+  return {
+    kind: candidate.kind,
+    leftNumber: typeof candidate.leftNumber === "number" ? candidate.leftNumber : undefined,
+    rightNumber: typeof candidate.rightNumber === "number" ? candidate.rightNumber : undefined,
+    leftText: typeof candidate.leftText === "string" ? candidate.leftText : undefined,
+    rightText: typeof candidate.rightText === "string" ? candidate.rightText : undefined,
+  };
+}
+
+function normalizeChangedFile(value: unknown): ChangedFile | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<ChangedFile>;
+  if (candidate.kind !== "add" && candidate.kind !== "edit" && candidate.kind !== "delete") {
+    return null;
+  }
+
+  return {
+    kind: candidate.kind,
+    path: typeof candidate.path === "string" ? candidate.path : "",
+    summary: typeof candidate.summary === "string" ? candidate.summary : "",
+    diffRows: Array.isArray(candidate.diffRows)
+      ? candidate.diffRows
+          .map((row) => normalizeDiffRow(row))
+          .filter((row): row is DiffRow => row !== null)
+      : [],
+  };
+}
+
+function normalizeAuditLogOperation(value: unknown): AuditLogOperation | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<AuditLogOperation>;
+  if (typeof candidate.type !== "string" || !candidate.type.trim()) {
+    return null;
+  }
+
+  return {
+    type: candidate.type,
+    summary: typeof candidate.summary === "string" ? candidate.summary : "",
+    details: typeof candidate.details === "string" ? candidate.details : undefined,
+  };
+}
+
+function normalizeRunCheckValue(label: string, value: unknown): string {
+  const normalizedValue = typeof value === "string" ? value : "";
+  return label.trim().toLowerCase() === "approval"
+    ? normalizeApprovalMode(normalizedValue, DEFAULT_APPROVAL_MODE)
+    : normalizedValue;
+}
+
+function normalizeRunCheck(value: unknown): RunCheck | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<RunCheck>;
+  if (typeof candidate.label !== "string" || !candidate.label.trim()) {
+    return null;
+  }
+
+  return {
+    label: candidate.label,
+    value: normalizeRunCheckValue(candidate.label, candidate.value),
+  };
+}
+
+function normalizeMessageArtifact(value: unknown): MessageArtifact | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const candidate = value as Partial<MessageArtifact>;
+  const operationTimeline = Array.isArray(candidate.operationTimeline)
+    ? candidate.operationTimeline
+        .map((operation) => normalizeAuditLogOperation(operation))
+        .filter((operation): operation is AuditLogOperation => operation !== null)
+    : undefined;
+
+  return {
+    title: typeof candidate.title === "string" ? candidate.title : "",
+    activitySummary: Array.isArray(candidate.activitySummary)
+      ? candidate.activitySummary.filter((item): item is string => typeof item === "string")
+      : [],
+    operationTimeline,
+    changedFiles: Array.isArray(candidate.changedFiles)
+      ? candidate.changedFiles
+          .map((file) => normalizeChangedFile(file))
+          .filter((file): file is ChangedFile => file !== null)
+      : [],
+    runChecks: Array.isArray(candidate.runChecks)
+      ? candidate.runChecks
+          .map((check) => normalizeRunCheck(check))
+          .filter((check): check is RunCheck => check !== null)
+      : [],
+  };
+}
+
+function normalizeMessage(value: unknown): Message | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<Message>;
+  if (candidate.role !== "user" && candidate.role !== "assistant") {
+    return null;
+  }
+
+  return {
+    role: candidate.role,
+    text: typeof candidate.text === "string" ? candidate.text : "",
+    accent: typeof candidate.accent === "boolean" ? candidate.accent : undefined,
+    artifact: normalizeMessageArtifact(candidate.artifact),
+  };
+}
+
 export function normalizeSession(value: unknown): Session | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -412,8 +543,7 @@ export function normalizeSession(value: unknown): Session | null {
         : "",
     characterThemeColors: normalizeCharacterThemeColors(candidate.characterThemeColors),
     runState: typeof candidate.runState === "string" && candidate.runState.trim() ? candidate.runState : "idle",
-    approvalMode:
-      typeof candidate.approvalMode === "string" && candidate.approvalMode.trim() ? candidate.approvalMode : "on-request",
+    approvalMode: normalizeApprovalMode(candidate.approvalMode, DEFAULT_APPROVAL_MODE),
     model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
     reasoningEffort:
       candidate.reasoningEffort === "minimal" ||
@@ -429,7 +559,11 @@ export function normalizeSession(value: unknown): Session | null {
         : typeof (candidate as { threadLabel?: string }).threadLabel === "string"
           ? (candidate as { threadLabel?: string }).threadLabel ?? ""
           : "",
-    messages: Array.isArray(candidate.messages) ? candidate.messages : [],
+    messages: Array.isArray(candidate.messages)
+      ? candidate.messages
+          .map((message) => normalizeMessage(message))
+          .filter((message): message is Message => message !== null)
+      : [],
     stream: Array.isArray(candidate.stream) ? candidate.stream : [],
   };
 }
@@ -467,7 +601,7 @@ export function buildNewSession(input: CreateSessionInput): Session {
     characterIconPath: input.characterIconPath,
     characterThemeColors: normalizeCharacterThemeColors(input.characterThemeColors),
     runState: "idle",
-    approvalMode: input.approvalMode,
+    approvalMode: normalizeApprovalMode(input.approvalMode, DEFAULT_APPROVAL_MODE),
     model: input.model?.trim() || DEFAULT_MODEL_ID,
     reasoningEffort: input.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
     threadId: "",

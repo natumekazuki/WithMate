@@ -2,12 +2,7 @@ import { useState, type CSSProperties } from "react";
 
 import type { CharacterVisual, ChangedFile, Session } from "./app-state.js";
 import { reasoningEffortLabel, type ModelCatalogItem, type ModelCatalogProvider, type ModelReasoningEffort } from "./model-catalog.js";
-
-export const approvalModeOptions = [
-  { id: "on-request", label: "都度確認" },
-  { id: "never", label: "確認しない" },
-  { id: "untrusted", label: "未信頼時のみ確認" },
-] as const;
+export { approvalModeLabel, approvalModeOptions } from "./approval-mode.js";
 
 function toFileUrl(filePath: string): string {
   const normalized = filePath.replace(/\\/g, "/");
@@ -65,10 +60,6 @@ export function sessionStateClassName(session: Session): string {
   }
 
   return session.status;
-}
-
-export function approvalModeLabel(approvalMode: string): string {
-  return approvalModeOptions.find((option) => option.id === approvalMode)?.label ?? approvalMode;
 }
 
 export function liveRunStepStatusLabel(status: string): string {

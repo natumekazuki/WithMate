@@ -29,7 +29,7 @@ WithMate では、`Recent Sessions` が 2 の `resume` 側を担う。
 - session title の入力
 - 現在選択中の Character の確認
 - Provider の確認
-- approval mode は `on-request` 固定で初期化する
+- approval mode は provider-neutral 3 mode の正本を使い、New Session の default は `safety` で初期化する
 - 新規セッション開始
 - model / depth は default 値で初期化する
 
@@ -135,7 +135,8 @@ React モックでは次の形がよい。
   - left accent bar = character `sub`
   - foreground = background から自動コントラスト決定
 - model / depth は launch dialog には出さず、session 作成時に default 値を入れる
-- approval mode は launch dialog では選ばず、`on-request` 固定で session を作る
+- approval mode は launch dialog では選ばず、provider-neutral 3 mode のうち default `safety` を使って session を作る
+- session 作成直後の UI 表示も `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording に揃える
 - `Start New Session` を押すと、入力した title を持つ新規 session record を作って `Session Window` を開く
 - 最初の依頼は Launch Dialog ではなく `Session Window` のメインチャットから入力する
 

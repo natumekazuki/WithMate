@@ -17,6 +17,7 @@ import type {
   Session,
 } from "../src/app-state.js";
 import { getProviderAppSettings } from "../src/app-state.js";
+import { mapApprovalModeToCodexPolicy } from "../src/approval-mode.js";
 import {
   reasoningEffortLabel,
   resolveModelSelection,
@@ -74,14 +75,6 @@ type PromptComposition = {
   additionalDirectories: string[];
 };
 const MAX_DIFF_MATRIX_CELLS = 2_000_000;
-
-function mapApprovalPolicy(approvalMode: string): "never" | "on-request" | "on-failure" | "untrusted" {
-  if (approvalMode === "never" || approvalMode === "on-request" || approvalMode === "on-failure" || approvalMode === "untrusted") {
-    return approvalMode;
-  }
-
-  return "on-request";
-}
 
 function summarizeChangedFile(kind: ChangedFile["kind"], filePath: string): string {
   switch (kind) {
@@ -802,7 +795,7 @@ export class CodexAdapter {
       workingDirectory: string;
       skipGitRepoCheck: true;
       sandboxMode: "workspace-write";
-      approvalPolicy: "never" | "on-request" | "on-failure" | "untrusted";
+      approvalPolicy: "never" | "on-request" | "untrusted";
       model: string;
       modelReasoningEffort: ModelReasoningEffort;
       additionalDirectories?: string[];
@@ -822,7 +815,7 @@ export class CodexAdapter {
       workingDirectory: session.workspacePath,
       skipGitRepoCheck: true as const,
       sandboxMode: "workspace-write" as const,
-      approvalPolicy: mapApprovalPolicy(session.approvalMode),
+      approvalPolicy: mapApprovalModeToCodexPolicy(session.approvalMode),
       model: selection.resolvedModel,
       modelReasoningEffort: selection.resolvedReasoningEffort,
       ...(additionalDirectories.length > 0 ? { additionalDirectories } : {}),

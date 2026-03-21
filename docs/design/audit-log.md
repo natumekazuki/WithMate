@@ -47,6 +47,8 @@ SQLite の `audit_logs` table を使う。
 
 `session_id` は `sessions.id` を参照し、session 削除時は `audit_logs` も削除する。
 旧 schema の `prompt_text` / `user_message` は互換目的で残ってもよいが、現行 UI と現行 insert は新列を正本にする。
+`approval_mode` は新規保存時は provider-neutral canonical value `allow-all / safety / provider-controlled` を正本にする。
+既存 row に残る `never / untrusted / on-request / on-failure` は read-path normalize で吸収し、one-shot migration は前提にしない。
 
 ## Logging Flow
 
@@ -121,6 +123,8 @@ overlay では 1 entry ごとに次を表示する。
 初期状態では `input prompt` だけを開き、他は閉じた状態から必要な箇所だけ個別に開いて読む。
 
 `composed prompt` は text payload だけを表す。画像添付がある場合でも、画像本体はここには含まれない。
+approval は UI 上では `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording で表示する。
+そのため、保存値が legacy/native でも overlay 表示時には canonical mode へ normalize したうえで同じ wording に揃える。
 
 ## Non Goals
 

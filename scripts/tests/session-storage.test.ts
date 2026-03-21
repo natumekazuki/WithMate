@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { buildNewSession } from "../../src/app-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";
 
 function createSession(taskTitle: string, workspaceLabel: string, characterId: string, character: string) {
@@ -17,7 +19,7 @@ function createSession(taskTitle: string, workspaceLabel: string, characterId: s
     character,
     characterIconPath: "",
     characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-    approvalMode: "on-request",
+    approvalMode: DEFAULT_APPROVAL_MODE,
   });
 }
 
@@ -65,6 +67,30 @@ describe("SessionStorage", () => {
 
       assert.deepEqual(storage.listSessions(), []);
       storage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("legacy approval 値も read-path normalize で provider-neutral に読める", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new SessionStorage(dbPath);
+      const session = storage.upsertSession(createSession("legacy", "workspace-legacy", "char-a", "A"));
+      storage.close();
+
+      const db = new DatabaseSync(dbPath);
+      db.prepare("UPDATE sessions SET approval_mode = ? WHERE id = ?").run("on-failure", session.id);
+      db.close();
+
+      const reopened = new SessionStorage(dbPath);
+      const loaded = reopened.getSession(session.id);
+      reopened.close();
+
+      assert.ok(loaded);
+      assert.equal(loaded.approvalMode, "provider-controlled");
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }

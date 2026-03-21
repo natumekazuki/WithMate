@@ -28,6 +28,7 @@ import {
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import {
   approvalModeOptions,
+  approvalModeLabel,
   CharacterAvatar,
   fileKindLabel,
   liveRunStepDetailsLabel,
@@ -387,6 +388,14 @@ function getLastNonEmptyValue(values: Array<string | null | undefined>): string 
   }
 
   return "";
+}
+
+function displayApprovalValue(value: string): string {
+  return approvalModeLabel(value);
+}
+
+function displayRunCheckValue(check: { label: string; value: string }): string {
+  return check.label.trim().toLowerCase() === "approval" ? displayApprovalValue(check.value) : check.value;
 }
 
 function buildRetryStopSummary(
@@ -1190,7 +1199,7 @@ export default function App() {
     return savedSession;
   };
 
-  const handleChangeApproval = async (approvalMode: string) => {
+  const handleChangeApproval = async (approvalMode: Session["approvalMode"]) => {
     if (!selectedSession || selectedSession.runState === "running" || approvalMode === selectedSession.approvalMode) {
       return;
     }
@@ -1754,7 +1763,7 @@ export default function App() {
                                     {message.artifact.runChecks.map((check) => (
                                       <div key={check.label} className="check-item">
                                         <span>{check.label}</span>
-                                        <strong>{check.value}</strong>
+                                        <strong>{displayRunCheckValue(check)}</strong>
                                       </div>
                                     ))}
                                   </div>
@@ -2178,7 +2187,7 @@ export default function App() {
                       <span>{entry.provider}</span>
                       <span>{entry.model}</span>
                       <span>{entry.reasoningEffort}</span>
-                      <span>{entry.approvalMode}</span>
+                      <span>{displayApprovalValue(entry.approvalMode)}</span>
                     </div>
 
                     <details className="audit-log-fold">

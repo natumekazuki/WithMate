@@ -69,6 +69,9 @@ WithMate では、永続化対象を 5 層に分ける。
 
 - codex thread id
 - approval mode
+  - 正本は provider-neutral canonical set `allow-all / safety / provider-controlled`
+  - write-path では canonical set だけを保存する
+  - legacy/native 値 `never / untrusted / on-request / on-failure` は read-path normalize で吸収する
 - selected provider
 - selected catalog revision
 - selected model
@@ -117,6 +120,7 @@ WithMate では、永続化対象を 5 層に分ける。
 - raw turn items
 - usage
 - error
+- approval は provider-neutral canonical value を正本にし、旧値は read-path normalize で扱う
 
 用途:
 
@@ -196,6 +200,7 @@ MVP では、保存責務を次のように切る。
 - Codex thread 作成時
 - turn 完了時
 - approval mode 変更時
+  - 保存済み row の one-shot migration は行わず、legacy/native 値は読み出し時 normalize で互換性を保つ
 - model / reasoning depth 変更時
 - changed files / run summary 確定時
 - アプリ再起動時の recovery 判定時

@@ -82,7 +82,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - session title 入力
   - workspace picker
   - character 選択
-  - approval mode は `on-request` 固定
+  - approval mode は provider-neutral 3 mode を前提にし、default は `safety`
 - `Settings` overlay
   - system prompt prefix 編集
   - `Coding Agent Providers` で provider ごとの enable / disable
@@ -102,6 +102,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - キャラカラーは限定的に使い、過度に Session 全体へ広げない
 - session title の rename / delete
 - `Audit Log` overlay
+  - approval 表示は `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording を使う
 - `Work Chat`
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
@@ -129,6 +130,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - assistant message ごとの `Turn Summary`
   - `Changed Files`
   - `Run Checks`
+    - approval は `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording で表示する
   - turn 内の `agent_message / command_execution / file_change / reasoning` を arrival 順に並べる operation timeline
 - composer 上の添付 toolbar (`File / Folder / Image`)
 - composer の attachment chip
@@ -142,6 +144,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - picker で選んだ file / folder / image も textarea に `@path` を挿入する
 - 添付 picker は初回だけ workspace を開き、以後は最後に選んだディレクトリを開く
 - composer 下の `Approval / Model / Depth`
+  - approval chip は `自動実行 / 安全寄り / プロバイダー判断`
 - session title は character `main`
 - assistant / pending bubble は `sub` ベースの薄い accent を持つ
 - `composer settings` の背景は `sub` ベースの薄い accent を持つ

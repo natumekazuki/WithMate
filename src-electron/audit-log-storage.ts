@@ -3,6 +3,7 @@ import path from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 
 import { type AuditLogEntry, type AuditLogOperation, type AuditLogPhase, type AuditLogUsage } from "../src/app-state.js";
+import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
 import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
 
 type AuditLogRow = {
@@ -75,7 +76,7 @@ function rowToAuditLogEntry(row: AuditLogRow): AuditLogEntry {
       row.reasoning_effort === "xhigh"
         ? row.reasoning_effort
         : DEFAULT_REASONING_EFFORT,
-    approvalMode: row.approval_mode || "on-request",
+    approvalMode: normalizeApprovalMode(row.approval_mode, DEFAULT_APPROVAL_MODE),
     threadId: row.thread_id || "",
     systemPromptText: row.system_prompt_text || "",
     inputPromptText: row.input_prompt_text || "",

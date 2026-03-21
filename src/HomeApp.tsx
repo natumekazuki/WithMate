@@ -9,6 +9,7 @@ import {
   type ProviderAppSettings,
   type Session,
 } from "./app-state.js";
+import { DEFAULT_APPROVAL_MODE } from "./approval-mode.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.js";
 import {
   SETTINGS_API_KEY_LABEL,
@@ -369,7 +370,7 @@ export default function HomeApp() {
       character: selectedCharacter.name,
       characterIconPath: selectedCharacter.iconPath,
       characterThemeColors: selectedCharacter.themeColors,
-      approvalMode: "on-request",
+      approvalMode: DEFAULT_APPROVAL_MODE,
     };
 
     const createdSession = await window.withmate.createSession(sessionInput);
