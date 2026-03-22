@@ -11,4 +11,5 @@
 
 ## Commit
 
-- なし
+- `f6850da` `feat(copilot): add minimal provider integration`
+  - Copilot child CLI の warning 抑止 env と回帰テストを同一コミットに含めた

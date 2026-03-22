@@ -17,4 +17,4 @@
 
 ## Related Commits
 
-- なし
+- `f6850da` `feat(copilot): add minimal provider integration`

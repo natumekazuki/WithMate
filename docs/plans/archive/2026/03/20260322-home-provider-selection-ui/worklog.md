@@ -15,4 +15,5 @@
 
 ## Commit
 
-- なし
+- `f6850da` `feat(copilot): add minimal provider integration`
+  - `New Session` の provider choice chip、`Settings` の provider row 整理、関連 docs/test を同一コミットで反映した

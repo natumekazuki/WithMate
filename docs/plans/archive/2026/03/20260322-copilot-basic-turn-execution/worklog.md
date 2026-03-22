@@ -24,4 +24,5 @@
 
 ## Commit
 
-- なし
+- `f6850da` `feat(copilot): add minimal provider integration`
+  - `基本 turn 実行` slice 本体、shared runtime contract、Copilot model catalog 追加、関連 docs/test を記録した

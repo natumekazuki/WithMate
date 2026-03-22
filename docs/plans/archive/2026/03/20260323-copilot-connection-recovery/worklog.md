@@ -11,4 +11,5 @@
 
 ## Commit
 
-- なし
+- `f6850da` `feat(copilot): add minimal provider integration`
+  - stale connection recovery と related test を同一コミットに含めた
