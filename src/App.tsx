@@ -512,12 +512,17 @@ export default function App() {
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
   const [isMessageListFollowing, setIsMessageListFollowing] = useState(true);
   const [hasMessageListUnread, setHasMessageListUnread] = useState(false);
+  const [isActivityMonitorFollowing, setIsActivityMonitorFollowing] = useState(true);
+  const [hasActivityMonitorUnread, setHasActivityMonitorUnread] = useState(false);
   const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
   const messageListRef = useRef<HTMLDivElement | null>(null);
+  const activityMonitorRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageListSignatureRef = useRef("");
   const messageListSessionIdRef = useRef<string | null>(null);
+  const activityMonitorSignatureRef = useRef("");
+  const activityMonitorSessionIdRef = useRef<string | null>(null);
 
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
 
@@ -766,7 +771,16 @@ export default function App() {
     () => buildDisplayedMessagesScrollSignature(displayedMessages),
     [displayedMessages],
   );
-  const liveRunScrollSignature = useMemo(
+  const pendingBubbleScrollSignature = useMemo(
+    () =>
+      [
+        selectedSession?.runState ?? "",
+        selectedSessionLiveRun?.assistantText ?? "",
+        selectedSessionLiveRun?.errorMessage ?? "",
+      ].join("\u001b"),
+    [selectedSession?.runState, selectedSessionLiveRun?.assistantText, selectedSessionLiveRun?.errorMessage],
+  );
+  const activityMonitorScrollSignature = useMemo(
     () => buildLiveRunScrollSignature(selectedSessionLiveRun),
     [selectedSessionLiveRun],
   );
@@ -776,9 +790,9 @@ export default function App() {
         selectedSession?.id ?? "",
         selectedSession?.runState ?? "",
         displayedMessagesScrollSignature,
-        liveRunScrollSignature,
+        pendingBubbleScrollSignature,
       ].join("\u001a"),
-    [displayedMessagesScrollSignature, liveRunScrollSignature, selectedSession?.id, selectedSession?.runState],
+    [displayedMessagesScrollSignature, pendingBubbleScrollSignature, selectedSession?.id, selectedSession?.runState],
   );
 
   useEffect(() => {
@@ -789,6 +803,8 @@ export default function App() {
     setWorkspacePathMatches([]);
     setActiveWorkspacePathMatchIndex(-1);
     setIsComposerImeComposing(false);
+    setIsActivityMonitorFollowing(true);
+    setHasActivityMonitorUnread(false);
     setAuditLogsState({ ownerSessionId: selectedSessionId, entries: [] });
     setLiveRunState({ ownerSessionId: selectedSessionId, state: null });
     setIsRetryDraftReplacePending(false);
@@ -834,6 +850,50 @@ export default function App() {
 
     setHasMessageListUnread(true);
   }, [isMessageListFollowing, messageListScrollSignature, selectedSessionId]);
+
+  useLayoutEffect(() => {
+    const isActivityMonitorVisible = selectedSession?.runState === "running";
+    const activityMonitorElement = activityMonitorRef.current;
+    const currentSignature = activityMonitorScrollSignature;
+    const wasSameSession = activityMonitorSessionIdRef.current === selectedSessionId;
+    const hasSignatureChanged = activityMonitorSignatureRef.current !== currentSignature;
+
+    if (!isActivityMonitorVisible) {
+      activityMonitorSessionIdRef.current = selectedSessionId;
+      activityMonitorSignatureRef.current = currentSignature;
+      setIsActivityMonitorFollowing(true);
+      setHasActivityMonitorUnread(false);
+      return;
+    }
+
+    if (!activityMonitorElement) {
+      activityMonitorSessionIdRef.current = selectedSessionId;
+      activityMonitorSignatureRef.current = currentSignature;
+      return;
+    }
+
+    if (!wasSameSession) {
+      activityMonitorSessionIdRef.current = selectedSessionId;
+      activityMonitorSignatureRef.current = currentSignature;
+      setIsActivityMonitorFollowing(true);
+      setHasActivityMonitorUnread(false);
+      activityMonitorElement.scrollTop = activityMonitorElement.scrollHeight;
+      return;
+    }
+
+    if (!hasSignatureChanged) {
+      return;
+    }
+
+    activityMonitorSignatureRef.current = currentSignature;
+
+    if (isActivityMonitorFollowing) {
+      activityMonitorElement.scrollTop = activityMonitorElement.scrollHeight;
+      return;
+    }
+
+    setHasActivityMonitorUnread(true);
+  }, [activityMonitorScrollSignature, isActivityMonitorFollowing, selectedSession?.runState, selectedSessionId]);
 
   useEffect(() => {
     let active = true;
@@ -1642,6 +1702,39 @@ export default function App() {
     scrollMessageListToBottom();
   };
 
+  const scrollActivityMonitorToBottom = () => {
+    const activityMonitorElement = activityMonitorRef.current;
+    if (!activityMonitorElement) {
+      return;
+    }
+
+    activityMonitorElement.scrollTop = activityMonitorElement.scrollHeight;
+  };
+
+  const handleActivityMonitorScroll = () => {
+    const activityMonitorElement = activityMonitorRef.current;
+    if (!activityMonitorElement) {
+      return;
+    }
+
+    const bottomGap = Math.max(
+      0,
+      activityMonitorElement.scrollHeight - activityMonitorElement.clientHeight - activityMonitorElement.scrollTop,
+    );
+    const nextFollowing = bottomGap <= 48;
+
+    setIsActivityMonitorFollowing((current) => (current === nextFollowing ? current : nextFollowing));
+    if (nextFollowing) {
+      setHasActivityMonitorUnread(false);
+    }
+  };
+
+  const handleJumpToActivityMonitorBottom = () => {
+    setIsActivityMonitorFollowing(true);
+    setHasActivityMonitorUnread(false);
+    scrollActivityMonitorToBottom();
+  };
+
   const orderedLiveRunSteps = useMemo(
     () =>
       (selectedSessionLiveRun?.steps ?? [])
@@ -1683,7 +1776,7 @@ export default function App() {
 
   const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
   const hasLiveRunAssistantText = liveRunAssistantText.length > 0;
-  const hasVisibleLiveRunShell = Boolean(
+  const hasVisibleActivityMonitor = Boolean(
     selectedSessionLiveRun
       && (orderedLiveRunSteps.length > 0 || selectedSessionLiveRun.errorMessage || liveRunUsageEntries.length > 0),
   );
@@ -1706,6 +1799,16 @@ export default function App() {
         ? `${pendingIndicatorCharacterName}が返答を準備しています`
         : "返答を準備しています";
   const pendingRunIndicatorAnnouncement = pendingRunIndicatorText;
+  const activityMonitorStateBadge = isActivityMonitorFollowing
+    ? "Activity"
+    : hasActivityMonitorUnread
+      ? "新着あり"
+      : "読み返し中";
+  const activityMonitorStateCopy = isActivityMonitorFollowing
+    ? "最新の command と変更をここで追えます。"
+    : hasActivityMonitorUnread
+      ? "読み返し中に新しい activity が来たよ。"
+      : "今は monitor の位置を固定しているよ。";
 
   if (!isDesktopRuntime) {
     return (
@@ -1908,68 +2011,13 @@ export default function App() {
                     </span>
                   </div>
                   {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} onOpenPath={handleOpenInlinePath} /> : null}
-                  {selectedSessionLiveRun && hasVisibleLiveRunShell ? (
-                    <div className="live-run-shell">
-                      {orderedLiveRunSteps.length > 0 ? (
-                        <ul className="live-run-step-list">
-                          {orderedLiveRunSteps.map((step) => {
-                            const toneClassName = liveRunStepToneClassName(step.status);
-                            const parsedFileChangeSummary = step.type === "file_change" ? parseFileChangeSummary(step.summary) : null;
-
-                            return (
-                              <li key={step.id} className={`live-run-step ${toneClassName} ${step.type}`}>
-                                <div className="live-run-step-head">
-                                  <span className={`live-run-step-status ${toneClassName}`}>{liveRunStepStatusLabel(step.status)}</span>
-                                  <span className="live-run-step-type">{operationTypeLabel(step.type)}</span>
-                                </div>
-                                {parsedFileChangeSummary ? (
-                                  <div className="live-run-step-summary live-run-file-change-summary">
-                                    <ul className="live-run-file-change-list" aria-label="変更対象ファイル">
-                                      {parsedFileChangeSummary.map((change, index) => (
-                                        <li key={`${change.path}-${index}`} className="live-run-file-change-item">
-                                          <span className={`live-run-file-change-kind ${change.toneClassName}`}>{change.actionLabel}</span>
-                                          <code className="live-run-file-change-path">{change.path}</code>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  </div>
-                                ) : step.type === "command_execution" ? (
-                                  <div className="live-run-step-summary live-run-command-summary" aria-label="実行コマンド">
-                                    <span className="live-run-command-prefix" aria-hidden="true">
-                                      $
-                                    </span>
-                                    <code className="live-run-command-text">{step.summary}</code>
-                                  </div>
-                                ) : (
-                                  <p className="live-run-step-summary">{step.summary}</p>
-                                )}
-                                {step.details ? (
-                                  <details className="live-run-step-details">
-                                    <summary>{liveRunStepDetailsLabel(step.type)}</summary>
-                                    <pre>{step.details}</pre>
-                                  </details>
-                                ) : null}
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      ) : null}
-                      {selectedSessionLiveRun.errorMessage ? (
-                        <div className="live-run-error-block" role="alert">
-                          <strong>実行エラー</strong>
-                          <p className="live-run-error">{selectedSessionLiveRun.errorMessage}</p>
-                        </div>
-                      ) : null}
-                      {liveRunUsageEntries.length > 0 ? (
-                        <div className="live-run-usage">
-                          {liveRunUsageEntries.map((entry) => (
-                            <span key={entry.key}>
-                              {entry.label} {entry.value}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
+                  {!hasLiveRunAssistantText ? (
+                    <p className="pending-run-helper">
+                      会話本文はここに表示し、実行中の command と変更は下の Activity Monitor で追えるようにしています。
+                    </p>
+                  ) : null}
+                  {selectedSessionLiveRun?.errorMessage ? (
+                    <p className="pending-run-error-note" role="alert">{selectedSessionLiveRun.errorMessage}</p>
                   ) : null}
                 </div>
               </article>
@@ -1987,6 +2035,91 @@ export default function App() {
                 末尾へ移動
               </button>
             </aside>
+          ) : null}
+
+          {selectedSession.runState === "running" ? (
+            <section className="activity-monitor-shell" aria-label="実行中の作業実況">
+              <div className="activity-monitor-head">
+                <div className="activity-monitor-head-copy">
+                  <span className={`activity-monitor-badge${isActivityMonitorFollowing ? "" : hasActivityMonitorUnread ? " has-unread" : " is-paused"}`}>
+                    {activityMonitorStateBadge}
+                  </span>
+                  <p>{activityMonitorStateCopy}</p>
+                </div>
+                {!isActivityMonitorFollowing ? (
+                  <button type="button" className="activity-monitor-follow-button" onClick={handleJumpToActivityMonitorBottom}>
+                    最新へ
+                  </button>
+                ) : null}
+              </div>
+              <div className="activity-monitor-body" ref={activityMonitorRef} onScroll={handleActivityMonitorScroll}>
+                {hasVisibleActivityMonitor ? (
+                  <>
+                    {orderedLiveRunSteps.length > 0 ? (
+                      <ul className="live-run-step-list">
+                        {orderedLiveRunSteps.map((step) => {
+                          const toneClassName = liveRunStepToneClassName(step.status);
+                          const parsedFileChangeSummary = step.type === "file_change" ? parseFileChangeSummary(step.summary) : null;
+
+                          return (
+                            <li key={step.id} className={`live-run-step ${toneClassName} ${step.type}`}>
+                              <div className="live-run-step-head">
+                                <span className={`live-run-step-status ${toneClassName}`}>{liveRunStepStatusLabel(step.status)}</span>
+                                <span className="live-run-step-type">{operationTypeLabel(step.type)}</span>
+                              </div>
+                              {parsedFileChangeSummary ? (
+                                <div className="live-run-step-summary live-run-file-change-summary">
+                                  <ul className="live-run-file-change-list" aria-label="変更対象ファイル">
+                                    {parsedFileChangeSummary.map((change, index) => (
+                                      <li key={`${change.path}-${index}`} className="live-run-file-change-item">
+                                        <span className={`live-run-file-change-kind ${change.toneClassName}`}>{change.actionLabel}</span>
+                                        <code className="live-run-file-change-path">{change.path}</code>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ) : step.type === "command_execution" ? (
+                                <div className="live-run-step-summary live-run-command-summary" aria-label="実行コマンド">
+                                  <span className="live-run-command-prefix" aria-hidden="true">
+                                    $
+                                  </span>
+                                  <code className="live-run-command-text">{step.summary}</code>
+                                </div>
+                              ) : (
+                                <p className="live-run-step-summary">{step.summary}</p>
+                              )}
+                              {step.details ? (
+                                <details className="live-run-step-details">
+                                  <summary>{liveRunStepDetailsLabel(step.type)}</summary>
+                                  <pre>{step.details}</pre>
+                                </details>
+                              ) : null}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : null}
+                    {selectedSessionLiveRun?.errorMessage ? (
+                      <div className="live-run-error-block" role="alert">
+                        <strong>実行エラー</strong>
+                        <p className="live-run-error">{selectedSessionLiveRun.errorMessage}</p>
+                      </div>
+                    ) : null}
+                    {liveRunUsageEntries.length > 0 ? (
+                      <div className="live-run-usage">
+                        {liveRunUsageEntries.map((entry) => (
+                          <span key={entry.key}>
+                            {entry.label} {entry.value}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="activity-monitor-empty">最初の command や file change を待っています。</p>
+                )}
+              </div>
+            </section>
           ) : null}
 
           <div className="composer">

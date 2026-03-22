@@ -112,20 +112,23 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - `selectedSession.id` 切替時は follow / unread state をリセットする
   - 追従停止中は `新着あり` / `読み返し中` の最小 banner を表示し、`末尾へ移動` で復帰できる
 - pending 中の live activity / streaming response
-- pending bubble の `live run step` は進捗 UI として表示し、`status / type` は人間向けラベルへ変換する
+- pending bubble は会話本文の面として扱い、`assistantText` と run indicator を表示する
+- `live run step` は pending bubble に混在させず、composer 直上に dock する `Activity Monitor` へ分離する
+- `Activity Monitor` は message list と独立した scroll / follow を持ち、chat 本文と command 実況の両方で最新を見失わない構成にする
 - `live run step` は `failed / canceled / in_progress` を先頭、`completed` を後段に並べ、`pending` や未知 status は safe degradation としてさらに後段へ送る。同一 bucket 内では到着順を維持する
 - `in_progress` は最も強く、`failed / canceled` は alert 系で明確化する。`completed` は全体のノイズを抑えつつも、`command_execution` の command 文字列は安全確認のため読める濃さを維持する
-- `assistantText` は pending bubble の会話本文として step list と分離して表示し、`agent_message` を live step row へ戻さない
+- `assistantText` は pending bubble の会話本文としてのみ扱い、`agent_message` を activity row へ戻さない
 - pending bubble の実行中 indicator は本文の代替ではなく `runState === "running"` を示すフラグとして扱い、`assistantText` の出力開始後も run 中は維持する
 - pending bubble の実行中 indicator は `runState !== "running"` になった時点で消し、success 固定の完了表現にはしない
 - pending bubble の実行中 indicator copy は character 名ベースを優先し、例として `<キャラ名>が作業を進めています` / `<キャラ名>が返答を続けています` / `<キャラ名>が返答を準備しています` のように出す
 - character 名を取得できない場合の fallback は `作業を進めています` / `返答を続けています` / `返答を準備しています` のような一般化表現とし、`コーディングエージェントが〜` へは戻さない
-- `assistantText` 未着でも pending bubble の step list を主役にし、`in_progress` step がある時は step 実行中であることが分かる copy を優先する。visible step が `completed / failed / canceled` のみでも、run 中である限り indicator 自体は残す
-- pending bubble の実行中 indicator は本文・step list と同居できる先頭 status row とし、screen reader には bubble 全体ではなく状態変化だけを最小限に通知して再アナウンス過多を避ける
+- `assistantText` 未着でも `Activity Monitor` は live step を主役として表示し、`in_progress` step がある時は step 実行中であることが分かる copy を優先する。visible step が `completed / failed / canceled` のみでも、run 中である限り indicator 自体は残す
+- pending bubble の実行中 indicator は本文と同居できる先頭 status row とし、screen reader には bubble 全体ではなく状態変化だけを最小限に通知して再アナウンス過多を避ける
 - `command_execution` step は command 文字列を常時表示し、通常 paragraph ではなく shell command と即判別できる専用の monospace block で表示する
 - `file_change` step は summary が複数行かつ `kind: path` 系の読み取り可能な形式なら、path を scan しやすい line item list で表示する。1 行 summary や未知フォーマットは raw summary fallback を維持する
-- `details` は stdout / stderr や raw todo など step ごとの二次情報だけを折りたたみ表示し、`usage` は live run footer の集約表示だけを出す
-- `liveRun.errorMessage` は step list と分離した alert block として扱う
+- `details` は stdout / stderr や raw todo など step ごとの二次情報だけを折りたたみ表示し、`usage` は `Activity Monitor` footer の集約表示だけを出す
+- `liveRun.errorMessage` は `Activity Monitor` 内の alert block として扱う
+- `Activity Monitor` は `runState === "running"` の間だけ表示し、turn 完了後の確定記録は artifact timeline と Audit Log に戻す
 - 実行中は `Send` の代わりに `Cancel` を表示
 - assistant message ごとの `Turn Summary`
   - `Changed Files`
@@ -150,6 +153,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `composer settings` の背景は `sub` ベースの薄い accent を持つ
 - `Send / Cancel` は character `main`
 - sendability 判定は `src/App.tsx` の単一導出に寄せ、`sessionExecutionBlockedReason` / `composerPreview.errors` / blank draft helper を Send 近傍の単一 feedback area で扱う
+- 実行中の command 実況分離の詳細は `docs/design/session-live-activity-monitor.md` を参照する
 - Send disabled 条件は submit button / `Ctrl+Enter` / `Cmd+Enter` guard で一致させ、blank / whitespace-only draft の no-op 送信を通さない
 - `runState === "running"` では `Cancel` 主体の既存 UX を維持し、送信不可説明を主表示しない
 - `Details` 展開後の artifact block 背景は `main / sub` の薄い accent を持つ
@@ -214,7 +218,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - Session は character の `main / sub` theme color snapshot を保持し、現在は header title、assistant / pending bubble、composer settings、`Send / Cancel`、artifact block、Session から開く Diff の `titlebar / subbar / pane header` の限定的な accent に使う
 - session は SQLite を正本とする
 - model catalog は DB の active revision を読む
-- message list follow mode は assistantText streaming / pending 更新 / live run step 更新に反応し、表示追従と読み返し位置の維持を両立する
+- message list follow mode は assistantText streaming / pending bubble 更新に反応し、step 更新の追従は `Activity Monitor` 側へ分離する
 
 ## Deliverables
 

@@ -2140,6 +2140,20 @@ button {
   box-shadow: inset 4px 0 0 color-mix(in srgb, var(--character-sub) 78%, transparent);
 }
 
+.pending-run-helper,
+.pending-run-error-note {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.pending-run-helper {
+  color: var(--muted);
+}
+
+.pending-run-error-note {
+  color: #ffd7bc;
+}
+
 .pending-run-indicator {
   padding: 10px 12px;
   border: 1px solid rgba(15, 139, 141, 0.18);
@@ -2172,6 +2186,90 @@ button {
   width: 7px;
   height: 7px;
   background: currentColor;
+}
+
+.activity-monitor-shell {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  margin-top: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 18px;
+  background: rgba(15, 19, 26, 0.9);
+}
+
+.session-page .activity-monitor-shell {
+  border-color: color-mix(in srgb, var(--character-sub) 20%, rgba(203, 213, 225, 0.14));
+  background: color-mix(in srgb, var(--character-sub-soft) 18%, rgba(12, 18, 27, 0.96));
+  box-shadow: inset 4px 0 0 color-mix(in srgb, var(--character-sub) 72%, transparent);
+}
+
+.activity-monitor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.activity-monitor-head-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.activity-monitor-head-copy p,
+.activity-monitor-empty {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.activity-monitor-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.16);
+  color: #c8f1ff;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.activity-monitor-badge.has-unread {
+  background: rgba(251, 191, 36, 0.18);
+  color: #ffe7bf;
+}
+
+.activity-monitor-badge.is-paused {
+  background: rgba(148, 163, 184, 0.16);
+  color: #dbe3ee;
+}
+
+.activity-monitor-follow-button {
+  flex: 0 0 auto;
+  padding: 9px 12px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+}
+
+.activity-monitor-body {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  max-height: clamp(140px, 28vh, 320px);
+  overflow: auto;
+  scrollbar-gutter: stable;
+  padding-right: 4px;
+}
+
+.activity-monitor-empty {
+  color: var(--muted);
 }
 
 .typing-dots {
@@ -4308,6 +4406,11 @@ button {
 
   .session-window-controls {
     width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .activity-monitor-head {
     flex-direction: column;
     align-items: stretch;
   }
