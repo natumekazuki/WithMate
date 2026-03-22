@@ -108,6 +108,8 @@ npm run typecheck
 
 - `docs/design/product-direction.md`
   - WithMate の優先順位と価値仮説
+- `docs/design/coding-agent-capability-matrix.md`
+  - coding agent wrapper 観点の対応機能一覧と current status
 - `docs/design/window-architecture.md`
   - Window ごとの責務分離
 - `docs/design/desktop-ui.md`
@@ -141,3 +143,6 @@ npm run typecheck
 
 - ルート `README.md` は人間向けの入口として維持します
 - 詳細仕様は `docs/` を正本とし、構造化された AI 向け情報は `.ai_context/` に集約する想定です
+- coding agent の対応状況を確認するときは `docs/design/coding-agent-capability-matrix.md` を最初に見ます
+- coding agent capability に影響する実装や改修では、同じ task の中で `docs/design/coding-agent-capability-matrix.md` を更新します
+- provider ごとの詳細設計は `docs/design/provider-adapter.md`、`docs/design/codex-approval-research.md`、`docs/design/slash-command-integration.md`、`docs/design/skill-command-design.md` を参照します

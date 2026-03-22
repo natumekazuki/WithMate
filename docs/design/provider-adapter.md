@@ -242,3 +242,5 @@ diff 本文は turn items からは直接取れないため、MVP では Main Pr
 - `docs/design/audit-log.md`
 - `docs/design/slash-command-integration.md`
 - `docs/design/skill-command-design.md`
+- `docs/design/coding-agent-capability-matrix.md`
+- `docs/design/codex-capability-matrix.md`
