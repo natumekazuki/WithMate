@@ -18,7 +18,7 @@
 - 実施内容: `src/App.tsx` を更新し、SessionWindow を `main split + action dock` へ再構成した。右 pane は `Latest Command` 1 件表示へ簡素化し、`Action Dock` を full-width で下段に配置した
 - 検証: `npm run typecheck`
 - メモ: `Latest Command` は live step と terminal Audit Log の両方を source にして復元できるようにした
-- 関連コミット: なし
+- 関連コミット: `bf28593 feat(session): rework window layout around latest command`
 
 ### 0003
 
@@ -27,7 +27,7 @@
 - 実施内容: `docs/design/desktop-ui.md`、`docs/design/session-live-activity-monitor.md`、`docs/design/session-window-layout-redesign.md`、`docs/manual-test-checklist.md` を現仕様へ更新した。`.ai_context/` と `README.md` は更新不要と判断した
 - 検証: `npm run typecheck`, `npm run build`
 - メモ: `.ai_context/` と `README.md` を更新しなかった理由は、SessionWindow の表示面再配置であり公開仕様や provider / persistence の説明変更ではないため
-- 関連コミット: なし
+- 関連コミット: `bf28593 feat(session): rework window layout around latest command`
 
 ## Open Items
 

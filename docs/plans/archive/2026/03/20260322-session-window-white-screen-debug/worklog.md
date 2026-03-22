@@ -18,7 +18,7 @@
 - 実施内容: `src/App.tsx` の wide layout 追加箇所を確認し、null ガード前の `selectedSession.runState` 参照が白画面を引き起こしていることを特定した。`isSelectedSessionRunning` を optional chain ベースに変更して初期描画で落ちないよう修正した
 - 検証: `npm run typecheck`, `npm run build`
 - メモ: DB 関連ファイルや schema は今回未変更で、白画面の直接原因ではなかった
-- 関連コミット: なし
+- 関連コミット: `bf28593 feat(session): rework window layout around latest command`
 
 ## Open Items
 

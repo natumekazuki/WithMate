@@ -17,7 +17,7 @@
 
 ## Related Commits
 
-- なし
+- `bf28593 feat(session): rework window layout around latest command`
 
 ## Rollback Guide
 

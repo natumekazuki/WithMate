@@ -24,7 +24,7 @@
   - splitter 幅の永続化は今回見送り、renderer local state に留めた
   - `.ai_context/` と `README.md` は今回の layout 実装では更新不要と判断した
   - `npm run build` は sandbox の `spawn EPERM` を避けるため権限付きで再実行した
-- 関連コミット: なし
+- 関連コミット: `bf28593 feat(session): rework window layout around latest command`
 
 ## Open Items
 
