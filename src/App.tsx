@@ -249,13 +249,12 @@ function buildComposerSendabilityState({
 
   const primaryFeedback =
     normalizedBlockedReason
-    || normalizedInputErrors[0]
-    || (isBlankDraft ? "メッセージを入力してください。" : "");
+    || normalizedInputErrors[0];
   const secondaryFeedback = normalizedBlockedReason ? normalizedInputErrors : normalizedInputErrors.slice(1);
   const feedbackTone = primaryFeedback
     ? normalizedBlockedReason || normalizedInputErrors.length > 0
       ? "blocked"
-      : "helper"
+      : null
     : null;
 
   return {
@@ -571,6 +570,8 @@ export default function App() {
   const [isContextRailResizing, setIsContextRailResizing] = useState(false);
   const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
+  const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
+  const [isActionDockPinnedExpanded, setIsActionDockPinnedExpanded] = useState(false);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const activityMonitorRef = useRef<HTMLDivElement | null>(null);
   const sessionWorkbenchRef = useRef<HTMLDivElement | null>(null);
@@ -933,6 +934,8 @@ export default function App() {
     setAuditLogsState({ ownerSessionId: selectedSessionId, entries: [] });
     setLiveRunState({ ownerSessionId: selectedSessionId, state: null });
     setIsRetryDraftReplacePending(false);
+    setIsHeaderExpanded(false);
+    setIsActionDockPinnedExpanded(false);
   }, [selectedSessionId]);
 
   useEffect(() => {
@@ -1306,6 +1309,27 @@ export default function App() {
   const isRetryActionDisabled =
     !retryBanner || !lastUserMessage || !!composerBlockedReason || selectedSession?.runState === "running";
   const isRetryEditDisabled = isRetryActionDisabled || isComposerDisabled;
+  const shouldForceActionDockExpanded =
+    isSkillPickerOpen
+    || workspacePathMatches.length > 0
+    || isRetryDraftReplacePending
+    || !!retryBanner
+    || composerSendability.feedbackTone === "blocked";
+  const isActionDockExpanded = isActionDockPinnedExpanded || shouldForceActionDockExpanded;
+  const canCollapseActionDock = !shouldForceActionDockExpanded;
+  const isSessionHeaderExpanded = isHeaderExpanded || isEditingTitle;
+  const actionDockCompactPreview = useMemo(() => {
+    const normalizedDraft = draft.replace(/\s+/g, " ").trim();
+    if (normalizedDraft) {
+      return normalizedDraft.length > 84 ? `${normalizedDraft.slice(0, 84)}…` : normalizedDraft;
+    }
+
+    if (selectedSession?.runState === "running") {
+      return "実行中";
+    }
+
+    return "下書きなし";
+  }, [draft, selectedSession?.runState]);
   const retryBannerIdentity = useMemo(() => {
     if (!retryBanner || !selectedSession || !lastUserMessage) {
       return null;
@@ -1496,6 +1520,7 @@ export default function App() {
     const nextDraft = trimmedDraft ? `${snippet}\n\n${trimmedDraft}` : `${snippet}\n`;
     const nextCaret = nextDraft.length;
 
+    setIsActionDockPinnedExpanded(true);
     setDraft(nextDraft);
     setComposerCaret(nextCaret);
     setIsSkillPickerOpen(false);
@@ -1540,6 +1565,7 @@ export default function App() {
     }
 
     setTitleDraft(selectedSession.taskTitle);
+    setIsHeaderExpanded(true);
     setIsEditingTitle(true);
   };
 
@@ -1645,6 +1671,7 @@ export default function App() {
     const textarea = composerTextareaRef.current;
     const nextDraft = messageText;
     const nextCaret = nextDraft.length;
+    setIsActionDockPinnedExpanded(true);
     setDraft(nextDraft);
     setComposerCaret(nextCaret);
     setWorkspacePathMatches([]);
@@ -1688,6 +1715,41 @@ export default function App() {
 
   const handleCloseWindow = () => {
     window.close();
+  };
+
+  const handleToggleHeaderExpanded = () => {
+    if (isEditingTitle) {
+      return;
+    }
+
+    setIsHeaderExpanded((current) => !current);
+  };
+
+  const handleExpandActionDock = (options?: { focusComposer?: boolean }) => {
+    setIsActionDockPinnedExpanded(true);
+
+    if (!options?.focusComposer) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      const textarea = composerTextareaRef.current;
+      if (!textarea) {
+        return;
+      }
+
+      textarea.focus();
+      const caret = textarea.value.length;
+      textarea.setSelectionRange(caret, caret);
+    });
+  };
+
+  const handleCollapseActionDock = () => {
+    if (!canCollapseActionDock) {
+      return;
+    }
+
+    setIsActionDockPinnedExpanded(false);
   };
 
   const handleOpenInlinePath = async (target: string) => {
@@ -1993,46 +2055,61 @@ export default function App() {
 
   return (
     <div className="page-shell session-page" style={sessionThemeStyle}>
-      <header className="panel session-window-bar rise-1">
-        <div className="session-title-shell">
-          {isEditingTitle ? (
-            <label className="session-title-editor">
-              <input value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} onKeyDown={handleTitleInputKeyDown} />
-              <div className="session-title-actions">
-                <button className="drawer-toggle compact" type="button" onClick={() => void handleSaveTitle()}>
-                  Save
-                </button>
-                <button className="drawer-toggle compact secondary" type="button" onClick={handleCancelTitleEdit}>
-                  Cancel
-                </button>
-              </div>
-            </label>
-          ) : (
-            <>
-              <span className="session-window-title session-title-accent">{selectedSession.taskTitle}</span>
-              <div className="session-title-actions">
-              <button className="drawer-toggle compact secondary" type="button" onClick={handleStartTitleEdit} disabled={selectedSession.runState === "running"}>
+      <header className={`session-window-bar session-top-bar rise-1${isSessionHeaderExpanded ? " is-expanded" : ""}`}>
+        <div className="session-top-bar-row">
+          <div className="session-title-shell">
+            <span className="session-window-title session-title-accent">{selectedSession.taskTitle}</span>
+          </div>
+          <div className="session-window-controls">
+            <button className="drawer-toggle compact secondary" type="button" onClick={() => setAuditLogsOpen(true)}>
+              Audit Log
+            </button>
+            {!isEditingTitle ? (
+              <button
+                className="drawer-toggle compact secondary"
+                type="button"
+                onClick={handleToggleHeaderExpanded}
+                aria-expanded={isSessionHeaderExpanded}
+              >
+                {isSessionHeaderExpanded ? "Hide" : "More"}
+              </button>
+            ) : null}
+            <button className="drawer-toggle compact" type="button" onClick={handleCloseWindow}>
+              Close
+            </button>
+          </div>
+        </div>
+
+        {isSessionHeaderExpanded ? (
+          <div className="session-top-bar-drawer">
+            {isEditingTitle ? (
+              <label className="session-title-editor">
+                <input value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} onKeyDown={handleTitleInputKeyDown} />
+                <div className="session-title-actions">
+                  <button className="drawer-toggle compact" type="button" onClick={() => void handleSaveTitle()}>
+                    Save
+                  </button>
+                  <button className="drawer-toggle compact secondary" type="button" onClick={handleCancelTitleEdit}>
+                    Cancel
+                  </button>
+                </div>
+              </label>
+            ) : (
+              <div className="session-top-bar-manage">
+                <button className="drawer-toggle compact secondary" type="button" onClick={handleStartTitleEdit} disabled={selectedSession.runState === "running"}>
                   Rename
                 </button>
                 <button className="drawer-toggle compact danger" type="button" onClick={() => void handleDeleteSession()} disabled={selectedSession.runState === "running"}>
                   Delete
                 </button>
               </div>
-            </>
-          )}
-        </div>
-        <div className="session-window-controls">
-          <button className="drawer-toggle compact secondary" type="button" onClick={() => setAuditLogsOpen(true)}>
-            Audit Log
-          </button>
-          <button className="drawer-toggle" type="button" onClick={handleCloseWindow}>
-            Close Window
-          </button>
-        </div>
+            )}
+          </div>
+        ) : null}
       </header>
 
       <section className="content-grid session-content-grid">
-        <section className="panel chat-panel rise-3">
+        <section className="chat-panel session-work-surface rise-3">
           <div className="session-workbench" ref={sessionWorkbenchRef} style={sessionWorkbenchStyle}>
             <div className="session-main-grid">
               <div className="session-message-column">
@@ -2270,8 +2347,10 @@ export default function App() {
               </aside>
             </div>
 
-            <div className="session-action-dock">
-              <div className="composer">
+            <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
+              {isActionDockExpanded ? (
+                <>
+                  <div className="composer">
             {retryBanner ? (
               <div className={`resume-banner retry-banner ${retryBanner.kind}`}>
                 <div className="resume-banner-head">
@@ -2329,17 +2408,19 @@ export default function App() {
               </div>
             ) : null}
             <div className="composer-attachments-toolbar">
-              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickFile()} disabled={selectedSession.runState === "running" || !!composerBlockedReason}>
-                File
-              </button>
-              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickFolder()} disabled={selectedSession.runState === "running" || !!composerBlockedReason}>
-                Folder
-              </button>
-              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickImage()} disabled={selectedSession.runState === "running" || !!composerBlockedReason}>
-                Image
-              </button>
+              <div className="composer-attachment-button-group" role="group" aria-label="添付">
+                <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickFile()} disabled={selectedSession.runState === "running" || !!composerBlockedReason}>
+                  File
+                </button>
+                <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickFolder()} disabled={selectedSession.runState === "running" || !!composerBlockedReason}>
+                  Folder
+                </button>
+                <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickImage()} disabled={selectedSession.runState === "running" || !!composerBlockedReason}>
+                  Image
+                </button>
+              </div>
               <button
-                className={`drawer-toggle compact secondary${isSkillPickerOpen ? " is-open" : ""}`}
+                className={`drawer-toggle compact secondary composer-skill-button${isSkillPickerOpen ? " is-open" : ""}`}
                 type="button"
                 onClick={() => setIsSkillPickerOpen((current) => !current)}
                 disabled={selectedSession.runState === "running" || !!composerBlockedReason}
@@ -2348,6 +2429,11 @@ export default function App() {
               >
                 Skill
               </button>
+              {canCollapseActionDock ? (
+                <button className="drawer-toggle compact secondary composer-hide-button" type="button" onClick={handleCollapseActionDock}>
+                  Hide
+                </button>
+              ) : null}
             </div>
             {isSkillPickerOpen ? (
               <div
@@ -2429,6 +2515,7 @@ export default function App() {
                   setDraft(event.target.value);
                   setComposerCaret(event.target.selectionStart ?? event.target.value.length);
                 }}
+                onFocus={() => setIsActionDockPinnedExpanded(true)}
                 onKeyDown={handleComposerKeyDown}
                 onSelect={(event) => setComposerCaret(event.currentTarget.selectionStart ?? 0)}
                 onCompositionStart={() => setIsComposerImeComposing(true)}
@@ -2541,8 +2628,42 @@ export default function App() {
                   ))}
                 </select>
               </div>
-            </div>
-              </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="session-action-dock-compact-row">
+                  <button
+                    className="session-action-dock-compact-preview"
+                    type="button"
+                    onClick={() => handleExpandActionDock({ focusComposer: true })}
+                    title={draft.trim() ? draft : "下書きなし"}
+                  >
+                    <span className="session-action-dock-compact-label">Draft</span>
+                    <span className={`session-action-dock-compact-text${draft.trim() ? " has-draft" : ""}`}>
+                      {actionDockCompactPreview}
+                    </span>
+                  </button>
+                  <div className="session-action-dock-compact-meta" aria-label="draft summary">
+                    {composerPreview.attachments.length > 0 ? (
+                      <span className="session-action-dock-compact-badge">{`添付 ${composerPreview.attachments.length}`}</span>
+                    ) : null}
+                    {selectedSession.runState === "running" ? (
+                      <span className="session-action-dock-compact-badge running">RUN</span>
+                    ) : null}
+                  </div>
+                  <div className="session-action-dock-compact-actions">
+                    <button
+                      className={selectedSession.runState === "running" ? "danger session-send-button" : "session-send-button"}
+                      type="button"
+                      onClick={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
+                      disabled={selectedSession.runState !== "running" && isSendDisabled}
+                    >
+                      {selectedSession.runState === "running" ? "Cancel" : "Send"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </section>

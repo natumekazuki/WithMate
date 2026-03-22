@@ -106,12 +106,22 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `Work Chat`
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
-- wide desktop (`1920x1080` baseline) では Session 本体を「中央 2 分割 + 下段 Action Dock」にする
+- wide desktop (`1920x1080` baseline) では Session 本体を「`Top Bar + 中央 2 分割 + 下段 Action Dock`」にする
+  - 上段: compact な `Top Bar`
   - 中央左: message list
   - 中央右: `Latest Command`
   - 下段: full-width の `Action Dock`
   - 左右の境界は draggable splitter で調整できる
   - narrow width では `message list -> Latest Command -> Action Dock` の縦 stack へ戻す
+- `Top Bar`
+  - default は compact
+  - 常時表示するのは `title / Audit Log / More / Close`
+  - `Rename / Delete` は `More` で展開した時だけ表示する
+- `Action Dock`
+  - compact / expanded の 2 状態を持つ
+  - compact では draft preview 全体を reopen hit area にし、`Send / Cancel` だけを残す
+  - retry banner、skill picker、`@path` 候補、blocked feedback がある時は expanded を維持する
+- work surface は外側 card を持たず、padding / gap を抑えて message viewport を優先する
 - message list は条件付き follow mode で動かす
   - viewport bottom gap が 80px 以下のときは末尾追従を許可する
   - 80px を超えて上へ読んでいる間は位置を維持する
@@ -140,6 +150,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
     - approval は `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording で表示する
   - turn 内の `agent_message / command_execution / file_change / reasoning` を arrival 順に並べる operation timeline
 - composer 上の添付 toolbar (`File / Folder / Image`)
+- `File / Folder / Image` は attachment group として並べ、`Skill` は別カテゴリの単独 button として区別する
 - composer の attachment chip
   - basename を主表示にし、file / folder / image の kind と `ワークスペース内` / `ワークスペース外` を即判別できる
   - 補足 path は副次表示へ回し、long path でも basename を先に読める
@@ -156,9 +167,10 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - assistant / pending bubble は `sub` ベースの薄い accent を持つ
 - `composer settings` の背景は `sub` ベースの薄い accent を持つ
 - `Send / Cancel` は character `main`
-- sendability 判定は `src/App.tsx` の単一導出に寄せ、`sessionExecutionBlockedReason` / `composerPreview.errors` / blank draft helper を Send 近傍の単一 feedback area で扱う
+- sendability 判定は `src/App.tsx` の単一導出に寄せ、`sessionExecutionBlockedReason` / `composerPreview.errors` を Send 近傍の単一 feedback area で扱う
 - 実行中の latest command 監視の詳細は `docs/design/session-live-activity-monitor.md` を参照する
 - wide desktop の再配置詳細は `docs/design/session-window-layout-redesign.md` を参照する
+- chrome 削減の現仕様は `docs/design/session-window-chrome-reduction.md` を参照する
 - Send disabled 条件は submit button / `Ctrl+Enter` / `Cmd+Enter` guard で一致させ、blank / whitespace-only draft の no-op 送信を通さない
 - `runState === "running"` では `Cancel` 主体の既存 UX を維持し、送信不可説明を主表示しない
 - `Details` 展開後の artifact block 背景は `main / sub` の薄い accent を持つ

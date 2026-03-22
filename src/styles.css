@@ -84,6 +84,13 @@ button {
   appearance: none;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  box-shadow: none;
+  pointer-events: none;
+}
+
 .page-shell {
   display: grid;
   gap: 20px;
@@ -112,6 +119,8 @@ button {
 
 .session-page {
   grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px 16px 16px;
   --surface: rgba(25, 29, 38, 0.94);
   --surface-strong: rgba(28, 33, 43, 0.98);
   --surface-deep: rgba(18, 22, 30, 0.98);
@@ -137,6 +146,11 @@ button {
   background: rgba(21, 26, 35, 0.92);
 }
 
+.session-page .session-top-bar,
+.session-page .session-work-surface {
+  box-shadow: none;
+}
+
 .session-page .drawer-toggle,
 .session-page .browse-button {
   background: rgba(255, 255, 255, 0.06);
@@ -153,8 +167,8 @@ button {
   color: #fecaca;
 }
 
-.session-page .drawer-toggle:hover,
-.session-page .browse-button:hover {
+.session-page .drawer-toggle:hover:not(:disabled),
+.session-page .browse-button:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.1);
 }
 
@@ -239,6 +253,17 @@ button {
   overflow: hidden;
 }
 
+.session-page .session-top-bar {
+  padding: 10px 14px;
+  overflow: visible;
+}
+
+.session-page .session-work-surface {
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
 .app-badge {
   display: grid;
   grid-template-columns: 68px minmax(0, 1fr) auto;
@@ -310,7 +335,8 @@ button {
 .artifact-toggle,
 .diff-button,
 .diff-close,
-.composer-box button {
+.composer-box button,
+.session-action-dock-compact-actions button {
   border: 0;
   border-radius: 999px;
   font-weight: 700;
@@ -1525,6 +1551,37 @@ button {
   background: var(--surface-strong);
 }
 
+.session-top-bar {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 18px;
+  background: rgba(12, 17, 25, 0.76);
+  backdrop-filter: blur(14px);
+}
+
+.session-top-bar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+}
+
+.session-top-bar-drawer {
+  display: grid;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(203, 213, 225, 0.12);
+}
+
+.session-top-bar-manage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .session-title-shell {
   display: flex;
   align-items: center;
@@ -1912,10 +1969,14 @@ button {
   grid-template-rows: minmax(0, 1fr);
 }
 
+.session-work-surface {
+  min-height: 0;
+}
+
 .session-workbench {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
-  gap: 18px;
+  gap: 12px;
   height: 100%;
   min-height: 0;
 }
@@ -1923,7 +1984,7 @@ button {
 .session-main-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 12px minmax(360px, var(--session-context-rail-width, 420px));
-  gap: 18px;
+  gap: 14px;
   min-height: 0;
   min-width: 0;
 }
@@ -1946,15 +2007,107 @@ button {
 .session-action-dock {
   display: grid;
   gap: 12px;
-  padding: 16px 18px 18px;
+  padding: 12px 14px 14px;
   border: 1px solid rgba(203, 213, 225, 0.12);
-  border-radius: 20px;
+  border-radius: 18px;
   background: rgba(10, 14, 22, 0.94);
 }
 
 .session-page .session-action-dock {
   border-color: color-mix(in srgb, var(--character-sub) 18%, rgba(203, 213, 225, 0.14));
   background: color-mix(in srgb, var(--character-sub-soft) 10%, rgba(8, 12, 20, 0.96));
+}
+
+.session-action-dock.compact {
+  gap: 0;
+  padding: 8px 10px;
+}
+
+.session-action-dock-compact-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.session-action-dock-compact-preview {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-action-dock-compact-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.session-action-dock-compact-text {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-action-dock-compact-text.has-draft {
+  color: var(--ink);
+}
+
+.session-action-dock-compact-meta,
+.session-action-dock-compact-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.session-action-dock-compact-meta {
+  justify-content: flex-end;
+}
+
+.session-action-dock-compact-actions .drawer-toggle,
+.session-action-dock-compact-actions .session-send-button {
+  min-height: 40px;
+  padding: 10px 14px;
+}
+
+.session-action-dock-compact-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.session-action-dock-compact-badge.running {
+  background: rgba(56, 189, 248, 0.16);
+  color: #c8f1ff;
+}
+
+.session-page .session-action-dock-compact-actions .session-send-button {
+  background: var(--character-main);
+  color: var(--character-main-ink);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--character-main) 28%, transparent);
+}
+
+.session-page .session-action-dock-compact-actions .session-send-button.danger {
+  background: color-mix(in srgb, #f87171 82%, var(--character-main));
+  color: #fff5f5;
+  box-shadow: 0 10px 22px rgba(248, 113, 113, 0.24);
 }
 
 .session-workbench-splitter {
@@ -3353,14 +3506,43 @@ button {
 .composer-attachments-toolbar {
   display: flex;
   gap: 8px;
+  align-items: center;
   flex-wrap: wrap;
   margin-bottom: 10px;
+}
+
+.composer-attachment-button-group {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+}
+
+.composer-attachment-button-group .drawer-toggle {
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.composer-attachment-button-group .drawer-toggle + .drawer-toggle {
+  border-left: 1px solid rgba(203, 213, 225, 0.12);
+}
+
+.composer-skill-button {
+  border-color: color-mix(in srgb, var(--character-main) 22%, rgba(203, 213, 225, 0.14));
+  background: color-mix(in srgb, var(--character-main-soft) 22%, rgba(255, 255, 255, 0.06));
 }
 
 .composer-attachments-toolbar .drawer-toggle.is-open {
   border-color: color-mix(in srgb, var(--character-main) 36%, rgba(203, 213, 225, 0.22));
   background: color-mix(in srgb, var(--character-main-soft) 24%, rgba(255, 255, 255, 0.08));
   color: var(--ink);
+}
+
+.composer-hide-button {
+  margin-left: auto;
 }
 
 .composer-attachment-list {
@@ -4623,6 +4805,19 @@ button {
     padding: 18px;
   }
 
+  .session-page {
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .session-page .session-top-bar {
+    padding: 10px 12px;
+  }
+
+  .session-page .session-work-surface {
+    padding: 0;
+  }
+
   .app-badge,
   .session-card,
   .character-card,
@@ -4654,6 +4849,20 @@ button {
     width: 100%;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .session-top-bar-row,
+  .session-top-bar-manage,
+  .session-action-dock-compact-row,
+  .session-action-dock-compact-actions {
+    width: 100%;
+    grid-template-columns: 1fr;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .session-action-dock-compact-meta {
+    justify-content: flex-start;
   }
 
   .command-monitor-card-head {

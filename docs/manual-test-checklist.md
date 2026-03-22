@@ -49,9 +49,12 @@ npm run electron:start
 | MT-021 | Character editor title theme | Home から Character Editor を開く | header title の文字色が現在のキャラ `main` 色で表示される |
 | MT-022 | Session theme accent | Session Window を開く | header title、assistant / pending bubble、composer settings、`Send / Cancel`、Details 展開後の artifact block に character theme の accent が反映され、`user-bubble` は neutral tone を維持する |
 | MT-023 | Diff theme accent | Session から Diff を開く | `titlebar / subbar / pane header` に character theme の薄い accent が反映され、`Before / After` の文字が背景色に埋もれず読める |
-| MT-023A | Session wide layout baseline | `1920x1080` 前後の幅で Session Window を開く | 中央が左右 2 分割され、左に message list、右に `Latest Command`、下段に full-width の `Action Dock` が表示される |
+| MT-023A | Session wide layout baseline | `1920x1080` 前後の幅で Session Window を開く | 上段に compact な `Top Bar`、中央に左右 2 分割、下段に `Action Dock` が表示される |
 | MT-023B | Session splitter resize | wide desktop 状態で左右境界をドラッグする | message list 面と `Latest Command` pane の幅が追従し、極端に寄せても chat の最小可読幅と右 pane の最小幅を下回らない |
-| MT-023C | Session action dock baseline | Session Window を開き、textarea / attachment / skill / approval / model / depth / `Send` の位置関係を見る | これらが左ペイン内ではなく下段 `Action Dock` にまとまり、左右ペインの下に full-width で表示される |
+| MT-023C | Session action dock baseline | Session Window を開き、textarea / attachment / skill / approval / model / depth / `Send` の位置関係を見る | これらが左ペイン内ではなく下段 `Action Dock` にまとまり、expanded 時だけ full editor と設定群が表示される。`File / Folder / Image` は attachment group、`Skill` は別ボタンとして区別される |
+| MT-023D | Session top bar compact | Session Window を開き、必要なら `More` を開閉する | `Top Bar` は 1 行の strip として表示され、常時は `title / Audit Log / More / Close` だけが見え、`Rename / Delete` は `More` 展開時だけ表示される |
+| MT-023E | Session action dock compact/expand | idle で draft 空の Session Window を開き、draft preview 押下 / `Hide` / textarea focus を試す | 初期状態は compact で、draft preview または textarea focus で expanded に戻り、`Hide` で再度 compact にできる |
+| MT-023F | Session action dock forced expand | retry banner、skill picker、`@path` 候補、blocked feedback のいずれかが出る状態を作る | その間は `Action Dock` が compact に落ちず、必要な操作要素が隠れない |
 | MT-024 | Latest command running state | `command_execution` を含む run を実行する | 右 pane に実行中または直前の command 1 件だけが表示され、raw command、status、source が読める |
 | MT-025 | Latest command terminal state | completed / failed / canceled の run をそれぞれ確認する | run 完了後も right pane に直近 run の最後の command が残り、status が terminal state に応じて変わる |
 | MT-026 | Latest command visibility with assistantText | assistantText streaming と `command_execution` が同時にある run を実行する | pending bubble は本文だけを表示し、right pane は command 1 件だけを表示する。command 一覧が会話本文を押し流さない |
@@ -76,7 +79,7 @@ npm run electron:start
 | MT-044 | Retry banner non-regression | retry banner が出る session で message list follow banner、pending indicator persistence、composer layout を確認する | retry banner 追加で不要なスクロールジャンプや composer 崩れが起きず、`新着あり` / `読み返し中` banner と pending indicator の既存挙動も維持される |
 | MT-045 | Retry banner no last user message | user message がまだ 0 件の session、または user message を持たない復旧ケースを開く | interrupted / failed / idle+canceled 判定相当でも `lastUserMessage` がなければ retry banner は出ない |
 | MT-046 | Session boundary no-bleed after switch | session A で canceled banner または pending / live run を表示したまま、Home か session 一覧から session B へ切り替え、切替直後の composer / message list / Audit Log を確認する | session B では retry banner 判定、`停止地点` summary、pending / live run 表示、Audit Log が session A の値を一瞬も引きずらず、session B 自身の state だけを表示する |
-| MT-047 | Composer sendability feedback 統合 | provider 無効化、壊れた `@path`、blank / whitespace draft をそれぞれ作り、composer を確認する | `sessionExecutionBlockedReason` / 添付 error / blank helper が Send 近傍の単一 feedback area に集約され、session-level reason が最優先、blank helper は他理由がない時だけ出る |
+| MT-047 | Composer sendability feedback 統合 | provider 無効化、壊れた `@path`、blank / whitespace draft をそれぞれ作り、composer を確認する | `sessionExecutionBlockedReason` / 添付 error が Send 近傍の単一 feedback area に集約される。blank / whitespace draft は helper 文言を出さず、`Send` disabled だけになる |
 | MT-048 | Composer send guard 一致 | blank / whitespace draft のまま Send、`Ctrl+Enter`、`Cmd+Enter` をそれぞれ試し、続けて有効な draft で再試行する | blank / whitespace draft は button と shortcut の両方で送信されず、textarea 内で no-op turn も作られない。有効な draft では button と shortcut の両方で同じ条件で送信できる |
 | MT-049 | Running composer priority | `runState === "running"` の間に composer を確認する | composer では `Cancel` が主表示のまま残り、sendability feedback が主表示に割り込まない。retry banner も出ない |
 | MT-050 | Attachment chip readability | workspace 内 file / folder / image と workspace 外 path をそれぞれ `@path` で添付し、長い path も含めて composer を確認する | attachment chip が kind、basename、`ワークスペース内` / `ワークスペース外` を見分けやすく表示し、長い path でも basename が先に読める |

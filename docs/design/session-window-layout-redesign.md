@@ -4,7 +4,8 @@
 
 - 状態: current design
 - 前提: `1920x1080` のディスプレイで `Session Window` をフル表示した利用を基準にする
-- 実装状況: `conversation + latest command` の中央 2 分割、下段 `Action Dock`、splitter を実装済み
+- 実装状況: `conversation + latest command` の中央 2 分割、下段 `Action Dock`、splitter、compact な `Top Bar` を実装済み
+- chrome 削減を含む現仕様は `docs/design/session-window-chrome-reduction.md` を参照する
 
 ## Goal
 
@@ -29,8 +30,8 @@ flowchart TB
 
 ### Window Frame
 
-- header は 1 行固定で管理操作に集中させる
-- body は `main split + action dock` の 2 段構成にする
+- 上段に `Top Bar`、下段に `main split + action dock` を置く
+- `Top Bar` は thin strip とし、`Rename / Delete` は展開時だけ見せる
 - `main split` は `minmax(0, 1.75fr) 420px` を第一候補にする
 - 会話面と right pane の間には draggable splitter を置く
 - splitter 比率は renderer local state で保持し、永続化は follow-up にする
@@ -57,6 +58,9 @@ flowchart TB
 - body 最下段の full-width 操作面
 - `retry banner`、attachment / skill、textarea、`Send / Cancel`、`Approval / Model / Depth` をまとめる
 - 入力操作はこの面だけで完結し、左右ペインには混ぜない
+- compact / expanded の 2 状態を持つ
+- compact では draft preview 全体を reopen hit area にし、`Send / Cancel` だけを残す
+- skill picker、`@path` 候補、retry conflict、blocked feedback がある間は expanded を維持する
 
 ## Responsive Rules
 
@@ -87,3 +91,4 @@ flowchart TB
 
 - `docs/design/desktop-ui.md`
 - `docs/design/session-live-activity-monitor.md`
+- `docs/design/session-window-chrome-reduction.md`
