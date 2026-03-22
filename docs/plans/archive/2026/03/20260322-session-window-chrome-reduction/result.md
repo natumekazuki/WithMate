@@ -16,7 +16,7 @@
 
 ## Related Commits
 
-- なし
+- `c1f8417 feat(session): reduce session window chrome`
 
 ## Rollback Guide
 
