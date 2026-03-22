@@ -30,50 +30,15 @@ import {
   type SnapshotCaptureStats,
   type WorkspaceSnapshot,
 } from "./snapshot-ignore.js";
-
-type RunSessionTurnInput = {
-  session: Session;
-  character: CharacterProfile;
-  providerCatalog: ModelCatalogProvider;
-  userMessage: string;
-  appSettings: AppSettings;
-  attachments: ComposerAttachment[];
-  signal?: AbortSignal;
-};
-
-type RunSessionTurnProgressHandler = (state: LiveSessionRunState) => void | Promise<void>;
-
-type RunSessionTurnResult = {
-  threadId: string | null;
-  assistantText: string;
-  artifact?: MessageArtifact;
-  systemPromptText: string;
-  inputPromptText: string;
-  composedPromptText: string;
-  operations: AuditLogOperation[];
-  rawItemsJson: string;
-  usage: AuditLogUsage | null;
-};
-
-export class ProviderTurnError extends Error {
-  readonly partialResult: RunSessionTurnResult;
-  readonly canceled: boolean;
-
-  constructor(message: string, partialResult: RunSessionTurnResult, canceled: boolean) {
-    super(message);
-    this.name = "ProviderTurnError";
-    this.partialResult = partialResult;
-    this.canceled = canceled;
-  }
-}
-
-type PromptComposition = {
-  systemPromptText: string;
-  inputPromptText: string;
-  composedPromptText: string;
-  imagePaths: string[];
-  additionalDirectories: string[];
-};
+import { composeProviderPrompt, isCanceledProviderMessage } from "./provider-prompt.js";
+import {
+  ProviderTurnError,
+  type ProviderPromptComposition,
+  type ProviderTurnAdapter,
+  type RunSessionTurnInput,
+  type RunSessionTurnProgressHandler,
+  type RunSessionTurnResult,
+} from "./provider-runtime.js";
 const MAX_DIFF_MATRIX_CELLS = 2_000_000;
 
 function summarizeChangedFile(kind: ChangedFile["kind"], filePath: string): string {
@@ -719,49 +684,12 @@ async function buildArtifact(
   };
 }
 
-function composePrompt(input: RunSessionTurnInput): PromptComposition {
-  const systemSections = [
-    input.appSettings.systemPromptPrefix.trim(),
-    input.character.roleMarkdown.trim() || "キャラクター定義は未設定。",
-  ].filter((section) => section.trim().length > 0);
-
-  const systemPromptBody = systemSections.join("\n\n");
-  const systemPromptText = systemPromptBody ? `# System Prompt\n\n${systemPromptBody}` : "";
-  const referencedImages = input.attachments.filter((attachment) => attachment.kind === "image");
-  const inputSections: string[] = [];
-
-  inputSections.push(input.userMessage.trim());
-  const inputPromptBody = inputSections.join("\n\n");
-  const inputPromptText = inputPromptBody ? `# User Input Prompt\n\n${inputPromptBody}` : "";
-  const composedPromptText = [systemPromptText, inputPromptText].filter((section) => section.trim().length > 0);
-
-  const additionalDirectories = Array.from(
-    new Set(
-      input.attachments
-        .filter((attachment) => attachment.isOutsideWorkspace && attachment.kind !== "image")
-        .map((attachment) => (attachment.kind === "folder" ? attachment.absolutePath : path.dirname(attachment.absolutePath))),
-    ),
-  ).sort((left, right) => left.localeCompare(right));
-
-  return {
-    systemPromptText,
-    inputPromptText,
-    composedPromptText: composedPromptText.join("\n\n"),
-    imagePaths: referencedImages.map((attachment) => attachment.absolutePath),
-    additionalDirectories,
-  };
-}
-
-function isCanceledProviderMessage(message: string): boolean {
-  return /abort|aborted|cancel|canceled|cancelled/i.test(message);
-}
-
-export class CodexAdapter {
+export class CodexAdapter implements ProviderTurnAdapter {
   private readonly clients = new Map<string, Codex>();
   private readonly threads = new Map<string, { thread: Thread; settingsKey: string }>();
 
-  composePrompt(input: RunSessionTurnInput): PromptComposition {
-    return composePrompt(input);
+  composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
+    return composeProviderPrompt(input);
   }
 
   invalidateSessionThread(sessionId: string): void {
@@ -862,7 +790,7 @@ export class CodexAdapter {
 
   private async buildTurnResult(
     input: RunSessionTurnInput,
-    prompt: PromptComposition,
+    prompt: ProviderPromptComposition,
     items: Map<string, ThreadItem>,
     usage: Usage | null,
     threadId: string | null,

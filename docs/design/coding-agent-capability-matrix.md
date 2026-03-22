@@ -34,8 +34,8 @@
 
 | Capability | WithMate canonical shape | Codex | GitHub Copilot CLI | WithMate current | Notes |
 | --- | --- | --- | --- | --- | --- |
-| 基本 turn 実行 | session から prompt を送って assistant response を得る | 対応 | 対応 | 実装済み | current runtime adapter は Codex のみ |
-| session 再開 | session metadata と provider thread/session id を結びつけて継続する | 対応 | 未確認 | 実装済み | Codex は `threadId` を保持して `resumeThread()` |
+| 基本 turn 実行 | session から prompt を送って assistant response を得る | 対応 | 対応 | 実装済み | current runtime は Codex と Copilot の両 adapter を持つ。Copilot は text-only の minimal turn から開始 |
+| session 再開 | session metadata と provider thread/session id を結びつけて継続する | 対応 | 対応 | 実装済み | Codex は `threadId` を保持して `resumeThread()`、Copilot も `sessionId` を `threadId` として保存し `resumeSession()` する |
 | cancel / interrupted handling | 実行中 turn を止め、UI と audit に canceled/interrupted を残す | 対応 | 未確認 | 実装済み | Copilot 側の中断 surface は別途実測が必要 |
 | retry | canceled/error 後に同じ request を再送する | 対応 | 未確認 | 実装済み | provider native 機能というより wrapper UX |
 | model selection | session ごとに model を選ぶ | 対応 | 対応 | 実装済み | catalog と session metadata に保存 |
@@ -45,10 +45,10 @@
 | image attachment | image を turn input に含める | 対応 | 未確認 | 実装済み | current runtime は Codex `local_image` のみ |
 | skill selection | skill を選び、provider native invocation へ変換する | 対応 | 対応 | 実装済み | Codex は `$skill-name`、Copilot は directive 設計まで |
 | custom agent selection | provider 固有 agent を session metadata へ反映する | 一部対応 | 対応 | 設計済み | Codex の `/agent` は thread switch 寄りで意味が違う |
-| assistant text streaming | turn 完了前の message stream を UI に出す | 対応 | 対応 | 実装済み | current runtime は Codex で shipped |
-| command visibility | 実行中または直前 command を UI で確認できる | 対応 | 未確認 | 実装済み | Session 右 pane の `Latest Command` |
+| assistant text streaming | turn 完了前の message stream を UI に出す | 対応 | 対応 | 実装済み | Codex は `runStreamed()`、Copilot は `assistant.message_delta` を live state へ中継する |
+| command visibility | 実行中または直前 command を UI で確認できる | 対応 | 一部対応 | 実装済み | Session 右 pane の `Latest Command`。Copilot は shell permission / tool event が出た時だけ command を表示する |
 | live step timeline | command 以外の進行 step も細かく可視化する | 対応 | 未確認 | 一部実装 | 現在は情報量を絞って `Latest Command` 優先 |
-| audit log | prompt / operations / raw items / usage を保存する | 対応 | 未確認 | 実装済み | current storage は Codex item schema 前提が強い |
+| audit log | prompt / operations / raw items / usage を保存する | 対応 | 一部対応 | 実装済み | Codex は rich item schema、Copilot は prompt / assistant / raw session events / minimal command operations を保存する |
 | changed files / diff | 変更ファイルと diff を見せる | 一部対応 | 未確認 | 実装済み | current は snapshot diff fallback 前提 |
 | partial result preservation | canceled/failed 時も取得済み text/items を残す | 対応 | 未確認 | 実装済み | current runtime は Codex partial result を保存 |
 | slash command absorption | provider slash command を canonical UI/metadata に吸収する | 一部対応 | 一部対応 | 設計済み | docs はあるが parser 実装は未着手 |

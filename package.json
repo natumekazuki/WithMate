@@ -22,6 +22,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@github/copilot-sdk": "^0.2.0",
     "@openai/codex-sdk": "^0.114.0",
     "ignore": "^7.0.5",
     "react": "^19.2.4",

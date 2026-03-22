@@ -41,7 +41,7 @@
   - `System Prompt Prefix`
   - `# System Prompt` 自動付与の案内
   - `Coding Agent Providers`
-    - provider ごとの enable checkbox
+    - provider 名を左、enable checkbox を右に置いた 1 行 row
   - `Coding Agent Credentials`
     - provider label を維持した credential card
     - `OpenAI API Key (Coding Agent)` 入力

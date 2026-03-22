@@ -54,7 +54,8 @@ MVP では、次の 4 ブロックで十分。
 - `Browse` ボタン
 
 3. `Launch Profile`
-- Provider (`Codex`)
+- Provider
+  - `Coding Agent Providers` で有効な provider だけを候補として出す
 - Character
   - search input
     - `name / description`
@@ -127,6 +128,7 @@ React モックでは次の形がよい。
 - `Launch Panel` 自体は modal dialog で維持できる
 - `Browse` は Electron 実行時に OS の directory picker を開く
 - title は空文字で開き、入力必須
+- provider は launch dialog 内で chip 選択し、enabled provider が 0 件なら start できない
 - `Character` は card で切り替える
 - `Character` は portrait 付きカードで切り替える
 - `Character` には検索入力があり、`name / description` の部分一致で絞り込める
@@ -137,6 +139,7 @@ React モックでは次の形がよい。
 - model / depth は launch dialog には出さず、session 作成時に default 値を入れる
 - approval mode は launch dialog では選ばず、provider-neutral 3 mode のうち default `safety` を使って session を作る
 - session 作成直後の UI 表示も `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording に揃える
+- `provider` は session 作成時に明示保存する
 - `Start New Session` を押すと、入力した title を持つ新規 session record を作って `Session Window` を開く
 - 最初の依頼は Launch Dialog ではなく `Session Window` のメインチャットから入力する
 

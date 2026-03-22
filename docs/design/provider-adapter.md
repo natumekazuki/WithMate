@@ -16,9 +16,12 @@ WithMate では provider 実行境界を Main Process に置く。
 - Electron Renderer へ SDK 実行権限を持ち込まなくてよい
 - session store と thread id を同じ責務で管理できる
 
-## Current MVP
+## Current Runtime
 
-MVP では `CodexAdapter` を 1 実装だけ持つ。
+current runtime は shared contract の上に次の 2 adapter を持つ。
+
+- `CodexAdapter`
+- `CopilotAdapter`
 
 ```ts
 type ProviderAdapter = {
@@ -49,6 +52,15 @@ type ProviderTurnResult = {
 
 監査用途では、provider 実行結果から `system / input / composed prompt`、operations、raw items、usage も Main Process へ返し、SQLite の監査ログに保存する。
 
+current milestone の provider ごとの差は次。
+
+- `CodexAdapter`
+  - `thread.runStreamed()` を使い、workspace snapshot を含む artifact まで組み立てる
+  - `file / folder / image` 添付を shipped
+- `CopilotAdapter`
+  - `session.sendAndWait()` と session event stream を使い、最小 turn 実行、assistant text streaming、minimal audit log を返す
+  - `file / folder / image` 添付、artifact summary、rich command timeline は未対応
+
 ## Session Flow
 
 1. Renderer が `runSessionTurn(sessionId, { userMessage })` を IPC で Main Process に送る
@@ -58,7 +70,9 @@ type ProviderTurnResult = {
 5. Main Process が app settings から `System Prompt Prefix` を読む
 6. prompt composer が `# System Prompt + (system prompt prefix + roleMarkdown) + # User Input Prompt + userMessage` を空行区切りで合成する
 7. Main Process が session の `catalogRevision` と `provider` から provider catalog を解決する
-8. `CodexAdapter` が `model / reasoningEffort` を検証し、通常 file/folder は `additionalDirectories` とワーキングディレクトリ、画像は structured input で SDK の `thread.runStreamed()` を実行する
+8. provider adapter が `model / reasoningEffort` を検証し、provider-native SDK 実行へ変換する
+   - `CodexAdapter`: file / folder を `additionalDirectories`、画像を structured input にして `thread.runStreamed()` を実行する
+   - `CopilotAdapter`: 現在は text-only prompt を `session.sendAndWait()` へ渡し、session event から live state を組み立てる
 9. Main Process が stream event から live state を組み立て、IPC で Session Window へ中継する
 10. turn 完了後に Main Process が `threadId` と assistant message を session store に反映する
 11. Main Process が `running / completed / canceled / failed` の監査ログを 1 turn 1 record で SQLite に保存する
@@ -66,11 +80,14 @@ type ProviderTurnResult = {
 
 ## Prompt Composition Constraint
 
-現時点の Codex SDK には、通常ファイルの専用添付 API はない。画像だけ `local_image` がある。
-そのため MVP では adapter 側で次のように分離する。
+現時点の provider 差分は、添付の扱いで最も大きい。
 
-- file / folder: `additionalDirectories`
-- image: structured input (`local_image`)
+- `Codex`
+  - file / folder: `additionalDirectories`
+  - image: structured input (`local_image`)
+- `Copilot`
+  - SDK native には file / directory attachment がある
+  - ただし current milestone の `CopilotAdapter` では未接続のため、text-only turn 実行に限定する
 
 picker で選んだ file / folder / image も renderer 側では textarea に `@path` を挿入するだけで、実行直前の解決対象は textarea の `@path` のみとする。
 
@@ -229,7 +246,6 @@ diff 本文は turn items からは直接取れないため、MVP では Main Pr
 
 将来は次を追加できる構造にする。
 
-- `CopilotAdapter`
 - provider ごとの prompt composer 差し替え
 - artifact summary の richer な構造化
 - Character Stream 用 provider / credential 設定の別系統化

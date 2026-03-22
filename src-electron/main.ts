@@ -40,7 +40,9 @@ import {
 } from "./character-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
-import { CodexAdapter, ProviderTurnError } from "./codex-adapter.js";
+import { CodexAdapter } from "./codex-adapter.js";
+import { CopilotAdapter } from "./copilot-adapter.js";
+import { ProviderTurnError, type ProviderTurnAdapter } from "./provider-runtime.js";
 import { resolveComposerPreview } from "./composer-attachments.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { resolveOpenPathTarget } from "./open-path.js";
@@ -104,6 +106,7 @@ const bundledModelCatalogPath = devServerUrl
   ? path.resolve(currentDir, "../../public/model-catalog.json")
   : path.resolve(rendererDistPath, "model-catalog.json");
 const codexAdapter = new CodexAdapter();
+const copilotAdapter = new CopilotAdapter();
 
 let homeWindow: BrowserWindow | null = null;
 const sessionWindows = new Map<string, BrowserWindow>();
@@ -200,6 +203,19 @@ function resolveProviderCatalog(
   }
 
   return { snapshot, provider };
+}
+
+function getProviderAdapter(providerId: string | null | undefined): ProviderTurnAdapter {
+  return providerId === "copilot" ? copilotAdapter : codexAdapter;
+}
+
+function invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void {
+  getProviderAdapter(providerId).invalidateSessionThread(sessionId);
+}
+
+function invalidateAllProviderSessionThreads(): void {
+  codexAdapter.invalidateAllSessionThreads();
+  copilotAdapter.invalidateAllSessionThreads();
 }
 
 function listCharacters(): CharacterProfile[] {
@@ -340,7 +356,7 @@ function resetAppDatabase(): ResetAppDatabaseResult {
   liveSessionRuns.clear();
   sessionRunControllers.clear();
   inFlightSessionRuns.clear();
-  codexAdapter.invalidateAllSessionThreads();
+  invalidateAllProviderSessionThreads();
 
   broadcastSessions();
   broadcastAppSettings(appSettings);
@@ -534,7 +550,11 @@ function replaceAllSessions(
   sessions = storage.listSessions();
 
   for (const sessionId of options?.invalidateSessionIds ?? []) {
-    codexAdapter.invalidateSessionThread(sessionId);
+    const sessionProvider =
+      nextSessions.find((session) => session.id === sessionId)?.provider
+      ?? sessions.find((session) => session.id === sessionId)?.provider
+      ?? null;
+    invalidateProviderSessionThread(sessionProvider, sessionId);
   }
 
   if (options?.broadcast ?? true) {
@@ -775,7 +795,8 @@ function updateAppSettings(nextSettingsInput: ReturnType<AppSettingsStorage["get
       broadcastSessions();
     } else {
       for (const sessionId of invalidatedSessionIds) {
-        codexAdapter.invalidateSessionThread(sessionId);
+        const sessionProvider = previousSessions.find((session) => session.id === sessionId)?.provider ?? null;
+        invalidateProviderSessionThread(sessionProvider, sessionId);
       }
     }
     broadcastAppSettings(savedSettings);
@@ -864,7 +885,8 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
   }
 
   const { provider } = resolveProviderCatalog(session.provider, session.catalogRevision);
-  const promptForAudit = codexAdapter.composePrompt({
+  const providerAdapter = getProviderAdapter(provider.id);
+  const promptForAudit = providerAdapter.composePrompt({
     session,
     character,
     providerCatalog: provider,
@@ -915,7 +937,7 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
   });
 
   try {
-    const result = await codexAdapter.runSessionTurn({
+    const result = await providerAdapter.runSessionTurn({
       session: runningSession,
       character,
       providerCatalog: provider,
@@ -970,7 +992,7 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
     const message = error instanceof Error ? error.message : String(error);
     const partialResult = providerTurnError?.partialResult;
     if (canceled) {
-      codexAdapter.invalidateSessionThread(sessionId);
+      invalidateProviderSessionThread(runningSession.provider, sessionId);
     }
     requireAuditLogStorage().updateAuditLog(runningAuditLog.id, {
       sessionId,

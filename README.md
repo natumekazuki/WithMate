@@ -39,6 +39,7 @@ WithMate は、`Codex CLI / GitHub Copilot CLI` 相当の coding agent 体験を
 - Vite
 - TypeScript
 - `@openai/codex-sdk`
+- `@github/copilot-sdk`
 
 ## セットアップ
 

@@ -86,6 +86,39 @@ export class ModelCatalogStorage {
     return parseModelCatalogDocument(JSON.parse(raw));
   }
 
+  private mergeBundledProvidersIntoActiveCatalog(
+    activeCatalog: ModelCatalogSnapshot,
+    bundledCatalog: ModelCatalogDocument,
+  ): ModelCatalogDocument | null {
+    const activeProvidersById = new Map(activeCatalog.providers.map((provider) => [provider.id, provider] as const));
+    const mergedProviders: ModelCatalogProvider[] = [];
+    let changed = false;
+
+    for (const bundledProvider of bundledCatalog.providers) {
+      const activeProvider = activeProvidersById.get(bundledProvider.id);
+      if (activeProvider) {
+        mergedProviders.push(activeProvider);
+        activeProvidersById.delete(bundledProvider.id);
+        continue;
+      }
+
+      mergedProviders.push(bundledProvider);
+      changed = true;
+    }
+
+    for (const activeProvider of activeProvidersById.values()) {
+      mergedProviders.push(activeProvider);
+    }
+
+    if (!changed) {
+      return null;
+    }
+
+    return {
+      providers: cloneModelCatalogDocument({ providers: mergedProviders }).providers,
+    };
+  }
+
   private getActiveRevision(): number | null {
     const row = this.db
       .prepare(`SELECT revision FROM model_catalog_revisions WHERE is_active = 1 ORDER BY revision DESC LIMIT 1`)
@@ -217,7 +250,12 @@ export class ModelCatalogStorage {
   ensureSeeded(): ModelCatalogSnapshot {
     const activeCatalog = this.getActiveCatalog();
     if (activeCatalog) {
-      return activeCatalog;
+      const mergedCatalog = this.mergeBundledProvidersIntoActiveCatalog(activeCatalog, this.readBundledCatalogDocument());
+      if (!mergedCatalog) {
+        return activeCatalog;
+      }
+
+      return this.writeCatalogDocument(mergedCatalog, "bundled");
     }
 
     return this.writeCatalogDocument(this.readBundledCatalogDocument(), "bundled");

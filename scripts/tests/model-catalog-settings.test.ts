@@ -66,10 +66,12 @@ describe("app settings provider helpers", () => {
     assert.deepEqual(getProviderAppSettings(settings, "codex"), {
       enabled: false,
       apiKey: "codex-key",
+      skillRootPath: "",
     });
     assert.deepEqual(getProviderAppSettings(settings, "copilot"), {
       enabled: true,
       apiKey: "copilot-key",
+      skillRootPath: "",
     });
   });
 
@@ -95,11 +97,13 @@ describe("app settings provider helpers", () => {
       codex: {
         enabled: false,
         apiKey: "canonical-key",
+        skillRootPath: "",
       },
     });
     assert.deepEqual(getProviderAppSettings(settings, "codex"), {
       enabled: false,
       apiKey: "canonical-key",
+      skillRootPath: "",
     });
   });
 });

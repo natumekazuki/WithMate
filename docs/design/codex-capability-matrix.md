@@ -17,9 +17,9 @@
 
 ## Snapshot
 
-- current runtime provider 実装: `CodexAdapter` のみ
+- current runtime provider 実装: `CodexAdapter` と `CopilotAdapter`
 - provider-neutral な session / approval / skill UI は一部先行している
-- `GitHub Copilot CLI` 向け docs はあるが、runtime 実装は未着手
+- `GitHub Copilot CLI` は basic turn 実行の最小 runtime が入り、full parity はこれから
 
 ## Capability Inventory
 
@@ -27,7 +27,7 @@
 
 - `対応済み`
 - Main Process に provider 境界を置き、Renderer からは IPC 経由で session turn を実行できる
-- current runtime は `CodexAdapter` 1 実装だけを持つ
+- current runtime は `CodexAdapter` と `CopilotAdapter` を shared contract で持つ
 - provider ごとの coding credential は Settings から解決し、model catalog の provider selection と合わせて使う
 
 主な実装:

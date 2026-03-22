@@ -81,11 +81,12 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `New Session` dialog
   - session title 入力
   - workspace picker
+  - enabled provider の選択
   - character 選択
   - approval mode は provider-neutral 3 mode を前提にし、default は `safety`
 - `Settings` overlay
   - system prompt prefix 編集
-  - `Coding Agent Providers` で provider ごとの enable / disable
+  - `Coding Agent Providers` で provider 名と checkbox を 1 行 row で見せ、provider ごとの enable / disable を切り替える
   - `Coding Agent Credentials` で provider label を維持した `OpenAI API Key (Coding Agent)` 入力を表示
   - credential 補助文で `Character Stream 用ではない` ことを明示し、future note だけ最小限で置く
   - `Model Catalog` import / export

@@ -121,6 +121,7 @@ export default function HomeApp() {
   const [launchOpen, setLaunchOpen] = useState(false);
   const [launchTitle, setLaunchTitle] = useState("");
   const [launchWorkspace, setLaunchWorkspace] = useState<LaunchWorkspace | null>(null);
+  const [launchProviderId, setLaunchProviderId] = useState("");
   const [launchCharacterId, setLaunchCharacterId] = useState("");
   const [launchCharacterSearchText, setLaunchCharacterSearchText] = useState("");
   const settingsDirtyRef = useRef(false);
@@ -308,6 +309,27 @@ export default function HomeApp() {
       return haystacks.some((value) => value.includes(normalizedLaunchCharacterSearch));
     });
   }, [characters, normalizedLaunchCharacterSearch]);
+  const enabledLaunchProviders = useMemo(() => {
+    if (!modelCatalog) {
+      return [];
+    }
+
+    return modelCatalog.providers.filter((provider) => getProviderAppSettings(appSettings, provider.id).enabled);
+  }, [appSettings, modelCatalog]);
+  const selectedLaunchProvider = useMemo(
+    () => enabledLaunchProviders.find((provider) => provider.id === launchProviderId) ?? enabledLaunchProviders[0] ?? null,
+    [enabledLaunchProviders, launchProviderId],
+  );
+
+  useEffect(() => {
+    setLaunchProviderId((current) => {
+      if (enabledLaunchProviders.find((provider) => provider.id === current)) {
+        return current;
+      }
+
+      return enabledLaunchProviders[0]?.id ?? "";
+    });
+  }, [enabledLaunchProviders]);
 
   const renderSearchIcon = () => (
     <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
@@ -347,6 +369,7 @@ export default function HomeApp() {
   const openLaunchDialog = () => {
     setLaunchTitle("");
     setLaunchWorkspace(null);
+    setLaunchProviderId(enabledLaunchProviders[0]?.id ?? "");
     setLaunchCharacterSearchText("");
     setLaunchOpen(true);
   };
@@ -355,16 +378,18 @@ export default function HomeApp() {
     setLaunchOpen(false);
     setLaunchTitle("");
     setLaunchWorkspace(null);
+    setLaunchProviderId("");
     setLaunchCharacterSearchText("");
   };
 
   const handleStartSession = async () => {
     const normalizedLaunchTitle = launchTitle.trim();
-    if (!window.withmate || !launchWorkspace || !selectedCharacter || !normalizedLaunchTitle) {
+    if (!window.withmate || !launchWorkspace || !selectedCharacter || !selectedLaunchProvider || !normalizedLaunchTitle) {
       return;
     }
 
     const sessionInput: CreateSessionInput = {
+      provider: selectedLaunchProvider.id,
       taskTitle: normalizedLaunchTitle,
       workspaceLabel: launchWorkspace.label,
       workspacePath: launchWorkspace.path,
@@ -803,6 +828,33 @@ export default function HomeApp() {
                 <p className={`launch-path${launchWorkspace ? " selected" : ""}`}>{launchWorkspace ? launchWorkspace.path : "workspace"}</p>
               </section>
 
+              <section className="launch-section minimal">
+                <div className="launch-field">
+                  <label className="launch-field-label" htmlFor="launch-provider-picker">
+                    Coding Provider
+                  </label>
+                  {enabledLaunchProviders.length > 0 ? (
+                    <div id="launch-provider-picker" className="choice-list launch-provider-list" role="listbox" aria-label="Coding Provider">
+                      {enabledLaunchProviders.map((provider) => (
+                        <button
+                          key={provider.id}
+                          className={`choice-chip${provider.id === selectedLaunchProvider?.id ? " active" : ""}`}
+                          type="button"
+                          aria-selected={provider.id === selectedLaunchProvider?.id}
+                          onClick={() => setLaunchProviderId(provider.id)}
+                        >
+                          {provider.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <article className="empty-list-card compact">
+                      <p>有効な Coding Provider がないよ。</p>
+                    </article>
+                  )}
+                </div>
+              </section>
+
               <section className="launch-section profile-panel minimal">
                 {characters.length > 0 ? (
                   <>
@@ -858,7 +910,7 @@ export default function HomeApp() {
               <button
                 className="start-session-button"
                 type="button"
-                disabled={!launchTitle.trim() || !launchWorkspace || !selectedCharacter}
+                disabled={!launchTitle.trim() || !launchWorkspace || !selectedCharacter || !selectedLaunchProvider}
                 onClick={() => void handleStartSession()}
               >
                 Start New Session
@@ -901,14 +953,14 @@ export default function HomeApp() {
                         <p className="settings-help">有効な coding provider は使える前提で扱う。失敗時は実行時エラーとして返る。</p>
                         <div className="settings-provider-list">
                           {providerSettingRows.map(({ provider, settings }) => (
-                            <section key={provider.id} className="settings-provider-card">
-                              <label className="settings-provider-toggle">
+                            <section key={provider.id} className="settings-provider-card settings-provider-toggle-card">
+                              <label className="settings-provider-toggle-row">
+                                <span className="settings-provider-name">{provider.label}</span>
                                 <input
                                   type="checkbox"
                                   checked={settings.enabled}
                                   onChange={(event) => handleChangeProviderEnabled(provider.id, event.target.checked)}
                                 />
-                                <span>{provider.label}</span>
                               </label>
                             </section>
                           ))}
