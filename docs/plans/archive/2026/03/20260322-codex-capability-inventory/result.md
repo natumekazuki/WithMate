@@ -18,7 +18,7 @@
 
 ## Related Commits
 
-- なし
+- `1e5e97f docs(coding-agents): add capability matrices`
 
 ## Rollback Guide
 

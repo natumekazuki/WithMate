@@ -10,4 +10,7 @@
 
 ## Commit
 
-- なし
+- `1e5e97f docs(coding-agents): add capability matrices`
+  - `docs/design/codex-capability-matrix.md` を追加
+  - `docs/design/coding-agent-capability-matrix.md` の追加に向けた Codex 側 snapshot を archive
+  - `README.md` と `docs/design/provider-adapter.md` の導線を更新
