@@ -2,7 +2,7 @@
 
 ## Goal
 
-- `/skill` の最小実装方針を WithMate に追加する
+- Skill picker の最小実装方針を WithMate に追加する
 - provider ごとの skill root と workspace 配下の skill を一覧化できるようにする
 - 選択した skill を provider ごとの形式で composer 先頭へ挿入する
 
@@ -10,7 +10,7 @@
 
 - Settings に provider ごとの skill root path を持たせる設計
 - workspace skill と provider skill の一覧化
-- `/skill` command の picker 起動
+- Session composer の `Skill` dropdown 起動
 - skill 選択後の composer 挿入形式
 
 ## Out of Scope
@@ -23,10 +23,10 @@
 ## Task List
 
 - [x] Plan を作成する
-- [ ] skill 探索元の設計を確定する
-- [ ] `/skill` の最小フローを設計する
-- [ ] provider ごとの injection 形式を確定する
-- [ ] 実装対象 docs を更新する
+- [x] skill 探索元の設計を確定する
+- [x] Skill picker の最小フローを設計する
+- [x] provider ごとの injection 形式を確定する
+- [x] 実装対象 docs を更新する
 
 ## Affected Files
 
@@ -44,4 +44,4 @@
 
 - 状態: 更新対象あり
 - 対象候補: `docs/design/skill-command-design.md`, `docs/design/slash-command-integration.md`, `docs/design/provider-adapter.md`
-- メモ: `/skill` 最小実装の探索元と挿入形式を docs に固定する
+- メモ: Skill picker 最小実装の探索元と挿入形式を docs に固定する

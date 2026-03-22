@@ -7,6 +7,7 @@ import {
   type ComposerPreview,
   currentTimestampLabel,
   DEFAULT_CHARACTER_THEME_COLORS,
+  type DiscoveredSkill,
   getProviderAppSettings,
   getSessionIdFromLocation,
   type ChangedFile,
@@ -92,6 +93,12 @@ type WorkspacePathMatchDisplay = {
   title: string;
 };
 
+type SkillMatchDisplay = {
+  primaryLabel: string;
+  secondaryLabel: string;
+  title: string;
+};
+
 function defaultRetryBannerDetailsOpen(kind: RetryBannerKind): boolean {
   return kind !== "canceled";
 }
@@ -111,6 +118,12 @@ function getActivePathReference(value: string, caret: number): ActivePathReferen
     start,
     end: caret,
   };
+}
+
+function buildSkillPromptSnippet(providerId: string, skillName: string): string {
+  return providerId === "codex"
+    ? `$${skillName}`
+    : `Use the skill "${skillName}" for this task.`;
 }
 
 function formatPathReference(path: string): string {
@@ -193,6 +206,14 @@ function buildWorkspacePathMatchDisplay(pathMatch: string): WorkspacePathMatchDi
     primaryLabel: basename || normalizedPath,
     secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 42) : "ワークスペース直下",
     title: normalizedPath,
+  };
+}
+
+function buildSkillMatchDisplay(skill: DiscoveredSkill): SkillMatchDisplay {
+  return {
+    primaryLabel: skill.name,
+    secondaryLabel: `${skill.sourceLabel}${skill.description ? ` · ${skill.description}` : ""}`,
+    title: `${skill.name}\n${skill.sourcePath}`,
   };
 }
 
@@ -485,6 +506,9 @@ export default function App() {
   const [composerCaret, setComposerCaret] = useState(0);
   const [workspacePathMatches, setWorkspacePathMatches] = useState<string[]>([]);
   const [activeWorkspacePathMatchIndex, setActiveWorkspacePathMatchIndex] = useState(-1);
+  const [availableSkills, setAvailableSkills] = useState<DiscoveredSkill[]>([]);
+  const [isSkillPickerOpen, setIsSkillPickerOpen] = useState(false);
+  const [isSkillListLoading, setIsSkillListLoading] = useState(false);
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
   const [isMessageListFollowing, setIsMessageListFollowing] = useState(true);
   const [hasMessageListUnread, setHasMessageListUnread] = useState(false);
@@ -604,6 +628,7 @@ export default function App() {
 
     return "";
   }, [isCharacterResolutionPending, isSelectedCharacterMissing, isSelectedProviderEnabled, selectedSession]);
+  const composerBlockedReason = sessionExecutionBlockedReason;
 
   useEffect(() => {
     if (!selectedSession || isEditingTitle) {
@@ -612,6 +637,45 @@ export default function App() {
 
     setTitleDraft(selectedSession.taskTitle);
   }, [isEditingTitle, selectedSession]);
+
+  useEffect(() => {
+    let active = true;
+
+    if (!window.withmate || !selectedSession) {
+      setAvailableSkills([]);
+      setIsSkillListLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    setIsSkillListLoading(true);
+    void window.withmate.listSessionSkills(selectedSession.id).then((skills) => {
+      if (active) {
+        setAvailableSkills(skills);
+        setIsSkillListLoading(false);
+      }
+    }).catch(() => {
+      if (active) {
+        setAvailableSkills([]);
+        setIsSkillListLoading(false);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [appSettings, selectedSession]);
+
+  useEffect(() => {
+    setIsSkillPickerOpen(false);
+  }, [selectedSessionId]);
+
+  useEffect(() => {
+    if (selectedSession?.runState === "running") {
+      setIsSkillPickerOpen(false);
+    }
+  }, [selectedSession?.runState]);
 
   useEffect(() => {
     let active = true;
@@ -868,7 +932,7 @@ export default function App() {
       !withmateApi
       || !selectedSession
       || selectedSession.runState === "running"
-      || !!sessionExecutionBlockedReason
+      || !!composerBlockedReason
       || !activePathReference
       || !activePathReference.query.trim()
     ) {
@@ -894,7 +958,7 @@ export default function App() {
       active = false;
       window.clearTimeout(timeoutId);
     };
-  }, [activePathReference, selectedSession, sessionExecutionBlockedReason]);
+  }, [activePathReference, composerBlockedReason, selectedSession]);
   const selectedProviderCatalog = useMemo(
     () => (modelCatalog && selectedSession ? getProviderCatalog(modelCatalog.providers, selectedSession.provider) : null),
     [modelCatalog, selectedSession],
@@ -995,20 +1059,20 @@ export default function App() {
   }, [lastAssistantMessage, lastUserMessage, latestTerminalAuditLog, selectedSession, selectedSessionLiveRun]);
   const hasDraftText = draft.trim().length > 0;
   const shouldProtectDraftOnRetryEdit = !!retryBanner && hasDraftText && draft !== retryBanner.lastRequestText;
-  const isComposerDisabled = selectedSession?.runState === "running" || !!sessionExecutionBlockedReason;
+  const isComposerDisabled = selectedSession?.runState === "running" || !!composerBlockedReason;
   const composerSendability = useMemo(
     () =>
       buildComposerSendabilityState({
         runState: selectedSession?.runState,
-        blockedReason: sessionExecutionBlockedReason,
+        blockedReason: composerBlockedReason,
         inputErrors: composerPreview.errors,
         draftText: draft,
       }),
-    [composerPreview.errors, draft, selectedSession?.runState, sessionExecutionBlockedReason],
+    [composerBlockedReason, composerPreview.errors, draft, selectedSession?.runState],
   );
   const isSendDisabled = composerSendability.isSendDisabled;
   const isRetryActionDisabled =
-    !retryBanner || !lastUserMessage || !!sessionExecutionBlockedReason || selectedSession?.runState === "running";
+    !retryBanner || !lastUserMessage || !!composerBlockedReason || selectedSession?.runState === "running";
   const isRetryEditDisabled = isRetryActionDisabled || isComposerDisabled;
   const retryBannerIdentity = useMemo(() => {
     if (!retryBanner || !selectedSession || !lastUserMessage) {
@@ -1050,8 +1114,8 @@ export default function App() {
       return;
     }
 
-    if (sessionExecutionBlockedReason) {
-      throw new Error(sessionExecutionBlockedReason);
+    if (composerBlockedReason) {
+      throw new Error(composerBlockedReason);
     }
 
     const nextMessage = messageText.trim();
@@ -1059,7 +1123,7 @@ export default function App() {
     setComposerPreview(preview);
     const sendability = buildComposerSendabilityState({
       runState: selectedSession.runState,
-      blockedReason: sessionExecutionBlockedReason,
+      blockedReason: composerBlockedReason,
       inputErrors: preview.errors,
       draftText: messageText,
     });
@@ -1189,6 +1253,31 @@ export default function App() {
     });
   };
 
+  const handleSelectSkill = (skill: DiscoveredSkill) => {
+    const textarea = composerTextareaRef.current;
+    if (!selectedSession) {
+      return;
+    }
+
+    const snippet = buildSkillPromptSnippet(selectedSession.provider, skill.name);
+    const trimmedDraft = draft.trimStart();
+    const nextDraft = trimmedDraft ? `${snippet}\n\n${trimmedDraft}` : `${snippet}\n`;
+    const nextCaret = nextDraft.length;
+
+    setDraft(nextDraft);
+    setComposerCaret(nextCaret);
+    setIsSkillPickerOpen(false);
+
+    window.requestAnimationFrame(() => {
+      if (!textarea) {
+        return;
+      }
+
+      textarea.focus();
+      textarea.setSelectionRange(nextCaret, nextCaret);
+    });
+  };
+
   const persistSession = async (nextSession: Session) => {
     if (!window.withmate) {
       throw new Error("Session Window は Electron から開いてね。");
@@ -1313,7 +1402,7 @@ export default function App() {
   };
 
   const handleResendLastMessage = async () => {
-    if (!lastUserMessage || sessionExecutionBlockedReason) {
+    if (!lastUserMessage || composerBlockedReason) {
       return;
     }
 
@@ -1447,6 +1536,7 @@ export default function App() {
       return;
     }
 
+    setIsSkillPickerOpen(false);
     const selectedPath = await window.withmate.pickFile(pickerBaseDirectory || selectedSession?.workspacePath || null);
     if (!selectedPath) {
       return;
@@ -1461,6 +1551,7 @@ export default function App() {
       return;
     }
 
+    setIsSkillPickerOpen(false);
     const selectedPath = await window.withmate.pickDirectory(pickerBaseDirectory || selectedSession?.workspacePath || null);
     if (!selectedPath) {
       return;
@@ -1475,6 +1566,7 @@ export default function App() {
       return;
     }
 
+    setIsSkillPickerOpen(false);
     const selectedPath = await window.withmate.pickImageFile(pickerBaseDirectory || selectedSession?.workspacePath || null);
     if (!selectedPath) {
       return;
@@ -1955,16 +2047,61 @@ export default function App() {
               </div>
             ) : null}
             <div className="composer-attachments-toolbar">
-              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickFile()} disabled={selectedSession.runState === "running" || !!sessionExecutionBlockedReason}>
+              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickFile()} disabled={selectedSession.runState === "running" || !!composerBlockedReason}>
                 File
               </button>
-              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickFolder()} disabled={selectedSession.runState === "running" || !!sessionExecutionBlockedReason}>
+              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickFolder()} disabled={selectedSession.runState === "running" || !!composerBlockedReason}>
                 Folder
               </button>
-              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickImage()} disabled={selectedSession.runState === "running" || !!sessionExecutionBlockedReason}>
+              <button className="drawer-toggle compact secondary" type="button" onClick={() => void handlePickImage()} disabled={selectedSession.runState === "running" || !!composerBlockedReason}>
                 Image
               </button>
+              <button
+                className={`drawer-toggle compact secondary${isSkillPickerOpen ? " is-open" : ""}`}
+                type="button"
+                onClick={() => setIsSkillPickerOpen((current) => !current)}
+                disabled={selectedSession.runState === "running" || !!composerBlockedReason}
+                aria-expanded={isSkillPickerOpen}
+                aria-haspopup="listbox"
+              >
+                Skill
+              </button>
             </div>
+            {isSkillPickerOpen ? (
+              <div
+                className="composer-path-match-list composer-skill-picker-list"
+                role={availableSkills.length > 0 ? "listbox" : "status"}
+                aria-label="Skill 候補"
+              >
+                {isSkillListLoading ? (
+                  <p className="composer-skill-empty">Skill を読み込み中だよ。</p>
+                ) : availableSkills.length > 0 ? (
+                  availableSkills.map((skill) => {
+                    const skillDisplay = buildSkillMatchDisplay(skill);
+
+                    return (
+                      <button
+                        key={skill.id}
+                        type="button"
+                        role="option"
+                        className="composer-path-match"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => handleSelectSkill(skill)}
+                        title={skillDisplay.title}
+                      >
+                        <span className="composer-path-match-primary">{skillDisplay.primaryLabel}</span>
+                        <span className="composer-path-match-secondary">{skillDisplay.secondaryLabel}</span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <p className="composer-skill-empty">
+                    使える skill がまだないよ。Home の Settings で Skill Root を設定するか、workspace 配下に
+                    `SKILL.md` を配置してね。
+                  </p>
+                )}
+              </div>
+            ) : null}
             {composerPreview.attachments.length > 0 ? (
               <div className="composer-attachment-list">
                 {composerPreview.attachments.map((attachment) => {

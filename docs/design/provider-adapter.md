@@ -206,6 +206,25 @@ diff 本文は turn items からは直接取れないため、MVP では Main Pr
 - stream 中の一時 step は監査ログへ逐次保存せず、turn 完了後の確定値だけを残す
 - Settings の DB reset を実行した場合は audit logs も初期化対象に含める
 
+## Slash Command Routing
+
+- slash command は provider SDK へそのまま渡さない
+- Renderer / Main Process が先に app command または session setting command として解釈する
+- adapter は slash command 自体を parse せず、更新済み metadata を provider-native option へ変換する
+
+## Agent / Skill Mapping
+
+- skill 探索元は次を使う
+  - `codingProviderSettings[providerId].skillRootPath`
+  - workspace 標準 skill roots (`skills`, `.github/skills`, `.copilot/skills`, `.codex/skills`, `.claude/skills`)
+- 同名 skill は workspace 優先で dedupe する
+- adapter は選択済み skill を provider ごとの prompt / option へ変換する
+  - Codex: `$skill-name` mention
+  - Copilot: explicit skill directive を prompt へ付加
+- `agent` は provider 専用 command とする
+  - Codex: 未対応
+  - Copilot: custom agent selection を session metadata へ保存し、adapter が provider-native 指定へ変換する
+
 ## Future Extension
 
 将来は次を追加できる構造にする。
@@ -221,3 +240,5 @@ diff 本文は turn items からは直接取れないため、MVP では Main Pr
 - `docs/design/session-persistence.md`
 - `docs/design/model-catalog.md`
 - `docs/design/audit-log.md`
+- `docs/design/slash-command-integration.md`
+- `docs/design/skill-command-design.md`

@@ -21,6 +21,9 @@ import {
   SETTINGS_RESET_DATABASE_LABEL,
   SETTINGS_RESET_DATABASE_SUCCESS_MESSAGE,
   SETTINGS_RELEASE_COMPATIBILITY_NOTE,
+  SETTINGS_SKILL_ROOT_HELP,
+  SETTINGS_SKILL_ROOT_LABEL,
+  SETTINGS_SKILL_ROOT_PLACEHOLDER,
 } from "./settings-ui.js";
 import { buildCardThemeStyle, CharacterAvatar, sessionStateLabel } from "./ui-utils.js";
 
@@ -466,6 +469,42 @@ export default function HomeApp() {
     }));
   };
 
+  const handleChangeProviderSkillRootPath = (providerId: string, skillRootPath: string) => {
+    setCodingProviderSettingsDraft((current) => ({
+      ...current,
+      [providerId]: {
+        ...getProviderAppSettings(
+          {
+            systemPromptPrefix: systemPromptPrefixDraft,
+            codingProviderSettings: current,
+          },
+          providerId,
+        ),
+        skillRootPath,
+      },
+    }));
+  };
+
+  const handleBrowseProviderSkillRootPath = async (providerId: string) => {
+    if (!window.withmate) {
+      return;
+    }
+
+    const currentSettings = getProviderAppSettings(
+      {
+        systemPromptPrefix: systemPromptPrefixDraft,
+        codingProviderSettings: codingProviderSettingsDraft,
+      },
+      providerId,
+    );
+    const selectedPath = await window.withmate.pickDirectory(currentSettings.skillRootPath || null);
+    if (!selectedPath) {
+      return;
+    }
+
+    handleChangeProviderSkillRootPath(providerId, selectedPath);
+  };
+
   const providerSettingRows = useMemo(
     () =>
       (modelCatalog?.providers ?? []).map((provider) => ({
@@ -852,11 +891,6 @@ export default function HomeApp() {
                       rows={8}
                     />
                   </div>
-                  <div className="settings-actions">
-                    <button className="launch-toggle" type="button" onClick={() => void handleSaveSettings()} disabled={!settingsDirty}>
-                      Save Settings
-                    </button>
-                  </div>
                 </section>
 
                 {providerSettingRows.length > 0 ? (
@@ -907,6 +941,40 @@ export default function HomeApp() {
                         <p className="settings-note">{SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE}</p>
                       </div>
                     </section>
+
+                    <section className="settings-section-card">
+                      <div className="settings-field">
+                        <strong>Skill Roots</strong>
+                        <p className="settings-help">{SETTINGS_SKILL_ROOT_HELP}</p>
+                        <div className="settings-provider-list">
+                          {providerSettingRows.map(({ provider, settings }) => (
+                            <section key={provider.id} className="settings-provider-card">
+                              <p className="settings-provider-name">{provider.label}</p>
+                              <label className="settings-provider-input">
+                                <span>{SETTINGS_SKILL_ROOT_LABEL}</span>
+                                <div className="settings-inline-input-row">
+                                  <input
+                                    type="text"
+                                    value={settings.skillRootPath}
+                                    onChange={(event) => handleChangeProviderSkillRootPath(provider.id, event.target.value)}
+                                    placeholder={SETTINGS_SKILL_ROOT_PLACEHOLDER}
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                  />
+                                  <button
+                                    className="launch-toggle"
+                                    type="button"
+                                    onClick={() => void handleBrowseProviderSkillRootPath(provider.id)}
+                                  >
+                                    Browse
+                                  </button>
+                                </div>
+                              </label>
+                            </section>
+                          ))}
+                        </div>
+                      </div>
+                    </section>
                   </>
                 ) : null}
 
@@ -943,8 +1011,13 @@ export default function HomeApp() {
                   </div>
                 </section>
 
-                {settingsFeedback ? <p className="settings-feedback">{settingsFeedback}</p> : null}
               </section>
+            </div>
+            <div className="launch-dialog-foot settings-dialog-foot">
+              {settingsFeedback ? <p className="settings-feedback settings-feedback-inline">{settingsFeedback}</p> : <span aria-hidden="true" />}
+              <button className="launch-toggle" type="button" onClick={() => void handleSaveSettings()} disabled={!settingsDirty}>
+                Save Settings
+              </button>
             </div>
           </section>
         </div>

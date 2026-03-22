@@ -20,10 +20,12 @@ describe("AppSettingsStorage", () => {
           codex: {
             enabled: false,
             apiKey: "codex-key",
+            skillRootPath: "C:/skills/codex",
           },
           copilot: {
             enabled: true,
             apiKey: "copilot-key",
+            skillRootPath: "C:/skills/copilot",
           },
         },
       });
@@ -51,10 +53,12 @@ describe("AppSettingsStorage", () => {
           codex: {
             enabled: false,
             apiKey: "custom-key",
+            skillRootPath: "C:/skills/codex",
           },
           copilot: {
             enabled: true,
             apiKey: "copilot-key",
+            skillRootPath: "C:/skills/copilot",
           },
         },
       });

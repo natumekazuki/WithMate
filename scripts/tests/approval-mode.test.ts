@@ -8,6 +8,7 @@ import {
   mapApprovalModeToCodexPolicy,
   normalizeApprovalMode,
 } from "../../src/approval-mode.js";
+import { createDefaultAppSettings, getProviderAppSettings, normalizeAppSettings } from "../../src/app-state.js";
 
 describe("approval mode helpers", () => {
   it("legacy/native approval 値を provider-neutral mode へ normalize できる", () => {
@@ -66,5 +67,23 @@ describe("approval mode helpers", () => {
   it("default approval label は 安全寄り を返す", () => {
     assert.equal(DEFAULT_APPROVAL_MODE, "safety");
     assert.equal(approvalModeLabel(DEFAULT_APPROVAL_MODE), "安全寄り");
+  });
+
+  it("provider settings は skill root path を保持できる", () => {
+    const defaults = createDefaultAppSettings();
+    assert.equal(getProviderAppSettings(defaults, "codex").skillRootPath, "");
+
+    const normalized = normalizeAppSettings({
+      ...defaults,
+      codingProviderSettings: {
+        codex: {
+          enabled: true,
+          apiKey: "test-key",
+          skillRootPath: "C:/skills/codex",
+        },
+      },
+    });
+
+    assert.equal(getProviderAppSettings(normalized, "codex").skillRootPath, "C:/skills/codex");
   });
 });

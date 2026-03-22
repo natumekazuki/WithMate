@@ -2,7 +2,7 @@
 
 ## Goal
 
-- WithMate の `/agent` と `/skill` をどこまで共通化できるか整理する
+- WithMate の `/agent` と skill UI をどこまで共通化できるか整理する
 - Codex と GitHub Copilot CLI の agent / skill の違いを設計として吸収する
 - provider 専用実装にする部分と共通 UI にできる部分を明確にする
 
@@ -38,7 +38,7 @@
 
 - Codex skills docs では、skill の明示呼び出しは CLI / IDE で `/skills` または `$` mention と説明されている
 - Codex は `skill-name` を prompt に直接 mention して explicit invocation できる
-- したがって WithMate の `/skill` は、Codex へは slash command passthrough ではなく skill mention 生成として実装するのが自然
+- したがって WithMate の skill 選択は、Codex へは slash command passthrough ではなく skill mention 生成として実装するのが自然
 
 ### 3. Copilot の `/agent` は custom agent selector
 
@@ -75,10 +75,10 @@
 - `/agent` は共通 command にしない
 - `provider = copilot` のときだけ有効化する provider-specific command とする
 
-### `/skill` は共通 UI にできる
+### Skill picker は共通 UI にできる
 
-- `/skill` は WithMate 独自 canonical command として定義する
-- command 実行時は provider 共通の skill picker を開く
+- skill 選択 UI は provider 共通の Skill picker として定義する
+- picker 起動は Session composer の `Skill` dropdown を主導線にする
 - picker では skill metadata を共通表示する
   - `name`
   - `description`
@@ -107,24 +107,28 @@
 
 WithMate では次を canonical にする。
 
-- `/skill`
-  - 共通 command
 - `/agent`
   - Copilot provider でのみ有効
 
+skill については:
+
+- 初回実装では slash command にしない
+- Session composer の `Skill` picker を canonical UI にする
+- 将来的に `/skill` alias を追加してもよいが、初回出荷条件には含めない
+
 alias:
 
-- Codex の `$` mention は `/skill` 実行結果として生成する
+- Codex の `$` mention は Skill picker の選択結果として生成する
 - Copilot の `/skills` は skill management command なので、初期実装では別扱いにする
 
 ## Initial UX
 
-### `/skill`
+### Skill picker
 
-1. user が `/skill` を入力する
-2. WithMate が skill picker を開く
+1. user が Session composer 上部の `Skill` を開く
+2. WithMate が skill picker を表示する
 3. skill を選択する
-4. provider ごとの prompt snippet を composer に挿入する
+4. provider ごとの prompt snippet を composer 先頭へ挿入する
 5. user はそのまま続けて自然言語を入力できる
 
 この方式なら、
@@ -132,6 +136,29 @@ alias:
 - skill catalog UI は共通化できる
 - provider 差は injection strategy だけに閉じる
 - slash command 実装が SDK 依存にならない
+
+### Minimal Implementation
+
+初回実装は次に絞る。
+
+- Settings に provider ごとの `skillRootPath` を 1 つ持つ
+- workspace 側は標準 root だけを見る
+  - `skills`
+  - `.github/skills`
+  - `.copilot/skills`
+  - `.codex/skills`
+  - `.claude/skills`
+- skill file は `SKILL.md` 前提にする
+- 同名 skill は workspace 優先で dedupe する
+- Session composer の `Skill` dropdown からだけ起動する
+- textarea に `/skill` を入力しても特別扱いしない
+- 選択後は provider ごとの snippet を composer 先頭へ挿入する
+
+この段階では:
+
+- `/skills` 管理 UI は作らない
+- recursive 全探索はしない
+- skill 実行可否の検証はしない
 
 ### `/agent`
 
@@ -153,6 +180,6 @@ Codex では:
 ## Recommendation
 
 - `/agent` は共通化しない
-- `/skill` は共通化する
+- Skill picker は共通化する
 - 共通化対象は picker と metadata 表示
 - provider 専用化対象は選択後の injection と session metadata mapping

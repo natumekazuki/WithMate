@@ -19,6 +19,7 @@ import {
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
+  WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSIONS_CHANNEL,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
@@ -91,6 +92,9 @@ const withmateApi: WithMateWindowApi = {
   },
   searchWorkspaceFiles(sessionId: string, query: string) {
     return ipcRenderer.invoke(WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL, sessionId, query);
+  },
+  listSessionSkills(sessionId: string) {
+    return ipcRenderer.invoke(WITHMATE_LIST_SESSION_SKILLS_CHANNEL, sessionId);
   },
   runSessionTurn(sessionId: string, request) {
     return ipcRenderer.invoke(WITHMATE_RUN_SESSION_TURN_CHANNEL, sessionId, request);

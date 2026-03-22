@@ -4,6 +4,10 @@ export const SETTINGS_CODING_CREDENTIALS_HELP =
   "ここで保存する credential は Coding Agent Providers 専用。Character Stream 用 API ではない。";
 export const SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE =
   "Character Stream 用 API 設定は future scope。current milestone ではまだ追加しない。";
+export const SETTINGS_SKILL_ROOT_LABEL = "Skill Root";
+export const SETTINGS_SKILL_ROOT_PLACEHOLDER = "skill folder の親ディレクトリを入力";
+export const SETTINGS_SKILL_ROOT_HELP =
+  "provider ごとの共有 skill root を指定できる。workspace 配下の標準 skill roots と合わせて Session の Skill picker 候補に出す。";
 export const SETTINGS_RELEASE_COMPATIBILITY_NOTE =
   "初回リリース前のため後方互換性は考慮しない。互換性のない変更が入った場合は Settings の DB 初期化で復旧する。";
 export const SETTINGS_RESET_DATABASE_LABEL = "DB を初期化";

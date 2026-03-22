@@ -89,6 +89,18 @@ export type AppSettings = {
 export type ProviderAppSettings = {
   enabled: boolean;
   apiKey: string;
+  skillRootPath: string;
+};
+
+export type DiscoveredSkillSource = "workspace" | "provider";
+
+export type DiscoveredSkill = {
+  id: string;
+  name: string;
+  description: string;
+  source: DiscoveredSkillSource;
+  sourcePath: string;
+  sourceLabel: string;
 };
 
 export type ComposerAttachmentKind = "file" | "folder" | "image";
@@ -267,6 +279,7 @@ export const DEFAULT_CHARACTER_THEME_COLORS: CharacterThemeColors = {
 export const DEFAULT_PROVIDER_APP_SETTINGS: ProviderAppSettings = {
   enabled: false,
   apiKey: "",
+  skillRootPath: "",
 };
 
 export function createDefaultAppSettings(): AppSettings {
@@ -276,6 +289,7 @@ export function createDefaultAppSettings(): AppSettings {
       [DEFAULT_PROVIDER_ID]: {
         enabled: true,
         apiKey: "",
+        skillRootPath: "",
       },
     },
   };
@@ -286,6 +300,7 @@ function normalizeProviderAppSettings(value: unknown, defaultEnabled: boolean): 
     return {
       enabled: defaultEnabled,
       apiKey: "",
+      skillRootPath: "",
     };
   }
 
@@ -293,6 +308,7 @@ function normalizeProviderAppSettings(value: unknown, defaultEnabled: boolean): 
   return {
     enabled: typeof candidate.enabled === "boolean" ? candidate.enabled : defaultEnabled,
     apiKey: typeof candidate.apiKey === "string" ? candidate.apiKey : "",
+    skillRootPath: typeof candidate.skillRootPath === "string" ? candidate.skillRootPath : "",
   };
 }
 
