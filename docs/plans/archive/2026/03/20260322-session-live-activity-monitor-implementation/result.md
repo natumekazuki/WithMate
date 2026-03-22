@@ -16,7 +16,7 @@
 
 ## Related Commits
 
-- なし
+- `c567902` `feat(session): split live activity monitor`
 
 ## Rollback Guide
 

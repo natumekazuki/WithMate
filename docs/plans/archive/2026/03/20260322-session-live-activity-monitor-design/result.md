@@ -16,12 +16,12 @@
 
 ## Related Commits
 
-- なし
+- `c567902` `feat(session): split live activity monitor`
 
 ## Rollback Guide
 
-- 戻し先候補: なし
-- 理由: 文書設計のみで、まだ commit は作成していないため
+- 戻し先候補: `207e6e5`
+- 理由: `Activity Monitor` 設計と実装を取り込む前の直近 commit
 
 ## Related Docs
 

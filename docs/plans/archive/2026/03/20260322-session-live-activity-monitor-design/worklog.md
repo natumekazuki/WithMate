@@ -14,7 +14,7 @@
 - メモ:
   - live data source は既存 `liveRun.assistantText / liveRun.steps` を維持する
   - 実装時は Renderer 側の責務変更で済ませる前提
-- 関連コミット: なし
+- 関連コミット: `c567902` (`feat(session): split live activity monitor`)
 
 ## Open Items
 

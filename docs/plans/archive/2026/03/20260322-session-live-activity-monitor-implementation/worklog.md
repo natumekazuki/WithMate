@@ -18,7 +18,7 @@
 - 実施内容: `pending bubble` を会話本文専用に寄せ、`live run step` を composer 直上の `Activity Monitor` へ分離した。message list と monitor の follow state を独立させ、`docs/design/desktop-ui.md`、`docs/design/session-live-activity-monitor.md`、`docs/manual-test-checklist.md` を同期した
 - 検証: `npm run typecheck`、`npm run build`
 - メモ: `npm run build` は sandbox の `spawn EPERM` を避けるため権限付きで再実行した。`.ai_context/` と `README.md` は今回の UI 構造変更では不要と判断した
-- 関連コミット: なし
+- 関連コミット: `c567902` (`feat(session): split live activity monitor`)
 
 ## Open Items
 
