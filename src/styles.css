@@ -1909,7 +1909,230 @@ button {
 
 .chat-panel {
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.session-workbench {
+  display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
+  gap: 18px;
+  height: 100%;
+  min-height: 0;
+}
+
+.session-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 12px minmax(360px, var(--session-context-rail-width, 420px));
+  gap: 18px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.session-message-column {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 12px;
+  min-height: 0;
+}
+
+.session-context-pane {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.session-action-dock {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px 18px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 20px;
+  background: rgba(10, 14, 22, 0.94);
+}
+
+.session-page .session-action-dock {
+  border-color: color-mix(in srgb, var(--character-sub) 18%, rgba(203, 213, 225, 0.14));
+  background: color-mix(in srgb, var(--character-sub-soft) 10%, rgba(8, 12, 20, 0.96));
+}
+
+.session-workbench-splitter {
+  position: relative;
+  width: 12px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+}
+
+.session-workbench-splitter::before {
+  content: "";
+  position: absolute;
+  inset: 8px 4px;
+  border-radius: 999px;
+  background: rgba(203, 213, 225, 0.14);
+  transition: background 160ms ease;
+}
+
+.session-workbench-splitter:hover::before,
+.session-workbench-splitter.is-active::before {
+  background: color-mix(in srgb, var(--character-main) 34%, rgba(203, 213, 225, 0.24));
+}
+
+.command-monitor-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 18px;
+  background: rgba(15, 19, 26, 0.9);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.session-page .command-monitor-shell {
+  border-color: color-mix(in srgb, var(--character-sub) 20%, rgba(203, 213, 225, 0.14));
+  background: color-mix(in srgb, var(--character-sub-soft) 14%, rgba(12, 18, 27, 0.96));
+}
+
+.command-monitor-head,
+.command-monitor-head-copy,
+.command-monitor-card,
+.command-monitor-empty-shell {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.command-monitor-card,
+.command-monitor-empty-shell {
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.command-monitor-head-copy p,
+.command-monitor-empty,
+.command-monitor-empty-subtle {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.55;
+}
+
+.command-monitor-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(111, 184, 199, 0.16);
+  color: #c8f1ff;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.command-monitor-badge.in_progress {
+  background: rgba(56, 189, 248, 0.18);
+  color: #c8f1ff;
+}
+
+.command-monitor-badge.completed {
+  background: rgba(74, 222, 128, 0.16);
+  color: #d8ffe7;
+}
+
+.command-monitor-badge.failed {
+  background: rgba(251, 146, 60, 0.18);
+  color: #ffe2c2;
+}
+
+.command-monitor-badge.canceled {
+  background: rgba(251, 191, 36, 0.18);
+  color: #ffe7bf;
+}
+
+.command-monitor-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.command-monitor-meta,
+.command-monitor-risk-list {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.command-monitor-source {
+  color: var(--muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.command-monitor-risk {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.command-monitor-risk.delete {
+  background: rgba(251, 146, 60, 0.18);
+  color: #ffe2c2;
+}
+
+.command-monitor-risk.write {
+  background: rgba(56, 189, 248, 0.16);
+  color: #c8f1ff;
+}
+
+.command-monitor-risk.network {
+  background: rgba(129, 140, 248, 0.18);
+  color: #e0e7ff;
+}
+
+.command-monitor-empty {
+  color: var(--ink);
+  min-width: 0;
+}
+
+.command-monitor-empty-subtle {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.command-monitor-details {
+  min-width: 0;
+}
+
+.session-message-column .message-follow-banner {
+  margin-top: 0;
+}
+
+.composer {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  align-content: start;
 }
 
 .message-row {
@@ -2140,14 +2363,9 @@ button {
   box-shadow: inset 4px 0 0 color-mix(in srgb, var(--character-sub) 78%, transparent);
 }
 
-.pending-run-helper,
 .pending-run-error-note {
   margin: 0;
   line-height: 1.6;
-}
-
-.pending-run-helper {
-  color: var(--muted);
 }
 
 .pending-run-error-note {
@@ -2203,6 +2421,15 @@ button {
   border-color: color-mix(in srgb, var(--character-sub) 20%, rgba(203, 213, 225, 0.14));
   background: color-mix(in srgb, var(--character-sub-soft) 18%, rgba(12, 18, 27, 0.96));
   box-shadow: inset 4px 0 0 color-mix(in srgb, var(--character-sub) 72%, transparent);
+}
+
+.session-context-rail .activity-monitor-shell {
+  margin-top: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.session-context-rail .activity-monitor-body {
+  max-height: none;
 }
 
 .activity-monitor-head {
@@ -2492,11 +2719,15 @@ button {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
   gap: 10px;
+  width: 100%;
+  min-width: 0;
   padding: 10px 12px;
   border: 1px solid rgba(32, 36, 55, 0.08);
   border-radius: 12px;
   background: rgba(18, 24, 39, 0.96);
   color: rgba(245, 245, 247, 0.96);
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .session-page .live-run-command-summary {
@@ -2522,6 +2753,7 @@ button {
   font: 0.84rem/1.55 "IBM Plex Mono", monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .live-run-file-change-summary {
@@ -4318,6 +4550,20 @@ button {
   }
 }
 
+@media (max-width: 1400px) {
+  .session-main-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .session-workbench-splitter {
+    display: none;
+  }
+
+  .session-context-pane {
+    grid-template-rows: auto;
+  }
+}
+
 @media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -4410,7 +4656,7 @@ button {
     align-items: stretch;
   }
 
-  .activity-monitor-head {
+  .command-monitor-card-head {
     flex-direction: column;
     align-items: stretch;
   }

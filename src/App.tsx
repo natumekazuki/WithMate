@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 
 import {
   type AuditLogEntry,
@@ -316,6 +316,14 @@ type ParsedFileChangeSummaryLine = {
   path: string;
 };
 
+type LatestCommandView = {
+  status: string;
+  summary: string;
+  details?: string;
+  sourceLabel: string;
+  riskLabels: string[];
+};
+
 const FILE_CHANGE_SUMMARY_ACTION_META: Record<string, Pick<ParsedFileChangeSummaryLine, "actionLabel" | "toneClassName">> = {
   add: { actionLabel: "ADD", toneClassName: "add" },
   added: { actionLabel: "ADD", toneClassName: "add" },
@@ -370,6 +378,36 @@ function parseFileChangeSummary(summary: string): ParsedFileChangeSummaryLine[] 
   });
 
   return parsedLines.every((line) => line !== null) ? parsedLines : null;
+}
+
+function buildCommandRiskLabels(command: string): string[] {
+  const normalizedCommand = command.toLowerCase();
+  const labels: string[] = [];
+
+  if (
+    /\b(rm|del|rmdir|rd|truncate)\b/.test(normalizedCommand)
+    || /\b(remove-item|remove-itemproperty)\b/.test(normalizedCommand)
+  ) {
+    labels.push("DELETE");
+  }
+
+  if (
+    /\b(mv|move|cp|copy|mkdir|md|touch|tee)\b/.test(normalizedCommand)
+    || /\b(new-item|set-content|add-content|out-file|rename-item|move-item|copy-item)\b/.test(normalizedCommand)
+    || /\b(git apply|git checkout|git restore|git clean)\b/.test(normalizedCommand)
+  ) {
+    labels.push("WRITE");
+  }
+
+  if (
+    /\b(curl|wget)\b/.test(normalizedCommand)
+    || /\b(invoke-webrequest|invoke-restmethod|iwr|irm)\b/.test(normalizedCommand)
+    || /\b(npm|pnpm|yarn|pip|uv|cargo|go)\s+(install|add|get)\b/.test(normalizedCommand)
+  ) {
+    labels.push("NETWORK");
+  }
+
+  return labels;
 }
 
 function buildDisplayedMessagesScrollSignature(messages: Message[]): string {
@@ -487,6 +525,21 @@ function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): strin
   ].join("\u001b");
 }
 
+const SESSION_CONTEXT_RAIL_DEFAULT_WIDTH = 420;
+const SESSION_CONTEXT_RAIL_MIN_WIDTH = 360;
+const SESSION_CONTEXT_RAIL_MAX_WIDTH = 620;
+const SESSION_CONVERSATION_MIN_WIDTH = 760;
+const SESSION_LAYOUT_BREAKPOINT = 1400;
+
+function clampContextRailWidth(requestedWidth: number, workbenchWidth: number): number {
+  const maxWidth = Math.min(
+    SESSION_CONTEXT_RAIL_MAX_WIDTH,
+    Math.max(SESSION_CONTEXT_RAIL_MIN_WIDTH, workbenchWidth - SESSION_CONVERSATION_MIN_WIDTH),
+  );
+
+  return Math.min(maxWidth, Math.max(SESSION_CONTEXT_RAIL_MIN_WIDTH, requestedWidth));
+}
+
 export default function App() {
   const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -514,15 +567,19 @@ export default function App() {
   const [hasMessageListUnread, setHasMessageListUnread] = useState(false);
   const [isActivityMonitorFollowing, setIsActivityMonitorFollowing] = useState(true);
   const [hasActivityMonitorUnread, setHasActivityMonitorUnread] = useState(false);
+  const [contextRailWidth, setContextRailWidth] = useState(SESSION_CONTEXT_RAIL_DEFAULT_WIDTH);
+  const [isContextRailResizing, setIsContextRailResizing] = useState(false);
   const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const activityMonitorRef = useRef<HTMLDivElement | null>(null);
+  const sessionWorkbenchRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageListSignatureRef = useRef("");
   const messageListSessionIdRef = useRef<string | null>(null);
   const activityMonitorSignatureRef = useRef("");
   const activityMonitorSessionIdRef = useRef<string | null>(null);
+  const contextRailWidthRef = useRef(SESSION_CONTEXT_RAIL_DEFAULT_WIDTH);
 
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
 
@@ -681,6 +738,74 @@ export default function App() {
       setIsSkillPickerOpen(false);
     }
   }, [selectedSession?.runState]);
+
+  useEffect(() => {
+    contextRailWidthRef.current = contextRailWidth;
+  }, [contextRailWidth]);
+
+  useLayoutEffect(() => {
+    const syncContextRailWidth = () => {
+      const workbenchElement = sessionWorkbenchRef.current;
+      if (!workbenchElement) {
+        return;
+      }
+
+      const nextWidth = clampContextRailWidth(
+        contextRailWidthRef.current,
+        workbenchElement.getBoundingClientRect().width,
+      );
+      contextRailWidthRef.current = nextWidth;
+      setContextRailWidth((current) => (current === nextWidth ? current : nextWidth));
+    };
+
+    syncContextRailWidth();
+    window.addEventListener("resize", syncContextRailWidth);
+    return () => window.removeEventListener("resize", syncContextRailWidth);
+  }, [selectedSessionId]);
+
+  useEffect(() => {
+    if (!isContextRailResizing) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const workbenchElement = sessionWorkbenchRef.current;
+      if (!workbenchElement) {
+        return;
+      }
+
+      const bounds = workbenchElement.getBoundingClientRect();
+      if (bounds.width < SESSION_LAYOUT_BREAKPOINT) {
+        return;
+      }
+
+      const requestedWidth = bounds.right - event.clientX;
+      const nextWidth = clampContextRailWidth(requestedWidth, bounds.width);
+      contextRailWidthRef.current = nextWidth;
+      setContextRailWidth(nextWidth);
+    };
+
+    const handlePointerEnd = () => {
+      setIsContextRailResizing(false);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerEnd);
+
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    };
+  }, [isContextRailResizing]);
 
   useEffect(() => {
     let active = true;
@@ -1069,6 +1194,53 @@ export default function App() {
     () => selectedSessionAuditLogs.find((entry) => isTerminalAuditLogPhase(entry.phase)) ?? null,
     [selectedSessionAuditLogs],
   );
+  const latestLiveCommandStep = useMemo(() => {
+    const steps = selectedSessionLiveRun?.steps ?? [];
+    for (let index = steps.length - 1; index >= 0; index -= 1) {
+      if (steps[index]?.type === "command_execution") {
+        return steps[index];
+      }
+    }
+
+    return null;
+  }, [selectedSessionLiveRun?.steps]);
+  const latestAuditCommandOperation = useMemo(() => {
+    const operations = latestTerminalAuditLog?.operations ?? [];
+    for (let index = operations.length - 1; index >= 0; index -= 1) {
+      if (operations[index]?.type === "command_execution") {
+        return operations[index];
+      }
+    }
+
+    return null;
+  }, [latestTerminalAuditLog]);
+  const latestCommandView = useMemo<LatestCommandView | null>(() => {
+    if (latestLiveCommandStep) {
+      return {
+        status: latestLiveCommandStep.status,
+        summary: latestLiveCommandStep.summary,
+        details: latestLiveCommandStep.details,
+        sourceLabel: "live",
+        riskLabels: buildCommandRiskLabels(latestLiveCommandStep.summary),
+      };
+    }
+
+    if (latestAuditCommandOperation) {
+      return {
+        status: latestTerminalAuditLog?.phase === "failed"
+          ? "failed"
+          : latestTerminalAuditLog?.phase === "canceled"
+            ? "canceled"
+            : "completed",
+        summary: latestAuditCommandOperation.summary,
+        details: latestAuditCommandOperation.details,
+        sourceLabel: "latest run",
+        riskLabels: buildCommandRiskLabels(latestAuditCommandOperation.summary),
+      };
+    }
+
+    return null;
+  }, [latestAuditCommandOperation, latestLiveCommandStep, latestTerminalAuditLog?.phase]);
   const retryBanner = useMemo<RetryBannerState | null>(() => {
     if (!selectedSession || selectedSession.runState === "running" || !lastUserMessage) {
       return null;
@@ -1735,6 +1907,15 @@ export default function App() {
     scrollActivityMonitorToBottom();
   };
 
+  const handleStartContextRailResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    setIsContextRailResizing(true);
+  };
+
   const orderedLiveRunSteps = useMemo(
     () =>
       (selectedSessionLiveRun?.steps ?? [])
@@ -1753,33 +1934,8 @@ export default function App() {
     [orderedLiveRunSteps],
   );
 
-  const liveRunUsageEntries = useMemo(() => {
-    if (!selectedSessionLiveRun?.usage) {
-      return [];
-    }
-
-    const entries = [
-      { key: "input", label: "input", value: selectedSessionLiveRun.usage.inputTokens },
-      { key: "output", label: "output", value: selectedSessionLiveRun.usage.outputTokens },
-    ];
-
-    if (selectedSessionLiveRun.usage.cachedInputTokens > 0) {
-      entries.splice(1, 0, {
-        key: "cached",
-        label: "cached",
-        value: selectedSessionLiveRun.usage.cachedInputTokens,
-      });
-    }
-
-    return entries;
-  }, [selectedSessionLiveRun?.usage]);
-
   const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
   const hasLiveRunAssistantText = liveRunAssistantText.length > 0;
-  const hasVisibleActivityMonitor = Boolean(
-    selectedSessionLiveRun
-      && (orderedLiveRunSteps.length > 0 || selectedSessionLiveRun.errorMessage || liveRunUsageEntries.length > 0),
-  );
   const pendingIndicatorCharacterName = useMemo(() => {
     const candidateNames = [selectedSessionCharacter?.name, resolvedCharacter?.name]
       .map((name) => name?.trim() ?? "")
@@ -1799,16 +1955,17 @@ export default function App() {
         ? `${pendingIndicatorCharacterName}が返答を準備しています`
         : "返答を準備しています";
   const pendingRunIndicatorAnnouncement = pendingRunIndicatorText;
-  const activityMonitorStateBadge = isActivityMonitorFollowing
-    ? "Activity"
-    : hasActivityMonitorUnread
-      ? "新着あり"
-      : "読み返し中";
-  const activityMonitorStateCopy = isActivityMonitorFollowing
-    ? "最新の command と変更をここで追えます。"
-    : hasActivityMonitorUnread
-      ? "読み返し中に新しい activity が来たよ。"
-      : "今は monitor の位置を固定しているよ。";
+  const isSelectedSessionRunning = selectedSession?.runState === "running";
+  const latestCommandToneClassName = latestCommandView ? liveRunStepToneClassName(latestCommandView.status) : "unknown";
+  const latestCommandStatusLabel = latestCommandView ? liveRunStepStatusLabel(latestCommandView.status) : "待機";
+  const latestCommandSourceCopy = latestCommandView?.sourceLabel === "live" ? "RUN LIVE" : "LAST RUN";
+  const sessionWorkbenchStyle = useMemo(
+    () =>
+      ({
+        ["--session-context-rail-width" as string]: `${contextRailWidth}px`,
+      }) as CSSProperties,
+    [contextRailWidth],
+  );
 
   if (!isDesktopRuntime) {
     return (
@@ -1876,7 +2033,10 @@ export default function App() {
 
       <section className="content-grid session-content-grid">
         <section className="panel chat-panel rise-3">
-          <div className="message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
+          <div className="session-workbench" ref={sessionWorkbenchRef} style={sessionWorkbenchStyle}>
+            <div className="session-main-grid">
+              <div className="session-message-column">
+                <div className="message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
             {displayedMessages.length > 0 ? (
               displayedMessages.map((message, index) => {
                 const artifactKey = `${selectedSession.id}-${index}`;
@@ -2011,11 +2171,6 @@ export default function App() {
                     </span>
                   </div>
                   {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} onOpenPath={handleOpenInlinePath} /> : null}
-                  {!hasLiveRunAssistantText ? (
-                    <p className="pending-run-helper">
-                      会話本文はここに表示し、実行中の command と変更は下の Activity Monitor で追えるようにしています。
-                    </p>
-                  ) : null}
                   {selectedSessionLiveRun?.errorMessage ? (
                     <p className="pending-run-error-note" role="alert">{selectedSessionLiveRun.errorMessage}</p>
                   ) : null}
@@ -2036,93 +2191,87 @@ export default function App() {
               </button>
             </aside>
           ) : null}
-
-          {selectedSession.runState === "running" ? (
-            <section className="activity-monitor-shell" aria-label="実行中の作業実況">
-              <div className="activity-monitor-head">
-                <div className="activity-monitor-head-copy">
-                  <span className={`activity-monitor-badge${isActivityMonitorFollowing ? "" : hasActivityMonitorUnread ? " has-unread" : " is-paused"}`}>
-                    {activityMonitorStateBadge}
-                  </span>
-                  <p>{activityMonitorStateCopy}</p>
-                </div>
-                {!isActivityMonitorFollowing ? (
-                  <button type="button" className="activity-monitor-follow-button" onClick={handleJumpToActivityMonitorBottom}>
-                    最新へ
-                  </button>
-                ) : null}
               </div>
-              <div className="activity-monitor-body" ref={activityMonitorRef} onScroll={handleActivityMonitorScroll}>
-                {hasVisibleActivityMonitor ? (
-                  <>
-                    {orderedLiveRunSteps.length > 0 ? (
-                      <ul className="live-run-step-list">
-                        {orderedLiveRunSteps.map((step) => {
-                          const toneClassName = liveRunStepToneClassName(step.status);
-                          const parsedFileChangeSummary = step.type === "file_change" ? parseFileChangeSummary(step.summary) : null;
 
-                          return (
-                            <li key={step.id} className={`live-run-step ${toneClassName} ${step.type}`}>
-                              <div className="live-run-step-head">
-                                <span className={`live-run-step-status ${toneClassName}`}>{liveRunStepStatusLabel(step.status)}</span>
-                                <span className="live-run-step-type">{operationTypeLabel(step.type)}</span>
-                              </div>
-                              {parsedFileChangeSummary ? (
-                                <div className="live-run-step-summary live-run-file-change-summary">
-                                  <ul className="live-run-file-change-list" aria-label="変更対象ファイル">
-                                    {parsedFileChangeSummary.map((change, index) => (
-                                      <li key={`${change.path}-${index}`} className="live-run-file-change-item">
-                                        <span className={`live-run-file-change-kind ${change.toneClassName}`}>{change.actionLabel}</span>
-                                        <code className="live-run-file-change-path">{change.path}</code>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              ) : step.type === "command_execution" ? (
-                                <div className="live-run-step-summary live-run-command-summary" aria-label="実行コマンド">
-                                  <span className="live-run-command-prefix" aria-hidden="true">
-                                    $
-                                  </span>
-                                  <code className="live-run-command-text">{step.summary}</code>
-                                </div>
-                              ) : (
-                                <p className="live-run-step-summary">{step.summary}</p>
-                              )}
-                              {step.details ? (
-                                <details className="live-run-step-details">
-                                  <summary>{liveRunStepDetailsLabel(step.type)}</summary>
-                                  <pre>{step.details}</pre>
-                                </details>
-                              ) : null}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    ) : null}
-                    {selectedSessionLiveRun?.errorMessage ? (
-                      <div className="live-run-error-block" role="alert">
-                        <strong>実行エラー</strong>
-                        <p className="live-run-error">{selectedSessionLiveRun.errorMessage}</p>
-                      </div>
-                    ) : null}
-                    {liveRunUsageEntries.length > 0 ? (
-                      <div className="live-run-usage">
-                        {liveRunUsageEntries.map((entry) => (
-                          <span key={entry.key}>
-                            {entry.label} {entry.value}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </>
-                ) : (
-                  <p className="activity-monitor-empty">最初の command や file change を待っています。</p>
-                )}
-              </div>
-            </section>
-          ) : null}
+              <button
+                className={`session-workbench-splitter${isContextRailResizing ? " is-active" : ""}`}
+                type="button"
+                onPointerDown={handleStartContextRailResize}
+                aria-label="会話と command pane の幅を調整"
+                title="左右の幅をドラッグで調整"
+              />
 
-          <div className="composer">
+              <aside className="session-context-pane">
+                <section className="command-monitor-shell" aria-label="最新 command">
+                  <div className="command-monitor-head">
+                    <div className="command-monitor-head-copy">
+                      <span className={`command-monitor-badge ${latestCommandToneClassName}`}>
+                        {isSelectedSessionRunning ? "LIVE COMMAND" : "LATEST COMMAND"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {latestCommandView ? (
+                    <div className="command-monitor-card">
+                      <div className="command-monitor-card-head">
+                        <div className="command-monitor-meta">
+                          <span className={`live-run-step-status ${latestCommandToneClassName}`}>{latestCommandStatusLabel}</span>
+                          <span className="live-run-step-type">Command</span>
+                          <span className="command-monitor-source">{latestCommandSourceCopy}</span>
+                        </div>
+                        {latestCommandView.riskLabels.length > 0 ? (
+                          <div className="command-monitor-risk-list" aria-label="command risk">
+                            {latestCommandView.riskLabels.map((label) => (
+                              <span key={label} className={`command-monitor-risk ${label.toLowerCase()}`}>
+                                {label}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="live-run-command-summary" aria-label="実行コマンド">
+                        <span className="live-run-command-prefix" aria-hidden="true">
+                          $
+                        </span>
+                        <code className="live-run-command-text">{latestCommandView.summary}</code>
+                      </div>
+
+                      {latestCommandView.details ? (
+                        <details className="command-monitor-details live-run-step-details">
+                          <summary>{liveRunStepDetailsLabel("command_execution")}</summary>
+                          <pre>{latestCommandView.details}</pre>
+                        </details>
+                      ) : null}
+
+                      {selectedSessionLiveRun?.errorMessage && isSelectedSessionRunning ? (
+                        <div className="live-run-error-block" role="alert">
+                          <strong>実行エラー</strong>
+                          <p className="live-run-error">{selectedSessionLiveRun.errorMessage}</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="command-monitor-empty-shell">
+                      <p className="command-monitor-empty">
+                        {isSelectedSessionRunning
+                          ? "最初の command を待っています。"
+                          : "直近 run に記録された command はまだないよ。"}
+                      </p>
+                      {selectedSessionLiveRun?.errorMessage ? (
+                        <div className="live-run-error-block" role="alert">
+                          <strong>実行エラー</strong>
+                          <p className="live-run-error">{selectedSessionLiveRun.errorMessage}</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </section>
+              </aside>
+            </div>
+
+            <div className="session-action-dock">
+              <div className="composer">
             {retryBanner ? (
               <div className={`resume-banner retry-banner ${retryBanner.kind}`}>
                 <div className="resume-banner-head">
@@ -2391,6 +2540,8 @@ export default function App() {
                     </option>
                   ))}
                 </select>
+              </div>
+            </div>
               </div>
             </div>
           </div>
