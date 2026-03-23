@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
 import {
   CopilotClient,
   approveAll,
@@ -35,6 +38,8 @@ type CopilotCommandStepState = {
   status: LiveRunStep["status"];
 };
 
+const require = createRequire(import.meta.url);
+
 export function buildCopilotClientEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   // Copilot SDK は child CLI の stderr を bootstrap failure 扱いするため、
   // Node.js の ExperimentalWarning だけで false error にならないように抑止する。
@@ -42,6 +47,70 @@ export function buildCopilotClientEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.Proces
     ...baseEnv,
     NODE_NO_WARNINGS: "1",
   };
+}
+
+export function resolveNativeCopilotPackageName(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): string | null {
+  if (platform === "win32") {
+    if (arch === "x64") {
+      return "@github/copilot-win32-x64";
+    }
+
+    if (arch === "arm64") {
+      return "@github/copilot-win32-arm64";
+    }
+  }
+
+  if (platform === "darwin") {
+    if (arch === "x64") {
+      return "@github/copilot-darwin-x64";
+    }
+
+    if (arch === "arm64") {
+      return "@github/copilot-darwin-arm64";
+    }
+  }
+
+  if (platform === "linux") {
+    if (arch === "x64") {
+      return "@github/copilot-linux-x64";
+    }
+
+    if (arch === "arm64") {
+      return "@github/copilot-linux-arm64";
+    }
+  }
+
+  return null;
+}
+
+export function resolveCopilotCliPath(
+  resolvePackagePath: (specifier: string) => string = require.resolve,
+  fileExists: (candidate: string) => boolean = existsSync,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): string {
+  const nativePackageName = resolveNativeCopilotPackageName(platform, arch);
+  if (nativePackageName) {
+    try {
+      const candidate = resolvePackagePath(nativePackageName);
+      if (fileExists(candidate)) {
+        return candidate;
+      }
+    } catch {
+      // fallback below
+    }
+  }
+
+  const commandFileName = platform === "win32" ? "copilot.cmd" : "copilot";
+  const localNodeModulesCommand = path.resolve(process.cwd(), "node_modules", ".bin", commandFileName);
+  if (fileExists(localNodeModulesCommand)) {
+    return localNodeModulesCommand;
+  }
+
+  return commandFileName;
 }
 
 function buildCopilotClientKey(providerId: string, input: RunSessionTurnInput): string {
@@ -225,6 +294,34 @@ function buildPermissionHandler(approvalMode: string): PermissionHandler {
   }
 }
 
+function buildCopilotBootstrapDebugItems(
+  input: RunSessionTurnInput,
+  cliPath: string,
+  phase: string,
+  message: string,
+): string {
+  return JSON.stringify([
+    {
+      type: "copilot_bootstrap_debug",
+      phase,
+      message,
+      cliPath,
+      provider: input.providerCatalog.id,
+      model: input.session.model,
+      reasoningEffort: input.session.reasoningEffort,
+      approvalMode: input.session.approvalMode,
+      workspacePath: input.session.workspacePath,
+      threadId: input.session.threadId,
+      hasApiKey: getProviderAppSettings(input.appSettings, input.providerCatalog.id).apiKey.trim().length > 0,
+      useLoggedInUser: getProviderAppSettings(input.appSettings, input.providerCatalog.id).apiKey.trim().length === 0,
+    },
+  ], null, 2);
+}
+
+function logCopilotRuntime(message: string, details: Record<string, unknown>): void {
+  console.warn(`[copilot] ${message} ${JSON.stringify(details)}`);
+}
+
 async function emitLiveState(
   handler: RunSessionTurnProgressHandler | undefined,
   sessionId: string,
@@ -274,7 +371,9 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       return { client: cached, clientKey };
     }
 
+    const cliPath = resolveCopilotCliPath();
     const client = new CopilotClient({
+      cliPath,
       env: buildCopilotClientEnv(process.env),
       ...(codingApiKey ? { githubToken: codingApiKey, useLoggedInUser: false } : {}),
     });
@@ -384,7 +483,35 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       throw new Error("Copilot provider はまだ file / folder / image 添付に対応していないよ。");
     }
 
-    const { session } = await this.getSession(input);
+    const cliPath = resolveCopilotCliPath();
+    let session: CopilotSession;
+    try {
+      ({ session } = await this.getSession(input));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logCopilotRuntime("session bootstrap failed", {
+        cliPath,
+        provider: input.providerCatalog.id,
+        model: input.session.model,
+        workspacePath: input.session.workspacePath,
+        threadId: input.session.threadId,
+        message,
+      });
+      throw new ProviderTurnError(
+        message,
+        {
+          threadId: input.session.threadId || null,
+          assistantText: "",
+          systemPromptText: prompt.systemPromptText,
+          inputPromptText: prompt.inputPromptText,
+          composedPromptText: prompt.composedPromptText,
+          operations: [],
+          rawItemsJson: buildCopilotBootstrapDebugItems(input, cliPath, "session-bootstrap", message),
+          usage: null,
+        },
+        Boolean(input.signal?.aborted) || isCanceledProviderMessage(message),
+      );
+    }
     const liveSteps = new Map<string, LiveRunStep>();
     const permissionToStepId = new Map<string, string>();
     const toolNamesByCallId = new Map<string, string>();
@@ -553,6 +680,14 @@ export class CopilotAdapter implements ProviderTurnAdapter {
 
       const message = error instanceof Error ? error.message : String(error);
       const partialResult = this.buildTurnResult(prompt, session.sessionId, assistantText, liveSteps, usage, events);
+      logCopilotRuntime("turn execution failed", {
+        cliPath,
+        provider: input.providerCatalog.id,
+        model: input.session.model,
+        workspacePath: input.session.workspacePath,
+        threadId: session.sessionId,
+        message,
+      });
       throw new ProviderTurnError(
         message,
         partialResult,
@@ -574,6 +709,13 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         throw error;
       }
 
+      logCopilotRuntime("retrying stale connection", {
+        provider: input.providerCatalog.id,
+        model: input.session.model,
+        workspacePath: input.session.workspacePath,
+        threadId: input.session.threadId,
+        message: error instanceof Error ? error.message : String(error),
+      });
       await this.resetRecoverableConnection(input);
       return this.runSessionTurnOnce(input, prompt, onProgress);
     }

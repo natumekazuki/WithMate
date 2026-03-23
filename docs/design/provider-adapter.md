@@ -60,6 +60,7 @@ current milestone の provider ごとの差は次。
 - `CopilotAdapter`
   - `session.sendAndWait()` と session event stream を使い、最小 turn 実行、assistant text streaming、minimal audit log を返す
   - `file / folder / image` 添付、artifact summary、rich command timeline は未対応
+  - Electron main process では SDK default の JS entry bootstrap を避け、native Copilot CLI binary を明示して起動する
 
 ## Session Flow
 
@@ -72,7 +73,7 @@ current milestone の provider ごとの差は次。
 7. Main Process が session の `catalogRevision` と `provider` から provider catalog を解決する
 8. provider adapter が `model / reasoningEffort` を検証し、provider-native SDK 実行へ変換する
    - `CodexAdapter`: file / folder を `additionalDirectories`、画像を structured input にして `thread.runStreamed()` を実行する
-   - `CopilotAdapter`: 現在は text-only prompt を `session.sendAndWait()` へ渡し、session event から live state を組み立てる
+   - `CopilotAdapter`: 現在は text-only prompt を `session.sendAndWait()` へ渡し、session event から live state を組み立てる。Electron では native CLI binary を明示して起動し、bootstrap failure 時は audit log に debug metadata を残す
 9. Main Process が stream event から live state を組み立て、IPC で Session Window へ中継する
 10. turn 完了後に Main Process が `threadId` と assistant message を session store に反映する
 11. Main Process が `running / completed / canceled / failed` の監査ログを 1 turn 1 record で SQLite に保存する

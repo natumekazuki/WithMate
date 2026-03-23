@@ -13,10 +13,11 @@
 - follow-up task `20260322-home-provider-selection-ui` を完了し、Home から `GitHub Copilot` provider を選んで session を作成できる状態にした
 - follow-up task `20260323-copilot-cli-warning-suppression` を完了し、Copilot child CLI の warning を `code 0` false error にしない env workaround を入れた
 - follow-up task `20260323-copilot-connection-recovery` を完了し、stale connection 系 error では cached session / client を破棄して 1 回だけ retry する recovery を入れた
+- follow-up task `20260323-copilot-electron-runtime-debug` を完了し、Electron main process では native Copilot CLI binary を明示する bootstrap 修正を入れた
 - `f6850da` `feat(copilot): add minimal provider integration` を作成し、Milestone A の初期 slice 群と launch UI まで main branch に入れた
 
 ## Next
 
 - 次の follow-up task は `session 継続 / cancel / audit parity` まわりの整理
 - `session 再開`、`cancel / interrupted handling`、`audit log` の dedicated validation を次に切る
-- Electron 実機では Copilot provider がまだ `CLI server exited unexpectedly with code 0` / `Connection is closed.` で失敗することがあり、app-level の再現条件特定が残っている
+- Copilot では `tool.execution_start` が `powershell` など provider-native tool 名で来るため、`Latest Command` と audit summary の command 可視化改善が follow-up 候補

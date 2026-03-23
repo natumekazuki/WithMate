@@ -12,12 +12,13 @@
 - `基本 turn 実行` slice は完了し、Copilot minimal runtime が main branch 作業ツリーに入った
 - Home の `New Session` から `GitHub Copilot` provider を選んで session を作成できるようにした
 - Copilot child CLI warning 抑止と stale connection recovery を入れて、known false error への対策を積んだ
+- Electron main process では native Copilot CLI binary を明示するようにし、Copilot turn が実機でも通る状態にした
 
 ## Remaining
 
 - capability ごとの follow-up plan 作成
 - `session 再開 / cancel / audit parity` 以降の slice を順に潰す
-- Electron 実機で出る `CLI server exited unexpectedly with code 0` / `Connection is closed.` の再現条件特定と恒久対応
+- `Latest Command` / audit summary で Copilot command を command として見せる follow-up
 
 ## Related Commits
 
