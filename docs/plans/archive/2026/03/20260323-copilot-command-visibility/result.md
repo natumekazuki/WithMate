@@ -17,4 +17,4 @@
 
 ## Related Commits
 
-- 未コミット
+- `e772e69` `fix(copilot): normalize event handling`

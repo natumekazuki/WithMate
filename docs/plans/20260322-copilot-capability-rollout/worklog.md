@@ -19,6 +19,7 @@
 - follow-up task `20260323-copilot-assistant-message-coalescing` を完了し、Copilot の複数 top-level assistant message を chat UI と audit で空行区切りに連結するようにした
 - `f6850da` `feat(copilot): add minimal provider integration` を作成し、Milestone A の初期 slice 群と launch UI まで main branch に入れた
 - `2dd6b83` `fix(copilot): bootstrap native cli in electron` を作成し、Electron 実機で Copilot turn が通るところまで切り分けと修正を反映した
+- `e772e69` `fix(copilot): normalize event handling` を作成し、Copilot の command 可視化、stable raw event trace、assistant message coalescing を main branch に入れた
 
 ## Next
 
