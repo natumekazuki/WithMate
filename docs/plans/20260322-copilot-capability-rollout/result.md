@@ -23,6 +23,7 @@
 ## Related Commits
 
 - `f6850da` `feat(copilot): add minimal provider integration`
+- `2dd6b83` `fix(copilot): bootstrap native cli in electron`
 
 ## Related Docs
 

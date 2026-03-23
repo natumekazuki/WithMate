@@ -20,4 +20,4 @@
 
 ## Related Commits
 
-- なし
+- `2dd6b83` `fix(copilot): bootstrap native cli in electron`

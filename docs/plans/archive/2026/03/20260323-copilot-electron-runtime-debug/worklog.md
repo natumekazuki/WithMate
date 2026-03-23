@@ -16,4 +16,5 @@
 
 ## Commit
 
-- なし
+- `2dd6b83` `fix(copilot): bootstrap native cli in electron`
+  - Electron 実機の Copilot bootstrap 修正、native CLI path 解決、回帰テスト、design doc 追記を記録した

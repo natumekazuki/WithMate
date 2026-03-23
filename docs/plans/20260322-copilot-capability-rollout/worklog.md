@@ -15,6 +15,7 @@
 - follow-up task `20260323-copilot-connection-recovery` を完了し、stale connection 系 error では cached session / client を破棄して 1 回だけ retry する recovery を入れた
 - follow-up task `20260323-copilot-electron-runtime-debug` を完了し、Electron main process では native Copilot CLI binary を明示する bootstrap 修正を入れた
 - `f6850da` `feat(copilot): add minimal provider integration` を作成し、Milestone A の初期 slice 群と launch UI まで main branch に入れた
+- `2dd6b83` `fix(copilot): bootstrap native cli in electron` を作成し、Electron 実機で Copilot turn が通るところまで切り分けと修正を反映した
 
 ## Next
 
