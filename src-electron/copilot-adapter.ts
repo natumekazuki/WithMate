@@ -38,6 +38,28 @@ type CopilotCommandStepState = {
   status: LiveRunStep["status"];
 };
 
+type CopilotStableRawItem = {
+  type: string;
+  timestamp?: string;
+  data?: Record<string, unknown>;
+};
+
+const COPILOT_SHELL_TOOL_NAMES = new Set(["shell", "powershell", "bash", "terminal"]);
+const COPILOT_MUTATING_TOOL_NAMES = new Set(["create", "write", "edit", "replace", "insert", "move", "rename", "delete", "remove"]);
+const COPILOT_DROPPED_RAW_EVENT_TYPES = new Set([
+  "pending_messages.modified",
+  "function",
+  "hook.start",
+  "hook.end",
+  "session.tools_updated",
+  "session.usage_info",
+  "assistant.intent",
+  "assistant.reasoning",
+  "assistant.turn_start",
+  "assistant.turn_end",
+  "session.info",
+]);
+
 const require = createRequire(import.meta.url);
 
 export function buildCopilotClientEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -191,6 +213,314 @@ function appendDetail(current: string | undefined, next: string | undefined): st
   }
 
   return `${current}\n${next}`;
+}
+
+function appendUniqueMessage(messages: string[], nextMessage: string): string[] {
+  const normalized = nextMessage.trim();
+  if (!normalized) {
+    return messages;
+  }
+
+  if (messages[messages.length - 1] === normalized) {
+    return messages;
+  }
+
+  return [...messages, normalized];
+}
+
+function buildAssistantText(messages: string[], draft: string): string {
+  const parts = [...messages];
+  const normalizedDraft = draft.trim();
+  if (normalizedDraft) {
+    parts.push(normalizedDraft);
+  }
+
+  return parts.join("\n\n");
+}
+
+export function applyCopilotAssistantEvent(
+  messages: string[],
+  draft: string,
+  event:
+    | Extract<SessionEvent, { type: "assistant.message_delta" }>
+    | Extract<SessionEvent, { type: "assistant.message" }>,
+): { messages: string[]; draft: string; assistantText: string } {
+  if (event.data.parentToolCallId) {
+    return {
+      messages,
+      draft,
+      assistantText: buildAssistantText(messages, draft),
+    };
+  }
+
+  if (event.type === "assistant.message_delta") {
+    const nextDraft = draft + event.data.deltaContent;
+    return {
+      messages,
+      draft: nextDraft,
+      assistantText: buildAssistantText(messages, nextDraft),
+    };
+  }
+
+  const content = event.data.content.trim();
+  if (!content) {
+    return {
+      messages,
+      draft: "",
+      assistantText: buildAssistantText(messages, ""),
+    };
+  }
+
+  const draftTrimmed = draft.trim();
+  const finalizedMessages = draftTrimmed && draftTrimmed === content
+    ? appendUniqueMessage(messages, draftTrimmed)
+    : appendUniqueMessage(messages, content);
+
+  return {
+    messages: finalizedMessages,
+    draft: "",
+    assistantText: buildAssistantText(finalizedMessages, ""),
+  };
+}
+
+function normalizeCopilotToolName(toolName: string): string {
+  return toolName.trim().toLowerCase();
+}
+
+function getStringArgument(argumentsValue: Record<string, unknown> | undefined, keys: string[]): string | null {
+  if (!argumentsValue) {
+    return null;
+  }
+
+  for (const key of keys) {
+    const candidate = argumentsValue[key];
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return null;
+}
+
+function compactCopilotTargetPath(targetPath: string, workspacePath: string): string {
+  const normalizedTarget = targetPath.replace(/\\/g, "/");
+  const normalizedWorkspace = workspacePath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const relativePath = path.posix.relative(normalizedWorkspace, normalizedTarget);
+
+  if (relativePath && !relativePath.startsWith("../") && !path.posix.isAbsolute(relativePath)) {
+    return relativePath;
+  }
+
+  return normalizedTarget;
+}
+
+function inferCopilotWriteAction(intention: string | undefined): string {
+  const normalized = intention?.trim().toLowerCase() ?? "";
+  if (normalized.includes("create")) {
+    return "create";
+  }
+
+  if (normalized.includes("delete") || normalized.includes("remove")) {
+    return "delete";
+  }
+
+  if (normalized.includes("rename") || normalized.includes("move")) {
+    return "move";
+  }
+
+  if (normalized.includes("replace") || normalized.includes("edit") || normalized.includes("modify") || normalized.includes("update")) {
+    return "edit";
+  }
+
+  return "write";
+}
+
+export function isCopilotVisibleToolName(toolName: string): boolean {
+  const normalized = normalizeCopilotToolName(toolName);
+  return COPILOT_SHELL_TOOL_NAMES.has(normalized) || COPILOT_MUTATING_TOOL_NAMES.has(normalized);
+}
+
+export function buildCopilotToolSummary(
+  toolName: string,
+  argumentsValue: Record<string, unknown> | undefined,
+  workspacePath: string,
+): string {
+  const normalizedToolName = normalizeCopilotToolName(toolName);
+  if (COPILOT_SHELL_TOOL_NAMES.has(normalizedToolName)) {
+    return extractShellCommandFromArguments(argumentsValue) ?? normalizedToolName;
+  }
+
+  const targetPath = getStringArgument(argumentsValue, ["path", "filePath", "fileName", "target", "targetPath", "destination", "destinationPath"]);
+  if (normalizedToolName === "move" || normalizedToolName === "rename") {
+    const sourcePath = getStringArgument(argumentsValue, ["source", "sourcePath", "from", "oldPath"]);
+    const destinationPath = getStringArgument(argumentsValue, ["destination", "destinationPath", "to", "newPath", "path"]);
+    const formattedSource = sourcePath ? compactCopilotTargetPath(sourcePath, workspacePath) : null;
+    const formattedDestination = destinationPath ? compactCopilotTargetPath(destinationPath, workspacePath) : null;
+    if (formattedSource && formattedDestination) {
+      return `${normalizedToolName} ${formattedSource} -> ${formattedDestination}`;
+    }
+
+    if (formattedDestination) {
+      return `${normalizedToolName} ${formattedDestination}`;
+    }
+  }
+
+  if (targetPath) {
+    return `${normalizedToolName} ${compactCopilotTargetPath(targetPath, workspacePath)}`;
+  }
+
+  return normalizedToolName;
+}
+
+function shouldDropCopilotRawEvent(event: SessionEvent): boolean {
+  if ("ephemeral" in event && event.ephemeral === true) {
+    return true;
+  }
+
+  const eventType = String(event.type);
+  return eventType.endsWith("_delta") || COPILOT_DROPPED_RAW_EVENT_TYPES.has(eventType);
+}
+
+type CopilotPermissionRequestLike = {
+  kind: string;
+  toolCallId?: string;
+  warning?: string;
+  fullCommandText?: unknown;
+  fileName?: unknown;
+  intention?: unknown;
+};
+
+function buildCopilotPermissionSummary(request: CopilotPermissionRequestLike, workspacePath: string): string | null {
+  if (request.kind === "shell" && typeof request.fullCommandText === "string" && request.fullCommandText.trim()) {
+    return request.fullCommandText.trim();
+  }
+
+  if (request.kind === "write" && typeof request.fileName === "string" && request.fileName.trim()) {
+    const action = inferCopilotWriteAction(typeof request.intention === "string" ? request.intention : undefined);
+    return `${action} ${compactCopilotTargetPath(request.fileName, workspacePath)}`;
+  }
+
+  return null;
+}
+
+export function buildCopilotStableRawItems(
+  events: SessionEvent[],
+  workspacePath: string,
+): CopilotStableRawItem[] {
+  const stableItems: CopilotStableRawItem[] = [];
+  const toolNamesByCallId = new Map<string, string>();
+
+  for (const event of events) {
+    if (shouldDropCopilotRawEvent(event)) {
+      continue;
+    }
+
+    switch (event.type) {
+      case "user.message":
+        stableItems.push({
+          type: event.type,
+          timestamp: event.timestamp,
+          data: {
+            content: event.data.content,
+          },
+        });
+        break;
+      case "assistant.message":
+        stableItems.push({
+          type: event.type,
+          timestamp: event.timestamp,
+          data: {
+            content: event.data.content,
+            parentToolCallId: event.data.parentToolCallId ?? null,
+          },
+        });
+        break;
+      case "assistant.usage":
+        stableItems.push({
+          type: event.type,
+          timestamp: event.timestamp,
+          data: {
+            inputTokens: event.data.inputTokens ?? null,
+            cacheReadTokens: event.data.cacheReadTokens ?? null,
+            outputTokens: event.data.outputTokens ?? null,
+          },
+        });
+        break;
+      case "session.error":
+        stableItems.push({
+          type: event.type,
+          timestamp: event.timestamp,
+          data: {
+            message: event.data.message,
+          },
+        });
+        break;
+      case "session.idle":
+        stableItems.push({
+          type: event.type,
+          timestamp: event.timestamp,
+        });
+        break;
+      case "permission.requested": {
+        const summary = buildCopilotPermissionSummary(event.data.permissionRequest, workspacePath);
+        stableItems.push({
+          type: event.type,
+          timestamp: event.timestamp,
+          data: {
+            requestId: event.data.requestId,
+            kind: event.data.permissionRequest.kind,
+            summary: summary ?? event.data.permissionRequest.kind,
+          },
+        });
+        break;
+      }
+      case "permission.completed":
+        stableItems.push({
+          type: event.type,
+          timestamp: event.timestamp,
+          data: {
+            requestId: event.data.requestId,
+            resultKind: event.data.result.kind,
+          },
+        });
+        break;
+      case "tool.execution_start":
+        toolNamesByCallId.set(event.data.toolCallId, event.data.toolName);
+        stableItems.push({
+          type: event.type,
+          timestamp: event.timestamp,
+          data: {
+            toolCallId: event.data.toolCallId,
+            toolName: event.data.toolName,
+            summary: buildCopilotToolSummary(event.data.toolName, event.data.arguments, workspacePath),
+          },
+        });
+        break;
+      case "tool.execution_complete": {
+        const toolName = toolNamesByCallId.get(event.data.toolCallId) ?? null;
+        stableItems.push({
+          type: event.type,
+          timestamp: event.timestamp,
+          data: {
+            toolCallId: event.data.toolCallId,
+            toolName,
+            success: event.data.success,
+            content: event.data.result?.content ?? null,
+            errorMessage: event.data.error?.message ?? null,
+          },
+        });
+        break;
+      }
+      default:
+        stableItems.push({
+          type: event.type,
+          timestamp: event.timestamp,
+        });
+        break;
+    }
+  }
+
+  return stableItems;
 }
 
 function extractShellCommandFromArguments(argumentsValue: Record<string, unknown> | undefined): string | null {
@@ -461,6 +791,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     steps: Map<string, LiveRunStep>,
     usage: AuditLogUsage | null,
     events: SessionEvent[],
+    workspacePath: string,
   ): RunSessionTurnResult {
     return {
       threadId,
@@ -469,7 +800,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       inputPromptText: prompt.inputPromptText,
       composedPromptText: prompt.composedPromptText,
       operations: toCommandOperations(steps),
-      rawItemsJson: JSON.stringify(events, null, 2),
+      rawItemsJson: JSON.stringify(buildCopilotStableRawItems(events, workspacePath), null, 2),
       usage,
     };
   }
@@ -517,6 +848,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     const toolNamesByCallId = new Map<string, string>();
     const events: SessionEvent[] = [];
     let assistantText = "";
+    let assistantMessages: string[] = [];
+    let assistantDraft = "";
     let usage: AuditLogUsage | null = null;
     let streamErrorMessage = "";
     let progressChain = Promise.resolve();
@@ -544,15 +877,13 @@ export class CopilotAdapter implements ProviderTurnAdapter {
 
       switch (event.type) {
         case "assistant.message_delta":
-          if (!event.data.parentToolCallId) {
-            assistantText += event.data.deltaContent;
-          }
+        case "assistant.message": {
+          const nextAssistantState = applyCopilotAssistantEvent(assistantMessages, assistantDraft, event);
+          assistantMessages = nextAssistantState.messages;
+          assistantDraft = nextAssistantState.draft;
+          assistantText = nextAssistantState.assistantText;
           break;
-        case "assistant.message":
-          if (!event.data.parentToolCallId) {
-            assistantText = event.data.content;
-          }
-          break;
+        }
         case "assistant.usage":
           usage = toAuditUsageFromCopilot(event.data);
           break;
@@ -561,14 +892,17 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           break;
         case "permission.requested": {
           const request = event.data.permissionRequest;
-          if (request.kind === "shell") {
+          const summary = buildCopilotPermissionSummary(request, input.session.workspacePath);
+          if (summary) {
             const stepId = request.toolCallId ?? event.data.requestId;
             permissionToStepId.set(event.data.requestId, stepId);
-            toolNamesByCallId.set(stepId, "shell");
+            if (request.kind === "shell") {
+              toolNamesByCallId.set(stepId, "shell");
+            }
             updateCommandStep({
               stepId,
-              summary: request.fullCommandText,
-              details: request.warning,
+              summary,
+              details: request.kind === "shell" ? request.warning : undefined,
               status: "pending",
             });
           }
@@ -595,11 +929,11 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         }
         case "tool.execution_start":
           toolNamesByCallId.set(event.data.toolCallId, event.data.toolName);
-          if (event.data.toolName === "shell") {
+          if (isCopilotVisibleToolName(event.data.toolName)) {
             const current = liveSteps.get(event.data.toolCallId);
             updateCommandStep({
               stepId: event.data.toolCallId,
-              summary: current?.summary ?? extractShellCommandFromArguments(event.data.arguments) ?? "shell",
+              summary: current?.summary ?? buildCopilotToolSummary(event.data.toolName, event.data.arguments, input.session.workspacePath),
               details: current?.details,
               status: "in_progress",
             });
@@ -620,11 +954,15 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           break;
         }
         case "tool.execution_complete":
-          if (liveSteps.has(event.data.toolCallId) || toolNamesByCallId.get(event.data.toolCallId) === "shell") {
+          if (
+            liveSteps.has(event.data.toolCallId)
+            || isCopilotVisibleToolName(toolNamesByCallId.get(event.data.toolCallId) ?? "")
+          ) {
             const current = liveSteps.get(event.data.toolCallId);
+            const toolName = toolNamesByCallId.get(event.data.toolCallId) ?? "shell";
             updateCommandStep({
               stepId: event.data.toolCallId,
-              summary: current?.summary ?? "shell",
+              summary: current?.summary ?? buildCopilotToolSummary(toolName, undefined, input.session.workspacePath),
               details: appendDetail(current?.details, extractToolExecutionDetails(event)),
               status: event.data.success ? "completed" : "failed",
             });
@@ -653,7 +991,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       await progressChain;
 
       if (finalMessage?.data.content && !assistantText.trim()) {
-        assistantText = finalMessage.data.content;
+        assistantMessages = appendUniqueMessage(assistantMessages, finalMessage.data.content);
+        assistantText = buildAssistantText(assistantMessages, assistantDraft);
       }
 
       if (streamErrorMessage) {
@@ -664,6 +1003,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           liveSteps,
           usage,
           events,
+          input.session.workspacePath,
         );
         throw new ProviderTurnError(
           streamErrorMessage,
@@ -672,14 +1012,22 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         );
       }
 
-      return this.buildTurnResult(prompt, session.sessionId, assistantText, liveSteps, usage, events);
+      return this.buildTurnResult(prompt, session.sessionId, assistantText, liveSteps, usage, events, input.session.workspacePath);
     } catch (error) {
       if (error instanceof ProviderTurnError) {
         throw error;
       }
 
       const message = error instanceof Error ? error.message : String(error);
-      const partialResult = this.buildTurnResult(prompt, session.sessionId, assistantText, liveSteps, usage, events);
+      const partialResult = this.buildTurnResult(
+        prompt,
+        session.sessionId,
+        assistantText,
+        liveSteps,
+        usage,
+        events,
+        input.session.workspacePath,
+      );
       logCopilotRuntime("turn execution failed", {
         cliPath,
         provider: input.providerCatalog.id,

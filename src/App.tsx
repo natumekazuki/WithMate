@@ -384,14 +384,14 @@ function buildCommandRiskLabels(command: string): string[] {
   const labels: string[] = [];
 
   if (
-    /\b(rm|del|rmdir|rd|truncate)\b/.test(normalizedCommand)
+    /\b(rm|del|rmdir|rd|truncate|delete|remove)\b/.test(normalizedCommand)
     || /\b(remove-item|remove-itemproperty)\b/.test(normalizedCommand)
   ) {
     labels.push("DELETE");
   }
 
   if (
-    /\b(mv|move|cp|copy|mkdir|md|touch|tee)\b/.test(normalizedCommand)
+    /\b(mv|move|cp|copy|mkdir|md|touch|tee|create|edit|replace|insert|write|rename)\b/.test(normalizedCommand)
     || /\b(new-item|set-content|add-content|out-file|rename-item|move-item|copy-item)\b/.test(normalizedCommand)
     || /\b(git apply|git checkout|git restore|git clean)\b/.test(normalizedCommand)
   ) {

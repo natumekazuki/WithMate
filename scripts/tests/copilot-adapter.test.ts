@@ -3,7 +3,11 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import {
+  applyCopilotAssistantEvent,
+  buildCopilotStableRawItems,
+  buildCopilotToolSummary,
   buildCopilotClientEnv,
+  isCopilotVisibleToolName,
   isRecoverableCopilotConnectionErrorMessage,
   resolveCopilotCliPath,
   resolveNativeCopilotPackageName,
@@ -88,6 +92,189 @@ describe("CopilotAdapter env", () => {
     assert.equal(isRecoverableCopilotConnectionErrorMessage("Connection is closed."), true);
     assert.equal(isRecoverableCopilotConnectionErrorMessage("CLI server exited unexpectedly with code 0"), true);
     assert.equal(isRecoverableCopilotConnectionErrorMessage("selected model が model catalog に存在しないよ。"), false);
+  });
+
+  it("Latest Command に載せる Copilot tool 名だけ可視化対象にする", () => {
+    assert.equal(isCopilotVisibleToolName("powershell"), true);
+    assert.equal(isCopilotVisibleToolName("create"), true);
+    assert.equal(isCopilotVisibleToolName("report_intent"), false);
+  });
+
+  it("shell tool は raw command を summary に使う", () => {
+    const summary = buildCopilotToolSummary(
+      "powershell",
+      {
+        command: "Get-ChildItem src",
+      },
+      "F:/repo",
+    );
+
+    assert.equal(summary, "Get-ChildItem src");
+  });
+
+  it("file-write tool は workspace 相対 path を含む summary にする", () => {
+    const summary = buildCopilotToolSummary(
+      "create",
+      {
+        path: "F:/repo/tmp/output.txt",
+      },
+      "F:/repo",
+    );
+
+    assert.equal(summary, "create tmp/output.txt");
+  });
+
+  it("move tool は source と destination の両方を summary にする", () => {
+    const summary = buildCopilotToolSummary(
+      "move",
+      {
+        source: "F:/repo/tmp/old.txt",
+        destination: "F:/repo/tmp/new.txt",
+      },
+      "F:/repo",
+    );
+
+    assert.equal(summary, "move tmp/old.txt -> tmp/new.txt");
+  });
+
+  it("rawItems は delta / ephemeral を落として stable event だけ残す", () => {
+    const items = buildCopilotStableRawItems([
+      {
+        type: "assistant.message_delta",
+        timestamp: "2026-03-23T00:00:00.000Z",
+        data: {
+          deltaContent: "he",
+        },
+      } as never,
+      {
+        type: "permission.requested",
+        timestamp: "2026-03-23T00:00:01.000Z",
+        data: {
+          requestId: "req-1",
+          permissionRequest: {
+            kind: "write",
+            intention: "Create file",
+            fileName: "F:/repo/tmp/output.txt",
+          },
+        },
+        ephemeral: true,
+      } as never,
+      {
+        type: "tool.execution_start",
+        timestamp: "2026-03-23T00:00:02.000Z",
+        data: {
+          toolCallId: "call-1",
+          toolName: "create",
+          arguments: {
+            path: "F:/repo/tmp/output.txt",
+          },
+        },
+      } as never,
+      {
+        type: "tool.execution_complete",
+        timestamp: "2026-03-23T00:00:03.000Z",
+        data: {
+          toolCallId: "call-1",
+          success: true,
+          result: {
+            content: "Created file",
+            detailedContent: "huge diff",
+          },
+        },
+      } as never,
+      {
+        type: "assistant.message",
+        timestamp: "2026-03-23T00:00:04.000Z",
+        data: {
+          content: "done",
+          parentToolCallId: undefined,
+        },
+      } as never,
+    ], "F:/repo");
+
+    assert.deepEqual(items, [
+      {
+        type: "tool.execution_start",
+        timestamp: "2026-03-23T00:00:02.000Z",
+        data: {
+          toolCallId: "call-1",
+          toolName: "create",
+          summary: "create tmp/output.txt",
+        },
+      },
+      {
+        type: "tool.execution_complete",
+        timestamp: "2026-03-23T00:00:03.000Z",
+        data: {
+          toolCallId: "call-1",
+          toolName: "create",
+          success: true,
+          content: "Created file",
+          errorMessage: null,
+        },
+      },
+      {
+        type: "assistant.message",
+        timestamp: "2026-03-23T00:00:04.000Z",
+        data: {
+          content: "done",
+          parentToolCallId: null,
+        },
+      },
+    ]);
+  });
+
+  it("top-level assistant message は arrival 順に空行区切りで連結する", () => {
+    const first = applyCopilotAssistantEvent([], "", {
+      type: "assistant.message",
+      data: {
+        content: "最初の案内",
+        parentToolCallId: null,
+      },
+    } as never);
+    const second = applyCopilotAssistantEvent(first.messages, first.draft, {
+      type: "assistant.message",
+      data: {
+        content: "次の案内",
+        parentToolCallId: null,
+      },
+    } as never);
+
+    assert.equal(second.assistantText, "最初の案内\n\n次の案内");
+  });
+
+  it("delta のあとに同内容の final message が来ても二重化しない", () => {
+    const streamed = applyCopilotAssistantEvent([], "", {
+      type: "assistant.message_delta",
+      data: {
+        deltaContent: "進行中メッセージ",
+        parentToolCallId: null,
+      },
+    } as never);
+    const finalized = applyCopilotAssistantEvent(streamed.messages, streamed.draft, {
+      type: "assistant.message",
+      data: {
+        content: "進行中メッセージ",
+        parentToolCallId: null,
+      },
+    } as never);
+
+    assert.equal(finalized.assistantText, "進行中メッセージ");
+    assert.equal(finalized.messages.length, 1);
+    assert.equal(finalized.draft, "");
+  });
+
+  it("tool 配下の assistant message は本文へ混ぜない", () => {
+    const next = applyCopilotAssistantEvent(["本文"], "", {
+      type: "assistant.message",
+      data: {
+        content: "tool 内メッセージ",
+        parentToolCallId: "call-1",
+      },
+    } as never);
+
+    assert.equal(next.assistantText, "本文");
+    assert.deepEqual(next.messages, ["本文"]);
   });
 
   it("進行途中の partial result が無い stale connection だけ retry する", () => {

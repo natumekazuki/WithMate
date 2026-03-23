@@ -97,7 +97,9 @@ SQLite の `audit_logs` table を使う。
 - `error`
 - `agent_message`
 
-`raw_items_json` は Codex SDK の `turn.items` をそのまま JSON で残す。
+`raw_items_json` は provider ごとの raw trace をそのまま抱え込むための列ではなく、監査で読む stable event trace を JSON で残す。
+- Codex は `turn.items` ベースの raw item を残す
+- Copilot は `assistant.message_delta` や `assistant.reasoning_delta` のような stream packet は落とし、`tool.execution_*`、`assistant.message`、`assistant.usage` などの stable event だけを残す
 `assistant_text` は Session UI と同じ表示基準で、複数の `agent_message` を arrival 順に空行区切りで連結した結果を保存する。
 個々の `agent_message` の粒度確認が必要な場合は `operations_json` または `raw_items_json` を使う。
 

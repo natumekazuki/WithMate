@@ -14,6 +14,9 @@
 - follow-up task `20260323-copilot-cli-warning-suppression` を完了し、Copilot child CLI の warning を `code 0` false error にしない env workaround を入れた
 - follow-up task `20260323-copilot-connection-recovery` を完了し、stale connection 系 error では cached session / client を破棄して 1 回だけ retry する recovery を入れた
 - follow-up task `20260323-copilot-electron-runtime-debug` を完了し、Electron main process では native Copilot CLI binary を明示する bootstrap 修正を入れた
+- follow-up task `20260323-copilot-command-visibility` を完了し、Copilot の `Latest Command` と audit `operations` で mutating tool も読めるようにした
+- follow-up task `20260323-copilot-rawitems-filtering` を完了し、Copilot の `rawItemsJson` を stable event trace に圧縮した
+- follow-up task `20260323-copilot-assistant-message-coalescing` を完了し、Copilot の複数 top-level assistant message を chat UI と audit で空行区切りに連結するようにした
 - `f6850da` `feat(copilot): add minimal provider integration` を作成し、Milestone A の初期 slice 群と launch UI まで main branch に入れた
 - `2dd6b83` `fix(copilot): bootstrap native cli in electron` を作成し、Electron 実機で Copilot turn が通るところまで切り分けと修正を反映した
 
@@ -21,4 +24,4 @@
 
 - 次の follow-up task は `session 継続 / cancel / audit parity` まわりの整理
 - `session 再開`、`cancel / interrupted handling`、`audit log` の dedicated validation を次に切る
-- Copilot では `tool.execution_start` が `powershell` など provider-native tool 名で来るため、`Latest Command` と audit summary の command 可視化改善が follow-up 候補
+- `file / folder context` と `image attachment` の native surface 確認が次の大きい slice 候補

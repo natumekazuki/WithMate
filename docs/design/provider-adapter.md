@@ -59,8 +59,11 @@ current milestone の provider ごとの差は次。
   - `file / folder / image` 添付を shipped
 - `CopilotAdapter`
   - `session.sendAndWait()` と session event stream を使い、最小 turn 実行、assistant text streaming、minimal audit log を返す
+  - top-level `assistant.message` が複数回来た場合は、arrival 順に空行区切りで連結した本文を `assistantText` として返す
   - `file / folder / image` 添付、artifact summary、rich command timeline は未対応
   - Electron main process では SDK default の JS entry bootstrap を避け、native Copilot CLI binary を明示して起動する
+  - `Latest Command` と audit `operations` には、`shell / powershell / bash` に加えて `create / edit / replace / move / delete` のような mutating tool も `command_execution` として正規化して返す
+  - `rawItemsJson` は full session dump ではなく、`tool.execution_*`、`assistant.message`、`assistant.usage` など監査で読む stable event trace に絞って返す
 
 ## Session Flow
 
