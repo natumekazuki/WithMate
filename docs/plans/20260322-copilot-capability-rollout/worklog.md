@@ -21,6 +21,7 @@
 - `f6850da` `feat(copilot): add minimal provider integration` を作成し、Milestone A の初期 slice 群と launch UI まで main branch に入れた
 - `2dd6b83` `fix(copilot): bootstrap native cli in electron` を作成し、Electron 実機で Copilot turn が通るところまで切り分けと修正を反映した
 - `e772e69` `fix(copilot): normalize event handling` を作成し、Copilot の command 可視化、stable raw event trace、assistant message coalescing を main branch に入れた
+- `8a644a0` `feat(copilot): add artifact parity` を作成し、Copilot でも `Details` / `Open Diff` を出せる最小 artifact summary を main branch に入れた
 
 ## Next
 

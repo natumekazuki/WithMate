@@ -16,4 +16,4 @@
 
 ## Related Commits
 
-- 未コミット
+- `8a644a0` `feat(copilot): add artifact parity`
