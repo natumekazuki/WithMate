@@ -49,7 +49,7 @@
 | command visibility | 実行中または直前 command を UI で確認できる | 対応 | 一部対応 | 実装済み | Session 右 pane の `Latest Command`。Copilot は shell に加えて `create / edit / replace / move / delete` などの mutating tool も `command_execution` へ正規化して表示する |
 | live step timeline | command 以外の進行 step も細かく可視化する | 対応 | 未確認 | 一部実装 | 現在は情報量を絞って `Latest Command` 優先 |
 | audit log | prompt / operations / raw items / usage を保存する | 対応 | 一部対応 | 実装済み | Codex は rich item schema、Copilot は prompt / assistant / stable provider event trace / normalized operations を保存する |
-| changed files / diff | 変更ファイルと diff を見せる | 一部対応 | 未確認 | 実装済み | current は snapshot diff fallback 前提 |
+| changed files / diff | 変更ファイルと diff を見せる | 一部対応 | 未確認 | 実装済み | current は snapshot diff fallback 前提。Copilot でも snapshot diff から `artifact.changedFiles` を組み立て、`Details` と `Open Diff` を出す |
 | partial result preservation | canceled/failed 時も取得済み text/items を残す | 対応 | 未確認 | 実装済み | current runtime は Codex partial result を保存 |
 | slash command absorption | provider slash command を canonical UI/metadata に吸収する | 一部対応 | 一部対応 | 設計済み | docs はあるが parser 実装は未着手 |
 | native slash passthrough | provider slash command を SDK 経由でそのまま実行する | 非対応 | 非対応 | 未着手 | SDK surface 上は想定しない方針 |

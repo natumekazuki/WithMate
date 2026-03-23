@@ -12,10 +12,11 @@ import {
   type SessionEvent,
 } from "@github/copilot-sdk";
 
-import type { AuditLogOperation, AuditLogUsage, LiveRunStep } from "../src/app-state.js";
+import type { AuditLogOperation, AuditLogUsage, LiveRunStep, Session } from "../src/app-state.js";
 import { getProviderAppSettings } from "../src/app-state.js";
 import { normalizeApprovalMode } from "../src/approval-mode.js";
 import { resolveModelSelection, type ResolvedModelSelection } from "../src/model-catalog.js";
+import { buildArtifactFromOperations } from "./provider-artifact.js";
 import { composeProviderPrompt, isCanceledProviderMessage } from "./provider-prompt.js";
 import {
   ProviderTurnError,
@@ -25,6 +26,11 @@ import {
   type RunSessionTurnProgressHandler,
   type RunSessionTurnResult,
 } from "./provider-runtime.js";
+import {
+  captureWorkspaceSnapshot,
+  type SnapshotCaptureStats,
+  type WorkspaceSnapshot,
+} from "./snapshot-ignore.js";
 
 type CachedCopilotSession = {
   session: CopilotSession;
@@ -784,7 +790,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     };
   }
 
-  private buildTurnResult(
+  private async buildTurnResult(
     prompt: ProviderPromptComposition,
     threadId: string | null,
     assistantText: string,
@@ -792,14 +798,35 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     usage: AuditLogUsage | null,
     events: SessionEvent[],
     workspacePath: string,
-  ): RunSessionTurnResult {
+    session: Session,
+    providerCatalog: RunSessionTurnInput["providerCatalog"],
+    selection: ResolvedModelSelection,
+    beforeSnapshot: WorkspaceSnapshot,
+    beforeSnapshotStats: SnapshotCaptureStats,
+  ): Promise<RunSessionTurnResult> {
+    const { snapshot: afterSnapshot, stats: afterSnapshotStats } = await captureWorkspaceSnapshot(workspacePath);
+    const operations = toCommandOperations(steps);
+    const artifact = buildArtifactFromOperations({
+      session,
+      operations,
+      usage,
+      threadId,
+      beforeSnapshot,
+      afterSnapshot,
+      beforeSnapshotStats,
+      afterSnapshotStats,
+      providerCatalog,
+      selection,
+    });
+
     return {
       threadId,
       assistantText,
+      artifact,
       systemPromptText: prompt.systemPromptText,
       inputPromptText: prompt.inputPromptText,
       composedPromptText: prompt.composedPromptText,
-      operations: toCommandOperations(steps),
+      operations,
       rawItemsJson: JSON.stringify(buildCopilotStableRawItems(events, workspacePath), null, 2),
       usage,
     };
@@ -815,9 +842,11 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     }
 
     const cliPath = resolveCopilotCliPath();
+    const { snapshot: beforeSnapshot, stats: beforeSnapshotStats } = await captureWorkspaceSnapshot(input.session.workspacePath);
     let session: CopilotSession;
+    let selection: ResolvedModelSelection;
     try {
-      ({ session } = await this.getSession(input));
+      ({ session, selection } = await this.getSession(input));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logCopilotRuntime("session bootstrap failed", {
@@ -996,7 +1025,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       }
 
       if (streamErrorMessage) {
-        const partialResult = this.buildTurnResult(
+        const partialResult = await this.buildTurnResult(
           prompt,
           session.sessionId,
           assistantText,
@@ -1004,6 +1033,11 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           usage,
           events,
           input.session.workspacePath,
+          input.session,
+          input.providerCatalog,
+          selection,
+          beforeSnapshot,
+          beforeSnapshotStats,
         );
         throw new ProviderTurnError(
           streamErrorMessage,
@@ -1012,14 +1046,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         );
       }
 
-      return this.buildTurnResult(prompt, session.sessionId, assistantText, liveSteps, usage, events, input.session.workspacePath);
-    } catch (error) {
-      if (error instanceof ProviderTurnError) {
-        throw error;
-      }
-
-      const message = error instanceof Error ? error.message : String(error);
-      const partialResult = this.buildTurnResult(
+      return this.buildTurnResult(
         prompt,
         session.sessionId,
         assistantText,
@@ -1027,6 +1054,31 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         usage,
         events,
         input.session.workspacePath,
+        input.session,
+        input.providerCatalog,
+        selection,
+        beforeSnapshot,
+        beforeSnapshotStats,
+      );
+    } catch (error) {
+      if (error instanceof ProviderTurnError) {
+        throw error;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      const partialResult = await this.buildTurnResult(
+        prompt,
+        session.sessionId,
+        assistantText,
+        liveSteps,
+        usage,
+        events,
+        input.session.workspacePath,
+        input.session,
+        input.providerCatalog,
+        selection,
+        beforeSnapshot,
+        beforeSnapshotStats,
       );
       logCopilotRuntime("turn execution failed", {
         cliPath,
