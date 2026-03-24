@@ -174,21 +174,26 @@ describe("CopilotAdapter env", () => {
     ]);
   });
 
-  it("image 添付は明示的に未対応エラーにする", () => {
-    assert.throws(
-      () => buildCopilotMessageAttachments([
-        {
-          id: "image:assets/sample.png",
-          kind: "image",
-          source: "text",
-          absolutePath: "F:\\repo\\assets\\sample.png",
-          displayPath: "assets/sample.png",
-          workspaceRelativePath: "assets/sample.png",
-          isOutsideWorkspace: false,
-        },
-      ]),
-      /image 添付はまだ未対応/,
-    );
+  it("image 添付も Copilot では file attachment として送る", () => {
+    const attachments = buildCopilotMessageAttachments([
+      {
+        id: "image:assets/sample.png",
+        kind: "image",
+        source: "text",
+        absolutePath: "F:\\repo\\assets\\sample.png",
+        displayPath: "assets/sample.png",
+        workspaceRelativePath: "assets/sample.png",
+        isOutsideWorkspace: false,
+      },
+    ]);
+
+    assert.deepEqual(attachments, [
+      {
+        type: "file",
+        path: "F:\\repo\\assets\\sample.png",
+        displayName: "assets/sample.png",
+      },
+    ]);
   });
 
   it("rawItems は delta / ephemeral を落として stable event だけ残す", () => {

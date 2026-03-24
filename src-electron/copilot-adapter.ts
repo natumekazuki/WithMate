@@ -473,11 +473,6 @@ function buildCopilotApprovalRequest(
 export function buildCopilotMessageAttachments(
   attachments: RunSessionTurnInput["attachments"],
 ): NonNullable<MessageOptions["attachments"]> {
-  const unsupportedImage = attachments.find((attachment) => attachment.kind === "image");
-  if (unsupportedImage) {
-    throw new Error("Copilot provider の image 添付はまだ未対応だよ。");
-  }
-
   return attachments.map((attachment) => ({
     type: attachment.kind === "folder" ? "directory" : "file",
     path: attachment.absolutePath,

@@ -42,7 +42,7 @@
 | reasoning depth | session ごとに reasoning depth を選ぶ | 対応 | 未確認 | 実装済み | Copilot 側の depth 同等概念は未整理 |
 | approval mode | provider-native approval 設定へ map する | 対応 | 一部対応 | 一部実装 | WithMate は `allow-all / safety / provider-controlled` を正本にしている。Copilot `provider-controlled` は direct approval UI と接続したが、Codex は policy mapping のまま |
 | file / folder context | workspace file/folder を turn input に含める | 一部対応 | 一部対応 | 実装済み | Codex は `additionalDirectories`、Copilot は `attachments` の `file` / `directory` へ変換して送る |
-| image attachment | image を turn input に含める | 対応 | 未確認 | 実装済み | current runtime は Codex `local_image` のみ |
+| image attachment | image を turn input に含める | 対応 | 一部対応 | 実装済み | Codex は `local_image`、Copilot は `attachments` の `file` として送る |
 | skill selection | skill を選び、provider native invocation へ変換する | 対応 | 対応 | 実装済み | Codex は `$skill-name`、Copilot は directive 設計まで |
 | custom agent selection | provider 固有 agent を session metadata へ反映する | 一部対応 | 対応 | 設計済み | Codex の `/agent` は thread switch 寄りで意味が違う |
 | assistant text streaming | turn 完了前の message stream を UI に出す | 対応 | 対応 | 実装済み | Codex は `runStreamed()`、Copilot は `assistant.message_delta` を live state へ中継し、top-level `assistant.message` が複数回来た場合も空行区切りで連結する |

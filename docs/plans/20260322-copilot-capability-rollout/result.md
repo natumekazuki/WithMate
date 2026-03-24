@@ -16,11 +16,11 @@
 - Copilot `provider-controlled` の permission request を Session UI の pending bubble から `今回だけ許可 / 拒否` できるようにした
 - approval 後の turn 完了待機を event stream ベースへ切り替え、長時間 command で false timeout しないようにした
 - Copilot でも `@path` 由来の file / folder を `attachments` の `file` / `directory` として送れるようにした
+- Copilot の画像は `Image` ボタンを共通維持したまま `file attachment` として送る形に寄せた
 
 ## Remaining
 
 - capability ごとの follow-up plan 作成
-- `image attachment` の current UI 反映方針整理
 - `custom agent selection` と `slash command absorption` の実装設計
 - `apps / mcp / plugins`、`sandbox / allowlist 拡張` の provider surface 調査
 
