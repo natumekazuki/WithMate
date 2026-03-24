@@ -12,3 +12,4 @@
 - `scripts/tests/audit-log-storage.test.ts` / `scripts/tests/copilot-adapter.test.ts` を更新し、`node --import tsx scripts/tests/audit-log-storage.test.ts`、`node --import tsx scripts/tests/copilot-adapter.test.ts`、`npm run build` を通した
 - `docs/design/audit-log.md` / `docs/design/provider-adapter.md` / `docs/design/prompt-composition.md` / `docs/manual-test-checklist.md` を更新した
 - `.ai_context/` はこの repo に存在しないため更新対象なし、`README.md` は今回の内部監査構造変更では入口仕様が変わらないため更新不要と判断した
+- コミット: `b892f01` `feat(runtime): 監査ログ構造化と DB 初期化を改善`

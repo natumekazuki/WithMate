@@ -25,3 +25,7 @@
 - `node --import tsx scripts/tests/copilot-adapter.test.ts`
 - `node --import tsx scripts/tests/audit-log-storage.test.ts`
 - `npm run build`
+
+## Commits
+
+- `b892f01` `feat(runtime): 監査ログ構造化と DB 初期化を改善`

@@ -42,3 +42,7 @@
 - `src-electron/copilot-adapter.ts`
 - `node_modules/@github/copilot-sdk/dist/types.d.ts`
 - `node_modules/@github/copilot-sdk/README.md`
+
+## Commits
+
+- `b892f01` `feat(runtime): 監査ログ構造化と DB 初期化を改善`
