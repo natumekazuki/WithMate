@@ -36,21 +36,23 @@ npm run electron:start
 | MT-007 | Settings save | `System Prompt Prefix` または coding provider 設定を変更して `Save Settings` を押す | 保存成功メッセージが表示され、再度開いても保持される |
 | MT-008 | Model catalog export | Settings の `Model Catalog` から `Export Models` を押す | catalog JSON が保存される |
 | MT-009 | Model catalog import | Settings の `Model Catalog` から `Import Models` を実行する | import 成功メッセージが表示され、active revision が更新される |
-| MT-010 | DB reset confirm | Settings の `Danger Zone` で `DB を初期化` を押す | confirm が出る |
-| MT-011 | DB reset success | idle session のみ存在する状態で `DB を初期化` を実行する | sessions / audit logs / app settings / model catalog が初期状態へ戻り、characters は保持される |
+| MT-010 | DB reset confirm | Settings の `Danger Zone` で reset 対象を 1 つ以上選び、`DB を初期化` を押す | 選択中 target を反映した confirm が出る |
+| MT-011 | DB reset success | idle session のみ存在する状態で reset 対象を選んで `DB を初期化` を実行する | 選択した target だけ初期状態へ戻る。`sessions` を含む場合は `audit logs` も一緒に消え、characters は保持される |
+| MT-011A | DB reset full rebuild | `sessions / audit logs / app settings / model catalog` を全選択して `DB を初期化` を実行する | DB が再生成され、schema を含めて初期状態へ戻る |
 | MT-012 | DB reset reject | 実行中 session がある状態で `DB を初期化` を実行する | reset が拒否され、実行中 session の完了またはキャンセルを促す |
 | MT-013 | New Session 起動 | Home の `New Session` を押す | launch dialog が開く |
 | MT-014 | New Session 作成 | title と workspace と provider と character を選び `Start New Session` を押す | Session Window が開き、Home の session 一覧に追加され、選んだ provider で session が作られ、approval 初期値は `安全寄り` になる |
 | MT-014A | New Session provider availability | `Coding Agent Providers` で一部 provider を無効化した後に `New Session` を開く | launch dialog の provider 候補には enabled provider だけが出る。0 件なら empty state が出て `Start New Session` は disabled のままになる |
 | MT-015 | Session 実行 | Session Window の textarea に入力して送信する | user message が追加され、pending と live activity が表示される |
 | MT-015A | Copilot basic turn | provider を `GitHub Copilot` にした session を作成し、text-only の prompt を 1 回送る | assistant response が返り、Session が `idle` へ戻る。添付なしなら Codex と同じ Session UI で 1 turn 完了できる |
+| MT-015A1 | Copilot character prompt separation | provider を `GitHub Copilot` にした session で character を有効にした 1 turn を実行し、その後 `Audit Log` を開く | `Logical Prompt` には character 指示を含む論理合成が残り、`Transport Payload` では `session.systemMessage` と `session.send.prompt` が分離して見える |
 | MT-015B | Copilot file / folder context | provider を `GitHub Copilot` にした session で workspace 内 file と folder を `@path` で参照して 1 turn 実行する | assistant response が返り、Copilot 側へ file / folder attachment が渡る。workspace 外 path でも session が失敗せず、少なくとも turn 自体は継続できる |
 | MT-015C | Copilot image via Image button | provider を `GitHub Copilot` にした session で `Image` ボタンから画像を選んで 1 turn 実行する | `Image` ボタンが利用でき、選んだ画像は Copilot 側へ file attachment として渡される |
 | MT-016 | Session 実行キャンセル | 実行中に `Cancel` を押す | 実行が止まり、session は `idle` に戻り、Audit Log に `CANCELED` が残る |
 | MT-017 | Approval / Model / Depth | idle 状態の Session Window で approval / model / depth を変更する | approval は `自動実行 / 安全寄り / プロバイダー判断` で表示され、選択値が保存され、再度開いても保持される |
 | MT-017A | Copilot approval prompt | provider を `GitHub Copilot`、approval を `プロバイダー判断` にした session で shell または write 承認が必要な turn を実行する | pending bubble 内に approval card が出て、`今回だけ許可 / 拒否` を押すと run が再開される。read-only request では card は出ない |
-| MT-018 | Audit Log | Session Window の `Audit Log` を押す | 1 turn 1 record の監査ログが閲覧でき、approval 表示は provider-neutral wording になる |
-| MT-018A | Copilot audit log minimum | Copilot session で 1 turn 実行後に `Audit Log` を開く | `system / input / composed prompt`、assistant text、provider metadata、raw session events が保存される。operations は command が無い turn では空でもよい |
+| MT-018 | Audit Log | Session Window の `Audit Log` を押す | 1 turn 1 record の監査ログが閲覧でき、approval 表示は provider-neutral wording になる。prompt 表示は `Logical Prompt` と `Transport Payload` に分かれる |
+| MT-018A | Copilot audit log minimum | Copilot session で 1 turn 実行後に `Audit Log` を開く | `Logical Prompt` と `Transport Payload`、assistant text、provider metadata、raw session events が保存される。operations は command が無い turn では空でもよい |
 | MT-018B | Copilot Details / Diff | Copilot session で file 変更を伴う turn を 1 回実行し、assistant bubble の `Details` を開く | `Changed Files`、`Run Checks`、`operationTimeline` が表示され、差分がある file では `Open Diff` から split diff を開ける |
 | MT-019 | Diff | artifact の `Open Diff` を押し、必要なら `Open In Window` も押す | inline diff と Diff Window の両方で split diff が開く |
 | MT-020 | Character persistence | character を作成 / 編集 / 削除する | `characters/` 相当の保存内容が Home と Session に反映される |
@@ -111,5 +113,5 @@ npm run electron:start
 
 ## 補足
 
-- `DB を初期化` は DB file 削除ではなく Main Process の論理 reset を使う
+- `DB を初期化` は通常は Main Process の論理 reset を使い、全対象選択時だけ DB ファイル再生成を行う
 - `Character Stream` は現行 UI に含まれないため、項目表にも含めない

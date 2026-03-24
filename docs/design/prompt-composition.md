@@ -77,20 +77,24 @@ Session Window の composer では、参照対象は最終的に textarea 内の
 
 ## Persisted Prompt Views
 
-監査用途では prompt を次の 3 つに分けて保存する。
+監査用途では prompt を次の 2 層に分けて保存する。
 
-- `systemPromptText`
-  - `# System Prompt`
-  - `System Prompt Prefix`
-  - `character.md`
-- `inputPromptText`
-  - `# User Input Prompt`
-  - ユーザー入力本文
-- `composedPromptText`
-  - 実際に `thread.run()` へ渡す text 部分の最終文字列
+- `logicalPrompt`
+  - `systemText`
+    - `# System Prompt`
+    - `System Prompt Prefix`
+    - `character.md`
+  - `inputText`
+    - `# User Input Prompt`
+    - ユーザー入力本文
+  - `composedText`
+    - 監査上の論理的な合成表示
+- `transportPayload`
+  - provider に実際に渡した payload の要約
+  - `summary + fields[]` の形で provider ごとの差を持てるようにする
 
-これらは監査上の区分であり、実際に送る文字列も同じ構造を持つ。
-画像添付がある場合は `composedPromptText` が text 部分になり、画像本体は structured input で別送される。
+`logicalPrompt` は監査上の論理区分であり、provider 実際の transport と完全一致する必要はない。
+画像添付や Copilot `systemMessage` のような別送情報は `transportPayload` 側を正本にする。
 
 ## Adapter Boundary
 
@@ -107,9 +111,11 @@ type PromptCompositionInput = {
 
 ```ts
 type PromptComposition = {
-  systemPromptText: string;
-  inputPromptText: string;
-  composedPromptText: string;
+  logicalPrompt: {
+    systemText: string;
+    inputText: string;
+    composedText: string;
+  };
 };
 
 type PromptComposer = (input: PromptCompositionInput) => PromptComposition;
@@ -121,7 +127,8 @@ type PromptComposer = (input: PromptCompositionInput) => PromptComposition;
 - app 共通で必要な固定指示は `System Prompt Prefix` に記述する
 - `Role` は system prompt 合成の主要入力として扱う
 - 現行の Codex SDK 実装では adapter が `# System Prompt + (System Prompt Prefix + character.md) + # User Input Prompt + user input` を空行区切りで 1 本の text として組み立て、画像がある場合だけ structured input で `thread.run()` へ渡す
-- 監査ログでは `system / input / composed` を分けて残し、後から差分を確認できるようにする
+- 現行の Copilot SDK 実装では adapter が `System Prompt Prefix + character.md` を `SessionConfig.systemMessage` `mode: "append"` に載せ、`session.send()` には user input 本文だけを渡す
+- 監査ログでは `logical prompt` と `transport payload` を分けて残し、後から論理指示と実 transport の差を確認できるようにする
 
 ## UI Impact
 
@@ -133,3 +140,4 @@ type PromptComposer = (input: PromptCompositionInput) => PromptComposition;
 ## Open Questions
 
 - provider ごとに prompt composer を分けるか
+  - 現状は共通 `logicalPrompt` を持ちつつ、transport だけ provider-specific に分ける方針

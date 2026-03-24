@@ -63,7 +63,34 @@ export type OpenPathOptions = {
   baseDirectory?: string | null;
 };
 
+export const ALL_RESET_APP_DATABASE_TARGETS = ["sessions", "auditLogs", "appSettings", "modelCatalog"] as const;
+
+export type ResetAppDatabaseTarget = (typeof ALL_RESET_APP_DATABASE_TARGETS)[number];
+
+export type ResetAppDatabaseRequest = {
+  targets: ResetAppDatabaseTarget[];
+};
+
+export function normalizeResetAppDatabaseTargets(
+  targets: readonly ResetAppDatabaseTarget[] | null | undefined,
+): ResetAppDatabaseTarget[] {
+  const selected = new Set<ResetAppDatabaseTarget>(targets ?? ALL_RESET_APP_DATABASE_TARGETS);
+  if (selected.has("sessions")) {
+    selected.add("auditLogs");
+  }
+
+  return ALL_RESET_APP_DATABASE_TARGETS.filter((target) => selected.has(target));
+}
+
+export function areAllResetAppDatabaseTargetsSelected(
+  targets: readonly ResetAppDatabaseTarget[] | null | undefined,
+): boolean {
+  const normalized = normalizeResetAppDatabaseTargets(targets);
+  return normalized.length === ALL_RESET_APP_DATABASE_TARGETS.length;
+}
+
 export type ResetAppDatabaseResult = {
+  resetTargets: ResetAppDatabaseTarget[];
   sessions: Session[];
   appSettings: AppSettings;
   modelCatalog: ModelCatalogSnapshot;
@@ -96,7 +123,7 @@ export type WithMateWindowApi = {
   listOpenSessionWindowIds(): Promise<string[]>;
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
-  resetAppDatabase(): Promise<ResetAppDatabaseResult>;
+  resetAppDatabase(request: ResetAppDatabaseRequest): Promise<ResetAppDatabaseResult>;
   listCharacters(): Promise<CharacterProfile[]>;
   getCharacter(characterId: string): Promise<CharacterProfile | null>;
   createCharacter(input: CreateCharacterInput): Promise<CharacterProfile>;

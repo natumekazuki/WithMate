@@ -32,9 +32,13 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
     .join("\n\n");
 
   return {
-    systemPromptText,
-    inputPromptText,
-    composedPromptText,
+    systemBodyText: systemPromptBody,
+    inputBodyText: inputPromptBody,
+    logicalPrompt: {
+      systemText: systemPromptText,
+      inputText: inputPromptText,
+      composedText: composedPromptText,
+    },
     imagePaths: referencedImages.map((attachment) => attachment.absolutePath),
     additionalDirectories: collectAdditionalDirectories(input.attachments),
   };

@@ -5,6 +5,7 @@ import { Codex, type Thread, type ThreadEvent, type ThreadItem, type Usage } fro
 import type {
   AppSettings,
   AuditLogOperation,
+  AuditTransportPayload,
   AuditLogUsage,
   ChangedFile,
   CharacterProfile,
@@ -592,6 +593,34 @@ async function emitLiveState(
   });
 }
 
+function buildCodexTransportPayload(prompt: ProviderPromptComposition): AuditTransportPayload {
+  const fields = [
+    {
+      label: "thread.runStreamed.text",
+      value: prompt.logicalPrompt.composedText,
+    },
+  ];
+
+  if (prompt.imagePaths.length > 0) {
+    fields.push({
+      label: "thread.runStreamed.images",
+      value: prompt.imagePaths.join("\n"),
+    });
+  }
+
+  if (prompt.additionalDirectories.length > 0) {
+    fields.push({
+      label: "thread.additionalDirectories",
+      value: prompt.additionalDirectories.join("\n"),
+    });
+  }
+
+  return {
+    summary: "Codex thread.runStreamed payload",
+    fields,
+  };
+}
+
 function toRunChecks(
   session: Session,
   usage: Usage | null,
@@ -819,9 +848,8 @@ export class CodexAdapter implements ProviderTurnAdapter {
       threadId,
       assistantText: finalAssistantText,
       artifact,
-      systemPromptText: prompt.systemPromptText,
-      inputPromptText: prompt.inputPromptText,
-      composedPromptText: prompt.composedPromptText,
+      logicalPrompt: prompt.logicalPrompt,
+      transportPayload: buildCodexTransportPayload(prompt),
       operations: toAuditOperations(finalItems),
       rawItemsJson: JSON.stringify(finalItems, null, 2),
       usage: toAuditUsage(usage),
@@ -835,10 +863,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
     const turnInput =
       prompt.imagePaths.length > 0
         ? [
-            { type: "text" as const, text: prompt.composedPromptText },
+            { type: "text" as const, text: prompt.logicalPrompt.composedText },
             ...prompt.imagePaths.map((imagePath) => ({ type: "local_image" as const, path: imagePath })),
           ]
-        : prompt.composedPromptText;
+        : prompt.logicalPrompt.composedText;
     const items = new Map<string, ThreadItem>();
     const liveSteps = new Map<string, LiveRunStep>();
     let threadId = thread.id;

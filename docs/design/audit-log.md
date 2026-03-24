@@ -8,9 +8,8 @@
 WithMate 上で行われた session 実行について、後から内容を精査できる監査ログを残す。
 少なくとも次を追跡できることを目的にする。
 
-- system prompt
-- input prompt
-- 実際に provider へ渡した composed prompt
+- 論理的な prompt 構成
+- 実際に provider へ渡した transport payload
 - Codex からの response
 - 実行中に発生した操作内容
 - failure 時の error
@@ -36,9 +35,8 @@ SQLite の `audit_logs` table を使う。
 - `reasoning_effort`
 - `approval_mode`
 - `thread_id`
-- `system_prompt_text`
-- `input_prompt_text`
-- `composed_prompt_text`
+- `logical_prompt_json`
+- `transport_payload_json`
 - `assistant_text`
 - `operations_json`
 - `raw_items_json`
@@ -46,7 +44,28 @@ SQLite の `audit_logs` table を使う。
 - `error_message`
 
 `session_id` は `sessions.id` を参照し、session 削除時は `audit_logs` も削除する。
-旧 schema の `prompt_text` / `user_message` は互換目的で残ってもよいが、現行 UI と現行 insert は新列を正本にする。
+`logical_prompt_json` は次の形を基本にする。
+
+```json
+{
+  "systemText": "...",
+  "inputText": "...",
+  "composedText": "..."
+}
+```
+
+`transport_payload_json` は次の形を基本にする。
+
+```json
+{
+  "summary": "Copilot session.send payload",
+  "fields": [
+    { "label": "session.send.prompt", "value": "..." }
+  ]
+}
+```
+
+旧 schema の `prompt_text` / `user_message` / `system_prompt_text` / `input_prompt_text` / `composed_prompt_text` は write-path の正本にしない。
 `approval_mode` は新規保存時は provider-neutral canonical value `allow-all / safety / provider-controlled` を正本にする。
 既存 row に残る `never / untrusted / on-request / on-failure` は read-path normalize で吸収し、one-shot migration は前提にしない。
 
@@ -55,12 +74,9 @@ SQLite の `audit_logs` table を使う。
 ### running
 
 - `runSessionTurn()` 開始直後に作成する
-- prompt composer の結果を
-  - `system_prompt_text`
-  - `input_prompt_text`
-  - `composed_prompt_text`
-  に分けて保存する
+- prompt composer の結果を `logical_prompt_json` に保存する
 - まだ実行結果が無いため、response / operations / usage は空でよい
+- `transport_payload_json` は provider 実行後に確定するまでは空でもよい
 
 ### completed
 
@@ -112,19 +128,19 @@ overlay では 1 entry ごとに次を表示する。
 - phase
 - timestamp
 - provider / model / reasoning / approval
-- system prompt
-- input prompt
-- composed prompt
+- logical prompt
+- transport payload
 - response
 - operations
 - usage
 - error
 - raw items
 
-長文になりやすい `system prompt` `input prompt` `composed prompt` `response` `operations` `usage` `error` `raw items` は、entry card 内でカテゴリ単位の折りたたみ表示にする。
-初期状態では `input prompt` だけを開き、他は閉じた状態から必要な箇所だけ個別に開いて読む。
+長文になりやすい `logical prompt` `transport payload` `response` `operations` `usage` `error` `raw items` は、entry card 内でカテゴリ単位の折りたたみ表示にする。
+初期状態では `logical prompt` だけを開き、他は閉じた状態から必要な箇所だけ個別に開いて読む。
 
-`composed prompt` は text payload だけを表す。画像添付がある場合でも、画像本体はここには含まれない。
+`logical prompt` は人間が読むための論理構成であり、provider 実 transport と完全一致する必要はない。
+実 transport は `transport payload` 側を正本として扱う。
 approval は UI 上では `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording で表示する。
 そのため、保存値が legacy/native でも overlay 表示時には canonical mode へ normalize したうえで同じ wording に揃える。
 

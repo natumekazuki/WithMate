@@ -1,6 +1,8 @@
 import type {
   AppSettings,
+  AuditLogicalPrompt,
   AuditLogOperation,
+  AuditTransportPayload,
   AuditLogUsage,
   CharacterProfile,
   ComposerAttachment,
@@ -13,9 +15,9 @@ import type {
 import type { ModelCatalogProvider } from "../src/model-catalog.js";
 
 export type ProviderPromptComposition = {
-  systemPromptText: string;
-  inputPromptText: string;
-  composedPromptText: string;
+  systemBodyText: string;
+  inputBodyText: string;
+  logicalPrompt: AuditLogicalPrompt;
   imagePaths: string[];
   additionalDirectories: string[];
 };
@@ -41,9 +43,8 @@ export type RunSessionTurnResult = {
   threadId: string | null;
   assistantText: string;
   artifact?: MessageArtifact;
-  systemPromptText: string;
-  inputPromptText: string;
-  composedPromptText: string;
+  logicalPrompt: AuditLogicalPrompt;
+  transportPayload: AuditTransportPayload | null;
   operations: AuditLogOperation[];
   rawItemsJson: string;
   usage: AuditLogUsage | null;

@@ -121,9 +121,8 @@ MVP では `sessions` テーブル 1 枚で管理する。
 - `reasoning_effort`
 - `approval_mode`
 - `thread_id`
-- `system_prompt_text`
-- `input_prompt_text`
-- `composed_prompt_text`
+- `logical_prompt_json`
+- `transport_payload_json`
 - `assistant_text`
 - `operations_json`
 - `raw_items_json`

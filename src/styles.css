@@ -1514,6 +1514,30 @@ button:disabled {
   line-height: 1.5;
 }
 
+.settings-reset-targets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+.settings-reset-target {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
+.settings-reset-target input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.settings-reset-target input:disabled + span {
+  color: var(--muted);
+}
+
 .settings-feedback {
   color: var(--ink);
 }

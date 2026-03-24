@@ -3044,30 +3044,44 @@ export default function App() {
                       <span>{displayApprovalValue(entry.approvalMode)}</span>
                     </div>
 
-                    <details className="audit-log-fold">
-                      <summary>
-                        <strong>System Prompt</strong>
-                      </summary>
-                      <section className="audit-log-section">
-                        <pre>{entry.systemPromptText || "-"}</pre>
-                      </section>
-                    </details>
-
                     <details className="audit-log-fold" open>
                       <summary>
-                        <strong>Input Prompt</strong>
+                        <strong>Logical Prompt</strong>
                       </summary>
                       <section className="audit-log-section">
-                        <pre>{entry.inputPromptText || "-"}</pre>
+                        <p><strong>System</strong></p>
+                        <pre>{entry.logicalPrompt.systemText || "-"}</pre>
+                        <p><strong>Input</strong></p>
+                        <pre>{entry.logicalPrompt.inputText || "-"}</pre>
+                        <p><strong>Composed</strong></p>
+                        <pre>{entry.logicalPrompt.composedText || "-"}</pre>
                       </section>
                     </details>
 
                     <details className="audit-log-fold">
                       <summary>
-                        <strong>Composed Prompt</strong>
+                        <strong>Transport Payload</strong>
                       </summary>
                       <section className="audit-log-section">
-                        <pre>{entry.composedPromptText || "-"}</pre>
+                        {entry.transportPayload ? (
+                          <>
+                            <p><strong>{entry.transportPayload.summary || "transport payload"}</strong></p>
+                            {entry.transportPayload.fields.length > 0 ? (
+                              <div className="audit-log-transport-fields">
+                                {entry.transportPayload.fields.map((field, index) => (
+                                  <div key={`${entry.id}-${field.label}-${index}`} className="audit-log-transport-field">
+                                    <p><strong>{field.label}</strong></p>
+                                    <pre>{field.value || "-"}</pre>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="audit-log-empty">記録された transport payload はまだないよ。</p>
+                            )}
+                          </>
+                        ) : (
+                          <p className="audit-log-empty">記録された transport payload はまだないよ。</p>
+                        )}
                       </section>
                     </details>
 

@@ -126,8 +126,8 @@ const withmateApi: WithMateWindowApi = {
   updateAppSettings(settings) {
     return ipcRenderer.invoke(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, settings);
   },
-  resetAppDatabase() {
-    return ipcRenderer.invoke(WITHMATE_RESET_APP_DATABASE_CHANNEL);
+  resetAppDatabase(request) {
+    return ipcRenderer.invoke(WITHMATE_RESET_APP_DATABASE_CHANNEL, request);
   },
   listCharacters() {
     return ipcRenderer.invoke(WITHMATE_LIST_CHARACTERS_CHANNEL);

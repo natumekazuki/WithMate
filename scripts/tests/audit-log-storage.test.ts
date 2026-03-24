@@ -25,7 +25,7 @@ function createSession() {
 }
 
 describe("AuditLogStorage", () => {
-  it("legacy approval_mode=never を allow-all として読み出す", async () => {
+  it("approval_mode を normalize しつつ新 schema の audit log を読み出せる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-audit-log-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
 
@@ -48,17 +48,14 @@ describe("AuditLogStorage", () => {
           reasoning_effort,
           approval_mode,
           thread_id,
-          prompt_text,
-          user_message,
-          system_prompt_text,
-          input_prompt_text,
-          composed_prompt_text,
+          logical_prompt_json,
+          transport_payload_json,
           assistant_text,
           operations_json,
           raw_items_json,
           usage_json,
           error_message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         session.id,
         "2026/03/21 10:00",
@@ -68,11 +65,17 @@ describe("AuditLogStorage", () => {
         "medium",
         "never",
         "thread-1",
-        "",
-        "",
-        "# System Prompt",
-        "# Input Prompt",
-        "# System Prompt\n\n# Input Prompt",
+        JSON.stringify({
+          systemText: "# System Prompt",
+          inputText: "# Input Prompt",
+          composedText: "# System Prompt\n\n# Input Prompt",
+        }),
+        JSON.stringify({
+          summary: "Codex thread.runStreamed payload",
+          fields: [
+            { label: "thread.runStreamed.text", value: "# System Prompt\n\n# Input Prompt" },
+          ],
+        }),
         "done",
         "[]",
         "[]",
@@ -87,6 +90,49 @@ describe("AuditLogStorage", () => {
 
       assert.equal(entries.length, 1);
       assert.equal(entries[0]?.approvalMode, "allow-all");
+      assert.equal(entries[0]?.logicalPrompt.systemText, "# System Prompt");
+      assert.equal(entries[0]?.transportPayload?.summary, "Codex thread.runStreamed payload");
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("clearAuditLogs で audit log を空にできる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-audit-log-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const sessionStorage = new SessionStorage(dbPath);
+      const session = sessionStorage.upsertSession(createSession());
+      sessionStorage.close();
+
+      const storage = new AuditLogStorage(dbPath);
+      storage.createAuditLog({
+        sessionId: session.id,
+        createdAt: "2026/03/24 23:00",
+        phase: "completed",
+        provider: "codex",
+        model: "gpt-5",
+        reasoningEffort: "medium",
+        approvalMode: DEFAULT_APPROVAL_MODE,
+        threadId: "thread-1",
+        logicalPrompt: {
+          systemText: "system",
+          inputText: "input",
+          composedText: "system\n\ninput",
+        },
+        transportPayload: null,
+        assistantText: "done",
+        operations: [],
+        rawItemsJson: "[]",
+        usage: null,
+        errorMessage: "",
+      });
+
+      storage.clearAuditLogs();
+
+      assert.deepEqual(storage.listSessionAuditLogs(session.id), []);
+      storage.close();
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }

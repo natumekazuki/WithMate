@@ -91,7 +91,9 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - credential 補助文で `Character Stream 用ではない` ことを明示し、future note だけ最小限で置く
   - `Model Catalog` import / export
   - `Danger Zone` の `DB を初期化`
-    - reset 対象: `sessions / audit logs / app settings / model catalog`
+    - reset 対象を `sessions / audit logs / app settings / model catalog` から選べる
+    - `sessions` を選ぶと `audit logs` も一緒に初期化される
+    - 全対象選択時は DB ファイル再生成で schema も初期化する
     - reset 非対象: `characters`
     - confirm 後に実行する
   - 初回リリース前は後方互換性を考慮せず、非互換変更時はここから回復する

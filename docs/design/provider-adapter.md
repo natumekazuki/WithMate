@@ -42,16 +42,22 @@ type ProviderTurnResult = {
   threadId: string | null;
   assistantText: string;
   artifact?: MessageArtifact;
-  systemPromptText: string;
-  inputPromptText: string;
-  composedPromptText: string;
+  logicalPrompt: {
+    systemText: string;
+    inputText: string;
+    composedText: string;
+  };
+  transportPayload: {
+    summary: string;
+    fields: Array<{ label: string; value: string }>;
+  } | null;
   operations: AuditLogOperation[];
   rawItemsJson: string;
   usage: AuditLogUsage | null;
 };
 ```
 
-監査用途では、provider 実行結果から `system / input / composed prompt`、operations、raw items、usage も Main Process へ返し、SQLite の監査ログに保存する。
+監査用途では、provider 実行結果から `logical prompt`、`transport payload`、operations、raw items、usage も Main Process へ返し、SQLite の監査ログに保存する。
 
 current milestone の provider ごとの差は次。
 
@@ -61,6 +67,7 @@ current milestone の provider ごとの差は次。
 - `CopilotAdapter`
   - `session.send()` と session event stream を使い、最小 turn 実行、assistant text streaming、minimal audit log を返す
   - top-level `assistant.message` が複数回来た場合は、arrival 順に空行区切りで連結した本文を `assistantText` として返す
+  - character prompt は `SessionConfig.systemMessage` `mode: "append"` に載せ、`session.send()` には user input 本文を送る
   - `file / folder` は Copilot SDK `attachments` (`file` / `directory`) へ変換して送る
   - `image` も `attachments` の `file` として送り、専用 UI 分岐は持たない
   - custom agent は `~/.copilot/agents` と workspace `.github/agents` を探索し、picker には `user-invocable: true` の定義だけを出す。session metadata の選択値は `customAgents` / `agent` に変換する
@@ -82,7 +89,7 @@ current milestone の provider ごとの差は次。
 7. Main Process が session の `catalogRevision` と `provider` から provider catalog を解決する
 8. provider adapter が `model / reasoningEffort` を検証し、provider-native SDK 実行へ変換する
    - `CodexAdapter`: file / folder を `additionalDirectories`、画像を structured input にして `thread.runStreamed()` を実行する
-   - `CopilotAdapter`: file / folder は `session.send({ attachments })` の `file` / `directory` へ変換して prompt と同時に渡す。image も `file` attachment として吸収し、renderer 側では共通の `Image` 導線を維持する。`provider-controlled` では permission request を Main Process へ返し、Session UI の approval card と往復する。Electron では native CLI binary を明示して起動し、bootstrap failure 時は audit log に debug metadata を残す
+   - `CopilotAdapter`: `systemPromptPrefix + roleMarkdown` は `SessionConfig.systemMessage` `mode: "append"` に載せ、`session.send()` には user input 本文だけを送る。file / folder は `session.send({ attachments })` の `file` / `directory` へ変換して同時に渡す。image も `file` attachment として吸収し、renderer 側では共通の `Image` 導線を維持する。`provider-controlled` では permission request を Main Process へ返し、Session UI の approval card と往復する。Electron では native CLI binary を明示して起動し、bootstrap failure 時は audit log に debug metadata を残す
 9. Main Process が stream event から live state を組み立て、IPC で Session Window へ中継する
    - live state には `approvalRequest` を含められる
 10. turn 完了後に Main Process が `threadId` と assistant message を session store に反映する

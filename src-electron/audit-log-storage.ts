@@ -2,7 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 
-import { type AuditLogEntry, type AuditLogOperation, type AuditLogPhase, type AuditLogUsage } from "../src/app-state.js";
+import {
+  type AuditLogEntry,
+  type AuditLogicalPrompt,
+  type AuditLogOperation,
+  type AuditLogPhase,
+  type AuditLogUsage,
+  type AuditTransportPayload,
+} from "../src/app-state.js";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
 import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
 
@@ -16,9 +23,8 @@ type AuditLogRow = {
   reasoning_effort: string;
   approval_mode: string;
   thread_id: string;
-  system_prompt_text: string;
-  input_prompt_text: string;
-  composed_prompt_text: string;
+  logical_prompt_json: string;
+  transport_payload_json: string;
   assistant_text: string;
   operations_json: string;
   raw_items_json: string;
@@ -27,6 +33,9 @@ type AuditLogRow = {
 };
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
+type TableInfoRow = {
+  name: string;
+};
 
 function toAuditLogPhase(value: string): AuditLogPhase {
   if (value === "running" || value === "started" || value === "completed" || value === "failed" || value === "canceled") {
@@ -60,6 +69,56 @@ function parseOperations(value: string): AuditLogOperation[] {
   }
 }
 
+function parseLogicalPrompt(value: string): AuditLogicalPrompt {
+  if (value) {
+    try {
+      const parsed = JSON.parse(value) as Partial<AuditLogicalPrompt>;
+      return {
+        systemText: typeof parsed.systemText === "string" ? parsed.systemText : "",
+        inputText: typeof parsed.inputText === "string" ? parsed.inputText : "",
+        composedText: typeof parsed.composedText === "string" ? parsed.composedText : "",
+      };
+    } catch {
+      // fallback below
+    }
+  }
+
+  return {
+    systemText: "",
+    inputText: "",
+    composedText: "",
+  };
+}
+
+function parseTransportPayload(value: string): AuditTransportPayload | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Partial<AuditTransportPayload>;
+    return {
+      summary: typeof parsed.summary === "string" ? parsed.summary : "",
+      fields: Array.isArray(parsed.fields)
+        ? parsed.fields
+            .map((field) => ({
+              label:
+                typeof field === "object" && field !== null && "label" in field && typeof field.label === "string"
+                  ? field.label
+                  : "",
+              value:
+                typeof field === "object" && field !== null && "value" in field && typeof field.value === "string"
+                  ? field.value
+                  : "",
+            }))
+            .filter((field) => field.label || field.value)
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
 function rowToAuditLogEntry(row: AuditLogRow): AuditLogEntry {
   return {
     id: row.id,
@@ -78,9 +137,8 @@ function rowToAuditLogEntry(row: AuditLogRow): AuditLogEntry {
         : DEFAULT_REASONING_EFFORT,
     approvalMode: normalizeApprovalMode(row.approval_mode, DEFAULT_APPROVAL_MODE),
     threadId: row.thread_id || "",
-    systemPromptText: row.system_prompt_text || "",
-    inputPromptText: row.input_prompt_text || "",
-    composedPromptText: row.composed_prompt_text || "",
+    logicalPrompt: parseLogicalPrompt(row.logical_prompt_json),
+    transportPayload: parseTransportPayload(row.transport_payload_json),
     assistantText: row.assistant_text || "",
     operations: parseOperations(row.operations_json),
     rawItemsJson: row.raw_items_json || "[]",
@@ -100,30 +158,7 @@ export class AuditLogStorage {
     this.db = new DatabaseSync(dbPath);
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec("PRAGMA foreign_keys = ON;");
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS audit_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        phase TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        model TEXT NOT NULL,
-        reasoning_effort TEXT NOT NULL,
-        approval_mode TEXT NOT NULL,
-        thread_id TEXT NOT NULL DEFAULT '',
-        prompt_text TEXT NOT NULL DEFAULT '',
-        user_message TEXT NOT NULL DEFAULT '',
-        system_prompt_text TEXT NOT NULL DEFAULT '',
-        input_prompt_text TEXT NOT NULL DEFAULT '',
-        composed_prompt_text TEXT NOT NULL DEFAULT '',
-        assistant_text TEXT NOT NULL DEFAULT '',
-        operations_json TEXT NOT NULL DEFAULT '[]',
-        raw_items_json TEXT NOT NULL DEFAULT '[]',
-        usage_json TEXT NOT NULL DEFAULT '',
-        error_message TEXT NOT NULL DEFAULT '',
-        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-      );
-    `);
+    this.createTable();
     this.ensureColumns();
 
     this.listStatement = this.db.prepare(`
@@ -137,9 +172,8 @@ export class AuditLogStorage {
         reasoning_effort,
         approval_mode,
         thread_id,
-        COALESCE(NULLIF(system_prompt_text, ''), prompt_text, '') AS system_prompt_text,
-        COALESCE(NULLIF(input_prompt_text, ''), user_message, '') AS input_prompt_text,
-        COALESCE(NULLIF(composed_prompt_text, ''), prompt_text, '') AS composed_prompt_text,
+        logical_prompt_json,
+        transport_payload_json,
         assistant_text,
         operations_json,
         raw_items_json,
@@ -160,17 +194,14 @@ export class AuditLogStorage {
         reasoning_effort,
         approval_mode,
         thread_id,
-        prompt_text,
-        user_message,
-        system_prompt_text,
-        input_prompt_text,
-        composed_prompt_text,
+        logical_prompt_json,
+        transport_payload_json,
         assistant_text,
         operations_json,
         raw_items_json,
         usage_json,
         error_message
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       RETURNING
         id,
         session_id,
@@ -181,9 +212,8 @@ export class AuditLogStorage {
         reasoning_effort,
         approval_mode,
         thread_id,
-        system_prompt_text,
-        input_prompt_text,
-        composed_prompt_text,
+        logical_prompt_json,
+        transport_payload_json,
         assistant_text,
         operations_json,
         raw_items_json,
@@ -200,11 +230,8 @@ export class AuditLogStorage {
         reasoning_effort = ?,
         approval_mode = ?,
         thread_id = ?,
-        prompt_text = ?,
-        user_message = ?,
-        system_prompt_text = ?,
-        input_prompt_text = ?,
-        composed_prompt_text = ?,
+        logical_prompt_json = ?,
+        transport_payload_json = ?,
         assistant_text = ?,
         operations_json = ?,
         raw_items_json = ?,
@@ -221,9 +248,8 @@ export class AuditLogStorage {
         reasoning_effort,
         approval_mode,
         thread_id,
-        system_prompt_text,
-        input_prompt_text,
-        composed_prompt_text,
+        logical_prompt_json,
+        transport_payload_json,
         assistant_text,
         operations_json,
         raw_items_json,
@@ -232,19 +258,42 @@ export class AuditLogStorage {
     `);
   }
 
+  private getCurrentColumnNames(): Set<string> {
+    return new Set(
+      (this.db.prepare(`SELECT name FROM pragma_table_info('audit_logs')`).all() as TableInfoRow[]).map((column) => column.name),
+    );
+  }
+
+  private createTable(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        phase TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        reasoning_effort TEXT NOT NULL,
+        approval_mode TEXT NOT NULL,
+        thread_id TEXT NOT NULL DEFAULT '',
+        logical_prompt_json TEXT NOT NULL DEFAULT '{}',
+        transport_payload_json TEXT NOT NULL DEFAULT '',
+        assistant_text TEXT NOT NULL DEFAULT '',
+        operations_json TEXT NOT NULL DEFAULT '[]',
+        raw_items_json TEXT NOT NULL DEFAULT '[]',
+        usage_json TEXT NOT NULL DEFAULT '',
+        error_message TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      );
+    `);
+  }
+
   private ensureColumns(): void {
-    const columns = this.db
-      .prepare(`
-        SELECT name
-        FROM pragma_table_info('audit_logs')
-      `)
-      .all() as Array<{ name: string }>;
-    const columnNames = new Set(columns.map((column) => column.name));
+    const columnNames = this.getCurrentColumnNames();
 
     const requiredColumns = [
-      { name: "system_prompt_text", definition: "TEXT NOT NULL DEFAULT ''" },
-      { name: "input_prompt_text", definition: "TEXT NOT NULL DEFAULT ''" },
-      { name: "composed_prompt_text", definition: "TEXT NOT NULL DEFAULT ''" },
+      { name: "logical_prompt_json", definition: "TEXT NOT NULL DEFAULT '{}'" },
+      { name: "transport_payload_json", definition: "TEXT NOT NULL DEFAULT ''" },
     ];
 
     for (const column of requiredColumns) {
@@ -269,11 +318,8 @@ export class AuditLogStorage {
       input.reasoningEffort,
       input.approvalMode,
       input.threadId,
-      input.composedPromptText,
-      input.inputPromptText,
-      input.systemPromptText,
-      input.inputPromptText,
-      input.composedPromptText,
+      JSON.stringify(input.logicalPrompt),
+      input.transportPayload ? JSON.stringify(input.transportPayload) : "",
       input.assistantText,
       JSON.stringify(input.operations),
       input.rawItemsJson,
@@ -292,11 +338,8 @@ export class AuditLogStorage {
       input.reasoningEffort,
       input.approvalMode,
       input.threadId,
-      input.composedPromptText,
-      input.inputPromptText,
-      input.systemPromptText,
-      input.inputPromptText,
-      input.composedPromptText,
+      JSON.stringify(input.logicalPrompt),
+      input.transportPayload ? JSON.stringify(input.transportPayload) : "",
       input.assistantText,
       JSON.stringify(input.operations),
       input.rawItemsJson,
@@ -310,6 +353,10 @@ export class AuditLogStorage {
     }
 
     return rowToAuditLogEntry(row);
+  }
+
+  clearAuditLogs(): void {
+    this.db.exec("DELETE FROM audit_logs;");
   }
 
   close(): void {

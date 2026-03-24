@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import {
   applyCopilotAssistantEvent,
   buildCopilotMessageAttachments,
+  buildCopilotSystemMessage,
   buildCopilotStableRawItems,
   buildCopilotToolSummary,
   buildCopilotClientEnv,
@@ -20,9 +21,12 @@ function createPartialResult(overrides?: Partial<RunSessionTurnResult>): RunSess
   return {
     threadId: "",
     assistantText: "",
-    systemPromptText: "",
-    inputPromptText: "",
-    composedPromptText: "",
+    logicalPrompt: {
+      systemText: "",
+      inputText: "",
+      composedText: "",
+    },
+    transportPayload: null,
     operations: [],
     rawItemsJson: "[]",
     usage: null,
@@ -194,6 +198,25 @@ describe("CopilotAdapter env", () => {
         displayName: "assets/sample.png",
       },
     ]);
+  });
+
+  it("character prompt は Copilot systemMessage append へ変換する", () => {
+    const systemMessage = buildCopilotSystemMessage({
+      systemBodyText: "あなたは頼れる相棒です。",
+      inputBodyText: "hello",
+      logicalPrompt: {
+        systemText: "# System Prompt\n\nあなたは頼れる相棒です。",
+        inputText: "# User Input Prompt\n\nhello",
+        composedText: "# System Prompt\n\nあなたは頼れる相棒です。\n\n# User Input Prompt\n\nhello",
+      },
+      imagePaths: [],
+      additionalDirectories: [],
+    });
+
+    assert.deepEqual(systemMessage, {
+      mode: "append",
+      content: "あなたは頼れる相棒です。",
+    });
   });
 
   it("rawItems は delta / ephemeral を落として stable event だけ残す", () => {

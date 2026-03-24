@@ -42,6 +42,22 @@ export type AuditLogUsage = {
   outputTokens: number;
 };
 
+export type AuditLogicalPrompt = {
+  systemText: string;
+  inputText: string;
+  composedText: string;
+};
+
+export type AuditTransportField = {
+  label: string;
+  value: string;
+};
+
+export type AuditTransportPayload = {
+  summary: string;
+  fields: AuditTransportField[];
+};
+
 export type AuditLogEntry = {
   id: number;
   sessionId: string;
@@ -52,9 +68,8 @@ export type AuditLogEntry = {
   reasoningEffort: ModelReasoningEffort;
   approvalMode: ApprovalMode;
   threadId: string;
-  systemPromptText: string;
-  inputPromptText: string;
-  composedPromptText: string;
+  logicalPrompt: AuditLogicalPrompt;
+  transportPayload: AuditTransportPayload | null;
   assistantText: string;
   operations: AuditLogOperation[];
   rawItemsJson: string;

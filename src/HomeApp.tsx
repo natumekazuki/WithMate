@@ -14,18 +14,26 @@ import type { ModelCatalogSnapshot } from "./model-catalog.js";
 import {
   SETTINGS_API_KEY_LABEL,
   SETTINGS_API_KEY_PLACEHOLDER,
+  buildResetDatabaseConfirmMessage,
+  buildResetDatabaseSuccessMessage,
+  describeResetDatabaseTargets,
   SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE,
   SETTINGS_CODING_CREDENTIALS_HELP,
-  SETTINGS_RESET_DATABASE_CONFIRM_MESSAGE,
   SETTINGS_RESET_DATABASE_HELP,
   SETTINGS_RESET_DATABASE_LABEL,
-  SETTINGS_RESET_DATABASE_SUCCESS_MESSAGE,
+  SETTINGS_RESET_DATABASE_TARGET_LABELS,
   SETTINGS_RELEASE_COMPATIBILITY_NOTE,
   SETTINGS_SKILL_ROOT_HELP,
   SETTINGS_SKILL_ROOT_LABEL,
   SETTINGS_SKILL_ROOT_PLACEHOLDER,
 } from "./settings-ui.js";
 import { buildCardThemeStyle, CharacterAvatar, sessionStateLabel } from "./ui-utils.js";
+import {
+  ALL_RESET_APP_DATABASE_TARGETS,
+  normalizeResetAppDatabaseTargets,
+  type ResetAppDatabaseRequest,
+  type ResetAppDatabaseTarget,
+} from "./withmate-window.js";
 
 type LaunchWorkspace = {
   label: string;
@@ -118,6 +126,7 @@ export default function HomeApp() {
   const [systemPromptPrefixDraft, setSystemPromptPrefixDraft] = useState("");
   const [codingProviderSettingsDraft, setCodingProviderSettingsDraft] = useState<Record<string, ProviderAppSettings>>({});
   const [resettingDatabase, setResettingDatabase] = useState(false);
+  const [resetDatabaseTargets, setResetDatabaseTargets] = useState<ResetAppDatabaseTarget[]>([...ALL_RESET_APP_DATABASE_TARGETS]);
   const [launchOpen, setLaunchOpen] = useState(false);
   const [launchTitle, setLaunchTitle] = useState("");
   const [launchWorkspace, setLaunchWorkspace] = useState<LaunchWorkspace | null>(null);
@@ -424,23 +433,39 @@ export default function HomeApp() {
       return;
     }
 
-    const confirmed = window.confirm(SETTINGS_RESET_DATABASE_CONFIRM_MESSAGE);
+    const request: ResetAppDatabaseRequest = {
+      targets: normalizeResetAppDatabaseTargets(resetDatabaseTargets),
+    };
+    if (request.targets.length === 0) {
+      setSettingsFeedback("初期化対象を 1 つ以上選んでね。");
+      return;
+    }
+
+    const confirmed = window.confirm(buildResetDatabaseConfirmMessage(request.targets));
     if (!confirmed) {
       return;
     }
 
     setResettingDatabase(true);
     try {
-      const result = await window.withmate.resetAppDatabase();
+      const result = await window.withmate.resetAppDatabase(request);
       setSessions(result.sessions);
       setModelCatalog(result.modelCatalog);
       applyIncomingAppSettings(result.appSettings, { force: true });
-      setSettingsFeedback(SETTINGS_RESET_DATABASE_SUCCESS_MESSAGE);
+      setResetDatabaseTargets(result.resetTargets);
+      setSettingsFeedback(buildResetDatabaseSuccessMessage(result.resetTargets));
     } catch (error) {
       setSettingsFeedback(error instanceof Error ? error.message : "DB の初期化に失敗したよ。");
     } finally {
       setResettingDatabase(false);
     }
+  };
+
+  const handleToggleResetDatabaseTarget = (target: ResetAppDatabaseTarget) => {
+    setResetDatabaseTargets((current) => {
+      const next = current.includes(target) ? current.filter((item) => item !== target) : [...current, target];
+      return normalizeResetAppDatabaseTargets(next);
+    });
   };
 
   const handleSaveSettings = async () => {
@@ -1052,11 +1077,34 @@ export default function HomeApp() {
                     <strong>Danger Zone</strong>
                     <p className="settings-help">{SETTINGS_RESET_DATABASE_HELP}</p>
                     <ul className="settings-danger-list">
-                      <li>reset 対象: sessions / audit logs / app settings / model catalog</li>
+                      <li>選択中の reset 対象: {describeResetDatabaseTargets(resetDatabaseTargets)}</li>
                       <li>reset 非対象: characters（DB 外ファイルなので保持）</li>
                     </ul>
+                    <div className="settings-reset-targets" role="group" aria-label="reset targets">
+                      {ALL_RESET_APP_DATABASE_TARGETS.map((target) => {
+                        const checked = resetDatabaseTargets.includes(target);
+                        const disabled = target === "auditLogs" && resetDatabaseTargets.includes("sessions");
+
+                        return (
+                          <label key={target} className="settings-reset-target">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={disabled || resettingDatabase}
+                              onChange={() => handleToggleResetDatabaseTarget(target)}
+                            />
+                            <span>{SETTINGS_RESET_DATABASE_TARGET_LABELS[target]}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
                     <div className="settings-actions">
-                      <button className="drawer-toggle danger" type="button" onClick={() => void handleResetAppDatabase()} disabled={resettingDatabase}>
+                      <button
+                        className="drawer-toggle danger"
+                        type="button"
+                        onClick={() => void handleResetAppDatabase()}
+                        disabled={resettingDatabase || resetDatabaseTargets.length === 0}
+                      >
                         {resettingDatabase ? "DB 初期化中..." : SETTINGS_RESET_DATABASE_LABEL}
                       </button>
                     </div>

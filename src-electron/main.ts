@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -56,6 +56,7 @@ import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
 import { clearWorkspaceFileIndex, searchWorkspaceFilePaths } from "./workspace-file-search.js";
 import {
+  areAllResetAppDatabaseTargetsSelected,
   WITHMATE_CHARACTERS_CHANGED_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
@@ -99,8 +100,11 @@ import {
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
+  normalizeResetAppDatabaseTargets,
   type OpenPathOptions,
+  type ResetAppDatabaseRequest,
   type ResetAppDatabaseResult,
+  type ResetAppDatabaseTarget,
 } from "../src/withmate-window.js";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
@@ -133,6 +137,7 @@ let modelCatalogStorage: ModelCatalogStorage | null = null;
 let auditLogStorage: AuditLogStorage | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
 let allowQuitWithInFlightRuns = false;
+let dbPath = "";
 
 function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0]): BrowserWindow {
   return new BrowserWindow({
@@ -195,6 +200,49 @@ function requireAppSettingsStorage(): AppSettingsStorage {
   }
 
   return appSettingsStorage;
+}
+
+async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
+  if (!dbPath) {
+    throw new Error("DB path が初期化されていないよ。");
+  }
+
+  closePersistentStores();
+
+  modelCatalogStorage = new ModelCatalogStorage(dbPath, bundledModelCatalogPath);
+  const activeModelCatalog = modelCatalogStorage.ensureSeeded();
+  sessionStorage = new SessionStorage(dbPath);
+  auditLogStorage = new AuditLogStorage(dbPath);
+  appSettingsStorage = new AppSettingsStorage(dbPath);
+  sessions = sessionStorage.listSessions();
+
+  return activeModelCatalog;
+}
+
+function closePersistentStores(): void {
+  modelCatalogStorage?.close();
+  sessionStorage?.close();
+  auditLogStorage?.close();
+  appSettingsStorage?.close();
+  modelCatalogStorage = null;
+  sessionStorage = null;
+  auditLogStorage = null;
+  appSettingsStorage = null;
+}
+
+async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
+  closePersistentStores();
+  sessions = [];
+
+  if (dbPath) {
+    await Promise.all([
+      rm(`${dbPath}-wal`, { force: true }),
+      rm(`${dbPath}-shm`, { force: true }),
+      rm(dbPath, { force: true }),
+    ]);
+  }
+
+  return initializePersistentStores();
 }
 
 function getModelCatalog(revision?: number | null): ModelCatalogSnapshot | null {
@@ -373,27 +421,59 @@ function closeResetTargetWindows(): void {
   diffWindows.clear();
 }
 
-function resetAppDatabase(): ResetAppDatabaseResult {
+async function resetAppDatabase(request?: ResetAppDatabaseRequest | null): Promise<ResetAppDatabaseResult> {
   if (hasInFlightSessionRuns() || hasRunningSessions()) {
     throw new Error("実行中の session があるため、DB を初期化できないよ。完了またはキャンセル後に試してね。");
   }
 
-  closeResetTargetWindows();
-  requireSessionStorage().clearSessions();
-  sessions = requireSessionStorage().listSessions();
-  const appSettings = requireAppSettingsStorage().resetSettings();
-  const modelCatalog = requireModelCatalogStorage().resetToBundled();
+  const resetTargets = normalizeResetAppDatabaseTargets(request?.targets);
+  if (resetTargets.length === 0) {
+    throw new Error("初期化対象が選ばれていないよ。");
+  }
 
-  liveSessionRuns.clear();
-  sessionRunControllers.clear();
-  inFlightSessionRuns.clear();
-  invalidateAllProviderSessionThreads();
+  const shouldResetSessions = resetTargets.includes("sessions");
+  if (shouldResetSessions) {
+    closeResetTargetWindows();
+  }
+
+  let modelCatalog: ModelCatalogSnapshot;
+  let appSettings: ReturnType<AppSettingsStorage["getSettings"]>;
+
+  if (areAllResetAppDatabaseTargetsSelected(resetTargets)) {
+    modelCatalog = await recreateDatabaseFile();
+    appSettings = requireAppSettingsStorage().getSettings();
+  } else {
+    const appliedTargets = new Set<ResetAppDatabaseTarget>(resetTargets);
+
+    if (appliedTargets.has("auditLogs")) {
+      requireAuditLogStorage().clearAuditLogs();
+    }
+    if (appliedTargets.has("sessions")) {
+      requireSessionStorage().clearSessions();
+      sessions = [];
+      liveSessionRuns.clear();
+      sessionRunControllers.clear();
+      inFlightSessionRuns.clear();
+      invalidateAllProviderSessionThreads();
+    }
+    if (appliedTargets.has("appSettings")) {
+      requireAppSettingsStorage().resetSettings();
+    }
+    if (appliedTargets.has("modelCatalog")) {
+      requireModelCatalogStorage().resetToBundled();
+    }
+
+    sessions = requireSessionStorage().listSessions();
+    modelCatalog = getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded();
+    appSettings = requireAppSettingsStorage().getSettings();
+  }
 
   broadcastSessions();
   broadcastAppSettings(appSettings);
   broadcastModelCatalog(modelCatalog);
 
   return {
+    resetTargets,
     sessions: listSessions(),
     appSettings,
     modelCatalog,
@@ -1040,9 +1120,8 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
     reasoningEffort: runningSession.reasoningEffort,
     approvalMode: runningSession.approvalMode,
     threadId: runningSession.threadId,
-    systemPromptText: promptForAudit.systemPromptText,
-    inputPromptText: promptForAudit.inputPromptText,
-    composedPromptText: promptForAudit.composedPromptText,
+    logicalPrompt: promptForAudit.logicalPrompt,
+    transportPayload: null,
     assistantText: "",
     operations: [],
     rawItemsJson: "[]",
@@ -1076,9 +1155,8 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
       reasoningEffort: runningSession.reasoningEffort,
       approvalMode: runningSession.approvalMode,
       threadId: result.threadId ?? runningSession.threadId,
-      systemPromptText: result.systemPromptText,
-      inputPromptText: result.inputPromptText,
-      composedPromptText: result.composedPromptText,
+      logicalPrompt: result.logicalPrompt,
+      transportPayload: result.transportPayload,
       assistantText: result.assistantText,
       operations: result.operations,
       rawItemsJson: result.rawItemsJson,
@@ -1120,9 +1198,8 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
       reasoningEffort: runningSession.reasoningEffort,
       approvalMode: runningSession.approvalMode,
       threadId: partialResult?.threadId ?? runningSession.threadId,
-      systemPromptText: partialResult?.systemPromptText ?? promptForAudit.systemPromptText,
-      inputPromptText: partialResult?.inputPromptText ?? promptForAudit.inputPromptText,
-      composedPromptText: partialResult?.composedPromptText ?? promptForAudit.composedPromptText,
+      logicalPrompt: partialResult?.logicalPrompt ?? promptForAudit.logicalPrompt,
+      transportPayload: partialResult?.transportPayload ?? null,
       assistantText: partialResult?.assistantText ?? "",
       operations: partialResult?.operations ?? [],
       rawItemsJson: partialResult?.rawItemsJson ?? "[]",
@@ -1352,13 +1429,8 @@ async function openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserW
 }
 
 app.whenReady().then(async () => {
-  const dbPath = path.join(app.getPath("userData"), "withmate.db");
-  modelCatalogStorage = new ModelCatalogStorage(dbPath, bundledModelCatalogPath);
-  const activeModelCatalog = modelCatalogStorage.ensureSeeded();
-  sessionStorage = new SessionStorage(dbPath);
-  auditLogStorage = new AuditLogStorage(dbPath);
-  appSettingsStorage = new AppSettingsStorage(dbPath);
-  sessions = sessionStorage.listSessions();
+  dbPath = path.join(app.getPath("userData"), "withmate.db");
+  const activeModelCatalog = await initializePersistentStores();
   recoverInterruptedSessions();
   await refreshCharactersFromStorage();
 
@@ -1384,7 +1456,9 @@ app.whenReady().then(async () => {
   ipcMain.handle(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL, () => listOpenSessionWindowIds());
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => requireAppSettingsStorage().getSettings());
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => updateAppSettings(settings));
-  ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, () => resetAppDatabase());
+  ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, (_event, request: ResetAppDatabaseRequest | null | undefined) =>
+    resetAppDatabase(request),
+  );
   ipcMain.handle(WITHMATE_LIST_CHARACTERS_CHANNEL, async () => refreshCharactersFromStorage());
   ipcMain.handle(WITHMATE_GET_MODEL_CATALOG_CHANNEL, (_event, revision: number | null) => getModelCatalog(revision));
   ipcMain.handle(WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL, (_event, document: ModelCatalogDocument) => importModelCatalogDocument(document));

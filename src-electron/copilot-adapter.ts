@@ -13,7 +13,7 @@ import {
   type SessionEvent,
 } from "@github/copilot-sdk";
 
-import type { AuditLogOperation, AuditLogUsage, LiveApprovalRequest, LiveRunStep, Session } from "../src/app-state.js";
+import type { AuditLogOperation, AuditLogUsage, AuditTransportPayload, LiveApprovalRequest, LiveRunStep, Session } from "../src/app-state.js";
 import { getProviderAppSettings } from "../src/app-state.js";
 import { normalizeApprovalMode } from "../src/approval-mode.js";
 import { resolveModelSelection, type ResolvedModelSelection } from "../src/model-catalog.js";
@@ -481,6 +481,59 @@ export function buildCopilotMessageAttachments(
   }));
 }
 
+export function buildCopilotSystemMessage(
+  prompt: ProviderPromptComposition,
+): SessionConfig["systemMessage"] | undefined {
+  if (!prompt.systemBodyText.trim()) {
+    return undefined;
+  }
+
+  return {
+    mode: "append",
+    content: prompt.systemBodyText,
+  };
+}
+
+function buildCopilotTransportPayload(
+  prompt: ProviderPromptComposition,
+  attachments: NonNullable<MessageOptions["attachments"]>,
+): AuditTransportPayload {
+  const fields = [];
+
+  if (prompt.systemBodyText.trim()) {
+    fields.push({
+      label: "session.systemMessage",
+      value: prompt.systemBodyText,
+    });
+  }
+
+  fields.push({
+    label: "session.send.prompt",
+    value: prompt.inputBodyText,
+  });
+
+  if (attachments.length > 0) {
+    fields.push({
+      label: "session.send.attachments",
+      value: attachments
+        .map((attachment) => {
+          const fallbackName = "path" in attachment
+            ? attachment.path
+            : "filePath" in attachment
+              ? attachment.filePath
+              : "selection";
+          return `${attachment.type}: ${attachment.displayName ?? fallbackName}`;
+        })
+        .join("\n"),
+    });
+  }
+
+  return {
+    summary: "Copilot session config + session.send payload",
+    fields,
+  };
+}
+
 export function buildCopilotStableRawItems(
   events: SessionEvent[],
   workspacePath: string,
@@ -864,6 +917,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
 
   private buildSessionConfig(
     input: RunSessionTurnInput,
+    prompt: ProviderPromptComposition,
     clientKey: string,
   ): {
     config: SessionConfig;
@@ -875,12 +929,14 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       input.session.workspacePath,
       input.session.customAgentName,
     );
+    const systemMessage = buildCopilotSystemMessage(prompt);
     const config: SessionConfig = {
       model: selection.resolvedModel,
       reasoningEffort: selection.resolvedReasoningEffort === "minimal" ? "low" : selection.resolvedReasoningEffort,
       workingDirectory: input.session.workspacePath,
       streaming: true,
       onPermissionRequest: buildPermissionHandler(input),
+      ...(systemMessage ? { systemMessage } : {}),
       ...(resolvedCustomAgents.customAgents.length > 0 ? { customAgents: resolvedCustomAgents.customAgents } : {}),
       ...(resolvedCustomAgents.selectedAgentName ? { agent: resolvedCustomAgents.selectedAgentName } : {}),
     };
@@ -894,6 +950,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         config.reasoningEffort,
         config.workingDirectory,
         input.session.approvalMode,
+        systemMessage?.mode ?? "",
+        systemMessage?.content ?? "",
         input.session.customAgentName,
         resolvedCustomAgents.customAgents.map((agent) => JSON.stringify({
           name: agent.name,
@@ -906,9 +964,12 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     };
   }
 
-  private async getSession(input: RunSessionTurnInput): Promise<{ session: CopilotSession; selection: ResolvedModelSelection }> {
+  private async getSession(
+    input: RunSessionTurnInput,
+    prompt: ProviderPromptComposition,
+  ): Promise<{ session: CopilotSession; selection: ResolvedModelSelection }> {
     const { client, clientKey } = this.getClient(input.providerCatalog.id, input);
-    const nextSettings = this.buildSessionConfig(input, clientKey);
+    const nextSettings = this.buildSessionConfig(input, prompt, clientKey);
     const cached = this.sessions.get(input.session.id);
     if (cached && cached.settingsKey === nextSettings.settingsKey) {
       return {
@@ -938,6 +999,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
 
   private async buildTurnResult(
     prompt: ProviderPromptComposition,
+    messageAttachments: NonNullable<MessageOptions["attachments"]>,
     threadId: string | null,
     assistantText: string,
     steps: Map<string, LiveRunStep>,
@@ -969,9 +1031,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       threadId,
       assistantText,
       artifact,
-      systemPromptText: prompt.systemPromptText,
-      inputPromptText: prompt.inputPromptText,
-      composedPromptText: prompt.composedPromptText,
+      logicalPrompt: prompt.logicalPrompt,
+      transportPayload: buildCopilotTransportPayload(prompt, messageAttachments),
       operations,
       rawItemsJson: JSON.stringify(buildCopilotStableRawItems(events, workspacePath), null, 2),
       usage,
@@ -990,7 +1051,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     let session: CopilotSession;
     let selection: ResolvedModelSelection;
     try {
-      ({ session, selection } = await this.getSession(input));
+      ({ session, selection } = await this.getSession(input, prompt));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logCopilotRuntime("session bootstrap failed", {
@@ -1006,9 +1067,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         {
           threadId: input.session.threadId || null,
           assistantText: "",
-          systemPromptText: prompt.systemPromptText,
-          inputPromptText: prompt.inputPromptText,
-          composedPromptText: prompt.composedPromptText,
+          logicalPrompt: prompt.logicalPrompt,
+          transportPayload: buildCopilotTransportPayload(prompt, messageAttachments),
           operations: [],
           rawItemsJson: buildCopilotBootstrapDebugItems(input, cliPath, "session-bootstrap", message),
           usage: null,
@@ -1158,7 +1218,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       const completion = waitForCopilotSessionCompletion(session, input.signal);
       try {
         await session.send({
-          prompt: prompt.composedPromptText,
+          prompt: prompt.inputBodyText,
           ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
         });
         await completion.wait;
@@ -1170,6 +1230,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       if (streamErrorMessage) {
         const partialResult = await this.buildTurnResult(
           prompt,
+          messageAttachments,
           session.sessionId,
           assistantText,
           liveSteps,
@@ -1191,6 +1252,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
 
       return this.buildTurnResult(
         prompt,
+        messageAttachments,
         session.sessionId,
         assistantText,
         liveSteps,
@@ -1211,6 +1273,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       const message = error instanceof Error ? error.message : String(error);
       const partialResult = await this.buildTurnResult(
         prompt,
+        messageAttachments,
         session.sessionId,
         assistantText,
         liveSteps,
