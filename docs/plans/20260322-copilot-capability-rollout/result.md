@@ -17,11 +17,12 @@
 - approval 後の turn 完了待機を event stream ベースへ切り替え、長時間 command で false timeout しないようにした
 - Copilot でも `@path` 由来の file / folder を `attachments` の `file` / `directory` として送れるようにした
 - Copilot の画像は `Image` ボタンを共通維持したまま `file attachment` として送る形に寄せた
+- Copilot custom agent を Session UI の `Agent` picker から選び、workspace `.github/agents` / `~/.copilot/agents` を provider-native session config へ反映できるようにした
 
 ## Remaining
 
 - capability ごとの follow-up plan 作成
-- `custom agent selection` と `slash command absorption` の実装設計
+- `slash command absorption` の実装設計
 - `apps / mcp / plugins`、`sandbox / allowlist 拡張` の provider surface 調査
 
 ## Related Commits
@@ -33,6 +34,7 @@
 - `93f5b27` `fix(copilot): handle approval requests in session ui`
 - `4efd330` `feat(copilot): attach file and folder context`
 - `3f2eec8` `feat(copilot): treat images as file attachments`
+- `3956e99` `feat(copilot): add custom agent selection`
 
 ## Related Docs
 

@@ -13,3 +13,4 @@
 - `docs/design/provider-adapter.md`、`docs/design/coding-agent-capability-matrix.md`、`docs/manual-test-checklist.md` を更新した
 - `npm run build`、`node --import tsx scripts/tests/custom-agent-discovery.test.ts`、`node --import tsx scripts/tests/session-storage.test.ts`、`node --import tsx scripts/tests/copilot-adapter.test.ts` で検証した
 - `.ai_context/` はこのリポジトリに存在せず、`README.md` も今回の provider-specific UI/API slice では更新不要と判断した
+- `3956e99` `feat(copilot): add custom agent selection` を作成した

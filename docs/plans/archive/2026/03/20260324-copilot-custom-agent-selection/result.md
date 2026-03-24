@@ -11,6 +11,10 @@
 - session persistence に `customAgentName` を追加し、再起動後も選択状態を復元できるようにした
 - custom agent 探索テスト、session storage テスト、Copilot adapter テスト、build を通した
 
+## コミット
+
+- `3956e99` `feat(copilot): add custom agent selection`
+
 ## 次アクション
 
-- 実装コミットを作成し、commit hash を記録したうえで archive へ移動する
+- archive へ移動し、親 rollout plan へ commit を記録する
