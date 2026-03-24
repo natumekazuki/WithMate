@@ -32,6 +32,7 @@
 - `8a644a0` `feat(copilot): add artifact parity`
 - `93f5b27` `fix(copilot): handle approval requests in session ui`
 - `4efd330` `feat(copilot): attach file and folder context`
+- `3f2eec8` `feat(copilot): treat images as file attachments`
 
 ## Related Docs
 

@@ -31,6 +31,7 @@
 - follow-up task `20260324-copilot-file-folder-context` を完了し、Copilot でも file / folder を provider-native attachment として送れるようにした
 - `4efd330` `feat(copilot): attach file and folder context` を作成し、file / folder context の follow-up task を main branch に入れた
 - follow-up task `20260324-copilot-image-as-file-attachment` を完了し、Copilot でも `Image` ボタン経由の画像を `file attachment` として吸収する形にそろえた
+- `3f2eec8` `feat(copilot): treat images as file attachments` を作成し、Copilot image の provider 差分を adapter 内へ閉じた
 
 ## Next
 
