@@ -34,6 +34,8 @@
 - `3f2eec8` `feat(copilot): treat images as file attachments` を作成し、Copilot image の provider 差分を adapter 内へ閉じた
 - follow-up task `20260324-copilot-custom-agent-selection` を完了し、workspace / global custom agent を Session UI から選んで provider-native session config へ反映できるようにした
 - `3956e99` `feat(copilot): add custom agent selection` を作成し、Copilot custom agent selection を main branch に入れた
+- follow-up task `20260324-copilot-custom-agent-picker-polish` を完了し、picker を `user-invocable: true` の agent だけに絞り、`Agent` ボタン自体に現在選択中の agent 名を出すようにした
+- `534deac` `fix(copilot): refine custom agent picker` を作成し、custom agent picker の表示条件と選択中ラベルを調整した
 
 ## Next
 

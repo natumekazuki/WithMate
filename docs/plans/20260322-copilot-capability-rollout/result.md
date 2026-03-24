@@ -18,6 +18,7 @@
 - Copilot でも `@path` 由来の file / folder を `attachments` の `file` / `directory` として送れるようにした
 - Copilot の画像は `Image` ボタンを共通維持したまま `file attachment` として送る形に寄せた
 - Copilot custom agent を Session UI の `Agent` picker から選び、workspace `.github/agents` / `~/.copilot/agents` を provider-native session config へ反映できるようにした
+- Copilot custom agent picker は `user-invocable: true` の agent だけを表示し、`Agent` ボタン自体に現在選択中の agent 名を表示するようにした
 
 ## Remaining
 
@@ -35,6 +36,7 @@
 - `4efd330` `feat(copilot): attach file and folder context`
 - `3f2eec8` `feat(copilot): treat images as file attachments`
 - `3956e99` `feat(copilot): add custom agent selection`
+- `534deac` `fix(copilot): refine custom agent picker`
 
 ## Related Docs
 

@@ -8,3 +8,4 @@
 - `scripts/tests/custom-agent-discovery.test.ts` に `user-invocable` フィルタのケースを追加した
 - `docs/design/provider-adapter.md` と `docs/manual-test-checklist.md` を更新した
 - `node --import tsx scripts/tests/custom-agent-discovery.test.ts` と `npm run build` で検証した
+- `534deac` `fix(copilot): refine custom agent picker` を作成した
