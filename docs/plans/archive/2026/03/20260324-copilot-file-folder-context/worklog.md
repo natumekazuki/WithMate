@@ -7,3 +7,4 @@
 - `src-electron/copilot-adapter.ts` で file / folder を Copilot attachment へ変換し、`session.send({ attachments })` に載せる実装を追加した
 - image は scope 外として `Copilot provider の image 添付はまだ未対応` エラーへ寄せた
 - `scripts/tests/copilot-adapter.test.ts` に attachment 変換テストを追加し、`node --import tsx scripts/tests/copilot-adapter.test.ts` と `npm run build` で確認した
+- `4efd330` `feat(copilot): attach file and folder context` を作成し、実装と docs を main branch に入れた

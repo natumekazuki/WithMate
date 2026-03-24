@@ -29,6 +29,7 @@
 - follow-up task `20260324-copilot-approval-timeout-fix` を完了し、approval 後の長時間 command で `180000ms` 固定 timeout に落ちないよう turn 完了待機を event stream ベースへ切り替えた
 - `93f5b27` `fix(copilot): handle approval requests in session ui` を作成し、approval UI と timeout fix を main branch に入れた
 - follow-up task `20260324-copilot-file-folder-context` を完了し、Copilot でも file / folder を provider-native attachment として送れるようにした
+- `4efd330` `feat(copilot): attach file and folder context` を作成し、file / folder context の follow-up task を main branch に入れた
 
 ## Next
 

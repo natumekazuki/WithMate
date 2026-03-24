@@ -16,4 +16,4 @@
 
 ## Related Commits
 
-- なし
+- `4efd330` `feat(copilot): attach file and folder context`

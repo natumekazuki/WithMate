@@ -31,6 +31,7 @@
 - `e772e69` `fix(copilot): normalize event handling`
 - `8a644a0` `feat(copilot): add artifact parity`
 - `93f5b27` `fix(copilot): handle approval requests in session ui`
+- `4efd330` `feat(copilot): attach file and folder context`
 
 ## Related Docs
 
