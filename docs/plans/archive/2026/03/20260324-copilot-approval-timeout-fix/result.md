@@ -17,4 +17,4 @@
 
 ## Related Commits
 
-- なし
+- `93f5b27` `fix(copilot): handle approval requests in session ui`

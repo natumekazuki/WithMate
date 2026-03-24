@@ -18,12 +18,12 @@
 
 ## Related Commits
 
-- なし
+- `fbd880d` `docs(research): restore deleted approval and slash command docs`
 
 ## Rollback Guide
 
-- 戻し先候補: なし
-- 理由: まだ commit は作成していないため
+- 戻し先候補: `fbd880d` の親 commit
+- 理由: agent / skill command 設計 docs の初回反映を戻せる
 
 ## Related Docs
 

@@ -23,9 +23,15 @@
 - `e772e69` `fix(copilot): normalize event handling` を作成し、Copilot の command 可視化、stable raw event trace、assistant message coalescing を main branch に入れた
 - `8a644a0` `feat(copilot): add artifact parity` を作成し、Copilot でも `Details` / `Open Diff` を出せる最小 artifact summary を main branch に入れた
 
+## 2026-03-24
+
+- follow-up task `20260324-approval-ui-future-proofing` を完了し、Copilot `provider-controlled` の permission request を Session UI から `今回だけ許可 / 拒否` できるようにした
+- follow-up task `20260324-copilot-approval-timeout-fix` を完了し、approval 後の長時間 command で `180000ms` 固定 timeout に落ちないよう turn 完了待機を event stream ベースへ切り替えた
+- `93f5b27` `fix(copilot): handle approval requests in session ui` を作成し、approval UI と timeout fix を main branch に入れた
+
 ## Next
 
-- 次の follow-up task は `session 継続 / cancel / audit parity` まわりの整理
-- `session 再開`、`cancel / interrupted handling`、`audit log` の dedicated validation を次に切る
-- `file / folder context` と `image attachment` の native surface 確認が次の大きい slice 候補
-- capability matrix 上の次候補は `approval mode` の validation か `file / folder context` のどちらか
+- `file / folder context` の Copilot native input 反映を確認して実装する
+- `image attachment` の Copilot native surface 有無を確定する
+- `custom agent selection` と `slash command absorption` の着手順を見直す
+- `apps / mcp / plugins`、`sandbox / allowlist 拡張` は provider surface 確認後に follow-up task を切る

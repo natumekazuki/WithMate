@@ -27,6 +27,7 @@
   - Codex の `/agent` は thread switch で、Copilot の custom agent selector と同一視しない
   - skill は両 provider で open standard 寄りなので picker 共通化がしやすい
 - 関連コミット:
+  - `fbd880d` `docs(research): restore deleted approval and slash command docs`
 
 ## Open Items
 

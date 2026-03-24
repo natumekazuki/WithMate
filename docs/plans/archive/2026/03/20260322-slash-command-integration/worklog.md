@@ -27,6 +27,7 @@
   - slash command は provider SDK へ passthrough しない前提が自然
   - app command / session setting command / out-of-scope の 3 分類で整理した
 - 関連コミット:
+  - `fbd880d` `docs(research): restore deleted approval and slash command docs`
 
 ## Open Items
 
