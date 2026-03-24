@@ -7,6 +7,7 @@ import type {
   CreateSessionInput,
   DiscoveredSkill,
   DiffPreviewPayload,
+  LiveApprovalDecision,
   LiveSessionRunState,
   RunSessionTurnRequest,
   Session,
@@ -46,6 +47,7 @@ export const WITHMATE_GET_APP_SETTINGS_CHANNEL = "withmate:get-app-settings";
 export const WITHMATE_UPDATE_APP_SETTINGS_CHANNEL = "withmate:update-app-settings";
 export const WITHMATE_RESET_APP_DATABASE_CHANNEL = "withmate:reset-app-database";
 export const WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL = "withmate:get-live-session-run";
+export const WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL = "withmate:resolve-live-approval";
 export const WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL = "withmate:list-open-session-window-ids";
 export const WITHMATE_SESSIONS_CHANGED_EVENT = "withmate:sessions-changed";
 export const WITHMATE_CHARACTERS_CHANGED_EVENT = "withmate:characters-changed";
@@ -86,6 +88,7 @@ export type WithMateWindowApi = {
   cancelSessionRun(sessionId: string): Promise<void>;
   listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
   getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
+  resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): Promise<void>;
   listOpenSessionWindowIds(): Promise<string[]>;
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;

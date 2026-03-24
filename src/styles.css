@@ -2602,6 +2602,133 @@ button:disabled {
   background: currentColor;
 }
 
+.live-approval-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(245, 158, 11, 0.24);
+  border-radius: 16px;
+  background: rgba(255, 248, 235, 0.94);
+}
+
+.session-page .live-approval-card {
+  border-color: rgba(251, 191, 36, 0.22);
+  background: rgba(64, 44, 18, 0.62);
+}
+
+.live-approval-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.live-approval-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.live-approval-badge,
+.live-approval-kind {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.live-approval-badge {
+  background: rgba(245, 158, 11, 0.16);
+  color: #9a5d11;
+}
+
+.live-approval-kind {
+  background: rgba(32, 36, 55, 0.08);
+  color: var(--muted);
+}
+
+.session-page .live-approval-badge {
+  background: rgba(251, 191, 36, 0.18);
+  color: #ffe7bf;
+}
+
+.session-page .live-approval-kind {
+  background: rgba(255, 255, 255, 0.08);
+  color: #dbe3ee;
+}
+
+.live-approval-title,
+.live-approval-warning {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.live-approval-title {
+  font-weight: 700;
+}
+
+.live-approval-summary,
+.live-approval-details pre {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(32, 36, 55, 0.08);
+  border-radius: 14px;
+  background: rgba(18, 24, 39, 0.96);
+  color: rgba(245, 245, 247, 0.96);
+  font: 0.82rem/1.55 "IBM Plex Mono", monospace;
+  white-space: pre-wrap;
+  overflow: auto;
+}
+
+.live-approval-warning {
+  color: #9a5d11;
+}
+
+.session-page .live-approval-warning {
+  color: #ffd7bc;
+}
+
+.live-approval-details {
+  display: grid;
+  gap: 8px;
+}
+
+.live-approval-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.8rem;
+  user-select: none;
+}
+
+.live-approval-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.live-approval-actions button {
+  justify-self: start;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: var(--orange);
+  color: #fff;
+}
+
+.live-approval-actions .drawer-toggle.secondary {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px rgba(203, 213, 225, 0.14);
+}
+
+.live-approval-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
 .activity-monitor-shell {
   display: grid;
   gap: 12px;

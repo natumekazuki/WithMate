@@ -72,6 +72,21 @@ export type LiveRunStep = {
   status: LiveRunStepStatus;
 };
 
+export type LiveApprovalDecision = "approve" | "deny";
+
+export type LiveApprovalDecisionMode = "direct-decision" | "retry-with-policy-change";
+
+export type LiveApprovalRequest = {
+  requestId: string;
+  provider: string;
+  kind: string;
+  title: string;
+  summary: string;
+  details?: string;
+  warning?: string;
+  decisionMode: LiveApprovalDecisionMode;
+};
+
 export type LiveSessionRunState = {
   sessionId: string;
   threadId: string;
@@ -79,6 +94,7 @@ export type LiveSessionRunState = {
   steps: LiveRunStep[];
   usage: AuditLogUsage | null;
   errorMessage: string;
+  approvalRequest: LiveApprovalRequest | null;
 };
 
 export type AppSettings = {

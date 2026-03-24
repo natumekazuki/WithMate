@@ -32,6 +32,7 @@ type ProviderAdapter = {
     appSettings: AppSettings;
     attachments: ComposerAttachment[];
     signal?: AbortSignal;
+    onApprovalRequest?: (request: LiveApprovalRequest) => Promise<"approve" | "deny">;
   }, onProgress?: (state: LiveSessionRunState) => Promise<void>): Promise<ProviderTurnResult>;
 };
 ```
@@ -61,6 +62,7 @@ current milestone の provider ごとの差は次。
   - `session.sendAndWait()` と session event stream を使い、最小 turn 実行、assistant text streaming、minimal audit log を返す
   - top-level `assistant.message` が複数回来た場合は、arrival 順に空行区切りで連結した本文を `assistantText` として返す
   - `file / folder / image` 添付と rich command timeline は未対応
+  - `provider-controlled` で non-read-only permission request が来た場合は、Main Process の `onApprovalRequest` bridge を通して Session UI の approval card へ中継し、user の `approve / deny` を SDK `PermissionHandler` へ返す
   - Electron main process では SDK default の JS entry bootstrap を避け、native Copilot CLI binary を明示して起動する
   - `Latest Command` と audit `operations` には、`shell / powershell / bash` に加えて `create / edit / replace / move / delete` のような mutating tool も `command_execution` として正規化して返す
   - `rawItemsJson` は full session dump ではなく、`tool.execution_*`、`assistant.message`、`assistant.usage` など監査で読む stable event trace に絞って返す
@@ -77,8 +79,9 @@ current milestone の provider ごとの差は次。
 7. Main Process が session の `catalogRevision` と `provider` から provider catalog を解決する
 8. provider adapter が `model / reasoningEffort` を検証し、provider-native SDK 実行へ変換する
    - `CodexAdapter`: file / folder を `additionalDirectories`、画像を structured input にして `thread.runStreamed()` を実行する
-   - `CopilotAdapter`: 現在は text-only prompt を `session.sendAndWait()` へ渡し、session event から live state を組み立てる。Electron では native CLI binary を明示して起動し、bootstrap failure 時は audit log に debug metadata を残す
+   - `CopilotAdapter`: 現在は text-only prompt を `session.sendAndWait()` へ渡し、session event から live state を組み立てる。`provider-controlled` では permission request を Main Process へ返し、Session UI の approval card と往復する。Electron では native CLI binary を明示して起動し、bootstrap failure 時は audit log に debug metadata を残す
 9. Main Process が stream event から live state を組み立て、IPC で Session Window へ中継する
+   - live state には `approvalRequest` を含められる
 10. turn 完了後に Main Process が `threadId` と assistant message を session store に反映する
 11. Main Process が `running / completed / canceled / failed` の監査ログを 1 turn 1 record で SQLite に保存する
 12. Renderer は `sessions-changed` と live state 購読を使って再描画する
@@ -201,11 +204,13 @@ diff 本文は turn items からは直接取れないため、MVP では Main Pr
   - 実行中 / 完了 / 失敗の step 一覧
   - usage
   - stream 中の error
+  - 必要なら pending approval request
 - `turn.items` に `agent_message` が複数ある場合、Session UI に表示する assistant text は arrival 順に空行区切りで連結する
 - Raw Items と operations は各 `agent_message` を個別に保持し、監査では元の粒度を失わない
 - live state は Main Process の memory 上だけに持ち、session DB へは保存しない
 - Session Window を開き直した場合は、Main Process が保持している live state を再購読して復元する
 - Session Window から `Cancel` を押した場合は、Main Process が保持している `AbortController` で provider 実行を中断する
+- Copilot の approval request は Main Process が pending resolver を保持し、Session UI の `今回だけ許可 / 拒否` を受けて permission handler を再開する
 - turn 完了時だけ session 本体と audit log を確定値で更新する
 - canceled / failed でも、途中まで取得できた `agent_message` と `turn.items` は partial result として回収し、Audit Log と `Details` に残す
 

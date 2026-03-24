@@ -588,6 +588,7 @@ async function emitLiveState(
     steps: Array.from(steps.values()),
     usage,
     errorMessage,
+    approvalRequest: null,
   });
 }
 

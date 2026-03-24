@@ -79,18 +79,24 @@
 - `artifact.operationTimeline[]`
 - `runState` と `approvalMode` のステータス表示
 
-今回は実装しない。
+現時点では次を実装済み。
 
 - 実際のストリーミング接続
+- Copilot `provider-controlled` の approval card 表示
+- Copilot approval に対する `approve / deny` の実処理
+- 同一ウインドウ内の diff overlay
+
+まだ実装しない、または provider 制約で未対応のもの。
+
 - コマンド出力全文表示
-- 承認操作の実処理
-- 別ウインドウの diff 表示
+- Codex 側の app-level approval callback
 
 ## Implementation Notes
 
 - Main Process 側に `CodexAdapter` を置き、SDK / CLI の差異はそこで吸収する
 - Renderer 側は `AgentEvent` からターン単位の `artifact summary` を生成して描画する
 - モック段階でも、会話本文と artifact 情報は型として分けておく
+- approval request を出せる provider では、pending assistant bubble 内に approval card を差し込み、会話面を切り替えずに `approve / deny` を返す
 - `Character Stream` は `CodexAdapter` とは別の monologue provider 境界を持つ
 - 認証、コスト、Memory 入力の方針は `docs/design/monologue-provider-policy.md` に従う
 

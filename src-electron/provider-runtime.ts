@@ -4,6 +4,8 @@ import type {
   AuditLogUsage,
   CharacterProfile,
   ComposerAttachment,
+  LiveApprovalDecision,
+  LiveApprovalRequest,
   LiveSessionRunState,
   MessageArtifact,
   Session,
@@ -26,9 +28,14 @@ export type RunSessionTurnInput = {
   appSettings: AppSettings;
   attachments: ComposerAttachment[];
   signal?: AbortSignal;
+  onApprovalRequest?: RunSessionTurnApprovalRequestHandler;
 };
 
 export type RunSessionTurnProgressHandler = (state: LiveSessionRunState) => void | Promise<void>;
+
+export type RunSessionTurnApprovalRequestHandler = (
+  request: LiveApprovalRequest,
+) => Promise<LiveApprovalDecision> | LiveApprovalDecision;
 
 export type RunSessionTurnResult = {
   threadId: string | null;
@@ -63,4 +70,3 @@ export type ProviderTurnAdapter = {
     onProgress?: RunSessionTurnProgressHandler,
   ): Promise<RunSessionTurnResult>;
 };
-

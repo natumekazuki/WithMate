@@ -13,6 +13,7 @@ import {
   type ChangedFile,
   type CharacterProfile,
   type DiffPreviewPayload,
+  type LiveApprovalRequest,
   type LiveSessionRunState,
   type Message,
   type RunSessionTurnRequest,
@@ -456,6 +457,25 @@ function displayRunCheckValue(check: { label: string; value: string }): string {
   return check.label.trim().toLowerCase() === "approval" ? displayApprovalValue(check.value) : check.value;
 }
 
+function liveApprovalKindLabel(kind: string): string {
+  switch (kind) {
+    case "shell":
+      return "Shell Command";
+    case "write":
+      return "File Change";
+    case "mcp":
+      return "MCP Tool";
+    case "custom-tool":
+      return "Custom Tool";
+    case "url":
+      return "URL Fetch";
+    case "read":
+      return "File Read";
+    default:
+      return kind;
+  }
+}
+
 function buildRetryStopSummary(
   kind: RetryBannerKind,
   liveRun: LiveSessionRunState | null,
@@ -515,6 +535,15 @@ function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): strin
   return [
     liveRun.assistantText,
     liveRun.errorMessage,
+    liveRun.approvalRequest
+      ? [
+          liveRun.approvalRequest.requestId,
+          liveRun.approvalRequest.kind,
+          liveRun.approvalRequest.summary,
+          liveRun.approvalRequest.details ?? "",
+          liveRun.approvalRequest.warning ?? "",
+        ].join("\u001d")
+      : "",
     liveRun.usage
       ? [liveRun.usage.inputTokens, liveRun.usage.cachedInputTokens, liveRun.usage.outputTokens].join(":")
       : "",
@@ -570,6 +599,7 @@ export default function App() {
   const [isContextRailResizing, setIsContextRailResizing] = useState(false);
   const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
+  const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
   const [isActionDockPinnedExpanded, setIsActionDockPinnedExpanded] = useState(false);
   const messageListRef = useRef<HTMLDivElement | null>(null);
@@ -903,8 +933,20 @@ export default function App() {
         selectedSession?.runState ?? "",
         selectedSessionLiveRun?.assistantText ?? "",
         selectedSessionLiveRun?.errorMessage ?? "",
+        selectedSessionLiveRun?.approvalRequest
+          ? [
+              selectedSessionLiveRun.approvalRequest.requestId,
+              selectedSessionLiveRun.approvalRequest.summary,
+              selectedSessionLiveRun.approvalRequest.warning ?? "",
+            ].join("\u001d")
+          : "",
       ].join("\u001b"),
-    [selectedSession?.runState, selectedSessionLiveRun?.assistantText, selectedSessionLiveRun?.errorMessage],
+    [
+      selectedSession?.runState,
+      selectedSessionLiveRun?.approvalRequest,
+      selectedSessionLiveRun?.assistantText,
+      selectedSessionLiveRun?.errorMessage,
+    ],
   );
   const activityMonitorScrollSignature = useMemo(
     () => buildLiveRunScrollSignature(selectedSessionLiveRun),
@@ -934,9 +976,14 @@ export default function App() {
     setAuditLogsState({ ownerSessionId: selectedSessionId, entries: [] });
     setLiveRunState({ ownerSessionId: selectedSessionId, state: null });
     setIsRetryDraftReplacePending(false);
+    setApprovalActionRequestId(null);
     setIsHeaderExpanded(false);
     setIsActionDockPinnedExpanded(false);
   }, [selectedSessionId]);
+
+  useEffect(() => {
+    setApprovalActionRequestId(null);
+  }, [selectedSessionLiveRun?.approvalRequest?.requestId]);
 
   useEffect(() => {
     if (!draft.trim()) {
@@ -1433,6 +1480,20 @@ export default function App() {
       await window.withmate.cancelSessionRun(selectedSession.id);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "キャンセルに失敗したよ。");
+    }
+  };
+
+  const handleResolveLiveApproval = async (request: LiveApprovalRequest, decision: "approve" | "deny") => {
+    if (!window.withmate || !selectedSession || approvalActionRequestId === request.requestId) {
+      return;
+    }
+
+    setApprovalActionRequestId(request.requestId);
+    try {
+      await window.withmate.resolveLiveApproval(selectedSession.id, request.requestId, decision);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "承認要求の処理に失敗したよ。");
+      setApprovalActionRequestId(null);
     }
   };
 
@@ -1997,6 +2058,8 @@ export default function App() {
   );
 
   const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
+  const liveApprovalRequest = selectedSessionLiveRun?.approvalRequest ?? null;
+  const isApprovalRequestPending = !!liveApprovalRequest;
   const hasLiveRunAssistantText = liveRunAssistantText.length > 0;
   const pendingIndicatorCharacterName = useMemo(() => {
     const candidateNames = [selectedSessionCharacter?.name, resolvedCharacter?.name]
@@ -2005,17 +2068,21 @@ export default function App() {
 
     return candidateNames[0] ?? "";
   }, [resolvedCharacter?.name, selectedSessionCharacter?.name]);
-  const pendingRunIndicatorText = hasInProgressLiveRunStep
+  const pendingRunIndicatorText = isApprovalRequestPending
     ? pendingIndicatorCharacterName
-      ? `${pendingIndicatorCharacterName}が作業を進めています`
-      : "作業を進めています"
-    : hasLiveRunAssistantText
+      ? `${pendingIndicatorCharacterName}が承認を待っています`
+      : "承認を待っています"
+    : hasInProgressLiveRunStep
       ? pendingIndicatorCharacterName
-        ? `${pendingIndicatorCharacterName}が返答を続けています`
-        : "返答を続けています"
-      : pendingIndicatorCharacterName
-        ? `${pendingIndicatorCharacterName}が返答を準備しています`
-        : "返答を準備しています";
+        ? `${pendingIndicatorCharacterName}が作業を進めています`
+        : "作業を進めています"
+      : hasLiveRunAssistantText
+        ? pendingIndicatorCharacterName
+          ? `${pendingIndicatorCharacterName}が返答を続けています`
+          : "返答を続けています"
+        : pendingIndicatorCharacterName
+          ? `${pendingIndicatorCharacterName}が返答を準備しています`
+          : "返答を準備しています";
   const pendingRunIndicatorAnnouncement = pendingRunIndicatorText;
   const isSelectedSessionRunning = selectedSession?.runState === "running";
   const latestCommandToneClassName = latestCommandView ? liveRunStepToneClassName(latestCommandView.status) : "unknown";
@@ -2247,6 +2314,44 @@ export default function App() {
                       <span />
                     </span>
                   </div>
+                  {liveApprovalRequest ? (
+                    <section className="live-approval-card" role="group" aria-label="承認要求">
+                      <div className="live-approval-head">
+                        <div className="live-approval-copy">
+                          <span className="live-approval-badge">承認待ち</span>
+                          <p className="live-approval-title">{liveApprovalRequest.title}</p>
+                        </div>
+                        <span className="live-approval-kind">{liveApprovalKindLabel(liveApprovalRequest.kind)}</span>
+                      </div>
+                      <pre className="live-approval-summary">{liveApprovalRequest.summary}</pre>
+                      {liveApprovalRequest.warning ? (
+                        <p className="live-approval-warning" role="alert">{liveApprovalRequest.warning}</p>
+                      ) : null}
+                      {liveApprovalRequest.details ? (
+                        <details className="live-approval-details">
+                          <summary>Details</summary>
+                          <pre>{liveApprovalRequest.details}</pre>
+                        </details>
+                      ) : null}
+                      <div className="live-approval-actions">
+                        <button
+                          type="button"
+                          onClick={() => void handleResolveLiveApproval(liveApprovalRequest, "approve")}
+                          disabled={approvalActionRequestId === liveApprovalRequest.requestId}
+                        >
+                          今回だけ許可
+                        </button>
+                        <button
+                          className="drawer-toggle secondary"
+                          type="button"
+                          onClick={() => void handleResolveLiveApproval(liveApprovalRequest, "deny")}
+                          disabled={approvalActionRequestId === liveApprovalRequest.requestId}
+                        >
+                          拒否
+                        </button>
+                      </div>
+                    </section>
+                  ) : null}
                   {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} onOpenPath={handleOpenInlinePath} /> : null}
                   {selectedSessionLiveRun?.errorMessage ? (
                     <p className="pending-run-error-note" role="alert">{selectedSessionLiveRun.errorMessage}</p>

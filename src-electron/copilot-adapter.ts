@@ -12,7 +12,7 @@ import {
   type SessionEvent,
 } from "@github/copilot-sdk";
 
-import type { AuditLogOperation, AuditLogUsage, LiveRunStep, Session } from "../src/app-state.js";
+import type { AuditLogOperation, AuditLogUsage, LiveApprovalRequest, LiveRunStep, Session } from "../src/app-state.js";
 import { getProviderAppSettings } from "../src/app-state.js";
 import { normalizeApprovalMode } from "../src/approval-mode.js";
 import { resolveModelSelection, type ResolvedModelSelection } from "../src/model-catalog.js";
@@ -409,6 +409,66 @@ function buildCopilotPermissionSummary(request: CopilotPermissionRequestLike, wo
   return null;
 }
 
+function buildCopilotApprovalTitle(kind: string): string {
+  switch (kind) {
+    case "shell":
+      return "Shell command の承認が必要";
+    case "write":
+      return "ファイル変更の承認が必要";
+    case "mcp":
+      return "MCP tool の承認が必要";
+    case "custom-tool":
+      return "Custom tool の承認が必要";
+    case "url":
+      return "URL fetch の承認が必要";
+    case "read":
+      return "ファイル参照の承認が必要";
+    default:
+      return "操作の承認が必要";
+  }
+}
+
+function buildCopilotApprovalDetails(request: CopilotPermissionRequestLike, workspacePath: string): string | undefined {
+  const detailParts: string[] = [];
+
+  if (request.kind === "write" && typeof request.intention === "string" && request.intention.trim()) {
+    detailParts.push(`intent: ${request.intention.trim()}`);
+  }
+
+  if (request.kind === "write" && typeof request.fileName === "string" && request.fileName.trim()) {
+    detailParts.push(`target: ${compactCopilotTargetPath(request.fileName, workspacePath)}`);
+  }
+
+  if (request.kind !== "shell" && typeof request.fullCommandText === "string" && request.fullCommandText.trim()) {
+    detailParts.push(request.fullCommandText.trim());
+  }
+
+  return detailParts.length > 0 ? detailParts.join("\n") : undefined;
+}
+
+function buildCopilotApprovalRequest(
+  request: PermissionRequest,
+  providerId: string,
+  workspacePath: string,
+): LiveApprovalRequest {
+  const requestLike = request as PermissionRequest & CopilotPermissionRequestLike;
+  const summary = buildCopilotPermissionSummary(requestLike, workspacePath) ?? request.kind;
+  const warning = typeof requestLike.warning === "string" && requestLike.warning.trim()
+    ? requestLike.warning.trim()
+    : undefined;
+
+  return {
+    requestId: request.toolCallId?.trim() || `${request.kind}:${summary}`,
+    provider: providerId,
+    kind: request.kind,
+    title: buildCopilotApprovalTitle(request.kind),
+    summary,
+    details: buildCopilotApprovalDetails(requestLike, workspacePath),
+    warning,
+    decisionMode: "direct-decision",
+  };
+}
+
 export function buildCopilotStableRawItems(
   events: SessionEvent[],
   workspacePath: string,
@@ -610,8 +670,8 @@ function isReadOnlyPermissionRequest(request: PermissionRequest): boolean {
   }
 }
 
-function buildPermissionHandler(approvalMode: string): PermissionHandler {
-  switch (normalizeApprovalMode(approvalMode)) {
+function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
+  switch (normalizeApprovalMode(input.session.approvalMode)) {
     case "allow-all":
       return approveAll;
     case "safety":
@@ -622,11 +682,20 @@ function buildPermissionHandler(approvalMode: string): PermissionHandler {
       );
     case "provider-controlled":
     default:
-      return (request) => (
-        isReadOnlyPermissionRequest(request)
-          ? toPermissionDecision("approved")
-          : toPermissionDecision("denied-no-approval-rule-and-could-not-request-from-user")
-      );
+      return async (request) => {
+        if (isReadOnlyPermissionRequest(request)) {
+          return toPermissionDecision("approved");
+        }
+
+        if (!input.onApprovalRequest) {
+          return toPermissionDecision("denied-no-approval-rule-and-could-not-request-from-user");
+        }
+
+        const decision = await input.onApprovalRequest(
+          buildCopilotApprovalRequest(request, input.providerCatalog.id, input.session.workspacePath),
+        );
+        return toPermissionDecision(decision === "approve" ? "approved" : "denied-interactively-by-user");
+      };
   }
 }
 
@@ -678,7 +747,58 @@ async function emitLiveState(
     steps: Array.from(steps.values()),
     usage,
     errorMessage,
+    approvalRequest: null,
   });
+}
+
+function waitForCopilotSessionCompletion(
+  session: CopilotSession,
+  signal: AbortSignal | undefined,
+): { wait: Promise<void>; dispose: () => void } {
+  let settled = false;
+  let resolveWait!: () => void;
+  let rejectWait!: (error: Error) => void;
+
+  const wait = new Promise<void>((resolve, reject) => {
+    resolveWait = resolve;
+    rejectWait = reject;
+  });
+
+  const settle = (handler: () => void) => {
+    if (settled) {
+      return;
+    }
+
+    settled = true;
+    handler();
+  };
+
+  const unsubscribe = session.on((event) => {
+    if (event.type === "session.idle") {
+      settle(() => resolveWait());
+      return;
+    }
+
+    if (event.type === "session.error") {
+      const error = new Error(event.data.message);
+      error.stack = event.data.stack;
+      settle(() => rejectWait(error));
+    }
+  });
+
+  const handleAbort = () => {
+    settle(() => rejectWait(new Error("Abort requested")));
+  };
+
+  signal?.addEventListener("abort", handleAbort, { once: true });
+
+  return {
+    wait,
+    dispose: () => {
+      signal?.removeEventListener("abort", handleAbort);
+      unsubscribe();
+    },
+  };
 }
 
 export class CopilotAdapter implements ProviderTurnAdapter {
@@ -744,7 +864,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       reasoningEffort: selection.resolvedReasoningEffort === "minimal" ? "low" : selection.resolvedReasoningEffort,
       workingDirectory: input.session.workspacePath,
       streaming: true,
-      onPermissionRequest: buildPermissionHandler(input.session.approvalMode),
+      onPermissionRequest: buildPermissionHandler(input),
     };
 
     return {
@@ -1011,18 +1131,16 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     input.signal?.addEventListener("abort", handleAbort, { once: true });
 
     try {
-      const finalMessage = await session.sendAndWait(
-        {
+      const completion = waitForCopilotSessionCompletion(session, input.signal);
+      try {
+        await session.send({
           prompt: prompt.composedPromptText,
-        },
-        180_000,
-      );
-      await progressChain;
-
-      if (finalMessage?.data.content && !assistantText.trim()) {
-        assistantMessages = appendUniqueMessage(assistantMessages, finalMessage.data.content);
-        assistantText = buildAssistantText(assistantMessages, assistantDraft);
+        });
+        await completion.wait;
+      } finally {
+        completion.dispose();
       }
+      await progressChain;
 
       if (streamErrorMessage) {
         const partialResult = await this.buildTurnResult(

@@ -32,6 +32,7 @@ import {
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
+  WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SESSIONS_CHANGED_EVENT,
@@ -107,6 +108,9 @@ const withmateApi: WithMateWindowApi = {
   },
   getLiveSessionRun(sessionId: string) {
     return ipcRenderer.invoke(WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL, sessionId);
+  },
+  resolveLiveApproval(sessionId: string, requestId: string, decision) {
+    return ipcRenderer.invoke(WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL, sessionId, requestId, decision);
   },
   listOpenSessionWindowIds() {
     return ipcRenderer.invoke(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL);

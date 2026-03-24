@@ -15,6 +15,8 @@ import {
   type CreateSessionInput,
   type DiscoveredSkill,
   type DiffPreviewPayload,
+  type LiveApprovalDecision,
+  type LiveApprovalRequest,
   getProviderAppSettings,
   normalizeAppSettings,
   type LiveSessionRunState,
@@ -81,6 +83,7 @@ import {
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
+  WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SESSIONS_CHANGED_EVENT,
@@ -117,6 +120,7 @@ const inFlightSessionRuns = new Set<string>();
 const sessionRunControllers = new Map<string, AbortController>();
 const allowCloseSessionWindows = new Set<string>();
 const liveSessionRuns = new Map<string, LiveSessionRunState>();
+const pendingSessionApprovalRequests = new Map<string, { requestId: string; resolve: (decision: LiveApprovalDecision) => void }>();
 let sessions: Session[] = [];
 let characters: CharacterProfile[] = [];
 let sessionStorage: SessionStorage | null = null;
@@ -373,6 +377,30 @@ function getLiveSessionRun(sessionId: string): LiveSessionRunState | null {
   return liveSessionRuns.get(sessionId) ?? null;
 }
 
+function setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void {
+  if (state) {
+    liveSessionRuns.set(sessionId, state);
+  } else {
+    liveSessionRuns.delete(sessionId);
+  }
+
+  broadcastLiveSessionRun(sessionId);
+}
+
+function updateLiveSessionRun(
+  sessionId: string,
+  recipe: (current: LiveSessionRunState) => LiveSessionRunState,
+): LiveSessionRunState | null {
+  const current = getLiveSessionRun(sessionId);
+  if (!current) {
+    return null;
+  }
+
+  const next = recipe(current);
+  setLiveSessionRun(sessionId, next);
+  return next;
+}
+
 function broadcastLiveSessionRun(sessionId: string): void {
   const state = getLiveSessionRun(sessionId);
   for (const window of BrowserWindow.getAllWindows()) {
@@ -395,12 +423,71 @@ function isCanceledRunError(error: unknown): boolean {
 }
 
 function cancelSessionRun(sessionId: string): void {
+  const pendingApprovalRequest = pendingSessionApprovalRequests.get(sessionId);
+  if (pendingApprovalRequest) {
+    pendingApprovalRequest.resolve("deny");
+  }
+
   const controller = sessionRunControllers.get(sessionId);
   if (!controller) {
     return;
   }
 
   controller.abort();
+}
+
+function resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void {
+  const pendingRequest = pendingSessionApprovalRequests.get(sessionId);
+  if (!pendingRequest || pendingRequest.requestId !== requestId) {
+    throw new Error("対象の承認要求はもう存在しないよ。");
+  }
+
+  pendingRequest.resolve(decision);
+}
+
+function waitForLiveApprovalDecision(
+  sessionId: string,
+  request: LiveApprovalRequest,
+  signal: AbortSignal,
+): Promise<LiveApprovalDecision> {
+  if (signal.aborted) {
+    return Promise.resolve("deny");
+  }
+
+  return new Promise<LiveApprovalDecision>((resolve) => {
+    const handleAbort = () => {
+      settle("deny");
+    };
+
+    const cleanup = () => {
+      signal.removeEventListener("abort", handleAbort);
+      const currentPendingRequest = pendingSessionApprovalRequests.get(sessionId);
+      if (currentPendingRequest?.requestId === request.requestId) {
+        pendingSessionApprovalRequests.delete(sessionId);
+      }
+
+      updateLiveSessionRun(sessionId, (current) =>
+        current.approvalRequest?.requestId === request.requestId
+          ? { ...current, approvalRequest: null }
+          : current,
+      );
+    };
+
+    const settle = (decision: LiveApprovalDecision) => {
+      cleanup();
+      resolve(decision);
+    };
+
+    signal.addEventListener("abort", handleAbort, { once: true });
+    pendingSessionApprovalRequests.set(sessionId, {
+      requestId: request.requestId,
+      resolve: settle,
+    });
+    updateLiveSessionRun(sessionId, (current) => ({
+      ...current,
+      approvalRequest: request,
+    }));
+  });
 }
 
 async function importModelCatalogFromFile(targetWindow?: BrowserWindow | null): Promise<ModelCatalogSnapshot | null> {
@@ -907,15 +994,15 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
   inFlightSessionRuns.add(sessionId);
   const runAbortController = new AbortController();
   sessionRunControllers.set(sessionId, runAbortController);
-  liveSessionRuns.set(sessionId, {
+  setLiveSessionRun(sessionId, {
     sessionId,
     threadId: runningSession.threadId,
     assistantText: "",
     steps: [],
     usage: null,
     errorMessage: "",
+    approvalRequest: null,
   });
-  broadcastLiveSessionRun(sessionId);
 
   const runningAuditLog = requireAuditLogStorage().createAuditLog({
     sessionId,
@@ -945,9 +1032,12 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
       appSettings,
       attachments: composerPreview.attachments,
       signal: runAbortController.signal,
+      onApprovalRequest: (request) => waitForLiveApprovalDecision(sessionId, request, runAbortController.signal),
     }, (state) => {
-      liveSessionRuns.set(sessionId, state);
-      broadcastLiveSessionRun(sessionId);
+      setLiveSessionRun(sessionId, {
+        ...state,
+        approvalRequest: getLiveSessionRun(sessionId)?.approvalRequest ?? null,
+      });
     });
 
     requireAuditLogStorage().updateAuditLog(runningAuditLog.id, {
@@ -1035,6 +1125,10 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
 
     return upsertSession(failedSession);
   } finally {
+    const pendingApprovalRequest = pendingSessionApprovalRequests.get(sessionId);
+    if (pendingApprovalRequest) {
+      pendingApprovalRequest.resolve("deny");
+    }
     inFlightSessionRuns.delete(sessionId);
     sessionRunControllers.delete(sessionId);
     liveSessionRuns.delete(sessionId);
@@ -1299,6 +1393,12 @@ app.whenReady().then(async () => {
 
     return getLiveSessionRun(sessionId);
   });
+  ipcMain.handle(
+    WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
+    (_event, sessionId: string, requestId: string, decision: LiveApprovalDecision) => {
+      resolveLiveApproval(sessionId, requestId, decision);
+    },
+  );
 
   ipcMain.handle(WITHMATE_GET_CHARACTER_CHANNEL, async (_event, characterId: string) => {
     if (!characterId) {

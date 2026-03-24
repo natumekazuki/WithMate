@@ -40,7 +40,7 @@
 | retry | canceled/error 後に同じ request を再送する | 対応 | 未確認 | 実装済み | provider native 機能というより wrapper UX |
 | model selection | session ごとに model を選ぶ | 対応 | 対応 | 実装済み | catalog と session metadata に保存 |
 | reasoning depth | session ごとに reasoning depth を選ぶ | 対応 | 未確認 | 実装済み | Copilot 側の depth 同等概念は未整理 |
-| approval mode | provider-native approval 設定へ map する | 対応 | 一部対応 | 一部実装 | WithMate は `allow-all / safety / provider-controlled` を正本にしている |
+| approval mode | provider-native approval 設定へ map する | 対応 | 一部対応 | 一部実装 | WithMate は `allow-all / safety / provider-controlled` を正本にしている。Copilot `provider-controlled` は direct approval UI と接続したが、Codex は policy mapping のまま |
 | file / folder context | workspace file/folder を turn input に含める | 一部対応 | 一部対応 | 実装済み | Codex は `additionalDirectories`、Copilot は native shape 未実装 |
 | image attachment | image を turn input に含める | 対応 | 未確認 | 実装済み | current runtime は Codex `local_image` のみ |
 | skill selection | skill を選び、provider native invocation へ変換する | 対応 | 対応 | 実装済み | Codex は `$skill-name`、Copilot は directive 設計まで |
@@ -55,7 +55,7 @@
 | native slash passthrough | provider slash command を SDK 経由でそのまま実行する | 非対応 | 非対応 | 未着手 | SDK surface 上は想定しない方針 |
 | apps / mcp / plugins | provider 拡張機能を session から扱う | 一部対応 | 一部対応 | 未着手 | Codex は `/apps` `/mcp`、Copilot は plugin 系がある |
 | sandbox / allowlist 拡張 | read dir 追加や tool allowlist を wrapper から制御する | 一部対応 | 一部対応 | 未着手 | approval mode より細かい native control は未吸収 |
-| app-level approval callback | app 側で approve / deny を返す | 非対応 | 未確認 | 未着手 | current research では Codex SDK には見えていない |
+| app-level approval callback | app 側で approve / deny を返す | 非対応 | 一部対応 | 一部実装 | Copilot provider-controlled では Session UI の approval card から `approve / deny` を返せる。Codex は current SDK surface では未対応 |
 
 ## Current Read
 
