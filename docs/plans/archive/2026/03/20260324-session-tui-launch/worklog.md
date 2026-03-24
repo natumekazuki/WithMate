@@ -11,3 +11,4 @@
 - `docs/design/desktop-ui.md` / `docs/design/session-window-layout-redesign.md` / `docs/design/session-window-chrome-reduction.md` / `docs/manual-test-checklist.md` を更新した
 - `.ai_context/` はこの repo に存在しないため更新対象なし、`README.md` は今回の UI 追加では入口仕様が変わらないため更新不要と判断した
 - `node --import tsx scripts/tests/open-terminal.test.ts` と `npm run build` を実行して通過した
+- コミット `fb213ab` `feat(session): add workspace terminal launcher`

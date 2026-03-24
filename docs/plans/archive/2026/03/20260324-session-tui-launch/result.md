@@ -28,3 +28,7 @@
 
 - `node --import tsx scripts/tests/open-terminal.test.ts`
 - `npm run build`
+
+## Commits
+
+- `fb213ab` `feat(session): add workspace terminal launcher`
