@@ -2143,6 +2143,18 @@ export default function App() {
     }
   };
 
+  const handleOpenSessionTerminal = async () => {
+    if (!window.withmate || !selectedSession) {
+      return;
+    }
+
+    try {
+      await window.withmate.openSessionTerminal(selectedSession.id);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "terminal の起動に失敗したよ。");
+    }
+  };
+
   const handleJumpToActivityMonitorBottom = () => {
     setIsActivityMonitorFollowing(true);
     setHasActivityMonitorUnread(false);
@@ -2249,6 +2261,14 @@ export default function App() {
           <div className="session-window-controls">
             <button className="drawer-toggle compact secondary" type="button" onClick={() => setAuditLogsOpen(true)}>
               Audit Log
+            </button>
+            <button
+              className="drawer-toggle compact secondary"
+              type="button"
+              onClick={() => void handleOpenSessionTerminal()}
+              title={selectedSession.workspacePath}
+            >
+              Terminal
             </button>
             {!isEditingTitle ? (
               <button

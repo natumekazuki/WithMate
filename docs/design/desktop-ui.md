@@ -116,8 +116,9 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - narrow width では `message list -> Latest Command -> Action Dock` の縦 stack へ戻す
 - `Top Bar`
   - default は compact
-  - 常時表示するのは `title / Audit Log / More / Close`
+  - 常時表示するのは `title / Audit Log / Terminal / More / Close`
   - `Rename / Delete` は `More` で展開した時だけ表示する
+  - `Terminal` は session の `workspacePath` を作業ディレクトリにした外部 terminal を開く
 - `Action Dock`
   - compact / expanded の 2 状態を持つ
   - compact では draft preview 全体を reopen hit area にし、`Send / Cancel` だけを残す

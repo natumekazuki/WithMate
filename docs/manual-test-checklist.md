@@ -60,7 +60,8 @@ npm run electron:start
 | MT-023A | Session wide layout baseline | `1920x1080` 前後の幅で Session Window を開く | 上段に compact な `Top Bar`、中央に左右 2 分割、下段に `Action Dock` が表示される |
 | MT-023B | Session splitter resize | wide desktop 状態で左右境界をドラッグする | message list 面と `Latest Command` pane の幅が追従し、極端に寄せても chat の最小可読幅と右 pane の最小幅を下回らない |
 | MT-023C | Session action dock baseline | Session Window を開き、textarea / attachment / skill / approval / model / depth / `Send` の位置関係を見る | これらが左ペイン内ではなく下段 `Action Dock` にまとまり、expanded 時だけ full editor と設定群が表示される。`File / Folder / Image` は attachment group、`Skill` は別ボタンとして区別される |
-| MT-023D | Session top bar compact | Session Window を開き、必要なら `More` を開閉する | `Top Bar` は 1 行の strip として表示され、常時は `title / Audit Log / More / Close` だけが見え、`Rename / Delete` は `More` 展開時だけ表示される |
+| MT-023D | Session top bar compact | Session Window を開き、必要なら `More` を開閉する | `Top Bar` は 1 行の strip として表示され、常時は `title / Audit Log / Terminal / More / Close` が見え、`Rename / Delete` は `More` 展開時だけ表示される |
+| MT-023D1 | Session terminal launch | Session Window で `Terminal` を押す | session の `workspacePath` を作業ディレクトリにした外部 terminal が開く |
 | MT-023E | Session action dock compact/expand | idle で draft 空の Session Window を開き、draft preview 押下 / `Hide` / textarea focus を試す | 初期状態は compact で、draft preview または textarea focus で expanded に戻り、`Hide` で再度 compact にできる |
 | MT-023F | Session action dock forced expand | retry banner、skill picker、`@path` 候補、blocked feedback のいずれかが出る状態を作る | その間は `Action Dock` が compact に落ちず、必要な操作要素が隠れない |
 | MT-024 | Latest command running state | `command_execution` を含む run を実行する | 右 pane に実行中または直前の command 1 件だけが表示され、raw command、status、source が読める |
@@ -106,7 +107,7 @@ npm run electron:start
 | MT-063 | Skill picker と挿入 | Session Window の composer 上部にある `Skill` を開き、候補を選ぶ | skill 候補が dropdown で表示され、選択すると Codex では `$skill-name`、Copilot では skill directive が composer 先頭へ挿入される |
 | MT-064 | Skill picker empty state | skill が 0 件の session で `Skill` を開く | 空状態メッセージが出て、textarea の通常入力や送信導線は固まらない |
 | MT-065 | Copilot custom agent picker | provider を `GitHub Copilot` にした session で `Agent` を開き、workspace `.github/agents` または `~/.copilot/agents` にある custom agent を選ぶ | `user-invocable: true` の custom agent だけが dropdown に出る。同名なら workspace が優先され、選択後の turn では Copilot session config に反映される |
-| MT-066 | Copilot selected agent visibility | provider を `GitHub Copilot` にした session で custom agent を選択し、composer settings を見る | `Agent` の現在値が settings 内に表示され、`Default Agent` と custom agent 名を見分けられる |
+| MT-066 | Copilot selected agent visibility | provider を `GitHub Copilot` にした session で custom agent を選択し、composer の `Agent` ボタンを見る | `Agent` ボタン自体が現在値を表示し、`Default Agent` と custom agent 名を見分けられる |
 
 ## 補足
 

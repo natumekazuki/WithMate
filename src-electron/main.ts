@@ -49,6 +49,7 @@ import { ProviderTurnError, type ProviderTurnAdapter } from "./provider-runtime.
 import { resolveComposerPreview } from "./composer-attachments.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { resolveOpenPathTarget } from "./open-path.js";
+import { launchTerminalAtPath } from "./open-terminal.js";
 import { SessionStorage } from "./session-storage.js";
 import { discoverSessionSkills } from "./skill-discovery.js";
 import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
@@ -81,6 +82,7 @@ import {
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
+  WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_PICK_FILE_CHANNEL,
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
@@ -259,6 +261,15 @@ function listSessionCustomAgents(sessionId: string): DiscoveredCustomAgent[] {
 
 function getSession(sessionId: string): Session | null {
   return cloneSessions(sessions).find((session) => session.id === sessionId) ?? null;
+}
+
+async function openSessionTerminal(sessionId: string): Promise<void> {
+  const session = getSession(sessionId);
+  if (!session) {
+    throw new Error("対象セッションが見つからないよ。");
+  }
+
+  await launchTerminalAtPath(session.workspacePath);
 }
 
 async function refreshCharactersFromStorage(): Promise<CharacterProfile[]> {
@@ -1510,6 +1521,9 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle(WITHMATE_OPEN_PATH_CHANNEL, async (_event, target: string, options: OpenPathOptions | null) =>
     openPathTarget(target, options ?? undefined),
+  );
+  ipcMain.handle(WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL, async (_event, sessionId: string) =>
+    openSessionTerminal(sessionId),
   );
 
   await createHomeWindow();

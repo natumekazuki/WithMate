@@ -33,7 +33,8 @@ flowchart TB
 ## Top Bar
 
 - window 上端に沿う薄い strip とする
-- 常時表示するのは `title / Audit Log / More / Close`
+- 常時表示するのは `title / Audit Log / Terminal / More / Close`
+- `Terminal` は session の `workspacePath` を使って外部 terminal を開く軽量 action とする
 - `Rename / Delete` は `More` で展開した drawer にだけ置く
 - title 編集中は drawer を自動で開いた状態にする
 

@@ -28,6 +28,7 @@ import {
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
+  WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_PICK_FILE_CHANNEL,
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
@@ -154,6 +155,9 @@ const withmateApi: WithMateWindowApi = {
   },
   openPath(target: string, options) {
     return ipcRenderer.invoke(WITHMATE_OPEN_PATH_CHANNEL, target, options ?? null);
+  },
+  openSessionTerminal(sessionId: string) {
+    return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL, sessionId);
   },
   subscribeSessions(listener) {
     const wrapped = (_event: unknown, sessions: Awaited<ReturnType<WithMateWindowApi["listSessions"]>>) => {

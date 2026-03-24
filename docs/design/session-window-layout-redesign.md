@@ -32,6 +32,7 @@ flowchart TB
 
 - 上段に `Top Bar`、下段に `main split + action dock` を置く
 - `Top Bar` は thin strip とし、`Rename / Delete` は展開時だけ見せる
+- `Top Bar` には `workspacePath` で外部 terminal を開く `Terminal` action を常設する
 - `main split` は `minmax(0, 1.75fr) 420px` を第一候補にする
 - 会話面と right pane の間には draggable splitter を置く
 - splitter 比率は renderer local state で保持し、永続化は follow-up にする

@@ -38,6 +38,7 @@ export const WITHMATE_PICK_DIRECTORY_CHANNEL = "withmate:pick-directory";
 export const WITHMATE_PICK_FILE_CHANNEL = "withmate:pick-file";
 export const WITHMATE_PICK_IMAGE_FILE_CHANNEL = "withmate:pick-image-file";
 export const WITHMATE_OPEN_PATH_CHANNEL = "withmate:open-path";
+export const WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL = "withmate:open-session-terminal";
 export const WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL = "withmate:preview-composer-input";
 export const WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL = "withmate:search-workspace-files";
 export const WITHMATE_LIST_SESSION_SKILLS_CHANNEL = "withmate:list-session-skills";
@@ -105,6 +106,7 @@ export type WithMateWindowApi = {
   pickFile(initialPath?: string | null): Promise<string | null>;
   pickImageFile(initialPath?: string | null): Promise<string | null>;
   openPath(target: string, options?: OpenPathOptions): Promise<void>;
+  openSessionTerminal(sessionId: string): Promise<void>;
   subscribeSessions(listener: (sessions: Session[]) => void): () => void;
   subscribeCharacters(listener: (characters: CharacterProfile[]) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
