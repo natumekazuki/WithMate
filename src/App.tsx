@@ -107,6 +107,11 @@ type CustomAgentMatchDisplay = {
   title: string;
 };
 
+type SelectedCustomAgentDisplay = {
+  label: string;
+  title?: string;
+};
+
 function defaultRetryBannerDetailsOpen(kind: RetryBannerKind): boolean {
   return kind !== "canceled";
 }
@@ -230,6 +235,36 @@ function buildCustomAgentMatchDisplay(agent: DiscoveredCustomAgent): CustomAgent
     primaryLabel: agent.displayName || agent.name,
     secondaryLabel: `${agent.sourceLabel}${agent.description ? ` · ${agent.description}` : ""}`,
     title: `${agent.displayName || agent.name}\n${agent.sourcePath}`,
+  };
+}
+
+function buildSelectedCustomAgentDisplay(
+  session: Session | null,
+  selectedAgent: DiscoveredCustomAgent | null,
+): SelectedCustomAgentDisplay {
+  if (!session || session.provider !== "copilot") {
+    return {
+      label: "",
+    };
+  }
+
+  if (!session.customAgentName.trim()) {
+    return {
+      label: "Default Agent",
+      title: "Copilot の標準 agent を使う",
+    };
+  }
+
+  if (selectedAgent) {
+    return {
+      label: selectedAgent.displayName || selectedAgent.name,
+      title: `${selectedAgent.displayName || selectedAgent.name}\n${selectedAgent.sourcePath}`,
+    };
+  }
+
+  return {
+    label: session.customAgentName.trim(),
+    title: session.customAgentName.trim(),
   };
 }
 
@@ -1420,6 +1455,10 @@ export default function App() {
     const normalizedSelectedAgentName = selectedSession.customAgentName.trim().toLowerCase();
     return availableCustomAgents.find((agent) => agent.name.trim().toLowerCase() === normalizedSelectedAgentName) ?? null;
   }, [availableCustomAgents, selectedSession?.customAgentName]);
+  const selectedCustomAgentDisplay = useMemo(
+    () => buildSelectedCustomAgentDisplay(selectedSession, selectedCustomAgent),
+    [selectedCustomAgent, selectedSession],
+  );
   const isActionDockExpanded = isActionDockPinnedExpanded || shouldForceActionDockExpanded;
   const canCollapseActionDock = !shouldForceActionDockExpanded;
   const isSessionHeaderExpanded = isHeaderExpanded || isEditingTitle;
@@ -2604,20 +2643,23 @@ export default function App() {
                   Image
                 </button>
               </div>
-              <button
-                className={`drawer-toggle compact secondary composer-skill-button${isAgentPickerOpen ? " is-open" : ""}`}
-                type="button"
-                onClick={() => {
-                  setIsSkillPickerOpen(false);
-                  setIsAgentPickerOpen((current) => !current);
-                }}
-                disabled={selectedSession.provider !== "copilot" || selectedSession.runState === "running" || !!composerBlockedReason}
-                aria-expanded={isAgentPickerOpen}
-                aria-haspopup="listbox"
-                title={selectedCustomAgent ? `${selectedCustomAgent.displayName || selectedCustomAgent.name}\n${selectedCustomAgent.sourcePath}` : "Copilot custom agent を選択"}
-              >
-                Agent
-              </button>
+              <div className="composer-agent-toolbar">
+                <button
+                  className={`drawer-toggle compact secondary composer-skill-button${isAgentPickerOpen ? " is-open" : ""}`}
+                  type="button"
+                  onClick={() => {
+                    setIsSkillPickerOpen(false);
+                    setIsAgentPickerOpen((current) => !current);
+                  }}
+                  disabled={selectedSession.provider !== "copilot" || selectedSession.runState === "running" || !!composerBlockedReason}
+                  aria-expanded={isAgentPickerOpen}
+                  aria-haspopup="listbox"
+                  aria-label="Copilot custom agent を選択"
+                  title={selectedCustomAgent ? `${selectedCustomAgent.displayName || selectedCustomAgent.name}\n${selectedCustomAgent.sourcePath}` : "Copilot custom agent を選択"}
+                >
+                  {selectedSession.provider === "copilot" ? selectedCustomAgentDisplay.label : "Agent"}
+                </button>
+              </div>
               <button
                 className={`drawer-toggle compact secondary composer-skill-button${isSkillPickerOpen ? " is-open" : ""}`}
                 type="button"

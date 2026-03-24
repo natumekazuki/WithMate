@@ -21,8 +21,9 @@ function writeCustomAgent(
     name,
     displayName,
     description,
+    userInvocable,
     prompt,
-  }: { name?: string; displayName?: string; description?: string; prompt: string },
+  }: { name?: string; displayName?: string; description?: string; userInvocable?: boolean; prompt: string },
 ): void {
   fs.mkdirSync(rootPath, { recursive: true });
   const frontmatterLines = [
@@ -30,6 +31,7 @@ function writeCustomAgent(
     ...(name ? [`name: ${name}`] : []),
     ...(displayName ? [`displayName: ${displayName}`] : []),
     ...(description ? [`description: ${description}`] : []),
+    ...(typeof userInvocable === "boolean" ? [`user-invocable: ${userInvocable ? "true" : "false"}`] : []),
     "---",
     "",
   ];
@@ -56,11 +58,13 @@ describe("discoverSessionCustomAgents", () => {
     writeCustomAgent(path.join(workspacePath, ".github", "agents"), "reviewer", {
       displayName: "Reviewer",
       description: "workspace agent",
+      userInvocable: true,
       prompt: "Review the code carefully.",
     });
     writeCustomAgent(path.join(homeDirectory, ".copilot", "agents"), "refactor", {
       displayName: "Refactorer",
       description: "global agent",
+      userInvocable: true,
       prompt: "Refactor the code safely.",
     });
 
@@ -79,11 +83,13 @@ describe("discoverSessionCustomAgents", () => {
     writeCustomAgent(path.join(workspacePath, ".github", "agents"), "reviewer", {
       name: "reviewer",
       displayName: "Workspace Reviewer",
+      userInvocable: true,
       prompt: "workspace prompt",
     });
     writeCustomAgent(path.join(homeDirectory, ".copilot", "agents"), "reviewer", {
       name: "reviewer",
       displayName: "Global Reviewer",
+      userInvocable: true,
       prompt: "global prompt",
     });
 
@@ -95,5 +101,31 @@ describe("discoverSessionCustomAgents", () => {
     assert.equal(resolved.selectedAgentName, "reviewer");
     assert.equal(resolved.customAgents[0]?.displayName, "Workspace Reviewer");
     assert.equal(resolved.customAgents[0]?.prompt, "workspace prompt");
+  });
+
+  it("picker には user-invocable: true の agent だけを出す", () => {
+    const workspacePath = createTempDir();
+    const homeDirectory = createTempDir();
+    writeCustomAgent(path.join(workspacePath, ".github", "agents"), "reviewer", {
+      displayName: "Reviewer",
+      userInvocable: true,
+      prompt: "workspace prompt",
+    });
+    writeCustomAgent(path.join(workspacePath, ".github", "agents"), "hidden", {
+      displayName: "Hidden Agent",
+      userInvocable: false,
+      prompt: "hidden prompt",
+    });
+    writeCustomAgent(path.join(homeDirectory, ".copilot", "agents"), "implicit-hidden", {
+      displayName: "Implicit Hidden",
+      prompt: "implicit hidden prompt",
+    });
+
+    const agents = discoverSessionCustomAgents(workspacePath, homeDirectory);
+    const resolved = resolveSessionCustomAgentConfigs(workspacePath, "hidden", homeDirectory);
+
+    assert.deepEqual(agents.map((agent) => agent.displayName), ["Reviewer"]);
+    assert.equal(resolved.customAgents.length, 3);
+    assert.equal(resolved.selectedAgentName, "hidden");
   });
 });

@@ -3703,12 +3703,19 @@ button:disabled {
 .composer-skill-button {
   border-color: color-mix(in srgb, var(--character-main) 22%, rgba(203, 213, 225, 0.14));
   background: color-mix(in srgb, var(--character-main-soft) 22%, rgba(255, 255, 255, 0.06));
+  color: color-mix(in srgb, var(--ink) 88%, white 12%);
 }
 
 .composer-attachments-toolbar .drawer-toggle.is-open {
   border-color: color-mix(in srgb, var(--character-main) 36%, rgba(203, 213, 225, 0.22));
   background: color-mix(in srgb, var(--character-main-soft) 24%, rgba(255, 255, 255, 0.08));
   color: var(--ink);
+}
+
+.composer-agent-toolbar {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
 }
 
 .composer-hide-button {

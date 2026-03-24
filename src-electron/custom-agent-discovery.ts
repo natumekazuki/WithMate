@@ -15,6 +15,7 @@ type CustomAgentRoot = {
 type ResolvedCustomAgent = DiscoveredCustomAgent & {
   prompt: string;
   tools?: string[] | null;
+  userInvocable: boolean;
 };
 
 function normalizeSlashes(filePath: string): string {
@@ -43,6 +44,19 @@ function parseFrontmatterValue(frontmatter: string, key: string): string {
   }
 
   return match[1].trim().replace(/^['"]|['"]$/g, "");
+}
+
+function parseFrontmatterBoolean(frontmatter: string, key: string): boolean | null {
+  const rawValue = parseFrontmatterValue(frontmatter, key).toLowerCase();
+  if (rawValue === "true") {
+    return true;
+  }
+
+  if (rawValue === "false") {
+    return false;
+  }
+
+  return null;
 }
 
 function parseFrontmatterTools(frontmatter: string): string[] | null | undefined {
@@ -92,7 +106,7 @@ function parseFrontmatterTools(frontmatter: string): string[] | null | undefined
 
 function parseCustomAgentMarkdown(
   agentFilePath: string,
-): { name: string; displayName: string; description: string; prompt: string; tools?: string[] | null } {
+): { name: string; displayName: string; description: string; prompt: string; tools?: string[] | null; userInvocable: boolean } {
   const markdown = fs.readFileSync(agentFilePath, "utf8");
   const frontmatterMatch = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(markdown);
   const frontmatter = frontmatterMatch?.[1] ?? "";
@@ -106,6 +120,7 @@ function parseCustomAgentMarkdown(
     description: parseFrontmatterValue(frontmatter, "description"),
     prompt,
     tools: parseFrontmatterTools(frontmatter),
+    userInvocable: parseFrontmatterBoolean(frontmatter, "user-invocable") === true,
   };
 }
 
@@ -154,6 +169,7 @@ function discoverCustomAgentsInRoot(workspacePath: string, root: CustomAgentRoot
       sourceLabel: root.sourceLabel,
       prompt,
       tools: parsed.tools,
+      userInvocable: parsed.userInvocable,
     });
   }
 
@@ -194,7 +210,9 @@ export function discoverSessionCustomAgents(
   workspacePath: string,
   homeDirectory: string = os.homedir(),
 ): DiscoveredCustomAgent[] {
-  return resolveCustomAgents(workspacePath, homeDirectory).map(({ prompt: _prompt, tools: _tools, ...agent }) => agent);
+  return resolveCustomAgents(workspacePath, homeDirectory)
+    .filter((agent) => agent.userInvocable)
+    .map(({ prompt: _prompt, tools: _tools, userInvocable: _userInvocable, ...agent }) => agent);
 }
 
 export function resolveSessionCustomAgentConfigs(
