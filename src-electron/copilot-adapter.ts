@@ -32,6 +32,7 @@ import {
   type SnapshotCaptureStats,
   type WorkspaceSnapshot,
 } from "./snapshot-ignore.js";
+import { resolveSessionCustomAgentConfigs } from "./custom-agent-discovery.js";
 
 type CachedCopilotSession = {
   session: CopilotSession;
@@ -870,12 +871,18 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     settingsKey: string;
   } {
     const selection = resolveModelSelection(input.providerCatalog, input.session.model, input.session.reasoningEffort);
+    const resolvedCustomAgents = resolveSessionCustomAgentConfigs(
+      input.session.workspacePath,
+      input.session.customAgentName,
+    );
     const config: SessionConfig = {
       model: selection.resolvedModel,
       reasoningEffort: selection.resolvedReasoningEffort === "minimal" ? "low" : selection.resolvedReasoningEffort,
       workingDirectory: input.session.workspacePath,
       streaming: true,
       onPermissionRequest: buildPermissionHandler(input),
+      ...(resolvedCustomAgents.customAgents.length > 0 ? { customAgents: resolvedCustomAgents.customAgents } : {}),
+      ...(resolvedCustomAgents.selectedAgentName ? { agent: resolvedCustomAgents.selectedAgentName } : {}),
     };
 
     return {
@@ -887,6 +894,14 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         config.reasoningEffort,
         config.workingDirectory,
         input.session.approvalMode,
+        input.session.customAgentName,
+        resolvedCustomAgents.customAgents.map((agent) => JSON.stringify({
+          name: agent.name,
+          displayName: agent.displayName ?? "",
+          description: agent.description ?? "",
+          prompt: agent.prompt,
+          tools: agent.tools ?? null,
+        })).join("\u001f"),
       ]),
     };
   }

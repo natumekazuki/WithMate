@@ -105,6 +105,7 @@ npm run electron:start
 | MT-062 | Skill Root settings | Home の `Settings` で provider ごとの `Skill Root` を入力または `Browse` で選び、`Save Settings` して再度開く | skill root path が保存され、provider ごとに保持される |
 | MT-063 | Skill picker と挿入 | Session Window の composer 上部にある `Skill` を開き、候補を選ぶ | skill 候補が dropdown で表示され、選択すると Codex では `$skill-name`、Copilot では skill directive が composer 先頭へ挿入される |
 | MT-064 | Skill picker empty state | skill が 0 件の session で `Skill` を開く | 空状態メッセージが出て、textarea の通常入力や送信導線は固まらない |
+| MT-065 | Copilot custom agent picker | provider を `GitHub Copilot` にした session で `Agent` を開き、workspace `.github/agents` または `~/.copilot/agents` にある custom agent を選ぶ | custom agent 候補が dropdown に出る。同名なら workspace が優先され、選択後の turn では Copilot session config に反映される |
 
 ## 補足
 

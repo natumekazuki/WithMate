@@ -119,6 +119,18 @@ export type DiscoveredSkill = {
   sourceLabel: string;
 };
 
+export type DiscoveredCustomAgentSource = "workspace" | "global";
+
+export type DiscoveredCustomAgent = {
+  id: string;
+  name: string;
+  displayName: string;
+  description: string;
+  source: DiscoveredCustomAgentSource;
+  sourcePath: string;
+  sourceLabel: string;
+};
+
 export type ComposerAttachmentKind = "file" | "folder" | "image";
 
 export type ComposerAttachmentSource = "text";
@@ -217,6 +229,7 @@ export type Session = {
   approvalMode: ApprovalMode;
   model: string;
   reasoningEffort: ModelReasoningEffort;
+  customAgentName: string;
   threadId: string;
   messages: Message[];
   stream: StreamEntry[];
@@ -242,6 +255,7 @@ export type CreateSessionInput = {
   approvalMode: ApprovalMode;
   model?: string;
   reasoningEffort?: ModelReasoningEffort;
+  customAgentName?: string;
 };
 
 function getLocationSearch(): string {
@@ -585,6 +599,7 @@ export function normalizeSession(value: unknown): Session | null {
       candidate.reasoningEffort === "xhigh"
         ? candidate.reasoningEffort
         : DEFAULT_REASONING_EFFORT,
+    customAgentName: typeof candidate.customAgentName === "string" ? candidate.customAgentName.trim() : "",
     threadId:
       typeof candidate.threadId === "string"
         ? candidate.threadId
@@ -636,6 +651,7 @@ export function buildNewSession(input: CreateSessionInput): Session {
     approvalMode: normalizeApprovalMode(input.approvalMode, DEFAULT_APPROVAL_MODE),
     model: input.model?.trim() || DEFAULT_MODEL_ID,
     reasoningEffort: input.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
+    customAgentName: input.customAgentName?.trim() || "",
     threadId: "",
     messages: [],
     stream: [],

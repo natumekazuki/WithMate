@@ -9,6 +9,22 @@ import { buildNewSession } from "../../src/app-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";
 
+async function removeDirectoryWithRetry(targetPath: string, attempts = 5): Promise<void> {
+  for (let index = 0; index < attempts; index += 1) {
+    try {
+      await rm(targetPath, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const isBusyError = typeof error === "object" && error !== null && "code" in error && error.code === "EBUSY";
+      if (!isBusyError || index === attempts - 1) {
+        throw error;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50 * (index + 1)));
+    }
+  }
+}
+
 function createSession(taskTitle: string, workspaceLabel: string, characterId: string, character: string) {
   return buildNewSession({
     taskTitle,
@@ -50,7 +66,7 @@ describe("SessionStorage", () => {
 
       storage.close();
     } finally {
-      await rm(tempDirectory, { recursive: true, force: true });
+      await removeDirectoryWithRetry(tempDirectory);
     }
   });
 
@@ -68,7 +84,7 @@ describe("SessionStorage", () => {
       assert.deepEqual(storage.listSessions(), []);
       storage.close();
     } finally {
-      await rm(tempDirectory, { recursive: true, force: true });
+      await removeDirectoryWithRetry(tempDirectory);
     }
   });
 
@@ -92,7 +108,29 @@ describe("SessionStorage", () => {
       assert.ok(loaded);
       assert.equal(loaded.approvalMode, "provider-controlled");
     } finally {
-      await rm(tempDirectory, { recursive: true, force: true });
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("customAgentName を保存して読み戻せる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new SessionStorage(dbPath);
+      const session = storage.upsertSession({
+        ...createSession("agent", "workspace-agent", "char-a", "A"),
+        provider: "copilot",
+        customAgentName: "reviewer",
+      });
+
+      const loaded = storage.getSession(session.id);
+      storage.close();
+
+      assert.ok(loaded);
+      assert.equal(loaded.customAgentName, "reviewer");
+    } finally {
+      await removeDirectoryWithRetry(tempDirectory);
     }
   });
 });

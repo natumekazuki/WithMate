@@ -63,6 +63,7 @@ current milestone の provider ごとの差は次。
   - top-level `assistant.message` が複数回来た場合は、arrival 順に空行区切りで連結した本文を `assistantText` として返す
   - `file / folder` は Copilot SDK `attachments` (`file` / `directory`) へ変換して送る
   - `image` も `attachments` の `file` として送り、専用 UI 分岐は持たない
+  - custom agent は `~/.copilot/agents` と workspace `.github/agents` を探索し、session metadata の選択値を `customAgents` / `agent` に変換する
   - rich command timeline は未対応
   - `provider-controlled` で non-read-only permission request が来た場合は、Main Process の `onApprovalRequest` bridge を通して Session UI の approval card へ中継し、user の `approve / deny` を SDK `PermissionHandler` へ返す
   - Electron main process では SDK default の JS entry bootstrap を避け、native Copilot CLI binary を明示して起動する
@@ -253,7 +254,7 @@ diff 本文は turn items からは直接取れないため、MVP では Main Pr
   - Copilot: explicit skill directive を prompt へ付加
 - `agent` は provider 専用 command とする
   - Codex: 未対応
-  - Copilot: custom agent selection を session metadata へ保存し、adapter が provider-native 指定へ変換する
+  - Copilot: custom agent selection を session metadata に保存し、`~/.copilot/agents` と workspace `.github/agents` から探索した agent catalog を adapter が `customAgents` / `agent` に変換する
 
 ## Future Extension
 

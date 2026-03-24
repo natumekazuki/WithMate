@@ -13,6 +13,7 @@ import {
   currentTimestampLabel,
   type CreateCharacterInput,
   type CreateSessionInput,
+  type DiscoveredCustomAgent,
   type DiscoveredSkill,
   type DiffPreviewPayload,
   type LiveApprovalDecision,
@@ -50,6 +51,7 @@ import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { resolveOpenPathTarget } from "./open-path.js";
 import { SessionStorage } from "./session-storage.js";
 import { discoverSessionSkills } from "./skill-discovery.js";
+import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
 import { clearWorkspaceFileIndex, searchWorkspaceFilePaths } from "./workspace-file-search.js";
 import {
@@ -70,6 +72,7 @@ import {
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
+  WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSIONS_CHANNEL,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
@@ -239,6 +242,19 @@ function listSessionSkills(sessionId: string): DiscoveredSkill[] {
   const appSettings = requireAppSettingsStorage().getSettings();
   const providerSettings = getProviderAppSettings(appSettings, session.provider);
   return discoverSessionSkills(session.workspacePath, providerSettings.skillRootPath);
+}
+
+function listSessionCustomAgents(sessionId: string): DiscoveredCustomAgent[] {
+  const session = getSession(sessionId);
+  if (!session) {
+    throw new Error("対象セッションが見つからないよ。");
+  }
+
+  if (session.provider !== "copilot") {
+    return [];
+  }
+
+  return discoverSessionCustomAgents(session.workspacePath);
 }
 
 function getSession(sessionId: string): Session | null {
@@ -1353,6 +1369,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(WITHMATE_LIST_SESSIONS_CHANNEL, () => listSessions());
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => listSessionAuditLogs(sessionId));
   ipcMain.handle(WITHMATE_LIST_SESSION_SKILLS_CHANNEL, (_event, sessionId: string) => listSessionSkills(sessionId));
+  ipcMain.handle(WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL, (_event, sessionId: string) => listSessionCustomAgents(sessionId));
   ipcMain.handle(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL, () => listOpenSessionWindowIds());
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => requireAppSettingsStorage().getSettings());
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => updateAppSettings(settings));

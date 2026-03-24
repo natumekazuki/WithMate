@@ -7,6 +7,7 @@ import {
   type ComposerPreview,
   currentTimestampLabel,
   DEFAULT_CHARACTER_THEME_COLORS,
+  type DiscoveredCustomAgent,
   type DiscoveredSkill,
   getProviderAppSettings,
   getSessionIdFromLocation,
@@ -95,6 +96,12 @@ type WorkspacePathMatchDisplay = {
 };
 
 type SkillMatchDisplay = {
+  primaryLabel: string;
+  secondaryLabel: string;
+  title: string;
+};
+
+type CustomAgentMatchDisplay = {
   primaryLabel: string;
   secondaryLabel: string;
   title: string;
@@ -215,6 +222,14 @@ function buildSkillMatchDisplay(skill: DiscoveredSkill): SkillMatchDisplay {
     primaryLabel: skill.name,
     secondaryLabel: `${skill.sourceLabel}${skill.description ? ` · ${skill.description}` : ""}`,
     title: `${skill.name}\n${skill.sourcePath}`,
+  };
+}
+
+function buildCustomAgentMatchDisplay(agent: DiscoveredCustomAgent): CustomAgentMatchDisplay {
+  return {
+    primaryLabel: agent.displayName || agent.name,
+    secondaryLabel: `${agent.sourceLabel}${agent.description ? ` · ${agent.description}` : ""}`,
+    title: `${agent.displayName || agent.name}\n${agent.sourcePath}`,
   };
 }
 
@@ -588,6 +603,9 @@ export default function App() {
   const [workspacePathMatches, setWorkspacePathMatches] = useState<string[]>([]);
   const [activeWorkspacePathMatchIndex, setActiveWorkspacePathMatchIndex] = useState(-1);
   const [availableSkills, setAvailableSkills] = useState<DiscoveredSkill[]>([]);
+  const [availableCustomAgents, setAvailableCustomAgents] = useState<DiscoveredCustomAgent[]>([]);
+  const [isAgentPickerOpen, setIsAgentPickerOpen] = useState(false);
+  const [isCustomAgentListLoading, setIsCustomAgentListLoading] = useState(false);
   const [isSkillPickerOpen, setIsSkillPickerOpen] = useState(false);
   const [isSkillListLoading, setIsSkillListLoading] = useState(false);
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
@@ -734,6 +752,35 @@ export default function App() {
   useEffect(() => {
     let active = true;
 
+    if (!window.withmate || !selectedSession || selectedSession.provider !== "copilot") {
+      setAvailableCustomAgents([]);
+      setIsCustomAgentListLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    setIsCustomAgentListLoading(true);
+    void window.withmate.listSessionCustomAgents(selectedSession.id).then((agents) => {
+      if (active) {
+        setAvailableCustomAgents(agents);
+        setIsCustomAgentListLoading(false);
+      }
+    }).catch(() => {
+      if (active) {
+        setAvailableCustomAgents([]);
+        setIsCustomAgentListLoading(false);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedSession]);
+
+  useEffect(() => {
+    let active = true;
+
     if (!window.withmate || !selectedSession) {
       setAvailableSkills([]);
       setIsSkillListLoading(false);
@@ -761,11 +808,13 @@ export default function App() {
   }, [appSettings, selectedSession]);
 
   useEffect(() => {
+    setIsAgentPickerOpen(false);
     setIsSkillPickerOpen(false);
   }, [selectedSessionId]);
 
   useEffect(() => {
     if (selectedSession?.runState === "running") {
+      setIsAgentPickerOpen(false);
       setIsSkillPickerOpen(false);
     }
   }, [selectedSession?.runState]);
@@ -1357,11 +1406,20 @@ export default function App() {
     !retryBanner || !lastUserMessage || !!composerBlockedReason || selectedSession?.runState === "running";
   const isRetryEditDisabled = isRetryActionDisabled || isComposerDisabled;
   const shouldForceActionDockExpanded =
-    isSkillPickerOpen
+    isAgentPickerOpen
+    || isSkillPickerOpen
     || workspacePathMatches.length > 0
     || isRetryDraftReplacePending
     || !!retryBanner
     || composerSendability.feedbackTone === "blocked";
+  const selectedCustomAgent = useMemo(() => {
+    if (!selectedSession?.customAgentName.trim()) {
+      return null;
+    }
+
+    const normalizedSelectedAgentName = selectedSession.customAgentName.trim().toLowerCase();
+    return availableCustomAgents.find((agent) => agent.name.trim().toLowerCase() === normalizedSelectedAgentName) ?? null;
+  }, [availableCustomAgents, selectedSession?.customAgentName]);
   const isActionDockExpanded = isActionDockPinnedExpanded || shouldForceActionDockExpanded;
   const canCollapseActionDock = !shouldForceActionDockExpanded;
   const isSessionHeaderExpanded = isHeaderExpanded || isEditingTitle;
@@ -1594,6 +1652,28 @@ export default function App() {
       textarea.focus();
       textarea.setSelectionRange(nextCaret, nextCaret);
     });
+  };
+
+  const handleSelectCustomAgent = async (agent: DiscoveredCustomAgent | null) => {
+    if (!selectedSession || selectedSession.provider !== "copilot") {
+      return;
+    }
+
+    const nextCustomAgentName = agent?.name ?? "";
+    if (nextCustomAgentName === selectedSession.customAgentName) {
+      setIsAgentPickerOpen(false);
+      return;
+    }
+
+    const nextSession: Session = {
+      ...selectedSession,
+      customAgentName: nextCustomAgentName,
+      threadId: "",
+      updatedAt: currentTimestampLabel(),
+    };
+
+    await persistSession(nextSession);
+    setIsAgentPickerOpen(false);
   };
 
   const persistSession = async (nextSession: Session) => {
@@ -2525,9 +2605,26 @@ export default function App() {
                 </button>
               </div>
               <button
+                className={`drawer-toggle compact secondary composer-skill-button${isAgentPickerOpen ? " is-open" : ""}`}
+                type="button"
+                onClick={() => {
+                  setIsSkillPickerOpen(false);
+                  setIsAgentPickerOpen((current) => !current);
+                }}
+                disabled={selectedSession.provider !== "copilot" || selectedSession.runState === "running" || !!composerBlockedReason}
+                aria-expanded={isAgentPickerOpen}
+                aria-haspopup="listbox"
+                title={selectedCustomAgent ? `${selectedCustomAgent.displayName || selectedCustomAgent.name}\n${selectedCustomAgent.sourcePath}` : "Copilot custom agent を選択"}
+              >
+                Agent
+              </button>
+              <button
                 className={`drawer-toggle compact secondary composer-skill-button${isSkillPickerOpen ? " is-open" : ""}`}
                 type="button"
-                onClick={() => setIsSkillPickerOpen((current) => !current)}
+                onClick={() => {
+                  setIsAgentPickerOpen(false);
+                  setIsSkillPickerOpen((current) => !current);
+                }}
                 disabled={selectedSession.runState === "running" || !!composerBlockedReason}
                 aria-expanded={isSkillPickerOpen}
                 aria-haspopup="listbox"
@@ -2540,6 +2637,54 @@ export default function App() {
                 </button>
               ) : null}
             </div>
+            {isAgentPickerOpen ? (
+              <div
+                className="composer-path-match-list composer-skill-picker-list"
+                role="listbox"
+                aria-label="Custom Agent 候補"
+              >
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={!selectedSession.customAgentName}
+                  className="composer-path-match"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => void handleSelectCustomAgent(null)}
+                  title="Custom Agent を使わない"
+                >
+                  <span className="composer-path-match-primary">Default Agent</span>
+                  <span className="composer-path-match-secondary">Copilot の標準 agent を使う</span>
+                </button>
+                {isCustomAgentListLoading ? (
+                  <p className="composer-skill-empty">Custom Agent を読み込み中だよ。</p>
+                ) : availableCustomAgents.length > 0 ? (
+                  availableCustomAgents.map((agent) => {
+                    const agentDisplay = buildCustomAgentMatchDisplay(agent);
+                    const isSelected = selectedSession.customAgentName.trim().toLowerCase() === agent.name.trim().toLowerCase();
+
+                    return (
+                      <button
+                        key={agent.id}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        className={`composer-path-match${isSelected ? " active" : ""}`}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => void handleSelectCustomAgent(agent)}
+                        title={agentDisplay.title}
+                      >
+                        <span className="composer-path-match-primary">{agentDisplay.primaryLabel}</span>
+                        <span className="composer-path-match-secondary">{agentDisplay.secondaryLabel}</span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <p className="composer-skill-empty">
+                    使える custom agent がまだないよ。`~/.copilot/agents` か workspace の `.github/agents` を確認してね。
+                  </p>
+                )}
+              </div>
+            ) : null}
             {isSkillPickerOpen ? (
               <div
                 className="composer-path-match-list composer-skill-picker-list"
