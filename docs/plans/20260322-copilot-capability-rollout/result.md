@@ -15,12 +15,12 @@
 - Electron main process では native Copilot CLI binary を明示するようにし、Copilot turn が実機でも通る状態にした
 - Copilot `provider-controlled` の permission request を Session UI の pending bubble から `今回だけ許可 / 拒否` できるようにした
 - approval 後の turn 完了待機を event stream ベースへ切り替え、長時間 command で false timeout しないようにした
+- Copilot でも `@path` 由来の file / folder を `attachments` の `file` / `directory` として送れるようにした
 
 ## Remaining
 
 - capability ごとの follow-up plan 作成
-- `file / folder context` の Copilot native input 反映
-- `image attachment` の native surface 確認
+- `image attachment` の current UI 反映方針整理
 - `custom agent selection` と `slash command absorption` の実装設計
 - `apps / mcp / plugins`、`sandbox / allowlist 拡張` の provider surface 調査
 

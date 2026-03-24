@@ -6,6 +6,7 @@ import {
   approveAll,
   type CopilotSession,
   type PermissionHandler,
+  type MessageOptions,
   type PermissionRequest,
   type PermissionRequestResult,
   type SessionConfig,
@@ -467,6 +468,21 @@ function buildCopilotApprovalRequest(
     warning,
     decisionMode: "direct-decision",
   };
+}
+
+export function buildCopilotMessageAttachments(
+  attachments: RunSessionTurnInput["attachments"],
+): NonNullable<MessageOptions["attachments"]> {
+  const unsupportedImage = attachments.find((attachment) => attachment.kind === "image");
+  if (unsupportedImage) {
+    throw new Error("Copilot provider の image 添付はまだ未対応だよ。");
+  }
+
+  return attachments.map((attachment) => ({
+    type: attachment.kind === "folder" ? "directory" : "file",
+    path: attachment.absolutePath,
+    displayName: attachment.displayPath,
+  }));
 }
 
 export function buildCopilotStableRawItems(
@@ -957,9 +973,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     prompt: ProviderPromptComposition,
     onProgress?: RunSessionTurnProgressHandler,
   ): Promise<RunSessionTurnResult> {
-    if (input.attachments.length > 0) {
-      throw new Error("Copilot provider はまだ file / folder / image 添付に対応していないよ。");
-    }
+    const messageAttachments = buildCopilotMessageAttachments(input.attachments);
 
     const cliPath = resolveCopilotCliPath();
     const { snapshot: beforeSnapshot, stats: beforeSnapshotStats } = await captureWorkspaceSnapshot(input.session.workspacePath);
@@ -1135,6 +1149,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       try {
         await session.send({
           prompt: prompt.composedPromptText,
+          ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
         });
         await completion.wait;
       } finally {

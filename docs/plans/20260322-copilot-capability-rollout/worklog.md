@@ -28,10 +28,10 @@
 - follow-up task `20260324-approval-ui-future-proofing` を完了し、Copilot `provider-controlled` の permission request を Session UI から `今回だけ許可 / 拒否` できるようにした
 - follow-up task `20260324-copilot-approval-timeout-fix` を完了し、approval 後の長時間 command で `180000ms` 固定 timeout に落ちないよう turn 完了待機を event stream ベースへ切り替えた
 - `93f5b27` `fix(copilot): handle approval requests in session ui` を作成し、approval UI と timeout fix を main branch に入れた
+- follow-up task `20260324-copilot-file-folder-context` を完了し、Copilot でも file / folder を provider-native attachment として送れるようにした
 
 ## Next
 
-- `file / folder context` の Copilot native input 反映を確認して実装する
-- `image attachment` の Copilot native surface 有無を確定する
+- `image attachment` の Copilot native surface を current UI にどう載せるか整理する
 - `custom agent selection` と `slash command absorption` の着手順を見直す
 - `apps / mcp / plugins`、`sandbox / allowlist 拡張` は provider surface 確認後に follow-up task を切る

@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 
 import {
   applyCopilotAssistantEvent,
+  buildCopilotMessageAttachments,
   buildCopilotStableRawItems,
   buildCopilotToolSummary,
   buildCopilotClientEnv,
@@ -135,6 +136,59 @@ describe("CopilotAdapter env", () => {
     );
 
     assert.equal(summary, "move tmp/old.txt -> tmp/new.txt");
+  });
+
+  it("file / folder 添付を Copilot attachments へ変換する", () => {
+    const attachments = buildCopilotMessageAttachments([
+      {
+        id: "file:src/index.ts",
+        kind: "file",
+        source: "text",
+        absolutePath: "F:\\repo\\src\\index.ts",
+        displayPath: "src/index.ts",
+        workspaceRelativePath: "src/index.ts",
+        isOutsideWorkspace: false,
+      },
+      {
+        id: "folder:docs",
+        kind: "folder",
+        source: "text",
+        absolutePath: "F:\\repo\\docs",
+        displayPath: "docs",
+        workspaceRelativePath: "docs",
+        isOutsideWorkspace: false,
+      },
+    ]);
+
+    assert.deepEqual(attachments, [
+      {
+        type: "file",
+        path: "F:\\repo\\src\\index.ts",
+        displayName: "src/index.ts",
+      },
+      {
+        type: "directory",
+        path: "F:\\repo\\docs",
+        displayName: "docs",
+      },
+    ]);
+  });
+
+  it("image 添付は明示的に未対応エラーにする", () => {
+    assert.throws(
+      () => buildCopilotMessageAttachments([
+        {
+          id: "image:assets/sample.png",
+          kind: "image",
+          source: "text",
+          absolutePath: "F:\\repo\\assets\\sample.png",
+          displayPath: "assets/sample.png",
+          workspaceRelativePath: "assets/sample.png",
+          isOutsideWorkspace: false,
+        },
+      ]),
+      /image 添付はまだ未対応/,
+    );
   });
 
   it("rawItems は delta / ephemeral を落として stable event だけ残す", () => {

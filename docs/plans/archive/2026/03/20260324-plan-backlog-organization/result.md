@@ -15,3 +15,7 @@
 
 - `20260322-copilot-capability-rollout` を唯一の active rollout 親 plan として維持する
 - 当該整理 plan は commit なしで archive し、この整理結果を次の実装起点にする
+
+## Related Commits
+
+- `cf33c82` `docs(plan): archive completed research backlogs`

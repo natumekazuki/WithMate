@@ -59,9 +59,10 @@ current milestone の provider ごとの差は次。
   - `thread.runStreamed()` を使い、workspace snapshot を含む artifact まで組み立てる
   - `file / folder / image` 添付を shipped
 - `CopilotAdapter`
-  - `session.sendAndWait()` と session event stream を使い、最小 turn 実行、assistant text streaming、minimal audit log を返す
+  - `session.send()` と session event stream を使い、最小 turn 実行、assistant text streaming、minimal audit log を返す
   - top-level `assistant.message` が複数回来た場合は、arrival 順に空行区切りで連結した本文を `assistantText` として返す
-  - `file / folder / image` 添付と rich command timeline は未対応
+  - `file / folder` は Copilot SDK `attachments` (`file` / `directory`) へ変換して送る
+  - `image` 添付と rich command timeline は未対応
   - `provider-controlled` で non-read-only permission request が来た場合は、Main Process の `onApprovalRequest` bridge を通して Session UI の approval card へ中継し、user の `approve / deny` を SDK `PermissionHandler` へ返す
   - Electron main process では SDK default の JS entry bootstrap を避け、native Copilot CLI binary を明示して起動する
   - `Latest Command` と audit `operations` には、`shell / powershell / bash` に加えて `create / edit / replace / move / delete` のような mutating tool も `command_execution` として正規化して返す
@@ -79,7 +80,7 @@ current milestone の provider ごとの差は次。
 7. Main Process が session の `catalogRevision` と `provider` から provider catalog を解決する
 8. provider adapter が `model / reasoningEffort` を検証し、provider-native SDK 実行へ変換する
    - `CodexAdapter`: file / folder を `additionalDirectories`、画像を structured input にして `thread.runStreamed()` を実行する
-   - `CopilotAdapter`: 現在は text-only prompt を `session.sendAndWait()` へ渡し、session event から live state を組み立てる。`provider-controlled` では permission request を Main Process へ返し、Session UI の approval card と往復する。Electron では native CLI binary を明示して起動し、bootstrap failure 時は audit log に debug metadata を残す
+   - `CopilotAdapter`: file / folder は `session.send({ attachments })` の `file` / `directory` へ変換して prompt と同時に渡す。image は current milestone では未接続のままにする。`provider-controlled` では permission request を Main Process へ返し、Session UI の approval card と往復する。Electron では native CLI binary を明示して起動し、bootstrap failure 時は audit log に debug metadata を残す
 9. Main Process が stream event から live state を組み立て、IPC で Session Window へ中継する
    - live state には `approvalRequest` を含められる
 10. turn 完了後に Main Process が `threadId` と assistant message を session store に反映する
@@ -94,8 +95,8 @@ current milestone の provider ごとの差は次。
   - file / folder: `additionalDirectories`
   - image: structured input (`local_image`)
 - `Copilot`
-  - SDK native には file / directory attachment がある
-  - ただし current milestone の `CopilotAdapter` では未接続のため、text-only turn 実行に限定する
+  - SDK native には `attachments` として `file` / `directory` attachment がある
+  - current milestone の `CopilotAdapter` は file / folder だけ接続し、image はまだ未接続
 
 picker で選んだ file / folder / image も renderer 側では textarea に `@path` を挿入するだけで、実行直前の解決対象は textarea の `@path` のみとする。
 
@@ -228,6 +229,7 @@ diff 本文は turn items からは直接取れないため、MVP では Main Pr
 
 - prompt composer が作った `system / input / composed prompt` を監査ログへ保存する
 - 画像添付がある場合の `composed prompt` は text 部分のみで、画像 payload は別送される
+ - Copilot の file / folder attachment も text prompt とは別送される
 - `turn.items` は読みやすい `operations` と raw の `raw_items_json` の両方で残す
 - Session Window から監査ログを overlay で閲覧できるようにする
 - stream 中の一時 step は監査ログへ逐次保存せず、turn 完了後の確定値だけを残す
