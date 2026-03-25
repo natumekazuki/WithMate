@@ -16,6 +16,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 ## Scope
 
 - Home の session / character 管理 UI
+- Session Monitor Window
 - Session の coding agent 作業 UI
 - Character Editor の編集 UI
 - Diff Window の閲覧 UI
@@ -48,6 +49,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - row では `avatar / taskTitle / workspace / state badge` を表示し、クリックで session を開く
   - interrupted / error は non-running section でも badge で判別できる
   - open な SessionWindow がないときは、その旨が分かる empty state を出す
+  - `Monitor Window` button から独立した monitor window を開ける
 - `Recent Sessions`
   - section action として `New Session`
   - resume picker
@@ -98,6 +100,19 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
     - confirm 後に実行する
   - 初回リリース前は後方互換性を考慮せず、非互換変更時はここから回復する
   - 縦が小さいときも overlay 内スクロールで末尾まで操作できる
+
+## Session Monitor Window
+
+- `Home` とは別の独立 window として開く
+- 既定サイズは細く縦長の compact window とする
+- `always on top` を初期 slice から有効にする
+- renderer は `HomeApp` の compact monitor mode を再利用する
+- 表示内容は Home 右ペインの `Session Monitor` と同じ truth source を使う
+  - open な `Session Window` のみ表示する
+  - `実行中` / `停止・完了` の 2 section を持つ
+  - row では `avatar / taskTitle / workspace / state badge` を表示し、クリックで session を開く
+- window 内の `Home` button から通常の `Home Window` を前面へ戻せる
+- close は通常の window close と同じ扱いで、session 実行自体は止めない
 
 ## Session Window
 
@@ -231,6 +246,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - Session の作成・更新・削除は Main Process 経由で永続化する
 - Session の実行中イベントは Main Process から live state として IPC 中継する
 - Home の `Session Monitor` は Main Process の `sessionWindows` を thin IPC bridge で参照し、開いている `Session Window` の session だけを表示する
+- `Session Monitor Window` も同じ IPC bridge と truth source を使い、`Home` と別 window でも monitor 内容を同期する
 - Session 実行の監査ログは SQLite に保存し、Session Window から閲覧する
 - chat message は限定的な rich text renderer で整形表示する
 - Settings overlay の `System Prompt Prefix` は SQLite に保存し、次回 turn から prompt composition へ反映する
@@ -245,6 +261,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 ## Deliverables
 
 - `src/HomeApp.tsx`
+- `src/withmate-window.ts`
 - `src/App.tsx`
 - `src/MessageRichText.tsx`
 - `src/CharacterEditorApp.tsx`

@@ -83,7 +83,9 @@ import {
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
+  WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
+  WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_PICK_FILE_CHANNEL,
@@ -122,6 +124,7 @@ const codexAdapter = new CodexAdapter();
 const copilotAdapter = new CopilotAdapter();
 
 let homeWindow: BrowserWindow | null = null;
+let sessionMonitorWindow: BrowserWindow | null = null;
 const sessionWindows = new Map<string, BrowserWindow>();
 const characterEditorWindows = new Map<string, BrowserWindow>();
 const diffWindows = new Map<string, BrowserWindow>();
@@ -1258,13 +1261,15 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
   }
 }
 
-async function loadHomeEntry(window: BrowserWindow): Promise<void> {
+async function loadHomeEntry(window: BrowserWindow, mode: "home" | "monitor" = "home"): Promise<void> {
+  const search = mode === "monitor" ? "?mode=monitor" : "";
+
   if (devServerUrl) {
-    await window.loadURL(devServerUrl);
+    await window.loadURL(`${devServerUrl}${search}`);
     return;
   }
 
-  await window.loadFile(path.resolve(rendererDistPath, "index.html"));
+  await window.loadFile(path.resolve(rendererDistPath, "index.html"), search ? { search } : undefined);
 }
 
 async function loadSessionEntry(window: BrowserWindow, sessionId: string): Promise<void> {
@@ -1323,7 +1328,39 @@ async function createHomeWindow(): Promise<BrowserWindow> {
     homeWindow = null;
   });
 
-  await loadHomeEntry(window);
+  await loadHomeEntry(window, "home");
+  return window;
+}
+
+async function openSessionMonitorWindow(): Promise<BrowserWindow> {
+  if (sessionMonitorWindow && !sessionMonitorWindow.isDestroyed()) {
+    if (sessionMonitorWindow.isMinimized()) {
+      sessionMonitorWindow.restore();
+    }
+
+    sessionMonitorWindow.focus();
+    sessionMonitorWindow.setAlwaysOnTop(true, "screen-saver");
+    return sessionMonitorWindow;
+  }
+
+  const window = createBaseWindow({
+    width: 360,
+    height: 840,
+    minWidth: 300,
+    minHeight: 520,
+    maxWidth: 460,
+    title: "WithMate Monitor",
+    alwaysOnTop: true,
+  });
+
+  sessionMonitorWindow = window;
+  window.setAlwaysOnTop(true, "screen-saver");
+  window.once("ready-to-show", () => window.show());
+  window.on("closed", () => {
+    sessionMonitorWindow = null;
+  });
+
+  await loadHomeEntry(window, "monitor");
   return window;
 }
 
@@ -1457,6 +1494,12 @@ app.whenReady().then(async () => {
     }
 
     await openSessionWindow(sessionId);
+  });
+  ipcMain.handle(WITHMATE_OPEN_HOME_WINDOW_CHANNEL, async () => {
+    await createHomeWindow();
+  });
+  ipcMain.handle(WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL, async () => {
+    await openSessionMonitorWindow();
   });
 
   ipcMain.handle(WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL, async (_event, characterId: string | null) => {

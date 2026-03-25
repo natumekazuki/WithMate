@@ -16,6 +16,8 @@ import type {
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
 
 export const WITHMATE_OPEN_SESSION_CHANNEL = "withmate:open-session";
+export const WITHMATE_OPEN_HOME_WINDOW_CHANNEL = "withmate:open-home-window";
+export const WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL = "withmate:open-session-monitor-window";
 export const WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL = "withmate:open-character-editor";
 export const WITHMATE_OPEN_DIFF_WINDOW_CHANNEL = "withmate:open-diff-window";
 export const WITHMATE_LIST_SESSIONS_CHANNEL = "withmate:list-sessions";
@@ -98,6 +100,8 @@ export type ResetAppDatabaseResult = {
 
 export type WithMateWindowApi = {
   openSession(sessionId: string): Promise<void>;
+  openHomeWindow(): Promise<void>;
+  openSessionMonitorWindow(): Promise<void>;
   openCharacterEditor(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   listSessions(): Promise<Session[]>;

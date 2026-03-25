@@ -61,6 +61,22 @@ async function openSessionWindow(sessionId: string) {
   await window.withmate.openSession(sessionId);
 }
 
+async function openHomeWindow() {
+  if (!window.withmate) {
+    return;
+  }
+
+  await window.withmate.openHomeWindow();
+}
+
+async function openSessionMonitorWindow() {
+  if (!window.withmate) {
+    return;
+  }
+
+  await window.withmate.openSessionMonitorWindow();
+}
+
 async function openCharacterEditor(characterId?: string | null) {
   if (!window.withmate) {
     return;
@@ -74,7 +90,21 @@ type HomeSessionState = {
   label: string;
 };
 
+type HomeMonitorEntry = {
+  session: Session;
+  state: HomeSessionState;
+};
+
 type HomeRightPaneView = "monitor" | "characters";
+type HomeWindowMode = "home" | "monitor";
+
+function getHomeWindowMode(): HomeWindowMode {
+  if (typeof window === "undefined") {
+    return "home";
+  }
+
+  return new URLSearchParams(window.location.search).get("mode") === "monitor" ? "monitor" : "home";
+}
 
 function getHomeSessionState(session: Session): HomeSessionState {
   if (session.status === "running" || session.runState === "running") {
@@ -111,8 +141,84 @@ function getHomeSessionState(session: Session): HomeSessionState {
   };
 }
 
+type HomeMonitorContentProps = {
+  runningEntries: HomeMonitorEntry[];
+  nonRunningEntries: HomeMonitorEntry[];
+  runningEmptyMessage: string;
+  completedEmptyMessage: string;
+};
+
+function HomeMonitorContent({
+  runningEntries,
+  nonRunningEntries,
+  runningEmptyMessage,
+  completedEmptyMessage,
+}: HomeMonitorContentProps) {
+  return (
+    <div className="home-monitor-body">
+      <section className="home-monitor-section" aria-labelledby="home-monitor-running">
+        <div className="home-monitor-section-head">
+          <h3 id="home-monitor-running">実行中</h3>
+          <span className="home-monitor-count">{runningEntries.length}</span>
+        </div>
+        <div className="home-monitor-list">
+          {runningEntries.length > 0 ? (
+            runningEntries.map(({ session, state }) => (
+              <button
+                key={session.id}
+                className="home-monitor-row"
+                type="button"
+                onClick={() => void openSessionWindow(session.id)}
+              >
+                <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
+                <div className="home-monitor-row-copy">
+                  <strong>{session.taskTitle}</strong>
+                  <span>{session.workspaceLabel || session.workspacePath || "workspace 未設定"}</span>
+                </div>
+                <span className={`session-status home-monitor-status ${state.kind}`.trim()}>{state.label}</span>
+              </button>
+            ))
+          ) : (
+            <p className="home-monitor-empty">{runningEmptyMessage}</p>
+          )}
+        </div>
+      </section>
+
+      <section className="home-monitor-section" aria-labelledby="home-monitor-inactive">
+        <div className="home-monitor-section-head">
+          <h3 id="home-monitor-inactive">停止・完了</h3>
+          <span className="home-monitor-count">{nonRunningEntries.length}</span>
+        </div>
+        <div className="home-monitor-list">
+          {nonRunningEntries.length > 0 ? (
+            nonRunningEntries.map(({ session, state }) => (
+              <button
+                key={session.id}
+                className="home-monitor-row"
+                type="button"
+                onClick={() => void openSessionWindow(session.id)}
+              >
+                <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
+                <div className="home-monitor-row-copy">
+                  <strong>{session.taskTitle}</strong>
+                  <span>{session.workspaceLabel || session.workspacePath || "workspace 未設定"}</span>
+                </div>
+                <span className={`session-status home-monitor-status ${state.kind}`.trim()}>{state.label}</span>
+              </button>
+            ))
+          ) : (
+            <p className="home-monitor-empty">{completedEmptyMessage}</p>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function HomeApp() {
   const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
+  const homeWindowMode = useMemo(() => getHomeWindowMode(), []);
+  const isMonitorWindowMode = homeWindowMode === "monitor";
   const [sessions, setSessions] = useState<Session[]>([]);
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [openSessionWindowIds, setOpenSessionWindowIds] = useState<string[]>([]);
@@ -281,7 +387,7 @@ export default function HomeApp() {
     [sessions, normalizedSessionSearch],
   );
   const openSessionWindowIdSet = useMemo(() => new Set(openSessionWindowIds), [openSessionWindowIds]);
-  const monitorEntries = useMemo(
+  const monitorEntries = useMemo<HomeMonitorEntry[]>(
     () => filteredSessionEntries.filter(({ session }) => openSessionWindowIdSet.has(session.id)),
     [filteredSessionEntries, openSessionWindowIdSet],
   );
@@ -348,6 +454,14 @@ export default function HomeApp() {
       />
     </svg>
   );
+  const renderMonitorWindowIcon = () => (
+    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path
+        d="M4 3.5h12A1.5 1.5 0 0 1 17.5 5v10a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 15V5A1.5 1.5 0 0 1 4 3.5Zm0 1a.5.5 0 0 0-.5.5v2h13V5a.5.5 0 0 0-.5-.5H4Zm-.5 10.5a.5.5 0 0 0 .5.5h12a.5.5 0 0 0 .5-.5V8h-13v7Zm2-5h4v1h-4v-1Zm0 2h6v1h-6v-1Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
   const hasOpenSessionWindows = openSessionWindowIds.length > 0;
   const monitorBaseEmptyMessage =
     filteredSessionEntries.length === 0
@@ -361,6 +475,7 @@ export default function HomeApp() {
     monitorEntries.length > 0 ? "実行中はないよ。" : monitorBaseEmptyMessage;
   const monitorCompletedEmptyMessage =
     monitorEntries.length > 0 ? "停止・完了はないよ。" : monitorBaseEmptyMessage;
+  const homePageClassName = `page-shell home-page${isMonitorWindowMode ? " home-page-monitor-window" : ""}`;
 
   const handleBrowseWorkspace = async () => {
     if (!window.withmate) {
@@ -599,7 +714,7 @@ export default function HomeApp() {
 
   if (!isDesktopRuntime) {
     return (
-      <div className="page-shell home-page">
+      <div className={homePageClassName}>
         <main className="home-layout home-layout-minimal">
           <section className="panel empty-list-card rise-1">
             <p>Home は Electron から起動してね。</p>
@@ -609,8 +724,36 @@ export default function HomeApp() {
     );
   }
 
+  if (isMonitorWindowMode) {
+    return (
+      <div className={homePageClassName}>
+        <main className="home-layout home-layout-monitor-window">
+          <section className="panel home-monitor-window-panel rise-3">
+            <div className="home-monitor-window-head">
+              <div className="home-monitor-window-copy">
+                <strong>Session Monitor</strong>
+                <span>開いている Session Window を常時表示</span>
+              </div>
+              <button className="launch-toggle compact" type="button" onClick={() => void openHomeWindow()}>
+                Home
+              </button>
+            </div>
+            <section className="home-monitor-panel compact" aria-label="Session Monitor">
+              <HomeMonitorContent
+                runningEntries={runningMonitorEntries}
+                nonRunningEntries={nonRunningMonitorEntries}
+                runningEmptyMessage={monitorRunningEmptyMessage}
+                completedEmptyMessage={monitorCompletedEmptyMessage}
+              />
+            </section>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
   return (
-    <div className="page-shell home-page">
+    <div className={homePageClassName}>
       <main className="home-layout rise-2">
 
         <section className="panel session-list-panel home-session-list-panel rise-3">
@@ -687,7 +830,7 @@ export default function HomeApp() {
                 aria-selected={rightPaneView === "monitor"}
                 onClick={() => setRightPaneView("monitor")}
               >
-                Session Monitor
+                Monitor
               </button>
               <button
                 className={`home-pane-toggle-button ${rightPaneView === "characters" ? "active" : ""}`.trim()}
@@ -699,70 +842,30 @@ export default function HomeApp() {
                 Characters
               </button>
             </div>
-            <button className="launch-toggle home-settings-button" type="button" onClick={() => setSettingsOpen(true)}>
-              Settings
-            </button>
+            <div className="home-settings-actions">
+              <button
+                className="launch-toggle home-monitor-window-button"
+                type="button"
+                aria-label="Session Monitor Window を開く"
+                title="Session Monitor Window"
+                onClick={() => void openSessionMonitorWindow()}
+              >
+                {renderMonitorWindowIcon()}
+              </button>
+              <button className="launch-toggle home-settings-button" type="button" onClick={() => setSettingsOpen(true)}>
+                Settings
+              </button>
+            </div>
           </div>
 
           {rightPaneView === "monitor" ? (
             <section className="home-monitor-panel" role="tabpanel" aria-label="Session Monitor">
-              <div className="home-monitor-body">
-                <section className="home-monitor-section" aria-labelledby="home-monitor-running">
-                  <div className="home-monitor-section-head">
-                    <h3 id="home-monitor-running">実行中</h3>
-                    <span className="home-monitor-count">{runningMonitorEntries.length}</span>
-                  </div>
-                  <div className="home-monitor-list">
-                    {runningMonitorEntries.length > 0 ? (
-                      runningMonitorEntries.map(({ session, state }) => (
-                        <button
-                          key={session.id}
-                          className="home-monitor-row"
-                          type="button"
-                          onClick={() => void openSessionWindow(session.id)}
-                        >
-                          <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
-                          <div className="home-monitor-row-copy">
-                            <strong>{session.taskTitle}</strong>
-                            <span>{session.workspaceLabel || session.workspacePath || "workspace 未設定"}</span>
-                          </div>
-                          <span className={`session-status home-monitor-status ${state.kind}`.trim()}>{state.label}</span>
-                        </button>
-                      ))
-                    ) : (
-                      <p className="home-monitor-empty">{monitorRunningEmptyMessage}</p>
-                    )}
-                  </div>
-                </section>
-
-                <section className="home-monitor-section" aria-labelledby="home-monitor-inactive">
-                  <div className="home-monitor-section-head">
-                    <h3 id="home-monitor-inactive">停止・完了</h3>
-                    <span className="home-monitor-count">{nonRunningMonitorEntries.length}</span>
-                  </div>
-                  <div className="home-monitor-list">
-                    {nonRunningMonitorEntries.length > 0 ? (
-                      nonRunningMonitorEntries.map(({ session, state }) => (
-                        <button
-                          key={session.id}
-                          className="home-monitor-row"
-                          type="button"
-                          onClick={() => void openSessionWindow(session.id)}
-                        >
-                          <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
-                          <div className="home-monitor-row-copy">
-                            <strong>{session.taskTitle}</strong>
-                            <span>{session.workspaceLabel || session.workspacePath || "workspace 未設定"}</span>
-                          </div>
-                          <span className={`session-status home-monitor-status ${state.kind}`.trim()}>{state.label}</span>
-                        </button>
-                      ))
-                    ) : (
-                      <p className="home-monitor-empty">{monitorCompletedEmptyMessage}</p>
-                    )}
-                  </div>
-                </section>
-              </div>
+              <HomeMonitorContent
+                runningEntries={runningMonitorEntries}
+                nonRunningEntries={nonRunningMonitorEntries}
+                runningEmptyMessage={monitorRunningEmptyMessage}
+                completedEmptyMessage={monitorCompletedEmptyMessage}
+              />
             </section>
           ) : (
             <section className="characters-panel home-characters-panel" role="tabpanel" aria-label="Characters">
