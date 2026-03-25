@@ -7,3 +7,5 @@
   - GitHub issue `#7 #11 #12 #13` に実装コメントを追加し close した
 - verification:
   - GitHub issue `#7 #11 #12 #13` の close 実行
+- notes:
+  - 実装コミット: `436b463` `docs(backlog): 実装状況と SDK 待ちを同期`
