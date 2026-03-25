@@ -6,6 +6,7 @@ import {
   type ComposerAttachment,
   type ComposerPreview,
   currentTimestampLabel,
+  DEFAULT_CHARACTER_SESSION_COPY,
   DEFAULT_CHARACTER_THEME_COLORS,
   type DiscoveredCustomAgent,
   type DiscoveredSkill,
@@ -666,6 +667,15 @@ function formatQuotaResetLabel(resetDate: string | undefined): string {
   });
 }
 
+function renderCharacterSessionCopy(template: string, characterName?: string | null): string {
+  const normalizedTemplate = template.trim();
+  if (!normalizedTemplate) {
+    return "";
+  }
+
+  return normalizedTemplate.replaceAll("{name}", characterName?.trim() || "キャラクター");
+}
+
 const SESSION_CONTEXT_RAIL_DEFAULT_WIDTH = 420;
 const SESSION_CONTEXT_RAIL_MIN_WIDTH = 360;
 const SESSION_CONTEXT_RAIL_MAX_WIDTH = 620;
@@ -839,6 +849,10 @@ export default function App() {
   const isCharacterResolutionPending = useMemo(
     () => !!selectedSession && !!selectedSession.characterId && resolvedCharacter === undefined,
     [resolvedCharacter, selectedSession],
+  );
+  const selectedSessionCopy = useMemo(
+    () => resolvedCharacter?.sessionCopy ?? DEFAULT_CHARACTER_SESSION_COPY,
+    [resolvedCharacter],
   );
   const isSelectedProviderEnabled = useMemo(
     () => !!selectedSession && getProviderAppSettings(appSettings, selectedSession.provider).enabled,
@@ -1603,7 +1617,7 @@ export default function App() {
         return {
           kind,
           badge: "中断",
-          title: "前回の依頼は中断されたままです",
+          title: renderCharacterSessionCopy(selectedSessionCopy.retryInterruptedTitle, pendingIndicatorCharacterName),
           stopSummary,
           lastRequestText: lastUserMessage.text,
         };
@@ -1611,7 +1625,7 @@ export default function App() {
         return {
           kind,
           badge: "失敗",
-          title: "前回の依頼はエラーで完了できませんでした",
+          title: renderCharacterSessionCopy(selectedSessionCopy.retryFailedTitle, pendingIndicatorCharacterName),
           stopSummary,
           lastRequestText: lastUserMessage.text,
         };
@@ -1619,14 +1633,24 @@ export default function App() {
         return {
           kind,
           badge: "キャンセル",
-          title: "この依頼はあなたが途中で停止しました",
+          title: renderCharacterSessionCopy(selectedSessionCopy.retryCanceledTitle, pendingIndicatorCharacterName),
           stopSummary,
           lastRequestText: lastUserMessage.text,
         };
       default:
         return null;
     }
-  }, [lastAssistantMessage, lastUserMessage, latestTerminalAuditLog, selectedSession, selectedSessionLiveRun]);
+  }, [
+    lastAssistantMessage,
+    lastUserMessage,
+    latestTerminalAuditLog,
+    pendingIndicatorCharacterName,
+    selectedSession,
+    selectedSessionCopy.retryCanceledTitle,
+    selectedSessionCopy.retryFailedTitle,
+    selectedSessionCopy.retryInterruptedTitle,
+    selectedSessionLiveRun,
+  ]);
   const hasDraftText = draft.trim().length > 0;
   const shouldProtectDraftOnRetryEdit = !!retryBanner && hasDraftText && draft !== retryBanner.lastRequestText;
   const isComposerDisabled = selectedSession?.runState === "running" || !!composerBlockedReason;
@@ -2440,20 +2464,12 @@ export default function App() {
     return candidateNames[0] ?? "";
   }, [resolvedCharacter?.name, selectedSessionCharacter?.name]);
   const pendingRunIndicatorText = isApprovalRequestPending
-    ? pendingIndicatorCharacterName
-      ? `${pendingIndicatorCharacterName}が承認を待っています`
-      : "承認を待っています"
+    ? renderCharacterSessionCopy(selectedSessionCopy.pendingApproval, pendingIndicatorCharacterName)
     : hasInProgressLiveRunStep
-      ? pendingIndicatorCharacterName
-        ? `${pendingIndicatorCharacterName}が作業を進めています`
-        : "作業を進めています"
+      ? renderCharacterSessionCopy(selectedSessionCopy.pendingWorking, pendingIndicatorCharacterName)
       : hasLiveRunAssistantText
-        ? pendingIndicatorCharacterName
-          ? `${pendingIndicatorCharacterName}が返答を続けています`
-          : "返答を続けています"
-        : pendingIndicatorCharacterName
-          ? `${pendingIndicatorCharacterName}が返答を準備しています`
-          : "返答を準備しています";
+        ? renderCharacterSessionCopy(selectedSessionCopy.pendingResponding, pendingIndicatorCharacterName)
+        : renderCharacterSessionCopy(selectedSessionCopy.pendingPreparing, pendingIndicatorCharacterName);
   const pendingRunIndicatorAnnouncement = pendingRunIndicatorText;
   const isSelectedSessionRunning = selectedSession?.runState === "running";
   const latestCommandToneClassName = latestCommandView ? liveRunStepToneClassName(latestCommandView.status) : "unknown";
@@ -2598,7 +2614,7 @@ export default function App() {
                               <div className="artifact-grid">
                                 <section className="artifact-section">
                                   <div className="artifact-file-list">
-                                    {message.artifact.changedFiles.length > 0 ? (
+                                          {message.artifact.changedFiles.length > 0 ? (
                                       message.artifact.changedFiles.map((file) => (
                                         <article key={`${file.kind}-${file.path}`} className="artifact-file-item">
                                           <div className="artifact-file-meta">
@@ -2629,7 +2645,7 @@ export default function App() {
                                         <p>
                                           {artifactHasSnapshotRisk
                                             ? "差分は見つからなかったけど、snapshot の上限や省略で取りこぼしがあるかもしれないよ。"
-                                            : "まだファイル変更はないよ。"}
+                                            : renderCharacterSessionCopy(selectedSessionCopy.changedFilesEmpty, pendingIndicatorCharacterName)}
                                         </p>
                                       </article>
                                     )}
@@ -2816,8 +2832,8 @@ export default function App() {
                     <div className="command-monitor-empty-shell">
                       <p className="command-monitor-empty">
                         {isSelectedSessionRunning
-                          ? "最初の command を待っています。"
-                          : "直近 run に記録された command はまだないよ。"}
+                          ? renderCharacterSessionCopy(selectedSessionCopy.latestCommandWaiting, pendingIndicatorCharacterName)
+                          : renderCharacterSessionCopy(selectedSessionCopy.latestCommandEmpty, pendingIndicatorCharacterName)}
                       </p>
                       {selectedSessionLiveRun?.errorMessage ? (
                         <div className="live-run-error-block" role="alert">
@@ -2878,7 +2894,7 @@ export default function App() {
                           </div>
                         </div>
                       ) : (
-                        <p className="provider-context-empty">まだ context usage はないよ。</p>
+                        <p className="provider-context-empty">{renderCharacterSessionCopy(selectedSessionCopy.contextEmpty, pendingIndicatorCharacterName)}</p>
                       )}
                     </details>
                   </section>

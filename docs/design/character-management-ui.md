@@ -35,6 +35,7 @@
   - `sub`
   - color picker + hex + RGB 入力
 - `roleMarkdown`
+- `session copy`
 - `Save`
 - `Delete`
 
@@ -46,7 +47,7 @@
 - `Add` は Home から直接始められるようにする
 - 編集画面では、入力の意味が自明でないためラベルを許容する
 - `character.md` は長文前提なので、metadata form と分離した editor 面を持つ
-- `Character Editor` は `Profile / システムプロンプト` の 2 モードで切り替え、長文の `character.md` がフォーム面を圧迫しないようにする
+- `Character Editor` は `Profile / システムプロンプト / Session Copy` の 3 モードで切り替え、長文の `character.md` や SessionWindow 向け copy 設定がフォーム面を圧迫しないようにする
 - Character Editor の基本配色は `Home` と同じ dark base を使い、キャラカラーは次段でアクセント用途へ限定していく
 - Character Editor では `main` を active tab / focus / primary action、`sub` を preview と各カードの補助ラインに使う
 - Character Editor の header title は create / edit のどちらでも `main` で表示し、現在編集中のキャラカラーが最上段で分かるようにする

@@ -156,9 +156,10 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `assistantText` は pending bubble の会話本文としてのみ扱い、`agent_message` を activity row へ戻さない
 - pending bubble の実行中 indicator は本文の代替ではなく `runState === "running"` を示すフラグとして扱い、`assistantText` の出力開始後も run 中は維持する
 - pending bubble の実行中 indicator は `runState !== "running"` になった時点で消し、success 固定の完了表現にはしない
-- pending bubble の実行中 indicator copy は character 名ベースを優先し、例として `<キャラ名>が作業を進めています` / `<キャラ名>が返答を続けています` / `<キャラ名>が返答を準備しています` のように出す
-- character 名を取得できない場合の fallback は `作業を進めています` / `返答を続けています` / `返答を準備しています` のような一般化表現とし、`コーディングエージェントが〜` へは戻さない
+- pending bubble の実行中 indicator copy は character ごとに `session copy` で差し替えられる
+- default fallback は bland な一般化表現を使い、character copy が未設定でも過剰にキャラ化しない
 - `assistantText` 未着でも right pane の `Latest Command` があれば raw command を表示し、command 未到着の局面では empty state と pending bubble の run indicator で待機を示す
+- `Latest Command` の waiting / empty copy、retry banner title、`Changed Files` empty copy も character ごとに差し替えられる
 - pending bubble の実行中 indicator は本文と同居できる先頭 status row とし、screen reader には bubble 全体ではなく状態変化だけを最小限に通知して再アナウンス過多を避ける
 - `command_execution` は通常 paragraph ではなく shell command と即判別できる専用の monospace block で表示する
 - `details` は stdout / stderr など二次情報だけを折りたたみ表示する

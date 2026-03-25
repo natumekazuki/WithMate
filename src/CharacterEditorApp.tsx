@@ -3,10 +3,12 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import {
   buildCharacterEditorUrl,
   currentTimestampLabel,
+  DEFAULT_CHARACTER_SESSION_COPY,
   DEFAULT_CHARACTER_THEME_COLORS,
   getCharacterIdFromLocation,
   getCharacterProfile,
   isCharacterCreateMode,
+  type CharacterSessionCopy,
   type CharacterThemeColors,
   type CharacterProfile,
   type CreateCharacterInput,
@@ -19,7 +21,26 @@ const emptyDraft: CreateCharacterInput = {
   description: "",
   roleMarkdown: "",
   themeColors: DEFAULT_CHARACTER_THEME_COLORS,
+  sessionCopy: DEFAULT_CHARACTER_SESSION_COPY,
 };
+
+const sessionCopyFieldDefinitions: Array<{
+  key: keyof CharacterSessionCopy;
+  label: string;
+  placeholder: string;
+}> = [
+  { key: "pendingApproval", label: "Pending Approval", placeholder: "例: {name}が確認を待機中" },
+  { key: "pendingWorking", label: "Pending Working", placeholder: "例: {name}が静かに処理中" },
+  { key: "pendingResponding", label: "Pending Responding", placeholder: "例: {name}が返答をまとめ中" },
+  { key: "pendingPreparing", label: "Pending Preparing", placeholder: "例: {name}が次の返答を準備中" },
+  { key: "retryInterruptedTitle", label: "Retry Interrupted", placeholder: "例: さっきの依頼は途中で止まっている" },
+  { key: "retryFailedTitle", label: "Retry Failed", placeholder: "例: さっきの依頼は最後まで進められなかった" },
+  { key: "retryCanceledTitle", label: "Retry Canceled", placeholder: "例: この依頼は途中で止められた" },
+  { key: "latestCommandWaiting", label: "Latest Command Waiting", placeholder: "例: 最初の command を待機中" },
+  { key: "latestCommandEmpty", label: "Latest Command Empty", placeholder: "例: 直近 run の command 記録はありません" },
+  { key: "changedFilesEmpty", label: "Changed Files Empty", placeholder: "例: ファイル変更はありません" },
+  { key: "contextEmpty", label: "Context Empty", placeholder: "例: context usage はまだありません" },
+];
 
 function hexToRgb(color: string): { r: number; g: number; b: number } {
   const normalized = /^#[0-9a-fA-F]{6}$/.test(color) ? color : DEFAULT_CHARACTER_THEME_COLORS.main;
@@ -82,6 +103,7 @@ function toDraft(character: CharacterProfile | null): CreateCharacterInput {
     description: character.description,
     roleMarkdown: character.roleMarkdown,
     themeColors: character.themeColors,
+    sessionCopy: character.sessionCopy,
   };
 }
 
@@ -91,7 +113,7 @@ export default function CharacterEditorApp() {
   const [draft, setDraft] = useState<CreateCharacterInput>(emptyDraft);
   const [characterId, setCharacterId] = useState<string | null>(() => getCharacterIdFromLocation());
   const [isCreateMode, setIsCreateMode] = useState<boolean>(() => isCharacterCreateMode() || !getCharacterIdFromLocation());
-  const [editorTab, setEditorTab] = useState<"profile" | "character-md">("profile");
+  const [editorTab, setEditorTab] = useState<"profile" | "character-md" | "session-copy">("profile");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -176,6 +198,16 @@ export default function CharacterEditorApp() {
       [channel]: Number.isNaN(numeric) ? 0 : clampRgb(numeric),
     };
     handleThemeColorChange(key, rgbToHex(nextRgb));
+  };
+
+  const handleSessionCopyChange = (key: keyof CharacterSessionCopy, value: string) => {
+    setDraft((current) => ({
+      ...current,
+      sessionCopy: {
+        ...current.sessionCopy,
+        [key]: value,
+      },
+    }));
   };
 
   const handlePickImage = () => {
@@ -284,6 +316,15 @@ export default function CharacterEditorApp() {
             onClick={() => setEditorTab("character-md")}
           >
             システムプロンプト
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={editorTab === "session-copy"}
+            className={`character-editor-tab${editorTab === "session-copy" ? " active" : ""}`}
+            onClick={() => setEditorTab("session-copy")}
+          >
+            Session Copy
           </button>
         </div>
       </div>
@@ -406,7 +447,7 @@ export default function CharacterEditorApp() {
                 </section>
               </section>
             </div>
-          ) : (
+          ) : editorTab === "character-md" ? (
             <div className="character-editor-content character-markdown-content">
               <div className="character-markdown-card">
                 <div className="character-markdown-note">
@@ -421,6 +462,27 @@ export default function CharacterEditorApp() {
                     spellCheck={false}
                   />
                 </label>
+              </div>
+            </div>
+          ) : (
+            <div className="character-editor-content">
+              <div className="character-markdown-card">
+                <div className="character-markdown-note">
+                  <strong>Session Copy</strong>
+                  <p>SessionWindow の固定文言を character ごとに差し替える。`{"{name}"}` を入れるとキャラクター名に置換される。</p>
+                </div>
+                <section className="character-form-grid">
+                  {sessionCopyFieldDefinitions.map((field) => (
+                    <label key={field.key} className="editor-field wide">
+                      <span>{field.label}</span>
+                      <textarea
+                        value={draft.sessionCopy[field.key]}
+                        placeholder={field.placeholder}
+                        onChange={(event) => handleSessionCopyChange(field.key, event.target.value)}
+                      />
+                    </label>
+                  ))}
+                </section>
               </div>
             </div>
           )}

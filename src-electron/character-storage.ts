@@ -3,7 +3,14 @@ import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs
 
 import { app } from "electron";
 
-import { DEFAULT_CHARACTER_THEME_COLORS, normalizeCharacterThemeColors, type CharacterProfile, type CreateCharacterInput } from "../src/app-state.js";
+import {
+  DEFAULT_CHARACTER_SESSION_COPY,
+  DEFAULT_CHARACTER_THEME_COLORS,
+  normalizeCharacterSessionCopy,
+  normalizeCharacterThemeColors,
+  type CharacterProfile,
+  type CreateCharacterInput,
+} from "../src/app-state.js";
 
 type StoredCharacterMeta = {
   id: string;
@@ -13,6 +20,7 @@ type StoredCharacterMeta = {
     main: string;
     sub: string;
   };
+  sessionCopy: typeof DEFAULT_CHARACTER_SESSION_COPY;
   iconFile: string | null;
   roleFile: string;
   createdAt: string;
@@ -71,6 +79,7 @@ function normalizeMeta(value: unknown): StoredCharacterMeta | null {
     name: candidate.name.trim(),
     description: typeof candidate.description === "string" ? candidate.description : "",
     theme: normalizeCharacterThemeColors(candidate.theme ?? DEFAULT_CHARACTER_THEME_COLORS),
+    sessionCopy: normalizeCharacterSessionCopy(candidate.sessionCopy),
     iconFile: typeof candidate.iconFile === "string" && candidate.iconFile.trim() ? candidate.iconFile : null,
     roleFile: typeof candidate.roleFile === "string" && candidate.roleFile.trim() ? candidate.roleFile : DEFAULT_ROLE_FILE,
     createdAt: typeof candidate.createdAt === "string" && candidate.createdAt.trim() ? candidate.createdAt : nowIso(),
@@ -134,6 +143,7 @@ async function materializeCharacterProfile(characterDirectoryPath: string, meta:
     roleMarkdown,
     updatedAt: formatTimestamp(meta.updatedAt),
     themeColors: normalizeCharacterThemeColors(meta.theme),
+    sessionCopy: normalizeCharacterSessionCopy(meta.sessionCopy),
   };
 }
 
@@ -230,6 +240,7 @@ async function writeCharacterFiles(
     name: input.name.trim() || "新規キャラクター",
     description: input.description.trim(),
     theme: normalizeCharacterThemeColors(input.themeColors),
+    sessionCopy: normalizeCharacterSessionCopy(input.sessionCopy),
     iconFile,
     roleFile,
     createdAt,
@@ -316,6 +327,7 @@ export async function updateStoredCharacter(character: CharacterProfile): Promis
       description: character.description,
       roleMarkdown: character.roleMarkdown,
       themeColors: character.themeColors,
+      sessionCopy: character.sessionCopy,
     },
     existingMeta,
   );
