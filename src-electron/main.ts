@@ -142,6 +142,7 @@ const liveSessionRuns = new Map<string, LiveSessionRunState>();
 const providerQuotaTelemetryByProvider = new Map<string, ProviderQuotaTelemetry>();
 const sessionContextTelemetryBySessionId = new Map<string, SessionContextTelemetry>();
 const providerQuotaRefreshPromises = new Map<string, Promise<ProviderQuotaTelemetry | null>>();
+const providerQuotaRefreshTimers = new Map<string, NodeJS.Timeout[]>();
 const pendingSessionApprovalRequests = new Map<string, { requestId: string; resolve: (decision: LiveApprovalDecision) => void }>();
 let sessions: Session[] = [];
 let characters: CharacterProfile[] = [];
@@ -414,6 +415,11 @@ function setProviderQuotaTelemetry(providerId: string, telemetry: ProviderQuotaT
 
 function clearProviderQuotaTelemetry(providerId: string): void {
   providerQuotaRefreshPromises.delete(providerId);
+  const scheduledTimers = providerQuotaRefreshTimers.get(providerId) ?? [];
+  for (const timer of scheduledTimers) {
+    clearTimeout(timer);
+  }
+  providerQuotaRefreshTimers.delete(providerId);
   setProviderQuotaTelemetry(providerId, null);
 }
 
@@ -473,6 +479,20 @@ async function getOrRefreshProviderQuotaTelemetry(providerId: string): Promise<P
   }
 
   return refreshProviderQuotaTelemetry(providerId);
+}
+
+function scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void {
+  const existingTimers = providerQuotaRefreshTimers.get(providerId) ?? [];
+  for (const timer of existingTimers) {
+    clearTimeout(timer);
+  }
+
+  const timers = delaysMs.map((delayMs) =>
+    setTimeout(() => {
+      void refreshProviderQuotaTelemetry(providerId).catch(() => undefined);
+    }, delayMs),
+  );
+  providerQuotaRefreshTimers.set(providerId, timers);
 }
 
 function getSessionContextTelemetry(sessionId: string): SessionContextTelemetry | null {
@@ -1418,6 +1438,9 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
 
     return upsertSession(failedSession);
   } finally {
+    if (runningSession.provider === "copilot") {
+      scheduleProviderQuotaTelemetryRefresh(runningSession.provider, [0, 3000, 10000]);
+    }
     const pendingApprovalRequest = pendingSessionApprovalRequests.get(sessionId);
     if (pendingApprovalRequest) {
       pendingApprovalRequest.resolve("deny");
