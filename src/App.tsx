@@ -667,13 +667,29 @@ function formatQuotaResetLabel(resetDate: string | undefined): string {
   });
 }
 
-function renderCharacterSessionCopy(template: string, characterName?: string | null): string {
-  const normalizedTemplate = template.trim();
-  if (!normalizedTemplate) {
+function hashStringToPositiveInt(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
+  }
+
+  return Math.abs(hash);
+}
+
+function renderCharacterSessionCopy(
+  templates: string[],
+  characterName?: string | null,
+  seed = "",
+): string {
+  const normalizedTemplates = templates
+    .map((template) => template.trim())
+    .filter((template) => template.length > 0);
+  if (normalizedTemplates.length === 0) {
     return "";
   }
 
-  return normalizedTemplate.replaceAll("{name}", characterName?.trim() || "キャラクター");
+  const selectedTemplate = normalizedTemplates[hashStringToPositiveInt(seed || normalizedTemplates.join("\u001f")) % normalizedTemplates.length];
+  return selectedTemplate.replaceAll("{name}", characterName?.trim() || "キャラクター");
 }
 
 const SESSION_CONTEXT_RAIL_DEFAULT_WIDTH = 420;
@@ -1617,7 +1633,11 @@ export default function App() {
         return {
           kind,
           badge: "中断",
-          title: renderCharacterSessionCopy(selectedSessionCopy.retryInterruptedTitle, pendingIndicatorCharacterName),
+          title: renderCharacterSessionCopy(
+            selectedSessionCopy.retryInterruptedTitle,
+            pendingIndicatorCharacterName,
+            `retry:interrupted:${selectedSession.id}:${lastUserMessage.text}`,
+          ),
           stopSummary,
           lastRequestText: lastUserMessage.text,
         };
@@ -1625,7 +1645,11 @@ export default function App() {
         return {
           kind,
           badge: "失敗",
-          title: renderCharacterSessionCopy(selectedSessionCopy.retryFailedTitle, pendingIndicatorCharacterName),
+          title: renderCharacterSessionCopy(
+            selectedSessionCopy.retryFailedTitle,
+            pendingIndicatorCharacterName,
+            `retry:failed:${selectedSession.id}:${lastUserMessage.text}`,
+          ),
           stopSummary,
           lastRequestText: lastUserMessage.text,
         };
@@ -1633,7 +1657,11 @@ export default function App() {
         return {
           kind,
           badge: "キャンセル",
-          title: renderCharacterSessionCopy(selectedSessionCopy.retryCanceledTitle, pendingIndicatorCharacterName),
+          title: renderCharacterSessionCopy(
+            selectedSessionCopy.retryCanceledTitle,
+            pendingIndicatorCharacterName,
+            `retry:canceled:${selectedSession.id}:${lastUserMessage.text}:${latestTerminalAuditLog?.id ?? ""}`,
+          ),
           stopSummary,
           lastRequestText: lastUserMessage.text,
         };
@@ -2464,12 +2492,28 @@ export default function App() {
     return candidateNames[0] ?? "";
   }, [resolvedCharacter?.name, selectedSessionCharacter?.name]);
   const pendingRunIndicatorText = isApprovalRequestPending
-    ? renderCharacterSessionCopy(selectedSessionCopy.pendingApproval, pendingIndicatorCharacterName)
+    ? renderCharacterSessionCopy(
+      selectedSessionCopy.pendingApproval,
+      pendingIndicatorCharacterName,
+      `pending:approval:${selectedSession?.id ?? ""}:${liveApprovalRequest?.requestId ?? ""}`,
+    )
     : hasInProgressLiveRunStep
-      ? renderCharacterSessionCopy(selectedSessionCopy.pendingWorking, pendingIndicatorCharacterName)
+      ? renderCharacterSessionCopy(
+        selectedSessionCopy.pendingWorking,
+        pendingIndicatorCharacterName,
+        `pending:working:${selectedSession?.id ?? ""}:${selectedSessionLiveRun?.threadId ?? ""}:${orderedLiveRunSteps.map((step) => `${step.id}:${step.status}`).join("|")}`,
+      )
       : hasLiveRunAssistantText
-        ? renderCharacterSessionCopy(selectedSessionCopy.pendingResponding, pendingIndicatorCharacterName)
-        : renderCharacterSessionCopy(selectedSessionCopy.pendingPreparing, pendingIndicatorCharacterName);
+        ? renderCharacterSessionCopy(
+          selectedSessionCopy.pendingResponding,
+          pendingIndicatorCharacterName,
+          `pending:responding:${selectedSession?.id ?? ""}:${selectedSessionLiveRun?.threadId ?? ""}:${liveRunAssistantText.length}`,
+        )
+        : renderCharacterSessionCopy(
+          selectedSessionCopy.pendingPreparing,
+          pendingIndicatorCharacterName,
+          `pending:preparing:${selectedSession?.id ?? ""}:${selectedSessionLiveRun?.threadId ?? ""}`,
+        );
   const pendingRunIndicatorAnnouncement = pendingRunIndicatorText;
   const isSelectedSessionRunning = selectedSession?.runState === "running";
   const latestCommandToneClassName = latestCommandView ? liveRunStepToneClassName(latestCommandView.status) : "unknown";
@@ -2645,7 +2689,11 @@ export default function App() {
                                         <p>
                                           {artifactHasSnapshotRisk
                                             ? "差分は見つからなかったけど、snapshot の上限や省略で取りこぼしがあるかもしれないよ。"
-                                            : renderCharacterSessionCopy(selectedSessionCopy.changedFilesEmpty, pendingIndicatorCharacterName)}
+                                            : renderCharacterSessionCopy(
+                                              selectedSessionCopy.changedFilesEmpty,
+                                              pendingIndicatorCharacterName,
+                                              `changed-files-empty:${artifactKey}`,
+                                            )}
                                         </p>
                                       </article>
                                     )}
@@ -2832,8 +2880,16 @@ export default function App() {
                     <div className="command-monitor-empty-shell">
                       <p className="command-monitor-empty">
                         {isSelectedSessionRunning
-                          ? renderCharacterSessionCopy(selectedSessionCopy.latestCommandWaiting, pendingIndicatorCharacterName)
-                          : renderCharacterSessionCopy(selectedSessionCopy.latestCommandEmpty, pendingIndicatorCharacterName)}
+                          ? renderCharacterSessionCopy(
+                            selectedSessionCopy.latestCommandWaiting,
+                            pendingIndicatorCharacterName,
+                            `latest-command-waiting:${selectedSession?.id ?? ""}:${selectedSessionLiveRun?.threadId ?? ""}`,
+                          )
+                          : renderCharacterSessionCopy(
+                            selectedSessionCopy.latestCommandEmpty,
+                            pendingIndicatorCharacterName,
+                            `latest-command-empty:${selectedSession?.id ?? ""}:${selectedSession?.updatedAt ?? ""}:${latestTerminalAuditLog?.id ?? ""}`,
+                          )}
                       </p>
                       {selectedSessionLiveRun?.errorMessage ? (
                         <div className="live-run-error-block" role="alert">
@@ -2894,7 +2950,13 @@ export default function App() {
                           </div>
                         </div>
                       ) : (
-                        <p className="provider-context-empty">{renderCharacterSessionCopy(selectedSessionCopy.contextEmpty, pendingIndicatorCharacterName)}</p>
+                        <p className="provider-context-empty">
+                          {renderCharacterSessionCopy(
+                            selectedSessionCopy.contextEmpty,
+                            pendingIndicatorCharacterName,
+                            `context-empty:${selectedSession?.id ?? ""}:${selectedSession?.updatedAt ?? ""}`,
+                          )}
+                        </p>
                       )}
                     </details>
                   </section>

@@ -36,6 +36,7 @@
   - color picker + hex + RGB 入力
 - `roleMarkdown`
 - `session copy`
+  - 候補行の追加 UI で複数文言を持てる
 - `Save`
 - `Delete`
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 
 import {
   buildCharacterEditorUrl,
+  cloneCharacterSessionCopy,
   currentTimestampLabel,
   DEFAULT_CHARACTER_SESSION_COPY,
   DEFAULT_CHARACTER_THEME_COLORS,
@@ -21,7 +22,7 @@ const emptyDraft: CreateCharacterInput = {
   description: "",
   roleMarkdown: "",
   themeColors: DEFAULT_CHARACTER_THEME_COLORS,
-  sessionCopy: DEFAULT_CHARACTER_SESSION_COPY,
+  sessionCopy: cloneCharacterSessionCopy(DEFAULT_CHARACTER_SESSION_COPY),
 };
 
 const sessionCopyFieldDefinitions: Array<{
@@ -41,6 +42,10 @@ const sessionCopyFieldDefinitions: Array<{
   { key: "changedFilesEmpty", label: "Changed Files Empty", placeholder: "例: ファイル変更はありません" },
   { key: "contextEmpty", label: "Context Empty", placeholder: "例: context usage はまだありません" },
 ];
+
+function ensureSessionCopyEditorCandidates(candidates: string[]): string[] {
+  return candidates.length > 0 ? candidates : [""];
+}
 
 function hexToRgb(color: string): { r: number; g: number; b: number } {
   const normalized = /^#[0-9a-fA-F]{6}$/.test(color) ? color : DEFAULT_CHARACTER_THEME_COLORS.main;
@@ -103,7 +108,7 @@ function toDraft(character: CharacterProfile | null): CreateCharacterInput {
     description: character.description,
     roleMarkdown: character.roleMarkdown,
     themeColors: character.themeColors,
-    sessionCopy: character.sessionCopy,
+    sessionCopy: cloneCharacterSessionCopy(character.sessionCopy),
   };
 }
 
@@ -200,12 +205,40 @@ export default function CharacterEditorApp() {
     handleThemeColorChange(key, rgbToHex(nextRgb));
   };
 
-  const handleSessionCopyChange = (key: keyof CharacterSessionCopy, value: string) => {
+  const handleSessionCopyCandidateChange = (key: keyof CharacterSessionCopy, index: number, value: string) => {
+    setDraft((current) => {
+      const nextCandidates = ensureSessionCopyEditorCandidates(current.sessionCopy[key]).map((candidate, candidateIndex) =>
+        candidateIndex === index ? value : candidate,
+      );
+      return {
+        ...current,
+        sessionCopy: {
+          ...current.sessionCopy,
+          [key]: nextCandidates,
+        },
+      };
+    });
+  };
+
+  const handleAddSessionCopyCandidate = (key: keyof CharacterSessionCopy) => {
     setDraft((current) => ({
       ...current,
       sessionCopy: {
         ...current.sessionCopy,
-        [key]: value,
+        [key]: [...ensureSessionCopyEditorCandidates(current.sessionCopy[key]), ""],
+      },
+    }));
+  };
+
+  const handleRemoveSessionCopyCandidate = (key: keyof CharacterSessionCopy, index: number) => {
+    setDraft((current) => ({
+      ...current,
+      sessionCopy: {
+        ...current.sessionCopy,
+        [key]:
+          ensureSessionCopyEditorCandidates(current.sessionCopy[key]).length <= 1
+            ? [""]
+            : ensureSessionCopyEditorCandidates(current.sessionCopy[key]).filter((_, candidateIndex) => candidateIndex !== index),
       },
     }));
   };
@@ -475,11 +508,32 @@ export default function CharacterEditorApp() {
                   {sessionCopyFieldDefinitions.map((field) => (
                     <label key={field.key} className="editor-field wide">
                       <span>{field.label}</span>
-                      <textarea
-                        value={draft.sessionCopy[field.key]}
-                        placeholder={field.placeholder}
-                        onChange={(event) => handleSessionCopyChange(field.key, event.target.value)}
-                      />
+                      <div className="session-copy-candidate-list">
+                        {ensureSessionCopyEditorCandidates(draft.sessionCopy[field.key]).map((candidate, index) => (
+                          <div key={`${field.key}-${index}`} className="session-copy-candidate-row">
+                            <input
+                              value={candidate}
+                              placeholder={field.placeholder}
+                              onChange={(event) => handleSessionCopyCandidateChange(field.key, index, event.target.value)}
+                            />
+                            <button
+                              type="button"
+                              className="session-copy-candidate-remove"
+                              onClick={() => handleRemoveSessionCopyCandidate(field.key, index)}
+                              aria-label={`${field.label} の候補 ${index + 1} を削除`}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        className="drawer-toggle compact session-copy-candidate-add"
+                        onClick={() => handleAddSessionCopyCandidate(field.key)}
+                      >
+                        +
+                      </button>
                     </label>
                   ))}
                 </section>

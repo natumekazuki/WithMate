@@ -4643,6 +4643,10 @@ button:disabled {
   scrollbar-gutter: stable;
 }
 
+.character-editor-main-session-copy .character-editor-content {
+  min-height: 0;
+}
+
 .character-editor-main-character-md {
   min-height: 100%;
 }
@@ -4789,6 +4793,56 @@ button:disabled {
   font-size: 0.78rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.editor-field-help {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.character-editor-main-session-copy .character-markdown-card {
+  min-height: 0;
+}
+
+.character-editor-main-session-copy .character-form-grid {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
+}
+
+.session-copy-candidate-list {
+  display: grid;
+  gap: 8px;
+}
+
+.session-copy-candidate-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.session-copy-candidate-remove {
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.session-copy-candidate-remove:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.session-copy-candidate-add {
+  justify-self: start;
+  min-width: 44px;
+  padding-inline: 14px;
 }
 
 .theme-fieldset > span {

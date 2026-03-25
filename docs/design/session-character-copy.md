@@ -13,21 +13,21 @@ SessionWindow の固定文言を character 体験へ寄せつつ、character 未
 
 ```ts
 type CharacterSessionCopy = {
-  pendingApproval?: string;
-  pendingWorking?: string;
-  pendingResponding?: string;
-  pendingPreparing?: string;
-  retryInterruptedTitle?: string;
-  retryFailedTitle?: string;
-  retryCanceledTitle?: string;
-  latestCommandWaiting?: string;
-  latestCommandEmpty?: string;
-  changedFilesEmpty?: string;
-  contextEmpty?: string;
+  pendingApproval?: string[];
+  pendingWorking?: string[];
+  pendingResponding?: string[];
+  pendingPreparing?: string[];
+  retryInterruptedTitle?: string[];
+  retryFailedTitle?: string[];
+  retryCanceledTitle?: string[];
+  latestCommandWaiting?: string[];
+  latestCommandEmpty?: string[];
+  changedFilesEmpty?: string[];
+  contextEmpty?: string[];
 };
 ```
 
-- 値はすべて optional
+- 値はすべて複数候補の配列
 - 未設定時は bland default copy を使う
 - `{name}` placeholder を許可し、描画時に character 名へ置換する
 
@@ -37,6 +37,7 @@ type CharacterSessionCopy = {
 - truth source は `resolvedCharacter`
 - Session へ copy を複製しない
 - character 更新後は既存 session でも reopen なしで反映できる構成を維持する
+- 候補選択は slot ごとの stable seed から決め、同じ表示中に文言が揺れないようにする
 
 ## Default Copy Policy
 
@@ -60,8 +61,10 @@ type CharacterSessionCopy = {
 ## Editor
 
 - Character Editor に `Session Copy` 編集面を追加する
-- 初回 slice は free text field 群でよい
-- helper text で `{name}` placeholder を案内する
+- 各 slot は 1 行 input の候補リストで編集する
+- `+` で候補行を追加し、`×` で候補行を削除する
+- 候補リスト部分だけを card 内でスクロールさせ、footer や card 外へはみ出させない
+- helper text で `{name}` placeholder と複数候補運用を案内する
 
 ## Out Of Scope
 
