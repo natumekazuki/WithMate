@@ -1,12 +1,15 @@
 # Product Direction
 
 - 作成日: 2026-03-11
+- 更新日: 2026-03-25
 - 対象: WithMate 全体の体験設計方針
 
 ## Goal
 
 WithMate を「キャラ付きチャットアプリ」ではなく、`Codex CLI / GitHub Copilot CLI` 相当の coding agent 体験をベースに、
-安定したキャラクターロールプレイを追加したアプリとして定義する。
+キャラクター体験を上乗せするアプリとして定義する。
+
+この文書は、current milestone で何を主役にし、何をまだ主役にしないかを判断するための上位方針とする。
 
 ## Product Thesis
 
@@ -16,17 +19,28 @@ WithMate で実現したい体験は次の三層で構成される。
 - coding agent としての基本体験は `Codex CLI` や `GitHub Copilot CLI` とほぼ同等であること
 - workspace、session resume、run state、approval、変更ファイル、diff などの主要操作で違和感がないこと
 
-2. `stable roleplay injection`
-- `character.md` を system prompt 合成へ安定注入し、ターンをまたいでも人格が崩れにくいこと
-- ユーザーが「このキャラで Codex を動かしている」と自然に感じられること
+2. `characterized work experience`
+- キャラクター定義や UI copy によって、作業面が「誰と作業しているか」を感じられること
+- ただし作業面の可読性や判断性を壊さないこと
 
 3. `parallel character stream`
 - 作業本体とは別枠で、キャラクターの独り言や内心が流れ続けること
 - 作業の合間に眺めて楽しめるが、本体の coding agent 体験を邪魔しないこと
 
-ただし Issue `#5` により、現段階ではこの 3 層目の UI 適用は pending とする。
-つまり価値仮説としては維持しつつ、実際の Session UI には表示しない。
-さらにユーザー確定方針として、Character Stream の実装開始は `Codex 対応完了`、`CopilotCLI 対応完了`、`両 CLI / SDK 経由で使える機能の網羅完了` の後に置く。
+ただし current milestone では主役を 1 層目に置く。
+2 層目は「作業体験を強めるための上乗せ」として扱い、3 層目は価値仮説として維持しつつ実装優先度を下げる。
+
+## Current Product Stance
+
+今の WithMate は次の前提で判断する。
+
+1. 主役は `coding agent として成立していること`
+2. Character は `作業支援に被せる体験`
+3. Memory は `継続性を出すための基盤`
+4. Monologue / Character Stream は `将来価値だが current milestone の主役ではない`
+
+つまり current milestone では、Character や Memory を「キャラアプリのため」だけに先行させない。
+まず coding plane を成立させ、その上で Character と Memory を「継続性」と「体験の濃さ」を上げるために使う。
 
 ## Release Policy
 
@@ -39,10 +53,12 @@ WithMate で実現したい体験は次の三層で構成される。
 主従関係は次の順序で固定する。
 
 1. coding agent として成立している
-2. キャラクターロールプレイが安定している
-3. Character Stream が楽しい
+2. Character が作業体験を壊さずに効いている
+3. Memory が継続性に寄与している
+4. Character Stream が楽しい
 
 `Character Stream` は WithMate の固有価値だが、coding agent としての可読性や操作性を壊してまで優先しない。
+Memory 更新は Character Stream とは別の裏処理 plane として扱い、まずは session 継続性の基盤として成立させる。
 
 ## CLI Parity Requirements
 
@@ -81,11 +97,24 @@ WithMate が最低限維持すべき体験は次のとおり。
 CLI parity の上に、WithMate 固有の層として次を追加する。
 
 - `character definition management`
-- `stable prompt composition`
+- `characterized session copy`
 - `memory architecture`
 - 将来的なキャラクター切り替えや固定
 
 これらは coding agent の基本操作を置き換えるのではなく、上から重ねる。
+
+### Current Interpretation
+
+current milestone では WithMate 固有拡張を次のように読む。
+
+- `character definition management`
+  - Character Editor と session への反映
+- `characterized session copy`
+  - SessionWindow の固定文言や見た目でキャラ体験を出す
+- `memory architecture`
+  - まだ実装より責務定義が先
+
+provider prompt 側の強いキャラ制御や Character Stream は、この層の future 側に置く。
 
 ## Provider Split
 
@@ -105,6 +134,49 @@ WithMate は provider を 1 つに統一しない。
 
 この分離により、本体の CLI parity を保ったまま、独り言機能のコスト管理と利用条件を独立して扱う。
 詳細は `docs/design/monologue-provider-policy.md` を参照する。
+
+## Character Responsibility
+
+current milestone における Character の責務は次のとおり。
+
+- session に「誰と作業しているか」を与える
+- UI copy、theme、icon、assistant 表現で体験を揃える
+- 将来 Memory や Monologue と接続できる単位になる
+
+逆に、まだ Character の責務にしないものは次のとおり。
+
+- provider ごとの複雑な prompt 制御
+- 自律的な会話継続
+- SessionWindow とは別面で動く Character Stream の本体
+
+## Memory Responsibility
+
+Memory は current milestone では「キャラ性を盛るための魔法」ではなく、継続性を扱う基盤として考える。
+
+Memory が解くべき問いは次の 2 つだけに絞る。
+
+1. 同じ character をまたいでも持ち越したいものは何か
+2. 同じ session を再開した時に忘れてほしくないものは何か
+
+このため、Memory はまず `Character Memory` と `Session Memory` の 2 軸で考える。
+Monologue 専用入力は、その後に組み立てる派生物とする。
+
+## Monologue / Character Stream Position
+
+Character Stream は「WithMate の固有価値」ではあるが、current milestone の中心には置かない。
+
+理由:
+
+- coding plane の完成度を先に上げたい
+- Character Stream を入れると UI / provider / memory / cost の論点が一気に増える
+- 今は「作業支援にキャラが乗る体験」を先に固めたほうが判断がぶれにくい
+
+したがって current milestone では次の扱いにする。
+
+- 構想は維持する
+- docs では責務を整理する
+- 実装優先度は `Memory` より後ろに置く
+- Session UI への適用は行わない
 
 ## VTuber Character UI Direction
 
@@ -140,8 +212,9 @@ WithMate は provider を 1 つに統一しない。
 ### 2. キャラ性は構造で出す
 
 - セッションにキャラクターが紐づいている
+- Session copy や theme が同じ character を感じさせる
 - 将来的には `Session Window` の別面で独り言を扱う
-- ただし現段階では UI へは出さない
+- ただし current milestone では UI へは出さない
 
 色や装飾だけで VTuber 感を作ろうとしない。
 
@@ -182,20 +255,39 @@ WithMate は provider を 1 つに統一しない。
 - 独り言 UI を premature に本実装済みへ見せないこと
 - 非互換変更時の回復導線として Settings の DB reset を維持すること
 
-## Impact On Current UI
+## What We Are Not Deciding Yet
+
+次の論点は、今すぐ 1 つに決めない。
+
+- Character Memory の保存粒度
+- Session Memory の要約タイミング
+- Monologue の発火契機を送信時にするか完了時にするか
+- Character Stream をどの window / pane に出すか
+- Character が prompt 制御まで担うかどうか
+
+これらは current milestone で「必要になるまで確定しない」。
+
+## Impact On Current Milestone
 
 現在の desktop UI では、次の方向で継続調整する。
 
 - `Recent Sessions` は `Home Window` の resume picker として再設計する
 - `Session Window` の `Work Chat` は TUI 本体寄りに保つ
+- Character は `Session Copy`、theme、icon、assistant 表現で効かせる
 - 独り言 UI は current milestone では `Session Window` に出さない
 - Settings は coding plane 用 provider / credential と DB reset を持つ管理面として扱う
 - 見た目はキャラクターに合わせていくが、構造は coding agent 優先で崩さない
 
-## Next Step
+## Next Questions
 
-- `Home Window` と `Session Window` の責務分離を維持したまま UI 密度を詰める
-- `Recent Sessions` のカード構造を Home 前提で詰める
-- 独り言 UI は pending のまま、まず coding plane の `Codex / CopilotCLI / CLI / SDK parity` を先に詰める
-- その後に Settings / memory / monologue 関連 docs を更新し、Character Stream の実装計画へ進む
-- 実イベント接続時も `CLI parity` と `WithMate 固有拡張` を分離して実装する
+この doc を起点に、次は次の順で詰める。
+
+1. `Memory` は何を保存するか
+2. `Character` は Memory をどう読むか
+3. `Monologue` はいつ・どこで出すか
+
+関連:
+
+- `docs/design/memory-architecture.md`
+- `docs/design/monologue-provider-policy.md`
+- `docs/design/character-chat-ui.md`
