@@ -1,17 +1,5 @@
-import path from "node:path";
-
-import type { ComposerAttachment } from "../src/app-state.js";
 import type { RunSessionTurnInput, ProviderPromptComposition } from "./provider-runtime.js";
-
-function collectAdditionalDirectories(attachments: ComposerAttachment[]): string[] {
-  return Array.from(
-    new Set(
-      attachments
-        .filter((attachment) => attachment.isOutsideWorkspace && attachment.kind !== "image")
-        .map((attachment) => (attachment.kind === "folder" ? attachment.absolutePath : path.dirname(attachment.absolutePath))),
-    ),
-  ).sort((left, right) => left.localeCompare(right));
-}
+import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 
 export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromptComposition {
   const systemSections = [
@@ -40,7 +28,10 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
       composedText: composedPromptText,
     },
     imagePaths: referencedImages.map((attachment) => attachment.absolutePath),
-    additionalDirectories: collectAdditionalDirectories(input.attachments),
+    additionalDirectories: normalizeAllowedAdditionalDirectories(
+      input.session.workspacePath,
+      input.session.allowedAdditionalDirectories,
+    ),
   };
 }
 

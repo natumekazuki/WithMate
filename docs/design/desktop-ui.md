@@ -165,6 +165,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - 候補 open 中だけ `ArrowUp` / `ArrowDown` / `Enter` / `Tab` / `Escape` の keyboard navigation を有効にする
 - picker で選んだ file / folder / image も textarea に `@path` を挿入する
 - 添付 picker は初回だけ workspace を開き、以後は最後に選んだディレクトリを開く
+- composer toolbar に `Add Directory` を置き、その横の toggle から `Additional Directories` 一覧を既定 closed で開閉できるようにする
 - composer 下の `Approval / Model / Depth`
   - approval chip は `自動実行 / 安全寄り / プロバイダー判断`
 - session title は character `main`

@@ -47,6 +47,7 @@ import { CodexAdapter } from "./codex-adapter.js";
 import { CopilotAdapter } from "./copilot-adapter.js";
 import { ProviderTurnError, type ProviderTurnAdapter } from "./provider-runtime.js";
 import { resolveComposerPreview } from "./composer-attachments.js";
+import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { resolveOpenPathTarget } from "./open-path.js";
 import { launchTerminalAtPath } from "./open-terminal.js";
@@ -660,6 +661,10 @@ function createSession(input: CreateSessionInput): Session {
     catalogRevision: snapshot.revision,
     model: selection.resolvedModel,
     reasoningEffort: selection.resolvedReasoningEffort,
+    allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
+      input.workspacePath,
+      input.allowedAdditionalDirectories ?? [],
+    ),
   });
   return upsertSession(created);
 }
@@ -697,7 +702,13 @@ function updateSession(nextSession: Session): Session {
     throw new Error("実行中のセッションは更新できないよ。");
   }
 
-  return upsertSession(nextSession);
+  return upsertSession({
+    ...nextSession,
+    allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
+      nextSession.workspacePath,
+      nextSession.allowedAdditionalDirectories,
+    ),
+  });
 }
 
 function deleteSession(sessionId: string): void {
@@ -726,7 +737,13 @@ function deleteSession(sessionId: string): void {
 
 function upsertSession(nextSession: Session): Session {
   const storage = requireSessionStorage();
-  const stored = storage.upsertSession(nextSession);
+  const stored = storage.upsertSession({
+    ...nextSession,
+    allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
+      nextSession.workspacePath,
+      nextSession.allowedAdditionalDirectories,
+    ),
+  });
   sessions = storage.listSessions();
   broadcastSessions();
   return cloneSessions([stored])[0];

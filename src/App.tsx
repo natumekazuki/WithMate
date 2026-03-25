@@ -95,6 +95,12 @@ type WorkspacePathMatchDisplay = {
   title: string;
 };
 
+type AdditionalDirectoryDisplay = {
+  primaryLabel: string;
+  secondaryLabel: string;
+  title: string;
+};
+
 type SkillMatchDisplay = {
   primaryLabel: string;
   secondaryLabel: string;
@@ -218,6 +224,16 @@ function buildWorkspacePathMatchDisplay(pathMatch: string): WorkspacePathMatchDi
   return {
     primaryLabel: basename || normalizedPath,
     secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 42) : "ワークスペース直下",
+    title: normalizedPath,
+  };
+}
+
+function buildAdditionalDirectoryDisplay(directoryPath: string): AdditionalDirectoryDisplay {
+  const normalizedPath = normalizePathForReference(directoryPath).replace(/\/+$/, "");
+  const { basename, parentPath } = splitPathForDisplay(normalizedPath);
+  return {
+    primaryLabel: basename || normalizedPath,
+    secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 52) : "ルート",
     title: normalizedPath,
   };
 }
@@ -642,6 +658,7 @@ export default function App() {
   const [isAgentPickerOpen, setIsAgentPickerOpen] = useState(false);
   const [isCustomAgentListLoading, setIsCustomAgentListLoading] = useState(false);
   const [isSkillPickerOpen, setIsSkillPickerOpen] = useState(false);
+  const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
   const [isSkillListLoading, setIsSkillListLoading] = useState(false);
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
   const [isMessageListFollowing, setIsMessageListFollowing] = useState(true);
@@ -2050,6 +2067,42 @@ export default function App() {
     insertReferencePath(selectedPath);
   };
 
+  const handleAddAdditionalDirectory = async () => {
+    if (!window.withmate || !selectedSession || selectedSession.runState === "running") {
+      return;
+    }
+
+    const selectedPath = await window.withmate.pickDirectory(pickerBaseDirectory || selectedSession.workspacePath || null);
+    if (!selectedPath) {
+      return;
+    }
+
+    const nextDirectories = Array.from(new Set([...selectedSession.allowedAdditionalDirectories, selectedPath]));
+    const nextSession: Session = {
+      ...selectedSession,
+      allowedAdditionalDirectories: nextDirectories,
+    };
+    setPickerBaseDirectory(selectedPath);
+    await persistSession(nextSession);
+  };
+
+  const handleRemoveAdditionalDirectory = async (directoryPath: string) => {
+    if (!selectedSession || selectedSession.provider !== "codex" || selectedSession.runState === "running") {
+      return;
+    }
+
+    const nextDirectories = selectedSession.allowedAdditionalDirectories.filter((entry) => entry !== directoryPath);
+    if (nextDirectories.length === selectedSession.allowedAdditionalDirectories.length) {
+      return;
+    }
+
+    const nextSession: Session = {
+      ...selectedSession,
+      allowedAdditionalDirectories: nextDirectories,
+    };
+    await persistSession(nextSession);
+  };
+
   const auditPhaseLabel = (phase: AuditLogEntry["phase"]) => {
     switch (phase) {
       case "running":
@@ -2693,6 +2746,25 @@ export default function App() {
               >
                 Skill
               </button>
+              <div className="composer-additional-directory-toolbar">
+                <button
+                  className="drawer-toggle compact secondary composer-skill-button"
+                  type="button"
+                  onClick={() => void handleAddAdditionalDirectory()}
+                  disabled={selectedSession.runState === "running" || !!composerBlockedReason}
+                >
+                  Add Directory
+                </button>
+                <button
+                  className={`drawer-toggle compact secondary composer-skill-button${isAdditionalDirectoryListOpen ? " is-open" : ""}`}
+                  type="button"
+                  onClick={() => setIsAdditionalDirectoryListOpen((current) => !current)}
+                  disabled={selectedSession.allowedAdditionalDirectories.length === 0}
+                  aria-expanded={isAdditionalDirectoryListOpen}
+                >
+                  {`Dirs ${selectedSession.allowedAdditionalDirectories.length}`}
+                </button>
+              </div>
               {canCollapseActionDock ? (
                 <button className="drawer-toggle compact secondary composer-hide-button" type="button" onClick={handleCollapseActionDock}>
                   Hide
@@ -2814,6 +2886,36 @@ export default function App() {
                       >
                         ×
                       </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+            {isAdditionalDirectoryListOpen && selectedSession.allowedAdditionalDirectories.length > 0 ? (
+              <div className="composer-additional-directory-list">
+                {selectedSession.allowedAdditionalDirectories.map((directoryPath) => {
+                  const directoryDisplay = buildAdditionalDirectoryDisplay(directoryPath);
+                  return (
+                    <div
+                      key={directoryPath}
+                      className="composer-additional-directory-chip"
+                      title={directoryDisplay.title}
+                    >
+                      <span className="composer-additional-directory-copy">
+                        <span className="composer-additional-directory-primary">{directoryDisplay.primaryLabel}</span>
+                        <span className="composer-additional-directory-secondary">{directoryDisplay.secondaryLabel}</span>
+                      </span>
+                      {selectedSession.provider === "codex" ? (
+                        <button
+                          type="button"
+                          className="composer-additional-directory-remove"
+                          onClick={() => void handleRemoveAdditionalDirectory(directoryPath)}
+                          disabled={selectedSession.runState === "running"}
+                          aria-label={`${directoryDisplay.primaryLabel} を削除`}
+                        >
+                          ×
+                        </button>
+                      ) : null}
                     </div>
                   );
                 })}

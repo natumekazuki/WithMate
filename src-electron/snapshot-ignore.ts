@@ -39,6 +39,14 @@ export type SnapshotScanResult = {
   ignoredFiles: string[];
 };
 
+function normalizeSnapshotKey(rootDirectory: string, relativePath: string, useWorkspaceRelativeKey: boolean): string {
+  if (useWorkspaceRelativeKey) {
+    return relativePath;
+  }
+
+  return path.join(path.resolve(rootDirectory), relativePath).replace(/\\/g, "/");
+}
+
 async function pathExists(targetPath: string): Promise<boolean> {
   try {
     await stat(targetPath);
@@ -253,10 +261,20 @@ export async function scanWorkspacePaths(rootDirectory: string): Promise<Snapsho
   });
 }
 
-export async function captureWorkspaceSnapshot(rootDirectory: string, limits: SnapshotLimits = {}): Promise<SnapshotCaptureResult> {
+export async function captureWorkspaceSnapshot(
+  rootDirectory: string | readonly string[],
+  limits: SnapshotLimits = {},
+): Promise<SnapshotCaptureResult> {
   const maxFileBytes = limits.maxFileBytes ?? DEFAULT_SNAPSHOT_MAX_FILE_BYTES;
   const maxFileCount = limits.maxFileCount ?? DEFAULT_SNAPSHOT_MAX_FILE_COUNT;
   const maxTotalBytes = limits.maxTotalBytes ?? DEFAULT_SNAPSHOT_MAX_TOTAL_BYTES;
+  const rootDirectories = Array.from(
+    new Map(
+      (Array.isArray(rootDirectory) ? rootDirectory : [rootDirectory])
+        .map((entry) => path.resolve(entry))
+        .map((entry) => [process.platform === "win32" ? entry.toLowerCase() : entry, entry] as const),
+    ).values(),
+  );
   const snapshot: WorkspaceSnapshot = new Map();
   const stats: SnapshotCaptureStats = {
     capturedFiles: 0,
@@ -267,35 +285,37 @@ export async function captureWorkspaceSnapshot(rootDirectory: string, limits: Sn
     hitTotalBytesLimit: false,
   };
 
-  await walkWorkspace(rootDirectory, async (absolutePath, relativePath) => {
-    if (stats.hitFileCountLimit || stats.hitTotalBytesLimit) {
-      stats.skippedByLimitFiles += 1;
-      return;
-    }
+  for (const [index, directory] of rootDirectories.entries()) {
+    await walkWorkspace(directory, async (absolutePath, relativePath) => {
+      if (stats.hitFileCountLimit || stats.hitTotalBytesLimit) {
+        stats.skippedByLimitFiles += 1;
+        return;
+      }
 
-    const text = await readSnapshotTextFile(absolutePath, maxFileBytes);
-    if (text === null) {
-      stats.skippedBinaryOrOversizeFiles += 1;
-      return;
-    }
+      const text = await readSnapshotTextFile(absolutePath, maxFileBytes);
+      if (text === null) {
+        stats.skippedBinaryOrOversizeFiles += 1;
+        return;
+      }
 
-    const nextBytes = Buffer.byteLength(text, "utf8");
-    if (stats.capturedFiles >= maxFileCount) {
-      stats.hitFileCountLimit = true;
-      stats.skippedByLimitFiles += 1;
-      return;
-    }
+      const nextBytes = Buffer.byteLength(text, "utf8");
+      if (stats.capturedFiles >= maxFileCount) {
+        stats.hitFileCountLimit = true;
+        stats.skippedByLimitFiles += 1;
+        return;
+      }
 
-    if (stats.capturedBytes + nextBytes > maxTotalBytes) {
-      stats.hitTotalBytesLimit = true;
-      stats.skippedByLimitFiles += 1;
-      return;
-    }
+      if (stats.capturedBytes + nextBytes > maxTotalBytes) {
+        stats.hitTotalBytesLimit = true;
+        stats.skippedByLimitFiles += 1;
+        return;
+      }
 
-    snapshot.set(relativePath, text);
-    stats.capturedFiles += 1;
-    stats.capturedBytes += nextBytes;
-  });
+      snapshot.set(normalizeSnapshotKey(directory, relativePath, index === 0), text);
+      stats.capturedFiles += 1;
+      stats.capturedBytes += nextBytes;
+    });
+  }
 
   return { snapshot, stats };
 }

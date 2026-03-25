@@ -26,6 +26,7 @@ type SessionRow = {
   model: string;
   reasoning_effort: string;
   custom_agent_name: string;
+  allowed_additional_directories_json: string;
   thread_id: string;
   messages_json: string;
   stream_json: string;
@@ -56,6 +57,7 @@ const SESSION_SELECT_COLUMNS = `
   model,
   reasoning_effort,
   custom_agent_name,
+  allowed_additional_directories_json,
   thread_id,
   messages_json,
   stream_json
@@ -97,11 +99,12 @@ const UPSERT_SESSION_SQL = `
     model,
     reasoning_effort,
     custom_agent_name,
+    allowed_additional_directories_json,
     thread_id,
     messages_json,
     stream_json,
     last_active_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     task_title = excluded.task_title,
     task_summary = excluded.task_summary,
@@ -122,6 +125,7 @@ const UPSERT_SESSION_SQL = `
     model = excluded.model,
     reasoning_effort = excluded.reasoning_effort,
     custom_agent_name = excluded.custom_agent_name,
+    allowed_additional_directories_json = excluded.allowed_additional_directories_json,
     thread_id = excluded.thread_id,
     messages_json = excluded.messages_json,
     stream_json = excluded.stream_json,
@@ -157,6 +161,7 @@ function rowToSession(row: SessionRow): Session | null {
     model: row.model,
     reasoningEffort: row.reasoning_effort,
     customAgentName: row.custom_agent_name,
+    allowedAdditionalDirectories: JSON.parse(row.allowed_additional_directories_json),
     threadId: row.thread_id,
     messages: JSON.parse(row.messages_json),
     stream: JSON.parse(row.stream_json),
@@ -198,6 +203,7 @@ export class SessionStorage {
         model TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_MODEL_ID)},
         reasoning_effort TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_REASONING_EFFORT)},
         custom_agent_name TEXT NOT NULL DEFAULT '',
+        allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]',
         thread_id TEXT NOT NULL DEFAULT '',
         messages_json TEXT NOT NULL,
         stream_json TEXT NOT NULL,
@@ -229,6 +235,7 @@ export class SessionStorage {
       normalized.model,
       normalized.reasoningEffort,
       normalized.customAgentName,
+      JSON.stringify(normalized.allowedAdditionalDirectories),
       normalized.threadId,
       JSON.stringify(normalized.messages),
       JSON.stringify(normalized.stream),
@@ -259,6 +266,10 @@ export class SessionStorage {
 
     if (!columns.has("custom_agent_name")) {
       this.db.exec("ALTER TABLE sessions ADD COLUMN custom_agent_name TEXT NOT NULL DEFAULT '';");
+    }
+
+    if (!columns.has("allowed_additional_directories_json")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]';");
     }
 
     if (!columns.has("character_theme_main")) {

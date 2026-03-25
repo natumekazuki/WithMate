@@ -122,6 +122,7 @@ describe("SessionStorage", () => {
         ...createSession("agent", "workspace-agent", "char-a", "A"),
         provider: "copilot",
         customAgentName: "reviewer",
+        allowedAdditionalDirectories: ["C:/shared/reference"],
       });
 
       const loaded = storage.getSession(session.id);
@@ -129,6 +130,7 @@ describe("SessionStorage", () => {
 
       assert.ok(loaded);
       assert.equal(loaded.customAgentName, "reviewer");
+      assert.deepEqual(loaded.allowedAdditionalDirectories, ["C:/shared/reference"]);
     } finally {
       await removeDirectoryWithRetry(tempDirectory);
     }

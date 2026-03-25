@@ -67,12 +67,13 @@ Session Window の composer では、参照対象は最終的に textarea 内の
 
 - picker から追加した file / folder / image も textarea に `@path` を挿入する
 - 手入力の `@path` も同じ扱いにする
+- workspace 外 path は session metadata `allowedAdditionalDirectories` 配下だけを許可する
 
 `@path` は送信時に解決するだけでなく、入力中も workspace 内の file path 候補を表示して補助する。
 候補一覧は軽量 cache を使って高速化するが、cache には TTL を持たせ、session run 完了後は invalidate して生成直後の file が反映されやすいようにする。
 
 通常ファイルとフォルダは prompt 内の参照情報として列挙する。画像だけは SDK の structured input (`local_image`) で別送する。
-通常ファイルとフォルダは prompt text へは埋め込まず、`additionalDirectories` とワーキングディレクトリ解決にだけ使う。
+通常ファイルとフォルダは prompt text へは埋め込まず、session metadata `allowedAdditionalDirectories` とワーキングディレクトリ解決にだけ使う。
 画像は `@path` が textarea に残っている場合にだけ `local_image` として送る。textarea から消えた画像 path は送信対象から外れる。
 
 ## Persisted Prompt Views

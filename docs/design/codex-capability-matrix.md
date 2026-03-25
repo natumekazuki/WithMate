@@ -70,7 +70,7 @@
 
 - `対応済み`
 - textarea 内の `@path` を実行直前に解決する
-- `file / folder` は Codex SDK の `additionalDirectories` へ変換する
+- workspace 外 `file / folder` は session metadata `allowedAdditionalDirectories` 配下だけを許可し、その許可リストを Codex SDK の `additionalDirectories` へ変換する
 - `image` は `local_image` structured input として渡す
 - picker で選んだ file / folder / image も、正本は textarea の `@path` に揃えている
 

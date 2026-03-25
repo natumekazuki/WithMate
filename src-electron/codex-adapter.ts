@@ -9,7 +9,6 @@ import type {
   AuditLogUsage,
   ChangedFile,
   CharacterProfile,
-  ComposerAttachment,
   DiffRow,
   LiveRunStep,
   LiveSessionRunState,
@@ -31,6 +30,7 @@ import {
   type SnapshotCaptureStats,
   type WorkspaceSnapshot,
 } from "./snapshot-ignore.js";
+import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 import { composeProviderPrompt, isCanceledProviderMessage } from "./provider-prompt.js";
 import {
   ProviderTurnError,
@@ -746,7 +746,6 @@ export class CodexAdapter implements ProviderTurnAdapter {
   private buildThreadSettings(
     session: Session,
     providerCatalog: ModelCatalogProvider,
-    attachments: ComposerAttachment[],
     clientKey: string,
   ): {
     options: {
@@ -762,13 +761,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
     settingsKey: string;
   } {
     const selection = resolveModelSelection(providerCatalog, session.model, session.reasoningEffort);
-    const additionalDirectories = Array.from(
-      new Set(
-        attachments
-          .filter((attachment) => attachment.isOutsideWorkspace && attachment.kind !== "image")
-          .map((attachment) => (attachment.kind === "folder" ? attachment.absolutePath : path.dirname(attachment.absolutePath))),
-      ),
-    ).sort((left, right) => left.localeCompare(right));
+    const additionalDirectories = normalizeAllowedAdditionalDirectories(
+      session.workspacePath,
+      session.allowedAdditionalDirectories,
+    );
     const options = {
       workingDirectory: session.workspacePath,
       skipGitRepoCheck: true as const,
@@ -795,7 +791,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
 
   private getThread(input: RunSessionTurnInput): { thread: Thread; selection: ResolvedModelSelection } {
     const { client, clientKey } = this.getClient(input.providerCatalog.id, input.appSettings);
-    const nextSettings = this.buildThreadSettings(input.session, input.providerCatalog, input.attachments, clientKey);
+    const nextSettings = this.buildThreadSettings(input.session, input.providerCatalog, clientKey);
     const cached = this.threads.get(input.session.id);
     if (cached && cached.settingsKey === nextSettings.settingsKey) {
       return {
@@ -830,7 +826,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
   ): Promise<RunSessionTurnResult> {
     const finalItems = Array.from(items.values());
     const finalAssistantText = collectAssistantText(finalItems);
-    const { snapshot: afterSnapshot, stats: afterSnapshotStats } = await captureWorkspaceSnapshot(input.session.workspacePath);
+    const { snapshot: afterSnapshot, stats: afterSnapshotStats } = await captureWorkspaceSnapshot([
+      input.session.workspacePath,
+      ...normalizeAllowedAdditionalDirectories(input.session.workspacePath, input.session.allowedAdditionalDirectories),
+    ]);
     const artifact = await buildArtifact(
       input.session,
       finalItems,
@@ -859,7 +858,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
   async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
     const { thread, selection } = this.getThread(input);
     const prompt = this.composePrompt(input);
-    const { snapshot: beforeSnapshot, stats: beforeSnapshotStats } = await captureWorkspaceSnapshot(input.session.workspacePath);
+    const { snapshot: beforeSnapshot, stats: beforeSnapshotStats } = await captureWorkspaceSnapshot([
+      input.session.workspacePath,
+      ...normalizeAllowedAdditionalDirectories(input.session.workspacePath, input.session.allowedAdditionalDirectories),
+    ]);
     const turnInput =
       prompt.imagePaths.length > 0
         ? [

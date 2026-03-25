@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 
 import type { ComposerAttachment, ComposerAttachmentInput, ComposerAttachmentKind, ComposerPreview, Session } from "../src/app-state.js";
+import { isPathWithinAnyDirectory, normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 
 const TEXT_PATH_REFERENCE_PATTERN = /(^|[\s(])@(?:"([^"\r\n]+)"|([^\s@]+))/gm;
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"]);
@@ -86,6 +87,13 @@ async function resolveAttachmentCandidate(
   }
 
   const workspaceRelativePath = toWorkspaceRelativePath(session.workspacePath, absolutePath);
+  const allowedAdditionalDirectories = normalizeAllowedAdditionalDirectories(
+    session.workspacePath,
+    session.allowedAdditionalDirectories,
+  );
+  if (workspaceRelativePath === null && !isPathWithinAnyDirectory(absolutePath, allowedAdditionalDirectories)) {
+    throw new Error(`ワークスペース外のパスは追加ディレクトリで許可してから添付してね: ${candidate.path}`);
+  }
   const displayPath = toDisplayPath(session.workspacePath, absolutePath);
 
   return {

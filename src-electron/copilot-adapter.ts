@@ -32,6 +32,7 @@ import {
   type SnapshotCaptureStats,
   type WorkspaceSnapshot,
 } from "./snapshot-ignore.js";
+import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 import { resolveSessionCustomAgentConfigs } from "./custom-agent-discovery.js";
 
 type CachedCopilotSession = {
@@ -1012,7 +1013,10 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     beforeSnapshot: WorkspaceSnapshot,
     beforeSnapshotStats: SnapshotCaptureStats,
   ): Promise<RunSessionTurnResult> {
-    const { snapshot: afterSnapshot, stats: afterSnapshotStats } = await captureWorkspaceSnapshot(workspacePath);
+    const { snapshot: afterSnapshot, stats: afterSnapshotStats } = await captureWorkspaceSnapshot([
+      workspacePath,
+      ...normalizeAllowedAdditionalDirectories(workspacePath, session.allowedAdditionalDirectories),
+    ]);
     const operations = toCommandOperations(steps);
     const artifact = buildArtifactFromOperations({
       session,
@@ -1047,7 +1051,10 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     const messageAttachments = buildCopilotMessageAttachments(input.attachments);
 
     const cliPath = resolveCopilotCliPath();
-    const { snapshot: beforeSnapshot, stats: beforeSnapshotStats } = await captureWorkspaceSnapshot(input.session.workspacePath);
+    const { snapshot: beforeSnapshot, stats: beforeSnapshotStats } = await captureWorkspaceSnapshot([
+      input.session.workspacePath,
+      ...normalizeAllowedAdditionalDirectories(input.session.workspacePath, input.session.allowedAdditionalDirectories),
+    ]);
     let session: CopilotSession;
     let selection: ResolvedModelSelection;
     try {

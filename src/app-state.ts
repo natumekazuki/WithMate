@@ -245,6 +245,7 @@ export type Session = {
   model: string;
   reasoningEffort: ModelReasoningEffort;
   customAgentName: string;
+  allowedAdditionalDirectories: string[];
   threadId: string;
   messages: Message[];
   stream: StreamEntry[];
@@ -271,6 +272,7 @@ export type CreateSessionInput = {
   model?: string;
   reasoningEffort?: ModelReasoningEffort;
   customAgentName?: string;
+  allowedAdditionalDirectories?: string[];
 };
 
 function getLocationSearch(): string {
@@ -615,6 +617,12 @@ export function normalizeSession(value: unknown): Session | null {
         ? candidate.reasoningEffort
         : DEFAULT_REASONING_EFFORT,
     customAgentName: typeof candidate.customAgentName === "string" ? candidate.customAgentName.trim() : "",
+    allowedAdditionalDirectories: Array.isArray((candidate as { allowedAdditionalDirectories?: unknown[] }).allowedAdditionalDirectories)
+      ? (candidate as { allowedAdditionalDirectories?: unknown[] }).allowedAdditionalDirectories
+          ?.filter((directory): directory is string => typeof directory === "string")
+          .map((directory) => directory.trim())
+          .filter((directory) => directory.length > 0) ?? []
+      : [],
     threadId:
       typeof candidate.threadId === "string"
         ? candidate.threadId
@@ -667,6 +675,9 @@ export function buildNewSession(input: CreateSessionInput): Session {
     model: input.model?.trim() || DEFAULT_MODEL_ID,
     reasoningEffort: input.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
     customAgentName: input.customAgentName?.trim() || "",
+    allowedAdditionalDirectories: Array.isArray(input.allowedAdditionalDirectories)
+      ? input.allowedAdditionalDirectories.map((directory) => directory.trim()).filter((directory) => directory.length > 0)
+      : [],
     threadId: "",
     messages: [],
     stream: [],
