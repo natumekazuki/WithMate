@@ -5,3 +5,4 @@
 - 2026-03-25: Character Editor に `Session Copy` タブを追加し、SessionWindow 向け copy slot を編集できるようにした。
 - 2026-03-25: SessionWindow の pending indicator、retry banner title、`Latest Command` empty / waiting、`Changed Files` empty、`Context` empty を character copy lookup 経由へ置き換えた。
 - 2026-03-25: `npm run build` で検証し、design / manual test / backlog を同期した。
+- 2026-03-25: `07b58ef` `feat(character): session copy を追加`

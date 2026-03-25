@@ -7,3 +7,5 @@
   - SessionWindow の主要 fixed copy を character lookup 経由へ置き換え、default は bland な fallback に寄せた
 - verification:
   - `npm run build`
+- notes:
+  - 実装コミット: `07b58ef` `feat(character): session copy を追加`
