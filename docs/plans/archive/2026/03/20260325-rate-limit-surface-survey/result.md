@@ -52,3 +52,7 @@
   - https://docs.github.com/en/copilot/concepts/billing/copilot-requests
   - https://developers.openai.com/api/reference/resources/organization/subresources/projects/subresources/rate_limits
   - https://platform.openai.com/docs/api-reference/usage/costs?api-mode=responses&lang=curl
+
+## Notes
+
+- 関連実装コミット: `2eac239` `feat(copilot): premium requests と context usage を可視化`

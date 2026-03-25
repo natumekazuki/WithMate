@@ -7,3 +7,4 @@
 - 2026-03-25: Main Process に provider quota telemetry cache と session context telemetry cache、IPC snapshot / subscribe、Copilot adapter の `getQuota()` / `assistant.usage` / `session.usage_info` bridge を実装した。
 - 2026-03-25: Session Window の preview UI を実データ表示へ置き換え、`Premium Requests` strip と collapsed `Context` details を backend と接続した。
 - 2026-03-25: `docs/design/provider-adapter.md`、`docs/design/desktop-ui.md`、`docs/manual-test-checklist.md`、`docs/task-backlog.md` を current 実装へ同期した。
+- 2026-03-25: `2eac239` `feat(copilot): premium requests と context usage を可視化`
