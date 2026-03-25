@@ -49,6 +49,8 @@ npm run electron:start
 | MT-015B | Copilot file / folder context | provider を `GitHub Copilot` にした session で workspace 内 file と folder を `@path` で参照して 1 turn 実行する | assistant response が返り、Copilot 側へ file / folder attachment が渡る。workspace 外 path でも session が失敗せず、少なくとも turn 自体は継続できる |
 | MT-015C | Copilot image via Image button | provider を `GitHub Copilot` にした session で `Image` ボタンから画像を選んで 1 turn 実行する | `Image` ボタンが利用でき、選んだ画像は Copilot 側へ file attachment として渡される |
 | MT-015D | Additional directory allowlist | Session Window の `More` から `Add Directory` で workspace 外ディレクトリを追加し、その配下の file または folder を `@path` で添付して 1 turn 実行する | 追加前は composer preview で workspace 外 path が拒否される。追加後は添付でき、`changed files / diff` の監視対象にも入る |
+| MT-015E | Copilot premium requests strip | provider を `GitHub Copilot` にした session を開く | 右 pane の `Latest Command` 下に `Premium Requests` strip が出て、残量が表示される。未取得時は `unavailable` 表示でもよい |
+| MT-015F | Copilot context usage details | Copilot session で 1 turn 実行し、右 pane の `Context` を開く | `current / limit / messages / system / conversation / reset` が開いた時だけ表示される。閉じた状態では右 pane の面積をほぼ消費しない |
 | MT-016 | Session 実行キャンセル | 実行中に `Cancel` を押す | 実行が止まり、session は `idle` に戻り、Audit Log に `CANCELED` が残る |
 | MT-017 | Approval / Model / Depth | idle 状態の Session Window で approval / model / depth を変更する | approval は `自動実行 / 安全寄り / プロバイダー判断` で表示され、選択値が保存され、再度開いても保持される |
 | MT-017A | Copilot approval prompt | provider を `GitHub Copilot`、approval を `プロバイダー判断` にした session で shell または write 承認が必要な turn を実行する | pending bubble 内に approval card が出て、`今回だけ許可 / 拒否` を押すと run が再開される。read-only request では card は出ない |

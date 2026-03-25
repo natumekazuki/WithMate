@@ -25,7 +25,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | P1 | 完了 | GitHub | [#13](https://github.com/natumekazuki/WithMate/issues/13) | `add-dir` 対応 | 追加 directory の許可リスト、外部添付制御、変更追跡まで実装済み | `docs/plans/archive/2026/03/20260325-additional-directory-allowlist/result.md` |
 | P1 | 完了 | GitHub | [#12](https://github.com/natumekazuki/WithMate/issues/12) | 実行中セッション監視 window | Home から切り出した常時前面 monitor window を実装済み | `docs/plans/20260325-session-monitor-window/result.md` |
-| P1 | 未着手 | GitHub | [#11](https://github.com/natumekazuki/WithMate/issues/11) | レートリミット可視化 | Codex / Copilot の残量や上限を UI へ出す | provider ごとの surface 調査が必要。比較的独立して進められる |
+| P1 | 完了 | GitHub | [#11](https://github.com/natumekazuki/WithMate/issues/11) | レートリミット可視化 | Copilot 先行で premium requests と context usage を UI へ出した | plan: `docs/plans/archive/2026/03/20260325-copilot-rate-limit-visibility/`、design: `docs/design/provider-usage-telemetry.md` |
 | P1 | 見送り | Local | `copilot-rollout` | slash command 吸収 | `/agent` `/model` など provider-native slash command を GUI state に吸収するかを整理する | `docs/plans/20260322-copilot-capability-rollout/result.md` の remaining。Issue [#10](https://github.com/natumekazuki/WithMate/issues/10) と接続 |
 | P2 | 未着手 | GitHub | [#10](https://github.com/natumekazuki/WithMate/issues/10) | Copilot custom slash command | GitHub Copilot SDK v1.0.10 の独自 slash command をどう使うか | まず `slash command 吸収` 方針を決めてから着手したい |
 | P2 | 見送り | Local | `copilot-rollout` | apps / mcp / plugins | provider extension surface の read-only 表示や制御を検討する | 「今は使っていない」整理なので優先度は落とす |
@@ -39,11 +39,10 @@
 
 ## 推奨順
 
-1. `#11 レートリミット可視化`
-2. `#7` を起点にしたキャラ別メッセージ上書き
-3. `#3` と `#1` をまとめた Character / Memory 系
-4. `#10 custom slash command`
-5. `#4` と各種 polish
+1. `#7` を起点にしたキャラ別メッセージ上書き
+2. `#3` と `#1` をまとめた Character / Memory 系
+3. `#10 custom slash command`
+4. `#4` と各種 polish
 
 ## 参照元
 

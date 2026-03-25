@@ -722,6 +722,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
     return composeProviderPrompt(input);
   }
 
+  async getProviderQuotaTelemetry(): Promise<null> {
+    return null;
+  }
+
   invalidateSessionThread(sessionId: string): void {
     this.threads.delete(sessionId);
   }

@@ -78,6 +78,8 @@ current milestone の provider ごとの差は次。
   - `Latest Command` と audit `operations` には、`shell / powershell / bash` に加えて `create / edit / replace / move / delete` のような mutating tool も `command_execution` として正規化して返す
   - `rawItemsJson` は full session dump ではなく、`tool.execution_*`、`assistant.message`、`assistant.usage` など監査で読む stable event trace に絞って返す
   - `artifact` は snapshot diff fallback を使って `changedFiles / runChecks / operationTimeline` を最小構成で返す
+  - `Premium Requests` は `client.rpc.account.getQuota()` と `assistant.usage.quotaSnapshots` から app-wide telemetry として更新する
+  - `Context Usage` は `session.usage_info` を session local telemetry として Main Process memory に保持する
 
 ## Session Flow
 
@@ -92,8 +94,9 @@ current milestone の provider ごとの差は次。
 8. provider adapter が `model / reasoningEffort` を検証し、provider-native SDK 実行へ変換する
    - `CodexAdapter`: file / folder の workspace 外 access は session metadata `allowedAdditionalDirectories` だけを `additionalDirectories` へ変換し、画像は structured input にして `thread.runStreamed()` を実行する
    - `CopilotAdapter`: `systemPromptPrefix + roleMarkdown` は `SessionConfig.systemMessage` `mode: "append"` に載せ、`session.send()` には user input 本文だけを送る。file / folder は `session.send({ attachments })` の `file` / `directory` へ変換して同時に渡す。image も `file` attachment として吸収し、renderer 側では共通の `Image` 導線を維持する。workspace 外 path は WithMate 側の `allowedAdditionalDirectories` 判定だけを正本にして許可する。`provider-controlled` では permission request を Main Process へ返し、Session UI の approval card と往復する。Electron では native CLI binary を明示して起動し、bootstrap failure 時は audit log に debug metadata を残す
-9. Main Process が stream event から live state を組み立て、IPC で Session Window へ中継する
+9. Main Process が stream event から live state と provider telemetry を組み立て、IPC で Session Window へ中継する
    - live state には `approvalRequest` を含められる
+   - quota telemetry は provider 単位、context telemetry は session 単位で memory cache する
 10. turn 完了後に Main Process が `threadId` と assistant message を session store に反映する
 11. Main Process が `running / completed / canceled / failed` の監査ログを 1 turn 1 record で SQLite に保存する
 12. Renderer は `sessions-changed` と live state 購読を使って再描画する

@@ -112,6 +112,34 @@ export type LiveSessionRunState = {
   approvalRequest: LiveApprovalRequest | null;
 };
 
+export type ProviderQuotaSnapshot = {
+  quotaKey: string;
+  entitlementRequests: number;
+  usedRequests: number;
+  remainingPercentage: number;
+  overage: number;
+  overageAllowedWithExhaustedQuota: boolean;
+  resetDate?: string;
+};
+
+export type ProviderQuotaTelemetry = {
+  provider: string;
+  updatedAt: string;
+  snapshots: ProviderQuotaSnapshot[];
+};
+
+export type SessionContextTelemetry = {
+  provider: string;
+  sessionId: string;
+  updatedAt: string;
+  tokenLimit: number;
+  currentTokens: number;
+  messagesLength: number;
+  systemTokens?: number;
+  conversationTokens?: number;
+  toolDefinitionsTokens?: number;
+};
+
 export type AppSettings = {
   systemPromptPrefix: string;
   codingProviderSettings: Record<string, ProviderAppSettings>;

@@ -5,6 +5,8 @@ import { describe, it } from "node:test";
 import {
   applyCopilotAssistantEvent,
   buildCopilotMessageAttachments,
+  buildCopilotProviderQuotaTelemetry,
+  buildCopilotSessionContextTelemetry,
   buildCopilotSystemMessage,
   buildCopilotStableRawItems,
   buildCopilotToolSummary,
@@ -14,6 +16,7 @@ import {
   resolveCopilotCliPath,
   resolveNativeCopilotPackageName,
   shouldRetryCopilotTurn,
+  toProviderQuotaSnapshots,
 } from "../../src-electron/copilot-adapter.js";
 import { ProviderTurnError, type RunSessionTurnResult } from "../../src-electron/provider-runtime.js";
 
@@ -216,6 +219,92 @@ describe("CopilotAdapter env", () => {
     assert.deepEqual(systemMessage, {
       mode: "append",
       content: "あなたは頼れる相棒です。",
+    });
+  });
+
+  it("quota snapshot は Copilot の 0-1 percentage を 0-100 表示用へ正規化する", () => {
+    const snapshots = toProviderQuotaSnapshots({
+      premium_interactions: {
+        entitlementRequests: 500,
+        usedRequests: 125,
+        remainingPercentage: 0.75,
+        overage: 0,
+        overageAllowedWithExhaustedQuota: false,
+        resetDate: "2026-04-01T00:00:00.000Z",
+      },
+    });
+
+    assert.deepEqual(snapshots, [
+      {
+        quotaKey: "premium_interactions",
+        entitlementRequests: 500,
+        usedRequests: 125,
+        remainingPercentage: 75,
+        overage: 0,
+        overageAllowedWithExhaustedQuota: false,
+        resetDate: "2026-04-01T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("quota snapshot から provider telemetry を組み立てる", () => {
+    const telemetry = buildCopilotProviderQuotaTelemetry(
+      "copilot",
+      {
+        premium_interactions: {
+          entitlementRequests: 420,
+          usedRequests: 118,
+          remainingPercentage: 0.719,
+          overage: 0,
+          overageAllowedWithExhaustedQuota: false,
+          resetDate: "2026-04-01T00:00:00.000Z",
+        },
+      },
+      "2026-03-25T08:00:00.000Z",
+    );
+
+    assert.deepEqual(telemetry, {
+      provider: "copilot",
+      updatedAt: "2026-03-25T08:00:00.000Z",
+      snapshots: [
+        {
+          quotaKey: "premium_interactions",
+          entitlementRequests: 420,
+          usedRequests: 118,
+          remainingPercentage: 71.89999999999999,
+          overage: 0,
+          overageAllowedWithExhaustedQuota: false,
+          resetDate: "2026-04-01T00:00:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("session usage_info から context telemetry を組み立てる", () => {
+    const telemetry = buildCopilotSessionContextTelemetry(
+      "copilot",
+      "session-1",
+      {
+        tokenLimit: 200000,
+        currentTokens: 18420,
+        messagesLength: 26,
+        systemTokens: 840,
+        conversationTokens: 17110,
+        toolDefinitionsTokens: 470,
+      },
+      "2026-03-25T08:05:00.000Z",
+    );
+
+    assert.deepEqual(telemetry, {
+      provider: "copilot",
+      sessionId: "session-1",
+      updatedAt: "2026-03-25T08:05:00.000Z",
+      tokenLimit: 200000,
+      currentTokens: 18420,
+      messagesLength: 26,
+      systemTokens: 840,
+      conversationTokens: 17110,
+      toolDefinitionsTokens: 470,
     });
   });
 

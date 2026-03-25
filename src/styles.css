@@ -2141,7 +2141,8 @@ button:disabled {
 
 .session-context-pane {
   display: grid;
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 10px;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -2418,6 +2419,128 @@ button:disabled {
 
 .command-monitor-details {
   min-width: 0;
+}
+
+.provider-usage-shell {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 16px;
+  background: rgba(12, 18, 27, 0.88);
+}
+
+.session-page .provider-usage-shell {
+  border-color: color-mix(in srgb, var(--character-sub) 18%, rgba(203, 213, 225, 0.14));
+  background: color-mix(in srgb, var(--character-sub-soft) 8%, rgba(10, 14, 22, 0.95));
+}
+
+.provider-usage-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.provider-usage-strip-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.provider-usage-strip-copy strong {
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
+.provider-usage-label {
+  color: var(--muted);
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.provider-usage-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+}
+
+.provider-usage-pill {
+  background: rgba(56, 189, 248, 0.16);
+  color: #c8f1ff;
+  white-space: nowrap;
+}
+
+.provider-context-details {
+  min-width: 0;
+}
+
+.provider-context-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.82rem;
+  list-style: none;
+}
+
+.provider-context-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.provider-context-summary-value {
+  color: var(--ink);
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 0.76rem;
+}
+
+.provider-context-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.provider-context-item {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  min-width: 0;
+}
+
+.provider-context-item.wide {
+  grid-column: 1 / -1;
+}
+
+.provider-context-item span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.provider-context-item strong {
+  color: var(--ink);
+  font-size: 0.84rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.provider-context-empty {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 .session-message-column .message-follow-banner {

@@ -12,7 +12,9 @@ import {
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
+  WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
+  WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
@@ -24,6 +26,7 @@ import {
   WITHMATE_LIST_SESSIONS_CHANNEL,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
+  WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT,
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
@@ -40,6 +43,7 @@ import {
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SESSIONS_CHANGED_EVENT,
+  WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
@@ -121,6 +125,12 @@ const withmateApi: WithMateWindowApi = {
   },
   getLiveSessionRun(sessionId: string) {
     return ipcRenderer.invoke(WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL, sessionId);
+  },
+  getProviderQuotaTelemetry(providerId: string) {
+    return ipcRenderer.invoke(WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL, providerId);
+  },
+  getSessionContextTelemetry(sessionId: string) {
+    return ipcRenderer.invoke(WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL, sessionId);
   },
   resolveLiveApproval(sessionId: string, requestId: string, decision) {
     return ipcRenderer.invoke(WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL, sessionId, requestId, decision);
@@ -220,6 +230,32 @@ const withmateApi: WithMateWindowApi = {
     ipcRenderer.on(WITHMATE_LIVE_SESSION_RUN_EVENT, wrapped);
     return () => {
       ipcRenderer.removeListener(WITHMATE_LIVE_SESSION_RUN_EVENT, wrapped);
+    };
+  },
+  subscribeProviderQuotaTelemetry(listener) {
+    const wrapped = (
+      _event: unknown,
+      payload: { providerId: string; telemetry: Awaited<ReturnType<WithMateWindowApi["getProviderQuotaTelemetry"]>> },
+    ) => {
+      listener(payload.providerId, payload.telemetry ?? null);
+    };
+
+    ipcRenderer.on(WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT, wrapped);
+    return () => {
+      ipcRenderer.removeListener(WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT, wrapped);
+    };
+  },
+  subscribeSessionContextTelemetry(listener) {
+    const wrapped = (
+      _event: unknown,
+      payload: { sessionId: string; telemetry: Awaited<ReturnType<WithMateWindowApi["getSessionContextTelemetry"]>> },
+    ) => {
+      listener(payload.sessionId, payload.telemetry ?? null);
+    };
+
+    ipcRenderer.on(WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT, wrapped);
+    return () => {
+      ipcRenderer.removeListener(WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT, wrapped);
     };
   },
   subscribeOpenSessionWindowIds(listener) {

@@ -17,8 +17,11 @@ import {
   type LiveApprovalRequest,
   type LiveSessionRunState,
   type Message,
+  type ProviderQuotaSnapshot,
+  type ProviderQuotaTelemetry,
   type RunSessionTurnRequest,
   type Session,
+  type SessionContextTelemetry,
   type AppSettings,
 } from "./app-state.js";
 import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
@@ -67,6 +70,16 @@ type SessionOwnedAuditLogs = {
 type SessionOwnedLiveRun = {
   ownerSessionId: string | null;
   state: LiveSessionRunState | null;
+};
+
+type ProviderOwnedQuotaTelemetry = {
+  ownerProviderId: string | null;
+  telemetry: ProviderQuotaTelemetry | null;
+};
+
+type SessionOwnedContextTelemetry = {
+  ownerSessionId: string | null;
+  telemetry: SessionContextTelemetry | null;
 };
 
 type ComposerSendabilityState = {
@@ -619,6 +632,40 @@ function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): strin
   ].join("\u001b");
 }
 
+function selectPrimaryQuotaSnapshot(telemetry: ProviderQuotaTelemetry | null): ProviderQuotaSnapshot | null {
+  if (!telemetry || telemetry.snapshots.length === 0) {
+    return null;
+  }
+
+  const preferredKeys = ["premium_interactions", "premium_requests", "premium", "chat"];
+  for (const preferredKey of preferredKeys) {
+    const matched = telemetry.snapshots.find((snapshot) => snapshot.quotaKey === preferredKey);
+    if (matched) {
+      return matched;
+    }
+  }
+
+  return telemetry.snapshots[0] ?? null;
+}
+
+function formatQuotaResetLabel(resetDate: string | undefined): string {
+  if (!resetDate?.trim()) {
+    return "未確認";
+  }
+
+  const parsed = new Date(resetDate);
+  if (Number.isNaN(parsed.getTime())) {
+    return resetDate;
+  }
+
+  return parsed.toLocaleString("ja-JP", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 const SESSION_CONTEXT_RAIL_DEFAULT_WIDTH = 420;
 const SESSION_CONTEXT_RAIL_MIN_WIDTH = 360;
 const SESSION_CONTEXT_RAIL_MAX_WIDTH = 620;
@@ -646,6 +693,14 @@ export default function App() {
   const [auditLogsOpen, setAuditLogsOpen] = useState(false);
   const [auditLogsState, setAuditLogsState] = useState<SessionOwnedAuditLogs>({ ownerSessionId: null, entries: [] });
   const [liveRunState, setLiveRunState] = useState<SessionOwnedLiveRun>({ ownerSessionId: null, state: null });
+  const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] = useState<ProviderOwnedQuotaTelemetry>({
+    ownerProviderId: null,
+    telemetry: null,
+  });
+  const [sessionContextTelemetryState, setSessionContextTelemetryState] = useState<SessionOwnedContextTelemetry>({
+    ownerSessionId: null,
+    telemetry: null,
+  });
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [resolvedCharacter, setResolvedCharacter] = useState<CharacterProfile | null | undefined>(undefined);
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>({ attachments: [], errors: [] });
@@ -739,6 +794,23 @@ export default function App() {
   const selectedSessionLiveRun = useMemo(
     () => (selectedSessionId !== null && liveRunState.ownerSessionId === selectedSessionId ? liveRunState.state : null),
     [liveRunState.ownerSessionId, liveRunState.state, selectedSessionId],
+  );
+  const selectedProviderQuotaTelemetry = useMemo(
+    () => (
+      selectedSession?.provider
+      && providerQuotaTelemetryState.ownerProviderId === selectedSession.provider
+        ? providerQuotaTelemetryState.telemetry
+        : null
+    ),
+    [providerQuotaTelemetryState.ownerProviderId, providerQuotaTelemetryState.telemetry, selectedSession?.provider],
+  );
+  const selectedSessionContextTelemetry = useMemo(
+    () => (
+      selectedSessionId !== null && sessionContextTelemetryState.ownerSessionId === selectedSessionId
+        ? sessionContextTelemetryState.telemetry
+        : null
+    ),
+    [selectedSessionId, sessionContextTelemetryState.ownerSessionId, sessionContextTelemetryState.telemetry],
   );
   const activePathReference = useMemo(
     () => (selectedSession ? getActivePathReference(draft, composerCaret) : null),
@@ -1076,11 +1148,20 @@ export default function App() {
     setHasActivityMonitorUnread(false);
     setAuditLogsState({ ownerSessionId: selectedSessionId, entries: [] });
     setLiveRunState({ ownerSessionId: selectedSessionId, state: null });
+    setProviderQuotaTelemetryState((current) =>
+      current.ownerProviderId === (selectedSession?.provider ?? null)
+        ? current
+        : {
+            ownerProviderId: selectedSession?.provider ?? null,
+            telemetry: null,
+          },
+    );
+    setSessionContextTelemetryState({ ownerSessionId: selectedSessionId, telemetry: null });
     setIsRetryDraftReplacePending(false);
     setApprovalActionRequestId(null);
     setIsHeaderExpanded(false);
     setIsActionDockPinnedExpanded(false);
-  }, [selectedSessionId]);
+  }, [selectedSession?.provider, selectedSessionId]);
 
   useEffect(() => {
     setApprovalActionRequestId(null);
@@ -1233,6 +1314,85 @@ export default function App() {
   useEffect(() => {
     let active = true;
     const withmateApi = window.withmate;
+    const providerId = selectedSession?.provider ?? null;
+
+    if (!withmateApi || providerId !== "copilot") {
+      setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry: null });
+      return () => {
+        active = false;
+      };
+    }
+
+    setProviderQuotaTelemetryState((current) =>
+      current.ownerProviderId === providerId
+        ? current
+        : { ownerProviderId: providerId, telemetry: null },
+    );
+
+    void withmateApi.getProviderQuotaTelemetry(providerId).then((telemetry) => {
+      if (active) {
+        setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry });
+      }
+    }).catch(() => {
+      if (active) {
+        setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry: null });
+      }
+    });
+
+    const unsubscribe = withmateApi.subscribeProviderQuotaTelemetry((nextProviderId, telemetry) => {
+      if (!active || nextProviderId !== providerId) {
+        return;
+      }
+
+      setProviderQuotaTelemetryState({ ownerProviderId: nextProviderId, telemetry });
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [selectedSession?.provider]);
+
+  useEffect(() => {
+    let active = true;
+    const withmateApi = window.withmate;
+    const sessionId = selectedSession?.id ?? null;
+
+    if (!withmateApi || !sessionId || selectedSession?.provider !== "copilot") {
+      setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry: null });
+      return () => {
+        active = false;
+      };
+    }
+
+    setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry: null });
+    void withmateApi.getSessionContextTelemetry(sessionId).then((telemetry) => {
+      if (active) {
+        setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry });
+      }
+    }).catch(() => {
+      if (active) {
+        setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry: null });
+      }
+    });
+
+    const unsubscribe = withmateApi.subscribeSessionContextTelemetry((nextSessionId, telemetry) => {
+      if (!active || nextSessionId !== sessionId) {
+        return;
+      }
+
+      setSessionContextTelemetryState({ ownerSessionId: nextSessionId, telemetry });
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [selectedSession?.id, selectedSession?.provider]);
+
+  useEffect(() => {
+    let active = true;
+    const withmateApi = window.withmate;
     if (!withmateApi || !selectedSession) {
       setComposerPreview({ attachments: [], errors: [] });
       return () => {
@@ -1298,6 +1458,33 @@ export default function App() {
   const selectedProviderCatalog = useMemo(
     () => (modelCatalog && selectedSession ? getProviderCatalog(modelCatalog.providers, selectedSession.provider) : null),
     [modelCatalog, selectedSession],
+  );
+  const isCopilotSession = selectedSession?.provider === "copilot";
+  const selectedCopilotQuotaSnapshot = useMemo(
+    () => (isCopilotSession ? selectPrimaryQuotaSnapshot(selectedProviderQuotaTelemetry) : null),
+    [isCopilotSession, selectedProviderQuotaTelemetry],
+  );
+  const selectedCopilotRemainingPercentLabel = useMemo(() => {
+    if (!selectedCopilotQuotaSnapshot) {
+      return "unavailable";
+    }
+
+    return `${Math.max(0, Math.round(selectedCopilotQuotaSnapshot.remainingPercentage))}% left`;
+  }, [selectedCopilotQuotaSnapshot]);
+  const selectedCopilotRemainingRequestsLabel = useMemo(() => {
+    if (!selectedCopilotQuotaSnapshot) {
+      return "usage unavailable";
+    }
+
+    const remainingRequests = Math.max(
+      0,
+      selectedCopilotQuotaSnapshot.entitlementRequests - selectedCopilotQuotaSnapshot.usedRequests,
+    );
+    return `${remainingRequests} / ${selectedCopilotQuotaSnapshot.entitlementRequests} left`;
+  }, [selectedCopilotQuotaSnapshot]);
+  const selectedCopilotQuotaResetLabel = useMemo(
+    () => formatQuotaResetLabel(selectedCopilotQuotaSnapshot?.resetDate),
+    [selectedCopilotQuotaSnapshot?.resetDate],
   );
   const availableReasoningEfforts = useMemo(
     () =>
@@ -2641,6 +2828,61 @@ export default function App() {
                     </div>
                   )}
                 </section>
+
+                {isCopilotSession ? (
+                  <section className="provider-usage-shell" aria-label="Copilot usage">
+                    <div className="provider-usage-strip">
+                      <div className="provider-usage-strip-copy">
+                        <span className="provider-usage-label">Premium Requests</span>
+                        <strong>{selectedCopilotRemainingPercentLabel}</strong>
+                      </div>
+                      <span className="provider-usage-pill">
+                        {selectedCopilotRemainingRequestsLabel}
+                      </span>
+                    </div>
+
+                    <details className="provider-context-details">
+                      <summary>
+                        <span>Context</span>
+                        <span className="provider-context-summary-value">
+                          {selectedSessionContextTelemetry
+                            ? `${selectedSessionContextTelemetry.currentTokens.toLocaleString()} / ${selectedSessionContextTelemetry.tokenLimit.toLocaleString()}`
+                            : "unavailable"}
+                        </span>
+                      </summary>
+                      {selectedSessionContextTelemetry ? (
+                        <div className="provider-context-grid">
+                          <div className="provider-context-item">
+                            <span>Current</span>
+                            <strong>{selectedSessionContextTelemetry.currentTokens.toLocaleString()}</strong>
+                          </div>
+                          <div className="provider-context-item">
+                            <span>Limit</span>
+                            <strong>{selectedSessionContextTelemetry.tokenLimit.toLocaleString()}</strong>
+                          </div>
+                          <div className="provider-context-item">
+                            <span>Messages</span>
+                            <strong>{selectedSessionContextTelemetry.messagesLength}</strong>
+                          </div>
+                          <div className="provider-context-item">
+                            <span>System</span>
+                            <strong>{selectedSessionContextTelemetry.systemTokens?.toLocaleString() ?? "-"}</strong>
+                          </div>
+                          <div className="provider-context-item wide">
+                            <span>Conversation</span>
+                            <strong>{selectedSessionContextTelemetry.conversationTokens?.toLocaleString() ?? "-"}</strong>
+                          </div>
+                          <div className="provider-context-item wide">
+                            <span>Reset</span>
+                            <strong>{selectedCopilotQuotaResetLabel}</strong>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="provider-context-empty">まだ context usage はないよ。</p>
+                      )}
+                    </details>
+                  </section>
+                ) : null}
               </aside>
             </div>
 

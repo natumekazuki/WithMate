@@ -151,6 +151,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
 - right pane は full timeline ではなく、実行中または直近 run の最後の `command_execution` 1 件だけを表示する
 - `Latest Command` には raw command、status、source、rough risk badge、必要時だけ開く `details` を出す
+- provider が `Copilot` の時だけ、`Latest Command` の下に `Premium Requests` の薄い strip を常設し、残量だけを即読できるようにする
+- `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない
 - `assistantText` は pending bubble の会話本文としてのみ扱い、`agent_message` を activity row へ戻さない
 - pending bubble の実行中 indicator は本文の代替ではなく `runState === "running"` を示すフラグとして扱い、`assistantText` の出力開始後も run 中は維持する
 - pending bubble の実行中 indicator は `runState !== "running"` になった時点で消し、success 固定の完了表現にはしない

@@ -21,8 +21,10 @@ import {
   getProviderAppSettings,
   normalizeAppSettings,
   type LiveSessionRunState,
+  type ProviderQuotaTelemetry,
   type RunSessionTurnRequest,
   type Session,
+  type SessionContextTelemetry,
 } from "../src/app-state.js";
 import {
   coerceModelSelection,
@@ -68,7 +70,9 @@ import {
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
+  WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
+  WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
@@ -80,6 +84,7 @@ import {
   WITHMATE_LIST_SESSIONS_CHANNEL,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
+  WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT,
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
@@ -96,6 +101,7 @@ import {
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SESSIONS_CHANGED_EVENT,
+  WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
@@ -133,6 +139,9 @@ const inFlightSessionRuns = new Set<string>();
 const sessionRunControllers = new Map<string, AbortController>();
 const allowCloseSessionWindows = new Set<string>();
 const liveSessionRuns = new Map<string, LiveSessionRunState>();
+const providerQuotaTelemetryByProvider = new Map<string, ProviderQuotaTelemetry>();
+const sessionContextTelemetryBySessionId = new Map<string, SessionContextTelemetry>();
+const providerQuotaRefreshPromises = new Map<string, Promise<ProviderQuotaTelemetry | null>>();
 const pendingSessionApprovalRequests = new Map<string, { requestId: string; resolve: (decision: LiveApprovalDecision) => void }>();
 let sessions: Session[] = [];
 let characters: CharacterProfile[] = [];
@@ -142,6 +151,7 @@ let auditLogStorage: AuditLogStorage | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
 let allowQuitWithInFlightRuns = false;
 let dbPath = "";
+const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
 
 function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0]): BrowserWindow {
   return new BrowserWindow({
@@ -379,6 +389,127 @@ function broadcastAppSettings(settings?: ReturnType<AppSettingsStorage["getSetti
   }
 }
 
+function getProviderQuotaTelemetry(providerId: string): ProviderQuotaTelemetry | null {
+  return providerQuotaTelemetryByProvider.get(providerId) ?? null;
+}
+
+function broadcastProviderQuotaTelemetry(providerId: string): void {
+  const telemetry = getProviderQuotaTelemetry(providerId);
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT, { providerId, telemetry });
+    }
+  }
+}
+
+function setProviderQuotaTelemetry(providerId: string, telemetry: ProviderQuotaTelemetry | null): void {
+  if (telemetry) {
+    providerQuotaTelemetryByProvider.set(providerId, telemetry);
+  } else {
+    providerQuotaTelemetryByProvider.delete(providerId);
+  }
+
+  broadcastProviderQuotaTelemetry(providerId);
+}
+
+function clearProviderQuotaTelemetry(providerId: string): void {
+  providerQuotaRefreshPromises.delete(providerId);
+  setProviderQuotaTelemetry(providerId, null);
+}
+
+function clearAllProviderQuotaTelemetry(): void {
+  const providerIds = new Set<string>([
+    ...providerQuotaTelemetryByProvider.keys(),
+    ...providerQuotaRefreshPromises.keys(),
+  ]);
+  providerQuotaRefreshPromises.clear();
+  providerQuotaTelemetryByProvider.clear();
+  for (const providerId of providerIds) {
+    broadcastProviderQuotaTelemetry(providerId);
+  }
+}
+
+function isProviderQuotaTelemetryStale(telemetry: ProviderQuotaTelemetry | null): boolean {
+  if (!telemetry) {
+    return true;
+  }
+
+  const updatedAt = Date.parse(telemetry.updatedAt);
+  if (Number.isNaN(updatedAt)) {
+    return true;
+  }
+
+  return Date.now() - updatedAt >= PROVIDER_QUOTA_STALE_TTL_MS;
+}
+
+async function refreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null> {
+  const inFlight = providerQuotaRefreshPromises.get(providerId);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const refreshPromise = (async () => {
+    const appSettings = requireAppSettingsStorage().getSettings();
+    const telemetry = await getProviderAdapter(providerId).getProviderQuotaTelemetry({
+      providerId,
+      appSettings,
+    });
+    setProviderQuotaTelemetry(providerId, telemetry);
+    return telemetry;
+  })();
+
+  providerQuotaRefreshPromises.set(providerId, refreshPromise);
+  try {
+    return await refreshPromise;
+  } finally {
+    providerQuotaRefreshPromises.delete(providerId);
+  }
+}
+
+async function getOrRefreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null> {
+  const current = getProviderQuotaTelemetry(providerId);
+  if (!isProviderQuotaTelemetryStale(current)) {
+    return current;
+  }
+
+  return refreshProviderQuotaTelemetry(providerId);
+}
+
+function getSessionContextTelemetry(sessionId: string): SessionContextTelemetry | null {
+  return sessionContextTelemetryBySessionId.get(sessionId) ?? null;
+}
+
+function broadcastSessionContextTelemetry(sessionId: string): void {
+  const telemetry = getSessionContextTelemetry(sessionId);
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT, { sessionId, telemetry });
+    }
+  }
+}
+
+function setSessionContextTelemetry(sessionId: string, telemetry: SessionContextTelemetry | null): void {
+  if (telemetry) {
+    sessionContextTelemetryBySessionId.set(sessionId, telemetry);
+  } else {
+    sessionContextTelemetryBySessionId.delete(sessionId);
+  }
+
+  broadcastSessionContextTelemetry(sessionId);
+}
+
+function clearSessionContextTelemetry(sessionId: string): void {
+  setSessionContextTelemetry(sessionId, null);
+}
+
+function clearAllSessionContextTelemetry(): void {
+  const sessionIds = Array.from(sessionContextTelemetryBySessionId.keys());
+  sessionContextTelemetryBySessionId.clear();
+  for (const sessionId of sessionIds) {
+    broadcastSessionContextTelemetry(sessionId);
+  }
+}
+
 function listOpenSessionWindowIds(): string[] {
   const openSessionIds: string[] = [];
   for (const [sessionId, window] of sessionWindows.entries()) {
@@ -445,6 +576,8 @@ async function resetAppDatabase(request?: ResetAppDatabaseRequest | null): Promi
 
   if (areAllResetAppDatabaseTargetsSelected(resetTargets)) {
     modelCatalog = await recreateDatabaseFile();
+    clearAllProviderQuotaTelemetry();
+    clearAllSessionContextTelemetry();
     appSettings = requireAppSettingsStorage().getSettings();
   } else {
     const appliedTargets = new Set<ResetAppDatabaseTarget>(resetTargets);
@@ -458,10 +591,12 @@ async function resetAppDatabase(request?: ResetAppDatabaseRequest | null): Promi
       liveSessionRuns.clear();
       sessionRunControllers.clear();
       inFlightSessionRuns.clear();
+      clearAllSessionContextTelemetry();
       invalidateAllProviderSessionThreads();
     }
     if (appliedTargets.has("appSettings")) {
       requireAppSettingsStorage().resetSettings();
+      clearAllProviderQuotaTelemetry();
     }
     if (appliedTargets.has("modelCatalog")) {
       requireModelCatalogStorage().resetToBundled();
@@ -705,13 +840,19 @@ function updateSession(nextSession: Session): Session {
     throw new Error("実行中のセッションは更新できないよ。");
   }
 
-  return upsertSession({
+  const updatedSession = upsertSession({
     ...nextSession,
     allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
       nextSession.workspacePath,
       nextSession.allowedAdditionalDirectories,
     ),
   });
+
+  if (currentSession.provider !== updatedSession.provider) {
+    clearSessionContextTelemetry(updatedSession.id);
+  }
+
+  return updatedSession;
 }
 
 function deleteSession(sessionId: string): void {
@@ -726,6 +867,7 @@ function deleteSession(sessionId: string): void {
 
   requireSessionStorage().deleteSession(sessionId);
   sessions = requireSessionStorage().listSessions();
+  clearSessionContextTelemetry(sessionId);
 
   const window = sessionWindows.get(sessionId);
   if (window && !window.isDestroyed()) {
@@ -760,8 +902,17 @@ function replaceAllSessions(
   },
 ): Session[] {
   const storage = requireSessionStorage();
+  const previousSessions = sessions;
   storage.replaceSessions(nextSessions);
   sessions = storage.listSessions();
+
+  const nextSessionsById = new Map(sessions.map((session) => [session.id, session] as const));
+  for (const previousSession of previousSessions) {
+    const nextSession = nextSessionsById.get(previousSession.id);
+    if (!nextSession || nextSession.provider !== previousSession.provider) {
+      clearSessionContextTelemetry(previousSession.id);
+    }
+  }
 
   for (const sessionId of options?.invalidateSessionIds ?? []) {
     const sessionProvider =
@@ -1001,6 +1152,14 @@ function updateAppSettings(nextSettingsInput: ReturnType<AppSettingsStorage["get
   let savedSettings: ReturnType<AppSettingsStorage["getSettings"]> | null = null;
   try {
     savedSettings = storage.updateSettings(nextSettings);
+    for (const providerId of providersWithApiKeyChange) {
+      clearProviderQuotaTelemetry(providerId);
+    }
+    for (const session of previousSessions) {
+      if (providersWithApiKeyChangeSet.has(session.provider)) {
+        clearSessionContextTelemetry(session.id);
+      }
+    }
     if (hasSessionThreadReset) {
       replaceAllSessions(nextSessions, {
         broadcast: false,
@@ -1150,6 +1309,10 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
   });
 
   try {
+    if (runningSession.provider === "copilot" && isProviderQuotaTelemetryStale(getProviderQuotaTelemetry(runningSession.provider))) {
+      void refreshProviderQuotaTelemetry(runningSession.provider).catch(() => undefined);
+    }
+
     const result = await providerAdapter.runSessionTurn({
       session: runningSession,
       character,
@@ -1159,6 +1322,12 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
       attachments: composerPreview.attachments,
       signal: runAbortController.signal,
       onApprovalRequest: (request) => waitForLiveApprovalDecision(sessionId, request, runAbortController.signal),
+      onProviderQuotaTelemetry: (telemetry) => {
+        setProviderQuotaTelemetry(telemetry.provider, telemetry);
+      },
+      onSessionContextTelemetry: (telemetry) => {
+        setSessionContextTelemetry(telemetry.sessionId, telemetry);
+      },
     }, (state) => {
       setLiveSessionRun(sessionId, {
         ...state,
@@ -1554,6 +1723,20 @@ app.whenReady().then(async () => {
     }
 
     return getLiveSessionRun(sessionId);
+  });
+  ipcMain.handle(WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL, async (_event, providerId: string) => {
+    if (!providerId) {
+      return null;
+    }
+
+    return getOrRefreshProviderQuotaTelemetry(providerId);
+  });
+  ipcMain.handle(WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL, (_event, sessionId: string) => {
+    if (!sessionId) {
+      return null;
+    }
+
+    return getSessionContextTelemetry(sessionId);
   });
   ipcMain.handle(
     WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,

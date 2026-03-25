@@ -10,6 +10,8 @@ import type {
   LiveApprovalRequest,
   LiveSessionRunState,
   MessageArtifact,
+  ProviderQuotaTelemetry,
+  SessionContextTelemetry,
   Session,
 } from "../src/app-state.js";
 import type { ModelCatalogProvider } from "../src/model-catalog.js";
@@ -31,6 +33,8 @@ export type RunSessionTurnInput = {
   attachments: ComposerAttachment[];
   signal?: AbortSignal;
   onApprovalRequest?: RunSessionTurnApprovalRequestHandler;
+  onProviderQuotaTelemetry?: RunSessionTurnProviderQuotaTelemetryHandler;
+  onSessionContextTelemetry?: RunSessionTurnSessionContextTelemetryHandler;
 };
 
 export type RunSessionTurnProgressHandler = (state: LiveSessionRunState) => void | Promise<void>;
@@ -38,6 +42,19 @@ export type RunSessionTurnProgressHandler = (state: LiveSessionRunState) => void
 export type RunSessionTurnApprovalRequestHandler = (
   request: LiveApprovalRequest,
 ) => Promise<LiveApprovalDecision> | LiveApprovalDecision;
+
+export type RunSessionTurnProviderQuotaTelemetryHandler = (
+  telemetry: ProviderQuotaTelemetry,
+) => Promise<void> | void;
+
+export type RunSessionTurnSessionContextTelemetryHandler = (
+  telemetry: SessionContextTelemetry,
+) => Promise<void> | void;
+
+export type GetProviderQuotaTelemetryInput = {
+  providerId: string;
+  appSettings: AppSettings;
+};
 
 export type RunSessionTurnResult = {
   threadId: string | null;
@@ -64,6 +81,7 @@ export class ProviderTurnError extends Error {
 
 export type ProviderTurnAdapter = {
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition;
+  getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput): Promise<ProviderQuotaTelemetry | null>;
   invalidateSessionThread(sessionId: string): void;
   invalidateAllSessionThreads(): void;
   runSessionTurn(

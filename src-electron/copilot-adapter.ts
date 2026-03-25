@@ -13,7 +13,17 @@ import {
   type SessionEvent,
 } from "@github/copilot-sdk";
 
-import type { AuditLogOperation, AuditLogUsage, AuditTransportPayload, LiveApprovalRequest, LiveRunStep, Session } from "../src/app-state.js";
+import type {
+  AuditLogOperation,
+  AuditLogUsage,
+  AuditTransportPayload,
+  LiveApprovalRequest,
+  LiveRunStep,
+  ProviderQuotaSnapshot,
+  ProviderQuotaTelemetry,
+  Session,
+  SessionContextTelemetry,
+} from "../src/app-state.js";
 import { getProviderAppSettings } from "../src/app-state.js";
 import { normalizeApprovalMode } from "../src/approval-mode.js";
 import { resolveModelSelection, type ResolvedModelSelection } from "../src/model-catalog.js";
@@ -144,9 +154,13 @@ export function resolveCopilotCliPath(
   return commandFileName;
 }
 
-function buildCopilotClientKey(providerId: string, input: RunSessionTurnInput): string {
-  const codingApiKey = getProviderAppSettings(input.appSettings, providerId).apiKey.trim();
+function buildCopilotClientKeyFromAppSettings(providerId: string, appSettings: RunSessionTurnInput["appSettings"]): string {
+  const codingApiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
   return JSON.stringify([providerId, codingApiKey || null]);
+}
+
+function buildCopilotClientKey(providerId: string, input: RunSessionTurnInput): string {
+  return buildCopilotClientKeyFromAppSettings(providerId, input.appSettings);
 }
 
 export function isRecoverableCopilotConnectionErrorMessage(message: string): boolean {
@@ -205,6 +219,90 @@ function toAuditUsageFromCopilot(data: { inputTokens?: number; cacheReadTokens?:
     inputTokens: data.inputTokens ?? 0,
     cachedInputTokens: data.cacheReadTokens ?? 0,
     outputTokens: data.outputTokens ?? 0,
+  };
+}
+
+type CopilotQuotaSnapshotLike = {
+  entitlementRequests: number;
+  usedRequests: number;
+  remainingPercentage: number;
+  overage?: number;
+  overageAllowedWithExhaustedQuota?: boolean;
+  resetDate?: string;
+};
+
+function normalizeQuotaRemainingPercentage(value: number): number {
+  if (Number.isNaN(value) || !Number.isFinite(value)) {
+    return 0;
+  }
+
+  if (value >= 0 && value <= 1) {
+    return value * 100;
+  }
+
+  return value;
+}
+
+export function toProviderQuotaSnapshots(
+  snapshots: Record<string, CopilotQuotaSnapshotLike> | null | undefined,
+): ProviderQuotaSnapshot[] {
+  if (!snapshots) {
+    return [];
+  }
+
+  return Object.entries(snapshots)
+    .map(([quotaKey, snapshot]) => ({
+      quotaKey,
+      entitlementRequests: snapshot.entitlementRequests,
+      usedRequests: snapshot.usedRequests,
+      remainingPercentage: normalizeQuotaRemainingPercentage(snapshot.remainingPercentage),
+      overage: snapshot.overage ?? 0,
+      overageAllowedWithExhaustedQuota: snapshot.overageAllowedWithExhaustedQuota ?? false,
+      resetDate: snapshot.resetDate,
+    }))
+    .sort((left, right) => left.quotaKey.localeCompare(right.quotaKey));
+}
+
+export function buildCopilotProviderQuotaTelemetry(
+  providerId: string,
+  snapshots: Record<string, CopilotQuotaSnapshotLike> | null | undefined,
+  updatedAt: string,
+): ProviderQuotaTelemetry | null {
+  const normalizedSnapshots = toProviderQuotaSnapshots(snapshots);
+  if (normalizedSnapshots.length === 0) {
+    return null;
+  }
+
+  return {
+    provider: providerId,
+    updatedAt,
+    snapshots: normalizedSnapshots,
+  };
+}
+
+export function buildCopilotSessionContextTelemetry(
+  providerId: string,
+  sessionId: string,
+  data: {
+    tokenLimit: number;
+    currentTokens: number;
+    messagesLength: number;
+    systemTokens?: number;
+    conversationTokens?: number;
+    toolDefinitionsTokens?: number;
+  },
+  updatedAt: string,
+): SessionContextTelemetry {
+  return {
+    provider: providerId,
+    sessionId,
+    updatedAt,
+    tokenLimit: data.tokenLimit,
+    currentTokens: data.currentTokens,
+    messagesLength: data.messagesLength,
+    systemTokens: data.systemTokens,
+    conversationTokens: data.conversationTokens,
+    toolDefinitionsTokens: data.toolDefinitionsTokens,
   };
 }
 
@@ -885,6 +983,32 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     }
   }
 
+  async getProviderQuotaTelemetry({
+    providerId,
+    appSettings,
+  }: {
+    providerId: string;
+    appSettings: RunSessionTurnInput["appSettings"];
+  }): Promise<ProviderQuotaTelemetry | null> {
+    const clientKey = buildCopilotClientKeyFromAppSettings(providerId, appSettings);
+    const cached = this.clients.get(clientKey);
+    const client = cached ?? new CopilotClient({
+      cliPath: resolveCopilotCliPath(),
+      env: buildCopilotClientEnv(process.env),
+      ...(getProviderAppSettings(appSettings, providerId).apiKey.trim()
+        ? { githubToken: getProviderAppSettings(appSettings, providerId).apiKey.trim(), useLoggedInUser: false }
+        : {}),
+    });
+
+    if (!cached) {
+      this.clients.set(clientKey, client);
+    }
+
+    await client.start();
+    const quota = await client.rpc.account.getQuota();
+    return buildCopilotProviderQuotaTelemetry(providerId, quota.quotaSnapshots, new Date().toISOString());
+  }
+
   private getClient(providerId: string, input: RunSessionTurnInput): { client: CopilotClient; clientKey: string } {
     const codingApiKey = getProviderAppSettings(input.appSettings, providerId).apiKey.trim();
     const clientKey = buildCopilotClientKey(providerId, input);
@@ -1126,6 +1250,28 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         }
         case "assistant.usage":
           usage = toAuditUsageFromCopilot(event.data);
+          if (input.onProviderQuotaTelemetry) {
+            const telemetry = buildCopilotProviderQuotaTelemetry(
+              input.providerCatalog.id,
+              event.data.quotaSnapshots,
+              event.timestamp,
+            );
+            if (telemetry) {
+              void input.onProviderQuotaTelemetry(telemetry);
+            }
+          }
+          break;
+        case "session.usage_info":
+          if (input.onSessionContextTelemetry) {
+            void input.onSessionContextTelemetry(
+              buildCopilotSessionContextTelemetry(
+                input.providerCatalog.id,
+                input.session.id,
+                event.data,
+                event.timestamp,
+              ),
+            );
+          }
           break;
         case "session.error":
           streamErrorMessage = event.data.message;
