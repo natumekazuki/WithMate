@@ -7,3 +7,5 @@
   - card 内で候補リストだけがスクロールするように調整した
 - verification:
   - `npm run build`
+- notes:
+  - 実装コミット: `cff2655` `feat(character): session copy editor を改善`

@@ -7,3 +7,5 @@
   - SessionWindow では slot ごとの stable seed から候補を 1 件選ぶようにした
 - verification:
   - `npm run build`
+- notes:
+  - 実装コミット: `cff2655` `feat(character): session copy editor を改善`
