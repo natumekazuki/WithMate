@@ -45,3 +45,7 @@
 - `docs/design/codex-capability-matrix.md`
 - `docs/design/slash-command-integration.md`
 - `node_modules/@openai/codex-sdk/dist/index.d.ts`
+
+## Commits
+
+- `e526de2` `docs(backlog): 実装状況の管理列を追加`
