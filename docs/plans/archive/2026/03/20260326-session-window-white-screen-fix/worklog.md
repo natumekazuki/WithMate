@@ -5,3 +5,4 @@
 - 2026-03-26: `src/App.tsx` を確認し、`retryBanner` の `useMemo` が後方定義の `pendingIndicatorCharacterName` を参照していることを特定した。
 - 2026-03-26: `pendingIndicatorCharacterName` と live run 派生値を `retryBanner` より前へ移動して TDZ を解消した。
 - 2026-03-26: `npm run build` と `ELECTRON_ENABLE_LOGGING=1 npm run electron:start` で renderer 例外が消えたことを確認した。
+- 2026-03-26: コミット `a083a2f` `fix(session): Session Window の白画面を修正` で、白画面修正と archive plan 一式を記録した。
