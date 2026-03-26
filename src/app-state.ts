@@ -28,7 +28,16 @@ export type RunCheck = {
   value: string;
 };
 
-export type AuditLogPhase = "running" | "completed" | "failed" | "canceled" | "started";
+export type AuditLogPhase =
+  | "running"
+  | "completed"
+  | "failed"
+  | "canceled"
+  | "started"
+  | "background-running"
+  | "background-completed"
+  | "background-failed"
+  | "background-canceled";
 
 export type AuditLogOperation = {
   type: string;

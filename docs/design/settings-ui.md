@@ -48,11 +48,11 @@
     - `OpenAI API Key (Coding Agent)` 入力
     - `Character Stream 用ではない` 補助文
     - future で Character Stream 用 API 欄を別責務で追加する note
-  - `Memory Extraction`
-    - provider ごとの `Model`
-    - provider ごとの `Reasoning Depth`
-    - provider ごとの `Output Tokens Threshold`
-    - `compact 前` / `session close 前` は強制実行である補助文
+- `Memory Extraction`
+  - provider ごとの `Model`
+  - provider ごとの `Reasoning Depth`
+  - provider ごとの `Output Tokens Threshold`
+  - 現在は turn 完了時の threshold 判定と `Session Window` close 時の強制実行に使う
   - `Model Catalog`
     - import / export
     - DB 初期化時は bundled catalog へ戻る補助文
@@ -83,6 +83,7 @@
 - coding credential は Settings 保存後すぐ Main Process から各 window へ broadcast し、Session Window の実行可否表示も即時更新する
 - provider 実装は保存済み coding credential を runtime の SDK client へ渡し、空文字のときだけ従来どおり環境依存 fallback を許可する
 - Memory extraction 設定は provider ごとに保持し、trigger engine は現在 provider の `model / reasoning depth / outputTokens threshold` を参照する
+- current 実装では、memory extraction の通常発火は `outputTokens threshold` だけで判定する
 - DB reset 成功時は renderer 側で reset 後の `appSettings` を draft に同期し、dirty 状態を解消する
 - reset 実行 API は選択対象を Main Process へ渡し、戻り値の current `sessions / appSettings / modelCatalog` で renderer を再同期する
 

@@ -15,6 +15,7 @@ import type {
   MessageArtifact,
   RunCheck,
   Session,
+  SessionMemoryDelta,
 } from "../src/app-state.js";
 import { getProviderAppSettings } from "../src/app-state.js";
 import { mapApprovalModeToCodexPolicy } from "../src/approval-mode.js";
@@ -34,12 +35,15 @@ import { normalizeAllowedAdditionalDirectories } from "./additional-directories.
 import { composeProviderPrompt, isCanceledProviderMessage } from "./provider-prompt.js";
 import {
   ProviderTurnError,
+  type ExtractSessionMemoryResult,
+  type ExtractSessionMemoryInput,
   type ProviderPromptComposition,
   type ProviderTurnAdapter,
   type RunSessionTurnInput,
   type RunSessionTurnProgressHandler,
   type RunSessionTurnResult,
 } from "./provider-runtime.js";
+import { parseSessionMemoryDeltaText } from "./session-memory-extraction.js";
 const MAX_DIFF_MATRIX_CELLS = 2_000_000;
 
 function summarizeChangedFile(kind: ChangedFile["kind"], filePath: string): string {
@@ -724,6 +728,30 @@ export class CodexAdapter implements ProviderTurnAdapter {
 
   async getProviderQuotaTelemetry(): Promise<null> {
     return null;
+  }
+
+  async extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult> {
+    const { client } = this.getClient(input.session.provider, input.appSettings);
+    const thread = client.startThread({
+      workingDirectory: input.session.workspacePath,
+      skipGitRepoCheck: true,
+      sandboxMode: "read-only",
+      approvalPolicy: "never",
+      model: input.model,
+      modelReasoningEffort: input.reasoningEffort,
+    });
+
+    const extractionInput = `${input.prompt.systemText}\n\n${input.prompt.userText}`.trim();
+    const result = await thread.run(extractionInput, {
+      outputSchema: input.prompt.outputSchema,
+    });
+
+    return {
+      threadId: thread.id,
+      rawText: result.finalResponse,
+      delta: parseSessionMemoryDeltaText(result.finalResponse),
+      usage: result.usage ? toAuditUsage(result.usage) : null,
+    };
   }
 
   invalidateSessionThread(sessionId: string): void {

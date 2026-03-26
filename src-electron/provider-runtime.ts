@@ -2,8 +2,8 @@ import type {
   AppSettings,
   AuditLogicalPrompt,
   AuditLogOperation,
-  AuditTransportPayload,
   AuditLogUsage,
+  AuditTransportPayload,
   CharacterProfile,
   ComposerAttachment,
   LiveApprovalDecision,
@@ -13,8 +13,10 @@ import type {
   ProviderQuotaTelemetry,
   SessionContextTelemetry,
   Session,
+  SessionMemoryDelta,
 } from "../src/app-state.js";
-import type { ModelCatalogProvider } from "../src/model-catalog.js";
+import type { ModelReasoningEffort, ModelCatalogProvider } from "../src/model-catalog.js";
+import type { SessionMemoryExtractionPrompt } from "./session-memory-extraction.js";
 
 export type ProviderPromptComposition = {
   systemBodyText: string;
@@ -56,6 +58,21 @@ export type GetProviderQuotaTelemetryInput = {
   appSettings: AppSettings;
 };
 
+export type ExtractSessionMemoryInput = {
+  session: Session;
+  appSettings: AppSettings;
+  model: string;
+  reasoningEffort: ModelReasoningEffort;
+  prompt: SessionMemoryExtractionPrompt;
+};
+
+export type ExtractSessionMemoryResult = {
+  threadId: string | null;
+  rawText: string;
+  delta: SessionMemoryDelta | null;
+  usage: AuditLogUsage | null;
+};
+
 export type RunSessionTurnResult = {
   threadId: string | null;
   assistantText: string;
@@ -82,6 +99,7 @@ export class ProviderTurnError extends Error {
 export type ProviderTurnAdapter = {
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition;
   getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput): Promise<ProviderQuotaTelemetry | null>;
+  extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult>;
   invalidateSessionThread(sessionId: string): void;
   invalidateAllSessionThreads(): void;
   runSessionTurn(

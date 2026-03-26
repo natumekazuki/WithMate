@@ -38,7 +38,17 @@ type TableInfoRow = {
 };
 
 function toAuditLogPhase(value: string): AuditLogPhase {
-  if (value === "running" || value === "started" || value === "completed" || value === "failed" || value === "canceled") {
+  if (
+    value === "running"
+    || value === "started"
+    || value === "completed"
+    || value === "failed"
+    || value === "canceled"
+    || value === "background-running"
+    || value === "background-completed"
+    || value === "background-failed"
+    || value === "background-canceled"
+  ) {
     return value;
   }
 

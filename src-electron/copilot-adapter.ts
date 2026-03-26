@@ -23,6 +23,7 @@ import type {
   ProviderQuotaTelemetry,
   Session,
   SessionContextTelemetry,
+  SessionMemoryDelta,
 } from "../src/app-state.js";
 import { getProviderAppSettings } from "../src/app-state.js";
 import { normalizeApprovalMode } from "../src/approval-mode.js";
@@ -31,12 +32,15 @@ import { buildArtifactFromOperations } from "./provider-artifact.js";
 import { composeProviderPrompt, isCanceledProviderMessage } from "./provider-prompt.js";
 import {
   ProviderTurnError,
+  type ExtractSessionMemoryResult,
+  type ExtractSessionMemoryInput,
   type ProviderPromptComposition,
   type ProviderTurnAdapter,
   type RunSessionTurnInput,
   type RunSessionTurnProgressHandler,
   type RunSessionTurnResult,
 } from "./provider-runtime.js";
+import { parseSessionMemoryDeltaText } from "./session-memory-extraction.js";
 import {
   captureWorkspaceSnapshot,
   type SnapshotCaptureStats,
@@ -1007,6 +1011,55 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     await client.start();
     const quota = await client.rpc.account.getQuota();
     return buildCopilotProviderQuotaTelemetry(providerId, quota.quotaSnapshots, new Date().toISOString());
+  }
+
+  async extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult> {
+    const providerId = input.session.provider;
+    const clientKey = buildCopilotClientKeyFromAppSettings(providerId, input.appSettings);
+    const cached = this.clients.get(clientKey);
+    const apiKey = getProviderAppSettings(input.appSettings, providerId).apiKey.trim();
+    const client = cached ?? new CopilotClient({
+      cliPath: resolveCopilotCliPath(),
+      env: buildCopilotClientEnv(process.env),
+      ...(apiKey ? { githubToken: apiKey, useLoggedInUser: false } : {}),
+    });
+
+    if (!cached) {
+      this.clients.set(clientKey, client);
+    }
+
+    await client.start();
+    let usage: AuditLogUsage | null = null;
+
+    const denyAllPermissions: PermissionHandler = () => ({ kind: "denied-interactively-by-user" });
+    const extractionSession = await client.createSession({
+      model: input.model,
+      reasoningEffort: input.reasoningEffort === "minimal" ? "low" : input.reasoningEffort,
+      workingDirectory: input.session.workspacePath,
+      streaming: false,
+      onPermissionRequest: denyAllPermissions,
+      systemMessage: {
+        mode: "append",
+        content: input.prompt.systemText,
+      },
+    });
+    const unsubscribeUsage = extractionSession.on("assistant.usage", (event) => {
+      usage = toAuditUsageFromCopilot(event.data);
+    });
+
+    try {
+      const response = await extractionSession.sendAndWait({ prompt: input.prompt.userText }, 60_000);
+      const rawText = response?.data.content ?? "";
+      return {
+        threadId: extractionSession.sessionId,
+        rawText,
+        delta: parseSessionMemoryDeltaText(rawText),
+        usage,
+      };
+    } finally {
+      unsubscribeUsage();
+      await extractionSession.disconnect().catch(() => undefined);
+    }
   }
 
   private getClient(providerId: string, input: RunSessionTurnInput): { client: CopilotClient; clientKey: string } {

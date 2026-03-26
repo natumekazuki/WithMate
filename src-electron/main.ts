@@ -18,6 +18,7 @@ import {
   type DiffPreviewPayload,
   type LiveApprovalDecision,
   type LiveApprovalRequest,
+  mergeSessionMemory,
   getProviderAppSettings,
   normalizeAppSettings,
   type LiveSessionRunState,
@@ -55,6 +56,14 @@ import { resolveOpenPathTarget } from "./open-path.js";
 import { launchTerminalAtPath } from "./open-terminal.js";
 import { SessionStorage } from "./session-storage.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
+import {
+  buildSessionMemoryExtractionLogicalPrompt,
+  buildSessionMemoryExtractionPrompt,
+  buildSessionMemoryExtractionTransportPayload,
+  getSessionMemoryExtractionSettings,
+  shouldTriggerSessionMemoryExtraction,
+  type SessionMemoryExtractionTriggerReason,
+} from "./session-memory-extraction.js";
 import { discoverSessionSkills } from "./skill-discovery.js";
 import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
@@ -147,6 +156,7 @@ const sessionContextTelemetryBySessionId = new Map<string, SessionContextTelemet
 const providerQuotaRefreshPromises = new Map<string, Promise<ProviderQuotaTelemetry | null>>();
 const providerQuotaRefreshTimers = new Map<string, NodeJS.Timeout[]>();
 const pendingSessionApprovalRequests = new Map<string, { requestId: string; resolve: (decision: LiveApprovalDecision) => void }>();
+const inFlightSessionMemoryExtractions = new Set<string>();
 let sessions: Session[] = [];
 let characters: CharacterProfile[] = [];
 let sessionStorage: SessionStorage | null = null;
@@ -944,6 +954,127 @@ function syncSessionMemoryForSession(session: Session): void {
   });
 }
 
+async function runSessionMemoryExtraction(
+  session: Session,
+  usage: AuditLogEntry["usage"],
+  options?: { force?: boolean; triggerReason?: SessionMemoryExtractionTriggerReason },
+): Promise<void> {
+  if (inFlightSessionMemoryExtractions.has(session.id)) {
+    return;
+  }
+
+  const appSettings = requireAppSettingsStorage().getSettings();
+  const extractionSettings = getSessionMemoryExtractionSettings(appSettings, session.provider);
+  const shouldRun = shouldTriggerSessionMemoryExtraction(
+    usage,
+    extractionSettings.outputTokensThreshold,
+    options?.force ?? false,
+  );
+  if (!shouldRun) {
+    return;
+  }
+
+  const sessionMemoryStore = requireSessionMemoryStorage();
+  const latestSession = getSession(session.id) ?? session;
+  const currentMemory = sessionMemoryStore.ensureSessionMemory(latestSession);
+  const prompt = buildSessionMemoryExtractionPrompt(latestSession, currentMemory);
+  const logicalPrompt = buildSessionMemoryExtractionLogicalPrompt(prompt);
+  const triggerReason = options?.triggerReason ?? (options?.force ? "session-window-close" : "outputTokensThreshold");
+  const transportPayload = buildSessionMemoryExtractionTransportPayload(
+    latestSession.provider,
+    extractionSettings,
+    triggerReason,
+  );
+  const providerAdapter = getProviderAdapter(latestSession.provider);
+  const runningAuditLog = requireAuditLogStorage().createAuditLog({
+    sessionId: latestSession.id,
+    createdAt: new Date().toISOString(),
+    phase: "background-running",
+    provider: latestSession.provider,
+    model: extractionSettings.model,
+    reasoningEffort: extractionSettings.reasoningEffort,
+    approvalMode: latestSession.approvalMode,
+    threadId: latestSession.threadId,
+    logicalPrompt,
+    transportPayload,
+    assistantText: "",
+    operations: [],
+    rawItemsJson: "[]",
+    usage: null,
+    errorMessage: "",
+  });
+
+  inFlightSessionMemoryExtractions.add(session.id);
+  try {
+    const extractionResult = await providerAdapter.extractSessionMemoryDelta({
+      session: latestSession,
+      appSettings,
+      model: extractionSettings.model,
+      reasoningEffort: extractionSettings.reasoningEffort,
+      prompt,
+    });
+    const delta = extractionResult.delta;
+    requireAuditLogStorage().updateAuditLog(runningAuditLog.id, {
+      sessionId: latestSession.id,
+      createdAt: runningAuditLog.createdAt,
+      phase: "background-completed",
+      provider: latestSession.provider,
+      model: extractionSettings.model,
+      reasoningEffort: extractionSettings.reasoningEffort,
+      approvalMode: latestSession.approvalMode,
+      threadId: extractionResult.threadId ?? latestSession.threadId,
+      logicalPrompt,
+      transportPayload,
+      assistantText: extractionResult.rawText,
+      operations: [],
+      rawItemsJson: "[]",
+      usage: extractionResult.usage,
+      errorMessage: "",
+    });
+    if (!delta) {
+      return;
+    }
+
+    const sessionForSave = getSession(session.id) ?? latestSession;
+    const currentForSave = sessionMemoryStore.ensureSessionMemory(sessionForSave);
+    sessionMemoryStore.upsertSessionMemory(
+      mergeSessionMemory(
+        {
+          ...currentForSave,
+          workspacePath: sessionForSave.workspacePath,
+          threadId: sessionForSave.threadId,
+        },
+        delta,
+      ),
+    );
+  } catch (error) {
+    requireAuditLogStorage().updateAuditLog(runningAuditLog.id, {
+      sessionId: latestSession.id,
+      createdAt: runningAuditLog.createdAt,
+      phase: "background-failed",
+      provider: latestSession.provider,
+      model: extractionSettings.model,
+      reasoningEffort: extractionSettings.reasoningEffort,
+      approvalMode: latestSession.approvalMode,
+      threadId: latestSession.threadId,
+      logicalPrompt,
+      transportPayload,
+      assistantText: "",
+      operations: [],
+      rawItemsJson: "[]",
+      usage: null,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    console.error("session memory extraction failed", {
+      sessionId: session.id,
+      provider: session.provider,
+      error,
+    });
+  } finally {
+    inFlightSessionMemoryExtractions.delete(session.id);
+  }
+}
+
 function replaceAllSessions(
   nextSessions: Session[],
   options?: {
@@ -1422,7 +1553,9 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
       ],
     };
 
-    return upsertSession(completedSession);
+    const storedCompletedSession = upsertSession(completedSession);
+    void runSessionMemoryExtraction(storedCompletedSession, result.usage, { triggerReason: "outputTokensThreshold" });
+    return storedCompletedSession;
   } catch (error: unknown) {
     const providerTurnError = error instanceof ProviderTurnError ? error : null;
     const canceled = providerTurnError ? providerTurnError.canceled : isCanceledRunError(error);
@@ -1469,7 +1602,9 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
       ],
     };
 
-    return upsertSession(failedSession);
+    const storedFailedSession = upsertSession(failedSession);
+    void runSessionMemoryExtraction(storedFailedSession, partialResult?.usage ?? null, { triggerReason: "outputTokensThreshold" });
+    return storedFailedSession;
   } finally {
     if (runningSession.provider === "copilot") {
       scheduleProviderQuotaTelemetryRefresh(runningSession.provider, [0, 3000, 10000]);
@@ -1677,6 +1812,10 @@ async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {
     allowCloseSessionWindows.delete(sessionId);
     sessionWindows.delete(sessionId);
     broadcastOpenSessionWindowIds();
+    const closedSession = getSession(sessionId);
+    if (closedSession && !isSessionRunInFlight(sessionId)) {
+      void runSessionMemoryExtraction(closedSession, null, { force: true, triggerReason: "session-window-close" });
+    }
   });
 
   await loadSessionEntry(window, sessionId);

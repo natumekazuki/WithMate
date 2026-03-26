@@ -515,7 +515,14 @@ function buildDisplayedMessagesScrollSignature(messages: Message[]): string {
 }
 
 function isTerminalAuditLogPhase(phase: AuditLogEntry["phase"]): boolean {
-  return phase === "completed" || phase === "failed" || phase === "canceled";
+  return (
+    phase === "completed"
+    || phase === "failed"
+    || phase === "canceled"
+    || phase === "background-completed"
+    || phase === "background-failed"
+    || phase === "background-canceled"
+  );
 }
 
 function getLastNonEmptyValue(values: Array<string | null | undefined>): string {
@@ -2376,12 +2383,20 @@ export default function App() {
       case "running":
       case "started":
         return "RUNNING";
+      case "background-running":
+        return "BG RUN";
       case "completed":
         return "DONE";
+      case "background-completed":
+        return "BG DONE";
       case "canceled":
         return "CANCELED";
+      case "background-canceled":
+        return "BG CANCELED";
       case "failed":
         return "FAIL";
+      case "background-failed":
+        return "BG FAIL";
       default:
         return phase;
     }
