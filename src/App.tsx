@@ -1609,6 +1609,35 @@ export default function App() {
 
     return null;
   }, [latestAuditCommandOperation, latestLiveCommandStep, latestTerminalAuditLog?.phase]);
+  const orderedLiveRunSteps = useMemo(
+    () =>
+      (selectedSessionLiveRun?.steps ?? [])
+        .map((step, index) => ({ step, index }))
+        .sort((left, right) => {
+          const bucketDiff =
+            liveRunStepBucketPriority(left.step.status) - liveRunStepBucketPriority(right.step.status);
+          return bucketDiff !== 0 ? bucketDiff : left.index - right.index;
+        })
+        .map(({ step }) => step),
+    [selectedSessionLiveRun?.steps],
+  );
+
+  const hasInProgressLiveRunStep = useMemo(
+    () => orderedLiveRunSteps.some((step) => step.status === "in_progress"),
+    [orderedLiveRunSteps],
+  );
+
+  const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
+  const liveApprovalRequest = selectedSessionLiveRun?.approvalRequest ?? null;
+  const isApprovalRequestPending = !!liveApprovalRequest;
+  const hasLiveRunAssistantText = liveRunAssistantText.length > 0;
+  const pendingIndicatorCharacterName = useMemo(() => {
+    const candidateNames = [selectedSessionCharacter?.name, resolvedCharacter?.name]
+      .map((name) => name?.trim() ?? "")
+      .filter(Boolean);
+
+    return candidateNames[0] ?? "";
+  }, [resolvedCharacter?.name, selectedSessionCharacter?.name]);
   const retryBanner = useMemo<RetryBannerState | null>(() => {
     if (!selectedSession || selectedSession.runState === "running" || !lastUserMessage) {
       return null;
@@ -2462,35 +2491,6 @@ export default function App() {
     setIsContextRailResizing(true);
   };
 
-  const orderedLiveRunSteps = useMemo(
-    () =>
-      (selectedSessionLiveRun?.steps ?? [])
-        .map((step, index) => ({ step, index }))
-        .sort((left, right) => {
-          const bucketDiff =
-            liveRunStepBucketPriority(left.step.status) - liveRunStepBucketPriority(right.step.status);
-          return bucketDiff !== 0 ? bucketDiff : left.index - right.index;
-        })
-        .map(({ step }) => step),
-    [selectedSessionLiveRun?.steps],
-  );
-
-  const hasInProgressLiveRunStep = useMemo(
-    () => orderedLiveRunSteps.some((step) => step.status === "in_progress"),
-    [orderedLiveRunSteps],
-  );
-
-  const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
-  const liveApprovalRequest = selectedSessionLiveRun?.approvalRequest ?? null;
-  const isApprovalRequestPending = !!liveApprovalRequest;
-  const hasLiveRunAssistantText = liveRunAssistantText.length > 0;
-  const pendingIndicatorCharacterName = useMemo(() => {
-    const candidateNames = [selectedSessionCharacter?.name, resolvedCharacter?.name]
-      .map((name) => name?.trim() ?? "")
-      .filter(Boolean);
-
-    return candidateNames[0] ?? "";
-  }, [resolvedCharacter?.name, selectedSessionCharacter?.name]);
   const pendingRunIndicatorText = isApprovalRequestPending
     ? renderCharacterSessionCopy(
       selectedSessionCopy.pendingApproval,
