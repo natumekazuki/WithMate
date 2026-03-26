@@ -29,7 +29,7 @@ npm run electron:start
 | MT-001 | Home 起動 | `npm run electron:start` でアプリを起動する | Home Window が表示される |
 | MT-002 | Home 一覧 | session が 0 件の状態で起動する | 空状態メッセージが表示される |
 | MT-003 | Characters 一覧 | character が 0 件の状態で起動する | 空状態メッセージと `Add Character` が表示される |
-| MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、`System Prompt Prefix` / `Coding Agent Providers` / `Coding Agent Credentials` / `Memory Extraction` / `Model Catalog` / `Danger Zone` が見える |
+| MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `System Prompt Prefix` / `Coding Agent Providers` / `Coding Agent Credentials` / `Memory Extraction` / `Model Catalog` / `Danger Zone` が既存値で表示される |
 | MT-004A | Settings provider row layout | `Settings Window` を開いて `Coding Agent Providers` を確認する | provider 名が左、checkbox が右の row で揃って見え、どの provider を on/off しているか即判別できる |
 | MT-004B | Memory extraction settings | `Settings Window` の `Memory Extraction` を確認する | provider ごとに `Model` / `Reasoning Depth` / `Output Tokens Threshold` が表示され、現在の model catalog に沿った選択肢だけが出る |
 | MT-005 | Settings copy | `Settings Window` を確認する | `OpenAI API Key (Coding Agent)` が coding plane 用と読め、`Character Stream 用ではない` 補助文と future note が表示される |

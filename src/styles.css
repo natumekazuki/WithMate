@@ -1399,6 +1399,14 @@ button:disabled {
   height: 100%;
 }
 
+.settings-loading-state {
+  display: grid;
+  place-items: center;
+  min-height: 240px;
+  padding: 24px;
+  color: var(--muted);
+}
+
 .launch-dialog-head {
   display: flex;
   align-items: center;
@@ -1518,6 +1526,12 @@ button:disabled {
   outline: none;
   border-color: rgba(15, 139, 141, 0.5);
   box-shadow: 0 0 0 3px rgba(15, 139, 141, 0.12);
+}
+
+.home-page.home-page-settings-window .composer-setting-field select {
+  border-color: rgba(203, 213, 225, 0.12);
+  background: rgba(15, 19, 26, 0.9);
+  color: var(--ink);
 }
 
 .settings-actions {

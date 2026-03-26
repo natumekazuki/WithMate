@@ -258,6 +258,8 @@ export default function HomeApp() {
   const [settingsFeedback, setSettingsFeedback] = useState("");
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
+  const [appSettingsLoaded, setAppSettingsLoaded] = useState(!isSettingsWindowMode);
+  const [modelCatalogLoaded, setModelCatalogLoaded] = useState(!isSettingsWindowMode);
   const [systemPromptPrefixDraft, setSystemPromptPrefixDraft] = useState("");
   const [codingProviderSettingsDraft, setCodingProviderSettingsDraft] = useState<Record<string, ProviderAppSettings>>({});
   const [memoryExtractionProviderSettingsDraft, setMemoryExtractionProviderSettingsDraft] = useState<
@@ -272,13 +274,18 @@ export default function HomeApp() {
   const [launchCharacterId, setLaunchCharacterId] = useState("");
   const [launchCharacterSearchText, setLaunchCharacterSearchText] = useState("");
   const settingsDirtyRef = useRef(false);
+  const settingsHydratedRef = useRef(!isSettingsWindowMode);
 
   const applyIncomingAppSettings = (settings: AppSettings, options?: { force?: boolean }) => {
     setAppSettings(settings);
-    if (options?.force || !isSettingsWindowMode || !settingsDirtyRef.current) {
+    setAppSettingsLoaded(true);
+    const shouldHydrateDrafts =
+      options?.force || !isSettingsWindowMode || !settingsHydratedRef.current || !settingsDirtyRef.current;
+    if (shouldHydrateDrafts) {
       setSystemPromptPrefixDraft(settings.systemPromptPrefix);
       setCodingProviderSettingsDraft(settings.codingProviderSettings);
       setMemoryExtractionProviderSettingsDraft(settings.memoryExtractionProviderSettings);
+      settingsHydratedRef.current = true;
     }
   };
 
@@ -316,6 +323,7 @@ export default function HomeApp() {
     void window.withmate.getModelCatalog(null).then((snapshot) => {
       if (active) {
         setModelCatalog(snapshot);
+        setModelCatalogLoaded(true);
       }
     });
 
@@ -345,6 +353,7 @@ export default function HomeApp() {
     const unsubscribeModelCatalog = window.withmate.subscribeModelCatalog((snapshot) => {
       if (active) {
         setModelCatalog(snapshot);
+        setModelCatalogLoaded(true);
       }
     });
     const unsubscribeAppSettings = window.withmate.subscribeAppSettings((settings) => {
@@ -928,11 +937,12 @@ export default function HomeApp() {
                     {providerSettingRows.map((row) => (
                       <section key={row.provider.id} className="settings-provider-card">
                         <p className="settings-provider-name">{row.provider.label}</p>
-                        <label className="settings-provider-input">
+                        <label className="settings-provider-input composer-setting-field">
                           <span>{SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL}</span>
                           <select
                             value={row.resolvedMemoryExtractionModel}
                             onChange={(event) => handleChangeMemoryExtractionModel(row.provider.id, event.target.value)}
+                            aria-label={`${row.provider.label} model`}
                           >
                             {row.provider.models.map((model) => (
                               <option key={model.id} value={model.id}>
@@ -941,7 +951,7 @@ export default function HomeApp() {
                             ))}
                           </select>
                         </label>
-                        <label className="settings-provider-input">
+                        <label className="settings-provider-input composer-setting-field">
                           <span>{SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL}</span>
                           <select
                             value={row.resolvedMemoryExtractionReasoningEffort}
@@ -949,7 +959,9 @@ export default function HomeApp() {
                               handleChangeMemoryExtractionReasoningEffort(
                                 row.provider.id,
                                 event.target.value as MemoryExtractionProviderSettings["reasoningEffort"],
-                              )}
+                              )
+                            }
+                            aria-label={`${row.provider.label} reasoning depth`}
                           >
                             {row.availableMemoryExtractionReasoningEfforts.map((reasoningEffort) => (
                               <option key={reasoningEffort} value={reasoningEffort}>
@@ -1056,11 +1068,18 @@ export default function HomeApp() {
   }
 
   if (isSettingsWindowMode) {
+    const settingsWindowReady = appSettingsLoaded && modelCatalogLoaded;
     return (
       <div className={`${homePageClassName} home-page-settings-window`.trim()}>
         <main className="home-layout home-layout-settings-window">
           <section className="launch-dialog settings-dialog panel settings-window-shell">
-            {settingsContent}
+            {settingsWindowReady ? (
+              settingsContent
+            ) : (
+              <div className="settings-loading-state">
+                <p>Settings を読み込み中...</p>
+              </div>
+            )}
           </section>
         </main>
       </div>
