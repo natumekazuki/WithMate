@@ -7,3 +7,5 @@
   - Memory Extraction 設定の入力 UI は、仮の chip ではなく Session と同じ native dropdown に戻した
 - verification:
   - `npm run build`
+- commits:
+  - `745449c` `fix(settings): restore settings window state and dropdowns`
