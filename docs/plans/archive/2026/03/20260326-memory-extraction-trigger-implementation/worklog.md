@@ -8,3 +8,5 @@
 - 2026-03-26: `docs/design/audit-log.md` と `docs/design/memory-architecture.md` に、memory extraction を `background-*` phase として監査に残す方針を追記した。
 - 2026-03-26: `audit_logs` に `background-running / background-completed / background-failed / background-canceled` を追加し、memory extraction の create/update path を `main.ts` に接続した。
 - 2026-03-26: `node --import tsx scripts/tests/session-memory-extraction.test.ts` と `node --import tsx scripts/tests/audit-log-storage.test.ts` を再実行し、background audit log の roundtrip を確認した。
+- 2026-03-26: `5d515eb` `feat(memory): add session memory extraction trigger`
+  - `Session Memory` の extraction helper、provider ごとの hidden extraction session、threshold trigger、background audit log を実装した。

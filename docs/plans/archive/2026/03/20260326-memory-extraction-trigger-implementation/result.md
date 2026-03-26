@@ -11,3 +11,5 @@
   - `node --import tsx scripts/tests/session-memory-extraction.test.ts`
   - `node --import tsx scripts/tests/audit-log-storage.test.ts`
   - `npm run build`
+- commits:
+  - `5d515eb` `feat(memory): add session memory extraction trigger`
