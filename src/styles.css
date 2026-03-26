@@ -420,12 +420,26 @@ button:disabled {
   padding: 14px;
 }
 
+.home-page.home-page-settings-window {
+  padding: 18px;
+}
+
 .home-page.home-page-monitor-window .home-layout {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.home-page.home-page-settings-window .home-layout {
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+}
+
 .home-layout-monitor-window {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.home-layout-settings-window {
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
 }
 
 .home-page .home-layout.home-layout-minimal {
@@ -1379,6 +1393,12 @@ button:disabled {
   max-height: min(760px, calc(100vh - 52px));
 }
 
+.settings-window-shell {
+  width: min(860px, 100%);
+  max-height: none;
+  height: 100%;
+}
+
 .launch-dialog-head {
   display: flex;
   align-items: center;
@@ -1472,6 +1492,16 @@ button:disabled {
   font: inherit;
 }
 
+.settings-field select {
+  width: 100%;
+  border: 1px solid rgba(32, 36, 55, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.88);
+  padding: 12px 14px;
+  color: var(--ink);
+  font: inherit;
+}
+
 .settings-field textarea:focus {
   outline: none;
   border-color: rgba(15, 139, 141, 0.5);
@@ -1479,6 +1509,12 @@ button:disabled {
 }
 
 .settings-field input:focus {
+  outline: none;
+  border-color: rgba(15, 139, 141, 0.5);
+  box-shadow: 0 0 0 3px rgba(15, 139, 141, 0.12);
+}
+
+.settings-field select:focus {
   outline: none;
   border-color: rgba(15, 139, 141, 0.5);
   box-shadow: 0 0 0 3px rgba(15, 139, 141, 0.12);

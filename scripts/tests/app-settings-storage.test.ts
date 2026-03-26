@@ -28,6 +28,18 @@ describe("AppSettingsStorage", () => {
             skillRootPath: "C:/skills/copilot",
           },
         },
+        memoryExtractionProviderSettings: {
+          codex: {
+            model: "gpt-5.4-mini",
+            reasoningEffort: "medium",
+            outputTokensThreshold: 240,
+          },
+          copilot: {
+            model: "gpt-5",
+            reasoningEffort: "low",
+            outputTokensThreshold: 180,
+          },
+        },
       });
       storage.close();
 
@@ -59,6 +71,18 @@ describe("AppSettingsStorage", () => {
             enabled: true,
             apiKey: "copilot-key",
             skillRootPath: "C:/skills/copilot",
+          },
+        },
+        memoryExtractionProviderSettings: {
+          codex: {
+            model: "gpt-5.4-mini",
+            reasoningEffort: "medium",
+            outputTokensThreshold: 240,
+          },
+          copilot: {
+            model: "gpt-5",
+            reasoningEffort: "low",
+            outputTokensThreshold: 180,
           },
         },
       });

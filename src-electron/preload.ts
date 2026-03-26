@@ -31,6 +31,7 @@ import {
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
+  WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
@@ -62,6 +63,9 @@ const withmateApi: WithMateWindowApi = {
   },
   openSessionMonitorWindow() {
     return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL);
+  },
+  openSettingsWindow() {
+    return ipcRenderer.invoke(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL);
   },
   openCharacterEditor(characterId?: string | null) {
     return ipcRenderer.invoke(WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL, characterId ?? null);

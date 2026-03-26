@@ -20,7 +20,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - Session の coding agent 作業 UI
 - Character Editor の編集 UI
 - Diff Window の閲覧 UI
-- Settings overlay と model catalog 操作
+- Settings Window と model catalog 操作
 - Session の監査ログ閲覧 UI
 
 ## Runtime
@@ -32,7 +32,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 ## Home Window
 
 - 黒基調の管理ハブとして表示する
-- Settings overlay の操作余白を確保するため、既定サイズは少し大きめにする
+- `Settings` は別 window で開く前提のため、Home は session / character 管理ハブを優先する
 - 2 カラム構成
   - 左: `Recent Sessions`
   - 右: `Settings` rail + `Session Monitor` または `Characters`
@@ -86,11 +86,18 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - enabled provider の選択
   - character 選択
   - approval mode は provider-neutral 3 mode を前提にし、default は `safety`
-- `Settings` overlay
+- `Settings` button
+  - 独立した `Settings Window` を開く
+- `Settings Window`
   - system prompt prefix 編集
   - `Coding Agent Providers` で provider 名と checkbox を 1 行 row で見せ、provider ごとの enable / disable を切り替える
   - `Coding Agent Credentials` で provider label を維持した `OpenAI API Key (Coding Agent)` 入力を表示
   - credential 補助文で `Character Stream 用ではない` ことを明示し、future note だけ最小限で置く
+  - `Memory Extraction`
+    - provider ごとの `Model`
+    - provider ごとの `Reasoning Depth`
+    - provider ごとの `Output Tokens Threshold`
+    - `compact 前` / `session close 前` は強制実行
   - `Model Catalog` import / export
   - `Danger Zone` の `DB を初期化`
     - reset 対象を `sessions / audit logs / app settings / model catalog` から選べる
@@ -252,8 +259,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `Session Monitor Window` も同じ IPC bridge と truth source を使い、`Home` と別 window でも monitor 内容を同期する
 - Session 実行の監査ログは SQLite に保存し、Session Window から閲覧する
 - chat message は限定的な rich text renderer で整形表示する
-- Settings overlay の `System Prompt Prefix` は SQLite に保存し、次回 turn から prompt composition へ反映する
-- Settings overlay の `DB を初期化` 成功時は Home が reset 後 `appSettings` / `modelCatalog` / `sessions` へ同期し、settings draft の dirty を解消する
+- `Settings Window` の `System Prompt Prefix` は SQLite に保存し、次回 turn から prompt composition へ反映する
+- `Settings Window` の `DB を初期化` 成功時は各 window が reset 後 `appSettings` / `modelCatalog` / `sessions` へ同期し、settings draft の dirty を解消する
 - character は `userData/characters/` を正本とする
 - `userData` は `<appData>/WithMate/` に固定する
 - Session は character の `main / sub` theme color snapshot を保持し、現在は header title、assistant / pending bubble、composer settings、`Send / Cancel`、artifact block、Session から開く Diff の `titlebar / subbar / pane header` の限定的な accent に使う

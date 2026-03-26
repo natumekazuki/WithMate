@@ -90,6 +90,7 @@ import {
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
+  WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
@@ -132,6 +133,7 @@ const copilotAdapter = new CopilotAdapter();
 
 let homeWindow: BrowserWindow | null = null;
 let sessionMonitorWindow: BrowserWindow | null = null;
+let settingsWindow: BrowserWindow | null = null;
 const sessionWindows = new Map<string, BrowserWindow>();
 const characterEditorWindows = new Map<string, BrowserWindow>();
 const diffWindows = new Map<string, BrowserWindow>();
@@ -1484,8 +1486,8 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
   }
 }
 
-async function loadHomeEntry(window: BrowserWindow, mode: "home" | "monitor" = "home"): Promise<void> {
-  const search = mode === "monitor" ? "?mode=monitor" : "";
+async function loadHomeEntry(window: BrowserWindow, mode: "home" | "monitor" | "settings" = "home"): Promise<void> {
+  const search = mode === "home" ? "" : `?mode=${mode}`;
 
   if (devServerUrl) {
     await window.loadURL(`${devServerUrl}${search}`);
@@ -1584,6 +1586,34 @@ async function openSessionMonitorWindow(): Promise<BrowserWindow> {
   });
 
   await loadHomeEntry(window, "monitor");
+  return window;
+}
+
+async function openSettingsWindow(): Promise<BrowserWindow> {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    if (settingsWindow.isMinimized()) {
+      settingsWindow.restore();
+    }
+
+    settingsWindow.focus();
+    return settingsWindow;
+  }
+
+  const window = createBaseWindow({
+    width: 920,
+    height: 960,
+    minWidth: 760,
+    minHeight: 720,
+    title: "WithMate Settings",
+  });
+
+  settingsWindow = window;
+  window.once("ready-to-show", () => window.show());
+  window.on("closed", () => {
+    settingsWindow = null;
+  });
+
+  await loadHomeEntry(window, "settings");
   return window;
 }
 
@@ -1723,6 +1753,9 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle(WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL, async () => {
     await openSessionMonitorWindow();
+  });
+  ipcMain.handle(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL, async () => {
+    await openSettingsWindow();
   });
 
   ipcMain.handle(WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL, async (_event, characterId: string | null) => {

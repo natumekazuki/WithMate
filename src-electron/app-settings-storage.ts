@@ -7,6 +7,7 @@ import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from
 const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
 const SYSTEM_PROMPT_PREFIX_KEY = "system_prompt_prefix";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
+const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
 
 type AppSettingRow = {
   setting_key: string;
@@ -47,6 +48,17 @@ export class AppSettingsStorage {
         ON CONFLICT(setting_key) DO NOTHING
       `)
       .run(CODING_PROVIDER_SETTINGS_KEY, JSON.stringify(DEFAULT_APP_SETTINGS.codingProviderSettings), updatedAt);
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY,
+        JSON.stringify(DEFAULT_APP_SETTINGS.memoryExtractionProviderSettings),
+        updatedAt,
+      );
   }
 
   getSettings(): AppSettings {
@@ -77,6 +89,20 @@ export class AppSettingsStorage {
       }
     }
 
+    const memoryExtractionProviderSettingsJson = rows.find(
+      (row) => row.setting_key === MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY,
+    )?.setting_value;
+    if (memoryExtractionProviderSettingsJson) {
+      try {
+        settings.memoryExtractionProviderSettings = normalizeAppSettings({
+          ...settings,
+          memoryExtractionProviderSettings: JSON.parse(memoryExtractionProviderSettingsJson),
+        }).memoryExtractionProviderSettings;
+      } catch {
+        settings.memoryExtractionProviderSettings = createDefaultAppSettings().memoryExtractionProviderSettings;
+      }
+    }
+
     return normalizeAppSettings(settings);
   }
 
@@ -104,6 +130,19 @@ export class AppSettingsStorage {
             updated_at = excluded.updated_at
         `)
         .run(CODING_PROVIDER_SETTINGS_KEY, JSON.stringify(normalized.codingProviderSettings), updatedAt);
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY,
+          JSON.stringify(normalized.memoryExtractionProviderSettings),
+          updatedAt,
+        );
       this.db.exec("COMMIT");
       return normalized;
     } catch (error) {

@@ -157,7 +157,7 @@ app 設定は `app_settings` table に保存する。
 
 - `listSessions()` で一覧を取得する
 - `subscribeSessions()` で一覧更新を反映する
-- `getAppSettings()` / `updateAppSettings()` で Settings overlay を扱う
+- `getAppSettings()` / `updateAppSettings()` で `Settings Window` の state を扱う
 - `createSession()` 実行後に返却された `session.id` を使って Session Window を開く
 - `pickDirectory()` で browse 結果を受け取る
 

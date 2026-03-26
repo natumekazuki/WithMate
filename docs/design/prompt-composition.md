@@ -30,7 +30,7 @@ Codex に渡す最終 prompt は、次のレイヤーを順に合成して作る
 
 ### System Prompt Prefix
 
-Settings overlay から編集する、アプリ共通の追加 system prompt。
+`Settings Window` から編集する、アプリ共通の追加 system prompt。
 
 責務:
 - キャラクターロール定義の前に必ず入れたい固定指示
@@ -136,7 +136,7 @@ type PromptComposer = (input: PromptCompositionInput) => PromptComposition;
 - Character Editor では `metadata form` と `character.md` editor を分離する
 - `Role` の編集面は markdown editor として広く確保する
 - `Description` は editor の metadata 側に残す
-- Settings overlay では `System Prompt Prefix` を編集できるようにする
+- `Settings Window` では `System Prompt Prefix` を編集できるようにする
 
 ## Open Questions
 

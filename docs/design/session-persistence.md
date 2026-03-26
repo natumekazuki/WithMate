@@ -216,7 +216,7 @@ MVP では、保存責務を次のように切る。
 
 更新タイミング:
 
-- Settings overlay で保存した時
+- `Settings Window` で保存した時
 - provider 有効化 / API key 更新時も同じ Settings 保存で扱う
 
 ### Session Memory

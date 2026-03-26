@@ -6,13 +6,18 @@ import {
   SETTINGS_API_KEY_PLACEHOLDER,
   SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE,
   SETTINGS_CODING_CREDENTIALS_HELP,
+  SETTINGS_MEMORY_EXTRACTION_HELP,
+  SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL,
+  SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL,
+  SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL,
   SETTINGS_RELEASE_COMPATIBILITY_NOTE,
-  SETTINGS_RESET_DATABASE_CONFIRM_MESSAGE,
   SETTINGS_RESET_DATABASE_HELP,
   SETTINGS_RESET_DATABASE_LABEL,
-  SETTINGS_RESET_DATABASE_SUCCESS_MESSAGE,
+  buildResetDatabaseConfirmMessage,
+  buildResetDatabaseSuccessMessage,
 } from "../../src/settings-ui.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS } from "../../src-electron/window-defaults.js";
+import { ALL_RESET_APP_DATABASE_TARGETS } from "../../src/withmate-window.js";
 
 describe("Settings UI constants", () => {
   it("coding credential の API key 文言は coding plane 専用だと分かる", () => {
@@ -27,11 +32,18 @@ describe("Settings UI constants", () => {
     assert.match(SETTINGS_RELEASE_COMPATIBILITY_NOTE, /後方互換性は考慮しない/);
     assert.equal(SETTINGS_RESET_DATABASE_LABEL, "DB を初期化");
     assert.match(SETTINGS_RESET_DATABASE_HELP, /Danger Zone/);
-    assert.match(SETTINGS_RESET_DATABASE_HELP, /sessions \/ audit logs \/ app settings \/ model catalog/);
-    assert.match(SETTINGS_RESET_DATABASE_HELP, /characters は保持される/);
-    assert.match(SETTINGS_RESET_DATABASE_CONFIRM_MESSAGE, /本当に続ける/);
-    assert.match(SETTINGS_RESET_DATABASE_CONFIRM_MESSAGE, /実行中の session がある間は初期化できない/);
-    assert.match(SETTINGS_RESET_DATABASE_SUCCESS_MESSAGE, /characters は保持した/);
+    assert.match(SETTINGS_RESET_DATABASE_HELP, /characters は DB 外ファイルなので保持/);
+    assert.match(buildResetDatabaseConfirmMessage(ALL_RESET_APP_DATABASE_TARGETS), /本当に続ける/);
+    assert.match(buildResetDatabaseConfirmMessage(ALL_RESET_APP_DATABASE_TARGETS), /実行中の session がある間は初期化できない/);
+    assert.match(buildResetDatabaseSuccessMessage(ALL_RESET_APP_DATABASE_TARGETS), /characters は保持した/);
+  });
+
+  it("memory extraction の設定項目は model と reasoning と threshold に限定する", () => {
+    assert.equal(SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL, "Model");
+    assert.equal(SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL, "Reasoning Depth");
+    assert.equal(SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL, "Output Tokens Threshold");
+    assert.match(SETTINGS_MEMORY_EXTRACTION_HELP, /compact 前/);
+    assert.match(SETTINGS_MEMORY_EXTRACTION_HELP, /session close 前/);
   });
 
   it("Home Window は Settings overlay の余裕を確保する既定サイズを使う", () => {

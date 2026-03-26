@@ -2,15 +2,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createDefaultAppSettings,
+  getMemoryExtractionProviderSettings,
   getProviderAppSettings,
   type AppSettings,
   type CharacterProfile,
   type CreateSessionInput,
+  type MemoryExtractionProviderSettings,
   type ProviderAppSettings,
   type Session,
 } from "./app-state.js";
 import { DEFAULT_APPROVAL_MODE } from "./approval-mode.js";
-import type { ModelCatalogSnapshot } from "./model-catalog.js";
+import {
+  coerceModelSelection,
+  getReasoningEffortOptionsForModel,
+  type ModelCatalogProvider,
+  type ModelCatalogSnapshot,
+} from "./model-catalog.js";
 import {
   SETTINGS_API_KEY_LABEL,
   SETTINGS_API_KEY_PLACEHOLDER,
@@ -26,8 +33,12 @@ import {
   SETTINGS_SKILL_ROOT_HELP,
   SETTINGS_SKILL_ROOT_LABEL,
   SETTINGS_SKILL_ROOT_PLACEHOLDER,
+  SETTINGS_MEMORY_EXTRACTION_HELP,
+  SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL,
+  SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL,
+  SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL,
 } from "./settings-ui.js";
-import { buildCardThemeStyle, CharacterAvatar, sessionStateLabel } from "./ui-utils.js";
+import { buildCardThemeStyle, CharacterAvatar, modelOptionLabel, reasoningDepthLabel, sessionStateLabel } from "./ui-utils.js";
 import {
   ALL_RESET_APP_DATABASE_TARGETS,
   normalizeResetAppDatabaseTargets,
@@ -77,6 +88,14 @@ async function openSessionMonitorWindow() {
   await window.withmate.openSessionMonitorWindow();
 }
 
+async function openSettingsWindow() {
+  if (!window.withmate) {
+    return;
+  }
+
+  await window.withmate.openSettingsWindow();
+}
+
 async function openCharacterEditor(characterId?: string | null) {
   if (!window.withmate) {
     return;
@@ -95,15 +114,25 @@ type HomeMonitorEntry = {
   state: HomeSessionState;
 };
 
+type ProviderSettingRow = {
+  provider: ModelCatalogProvider;
+  settings: ProviderAppSettings;
+  memoryExtractionSettings: MemoryExtractionProviderSettings;
+  resolvedMemoryExtractionModel: string;
+  resolvedMemoryExtractionReasoningEffort: MemoryExtractionProviderSettings["reasoningEffort"];
+  availableMemoryExtractionReasoningEfforts: readonly MemoryExtractionProviderSettings["reasoningEffort"][];
+};
+
 type HomeRightPaneView = "monitor" | "characters";
-type HomeWindowMode = "home" | "monitor";
+type HomeWindowMode = "home" | "monitor" | "settings";
 
 function getHomeWindowMode(): HomeWindowMode {
   if (typeof window === "undefined") {
     return "home";
   }
 
-  return new URLSearchParams(window.location.search).get("mode") === "monitor" ? "monitor" : "home";
+  const mode = new URLSearchParams(window.location.search).get("mode");
+  return mode === "monitor" || mode === "settings" ? mode : "home";
 }
 
 function getHomeSessionState(session: Session): HomeSessionState {
@@ -219,18 +248,21 @@ export default function HomeApp() {
   const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
   const homeWindowMode = useMemo(() => getHomeWindowMode(), []);
   const isMonitorWindowMode = homeWindowMode === "monitor";
+  const isSettingsWindowMode = homeWindowMode === "settings";
   const [sessions, setSessions] = useState<Session[]>([]);
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [openSessionWindowIds, setOpenSessionWindowIds] = useState<string[]>([]);
   const [sessionSearchText, setSessionSearchText] = useState("");
   const [characterSearchText, setCharacterSearchText] = useState("");
   const [rightPaneView, setRightPaneView] = useState<HomeRightPaneView>("monitor");
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsFeedback, setSettingsFeedback] = useState("");
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [systemPromptPrefixDraft, setSystemPromptPrefixDraft] = useState("");
   const [codingProviderSettingsDraft, setCodingProviderSettingsDraft] = useState<Record<string, ProviderAppSettings>>({});
+  const [memoryExtractionProviderSettingsDraft, setMemoryExtractionProviderSettingsDraft] = useState<
+    Record<string, MemoryExtractionProviderSettings>
+  >({});
   const [resettingDatabase, setResettingDatabase] = useState(false);
   const [resetDatabaseTargets, setResetDatabaseTargets] = useState<ResetAppDatabaseTarget[]>([...ALL_RESET_APP_DATABASE_TARGETS]);
   const [launchOpen, setLaunchOpen] = useState(false);
@@ -240,13 +272,13 @@ export default function HomeApp() {
   const [launchCharacterId, setLaunchCharacterId] = useState("");
   const [launchCharacterSearchText, setLaunchCharacterSearchText] = useState("");
   const settingsDirtyRef = useRef(false);
-  const settingsOpenRef = useRef(false);
 
   const applyIncomingAppSettings = (settings: AppSettings, options?: { force?: boolean }) => {
     setAppSettings(settings);
-    if (options?.force || !settingsOpenRef.current || !settingsDirtyRef.current) {
+    if (options?.force || !isSettingsWindowMode || !settingsDirtyRef.current) {
       setSystemPromptPrefixDraft(settings.systemPromptPrefix);
       setCodingProviderSettingsDraft(settings.codingProviderSettings);
+      setMemoryExtractionProviderSettingsDraft(settings.memoryExtractionProviderSettings);
     }
   };
 
@@ -592,27 +624,33 @@ export default function HomeApp() {
       const nextSettings = await window.withmate.updateAppSettings({
         systemPromptPrefix: systemPromptPrefixDraft,
         codingProviderSettings: codingProviderSettingsDraft,
+        memoryExtractionProviderSettings: normalizedMemoryExtractionProviderSettingsDraft,
       });
       setAppSettings(nextSettings);
       setSystemPromptPrefixDraft(nextSettings.systemPromptPrefix);
       setCodingProviderSettingsDraft(nextSettings.codingProviderSettings);
+      setMemoryExtractionProviderSettingsDraft(nextSettings.memoryExtractionProviderSettings);
       setSettingsFeedback("設定を保存したよ。");
     } catch (error) {
       setSettingsFeedback(error instanceof Error ? error.message : "設定の保存に失敗したよ。");
     }
   };
 
+  const buildDraftAppSettings = (overrides?: {
+    codingProviderSettings?: Record<string, ProviderAppSettings>;
+    memoryExtractionProviderSettings?: Record<string, MemoryExtractionProviderSettings>;
+  }): AppSettings => ({
+    systemPromptPrefix: systemPromptPrefixDraft,
+    codingProviderSettings: overrides?.codingProviderSettings ?? codingProviderSettingsDraft,
+    memoryExtractionProviderSettings:
+      overrides?.memoryExtractionProviderSettings ?? memoryExtractionProviderSettingsDraft,
+  });
+
   const handleChangeProviderEnabled = (providerId: string, enabled: boolean) => {
     setCodingProviderSettingsDraft((current) => ({
       ...current,
       [providerId]: {
-        ...getProviderAppSettings(
-          {
-            systemPromptPrefix: systemPromptPrefixDraft,
-            codingProviderSettings: current,
-          },
-          providerId,
-        ),
+        ...getProviderAppSettings(buildDraftAppSettings({ codingProviderSettings: current }), providerId),
         enabled,
       },
     }));
@@ -622,13 +660,7 @@ export default function HomeApp() {
     setCodingProviderSettingsDraft((current) => ({
       ...current,
       [providerId]: {
-        ...getProviderAppSettings(
-          {
-            systemPromptPrefix: systemPromptPrefixDraft,
-            codingProviderSettings: current,
-          },
-          providerId,
-        ),
+        ...getProviderAppSettings(buildDraftAppSettings({ codingProviderSettings: current }), providerId),
         apiKey,
       },
     }));
@@ -638,13 +670,7 @@ export default function HomeApp() {
     setCodingProviderSettingsDraft((current) => ({
       ...current,
       [providerId]: {
-        ...getProviderAppSettings(
-          {
-            systemPromptPrefix: systemPromptPrefixDraft,
-            codingProviderSettings: current,
-          },
-          providerId,
-        ),
+        ...getProviderAppSettings(buildDraftAppSettings({ codingProviderSettings: current }), providerId),
         skillRootPath,
       },
     }));
@@ -655,13 +681,7 @@ export default function HomeApp() {
       return;
     }
 
-    const currentSettings = getProviderAppSettings(
-      {
-        systemPromptPrefix: systemPromptPrefixDraft,
-        codingProviderSettings: codingProviderSettingsDraft,
-      },
-      providerId,
-    );
+    const currentSettings = getProviderAppSettings(buildDraftAppSettings(), providerId);
     const selectedPath = await window.withmate.pickDirectory(currentSettings.skillRootPath || null);
     if (!selectedPath) {
       return;
@@ -670,34 +690,112 @@ export default function HomeApp() {
     handleChangeProviderSkillRootPath(providerId, selectedPath);
   };
 
-  const providerSettingRows = useMemo(
-    () =>
-      (modelCatalog?.providers ?? []).map((provider) => ({
-        provider,
-        settings: getProviderAppSettings(
-          {
-            systemPromptPrefix: systemPromptPrefixDraft,
-            codingProviderSettings: codingProviderSettingsDraft,
-          },
-          provider.id,
+  const handleChangeMemoryExtractionModel = (providerId: string, model: string) => {
+    const providerCatalog = modelCatalog?.providers.find((provider) => provider.id === providerId);
+    if (!providerCatalog) {
+      return;
+    }
+
+    setMemoryExtractionProviderSettingsDraft((current) => {
+      const currentSettings = getMemoryExtractionProviderSettings(
+        buildDraftAppSettings({ memoryExtractionProviderSettings: current }),
+        providerId,
+      );
+      const selection = coerceModelSelection(providerCatalog, model, currentSettings.reasoningEffort);
+      return {
+        ...current,
+        [providerId]: {
+          ...currentSettings,
+          model: selection.resolvedModel,
+          reasoningEffort: selection.resolvedReasoningEffort,
+        },
+      };
+    });
+  };
+
+  const handleChangeMemoryExtractionReasoningEffort = (
+    providerId: string,
+    reasoningEffort: MemoryExtractionProviderSettings["reasoningEffort"],
+  ) => {
+    setMemoryExtractionProviderSettingsDraft((current) => ({
+      ...current,
+      [providerId]: {
+        ...getMemoryExtractionProviderSettings(
+          buildDraftAppSettings({ memoryExtractionProviderSettings: current }),
+          providerId,
         ),
-      })),
-    [codingProviderSettingsDraft, modelCatalog, systemPromptPrefixDraft],
+        reasoningEffort,
+      },
+    }));
+  };
+
+  const handleChangeMemoryExtractionThreshold = (providerId: string, value: string) => {
+    const normalized = Number.parseInt(value, 10);
+    setMemoryExtractionProviderSettingsDraft((current) => ({
+      ...current,
+      [providerId]: {
+        ...getMemoryExtractionProviderSettings(
+          buildDraftAppSettings({ memoryExtractionProviderSettings: current }),
+          providerId,
+        ),
+        outputTokensThreshold: Number.isFinite(normalized) && normalized > 0 ? normalized : 1,
+      },
+    }));
+  };
+
+  const providerSettingRows = useMemo<ProviderSettingRow[]>(
+    () =>
+      (modelCatalog?.providers ?? []).map((provider) => {
+        const settings = getProviderAppSettings(buildDraftAppSettings(), provider.id);
+        const memoryExtractionSettings = getMemoryExtractionProviderSettings(buildDraftAppSettings(), provider.id);
+        const selection = coerceModelSelection(
+          provider,
+          memoryExtractionSettings.model,
+          memoryExtractionSettings.reasoningEffort,
+        );
+        return {
+          provider,
+          settings,
+          memoryExtractionSettings,
+          resolvedMemoryExtractionModel: selection.resolvedModel,
+          resolvedMemoryExtractionReasoningEffort: selection.resolvedReasoningEffort,
+          availableMemoryExtractionReasoningEfforts: getReasoningEffortOptionsForModel(provider, selection.resolvedModel),
+        };
+      }),
+    [codingProviderSettingsDraft, memoryExtractionProviderSettingsDraft, modelCatalog, systemPromptPrefixDraft],
+  );
+  const normalizedMemoryExtractionProviderSettingsDraft = useMemo(
+    () =>
+      Object.fromEntries(
+        providerSettingRows.map((row) => [
+          row.provider.id,
+          {
+            model: row.resolvedMemoryExtractionModel,
+            reasoningEffort: row.resolvedMemoryExtractionReasoningEffort,
+            outputTokensThreshold: row.memoryExtractionSettings.outputTokensThreshold,
+          } satisfies MemoryExtractionProviderSettings,
+        ]),
+      ),
+    [providerSettingRows],
   );
   const settingsDirty = useMemo(() => {
     return (
       systemPromptPrefixDraft !== appSettings.systemPromptPrefix ||
-      JSON.stringify(codingProviderSettingsDraft) !== JSON.stringify(appSettings.codingProviderSettings)
+      JSON.stringify(codingProviderSettingsDraft) !== JSON.stringify(appSettings.codingProviderSettings) ||
+      JSON.stringify(memoryExtractionProviderSettingsDraft) !== JSON.stringify(appSettings.memoryExtractionProviderSettings)
     );
-  }, [appSettings.codingProviderSettings, appSettings.systemPromptPrefix, codingProviderSettingsDraft, systemPromptPrefixDraft]);
+  }, [
+    appSettings.codingProviderSettings,
+    appSettings.memoryExtractionProviderSettings,
+    appSettings.systemPromptPrefix,
+    codingProviderSettingsDraft,
+    memoryExtractionProviderSettingsDraft,
+    systemPromptPrefixDraft,
+  ]);
 
   useEffect(() => {
     settingsDirtyRef.current = settingsDirty;
   }, [settingsDirty]);
-
-  useEffect(() => {
-    settingsOpenRef.current = settingsOpen;
-  }, [settingsOpen]);
 
   const handleExportModelCatalog = async () => {
     if (!window.withmate) {
@@ -712,12 +810,257 @@ export default function HomeApp() {
     }
   };
 
+  const settingsContent = (
+    <>
+      <div className="launch-dialog-head minimal settings-window-head">
+        <button className="launch-toggle compact" type="button" onClick={() => void openHomeWindow()}>
+          Home
+        </button>
+        <button className="diff-close" type="button" onClick={() => window.close()}>
+          Close
+        </button>
+      </div>
+
+      <div className="settings-panel">
+        <section className="settings-section">
+          <p className="settings-note">{SETTINGS_RELEASE_COMPATIBILITY_NOTE}</p>
+
+          <section className="settings-section-card">
+            <div className="settings-field">
+              <strong>System Prompt Prefix</strong>
+              <p className="settings-help">保存時に先頭へ <code># System Prompt</code> が自動で付く。</p>
+              <textarea
+                value={systemPromptPrefixDraft}
+                onChange={(event) => setSystemPromptPrefixDraft(event.target.value)}
+                rows={8}
+              />
+            </div>
+          </section>
+
+          {providerSettingRows.length > 0 ? (
+            <>
+              <section className="settings-section-card">
+                <div className="settings-field">
+                  <strong>Coding Agent Providers</strong>
+                  <p className="settings-help">有効な coding provider は使える前提で扱う。失敗時は実行時エラーとして返る。</p>
+                  <div className="settings-provider-list">
+                    {providerSettingRows.map(({ provider, settings }) => (
+                      <section key={provider.id} className="settings-provider-card settings-provider-toggle-card">
+                        <label className="settings-provider-toggle-row">
+                          <span className="settings-provider-name">{provider.label}</span>
+                          <input
+                            type="checkbox"
+                            checked={settings.enabled}
+                            onChange={(event) => handleChangeProviderEnabled(provider.id, event.target.checked)}
+                          />
+                        </label>
+                      </section>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              <section className="settings-section-card">
+                <div className="settings-field">
+                  <strong>Coding Agent Credentials</strong>
+                  <p className="settings-help">{SETTINGS_CODING_CREDENTIALS_HELP}</p>
+                  <div className="settings-provider-list">
+                    {providerSettingRows.map(({ provider, settings }) => (
+                      <section key={provider.id} className="settings-provider-card">
+                        <p className="settings-provider-name">{provider.label}</p>
+                        <label className="settings-provider-input">
+                          <span>{SETTINGS_API_KEY_LABEL}</span>
+                          <input
+                            type="password"
+                            value={settings.apiKey}
+                            onChange={(event) => handleChangeProviderApiKey(provider.id, event.target.value)}
+                            placeholder={SETTINGS_API_KEY_PLACEHOLDER}
+                            autoComplete="off"
+                            spellCheck={false}
+                          />
+                        </label>
+                      </section>
+                    ))}
+                  </div>
+                  <p className="settings-note">{SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE}</p>
+                </div>
+              </section>
+
+              <section className="settings-section-card">
+                <div className="settings-field">
+                  <strong>Skill Roots</strong>
+                  <p className="settings-help">{SETTINGS_SKILL_ROOT_HELP}</p>
+                  <div className="settings-provider-list">
+                    {providerSettingRows.map(({ provider, settings }) => (
+                      <section key={provider.id} className="settings-provider-card">
+                        <p className="settings-provider-name">{provider.label}</p>
+                        <label className="settings-provider-input">
+                          <span>{SETTINGS_SKILL_ROOT_LABEL}</span>
+                          <div className="settings-inline-input-row">
+                            <input
+                              type="text"
+                              value={settings.skillRootPath}
+                              onChange={(event) => handleChangeProviderSkillRootPath(provider.id, event.target.value)}
+                              placeholder={SETTINGS_SKILL_ROOT_PLACEHOLDER}
+                              autoComplete="off"
+                              spellCheck={false}
+                            />
+                            <button
+                              className="launch-toggle"
+                              type="button"
+                              onClick={() => void handleBrowseProviderSkillRootPath(provider.id)}
+                            >
+                              Browse
+                            </button>
+                          </div>
+                        </label>
+                      </section>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              <section className="settings-section-card">
+                <div className="settings-field">
+                  <strong>Memory Extraction</strong>
+                  <p className="settings-help">{SETTINGS_MEMORY_EXTRACTION_HELP}</p>
+                  <div className="settings-provider-list">
+                    {providerSettingRows.map((row) => (
+                      <section key={row.provider.id} className="settings-provider-card">
+                        <p className="settings-provider-name">{row.provider.label}</p>
+                        <label className="settings-provider-input">
+                          <span>{SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL}</span>
+                          <select
+                            value={row.resolvedMemoryExtractionModel}
+                            onChange={(event) => handleChangeMemoryExtractionModel(row.provider.id, event.target.value)}
+                          >
+                            {row.provider.models.map((model) => (
+                              <option key={model.id} value={model.id}>
+                                {modelOptionLabel(model)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="settings-provider-input">
+                          <span>{SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL}</span>
+                          <select
+                            value={row.resolvedMemoryExtractionReasoningEffort}
+                            onChange={(event) =>
+                              handleChangeMemoryExtractionReasoningEffort(
+                                row.provider.id,
+                                event.target.value as MemoryExtractionProviderSettings["reasoningEffort"],
+                              )}
+                          >
+                            {row.availableMemoryExtractionReasoningEfforts.map((reasoningEffort) => (
+                              <option key={reasoningEffort} value={reasoningEffort}>
+                                {reasoningDepthLabel(reasoningEffort)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="settings-provider-input">
+                          <span>{SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL}</span>
+                          <input
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={row.memoryExtractionSettings.outputTokensThreshold}
+                            onChange={(event) => handleChangeMemoryExtractionThreshold(row.provider.id, event.target.value)}
+                          />
+                        </label>
+                      </section>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            </>
+          ) : null}
+
+          <section className="settings-section-card">
+            <div className="settings-field">
+              <strong>Model Catalog</strong>
+              <p className="settings-help">
+                active revision: {modelCatalog?.revision ?? "-"}。DB 初期化を行うと bundled catalog の初期状態へ戻る。
+              </p>
+              <div className="settings-actions">
+                <button className="launch-toggle" type="button" onClick={() => void handleImportModelCatalog()}>
+                  Import Models
+                </button>
+                <button className="launch-toggle" type="button" onClick={() => void handleExportModelCatalog()}>
+                  Export Models
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="settings-section-card danger-zone">
+            <div className="settings-field">
+              <strong>Danger Zone</strong>
+              <p className="settings-help">{SETTINGS_RESET_DATABASE_HELP}</p>
+              <ul className="settings-danger-list">
+                <li>選択中の reset 対象: {describeResetDatabaseTargets(resetDatabaseTargets)}</li>
+                <li>reset 非対象: characters（DB 外ファイルなので保持）</li>
+              </ul>
+              <div className="settings-reset-targets" role="group" aria-label="reset targets">
+                {ALL_RESET_APP_DATABASE_TARGETS.map((target) => {
+                  const checked = resetDatabaseTargets.includes(target);
+                  const disabled = target === "auditLogs" && resetDatabaseTargets.includes("sessions");
+
+                  return (
+                    <label key={target} className="settings-reset-target">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={disabled || resettingDatabase}
+                        onChange={() => handleToggleResetDatabaseTarget(target)}
+                      />
+                      <span>{SETTINGS_RESET_DATABASE_TARGET_LABELS[target]}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="settings-actions">
+                <button
+                  className="drawer-toggle danger"
+                  type="button"
+                  onClick={() => void handleResetAppDatabase()}
+                  disabled={resettingDatabase || resetDatabaseTargets.length === 0}
+                >
+                  {resettingDatabase ? "DB 初期化中..." : SETTINGS_RESET_DATABASE_LABEL}
+                </button>
+              </div>
+            </div>
+          </section>
+
+        </section>
+      </div>
+      <div className="launch-dialog-foot settings-dialog-foot">
+        {settingsFeedback ? <p className="settings-feedback settings-feedback-inline">{settingsFeedback}</p> : <span aria-hidden="true" />}
+        <button className="launch-toggle" type="button" onClick={() => void handleSaveSettings()} disabled={!settingsDirty}>
+          Save Settings
+        </button>
+      </div>
+    </>
+  );
+
   if (!isDesktopRuntime) {
     return (
       <div className={homePageClassName}>
         <main className="home-layout home-layout-minimal">
           <section className="panel empty-list-card rise-1">
             <p>Home は Electron から起動してね。</p>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
+  if (isSettingsWindowMode) {
+    return (
+      <div className={`${homePageClassName} home-page-settings-window`.trim()}>
+        <main className="home-layout home-layout-settings-window">
+          <section className="launch-dialog settings-dialog panel settings-window-shell">
+            {settingsContent}
           </section>
         </main>
       </div>
@@ -852,7 +1195,7 @@ export default function HomeApp() {
               >
                 {renderMonitorWindowIcon()}
               </button>
-              <button className="launch-toggle home-settings-button" type="button" onClick={() => setSettingsOpen(true)}>
+              <button className="launch-toggle home-settings-button" type="button" onClick={() => void openSettingsWindow()}>
                 Settings
               </button>
             </div>
@@ -1048,183 +1391,6 @@ export default function HomeApp() {
         </div>
       ) : null}
 
-      {settingsOpen ? (
-        <div className="launch-modal settings-modal" role="dialog" aria-modal="true" onClick={() => setSettingsOpen(false)}>
-          <section className="launch-dialog settings-dialog panel" onClick={(event) => event.stopPropagation()}>
-            <div className="launch-dialog-head minimal">
-              <button className="diff-close" type="button" onClick={() => setSettingsOpen(false)}>
-                Close
-              </button>
-            </div>
-
-            <div className="settings-panel">
-              <section className="settings-section">
-                <p className="settings-note">{SETTINGS_RELEASE_COMPATIBILITY_NOTE}</p>
-
-                <section className="settings-section-card">
-                  <div className="settings-field">
-                    <strong>System Prompt Prefix</strong>
-                    <p className="settings-help">保存時に先頭へ <code># System Prompt</code> が自動で付く。</p>
-                    <textarea
-                      value={systemPromptPrefixDraft}
-                      onChange={(event) => setSystemPromptPrefixDraft(event.target.value)}
-                      rows={8}
-                    />
-                  </div>
-                </section>
-
-                {providerSettingRows.length > 0 ? (
-                  <>
-                    <section className="settings-section-card">
-                      <div className="settings-field">
-                        <strong>Coding Agent Providers</strong>
-                        <p className="settings-help">有効な coding provider は使える前提で扱う。失敗時は実行時エラーとして返る。</p>
-                        <div className="settings-provider-list">
-                          {providerSettingRows.map(({ provider, settings }) => (
-                            <section key={provider.id} className="settings-provider-card settings-provider-toggle-card">
-                              <label className="settings-provider-toggle-row">
-                                <span className="settings-provider-name">{provider.label}</span>
-                                <input
-                                  type="checkbox"
-                                  checked={settings.enabled}
-                                  onChange={(event) => handleChangeProviderEnabled(provider.id, event.target.checked)}
-                                />
-                              </label>
-                            </section>
-                          ))}
-                        </div>
-                      </div>
-                    </section>
-
-                    <section className="settings-section-card">
-                      <div className="settings-field">
-                        <strong>Coding Agent Credentials</strong>
-                        <p className="settings-help">{SETTINGS_CODING_CREDENTIALS_HELP}</p>
-                        <div className="settings-provider-list">
-                          {providerSettingRows.map(({ provider, settings }) => (
-                            <section key={provider.id} className="settings-provider-card">
-                              <p className="settings-provider-name">{provider.label}</p>
-                              <label className="settings-provider-input">
-                                <span>{SETTINGS_API_KEY_LABEL}</span>
-                                <input
-                                  type="password"
-                                  value={settings.apiKey}
-                                  onChange={(event) => handleChangeProviderApiKey(provider.id, event.target.value)}
-                                  placeholder={SETTINGS_API_KEY_PLACEHOLDER}
-                                  autoComplete="off"
-                                  spellCheck={false}
-                                />
-                              </label>
-                            </section>
-                          ))}
-                        </div>
-                        <p className="settings-note">{SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE}</p>
-                      </div>
-                    </section>
-
-                    <section className="settings-section-card">
-                      <div className="settings-field">
-                        <strong>Skill Roots</strong>
-                        <p className="settings-help">{SETTINGS_SKILL_ROOT_HELP}</p>
-                        <div className="settings-provider-list">
-                          {providerSettingRows.map(({ provider, settings }) => (
-                            <section key={provider.id} className="settings-provider-card">
-                              <p className="settings-provider-name">{provider.label}</p>
-                              <label className="settings-provider-input">
-                                <span>{SETTINGS_SKILL_ROOT_LABEL}</span>
-                                <div className="settings-inline-input-row">
-                                  <input
-                                    type="text"
-                                    value={settings.skillRootPath}
-                                    onChange={(event) => handleChangeProviderSkillRootPath(provider.id, event.target.value)}
-                                    placeholder={SETTINGS_SKILL_ROOT_PLACEHOLDER}
-                                    autoComplete="off"
-                                    spellCheck={false}
-                                  />
-                                  <button
-                                    className="launch-toggle"
-                                    type="button"
-                                    onClick={() => void handleBrowseProviderSkillRootPath(provider.id)}
-                                  >
-                                    Browse
-                                  </button>
-                                </div>
-                              </label>
-                            </section>
-                          ))}
-                        </div>
-                      </div>
-                    </section>
-                  </>
-                ) : null}
-
-                <section className="settings-section-card">
-                  <div className="settings-field">
-                    <strong>Model Catalog</strong>
-                    <p className="settings-help">
-                      active revision: {modelCatalog?.revision ?? "-"}。DB 初期化を行うと bundled catalog の初期状態へ戻る。
-                    </p>
-                    <div className="settings-actions">
-                      <button className="launch-toggle" type="button" onClick={() => void handleImportModelCatalog()}>
-                        Import Models
-                      </button>
-                      <button className="launch-toggle" type="button" onClick={() => void handleExportModelCatalog()}>
-                        Export Models
-                      </button>
-                    </div>
-                  </div>
-                </section>
-
-                <section className="settings-section-card danger-zone">
-                  <div className="settings-field">
-                    <strong>Danger Zone</strong>
-                    <p className="settings-help">{SETTINGS_RESET_DATABASE_HELP}</p>
-                    <ul className="settings-danger-list">
-                      <li>選択中の reset 対象: {describeResetDatabaseTargets(resetDatabaseTargets)}</li>
-                      <li>reset 非対象: characters（DB 外ファイルなので保持）</li>
-                    </ul>
-                    <div className="settings-reset-targets" role="group" aria-label="reset targets">
-                      {ALL_RESET_APP_DATABASE_TARGETS.map((target) => {
-                        const checked = resetDatabaseTargets.includes(target);
-                        const disabled = target === "auditLogs" && resetDatabaseTargets.includes("sessions");
-
-                        return (
-                          <label key={target} className="settings-reset-target">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              disabled={disabled || resettingDatabase}
-                              onChange={() => handleToggleResetDatabaseTarget(target)}
-                            />
-                            <span>{SETTINGS_RESET_DATABASE_TARGET_LABELS[target]}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                    <div className="settings-actions">
-                      <button
-                        className="drawer-toggle danger"
-                        type="button"
-                        onClick={() => void handleResetAppDatabase()}
-                        disabled={resettingDatabase || resetDatabaseTargets.length === 0}
-                      >
-                        {resettingDatabase ? "DB 初期化中..." : SETTINGS_RESET_DATABASE_LABEL}
-                      </button>
-                    </div>
-                  </div>
-                </section>
-
-              </section>
-            </div>
-            <div className="launch-dialog-foot settings-dialog-foot">
-              {settingsFeedback ? <p className="settings-feedback settings-feedback-inline">{settingsFeedback}</p> : <span aria-hidden="true" />}
-              <button className="launch-toggle" type="button" onClick={() => void handleSaveSettings()} disabled={!settingsDirty}>
-                Save Settings
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
     </div>
   );
 }

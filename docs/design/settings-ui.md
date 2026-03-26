@@ -1,18 +1,17 @@
 # Settings UI
 
 - 作成日: 2026-03-14
-- 対象: `Home Window` 上で開く Settings overlay
+- 対象: 独立した `Settings Window`
 
 ## Goal
 
-設定系の要素を `Home Window` に常設せず、必要なときだけ開く overlay としてまとめる。
-`Session Window` を増やさずに将来の設定追加先を確保しつつ、Home の session / character 管理ハブとしての役割を崩さない。
+設定系の要素を `Home Window` から分離し、独立した `Settings Window` に集約する。
+`Home Window` は session / character 管理ハブへ寄せ、設定編集は別 window で落ち着いて扱えるようにする。
 
 ## Decision
 
-- 設定は独立 window ではなく `Home Window` 上の overlay とする
-- overlay は一時的に開いて閉じる管理面として扱う
-- `System Prompt Prefix` は Settings overlay で定義し、prompt composition に渡す
+- 設定は `Home Window` から開く独立 `Settings Window` とする
+- `System Prompt Prefix` は `Settings Window` で定義し、prompt composition に渡す
 - `System Prompt Prefix` は保存時に `# System Prompt` 配下へ組み込まれる
 - current 実装では `System Prompt Prefix`、`Coding Agent Providers`、`Coding Agent Credentials`、`Memory Extraction`、`Model Catalog`、`Danger Zone` を置く
 - 現在の provider / credential 設定は coding plane 専用として扱い、Character Stream / monologue 用 API 入力は置かない
@@ -20,17 +19,17 @@
 - `DB を初期化` は `sessions / audit logs / app settings / model catalog` から対象を選べるようにし、`characters` は保持する
 - `sessions` を選んだ場合は、外部キー整合のため `audit logs` も同時に初期化する
 - 全対象を選んだ場合は DB ファイルを再生成して schema も初期化する
-- Settings overlay は縦方向の余白を少し増やしつつ、内容が増えた場合は overlay 内スクロールで末尾まで操作できるようにする
+- `Settings Window` は縦方向の余白を少し増やしつつ、内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - file picker / save dialog は Main Process 側で開く
 
 ## Interaction
 
 1. ユーザーが Home toolbar の `Settings` を押す
-2. Home の上に overlay が開く
-3. `System Prompt Prefix`、coding provider の enable / disable、coding credential を編集して保存する。overlay が小さいときは内部スクロールで下端まで移動し、`Import Models` / `Export Models` / `DB を初期化` も実行できる
+2. 独立した `Settings Window` が開く
+3. `System Prompt Prefix`、coding provider の enable / disable、coding credential、memory extraction 設定を編集して保存する。window が小さいときは内部スクロールで下端まで移動し、`Import Models` / `Export Models` / `DB を初期化` も実行できる
 4. `DB を初期化` 実行前には confirm を出し、選択中の対象と非対象を明示する
-5. 結果は overlay 内の短いフィードバックで返す
-6. `Close` で overlay を閉じる
+5. 結果は window 内の短いフィードバックで返す
+6. `Close` で `Settings Window` を閉じる
 
 ## Layout
 
@@ -38,7 +37,7 @@
   - `Settings`
   - `Add Character`
   - `New Session`
-- Settings overlay
+- Settings Window
   - `Close`
   - `System Prompt Prefix`
   - `# System Prompt` 自動付与の案内
@@ -50,8 +49,9 @@
     - `Character Stream 用ではない` 補助文
     - future で Character Stream 用 API 欄を別責務で追加する note
   - `Memory Extraction`
-    - `Codex outputTokens threshold`
-    - `Copilot outputTokens threshold`
+    - provider ごとの `Model`
+    - provider ごとの `Reasoning Depth`
+    - provider ごとの `Output Tokens Threshold`
     - `compact 前` / `session close 前` は強制実行である補助文
   - `Model Catalog`
     - import / export
@@ -69,7 +69,7 @@
 - `System Prompt Prefix` の編集と保存
 - coding provider ごとの enable / disable
 - coding provider ごとの `OpenAI API Key (Coding Agent)` 入力保存
-- provider ごとの `Memory Extraction outputTokens threshold` 入力保存
+- provider ごとの `Memory Extraction model / reasoning depth / outputTokens threshold` 入力保存
 - `model catalog` の import
 - `model catalog` の export
 - `DB を初期化` による設定・セッション系ストレージのリカバリ
@@ -82,7 +82,7 @@
 - current milestone では provider readiness / preflight を must-have にしない
 - coding credential は Settings 保存後すぐ Main Process から各 window へ broadcast し、Session Window の実行可否表示も即時更新する
 - provider 実装は保存済み coding credential を runtime の SDK client へ渡し、空文字のときだけ従来どおり環境依存 fallback を許可する
-- Memory extraction threshold は provider ごとに保持し、trigger engine は現在 provider の値だけを参照する
+- Memory extraction 設定は provider ごとに保持し、trigger engine は現在 provider の `model / reasoning depth / outputTokens threshold` を参照する
 - DB reset 成功時は renderer 側で reset 後の `appSettings` を draft に同期し、dirty 状態を解消する
 - reset 実行 API は選択対象を Main Process へ渡し、戻り値の current `sessions / appSettings / modelCatalog` で renderer を再同期する
 
@@ -95,6 +95,5 @@
 
 ## Non Goals
 
-- Settings を独立 window として増やすこと
 - Home に設定項目を常設すること
 - Character Stream 用設定欄を current milestone で追加すること

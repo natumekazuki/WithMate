@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { createDefaultAppSettings, getProviderAppSettings, normalizeAppSettings } from "../../src/app-state.js";
+import {
+  createDefaultAppSettings,
+  getMemoryExtractionProviderSettings,
+  getProviderAppSettings,
+  normalizeAppSettings,
+} from "../../src/app-state.js";
 import { coerceModelSelection, type ModelCatalogProvider } from "../../src/model-catalog.js";
 
 const providerCatalog: ModelCatalogProvider = {
@@ -104,6 +109,25 @@ describe("app settings provider helpers", () => {
       enabled: false,
       apiKey: "canonical-key",
       skillRootPath: "",
+    });
+  });
+
+  it("memory extraction settings を provider ごとに保持する", () => {
+    const settings = normalizeAppSettings({
+      ...createDefaultAppSettings(),
+      memoryExtractionProviderSettings: {
+        codex: {
+          model: "gpt-5.1-mini",
+          reasoningEffort: "medium",
+          outputTokensThreshold: 280,
+        },
+      },
+    });
+
+    assert.deepEqual(getMemoryExtractionProviderSettings(settings, "codex"), {
+      model: "gpt-5.1-mini",
+      reasoningEffort: "medium",
+      outputTokensThreshold: 280,
     });
   });
 });
