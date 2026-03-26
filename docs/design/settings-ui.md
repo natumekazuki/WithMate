@@ -14,7 +14,7 @@
 - overlay は一時的に開いて閉じる管理面として扱う
 - `System Prompt Prefix` は Settings overlay で定義し、prompt composition に渡す
 - `System Prompt Prefix` は保存時に `# System Prompt` 配下へ組み込まれる
-- current 実装では `System Prompt Prefix`、`Coding Agent Providers`、`Coding Agent Credentials`、`Model Catalog`、`Danger Zone` を置く
+- current 実装では `System Prompt Prefix`、`Coding Agent Providers`、`Coding Agent Credentials`、`Memory Extraction`、`Model Catalog`、`Danger Zone` を置く
 - 現在の provider / credential 設定は coding plane 専用として扱い、Character Stream / monologue 用 API 入力は置かない
 - 初回リリース前のため後方互換性は考慮しない。非互換変更が入った場合は Settings の `DB を初期化` で回復する運用を正本とする
 - `DB を初期化` は `sessions / audit logs / app settings / model catalog` から対象を選べるようにし、`characters` は保持する
@@ -49,6 +49,10 @@
     - `OpenAI API Key (Coding Agent)` 入力
     - `Character Stream 用ではない` 補助文
     - future で Character Stream 用 API 欄を別責務で追加する note
+  - `Memory Extraction`
+    - `Codex outputTokens threshold`
+    - `Copilot outputTokens threshold`
+    - `compact 前` / `session close 前` は強制実行である補助文
   - `Model Catalog`
     - import / export
     - DB 初期化時は bundled catalog へ戻る補助文
@@ -65,6 +69,7 @@
 - `System Prompt Prefix` の編集と保存
 - coding provider ごとの enable / disable
 - coding provider ごとの `OpenAI API Key (Coding Agent)` 入力保存
+- provider ごとの `Memory Extraction outputTokens threshold` 入力保存
 - `model catalog` の import
 - `model catalog` の export
 - `DB を初期化` による設定・セッション系ストレージのリカバリ
@@ -77,6 +82,7 @@
 - current milestone では provider readiness / preflight を must-have にしない
 - coding credential は Settings 保存後すぐ Main Process から各 window へ broadcast し、Session Window の実行可否表示も即時更新する
 - provider 実装は保存済み coding credential を runtime の SDK client へ渡し、空文字のときだけ従来どおり環境依存 fallback を許可する
+- Memory extraction threshold は provider ごとに保持し、trigger engine は現在 provider の値だけを参照する
 - DB reset 成功時は renderer 側で reset 後の `appSettings` を draft に同期し、dirty 状態を解消する
 - reset 実行 API は選択対象を Main Process へ渡し、戻り値の current `sessions / appSettings / modelCatalog` で renderer を再同期する
 
@@ -85,6 +91,7 @@
 - Character Stream / monologue 用 API 設定
 - 新規 workspace の root directory 設定
 - provider ごとの既定値
+- Memory extraction の trigger mode 切替
 
 ## Non Goals
 

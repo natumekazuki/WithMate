@@ -54,6 +54,7 @@ import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { resolveOpenPathTarget } from "./open-path.js";
 import { launchTerminalAtPath } from "./open-terminal.js";
 import { SessionStorage } from "./session-storage.js";
+import { SessionMemoryStorage } from "./session-memory-storage.js";
 import { discoverSessionSkills } from "./skill-discovery.js";
 import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
@@ -147,6 +148,7 @@ const pendingSessionApprovalRequests = new Map<string, { requestId: string; reso
 let sessions: Session[] = [];
 let characters: CharacterProfile[] = [];
 let sessionStorage: SessionStorage | null = null;
+let sessionMemoryStorage: SessionMemoryStorage | null = null;
 let modelCatalogStorage: ModelCatalogStorage | null = null;
 let auditLogStorage: AuditLogStorage | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
@@ -217,6 +219,14 @@ function requireAppSettingsStorage(): AppSettingsStorage {
   return appSettingsStorage;
 }
 
+function requireSessionMemoryStorage(): SessionMemoryStorage {
+  if (!sessionMemoryStorage) {
+    throw new Error("session memory storage が初期化されていないよ。");
+  }
+
+  return sessionMemoryStorage;
+}
+
 async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
   if (!dbPath) {
     throw new Error("DB path が初期化されていないよ。");
@@ -227,9 +237,13 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
   modelCatalogStorage = new ModelCatalogStorage(dbPath, bundledModelCatalogPath);
   const activeModelCatalog = modelCatalogStorage.ensureSeeded();
   sessionStorage = new SessionStorage(dbPath);
+  sessionMemoryStorage = new SessionMemoryStorage(dbPath);
   auditLogStorage = new AuditLogStorage(dbPath);
   appSettingsStorage = new AppSettingsStorage(dbPath);
   sessions = sessionStorage.listSessions();
+  for (const session of sessions) {
+    syncSessionMemoryForSession(session);
+  }
 
   return activeModelCatalog;
 }
@@ -237,10 +251,12 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
 function closePersistentStores(): void {
   modelCatalogStorage?.close();
   sessionStorage?.close();
+  sessionMemoryStorage?.close();
   auditLogStorage?.close();
   appSettingsStorage?.close();
   modelCatalogStorage = null;
   sessionStorage = null;
+  sessionMemoryStorage = null;
   auditLogStorage = null;
   appSettingsStorage = null;
 }
@@ -909,9 +925,21 @@ function upsertSession(nextSession: Session): Session {
       nextSession.allowedAdditionalDirectories,
     ),
   });
+  syncSessionMemoryForSession(stored);
   sessions = storage.listSessions();
   broadcastSessions();
   return cloneSessions([stored])[0];
+}
+
+function syncSessionMemoryForSession(session: Session): void {
+  const storage = requireSessionMemoryStorage();
+  const existing = storage.ensureSessionMemory(session);
+  storage.upsertSessionMemory({
+    ...existing,
+    workspacePath: session.workspacePath,
+    threadId: session.threadId,
+    goal: existing.goal.trim() ? existing.goal : session.taskTitle.trim(),
+  });
 }
 
 function replaceAllSessions(
@@ -925,6 +953,9 @@ function replaceAllSessions(
   const previousSessions = sessions;
   storage.replaceSessions(nextSessions);
   sessions = storage.listSessions();
+  for (const session of sessions) {
+    syncSessionMemoryForSession(session);
+  }
 
   const nextSessionsById = new Map(sessions.map((session) => [session.id, session] as const));
   for (const previousSession of previousSessions) {
@@ -1916,6 +1947,8 @@ app.on("before-quit", (event) => {
 
   sessionStorage?.close();
   sessionStorage = null;
+  sessionMemoryStorage?.close();
+  sessionMemoryStorage = null;
   auditLogStorage?.close();
   auditLogStorage = null;
   appSettingsStorage?.close();

@@ -6,11 +6,29 @@
 - 関連 Issue:
   - `#3 LangGraphを使ってMemoryの永続化と共有`
   - `#1 定期実行はサブスクリプションだと規約違反の可能性がある`
+  - `#14 memoryに時間経過の評価値追加`
+  - `#15 キャラストリームをメモリー生成の一部にする`
 
 ## Goal
 
 WithMate における Memory を、`coding agent の継続性` と `character との積み重ね` を支える基盤として定義する。  
 current milestone では、Memory をまず `Project`、`Session`、`Character` の 3 層に分け、何をどこへ残すかの判断基準を固定する。
+
+## Issue Mapping
+
+- `#3`
+  - Memory 永続化と共有の基盤
+  - `Project / Session / Character` の保存先、抽出、検索の設計対象
+- `#14`
+  - Memory retrieval の ranking 改善
+  - 保存 schema ではなく、検索時の時間減衰や評価値の設計として扱う
+- `#15`
+  - memory extraction plane と Character Stream の接続案
+  - Memory 基盤の上に載る応用案として扱う
+- `#1`
+  - monologue plane の provider / auth / trigger policy
+  - `#15` が成立する前提条件
+
 
 ## Design Summary
 
@@ -98,6 +116,24 @@ WithMate 内部の処理で行う。
 3. 関係性や character 固有の積み重ねだけ `Character Memory` に寄せる
 
 つまり、`Project Memory` は直接書き込む先というより、`Session Memory` からの昇格先として扱う。
+
+## Retrieval Evaluation
+
+`Project Memory` と `Character Memory` の retrieval では、保存有無だけでなく「今どれを拾うべきか」の評価が必要になる。
+
+current design では、次の 3 要素を retrieval score の候補として扱う。
+
+1. semantic relevance
+- 現在の query や session 文脈との意味的近さ
+
+2. lexical match
+- 明示的なキーワード一致
+
+3. recency / decay
+- 古い記憶ほど価値を下げる補正
+- Issue `#14` はこの層の follow-up として扱う
+
+このため `#14` は新しい memory type の追加ではなく、検索・再注入ロジックの改善タスクとして位置づける。
 
 ## Data Domains
 
@@ -355,6 +391,27 @@ flowchart TD
 
 project の知識や task の知識はここへ混ぜない。
 
+## Current Implementation Slice
+
+current 実装では、まず `Session Memory` の永続化基盤から着手する。
+
+- SQLite の `session_memories` table を使う
+- key は `session_id`
+- `Session` 作成時に default memory を作る
+- `workspacePath` と `threadId` は session metadata と同期する
+- extraction plane による自動更新は次の slice で実装する
+
+つまり現段階では、
+
+- `Session Memory`
+  - 保存基盤あり
+- `Project Memory`
+  - design only
+- `Character Memory`
+  - design only
+
+という進み方を取る。
+
 ## Decision Engine
 
 current milestone の設計では、分類と昇格は内部処理で扱う。
@@ -477,17 +534,36 @@ type SessionMemoryDelta = {
 
 Memory extraction は定期常駐ではなく、session の流れに従属した裏処理として発火させる。
 
-### Recommended Initial Triggers
+### Initial Trigger Rule
 
-- `N turn` ごと
-- compact 前後
+初期仕様では、Memory extraction の通常発火条件を `outputTokens threshold` のみで扱う。
+
+- `Codex`
+  - 直近 turn の `outputTokens` が threshold 以上なら発火
+- `Copilot`
+  - 直近 turn の `outputTokens` が threshold 以上なら発火
+
+ここでは provider ごとの差があっても、trigger の概念は揃える。
+
+### Forced Triggers
+
+次は threshold に関係なく必ず発火させる。
+
+- compact 前
 - session close 前
 
 ### Why
 
-- Character Stream のような独立した自動生成より説明しやすい
-- session に従属した補助処理なので、自律常駐実行に見えにくい
-- 必要十分な頻度で Memory を更新できる
+- `N turn` 固定より、情報量ベースで説明しやすい
+- context growth や複合統計まで持ち込まずに済む
+- Settings を provider ごとの 1 数値だけで済ませられる
+
+### Threshold Ownership
+
+- threshold は provider ごとに持つ
+- 初期値は app 側の固定値とする
+- 将来の自動調整は必須にしない
+- ユーザーが必要なら Settings から手動で上書きできる形を想定する
 
 ## Provider Boundary
 

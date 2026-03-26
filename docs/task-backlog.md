@@ -1,6 +1,6 @@
 # Task Backlog
 
-- 更新日: 2026-03-25
+- 更新日: 2026-03-26
 - 対象: GitHub issue と repo 内の残タスクの統合管理
 
 ## 方針
@@ -31,18 +31,54 @@
 | P2 | 見送り | Local | `copilot-rollout` | apps / mcp / plugins | provider extension surface の read-only 表示や制御を検討する | 「今は使っていない」整理なので優先度は落とす |
 | P2 | 見送り | Local | `sdk-pending` | provider SDK 対応待ち | approval parity、plan / compact parity、quota parity など、SDK surface 待ちの項目を整理する | `docs/design/provider-sdk-pending-items.md` |
 | P2 | 完了 | GitHub | [#7](https://github.com/natumekazuki/WithMate/issues/7) | キャラ別メッセージ上書き | SessionWindow の固定文言を character ごとに差し替え、複数候補から stable に切り替えられるようにした | plan: `docs/plans/archive/2026/03/20260325-character-session-copy/`、design: `docs/design/session-character-copy.md` |
-| P2 | 未着手 | GitHub | [#3](https://github.com/natumekazuki/WithMate/issues/3) | Memory 永続化と共有 | Character / Session Memory を永続化し、独り言や継続文脈へ使う | `docs/design/memory-architecture.md` が正本。Character Stream 再開の前提 |
-| P2 | 未着手 | GitHub | [#1](https://github.com/natumekazuki/WithMate/issues/1) | 独り言の API 運用 | subscription ではなく API key 前提で monologue を扱う | `docs/design/monologue-provider-policy.md` とセットで扱う |
+| P1 | 進行中 | GitHub | [#3](https://github.com/natumekazuki/WithMate/issues/3) | Memory 永続化と共有 | Project / Session / Character Memory を永続化し、抽出 plane と retrieval の基盤を作る | `Session Memory` の SQLite 基盤まで完了。次は `outputTokens threshold` ベースの extraction trigger と Settings 保存。plan: `docs/plans/archive/2026/03/20260326-session-memory-foundation/` |
+| P2 | 未着手 | GitHub | [#14](https://github.com/natumekazuki/WithMate/issues/14) | memory の時間減衰 | 古い記憶の価値を下げる評価値を導入する | `#3` の後続。retrieval / ranking 層の設計として扱う |
+| P2 | 未着手 | GitHub | [#1](https://github.com/natumekazuki/WithMate/issues/1) | 独り言の API 運用 | subscription ではなく API key 前提で monologue を扱う | `docs/design/monologue-provider-policy.md` が正本。monologue plane の前提 |
+| P3 | 未着手 | GitHub | [#15](https://github.com/natumekazuki/WithMate/issues/15) | キャラストリームをメモリー生成の一部にする | memory extraction のレスポンスに独り言を載せる構成を検討する | `#3` `#1` `#5` の後で判断。Memory と Character Stream を橋渡しする応用タスク |
 | P3 | 見送り | GitHub | [#5](https://github.com/natumekazuki/WithMate/issues/5) | 独り言システム pending | Character Stream / monologue UI 適用を保留にする | parity 完了後に reopen 前提 |
 | P3 | 未着手 | GitHub | [#4](https://github.com/natumekazuki/WithMate/issues/4) | キャラ定義の自己改善 | エージェントがキャラ定義自体を改善できるようにする | Memory / Character 運用が固まってからでないと広がりすぎる |
 | P3 | 未着手 | Local | `character-chat-ui` | キャラ画像まわりの polish | 画像 path 正規化、assistant bubble 表現、avatar 表現差など | `docs/design/character-chat-ui.md` の open points |
 | P3 | 未着手 | Local | `home/session polish` | split ratio などの永続化 | Session layout / Home layout の local state を必要なら永続化する | `docs/design/session-window-layout-redesign.md` では follow-up 扱い |
 
+## Memory 関連タスク整理
+
+### 1. 基盤
+
+- `#3 Memory 永続化と共有`
+  - `Project / Session / Character Memory`
+  - extraction plane
+  - 永続化 schema
+  - retrieval の土台
+
+### 2. retrieval / ranking
+
+- `#14 memory の時間減衰`
+  - 古い記憶の価値を下げる
+  - retrieval score の一部として扱う
+  - `#3` の保存・検索基盤が前提
+
+### 3. monologue plane
+
+- `#1 独り言の API 運用`
+  - monologue を coding plane と分離する
+  - API key、model、trigger policy を確定する
+  - `Character Stream` の実装条件を固定する
+
+### 4. 応用 / 統合
+
+- `#15 キャラストリームをメモリー生成の一部にする`
+  - memory extraction と独り言生成を一つの裏処理にまとめる案
+  - `#3` の memory 基盤と `#1` の monologue plane が前提
+  - UI 適用は `#5` の pending 解消後に判断する
+
 ## 推奨順
 
-1. `#3` と `#1` をまとめた Character / Memory 系
-2. `#10 custom slash command`
-3. `#4` と各種 polish
+1. `#3 Memory 永続化と共有`
+2. `#1 独り言の API 運用`
+3. `#14 memory の時間減衰`
+4. `#15 キャラストリームをメモリー生成の一部にする`
+5. `#10 custom slash command`
+6. `#4` と各種 polish
 
 ## 参照元
 
@@ -52,4 +88,4 @@
 - `docs/design/memory-architecture.md`
 - `docs/design/monologue-provider-policy.md`
 - `docs/design/character-chat-ui.md`
-- GitHub Issues `#1 #3 #4 #5 #7 #10 #11 #12 #13`
+- GitHub Issues `#1 #3 #4 #5 #7 #10 #11 #12 #13 #14 #15`

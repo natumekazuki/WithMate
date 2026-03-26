@@ -295,6 +295,27 @@ export type Session = {
   stream: StreamEntry[];
 };
 
+export type SessionMemory = {
+  sessionId: string;
+  workspacePath: string;
+  threadId: string;
+  schemaVersion: 1;
+  goal: string;
+  decisions: string[];
+  openQuestions: string[];
+  nextActions: string[];
+  notes: string[];
+  updatedAt: string;
+};
+
+export type SessionMemoryDelta = {
+  goal?: string | null;
+  decisions?: string[];
+  openQuestions?: string[];
+  nextActions?: string[];
+  notes?: string[];
+};
+
 export type DiffPreviewPayload = {
   title: string;
   file: ChangedFile;
@@ -360,6 +381,10 @@ export function formatTimestampLabel(value: Date | string | number): string {
 
 export function currentTimestampLabel(): string {
   return formatTimestampLabel(new Date());
+}
+
+export function currentIsoTimestamp(): string {
+  return new Date().toISOString();
 }
 
 export const DEFAULT_CHARACTER_THEME_COLORS: CharacterThemeColors = {
@@ -519,6 +544,19 @@ function normalizeCharacterSessionCopyValue(value: unknown, fallback: string[]):
   return [...fallback];
 }
 
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const normalized = value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  return Array.from(new Set(normalized));
+}
+
 export function normalizeCharacterSessionCopy(value: unknown): CharacterSessionCopy {
   if (!value || typeof value !== "object") {
     return cloneCharacterSessionCopy(DEFAULT_CHARACTER_SESSION_COPY);
@@ -537,6 +575,82 @@ export function normalizeCharacterSessionCopy(value: unknown): CharacterSessionC
     latestCommandEmpty: normalizeCharacterSessionCopyValue(candidate.latestCommandEmpty, DEFAULT_CHARACTER_SESSION_COPY.latestCommandEmpty),
     changedFilesEmpty: normalizeCharacterSessionCopyValue(candidate.changedFilesEmpty, DEFAULT_CHARACTER_SESSION_COPY.changedFilesEmpty),
     contextEmpty: normalizeCharacterSessionCopyValue(candidate.contextEmpty, DEFAULT_CHARACTER_SESSION_COPY.contextEmpty),
+  };
+}
+
+export function createDefaultSessionMemory(input: Pick<Session, "id" | "workspacePath" | "threadId" | "taskTitle" | "taskSummary">): SessionMemory {
+  const goal = input.taskTitle.trim() || input.taskSummary.trim();
+  return {
+    sessionId: input.id,
+    workspacePath: input.workspacePath,
+    threadId: input.threadId,
+    schemaVersion: 1,
+    goal,
+    decisions: [],
+    openQuestions: [],
+    nextActions: [],
+    notes: [],
+    updatedAt: currentIsoTimestamp(),
+  };
+}
+
+export function normalizeSessionMemory(value: unknown): SessionMemory | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<SessionMemory>;
+  if (typeof candidate.sessionId !== "string" || !candidate.sessionId.trim()) {
+    return null;
+  }
+
+  return {
+    sessionId: candidate.sessionId.trim(),
+    workspacePath: typeof candidate.workspacePath === "string" ? candidate.workspacePath : "",
+    threadId: typeof candidate.threadId === "string" ? candidate.threadId : "",
+    schemaVersion: 1,
+    goal: typeof candidate.goal === "string" ? candidate.goal.trim() : "",
+    decisions: normalizeStringList(candidate.decisions),
+    openQuestions: normalizeStringList(candidate.openQuestions),
+    nextActions: normalizeStringList(candidate.nextActions),
+    notes: normalizeStringList(candidate.notes),
+    updatedAt:
+      typeof candidate.updatedAt === "string" && candidate.updatedAt.trim()
+        ? candidate.updatedAt
+        : currentIsoTimestamp(),
+  };
+}
+
+export function normalizeSessionMemoryDelta(value: unknown): SessionMemoryDelta {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const candidate = value as Partial<SessionMemoryDelta>;
+  return {
+    goal:
+      typeof candidate.goal === "string"
+        ? candidate.goal.trim()
+        : candidate.goal === null
+          ? null
+          : undefined,
+    decisions: Array.isArray(candidate.decisions) ? normalizeStringList(candidate.decisions) : undefined,
+    openQuestions: Array.isArray(candidate.openQuestions) ? normalizeStringList(candidate.openQuestions) : undefined,
+    nextActions: Array.isArray(candidate.nextActions) ? normalizeStringList(candidate.nextActions) : undefined,
+    notes: Array.isArray(candidate.notes) ? normalizeStringList(candidate.notes) : undefined,
+  };
+}
+
+export function mergeSessionMemory(current: SessionMemory, delta: SessionMemoryDelta): SessionMemory {
+  const normalizedDelta = normalizeSessionMemoryDelta(delta);
+  return {
+    ...current,
+    goal: normalizedDelta.goal === undefined ? current.goal : normalizedDelta.goal ?? "",
+    decisions: normalizedDelta.decisions ?? current.decisions,
+    openQuestions: normalizedDelta.openQuestions ?? current.openQuestions,
+    nextActions: normalizedDelta.nextActions ?? current.nextActions,
+    notes: normalizedDelta.notes ?? current.notes,
+    updatedAt: currentIsoTimestamp(),
   };
 }
 

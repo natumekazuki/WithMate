@@ -6,6 +6,7 @@
   - `#1 定期実行はサブスクリプションだと規約違反の可能性がある`
   - `#3 LangGraphを使ってMemoryの永続化と共有`
   - `#5 独り言システムはペンディング`
+  - `#15 キャラストリームをメモリー生成の一部にする`
 
 ## Goal
 
@@ -189,3 +190,4 @@ current milestone では `Character Stream` は **非着手** とし、provider 
 - 1 ターンにつき独り言を 1 回固定にするか
 - API 未設定時に独り言設定をどの画面で案内するか
 - parity 完了後の Character Stream 実装順を provider / memory / UI のどこから切るか
+- `#15` のように memory extraction と独り言生成を 1 つの裏処理に統合するか、別 request のまま保つか
