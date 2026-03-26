@@ -767,3 +767,4 @@ WithMate では、現時点では次の対応が自然である。
 
 - `docs/design/product-direction.md`
 - `docs/design/monologue-provider-policy.md`
+- `docs/design/project-memory-storage.md`
