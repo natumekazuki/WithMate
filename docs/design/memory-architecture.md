@@ -46,6 +46,8 @@ WithMate の Memory は 3 層に分ける。
 - ユーザーと character の関係性や積み重ね
 - project や task と分離して character 単位で持つ記憶
 - main の coding session prompt には注入せず、monologue や将来の character update で使う
+- `独り言` と共通の `character reflection cycle` で更新する
+- `SessionStart` では monologue only、通常更新は文脈増加ベースで走らせる
 
 ## Core Distinction
 
@@ -353,6 +355,13 @@ type SessionMemoryV1 = {
 - 継続した反応傾向
 - 一緒に過ごした時間として残したい印象
 
+保持しないもの:
+
+- coding task の決定事項
+- project の durable knowledge
+- session 固有の TODO
+- 作業手順そのもの
+
 保存キーの考え方:
 
 - character id
@@ -369,6 +378,16 @@ type SessionMemoryV1 = {
 
 - main の coding session prompt への常設注入
 - main の coding session prompt での on-demand retrieval
+
+更新方針:
+
+- `Character Memory` と `独り言` は別 trigger にしない
+- 共通の `character reflection cycle` を 1 つ持つ
+- 1 回の reflection で `CharacterMemoryDelta` と `monologueText` を分けて生成する
+- coding plane の run とは別 request として扱う
+- `SessionStart` では `monologueText` だけを生成する
+- 通常更新は `charDelta >= 1200` または `messageDelta >= 6`、かつ `cooldown >= 5分` を満たした時だけ走らせる
+- `session close` は trigger に使わない
 
 ## Promotion Rules
 
@@ -455,6 +474,7 @@ current 実装では、`Session Memory` の永続化と extraction trigger、`Pr
   - retrieval 時に `lastUsedAt` 更新あり
 - `Character Memory`
   - design only
+  - `独り言` と共通 trigger の `character reflection cycle` を正本にする
 
 という進み方を取る。
 

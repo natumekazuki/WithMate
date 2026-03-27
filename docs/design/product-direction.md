@@ -161,6 +161,9 @@ coding plane において、Memory が解くべき問いは次の 2 つだけに
 このため、coding plane ではまず `Project Memory` と `Session Memory` の 2 軸で考える。  
 `Character Memory` は monologue や将来の character update で使う別軸とし、main の session prompt には注入しない。
 
+さらに、`Character Memory` の更新と `独り言` 生成は別機能として分離せず、共通の `character reflection cycle` で扱う。  
+current v1 では、`SessionStart` の monologue only path と、文脈増加ベースの通常 reflection を分ける。
+
 ## Monologue / Character Stream Position
 
 Character Stream は「WithMate の固有価値」ではあるが、current milestone の中心には置かない。

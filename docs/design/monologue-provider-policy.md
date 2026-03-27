@@ -21,8 +21,9 @@
 4. 独り言機能は consumer / subscription 側の自動多重実行では実装しない
 5. MVP の独り言モデルは `gpt-5-mini` 固定にする
 6. 独り言の実行契機はユーザー操作に連動するイベントに限定し、定期実行は行わない
-7. 独り言の文脈は Memory から抽出した軽量コンテキストに限定する
-8. current milestone では Character Stream 実装には着手しない
+7. 独り言は `Character Memory` 更新と共通の `character reflection cycle` で生成する
+8. 独り言の文脈は Memory から抽出した軽量コンテキストに限定する
+9. current milestone では Character Stream 実装には着手しない
 
 ## Why
 
@@ -85,10 +86,37 @@ MVP では次の方針を採用する。
 
 - 定期実行はしない
 - バックグラウンド常時実行はしない
-- ユーザーが coding agent 本体へ prompt を送信したとき、またはそのターンが完了したときに連動して独り言生成を行う
+- `独り言` 単体の trigger は持たない
+- `Character Memory` 更新と共通の `character reflection cycle` を trigger にする
 
-実装上は、`本体ターンと独り言生成は別リクエスト` として扱う。
+実装上は、`coding plane の本体ターン` と `character reflection cycle` は別リクエストとして扱う。  
 同じ UI ターンに紐づいていても、同一 provider 呼び出しとして混ぜない。
+
+### v1 Trigger
+
+1. `SessionStart`
+- monologue only
+- `Character Memory` は更新しない
+
+2. `Context 増加ベース`
+- `Character Memory` 更新と monologue 更新を同時に行う
+- 条件:
+  - `charDelta >= 1200`
+  - または `messageDelta >= 6`
+  - かつ `cooldown >= 5分`
+
+### Non Trigger
+
+- `session close` は monologue trigger に使わない
+
+### Reflection Cycle
+
+`character reflection cycle` の出力は 2 つに分ける。
+
+- `CharacterMemoryDelta`
+- `monologueText`
+
+つまり、trigger は共通化するが、保存先と表示先は分ける。
 
 ## Model Policy
 
@@ -151,6 +179,11 @@ Issue `#3` は、このポリシーを成立させるための基盤とする。
 - 直近ターンと現在の mood / run state を含む
 
 MVP では、独り言生成にフル履歴を渡さない。
+
+### Boundary
+
+- coding task の決定事項や project 知識は `Character Memory` に混ぜない
+- 作業知識は `Project Memory` / `Session Memory` に残す
 
 ## UI Policy
 
