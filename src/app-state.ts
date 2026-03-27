@@ -149,6 +149,21 @@ export type SessionContextTelemetry = {
   toolDefinitionsTokens?: number;
 };
 
+export type SessionBackgroundActivityKind = "memory-generation" | "monologue";
+
+export type SessionBackgroundActivityStatus = "running" | "completed" | "failed" | "canceled";
+
+export type SessionBackgroundActivityState = {
+  sessionId: string;
+  kind: SessionBackgroundActivityKind;
+  status: SessionBackgroundActivityStatus;
+  title: string;
+  summary: string;
+  details?: string;
+  errorMessage: string;
+  updatedAt: string;
+};
+
 export type AppSettings = {
   systemPromptPrefix: string;
   codingProviderSettings: Record<string, ProviderAppSettings>;

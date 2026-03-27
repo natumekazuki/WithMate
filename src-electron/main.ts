@@ -25,6 +25,8 @@ import {
   type ProviderQuotaTelemetry,
   type RunSessionTurnRequest,
   type Session,
+  type SessionBackgroundActivityKind,
+  type SessionBackgroundActivityState,
   type SessionMemory,
   type SessionMemoryDelta,
   type SessionContextTelemetry,
@@ -87,6 +89,7 @@ import {
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
+  WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
@@ -119,6 +122,7 @@ import {
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SESSIONS_CHANGED_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
+  WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
@@ -159,6 +163,7 @@ const allowCloseSessionWindows = new Set<string>();
 const liveSessionRuns = new Map<string, LiveSessionRunState>();
 const providerQuotaTelemetryByProvider = new Map<string, ProviderQuotaTelemetry>();
 const sessionContextTelemetryBySessionId = new Map<string, SessionContextTelemetry>();
+const sessionBackgroundActivities = new Map<string, SessionBackgroundActivityState>();
 const providerQuotaRefreshPromises = new Map<string, Promise<ProviderQuotaTelemetry | null>>();
 const providerQuotaRefreshTimers = new Map<string, NodeJS.Timeout[]>();
 const pendingSessionApprovalRequests = new Map<string, { requestId: string; resolve: (decision: LiveApprovalDecision) => void }>();
@@ -577,6 +582,60 @@ function clearAllSessionContextTelemetry(): void {
   }
 }
 
+function buildSessionBackgroundActivityKey(sessionId: string, kind: SessionBackgroundActivityKind): string {
+  return `${sessionId}\u001f${kind}`;
+}
+
+function getSessionBackgroundActivity(
+  sessionId: string,
+  kind: SessionBackgroundActivityKind,
+): SessionBackgroundActivityState | null {
+  return sessionBackgroundActivities.get(buildSessionBackgroundActivityKey(sessionId, kind)) ?? null;
+}
+
+function broadcastSessionBackgroundActivity(
+  sessionId: string,
+  kind: SessionBackgroundActivityKind,
+): void {
+  const state = getSessionBackgroundActivity(sessionId, kind);
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT, { sessionId, kind, state });
+    }
+  }
+}
+
+function setSessionBackgroundActivity(
+  sessionId: string,
+  kind: SessionBackgroundActivityKind,
+  state: SessionBackgroundActivityState | null,
+): void {
+  const key = buildSessionBackgroundActivityKey(sessionId, kind);
+  if (state) {
+    sessionBackgroundActivities.set(key, state);
+  } else {
+    sessionBackgroundActivities.delete(key);
+  }
+
+  broadcastSessionBackgroundActivity(sessionId, kind);
+}
+
+function clearSessionBackgroundActivities(sessionId: string): void {
+  setSessionBackgroundActivity(sessionId, "memory-generation", null);
+  setSessionBackgroundActivity(sessionId, "monologue", null);
+}
+
+function clearAllSessionBackgroundActivities(): void {
+  const activityKeys = Array.from(sessionBackgroundActivities.keys());
+  sessionBackgroundActivities.clear();
+  for (const key of activityKeys) {
+    const [sessionId, kind] = key.split("\u001f") as [string | undefined, SessionBackgroundActivityKind | undefined];
+    if (sessionId && kind) {
+      broadcastSessionBackgroundActivity(sessionId, kind);
+    }
+  }
+}
+
 function listOpenSessionWindowIds(): string[] {
   const openSessionIds: string[] = [];
   for (const [sessionId, window] of sessionWindows.entries()) {
@@ -656,6 +715,7 @@ async function resetAppDatabase(request?: ResetAppDatabaseRequest | null): Promi
       requireSessionStorage().clearSessions();
       sessions = [];
       liveSessionRuns.clear();
+      clearAllSessionBackgroundActivities();
       sessionRunControllers.clear();
       inFlightSessionRuns.clear();
       clearAllSessionContextTelemetry();
@@ -938,6 +998,7 @@ function deleteSession(sessionId: string): void {
   requireSessionStorage().deleteSession(sessionId);
   sessions = requireSessionStorage().listSessions();
   clearSessionContextTelemetry(sessionId);
+  clearSessionBackgroundActivities(sessionId);
 
   const window = sessionWindows.get(sessionId);
   if (window && !window.isDestroyed()) {
@@ -1058,6 +1119,16 @@ async function runSessionMemoryExtraction(
   });
 
   inFlightSessionMemoryExtractions.add(session.id);
+  setSessionBackgroundActivity(session.id, "memory-generation", {
+    sessionId: session.id,
+    kind: "memory-generation",
+    status: "running",
+    title: "Memory生成",
+    summary: "Session Memory を整理しています。",
+    details: `trigger: ${triggerReason}\nmodel: ${extractionSettings.model}\nreasoning: ${extractionSettings.reasoningEffort}`,
+    errorMessage: "",
+    updatedAt: new Date().toISOString(),
+  });
   try {
     const extractionResult = await providerAdapter.extractSessionMemoryDelta({
       session: latestSession,
@@ -1083,6 +1154,27 @@ async function runSessionMemoryExtraction(
       rawItemsJson: "[]",
       usage: extractionResult.usage,
       errorMessage: "",
+    });
+    const memoryFieldLabels = delta
+      ? [
+        delta.goal !== undefined ? "goal" : null,
+        delta.decisions?.length ? "decisions" : null,
+        delta.openQuestions?.length ? "openQuestions" : null,
+        delta.nextActions?.length ? "nextActions" : null,
+        delta.notes?.length ? "notes" : null,
+      ].filter((value): value is string => !!value)
+      : [];
+    setSessionBackgroundActivity(session.id, "memory-generation", {
+      sessionId: session.id,
+      kind: "memory-generation",
+      status: "completed",
+      title: "Memory生成",
+      summary: memoryFieldLabels.length > 0
+        ? `Session Memory を更新しました: ${memoryFieldLabels.join(", ")}`
+        : "更新は不要でした。",
+      details: `trigger: ${triggerReason}\nmodel: ${extractionSettings.model}\nreasoning: ${extractionSettings.reasoningEffort}`,
+      errorMessage: "",
+      updatedAt: new Date().toISOString(),
     });
     if (!delta) {
       return;
@@ -1119,6 +1211,18 @@ async function runSessionMemoryExtraction(
       usage: null,
       errorMessage: error instanceof Error ? error.message : String(error),
     });
+    setSessionBackgroundActivity(session.id, "memory-generation", {
+      sessionId: session.id,
+      kind: "memory-generation",
+      status: isCanceledRunError(error) ? "canceled" : "failed",
+      title: "Memory生成",
+      summary: isCanceledRunError(error)
+        ? "Memory 生成はキャンセルされました。"
+        : "Memory 生成に失敗しました。",
+      details: `trigger: ${triggerReason}\nmodel: ${extractionSettings.model}\nreasoning: ${extractionSettings.reasoningEffort}`,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      updatedAt: new Date().toISOString(),
+    });
     console.error("session memory extraction failed", {
       sessionId: session.id,
       provider: session.provider,
@@ -1150,6 +1254,9 @@ function replaceAllSessions(
     const nextSession = nextSessionsById.get(previousSession.id);
     if (!nextSession || nextSession.provider !== previousSession.provider) {
       clearSessionContextTelemetry(previousSession.id);
+    }
+    if (!nextSession) {
+      clearSessionBackgroundActivities(previousSession.id);
     }
   }
 
@@ -2025,6 +2132,16 @@ app.whenReady().then(async () => {
 
     return getSessionContextTelemetry(sessionId);
   });
+  ipcMain.handle(
+    WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
+    (_event, sessionId: string, kind: SessionBackgroundActivityKind) => {
+      if (!sessionId || !kind) {
+        return null;
+      }
+
+      return getSessionBackgroundActivity(sessionId, kind);
+    },
+  );
   ipcMain.handle(
     WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
     (_event, sessionId: string, requestId: string, decision: LiveApprovalDecision) => {

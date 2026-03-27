@@ -156,8 +156,13 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - pending 中の live activity / streaming response
 - pending bubble は会話本文の面として扱い、`assistantText` と run indicator を表示する
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
-- right pane は full timeline ではなく、実行中または直近 run の最後の `command_execution` 1 件だけを表示する
+- right pane は `Latest Command / Memory生成 / 独り言` の tab host とする
+- command 実行中は `Latest Command` を最優先で自動表示する
+- background memory extraction 実行中は `Memory生成` へ自動切り替える
+- `独り言` は current milestone では empty state host のみ置く
+- right pane の empty / idle copy は説明過多にせず、使えば分かる最小表現を優先する
 - `Latest Command` には raw command、status、source、rough risk badge、必要時だけ開く `details` を出す
+- `Memory生成` には background activity の status、summary、必要時だけ開く `details` を出す
 - provider が `Copilot` の時だけ、`Latest Command` の下に `Premium Requests` の薄い strip を常設し、残量だけを即読できるようにする
 - `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない
 - `assistantText` は pending bubble の会話本文としてのみ扱い、`agent_message` を activity row へ戻さない

@@ -10,6 +10,8 @@ import type {
   DiffPreviewPayload,
   LiveApprovalDecision,
   ProviderQuotaTelemetry,
+  SessionBackgroundActivityKind,
+  SessionBackgroundActivityState,
   SessionContextTelemetry,
   LiveSessionRunState,
   RunSessionTurnRequest,
@@ -57,6 +59,7 @@ export const WITHMATE_RESET_APP_DATABASE_CHANNEL = "withmate:reset-app-database"
 export const WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL = "withmate:get-live-session-run";
 export const WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL = "withmate:get-provider-quota-telemetry";
 export const WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL = "withmate:get-session-context-telemetry";
+export const WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL = "withmate:get-session-background-activity";
 export const WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL = "withmate:resolve-live-approval";
 export const WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL = "withmate:list-open-session-window-ids";
 export const WITHMATE_SESSIONS_CHANGED_EVENT = "withmate:sessions-changed";
@@ -66,6 +69,7 @@ export const WITHMATE_APP_SETTINGS_CHANGED_EVENT = "withmate:app-settings-change
 export const WITHMATE_LIVE_SESSION_RUN_EVENT = "withmate:live-session-run";
 export const WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT = "withmate:provider-quota-telemetry";
 export const WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT = "withmate:session-context-telemetry";
+export const WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT = "withmate:session-background-activity";
 export const WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT = "withmate:open-session-windows-changed";
 
 export type OpenPathOptions = {
@@ -133,6 +137,10 @@ export type WithMateWindowApi = {
   getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
   getProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
   getSessionContextTelemetry(sessionId: string): Promise<SessionContextTelemetry | null>;
+  getSessionBackgroundActivity(
+    sessionId: string,
+    kind: SessionBackgroundActivityKind,
+  ): Promise<SessionBackgroundActivityState | null>;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): Promise<void>;
   listOpenSessionWindowIds(): Promise<string[]>;
   getAppSettings(): Promise<AppSettings>;
@@ -155,6 +163,13 @@ export type WithMateWindowApi = {
   subscribeLiveSessionRun(listener: (sessionId: string, state: LiveSessionRunState | null) => void): () => void;
   subscribeProviderQuotaTelemetry(listener: (providerId: string, telemetry: ProviderQuotaTelemetry | null) => void): () => void;
   subscribeSessionContextTelemetry(listener: (sessionId: string, telemetry: SessionContextTelemetry | null) => void): () => void;
+  subscribeSessionBackgroundActivity(
+    listener: (
+      sessionId: string,
+      kind: SessionBackgroundActivityKind,
+      state: SessionBackgroundActivityState | null,
+    ) => void,
+  ): () => void;
   subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
 };
 

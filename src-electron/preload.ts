@@ -14,6 +14,7 @@ import {
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
+  WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
@@ -27,6 +28,7 @@ import {
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
   WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT,
+  WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
@@ -135,6 +137,9 @@ const withmateApi: WithMateWindowApi = {
   },
   getSessionContextTelemetry(sessionId: string) {
     return ipcRenderer.invoke(WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL, sessionId);
+  },
+  getSessionBackgroundActivity(sessionId: string, kind) {
+    return ipcRenderer.invoke(WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL, sessionId, kind);
   },
   resolveLiveApproval(sessionId: string, requestId: string, decision) {
     return ipcRenderer.invoke(WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL, sessionId, requestId, decision);
@@ -260,6 +265,23 @@ const withmateApi: WithMateWindowApi = {
     ipcRenderer.on(WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT, wrapped);
     return () => {
       ipcRenderer.removeListener(WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT, wrapped);
+    };
+  },
+  subscribeSessionBackgroundActivity(listener) {
+    const wrapped = (
+      _event: unknown,
+      payload: {
+        sessionId: string;
+        kind: Parameters<WithMateWindowApi["getSessionBackgroundActivity"]>[1];
+        state: Awaited<ReturnType<WithMateWindowApi["getSessionBackgroundActivity"]>>;
+      },
+    ) => {
+      listener(payload.sessionId, payload.kind, payload.state ?? null);
+    };
+
+    ipcRenderer.on(WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT, wrapped);
+    return () => {
+      ipcRenderer.removeListener(WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT, wrapped);
     };
   },
   subscribeOpenSessionWindowIds(listener) {

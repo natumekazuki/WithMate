@@ -1,10 +1,10 @@
-# Session Live Command Monitor
+# Session Live Activity Monitor
 
 ## Goal
 
 - Session 実行中に、会話本文を潰さずに `command_execution` を常時確認できるようにする
 - safety / trust 観点で必要な情報を `最新 command 1 件` に絞り、見落としや情報過多を減らす
-- 実行中と待機中で right pane の責務を切り替えやすい host を残す
+- right pane を `Latest Command / Memory生成 / 独り言` の activity host にする
 
 ## Problem
 
@@ -17,10 +17,17 @@
 ## Design Summary
 
 - pending bubble は引き続き `assistantText` と run indicator だけを表示する
-- right pane は `Latest Command` だけを表示する単一 pane にする
+- right pane は `Latest Command / Memory生成 / 独り言` の 3 面を持つ
+- 手動切り替えは常時可能にする
+- 自動切り替えは `running` を基準にする
+  - `Latest Command` は session run 中を最優先で表示する
+  - `Memory生成` は background memory extraction が `running` の時に自動表示する
+  - `独り言` は将来の monologue 実行が `running` の時に自動表示する
 - `Latest Command` は次の優先順で決める
   - 実行中なら `liveRun.steps` の最後の `command_execution`
   - 待機中なら直近 terminal Audit Log に含まれる最後の `command_execution`
+- `Memory生成` は専用 background activity state を main process から受ける
+- `独り言` は current milestone では host だけを置き、empty state を出す
 - それ以外の step list や詳細な実況履歴は right pane 常設から外し、確定後は artifact timeline / Audit Log を見る
 
 ## Layout
@@ -31,7 +38,7 @@ flowchart TB
   H --> M
   M[Main Split]
   M --> C[Conversation]
-  M --> R[Latest Command]
+  M --> R[Right Pane Tabs]
   M --> D[Action Dock]
 ```
 
@@ -41,9 +48,16 @@ flowchart TB
 - `assistantText` を読む主面として扱う
 - `message follow` banner は既存どおり list 下端の導線に留める
 
-### Latest Command
+### Right Pane Tabs
 
 - wide desktop では右 pane に常設する
+- 上部に 3 つの tab button を置く
+  - `LatestCommand`
+  - `Memory生成`
+  - `独り言`
+
+#### Latest Command
+
 - 表示対象は 1 件だけ
 - 内容は次に絞る
   - status badge
@@ -52,6 +66,21 @@ flowchart TB
   - 危険度の rough badge (`DELETE / WRITE / NETWORK`)
   - 必要時だけ開く `details`
 - `liveRun.errorMessage` がある時は card 内の alert として併記する
+
+#### Memory生成
+
+- `Session Memory extraction` の background activity を表示する
+- 内容は次に絞る
+  - status badge
+  - summary
+  - trigger / model / reasoning を含む `details`
+  - failure 時の error block
+
+#### 独り言
+
+- current milestone では empty state のみ
+- 将来の monologue plane を差し込む host として扱う
+- empty state copy は説明過多にせず、最小の表示に留める
 
 ### Action Dock
 
@@ -68,20 +97,21 @@ flowchart TB
 
 ### Desktop Width
 
-- `Latest Command` を右 pane に置く
+- right pane の tab host を常設する
 - `Action Dock` は左右ペインの下に full-width で置く
 - splitter で会話面と right pane の幅を調整できる
 
 ### Narrow Width
 
 - main split は縦 stack に戻す
-- `Latest Command` は message list の下、`Action Dock` の上へ置く
+- right pane は message list の下、`Action Dock` の上へ置く
 - `Action Dock` は引き続き最下段に固定面として扱う
 
 ## Data Mapping
 
 - provider adapter や `liveRun` schema は変更しない
 - Renderer 側で `liveRun.steps` と terminal Audit Log から最新 command だけを抽出する
+- `Memory生成` と `独り言` は session 単位の background activity state を main process から IPC event で受ける
 - command 以外の live step は right pane へ出さない
 
 ## Non-Goals

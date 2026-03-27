@@ -2363,6 +2363,50 @@ button:disabled {
   overflow: hidden;
 }
 
+.command-monitor-switcher {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.command-monitor-switcher-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.command-monitor-switcher-button:hover {
+  border-color: rgba(203, 213, 225, 0.22);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.command-monitor-switcher-current {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.command-monitor-switcher-label {
+  color: var(--ink);
+  font-size: 0.88rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .command-monitor-head-copy p,
 .command-monitor-empty,
 .command-monitor-empty-subtle {
@@ -2469,6 +2513,26 @@ button:disabled {
 
 .command-monitor-details {
   min-width: 0;
+}
+
+.background-activity-summary {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.background-activity-summary strong,
+.background-activity-summary p {
+  margin: 0;
+}
+
+.background-activity-summary strong {
+  color: var(--ink);
+}
+
+.background-activity-summary p {
+  color: var(--ink);
+  line-height: 1.55;
 }
 
 .provider-usage-shell {
