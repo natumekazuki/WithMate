@@ -10,9 +10,11 @@ import type {
   LiveApprovalRequest,
   LiveSessionRunState,
   MessageArtifact,
+  ProjectMemoryEntry,
   ProviderQuotaTelemetry,
   SessionContextTelemetry,
   Session,
+  SessionMemory,
   SessionMemoryDelta,
 } from "../src/app-state.js";
 import type { ModelReasoningEffort, ModelCatalogProvider } from "../src/model-catalog.js";
@@ -28,6 +30,8 @@ export type ProviderPromptComposition = {
 
 export type RunSessionTurnInput = {
   session: Session;
+  sessionMemory: SessionMemory;
+  projectMemoryEntries: ProjectMemoryEntry[];
   character: CharacterProfile;
   providerCatalog: ModelCatalogProvider;
   userMessage: string;

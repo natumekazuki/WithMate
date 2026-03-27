@@ -120,6 +120,23 @@ WithMate 内部の処理で行う。
 
 つまり、`Project Memory` は直接書き込む先というより、`Session Memory` からの昇格先として扱う。
 
+## Project Promotion Policy v1
+
+current 実装の `Session -> Project` 昇格は rule-based で行う。
+
+- `decisions`
+  - 常に `Project Memory` へ昇格する
+- `notes`
+  - `constraint:` / `convention:` / `context:` / `deferred:` prefix を持つものだけ昇格する
+- `goal`
+  - 昇格しない
+- `openQuestions`
+  - 昇格しない
+- `nextActions`
+  - 昇格しない
+
+この設計では、`Project Memory` のノイズを抑え、session 固有の scratchpad を長期記憶へ混ぜすぎないことを優先する。
+
 ## Retrieval Evaluation
 
 `Project Memory` と `Character Memory` の retrieval では、保存有無だけでなく「今どれを拾うべきか」の評価が必要になる。  
@@ -419,6 +436,8 @@ current 実装では、`Session Memory` の永続化と extraction trigger、`Pr
 - turn 完了時に `outputTokensThreshold` を超えた場合だけ extraction plane を走らせる
 - `Session Window` を閉じた時は threshold に関係なく extraction を 1 回走らせる
 - extraction 結果は `SessionMemoryDelta` を validate / normalize した時だけ merge する
+- `Session Memory` の `decisions` と tag 付き `notes` を `Project Memory` へ昇格する
+- coding plane prompt では `Session Memory` を常設し、`Project Memory` は lexical retrieval hit を最大 3 件だけ注入する
 
 つまり現段階では、
 
@@ -428,7 +447,8 @@ current 実装では、`Session Memory` の永続化と extraction trigger、`Pr
 - `Project Memory`
   - `project_scopes` / `project_memory_entries` の保存基盤あり
   - scope 解決あり
-  - 昇格 / retrieval は未実装
+  - rule-based 昇格あり
+  - lexical retrieval あり
 - `Character Memory`
   - design only
 

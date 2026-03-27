@@ -134,6 +134,7 @@ export function buildSessionMemoryExtractionPrompt(
     "Markdown や説明文、コードフェンスは出さないでください。",
     "今回の会話から Session Memory を更新する差分だけを返してください。",
     "確定していない内容を decisions に入れないでください。",
+    "Project Memory に昇格すべき durable な補助知識を notes に入れる場合は、先頭に constraint: / convention: / context: / deferred: のいずれかを付けてください。",
     "更新不要な field は省略して構いません。",
   ].join("\n");
 

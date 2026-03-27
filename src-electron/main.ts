@@ -25,6 +25,8 @@ import {
   type ProviderQuotaTelemetry,
   type RunSessionTurnRequest,
   type Session,
+  type SessionMemory,
+  type SessionMemoryDelta,
   type SessionContextTelemetry,
 } from "../src/app-state.js";
 import {
@@ -57,6 +59,8 @@ import { launchTerminalAtPath } from "./open-terminal.js";
 import { SessionStorage } from "./session-storage.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
 import { ProjectMemoryStorage } from "./project-memory-storage.js";
+import { buildProjectMemoryPromotionEntries } from "./project-memory-promotion.js";
+import { retrieveProjectMemoryEntries } from "./project-memory-retrieval.js";
 import {
   buildSessionMemoryExtractionLogicalPrompt,
   buildSessionMemoryExtractionPrompt,
@@ -973,8 +977,31 @@ function syncSessionMemoryForSession(session: Session): void {
   });
 }
 
-function syncProjectScopeForSession(session: Session): void {
-  requireProjectMemoryStorage().ensureProjectScope(resolveProjectScope(session.workspacePath));
+function syncProjectScopeForSession(session: Session) {
+  return requireProjectMemoryStorage().ensureProjectScope(resolveProjectScope(session.workspacePath));
+}
+
+function resolveProjectMemoryEntriesForPrompt(
+  session: Session,
+  userMessage: string,
+  sessionMemory: SessionMemory,
+) {
+  const projectScope = syncProjectScopeForSession(session);
+  const entries = requireProjectMemoryStorage().listProjectMemoryEntries(projectScope.id);
+  return retrieveProjectMemoryEntries(entries, userMessage, sessionMemory);
+}
+
+function promoteSessionMemoryDeltaToProjectMemory(session: Session, delta: SessionMemoryDelta): void {
+  const projectScope = syncProjectScopeForSession(session);
+  const entries = buildProjectMemoryPromotionEntries(session, projectScope.id, delta);
+  if (entries.length === 0) {
+    return;
+  }
+
+  const storage = requireProjectMemoryStorage();
+  for (const entry of entries) {
+    storage.upsertProjectMemoryEntry(entry);
+  }
 }
 
 async function runSessionMemoryExtraction(
@@ -1070,6 +1097,7 @@ async function runSessionMemoryExtraction(
         delta,
       ),
     );
+    promoteSessionMemoryDeltaToProjectMemory(sessionForSave, delta);
   } catch (error) {
     requireAuditLogStorage().updateAuditLog(runningAuditLog.id, {
       sessionId: latestSession.id,
@@ -1467,8 +1495,12 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
 
   const { provider } = resolveProviderCatalog(session.provider, session.catalogRevision);
   const providerAdapter = getProviderAdapter(provider.id);
+  const sessionMemory = requireSessionMemoryStorage().ensureSessionMemory(session);
+  const projectMemoryEntries = resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
   const promptForAudit = providerAdapter.composePrompt({
     session,
+    sessionMemory,
+    projectMemoryEntries,
     character,
     providerCatalog: provider,
     userMessage: nextMessage,
@@ -1523,6 +1555,8 @@ async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest)
 
     const result = await providerAdapter.runSessionTurn({
       session: runningSession,
+      sessionMemory,
+      projectMemoryEntries,
       character,
       providerCatalog: provider,
       userMessage: nextMessage,

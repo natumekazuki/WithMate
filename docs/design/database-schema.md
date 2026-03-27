@@ -411,6 +411,17 @@ Project Memory の anchor table。
 
 Project Memory entry の本体 table。
 
+current 実装では、`Session Memory` extraction の結果から次だけを昇格保存する。
+
+- `decisions`
+  - 常に `decision`
+- `notes`
+  - `constraint:` / `convention:` / `context:` / `deferred:` prefix を持つものだけ対応 category へ昇格
+
+`goal` / `openQuestions` / `nextActions` は current slice では保存しない。
+
+retrieval 側では、`title` / `detail` / `keywords_json` を使って lexical match を行い、coding plane prompt へ最大 3 件まで再注入する。
+
 | Column | Type | Meaning |
 | --- | --- | --- |
 | `id` | `TEXT` | entry id |
