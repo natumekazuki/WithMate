@@ -147,4 +147,40 @@ describe("ProjectMemoryStorage", () => {
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
+
+  it("retrieval に使った entry の lastUsedAt を更新できる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-memory-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    const workspacePath = path.join(tempDirectory, "workspace");
+    let storage: ProjectMemoryStorage | null = null;
+    let sessionStorage: SessionStorage | null = null;
+
+    try {
+      await mkdir(workspacePath, { recursive: true });
+
+      sessionStorage = new SessionStorage(dbPath);
+      storage = new ProjectMemoryStorage(dbPath);
+      const scope = storage.ensureProjectScope(resolveProjectScope(workspacePath));
+
+      const entry = storage.upsertProjectMemoryEntry({
+        projectScopeId: scope.id,
+        sourceSessionId: null,
+        category: "decision",
+        title: "memory の方針",
+        detail: "Project Memory は retrieval 後に lastUsedAt を更新する",
+        keywords: [],
+        evidence: [],
+      });
+
+      assert.equal(entry.lastUsedAt, null);
+      storage.markProjectMemoryEntriesUsed([entry.id]);
+
+      const loaded = storage.listProjectMemoryEntries(scope.id).find((candidate) => candidate.id === entry.id);
+      assert.ok(loaded?.lastUsedAt);
+    } finally {
+      storage?.close();
+      sessionStorage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
 });

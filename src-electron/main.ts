@@ -987,8 +987,11 @@ function resolveProjectMemoryEntriesForPrompt(
   sessionMemory: SessionMemory,
 ) {
   const projectScope = syncProjectScopeForSession(session);
-  const entries = requireProjectMemoryStorage().listProjectMemoryEntries(projectScope.id);
-  return retrieveProjectMemoryEntries(entries, userMessage, sessionMemory);
+  const storage = requireProjectMemoryStorage();
+  const entries = storage.listProjectMemoryEntries(projectScope.id);
+  const resolved = retrieveProjectMemoryEntries(entries, userMessage, sessionMemory);
+  storage.markProjectMemoryEntriesUsed(resolved.map((entry) => entry.id));
+  return resolved;
 }
 
 function promoteSessionMemoryDeltaToProjectMemory(session: Session, delta: SessionMemoryDelta): void {

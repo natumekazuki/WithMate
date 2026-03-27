@@ -252,6 +252,21 @@ export class ProjectMemoryStorage {
     return cloneProjectMemoryEntries(rows.map(rowToProjectMemoryEntry).filter((row): row is ProjectMemoryEntry => row !== null));
   }
 
+  markProjectMemoryEntriesUsed(entryIds: string[]): void {
+    const uniqueIds = [...new Set(entryIds.map((id) => id.trim()).filter((id) => id.length > 0))];
+    if (uniqueIds.length === 0) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const placeholders = uniqueIds.map(() => "?").join(", ");
+    this.db.prepare(`
+      UPDATE project_memory_entries
+      SET last_used_at = ?, updated_at = updated_at
+      WHERE id IN (${placeholders})
+    `).run(now, ...uniqueIds);
+  }
+
   upsertProjectMemoryEntry(input: Omit<ProjectMemoryEntry, "id" | "createdAt" | "updatedAt" | "lastUsedAt"> & { id?: string }): ProjectMemoryEntry {
     const normalized = normalizeProjectMemoryEntry({
       ...input,

@@ -297,6 +297,8 @@ current 実装では、persistence foundation まで入っている。
 - `Project Memory` entry の upsert は exact match 再利用だけを入れる
 - `Session Memory` extraction 完了後、`decisions` と tag 付き `notes` を `Project Memory` へ昇格する
 - coding plane prompt 向けに、`userMessage + SessionMemory.goal + SessionMemory.openQuestions` から lexical retrieval を行い、最大 3 件を返す
+- lexical retrieval は word token に加えて 2-gram / 3-gram を使い、日本語 query の部分一致も拾う
+- prompt に注入した entry は `lastUsedAt` を更新する
 
 まだ未実装のもの:
 

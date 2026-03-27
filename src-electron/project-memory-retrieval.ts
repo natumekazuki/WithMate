@@ -13,19 +13,59 @@ const CATEGORY_WEIGHTS: Record<ProjectMemoryEntry["category"], number> = {
   deferred: 1,
 };
 
-function tokenize(text: string): string[] {
-  const tokens = text.match(/[\p{L}\p{N}_-]{2,}/gu) ?? [];
-  const unique = new Set<string>();
-  for (const token of tokens) {
-    unique.add(token.trim().toLowerCase());
-  }
-
-  return [...unique];
+function normalizeText(text: string): string {
+  return text.trim().toLowerCase();
 }
 
-function buildRetrievalQuery(userMessage: string, sessionMemory: SessionMemory): string {
+function isLowSignalJapaneseToken(token: string): boolean {
+  return /^[ぁ-ゖー]+$/u.test(token);
+}
+
+function tokenizeWords(text: string): string[] {
+  const tokens = text.match(/[\p{L}\p{N}_-]{2,}/gu) ?? [];
+  return tokens
+    .map((token) => normalizeText(token))
+    .filter((token) => token.length > 0 && !isLowSignalJapaneseToken(token));
+}
+
+function tokenizeNgrams(text: string): string[] {
+  const result = new Set<string>();
+  const segments = normalizeText(text).match(/[一-龯ぁ-ゖァ-ヴー]{2,}/gu) ?? [];
+  for (const segment of segments) {
+    const chars = [...segment];
+    for (const size of [2, 3]) {
+      if (chars.length < size) {
+        continue;
+      }
+
+      for (let index = 0; index <= chars.length - size; index += 1) {
+        const token = chars.slice(index, index + size).join("");
+        if (isLowSignalJapaneseToken(token)) {
+          continue;
+        }
+
+        result.add(token);
+      }
+    }
+  }
+
+  return [...result];
+}
+
+function collectQueryFeatures(text: string): string[] {
+  const features = new Set<string>();
+  for (const token of tokenizeWords(text)) {
+    features.add(token);
+  }
+  for (const token of tokenizeNgrams(text)) {
+    features.add(token);
+  }
+
+  return [...features];
+}
+
+function buildSessionContextText(sessionMemory: SessionMemory): string {
   return [
-    userMessage,
     sessionMemory.goal,
     ...sessionMemory.openQuestions.slice(0, 3),
   ]
@@ -34,24 +74,75 @@ function buildRetrievalQuery(userMessage: string, sessionMemory: SessionMemory):
     .join("\n");
 }
 
-function scoreEntry(entry: ProjectMemoryEntry, queryTokens: string[]): number {
-  if (queryTokens.length === 0) {
-    return 0;
-  }
-
-  const haystack = `${entry.title}\n${entry.detail}\n${entry.keywords.join(" ")}`.toLowerCase();
-  let matchedTokens = 0;
-  for (const token of queryTokens) {
-    if (haystack.includes(token)) {
-      matchedTokens += 1;
+function scoreMatches(haystack: string, queryFeatures: string[], weight: number): number {
+  let score = 0;
+  for (const feature of queryFeatures) {
+    if (!feature || !haystack.includes(feature)) {
+      continue;
     }
+
+    score += weight;
   }
 
-  if (matchedTokens === 0) {
+  return score;
+}
+
+function scoreEntryPart(
+  entry: ProjectMemoryEntry,
+  queryText: string,
+  queryFeatures: string[],
+  weights: { title: number; keywords: number; detail: number; fullTextBonus: number; fullDetailBonus: number },
+): number {
+  const normalizedQuery = normalizeText(queryText);
+  const titleHaystack = normalizeText(entry.title);
+  const detailHaystack = normalizeText(entry.detail);
+  const keywordsHaystack = normalizeText(entry.keywords.join(" "));
+
+  let score = 0;
+  score += scoreMatches(titleHaystack, queryFeatures, weights.title);
+  score += scoreMatches(keywordsHaystack, queryFeatures, weights.keywords);
+  score += scoreMatches(detailHaystack, queryFeatures, weights.detail);
+
+  if (normalizedQuery && titleHaystack.includes(normalizedQuery)) {
+    score += weights.fullTextBonus;
+  }
+
+  if (normalizedQuery && detailHaystack.includes(normalizedQuery)) {
+    score += weights.fullDetailBonus;
+  }
+
+  return score;
+}
+
+function scoreEntry(
+  entry: ProjectMemoryEntry,
+  userMessage: string,
+  userFeatures: string[],
+  sessionContextText: string,
+  sessionFeatures: string[],
+): number {
+  const userScore = scoreEntryPart(entry, userMessage, userFeatures, {
+    title: 6,
+    keywords: 5,
+    detail: 2,
+    fullTextBonus: 20,
+    fullDetailBonus: 8,
+  });
+  if (userScore <= 0) {
     return 0;
   }
 
-  return matchedTokens * 10 + CATEGORY_WEIGHTS[entry.category];
+  const sessionScore = sessionFeatures.length > 0
+    ? scoreEntryPart(entry, sessionContextText, sessionFeatures, {
+      title: 2,
+      keywords: 1,
+      detail: 1,
+      fullTextBonus: 4,
+      fullDetailBonus: 2,
+    })
+    : 0;
+
+  return CATEGORY_WEIGHTS[entry.category] + userScore + sessionScore;
 }
 
 export function retrieveProjectMemoryEntries(
@@ -60,11 +151,14 @@ export function retrieveProjectMemoryEntries(
   sessionMemory: SessionMemory,
   maxEntries = 3,
 ): ProjectMemoryEntry[] {
-  const queryTokens = tokenize(buildRetrievalQuery(userMessage, sessionMemory));
+  const userText = userMessage.trim();
+  const userFeatures = collectQueryFeatures(userText);
+  const sessionContextText = buildSessionContextText(sessionMemory);
+  const sessionFeatures = collectQueryFeatures(sessionContextText);
   const ranked: RetrievedProjectMemory[] = [];
 
   for (const entry of entries) {
-    const score = scoreEntry(entry, queryTokens);
+    const score = scoreEntry(entry, userText, userFeatures, sessionContextText, sessionFeatures);
     if (score <= 0) {
       continue;
     }

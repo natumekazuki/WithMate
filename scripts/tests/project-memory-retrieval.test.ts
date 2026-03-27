@@ -72,6 +72,29 @@ describe("retrieveProjectMemoryEntries", () => {
     assert.deepEqual(entries.map((entry) => entry.id), ["a", "c"]);
   });
 
+  it("日本語 query の部分一致でも relevant entry を拾える", () => {
+    const entries = retrieveProjectMemoryEntries(
+      [
+        makeEntry({
+          id: "a",
+          category: "constraint",
+          title: "承認UIはprovider差を吸収する",
+          detail: "承認UIはprovider差を吸収する",
+        }),
+        makeEntry({
+          id: "b",
+          category: "context",
+          title: "背景色の設計",
+          detail: "ホーム画面の背景色をどうするか",
+        }),
+      ],
+      "承認UIの方針どうする？",
+      sessionMemory,
+    );
+
+    assert.deepEqual(entries.map((entry) => entry.id), ["a"]);
+  });
+
   it("hit が無い時は空配列を返す", () => {
     const entries = retrieveProjectMemoryEntries(
       [
