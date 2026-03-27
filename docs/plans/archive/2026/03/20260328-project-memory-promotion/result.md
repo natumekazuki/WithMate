@@ -19,3 +19,7 @@
 
 - 昇格は current slice では rule-based に限定する
 - retrieval は follow-up とする
+
+## Commits
+
+- `0a8f4bd feat(memory): promote and inject project memory`

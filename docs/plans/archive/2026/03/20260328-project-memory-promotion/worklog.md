@@ -5,3 +5,6 @@
   - `src-electron/project-memory-promotion.ts` を追加
   - session memory extraction 完了後に `project_memory_entries` へ upsert
   - `goal / openQuestions / nextActions` は昇格しない current 仕様を docs と test に反映
+- 2026-03-28: `0a8f4bd feat(memory): promote and inject project memory`
+  - `Project Memory` の rule-based promotion を commit
+  - 同じ commit で coding plane への `Session / Project Memory` prompt 注入も接続

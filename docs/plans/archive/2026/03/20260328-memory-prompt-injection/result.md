@@ -17,3 +17,7 @@
 ## Notes
 
 - current slice では retrieval を lexical match に限定する
+
+## Commits
+
+- `0a8f4bd feat(memory): promote and inject project memory`
