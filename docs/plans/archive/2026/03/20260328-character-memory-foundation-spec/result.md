@@ -14,3 +14,4 @@
 ## Notes
 
 - 実装ではなく docs slice
+- 関連コミット: `d888f37` `docs(memory): fix character reflection trigger policy`
