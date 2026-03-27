@@ -17,3 +17,7 @@
 ## Notes
 
 - current slice では FTS / vector / decay は入れない
+
+## Commits
+
+- `9be9282 feat(memory): enhance project memory retrieval`

@@ -6,3 +6,5 @@
   - ひらがなだけの低情報量 token を除外した
   - prompt に注入した entry の `lastUsedAt` を更新する storage API を追加した
   - docs と backlog を current 実装へ同期した
+- 2026-03-28: `9be9282 feat(memory): enhance project memory retrieval`
+  - 日本語 query 向け lexical retrieval 強化と `lastUsedAt` 更新を commit
