@@ -40,6 +40,16 @@ describe("AppSettingsStorage", () => {
             outputTokensThreshold: 180,
           },
         },
+        characterReflectionProviderSettings: {
+          codex: {
+            model: "gpt-5.4-mini",
+            reasoningEffort: "medium",
+          },
+          copilot: {
+            model: "gpt-5",
+            reasoningEffort: "low",
+          },
+        },
       });
       storage.close();
 
@@ -83,6 +93,16 @@ describe("AppSettingsStorage", () => {
             model: "gpt-5",
             reasoningEffort: "low",
             outputTokensThreshold: 180,
+          },
+        },
+        characterReflectionProviderSettings: {
+          codex: {
+            model: "gpt-5.4-mini",
+            reasoningEffort: "medium",
+          },
+          copilot: {
+            model: "gpt-5",
+            reasoningEffort: "low",
           },
         },
       });

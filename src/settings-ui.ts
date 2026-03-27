@@ -20,6 +20,10 @@ export const SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL = "Reasoning Depth";
 export const SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL = "Output Tokens Threshold";
 export const SETTINGS_MEMORY_EXTRACTION_HELP =
   "Memory extraction は provider ごとに専用 model / reasoning depth / outputTokens threshold を持つ。`compact 前` と `session close 前` は threshold に関係なく強制実行する。";
+export const SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL = "Model";
+export const SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL = "Reasoning Depth";
+export const SETTINGS_CHARACTER_REFLECTION_HELP =
+  "Character reflection は provider ごとに専用 model / reasoning depth を持つ。trigger 条件は app 側の仕様で固定する。";
 export const SETTINGS_RELEASE_COMPATIBILITY_NOTE =
   "初回リリース前のため後方互換性は考慮しない。互換性のない変更が入った場合は Settings の DB 初期化で復旧する。";
 export const SETTINGS_RESET_DATABASE_LABEL = "DB を初期化";
@@ -32,6 +36,7 @@ export const SETTINGS_RESET_DATABASE_TARGET_LABELS: Record<ResetAppDatabaseTarge
   appSettings: "app settings",
   modelCatalog: "model catalog",
   projectMemory: "project memory",
+  characterMemory: "character memory",
 };
 
 export function describeResetDatabaseTargets(targets: readonly ResetAppDatabaseTarget[]): string {

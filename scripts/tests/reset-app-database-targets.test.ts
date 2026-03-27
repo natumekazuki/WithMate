@@ -20,4 +20,8 @@ describe("resetAppDatabaseTargets", () => {
     assert.equal(areAllResetAppDatabaseTargetsSelected(ALL_RESET_APP_DATABASE_TARGETS), true);
     assert.equal(areAllResetAppDatabaseTargetsSelected(["appSettings", "modelCatalog"]), false);
   });
+
+  it("characterMemory を個別 target として保持する", () => {
+    assert.deepEqual(normalizeResetAppDatabaseTargets(["characterMemory"]), ["characterMemory"]);
+  });
 });

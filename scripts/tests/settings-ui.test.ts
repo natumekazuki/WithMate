@@ -4,6 +4,9 @@ import { describe, it } from "node:test";
 import {
   SETTINGS_API_KEY_LABEL,
   SETTINGS_API_KEY_PLACEHOLDER,
+  SETTINGS_CHARACTER_REFLECTION_HELP,
+  SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL,
+  SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL,
   SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE,
   SETTINGS_CODING_CREDENTIALS_HELP,
   SETTINGS_MEMORY_EXTRACTION_HELP,
@@ -44,6 +47,12 @@ describe("Settings UI constants", () => {
     assert.equal(SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL, "Output Tokens Threshold");
     assert.match(SETTINGS_MEMORY_EXTRACTION_HELP, /compact 前/);
     assert.match(SETTINGS_MEMORY_EXTRACTION_HELP, /session close 前/);
+  });
+
+  it("character reflection の設定項目は model と reasoning に限定する", () => {
+    assert.equal(SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL, "Model");
+    assert.equal(SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL, "Reasoning Depth");
+    assert.match(SETTINGS_CHARACTER_REFLECTION_HELP, /provider ごと/);
   });
 
   it("Home Window は Settings overlay の余裕を確保する既定サイズを使う", () => {

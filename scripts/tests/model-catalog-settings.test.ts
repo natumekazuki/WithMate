@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  getCharacterReflectionProviderSettings,
   createDefaultAppSettings,
   getMemoryExtractionProviderSettings,
   getProviderAppSettings,
@@ -128,6 +129,23 @@ describe("app settings provider helpers", () => {
       model: "gpt-5.1-mini",
       reasoningEffort: "medium",
       outputTokensThreshold: 280,
+    });
+  });
+
+  it("character reflection settings を provider ごとに保持する", () => {
+    const settings = normalizeAppSettings({
+      ...createDefaultAppSettings(),
+      characterReflectionProviderSettings: {
+        codex: {
+          model: "gpt-5.1-mini",
+          reasoningEffort: "medium",
+        },
+      },
+    });
+
+    assert.deepEqual(getCharacterReflectionProviderSettings(settings, "codex"), {
+      model: "gpt-5.1-mini",
+      reasoningEffort: "medium",
     });
   });
 });

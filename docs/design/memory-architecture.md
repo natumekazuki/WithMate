@@ -473,8 +473,12 @@ current 実装では、`Session Memory` の永続化と extraction trigger、`Pr
   - `minimum score threshold` / `minimum user coverage` / duplicate suppression あり
   - retrieval 時に `lastUsedAt` 更新あり
 - `Character Memory`
-  - design only
+  - `character_scopes` / `character_memory_entries` の保存基盤あり
+  - session 保存時と app 起動時に scope 同期あり
+  - `DB を初期化` の個別 target あり
+  - provider ごとの `Character Reflection model / reasoning depth` 設定あり
   - `独り言` と共通 trigger の `character reflection cycle` を正本にする
+  - reflection 実行自体はまだ未実装
 
 という進み方を取る。
 

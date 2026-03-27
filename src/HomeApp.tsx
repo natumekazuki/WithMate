@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createDefaultAppSettings,
+  getCharacterReflectionProviderSettings,
   getMemoryExtractionProviderSettings,
   getProviderAppSettings,
   type AppSettings,
+  type CharacterReflectionProviderSettings,
   type CharacterProfile,
   type CreateSessionInput,
   type MemoryExtractionProviderSettings,
@@ -33,6 +35,9 @@ import {
   SETTINGS_SKILL_ROOT_HELP,
   SETTINGS_SKILL_ROOT_LABEL,
   SETTINGS_SKILL_ROOT_PLACEHOLDER,
+  SETTINGS_CHARACTER_REFLECTION_HELP,
+  SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL,
+  SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL,
   SETTINGS_MEMORY_EXTRACTION_HELP,
   SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL,
   SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL,
@@ -118,9 +123,13 @@ type ProviderSettingRow = {
   provider: ModelCatalogProvider;
   settings: ProviderAppSettings;
   memoryExtractionSettings: MemoryExtractionProviderSettings;
+  characterReflectionSettings: CharacterReflectionProviderSettings;
   resolvedMemoryExtractionModel: string;
   resolvedMemoryExtractionReasoningEffort: MemoryExtractionProviderSettings["reasoningEffort"];
+  resolvedCharacterReflectionModel: string;
+  resolvedCharacterReflectionReasoningEffort: CharacterReflectionProviderSettings["reasoningEffort"];
   availableMemoryExtractionReasoningEfforts: readonly MemoryExtractionProviderSettings["reasoningEffort"][];
+  availableCharacterReflectionReasoningEfforts: readonly CharacterReflectionProviderSettings["reasoningEffort"][];
 };
 
 type HomeRightPaneView = "monitor" | "characters";
@@ -265,6 +274,9 @@ export default function HomeApp() {
   const [memoryExtractionProviderSettingsDraft, setMemoryExtractionProviderSettingsDraft] = useState<
     Record<string, MemoryExtractionProviderSettings>
   >({});
+  const [characterReflectionProviderSettingsDraft, setCharacterReflectionProviderSettingsDraft] = useState<
+    Record<string, CharacterReflectionProviderSettings>
+  >({});
   const [resettingDatabase, setResettingDatabase] = useState(false);
   const [resetDatabaseTargets, setResetDatabaseTargets] = useState<ResetAppDatabaseTarget[]>([...ALL_RESET_APP_DATABASE_TARGETS]);
   const [launchOpen, setLaunchOpen] = useState(false);
@@ -285,6 +297,7 @@ export default function HomeApp() {
       setSystemPromptPrefixDraft(settings.systemPromptPrefix);
       setCodingProviderSettingsDraft(settings.codingProviderSettings);
       setMemoryExtractionProviderSettingsDraft(settings.memoryExtractionProviderSettings);
+      setCharacterReflectionProviderSettingsDraft(settings.characterReflectionProviderSettings);
       settingsHydratedRef.current = true;
     }
   };
@@ -634,11 +647,13 @@ export default function HomeApp() {
         systemPromptPrefix: systemPromptPrefixDraft,
         codingProviderSettings: codingProviderSettingsDraft,
         memoryExtractionProviderSettings: normalizedMemoryExtractionProviderSettingsDraft,
+        characterReflectionProviderSettings: normalizedCharacterReflectionProviderSettingsDraft,
       });
       setAppSettings(nextSettings);
       setSystemPromptPrefixDraft(nextSettings.systemPromptPrefix);
       setCodingProviderSettingsDraft(nextSettings.codingProviderSettings);
       setMemoryExtractionProviderSettingsDraft(nextSettings.memoryExtractionProviderSettings);
+      setCharacterReflectionProviderSettingsDraft(nextSettings.characterReflectionProviderSettings);
       setSettingsFeedback("設定を保存したよ。");
     } catch (error) {
       setSettingsFeedback(error instanceof Error ? error.message : "設定の保存に失敗したよ。");
@@ -648,11 +663,14 @@ export default function HomeApp() {
   const buildDraftAppSettings = (overrides?: {
     codingProviderSettings?: Record<string, ProviderAppSettings>;
     memoryExtractionProviderSettings?: Record<string, MemoryExtractionProviderSettings>;
+    characterReflectionProviderSettings?: Record<string, CharacterReflectionProviderSettings>;
   }): AppSettings => ({
     systemPromptPrefix: systemPromptPrefixDraft,
     codingProviderSettings: overrides?.codingProviderSettings ?? codingProviderSettingsDraft,
     memoryExtractionProviderSettings:
       overrides?.memoryExtractionProviderSettings ?? memoryExtractionProviderSettingsDraft,
+    characterReflectionProviderSettings:
+      overrides?.characterReflectionProviderSettings ?? characterReflectionProviderSettingsDraft,
   });
 
   const handleChangeProviderEnabled = (providerId: string, enabled: boolean) => {
@@ -752,26 +770,80 @@ export default function HomeApp() {
     }));
   };
 
+  const handleChangeCharacterReflectionModel = (providerId: string, model: string) => {
+    const providerCatalog = modelCatalog?.providers.find((provider) => provider.id === providerId);
+    if (!providerCatalog) {
+      return;
+    }
+
+    setCharacterReflectionProviderSettingsDraft((current) => {
+      const currentSettings = getCharacterReflectionProviderSettings(
+        buildDraftAppSettings({ characterReflectionProviderSettings: current }),
+        providerId,
+      );
+      const selection = coerceModelSelection(providerCatalog, model, currentSettings.reasoningEffort);
+      return {
+        ...current,
+        [providerId]: {
+          model: selection.resolvedModel,
+          reasoningEffort: selection.resolvedReasoningEffort,
+        },
+      };
+    });
+  };
+
+  const handleChangeCharacterReflectionReasoningEffort = (
+    providerId: string,
+    reasoningEffort: CharacterReflectionProviderSettings["reasoningEffort"],
+  ) => {
+    setCharacterReflectionProviderSettingsDraft((current) => ({
+      ...current,
+      [providerId]: {
+        ...getCharacterReflectionProviderSettings(
+          buildDraftAppSettings({ characterReflectionProviderSettings: current }),
+          providerId,
+        ),
+        reasoningEffort,
+      },
+    }));
+  };
+
   const providerSettingRows = useMemo<ProviderSettingRow[]>(
     () =>
       (modelCatalog?.providers ?? []).map((provider) => {
         const settings = getProviderAppSettings(buildDraftAppSettings(), provider.id);
         const memoryExtractionSettings = getMemoryExtractionProviderSettings(buildDraftAppSettings(), provider.id);
-        const selection = coerceModelSelection(
+        const characterReflectionSettings = getCharacterReflectionProviderSettings(buildDraftAppSettings(), provider.id);
+        const memoryExtractionSelection = coerceModelSelection(
           provider,
           memoryExtractionSettings.model,
           memoryExtractionSettings.reasoningEffort,
+        );
+        const characterReflectionSelection = coerceModelSelection(
+          provider,
+          characterReflectionSettings.model,
+          characterReflectionSettings.reasoningEffort,
         );
         return {
           provider,
           settings,
           memoryExtractionSettings,
-          resolvedMemoryExtractionModel: selection.resolvedModel,
-          resolvedMemoryExtractionReasoningEffort: selection.resolvedReasoningEffort,
-          availableMemoryExtractionReasoningEfforts: getReasoningEffortOptionsForModel(provider, selection.resolvedModel),
+          characterReflectionSettings,
+          resolvedMemoryExtractionModel: memoryExtractionSelection.resolvedModel,
+          resolvedMemoryExtractionReasoningEffort: memoryExtractionSelection.resolvedReasoningEffort,
+          resolvedCharacterReflectionModel: characterReflectionSelection.resolvedModel,
+          resolvedCharacterReflectionReasoningEffort: characterReflectionSelection.resolvedReasoningEffort,
+          availableMemoryExtractionReasoningEfforts: getReasoningEffortOptionsForModel(provider, memoryExtractionSelection.resolvedModel),
+          availableCharacterReflectionReasoningEfforts: getReasoningEffortOptionsForModel(provider, characterReflectionSelection.resolvedModel),
         };
       }),
-    [codingProviderSettingsDraft, memoryExtractionProviderSettingsDraft, modelCatalog, systemPromptPrefixDraft],
+    [
+      characterReflectionProviderSettingsDraft,
+      codingProviderSettingsDraft,
+      memoryExtractionProviderSettingsDraft,
+      modelCatalog,
+      systemPromptPrefixDraft,
+    ],
   );
   const normalizedMemoryExtractionProviderSettingsDraft = useMemo(
     () =>
@@ -787,16 +859,32 @@ export default function HomeApp() {
       ),
     [providerSettingRows],
   );
+  const normalizedCharacterReflectionProviderSettingsDraft = useMemo(
+    () =>
+      Object.fromEntries(
+        providerSettingRows.map((row) => [
+          row.provider.id,
+          {
+            model: row.resolvedCharacterReflectionModel,
+            reasoningEffort: row.resolvedCharacterReflectionReasoningEffort,
+          } satisfies CharacterReflectionProviderSettings,
+        ]),
+      ),
+    [providerSettingRows],
+  );
   const settingsDirty = useMemo(() => {
     return (
       systemPromptPrefixDraft !== appSettings.systemPromptPrefix ||
       JSON.stringify(codingProviderSettingsDraft) !== JSON.stringify(appSettings.codingProviderSettings) ||
-      JSON.stringify(memoryExtractionProviderSettingsDraft) !== JSON.stringify(appSettings.memoryExtractionProviderSettings)
+      JSON.stringify(memoryExtractionProviderSettingsDraft) !== JSON.stringify(appSettings.memoryExtractionProviderSettings) ||
+      JSON.stringify(characterReflectionProviderSettingsDraft) !== JSON.stringify(appSettings.characterReflectionProviderSettings)
     );
   }, [
+    appSettings.characterReflectionProviderSettings,
     appSettings.codingProviderSettings,
     appSettings.memoryExtractionProviderSettings,
     appSettings.systemPromptPrefix,
+    characterReflectionProviderSettingsDraft,
     codingProviderSettingsDraft,
     memoryExtractionProviderSettingsDraft,
     systemPromptPrefixDraft,
@@ -979,6 +1067,53 @@ export default function HomeApp() {
                             value={row.memoryExtractionSettings.outputTokensThreshold}
                             onChange={(event) => handleChangeMemoryExtractionThreshold(row.provider.id, event.target.value)}
                           />
+                        </label>
+                      </section>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              <section className="settings-section-card">
+                <div className="settings-field">
+                  <strong>Character Reflection</strong>
+                  <p className="settings-help">{SETTINGS_CHARACTER_REFLECTION_HELP}</p>
+                  <div className="settings-provider-list">
+                    {providerSettingRows.map((row) => (
+                      <section key={row.provider.id} className="settings-provider-card">
+                        <p className="settings-provider-name">{row.provider.label}</p>
+                        <label className="settings-provider-input composer-setting-field">
+                          <span>{SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL}</span>
+                          <select
+                            value={row.resolvedCharacterReflectionModel}
+                            onChange={(event) => handleChangeCharacterReflectionModel(row.provider.id, event.target.value)}
+                            aria-label={`${row.provider.label} character reflection model`}
+                          >
+                            {row.provider.models.map((model) => (
+                              <option key={model.id} value={model.id}>
+                                {modelOptionLabel(model)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="settings-provider-input composer-setting-field">
+                          <span>{SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL}</span>
+                          <select
+                            value={row.resolvedCharacterReflectionReasoningEffort}
+                            onChange={(event) =>
+                              handleChangeCharacterReflectionReasoningEffort(
+                                row.provider.id,
+                                event.target.value as CharacterReflectionProviderSettings["reasoningEffort"],
+                              )
+                            }
+                            aria-label={`${row.provider.label} character reflection reasoning depth`}
+                          >
+                            {row.availableCharacterReflectionReasoningEfforts.map((reasoningEffort) => (
+                              <option key={reasoningEffort} value={reasoningEffort}>
+                                {reasoningDepthLabel(reasoningEffort)}
+                              </option>
+                            ))}
+                          </select>
                         </label>
                       </section>
                     ))}

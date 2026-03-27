@@ -202,6 +202,24 @@ current milestone では coding plane には使わないため、retrieval は m
 - `独り言` 生成時だけ上位数件を引く
 - 将来の ranking は `#14` の時間減衰と連動できるようにする
 
+## Current Implementation Slice
+
+current 実装では、まず保存基盤だけを入れる。
+
+- SQLite に `character_scopes` を作る
+- SQLite に `character_memory_entries` を作る
+- `characterId` 単位で scope を一意に解決する
+- session の保存時と app 起動時に scope を同期する
+- entry の upsert は exact match 再利用だけを入れる
+- `DB を初期化` から `character memory` を個別に消せるようにする
+
+まだ未実装のもの:
+
+- `character reflection cycle` の実行
+- `CharacterMemoryDelta` の merge
+- monologue retrieval
+- renderer UI
+
 ## Non Goals
 
 - coding plane prompt への注入

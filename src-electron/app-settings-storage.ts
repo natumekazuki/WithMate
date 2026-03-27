@@ -8,6 +8,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
 const SYSTEM_PROMPT_PREFIX_KEY = "system_prompt_prefix";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
+const CHARACTER_REFLECTION_PROVIDER_SETTINGS_KEY = "character_reflection_provider_settings_json";
 
 type AppSettingRow = {
   setting_key: string;
@@ -59,6 +60,17 @@ export class AppSettingsStorage {
         JSON.stringify(DEFAULT_APP_SETTINGS.memoryExtractionProviderSettings),
         updatedAt,
       );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        CHARACTER_REFLECTION_PROVIDER_SETTINGS_KEY,
+        JSON.stringify(DEFAULT_APP_SETTINGS.characterReflectionProviderSettings),
+        updatedAt,
+      );
   }
 
   getSettings(): AppSettings {
@@ -103,6 +115,20 @@ export class AppSettingsStorage {
       }
     }
 
+    const characterReflectionProviderSettingsJson = rows.find(
+      (row) => row.setting_key === CHARACTER_REFLECTION_PROVIDER_SETTINGS_KEY,
+    )?.setting_value;
+    if (characterReflectionProviderSettingsJson) {
+      try {
+        settings.characterReflectionProviderSettings = normalizeAppSettings({
+          ...settings,
+          characterReflectionProviderSettings: JSON.parse(characterReflectionProviderSettingsJson),
+        }).characterReflectionProviderSettings;
+      } catch {
+        settings.characterReflectionProviderSettings = createDefaultAppSettings().characterReflectionProviderSettings;
+      }
+    }
+
     return normalizeAppSettings(settings);
   }
 
@@ -141,6 +167,19 @@ export class AppSettingsStorage {
         .run(
           MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY,
           JSON.stringify(normalized.memoryExtractionProviderSettings),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          CHARACTER_REFLECTION_PROVIDER_SETTINGS_KEY,
+          JSON.stringify(normalized.characterReflectionProviderSettings),
           updatedAt,
         );
       this.db.exec("COMMIT");

@@ -80,6 +80,11 @@
   - coding plane の provider / credential と混ぜない
   - current milestone では設定欄も追加しない
 
+## Current Implementation Note
+
+current 実装では、将来の `character reflection cycle` に備えて Settings に provider ごとの `Character Reflection model / reasoning depth` を保持する。  
+ただしこれは monologue plane の API 実装そのものではなく、暫定的な reflection backend 設定の受け皿として扱う。
+
 ## Trigger Policy
 
 MVP では次の方針を採用する。

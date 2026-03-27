@@ -32,6 +32,7 @@ npm run electron:start
 | MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `System Prompt Prefix` / `Coding Agent Providers` / `Coding Agent Credentials` / `Memory Extraction` / `Model Catalog` / `Danger Zone` が既存値で表示される |
 | MT-004A | Settings provider row layout | `Settings Window` を開いて `Coding Agent Providers` を確認する | provider 名が左、checkbox が右の row で揃って見え、どの provider を on/off しているか即判別できる |
 | MT-004B | Memory extraction settings | `Settings Window` の `Memory Extraction` を確認する | provider ごとに `Model` / `Reasoning Depth` / `Output Tokens Threshold` が表示され、現在の model catalog に沿った選択肢だけが出る |
+| MT-004C | Character reflection settings | `Settings Window` の `Character Reflection` を確認する | provider ごとに `Model` / `Reasoning Depth` が表示され、現在の model catalog に沿った選択肢だけが出る |
 | MT-005 | Settings copy | `Settings Window` を確認する | `OpenAI API Key (Coding Agent)` が coding plane 用と読め、`Character Stream 用ではない` 補助文と future note が表示される |
 | MT-006 | Compatibility note | `Settings Window` を確認する | `初回リリース前のため後方互換性は考慮しない` と `DB 初期化で復旧する` 旨の note が表示される |
 | MT-007 | Settings save | `System Prompt Prefix` または coding provider 設定を変更して `Save Settings` を押す | 保存成功メッセージが表示され、再度開いても保持される |
@@ -39,7 +40,7 @@ npm run electron:start
 | MT-009 | Model catalog import | Settings の `Model Catalog` から `Import Models` を実行する | import 成功メッセージが表示され、active revision が更新される |
 | MT-010 | DB reset confirm | Settings の `Danger Zone` で reset 対象を 1 つ以上選び、`DB を初期化` を押す | 選択中 target を反映した confirm が出る |
 | MT-011 | DB reset success | idle session のみ存在する状態で reset 対象を選んで `DB を初期化` を実行する | 選択した target だけ初期状態へ戻る。`sessions` を含む場合は `audit logs` も一緒に消え、characters は保持される |
-| MT-011A | DB reset full rebuild | `sessions / audit logs / app settings / model catalog` を全選択して `DB を初期化` を実行する | DB が再生成され、schema を含めて初期状態へ戻る |
+| MT-011A | DB reset full rebuild | `sessions / audit logs / app settings / model catalog / project memory / character memory` を全選択して `DB を初期化` を実行する | DB が再生成され、schema を含めて初期状態へ戻る |
 | MT-012 | DB reset reject | 実行中 session がある状態で `DB を初期化` を実行する | reset が拒否され、実行中 session の完了またはキャンセルを促す |
 | MT-013 | New Session 起動 | Home の `New Session` を押す | launch dialog が開く |
 | MT-014 | New Session 作成 | title と workspace と provider と character を選び `Start New Session` を押す | Session Window が開き、Home の session 一覧に追加され、選んだ provider で session が作られ、approval 初期値は `安全寄り` になる |

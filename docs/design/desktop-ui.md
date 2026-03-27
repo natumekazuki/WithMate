@@ -100,7 +100,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
     - `compact 前` / `session close 前` は強制実行
   - `Model Catalog` import / export
   - `Danger Zone` の `DB を初期化`
-    - reset 対象を `sessions / audit logs / app settings / model catalog / project memory` から選べる
+    - reset 対象を `sessions / audit logs / app settings / model catalog / project memory / character memory` から選べる
     - `sessions` を選ぶと `audit logs` も一緒に初期化される
     - 全対象選択時は DB ファイル再生成で schema も初期化する
     - reset 非対象: `characters`

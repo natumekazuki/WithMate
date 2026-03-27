@@ -61,6 +61,7 @@ import { launchTerminalAtPath } from "./open-terminal.js";
 import { SessionStorage } from "./session-storage.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
 import { ProjectMemoryStorage } from "./project-memory-storage.js";
+import { CharacterMemoryStorage } from "./character-memory-storage.js";
 import { buildProjectMemoryPromotionEntries } from "./project-memory-promotion.js";
 import { retrieveProjectMemoryEntries } from "./project-memory-retrieval.js";
 import {
@@ -173,6 +174,7 @@ let characters: CharacterProfile[] = [];
 let sessionStorage: SessionStorage | null = null;
 let sessionMemoryStorage: SessionMemoryStorage | null = null;
 let projectMemoryStorage: ProjectMemoryStorage | null = null;
+let characterMemoryStorage: CharacterMemoryStorage | null = null;
 let modelCatalogStorage: ModelCatalogStorage | null = null;
 let auditLogStorage: AuditLogStorage | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
@@ -259,6 +261,14 @@ function requireProjectMemoryStorage(): ProjectMemoryStorage {
   return projectMemoryStorage;
 }
 
+function requireCharacterMemoryStorage(): CharacterMemoryStorage {
+  if (!characterMemoryStorage) {
+    throw new Error("character memory storage が初期化されていないよ。");
+  }
+
+  return characterMemoryStorage;
+}
+
 async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
   if (!dbPath) {
     throw new Error("DB path が初期化されていないよ。");
@@ -271,12 +281,14 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
   sessionStorage = new SessionStorage(dbPath);
   sessionMemoryStorage = new SessionMemoryStorage(dbPath);
   projectMemoryStorage = new ProjectMemoryStorage(dbPath);
+  characterMemoryStorage = new CharacterMemoryStorage(dbPath);
   auditLogStorage = new AuditLogStorage(dbPath);
   appSettingsStorage = new AppSettingsStorage(dbPath);
   sessions = sessionStorage.listSessions();
   for (const session of sessions) {
     syncSessionMemoryForSession(session);
     syncProjectScopeForSession(session);
+    syncCharacterScopeForSession(session);
   }
 
   return activeModelCatalog;
@@ -287,12 +299,14 @@ function closePersistentStores(): void {
   sessionStorage?.close();
   sessionMemoryStorage?.close();
   projectMemoryStorage?.close();
+  characterMemoryStorage?.close();
   auditLogStorage?.close();
   appSettingsStorage?.close();
   modelCatalogStorage = null;
   sessionStorage = null;
   sessionMemoryStorage = null;
   projectMemoryStorage = null;
+  characterMemoryStorage = null;
   auditLogStorage = null;
   appSettingsStorage = null;
 }
@@ -731,6 +745,9 @@ async function resetAppDatabase(request?: ResetAppDatabaseRequest | null): Promi
     if (appliedTargets.has("projectMemory")) {
       requireProjectMemoryStorage().clearProjectMemories();
     }
+    if (appliedTargets.has("characterMemory")) {
+      requireCharacterMemoryStorage().clearCharacterMemories();
+    }
 
     sessions = requireSessionStorage().listSessions();
     modelCatalog = getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded();
@@ -1022,6 +1039,7 @@ function upsertSession(nextSession: Session): Session {
   });
   syncSessionMemoryForSession(stored);
   syncProjectScopeForSession(stored);
+  syncCharacterScopeForSession(stored);
   sessions = storage.listSessions();
   broadcastSessions();
   return cloneSessions([stored])[0];
@@ -1040,6 +1058,13 @@ function syncSessionMemoryForSession(session: Session): void {
 
 function syncProjectScopeForSession(session: Session) {
   return requireProjectMemoryStorage().ensureProjectScope(resolveProjectScope(session.workspacePath));
+}
+
+function syncCharacterScopeForSession(session: Session) {
+  return requireCharacterMemoryStorage().ensureCharacterScope({
+    characterId: session.characterId,
+    displayName: session.character,
+  });
 }
 
 function resolveProjectMemoryEntriesForPrompt(

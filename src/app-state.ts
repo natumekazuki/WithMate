@@ -168,6 +168,7 @@ export type AppSettings = {
   systemPromptPrefix: string;
   codingProviderSettings: Record<string, ProviderAppSettings>;
   memoryExtractionProviderSettings: Record<string, MemoryExtractionProviderSettings>;
+  characterReflectionProviderSettings: Record<string, CharacterReflectionProviderSettings>;
 };
 
 export type ProviderAppSettings = {
@@ -180,6 +181,11 @@ export type MemoryExtractionProviderSettings = {
   model: string;
   reasoningEffort: ModelReasoningEffort;
   outputTokensThreshold: number;
+};
+
+export type CharacterReflectionProviderSettings = {
+  model: string;
+  reasoningEffort: ModelReasoningEffort;
 };
 
 export type DiscoveredSkillSource = "workspace" | "provider";
@@ -377,6 +383,30 @@ export type ProjectMemoryEntry = {
   lastUsedAt: string | null;
 };
 
+export type CharacterMemoryCategory = "preference" | "relationship" | "shared_moment" | "tone" | "boundary";
+
+export type CharacterScope = {
+  id: string;
+  characterId: string;
+  displayName: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CharacterMemoryEntry = {
+  id: string;
+  characterScopeId: string;
+  sourceSessionId: string | null;
+  category: CharacterMemoryCategory;
+  title: string;
+  detail: string;
+  keywords: string[];
+  evidence: string[];
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt: string | null;
+};
+
 export type DiffPreviewPayload = {
   title: string;
   file: ChangedFile;
@@ -497,6 +527,11 @@ export const DEFAULT_MEMORY_EXTRACTION_PROVIDER_SETTINGS: MemoryExtractionProvid
   outputTokensThreshold: DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD,
 };
 
+export const DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS: CharacterReflectionProviderSettings = {
+  model: DEFAULT_MODEL_ID,
+  reasoningEffort: DEFAULT_REASONING_EFFORT,
+};
+
 export function createDefaultAppSettings(): AppSettings {
   return {
     systemPromptPrefix: "",
@@ -509,6 +544,9 @@ export function createDefaultAppSettings(): AppSettings {
     },
     memoryExtractionProviderSettings: {
       [DEFAULT_PROVIDER_ID]: { ...DEFAULT_MEMORY_EXTRACTION_PROVIDER_SETTINGS },
+    },
+    characterReflectionProviderSettings: {
+      [DEFAULT_PROVIDER_ID]: { ...DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS },
     },
   };
 }
@@ -567,6 +605,25 @@ function normalizeMemoryExtractionProviderSettings(value: unknown): MemoryExtrac
   };
 }
 
+function normalizeCharacterReflectionProviderSettings(value: unknown): CharacterReflectionProviderSettings {
+  if (!value || typeof value !== "object") {
+    return { ...DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS };
+  }
+
+  const candidate = value as Partial<CharacterReflectionProviderSettings>;
+  return {
+    model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
+    reasoningEffort:
+      candidate.reasoningEffort === "minimal" ||
+      candidate.reasoningEffort === "low" ||
+      candidate.reasoningEffort === "medium" ||
+      candidate.reasoningEffort === "high" ||
+      candidate.reasoningEffort === "xhigh"
+        ? candidate.reasoningEffort
+        : DEFAULT_REASONING_EFFORT,
+  };
+}
+
 export function normalizeAppSettings(value: unknown): AppSettings {
   const defaults = createDefaultAppSettings();
   if (!value || typeof value !== "object") {
@@ -582,8 +639,13 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     candidate.memoryExtractionProviderSettings && typeof candidate.memoryExtractionProviderSettings === "object"
       ? candidate.memoryExtractionProviderSettings
       : null;
+  const rawCharacterReflectionProviderSettings =
+    candidate.characterReflectionProviderSettings && typeof candidate.characterReflectionProviderSettings === "object"
+      ? candidate.characterReflectionProviderSettings
+      : null;
   const codingProviderSettings: Record<string, ProviderAppSettings> = {};
   const memoryExtractionProviderSettings: Record<string, MemoryExtractionProviderSettings> = {};
+  const characterReflectionProviderSettings: Record<string, CharacterReflectionProviderSettings> = {};
   if (rawCodingProviderSettings) {
     for (const [providerId, providerSettingsValue] of Object.entries(rawCodingProviderSettings)) {
       const normalizedProviderId = normalizeProviderId(providerId);
@@ -599,6 +661,12 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       memoryExtractionProviderSettings[normalizedProviderId] = normalizeMemoryExtractionProviderSettings(providerSettingsValue);
     }
   }
+  if (rawCharacterReflectionProviderSettings) {
+    for (const [providerId, providerSettingsValue] of Object.entries(rawCharacterReflectionProviderSettings)) {
+      const normalizedProviderId = normalizeProviderId(providerId);
+      characterReflectionProviderSettings[normalizedProviderId] = normalizeCharacterReflectionProviderSettings(providerSettingsValue);
+    }
+  }
 
   if (!codingProviderSettings[DEFAULT_PROVIDER_ID]) {
     codingProviderSettings[DEFAULT_PROVIDER_ID] = { ...defaults.codingProviderSettings[DEFAULT_PROVIDER_ID] };
@@ -606,11 +674,15 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   if (!memoryExtractionProviderSettings[DEFAULT_PROVIDER_ID]) {
     memoryExtractionProviderSettings[DEFAULT_PROVIDER_ID] = { ...defaults.memoryExtractionProviderSettings[DEFAULT_PROVIDER_ID] };
   }
+  if (!characterReflectionProviderSettings[DEFAULT_PROVIDER_ID]) {
+    characterReflectionProviderSettings[DEFAULT_PROVIDER_ID] = { ...defaults.characterReflectionProviderSettings[DEFAULT_PROVIDER_ID] };
+  }
 
   return {
     systemPromptPrefix: typeof candidate.systemPromptPrefix === "string" ? candidate.systemPromptPrefix : "",
     codingProviderSettings,
     memoryExtractionProviderSettings,
+    characterReflectionProviderSettings,
   };
 }
 
@@ -631,6 +703,17 @@ export function getMemoryExtractionProviderSettings(
   const resolvedSettings = normalizeAppSettings(settings);
   return normalizeMemoryExtractionProviderSettings(
     resolvedSettings.memoryExtractionProviderSettings[normalizedProviderId],
+  );
+}
+
+export function getCharacterReflectionProviderSettings(
+  settings: AppSettings,
+  providerId: string | null | undefined,
+): CharacterReflectionProviderSettings {
+  const normalizedProviderId = normalizeProviderId(providerId);
+  const resolvedSettings = normalizeAppSettings(settings);
+  return normalizeCharacterReflectionProviderSettings(
+    resolvedSettings.characterReflectionProviderSettings[normalizedProviderId],
   );
 }
 
@@ -799,6 +882,16 @@ function normalizeProjectMemoryCategory(value: unknown): ProjectMemoryCategory |
     : null;
 }
 
+function normalizeCharacterMemoryCategory(value: unknown): CharacterMemoryCategory | null {
+  return value === "preference" ||
+    value === "relationship" ||
+    value === "shared_moment" ||
+    value === "tone" ||
+    value === "boundary"
+    ? value
+    : null;
+}
+
 export function normalizeProjectScope(value: unknown): ProjectScope | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -867,6 +960,81 @@ export function normalizeProjectMemoryEntry(value: unknown): ProjectMemoryEntry 
   return {
     id: candidate.id.trim(),
     projectScopeId: candidate.projectScopeId.trim(),
+    sourceSessionId:
+      typeof candidate.sourceSessionId === "string" && candidate.sourceSessionId.trim()
+        ? candidate.sourceSessionId.trim()
+        : null,
+    category,
+    title: typeof candidate.title === "string" ? candidate.title.trim() : "",
+    detail: typeof candidate.detail === "string" ? candidate.detail.trim() : "",
+    keywords: normalizeStringList(candidate.keywords),
+    evidence: normalizeStringList(candidate.evidence),
+    createdAt:
+      typeof candidate.createdAt === "string" && candidate.createdAt.trim()
+        ? candidate.createdAt
+        : currentIsoTimestamp(),
+    updatedAt:
+      typeof candidate.updatedAt === "string" && candidate.updatedAt.trim()
+        ? candidate.updatedAt
+        : currentIsoTimestamp(),
+    lastUsedAt:
+      typeof candidate.lastUsedAt === "string" && candidate.lastUsedAt.trim()
+        ? candidate.lastUsedAt
+        : null,
+  };
+}
+
+export function normalizeCharacterScope(value: unknown): CharacterScope | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<CharacterScope>;
+  if (typeof candidate.id !== "string" || !candidate.id.trim()) {
+    return null;
+  }
+
+  if (typeof candidate.characterId !== "string" || !candidate.characterId.trim()) {
+    return null;
+  }
+
+  return {
+    id: candidate.id.trim(),
+    characterId: candidate.characterId.trim(),
+    displayName: typeof candidate.displayName === "string" ? candidate.displayName.trim() : "",
+    createdAt:
+      typeof candidate.createdAt === "string" && candidate.createdAt.trim()
+        ? candidate.createdAt
+        : currentIsoTimestamp(),
+    updatedAt:
+      typeof candidate.updatedAt === "string" && candidate.updatedAt.trim()
+        ? candidate.updatedAt
+        : currentIsoTimestamp(),
+  };
+}
+
+export function normalizeCharacterMemoryEntry(value: unknown): CharacterMemoryEntry | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<CharacterMemoryEntry>;
+  if (typeof candidate.id !== "string" || !candidate.id.trim()) {
+    return null;
+  }
+
+  if (typeof candidate.characterScopeId !== "string" || !candidate.characterScopeId.trim()) {
+    return null;
+  }
+
+  const category = normalizeCharacterMemoryCategory(candidate.category);
+  if (!category) {
+    return null;
+  }
+
+  return {
+    id: candidate.id.trim(),
+    characterScopeId: candidate.characterScopeId.trim(),
     sourceSessionId:
       typeof candidate.sourceSessionId === "string" && candidate.sourceSessionId.trim()
         ? candidate.sourceSessionId.trim()
@@ -1114,6 +1282,14 @@ export function cloneProjectScopes(scopes: ProjectScope[]): ProjectScope[] {
 
 export function cloneProjectMemoryEntries(entries: ProjectMemoryEntry[]): ProjectMemoryEntry[] {
   return JSON.parse(JSON.stringify(entries)) as ProjectMemoryEntry[];
+}
+
+export function cloneCharacterScopes(scopes: CharacterScope[]): CharacterScope[] {
+  return JSON.parse(JSON.stringify(scopes)) as CharacterScope[];
+}
+
+export function cloneCharacterMemoryEntries(entries: CharacterMemoryEntry[]): CharacterMemoryEntry[] {
+  return JSON.parse(JSON.stringify(entries)) as CharacterMemoryEntry[];
 }
 
 export function cloneCharacterProfiles(characters: CharacterProfile[]): CharacterProfile[] {

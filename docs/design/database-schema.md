@@ -1,7 +1,7 @@
 # Database Schema
 
 - 作成日: 2026-03-27
-- 更新日: 2026-03-27
+- 更新日: 2026-03-28
 - 対象: WithMate の current 保存構造
 
 ## Goal
@@ -51,6 +51,7 @@ future design だけで未実装のものは、最後に別枠で注記する。
 | Audit Log | `audit_logs` | 通常 turn と background task を同居 |
 | App Settings | `app_settings` | key-value 方式 |
 | Model Catalog | `model_catalog_*` | revision 管理あり |
+| Character Memory | `character_scopes` / `character_memory_entries` | character 単位の関係性記憶 |
 | Characters | `<userData>/characters/` | DB ではなく file system |
 
 ## Table Summary
@@ -66,6 +67,8 @@ future design だけで未実装のものは、最後に別枠で注記する。
 | `model_catalog_models` | `(revision, provider_id, model_id)` | revision ごとの model 定義 |
 | `project_scopes` | `id` | Project Memory の anchor |
 | `project_memory_entries` | `id` | project 単位の durable knowledge |
+| `character_scopes` | `id` | Character Memory の anchor |
+| `character_memory_entries` | `id` | character 単位の関係性記憶 |
 
 ## Table Details
 
@@ -308,6 +311,7 @@ current 実装の key:
 | `system_prompt_prefix` | app 共通の system prompt prefix |
 | `coding_provider_settings_json` | coding plane provider 設定 |
 | `memory_extraction_provider_settings_json` | memory extraction provider 設定 |
+| `character_reflection_provider_settings_json` | character reflection provider 設定 |
 
 `coding_provider_settings_json` の例:
 
@@ -339,6 +343,21 @@ current 実装の key:
     "model": "gpt-5.4-mini",
     "reasoningEffort": "medium",
     "outputTokensThreshold": 200
+  }
+}
+```
+
+`character_reflection_provider_settings_json` の例:
+
+```json
+{
+  "codex": {
+    "model": "gpt-5.4-mini",
+    "reasoningEffort": "medium"
+  },
+  "copilot": {
+    "model": "gpt-5.4-mini",
+    "reasoningEffort": "medium"
   }
 }
 ```
@@ -444,6 +463,52 @@ JSON カラム:
   "keywords_json": ["memory", "project", "prompt"],
   "evidence_json": ["docs/design/memory-architecture.md"]
 }
+
+### `character_scopes`
+
+Character Memory の anchor table。
+
+| Column | Type | Meaning |
+| --- | --- | --- |
+| `id` | `TEXT` | character scope id |
+| `character_id` | `TEXT` | character id |
+| `display_name` | `TEXT` | 表示名 |
+| `created_at` | `TEXT` | 初回作成時刻 |
+| `updated_at` | `TEXT` | 最終同期時刻 |
+
+補足:
+
+- `character_id` は一意で、同じ character の scope を再利用する
+- current 実装では session の保存時と app 起動時に scope を同期する
+
+### `character_memory_entries`
+
+Character Memory entry の本体 table。
+
+current 実装では保存基盤のみで、reflection 実行はまだ未接続。
+
+| Column | Type | Meaning |
+| --- | --- | --- |
+| `id` | `TEXT` | entry id |
+| `character_scope_id` | `TEXT` | `character_scopes.id` |
+| `source_session_id` | `TEXT` | 元になった session |
+| `category` | `TEXT` | `preference / relationship / shared_moment / tone / boundary` |
+| `title` | `TEXT` | 短い題名 |
+| `detail` | `TEXT` | 関係性記憶の本文 |
+| `keywords_json` | `TEXT` | 検索補助キーワード |
+| `evidence_json` | `TEXT` | 根拠参照 |
+| `created_at` | `TEXT` | 作成時刻 |
+| `updated_at` | `TEXT` | 最終更新時刻 |
+| `last_used_at` | `TEXT` | retrieval 利用時刻 |
+
+JSON カラム:
+
+```json
+{
+  "keywords_json": ["距離感", "友人"],
+  "evidence_json": ["docs/design/character-memory-storage.md"]
+}
+```
 ```
 
 ## DB Outside: Characters
@@ -500,6 +565,7 @@ Settings の `DB を初期化` で対象にできるのは次の 5 系統。
 - `app settings`
 - `model catalog`
 - `project memory`
+- `character memory`
 
 補足:
 
@@ -520,6 +586,8 @@ Settings の `DB を初期化` で対象にできるのは次の 5 系統。
 - `model_catalog_models`
 - `project_scopes`
 - `project_memory_entries`
+- `character_scopes`
+- `character_memory_entries`
 - `<userData>/characters/`
 
 ### Future design only
@@ -541,3 +609,4 @@ Settings の `DB を初期化` で対象にできるのは次の 5 系統。
 4. `docs/design/model-catalog.md`
 5. `docs/design/character-storage.md`
 6. `docs/design/project-memory-storage.md`
+7. `docs/design/character-memory-storage.md`
