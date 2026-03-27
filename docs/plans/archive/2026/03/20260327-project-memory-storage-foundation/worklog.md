@@ -9,3 +9,10 @@
 - `src-electron/main.ts` に storage 初期化、session 保存時同期、DB reset target の接続を入れた
 - `scripts/tests/project-memory-storage.test.ts` を追加し、scope 解決と entry upsert を確認した
 - `docs/design/project-memory-storage.md`、`docs/design/database-schema.md` などを current 実装へ同期した
+
+## 2026-03-28
+
+- `84752fd feat(memory): add project memory storage foundation`
+  - `project_scopes` / `project_memory_entries` の persistence foundation を追加
+  - app 起動時 / session 保存時 / `replaceAllSessions` 時に project scope を同期
+  - reset target と DB 定義書を `project memory` まで同期

@@ -7,6 +7,7 @@
 - `Project Memory` の persistence foundation を実装した
 - `project_scopes` と `project_memory_entries` を SQLite に追加した
 - `workspacePath` から `git | directory` の project scope を解決して、session 保存時と app 起動時に同期するようにした
+- `replaceAllSessions` の経路でも project scope を同期するようにした
 - reset target に `project memory` を追加した
 
 ## Verification
@@ -18,3 +19,7 @@
 ## Notes
 
 - current slice では `Session -> Project` の昇格と retrieval は未実装
+
+## Commits
+
+- `84752fd feat(memory): add project memory storage foundation`
