@@ -17,3 +17,4 @@
 ## Notes
 
 - 実装 slice
+- 対応コミット: `93f7412 feat(memory): add character memory foundation`
