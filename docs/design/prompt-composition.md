@@ -310,4 +310,4 @@ type PromptComposer = (input: PromptCompositionInput) => PromptComposition;
 - provider ごとに prompt composer を分けるか
   - 現状は共通 `logicalPrompt` を持ちつつ、transport だけ provider-specific に分ける方針
 - `Session Memory` の各 field の件数上限を実運用でどこまで絞るか
-- `Project Memory` retrieval の threshold と ranking をどう決めるか
+- `Project Memory` retrieval に時間減衰や semantic retrieval をどこまで足すか

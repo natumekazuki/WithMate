@@ -451,6 +451,7 @@ current 実装では、`Session Memory` の永続化と extraction trigger、`Pr
   - scope 解決あり
   - rule-based 昇格あり
   - lexical retrieval あり
+  - `minimum score threshold` / `minimum user coverage` / duplicate suppression あり
   - retrieval 時に `lastUsedAt` 更新あり
 - `Character Memory`
   - design only

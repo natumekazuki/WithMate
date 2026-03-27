@@ -298,13 +298,15 @@ current 実装では、persistence foundation まで入っている。
 - `Session Memory` extraction 完了後、`decisions` と tag 付き `notes` を `Project Memory` へ昇格する
 - coding plane prompt 向けに、`userMessage + SessionMemory.goal + SessionMemory.openQuestions` から lexical retrieval を行い、最大 3 件を返す
 - lexical retrieval は word token に加えて 2-gram / 3-gram を使い、日本語 query の部分一致も拾う
+- ranking では `minimum score threshold` と `minimum user coverage` を使って弱い hit を落とす
+- 同一 `category / title / detail` の entry は duplicate suppression で 1 件に絞る
 - prompt に注入した entry は `lastUsedAt` を更新する
 
 まだ未実装のもの:
 
 - renderer UI
 - FTS / vector retrieval
-- ranking / decay
+- 時間減衰
 
 ## Future Extensions
 

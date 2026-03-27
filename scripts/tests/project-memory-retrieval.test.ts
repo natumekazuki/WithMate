@@ -95,6 +95,58 @@ describe("retrieveProjectMemoryEntries", () => {
     assert.deepEqual(entries.map((entry) => entry.id), ["a"]);
   });
 
+  it("弱い部分一致だけの entry は threshold で落とす", () => {
+    const entries = retrieveProjectMemoryEntries(
+      [
+        makeEntry({
+          id: "a",
+          category: "decision",
+          title: "Copilot approval UI は provider 差を吸収する",
+          detail: "Copilot approval UI は provider 差を吸収する",
+          keywords: ["copilot", "approval", "ui"],
+        }),
+        makeEntry({
+          id: "b",
+          category: "context",
+          title: "approval mode の補足",
+          detail: "approval に関する雑多な補足",
+          keywords: ["approval"],
+        }),
+      ],
+      "Copilot の approval UI をどう扱う？",
+      sessionMemory,
+    );
+
+    assert.deepEqual(entries.map((entry) => entry.id), ["a"]);
+  });
+
+  it("title と detail が同一な重複 entry は 1 件に絞る", () => {
+    const entries = retrieveProjectMemoryEntries(
+      [
+        makeEntry({
+          id: "a",
+          category: "decision",
+          title: "approval UI は provider 差を吸収する",
+          detail: "approval UI は provider 差を吸収する",
+          keywords: ["approval", "ui"],
+          updatedAt: "2026-03-28T10:00:00.000Z",
+        }),
+        makeEntry({
+          id: "b",
+          category: "decision",
+          title: "approval UI は provider 差を吸収する",
+          detail: "approval UI は provider 差を吸収する",
+          keywords: ["approval", "ui", "provider"],
+          updatedAt: "2026-03-28T11:00:00.000Z",
+        }),
+      ],
+      "approval UI の方針どうする？",
+      sessionMemory,
+    );
+
+    assert.deepEqual(entries.map((entry) => entry.id), ["b"]);
+  });
+
   it("hit が無い時は空配列を返す", () => {
     const entries = retrieveProjectMemoryEntries(
       [
