@@ -18,3 +18,4 @@
 ## Notes
 
 - 実装 slice
+- 対応コミット: `bff0ba3` `feat(memory): Character Reflection と記憶 ranking を追加`
