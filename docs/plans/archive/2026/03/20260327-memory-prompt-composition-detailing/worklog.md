@@ -6,3 +6,4 @@
 - `docs/design/prompt-composition.md` の現状確認を開始
 - `docs/design/prompt-composition.md` に `Session Memory` / `Project Memory` の section 書式、件数上限、cache 方針を追記
 - `docs/design/memory-architecture.md` に `prompt-composition` を section 書式の正本とする旨を追記
+- コミット `3c579d4` `docs(memory): prompt と DB 設計を整理` で prompt composition 更新を記録した

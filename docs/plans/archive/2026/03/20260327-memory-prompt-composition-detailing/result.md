@@ -16,3 +16,4 @@
 ## Notes
 
 - docs-only タスクのため build / test は未実施
+- 実装コミット: `3c579d4` `docs(memory): prompt と DB 設計を整理`
