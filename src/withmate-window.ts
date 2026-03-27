@@ -72,7 +72,7 @@ export type OpenPathOptions = {
   baseDirectory?: string | null;
 };
 
-export const ALL_RESET_APP_DATABASE_TARGETS = ["sessions", "auditLogs", "appSettings", "modelCatalog"] as const;
+export const ALL_RESET_APP_DATABASE_TARGETS = ["sessions", "auditLogs", "appSettings", "modelCatalog", "projectMemory"] as const;
 
 export type ResetAppDatabaseTarget = (typeof ALL_RESET_APP_DATABASE_TARGETS)[number];
 

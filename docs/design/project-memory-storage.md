@@ -1,6 +1,7 @@
 # Project Memory Storage
 
 - 作成日: 2026-03-26
+- 更新日: 2026-03-27
 - 対象: `Project Memory` の永続化設計
 
 ## Goal
@@ -246,6 +247,23 @@ v1 では aggressive な自動マージはしない。
   - durable knowledge を蓄積
 
 したがって storage も別 table にする。
+
+## Current Implementation Slice
+
+current 実装では、persistence foundation まで入っている。
+
+- SQLite に `project_scopes` を作る
+- SQLite に `project_memory_entries` を作る
+- `workspacePath` から `git | directory` の scope を解決する
+- session の保存時と app 起動時に scope を同期する
+- `Project Memory` entry の upsert は exact match 再利用だけを入れる
+
+まだ未実装のもの:
+
+- `Session -> Project` の昇格実行
+- retrieval
+- renderer UI
+- ranking / decay
 
 ## Future Extensions
 

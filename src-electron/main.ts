@@ -56,6 +56,7 @@ import { resolveOpenPathTarget } from "./open-path.js";
 import { launchTerminalAtPath } from "./open-terminal.js";
 import { SessionStorage } from "./session-storage.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
+import { ProjectMemoryStorage } from "./project-memory-storage.js";
 import {
   buildSessionMemoryExtractionLogicalPrompt,
   buildSessionMemoryExtractionPrompt,
@@ -64,6 +65,7 @@ import {
   shouldTriggerSessionMemoryExtraction,
   type SessionMemoryExtractionTriggerReason,
 } from "./session-memory-extraction.js";
+import { resolveProjectScope } from "./project-scope.js";
 import { discoverSessionSkills } from "./skill-discovery.js";
 import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
@@ -161,6 +163,7 @@ let sessions: Session[] = [];
 let characters: CharacterProfile[] = [];
 let sessionStorage: SessionStorage | null = null;
 let sessionMemoryStorage: SessionMemoryStorage | null = null;
+let projectMemoryStorage: ProjectMemoryStorage | null = null;
 let modelCatalogStorage: ModelCatalogStorage | null = null;
 let auditLogStorage: AuditLogStorage | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
@@ -239,6 +242,14 @@ function requireSessionMemoryStorage(): SessionMemoryStorage {
   return sessionMemoryStorage;
 }
 
+function requireProjectMemoryStorage(): ProjectMemoryStorage {
+  if (!projectMemoryStorage) {
+    throw new Error("project memory storage が初期化されていないよ。");
+  }
+
+  return projectMemoryStorage;
+}
+
 async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
   if (!dbPath) {
     throw new Error("DB path が初期化されていないよ。");
@@ -250,11 +261,13 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
   const activeModelCatalog = modelCatalogStorage.ensureSeeded();
   sessionStorage = new SessionStorage(dbPath);
   sessionMemoryStorage = new SessionMemoryStorage(dbPath);
+  projectMemoryStorage = new ProjectMemoryStorage(dbPath);
   auditLogStorage = new AuditLogStorage(dbPath);
   appSettingsStorage = new AppSettingsStorage(dbPath);
   sessions = sessionStorage.listSessions();
   for (const session of sessions) {
     syncSessionMemoryForSession(session);
+    syncProjectScopeForSession(session);
   }
 
   return activeModelCatalog;
@@ -264,11 +277,13 @@ function closePersistentStores(): void {
   modelCatalogStorage?.close();
   sessionStorage?.close();
   sessionMemoryStorage?.close();
+  projectMemoryStorage?.close();
   auditLogStorage?.close();
   appSettingsStorage?.close();
   modelCatalogStorage = null;
   sessionStorage = null;
   sessionMemoryStorage = null;
+  projectMemoryStorage = null;
   auditLogStorage = null;
   appSettingsStorage = null;
 }
@@ -649,6 +664,9 @@ async function resetAppDatabase(request?: ResetAppDatabaseRequest | null): Promi
     if (appliedTargets.has("modelCatalog")) {
       requireModelCatalogStorage().resetToBundled();
     }
+    if (appliedTargets.has("projectMemory")) {
+      requireProjectMemoryStorage().clearProjectMemories();
+    }
 
     sessions = requireSessionStorage().listSessions();
     modelCatalog = getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded();
@@ -938,6 +956,7 @@ function upsertSession(nextSession: Session): Session {
     ),
   });
   syncSessionMemoryForSession(stored);
+  syncProjectScopeForSession(stored);
   sessions = storage.listSessions();
   broadcastSessions();
   return cloneSessions([stored])[0];
@@ -952,6 +971,10 @@ function syncSessionMemoryForSession(session: Session): void {
     threadId: session.threadId,
     goal: existing.goal.trim() ? existing.goal : session.taskTitle.trim(),
   });
+}
+
+function syncProjectScopeForSession(session: Session): void {
+  requireProjectMemoryStorage().ensureProjectScope(resolveProjectScope(session.workspacePath));
 }
 
 async function runSessionMemoryExtraction(
@@ -1088,6 +1111,7 @@ function replaceAllSessions(
   sessions = storage.listSessions();
   for (const session of sessions) {
     syncSessionMemoryForSession(session);
+    syncProjectScopeForSession(session);
   }
 
   const nextSessionsById = new Map(sessions.map((session) => [session.id, session] as const));
@@ -2121,6 +2145,8 @@ app.on("before-quit", (event) => {
   sessionStorage = null;
   sessionMemoryStorage?.close();
   sessionMemoryStorage = null;
+  projectMemoryStorage?.close();
+  projectMemoryStorage = null;
   auditLogStorage?.close();
   auditLogStorage = null;
   appSettingsStorage?.close();

@@ -332,6 +332,36 @@ export type SessionMemoryDelta = {
   notes?: string[];
 };
 
+export type ProjectScopeType = "git" | "directory";
+
+export type ProjectMemoryCategory = "decision" | "constraint" | "convention" | "context" | "deferred";
+
+export type ProjectScope = {
+  id: string;
+  projectType: ProjectScopeType;
+  projectKey: string;
+  workspacePath: string;
+  gitRoot: string | null;
+  gitRemoteUrl: string | null;
+  displayName: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProjectMemoryEntry = {
+  id: string;
+  projectScopeId: string;
+  sourceSessionId: string | null;
+  category: ProjectMemoryCategory;
+  title: string;
+  detail: string;
+  keywords: string[];
+  evidence: string[];
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt: string | null;
+};
+
 export type DiffPreviewPayload = {
   title: string;
   file: ChangedFile;
@@ -744,6 +774,108 @@ export function mergeSessionMemory(current: SessionMemory, delta: SessionMemoryD
   };
 }
 
+function normalizeProjectMemoryCategory(value: unknown): ProjectMemoryCategory | null {
+  return value === "decision" ||
+    value === "constraint" ||
+    value === "convention" ||
+    value === "context" ||
+    value === "deferred"
+    ? value
+    : null;
+}
+
+export function normalizeProjectScope(value: unknown): ProjectScope | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<ProjectScope>;
+  if (typeof candidate.id !== "string" || !candidate.id.trim()) {
+    return null;
+  }
+
+  const projectType = candidate.projectType === "git" || candidate.projectType === "directory"
+    ? candidate.projectType
+    : null;
+  if (!projectType) {
+    return null;
+  }
+
+  if (typeof candidate.projectKey !== "string" || !candidate.projectKey.trim()) {
+    return null;
+  }
+
+  return {
+    id: candidate.id.trim(),
+    projectType,
+    projectKey: candidate.projectKey.trim(),
+    workspacePath: typeof candidate.workspacePath === "string" ? candidate.workspacePath.trim() : "",
+    gitRoot:
+      typeof candidate.gitRoot === "string" && candidate.gitRoot.trim()
+        ? candidate.gitRoot.trim()
+        : null,
+    gitRemoteUrl:
+      typeof candidate.gitRemoteUrl === "string" && candidate.gitRemoteUrl.trim()
+        ? candidate.gitRemoteUrl.trim()
+        : null,
+    displayName: typeof candidate.displayName === "string" ? candidate.displayName.trim() : "",
+    createdAt:
+      typeof candidate.createdAt === "string" && candidate.createdAt.trim()
+        ? candidate.createdAt
+        : currentIsoTimestamp(),
+    updatedAt:
+      typeof candidate.updatedAt === "string" && candidate.updatedAt.trim()
+        ? candidate.updatedAt
+        : currentIsoTimestamp(),
+  };
+}
+
+export function normalizeProjectMemoryEntry(value: unknown): ProjectMemoryEntry | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<ProjectMemoryEntry>;
+  if (typeof candidate.id !== "string" || !candidate.id.trim()) {
+    return null;
+  }
+
+  if (typeof candidate.projectScopeId !== "string" || !candidate.projectScopeId.trim()) {
+    return null;
+  }
+
+  const category = normalizeProjectMemoryCategory(candidate.category);
+  if (!category) {
+    return null;
+  }
+
+  return {
+    id: candidate.id.trim(),
+    projectScopeId: candidate.projectScopeId.trim(),
+    sourceSessionId:
+      typeof candidate.sourceSessionId === "string" && candidate.sourceSessionId.trim()
+        ? candidate.sourceSessionId.trim()
+        : null,
+    category,
+    title: typeof candidate.title === "string" ? candidate.title.trim() : "",
+    detail: typeof candidate.detail === "string" ? candidate.detail.trim() : "",
+    keywords: normalizeStringList(candidate.keywords),
+    evidence: normalizeStringList(candidate.evidence),
+    createdAt:
+      typeof candidate.createdAt === "string" && candidate.createdAt.trim()
+        ? candidate.createdAt
+        : currentIsoTimestamp(),
+    updatedAt:
+      typeof candidate.updatedAt === "string" && candidate.updatedAt.trim()
+        ? candidate.updatedAt
+        : currentIsoTimestamp(),
+    lastUsedAt:
+      typeof candidate.lastUsedAt === "string" && candidate.lastUsedAt.trim()
+        ? candidate.lastUsedAt
+        : null,
+  };
+}
+
 function normalizeDiffRow(value: unknown): DiffRow | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -959,6 +1091,14 @@ export function normalizeSession(value: unknown): Session | null {
 
 export function cloneSessions(sessions: Session[]): Session[] {
   return JSON.parse(JSON.stringify(sessions)) as Session[];
+}
+
+export function cloneProjectScopes(scopes: ProjectScope[]): ProjectScope[] {
+  return JSON.parse(JSON.stringify(scopes)) as ProjectScope[];
+}
+
+export function cloneProjectMemoryEntries(entries: ProjectMemoryEntry[]): ProjectMemoryEntry[] {
+  return JSON.parse(JSON.stringify(entries)) as ProjectMemoryEntry[];
 }
 
 export function cloneCharacterProfiles(characters: CharacterProfile[]): CharacterProfile[] {

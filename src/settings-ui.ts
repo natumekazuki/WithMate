@@ -31,6 +31,7 @@ export const SETTINGS_RESET_DATABASE_TARGET_LABELS: Record<ResetAppDatabaseTarge
   auditLogs: "audit logs",
   appSettings: "app settings",
   modelCatalog: "model catalog",
+  projectMemory: "project memory",
 };
 
 export function describeResetDatabaseTargets(targets: readonly ResetAppDatabaseTarget[]): string {

@@ -46,7 +46,7 @@ WithMate で実現したい体験は次の三層で構成される。
 
 - 初回リリース前のため後方互換性は考慮しない
 - Settings / storage / catalog に非互換変更が入った場合は、Settings の `DB を初期化` を回復手段の正本とする
-- `DB を初期化` は `sessions / audit logs / app settings / model catalog` を初期化し、`characters` は保持する
+- `DB を初期化` は `sessions / audit logs / app settings / model catalog / project memory` を初期化し、`characters` は保持する
 
 ## Priority Order
 

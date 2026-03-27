@@ -16,7 +16,7 @@
 - current 実装では `System Prompt Prefix`、`Coding Agent Providers`、`Coding Agent Credentials`、`Memory Extraction`、`Model Catalog`、`Danger Zone` を置く
 - 現在の provider / credential 設定は coding plane 専用として扱い、Character Stream / monologue 用 API 入力は置かない
 - 初回リリース前のため後方互換性は考慮しない。非互換変更が入った場合は Settings の `DB を初期化` で回復する運用を正本とする
-- `DB を初期化` は `sessions / audit logs / app settings / model catalog` から対象を選べるようにし、`characters` は保持する
+- `DB を初期化` は `sessions / audit logs / app settings / model catalog / project memory` から対象を選べるようにし、`characters` は保持する
 - `sessions` を選んだ場合は、外部キー整合のため `audit logs` も同時に初期化する
 - 全対象を選んだ場合は DB ファイルを再生成して schema も初期化する
 - `Settings Window` は縦方向の余白を少し増やしつつ、内容が増えた場合は window 内スクロールで末尾まで操作できるようにする

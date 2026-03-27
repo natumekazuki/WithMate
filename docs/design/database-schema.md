@@ -64,6 +64,8 @@ future design だけで未実装のものは、最後に別枠で注記する。
 | `model_catalog_revisions` | `revision` | model catalog revision 管理 |
 | `model_catalog_providers` | `(revision, provider_id)` | revision ごとの provider 定義 |
 | `model_catalog_models` | `(revision, provider_id, model_id)` | revision ごとの model 定義 |
+| `project_scopes` | `id` | Project Memory の anchor |
+| `project_memory_entries` | `id` | project 単位の durable knowledge |
 
 ## Table Details
 
@@ -384,6 +386,54 @@ revision ごとの model 定義。
 ["minimal", "low", "medium", "high"]
 ```
 
+### `project_scopes`
+
+Project Memory の anchor table。
+
+| Column | Type | Meaning |
+| --- | --- | --- |
+| `id` | `TEXT` | project scope id |
+| `project_type` | `TEXT` | `git` or `directory` |
+| `project_key` | `TEXT` | canonical key |
+| `workspace_path` | `TEXT` | session 起点の workspace path |
+| `git_root` | `TEXT` | git root |
+| `git_remote_url` | `TEXT` | future 用の補助情報 |
+| `display_name` | `TEXT` | 表示名 |
+| `created_at` | `TEXT` | 初回作成時刻 |
+| `updated_at` | `TEXT` | 最終同期時刻 |
+
+補足:
+
+- `project_key` は `git:<path>` または `directory:<path>` の形で一意にする
+- current 実装では `gitRemoteUrl` は `null` 許容のまま保持する
+
+### `project_memory_entries`
+
+Project Memory entry の本体 table。
+
+| Column | Type | Meaning |
+| --- | --- | --- |
+| `id` | `TEXT` | entry id |
+| `project_scope_id` | `TEXT` | `project_scopes.id` |
+| `source_session_id` | `TEXT` | 昇格元 session |
+| `category` | `TEXT` | `decision / constraint / convention / context / deferred` |
+| `title` | `TEXT` | 短い題名 |
+| `detail` | `TEXT` | durable knowledge 本文 |
+| `keywords_json` | `TEXT` | 検索補助キーワード |
+| `evidence_json` | `TEXT` | 根拠参照 |
+| `created_at` | `TEXT` | 作成時刻 |
+| `updated_at` | `TEXT` | 最終更新時刻 |
+| `last_used_at` | `TEXT` | retrieval 利用時刻 |
+
+JSON カラム:
+
+```json
+{
+  "keywords_json": ["memory", "project", "prompt"],
+  "evidence_json": ["docs/design/memory-architecture.md"]
+}
+```
+
 ## DB Outside: Characters
 
 character は SQLite ではなく file system に保存する。
@@ -431,12 +481,13 @@ character は SQLite ではなく file system に保存する。
 
 ## Reset Policy
 
-Settings の `DB を初期化` で対象にできるのは次の 4 系統。
+Settings の `DB を初期化` で対象にできるのは次の 5 系統。
 
 - `sessions`
 - `audit logs`
 - `app settings`
 - `model catalog`
+- `project memory`
 
 補足:
 
@@ -455,14 +506,16 @@ Settings の `DB を初期化` で対象にできるのは次の 4 系統。
 - `model_catalog_revisions`
 - `model_catalog_providers`
 - `model_catalog_models`
+- `project_scopes`
+- `project_memory_entries`
 - `<userData>/characters/`
 
 ### Future design only
 
 まだ未実装だが design があるもの:
 
-- `project_scopes`
-- `project_memory_entries`
+- `project_memory_entry_links`
+- FTS / embedding 系 index
 
 詳細は `docs/design/project-memory-storage.md` を参照する。
 
