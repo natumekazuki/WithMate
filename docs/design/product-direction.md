@@ -1,7 +1,7 @@
 # Product Direction
 
 - 作成日: 2026-03-11
-- 更新日: 2026-03-25
+- 更新日: 2026-03-27
 - 対象: WithMate 全体の体験設計方針
 
 ## Goal
@@ -153,13 +153,13 @@ current milestone における Character の責務は次のとおり。
 
 Memory は current milestone では「キャラ性を盛るための魔法」ではなく、継続性を扱う基盤として考える。
 
-Memory が解くべき問いは次の 2 つだけに絞る。
+coding plane において、Memory が解くべき問いは次の 2 つだけに絞る。
 
-1. 同じ character をまたいでも持ち越したいものは何か
+1. 同じ project をまたいでも持ち越したいものは何か
 2. 同じ session を再開した時に忘れてほしくないものは何か
 
-このため、Memory はまず `Character Memory` と `Session Memory` の 2 軸で考える。
-Monologue 専用入力は、その後に組み立てる派生物とする。
+このため、coding plane ではまず `Project Memory` と `Session Memory` の 2 軸で考える。  
+`Character Memory` は monologue や将来の character update で使う別軸とし、main の session prompt には注入しない。
 
 ## Monologue / Character Stream Position
 
@@ -283,8 +283,8 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 この doc を起点に、次は次の順で詰める。
 
 1. `Memory` は何を保存するか
-2. `Character` は Memory をどう読むか
-3. `Monologue` はいつ・どこで出すか
+2. `Project / Session Memory` を coding plane へどう入れるか
+3. `Character Memory` を monologue / character update でどう使うか
 
 関連:
 

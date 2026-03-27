@@ -119,6 +119,8 @@ npm run typecheck
   - settings prefix / character role / input prompt の合成方針
 - `docs/design/audit-log.md`
   - Session 実行の監査ログ設計
+- `docs/design/database-schema.md`
+  - current の保存構造と DB / file storage の一覧
 - `docs/manual-test-checklist.md`
   - 現行実装に対する実機テスト項目表
 - `docs/design/manual-test-checklist.md`
@@ -146,4 +148,5 @@ npm run typecheck
 - 詳細仕様は `docs/` を正本とし、構造化された AI 向け情報は `.ai_context/` に集約する想定です
 - coding agent の対応状況を確認するときは `docs/design/coding-agent-capability-matrix.md` を最初に見ます
 - coding agent capability に影響する実装や改修では、同じ task の中で `docs/design/coding-agent-capability-matrix.md` を更新します
+- 永続化構造、SQLite schema、JSON カラム、DB 外保存の責務に変更がある task では、同じ task の中で `docs/design/database-schema.md` も更新します
 - provider ごとの詳細設計は `docs/design/provider-adapter.md`、`docs/design/codex-approval-research.md`、`docs/design/slash-command-integration.md`、`docs/design/skill-command-design.md` を参照します

@@ -1,6 +1,6 @@
 # Task Backlog
 
-- 更新日: 2026-03-26
+- 更新日: 2026-03-27
 - 対象: GitHub issue と repo 内の残タスクの統合管理
 
 ## 方針
@@ -31,7 +31,7 @@
 | P2 | 見送り | Local | `copilot-rollout` | apps / mcp / plugins | provider extension surface の read-only 表示や制御を検討する | 「今は使っていない」整理なので優先度は落とす |
 | P2 | 見送り | Local | `sdk-pending` | provider SDK 対応待ち | approval parity、plan / compact parity、quota parity など、SDK surface 待ちの項目を整理する | `docs/design/provider-sdk-pending-items.md` |
 | P2 | 完了 | GitHub | [#7](https://github.com/natumekazuki/WithMate/issues/7) | キャラ別メッセージ上書き | SessionWindow の固定文言を character ごとに差し替え、複数候補から stable に切り替えられるようにした | plan: `docs/plans/archive/2026/03/20260325-character-session-copy/`、design: `docs/design/session-character-copy.md` |
-| P1 | 進行中 | GitHub | [#3](https://github.com/natumekazuki/WithMate/issues/3) | Memory 永続化と共有 | Project / Session / Character Memory を永続化し、抽出 plane と retrieval の基盤を作る | `Session Memory` の SQLite 基盤まで完了。次は `outputTokens threshold` ベースの extraction trigger と Settings 保存。plan: `docs/plans/archive/2026/03/20260326-session-memory-foundation/` |
+| P1 | 進行中 | GitHub | [#3](https://github.com/natumekazuki/WithMate/issues/3) | Memory 永続化と共有 | Project / Session / Character Memory を永続化し、抽出 plane と retrieval の基盤を作る | `Session Memory` の SQLite 基盤と extraction trigger まで完了。coding plane では `Project / Session` を prompt 対象、`Character Memory` は monologue / character update 側で扱う。 |
 | P2 | 未着手 | GitHub | [#14](https://github.com/natumekazuki/WithMate/issues/14) | memory の時間減衰 | 古い記憶の価値を下げる評価値を導入する | `#3` の後続。retrieval / ranking 層の設計として扱う |
 | P2 | 未着手 | GitHub | [#1](https://github.com/natumekazuki/WithMate/issues/1) | 独り言の API 運用 | subscription ではなく API key 前提で monologue を扱う | `docs/design/monologue-provider-policy.md` が正本。monologue plane の前提 |
 | P3 | 未着手 | GitHub | [#15](https://github.com/natumekazuki/WithMate/issues/15) | キャラストリームをメモリー生成の一部にする | memory extraction のレスポンスに独り言を載せる構成を検討する | `#3` `#1` `#5` の後で判断。Memory と Character Stream を橋渡しする応用タスク |
@@ -69,6 +69,7 @@
 - `#15 キャラストリームをメモリー生成の一部にする`
   - memory extraction と独り言生成を一つの裏処理にまとめる案
   - `#3` の memory 基盤と `#1` の monologue plane が前提
+  - `Character Memory` は main session prompt ではなく、この系統で使う
   - UI 適用は `#5` の pending 解消後に判断する
 
 ## 推奨順

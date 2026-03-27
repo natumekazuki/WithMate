@@ -176,6 +176,7 @@ app 設定は `app_settings` table に保存する。
 - [session-persistence.md](./session-persistence.md) で定義した `Session Metadata` の source of truth に相当する
 - Main Process 側 SQLite 実装が current source of truth
 - preload API は将来 SQLite 実装へ差し替えても Renderer を変えないための境界として使う
+- table 一覧と JSON カラムの棚卸しは [database-schema.md](./database-schema.md) を参照する
 
 ## Directory Picker Policy
 

@@ -124,6 +124,7 @@ Issue `#3` は、このポリシーを成立させるための基盤とする。
 - キャラとして維持したい口調
 - ユーザーとの距離感
 - 継続する好みや反応傾向
+- coding plane の main prompt には入れず、monologue plane 側でのみ使う
 
 ### 2. Session Memory
 
@@ -131,6 +132,18 @@ Issue `#3` は、このポリシーを成立させるための基盤とする。
 - 決定事項
 - unresolved な論点
 - 最近の変更の要約
+
+### Boundary
+
+- coding plane の main prompt
+  - `character.md`
+  - `Session Memory`
+  - 必要時の `Project Memory`
+- monologue plane / character update plane
+  - `Character Memory`
+  - 必要なら `Session Memory` の軽量 summary
+
+つまり `Character Memory` は、main の coding session prompt ではなく monologue 側の文脈生成に使う。
 
 ### 3. Monologue Context
 
