@@ -70,10 +70,14 @@ describe("session-memory-extraction", () => {
     });
 
     assert.match(prompt.systemText, /Session Memory 抽出器/);
+    assert.match(prompt.systemText, /差分だけを返して/);
+    assert.match(prompt.systemText, /decisions には、後続の作業を拘束する確定判断だけ/);
     assert.match(prompt.userText, /Current Session Memory/);
     assert.match(prompt.userText, /trigger は outputTokens threshold にする/);
     assert.match(prompt.userText, /Recent Messages/);
     assert.match(prompt.userText, /Memory の設計を進めたい/);
+    assert.match(prompt.userText, /Field Guide/);
+    assert.match(prompt.userText, /Output Rules/);
   });
 
   it("JSON と fenced JSON を SessionMemoryDelta として parse できる", () => {

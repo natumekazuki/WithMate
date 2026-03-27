@@ -539,6 +539,9 @@ Memory 抽出には固定 prompt を使う。
 - 不明な field は無理に埋めない
 - 既存 memory を全再生成せず、差分更新を意識する
 - 推測で `decisions` を増やしすぎない
+- `goal / decisions / openQuestions / nextActions / notes` の役割を field guide として明示する
+- `goal` は session 全体の目的が変わった時だけ更新する
+- `notes` は fallback として扱い、durable knowledge 候補だけ tag を付ける
 
 ## Session Memory Delta
 
