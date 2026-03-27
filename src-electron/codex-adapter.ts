@@ -8,6 +8,7 @@ import type {
   AuditTransportPayload,
   AuditLogUsage,
   ChangedFile,
+  CharacterReflectionOutput,
   CharacterProfile,
   DiffRow,
   LiveRunStep,
@@ -42,7 +43,10 @@ import {
   type RunSessionTurnInput,
   type RunSessionTurnProgressHandler,
   type RunSessionTurnResult,
+  type RunCharacterReflectionInput,
+  type RunCharacterReflectionResult,
 } from "./provider-runtime.js";
+import { parseCharacterReflectionOutputText } from "./character-reflection.js";
 import { parseSessionMemoryDeltaText } from "./session-memory-extraction.js";
 const MAX_DIFF_MATRIX_CELLS = 2_000_000;
 
@@ -750,6 +754,30 @@ export class CodexAdapter implements ProviderTurnAdapter {
       threadId: thread.id,
       rawText: result.finalResponse,
       delta: parseSessionMemoryDeltaText(result.finalResponse),
+      usage: result.usage ? toAuditUsage(result.usage) : null,
+    };
+  }
+
+  async runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult> {
+    const { client } = this.getClient(input.session.provider, input.appSettings);
+    const thread = client.startThread({
+      workingDirectory: input.session.workspacePath,
+      skipGitRepoCheck: true,
+      sandboxMode: "read-only",
+      approvalPolicy: "never",
+      model: input.model,
+      modelReasoningEffort: input.reasoningEffort,
+    });
+
+    const reflectionInput = `${input.prompt.systemText}\n\n${input.prompt.userText}`.trim();
+    const result = await thread.run(reflectionInput, {
+      outputSchema: input.prompt.outputSchema,
+    });
+
+    return {
+      threadId: thread.id,
+      rawText: result.finalResponse,
+      output: parseCharacterReflectionOutputText(result.finalResponse),
       usage: result.usage ? toAuditUsage(result.usage) : null,
     };
   }

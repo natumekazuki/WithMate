@@ -157,6 +157,8 @@ current design では、次の 3 要素を retrieval score の候補として扱
 - Issue `#14` はこの層の follow-up として扱う
 
 current 実装の `Project Memory` retrieval は semantic ではなく lexical までで止めるが、日本語 query を拾いやすくするために word token と 2-gram / 3-gram を併用する。
+また、`Project Memory` と `Character Memory` の retrieval では `lastUsedAt ?? updatedAt` を参照する時間減衰を score 補正として入れる。
+recent な記憶ほど少し有利にしつつ、十分 relevant な古い記憶は残せる段階的補正とする。
 
 このため `#14` は新しい memory type の追加ではなく、検索・再注入ロジックの改善タスクとして位置づける。  
 `Project Memory` では coding session への再注入の ranking、`Character Memory` では monologue / character update 用 retrieval ranking に効く。
@@ -470,15 +472,17 @@ current 実装では、`Session Memory` の永続化と extraction trigger、`Pr
   - scope 解決あり
   - rule-based 昇格あり
   - lexical retrieval あり
-  - `minimum score threshold` / `minimum user coverage` / duplicate suppression あり
+  - `minimum score threshold` / `minimum user coverage` / duplicate suppression / 時間減衰あり
   - retrieval 時に `lastUsedAt` 更新あり
 - `Character Memory`
   - `character_scopes` / `character_memory_entries` の保存基盤あり
   - session 保存時と app 起動時に scope 同期あり
   - `DB を初期化` の個別 target あり
   - provider ごとの `Character Reflection model / reasoning depth` 設定あり
-  - `独り言` と共通 trigger の `character reflection cycle` を正本にする
-  - reflection 実行自体はまだ未実装
+  - `独り言` と共通 trigger の `character reflection cycle` を実装済み
+  - `SessionStart` は monologue only、通常更新は文脈増加ベースで実行する
+  - `CharacterMemoryDelta` 保存と monologue の session `stream` 追記まで実装済み
+  - monologue / reflection 向け query-based retrieval と時間減衰あり
 
 という進み方を取る。
 

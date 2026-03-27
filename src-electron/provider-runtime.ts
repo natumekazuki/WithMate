@@ -5,6 +5,8 @@ import type {
   AuditLogUsage,
   AuditTransportPayload,
   CharacterProfile,
+  CharacterMemoryEntry,
+  CharacterReflectionOutput,
   ComposerAttachment,
   LiveApprovalDecision,
   LiveApprovalRequest,
@@ -18,6 +20,7 @@ import type {
   SessionMemoryDelta,
 } from "../src/app-state.js";
 import type { ModelReasoningEffort, ModelCatalogProvider } from "../src/model-catalog.js";
+import type { CharacterReflectionPrompt, CharacterReflectionTriggerReason } from "./character-reflection.js";
 import type { SessionMemoryExtractionPrompt } from "./session-memory-extraction.js";
 
 export type ProviderPromptComposition = {
@@ -77,6 +80,25 @@ export type ExtractSessionMemoryResult = {
   usage: AuditLogUsage | null;
 };
 
+export type RunCharacterReflectionInput = {
+  session: Session;
+  sessionMemory: SessionMemory;
+  character: CharacterProfile;
+  characterMemoryEntries: CharacterMemoryEntry[];
+  appSettings: AppSettings;
+  model: string;
+  reasoningEffort: ModelReasoningEffort;
+  triggerReason: CharacterReflectionTriggerReason;
+  prompt: CharacterReflectionPrompt;
+};
+
+export type RunCharacterReflectionResult = {
+  threadId: string | null;
+  rawText: string;
+  output: CharacterReflectionOutput | null;
+  usage: AuditLogUsage | null;
+};
+
 export type RunSessionTurnResult = {
   threadId: string | null;
   assistantText: string;
@@ -104,6 +126,7 @@ export type ProviderTurnAdapter = {
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition;
   getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput): Promise<ProviderQuotaTelemetry | null>;
   extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult>;
+  runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult>;
   invalidateSessionThread(sessionId: string): void;
   invalidateAllSessionThreads(): void;
   runSessionTurn(

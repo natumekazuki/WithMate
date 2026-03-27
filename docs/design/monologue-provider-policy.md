@@ -17,9 +17,9 @@
 
 1. coding agent 本体は current 実装では `Codex` 中心だが、Character Stream 着手前に `Codex` と `CopilotCLI` の target scope を揃える
 2. 上記の前提として、両 CLI / SDK 経由でも使える機能の網羅範囲を先に固める
-3. `Character Stream` / 独り言は OpenAI API を使う
+3. long-term では `Character Stream` / 独り言を OpenAI API へ分離できる構造を保つ
 4. 独り言機能は consumer / subscription 側の自動多重実行では実装しない
-5. MVP の独り言モデルは `gpt-5-mini` 固定にする
+5. current v1 では reflection backend を current provider で流用し、model / reasoning depth は Settings から provider ごとに切り替える
 6. 独り言の実行契機はユーザー操作に連動するイベントに限定し、定期実行は行わない
 7. 独り言は `Character Memory` 更新と共通の `character reflection cycle` で生成する
 8. 独り言の文脈は Memory から抽出した軽量コンテキストに限定する
@@ -67,9 +67,9 @@
 
 ### Monologue Plane
 
-- Provider: OpenAI API
-- Auth: API key
-- Model: `gpt-5-mini`
+- Provider: future option として OpenAI API
+- Auth: future option として API key
+- Model: future option として monologue 専用 model
 - Main UI:
   - `Character Stream`
 - Responsibility:
@@ -78,12 +78,13 @@
   - mood / reaction continuity
 - Settings:
   - coding plane の provider / credential と混ぜない
-  - current milestone では設定欄も追加しない
+  - current v1 では実体未分離のため、専用設定欄はまだ追加しない
 
 ## Current Implementation Note
 
-current 実装では、将来の `character reflection cycle` に備えて Settings に provider ごとの `Character Reflection model / reasoning depth` を保持する。  
-ただしこれは monologue plane の API 実装そのものではなく、暫定的な reflection backend 設定の受け皿として扱う。
+current v1 では `character reflection cycle` を current coding provider の backend で動かす。  
+Settings に provider ごとの `Character Reflection model / reasoning depth` を保持し、`SessionStart` と文脈増加時の reflection で利用する。  
+これは monologue plane の恒久仕様ではなく、将来 API 分離へ差し替え可能な暫定 backend として扱う。
 
 ## Trigger Policy
 
@@ -199,10 +200,9 @@ current milestone では `Character Stream` は **非着手** とし、provider 
 
 ### API Key Available
 
-- current milestone では API キー有無にかかわらず Character Stream 実装は進めない
-- backend / context 連携の土台実装も parity 完了後の reopen フェーズへ送る
-- UI 適用は pending とし、Session UI には表示しない
-- Settings の coding credential 欄は Character Stream 用ではなく、API キー入力導線は future の別欄で扱う
+- current v1 では API キー分離はまだ入れず、reflection backend は current provider を流用する
+- UI は `Session Window` の `独り言` tab に限定して表示する
+- Settings の coding credential 欄は Character Stream 用ではなく、専用 API キー導線は future の別欄で扱う
 
 ### API Key Missing
 
@@ -227,7 +227,7 @@ current milestone では `Character Stream` は **非着手** とし、provider 
 ### Agent Event UI
 
 - `Character Stream` は coding agent 本体の event stream ではなく、別 plane の生成物として扱う
-- current UI では独り言面そのものを表示しない
+- current UI では `Session Window` の `独り言` tab に background state と recent monologue を表示する
 
 ### Memory Design
 

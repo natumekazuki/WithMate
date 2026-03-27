@@ -147,6 +147,53 @@ describe("retrieveProjectMemoryEntries", () => {
     assert.deepEqual(entries.map((entry) => entry.id), ["b"]);
   });
 
+  it("同程度に relevant な entry では最近使われたものを優先する", () => {
+    const entries = retrieveProjectMemoryEntries(
+      [
+        makeEntry({
+          id: "a",
+          category: "decision",
+          title: "approval UI は provider 差を吸収する",
+          detail: "approval UI は provider 差を吸収する",
+          keywords: ["approval", "ui", "provider"],
+          updatedAt: "2025-10-01T00:00:00.000Z",
+        }),
+        makeEntry({
+          id: "b",
+          category: "decision",
+          title: "approval UI は provider 差を吸収する",
+          detail: "approval UI は provider 差を吸収する",
+          keywords: ["approval", "ui", "provider"],
+          lastUsedAt: "2026-03-28T11:00:00.000Z",
+          updatedAt: "2026-03-20T00:00:00.000Z",
+        }),
+      ],
+      "approval UI の方針どうする？",
+      sessionMemory,
+    );
+
+    assert.deepEqual(entries.map((entry) => entry.id), ["b"]);
+  });
+
+  it("古くても十分 relevant な entry は retrieval に残る", () => {
+    const entries = retrieveProjectMemoryEntries(
+      [
+        makeEntry({
+          id: "a",
+          category: "decision",
+          title: "approval UI は provider 差を吸収する",
+          detail: "approval UI は provider 差を吸収する",
+          keywords: ["approval", "ui", "provider"],
+          updatedAt: "2025-10-01T00:00:00.000Z",
+        }),
+      ],
+      "approval UI の方針どうする？",
+      sessionMemory,
+    );
+
+    assert.deepEqual(entries.map((entry) => entry.id), ["a"]);
+  });
+
   it("hit が無い時は空配列を返す", () => {
     const entries = retrieveProjectMemoryEntries(
       [

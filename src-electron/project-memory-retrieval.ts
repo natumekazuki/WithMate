@@ -1,4 +1,5 @@
 import type { ProjectMemoryEntry, SessionMemory } from "../src/app-state.js";
+import { computeMemoryTimeDecayScore } from "./memory-time-decay.js";
 
 type RetrievedProjectMemory = {
   entry: ProjectMemoryEntry;
@@ -201,6 +202,7 @@ function scoreEntry(
   userFeatures: QueryFeature[],
   sessionContextText: string,
   sessionFeatures: QueryFeature[],
+  nowMs: number,
 ): RetrievedProjectMemory | null {
   const userPart = scoreEntryPart(entry, userMessage, userFeatures, {
     title: 6,
@@ -230,7 +232,8 @@ function scoreEntry(
     + userPart.score
     + userCoverage.bonus
     + sessionPart.score
-    + sessionCoverage.bonus;
+    + sessionCoverage.bonus
+    + computeMemoryTimeDecayScore(entry.lastUsedAt, entry.updatedAt, nowMs);
 
   return {
     entry,
@@ -253,10 +256,11 @@ export function retrieveProjectMemoryEntries(
   const sessionFeatures = collectQueryFeatures(sessionContextText);
   const minimumScore = computeMinimumScore(userFeatures);
   const minimumCoverage = computeMinimumCoverage(userFeatures);
+  const nowMs = Date.now();
   const ranked: RetrievedProjectMemory[] = [];
 
   for (const entry of entries) {
-    const scored = scoreEntry(entry, userText, userFeatures, sessionContextText, sessionFeatures);
+    const scored = scoreEntry(entry, userText, userFeatures, sessionContextText, sessionFeatures, nowMs);
     if (!scored || scored.score < minimumScore || scored.userCoverage < minimumCoverage) {
       continue;
     }

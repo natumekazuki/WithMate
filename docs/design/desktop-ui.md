@@ -159,7 +159,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - right pane は `Latest Command / Memory生成 / 独り言` の tab host とする
 - command 実行中は `Latest Command` を最優先で自動表示する
 - background memory extraction 実行中は `Memory生成` へ自動切り替える
-- `独り言` は current milestone では empty state host のみ置く
+- `独り言` は background state と recent monologue を表示する
 - right pane の empty / idle copy は説明過多にせず、使えば分かる最小表現を優先する
 - `Latest Command` には raw command、status、source、rough risk badge、必要時だけ開く `details` を出す
 - `Memory生成` には background activity の status、summary、必要時だけ開く `details` を出す

@@ -1,7 +1,7 @@
 # Project Memory Storage
 
 - 作成日: 2026-03-26
-- 更新日: 2026-03-27
+- 更新日: 2026-03-28
 - 対象: `Project Memory` の永続化設計
 
 ## Goal
@@ -302,11 +302,13 @@ current 実装では、persistence foundation まで入っている。
 - 同一 `category / title / detail` の entry は duplicate suppression で 1 件に絞る
 - prompt に注入した entry は `lastUsedAt` を更新する
 
+current 実装では、`lastUsedAt ?? updatedAt` を参照する段階的な時間減衰を retrieval score に入れている。
+これにより、recent な durable knowledge をやや優先しつつ、十分 relevant な古い entry は残せる。
+
 まだ未実装のもの:
 
 - renderer UI
 - FTS / vector retrieval
-- 時間減衰
 
 ## Future Extensions
 

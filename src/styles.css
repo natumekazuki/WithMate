@@ -3335,6 +3335,21 @@ button:disabled {
   color: #d8ffe7;
 }
 
+.live-run-step-status.spark {
+  background: rgba(217, 119, 6, 0.16);
+  color: #fed7aa;
+}
+
+.live-run-step-status.calm {
+  background: rgba(56, 189, 248, 0.16);
+  color: #c8f1ff;
+}
+
+.live-run-step-status.warm {
+  background: rgba(244, 114, 182, 0.16);
+  color: #ffd6e7;
+}
+
 .live-run-step-status.failed {
   background: rgba(201, 106, 42, 0.14);
   color: #8a4218;

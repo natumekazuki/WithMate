@@ -14,7 +14,7 @@
 - `System Prompt Prefix` は `Settings Window` で定義し、prompt composition に渡す
 - `System Prompt Prefix` は保存時に `# System Prompt` 配下へ組み込まれる
 - current 実装では `System Prompt Prefix`、`Coding Agent Providers`、`Coding Agent Credentials`、`Memory Extraction`、`Character Reflection`、`Model Catalog`、`Danger Zone` を置く
-- 現在の provider / credential 設定は coding plane 専用として扱い、Character Stream / monologue 用 API 入力は置かない
+- 現在の provider / credential 設定は coding plane 専用として扱うが、current v1 の Character Reflection backend は同じ provider client を流用する
 - 初回リリース前のため後方互換性は考慮しない。非互換変更が入った場合は Settings の `DB を初期化` で回復する運用を正本とする
 - `DB を初期化` は `sessions / audit logs / app settings / model catalog / project memory / character memory` から対象を選べるようにし、`characters` は保持する
 - `sessions` を選んだ場合は、外部キー整合のため `audit logs` も同時に初期化する
@@ -89,7 +89,7 @@
 - provider 実装は保存済み coding credential を runtime の SDK client へ渡し、空文字のときだけ従来どおり環境依存 fallback を許可する
 - Memory extraction 設定は provider ごとに保持し、trigger engine は現在 provider の `model / reasoning depth / outputTokens threshold` を参照する
 - current 実装では、memory extraction の通常発火は `outputTokens threshold` だけで判定する
-- Character reflection 設定は provider ごとに保持し、将来の `character reflection cycle` 実行時に `model / reasoning depth` を参照する
+- Character reflection 設定は provider ごとに保持し、current v1 の `character reflection cycle` 実行時に `model / reasoning depth` を参照する
 - DB reset 成功時は renderer 側で reset 後の `appSettings` を draft に同期し、dirty 状態を解消する
 - reset 実行 API は選択対象を Main Process へ渡し、戻り値の current `sessions / appSettings / modelCatalog` で renderer を再同期する
 

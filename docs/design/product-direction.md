@@ -209,7 +209,7 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 - `Home Window` は resume / new session / character selection を担う管理面
 - `Session Window` は作業面
 - `Work Chat` は作業結果を読む面
-- 独り言 UI は current milestone では置かない
+- 独り言 UI は `Session Window` の `独り言` tab に限定して置く
 - これは `未実装だから一時的に隠している` のではなく、`Codex / CopilotCLI / CLI / SDK parity` 完了前は着手しない方針による
 
 ### 2. キャラ性は構造で出す
@@ -277,7 +277,7 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 - `Recent Sessions` は `Home Window` の resume picker として再設計する
 - `Session Window` の `Work Chat` は TUI 本体寄りに保つ
 - Character は `Session Copy`、theme、icon、assistant 表現で効かせる
-- 独り言 UI は current milestone では `Session Window` に出さない
+- 独り言 UI は `Session Window` の `独り言` tab に限定して表示する
 - Settings は coding plane 用 provider / credential と DB reset を持つ管理面として扱う
 - 見た目はキャラクターに合わせていくが、構造は coding agent 優先で崩さない
 

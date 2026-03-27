@@ -39,7 +39,10 @@ import {
   type RunSessionTurnInput,
   type RunSessionTurnProgressHandler,
   type RunSessionTurnResult,
+  type RunCharacterReflectionInput,
+  type RunCharacterReflectionResult,
 } from "./provider-runtime.js";
+import { parseCharacterReflectionOutputText } from "./character-reflection.js";
 import { parseSessionMemoryDeltaText } from "./session-memory-extraction.js";
 import {
   captureWorkspaceSnapshot,
@@ -1054,6 +1057,55 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         threadId: extractionSession.sessionId,
         rawText,
         delta: parseSessionMemoryDeltaText(rawText),
+        usage,
+      };
+    } finally {
+      unsubscribeUsage();
+      await extractionSession.disconnect().catch(() => undefined);
+    }
+  }
+
+  async runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult> {
+    const providerId = input.session.provider;
+    const clientKey = buildCopilotClientKeyFromAppSettings(providerId, input.appSettings);
+    const cached = this.clients.get(clientKey);
+    const apiKey = getProviderAppSettings(input.appSettings, providerId).apiKey.trim();
+    const client = cached ?? new CopilotClient({
+      cliPath: resolveCopilotCliPath(),
+      env: buildCopilotClientEnv(process.env),
+      ...(apiKey ? { githubToken: apiKey, useLoggedInUser: false } : {}),
+    });
+
+    if (!cached) {
+      this.clients.set(clientKey, client);
+    }
+
+    await client.start();
+    let usage: AuditLogUsage | null = null;
+
+    const denyAllPermissions: PermissionHandler = () => ({ kind: "denied-interactively-by-user" });
+    const extractionSession = await client.createSession({
+      model: input.model,
+      reasoningEffort: input.reasoningEffort === "minimal" ? "low" : input.reasoningEffort,
+      workingDirectory: input.session.workspacePath,
+      streaming: false,
+      onPermissionRequest: denyAllPermissions,
+      systemMessage: {
+        mode: "append",
+        content: input.prompt.systemText,
+      },
+    });
+    const unsubscribeUsage = extractionSession.on("assistant.usage", (event) => {
+      usage = toAuditUsageFromCopilot(event.data);
+    });
+
+    try {
+      const response = await extractionSession.sendAndWait({ prompt: input.prompt.userText }, 60_000);
+      const rawText = response?.data.content ?? "";
+      return {
+        threadId: extractionSession.sessionId,
+        rawText,
+        output: parseCharacterReflectionOutputText(rawText),
         usage,
       };
     } finally {

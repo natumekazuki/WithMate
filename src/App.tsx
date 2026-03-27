@@ -912,6 +912,10 @@ export default function App() {
     ),
     [monologueActivityState.ownerSessionId, monologueActivityState.state, selectedSessionId],
   );
+  const selectedMonologueEntries = useMemo(
+    () => (selectedSession ? [...selectedSession.stream].reverse().slice(0, 6) : []),
+    [selectedSession],
+  );
   const activePathReference = useMemo(
     () => (selectedSession ? getActivePathReference(draft, composerCaret) : null),
     [composerCaret, draft, selectedSession],
@@ -3162,37 +3166,58 @@ export default function App() {
                   ) : null}
 
                   {activeContextPaneTab === "monologue" ? (
-                    selectedMonologueActivity ? (
-                      <div className="command-monitor-card">
-                        <div className="command-monitor-card-head">
-                          <div className="command-monitor-meta">
-                            <span className={`live-run-step-status ${monologueToneClassName}`}>
-                              {sessionBackgroundActivityStatusLabel(selectedMonologueActivity.status)}
-                            </span>
-                            <span className="live-run-step-type">Background</span>
-                            <span className="command-monitor-source">MONOLOGUE</span>
+                    selectedMonologueActivity || selectedMonologueEntries.length > 0 ? (
+                      <>
+                        {selectedMonologueActivity ? (
+                          <div className="command-monitor-card">
+                            <div className="command-monitor-card-head">
+                              <div className="command-monitor-meta">
+                                <span className={`live-run-step-status ${monologueToneClassName}`}>
+                                  {sessionBackgroundActivityStatusLabel(selectedMonologueActivity.status)}
+                                </span>
+                                <span className="live-run-step-type">Background</span>
+                                <span className="command-monitor-source">MONOLOGUE</span>
+                              </div>
+                            </div>
+
+                            <div className="background-activity-summary">
+                              <strong>{selectedMonologueActivity.title}</strong>
+                              <p>{selectedMonologueActivity.summary}</p>
+                            </div>
+
+                            {selectedMonologueActivity.details ? (
+                              <details className="command-monitor-details live-run-step-details">
+                                <summary>詳細</summary>
+                                <pre>{selectedMonologueActivity.details}</pre>
+                              </details>
+                            ) : null}
+
+                            {selectedMonologueActivity.errorMessage ? (
+                              <div className="live-run-error-block" role="alert">
+                                <strong>実行エラー</strong>
+                                <p className="live-run-error">{selectedMonologueActivity.errorMessage}</p>
+                              </div>
+                            ) : null}
                           </div>
-                        </div>
-
-                        <div className="background-activity-summary">
-                          <strong>{selectedMonologueActivity.title}</strong>
-                          <p>{selectedMonologueActivity.summary}</p>
-                        </div>
-
-                        {selectedMonologueActivity.details ? (
-                          <details className="command-monitor-details live-run-step-details">
-                            <summary>詳細</summary>
-                            <pre>{selectedMonologueActivity.details}</pre>
-                          </details>
                         ) : null}
 
-                        {selectedMonologueActivity.errorMessage ? (
-                          <div className="live-run-error-block" role="alert">
-                            <strong>実行エラー</strong>
-                            <p className="live-run-error">{selectedMonologueActivity.errorMessage}</p>
+                        {selectedMonologueEntries.map((entry, index) => (
+                          <div key={`${entry.time}-${index}`} className="command-monitor-card">
+                            <div className="command-monitor-card-head">
+                              <div className="command-monitor-meta">
+                                <span className={`live-run-step-status ${entry.mood}`}>
+                                  {entry.mood}
+                                </span>
+                                <span className="live-run-step-type">{entry.time}</span>
+                                <span className="command-monitor-source">MONOLOGUE</span>
+                              </div>
+                            </div>
+                            <div className="background-activity-summary">
+                              <p>{entry.text}</p>
+                            </div>
                           </div>
-                        ) : null}
-                      </div>
+                        ))}
+                      </>
                     ) : (
                       <div className="command-monitor-empty-shell" />
                     )

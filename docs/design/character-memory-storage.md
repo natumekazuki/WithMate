@@ -200,7 +200,7 @@ current milestone では coding plane には使わないため、retrieval は m
 
 - main prompt 用 retrieval はしない
 - `独り言` 生成時だけ上位数件を引く
-- 将来の ranking は `#14` の時間減衰と連動できるようにする
+- ranking では `user` 発話を主 query にし、`lastUsedAt ?? updatedAt` を参照する時間減衰を score 補正として入れる
 
 ## Current Implementation Slice
 
@@ -213,12 +213,20 @@ current 実装では、まず保存基盤だけを入れる。
 - entry の upsert は exact match 再利用だけを入れる
 - `DB を初期化` から `character memory` を個別に消せるようにする
 
+current 実装で入ったもの:
+
+- `SessionStart` の monologue only path
+- 文脈増加ベースの `character reflection cycle`
+- `CharacterMemoryDelta` の save
+- monologue の session `stream` 追記
+- right pane `独り言` tab での表示
+- background activity / audit 記録
+- query-based retrieval / ranking
+- `lastUsedAt ?? updatedAt` を使う時間減衰
+
 まだ未実装のもの:
 
-- `character reflection cycle` の実行
-- `CharacterMemoryDelta` の merge
-- monologue retrieval
-- renderer UI
+- character definition update への反映
 
 ## Non Goals
 

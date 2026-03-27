@@ -27,7 +27,7 @@
   - 実行中なら `liveRun.steps` の最後の `command_execution`
   - 待機中なら直近 terminal Audit Log に含まれる最後の `command_execution`
 - `Memory生成` は専用 background activity state を main process から受ける
-- `独り言` は current milestone では host だけを置き、empty state を出す
+- `独り言` は background activity と recent monologue stream を表示する
 - それ以外の step list や詳細な実況履歴は right pane 常設から外し、確定後は artifact timeline / Audit Log を見る
 
 ## Layout
@@ -78,9 +78,9 @@ flowchart TB
 
 #### 独り言
 
-- current milestone では empty state のみ
-- 将来の monologue plane を差し込む host として扱う
-- empty state copy は説明過多にせず、最小の表示に留める
+- `character reflection cycle` の background state を表示する
+- session `stream` に保存された recent monologue を新しい順で表示する
+- 将来の monologue plane へ差し替えやすい host として扱う
 
 ### Action Dock
 

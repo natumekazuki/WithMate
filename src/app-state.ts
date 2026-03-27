@@ -407,6 +407,28 @@ export type CharacterMemoryEntry = {
   lastUsedAt: string | null;
 };
 
+export type CharacterMemoryDeltaEntry = {
+  category: CharacterMemoryCategory;
+  title: string;
+  detail: string;
+  keywords: string[];
+  evidence: string[];
+};
+
+export type CharacterMemoryDelta = {
+  entries: CharacterMemoryDeltaEntry[];
+};
+
+export type CharacterReflectionMonologue = {
+  text: string;
+  mood: StreamEntry["mood"];
+};
+
+export type CharacterReflectionOutput = {
+  memoryDelta: CharacterMemoryDelta | null;
+  monologue: CharacterReflectionMonologue | null;
+};
+
 export type DiffPreviewPayload = {
   title: string;
   file: ChangedFile;
@@ -892,6 +914,10 @@ function normalizeCharacterMemoryCategory(value: unknown): CharacterMemoryCatego
     : null;
 }
 
+function normalizeStreamMood(value: unknown): StreamEntry["mood"] {
+  return value === "spark" || value === "warm" || value === "calm" ? value : "calm";
+}
+
 export function normalizeProjectScope(value: unknown): ProjectScope | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -1056,6 +1082,88 @@ export function normalizeCharacterMemoryEntry(value: unknown): CharacterMemoryEn
       typeof candidate.lastUsedAt === "string" && candidate.lastUsedAt.trim()
         ? candidate.lastUsedAt
         : null,
+  };
+}
+
+export function normalizeCharacterMemoryDeltaEntry(value: unknown): CharacterMemoryDeltaEntry | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<CharacterMemoryDeltaEntry>;
+  const category = normalizeCharacterMemoryCategory(candidate.category);
+  if (!category) {
+    return null;
+  }
+
+  const title = typeof candidate.title === "string" ? candidate.title.trim() : "";
+  const detail = typeof candidate.detail === "string" ? candidate.detail.trim() : "";
+  if (!title || !detail) {
+    return null;
+  }
+
+  return {
+    category,
+    title,
+    detail,
+    keywords: normalizeStringList(candidate.keywords),
+    evidence: normalizeStringList(candidate.evidence),
+  };
+}
+
+export function normalizeCharacterMemoryDelta(value: unknown): CharacterMemoryDelta | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<CharacterMemoryDelta>;
+  const entries = Array.isArray(candidate.entries)
+    ? candidate.entries
+        .map((entry) => normalizeCharacterMemoryDeltaEntry(entry))
+        .filter((entry): entry is CharacterMemoryDeltaEntry => entry !== null)
+    : [];
+
+  return {
+    entries,
+  };
+}
+
+export function normalizeCharacterReflectionMonologue(value: unknown): CharacterReflectionMonologue | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<CharacterReflectionMonologue>;
+  const text = typeof candidate.text === "string" ? candidate.text.trim() : "";
+  if (!text) {
+    return null;
+  }
+
+  return {
+    text,
+    mood: normalizeStreamMood(candidate.mood),
+  };
+}
+
+export function normalizeCharacterReflectionOutput(value: unknown): CharacterReflectionOutput | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<CharacterReflectionOutput> & { monologueText?: unknown };
+  const memoryDelta = candidate.memoryDelta === null
+    ? null
+    : normalizeCharacterMemoryDelta(candidate.memoryDelta) ?? { entries: [] };
+  const monologue = candidate.monologue === null
+    ? null
+    : normalizeCharacterReflectionMonologue(candidate.monologue)
+      ?? (typeof candidate.monologueText === "string"
+        ? normalizeCharacterReflectionMonologue({ text: candidate.monologueText, mood: "calm" })
+        : null);
+
+  return {
+    memoryDelta,
+    monologue,
   };
 }
 
