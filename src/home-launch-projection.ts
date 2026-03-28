@@ -9,7 +9,6 @@ export type LaunchWorkspace = {
 };
 
 export type HomeLaunchProjection = {
-  filteredCharacters: CharacterProfile[];
   filteredLaunchCharacters: CharacterProfile[];
   selectedCharacter: CharacterProfile | null;
   enabledLaunchProviders: ModelCatalogProvider[];
@@ -47,7 +46,6 @@ export function filterCharacters(
 
 export function buildHomeLaunchProjection({
   characters,
-  characterSearchText,
   launchCharacterSearchText,
   launchCharacterId,
   launchProviderId,
@@ -57,7 +55,6 @@ export function buildHomeLaunchProjection({
   modelCatalog,
 }: {
   characters: readonly CharacterProfile[];
-  characterSearchText: string;
   launchCharacterSearchText: string;
   launchCharacterId: string;
   launchProviderId: string;
@@ -66,7 +63,6 @@ export function buildHomeLaunchProjection({
   appSettings: AppSettings;
   modelCatalog: ModelCatalogSnapshot | null;
 }): HomeLaunchProjection {
-  const filteredCharacters = filterCharacters(characters, characterSearchText);
   const filteredLaunchCharacters = filterCharacters(characters, launchCharacterSearchText);
   const selectedCharacter = characters.find((character) => character.id === launchCharacterId) ?? characters[0] ?? null;
   const enabledLaunchProviders = (modelCatalog?.providers ?? []).filter(
@@ -76,7 +72,6 @@ export function buildHomeLaunchProjection({
     enabledLaunchProviders.find((provider) => provider.id === launchProviderId) ?? enabledLaunchProviders[0] ?? null;
 
   return {
-    filteredCharacters,
     filteredLaunchCharacters,
     selectedCharacter,
     enabledLaunchProviders,

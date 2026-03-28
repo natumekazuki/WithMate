@@ -17,6 +17,9 @@ import {
   buildHomeLaunchProjection,
 } from "./home-launch-projection.js";
 import {
+  buildHomeCharacterProjection,
+} from "./home-character-projection.js";
+import {
   buildCreateSessionInputFromLaunchDraft,
   closeLaunchDraft,
   createClosedLaunchDraft,
@@ -358,7 +361,6 @@ export default function HomeApp() {
   const launchProjection = useMemo(
     () => buildHomeLaunchProjection({
       characters,
-      characterSearchText,
       launchCharacterSearchText: launchDraft.characterSearchText,
       launchCharacterId: launchDraft.characterId,
       launchProviderId: launchDraft.providerId,
@@ -376,7 +378,6 @@ export default function HomeApp() {
     ],
   );
   const {
-    filteredCharacters,
     filteredLaunchCharacters,
     selectedCharacter,
     enabledLaunchProviders,
@@ -384,6 +385,11 @@ export default function HomeApp() {
     launchWorkspacePathLabel,
     canStartSession,
   } = launchProjection;
+  const characterProjection = useMemo(
+    () => buildHomeCharacterProjection(characters, characterSearchText),
+    [characterSearchText, characters],
+  );
+  const { filteredCharacters, emptyState: characterEmptyState } = characterProjection;
 
   useEffect(() => {
     setLaunchDraft((current) => {
@@ -1112,7 +1118,7 @@ export default function HomeApp() {
                       </div>
                     </button>
                   ))
-                ) : characters.length > 0 && normalizedCharacterSearch ? (
+                ) : characterEmptyState === "no-match" ? (
                   <article className="empty-list-card">
                     <p>一致するキャラはないよ。</p>
                   </article>

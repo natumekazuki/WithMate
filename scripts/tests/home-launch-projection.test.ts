@@ -62,13 +62,12 @@ describe("home-launch-projection", () => {
     });
   });
 
-  it("character search と launch search を別々に投影する", () => {
+  it("launch search と selected character を投影する", () => {
     const projection = buildHomeLaunchProjection({
       characters: [
         createCharacter({ id: "a", name: "Mia", description: "azure" }),
         createCharacter({ id: "b", name: "Luna", description: "moon" }),
       ],
-      characterSearchText: "mi",
       launchCharacterSearchText: "lu",
       launchCharacterId: "b",
       launchProviderId: "",
@@ -78,7 +77,6 @@ describe("home-launch-projection", () => {
       modelCatalog: createCatalog(),
     });
 
-    assert.deepEqual(projection.filteredCharacters.map((character) => character.id), ["a"]);
     assert.deepEqual(projection.filteredLaunchCharacters.map((character) => character.id), ["b"]);
     assert.equal(projection.selectedCharacter?.id, "b");
   });
@@ -93,7 +91,6 @@ describe("home-launch-projection", () => {
 
     const projection = buildHomeLaunchProjection({
       characters: [createCharacter({ id: "a", name: "Mia" })],
-      characterSearchText: "",
       launchCharacterSearchText: "",
       launchCharacterId: "a",
       launchProviderId: "",
