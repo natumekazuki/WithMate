@@ -9,6 +9,7 @@
 - `src/withmate-window.ts` を public entry にして、IPC channel 定数、window bridge type、reset type を別 module へ分離した
 - `src-electron/preload-api.ts` を追加し、preload 側の `invoke / subscribe` bridge を domain ごとの helper で構成する形に整理した
 - `src-electron/main-ipc-registration.ts` は register group ごとに分割し、window / catalog / settings / session / character の責務を読みやすくした
+- 対応コミット: `2a1282d` `refactor(ipc): split preload and registration boundaries`
 
 ## 検証
 
