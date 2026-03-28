@@ -6,7 +6,6 @@ import {
   type AppSettings,
   type CharacterReflectionProviderSettings,
   type CharacterProfile,
-  type CreateSessionInput,
   type MemoryExtractionProviderSettings,
   type Session,
 } from "./app-state.js";
@@ -16,9 +15,16 @@ import {
 } from "./model-catalog.js";
 import {
   buildHomeLaunchProjection,
-  inferWorkspaceFromPath,
-  type LaunchWorkspace,
 } from "./home-launch-projection.js";
+import {
+  buildCreateSessionInputFromLaunchDraft,
+  closeLaunchDraft,
+  createClosedLaunchDraft,
+  openLaunchDraft,
+  setLaunchWorkspaceFromPath,
+  syncLaunchDraftCharacter,
+  type HomeLaunchDraft,
+} from "./home-launch-state.js";
 import {
   buildHomeSessionProjection,
   type HomeMonitorEntry,
@@ -216,12 +222,7 @@ export default function HomeApp() {
   const [modelCatalogLoaded, setModelCatalogLoaded] = useState(!isSettingsWindowMode);
   const [resettingDatabase, setResettingDatabase] = useState(false);
   const [resetDatabaseTargets, setResetDatabaseTargets] = useState<ResetAppDatabaseTarget[]>([...ALL_RESET_APP_DATABASE_TARGETS]);
-  const [launchOpen, setLaunchOpen] = useState(false);
-  const [launchTitle, setLaunchTitle] = useState("");
-  const [launchWorkspace, setLaunchWorkspace] = useState<LaunchWorkspace | null>(null);
-  const [launchProviderId, setLaunchProviderId] = useState("");
-  const [launchCharacterId, setLaunchCharacterId] = useState("");
-  const [launchCharacterSearchText, setLaunchCharacterSearchText] = useState("");
+  const [launchDraft, setLaunchDraft] = useState<HomeLaunchDraft>(() => createClosedLaunchDraft());
   const settingsDirtyRef = useRef(false);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
 
@@ -236,16 +237,6 @@ export default function HomeApp() {
     if (options?.force || !isSettingsWindowMode || !settingsHydratedRef.current || !settingsDirtyRef.current) {
       settingsHydratedRef.current = true;
     }
-  };
-
-  const syncLaunchCharacterId = (nextCharacters: CharacterProfile[]) => {
-    setLaunchCharacterId((current) => {
-      if (nextCharacters.find((character) => character.id === current)) {
-        return current;
-      }
-
-      return nextCharacters[0]?.id ?? "";
-    });
   };
 
   useEffect(() => {
@@ -282,7 +273,7 @@ export default function HomeApp() {
       }
 
       setCharacters(nextCharacters);
-      syncLaunchCharacterId(nextCharacters);
+      setLaunchDraft((current) => syncLaunchDraftCharacter(current, nextCharacters));
     });
 
     const unsubscribeSessions = window.withmate.subscribeSessions((nextSessions) => {
@@ -297,7 +288,7 @@ export default function HomeApp() {
       }
 
       setCharacters(nextCharacters);
-      syncLaunchCharacterId(nextCharacters);
+      setLaunchDraft((current) => syncLaunchDraftCharacter(current, nextCharacters));
     });
     const unsubscribeModelCatalog = window.withmate.subscribeModelCatalog((snapshot) => {
       if (active) {
@@ -368,11 +359,11 @@ export default function HomeApp() {
     () => buildHomeLaunchProjection({
       characters,
       characterSearchText,
-      launchCharacterSearchText,
-      launchCharacterId,
-      launchProviderId,
-      launchTitle,
-      launchWorkspace,
+      launchCharacterSearchText: launchDraft.characterSearchText,
+      launchCharacterId: launchDraft.characterId,
+      launchProviderId: launchDraft.providerId,
+      launchTitle: launchDraft.title,
+      launchWorkspace: launchDraft.workspace,
       appSettings,
       modelCatalog,
     }),
@@ -380,11 +371,7 @@ export default function HomeApp() {
       appSettings,
       characterSearchText,
       characters,
-      launchCharacterId,
-      launchCharacterSearchText,
-      launchProviderId,
-      launchTitle,
-      launchWorkspace,
+      launchDraft,
       modelCatalog,
     ],
   );
@@ -399,12 +386,15 @@ export default function HomeApp() {
   } = launchProjection;
 
   useEffect(() => {
-    setLaunchProviderId((current) => {
-      if (enabledLaunchProviders.find((provider) => provider.id === current)) {
+    setLaunchDraft((current) => {
+      if (enabledLaunchProviders.find((provider) => provider.id === current.providerId)) {
         return current;
       }
 
-      return enabledLaunchProviders[0]?.id ?? "";
+      return {
+        ...current,
+        providerId: enabledLaunchProviders[0]?.id ?? "",
+      };
     });
   }, [enabledLaunchProviders]);
 
@@ -436,43 +426,31 @@ export default function HomeApp() {
       return;
     }
 
-    setLaunchWorkspace(inferWorkspaceFromPath(selectedPath));
+    setLaunchDraft((current) => setLaunchWorkspaceFromPath(current, selectedPath));
   };
 
   const openLaunchDialog = () => {
-    setLaunchTitle("");
-    setLaunchWorkspace(null);
-    setLaunchProviderId(enabledLaunchProviders[0]?.id ?? "");
-    setLaunchCharacterSearchText("");
-    setLaunchOpen(true);
+    setLaunchDraft((current) => openLaunchDraft(current, enabledLaunchProviders[0]?.id ?? ""));
   };
 
   const closeLaunchDialog = () => {
-    setLaunchOpen(false);
-    setLaunchTitle("");
-    setLaunchWorkspace(null);
-    setLaunchProviderId("");
-    setLaunchCharacterSearchText("");
+    setLaunchDraft((current) => closeLaunchDraft(current));
   };
 
   const handleStartSession = async () => {
-    const normalizedLaunchTitle = launchTitle.trim();
-    if (!window.withmate || !launchWorkspace || !selectedCharacter || !selectedLaunchProvider || !normalizedLaunchTitle) {
+    if (!window.withmate) {
       return;
     }
 
-    const sessionInput: CreateSessionInput = {
-      provider: selectedLaunchProvider.id,
-      taskTitle: normalizedLaunchTitle,
-      workspaceLabel: launchWorkspace.label,
-      workspacePath: launchWorkspace.path,
-      branch: launchWorkspace.branch,
-      characterId: selectedCharacter.id,
-      character: selectedCharacter.name,
-      characterIconPath: selectedCharacter.iconPath,
-      characterThemeColors: selectedCharacter.themeColors,
+    const sessionInput = buildCreateSessionInputFromLaunchDraft({
+      draft: launchDraft,
+      selectedCharacter,
+      selectedProviderId: selectedLaunchProvider?.id ?? null,
       approvalMode: DEFAULT_APPROVAL_MODE,
-    };
+    });
+    if (!sessionInput) {
+      return;
+    }
 
     const createdSession = await window.withmate.createSession(sessionInput);
     closeLaunchDialog();
@@ -1152,7 +1130,7 @@ export default function HomeApp() {
         </section>
       </main>
 
-      {launchOpen ? (
+      {launchDraft.open ? (
         <div className="launch-modal" role="dialog" aria-modal="true" onClick={() => closeLaunchDialog()}>
           <section className="launch-dialog panel" onClick={(event) => event.stopPropagation()}>
             <div className="launch-dialog-head minimal">
@@ -1171,8 +1149,8 @@ export default function HomeApp() {
                     id="launch-session-title"
                     className="launch-field-input"
                     type="text"
-                    value={launchTitle}
-                    onChange={(event) => setLaunchTitle(event.target.value)}
+                    value={launchDraft.title}
+                    onChange={(event) => setLaunchDraft((current) => ({ ...current, title: event.target.value }))}
                   />
                 </div>
               </section>
@@ -1183,7 +1161,7 @@ export default function HomeApp() {
                     Browse
                   </button>
                 </div>
-                <p className={`launch-path${launchWorkspace ? " selected" : ""}`}>{launchWorkspacePathLabel}</p>
+                <p className={`launch-path${launchDraft.workspace ? " selected" : ""}`}>{launchWorkspacePathLabel}</p>
               </section>
 
               <section className="launch-section minimal">
@@ -1199,7 +1177,7 @@ export default function HomeApp() {
                           className={`choice-chip${provider.id === selectedLaunchProvider?.id ? " active" : ""}`}
                           type="button"
                           aria-selected={provider.id === selectedLaunchProvider?.id}
-                          onClick={() => setLaunchProviderId(provider.id)}
+                          onClick={() => setLaunchDraft((current) => ({ ...current, providerId: provider.id }))}
                         >
                           {provider.label}
                         </button>
@@ -1222,8 +1200,10 @@ export default function HomeApp() {
                         <input
                           className="toolbar-search-input"
                           type="text"
-                          value={launchCharacterSearchText}
-                          onChange={(event) => setLaunchCharacterSearchText(event.target.value)}
+                          value={launchDraft.characterSearchText}
+                          onChange={(event) =>
+                            setLaunchDraft((current) => ({ ...current, characterSearchText: event.target.value }))
+                          }
                         />
                       </label>
                     </div>
@@ -1236,7 +1216,7 @@ export default function HomeApp() {
                             className={`choice-card${character.id === selectedCharacter?.id ? " active" : ""}`}
                             style={buildCardThemeStyle(character.themeColors)}
                             type="button"
-                            onClick={() => setLaunchCharacterId(character.id)}
+                            onClick={() => setLaunchDraft((current) => ({ ...current, characterId: character.id }))}
                           >
                             <CharacterAvatar character={character} size="small" className="choice-avatar" />
                             <div className="choice-card-copy">
