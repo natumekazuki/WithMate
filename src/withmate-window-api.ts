@@ -20,21 +20,29 @@ import type {
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
 import type { OpenPathOptions, ResetAppDatabaseRequest, ResetAppDatabaseResult } from "./withmate-window-types.js";
 
-export type WithMateWindowApi = {
+export type WithMateWindowNavigationApi = {
   openSession(sessionId: string): Promise<void>;
   openHomeWindow(): Promise<void>;
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
   openCharacterEditor(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
-  listSessions(): Promise<Session[]>;
-  getSession(sessionId: string): Promise<Session | null>;
+  openPath(target: string, options?: OpenPathOptions): Promise<void>;
+  openSessionTerminal(sessionId: string): Promise<void>;
+};
+
+export type WithMateWindowCatalogApi = {
   getModelCatalog(revision?: number | null): Promise<ModelCatalogSnapshot | null>;
   importModelCatalog(document: ModelCatalogDocument): Promise<ModelCatalogSnapshot>;
   exportModelCatalog(revision?: number | null): Promise<ModelCatalogDocument | null>;
   importModelCatalogFile(): Promise<ModelCatalogSnapshot | null>;
   exportModelCatalogFile(revision?: number | null): Promise<string | null>;
   getDiffPreview(token: string): Promise<DiffPreviewPayload | null>;
+};
+
+export type WithMateWindowSessionApi = {
+  listSessions(): Promise<Session[]>;
+  getSession(sessionId: string): Promise<Session | null>;
   createSession(input: CreateSessionInput): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
   deleteSession(sessionId: string): Promise<void>;
@@ -46,27 +54,40 @@ export type WithMateWindowApi = {
   cancelSessionRun(sessionId: string): Promise<void>;
   listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
   getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
+  resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): Promise<void>;
+};
+
+export type WithMateWindowObservabilityApi = {
   getProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
   getSessionContextTelemetry(sessionId: string): Promise<SessionContextTelemetry | null>;
   getSessionBackgroundActivity(
     sessionId: string,
     kind: SessionBackgroundActivityKind,
   ): Promise<SessionBackgroundActivityState | null>;
-  resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): Promise<void>;
   listOpenSessionWindowIds(): Promise<string[]>;
+};
+
+export type WithMateWindowSettingsApi = {
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
   resetAppDatabase(request: ResetAppDatabaseRequest): Promise<ResetAppDatabaseResult>;
+};
+
+export type WithMateWindowCharacterApi = {
   listCharacters(): Promise<CharacterProfile[]>;
   getCharacter(characterId: string): Promise<CharacterProfile | null>;
   createCharacter(input: CreateCharacterInput): Promise<CharacterProfile>;
   updateCharacter(character: CharacterProfile): Promise<CharacterProfile>;
   deleteCharacter(characterId: string): Promise<void>;
+};
+
+export type WithMateWindowPickerApi = {
   pickDirectory(initialPath?: string | null): Promise<string | null>;
   pickFile(initialPath?: string | null): Promise<string | null>;
   pickImageFile(initialPath?: string | null): Promise<string | null>;
-  openPath(target: string, options?: OpenPathOptions): Promise<void>;
-  openSessionTerminal(sessionId: string): Promise<void>;
+};
+
+export type WithMateWindowSubscriptionApi = {
   subscribeSessions(listener: (sessions: Session[]) => void): () => void;
   subscribeCharacters(listener: (characters: CharacterProfile[]) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
@@ -83,3 +104,13 @@ export type WithMateWindowApi = {
   ): () => void;
   subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
 };
+
+export type WithMateWindowApi =
+  & WithMateWindowNavigationApi
+  & WithMateWindowCatalogApi
+  & WithMateWindowSessionApi
+  & WithMateWindowObservabilityApi
+  & WithMateWindowSettingsApi
+  & WithMateWindowCharacterApi
+  & WithMateWindowPickerApi
+  & WithMateWindowSubscriptionApi;

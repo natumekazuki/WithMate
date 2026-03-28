@@ -1,6 +1,16 @@
 import type { IpcRenderer } from "electron";
 
-import type { WithMateWindowApi } from "../src/withmate-window-api.js";
+import type {
+  WithMateWindowApi,
+  WithMateWindowCatalogApi,
+  WithMateWindowCharacterApi,
+  WithMateWindowNavigationApi,
+  WithMateWindowObservabilityApi,
+  WithMateWindowPickerApi,
+  WithMateWindowSessionApi,
+  WithMateWindowSettingsApi,
+  WithMateWindowSubscriptionApi,
+} from "../src/withmate-window-api.js";
 import {
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
@@ -92,17 +102,7 @@ function subscribe<EventArgs extends unknown[]>(
   };
 }
 
-function createWindowApi(ipcRenderer: IpcRendererLike): Pick<
-  WithMateWindowApi,
-  | "openSession"
-  | "openHomeWindow"
-  | "openSessionMonitorWindow"
-  | "openSettingsWindow"
-  | "openCharacterEditor"
-  | "openDiffWindow"
-  | "openPath"
-  | "openSessionTerminal"
-> {
+function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigationApi {
   return {
     openSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_CHANNEL, sessionId);
@@ -131,15 +131,7 @@ function createWindowApi(ipcRenderer: IpcRendererLike): Pick<
   };
 }
 
-function createCatalogApi(ipcRenderer: IpcRendererLike): Pick<
-  WithMateWindowApi,
-  | "getModelCatalog"
-  | "importModelCatalog"
-  | "exportModelCatalog"
-  | "importModelCatalogFile"
-  | "exportModelCatalogFile"
-  | "getDiffPreview"
-> {
+function createCatalogApi(ipcRenderer: IpcRendererLike): WithMateWindowCatalogApi {
   return {
     getModelCatalog(revision) {
       return ipcRenderer.invoke(WITHMATE_GET_MODEL_CATALOG_CHANNEL, revision ?? null);
@@ -162,23 +154,7 @@ function createCatalogApi(ipcRenderer: IpcRendererLike): Pick<
   };
 }
 
-function createSessionApi(ipcRenderer: IpcRendererLike): Pick<
-  WithMateWindowApi,
-  | "listSessions"
-  | "getSession"
-  | "createSession"
-  | "updateSession"
-  | "deleteSession"
-  | "previewComposerInput"
-  | "searchWorkspaceFiles"
-  | "listSessionSkills"
-  | "listSessionCustomAgents"
-  | "runSessionTurn"
-  | "cancelSessionRun"
-  | "listSessionAuditLogs"
-  | "getLiveSessionRun"
-  | "resolveLiveApproval"
-> {
+function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionApi {
   return {
     listSessions() {
       return ipcRenderer.invoke(WITHMATE_LIST_SESSIONS_CHANNEL);
@@ -226,7 +202,7 @@ function createSessionApi(ipcRenderer: IpcRendererLike): Pick<
 }
 
 function createObservabilityApi(ipcRenderer: IpcRendererLike): Pick<
-  WithMateWindowApi,
+  WithMateWindowObservabilityApi,
   | "getProviderQuotaTelemetry"
   | "getSessionContextTelemetry"
   | "getSessionBackgroundActivity"
@@ -248,10 +224,7 @@ function createObservabilityApi(ipcRenderer: IpcRendererLike): Pick<
   };
 }
 
-function createSettingsApi(ipcRenderer: IpcRendererLike): Pick<
-  WithMateWindowApi,
-  "getAppSettings" | "updateAppSettings" | "resetAppDatabase"
-> {
+function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettingsApi {
   return {
     getAppSettings() {
       return ipcRenderer.invoke(WITHMATE_GET_APP_SETTINGS_CHANNEL);
@@ -265,10 +238,7 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): Pick<
   };
 }
 
-function createCharacterApi(ipcRenderer: IpcRendererLike): Pick<
-  WithMateWindowApi,
-  "listCharacters" | "getCharacter" | "createCharacter" | "updateCharacter" | "deleteCharacter"
-> {
+function createCharacterApi(ipcRenderer: IpcRendererLike): WithMateWindowCharacterApi {
   return {
     listCharacters() {
       return ipcRenderer.invoke(WITHMATE_LIST_CHARACTERS_CHANNEL);
@@ -288,10 +258,7 @@ function createCharacterApi(ipcRenderer: IpcRendererLike): Pick<
   };
 }
 
-function createPickerApi(ipcRenderer: IpcRendererLike): Pick<
-  WithMateWindowApi,
-  "pickDirectory" | "pickFile" | "pickImageFile"
-> {
+function createPickerApi(ipcRenderer: IpcRendererLike): WithMateWindowPickerApi {
   return {
     pickDirectory(initialPath) {
       return ipcRenderer.invoke(WITHMATE_PICK_DIRECTORY_CHANNEL, initialPath ?? null);
@@ -305,18 +272,7 @@ function createPickerApi(ipcRenderer: IpcRendererLike): Pick<
   };
 }
 
-function createSubscriptionApi(ipcRenderer: IpcRendererLike): Pick<
-  WithMateWindowApi,
-  | "subscribeSessions"
-  | "subscribeCharacters"
-  | "subscribeModelCatalog"
-  | "subscribeAppSettings"
-  | "subscribeLiveSessionRun"
-  | "subscribeProviderQuotaTelemetry"
-  | "subscribeSessionContextTelemetry"
-  | "subscribeSessionBackgroundActivity"
-  | "subscribeOpenSessionWindowIds"
-> {
+function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubscriptionApi {
   return {
     subscribeSessions(listener) {
       return subscribe(ipcRenderer, WITHMATE_SESSIONS_CHANGED_EVENT, listener);
