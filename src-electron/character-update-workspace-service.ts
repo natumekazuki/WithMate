@@ -47,6 +47,7 @@ export class CharacterUpdateWorkspaceService {
       characterName: character.name,
       workspacePath,
       characterMarkdownPath: path.join(workspacePath, "character.md"),
+      characterNotesPath: path.join(workspacePath, "character-notes.md"),
       codexInstructionPath: path.join(workspacePath, "AGENTS.md"),
       copilotInstructionPath: path.join(workspacePath, "copilot-instructions.md"),
     };

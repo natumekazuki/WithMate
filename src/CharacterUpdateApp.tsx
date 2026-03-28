@@ -277,6 +277,7 @@ export default function CharacterUpdateApp() {
             <strong>Files</strong>
             <div className="character-update-file-list">
               <code>{workspace?.characterMarkdownPath ?? ""}</code>
+              <code>{workspace?.characterNotesPath ?? ""}</code>
               <code>{selectedInstructionPath}</code>
             </div>
           </section>

@@ -12,6 +12,7 @@ test("CharacterUpdateWorkspaceService は workspace 情報と extract を返す"
         iconPath: "",
         description: "",
         roleMarkdown: "",
+        notesMarkdown: "",
         updatedAt: "",
         themeColors: { main: "#111111", sub: "#222222" },
         sessionCopy: {} as never,
@@ -51,6 +52,7 @@ test("CharacterUpdateWorkspaceService は workspace 情報と extract を返す"
 
   assert.equal(workspace?.workspacePath, "C:/WithMate/characters/char-1");
   assert.match(workspace?.codexInstructionPath ?? "", /AGENTS\.md$/);
+  assert.match(workspace?.characterNotesPath ?? "", /character-notes\.md$/);
   assert.equal(extract.entryCount, 1);
 });
 
@@ -64,6 +66,7 @@ test("CharacterUpdateWorkspaceService は update session 作成時に instructio
         iconPath: "",
         description: "",
         roleMarkdown: "",
+        notesMarkdown: "",
         updatedAt: "",
         themeColors: { main: "#111111", sub: "#222222" },
         sessionCopy: {} as never,

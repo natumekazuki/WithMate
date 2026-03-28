@@ -29,6 +29,7 @@ export type CharacterCatalogItem = CharacterVisual & {
 export type CharacterProfile = CharacterCatalogItem & {
   description: string;
   roleMarkdown: string;
+  notesMarkdown: string;
   updatedAt: string;
   themeColors: CharacterThemeColors;
   sessionCopy: CharacterSessionCopy;
@@ -39,6 +40,7 @@ export type CreateCharacterInput = {
   iconPath: string;
   description: string;
   roleMarkdown: string;
+  notesMarkdown: string;
   themeColors: CharacterThemeColors;
   sessionCopy: CharacterSessionCopy;
 };

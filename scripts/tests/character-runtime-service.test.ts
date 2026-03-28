@@ -13,6 +13,7 @@ function createCharacter(overrides?: Partial<CharacterProfile>): CharacterProfil
     iconPath: "",
     description: "",
     roleMarkdown: "",
+    notesMarkdown: "",
     themeColors: { main: "#111111", sub: "#222222" },
     sessionCopy: {
       pendingApproval: [],

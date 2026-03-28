@@ -5,6 +5,7 @@ export type CharacterUpdateWorkspace = {
   characterName: string;
   workspacePath: string;
   characterMarkdownPath: string;
+  characterNotesPath: string;
   codexInstructionPath: string;
   copilotInstructionPath: string;
 };

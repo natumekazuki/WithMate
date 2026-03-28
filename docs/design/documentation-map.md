@@ -38,6 +38,7 @@ current 実装の正本として維持する文書。
 | --- | --- |
 | `character-management-ui.md` | Character Editor の UI 詳細 |
 | `character-storage.md` | character catalog の保存詳細 |
+| `character-definition-format.md` | `character.md` / `character-notes.md` の標準構成 |
 | `character-update-workspace.md` | character 更新用 workspace と memory extract helper の詳細 |
 | `project-memory-storage.md` | Project Memory の storage / promotion / retrieval detail |
 | `character-memory-storage.md` | Character Memory と reflection cycle の detail |

@@ -527,8 +527,9 @@ character は SQLite ではなく file system に保存する。
     <character-id>/
       meta.json
       character.md
+      character-notes.md
       character.png
-```
+``` 
 
 構成:
 
@@ -536,6 +537,7 @@ character は SQLite ではなく file system に保存する。
 | --- | --- |
 | `meta.json` | 一覧表示と軽量 metadata |
 | `character.md` | role の正本 |
+| `character-notes.md` | 採用理由、出典、保留事項、改稿履歴 |
 | `character.png` | icon |
 
 `meta.json` の代表項目:

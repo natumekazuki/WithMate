@@ -108,6 +108,7 @@ describe("character-reflection", () => {
       iconPath: "",
       description: "",
       roleMarkdown: "穏やかな相棒として振る舞う",
+      notesMarkdown: "",
       updatedAt: "2026-03-28T00:00:00.000Z",
       themeColors: { main: "#6f8cff", sub: "#6fb8c7" },
       sessionCopy: {

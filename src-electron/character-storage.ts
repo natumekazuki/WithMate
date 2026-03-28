@@ -11,7 +11,7 @@ import {
   type CharacterProfile,
   type CreateCharacterInput,
 } from "../src/character-state.js";
-import { buildCharacterUpdateInstructionFiles } from "./character-update-instructions.js";
+import { buildCharacterNotesTemplate, buildCharacterUpdateInstructionFiles } from "./character-update-instructions.js";
 
 type StoredCharacterMeta = {
   id: string;
@@ -30,6 +30,7 @@ type StoredCharacterMeta = {
 
 const CHARACTER_ROOT_DIRECTORY = "characters";
 const DEFAULT_ROLE_FILE = "character.md";
+const DEFAULT_NOTES_FILE = "character-notes.md";
 const LEGACY_SAMPLE_CHARACTER_IDS = ["kuramochi-melto", "ishigami-nozomi", "ozora-subaru", "inui-toko"];
 
 function nowIso(): string {
@@ -131,6 +132,7 @@ async function readOptionalText(filePath: string): Promise<string> {
 
 async function materializeCharacterProfile(characterDirectoryPath: string, meta: StoredCharacterMeta): Promise<CharacterProfile> {
   const roleMarkdown = await readOptionalText(path.join(characterDirectoryPath, meta.roleFile));
+  const notesMarkdown = await readOptionalText(path.join(characterDirectoryPath, DEFAULT_NOTES_FILE));
   const iconPath =
     meta.iconFile && (await pathExists(path.join(characterDirectoryPath, meta.iconFile)))
       ? path.join(characterDirectoryPath, meta.iconFile)
@@ -142,6 +144,7 @@ async function materializeCharacterProfile(characterDirectoryPath: string, meta:
     iconPath,
     description: meta.description,
     roleMarkdown,
+    notesMarkdown,
     updatedAt: formatTimestamp(meta.updatedAt),
     themeColors: normalizeCharacterThemeColors(meta.theme),
     sessionCopy: normalizeCharacterSessionCopy(meta.sessionCopy),
@@ -234,6 +237,7 @@ async function writeCharacterFiles(
   const createdAt = existingMeta?.createdAt ?? nowIso();
   const updatedAt = nowIso();
   const roleFile = existingMeta?.roleFile ?? DEFAULT_ROLE_FILE;
+  const notesPath = path.join(characterDirectoryPath, DEFAULT_NOTES_FILE);
   const iconFile = await syncCharacterIcon(characterDirectoryPath, input.iconPath, existingMeta?.iconFile ?? null);
 
   const nextMeta: StoredCharacterMeta = {
@@ -249,10 +253,16 @@ async function writeCharacterFiles(
   };
 
   const instructionFiles = buildCharacterUpdateInstructionFiles(nextMeta.name);
+  const shouldSeedNotes = !(await pathExists(notesPath));
 
   await Promise.all([
     writeFile(path.join(characterDirectoryPath, "meta.json"), JSON.stringify(nextMeta, null, 2), "utf8"),
     writeFile(path.join(characterDirectoryPath, roleFile), input.roleMarkdown.trim(), "utf8"),
+    writeFile(
+      notesPath,
+      input.notesMarkdown.trim() || (shouldSeedNotes ? buildCharacterNotesTemplate(nextMeta.name) : ""),
+      "utf8",
+    ),
     ...instructionFiles.map((file) => writeFile(path.join(characterDirectoryPath, file.fileName), file.content, "utf8")),
   ]);
 
@@ -330,6 +340,7 @@ export async function updateStoredCharacter(character: CharacterProfile): Promis
       iconPath: character.iconPath,
       description: character.description,
       roleMarkdown: character.roleMarkdown,
+      notesMarkdown: character.notesMarkdown,
       themeColors: character.themeColors,
       sessionCopy: character.sessionCopy,
     },

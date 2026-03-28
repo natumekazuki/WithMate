@@ -24,6 +24,7 @@ const emptyDraft: CreateCharacterInput = {
   iconPath: "",
   description: "",
   roleMarkdown: "",
+  notesMarkdown: "",
   themeColors: DEFAULT_CHARACTER_THEME_COLORS,
   sessionCopy: cloneCharacterSessionCopy(DEFAULT_CHARACTER_SESSION_COPY),
 };
@@ -110,6 +111,7 @@ function toDraft(character: CharacterProfile | null): CreateCharacterInput {
     iconPath: character.iconPath,
     description: character.description,
     roleMarkdown: character.roleMarkdown,
+    notesMarkdown: character.notesMarkdown,
     themeColors: character.themeColors,
     sessionCopy: cloneCharacterSessionCopy(character.sessionCopy),
   };
@@ -121,7 +123,7 @@ export default function CharacterEditorApp() {
   const [draft, setDraft] = useState<CreateCharacterInput>(emptyDraft);
   const [characterId, setCharacterId] = useState<string | null>(() => getCharacterIdFromLocation());
   const [isCreateMode, setIsCreateMode] = useState<boolean>(() => isCharacterCreateMode() || !getCharacterIdFromLocation());
-  const [editorTab, setEditorTab] = useState<"profile" | "character-md" | "session-copy">("profile");
+  const [editorTab, setEditorTab] = useState<"profile" | "character-md" | "character-notes" | "session-copy">("profile");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -371,6 +373,15 @@ export default function CharacterEditorApp() {
           <button
             type="button"
             role="tab"
+            aria-selected={editorTab === "character-notes"}
+            className={`character-editor-tab${editorTab === "character-notes" ? " active" : ""}`}
+            onClick={() => setEditorTab("character-notes")}
+          >
+            character-notes
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={editorTab === "session-copy"}
             className={`character-editor-tab${editorTab === "session-copy" ? " active" : ""}`}
             onClick={() => setEditorTab("session-copy")}
@@ -510,6 +521,23 @@ export default function CharacterEditorApp() {
                     className="markdown-editor-textarea character-markdown-textarea"
                     value={draft.roleMarkdown}
                     onChange={(event) => handleChange("roleMarkdown", event.target.value)}
+                    spellCheck={false}
+                  />
+                </label>
+              </div>
+            </div>
+          ) : editorTab === "character-notes" ? (
+            <div className="character-editor-content character-markdown-content">
+              <div className="character-markdown-card">
+                <div className="character-markdown-note">
+                  <strong>character-notes.md</strong>
+                  <p>この内容は調査メモ、採用理由、出典、未確定事項、改稿履歴の保管用で、通常の prompt 合成には直接使われない。</p>
+                </div>
+                <label className="markdown-editor-shell character-markdown-shell">
+                  <textarea
+                    className="markdown-editor-textarea character-markdown-textarea"
+                    value={draft.notesMarkdown}
+                    onChange={(event) => handleChange("notesMarkdown", event.target.value)}
                     spellCheck={false}
                   />
                 </label>

@@ -14,6 +14,7 @@
   - Copilot: `copilot-instructions.md`
 - instruction file は character 保存時に character directory へ同期しておく
 - Character Memory は自動注入せず、`Memory Extract` ボタンで貼り付け用テキストを生成して表示する
+- `character.md` と `character-notes.md` の分離方針は `docs/design/character-definition-format.md` を前提にする
 
 ## UI
 
@@ -32,6 +33,8 @@
 
 - `character.md`
   - character 定義の正本
+- `character-notes.md`
+  - 採用理由、出典、保留事項、改稿履歴の退避先
 - `AGENTS.md` or `copilot-instructions.md`
   - update 作業用の provider rule
 
@@ -40,7 +43,8 @@
 1. ユーザーが今回与えた更新指示
 2. 明示された外部資料や wiki
 3. 現在の `character.md`
-4. Character Memory extract
+4. `character-notes.md`
+5. Character Memory extract
 
 ## Character Memory Extract
 
@@ -76,6 +80,7 @@
 - update session は保存されるが、Home の `Recent Sessions` / `Session Monitor` には出さない
 - create / update 保存時に `AGENTS.md` と `copilot-instructions.md` を同期しておく
 - update session 起動時は保存済みの instruction file をそのまま使う
+- `character-notes.md` は character 保存時に seed され、update task の補助ファイルとして扱う
 
 ## Non Goals
 

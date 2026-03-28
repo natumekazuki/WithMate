@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildCharacterNotesTemplate,
   buildCharacterUpdateInstructionFiles,
   buildCharacterUpdateInstructionText,
   getCharacterUpdateInstructionFileName,
@@ -27,6 +28,17 @@ test("instruction text は update workspace のルールを含む", () => {
   const text = buildCharacterUpdateInstructionText("Noa");
 
   assert.match(text, /character\.md/);
+  assert.match(text, /character-notes\.md/);
   assert.match(text, /ユーザーの今回の指示を最優先/);
   assert.match(text, /Noa/);
+});
+
+test("notes template は初期ノート構成を返す", () => {
+  const text = buildCharacterNotesTemplate("Noa");
+
+  assert.match(text, /# Noa Notes/);
+  assert.match(text, /## Evidence & Notes/);
+  assert.match(text, /## Sources/);
+  assert.match(text, /## Open Questions/);
+  assert.match(text, /## Revision Notes/);
 });

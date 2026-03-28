@@ -35,6 +35,7 @@
   - `sub`
   - color picker + hex + RGB 入力
 - `roleMarkdown`
+- `notesMarkdown`
 - `session copy`
   - 候補行の追加 UI で複数文言を持てる
 - `Save`
@@ -48,16 +49,17 @@
 - `Add` は Home から直接始められるようにする
 - 編集画面では、入力の意味が自明でないためラベルを許容する
 - `character.md` は長文前提なので、metadata form と分離した editor 面を持つ
-- `Character Editor` は `Profile / システムプロンプト / Session Copy` の 3 モードで切り替え、長文の `character.md` や SessionWindow 向け copy 設定がフォーム面を圧迫しないようにする
+- `Character Editor` は `Profile / システムプロンプト / character-notes / Session Copy` の 4 モードで切り替え、長文の `character.md`、`character-notes.md`、SessionWindow 向け copy 設定がフォーム面を圧迫しないようにする
 - Character Editor の基本配色は `Home` と同じ dark base を使い、キャラカラーは次段でアクセント用途へ限定していく
 - Character Editor では `main` を active tab / focus / primary action、`sub` を preview と各カードの補助ラインに使う
 - Character Editor の header title は create / edit のどちらでも `main` で表示し、現在編集中のキャラカラーが最上段で分かるようにする
 - `Save / Delete` は画面下部の action bar に固定し、本文は header / footer の間だけスクロールする
-- `Profile / システムプロンプト` の tabs は content カードの外に置くが、背景色や固定レールは付けない
+- `Profile / システムプロンプト / character-notes` の tabs は content カードの外に置くが、背景色や固定レールは付けない
 - content カードは header / tabs / footer を除いた残り高さを常に使い切り、`Profile` と `character.md` で高さ感を揃える
 - `character.md` タブも `Profile` と同じ content レイアウト定義を使い、残り高さを editor に割り当てる
 - `システムプロンプト` タブでは、`character.md` の説明と editor を同じカードにまとめる
 - `character.md` タブには「キャラクター定義の正本であり、プロンプト合成に使われる」説明を表示し、説明ブロックは `Profile` と同じ文脈で読めるカードとして扱う
+- `character-notes` タブも同じ editor shell を使い、調査メモや採用理由が prompt 本体へ混ざらないように分離する
 - `Profile` 側は content カード内でスクロールし、`Theme` などの下部要素がカード外へはみ出さないようにする
 - `Profile` 側のスクロールバー有無で幅が揺れないように、scroll gutter を固定する
 - top の preview は window 高さに関わらず同じレイアウトを維持し、avatar サイズや theme swatch 位置を動かさない

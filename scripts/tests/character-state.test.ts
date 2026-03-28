@@ -13,6 +13,7 @@ function createCharacter(partial?: Partial<CharacterProfile>): CharacterProfile 
     description: "",
     iconPath: "icon.png",
     roleMarkdown: "role",
+    notesMarkdown: "notes",
     updatedAt: "2026-03-29T00:00:00.000Z",
     themeColors: {
       main: "#111111",

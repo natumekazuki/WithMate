@@ -11,6 +11,7 @@ function createCharacter(partial: Partial<CharacterProfile> & Pick<CharacterProf
     description: "",
     iconPath: "icon.png",
     roleMarkdown: "",
+    notesMarkdown: "",
     themeColors: {
       main: "#000000",
       sub: "#ffffff",

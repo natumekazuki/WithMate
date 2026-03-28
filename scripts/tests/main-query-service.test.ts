@@ -37,6 +37,7 @@ function createCharacter(): CharacterProfile {
     name: "A",
     iconPath: "",
     roleMarkdown: "",
+    notesMarkdown: "",
     description: "",
     themeColors: { main: "#111", sub: "#222" },
     sessionCopy: {
