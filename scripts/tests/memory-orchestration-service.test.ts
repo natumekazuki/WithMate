@@ -97,7 +97,23 @@ describe("MemoryOrchestrationService", () => {
           threadId: "thread-memory",
           rawText: "{\"goal\":\"整理する\",\"nextActions\":[\"次をやる\"]}",
           delta: { goal: "整理する", nextActions: ["次をやる"] },
+          rawItemsJson: "{\"type\":\"background-response\"}",
           usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 220 },
+          providerQuotaTelemetry: {
+            provider: "copilot",
+            updatedAt: "2026-03-29T00:00:00.000Z",
+            snapshots: [
+              {
+                quotaKey: "premium_interactions",
+                entitlementRequests: 500,
+                usedRequests: 120,
+                remainingPercentage: 76,
+                overage: 0,
+                overageAllowedWithExhaustedQuota: false,
+                resetDate: "2026-04-01T00:00:00.000Z",
+              },
+            ],
+          },
         };
       },
       async runCharacterReflection() {
@@ -132,6 +148,7 @@ describe("MemoryOrchestrationService", () => {
       },
       promoteSessionMemoryDeltaToProjectMemory(nextSession, delta) {
         promoted.push({ sessionId: nextSession.id, goal: delta.goal });
+        return 1;
       },
       resolveCharacterMemoryEntriesForReflection() {
         return [];
@@ -163,6 +180,15 @@ describe("MemoryOrchestrationService", () => {
     );
 
     assert.equal(auditUpdates.at(-1)?.phase, "background-completed");
+    assert.equal(auditUpdates.at(-1)?.rawItemsJson, "{\"type\":\"background-response\"}");
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "remainingPercentage")?.value,
+      "76%",
+    );
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "projectMemoryPromotions")?.value,
+      "1",
+    );
     assert.equal(savedMemories.at(-1)?.goal, "整理する");
     assert.deepEqual(savedMemories.at(-1)?.nextActions, ["次をやる"]);
     assert.deepEqual(promoted, [{ sessionId: session.id, goal: "整理する" }]);
@@ -189,7 +215,9 @@ describe("MemoryOrchestrationService", () => {
             memoryDelta: null,
             monologue: { text: "今日はよろしく。", mood: "warm" },
           },
+          rawItemsJson: "{\"type\":\"background-response\"}",
           usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 80 },
+          providerQuotaTelemetry: null,
         };
       },
     };
@@ -217,7 +245,9 @@ describe("MemoryOrchestrationService", () => {
         return createDefaultSessionMemory(current);
       },
       upsertSessionMemory() {},
-      promoteSessionMemoryDeltaToProjectMemory() {},
+      promoteSessionMemoryDeltaToProjectMemory() {
+        return 0;
+      },
       resolveCharacterMemoryEntriesForReflection() {
         return [createMemoryEntry()];
       },
@@ -278,7 +308,9 @@ describe("MemoryOrchestrationService", () => {
             },
             monologue: null,
           },
+          rawItemsJson: "{\"type\":\"background-response\"}",
           usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 120 },
+          providerQuotaTelemetry: null,
         };
       },
     };
@@ -320,7 +352,9 @@ describe("MemoryOrchestrationService", () => {
         return createDefaultSessionMemory(current);
       },
       upsertSessionMemory() {},
-      promoteSessionMemoryDeltaToProjectMemory() {},
+      promoteSessionMemoryDeltaToProjectMemory() {
+        return 0;
+      },
       resolveCharacterMemoryEntriesForReflection() {
         return [createMemoryEntry()];
       },

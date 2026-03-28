@@ -56,6 +56,8 @@ SQLite の `audit_logs` table を使う。
 ```
 
 `transport_payload_json` は次の形を基本にする。
+- Copilot では premium request quota の current snapshot を補助 field として付与してよい
+- 実行時間や retrieval 件数のような補助 metadata も `fields` に付与してよい
 
 ```json
 {
@@ -96,15 +98,23 @@ background memory extraction でも `audit_logs` table 自体は共用する。
   - 既存 Session Memory と recent messages を含む
 - `transport_payload_json`
   - extraction model / reasoning depth / trigger reason
+  - Copilot の場合は取得できた premium request quota も付与する
+  - 実行時間や memory 件数も補助 field として付与してよい
   - 例:
     - `trigger: outputTokensThreshold`
     - `trigger: session-window-close`
+    - `remainingPercentage: 76%`
+    - `remainingRequests: 380 / 500`
+    - `durationMs: 1840`
+    - `projectMemoryPromotions: 2`
+    - `characterMemorySaved: 1`
 - `assistant_text`
   - provider が返した raw JSON text
 - `operations_json`
   - 基本は空でよい
 - `raw_items_json`
   - provider ごとの stable trace を必要最小限で残す
+  - background task でも `[]` 固定にせず、provider response と補助 metadata を compact trace として残す
 - `usage_json`
   - extraction run 自体の usage
 - `error_message`
@@ -112,8 +122,8 @@ background memory extraction でも `audit_logs` table 自体は共用する。
 
 ### Visibility Policy
 
-Session Window の Audit Log overlay では、background memory extraction entry も同じ一覧に出してよい。  
-ただし通常 turn と見分けられるように、entry card には `Background Memory` の badge を出す前提にする。
+Session Window の Audit Log overlay では、background task を通常 turn と同じ一覧に混在表示しない。  
+UI では `Main` と `Background` を切り替えて見られるようにし、通常 turn と background task の確認面を分ける。
 
 ### Why Not Separate Table
 
@@ -139,6 +149,14 @@ current design では memory extraction も「実際に provider へ投げた ba
 - `raw_items_json`
 - `usage_json`
 を保存する
+- Copilot の場合は `transport payload` に premium request quota の snapshot を補助 field として付与してよい
+  - `remainingPercentage`
+  - `remainingRequests`
+  - `resetDate`
+- current 実装では次の補助 metadata も付与する
+  - `durationMs`
+  - `projectMemoryHits`
+  - `attachmentCount`
 - `runStreamed()` で表示した step のうち、確定した `turn.items` から再構築できる内容だけを残す
 
 ### canceled
@@ -169,6 +187,7 @@ current design では memory extraction も「実際に provider へ投げた ba
 `raw_items_json` は provider ごとの raw trace をそのまま抱え込むための列ではなく、監査で読む stable event trace を JSON で残す。
 - Codex は `turn.items` ベースの raw item を残す
 - Copilot は `assistant.message_delta` や `assistant.reasoning_delta` のような stream packet は落とし、`tool.execution_*`、`assistant.message`、`assistant.usage` などの stable event だけを残す
+- background task は stable event stream を持たない provider もあるため、current 実装では `background-response` 相当の compact trace を残す
 `assistant_text` は Session UI と同じ表示基準で、複数の `agent_message` を arrival 順に空行区切りで連結した結果を保存する。
 個々の `agent_message` の粒度確認が必要な場合は `operations_json` または `raw_items_json` を使う。
 
@@ -190,7 +209,7 @@ overlay では 1 entry ごとに次を表示する。
 - raw items
 
 長文になりやすい `logical prompt` `transport payload` `response` `operations` `usage` `error` `raw items` は、entry card 内でカテゴリ単位の折りたたみ表示にする。
-初期状態では `logical prompt` だけを開き、他は閉じた状態から必要な箇所だけ個別に開いて読む。
+初期状態はすべて閉じた状態から必要な箇所だけ個別に開いて読む。
 
 `logical prompt` は人間が読むための論理構成であり、provider 実 transport と完全一致する必要はない。
 実 transport は `transport payload` 側を正本として扱う。

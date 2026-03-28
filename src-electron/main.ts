@@ -1280,6 +1280,10 @@ app.whenReady().then(async () => {
   dbPath = path.join(app.getPath("userData"), "withmate.db");
   await requireMainBootstrapService().handleReady();
 
+  if (process.env.WITHMATE_DEBUG_OPEN_SESSION_ID) {
+    await openSessionWindow(process.env.WITHMATE_DEBUG_OPEN_SESSION_ID);
+  }
+
   app.on("activate", async () => {
     await requireAppLifecycleService().handleActivate();
   });

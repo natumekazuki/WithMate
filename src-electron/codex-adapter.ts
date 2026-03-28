@@ -796,12 +796,22 @@ export class CodexAdapter implements ProviderTurnAdapter {
       threadId: result.threadId,
       rawText: result.rawText,
       delta: result.output,
+      rawItemsJson: result.rawItemsJson,
       usage: result.usage,
+      providerQuotaTelemetry: null,
     };
   }
 
   async runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult> {
-    return this.runBackgroundStructuredPrompt(input, parseCharacterReflectionOutputText);
+    const result = await this.runBackgroundStructuredPrompt(input, parseCharacterReflectionOutputText);
+    return {
+      threadId: result.threadId,
+      rawText: result.rawText,
+      output: result.output,
+      rawItemsJson: result.rawItemsJson,
+      usage: result.usage,
+      providerQuotaTelemetry: null,
+    };
   }
 
   invalidateSessionThread(sessionId: string): void {
@@ -830,6 +840,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     threadId: string | null;
     rawText: string;
     output: TOutput | null;
+    rawItemsJson: string;
     usage: AuditLogUsage | null;
   }> {
     const { client } = this.getClient(input.session.provider, input.appSettings);
@@ -844,6 +855,11 @@ export class CodexAdapter implements ProviderTurnAdapter {
       threadId: thread.id,
       rawText: result.finalResponse,
       output: parse(result.finalResponse),
+      rawItemsJson: JSON.stringify({
+        type: "codex-background-response",
+        threadId: thread.id,
+        finalResponse: result.finalResponse,
+      }, null, 2),
       usage: result.usage ? toAuditUsage(result.usage) : null,
     };
   }
@@ -970,6 +986,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       operations: toAuditOperations(finalItems),
       rawItemsJson: JSON.stringify(finalItems, null, 2),
       usage: toAuditUsage(usage),
+      providerQuotaTelemetry: null,
     };
   }
 

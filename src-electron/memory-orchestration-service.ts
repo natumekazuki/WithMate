@@ -36,6 +36,8 @@ import {
   type SessionMemoryExtractionTriggerReason,
 } from "./session-memory-extraction.js";
 import { isCanceledRunError } from "./session-runtime-service.js";
+import { appendQuotaTelemetryToTransportPayload } from "./audit-log-quota.js";
+import { appendTransportPayloadFields, calculateAuditDurationMs } from "./audit-log-metadata.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
@@ -48,7 +50,7 @@ export type MemoryOrchestrationServiceDeps = {
   getProviderBackgroundAdapter(providerId: string): ProviderBackgroundAdapter;
   ensureSessionMemory(session: Session): SessionMemory;
   upsertSessionMemory(memory: SessionMemory): void;
-  promoteSessionMemoryDeltaToProjectMemory(session: Session, delta: SessionMemoryDelta): void;
+  promoteSessionMemoryDeltaToProjectMemory(session: Session, delta: SessionMemoryDelta): number;
   resolveCharacterMemoryEntriesForReflection(session: Session): CharacterMemoryEntry[];
   markCharacterMemoryEntriesUsed(entryIds: string[]): void;
   saveCharacterMemoryDelta(session: Session, entries: CharacterMemoryDelta["entries"]): number;
@@ -156,6 +158,18 @@ export class MemoryOrchestrationService {
     });
 
     this.inFlightCharacterReflections.add(latestSession.id);
+    if (options.triggerReason !== "session-start") {
+      this.deps.setSessionBackgroundActivity(latestSession.id, "character-memory-generation", {
+        sessionId: latestSession.id,
+        kind: "character-memory-generation",
+        status: "running",
+        title: "CharacterMemory",
+        summary: "Character Memory を整理しています。",
+        details: `trigger: ${options.triggerReason}\nmodel: ${reflectionSettings.model}\nreasoning: ${reflectionSettings.reasoningEffort}`,
+        errorMessage: "",
+        updatedAt: new Date().toISOString(),
+      });
+    }
     this.deps.setSessionBackgroundActivity(latestSession.id, "monologue", {
       sessionId: latestSession.id,
       kind: "monologue",
@@ -188,6 +202,8 @@ export class MemoryOrchestrationService {
 
       const memoryEntries = reflectionResult.output.memoryDelta?.entries ?? [];
       const monologue = reflectionResult.output.monologue;
+      const completedAt = new Date().toISOString();
+      const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
       this.deps.updateAuditLog(runningAuditLog.id, {
         sessionId: latestSession.id,
         createdAt: runningAuditLog.createdAt,
@@ -198,10 +214,18 @@ export class MemoryOrchestrationService {
         approvalMode: latestSession.approvalMode,
         threadId: reflectionResult.threadId ?? latestSession.threadId,
         logicalPrompt,
-        transportPayload,
+        transportPayload: appendTransportPayloadFields(
+          appendQuotaTelemetryToTransportPayload(transportPayload, reflectionResult.providerQuotaTelemetry),
+          [
+            { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
+            { label: "characterMemoryReferenced", value: String(characterMemoryEntries.length) },
+            { label: "characterMemorySaved", value: String(options.triggerReason === "session-start" ? 0 : memoryEntries.length) },
+            { label: "monologueUpdated", value: monologue ? "true" : "false" },
+          ],
+        ),
         assistantText: reflectionResult.rawText,
         operations: [],
-        rawItemsJson: "[]",
+        rawItemsJson: reflectionResult.rawItemsJson,
         usage: reflectionResult.usage,
         errorMessage: "",
       });
@@ -221,6 +245,23 @@ export class MemoryOrchestrationService {
         ...currentSnapshot,
         reflectedAt: new Date().toISOString(),
       });
+      if (options.triggerReason !== "session-start") {
+        this.deps.setSessionBackgroundActivity(latestSession.id, "character-memory-generation", {
+          sessionId: latestSession.id,
+          kind: "character-memory-generation",
+          status: "completed",
+          title: "CharacterMemory",
+          summary: savedCount > 0 ? `Character Memory を更新しました: ${savedCount}件` : "更新は不要でした。",
+          details: [
+            `trigger: ${options.triggerReason}`,
+            `model: ${reflectionSettings.model}`,
+            `reasoning: ${reflectionSettings.reasoningEffort}`,
+            monologue ? "monologue: updated" : "",
+          ].filter((line) => line.length > 0).join("\n"),
+          errorMessage: "",
+          updatedAt: new Date().toISOString(),
+        });
+      }
       this.deps.setSessionBackgroundActivity(latestSession.id, "monologue", {
         sessionId: latestSession.id,
         kind: "monologue",
@@ -237,6 +278,20 @@ export class MemoryOrchestrationService {
         updatedAt: new Date().toISOString(),
       });
     } catch (error) {
+      const completedAt = new Date().toISOString();
+      const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
+      if (options.triggerReason !== "session-start") {
+        this.deps.setSessionBackgroundActivity(latestSession.id, "character-memory-generation", {
+          sessionId: latestSession.id,
+          kind: "character-memory-generation",
+          status: isCanceledRunError(error) ? "canceled" : "failed",
+          title: "CharacterMemory",
+          summary: isCanceledRunError(error) ? "Character Memory 更新はキャンセルされました。" : "Character Memory 更新に失敗しました。",
+          details: `trigger: ${options.triggerReason}\nmodel: ${reflectionSettings.model}\nreasoning: ${reflectionSettings.reasoningEffort}`,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          updatedAt: new Date().toISOString(),
+        });
+      }
       this.deps.updateAuditLog(runningAuditLog.id, {
         sessionId: latestSession.id,
         createdAt: runningAuditLog.createdAt,
@@ -247,10 +302,13 @@ export class MemoryOrchestrationService {
         approvalMode: latestSession.approvalMode,
         threadId: latestSession.threadId,
         logicalPrompt,
-        transportPayload,
+        transportPayload: appendTransportPayloadFields(transportPayload, [
+          { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
+          { label: "characterMemoryReferenced", value: String(characterMemoryEntries.length) },
+        ]),
         assistantText: "",
         operations: [],
-        rawItemsJson: "[]",
+        rawItemsJson: runningAuditLog.rawItemsJson,
         usage: null,
         errorMessage: error instanceof Error ? error.message : String(error),
       });
@@ -343,6 +401,20 @@ export class MemoryOrchestrationService {
         prompt,
       });
       const delta = extractionResult.delta;
+      const completedAt = new Date().toISOString();
+      const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
+      const memoryFieldLabels = delta
+        ? [
+          delta.goal !== undefined ? "goal" : null,
+          delta.decisions?.length ? "decisions" : null,
+          delta.openQuestions?.length ? "openQuestions" : null,
+          delta.nextActions?.length ? "nextActions" : null,
+          delta.notes?.length ? "notes" : null,
+        ].filter((value): value is string => !!value)
+        : [];
+      const promotedCount = delta
+        ? this.deps.promoteSessionMemoryDeltaToProjectMemory(this.deps.getSession(session.id) ?? latestSession, delta)
+        : 0;
       this.deps.updateAuditLog(runningAuditLog.id, {
         sessionId: latestSession.id,
         createdAt: runningAuditLog.createdAt,
@@ -353,22 +425,20 @@ export class MemoryOrchestrationService {
         approvalMode: latestSession.approvalMode,
         threadId: extractionResult.threadId ?? latestSession.threadId,
         logicalPrompt,
-        transportPayload,
+        transportPayload: appendTransportPayloadFields(
+          appendQuotaTelemetryToTransportPayload(transportPayload, extractionResult.providerQuotaTelemetry),
+          [
+            { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
+            { label: "updatedFields", value: memoryFieldLabels.join(", ") },
+            { label: "projectMemoryPromotions", value: String(promotedCount) },
+          ],
+        ),
         assistantText: extractionResult.rawText,
         operations: [],
-        rawItemsJson: "[]",
+        rawItemsJson: extractionResult.rawItemsJson,
         usage: extractionResult.usage,
         errorMessage: "",
       });
-      const memoryFieldLabels = delta
-        ? [
-          delta.goal !== undefined ? "goal" : null,
-          delta.decisions?.length ? "decisions" : null,
-          delta.openQuestions?.length ? "openQuestions" : null,
-          delta.nextActions?.length ? "nextActions" : null,
-          delta.notes?.length ? "notes" : null,
-        ].filter((value): value is string => !!value)
-        : [];
       this.deps.setSessionBackgroundActivity(session.id, "memory-generation", {
         sessionId: session.id,
         kind: "memory-generation",
@@ -397,8 +467,9 @@ export class MemoryOrchestrationService {
           delta,
         ),
       );
-      this.deps.promoteSessionMemoryDeltaToProjectMemory(sessionForSave, delta);
     } catch (error) {
+      const completedAt = new Date().toISOString();
+      const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
       this.deps.updateAuditLog(runningAuditLog.id, {
         sessionId: latestSession.id,
         createdAt: runningAuditLog.createdAt,
@@ -409,10 +480,12 @@ export class MemoryOrchestrationService {
         approvalMode: latestSession.approvalMode,
         threadId: latestSession.threadId,
         logicalPrompt,
-        transportPayload,
+        transportPayload: appendTransportPayloadFields(transportPayload, [
+          { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
+        ]),
         assistantText: "",
         operations: [],
-        rawItemsJson: "[]",
+        rawItemsJson: runningAuditLog.rawItemsJson,
         usage: null,
         errorMessage: error instanceof Error ? error.message : String(error),
       });

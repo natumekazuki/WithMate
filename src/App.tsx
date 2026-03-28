@@ -8,7 +8,6 @@ import {
   type DiscoveredCustomAgent,
   type DiscoveredSkill,
   getSessionIdFromLocation,
-  type DiffPreviewPayload,
   type LiveApprovalRequest,
   type LiveSessionRunState,
   type ProviderQuotaTelemetry,
@@ -24,7 +23,6 @@ import {
   type AppSettings,
 } from "./provider-settings-state.js";
 import {
-  getSessionIdFromLocation,
   type DiffPreviewPayload,
   type Message,
   type Session,
@@ -655,6 +653,11 @@ export default function App() {
     kind: "memory-generation",
     state: null,
   });
+  const [characterMemoryGenerationActivityState, setCharacterMemoryGenerationActivityState] = useState<SessionOwnedBackgroundActivity>({
+    ownerSessionId: null,
+    kind: "character-memory-generation",
+    state: null,
+  });
   const [monologueActivityState, setMonologueActivityState] = useState<SessionOwnedBackgroundActivity>({
     ownerSessionId: null,
     kind: "monologue",
@@ -780,6 +783,14 @@ export default function App() {
     ),
     [memoryGenerationActivityState.ownerSessionId, memoryGenerationActivityState.state, selectedSessionId],
   );
+  const selectedCharacterMemoryGenerationActivity = useMemo(
+    () => (
+      selectedSessionId !== null && characterMemoryGenerationActivityState.ownerSessionId === selectedSessionId
+        ? characterMemoryGenerationActivityState.state
+        : null
+    ),
+    [characterMemoryGenerationActivityState.ownerSessionId, characterMemoryGenerationActivityState.state, selectedSessionId],
+  );
   const selectedMonologueActivity = useMemo(
     () => (
       selectedSessionId !== null && monologueActivityState.ownerSessionId === selectedSessionId
@@ -789,7 +800,7 @@ export default function App() {
     [monologueActivityState.ownerSessionId, monologueActivityState.state, selectedSessionId],
   );
   const selectedMonologueEntries = useMemo(
-    () => (selectedSession ? [...selectedSession.stream].reverse().slice(0, 6) : []),
+    () => (selectedSession ? selectedSession.stream.slice(-6) : []),
     [selectedSession],
   );
   const activePathReference = useMemo(
@@ -1412,6 +1423,42 @@ export default function App() {
     const sessionId = selectedSession?.id ?? null;
 
     if (!withmateApi || !sessionId) {
+      setCharacterMemoryGenerationActivityState({ ownerSessionId: sessionId, kind: "character-memory-generation", state: null });
+      return () => {
+        active = false;
+      };
+    }
+
+    setCharacterMemoryGenerationActivityState({ ownerSessionId: sessionId, kind: "character-memory-generation", state: null });
+    void withmateApi.getSessionBackgroundActivity(sessionId, "character-memory-generation").then((state) => {
+      if (active) {
+        setCharacterMemoryGenerationActivityState({ ownerSessionId: sessionId, kind: "character-memory-generation", state });
+      }
+    }).catch(() => {
+      if (active) {
+        setCharacterMemoryGenerationActivityState({ ownerSessionId: sessionId, kind: "character-memory-generation", state: null });
+      }
+    });
+
+    const unsubscribe = withmateApi.subscribeSessionBackgroundActivity((nextSessionId, kind, state) => {
+      if (!active || nextSessionId !== sessionId || kind !== "character-memory-generation") {
+        return;
+      }
+
+      setCharacterMemoryGenerationActivityState({ ownerSessionId: nextSessionId, kind, state });
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [selectedSession?.id]);
+
+  useEffect(() => {
+    let active = true;
+    const sessionId = selectedSession?.id ?? null;
+
+    if (!withmateApi || !sessionId) {
       setMonologueActivityState({ ownerSessionId: sessionId, kind: "monologue", state: null });
       return () => {
         active = false;
@@ -1522,20 +1569,6 @@ export default function App() {
     () => buildSessionContextTelemetryProjection(selectedSessionContextTelemetry),
     [selectedSessionContextTelemetry],
   );
-  const selectedContextEmptyText = useMemo(
-    () =>
-      renderCharacterSessionCopy(
-        selectedSessionCopy.contextEmpty,
-        pendingIndicatorCharacterName,
-        `context-empty:${selectedSession?.id ?? ""}:${selectedSession?.updatedAt ?? ""}`,
-      ),
-    [
-      pendingIndicatorCharacterName,
-      selectedSession?.id,
-      selectedSession?.updatedAt,
-      selectedSessionCopy.contextEmpty,
-    ],
-  );
   const availableReasoningEfforts = useMemo(
     () =>
       selectedProviderCatalog && selectedSession
@@ -1639,6 +1672,20 @@ export default function App() {
 
     return candidateNames[0] ?? "";
   }, [resolvedCharacter?.name, selectedSessionCharacter?.name]);
+  const selectedContextEmptyText = useMemo(
+    () =>
+      renderCharacterSessionCopy(
+        selectedSessionCopy.contextEmpty,
+        pendingIndicatorCharacterName,
+        `context-empty:${selectedSession?.id ?? ""}:${selectedSession?.updatedAt ?? ""}`,
+      ),
+    [
+      pendingIndicatorCharacterName,
+      selectedSession?.id,
+      selectedSession?.updatedAt,
+      selectedSessionCopy.contextEmpty,
+    ],
+  );
   const retryBanner = useMemo<RetryBannerState | null>(() => {
     if (!selectedSession || selectedSession.runState === "running" || !lastUserMessage) {
       return null;
@@ -2619,21 +2666,23 @@ export default function App() {
       activeContextPaneTab,
       latestCommandView,
       selectedMemoryGenerationActivity,
+      selectedCharacterMemoryGenerationActivity,
       selectedMonologueActivity,
     }),
-    [activeContextPaneTab, latestCommandView, selectedMemoryGenerationActivity, selectedMonologueActivity],
+    [activeContextPaneTab, latestCommandView, selectedMemoryGenerationActivity, selectedCharacterMemoryGenerationActivity, selectedMonologueActivity],
   );
 
   useEffect(() => {
     const nextTab = resolveAutoContextPaneTab({
       isSelectedSessionRunning,
       selectedMemoryGenerationActivity,
+      selectedCharacterMemoryGenerationActivity,
       selectedMonologueActivity,
     });
     if (nextTab) {
       setActiveContextPaneTab(nextTab);
     }
-  }, [isSelectedSessionRunning, selectedMemoryGenerationActivity?.status, selectedMonologueActivity?.status]);
+  }, [isSelectedSessionRunning, selectedMemoryGenerationActivity?.status, selectedCharacterMemoryGenerationActivity?.status, selectedMonologueActivity?.status]);
   const handleCycleContextPaneTab = (direction: -1 | 1) => {
     setActiveContextPaneTab((current) => cycleContextPaneTab(current, direction));
   };
@@ -2745,7 +2794,9 @@ export default function App() {
                 latestCommandView={latestCommandView}
                 selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
                 isSelectedSessionRunning={isSelectedSessionRunning}
+                selectedSessionCharacter={selectedSessionCharacter}
                 selectedMemoryGenerationActivity={selectedMemoryGenerationActivity}
+                selectedCharacterMemoryGenerationActivity={selectedCharacterMemoryGenerationActivity}
                 selectedMonologueActivity={selectedMonologueActivity}
                 selectedMonologueEntries={selectedMonologueEntries}
                 isCopilotSession={isCopilotSession}

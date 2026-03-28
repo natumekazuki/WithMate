@@ -16,6 +16,8 @@ import { getProviderAppSettings, type AppSettings } from "../src/provider-settin
 import { type Session } from "../src/session-state.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import { ProviderTurnError, type ProviderCodingAdapter } from "./provider-runtime.js";
+import { appendQuotaTelemetryToTransportPayload } from "./audit-log-quota.js";
+import { appendTransportPayloadFields, calculateAuditDurationMs } from "./audit-log-metadata.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
@@ -218,6 +220,8 @@ export class SessionRuntimeService {
           approvalRequest: this.deps.getLiveSessionRun(sessionId)?.approvalRequest ?? null,
         });
       });
+      const completedAt = new Date().toISOString();
+      const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
 
       this.deps.updateAuditLog(runningAuditLog.id, {
         sessionId,
@@ -229,7 +233,17 @@ export class SessionRuntimeService {
         approvalMode: runningSession.approvalMode,
         threadId: result.threadId ?? runningSession.threadId,
         logicalPrompt: result.logicalPrompt,
-        transportPayload: result.transportPayload,
+        transportPayload: appendTransportPayloadFields(
+          appendQuotaTelemetryToTransportPayload(
+            result.transportPayload,
+            result.providerQuotaTelemetry,
+          ),
+          [
+            { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
+            { label: "projectMemoryHits", value: String(projectMemoryEntries.length) },
+            { label: "attachmentCount", value: String(composerPreview.attachments.length) },
+          ],
+        ),
         assistantText: result.assistantText,
         operations: result.operations,
         rawItemsJson: result.rawItemsJson,
@@ -262,6 +276,8 @@ export class SessionRuntimeService {
       const canceled = providerTurnError ? providerTurnError.canceled : isCanceledRunError(error);
       const message = error instanceof Error ? error.message : String(error);
       const partialResult = providerTurnError?.partialResult;
+      const completedAt = new Date().toISOString();
+      const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
       if (canceled) {
         this.deps.invalidateProviderSessionThread(runningSession.provider, sessionId);
       }
@@ -276,7 +292,17 @@ export class SessionRuntimeService {
         approvalMode: runningSession.approvalMode,
         threadId: partialResult?.threadId ?? runningSession.threadId,
         logicalPrompt: partialResult?.logicalPrompt ?? promptForAudit.logicalPrompt,
-        transportPayload: partialResult?.transportPayload ?? null,
+        transportPayload: appendTransportPayloadFields(
+          appendQuotaTelemetryToTransportPayload(
+            partialResult?.transportPayload ?? null,
+            partialResult?.providerQuotaTelemetry,
+          ),
+          [
+            { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
+            { label: "projectMemoryHits", value: String(projectMemoryEntries.length) },
+            { label: "attachmentCount", value: String(composerPreview.attachments.length) },
+          ],
+        ),
         assistantText: partialResult?.assistantText ?? "",
         operations: partialResult?.operations ?? [],
         rawItemsJson: partialResult?.rawItemsJson ?? "[]",

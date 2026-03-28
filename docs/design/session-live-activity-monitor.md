@@ -68,7 +68,7 @@ flowchart TB
 
 #### MemoryGeneration
 
-- `Session Memory extraction` の background activity を表示する
+- `Session Memory extraction` と `Character Memory` 更新の background activity を表示する
 - 内容は次に絞る
   - status badge
   - summary
@@ -77,7 +77,7 @@ flowchart TB
 
 #### Monologue
 
-- `character reflection cycle` の background state を表示する
+- `character reflection cycle` の生成結果を表示する
 - session `stream` に保存された recent monologue を新しい順で表示する
 - 将来の monologue plane へ差し替えやすい host として扱う
 

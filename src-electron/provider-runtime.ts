@@ -77,7 +77,9 @@ export type ExtractSessionMemoryResult = {
   threadId: string | null;
   rawText: string;
   delta: SessionMemoryDelta | null;
+  rawItemsJson: string;
   usage: AuditLogUsage | null;
+  providerQuotaTelemetry?: ProviderQuotaTelemetry | null;
 };
 
 export type RunCharacterReflectionInput = {
@@ -96,7 +98,9 @@ export type RunCharacterReflectionResult = {
   threadId: string | null;
   rawText: string;
   output: CharacterReflectionOutput | null;
+  rawItemsJson: string;
   usage: AuditLogUsage | null;
+  providerQuotaTelemetry?: ProviderQuotaTelemetry | null;
 };
 
 export type RunSessionTurnResult = {
@@ -108,6 +112,7 @@ export type RunSessionTurnResult = {
   operations: AuditLogOperation[];
   rawItemsJson: string;
   usage: AuditLogUsage | null;
+  providerQuotaTelemetry?: ProviderQuotaTelemetry | null;
 };
 
 export class ProviderTurnError extends Error {

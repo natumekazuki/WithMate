@@ -178,7 +178,7 @@ test("SessionMemorySupportService は project promotion と monologue append を
     decisions: ["Memory は段階的に入れる"],
     notes: ["制約: Character Memory は coding prompt に入れない"],
   };
-  service.promoteSessionMemoryDeltaToProjectMemory(createSession(), delta);
+  const promotedCount = service.promoteSessionMemoryDeltaToProjectMemory(createSession(), delta);
 
   const resolved = service.resolveProjectMemoryEntriesForPrompt(
     createSession(),
@@ -194,6 +194,7 @@ test("SessionMemorySupportService は project promotion と monologue append を
     "decision:Memory は段階的に入れる",
     "constraint:Character Memory は coding prompt に入れない",
   ]);
+  assert.equal(promotedCount, 2);
   assert.deepEqual(resolved.map((entry) => entry.id), ["project-entry-1"]);
   assert.deepEqual(marked, [["project-entry-1"]]);
   assert.equal(updatedSession?.stream.length, 1);

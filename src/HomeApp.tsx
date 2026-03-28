@@ -149,18 +149,14 @@ export default function HomeApp() {
         setSessions(nextSessions);
       }
     });
-    void withmateApi.getAppSettings().then((settings) => {
+    void Promise.all([withmateApi.getAppSettings(), withmateApi.getModelCatalog(null)]).then(([settings, snapshot]) => {
       if (!active) {
         return;
       }
 
-      applyIncomingAppSettings(settings);
-    });
-    void withmateApi.getModelCatalog(null).then((snapshot) => {
-      if (active) {
-        setModelCatalog(snapshot);
-        setModelCatalogLoaded(true);
-      }
+      applyIncomingAppSettings(settings, { force: isSettingsWindowMode });
+      setModelCatalog(snapshot);
+      setModelCatalogLoaded(true);
     });
 
     void withmateApi.listCharacters().then((nextCharacters) => {

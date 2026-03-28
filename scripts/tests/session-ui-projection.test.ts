@@ -84,6 +84,7 @@ describe("session-ui-projection", () => {
     const tab = resolveAutoContextPaneTab({
       isSelectedSessionRunning: true,
       selectedMemoryGenerationActivity: null,
+      selectedCharacterMemoryGenerationActivity: null,
       selectedMonologueActivity: makeBackgroundActivity({
         kind: "monologue",
         status: "running",
@@ -110,6 +111,12 @@ describe("session-ui-projection", () => {
         title: "Session Memory を更新中",
         summary: "delta を生成している",
       }),
+      selectedCharacterMemoryGenerationActivity: makeBackgroundActivity({
+        kind: "character-memory-generation",
+        status: "completed",
+        title: "Character Memory を更新中",
+        summary: "relationship を整理している",
+      }),
       selectedMonologueActivity: null,
     });
 
@@ -119,6 +126,7 @@ describe("session-ui-projection", () => {
     assert.equal(projection.latestCommandStatusLabel, "完了");
     assert.equal(projection.latestCommandSourceCopy, "LAST RUN");
     assert.equal(projection.memoryGenerationToneClassName, "running");
+    assert.equal(projection.characterMemoryGenerationToneClassName, "completed");
   });
 
   it("SessionContextTelemetry projection は表示用の文字列をまとめる", () => {

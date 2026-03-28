@@ -2342,6 +2342,22 @@ button:disabled {
   box-sizing: border-box;
 }
 
+.command-monitor-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
+.command-monitor-stack {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin-top: auto;
+}
+
 .session-page .command-monitor-shell {
   border-color: color-mix(in srgb, var(--character-sub) 20%, rgba(203, 213, 225, 0.14));
   background: color-mix(in srgb, var(--character-sub-soft) 14%, rgba(12, 18, 27, 0.96));
@@ -2394,8 +2410,34 @@ button:disabled {
 .command-monitor-switcher-current {
   display: grid;
   justify-items: center;
-  gap: 8px;
+  gap: 4px;
   min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.command-monitor-switcher-current.in_progress,
+.command-monitor-switcher-current.running {
+  border-color: rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.command-monitor-switcher-current.completed {
+  border-color: rgba(74, 222, 128, 0.32);
+  background: rgba(74, 222, 128, 0.08);
+}
+
+.command-monitor-switcher-current.failed {
+  border-color: rgba(251, 146, 60, 0.34);
+  background: rgba(251, 146, 60, 0.09);
+}
+
+.command-monitor-switcher-current.canceled {
+  border-color: rgba(251, 191, 36, 0.32);
+  background: rgba(251, 191, 36, 0.08);
 }
 
 .command-monitor-switcher-label {
@@ -2413,40 +2455,6 @@ button:disabled {
   margin: 0;
   color: var(--ink);
   line-height: 1.55;
-}
-
-.command-monitor-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  width: fit-content;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: rgba(111, 184, 199, 0.16);
-  color: #c8f1ff;
-  font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.command-monitor-badge.in_progress {
-  background: rgba(56, 189, 248, 0.18);
-  color: #c8f1ff;
-}
-
-.command-monitor-badge.completed {
-  background: rgba(74, 222, 128, 0.16);
-  color: #d8ffe7;
-}
-
-.command-monitor-badge.failed {
-  background: rgba(251, 146, 60, 0.18);
-  color: #ffe2c2;
-}
-
-.command-monitor-badge.canceled {
-  background: rgba(251, 191, 36, 0.18);
-  color: #ffe7bf;
 }
 
 .command-monitor-card-head {
@@ -4501,7 +4509,7 @@ button:disabled {
   width: min(1160px, 100%);
   height: min(82vh, 920px);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   overflow: hidden;
   background: rgba(251, 249, 245, 0.97);
   border-radius: var(--radius-lg);
@@ -4519,6 +4527,34 @@ button:disabled {
 }
 
 .session-page .diff-titlebar h2 {
+  color: var(--ink);
+}
+
+.audit-log-segmented {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  margin: 6px 22px 14px;
+  width: fit-content;
+  padding: 4px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.audit-log-segmented-button {
+  min-width: 120px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.audit-log-segmented-button.is-active {
+  background: rgba(255, 255, 255, 0.1);
   color: var(--ink);
 }
 
@@ -4770,6 +4806,59 @@ button:disabled {
   overflow: auto;
   padding-right: 6px;
   scrollbar-gutter: stable;
+}
+
+.monologue-entry-time {
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(203, 213, 225, 0.12);
+  color: var(--muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+}
+
+.monologue-entry-card {
+  padding: 14px 16px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-left-width: 4px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.monologue-entry-card.mood-calm {
+  border-color: color-mix(in srgb, var(--character-sub, #7ea7ff) 26%, rgba(203, 213, 225, 0.12));
+  border-left-color: color-mix(in srgb, var(--character-sub, #7ea7ff) 68%, rgba(203, 213, 225, 0.2));
+  background: color-mix(in srgb, var(--character-sub-soft, rgba(126, 167, 255, 0.18)) 32%, rgba(255, 255, 255, 0.04));
+}
+
+.monologue-entry-card.mood-warm {
+  border-color: color-mix(in srgb, #f6a85a 24%, rgba(203, 213, 225, 0.12));
+  border-left-color: color-mix(in srgb, #f6a85a 78%, rgba(203, 213, 225, 0.2));
+  background: color-mix(in srgb, rgba(246, 168, 90, 0.22) 38%, rgba(255, 255, 255, 0.04));
+}
+
+.monologue-entry-card.mood-spark {
+  border-color: color-mix(in srgb, #ffd166 26%, rgba(203, 213, 225, 0.12));
+  border-left-color: color-mix(in srgb, #ffd166 82%, rgba(203, 213, 225, 0.2));
+  background: color-mix(in srgb, rgba(255, 209, 102, 0.2) 42%, rgba(255, 255, 255, 0.04));
+}
+
+.monologue-entry-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.monologue-entry-avatar {
+  width: clamp(44px, 16%, 56px);
+  height: auto;
+  aspect-ratio: 1 / 1;
+  transform: translateY(2px);
+}
+
+.monologue-entry-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .character-editor-main-session-copy .character-editor-content {

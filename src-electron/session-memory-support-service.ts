@@ -59,12 +59,13 @@ export class SessionMemorySupportService {
     return resolved;
   }
 
-  promoteSessionMemoryDeltaToProjectMemory(session: Session, delta: SessionMemoryDelta): void {
+  promoteSessionMemoryDeltaToProjectMemory(session: Session, delta: SessionMemoryDelta): number {
     const projectScope = this.ensureProjectScope(session);
     const entries = buildProjectMemoryPromotionEntries(session, projectScope.id, delta);
     for (const entry of entries) {
       this.deps.upsertProjectMemoryEntry(entry);
     }
+    return entries.length;
   }
 
   resolveCharacterMemoryEntriesForReflection(session: Session): CharacterMemoryEntry[] {

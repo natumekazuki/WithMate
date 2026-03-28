@@ -1166,10 +1166,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     providerId: string;
     appSettings: RunSessionTurnInput["appSettings"];
   }): Promise<ProviderQuotaTelemetry | null> {
-    const client = this.getOrCreateClientByAppSettings(providerId, appSettings);
-    await client.start();
-    const quota = await client.rpc.account.getQuota();
-    return buildCopilotProviderQuotaTelemetry(providerId, quota.quotaSnapshots, new Date().toISOString());
+    return this.fetchProviderQuotaTelemetry(providerId, appSettings);
   }
 
   async extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult> {
@@ -1178,12 +1175,22 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       threadId: result.threadId,
       rawText: result.rawText,
       delta: result.output,
+      rawItemsJson: result.rawItemsJson,
       usage: result.usage,
+      providerQuotaTelemetry: result.providerQuotaTelemetry,
     };
   }
 
   async runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult> {
-    return this.runBackgroundPrompt(input, parseCharacterReflectionOutputText);
+    const result = await this.runBackgroundPrompt(input, parseCharacterReflectionOutputText);
+    return {
+      threadId: result.threadId,
+      rawText: result.rawText,
+      output: result.output,
+      rawItemsJson: result.rawItemsJson,
+      usage: result.usage,
+      providerQuotaTelemetry: result.providerQuotaTelemetry,
+    };
   }
 
   private getClient(providerId: string, input: RunSessionTurnInput): { client: CopilotClient; clientKey: string } {
@@ -1243,7 +1250,9 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     threadId: string | null;
     rawText: string;
     output: TOutput | null;
+    rawItemsJson: string;
     usage: AuditLogUsage | null;
+    providerQuotaTelemetry: ProviderQuotaTelemetry | null;
   }> {
     const client = this.getOrCreateClientByAppSettings(input.session.provider, input.appSettings);
     await client.start();
@@ -1257,11 +1266,20 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     try {
       const response = await extractionSession.sendAndWait({ prompt: input.prompt.userText }, 60_000);
       const rawText = response?.data.content ?? "";
+      const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.session.provider, input.appSettings)
+        .catch(() => null);
       return {
         threadId: extractionSession.sessionId,
         rawText,
         output: parse(rawText),
+        rawItemsJson: JSON.stringify({
+          type: "copilot-background-response",
+          sessionId: extractionSession.sessionId,
+          content: rawText,
+          quotaSnapshots: providerQuotaTelemetry?.snapshots ?? [],
+        }, null, 2),
         usage,
+        providerQuotaTelemetry,
       };
     } finally {
       unsubscribeUsage();
@@ -1378,6 +1396,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     selection: ResolvedModelSelection,
     beforeSnapshot: WorkspaceSnapshot,
     beforeSnapshotStats: SnapshotCaptureStats,
+    providerQuotaTelemetry: ProviderQuotaTelemetry | null,
   ): Promise<RunSessionTurnResult> {
     const { snapshot: afterSnapshot, stats: afterSnapshotStats } = await captureWorkspaceSnapshot([
       workspacePath,
@@ -1406,6 +1425,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       operations,
       rawItemsJson: JSON.stringify(buildCopilotStableRawItems(events, workspacePath), null, 2),
       usage,
+      providerQuotaTelemetry,
     };
   }
 
@@ -1445,6 +1465,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           operations: [],
           rawItemsJson: buildCopilotBootstrapDebugItems(input, cliPath, "session-bootstrap", message),
           usage: null,
+          providerQuotaTelemetry: null,
         },
         Boolean(input.signal?.aborted) || isCanceledProviderMessage(message),
       );
@@ -1509,6 +1530,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       await progressChain;
 
       if (streamState.streamErrorMessage) {
+        const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.providerCatalog.id, input.appSettings)
+          .catch(() => null);
         const partialResult = await this.buildTurnResult(
           prompt,
           messageAttachments,
@@ -1523,6 +1546,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           selection,
           beforeSnapshot,
           beforeSnapshotStats,
+          providerQuotaTelemetry,
         );
         throw new ProviderTurnError(
           streamState.streamErrorMessage,
@@ -1531,6 +1555,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         );
       }
 
+      const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.providerCatalog.id, input.appSettings)
+        .catch(() => null);
       return this.buildTurnResult(
         prompt,
         messageAttachments,
@@ -1545,6 +1571,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         selection,
         beforeSnapshot,
         beforeSnapshotStats,
+        providerQuotaTelemetry,
       );
     } catch (error) {
       if (error instanceof ProviderTurnError) {
@@ -1552,6 +1579,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       }
 
       const message = error instanceof Error ? error.message : String(error);
+      const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.providerCatalog.id, input.appSettings)
+        .catch(() => null);
       const partialResult = await this.buildTurnResult(
         prompt,
         messageAttachments,
@@ -1566,6 +1595,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         selection,
         beforeSnapshot,
         beforeSnapshotStats,
+        providerQuotaTelemetry,
       );
       logCopilotRuntime("turn execution failed", {
         cliPath,
@@ -1606,5 +1636,15 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       await this.resetRecoverableConnection(input);
       return this.runSessionTurnOnce(input, prompt, onProgress);
     }
+  }
+
+  private async fetchProviderQuotaTelemetry(
+    providerId: string,
+    appSettings: RunSessionTurnInput["appSettings"],
+  ): Promise<ProviderQuotaTelemetry | null> {
+    const client = this.getOrCreateClientByAppSettings(providerId, appSettings);
+    await client.start();
+    const quota = await client.rpc.account.getQuota();
+    return buildCopilotProviderQuotaTelemetry(providerId, quota.quotaSnapshots, new Date().toISOString());
   }
 }

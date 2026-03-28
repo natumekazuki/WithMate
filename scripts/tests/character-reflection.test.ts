@@ -133,6 +133,8 @@ describe("character-reflection", () => {
       triggerReason: "session-start",
     });
     assert.match(startPrompt.systemText, /monologue のみ生成し、memoryDelta は null/);
+    assert.match(startPrompt.systemText, /2〜3 行/);
+    assert.match(startPrompt.systemText, /改行/);
 
     const normalPrompt = buildCharacterReflectionPrompt({
       session,
@@ -144,6 +146,8 @@ describe("character-reflection", () => {
     assert.match(normalPrompt.systemText, /memoryDelta と monologue を両方/);
     assert.match(normalPrompt.userText, /Existing Character Memory/);
     assert.match(normalPrompt.userText, /Recent Conversation/);
+    assert.match(normalPrompt.userText, /monologue\.text は 2〜3 行/);
+    assert.match(normalPrompt.userText, /1行目\\n2行目\\n3行目/);
   });
 
   it("JSON と fenced JSON を CharacterReflectionOutput として parse できる", () => {

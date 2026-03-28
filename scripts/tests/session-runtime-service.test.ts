@@ -138,6 +138,21 @@ describe("SessionRuntimeService", () => {
           operations: [],
           rawItemsJson: "[]",
           usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 220 },
+          providerQuotaTelemetry: {
+            provider: "copilot",
+            updatedAt: "2026-03-29T04:10:00.000Z",
+            snapshots: [
+              {
+                quotaKey: "premium_interactions",
+                entitlementRequests: 500,
+                usedRequests: 120,
+                remainingPercentage: 76.4,
+                overage: 0,
+                overageAllowedWithExhaustedQuota: false,
+                resetDate: "2026-04-01T00:00:00.000Z",
+              },
+            ],
+          },
         };
       },
     };
@@ -210,6 +225,18 @@ describe("SessionRuntimeService", () => {
     assert.equal(storedSessions[1]?.runState, "idle");
     assert.equal(storedSessions[1]?.messages.at(-1)?.text, "完了したよ。");
     assert.equal(auditUpdates.at(-1)?.phase, "completed");
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "remainingPercentage")?.value,
+      "76%",
+    );
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "projectMemoryHits")?.value,
+      "0",
+    );
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "attachmentCount")?.value,
+      "0",
+    );
     assert.deepEqual(memoryTriggers, [{ sessionId: session.id, triggerReason: "outputTokensThreshold" }]);
     assert.deepEqual(reflectionTriggers, [{ sessionId: session.id, triggerReason: "context-growth" }]);
     assert.equal(liveStates.at(-1), null);

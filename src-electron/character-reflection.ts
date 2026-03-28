@@ -201,7 +201,8 @@ export function buildCharacterReflectionPrompt(input: {
       ? "今回は SessionStart のため monologue のみ生成し、memoryDelta は null にしてください。"
       : "今回は通常 reflection のため、必要なら memoryDelta と monologue を両方返してください。",
     "memoryDelta は保守的に返し、明確な preference / relationship / shared_moment / tone / boundary だけを入れてください。",
-    "monologue は短く、キャラクターの内心として自然な 1〜3 文にしてください。",
+    "monologue は短く、キャラクターの内心として自然な 2〜3 行にしてください。",
+    "monologue.text は文ごとに改行で区切り、1 行に詰め込まないでください。",
     "不明な内容は推測しないでください。",
   ].join("\n");
 
@@ -228,12 +229,14 @@ export function buildCharacterReflectionPrompt(input: {
       ? "- memoryDelta は null にする"
       : "- 関係性更新が不要なら memoryDelta は null にしてよい",
     "- monologue は不要なら null にしてよい",
+    "- monologue.text は 2〜3 行を優先し、各行は短い 1 文にする",
+    "- monologue.text は行の区切りに \\n を使い、1 行にまとめない",
     "- memoryDelta.entries は重複を避ける",
     "- title と detail は短く具体的にする",
     "- coding task の決定事項は memoryDelta に入れない",
     "",
     "# Output JSON shape",
-    '{"memoryDelta": {"entries":[{"category":"relationship","title":"...","detail":"...","keywords":["..."],"evidence":["..."]}]} | null, "monologue": {"text":"...","mood":"spark|calm|warm"} | null}',
+    '{"memoryDelta": {"entries":[{"category":"relationship","title":"...","detail":"...","keywords":["..."],"evidence":["..."]}]} | null, "monologue": {"text":"1行目\\n2行目\\n3行目","mood":"spark|calm|warm"} | null}',
   ].join("\n");
 
   return {

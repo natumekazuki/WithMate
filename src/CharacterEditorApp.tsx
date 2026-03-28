@@ -140,7 +140,7 @@ export default function CharacterEditorApp() {
       }
 
       setCharacters(nextCharacters);
-      const currentCharacter = characterId ? getCharacterProfile(characterId, nextCharacters) : null;
+      const currentCharacter = characterId ? getCharacterProfile(nextCharacters, characterId) : null;
       setDraft(toDraft(currentCharacter));
     });
 
@@ -150,7 +150,7 @@ export default function CharacterEditorApp() {
       }
 
       setCharacters(nextCharacters);
-      const currentCharacter = characterId ? getCharacterProfile(characterId, nextCharacters) : null;
+      const currentCharacter = characterId ? getCharacterProfile(nextCharacters, characterId) : null;
       if (currentCharacter) {
         setDraft(toDraft(currentCharacter));
       }
@@ -163,7 +163,7 @@ export default function CharacterEditorApp() {
   }, [characterId]);
 
   const selectedCharacter = useMemo(
-    () => (characterId ? getCharacterProfile(characterId, characters) : null),
+    () => (characterId ? getCharacterProfile(characters, characterId) : null),
     [characterId, characters],
   );
 

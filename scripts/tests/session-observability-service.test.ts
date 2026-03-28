@@ -108,7 +108,7 @@ test("SessionObservabilityService は provider quota refresh を dedupe して c
 test("SessionObservabilityService は background activity を session 単位で clear できる", () => {
   const { service, events } = createService();
   const updatedAt = new Date().toISOString();
-  const kinds: SessionBackgroundActivityKind[] = ["memory-generation", "monologue"];
+  const kinds: SessionBackgroundActivityKind[] = ["memory-generation", "character-memory-generation", "monologue"];
 
   for (const kind of kinds) {
     service.setSessionBackgroundActivity("s-1", kind, {
@@ -122,9 +122,11 @@ test("SessionObservabilityService は background activity を session 単位で 
   service.clearSessionBackgroundActivities("s-1");
 
   assert.equal(service.getSessionBackgroundActivity("s-1", "memory-generation"), null);
+  assert.equal(service.getSessionBackgroundActivity("s-1", "character-memory-generation"), null);
   assert.equal(service.getSessionBackgroundActivity("s-1", "monologue"), null);
-  assert.deepEqual(events.slice(-2), [
+  assert.deepEqual(events.slice(-3), [
     { type: "background", payload: { sessionId: "s-1", kind: "memory-generation", state: null } },
+    { type: "background", payload: { sessionId: "s-1", kind: "character-memory-generation", state: null } },
     { type: "background", payload: { sessionId: "s-1", kind: "monologue", state: null } },
   ]);
 });

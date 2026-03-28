@@ -1,4 +1,4 @@
-import type { CSSProperties, KeyboardEventHandler, ReactNode, RefObject, UIEventHandler } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEventHandler, type ReactNode, type RefObject, type UIEventHandler } from "react";
 
 import type {
   AuditLogEntry,
@@ -72,6 +72,10 @@ function auditPhaseLabel(phase: AuditLogEntry["phase"]): string {
     default:
       return phase;
   }
+}
+
+function isBackgroundAuditPhase(phase: AuditLogEntry["phase"]): boolean {
+  return phase.startsWith("background-");
 }
 
 export type SessionDiffModalProps = {
@@ -229,6 +233,17 @@ export function SessionAuditLogModal({
   entries,
   onClose,
 }: SessionAuditLogModalProps) {
+  const [activeSection, setActiveSection] = useState<"main" | "background">("main");
+  const mainEntries = useMemo(
+    () => entries.filter((entry) => !isBackgroundAuditPhase(entry.phase)),
+    [entries],
+  );
+  const backgroundEntries = useMemo(
+    () => entries.filter((entry) => isBackgroundAuditPhase(entry.phase)),
+    [entries],
+  );
+  const visibleEntries = activeSection === "main" ? mainEntries : backgroundEntries;
+
   if (!open) {
     return null;
   }
@@ -245,9 +260,26 @@ export function SessionAuditLogModal({
           </div>
         </div>
 
+        <div className="audit-log-segmented" aria-label="監査ログ表示切り替え">
+          <button
+            type="button"
+            className={`audit-log-segmented-button${activeSection === "main" ? " is-active" : ""}`}
+            onClick={() => setActiveSection("main")}
+          >
+            Main
+          </button>
+          <button
+            type="button"
+            className={`audit-log-segmented-button${activeSection === "background" ? " is-active" : ""}`}
+            onClick={() => setActiveSection("background")}
+          >
+            Background
+          </button>
+        </div>
+
         <div className="audit-log-list">
-          {entries.length > 0 ? (
-            entries.map((entry) => (
+          {visibleEntries.length > 0 ? (
+            visibleEntries.map((entry) => (
               <article key={entry.id} className={`audit-log-card ${entry.phase}`}>
                 <div className="audit-log-head">
                   <span className={`file-kind ${
@@ -271,7 +303,7 @@ export function SessionAuditLogModal({
                   <span>{displayApprovalValue(entry.approvalMode)}</span>
                 </div>
 
-                <details className="audit-log-fold" open>
+                <details className="audit-log-fold">
                   <summary>
                     <strong>Logical Prompt</strong>
                   </summary>
@@ -378,11 +410,7 @@ export function SessionAuditLogModal({
                 </details>
               </article>
             ))
-          ) : (
-            <article className="empty-list-card compact">
-              <p>まだ監査ログはないよ。</p>
-            </article>
-          )}
+          ) : null}
         </div>
       </section>
     </div>
@@ -395,7 +423,9 @@ export type SessionContextPaneProps = {
   latestCommandView: LatestCommandView | null;
   selectedSessionLiveRunErrorMessage: string;
   isSelectedSessionRunning: boolean;
+  selectedSessionCharacter: { name: string; iconPath: string } | null;
   selectedMemoryGenerationActivity: SessionBackgroundActivityState | null;
+  selectedCharacterMemoryGenerationActivity: SessionBackgroundActivityState | null;
   selectedMonologueActivity: SessionBackgroundActivityState | null;
   selectedMonologueEntries: StreamEntry[];
   isCopilotSession: boolean;
@@ -414,7 +444,9 @@ export function SessionContextPane({
   latestCommandView,
   selectedSessionLiveRunErrorMessage,
   isSelectedSessionRunning,
+  selectedSessionCharacter,
   selectedMemoryGenerationActivity,
+  selectedCharacterMemoryGenerationActivity,
   selectedMonologueActivity,
   selectedMonologueEntries,
   isCopilotSession,
@@ -426,6 +458,51 @@ export function SessionContextPane({
   contextEmptyText,
   onCycleContextPaneTab,
 }: SessionContextPaneProps) {
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const memoryGenerationActivities = useMemo(
+    () =>
+      [selectedMemoryGenerationActivity, selectedCharacterMemoryGenerationActivity]
+        .filter((activity): activity is SessionBackgroundActivityState => activity !== null)
+        .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt)),
+    [selectedCharacterMemoryGenerationActivity, selectedMemoryGenerationActivity],
+  );
+  const contentScrollKey = useMemo(() => {
+    switch (activeContextPaneTab) {
+      case "latest-command":
+        return [
+          latestCommandView?.status ?? "",
+          latestCommandView?.summary ?? "",
+          latestCommandView?.details ?? "",
+          selectedSessionLiveRunErrorMessage,
+        ].join("|");
+      case "memory-generation":
+        return memoryGenerationActivities
+          .map((activity) => `${activity.kind}:${activity.status}:${activity.updatedAt}:${activity.summary}`)
+          .join("|");
+      case "monologue":
+        return selectedMonologueEntries
+          .map((entry) => `${entry.time}:${entry.text}`)
+          .join("|");
+      default:
+        return "";
+    }
+  }, [
+    activeContextPaneTab,
+    latestCommandView,
+    memoryGenerationActivities,
+    selectedMonologueEntries,
+    selectedSessionLiveRunErrorMessage,
+  ]);
+
+  useLayoutEffect(() => {
+    const contentNode = contentRef.current;
+    if (!contentNode) {
+      return;
+    }
+
+    contentNode.scrollTop = contentNode.scrollHeight;
+  }, [contentScrollKey]);
+
   return (
     <aside className="session-context-pane">
       <section className="command-monitor-shell" aria-label="最新 command">
@@ -439,12 +516,7 @@ export function SessionContextPane({
             >
               ‹
             </button>
-            <div className="command-monitor-switcher-current">
-              {contextPaneProjection.badgeLabel ? (
-                <span className={`command-monitor-badge ${contextPaneProjection.toneClassName}`}>
-                  {contextPaneProjection.badgeLabel}
-                </span>
-              ) : null}
+            <div className={`command-monitor-switcher-current ${contextPaneProjection.toneClassName}`}>
               <span className="command-monitor-switcher-label">
                 {contextPaneTabLabel(activeContextPaneTab)}
               </span>
@@ -460,153 +532,136 @@ export function SessionContextPane({
           </div>
         </div>
 
-        {activeContextPaneTab === "latest-command" ? (
-          latestCommandView ? (
-            <div className="command-monitor-card">
-              <div className="command-monitor-card-head">
-                <div className="command-monitor-meta">
-                  <span className={`live-run-step-status ${contextPaneProjection.latestCommandToneClassName}`}>{contextPaneProjection.latestCommandStatusLabel}</span>
-                  <span className="live-run-step-type">Command</span>
-                  <span className="command-monitor-source">{contextPaneProjection.latestCommandSourceCopy}</span>
-                </div>
-                {latestCommandView.riskLabels.length > 0 ? (
-                  <div className="command-monitor-risk-list" aria-label="command risk">
-                    {latestCommandView.riskLabels.map((label) => (
-                      <span key={label} className={`command-monitor-risk ${label.toLowerCase()}`}>
-                        {label}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="live-run-command-summary" aria-label="実行コマンド">
-                <span className="live-run-command-prefix" aria-hidden="true">
-                  $
-                </span>
-                <code className="live-run-command-text">{latestCommandView.summary}</code>
-              </div>
-
-              {latestCommandView.details ? (
-                <details className="command-monitor-details live-run-step-details">
-                  <summary>command_execution の詳細</summary>
-                  <pre>{latestCommandView.details}</pre>
-                </details>
-              ) : null}
-
-              {selectedSessionLiveRunErrorMessage && isSelectedSessionRunning ? (
-                <div className="live-run-error-block" role="alert">
-                  <strong>実行エラー</strong>
-                  <p className="live-run-error">{selectedSessionLiveRunErrorMessage}</p>
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <div className="command-monitor-empty-shell">
-              {selectedSessionLiveRunErrorMessage ? (
-                <div className="live-run-error-block" role="alert">
-                  <strong>実行エラー</strong>
-                  <p className="live-run-error">{selectedSessionLiveRunErrorMessage}</p>
-                </div>
-              ) : null}
-            </div>
-          )
-        ) : null}
-
-        {activeContextPaneTab === "memory-generation" ? (
-          selectedMemoryGenerationActivity ? (
-            <div className="command-monitor-card">
-              <div className="command-monitor-card-head">
-                <div className="command-monitor-meta">
-                  <span className={`live-run-step-status ${contextPaneProjection.memoryGenerationToneClassName}`}>
-                    {sessionBackgroundActivityStatusLabel(selectedMemoryGenerationActivity.status)}
-                  </span>
-                  <span className="live-run-step-type">Background</span>
-                  <span className="command-monitor-source">MEMORY</span>
-                </div>
-              </div>
-
-              <div className="background-activity-summary">
-                <strong>{selectedMemoryGenerationActivity.title}</strong>
-                <p>{selectedMemoryGenerationActivity.summary}</p>
-              </div>
-
-              {selectedMemoryGenerationActivity.details ? (
-                <details className="command-monitor-details live-run-step-details">
-                  <summary>詳細</summary>
-                  <pre>{selectedMemoryGenerationActivity.details}</pre>
-                </details>
-              ) : null}
-
-              {selectedMemoryGenerationActivity.errorMessage ? (
-                <div className="live-run-error-block" role="alert">
-                  <strong>実行エラー</strong>
-                  <p className="live-run-error">{selectedMemoryGenerationActivity.errorMessage}</p>
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <div className="command-monitor-empty-shell" />
-          )
-        ) : null}
-
-        {activeContextPaneTab === "monologue" ? (
-          selectedMonologueActivity || selectedMonologueEntries.length > 0 ? (
-            <>
-              {selectedMonologueActivity ? (
+        <div ref={contentRef} className="command-monitor-content">
+          <div className="command-monitor-stack">
+            {activeContextPaneTab === "latest-command" ? (
+              latestCommandView ? (
                 <div className="command-monitor-card">
                   <div className="command-monitor-card-head">
                     <div className="command-monitor-meta">
-                      <span className={`live-run-step-status ${contextPaneProjection.monologueToneClassName}`}>
-                        {sessionBackgroundActivityStatusLabel(selectedMonologueActivity.status)}
-                      </span>
-                      <span className="live-run-step-type">Background</span>
-                      <span className="command-monitor-source">MONOLOGUE</span>
+                      <span className={`live-run-step-status ${contextPaneProjection.latestCommandToneClassName}`}>{contextPaneProjection.latestCommandStatusLabel}</span>
+                      <span className="live-run-step-type">Command</span>
+                      <span className="command-monitor-source">{contextPaneProjection.latestCommandSourceCopy}</span>
                     </div>
+                    {latestCommandView.riskLabels.length > 0 ? (
+                      <div className="command-monitor-risk-list" aria-label="command risk">
+                        {latestCommandView.riskLabels.map((label) => (
+                          <span key={label} className={`command-monitor-risk ${label.toLowerCase()}`}>
+                            {label}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
 
-                  <div className="background-activity-summary">
-                    <strong>{selectedMonologueActivity.title}</strong>
-                    <p>{selectedMonologueActivity.summary}</p>
+                  <div className="live-run-command-summary" aria-label="実行コマンド">
+                    <span className="live-run-command-prefix" aria-hidden="true">
+                      $
+                    </span>
+                    <code className="live-run-command-text">{latestCommandView.summary}</code>
                   </div>
 
-                  {selectedMonologueActivity.details ? (
+                  {latestCommandView.details ? (
                     <details className="command-monitor-details live-run-step-details">
-                      <summary>詳細</summary>
-                      <pre>{selectedMonologueActivity.details}</pre>
+                      <summary>command_execution の詳細</summary>
+                      <pre>{latestCommandView.details}</pre>
                     </details>
                   ) : null}
 
-                  {selectedMonologueActivity.errorMessage ? (
+                  {selectedSessionLiveRunErrorMessage && isSelectedSessionRunning ? (
                     <div className="live-run-error-block" role="alert">
                       <strong>実行エラー</strong>
-                      <p className="live-run-error">{selectedMonologueActivity.errorMessage}</p>
+                      <p className="live-run-error">{selectedSessionLiveRunErrorMessage}</p>
                     </div>
                   ) : null}
                 </div>
-              ) : null}
-
-              {selectedMonologueEntries.map((entry, index) => (
-                <div key={`${entry.time}-${index}`} className="command-monitor-card">
-                  <div className="command-monitor-card-head">
-                    <div className="command-monitor-meta">
-                      <span className={`live-run-step-status ${entry.mood}`}>
-                        {entry.mood}
-                      </span>
-                      <span className="live-run-step-type">{entry.time}</span>
-                      <span className="command-monitor-source">MONOLOGUE</span>
+              ) : (
+                <div className="command-monitor-empty-shell">
+                  {selectedSessionLiveRunErrorMessage ? (
+                    <div className="live-run-error-block" role="alert">
+                      <strong>実行エラー</strong>
+                      <p className="live-run-error">{selectedSessionLiveRunErrorMessage}</p>
                     </div>
-                  </div>
-                  <div className="background-activity-summary">
-                    <p>{entry.text}</p>
-                  </div>
+                  ) : null}
                 </div>
-              ))}
-            </>
-          ) : (
-            <div className="command-monitor-empty-shell" />
-          )
-        ) : null}
+              )
+            ) : null}
+
+            {activeContextPaneTab === "memory-generation" ? (
+              memoryGenerationActivities.length > 0 ? (
+                <>
+                  {memoryGenerationActivities.map((activity) => {
+                    const isCharacterActivity = activity.kind === "character-memory-generation";
+                    return (
+                    <div key={`${activity.kind}:${activity.updatedAt}`} className="command-monitor-card">
+                      <div className="command-monitor-card-head">
+                        <div className="command-monitor-meta">
+                          <span className={`live-run-step-status ${isCharacterActivity ? contextPaneProjection.characterMemoryGenerationToneClassName : contextPaneProjection.memoryGenerationToneClassName}`}>
+                            {sessionBackgroundActivityStatusLabel(activity.status)}
+                          </span>
+                          <span className="live-run-step-type">Background</span>
+                          <span className="command-monitor-source">{isCharacterActivity ? "CHARACTER" : "SESSION"}</span>
+                        </div>
+                      </div>
+
+                      <div className="background-activity-summary">
+                        <strong>{activity.title}</strong>
+                        <p>{activity.summary}</p>
+                      </div>
+
+                      {activity.details ? (
+                        <details className="command-monitor-details live-run-step-details">
+                          <summary>詳細</summary>
+                          <pre>{activity.details}</pre>
+                        </details>
+                      ) : null}
+
+                      {activity.errorMessage ? (
+                        <div className="live-run-error-block" role="alert">
+                          <strong>実行エラー</strong>
+                          <p className="live-run-error">{activity.errorMessage}</p>
+                        </div>
+                      ) : null}
+                    </div>
+                    );
+                  })}
+                </>
+              ) : (
+                <div className="command-monitor-empty-shell" />
+              )
+            ) : null}
+
+            {activeContextPaneTab === "monologue" ? (
+              selectedMonologueEntries.length > 0 ? (
+                <>
+                  {selectedMonologueEntries.map((entry, index) => (
+                    <div
+                      key={`${entry.time}-${index}`}
+                      className={`command-monitor-card monologue-entry-card mood-${entry.mood}`}
+                    >
+                      <div className="monologue-entry-time">{entry.time}</div>
+                      <div className="monologue-entry-row">
+                        <CharacterAvatar
+                          character={{
+                            name: selectedSessionCharacter?.name ?? "?",
+                            iconPath: selectedSessionCharacter?.iconPath ?? "",
+                          }}
+                          size="large"
+                          className="monologue-entry-avatar"
+                        />
+                        <div className="background-activity-summary">
+                          <p className="monologue-entry-text">{entry.text}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <div className="command-monitor-empty-shell" />
+              )
+            ) : null}
+          </div>
+        </div>
       </section>
 
       {isCopilotSession ? (

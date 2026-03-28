@@ -36,6 +36,7 @@ export type ContextPaneProjection = {
   latestCommandStatusLabel: string;
   latestCommandSourceCopy: string;
   memoryGenerationToneClassName: string;
+  characterMemoryGenerationToneClassName: string;
   monologueToneClassName: string;
 };
 
@@ -236,17 +237,22 @@ export function contextPaneTabLabel(tab: ContextPaneTabKey): string {
 export function resolveAutoContextPaneTab({
   isSelectedSessionRunning,
   selectedMemoryGenerationActivity,
+  selectedCharacterMemoryGenerationActivity,
   selectedMonologueActivity,
 }: {
   isSelectedSessionRunning: boolean;
   selectedMemoryGenerationActivity: SessionBackgroundActivityState | null;
+  selectedCharacterMemoryGenerationActivity: SessionBackgroundActivityState | null;
   selectedMonologueActivity: SessionBackgroundActivityState | null;
 }): ContextPaneTabKey | null {
   if (isSelectedSessionRunning) {
     return "latest-command";
   }
 
-  if (selectedMemoryGenerationActivity?.status === "running") {
+  if (
+    selectedMemoryGenerationActivity?.status === "running"
+    || selectedCharacterMemoryGenerationActivity?.status === "running"
+  ) {
     return "memory-generation";
   }
 
@@ -268,17 +274,22 @@ export function buildContextPaneProjection({
   activeContextPaneTab,
   latestCommandView,
   selectedMemoryGenerationActivity,
+  selectedCharacterMemoryGenerationActivity,
   selectedMonologueActivity,
 }: {
   activeContextPaneTab: ContextPaneTabKey;
   latestCommandView: LatestCommandView | null;
   selectedMemoryGenerationActivity: SessionBackgroundActivityState | null;
+  selectedCharacterMemoryGenerationActivity: SessionBackgroundActivityState | null;
   selectedMonologueActivity: SessionBackgroundActivityState | null;
 }): ContextPaneProjection {
   const latestCommandToneClassName = latestCommandView ? liveRunStepToneClassName(latestCommandView.status) : "unknown";
   const latestCommandStatusLabel = latestCommandView ? liveRunStepStatusLabel(latestCommandView.status) : "待機";
   const latestCommandSourceCopy = latestCommandView?.sourceLabel === "live" ? "RUN LIVE" : "LAST RUN";
-  const memoryGenerationToneClassName = selectedMemoryGenerationActivity?.status ?? "unknown";
+  const memoryGenerationToneClassName = selectedMemoryGenerationActivity?.status
+    ?? selectedCharacterMemoryGenerationActivity?.status
+    ?? "unknown";
+  const characterMemoryGenerationToneClassName = selectedCharacterMemoryGenerationActivity?.status ?? "unknown";
   const monologueToneClassName = selectedMonologueActivity?.status ?? "unknown";
 
   let badgeLabel = "";
@@ -286,6 +297,8 @@ export function buildContextPaneProjection({
     case "memory-generation":
       badgeLabel = selectedMemoryGenerationActivity
         ? sessionBackgroundActivityStatusLabel(selectedMemoryGenerationActivity.status)
+        : selectedCharacterMemoryGenerationActivity
+          ? sessionBackgroundActivityStatusLabel(selectedCharacterMemoryGenerationActivity.status)
         : "";
       break;
     case "monologue":
@@ -322,6 +335,7 @@ export function buildContextPaneProjection({
     latestCommandStatusLabel,
     latestCommandSourceCopy,
     memoryGenerationToneClassName,
+    characterMemoryGenerationToneClassName,
     monologueToneClassName,
   };
 }

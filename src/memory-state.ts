@@ -1,6 +1,6 @@
 import { currentIsoTimestamp } from "./time-state.js";
 
-export type SessionBackgroundActivityKind = "memory-generation" | "monologue";
+export type SessionBackgroundActivityKind = "memory-generation" | "character-memory-generation" | "monologue";
 
 export type SessionBackgroundActivityStatus = "running" | "completed" | "failed" | "canceled";
 
