@@ -29,3 +29,6 @@
 - 2026-03-28: コミット `baef8aa` `refactor(main): extract observability facade`
   - `MainObservabilityFacade` を追加
   - provider quota / session context / background activity / live run の forwarding を `main.ts` から分離
+- 2026-03-28: `src-electron/main-broadcast-facade.ts` を追加し、sessions / characters / model catalog / app settings / open session windows の broadcast payload 組み立てを `main.ts` から分離
+- 2026-03-28: `npm run build`
+- 2026-03-28: `node --test --import tsx scripts/tests/main-broadcast-facade.test.ts scripts/tests/main-observability-facade.test.ts scripts/tests/main-query-service.test.ts scripts/tests/main-infrastructure-registry.test.ts`

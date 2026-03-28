@@ -77,6 +77,7 @@ import { createAppLifecycleDeps } from "./app-lifecycle-deps.js";
 import { createMainBootstrapDeps } from "./main-bootstrap-deps.js";
 import { MainInfrastructureRegistry } from "./main-infrastructure-registry.js";
 import { MainBootstrapService } from "./main-bootstrap-service.js";
+import { MainBroadcastFacade } from "./main-broadcast-facade.js";
 import { MainObservabilityFacade } from "./main-observability-facade.js";
 import { MainQueryService } from "./main-query-service.js";
 import { resolveProviderCatalogOrThrow, resolveProviderTurnAdapter } from "./provider-support.js";
@@ -126,6 +127,7 @@ let sessionApprovalService: SessionApprovalService | null = null;
 let auditLogService: AuditLogService | null = null;
 let sessionMemorySupportService: SessionMemorySupportService | null = null;
 let characterRuntimeService: CharacterRuntimeService | null = null;
+let mainBroadcastFacade: MainBroadcastFacade<BrowserWindow> | null = null;
 let mainObservabilityFacade: MainObservabilityFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
 let mainInfrastructureRegistry:
@@ -378,6 +380,21 @@ function requireMainQueryService(): MainQueryService {
   }
 
   return mainQueryService;
+}
+
+function requireMainBroadcastFacade(): MainBroadcastFacade<BrowserWindow> {
+  if (!mainBroadcastFacade) {
+    mainBroadcastFacade = new MainBroadcastFacade({
+      getWindowBroadcastService: () => requireWindowBroadcastService(),
+      listSessions: () => listSessions(),
+      listCharacters: () => listCharacters(),
+      getModelCatalog: () => getModelCatalog(),
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      listOpenSessionWindowIds: () => listOpenSessionWindowIds(),
+    });
+  }
+
+  return mainBroadcastFacade;
 }
 
 function requireMainObservabilityFacade(): MainObservabilityFacade {
@@ -802,6 +819,7 @@ function closePersistentStores(): void {
   sessionApprovalService = null;
   sessionMemorySupportService = null;
   characterRuntimeService = null;
+  mainBroadcastFacade = null;
   mainObservabilityFacade = null;
   mainQueryService = null;
   mainInfrastructureRegistry?.reset();
@@ -829,6 +847,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   sessionApprovalService = null;
   sessionMemorySupportService = null;
   characterRuntimeService = null;
+  mainBroadcastFacade = null;
   mainObservabilityFacade = null;
   mainQueryService = null;
   mainInfrastructureRegistry?.reset();
@@ -904,25 +923,19 @@ async function getCharacter(characterId: string): Promise<CharacterProfile | nul
 }
 
 function broadcastSessions(): void {
-  requireWindowBroadcastService().broadcastSessions(listSessions());
+  requireMainBroadcastFacade().broadcastSessions();
 }
 
 function broadcastCharacters(): void {
-  requireWindowBroadcastService().broadcastCharacters(listCharacters());
+  requireMainBroadcastFacade().broadcastCharacters();
 }
 
 function broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): void {
-  const payload = snapshot ?? getModelCatalog();
-  if (!payload) {
-    return;
-  }
-
-  requireWindowBroadcastService().broadcastModelCatalog(payload);
+  requireMainBroadcastFacade().broadcastModelCatalog(snapshot);
 }
 
 function broadcastAppSettings(settings?: ReturnType<AppSettingsStorage["getSettings"]>): void {
-  const payload = settings ?? requireAppSettingsStorage().getSettings();
-  requireWindowBroadcastService().broadcastAppSettings(payload);
+  requireMainBroadcastFacade().broadcastAppSettings(settings);
 }
 
 function getProviderQuotaTelemetry(providerId: string): ProviderQuotaTelemetry | null {
@@ -1001,7 +1014,7 @@ function listOpenSessionWindowIds(): string[] {
 }
 
 function broadcastOpenSessionWindowIds(): void {
-  requireWindowBroadcastService().broadcastOpenSessionWindowIds(listOpenSessionWindowIds());
+  requireMainBroadcastFacade().broadcastOpenSessionWindowIds();
 }
 
 function hasRunningSessions(): boolean {

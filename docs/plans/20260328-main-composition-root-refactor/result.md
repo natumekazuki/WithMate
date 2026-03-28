@@ -11,8 +11,9 @@
   - コミット: `ea55957` `refactor(main): improve composition root boundaries`
   - provider quota / session context / background activity / live run を `MainObservabilityFacade` に分離
   - コミット: `baef8aa` `refactor(main): extract observability facade`
+  - sessions / characters / model catalog / app settings / open session windows の broadcast payload を `MainBroadcastFacade` に分離
 - 残り:
-  - `main.ts` に残る broadcast / persistence wrapper の置き場整理
+  - `main.ts` に残る persistence wrapper の置き場整理
   - composition root の最終的な見通し改善
 
 ## メモ
@@ -24,4 +25,5 @@
 - fourth slice として infrastructure singleton を `MainInfrastructureRegistry` にまとめた
 - fifth slice として query 系 helper を `MainQueryService` にまとめた
 - sixth slice として observability forwarding を `MainObservabilityFacade` にまとめた
-- 次は broadcast / persistence wrapper の整理へ進む
+- seventh slice として broadcast payload の組み立てを `MainBroadcastFacade` にまとめた
+- 次は persistence wrapper の整理へ進む
