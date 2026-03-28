@@ -44,3 +44,12 @@
 - 2026-03-28: コミット `72e1610` `refactor(main): extract session command facades`
   - `MainSessionCommandFacade` と `MainSessionPersistenceFacade` を追加
   - session create/update/delete/run/cancel と `upsertSession / replaceAllSessions / recoverInterruptedSessions` を `main.ts` から分離
+- 2026-03-28: `src-electron/main-provider-facade.ts` を追加し、model catalog / provider adapter / thread invalidation の forwarding を `main.ts` から分離
+- 2026-03-28: `npm run build`
+- 2026-03-28: `node --test --import tsx scripts/tests/main-provider-facade.test.ts scripts/tests/main-session-persistence-facade.test.ts scripts/tests/main-session-command-facade.test.ts scripts/tests/main-broadcast-facade.test.ts scripts/tests/main-observability-facade.test.ts scripts/tests/main-query-service.test.ts scripts/tests/main-infrastructure-registry.test.ts`
+- 2026-03-28: `src-electron/main-character-facade.ts` と `src-electron/main-window-facade.ts` を追加し、character/query/runtime の束ねと window 操作の thin wrapper を `main.ts` から分離
+- 2026-03-28: `npm run build`
+- 2026-03-28: `node --test --import tsx scripts/tests/main-window-facade.test.ts scripts/tests/main-character-facade.test.ts scripts/tests/main-provider-facade.test.ts scripts/tests/main-session-persistence-facade.test.ts scripts/tests/main-session-command-facade.test.ts scripts/tests/main-broadcast-facade.test.ts scripts/tests/main-observability-facade.test.ts scripts/tests/main-query-service.test.ts scripts/tests/main-infrastructure-registry.test.ts`
+- 2026-03-28: コミット `4ed691a` `refactor(main): extract provider character and window facades`
+  - `MainProviderFacade`、`MainCharacterFacade`、`MainWindowFacade` を追加
+  - provider / character / window の thin wrapper を `main.ts` から分離

@@ -1,6 +1,6 @@
 # Result
 
-- 状態: in_progress
+- 状態: completed
 - 進捗:
   - `AppLifecycleService` を `main.ts` から分離
   - `MainBootstrapService` と `main-ipc-deps` を導入
@@ -16,9 +16,12 @@
   - session create/update/delete/run/cancel の forwarding と Copilot quota refresh 前処理を `MainSessionCommandFacade` に分離
   - `upsertSession / replaceAllSessions / recoverInterruptedSessions` を `MainSessionPersistenceFacade` に分離
   - コミット: `72e1610` `refactor(main): extract session command facades`
+  - model catalog / provider adapter / thread invalidation を `MainProviderFacade` に分離
+  - character query/runtime の束ねを `MainCharacterFacade` に分離
+  - window 操作の thin wrapper を `MainWindowFacade` に分離
+  - コミット: `4ed691a` `refactor(main): extract provider character and window facades`
 - 残り:
-  - `main.ts` に残る thin wrapper / wiring の最終整理
-  - composition root の最終的な見通し改善
+  - なし
 
 ## メモ
 
@@ -32,4 +35,7 @@
 - seventh slice として broadcast payload の組み立てを `MainBroadcastFacade` にまとめた
 - eighth slice として session create/update/delete/run/cancel の forwarding を `MainSessionCommandFacade` にまとめた
 - ninth slice として `upsertSession / replaceAllSessions / recoverInterruptedSessions` を `MainSessionPersistenceFacade` にまとめた
-- 次は `main.ts` に残る thin wrapper / wiring の整理へ進む
+- tenth slice として model catalog / provider adapter / thread invalidation を `MainProviderFacade` にまとめた
+- eleventh slice として character query/runtime を `MainCharacterFacade` にまとめた
+- twelfth slice として window 操作を `MainWindowFacade` にまとめた
+- 残りの thin wrapper は composition root として許容し、この plan を完了とする
