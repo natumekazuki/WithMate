@@ -28,15 +28,19 @@ import {
 } from "./home-launch-state.js";
 import {
   buildHomeSessionProjection,
-  type HomeMonitorEntry,
-  type HomeSessionState,
 } from "./home-session-projection.js";
 import {
   buildHomeProviderSettingRows,
   buildPersistedAppSettingsFromRows,
   type HomeProviderSettingRow,
 } from "./home-settings-view-model.js";
-import { HomeLaunchDialog, HomeSettingsContent } from "./home-components.js";
+import {
+  HomeLaunchDialog,
+  HomeMonitorContent,
+  HomeRecentSessionsPanel,
+  HomeRightPane,
+  HomeSettingsContent,
+} from "./home-components.js";
 import {
   exportHomeModelCatalog,
   importHomeModelCatalog,
@@ -55,9 +59,6 @@ import {
   updateMemoryExtractionThresholdDraft,
   updateSystemPromptPrefix,
 } from "./home-settings-draft.js";
-import {
-} from "./settings-ui.js";
-import { buildCardThemeStyle, CharacterAvatar } from "./ui-utils.js";
 import {
   ALL_RESET_APP_DATABASE_TARGETS,
   normalizeResetAppDatabaseTargets,
@@ -114,80 +115,6 @@ function getHomeWindowMode(): HomeWindowMode {
 
   const mode = new URLSearchParams(window.location.search).get("mode");
   return mode === "monitor" || mode === "settings" ? mode : "home";
-}
-
-type HomeMonitorContentProps = {
-  runningEntries: HomeMonitorEntry[];
-  nonRunningEntries: HomeMonitorEntry[];
-  runningEmptyMessage: string;
-  completedEmptyMessage: string;
-};
-
-function HomeMonitorContent({
-  runningEntries,
-  nonRunningEntries,
-  runningEmptyMessage,
-  completedEmptyMessage,
-}: HomeMonitorContentProps) {
-  return (
-    <div className="home-monitor-body">
-      <section className="home-monitor-section" aria-labelledby="home-monitor-running">
-        <div className="home-monitor-section-head">
-          <h3 id="home-monitor-running">実行中</h3>
-          <span className="home-monitor-count">{runningEntries.length}</span>
-        </div>
-        <div className="home-monitor-list">
-          {runningEntries.length > 0 ? (
-            runningEntries.map(({ session, state }) => (
-              <button
-                key={session.id}
-                className="home-monitor-row"
-                type="button"
-                onClick={() => void openSessionWindow(session.id)}
-              >
-                <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
-                <div className="home-monitor-row-copy">
-                  <strong>{session.taskTitle}</strong>
-                  <span>{session.workspaceLabel || session.workspacePath || "workspace 未設定"}</span>
-                </div>
-                <span className={`session-status home-monitor-status ${state.kind}`.trim()}>{state.label}</span>
-              </button>
-            ))
-          ) : (
-            <p className="home-monitor-empty">{runningEmptyMessage}</p>
-          )}
-        </div>
-      </section>
-
-      <section className="home-monitor-section" aria-labelledby="home-monitor-inactive">
-        <div className="home-monitor-section-head">
-          <h3 id="home-monitor-inactive">停止・完了</h3>
-          <span className="home-monitor-count">{nonRunningEntries.length}</span>
-        </div>
-        <div className="home-monitor-list">
-          {nonRunningEntries.length > 0 ? (
-            nonRunningEntries.map(({ session, state }) => (
-              <button
-                key={session.id}
-                className="home-monitor-row"
-                type="button"
-                onClick={() => void openSessionWindow(session.id)}
-              >
-                <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
-                <div className="home-monitor-row-copy">
-                  <strong>{session.taskTitle}</strong>
-                  <span>{session.workspaceLabel || session.workspacePath || "workspace 未設定"}</span>
-                </div>
-                <span className={`session-status home-monitor-status ${state.kind}`.trim()}>{state.label}</span>
-              </button>
-            ))
-          ) : (
-            <p className="home-monitor-empty">{completedEmptyMessage}</p>
-          )}
-        </div>
-      </section>
-    </div>
-  );
 }
 
 export default function HomeApp() {
@@ -699,6 +626,7 @@ export default function HomeApp() {
                 nonRunningEntries={nonRunningMonitorEntries}
                 runningEmptyMessage={monitorRunningEmptyMessage}
                 completedEmptyMessage={monitorCompletedEmptyMessage}
+                onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
               />
             </section>
           </section>
@@ -710,170 +638,34 @@ export default function HomeApp() {
   return (
     <div className={homePageClassName}>
       <main className="home-layout rise-2">
+        <HomeRecentSessionsPanel
+          filteredSessionEntries={filteredSessionEntries}
+          normalizedSessionSearch={normalizedSessionSearch}
+          searchText={sessionSearchText}
+          searchIcon={renderSearchIcon()}
+          onChangeSearchText={setSessionSearchText}
+          onOpenLaunchDialog={openLaunchDialog}
+          onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
+        />
 
-        <section className="panel session-list-panel home-session-list-panel rise-3">
-          <div className="home-panel-head">
-            <div className="home-panel-copy">
-              <h2>Recent Sessions</h2>
-            </div>
-          </div>
-
-          <div className="toolbar-search-row">
-            <label className="toolbar-search-field" aria-label="セッション検索">
-              <span className="toolbar-search-icon" aria-hidden="true">
-                {renderSearchIcon()}
-              </span>
-              <input
-                className="toolbar-search-input"
-                type="text"
-                aria-label="セッション検索"
-                value={sessionSearchText}
-                onChange={(event) => setSessionSearchText(event.target.value)}
-              />
-            </label>
-            <button className="start-session-button" type="button" onClick={() => openLaunchDialog()}>
-              New Session
-            </button>
-          </div>
-
-          <div className="session-card-list home-session-card-list">
-            {filteredSessionEntries.length > 0 ? (
-              filteredSessionEntries.map(({ session, state }) => (
-                <button
-                  key={session.id}
-                  className="session-card home-session-card"
-                  type="button"
-                  style={buildCardThemeStyle(session.characterThemeColors)}
-                  onClick={() => void openSessionWindow(session.id)}
-                >
-                  <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="small" className="session-card-avatar" />
-                  <div className="session-card-copy">
-                    <div className="session-card-topline home-session-card-topline">
-                      <strong>{session.taskTitle}</strong>
-                      <span className={`session-status home-session-status ${state.kind}`.trim()}>{state.label}</span>
-                    </div>
-                    <div className="session-card-subline home-session-card-meta">
-                      <span>{`Workspace : ${session.workspacePath || session.workspaceLabel}`}</span>
-                      <span>{`updatedAt: ${session.updatedAt}`}</span>
-                    </div>
-                    {session.taskSummary.trim() ? <p className="session-card-summary home-session-card-summary">{session.taskSummary}</p> : null}
-                  </div>
-                </button>
-              ))
-            ) : normalizedSessionSearch ? (
-              <article className="empty-list-card">
-                <p>一致するセッションはないよ。</p>
-              </article>
-            ) : (
-              <article className="empty-list-card">
-                <p>まだセッションはないよ。</p>
-                <button className="start-session-button" type="button" onClick={() => openLaunchDialog()}>
-                  New Session
-                </button>
-              </article>
-            )}
-          </div>
-        </section>
-
-        <section className="panel home-right-pane rise-3">
-          <div className="home-settings-rail">
-            <div className="home-pane-toggle" role="tablist" aria-label="Home right pane">
-              <button
-                className={`home-pane-toggle-button ${rightPaneView === "monitor" ? "active" : ""}`.trim()}
-                type="button"
-                role="tab"
-                aria-selected={rightPaneView === "monitor"}
-                onClick={() => setRightPaneView("monitor")}
-              >
-                Monitor
-              </button>
-              <button
-                className={`home-pane-toggle-button ${rightPaneView === "characters" ? "active" : ""}`.trim()}
-                type="button"
-                role="tab"
-                aria-selected={rightPaneView === "characters"}
-                onClick={() => setRightPaneView("characters")}
-              >
-                Characters
-              </button>
-            </div>
-            <div className="home-settings-actions">
-              <button
-                className="launch-toggle home-monitor-window-button"
-                type="button"
-                aria-label="Session Monitor Window を開く"
-                title="Session Monitor Window"
-                onClick={() => void openSessionMonitorWindow()}
-              >
-                {renderMonitorWindowIcon()}
-              </button>
-              <button className="launch-toggle home-settings-button" type="button" onClick={() => void openSettingsWindow()}>
-                Settings
-              </button>
-            </div>
-          </div>
-
-          {rightPaneView === "monitor" ? (
-            <section className="home-monitor-panel" role="tabpanel" aria-label="Session Monitor">
-              <HomeMonitorContent
-                runningEntries={runningMonitorEntries}
-                nonRunningEntries={nonRunningMonitorEntries}
-                runningEmptyMessage={monitorRunningEmptyMessage}
-                completedEmptyMessage={monitorCompletedEmptyMessage}
-              />
-            </section>
-          ) : (
-            <section className="characters-panel home-characters-panel" role="tabpanel" aria-label="Characters">
-              <div className="toolbar-search-row home-character-toolbar">
-                <label className="toolbar-search-field" aria-label="キャラクター検索">
-                  <span className="toolbar-search-icon" aria-hidden="true">
-                    {renderSearchIcon()}
-                  </span>
-                  <input
-                    className="toolbar-search-input"
-                    type="text"
-                    aria-label="キャラクター検索"
-                    value={characterSearchText}
-                    onChange={(event) => setCharacterSearchText(event.target.value)}
-                  />
-                </label>
-                <button className="launch-toggle" type="button" onClick={() => void openCharacterEditor()}>
-                  Add Character
-                </button>
-              </div>
-
-              <div className="character-list">
-                {filteredCharacters.length > 0 ? (
-                  filteredCharacters.map((character) => (
-                    <button
-                      key={character.id}
-                      className="character-card"
-                      type="button"
-                      style={buildCardThemeStyle(character.themeColors)}
-                      onClick={() => void openCharacterEditor(character.id)}
-                    >
-                      <CharacterAvatar character={character} size="small" className="character-card-avatar" />
-                      <div className="character-card-copy">
-                        <strong>{character.name}</strong>
-                      </div>
-                    </button>
-                  ))
-                ) : characterEmptyState === "no-match" ? (
-                  <article className="empty-list-card">
-                    <p>一致するキャラはないよ。</p>
-                  </article>
-                ) : (
-                  <article className="empty-list-card">
-                    <p>まだキャラはないよ。</p>
-                    <button className="launch-toggle" type="button" onClick={() => void openCharacterEditor()}>
-                      Add Character
-                    </button>
-                  </article>
-                )}
-              </div>
-            </section>
-          )}
-        </section>
+        <HomeRightPane
+          rightPaneView={rightPaneView}
+          runningMonitorEntries={runningMonitorEntries}
+          nonRunningMonitorEntries={nonRunningMonitorEntries}
+          monitorRunningEmptyMessage={monitorRunningEmptyMessage}
+          monitorCompletedEmptyMessage={monitorCompletedEmptyMessage}
+          filteredCharacters={filteredCharacters}
+          characterEmptyState={characterEmptyState}
+          characterSearchText={characterSearchText}
+          searchIcon={renderSearchIcon()}
+          monitorWindowIcon={renderMonitorWindowIcon()}
+          onChangeRightPaneView={setRightPaneView}
+          onOpenSessionMonitorWindow={() => void openSessionMonitorWindow()}
+          onOpenSettingsWindow={() => void openSettingsWindow()}
+          onChangeCharacterSearchText={setCharacterSearchText}
+          onOpenCharacterEditor={(characterId) => void openCharacterEditor(characterId)}
+          onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
+        />
       </main>
 
       <HomeLaunchDialog
