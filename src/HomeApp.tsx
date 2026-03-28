@@ -15,6 +15,11 @@ import {
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
 import {
+  buildHomeLaunchProjection,
+  inferWorkspaceFromPath,
+  type LaunchWorkspace,
+} from "./home-launch-projection.js";
+import {
   buildHomeSessionProjection,
   type HomeMonitorEntry,
   type HomeSessionState,
@@ -65,24 +70,6 @@ import {
   type ResetAppDatabaseRequest,
   type ResetAppDatabaseTarget,
 } from "./withmate-window.js";
-
-type LaunchWorkspace = {
-  label: string;
-  path: string;
-  branch: string;
-};
-
-function inferWorkspaceFromPath(selectedPath: string): LaunchWorkspace {
-  const normalized = selectedPath.replace(/[\\/]+$/, "");
-  const segments = normalized.split(/[\\/]/).filter(Boolean);
-  const label = segments.at(-1) ?? normalized;
-
-  return {
-    label,
-    path: selectedPath,
-    branch: "main",
-  };
-}
 
 async function openSessionWindow(sessionId: string) {
   if (!window.withmate) {
@@ -366,11 +353,6 @@ export default function HomeApp() {
     };
   }, []);
 
-  const selectedCharacter = useMemo(
-    () => characters.find((character) => character.id === launchCharacterId) ?? characters[0] ?? null,
-    [characters, launchCharacterId],
-  );
-
   const sessionProjection = useMemo(
     () => buildHomeSessionProjection(sessions, openSessionWindowIds, sessionSearchText),
     [openSessionWindowIds, sessionSearchText, sessions],
@@ -382,42 +364,39 @@ export default function HomeApp() {
     monitorRunningEmptyMessage,
     monitorCompletedEmptyMessage,
   } = sessionProjection;
-  const normalizedCharacterSearch = useMemo(() => characterSearchText.trim().toLocaleLowerCase(), [characterSearchText]);
-  const filteredCharacters = useMemo(() => {
-    if (!normalizedCharacterSearch) {
-      return characters;
-    }
-
-    return characters.filter((character) => {
-      const haystacks = [character.name, character.description].map((value) => value.toLocaleLowerCase());
-      return haystacks.some((value) => value.includes(normalizedCharacterSearch));
-    });
-  }, [characters, normalizedCharacterSearch]);
-  const normalizedLaunchCharacterSearch = useMemo(
-    () => launchCharacterSearchText.trim().toLocaleLowerCase(),
-    [launchCharacterSearchText],
+  const launchProjection = useMemo(
+    () => buildHomeLaunchProjection({
+      characters,
+      characterSearchText,
+      launchCharacterSearchText,
+      launchCharacterId,
+      launchProviderId,
+      launchTitle,
+      launchWorkspace,
+      appSettings,
+      modelCatalog,
+    }),
+    [
+      appSettings,
+      characterSearchText,
+      characters,
+      launchCharacterId,
+      launchCharacterSearchText,
+      launchProviderId,
+      launchTitle,
+      launchWorkspace,
+      modelCatalog,
+    ],
   );
-  const filteredLaunchCharacters = useMemo(() => {
-    if (!normalizedLaunchCharacterSearch) {
-      return characters;
-    }
-
-    return characters.filter((character) => {
-      const haystacks = [character.name, character.description].map((value) => value.toLocaleLowerCase());
-      return haystacks.some((value) => value.includes(normalizedLaunchCharacterSearch));
-    });
-  }, [characters, normalizedLaunchCharacterSearch]);
-  const enabledLaunchProviders = useMemo(() => {
-    if (!modelCatalog) {
-      return [];
-    }
-
-    return modelCatalog.providers.filter((provider) => getProviderAppSettings(appSettings, provider.id).enabled);
-  }, [appSettings, modelCatalog]);
-  const selectedLaunchProvider = useMemo(
-    () => enabledLaunchProviders.find((provider) => provider.id === launchProviderId) ?? enabledLaunchProviders[0] ?? null,
-    [enabledLaunchProviders, launchProviderId],
-  );
+  const {
+    filteredCharacters,
+    filteredLaunchCharacters,
+    selectedCharacter,
+    enabledLaunchProviders,
+    selectedLaunchProvider,
+    launchWorkspacePathLabel,
+    canStartSession,
+  } = launchProjection;
 
   useEffect(() => {
     setLaunchProviderId((current) => {
@@ -1204,8 +1183,7 @@ export default function HomeApp() {
                     Browse
                   </button>
                 </div>
-
-                <p className={`launch-path${launchWorkspace ? " selected" : ""}`}>{launchWorkspace ? launchWorkspace.path : "workspace"}</p>
+                <p className={`launch-path${launchWorkspace ? " selected" : ""}`}>{launchWorkspacePathLabel}</p>
               </section>
 
               <section className="launch-section minimal">
@@ -1290,7 +1268,7 @@ export default function HomeApp() {
               <button
                 className="start-session-button"
                 type="button"
-                disabled={!launchTitle.trim() || !launchWorkspace || !selectedCharacter || !selectedLaunchProvider}
+                disabled={!canStartSession}
                 onClick={() => void handleStartSession()}
               >
                 Start New Session
