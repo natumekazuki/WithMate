@@ -1,3 +1,25 @@
 # Worklog
 
 - 2026-03-28: plan 作成
+- 2026-03-28: `src-electron/app-lifecycle-service.ts` を追加し、`activate / window-all-closed / before-quit` を service 経由に整理
+- 2026-03-28: `npm run build`
+- 2026-03-28: `node --test --import tsx scripts/tests/app-lifecycle-service.test.ts scripts/tests/persistent-store-lifecycle-service.test.ts scripts/tests/main-ipc-registration.test.ts`
+- 2026-03-28: `src-electron/main-ipc-deps.ts` と `src-electron/main-bootstrap-service.ts` を追加し、`whenReady()` の IPC deps 組み立てと起動シーケンスを service/helper 経由に整理
+- 2026-03-28: `npm run build`
+- 2026-03-28: `node --test --import tsx scripts/tests/main-bootstrap-service.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/app-lifecycle-service.test.ts`
+- 2026-03-28: `src-electron/app-lifecycle-deps.ts` と `src-electron/main-bootstrap-deps.ts` を追加し、`main.ts` の lifecycle/bootstrap 依存組み立てを helper に分離
+- 2026-03-28: `npm run build`
+- 2026-03-28: `node --test --import tsx scripts/tests/app-lifecycle-deps.test.ts scripts/tests/main-bootstrap-deps.test.ts scripts/tests/app-lifecycle-service.test.ts scripts/tests/main-bootstrap-service.test.ts scripts/tests/main-ipc-deps.test.ts`
+- 2026-03-28: `src-electron/provider-support.ts` を追加し、provider catalog / adapter / quota fetch の generic helper を `main.ts` から分離
+- 2026-03-28: `npm run build`
+- 2026-03-28: `node --test --import tsx scripts/tests/provider-support.test.ts scripts/tests/app-lifecycle-deps.test.ts scripts/tests/main-bootstrap-deps.test.ts scripts/tests/main-bootstrap-service.test.ts scripts/tests/main-ipc-deps.test.ts`
+- 2026-03-28: `src-electron/main-infrastructure-registry.ts` を追加し、infrastructure singleton の lazy 生成と reset を `main.ts` から分離
+- 2026-03-28: `npm run build`
+- 2026-03-28: `node --test --import tsx scripts/tests/main-infrastructure-registry.test.ts scripts/tests/provider-support.test.ts scripts/tests/app-lifecycle-deps.test.ts scripts/tests/main-bootstrap-deps.test.ts scripts/tests/app-lifecycle-service.test.ts scripts/tests/main-bootstrap-service.test.ts scripts/tests/main-ipc-deps.test.ts`
+- 2026-03-28: `src-electron/main-query-service.ts` を追加し、session/character query と discovery/search helper を `main.ts` から分離
+- 2026-03-28: `npm run build`
+- 2026-03-28: `node --test --import tsx scripts/tests/main-query-service.test.ts scripts/tests/main-infrastructure-registry.test.ts scripts/tests/provider-support.test.ts scripts/tests/app-lifecycle-deps.test.ts scripts/tests/main-bootstrap-deps.test.ts`
+- 2026-03-28: コミット `ea55957` `refactor(main): improve composition root boundaries`
+  - `AppLifecycleService` / `MainBootstrapService` / `MainInfrastructureRegistry` / `MainQueryService` を追加
+  - provider support helper と lifecycle/bootstrap deps helper を導入
+  - `main.ts` の composition root と query/helper 境界を整理

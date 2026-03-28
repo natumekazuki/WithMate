@@ -1,7 +1,24 @@
 # Result
 
 - 状態: in_progress
+- 進捗:
+  - `AppLifecycleService` を `main.ts` から分離
+  - `MainBootstrapService` と `main-ipc-deps` を導入
+  - lifecycle/bootstrap の deps 組み立てを helper 化
+  - provider catalog / adapter / quota fetch helper を `main.ts` から分離
+  - infrastructure singleton の registry 化で `main.ts` の service 変数を縮小
+  - session/character query と discovery/search helper を `MainQueryService` に分離
+  - コミット: `ea55957` `refactor(main): improve composition root boundaries`
+- 残り:
+  - `main.ts` に残る observability / broadcast helper の置き場整理
+  - composition root の最終的な見通し改善
 
 ## メモ
 
 - `main.ts` の composition root を整理する
+- first slice として app lifecycle を `AppLifecycleService` に切り出した
+- second slice として `whenReady()` の IPC deps 組み立てを `main-ipc-deps.ts` に、起動シーケンスを `MainBootstrapService` に切り出した
+- third slice として lifecycle/bootstrap deps の helper 化と provider support helper の切り出しを行った
+- fourth slice として infrastructure singleton を `MainInfrastructureRegistry` にまとめた
+- fifth slice として query 系 helper を `MainQueryService` にまとめた
+- 次は observability / broadcast helper の整理へ進む
