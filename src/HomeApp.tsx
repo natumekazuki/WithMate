@@ -16,10 +16,24 @@ import {
 import { DEFAULT_APPROVAL_MODE } from "./approval-mode.js";
 import {
   coerceModelSelection,
-  getReasoningEffortOptionsForModel,
-  type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
+import {
+  buildHomeProviderSettingRows,
+  buildNormalizedCharacterReflectionProviderSettings,
+  buildNormalizedMemoryExtractionProviderSettings,
+  type HomeProviderSettingRow,
+} from "./home-settings-view-model.js";
+import {
+  updateCharacterReflectionModel,
+  updateCharacterReflectionReasoningEffort,
+  updateCodingProviderApiKey,
+  updateCodingProviderEnabled,
+  updateCodingProviderSkillRootPath,
+  updateMemoryExtractionModel,
+  updateMemoryExtractionReasoningEffort,
+  updateMemoryExtractionThreshold,
+} from "./home-settings-draft.js";
 import {
   SETTINGS_API_KEY_LABEL,
   SETTINGS_API_KEY_PLACEHOLDER,
@@ -117,19 +131,6 @@ type HomeSessionState = {
 type HomeMonitorEntry = {
   session: Session;
   state: HomeSessionState;
-};
-
-type ProviderSettingRow = {
-  provider: ModelCatalogProvider;
-  settings: ProviderAppSettings;
-  memoryExtractionSettings: MemoryExtractionProviderSettings;
-  characterReflectionSettings: CharacterReflectionProviderSettings;
-  resolvedMemoryExtractionModel: string;
-  resolvedMemoryExtractionReasoningEffort: MemoryExtractionProviderSettings["reasoningEffort"];
-  resolvedCharacterReflectionModel: string;
-  resolvedCharacterReflectionReasoningEffort: CharacterReflectionProviderSettings["reasoningEffort"];
-  availableMemoryExtractionReasoningEfforts: readonly MemoryExtractionProviderSettings["reasoningEffort"][];
-  availableCharacterReflectionReasoningEfforts: readonly CharacterReflectionProviderSettings["reasoningEffort"][];
 };
 
 type HomeRightPaneView = "monitor" | "characters";
@@ -674,33 +675,25 @@ export default function HomeApp() {
   });
 
   const handleChangeProviderEnabled = (providerId: string, enabled: boolean) => {
-    setCodingProviderSettingsDraft((current) => ({
-      ...current,
-      [providerId]: {
-        ...getProviderAppSettings(buildDraftAppSettings({ codingProviderSettings: current }), providerId),
-        enabled,
-      },
-    }));
+    setCodingProviderSettingsDraft((current) =>
+      updateCodingProviderEnabled(buildDraftAppSettings({ codingProviderSettings: current }), providerId, enabled)
+    );
   };
 
   const handleChangeProviderApiKey = (providerId: string, apiKey: string) => {
-    setCodingProviderSettingsDraft((current) => ({
-      ...current,
-      [providerId]: {
-        ...getProviderAppSettings(buildDraftAppSettings({ codingProviderSettings: current }), providerId),
-        apiKey,
-      },
-    }));
+    setCodingProviderSettingsDraft((current) =>
+      updateCodingProviderApiKey(buildDraftAppSettings({ codingProviderSettings: current }), providerId, apiKey)
+    );
   };
 
   const handleChangeProviderSkillRootPath = (providerId: string, skillRootPath: string) => {
-    setCodingProviderSettingsDraft((current) => ({
-      ...current,
-      [providerId]: {
-        ...getProviderAppSettings(buildDraftAppSettings({ codingProviderSettings: current }), providerId),
+    setCodingProviderSettingsDraft((current) =>
+      updateCodingProviderSkillRootPath(
+        buildDraftAppSettings({ codingProviderSettings: current }),
+        providerId,
         skillRootPath,
-      },
-    }));
+      )
+    );
   };
 
   const handleBrowseProviderSkillRootPath = async (providerId: string) => {
@@ -723,51 +716,37 @@ export default function HomeApp() {
       return;
     }
 
-    setMemoryExtractionProviderSettingsDraft((current) => {
-      const currentSettings = getMemoryExtractionProviderSettings(
+    setMemoryExtractionProviderSettingsDraft((current) =>
+      updateMemoryExtractionModel(
         buildDraftAppSettings({ memoryExtractionProviderSettings: current }),
+        providerCatalog,
         providerId,
-      );
-      const selection = coerceModelSelection(providerCatalog, model, currentSettings.reasoningEffort);
-      return {
-        ...current,
-        [providerId]: {
-          ...currentSettings,
-          model: selection.resolvedModel,
-          reasoningEffort: selection.resolvedReasoningEffort,
-        },
-      };
-    });
+        model,
+      )
+    );
   };
 
   const handleChangeMemoryExtractionReasoningEffort = (
     providerId: string,
     reasoningEffort: MemoryExtractionProviderSettings["reasoningEffort"],
   ) => {
-    setMemoryExtractionProviderSettingsDraft((current) => ({
-      ...current,
-      [providerId]: {
-        ...getMemoryExtractionProviderSettings(
-          buildDraftAppSettings({ memoryExtractionProviderSettings: current }),
-          providerId,
-        ),
+    setMemoryExtractionProviderSettingsDraft((current) =>
+      updateMemoryExtractionReasoningEffort(
+        buildDraftAppSettings({ memoryExtractionProviderSettings: current }),
+        providerId,
         reasoningEffort,
-      },
-    }));
+      )
+    );
   };
 
   const handleChangeMemoryExtractionThreshold = (providerId: string, value: string) => {
-    const normalized = Number.parseInt(value, 10);
-    setMemoryExtractionProviderSettingsDraft((current) => ({
-      ...current,
-      [providerId]: {
-        ...getMemoryExtractionProviderSettings(
-          buildDraftAppSettings({ memoryExtractionProviderSettings: current }),
-          providerId,
-        ),
-        outputTokensThreshold: Number.isFinite(normalized) && normalized > 0 ? normalized : 1,
-      },
-    }));
+    setMemoryExtractionProviderSettingsDraft((current) =>
+      updateMemoryExtractionThreshold(
+        buildDraftAppSettings({ memoryExtractionProviderSettings: current }),
+        providerId,
+        value,
+      )
+    );
   };
 
   const handleChangeCharacterReflectionModel = (providerId: string, model: string) => {
@@ -776,67 +755,31 @@ export default function HomeApp() {
       return;
     }
 
-    setCharacterReflectionProviderSettingsDraft((current) => {
-      const currentSettings = getCharacterReflectionProviderSettings(
+    setCharacterReflectionProviderSettingsDraft((current) =>
+      updateCharacterReflectionModel(
         buildDraftAppSettings({ characterReflectionProviderSettings: current }),
+        providerCatalog,
         providerId,
-      );
-      const selection = coerceModelSelection(providerCatalog, model, currentSettings.reasoningEffort);
-      return {
-        ...current,
-        [providerId]: {
-          model: selection.resolvedModel,
-          reasoningEffort: selection.resolvedReasoningEffort,
-        },
-      };
-    });
+        model,
+      )
+    );
   };
 
   const handleChangeCharacterReflectionReasoningEffort = (
     providerId: string,
     reasoningEffort: CharacterReflectionProviderSettings["reasoningEffort"],
   ) => {
-    setCharacterReflectionProviderSettingsDraft((current) => ({
-      ...current,
-      [providerId]: {
-        ...getCharacterReflectionProviderSettings(
-          buildDraftAppSettings({ characterReflectionProviderSettings: current }),
-          providerId,
-        ),
+    setCharacterReflectionProviderSettingsDraft((current) =>
+      updateCharacterReflectionReasoningEffort(
+        buildDraftAppSettings({ characterReflectionProviderSettings: current }),
+        providerId,
         reasoningEffort,
-      },
-    }));
+      )
+    );
   };
 
-  const providerSettingRows = useMemo<ProviderSettingRow[]>(
-    () =>
-      (modelCatalog?.providers ?? []).map((provider) => {
-        const settings = getProviderAppSettings(buildDraftAppSettings(), provider.id);
-        const memoryExtractionSettings = getMemoryExtractionProviderSettings(buildDraftAppSettings(), provider.id);
-        const characterReflectionSettings = getCharacterReflectionProviderSettings(buildDraftAppSettings(), provider.id);
-        const memoryExtractionSelection = coerceModelSelection(
-          provider,
-          memoryExtractionSettings.model,
-          memoryExtractionSettings.reasoningEffort,
-        );
-        const characterReflectionSelection = coerceModelSelection(
-          provider,
-          characterReflectionSettings.model,
-          characterReflectionSettings.reasoningEffort,
-        );
-        return {
-          provider,
-          settings,
-          memoryExtractionSettings,
-          characterReflectionSettings,
-          resolvedMemoryExtractionModel: memoryExtractionSelection.resolvedModel,
-          resolvedMemoryExtractionReasoningEffort: memoryExtractionSelection.resolvedReasoningEffort,
-          resolvedCharacterReflectionModel: characterReflectionSelection.resolvedModel,
-          resolvedCharacterReflectionReasoningEffort: characterReflectionSelection.resolvedReasoningEffort,
-          availableMemoryExtractionReasoningEfforts: getReasoningEffortOptionsForModel(provider, memoryExtractionSelection.resolvedModel),
-          availableCharacterReflectionReasoningEfforts: getReasoningEffortOptionsForModel(provider, characterReflectionSelection.resolvedModel),
-        };
-      }),
+  const providerSettingRows = useMemo<HomeProviderSettingRow[]>(
+    () => buildHomeProviderSettingRows(modelCatalog, buildDraftAppSettings()),
     [
       characterReflectionProviderSettingsDraft,
       codingProviderSettingsDraft,
@@ -846,30 +789,11 @@ export default function HomeApp() {
     ],
   );
   const normalizedMemoryExtractionProviderSettingsDraft = useMemo(
-    () =>
-      Object.fromEntries(
-        providerSettingRows.map((row) => [
-          row.provider.id,
-          {
-            model: row.resolvedMemoryExtractionModel,
-            reasoningEffort: row.resolvedMemoryExtractionReasoningEffort,
-            outputTokensThreshold: row.memoryExtractionSettings.outputTokensThreshold,
-          } satisfies MemoryExtractionProviderSettings,
-        ]),
-      ),
+    () => buildNormalizedMemoryExtractionProviderSettings(providerSettingRows),
     [providerSettingRows],
   );
   const normalizedCharacterReflectionProviderSettingsDraft = useMemo(
-    () =>
-      Object.fromEntries(
-        providerSettingRows.map((row) => [
-          row.provider.id,
-          {
-            model: row.resolvedCharacterReflectionModel,
-            reasoningEffort: row.resolvedCharacterReflectionReasoningEffort,
-          } satisfies CharacterReflectionProviderSettings,
-        ]),
-      ),
+    () => buildNormalizedCharacterReflectionProviderSettings(providerSettingRows),
     [providerSettingRows],
   );
   const settingsDirty = useMemo(() => {

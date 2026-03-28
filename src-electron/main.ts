@@ -21,7 +21,6 @@ import {
   type LiveApprovalDecision,
   type LiveApprovalRequest,
   getProviderAppSettings,
-  normalizeAppSettings,
   type LiveSessionRunState,
   type ProviderQuotaTelemetry,
   type RunSessionTurnRequest,
@@ -33,10 +32,8 @@ import {
   type SessionContextTelemetry,
 } from "../src/app-state.js";
 import {
-  coerceModelSelection,
   DEFAULT_PROVIDER_ID,
   getProviderCatalog,
-  parseModelCatalogDocument,
   type ModelCatalogDocument,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
@@ -65,6 +62,7 @@ import { SessionRuntimeService } from "./session-runtime-service.js";
 import { SessionPersistenceService } from "./session-persistence-service.js";
 import { SessionWindowBridge } from "./session-window-bridge.js";
 import { MemoryOrchestrationService } from "./memory-orchestration-service.js";
+import { SettingsCatalogService } from "./settings-catalog-service.js";
 import { buildProjectMemoryPromotionEntries } from "./project-memory-promotion.js";
 import { retrieveProjectMemoryEntries } from "./project-memory-retrieval.js";
 import {
@@ -182,6 +180,7 @@ let sessionRuntimeService: SessionRuntimeService | null = null;
 let sessionPersistenceService: SessionPersistenceService | null = null;
 let sessionWindowBridge: SessionWindowBridge<BrowserWindow> | null = null;
 let memoryOrchestrationService: MemoryOrchestrationService | null = null;
+let settingsCatalogService: SettingsCatalogService | null = null;
 
 function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0]): BrowserWindow {
   return new BrowserWindow({
@@ -403,6 +402,32 @@ function requireMemoryOrchestrationService(): MemoryOrchestrationService {
   return memoryOrchestrationService;
 }
 
+function requireSettingsCatalogService(): SettingsCatalogService {
+  if (!settingsCatalogService) {
+    settingsCatalogService = new SettingsCatalogService({
+      hasInFlightSessionRuns,
+      isSessionRunInFlight,
+      isRunningSession,
+      listSessions,
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      updateAppSettings: (settings) => requireAppSettingsStorage().updateSettings(settings),
+      getModelCatalog,
+      ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
+      importModelCatalogDocument: (document, source) => requireModelCatalogStorage().importCatalogDocument(document, source),
+      exportModelCatalogDocument: (revision) => requireModelCatalogStorage().exportCatalogDocument(revision),
+      replaceAllSessions,
+      clearProviderQuotaTelemetry,
+      clearSessionContextTelemetry,
+      invalidateProviderSessionThread,
+      broadcastSessions,
+      broadcastAppSettings,
+      broadcastModelCatalog,
+    });
+  }
+
+  return settingsCatalogService;
+}
+
 function requireSessionMemoryStorage(): SessionMemoryStorage {
   if (!sessionMemoryStorage) {
     throw new Error("session memory storage が初期化されていないよ。");
@@ -467,6 +492,7 @@ function closePersistentStores(): void {
   characterMemoryStorage = null;
   auditLogStorage = null;
   appSettingsStorage = null;
+  settingsCatalogService = null;
 }
 
 async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
@@ -1019,7 +1045,7 @@ async function importModelCatalogFromFile(targetWindow?: BrowserWindow | null): 
 
   const raw = await readFile(result.filePaths[0], "utf8");
   const document = JSON.parse(raw) as ModelCatalogDocument;
-  return importModelCatalogDocument(document);
+  return requireSettingsCatalogService().importModelCatalogDocument(document);
 }
 
 async function exportModelCatalogToFile(revision: number | null | undefined, targetWindow?: BrowserWindow | null): Promise<string | null> {
@@ -1265,176 +1291,6 @@ async function resolveSessionCharacter(session: Session): Promise<CharacterProfi
     }
   }
   return null;
-}
-
-function migrateSessionToCatalog(session: Session, snapshot: ModelCatalogSnapshot): Session {
-  const provider = getProviderCatalog(snapshot.providers, session.provider);
-  if (!provider) {
-    throw new Error("利用できる model catalog provider が見つからないよ。");
-  }
-
-  const selection = coerceModelSelection(provider, session.model, session.reasoningEffort);
-  const shouldResetThread =
-    session.provider !== provider.id ||
-    session.model !== selection.resolvedModel ||
-    session.reasoningEffort !== selection.resolvedReasoningEffort;
-
-  return {
-    ...session,
-    provider: provider.id,
-    catalogRevision: snapshot.revision,
-    model: selection.resolvedModel,
-    reasoningEffort: selection.resolvedReasoningEffort,
-    threadId: shouldResetThread ? "" : session.threadId,
-    updatedAt: shouldResetThread || session.catalogRevision !== snapshot.revision ? currentTimestampLabel() : session.updatedAt,
-  };
-}
-
-function migrateSessionsToCatalog(snapshot: ModelCatalogSnapshot): Session[] {
-  const migratedSessions = sessions.map((session) => migrateSessionToCatalog(session, snapshot));
-  const invalidatedSessionIds = migratedSessions
-    .filter((session) => !session.threadId)
-    .map((session) => session.id);
-  return replaceAllSessions(migratedSessions, {
-    broadcast: false,
-    invalidateSessionIds: invalidatedSessionIds,
-  });
-}
-
-function importModelCatalogDocument(document: ModelCatalogDocument): ModelCatalogSnapshot {
-  if (hasInFlightSessionRuns()) {
-    throw new Error("session 実行中は model catalog を読み込めないよ。");
-  }
-
-  const storage = requireModelCatalogStorage();
-  const previousSnapshot = getModelCatalog(null) ?? storage.ensureSeeded();
-  const previousCatalogDocument = storage.exportCatalogDocument(previousSnapshot.revision);
-  if (!previousCatalogDocument) {
-    throw new Error("rollback 用の model catalog を取得できなかったよ。");
-  }
-
-  const previousSessions = listSessions();
-  const normalizedDocument = parseModelCatalogDocument(document);
-  for (const session of previousSessions) {
-    migrateSessionToCatalog(session, { revision: previousSnapshot.revision, providers: normalizedDocument.providers });
-  }
-
-  let importedSnapshot: ModelCatalogSnapshot | null = null;
-  try {
-    importedSnapshot = storage.importCatalogDocument(normalizedDocument, "imported");
-    migrateSessionsToCatalog(importedSnapshot);
-    broadcastSessions();
-    broadcastModelCatalog(importedSnapshot);
-    return importedSnapshot;
-  } catch (error) {
-    if (!importedSnapshot) {
-      throw error;
-    }
-
-    try {
-      storage.importCatalogDocument(previousCatalogDocument, "rollback");
-      replaceAllSessions(previousSessions, { broadcast: false });
-    } catch (rollbackError) {
-      throw new AggregateError(
-        [error, rollbackError],
-        "model catalog の import を rollback できなかったよ。",
-      );
-    }
-
-    throw error;
-  }
-}
-
-function getProvidersWithApiKeyChange(previousSettings: ReturnType<AppSettingsStorage["getSettings"]>, nextSettings: ReturnType<AppSettingsStorage["getSettings"]>): string[] {
-  const providerIds = new Set<string>([
-    ...Object.keys(previousSettings.codingProviderSettings),
-    ...Object.keys(nextSettings.codingProviderSettings),
-  ]);
-
-  return Array.from(providerIds).filter(
-    (providerId) =>
-      getProviderAppSettings(previousSettings, providerId).apiKey.trim() !==
-      getProviderAppSettings(nextSettings, providerId).apiKey.trim(),
-  );
-}
-
-function updateAppSettings(nextSettingsInput: ReturnType<AppSettingsStorage["getSettings"]>): ReturnType<AppSettingsStorage["getSettings"]> {
-  const storage = requireAppSettingsStorage();
-  const previousSettings = storage.getSettings();
-  const nextSettings = normalizeAppSettings(nextSettingsInput);
-  const providersWithApiKeyChange = getProvidersWithApiKeyChange(previousSettings, nextSettings);
-
-  if (providersWithApiKeyChange.length > 0) {
-    const blockedSessions = sessions.filter(
-      (session) =>
-        providersWithApiKeyChange.includes(session.provider) &&
-        (isSessionRunInFlight(session.id) || isRunningSession(session)),
-    );
-    if (blockedSessions.length > 0) {
-      throw new Error("Coding Agent credential を変更する provider に実行中の session があるため、完了まで待ってね。");
-    }
-  }
-
-  const previousSessions = listSessions();
-  const providersWithApiKeyChangeSet = new Set(providersWithApiKeyChange);
-  const nextSessions = previousSessions.map((session) => {
-    if (!providersWithApiKeyChangeSet.has(session.provider) || !session.threadId) {
-      return session;
-    }
-
-    return {
-      ...session,
-      threadId: "",
-      updatedAt: currentTimestampLabel(),
-    };
-  });
-  const invalidatedSessionIds = previousSessions
-    .filter((session) => providersWithApiKeyChangeSet.has(session.provider))
-    .map((session) => session.id);
-  const hasSessionThreadReset = nextSessions.some((session, index) => session.threadId !== previousSessions[index]?.threadId);
-
-  let savedSettings: ReturnType<AppSettingsStorage["getSettings"]> | null = null;
-  try {
-    savedSettings = storage.updateSettings(nextSettings);
-    for (const providerId of providersWithApiKeyChange) {
-      clearProviderQuotaTelemetry(providerId);
-    }
-    for (const session of previousSessions) {
-      if (providersWithApiKeyChangeSet.has(session.provider)) {
-        clearSessionContextTelemetry(session.id);
-      }
-    }
-    if (hasSessionThreadReset) {
-      replaceAllSessions(nextSessions, {
-        broadcast: false,
-        invalidateSessionIds: invalidatedSessionIds,
-      });
-      broadcastSessions();
-    } else {
-      for (const sessionId of invalidatedSessionIds) {
-        const sessionProvider = previousSessions.find((session) => session.id === sessionId)?.provider ?? null;
-        invalidateProviderSessionThread(sessionProvider, sessionId);
-      }
-    }
-    broadcastAppSettings(savedSettings);
-    return savedSettings;
-  } catch (error) {
-    if (!savedSettings) {
-      throw error;
-    }
-
-    try {
-      storage.updateSettings(previousSettings);
-      replaceAllSessions(previousSessions, { broadcast: false });
-    } catch (rollbackError) {
-      throw new AggregateError(
-        [error, rollbackError],
-        "app settings の更新を rollback できなかったよ。",
-      );
-    }
-
-    throw error;
-  }
 }
 
 async function previewComposerInput(
@@ -1702,14 +1558,20 @@ app.whenReady().then(async () => {
   ipcMain.handle(WITHMATE_LIST_SESSION_SKILLS_CHANNEL, (_event, sessionId: string) => listSessionSkills(sessionId));
   ipcMain.handle(WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL, (_event, sessionId: string) => listSessionCustomAgents(sessionId));
   ipcMain.handle(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL, () => listOpenSessionWindowIds());
-  ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => requireAppSettingsStorage().getSettings());
-  ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => updateAppSettings(settings));
+  ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => requireSettingsCatalogService().getAppSettings());
+  ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) =>
+    requireSettingsCatalogService().updateAppSettings(settings),
+  );
   ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, (_event, request: ResetAppDatabaseRequest | null | undefined) =>
     resetAppDatabase(request),
   );
   ipcMain.handle(WITHMATE_LIST_CHARACTERS_CHANNEL, async () => refreshCharactersFromStorage());
-  ipcMain.handle(WITHMATE_GET_MODEL_CATALOG_CHANNEL, (_event, revision: number | null) => getModelCatalog(revision));
-  ipcMain.handle(WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL, (_event, document: ModelCatalogDocument) => importModelCatalogDocument(document));
+  ipcMain.handle(WITHMATE_GET_MODEL_CATALOG_CHANNEL, (_event, revision: number | null) =>
+    requireSettingsCatalogService().getModelCatalog(revision),
+  );
+  ipcMain.handle(WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL, (_event, document: ModelCatalogDocument) =>
+    requireSettingsCatalogService().importModelCatalogDocument(document),
+  );
   ipcMain.handle(WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL, async (event) => {
     const targetWindow = BrowserWindow.fromWebContents(event.sender) ?? homeWindow ?? undefined;
     return importModelCatalogFromFile(targetWindow);
@@ -1934,6 +1796,7 @@ app.on("before-quit", (event) => {
   appSettingsStorage = null;
   modelCatalogStorage?.close();
   modelCatalogStorage = null;
+  settingsCatalogService = null;
 });
 
 

@@ -21,6 +21,7 @@
 - 全対象を選んだ場合は DB ファイルを再生成して schema も初期化する
 - `Settings Window` は縦方向の余白を少し増やしつつ、内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - file picker / save dialog は Main Process 側で開く
+- current 実装では Main Process 側の settings / catalog 更新は `src-electron/settings-catalog-service.ts` に寄せ、renderer 側の provider row 組み立ては `src/home-settings-view-model.ts` に寄せる
 
 ## Interaction
 
@@ -90,6 +91,8 @@
 - Memory extraction 設定は provider ごとに保持し、trigger engine は現在 provider の `model / reasoning depth / outputTokens threshold` を参照する
 - current 実装では、memory extraction の通常発火は `outputTokens threshold` だけで判定する
 - Character reflection 設定は provider ごとに保持し、current v1 の `character reflection cycle` 実行時に `model / reasoning depth` を参照する
+- Main Process 側の `app settings` 更新、`model catalog` import、rollback、関連 session / telemetry invalidation は `SettingsCatalogService` が担当する
+- renderer 側では `HomeApp.tsx` が storage 正規化を直接持たず、`home-settings-view-model` の derived data を使って provider row を描画する
 - DB reset 成功時は renderer 側で reset 後の `appSettings` を draft に同期し、dirty 状態を解消する
 - reset 実行 API は選択対象を Main Process へ渡し、戻り値の current `sessions / appSettings / modelCatalog` で renderer を再同期する
 
