@@ -289,7 +289,7 @@ diff 本文は turn items からは直接取れないため、MVP では Main Pr
 ## References
 
 - `docs/design/prompt-composition.md`
-- `docs/design/session-persistence.md`
+- `docs/design/electron-session-store.md`
 - `docs/design/model-catalog.md`
 - `docs/design/audit-log.md`
 - `docs/design/coding-agent-capability-matrix.md`

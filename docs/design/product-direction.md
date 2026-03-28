@@ -52,7 +52,7 @@ WithMate で実現したい体験は次の三層で構成される。
 
 - 初回リリース前のため後方互換性は考慮しない
 - Settings / storage / catalog に非互換変更が入った場合は、Settings の `DB を初期化` を回復手段の正本とする
-- `DB を初期化` は `sessions / audit logs / app settings / model catalog / project memory` を初期化し、`characters` は保持する
+- `DB を初期化` は `sessions / audit logs / app settings / model catalog / project memory / character memory` を初期化し、`characters` は保持する
 
 ## Priority Order
 
@@ -131,7 +131,7 @@ WithMate は provider を 1 つに統一しない。
   - **target scope**: `Codex` と `CopilotCLI`
   - CLI / SDK で使える共通機能の網羅を先に進める
   - current Settings は coding plane 専用で、provider enable / disable と coding credential をここで扱う
-- 将来的な `Character Stream`
+- 将来的な独立 `Character Stream`
   - OpenAI API
   - API キー前提
   - Settings 上も coding plane とは別責務で扱う
@@ -153,7 +153,7 @@ current milestone における Character の責務は次のとおり。
 
 - provider ごとの複雑な prompt 制御
 - 自律的な会話継続
-- SessionWindow とは別面で動く Character Stream の本体
+- coding plane と分離した独立 Character Stream 本体
 
 ## Memory Responsibility
 
@@ -215,15 +215,15 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 - `Home Window` は resume / new session / character selection を担う管理面
 - `Session Window` は作業面
 - `Work Chat` は作業結果を読む面
-- 独り言 UI は `Session Window` の `独り言` tab に限定して置く
-- これは `未実装だから一時的に隠している` のではなく、`Codex / CopilotCLI / CLI / SDK parity` 完了前は着手しない方針による
+- `独り言` は `Session Window` 右ペインの `Monologue` host に限定して置く
+- これは本体作業面の主面ではなく、character reflection の補助面として扱う
 
 ### 2. キャラ性は構造で出す
 
 - セッションにキャラクターが紐づいている
 - Session copy や theme が同じ character を感じさせる
-- 将来的には `Session Window` の別面で独り言を扱う
-- ただし current milestone では UI へは出さない
+- current 実装では `Session Window` 右ペインに `Monologue` host を置く
+- ただし本体作業面の主面には昇格させない
 
 色や装飾だけで VTuber 感を作ろうとしない。
 
@@ -232,7 +232,7 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 - 普段見る: chat, status
 - 必要時に開く: artifact summary
 - 深掘り時だけ開く: diff viewer
-- future では Character Stream を別面として追加しうるが、current milestone の通常表示面には含めない
+- future では Character Stream を独立 plane として強化しうるが、current milestone では right pane host の範囲に留める
 - 役割が自明な面では、見出しや名前ラベルは原則出さない
 - 表示を正当化できるのは、ユーザー操作か直近判断に必要な情報だけ
 
@@ -261,7 +261,7 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 - `Work Chat` の読みやすさ
 - `Artifact Summary` の実務的な有用性
 - キャラクター定義の安定注入前提
-- 独り言 UI を premature に本実装済みへ見せないこと
+- 独り言 UI を本体作業面より前に出しすぎないこと
 - 非互換変更時の回復導線として Settings の DB reset を維持すること
 
 ## What We Are Not Deciding Yet

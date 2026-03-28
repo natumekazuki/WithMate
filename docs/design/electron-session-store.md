@@ -171,14 +171,14 @@ app 設定は `app_settings` table に保存する。
 - `listSessionAuditLogs(sessionId)` で監査ログを取得する
 - `subscribeSessions()` で同じ session の最新状態を追従する
 
-## Relation To Session Persistence
+## Relation To Current Persistence Docs
 
-- [session-persistence.md](./session-persistence.md) で定義した `Session Metadata` の source of truth に相当する
 - Main Process 側 SQLite 実装が current source of truth
 - `SessionPersistenceService` は SQLite-backed store と in-memory `sessions` 配列の同期を担う
 - `replaceAllSessions()` を含む bulk write path も `SessionPersistenceService` に集約する
 - preload API は将来 SQLite 実装へ差し替えても Renderer を変えないための境界として使う
 - table 一覧と JSON カラムの棚卸しは [database-schema.md](./database-schema.md) を参照する
+- session 実行 lifecycle と background task のつながりは [session-run-lifecycle.md](./session-run-lifecycle.md) を参照する
 
 ## Directory Picker Policy
 

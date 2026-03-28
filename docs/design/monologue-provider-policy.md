@@ -238,7 +238,7 @@ current milestone では `Character Stream` は **非着手** とし、provider 
 ### Memory Design
 
 - `#3` の Memory は、独り言の継続性とコスト最適化の両方に責務を持つ
-- 詳細は `docs/design/memory-architecture.md` と `docs/design/session-persistence.md` を参照する
+- 詳細は `docs/design/memory-architecture.md` と `docs/design/database-schema.md` を参照する
 
 ## Open Questions
 

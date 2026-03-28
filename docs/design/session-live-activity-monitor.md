@@ -17,8 +17,8 @@
 ## Design Summary
 
 - pending bubble は引き続き `assistantText` と run indicator だけを表示する
-- right pane は `Latest Command / Memory生成 / 独り言` の 3 面を持つ
-- 手動切り替えは常時可能にする
+- right pane は `LatestCommand / MemoryGeneration / Monologue` の 3 面を持つ
+- 手動切り替えは左右ボタンで常時可能にする
 - 自動切り替えは `running` を基準にする
   - `Latest Command` は session run 中を最優先で表示する
   - `Memory生成` は background memory extraction が `running` の時に自動表示する
@@ -48,13 +48,12 @@ flowchart TB
 - `assistantText` を読む主面として扱う
 - `message follow` banner は既存どおり list 下端の導線に留める
 
-### Right Pane Tabs
+### Right Pane Switcher
 
 - wide desktop では右 pane に常設する
-- 上部に 3 つの tab button を置く
-  - `LatestCommand`
-  - `Memory生成`
-  - `独り言`
+- 上部に `現在の面名 + 左右切り替え` を置く
+- badge は current 面の状態だけを最小表示する
+- inactive 面は常時並べず、狭い幅でも詰まらないことを優先する
 
 #### Latest Command
 
@@ -67,7 +66,7 @@ flowchart TB
   - 必要時だけ開く `details`
 - `liveRun.errorMessage` がある時は card 内の alert として併記する
 
-#### Memory生成
+#### MemoryGeneration
 
 - `Session Memory extraction` の background activity を表示する
 - 内容は次に絞る
@@ -76,7 +75,7 @@ flowchart TB
   - trigger / model / reasoning を含む `details`
   - failure 時の error block
 
-#### 独り言
+#### Monologue
 
 - `character reflection cycle` の background state を表示する
 - session `stream` に保存された recent monologue を新しい順で表示する
@@ -118,7 +117,7 @@ flowchart TB
 ## Non-Goals
 
 - full step timeline の常設表示
-- `Character Stream` 本体実装
+- monologue 専用 plane の独立 provider 化
 - command の危険度判定を完全自動化すること
 - Audit Log の構造変更
 

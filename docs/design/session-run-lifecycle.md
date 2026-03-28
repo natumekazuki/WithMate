@@ -153,7 +153,8 @@ MVP では tray 常駐までは行わない。
   - window ごとの責務
 - [electron-window-runtime.md](./electron-window-runtime.md)
   - Electron Main Process の lifecycle
-- [session-persistence.md](./session-persistence.md)
+- [electron-session-store.md](./electron-session-store.md)
+- [database-schema.md](./database-schema.md)
   - session metadata の永続化
 - [refactor-roadmap.md](./refactor-roadmap.md)
   - runtime orchestration の段階的分離方針

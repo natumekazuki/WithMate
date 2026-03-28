@@ -31,7 +31,6 @@ current 実装の正本として維持する文書。
 | `database-schema.md` | current 保存構造と DB 定義の正本 |
 | `model-catalog.md` | model catalog 保存 / 解決ロジック |
 | `session-run-lifecycle.md` | session 実行 lifecycle と background task のつながり |
-| `session-persistence.md` | session 永続化の責務分離 |
 | `provider-usage-telemetry.md` | Copilot usage telemetry の current 仕様 |
 
 ### B. Supporting / Domain Detail
@@ -70,13 +69,14 @@ current 正本としては扱わず、必要時だけ archive を参照する。
 | `archive/2026/03/skill-command-design.md` | skill command 設計メモとして archive |
 | `archive/2026/03/slash-command-integration.md` | slash command 統合検討メモとして archive |
 | `archive/2026/03/provider-sdk-pending-items.md` | SDK pending items の review note として archive |
+| `archive/2026/03/session-persistence.md` | SQLite / Memory current 実装は `electron-session-store.md` と `database-schema.md` に吸収済みのため archive |
 
 ## Next Review Order
 
 docs 精査は次の順で進める。
 
 1. `desktop-ui.md` と UI 系文書の統合方針を決める
-2. `window-architecture.md` / `electron-window-runtime.md` / `session-run-lifecycle.md` の境界を見直す
+2. `window-architecture.md` / `electron-window-runtime.md` / `session-run-lifecycle.md` / `electron-session-store.md` の境界を見直す
 3. archive した調査メモから、current 正本へ戻すべき論点が出た時だけ follow-up を切る
 4. current docs に新しい historical / review 文書を増やさない運用を維持する
 

@@ -1,5 +1,7 @@
 # Session Persistence
 
+> 注記: 本書は current 実装の正本ではない。session / audit / memory の current 保存構造は `docs/design/electron-session-store.md` と `docs/design/database-schema.md` を正本とする。
+
 - 作成日: 2026-03-12
 - 対象: セッション継続に必要な永続化設計
 - 関連 Issue:

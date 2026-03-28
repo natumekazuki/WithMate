@@ -20,7 +20,7 @@ WithMate は、`Codex CLI / GitHub Copilot CLI` 相当の coding agent 体験を
   - セッション一覧の確認
   - 新規セッション起動
   - キャラクター一覧の確認
-  - Settings overlay の起点
+  - Settings Window の起点
 - `Session Window`
   - coding agent との作業チャット
   - approval mode の反映
@@ -131,17 +131,17 @@ npm run typecheck
   - 新規セッション起動 UI の考え方
 - `docs/design/character-storage.md`
   - キャラクター保存まわりの設計
-- `docs/design/session-persistence.md`
-  - セッション永続化の設計
+- `docs/design/electron-session-store.md`
+  - Electron 側の session / audit / memory 永続化の設計
 
 ## 現在の状態
 
 - Electron 実行を正本とする desktop アプリ構成です
 - セッション情報は Electron 側で保持され、キャラクター情報はストレージから読み込みます
-- Settings overlay では `System Prompt Prefix`、`Coding Agent Providers`、`Coding Agent Credentials`、model catalog、`Danger Zone` の DB 初期化を管理します
-- current Settings の provider / credential は coding plane 専用です。`Character Stream` 用 API 入力欄は current milestone では追加していません
+- Settings Window では `System Prompt Prefix`、`Coding Agent Providers`、`Coding Agent Credentials`、`Memory Extraction`、`Character Reflection`、model catalog、`Danger Zone` の DB 初期化を管理します
+- current の provider credential は coding plane を正本にし、Character Reflection も同じ provider client を流用します。独立した monologue / Character Stream 用 API 入力欄は current milestone では追加していません
 - 初回リリース前のため後方互換性は考慮しません。互換性のない変更が入った場合は Settings の `DB を初期化` で回復する前提です
-- `DB を初期化` は `sessions / audit logs / app settings / model catalog / project memory` を初期状態へ戻し、`characters` は削除しません
+- `DB を初期化` は `sessions / audit logs / app settings / model catalog / project memory / character memory` を初期状態へ戻し、`characters` は削除しません
 - `Character Stream` は価値仮説として保持しているものの、current milestone では未着手です
 
 ## 補足

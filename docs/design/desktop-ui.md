@@ -102,7 +102,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
     - provider ごとの `Model`
     - provider ごとの `Reasoning Depth`
     - provider ごとの `Output Tokens Threshold`
-    - `compact 前` / `session close 前` は強制実行
+    - current 実装では turn 完了時の threshold 判定と `Session Window` close 時の強制実行に使う
   - `Model Catalog` import / export
   - `Danger Zone` の `DB を初期化`
     - reset 対象を `sessions / audit logs / app settings / model catalog / project memory / character memory` から選べる
