@@ -3,7 +3,7 @@ import {
   areAllResetAppDatabaseTargetsSelected,
   normalizeResetAppDatabaseTargets,
   type ResetAppDatabaseTarget,
-} from "./withmate-window.js";
+} from "./withmate-window-types.js";
 
 export const SETTINGS_API_KEY_LABEL = "OpenAI API Key (Coding Agent)";
 export const SETTINGS_API_KEY_PLACEHOLDER = "Coding Agent 用 OpenAI API Key を入力";

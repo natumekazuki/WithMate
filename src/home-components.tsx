@@ -31,7 +31,7 @@ import {
   SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL,
 } from "./settings-ui.js";
 import { buildCardThemeStyle, CharacterAvatar, modelOptionLabel, reasoningDepthLabel } from "./ui-utils.js";
-import type { ResetAppDatabaseTarget } from "./withmate-window.js";
+import type { ResetAppDatabaseTarget } from "./withmate-window-types.js";
 
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;

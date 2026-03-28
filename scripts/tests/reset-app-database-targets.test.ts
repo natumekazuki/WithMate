@@ -5,7 +5,7 @@ import {
   ALL_RESET_APP_DATABASE_TARGETS,
   areAllResetAppDatabaseTargetsSelected,
   normalizeResetAppDatabaseTargets,
-} from "../../src/withmate-window.js";
+} from "../../src/withmate-window-types.js";
 
 describe("resetAppDatabaseTargets", () => {
   it("sessions を選ぶと auditLogs も自動的に含める", () => {

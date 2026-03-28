@@ -63,7 +63,7 @@ import {
   ALL_RESET_APP_DATABASE_TARGETS,
   normalizeResetAppDatabaseTargets,
   type ResetAppDatabaseTarget,
-} from "./withmate-window.js";
+} from "./withmate-window-types.js";
 
 async function openSessionWindow(sessionId: string) {
   if (!window.withmate) {

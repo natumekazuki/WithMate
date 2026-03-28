@@ -12,9 +12,10 @@ import type {
   SessionContextTelemetry,
 } from "../src/app-state.js";
 import type { CreateCharacterInput } from "../src/character-state.js";
-import type { CreateSessionInput, DiffPreviewPayload, Session } from "../src/session-state.js";
-import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
+import type { AppSettings } from "../src/provider-settings-state.js";
+import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
+import type { CreateSessionInput, DiffPreviewPayload, Session } from "../src/session-state.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
@@ -59,10 +60,8 @@ import {
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
-  type OpenPathOptions,
-  type ResetAppDatabaseRequest,
-} from "../src/withmate-window.js";
-import type { AppSettings } from "../src/provider-settings-state.js";
+} from "../src/withmate-ipc-channels.js";
+import type { OpenPathOptions, ResetAppDatabaseRequest } from "../src/withmate-window-types.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
 
@@ -117,6 +116,71 @@ export type MainIpcRegistrationDeps = {
   openSessionTerminal(sessionId: string): Promise<void>;
 };
 
+type MainIpcWindowDeps = Pick<
+  MainIpcRegistrationDeps,
+  | "resolveEventWindow"
+  | "resolveHomeWindow"
+  | "openSessionWindow"
+  | "openHomeWindow"
+  | "openSessionMonitorWindow"
+  | "openSettingsWindow"
+  | "openCharacterEditorWindow"
+  | "openDiffWindow"
+  | "openPathTarget"
+  | "openSessionTerminal"
+  | "pickDirectory"
+  | "pickFile"
+  | "pickImageFile"
+>;
+
+type MainIpcCatalogDeps = Pick<
+  MainIpcRegistrationDeps,
+  | "resolveEventWindow"
+  | "resolveHomeWindow"
+  | "getModelCatalog"
+  | "importModelCatalogDocument"
+  | "importModelCatalogFromFile"
+  | "exportModelCatalogDocument"
+  | "exportModelCatalogToFile"
+>;
+
+type MainIpcSettingsDeps = Pick<
+  MainIpcRegistrationDeps,
+  "getAppSettings" | "updateAppSettings" | "resetAppDatabase"
+>;
+
+type MainIpcSessionQueryDeps = Pick<
+  MainIpcRegistrationDeps,
+  | "listSessions"
+  | "listSessionAuditLogs"
+  | "listSessionSkills"
+  | "listSessionCustomAgents"
+  | "listOpenSessionWindowIds"
+  | "getSession"
+  | "getDiffPreview"
+  | "previewComposerInput"
+  | "searchWorkspaceFiles"
+>;
+
+type MainIpcSessionRuntimeDeps = Pick<
+  MainIpcRegistrationDeps,
+  | "getLiveSessionRun"
+  | "getProviderQuotaTelemetry"
+  | "getSessionContextTelemetry"
+  | "getSessionBackgroundActivity"
+  | "resolveLiveApproval"
+  | "createSession"
+  | "updateSession"
+  | "deleteSession"
+  | "runSessionTurn"
+  | "cancelSessionRun"
+>;
+
+type MainIpcCharacterDeps = Pick<
+  MainIpcRegistrationDeps,
+  "listCharacters" | "getCharacter" | "createCharacter" | "updateCharacter" | "deleteCharacter"
+>;
+
 function resolveTargetWindow(
   event: IpcMainInvokeEvent,
   deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveHomeWindow">,
@@ -124,7 +188,7 @@ function resolveTargetWindow(
   return deps.resolveEventWindow(event) ?? deps.resolveHomeWindow() ?? undefined;
 }
 
-export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrationDeps): void {
+function registerWindowHandlers(ipcMain: IpcMain, deps: MainIpcWindowDeps): void {
   ipcMain.handle(WITHMATE_OPEN_SESSION_CHANNEL, async (_event, sessionId: string) => {
     if (!sessionId) {
       return;
@@ -146,19 +210,24 @@ export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrat
   ipcMain.handle(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, async (_event, diffPreview: DiffPreviewPayload) => {
     await deps.openDiffWindow(diffPreview);
   });
-
-  ipcMain.handle(WITHMATE_LIST_SESSIONS_CHANNEL, () => deps.listSessions());
-  ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => deps.listSessionAuditLogs(sessionId));
-  ipcMain.handle(WITHMATE_LIST_SESSION_SKILLS_CHANNEL, (_event, sessionId: string) => deps.listSessionSkills(sessionId));
-  ipcMain.handle(WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL, (_event, sessionId: string) => deps.listSessionCustomAgents(sessionId));
-  ipcMain.handle(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL, () => deps.listOpenSessionWindowIds());
-
-  ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => deps.getAppSettings());
-  ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => deps.updateAppSettings(settings));
-  ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, (_event, request: ResetAppDatabaseRequest | null | undefined) =>
-    deps.resetAppDatabase(request),
+  ipcMain.handle(WITHMATE_PICK_DIRECTORY_CHANNEL, async (event, initialPath: string | null) =>
+    deps.pickDirectory(resolveTargetWindow(event, deps), initialPath),
   );
-  ipcMain.handle(WITHMATE_LIST_CHARACTERS_CHANNEL, async () => deps.listCharacters());
+  ipcMain.handle(WITHMATE_PICK_FILE_CHANNEL, async (event, initialPath: string | null) =>
+    deps.pickFile(resolveTargetWindow(event, deps), initialPath),
+  );
+  ipcMain.handle(WITHMATE_PICK_IMAGE_FILE_CHANNEL, async (event, initialPath: string | null) =>
+    deps.pickImageFile(resolveTargetWindow(event, deps), initialPath),
+  );
+  ipcMain.handle(WITHMATE_OPEN_PATH_CHANNEL, async (_event, target: string, options: OpenPathOptions | null) =>
+    deps.openPathTarget(target, options ?? undefined),
+  );
+  ipcMain.handle(WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL, async (_event, sessionId: string) =>
+    deps.openSessionTerminal(sessionId),
+  );
+}
+
+function registerCatalogHandlers(ipcMain: IpcMain, deps: MainIpcCatalogDeps): void {
   ipcMain.handle(WITHMATE_GET_MODEL_CATALOG_CHANNEL, (_event, revision: number | null) => deps.getModelCatalog(revision));
   ipcMain.handle(WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL, (_event, document: ModelCatalogDocument) =>
     deps.importModelCatalogDocument(document),
@@ -172,7 +241,24 @@ export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrat
   ipcMain.handle(WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL, async (event, revision: number | null) =>
     deps.exportModelCatalogToFile(revision, resolveTargetWindow(event, deps)),
   );
+}
 
+function registerSettingsHandlers(ipcMain: IpcMain, deps: MainIpcSettingsDeps): void {
+  ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => deps.getAppSettings());
+  ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => deps.updateAppSettings(settings));
+  ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, (_event, request: ResetAppDatabaseRequest | null | undefined) =>
+    deps.resetAppDatabase(request),
+  );
+}
+
+function registerSessionQueryHandlers(ipcMain: IpcMain, deps: MainIpcSessionQueryDeps): void {
+  ipcMain.handle(WITHMATE_LIST_SESSIONS_CHANNEL, () => deps.listSessions());
+  ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => deps.listSessionAuditLogs(sessionId));
+  ipcMain.handle(WITHMATE_LIST_SESSION_SKILLS_CHANNEL, (_event, sessionId: string) => deps.listSessionSkills(sessionId));
+  ipcMain.handle(WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL, (_event, sessionId: string) =>
+    deps.listSessionCustomAgents(sessionId),
+  );
+  ipcMain.handle(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL, () => deps.listOpenSessionWindowIds());
   ipcMain.handle(WITHMATE_GET_SESSION_CHANNEL, (_event, sessionId: string) => {
     if (!sessionId) {
       return null;
@@ -185,6 +271,15 @@ export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrat
     }
     return deps.getDiffPreview(token);
   });
+  ipcMain.handle(WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL, (_event, sessionId: string, userMessage: string) =>
+    deps.previewComposerInput(sessionId, userMessage),
+  );
+  ipcMain.handle(WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL, (_event, sessionId: string, query: string) =>
+    deps.searchWorkspaceFiles(sessionId, query),
+  );
+}
+
+function registerSessionRuntimeHandlers(ipcMain: IpcMain, deps: MainIpcSessionRuntimeDeps): void {
   ipcMain.handle(WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL, (_event, sessionId: string) => {
     if (!sessionId) {
       return null;
@@ -203,54 +298,50 @@ export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrat
     }
     return deps.getSessionContextTelemetry(sessionId);
   });
-  ipcMain.handle(WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL, (_event, sessionId: string, kind: SessionBackgroundActivityKind) => {
-    if (!sessionId || !kind) {
-      return null;
-    }
-    return deps.getSessionBackgroundActivity(sessionId, kind);
-  });
-  ipcMain.handle(WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL, (_event, sessionId: string, requestId: string, decision: LiveApprovalDecision) => {
-    deps.resolveLiveApproval(sessionId, requestId, decision);
-  });
-
-  ipcMain.handle(WITHMATE_GET_CHARACTER_CHANNEL, async (_event, characterId: string) => {
-    if (!characterId) {
-      return null;
-    }
-    return deps.getCharacter(characterId);
-  });
+  ipcMain.handle(
+    WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
+    (_event, sessionId: string, kind: SessionBackgroundActivityKind) => {
+      if (!sessionId || !kind) {
+        return null;
+      }
+      return deps.getSessionBackgroundActivity(sessionId, kind);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
+    (_event, sessionId: string, requestId: string, decision: LiveApprovalDecision) => {
+      deps.resolveLiveApproval(sessionId, requestId, decision);
+    },
+  );
   ipcMain.handle(WITHMATE_CREATE_SESSION_CHANNEL, (_event, input: CreateSessionInput) => deps.createSession(input));
   ipcMain.handle(WITHMATE_UPDATE_SESSION_CHANNEL, (_event, session: Session) => deps.updateSession(session));
   ipcMain.handle(WITHMATE_DELETE_SESSION_CHANNEL, (_event, sessionId: string) => deps.deleteSession(sessionId));
-  ipcMain.handle(WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL, (_event, sessionId: string, userMessage: string) =>
-    deps.previewComposerInput(sessionId, userMessage),
-  );
-  ipcMain.handle(WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL, (_event, sessionId: string, query: string) =>
-    deps.searchWorkspaceFiles(sessionId, query),
-  );
   ipcMain.handle(WITHMATE_RUN_SESSION_TURN_CHANNEL, async (_event, sessionId: string, request: RunSessionTurnRequest) =>
     deps.runSessionTurn(sessionId, request),
   );
   ipcMain.handle(WITHMATE_CANCEL_SESSION_RUN_CHANNEL, (_event, sessionId: string) => {
     deps.cancelSessionRun(sessionId);
   });
+}
+
+function registerCharacterHandlers(ipcMain: IpcMain, deps: MainIpcCharacterDeps): void {
+  ipcMain.handle(WITHMATE_LIST_CHARACTERS_CHANNEL, async () => deps.listCharacters());
+  ipcMain.handle(WITHMATE_GET_CHARACTER_CHANNEL, async (_event, characterId: string) => {
+    if (!characterId) {
+      return null;
+    }
+    return deps.getCharacter(characterId);
+  });
   ipcMain.handle(WITHMATE_CREATE_CHARACTER_CHANNEL, async (_event, input: CreateCharacterInput) => deps.createCharacter(input));
   ipcMain.handle(WITHMATE_UPDATE_CHARACTER_CHANNEL, async (_event, character: CharacterProfile) => deps.updateCharacter(character));
   ipcMain.handle(WITHMATE_DELETE_CHARACTER_CHANNEL, async (_event, characterId: string) => deps.deleteCharacter(characterId));
+}
 
-  ipcMain.handle(WITHMATE_PICK_DIRECTORY_CHANNEL, async (event, initialPath: string | null) =>
-    deps.pickDirectory(resolveTargetWindow(event, deps), initialPath),
-  );
-  ipcMain.handle(WITHMATE_PICK_FILE_CHANNEL, async (event, initialPath: string | null) =>
-    deps.pickFile(resolveTargetWindow(event, deps), initialPath),
-  );
-  ipcMain.handle(WITHMATE_PICK_IMAGE_FILE_CHANNEL, async (event, initialPath: string | null) =>
-    deps.pickImageFile(resolveTargetWindow(event, deps), initialPath),
-  );
-  ipcMain.handle(WITHMATE_OPEN_PATH_CHANNEL, async (_event, target: string, options: OpenPathOptions | null) =>
-    deps.openPathTarget(target, options ?? undefined),
-  );
-  ipcMain.handle(WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL, async (_event, sessionId: string) =>
-    deps.openSessionTerminal(sessionId),
-  );
+export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrationDeps): void {
+  registerWindowHandlers(ipcMain, deps);
+  registerCatalogHandlers(ipcMain, deps);
+  registerSettingsHandlers(ipcMain, deps);
+  registerSessionQueryHandlers(ipcMain, deps);
+  registerSessionRuntimeHandlers(ipcMain, deps);
+  registerCharacterHandlers(ipcMain, deps);
 }

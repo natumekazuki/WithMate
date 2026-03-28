@@ -8,8 +8,8 @@ import {
   normalizeResetAppDatabaseTargets,
   type ResetAppDatabaseResult,
   type ResetAppDatabaseTarget,
-  type WithMateWindowApi,
-} from "./withmate-window.js";
+} from "./withmate-window-types.js";
+import type { WithMateWindowApi } from "./withmate-window-api.js";
 
 export type HomeSettingsApi = Pick<
   WithMateWindowApi,

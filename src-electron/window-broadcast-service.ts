@@ -19,7 +19,7 @@ import {
   WITHMATE_SESSIONS_CHANGED_EVENT,
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
-} from "../src/withmate-window.js";
+} from "../src/withmate-ipc-channels.js";
 
 type WindowLike = {
   isDestroyed(): boolean;

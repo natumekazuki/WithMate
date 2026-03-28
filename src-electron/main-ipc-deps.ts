@@ -16,12 +16,12 @@ import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-ca
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionInput, DiffPreviewPayload, Session } from "../src/session-state.js";
-import type { OpenPathOptions, ResetAppDatabaseRequest } from "../src/withmate-window.js";
+import type { OpenPathOptions, ResetAppDatabaseRequest } from "../src/withmate-window-types.js";
 import type { MainIpcRegistrationDeps } from "./main-ipc-registration.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
 
-type CreateMainIpcRegistrationDepsArgs = {
+export type MainIpcWindowDepsArgs = {
   resolveEventWindow(event: IpcMainInvokeEvent): MaybeWindow;
   resolveHomeWindow(): MaybeWindow;
   openSessionWindow(sessionId: string): Promise<BrowserWindow>;
@@ -30,22 +30,40 @@ type CreateMainIpcRegistrationDepsArgs = {
   openSettingsWindow(): Promise<BrowserWindow>;
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
-  listSessions(): Session[];
-  listSessionAuditLogs(sessionId: string): AuditLogEntry[];
-  listSessionSkills(sessionId: string): DiscoveredSkill[];
-  listSessionCustomAgents(sessionId: string): DiscoveredCustomAgent[];
-  listOpenSessionWindowIds(): string[];
-  getAppSettings(): AppSettings;
-  updateAppSettings(settings: AppSettings): AppSettings;
-  resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
-  listCharacters(): Promise<CharacterProfile[]>;
+  pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
+  pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
+  pickImageFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
+  openPathTarget(target: string, options?: OpenPathOptions): Promise<void>;
+  openSessionTerminal(sessionId: string): Promise<void>;
+};
+
+export type MainIpcCatalogDepsArgs = {
   getModelCatalog(revision: number | null): ModelCatalogSnapshot | null;
   importModelCatalogDocument(document: ModelCatalogDocument): ModelCatalogSnapshot;
   importModelCatalogFromFile(targetWindow?: MaybeWindow): Promise<ModelCatalogSnapshot | null>;
   exportModelCatalogDocument(revision: number | null): ModelCatalogDocument | null;
   exportModelCatalogToFile(revision: number | null, targetWindow?: MaybeWindow): Promise<string | null>;
+};
+
+export type MainIpcSettingsDepsArgs = {
+  getAppSettings(): AppSettings;
+  updateAppSettings(settings: AppSettings): AppSettings;
+  resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
+};
+
+export type MainIpcSessionQueryDepsArgs = {
+  listSessions(): Session[];
+  listSessionAuditLogs(sessionId: string): AuditLogEntry[];
+  listSessionSkills(sessionId: string): DiscoveredSkill[];
+  listSessionCustomAgents(sessionId: string): DiscoveredCustomAgent[];
+  listOpenSessionWindowIds(): string[];
   getSession(sessionId: string): Session | null;
   getDiffPreview(token: string): DiffPreviewPayload | null;
+  previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
+  searchWorkspaceFiles(sessionId: string, query: string): Promise<string[]>;
+};
+
+export type MainIpcSessionRuntimeDepsArgs = {
   getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
   getProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
   getSessionContextTelemetry(sessionId: string): SessionContextTelemetry | null;
@@ -54,84 +72,90 @@ type CreateMainIpcRegistrationDepsArgs = {
     kind: SessionBackgroundActivityKind,
   ): SessionBackgroundActivityState | null;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void;
-  getCharacter(characterId: string): Promise<CharacterProfile | null>;
   createSession(input: CreateSessionInput): Session;
   updateSession(session: Session): Session;
   deleteSession(sessionId: string): void;
-  previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
-  searchWorkspaceFiles(sessionId: string, query: string): Promise<string[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   cancelSessionRun(sessionId: string): void;
+};
+
+export type MainIpcCharacterDepsArgs = {
+  listCharacters(): Promise<CharacterProfile[]>;
+  getCharacter(characterId: string): Promise<CharacterProfile | null>;
   createCharacter(input: CreateCharacterInput): Promise<CharacterProfile>;
   updateCharacter(character: CharacterProfile): Promise<CharacterProfile>;
   deleteCharacter(characterId: string): Promise<void>;
-  pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
-  pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
-  pickImageFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
-  openPathTarget(target: string, options?: OpenPathOptions): Promise<void>;
-  openSessionTerminal(sessionId: string): Promise<void>;
+};
+
+export type CreateMainIpcRegistrationDepsArgs = {
+  window: MainIpcWindowDepsArgs;
+  catalog: MainIpcCatalogDepsArgs;
+  settings: MainIpcSettingsDepsArgs;
+  sessionQuery: MainIpcSessionQueryDepsArgs;
+  sessionRuntime: MainIpcSessionRuntimeDepsArgs;
+  character: MainIpcCharacterDepsArgs;
 };
 
 export function createMainIpcRegistrationDeps(
   args: CreateMainIpcRegistrationDepsArgs,
 ): MainIpcRegistrationDeps {
   return {
-    resolveEventWindow: args.resolveEventWindow,
-    resolveHomeWindow: args.resolveHomeWindow,
+    resolveEventWindow: args.window.resolveEventWindow,
+    resolveHomeWindow: args.window.resolveHomeWindow,
     openSessionWindow: async (sessionId) => {
-      await args.openSessionWindow(sessionId);
+      await args.window.openSessionWindow(sessionId);
     },
     openHomeWindow: async () => {
-      await args.openHomeWindow();
+      await args.window.openHomeWindow();
     },
     openSessionMonitorWindow: async () => {
-      await args.openSessionMonitorWindow();
+      await args.window.openSessionMonitorWindow();
     },
     openSettingsWindow: async () => {
-      await args.openSettingsWindow();
+      await args.window.openSettingsWindow();
     },
     openCharacterEditorWindow: async (characterId) => {
-      await args.openCharacterEditorWindow(characterId);
+      await args.window.openCharacterEditorWindow(characterId);
     },
     openDiffWindow: async (diffPreview) => {
-      await args.openDiffWindow(diffPreview);
+      await args.window.openDiffWindow(diffPreview);
     },
-    listSessions: args.listSessions,
-    listSessionAuditLogs: args.listSessionAuditLogs,
-    listSessionSkills: args.listSessionSkills,
-    listSessionCustomAgents: args.listSessionCustomAgents,
-    listOpenSessionWindowIds: args.listOpenSessionWindowIds,
-    getAppSettings: args.getAppSettings,
-    updateAppSettings: args.updateAppSettings,
-    resetAppDatabase: args.resetAppDatabase,
-    listCharacters: args.listCharacters,
-    getModelCatalog: args.getModelCatalog,
-    importModelCatalogDocument: args.importModelCatalogDocument,
-    importModelCatalogFromFile: args.importModelCatalogFromFile,
-    exportModelCatalogDocument: args.exportModelCatalogDocument,
-    exportModelCatalogToFile: args.exportModelCatalogToFile,
-    getSession: args.getSession,
-    getDiffPreview: args.getDiffPreview,
-    getLiveSessionRun: args.getLiveSessionRun,
-    getProviderQuotaTelemetry: args.getProviderQuotaTelemetry,
-    getSessionContextTelemetry: args.getSessionContextTelemetry,
-    getSessionBackgroundActivity: args.getSessionBackgroundActivity,
-    resolveLiveApproval: args.resolveLiveApproval,
-    getCharacter: args.getCharacter,
-    createSession: args.createSession,
-    updateSession: args.updateSession,
-    deleteSession: args.deleteSession,
-    previewComposerInput: args.previewComposerInput,
-    searchWorkspaceFiles: args.searchWorkspaceFiles,
-    runSessionTurn: args.runSessionTurn,
-    cancelSessionRun: args.cancelSessionRun,
-    createCharacter: args.createCharacter,
-    updateCharacter: args.updateCharacter,
-    deleteCharacter: args.deleteCharacter,
-    pickDirectory: args.pickDirectory,
-    pickFile: args.pickFile,
-    pickImageFile: args.pickImageFile,
-    openPathTarget: args.openPathTarget,
-    openSessionTerminal: args.openSessionTerminal,
+    pickDirectory: args.window.pickDirectory,
+    pickFile: args.window.pickFile,
+    pickImageFile: args.window.pickImageFile,
+    openPathTarget: args.window.openPathTarget,
+    openSessionTerminal: args.window.openSessionTerminal,
+    getModelCatalog: args.catalog.getModelCatalog,
+    importModelCatalogDocument: args.catalog.importModelCatalogDocument,
+    importModelCatalogFromFile: args.catalog.importModelCatalogFromFile,
+    exportModelCatalogDocument: args.catalog.exportModelCatalogDocument,
+    exportModelCatalogToFile: args.catalog.exportModelCatalogToFile,
+    getAppSettings: args.settings.getAppSettings,
+    updateAppSettings: args.settings.updateAppSettings,
+    resetAppDatabase: args.settings.resetAppDatabase,
+    listSessions: args.sessionQuery.listSessions,
+    listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,
+    listSessionSkills: args.sessionQuery.listSessionSkills,
+    listSessionCustomAgents: args.sessionQuery.listSessionCustomAgents,
+    listOpenSessionWindowIds: args.sessionQuery.listOpenSessionWindowIds,
+    getSession: args.sessionQuery.getSession,
+    getDiffPreview: args.sessionQuery.getDiffPreview,
+    previewComposerInput: args.sessionQuery.previewComposerInput,
+    searchWorkspaceFiles: args.sessionQuery.searchWorkspaceFiles,
+    getLiveSessionRun: args.sessionRuntime.getLiveSessionRun,
+    getProviderQuotaTelemetry: args.sessionRuntime.getProviderQuotaTelemetry,
+    getSessionContextTelemetry: args.sessionRuntime.getSessionContextTelemetry,
+    getSessionBackgroundActivity: args.sessionRuntime.getSessionBackgroundActivity,
+    resolveLiveApproval: args.sessionRuntime.resolveLiveApproval,
+    createSession: args.sessionRuntime.createSession,
+    updateSession: args.sessionRuntime.updateSession,
+    deleteSession: args.sessionRuntime.deleteSession,
+    runSessionTurn: args.sessionRuntime.runSessionTurn,
+    cancelSessionRun: args.sessionRuntime.cancelSessionRun,
+    listCharacters: args.character.listCharacters,
+    getCharacter: args.character.getCharacter,
+    createCharacter: args.character.createCharacter,
+    updateCharacter: args.character.updateCharacter,
+    deleteCharacter: args.character.deleteCharacter,
   };
 }

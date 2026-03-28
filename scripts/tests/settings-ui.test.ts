@@ -20,7 +20,7 @@ import {
   buildResetDatabaseSuccessMessage,
 } from "../../src/settings-ui.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS } from "../../src-electron/window-defaults.js";
-import { ALL_RESET_APP_DATABASE_TARGETS } from "../../src/withmate-window.js";
+import { ALL_RESET_APP_DATABASE_TARGETS } from "../../src/withmate-window-types.js";
 
 describe("Settings UI constants", () => {
   it("coding credential の API key 文言は coding plane 専用だと分かる", () => {

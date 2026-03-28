@@ -17,10 +17,12 @@ import {
 import {
   areAllResetAppDatabaseTargetsSelected,
   normalizeResetAppDatabaseTargets,
-  type ResetAppDatabaseRequest,
-  type ResetAppDatabaseResult,
-  type ResetAppDatabaseTarget,
-} from "../src/withmate-window.js";
+} from "../src/withmate-window-types.js";
+import type {
+  ResetAppDatabaseRequest,
+  ResetAppDatabaseResult,
+  ResetAppDatabaseTarget,
+} from "../src/withmate-window-types.js";
 
 export type SettingsCatalogServiceDeps = {
   hasInFlightSessionRuns(): boolean;

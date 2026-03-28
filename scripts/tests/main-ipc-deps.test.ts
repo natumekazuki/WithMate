@@ -7,93 +7,106 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
   const calls: string[] = [];
 
   const deps = createMainIpcRegistrationDeps({
-    resolveEventWindow: () => null,
-    resolveHomeWindow: () => null,
-    async openSessionWindow(sessionId) {
-      calls.push(`openSession:${sessionId}`);
-      return {} as never;
+    window: {
+      resolveEventWindow: () => null,
+      resolveHomeWindow: () => null,
+      async openSessionWindow(sessionId) {
+        calls.push(`openSession:${sessionId}`);
+        return {} as never;
+      },
+      async openHomeWindow() {
+        calls.push("openHome");
+        return {} as never;
+      },
+      async openSessionMonitorWindow() {
+        return {} as never;
+      },
+      async openSettingsWindow() {
+        return {} as never;
+      },
+      async openCharacterEditorWindow() {
+        return {} as never;
+      },
+      async openDiffWindow() {
+        return {} as never;
+      },
+      async pickDirectory() {
+        return null;
+      },
+      async pickFile() {
+        return null;
+      },
+      async pickImageFile() {
+        return null;
+      },
+      async openPathTarget() {},
+      async openSessionTerminal() {},
     },
-    async openHomeWindow() {
-      calls.push("openHome");
-      return {} as never;
+    catalog: {
+      getModelCatalog: () => null,
+      importModelCatalogDocument: () => ({ revision: 1, providers: [] }),
+      async importModelCatalogFromFile() {
+        return null;
+      },
+      exportModelCatalogDocument: () => null,
+      async exportModelCatalogToFile() {
+        return null;
+      },
     },
-    async openSessionMonitorWindow() {
-      return {} as never;
+    settings: {
+      getAppSettings: () =>
+        ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} }) as never,
+      updateAppSettings: (settings) => settings,
+      async resetAppDatabase() {
+        return null;
+      },
     },
-    async openSettingsWindow() {
-      return {} as never;
+    sessionQuery: {
+      listSessions: () => [],
+      listSessionAuditLogs: () => [],
+      listSessionSkills: () => [],
+      listSessionCustomAgents: () => [],
+      listOpenSessionWindowIds: () => [],
+      getSession: () => null,
+      getDiffPreview: () => null,
+      async previewComposerInput() {
+        return null;
+      },
+      async searchWorkspaceFiles() {
+        return [];
+      },
     },
-    async openCharacterEditorWindow() {
-      return {} as never;
+    sessionRuntime: {
+      getLiveSessionRun: () => null,
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      getSessionContextTelemetry: () => null,
+      getSessionBackgroundActivity: () => null,
+      resolveLiveApproval: () => {},
+      createSession: () => ({}) as never,
+      updateSession: () => ({}) as never,
+      deleteSession: () => {},
+      async runSessionTurn() {
+        return {} as never;
+      },
+      cancelSessionRun: () => {},
     },
-    async openDiffWindow() {
-      return {} as never;
+    character: {
+      async listCharacters() {
+        return [];
+      },
+      async getCharacter() {
+        return null;
+      },
+      async createCharacter() {
+        return {} as never;
+      },
+      async updateCharacter() {
+        return {} as never;
+      },
+      async deleteCharacter() {},
     },
-    listSessions: () => [],
-    listSessionAuditLogs: () => [],
-    listSessionSkills: () => [],
-    listSessionCustomAgents: () => [],
-    listOpenSessionWindowIds: () => [],
-    getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
-    updateAppSettings: (settings) => settings,
-    async resetAppDatabase() {
-      return null;
-    },
-    async listCharacters() {
-      return [];
-    },
-    getModelCatalog: () => null,
-    importModelCatalogDocument: () => ({ revision: 1, providers: [] }),
-    async importModelCatalogFromFile() {
-      return null;
-    },
-    exportModelCatalogDocument: () => null,
-    async exportModelCatalogToFile() {
-      return null;
-    },
-    getSession: () => null,
-    getDiffPreview: () => null,
-    getLiveSessionRun: () => null,
-    async getProviderQuotaTelemetry() {
-      return null;
-    },
-    getSessionContextTelemetry: () => null,
-    getSessionBackgroundActivity: () => null,
-    resolveLiveApproval: () => {},
-    async getCharacter() {
-      return null;
-    },
-    createSession: () => ({}) as never,
-    updateSession: () => ({}) as never,
-    deleteSession: () => {},
-    async previewComposerInput() {
-      return null;
-    },
-    async searchWorkspaceFiles() {
-      return [];
-    },
-    async runSessionTurn() {
-      return {} as never;
-    },
-    cancelSessionRun: () => {},
-    async createCharacter() {
-      return {} as never;
-    },
-    async updateCharacter() {
-      return {} as never;
-    },
-    async deleteCharacter() {},
-    async pickDirectory() {
-      return null;
-    },
-    async pickFile() {
-      return null;
-    },
-    async pickImageFile() {
-      return null;
-    },
-    async openPathTarget() {},
-    async openSessionTerminal() {},
   });
 
   assert.equal(await deps.openHomeWindow(), undefined);
