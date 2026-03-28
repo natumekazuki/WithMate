@@ -35,3 +35,9 @@
 - 2026-03-28: コミット `999d5f9` `refactor(main): extract broadcast facade`
   - `MainBroadcastFacade` を追加
   - sessions / characters / model catalog / app settings / open session windows の broadcast payload と forwarding を `main.ts` から分離
+- 2026-03-28: `src-electron/main-session-command-facade.ts` を追加し、session create/update/delete/run/cancel の forwarding と Copilot quota refresh 前処理を `main.ts` から分離
+- 2026-03-28: `npm run build`
+- 2026-03-28: `node --test --import tsx scripts/tests/main-session-command-facade.test.ts scripts/tests/main-broadcast-facade.test.ts scripts/tests/main-observability-facade.test.ts scripts/tests/main-query-service.test.ts scripts/tests/main-infrastructure-registry.test.ts`
+- 2026-03-28: `src-electron/main-session-persistence-facade.ts` を追加し、`upsertSession / replaceAllSessions / recoverInterruptedSessions` を `main.ts` から分離
+- 2026-03-28: `npm run build`
+- 2026-03-28: `node --test --import tsx scripts/tests/main-session-persistence-facade.test.ts scripts/tests/main-session-command-facade.test.ts scripts/tests/main-broadcast-facade.test.ts scripts/tests/main-observability-facade.test.ts scripts/tests/main-query-service.test.ts scripts/tests/main-infrastructure-registry.test.ts`

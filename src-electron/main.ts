@@ -13,7 +13,6 @@ import {
   type LiveApprovalRequest,
   type LiveSessionRunState,
   type ProviderQuotaTelemetry,
-  type RunSessionTurnRequest,
   type SessionBackgroundActivityKind,
   type SessionBackgroundActivityState,
   type SessionContextTelemetry,
@@ -23,7 +22,6 @@ import {
   type CreateCharacterInput,
 } from "../src/character-state.js";
 import {
-  type CreateSessionInput,
   type DiffPreviewPayload,
   type Session,
 } from "../src/session-state.js";
@@ -79,6 +77,8 @@ import { MainInfrastructureRegistry } from "./main-infrastructure-registry.js";
 import { MainBootstrapService } from "./main-bootstrap-service.js";
 import { MainBroadcastFacade } from "./main-broadcast-facade.js";
 import { MainObservabilityFacade } from "./main-observability-facade.js";
+import { MainSessionCommandFacade } from "./main-session-command-facade.js";
+import { MainSessionPersistenceFacade } from "./main-session-persistence-facade.js";
 import { MainQueryService } from "./main-query-service.js";
 import { resolveProviderCatalogOrThrow, resolveProviderTurnAdapter } from "./provider-support.js";
 import {
@@ -129,6 +129,8 @@ let sessionMemorySupportService: SessionMemorySupportService | null = null;
 let characterRuntimeService: CharacterRuntimeService | null = null;
 let mainBroadcastFacade: MainBroadcastFacade<BrowserWindow> | null = null;
 let mainObservabilityFacade: MainObservabilityFacade | null = null;
+let mainSessionCommandFacade: MainSessionCommandFacade | null = null;
+let mainSessionPersistenceFacade: MainSessionPersistenceFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
 let mainInfrastructureRegistry:
   | MainInfrastructureRegistry<
@@ -293,7 +295,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             ipcMain,
             registerMainIpcHandlers,
             initializePersistentStores,
-            recoverInterruptedSessions,
+            recoverInterruptedSessions: () => requireMainSessionPersistenceFacade().recoverInterruptedSessions(),
             refreshCharactersFromStorage: async () => {
               await refreshCharactersFromStorage();
             },
@@ -328,13 +330,13 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             getSessionBackgroundActivity: (sessionId, kind) => getSessionBackgroundActivity(sessionId, kind),
             resolveLiveApproval,
             getCharacter,
-            createSession: (input) => createSession(input),
-            updateSession: (session) => updateSession(session),
-            deleteSession: (sessionId) => deleteSession(sessionId),
+            createSession: (input) => requireMainSessionCommandFacade().createSession(input),
+            updateSession: (session) => requireMainSessionCommandFacade().updateSession(session),
+            deleteSession: (sessionId) => requireMainSessionCommandFacade().deleteSession(sessionId),
             previewComposerInput,
             searchWorkspaceFiles,
-            runSessionTurn,
-            cancelSessionRun,
+            runSessionTurn: (sessionId, request) => requireMainSessionCommandFacade().runSessionTurn(sessionId, request),
+            cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
             createCharacter,
             updateCharacter,
             deleteCharacter,
@@ -410,6 +412,36 @@ function requireMainObservabilityFacade(): MainObservabilityFacade {
   return mainObservabilityFacade;
 }
 
+function requireMainSessionCommandFacade(): MainSessionCommandFacade {
+  if (!mainSessionCommandFacade) {
+    mainSessionCommandFacade = new MainSessionCommandFacade({
+      getSession,
+      getSessionPersistenceService: () => requireSessionPersistenceService(),
+      getSessionRuntimeService: () => requireSessionRuntimeService(),
+      getProviderQuotaTelemetry: (providerId) => getProviderQuotaTelemetry(providerId),
+      isProviderQuotaTelemetryStale: (telemetry) => isProviderQuotaTelemetryStale(telemetry),
+      refreshProviderQuotaTelemetry: (providerId) => refreshProviderQuotaTelemetry(providerId),
+    });
+  }
+
+  return mainSessionCommandFacade;
+}
+
+function requireMainSessionPersistenceFacade(): MainSessionPersistenceFacade {
+  if (!mainSessionPersistenceFacade) {
+    mainSessionPersistenceFacade = new MainSessionPersistenceFacade({
+      getSessions: () => sessions,
+      setSessions: (nextSessions) => {
+        sessions = nextSessions;
+      },
+      getSessionPersistenceService: () => requireSessionPersistenceService(),
+      getSessionStorage: () => requireSessionStorage(),
+    });
+  }
+
+  return mainSessionPersistenceFacade;
+}
+
 function requireModelCatalogStorage(): ModelCatalogStorage {
   if (!modelCatalogStorage) {
     throw new Error("model catalog storage が初期化されていないよ。");
@@ -466,7 +498,7 @@ function requireSessionMemorySupportService(): SessionMemorySupportService {
         requireCharacterMemoryStorage().listCharacterMemoryEntries(characterScopeId),
       upsertCharacterMemoryEntry: (entry) => requireCharacterMemoryStorage().upsertCharacterMemoryEntry(entry),
       markCharacterMemoryEntriesUsed: (entryIds) => requireCharacterMemoryStorage().markCharacterMemoryEntriesUsed(entryIds),
-      upsertSession,
+      upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSession(session),
     });
   }
 
@@ -514,7 +546,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
   if (!sessionRuntimeService) {
     sessionRuntimeService = new SessionRuntimeService({
       getSession,
-      upsertSession,
+        upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSession(session),
       resolveComposerPreview,
       resolveSessionCharacter,
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
@@ -680,7 +712,8 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
       importModelCatalogDocument: (document, source) => requireModelCatalogStorage().importCatalogDocument(document, source),
       exportModelCatalogDocument: (revision) => requireModelCatalogStorage().exportCatalogDocument(revision),
-      replaceAllSessions,
+      replaceAllSessions: (nextSessions, options) =>
+        requireMainSessionPersistenceFacade().replaceAllSessions(nextSessions, options),
       clearProviderQuotaTelemetry,
       clearSessionContextTelemetry,
       invalidateProviderSessionThread,
@@ -821,6 +854,8 @@ function closePersistentStores(): void {
   characterRuntimeService = null;
   mainBroadcastFacade = null;
   mainObservabilityFacade = null;
+  mainSessionCommandFacade = null;
+  mainSessionPersistenceFacade = null;
   mainQueryService = null;
   mainInfrastructureRegistry?.reset();
   mainInfrastructureRegistry = null;
@@ -849,6 +884,8 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   characterRuntimeService = null;
   mainBroadcastFacade = null;
   mainObservabilityFacade = null;
+  mainSessionCommandFacade = null;
+  mainSessionPersistenceFacade = null;
   mainQueryService = null;
   mainInfrastructureRegistry?.reset();
   mainInfrastructureRegistry = null;
@@ -1045,10 +1082,6 @@ function broadcastLiveSessionRun(sessionId: string): void {
   requireMainObservabilityFacade().setLiveSessionRun(sessionId, getLiveSessionRun(sessionId));
 }
 
-function cancelSessionRun(sessionId: string): void {
-  requireSessionRuntimeService().cancelRun(sessionId);
-}
-
 function resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void {
   requireSessionApprovalService().resolveLiveApproval(sessionId, requestId, decision);
 }
@@ -1069,20 +1102,8 @@ async function exportModelCatalogToFile(revision: number | null | undefined, tar
   return requireWindowDialogService().exportModelCatalogToFile(revision, targetWindow);
 }
 
-function createSession(input: CreateSessionInput): Session {
-  return requireSessionPersistenceService().createSession(input);
-}
-
-function updateSession(nextSession: Session): Session {
-  return requireSessionPersistenceService().updateSession(nextSession);
-}
-
-function deleteSession(sessionId: string): void {
-  requireSessionPersistenceService().deleteSession(sessionId);
-}
-
 function upsertSession(nextSession: Session): Session {
-  return requireSessionPersistenceService().upsertSession(nextSession);
+  return requireMainSessionPersistenceFacade().upsertSession(nextSession);
 }
 
 function replaceAllSessions(
@@ -1092,44 +1113,11 @@ function replaceAllSessions(
     invalidateSessionIds?: Iterable<string>;
   },
 ): Session[] {
-  return requireSessionPersistenceService().replaceAllSessions(nextSessions, options);
-}
-
-function buildInterruptedSession(session: Session): Session {
-  const interruptedMessage = "前回の実行はアプリ終了で中断された可能性があるよ。必要ならもう一度送ってね。";
-  const lastMessage = session.messages.at(-1);
-  const nextMessages =
-    lastMessage?.role === "assistant" && lastMessage.text === interruptedMessage
-      ? session.messages
-      : [
-          ...session.messages,
-          {
-            role: "assistant" as const,
-            text: interruptedMessage,
-            accent: true,
-          },
-        ];
-
-  return {
-    ...session,
-    status: "idle",
-    runState: "interrupted",
-    updatedAt: currentTimestampLabel(),
-    messages: nextMessages,
-  };
+  return requireMainSessionPersistenceFacade().replaceAllSessions(nextSessions, options);
 }
 
 function recoverInterruptedSessions(): void {
-  const runningSessions = sessions.filter(isRunningSession);
-  if (runningSessions.length === 0) {
-    return;
-  }
-
-  for (const session of runningSessions) {
-    upsertSession(buildInterruptedSession(session));
-  }
-
-  sessions = requireSessionStorage().listSessions();
+  requireMainSessionPersistenceFacade().recoverInterruptedSessions();
 }
 
 async function createCharacter(input: CreateCharacterInput): Promise<CharacterProfile> {
@@ -1170,15 +1158,6 @@ async function openPathTarget(target: string, options?: OpenPathOptions): Promis
   if (errorMessage) {
     throw new Error(errorMessage);
   }
-}
-
-async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {
-  const session = getSession(sessionId);
-  if (session?.provider === "copilot" && isProviderQuotaTelemetryStale(getProviderQuotaTelemetry(session.provider))) {
-    void refreshProviderQuotaTelemetry(session.provider).catch(() => undefined);
-  }
-
-  return requireSessionRuntimeService().runSessionTurn(sessionId, request);
 }
 
 async function createHomeWindow(): Promise<BrowserWindow> {
