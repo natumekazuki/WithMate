@@ -16,3 +16,4 @@
 ## Notes
 
 - retrieval / ranking の責務は今回の scope から外し、既存 module に残した
+- 対応コミット: `57764c2` `refactor(memory): extract orchestration service`
