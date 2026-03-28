@@ -1,8 +1,6 @@
 import {
-  getCharacterReflectionProviderSettings,
-  getMemoryExtractionProviderSettings,
-  getProviderAppSettings,
   type AppSettings,
+  getResolvedProviderSettingsBundle,
   type CharacterReflectionProviderSettings,
   type MemoryExtractionProviderSettings,
   type ProviderAppSettings,
@@ -32,9 +30,10 @@ export function buildHomeProviderSettingRows(
   appSettings: AppSettings,
 ): HomeProviderSettingRow[] {
   return (modelCatalog?.providers ?? []).map((provider) => {
-    const settings = getProviderAppSettings(appSettings, provider.id);
-    const memoryExtractionSettings = getMemoryExtractionProviderSettings(appSettings, provider.id);
-    const characterReflectionSettings = getCharacterReflectionProviderSettings(appSettings, provider.id);
+    const resolvedSettings = getResolvedProviderSettingsBundle(appSettings, provider.id);
+    const settings = resolvedSettings.coding;
+    const memoryExtractionSettings = resolvedSettings.memoryExtraction;
+    const characterReflectionSettings = resolvedSettings.characterReflection;
     const memoryExtractionSelection = coerceModelSelection(
       provider,
       memoryExtractionSettings.model,
@@ -94,4 +93,15 @@ export function buildNormalizedCharacterReflectionProviderSettings(
       } satisfies CharacterReflectionProviderSettings,
     ]),
   );
+}
+
+export function buildPersistedAppSettingsFromRows(
+  draft: AppSettings,
+  rows: readonly HomeProviderSettingRow[],
+): AppSettings {
+  return {
+    ...draft,
+    memoryExtractionProviderSettings: buildNormalizedMemoryExtractionProviderSettings(rows),
+    characterReflectionProviderSettings: buildNormalizedCharacterReflectionProviderSettings(rows),
+  };
 }

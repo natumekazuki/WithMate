@@ -8,6 +8,49 @@ import {
 } from "./app-state.js";
 import { coerceModelSelection, type ModelCatalogProvider } from "./model-catalog.js";
 
+export function updateSystemPromptPrefix(
+  draft: AppSettings,
+  systemPromptPrefix: string,
+): AppSettings {
+  return {
+    ...draft,
+    systemPromptPrefix,
+  };
+}
+
+export function updateCodingProviderEnabledDraft(
+  draft: AppSettings,
+  providerId: string,
+  enabled: boolean,
+): AppSettings {
+  return {
+    ...draft,
+    codingProviderSettings: updateCodingProviderEnabled(draft, providerId, enabled),
+  };
+}
+
+export function updateCodingProviderApiKeyDraft(
+  draft: AppSettings,
+  providerId: string,
+  apiKey: string,
+): AppSettings {
+  return {
+    ...draft,
+    codingProviderSettings: updateCodingProviderApiKey(draft, providerId, apiKey),
+  };
+}
+
+export function updateCodingProviderSkillRootPathDraft(
+  draft: AppSettings,
+  providerId: string,
+  skillRootPath: string,
+): AppSettings {
+  return {
+    ...draft,
+    codingProviderSettings: updateCodingProviderSkillRootPath(draft, providerId, skillRootPath),
+  };
+}
+
 export function updateCodingProviderEnabled(
   draft: AppSettings,
   providerId: string,
@@ -97,6 +140,40 @@ export function updateMemoryExtractionThreshold(
   };
 }
 
+export function updateMemoryExtractionModelDraft(
+  draft: AppSettings,
+  providerCatalog: ModelCatalogProvider,
+  providerId: string,
+  model: string,
+): AppSettings {
+  return {
+    ...draft,
+    memoryExtractionProviderSettings: updateMemoryExtractionModel(draft, providerCatalog, providerId, model),
+  };
+}
+
+export function updateMemoryExtractionReasoningEffortDraft(
+  draft: AppSettings,
+  providerId: string,
+  reasoningEffort: MemoryExtractionProviderSettings["reasoningEffort"],
+): AppSettings {
+  return {
+    ...draft,
+    memoryExtractionProviderSettings: updateMemoryExtractionReasoningEffort(draft, providerId, reasoningEffort),
+  };
+}
+
+export function updateMemoryExtractionThresholdDraft(
+  draft: AppSettings,
+  providerId: string,
+  rawValue: string,
+): AppSettings {
+  return {
+    ...draft,
+    memoryExtractionProviderSettings: updateMemoryExtractionThreshold(draft, providerId, rawValue),
+  };
+}
+
 export function updateCharacterReflectionModel(
   draft: AppSettings,
   providerCatalog: ModelCatalogProvider,
@@ -125,5 +202,28 @@ export function updateCharacterReflectionReasoningEffort(
       ...getCharacterReflectionProviderSettings(draft, providerId),
       reasoningEffort,
     },
+  };
+}
+
+export function updateCharacterReflectionModelDraft(
+  draft: AppSettings,
+  providerCatalog: ModelCatalogProvider,
+  providerId: string,
+  model: string,
+): AppSettings {
+  return {
+    ...draft,
+    characterReflectionProviderSettings: updateCharacterReflectionModel(draft, providerCatalog, providerId, model),
+  };
+}
+
+export function updateCharacterReflectionReasoningEffortDraft(
+  draft: AppSettings,
+  providerId: string,
+  reasoningEffort: CharacterReflectionProviderSettings["reasoningEffort"],
+): AppSettings {
+  return {
+    ...draft,
+    characterReflectionProviderSettings: updateCharacterReflectionReasoningEffort(draft, providerId, reasoningEffort),
   };
 }

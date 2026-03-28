@@ -5,13 +5,22 @@ import { createDefaultAppSettings } from "../../src/app-state.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
   updateCharacterReflectionModel,
+  updateCharacterReflectionModelDraft,
   updateCharacterReflectionReasoningEffort,
+  updateCharacterReflectionReasoningEffortDraft,
   updateCodingProviderApiKey,
+  updateCodingProviderApiKeyDraft,
   updateCodingProviderEnabled,
+  updateCodingProviderEnabledDraft,
   updateCodingProviderSkillRootPath,
+  updateCodingProviderSkillRootPathDraft,
   updateMemoryExtractionModel,
+  updateMemoryExtractionModelDraft,
   updateMemoryExtractionReasoningEffort,
+  updateMemoryExtractionReasoningEffortDraft,
   updateMemoryExtractionThreshold,
+  updateMemoryExtractionThresholdDraft,
+  updateSystemPromptPrefix,
 } from "../../src/home-settings-draft.js";
 
 const providerCatalog: ModelCatalogProvider = {
@@ -99,5 +108,52 @@ describe("home-settings-draft", () => {
     assert.equal(nextModel.codex.model, "gpt-5.4-mini");
     assert.equal(nextModel.codex.reasoningEffort, "low");
     assert.equal(nextReasoning.codex.reasoningEffort, "medium");
+  });
+
+  it("draft wrapper は AppSettings 全体を更新する", () => {
+    const draft = createDefaultAppSettings();
+
+    const next = updateCharacterReflectionReasoningEffortDraft(
+      updateCharacterReflectionModelDraft(
+        updateMemoryExtractionThresholdDraft(
+          updateMemoryExtractionReasoningEffortDraft(
+            updateMemoryExtractionModelDraft(
+              updateCodingProviderSkillRootPathDraft(
+                updateCodingProviderApiKeyDraft(
+                  updateCodingProviderEnabledDraft(
+                    updateSystemPromptPrefix(draft, "prefix"),
+                    "codex",
+                    false,
+                  ),
+                  "codex",
+                  "key",
+                ),
+                "codex",
+                "C:/skills",
+              ),
+              providerCatalog,
+              "codex",
+              "gpt-5.4-mini",
+            ),
+            "codex",
+            "medium",
+          ),
+          "codex",
+          "321",
+        ),
+        providerCatalog,
+        "codex",
+        "gpt-5.4-mini",
+      ),
+      "codex",
+      "medium",
+    );
+
+    assert.equal(next.systemPromptPrefix, "prefix");
+    assert.equal(next.codingProviderSettings.codex.enabled, false);
+    assert.equal(next.codingProviderSettings.codex.apiKey, "key");
+    assert.equal(next.codingProviderSettings.codex.skillRootPath, "C:/skills");
+    assert.equal(next.memoryExtractionProviderSettings.codex.outputTokensThreshold, 321);
+    assert.equal(next.characterReflectionProviderSettings.codex.reasoningEffort, "medium");
   });
 });

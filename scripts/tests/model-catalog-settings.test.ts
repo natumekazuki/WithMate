@@ -6,6 +6,7 @@ import {
   createDefaultAppSettings,
   getMemoryExtractionProviderSettings,
   getProviderAppSettings,
+  getResolvedProviderSettingsBundle,
   normalizeAppSettings,
 } from "../../src/app-state.js";
 import { coerceModelSelection, type ModelCatalogProvider } from "../../src/model-catalog.js";
@@ -146,6 +147,49 @@ describe("app settings provider helpers", () => {
     assert.deepEqual(getCharacterReflectionProviderSettings(settings, "codex"), {
       model: "gpt-5.1-mini",
       reasoningEffort: "medium",
+    });
+  });
+
+  it("resolved provider settings bundle で 3 種の設定をまとめて取得できる", () => {
+    const settings = normalizeAppSettings({
+      ...createDefaultAppSettings(),
+      codingProviderSettings: {
+        codex: {
+          enabled: false,
+          apiKey: "codex-key",
+          skillRootPath: "C:/skills",
+        },
+      },
+      memoryExtractionProviderSettings: {
+        codex: {
+          model: "gpt-5.1-mini",
+          reasoningEffort: "medium",
+          outputTokensThreshold: 280,
+        },
+      },
+      characterReflectionProviderSettings: {
+        codex: {
+          model: "gpt-5.1-mini",
+          reasoningEffort: "medium",
+        },
+      },
+    });
+
+    assert.deepEqual(getResolvedProviderSettingsBundle(settings, "codex"), {
+      coding: {
+        enabled: false,
+        apiKey: "codex-key",
+        skillRootPath: "C:/skills",
+      },
+      memoryExtraction: {
+        model: "gpt-5.1-mini",
+        reasoningEffort: "medium",
+        outputTokensThreshold: 280,
+      },
+      characterReflection: {
+        model: "gpt-5.1-mini",
+        reasoningEffort: "medium",
+      },
     });
   });
 });

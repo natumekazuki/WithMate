@@ -95,6 +95,8 @@
 - `DB を初期化` の partial reset / full reset orchestration と `model catalog export` の document 取得も `SettingsCatalogService` が担当する
 - renderer 側では `HomeApp.tsx` が storage 正規化を直接持たず、`home-settings-view-model` の derived data を使って provider row を描画する
 - renderer 側の provider settings draft 更新は `home-settings-draft` の pure function を経由する
+- `HomeApp.tsx` は `systemPromptPrefix` と 3 種の provider settings を別 state で持たず、単一の `AppSettings draft` を編集する
+- save 時の payload は `home-settings-view-model` が resolved model / reasoning を反映した `persisted settings` として組み立てる
 - DB reset 成功時は renderer 側で reset 後の `appSettings` を draft に同期し、dirty 状態を解消する
 - reset 実行 API は選択対象を Main Process へ渡し、戻り値の current `sessions / appSettings / modelCatalog` で renderer を再同期する
 

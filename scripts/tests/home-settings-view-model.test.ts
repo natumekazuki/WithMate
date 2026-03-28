@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { createDefaultAppSettings } from "../../src/app-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import {
+  buildPersistedAppSettingsFromRows,
   buildHomeProviderSettingRows,
   buildNormalizedCharacterReflectionProviderSettings,
   buildNormalizedMemoryExtractionProviderSettings,
@@ -63,6 +64,26 @@ describe("home-settings-view-model", () => {
         model: "gpt-5.4",
         reasoningEffort: "high",
       },
+    });
+  });
+
+  it("persisted settings は draft の system prompt を維持したまま resolved provider settings を埋め込む", () => {
+    const draft = createDefaultAppSettings();
+    draft.systemPromptPrefix = "prefix";
+    draft.memoryExtractionProviderSettings.codex = {
+      model: "missing-model",
+      reasoningEffort: "high",
+      outputTokensThreshold: 333,
+    };
+
+    const rows = buildHomeProviderSettingRows(createSnapshot(), draft);
+    const persisted = buildPersistedAppSettingsFromRows(draft, rows);
+
+    assert.equal(persisted.systemPromptPrefix, "prefix");
+    assert.deepEqual(persisted.memoryExtractionProviderSettings.codex, {
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      outputTokensThreshold: 333,
     });
   });
 });

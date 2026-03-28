@@ -2,37 +2,33 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createDefaultAppSettings,
-  getCharacterReflectionProviderSettings,
-  getMemoryExtractionProviderSettings,
   getProviderAppSettings,
   type AppSettings,
   type CharacterReflectionProviderSettings,
   type CharacterProfile,
   type CreateSessionInput,
   type MemoryExtractionProviderSettings,
-  type ProviderAppSettings,
   type Session,
 } from "./app-state.js";
 import { DEFAULT_APPROVAL_MODE } from "./approval-mode.js";
 import {
-  coerceModelSelection,
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
 import {
   buildHomeProviderSettingRows,
-  buildNormalizedCharacterReflectionProviderSettings,
-  buildNormalizedMemoryExtractionProviderSettings,
+  buildPersistedAppSettingsFromRows,
   type HomeProviderSettingRow,
 } from "./home-settings-view-model.js";
 import {
-  updateCharacterReflectionModel,
-  updateCharacterReflectionReasoningEffort,
-  updateCodingProviderApiKey,
-  updateCodingProviderEnabled,
-  updateCodingProviderSkillRootPath,
-  updateMemoryExtractionModel,
-  updateMemoryExtractionReasoningEffort,
-  updateMemoryExtractionThreshold,
+  updateCharacterReflectionModelDraft,
+  updateCharacterReflectionReasoningEffortDraft,
+  updateCodingProviderApiKeyDraft,
+  updateCodingProviderEnabledDraft,
+  updateCodingProviderSkillRootPathDraft,
+  updateMemoryExtractionModelDraft,
+  updateMemoryExtractionReasoningEffortDraft,
+  updateMemoryExtractionThresholdDraft,
+  updateSystemPromptPrefix,
 } from "./home-settings-draft.js";
 import {
   SETTINGS_API_KEY_LABEL,
@@ -267,17 +263,10 @@ export default function HomeApp() {
   const [rightPaneView, setRightPaneView] = useState<HomeRightPaneView>("monitor");
   const [settingsFeedback, setSettingsFeedback] = useState("");
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
+  const [settingsDraft, setSettingsDraft] = useState<AppSettings>(createDefaultAppSettings());
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [appSettingsLoaded, setAppSettingsLoaded] = useState(!isSettingsWindowMode);
   const [modelCatalogLoaded, setModelCatalogLoaded] = useState(!isSettingsWindowMode);
-  const [systemPromptPrefixDraft, setSystemPromptPrefixDraft] = useState("");
-  const [codingProviderSettingsDraft, setCodingProviderSettingsDraft] = useState<Record<string, ProviderAppSettings>>({});
-  const [memoryExtractionProviderSettingsDraft, setMemoryExtractionProviderSettingsDraft] = useState<
-    Record<string, MemoryExtractionProviderSettings>
-  >({});
-  const [characterReflectionProviderSettingsDraft, setCharacterReflectionProviderSettingsDraft] = useState<
-    Record<string, CharacterReflectionProviderSettings>
-  >({});
   const [resettingDatabase, setResettingDatabase] = useState(false);
   const [resetDatabaseTargets, setResetDatabaseTargets] = useState<ResetAppDatabaseTarget[]>([...ALL_RESET_APP_DATABASE_TARGETS]);
   const [launchOpen, setLaunchOpen] = useState(false);
@@ -291,14 +280,13 @@ export default function HomeApp() {
 
   const applyIncomingAppSettings = (settings: AppSettings, options?: { force?: boolean }) => {
     setAppSettings(settings);
+    setSettingsDraft((current) => {
+      const shouldHydrateDrafts =
+        options?.force || !isSettingsWindowMode || !settingsHydratedRef.current || !settingsDirtyRef.current;
+      return shouldHydrateDrafts ? settings : current;
+    });
     setAppSettingsLoaded(true);
-    const shouldHydrateDrafts =
-      options?.force || !isSettingsWindowMode || !settingsHydratedRef.current || !settingsDirtyRef.current;
-    if (shouldHydrateDrafts) {
-      setSystemPromptPrefixDraft(settings.systemPromptPrefix);
-      setCodingProviderSettingsDraft(settings.codingProviderSettings);
-      setMemoryExtractionProviderSettingsDraft(settings.memoryExtractionProviderSettings);
-      setCharacterReflectionProviderSettingsDraft(settings.characterReflectionProviderSettings);
+    if (options?.force || !isSettingsWindowMode || !settingsHydratedRef.current || !settingsDirtyRef.current) {
       settingsHydratedRef.current = true;
     }
   };
@@ -644,56 +632,25 @@ export default function HomeApp() {
     }
 
     try {
-      const nextSettings = await window.withmate.updateAppSettings({
-        systemPromptPrefix: systemPromptPrefixDraft,
-        codingProviderSettings: codingProviderSettingsDraft,
-        memoryExtractionProviderSettings: normalizedMemoryExtractionProviderSettingsDraft,
-        characterReflectionProviderSettings: normalizedCharacterReflectionProviderSettingsDraft,
-      });
+      const nextSettings = await window.withmate.updateAppSettings(persistedSettingsDraft);
       setAppSettings(nextSettings);
-      setSystemPromptPrefixDraft(nextSettings.systemPromptPrefix);
-      setCodingProviderSettingsDraft(nextSettings.codingProviderSettings);
-      setMemoryExtractionProviderSettingsDraft(nextSettings.memoryExtractionProviderSettings);
-      setCharacterReflectionProviderSettingsDraft(nextSettings.characterReflectionProviderSettings);
+      setSettingsDraft(nextSettings);
       setSettingsFeedback("設定を保存したよ。");
     } catch (error) {
       setSettingsFeedback(error instanceof Error ? error.message : "設定の保存に失敗したよ。");
     }
   };
 
-  const buildDraftAppSettings = (overrides?: {
-    codingProviderSettings?: Record<string, ProviderAppSettings>;
-    memoryExtractionProviderSettings?: Record<string, MemoryExtractionProviderSettings>;
-    characterReflectionProviderSettings?: Record<string, CharacterReflectionProviderSettings>;
-  }): AppSettings => ({
-    systemPromptPrefix: systemPromptPrefixDraft,
-    codingProviderSettings: overrides?.codingProviderSettings ?? codingProviderSettingsDraft,
-    memoryExtractionProviderSettings:
-      overrides?.memoryExtractionProviderSettings ?? memoryExtractionProviderSettingsDraft,
-    characterReflectionProviderSettings:
-      overrides?.characterReflectionProviderSettings ?? characterReflectionProviderSettingsDraft,
-  });
-
   const handleChangeProviderEnabled = (providerId: string, enabled: boolean) => {
-    setCodingProviderSettingsDraft((current) =>
-      updateCodingProviderEnabled(buildDraftAppSettings({ codingProviderSettings: current }), providerId, enabled)
-    );
+    setSettingsDraft((current) => updateCodingProviderEnabledDraft(current, providerId, enabled));
   };
 
   const handleChangeProviderApiKey = (providerId: string, apiKey: string) => {
-    setCodingProviderSettingsDraft((current) =>
-      updateCodingProviderApiKey(buildDraftAppSettings({ codingProviderSettings: current }), providerId, apiKey)
-    );
+    setSettingsDraft((current) => updateCodingProviderApiKeyDraft(current, providerId, apiKey));
   };
 
   const handleChangeProviderSkillRootPath = (providerId: string, skillRootPath: string) => {
-    setCodingProviderSettingsDraft((current) =>
-      updateCodingProviderSkillRootPath(
-        buildDraftAppSettings({ codingProviderSettings: current }),
-        providerId,
-        skillRootPath,
-      )
-    );
+    setSettingsDraft((current) => updateCodingProviderSkillRootPathDraft(current, providerId, skillRootPath));
   };
 
   const handleBrowseProviderSkillRootPath = async (providerId: string) => {
@@ -701,7 +658,7 @@ export default function HomeApp() {
       return;
     }
 
-    const currentSettings = getProviderAppSettings(buildDraftAppSettings(), providerId);
+    const currentSettings = getProviderAppSettings(settingsDraft, providerId);
     const selectedPath = await window.withmate.pickDirectory(currentSettings.skillRootPath || null);
     if (!selectedPath) {
       return;
@@ -716,37 +673,18 @@ export default function HomeApp() {
       return;
     }
 
-    setMemoryExtractionProviderSettingsDraft((current) =>
-      updateMemoryExtractionModel(
-        buildDraftAppSettings({ memoryExtractionProviderSettings: current }),
-        providerCatalog,
-        providerId,
-        model,
-      )
-    );
+    setSettingsDraft((current) => updateMemoryExtractionModelDraft(current, providerCatalog, providerId, model));
   };
 
   const handleChangeMemoryExtractionReasoningEffort = (
     providerId: string,
-    reasoningEffort: MemoryExtractionProviderSettings["reasoningEffort"],
+    reasoningEffort: AppSettings["memoryExtractionProviderSettings"][string]["reasoningEffort"],
   ) => {
-    setMemoryExtractionProviderSettingsDraft((current) =>
-      updateMemoryExtractionReasoningEffort(
-        buildDraftAppSettings({ memoryExtractionProviderSettings: current }),
-        providerId,
-        reasoningEffort,
-      )
-    );
+    setSettingsDraft((current) => updateMemoryExtractionReasoningEffortDraft(current, providerId, reasoningEffort));
   };
 
   const handleChangeMemoryExtractionThreshold = (providerId: string, value: string) => {
-    setMemoryExtractionProviderSettingsDraft((current) =>
-      updateMemoryExtractionThreshold(
-        buildDraftAppSettings({ memoryExtractionProviderSettings: current }),
-        providerId,
-        value,
-      )
-    );
+    setSettingsDraft((current) => updateMemoryExtractionThresholdDraft(current, providerId, value));
   };
 
   const handleChangeCharacterReflectionModel = (providerId: string, model: string) => {
@@ -755,64 +693,30 @@ export default function HomeApp() {
       return;
     }
 
-    setCharacterReflectionProviderSettingsDraft((current) =>
-      updateCharacterReflectionModel(
-        buildDraftAppSettings({ characterReflectionProviderSettings: current }),
-        providerCatalog,
-        providerId,
-        model,
-      )
-    );
+    setSettingsDraft((current) => updateCharacterReflectionModelDraft(current, providerCatalog, providerId, model));
   };
 
   const handleChangeCharacterReflectionReasoningEffort = (
     providerId: string,
-    reasoningEffort: CharacterReflectionProviderSettings["reasoningEffort"],
+    reasoningEffort: AppSettings["characterReflectionProviderSettings"][string]["reasoningEffort"],
   ) => {
-    setCharacterReflectionProviderSettingsDraft((current) =>
-      updateCharacterReflectionReasoningEffort(
-        buildDraftAppSettings({ characterReflectionProviderSettings: current }),
-        providerId,
-        reasoningEffort,
-      )
-    );
+    setSettingsDraft((current) => updateCharacterReflectionReasoningEffortDraft(current, providerId, reasoningEffort));
   };
 
   const providerSettingRows = useMemo<HomeProviderSettingRow[]>(
-    () => buildHomeProviderSettingRows(modelCatalog, buildDraftAppSettings()),
+    () => buildHomeProviderSettingRows(modelCatalog, settingsDraft),
     [
-      characterReflectionProviderSettingsDraft,
-      codingProviderSettingsDraft,
-      memoryExtractionProviderSettingsDraft,
       modelCatalog,
-      systemPromptPrefixDraft,
+      settingsDraft,
     ],
   );
-  const normalizedMemoryExtractionProviderSettingsDraft = useMemo(
-    () => buildNormalizedMemoryExtractionProviderSettings(providerSettingRows),
-    [providerSettingRows],
-  );
-  const normalizedCharacterReflectionProviderSettingsDraft = useMemo(
-    () => buildNormalizedCharacterReflectionProviderSettings(providerSettingRows),
-    [providerSettingRows],
+  const persistedSettingsDraft = useMemo(
+    () => buildPersistedAppSettingsFromRows(settingsDraft, providerSettingRows),
+    [providerSettingRows, settingsDraft],
   );
   const settingsDirty = useMemo(() => {
-    return (
-      systemPromptPrefixDraft !== appSettings.systemPromptPrefix ||
-      JSON.stringify(codingProviderSettingsDraft) !== JSON.stringify(appSettings.codingProviderSettings) ||
-      JSON.stringify(memoryExtractionProviderSettingsDraft) !== JSON.stringify(appSettings.memoryExtractionProviderSettings) ||
-      JSON.stringify(characterReflectionProviderSettingsDraft) !== JSON.stringify(appSettings.characterReflectionProviderSettings)
-    );
-  }, [
-    appSettings.characterReflectionProviderSettings,
-    appSettings.codingProviderSettings,
-    appSettings.memoryExtractionProviderSettings,
-    appSettings.systemPromptPrefix,
-    characterReflectionProviderSettingsDraft,
-    codingProviderSettingsDraft,
-    memoryExtractionProviderSettingsDraft,
-    systemPromptPrefixDraft,
-  ]);
+    return JSON.stringify(persistedSettingsDraft) !== JSON.stringify(appSettings);
+  }, [appSettings, persistedSettingsDraft]);
 
   useEffect(() => {
     settingsDirtyRef.current = settingsDirty;
@@ -851,8 +755,8 @@ export default function HomeApp() {
               <strong>System Prompt Prefix</strong>
               <p className="settings-help">保存時に先頭へ <code># System Prompt</code> が自動で付く。</p>
               <textarea
-                value={systemPromptPrefixDraft}
-                onChange={(event) => setSystemPromptPrefixDraft(event.target.value)}
+                value={settingsDraft.systemPromptPrefix}
+                onChange={(event) => setSettingsDraft((current) => updateSystemPromptPrefix(current, event.target.value))}
                 rows={8}
               />
             </div>

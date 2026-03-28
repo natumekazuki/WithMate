@@ -188,6 +188,12 @@ export type CharacterReflectionProviderSettings = {
   reasoningEffort: ModelReasoningEffort;
 };
 
+export type ResolvedProviderSettingsBundle = {
+  coding: ProviderAppSettings;
+  memoryExtraction: MemoryExtractionProviderSettings;
+  characterReflection: CharacterReflectionProviderSettings;
+};
+
 export type DiscoveredSkillSource = "workspace" | "provider";
 
 export type DiscoveredSkill = {
@@ -737,6 +743,17 @@ export function getCharacterReflectionProviderSettings(
   return normalizeCharacterReflectionProviderSettings(
     resolvedSettings.characterReflectionProviderSettings[normalizedProviderId],
   );
+}
+
+export function getResolvedProviderSettingsBundle(
+  settings: AppSettings,
+  providerId: string | null | undefined,
+): ResolvedProviderSettingsBundle {
+  return {
+    coding: getProviderAppSettings(settings, providerId),
+    memoryExtraction: getMemoryExtractionProviderSettings(settings, providerId),
+    characterReflection: getCharacterReflectionProviderSettings(settings, providerId),
+  };
 }
 
 function normalizeHexColor(value: unknown, fallback: string): string {
