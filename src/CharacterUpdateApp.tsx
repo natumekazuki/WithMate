@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 
+import type { AuditLogEntry, LiveSessionRunState, Session } from "./app-state.js";
+import {
+  buildCharacterUpdateLatestCommandView,
+  selectLatestCharacterUpdateSession,
+  type CharacterUpdatePaneTabKey,
+} from "./character-update-projection.js";
 import { CharacterAvatar } from "./ui-utils.js";
 import { getCharacterIdFromLocation, isCharacterUpdateMode, type CharacterProfile } from "./character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "./character-update-state.js";
 import { createDefaultAppSettings, getProviderAppSettings, type AppSettings } from "./provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
+import { liveRunStepStatusLabel } from "./ui-utils.js";
 
 function getUpdateCharacterId(): string | null {
   return isCharacterUpdateMode() ? getCharacterIdFromLocation() : null;
@@ -16,10 +23,14 @@ export default function CharacterUpdateApp() {
   const characterId = useMemo(() => getUpdateCharacterId(), []);
   const [character, setCharacter] = useState<CharacterProfile | null>(null);
   const [workspace, setWorkspace] = useState<CharacterUpdateWorkspace | null>(null);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [selectedProviderId, setSelectedProviderId] = useState("");
   const [memoryExtract, setMemoryExtract] = useState<CharacterUpdateMemoryExtract | null>(null);
+  const [linkedSessionLiveRun, setLinkedSessionLiveRun] = useState<LiveSessionRunState | null>(null);
+  const [linkedSessionAuditLogs, setLinkedSessionAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [activePaneTab, setActivePaneTab] = useState<CharacterUpdatePaneTabKey>("latest-command");
   const [loadingExtract, setLoadingExtract] = useState(false);
   const [startingSession, setStartingSession] = useState(false);
 
@@ -35,14 +46,16 @@ export default function CharacterUpdateApp() {
     void Promise.all([
       api.getCharacter(characterId),
       api.getCharacterUpdateWorkspace(characterId),
+      api.listSessions(),
       api.getAppSettings(),
       api.getModelCatalog(null),
-    ]).then(([nextCharacter, nextWorkspace, nextSettings, nextCatalog]) => {
+    ]).then(([nextCharacter, nextWorkspace, nextSessions, nextSettings, nextCatalog]) => {
       if (!active) {
         return;
       }
       setCharacter(nextCharacter);
       setWorkspace(nextWorkspace);
+      setSessions(nextSessions);
       setAppSettings(nextSettings);
       setModelCatalog(nextCatalog);
     });
@@ -59,6 +72,11 @@ export default function CharacterUpdateApp() {
         }
       });
     });
+    const unsubscribeSessions = api.subscribeSessions((nextSessions) => {
+      if (active) {
+        setSessions(nextSessions);
+      }
+    });
     const unsubscribeAppSettings = api.subscribeAppSettings((nextSettings) => {
       if (active) {
         setAppSettings(nextSettings);
@@ -73,6 +91,7 @@ export default function CharacterUpdateApp() {
     return () => {
       active = false;
       unsubscribeCharacters();
+      unsubscribeSessions();
       unsubscribeAppSettings();
       unsubscribeModelCatalog();
     };
@@ -94,6 +113,64 @@ export default function CharacterUpdateApp() {
     }
     return selectedProviderId === "copilot" ? workspace.copilotInstructionPath : workspace.codexInstructionPath;
   }, [selectedProviderId, workspace]);
+  const linkedSession = useMemo(
+    () => selectLatestCharacterUpdateSession(sessions, characterId),
+    [characterId, sessions],
+  );
+  const latestCommandView = useMemo(
+    () => buildCharacterUpdateLatestCommandView({
+      liveRun: linkedSessionLiveRun,
+      auditLogs: linkedSessionAuditLogs,
+    }),
+    [linkedSessionAuditLogs, linkedSessionLiveRun],
+  );
+  const hasRunningLinkedCommand = useMemo(
+    () =>
+      linkedSession?.status === "running"
+      || (linkedSessionLiveRun?.steps ?? []).some((step) => step.status === "in_progress"),
+    [linkedSession?.status, linkedSessionLiveRun?.steps],
+  );
+
+  useEffect(() => {
+    if (hasRunningLinkedCommand) {
+      setActivePaneTab("latest-command");
+    }
+  }, [hasRunningLinkedCommand]);
+
+  useEffect(() => {
+    let active = true;
+    const api = getWithMateApi();
+    const linkedSessionId = linkedSession?.id;
+    if (!api || !linkedSessionId) {
+      setLinkedSessionLiveRun(null);
+      setLinkedSessionAuditLogs([]);
+      return () => {
+        active = false;
+      };
+    }
+
+    void Promise.all([
+      api.getLiveSessionRun(linkedSessionId),
+      api.listSessionAuditLogs(linkedSessionId),
+    ]).then(([nextLiveRun, nextAuditLogs]) => {
+      if (!active) {
+        return;
+      }
+      setLinkedSessionLiveRun(nextLiveRun);
+      setLinkedSessionAuditLogs(nextAuditLogs);
+    });
+
+    const unsubscribeLiveRun = api.subscribeLiveSessionRun((sessionId, state) => {
+      if (active && sessionId === linkedSessionId) {
+        setLinkedSessionLiveRun(state);
+      }
+    });
+
+    return () => {
+      active = false;
+      unsubscribeLiveRun();
+    };
+  }, [linkedSession?.id, linkedSession?.updatedAt]);
 
   const handleExtract = async () => {
     const api = getWithMateApi();
@@ -123,6 +200,7 @@ export default function CharacterUpdateApp() {
     setStartingSession(true);
     try {
       const session = await api.createCharacterUpdateSession(characterId, selectedProviderId);
+      setActivePaneTab("latest-command");
       await api.openSession(session.id);
     } finally {
       setStartingSession(false);
@@ -213,28 +291,106 @@ export default function CharacterUpdateApp() {
               >
                 {startingSession ? "Starting..." : "Start Update Session"}
               </button>
-              <button className="launch-toggle" type="button" onClick={() => void handleExtract()} disabled={loadingExtract}>
-                {loadingExtract ? "Extracting..." : "Extract Memory"}
-              </button>
-              <button className="launch-toggle" type="button" onClick={() => void handleCopy()} disabled={!memoryExtract?.text}>
-                Copy
-              </button>
             </div>
-          </section>
-
-          <section className="character-update-section character-update-extract-section">
-            <div className="character-update-extract-head">
-              <strong>Memory Extract</strong>
-              <span>{memoryExtract?.entryCount ?? 0}</span>
-            </div>
-            <textarea
-              className="character-update-extract"
-              value={memoryExtract?.text ?? ""}
-              readOnly
-              spellCheck={false}
-            />
           </section>
         </section>
+
+        <aside className="panel character-update-side">
+          <section className="command-monitor-shell character-update-monitor-shell" aria-label="Character Update 右ペイン">
+            <div className="command-monitor-head">
+              <div className="character-update-pane-toggle" role="tablist" aria-label="Character Update 右ペイン表示切り替え">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activePaneTab === "latest-command"}
+                  className={`character-update-pane-toggle-button${activePaneTab === "latest-command" ? " active" : ""}`}
+                  onClick={() => setActivePaneTab("latest-command")}
+                >
+                  LatestCommand
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activePaneTab === "memory-extract"}
+                  className={`character-update-pane-toggle-button${activePaneTab === "memory-extract" ? " active" : ""}`}
+                  onClick={() => setActivePaneTab("memory-extract")}
+                >
+                  MemoryExtract
+                </button>
+              </div>
+            </div>
+
+            <div className="command-monitor-content">
+              <div className="command-monitor-stack">
+                {activePaneTab === "latest-command" ? (
+                  latestCommandView ? (
+                    <div className="command-monitor-card">
+                      <div className="command-monitor-card-head">
+                        <div className="command-monitor-meta">
+                          <span className={`live-run-step-status ${latestCommandView.status}`}>
+                            {liveRunStepStatusLabel(latestCommandView.status)}
+                          </span>
+                          <span className="live-run-step-type">Command</span>
+                          <span className="command-monitor-source">
+                            {latestCommandView.sourceLabel === "live" ? "RUN LIVE" : "LAST RUN"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="live-run-command-summary" aria-label="実行コマンド">
+                        <span className="live-run-command-prefix" aria-hidden="true">
+                          $
+                        </span>
+                        <code className="live-run-command-text">{latestCommandView.summary}</code>
+                      </div>
+
+                      {latestCommandView.details ? (
+                        <details className="command-monitor-details live-run-step-details">
+                          <summary>command_execution の詳細</summary>
+                          <pre>{latestCommandView.details}</pre>
+                        </details>
+                      ) : null}
+
+                      {linkedSessionLiveRun?.errorMessage ? (
+                        <div className="live-run-error-block" role="alert">
+                          <strong>実行エラー</strong>
+                          <p className="live-run-error">{linkedSessionLiveRun.errorMessage}</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="command-monitor-empty-shell" />
+                  )
+                ) : null}
+
+                {activePaneTab === "memory-extract" ? (
+                  <div className="command-monitor-card">
+                    <div className="character-update-extract-head">
+                      <div className="command-monitor-meta">
+                        <strong>Memory Extract</strong>
+                        <span className="command-monitor-source">{memoryExtract?.entryCount ?? 0}</span>
+                      </div>
+                      <div className="character-update-extract-actions">
+                        <button className="launch-toggle compact" type="button" onClick={() => void handleExtract()} disabled={loadingExtract}>
+                          {loadingExtract ? "Extracting..." : "Refresh"}
+                        </button>
+                        <button className="launch-toggle compact" type="button" onClick={() => void handleCopy()} disabled={!memoryExtract?.text}>
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+                    <textarea
+                      className="character-update-extract"
+                      value={memoryExtract?.text ?? ""}
+                      readOnly
+                      spellCheck={false}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </section>
+        </aside>
       </main>
     </div>
   );

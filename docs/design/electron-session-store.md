@@ -131,6 +131,7 @@ Main Process 側では `MainQueryService`、`SessionRuntimeService`、`SessionPe
   - session metadata
   - `messages_json`
   - `stream_json`
+  - `session_kind` による用途分離
 - `session_memories`
   - `Session Memory v1`
 - `audit_logs`

@@ -21,6 +21,10 @@ export type HomeSessionProjection = {
   monitorCompletedEmptyMessage: string;
 };
 
+export function shouldDisplayHomeSession(session: Session): boolean {
+  return session.sessionKind !== "character-update";
+}
+
 export function getHomeSessionState(session: Session): HomeSessionState {
   if (session.status === "running" || session.runState === "running") {
     return {
@@ -63,6 +67,7 @@ export function buildHomeSessionProjection(
 ): HomeSessionProjection {
   const normalizedSessionSearch = sessionSearchText.trim().toLocaleLowerCase();
   const filteredSessionEntries = sessions
+    .filter((session) => shouldDisplayHomeSession(session))
     .filter((session) => {
       if (!normalizedSessionSearch) {
         return true;

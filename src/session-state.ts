@@ -37,6 +37,8 @@ export type StreamEntry = {
   text: string;
 };
 
+export type SessionKind = "default" | "character-update";
+
 export type Session = {
   id: string;
   taskTitle: string;
@@ -48,6 +50,7 @@ export type Session = {
   workspaceLabel: string;
   workspacePath: string;
   branch: string;
+  sessionKind: SessionKind;
   characterId: string;
   character: string;
   characterIconPath: string;
@@ -76,6 +79,7 @@ export type CreateSessionInput = {
   workspaceLabel: string;
   workspacePath: string;
   branch: string;
+  sessionKind?: SessionKind;
   characterId: string;
   character: string;
   characterIconPath: string;
@@ -264,6 +268,7 @@ export function normalizeSession(value: unknown): Session | null {
         : "workspace",
     workspacePath: typeof candidate.workspacePath === "string" ? candidate.workspacePath : "",
     branch: typeof candidate.branch === "string" && candidate.branch.trim() ? candidate.branch : "main",
+    sessionKind: candidate.sessionKind === "character-update" ? "character-update" : "default",
     characterId:
       typeof candidate.characterId === "string" && candidate.characterId.trim()
         ? candidate.characterId
@@ -329,6 +334,7 @@ export function buildNewSession(input: CreateSessionInput): Session {
     workspaceLabel: input.workspaceLabel,
     workspacePath: input.workspacePath,
     branch: input.branch,
+    sessionKind: input.sessionKind ?? "default",
     characterId: input.characterId,
     character: input.character,
     characterIconPath: input.characterIconPath,

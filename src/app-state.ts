@@ -11,6 +11,7 @@ export type {
   Message,
   MessageArtifact,
   Session,
+  SessionKind,
   StreamEntry,
 } from "./session-state.js";
 export {

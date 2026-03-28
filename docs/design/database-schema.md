@@ -92,6 +92,7 @@ Session の正本。
 | `workspace_label` | `TEXT` | 表示用 workspace 名 |
 | `workspace_path` | `TEXT` | 作業ディレクトリ |
 | `branch` | `TEXT` | branch 表示用文字列 |
+| `session_kind` | `TEXT` | session 用途 (`default` / `character-update`) |
 | `character_id` | `TEXT` | character id |
 | `character_name` | `TEXT` | session snapshot としての character 名 |
 | `character_icon_path` | `TEXT` | session snapshot としての icon path |

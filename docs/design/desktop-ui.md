@@ -49,6 +49,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - 初期表示は `Session Monitor`
   - compact な session row を表示する
   - source は `src-electron/main.ts` の `sessionWindows: Map<string, BrowserWindow>` を truth source にした open session ids と、`Recent Sessions` と同じ filtered session list の交差集合を使う
+  - `sessionKind === "character-update"` の update 専用 session は monitor 対象から除外する
   - section
     - `実行中`: `running`
     - `停止・完了`: `interrupted` / `error` / `neutral` を含む non-running
@@ -63,6 +64,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
     - `taskTitle / workspace`
     - 部分一致
   - card list は全 session を正本として表示し、storage 既定の `last_active_at DESC` を崩さない
+  - `sessionKind === "character-update"` の update 専用 session はこの一覧から除外する
   - card 常時表示情報
     - `avatar / taskTitle / runState badge / workspacePath / updatedAt`
     - `taskSummary` は 1 行補助情報として、空なら省略可

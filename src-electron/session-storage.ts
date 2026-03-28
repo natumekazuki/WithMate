@@ -16,6 +16,7 @@ type SessionRow = {
   workspace_label: string;
   workspace_path: string;
   branch: string;
+  session_kind: string;
   character_id: string;
   character_name: string;
   character_icon_path: string;
@@ -47,6 +48,7 @@ const SESSION_SELECT_COLUMNS = `
   workspace_label,
   workspace_path,
   branch,
+  session_kind,
   character_id,
   character_name,
   character_icon_path,
@@ -89,6 +91,7 @@ const UPSERT_SESSION_SQL = `
     workspace_label,
     workspace_path,
     branch,
+    session_kind,
     character_id,
     character_name,
     character_icon_path,
@@ -115,6 +118,7 @@ const UPSERT_SESSION_SQL = `
     workspace_label = excluded.workspace_label,
     workspace_path = excluded.workspace_path,
     branch = excluded.branch,
+    session_kind = excluded.session_kind,
     character_id = excluded.character_id,
     character_name = excluded.character_name,
     character_icon_path = excluded.character_icon_path,
@@ -149,6 +153,7 @@ function rowToSession(row: SessionRow): Session | null {
     workspaceLabel: row.workspace_label,
     workspacePath: row.workspace_path,
     branch: row.branch,
+    sessionKind: row.session_kind,
     characterId: row.character_id,
     character: row.character_name,
     characterIconPath: row.character_icon_path,
@@ -193,6 +198,7 @@ export class SessionStorage {
         workspace_label TEXT NOT NULL,
         workspace_path TEXT NOT NULL,
         branch TEXT NOT NULL,
+        session_kind TEXT NOT NULL DEFAULT 'default',
         character_id TEXT NOT NULL,
         character_name TEXT NOT NULL,
         character_icon_path TEXT NOT NULL,
@@ -225,6 +231,7 @@ export class SessionStorage {
       normalized.workspaceLabel,
       normalized.workspacePath,
       normalized.branch,
+      normalized.sessionKind,
       normalized.characterId,
       normalized.character,
       normalized.characterIconPath,
@@ -279,6 +286,7 @@ export class SessionStorage {
     if (!columns.has("character_theme_sub")) {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN character_theme_sub TEXT NOT NULL DEFAULT '#6fb8c7';`);
     }
+
   }
 
   listSessions(): Session[] {

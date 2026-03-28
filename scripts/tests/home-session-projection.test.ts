@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import type { Session } from "../../src/app-state.js";
-import { buildHomeSessionProjection, getHomeSessionState } from "../../src/home-session-projection.js";
+import { buildHomeSessionProjection, getHomeSessionState, shouldDisplayHomeSession } from "../../src/home-session-projection.js";
 
 function createSession(partial: Partial<Session> & Pick<Session, "id" | "taskTitle">): Session {
   return {
@@ -14,6 +14,7 @@ function createSession(partial: Partial<Session> & Pick<Session, "id" | "taskTit
     workspaceLabel: "workspace",
     workspacePath: "F:/workspace",
     branch: "main",
+    sessionKind: "default",
     characterId: "char-1",
     character: "Mia",
     characterIconPath: "icon.png",
@@ -73,5 +74,31 @@ describe("home-session-projection", () => {
     assert.equal(projection.monitorBaseEmptyMessage, "一致するセッションはないよ。");
     assert.equal(projection.monitorRunningEmptyMessage, "一致するセッションはないよ。");
     assert.equal(projection.monitorCompletedEmptyMessage, "一致するセッションはないよ。");
+  });
+
+  it("character-update session を Home 一覧と monitor から除外する", () => {
+    const projection = buildHomeSessionProjection(
+      [
+        createSession({ id: "main", taskTitle: "Main Task", branch: "main" }),
+        createSession({
+          id: "update",
+          taskTitle: "Muse の更新",
+          branch: "main",
+          sessionKind: "character-update",
+          status: "running",
+          runState: "running",
+        }),
+      ],
+      ["main", "update"],
+      "",
+    );
+
+    assert.equal(shouldDisplayHomeSession(createSession({ id: "visible", taskTitle: "visible", branch: "main" })), true);
+    assert.equal(
+      shouldDisplayHomeSession(createSession({ id: "hidden", taskTitle: "hidden", branch: "main", sessionKind: "character-update" })),
+      false,
+    );
+    assert.deepEqual(projection.filteredSessionEntries.map(({ session }) => session.id), ["main"]);
+    assert.deepEqual(projection.monitorEntries.map(({ session }) => session.id), ["main"]);
   });
 });

@@ -23,6 +23,7 @@ export type CharacterUpdateWorkspaceServiceDeps = {
     workspaceLabel: string;
     workspacePath: string;
     branch: string;
+    sessionKind?: Session["sessionKind"];
     characterId: string;
     character: string;
     characterIconPath: string;
@@ -84,7 +85,8 @@ export class CharacterUpdateWorkspaceService {
       taskTitle: `${character.name} の更新`,
       workspaceLabel: `${character.name} workspace`,
       workspacePath,
-      branch: "character-update",
+      branch: "main",
+      sessionKind: "character-update",
       characterId: character.id,
       character: character.name,
       characterIconPath: character.iconPath,

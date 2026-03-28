@@ -18,13 +18,15 @@
 ## UI
 
 - Character Editor から `Update Workspace` を開く
-- 専用 window には最低限これを置く
-  - workspace path
-  - provider 選択
-  - `Start Update Session`
-  - `Extract Memory`
-  - extract 結果の read-only 表示
-  - `Copy`
+- 専用 window は `SessionWindow` より狭い責務の 2 カラム構成にする
+  - 左カラム
+    - workspace path
+    - provider 選択
+    - `Start Update Session`
+    - update 対象ファイル一覧
+  - 右カラム
+    - `LatestCommand`
+    - `MemoryExtract`
 
 ## Workspace Files
 
@@ -53,13 +55,25 @@
 - 各項目は `title: detail` の bullet を基本とする
 - `evidence` は存在する時だけ短く添える
 - extract は更新用 prompt へ手動で貼り付ける前提で、説明文は最小限にする
+- `MemoryExtract` 右ペインから `Refresh / Copy` を行う
+
+## LatestCommand
+
+- Character Update Window 自体は update session を内包しない
+- `sessionKind === "character-update"` かつ同一 `characterId` の session を linked session として扱う
+- linked session は次の順で選ぶ
+  1. `running`
+  2. `updatedAt` が新しいもの
+- `LatestCommand` は linked session の live run を優先して表示する
+- live run が無い時だけ、linked session の main audit log から直近 `command_execution` を補助表示する
 
 ## Session 作成
 
 - `workspacePath` は character directory
 - `workspaceLabel` は character 名ベースの label を使う
 - `taskTitle` は `${character.name} の更新`
-- `branch` は固定の logical label を使う
+- `branch` は実 branch 用の値を使い、用途識別は `sessionKind = "character-update"` で行う
+- update session は保存されるが、Home の `Recent Sessions` / `Session Monitor` には出さない
 - create / update 保存時に `AGENTS.md` と `copilot-instructions.md` を同期しておく
 - update session 起動時は保存済みの instruction file をそのまま使う
 
