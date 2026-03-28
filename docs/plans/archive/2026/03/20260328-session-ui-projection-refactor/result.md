@@ -8,6 +8,10 @@
 - `LatestCommand / MemoryGeneration / Monologue` の tab 表示、Copilot quota summary、自動切り替えを pure helper で扱う形にした
 - `Context` telemetry の summary / value 整形も helper へ寄せた
 
+## Commits
+
+- `01a3da7` `refactor(session): extract session ui projection helpers`
+
 ## Verification
 
 - `node --test --import tsx scripts/tests/session-ui-projection.test.ts`
