@@ -16,6 +16,7 @@ import {
   type CharacterProfile,
   type CreateCharacterInput,
 } from "./character-state.js";
+import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { CharacterAvatar } from "./ui-utils.js";
 
 const emptyDraft: CreateCharacterInput = {
@@ -115,7 +116,7 @@ function toDraft(character: CharacterProfile | null): CreateCharacterInput {
 }
 
 export default function CharacterEditorApp() {
-  const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
+  const desktopRuntime = isDesktopRuntime();
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [draft, setDraft] = useState<CreateCharacterInput>(emptyDraft);
   const [characterId, setCharacterId] = useState<string | null>(() => getCharacterIdFromLocation());
@@ -125,14 +126,15 @@ export default function CharacterEditorApp() {
 
   useEffect(() => {
     let active = true;
+    const withmateApi = getWithMateApi();
 
-    if (!window.withmate) {
+    if (!withmateApi) {
       return () => {
         active = false;
       };
     }
 
-    void window.withmate.listCharacters().then((nextCharacters) => {
+    void withmateApi.listCharacters().then((nextCharacters) => {
       if (!active) {
         return;
       }
@@ -142,7 +144,7 @@ export default function CharacterEditorApp() {
       setDraft(toDraft(currentCharacter));
     });
 
-    const unsubscribe = window.withmate.subscribeCharacters((nextCharacters) => {
+    const unsubscribe = withmateApi.subscribeCharacters((nextCharacters) => {
       if (!active) {
         return;
       }
@@ -274,12 +276,13 @@ export default function CharacterEditorApp() {
   };
 
   const handleSave = async () => {
-    if (!window.withmate || !draft.name.trim()) {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !draft.name.trim()) {
       return;
     }
 
     if (selectedCharacter && !isCreateMode) {
-      const saved = await window.withmate.updateCharacter({
+      const saved = await withmateApi.updateCharacter({
         ...selectedCharacter,
         ...draft,
         updatedAt: currentTimestampLabel(),
@@ -290,7 +293,7 @@ export default function CharacterEditorApp() {
       return;
     }
 
-    const created = await window.withmate.createCharacter(draft);
+    const created = await withmateApi.createCharacter(draft);
     setCharacterId(created.id);
     setIsCreateMode(false);
     setDraft(toDraft(created));
@@ -298,7 +301,8 @@ export default function CharacterEditorApp() {
   };
 
   const handleDelete = async () => {
-    if (!window.withmate || !selectedCharacter) {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !selectedCharacter) {
       return;
     }
 
@@ -307,11 +311,11 @@ export default function CharacterEditorApp() {
       return;
     }
 
-    await window.withmate.deleteCharacter(selectedCharacter.id);
+    await withmateApi.deleteCharacter(selectedCharacter.id);
     window.close();
   };
 
-  if (!isDesktopRuntime) {
+  if (!desktopRuntime) {
     return (
       <div className="page-shell character-editor-page">
         <main className="character-editor-layout">

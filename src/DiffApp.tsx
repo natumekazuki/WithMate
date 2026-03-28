@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 
 import { getDiffTokenFromLocation, type DiffPreviewPayload } from "./session-state.js";
 import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
+import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 
 export default function DiffApp() {
-  const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
+  const desktopRuntime = isDesktopRuntime();
   const [diffPreview, setDiffPreview] = useState<DiffPreviewPayload | null>(null);
   const diffThemeStyle = useMemo(
     () => (diffPreview ? buildCharacterThemeStyle(diffPreview.themeColors) : undefined),
@@ -15,15 +16,16 @@ export default function DiffApp() {
   useEffect(() => {
     let active = true;
     const token = getDiffTokenFromLocation();
+    const withmateApi = getWithMateApi();
 
-    if (!window.withmate || !token) {
+    if (!withmateApi || !token) {
       setDiffPreview(null);
       return () => {
         active = false;
       };
     }
 
-    void window.withmate.getDiffPreview(token).then((payload) => {
+    void withmateApi.getDiffPreview(token).then((payload) => {
       if (active) {
         setDiffPreview(payload);
       }
@@ -34,7 +36,7 @@ export default function DiffApp() {
     };
   }, []);
 
-  if (!isDesktopRuntime) {
+  if (!desktopRuntime) {
     return (
       <div className="page-shell diff-page">
         <section className="panel empty-session-card rise-1">

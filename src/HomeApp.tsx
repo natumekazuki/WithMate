@@ -64,45 +64,51 @@ import {
   normalizeResetAppDatabaseTargets,
   type ResetAppDatabaseTarget,
 } from "./withmate-window-types.js";
+import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 
 async function openSessionWindow(sessionId: string) {
-  if (!window.withmate) {
+  const withmateApi = getWithMateApi();
+  if (!withmateApi) {
     return;
   }
 
-  await window.withmate.openSession(sessionId);
+  await withmateApi.openSession(sessionId);
 }
 
 async function openHomeWindow() {
-  if (!window.withmate) {
+  const withmateApi = getWithMateApi();
+  if (!withmateApi) {
     return;
   }
 
-  await window.withmate.openHomeWindow();
+  await withmateApi.openHomeWindow();
 }
 
 async function openSessionMonitorWindow() {
-  if (!window.withmate) {
+  const withmateApi = getWithMateApi();
+  if (!withmateApi) {
     return;
   }
 
-  await window.withmate.openSessionMonitorWindow();
+  await withmateApi.openSessionMonitorWindow();
 }
 
 async function openSettingsWindow() {
-  if (!window.withmate) {
+  const withmateApi = getWithMateApi();
+  if (!withmateApi) {
     return;
   }
 
-  await window.withmate.openSettingsWindow();
+  await withmateApi.openSettingsWindow();
 }
 
 async function openCharacterEditor(characterId?: string | null) {
-  if (!window.withmate) {
+  const withmateApi = getWithMateApi();
+  if (!withmateApi) {
     return;
   }
 
-  await window.withmate.openCharacterEditor(characterId);
+  await withmateApi.openCharacterEditor(characterId);
 }
 
 type HomeRightPaneView = "monitor" | "characters";
@@ -118,7 +124,7 @@ function getHomeWindowMode(): HomeWindowMode {
 }
 
 export default function HomeApp() {
-  const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
+  const desktopRuntime = isDesktopRuntime();
   const homeWindowMode = useMemo(() => getHomeWindowMode(), []);
   const isMonitorWindowMode = homeWindowMode === "monitor";
   const isSettingsWindowMode = homeWindowMode === "settings";
@@ -155,33 +161,34 @@ export default function HomeApp() {
 
   useEffect(() => {
     let active = true;
+    const withmateApi = getWithMateApi();
 
-    if (!window.withmate) {
+    if (!withmateApi) {
       return () => {
         active = false;
       };
     }
 
-    void window.withmate.listSessions().then((nextSessions) => {
+    void withmateApi.listSessions().then((nextSessions) => {
       if (active) {
         setSessions(nextSessions);
       }
     });
-    void window.withmate.getAppSettings().then((settings) => {
+    void withmateApi.getAppSettings().then((settings) => {
       if (!active) {
         return;
       }
 
       applyIncomingAppSettings(settings);
     });
-    void window.withmate.getModelCatalog(null).then((snapshot) => {
+    void withmateApi.getModelCatalog(null).then((snapshot) => {
       if (active) {
         setModelCatalog(snapshot);
         setModelCatalogLoaded(true);
       }
     });
 
-    void window.withmate.listCharacters().then((nextCharacters) => {
+    void withmateApi.listCharacters().then((nextCharacters) => {
       if (!active) {
         return;
       }
@@ -190,13 +197,13 @@ export default function HomeApp() {
       setLaunchDraft((current) => syncLaunchDraftCharacter(current, nextCharacters));
     });
 
-    const unsubscribeSessions = window.withmate.subscribeSessions((nextSessions) => {
+    const unsubscribeSessions = withmateApi.subscribeSessions((nextSessions) => {
       if (active) {
         setSessions(nextSessions);
       }
     });
 
-    const unsubscribeCharacters = window.withmate.subscribeCharacters((nextCharacters) => {
+    const unsubscribeCharacters = withmateApi.subscribeCharacters((nextCharacters) => {
       if (!active) {
         return;
       }
@@ -204,13 +211,13 @@ export default function HomeApp() {
       setCharacters(nextCharacters);
       setLaunchDraft((current) => syncLaunchDraftCharacter(current, nextCharacters));
     });
-    const unsubscribeModelCatalog = window.withmate.subscribeModelCatalog((snapshot) => {
+    const unsubscribeModelCatalog = withmateApi.subscribeModelCatalog((snapshot) => {
       if (active) {
         setModelCatalog(snapshot);
         setModelCatalogLoaded(true);
       }
     });
-    const unsubscribeAppSettings = window.withmate.subscribeAppSettings((settings) => {
+    const unsubscribeAppSettings = withmateApi.subscribeAppSettings((settings) => {
       if (active) {
         applyIncomingAppSettings(settings);
       }
@@ -228,14 +235,15 @@ export default function HomeApp() {
   useEffect(() => {
     let active = true;
     let receivedSubscriptionUpdate = false;
+    const withmateApi = getWithMateApi();
 
-    if (!window.withmate) {
+    if (!withmateApi) {
       return () => {
         active = false;
       };
     }
 
-    const unsubscribeOpenSessionWindowIds = window.withmate.subscribeOpenSessionWindowIds((nextSessionIds) => {
+    const unsubscribeOpenSessionWindowIds = withmateApi.subscribeOpenSessionWindowIds((nextSessionIds) => {
       if (!active) {
         return;
       }
@@ -244,7 +252,7 @@ export default function HomeApp() {
       setOpenSessionWindowIds(nextSessionIds);
     });
 
-    void window.withmate.listOpenSessionWindowIds().then((nextSessionIds) => {
+    void withmateApi.listOpenSessionWindowIds().then((nextSessionIds) => {
       if (!active || receivedSubscriptionUpdate) {
         return;
       }
@@ -264,6 +272,7 @@ export default function HomeApp() {
   );
   const {
     filteredSessionEntries,
+    normalizedSessionSearch,
     runningMonitorEntries,
     nonRunningMonitorEntries,
     monitorRunningEmptyMessage,
@@ -334,11 +343,12 @@ export default function HomeApp() {
   const homePageClassName = `page-shell home-page${isMonitorWindowMode ? " home-page-monitor-window" : ""}`;
 
   const handleBrowseWorkspace = async () => {
-    if (!window.withmate) {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
       return;
     }
 
-    const selectedPath = await window.withmate.pickDirectory();
+    const selectedPath = await withmateApi.pickDirectory();
     if (!selectedPath) {
       return;
     }
@@ -355,7 +365,8 @@ export default function HomeApp() {
   };
 
   const handleStartSession = async () => {
-    if (!window.withmate) {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
       return;
     }
 
@@ -369,32 +380,34 @@ export default function HomeApp() {
       return;
     }
 
-    const createdSession = await window.withmate.createSession(sessionInput);
+    const createdSession = await withmateApi.createSession(sessionInput);
     closeLaunchDialog();
     await openSessionWindow(createdSession.id);
   };
 
   const handleImportModelCatalog = async () => {
-    if (!window.withmate) {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
       return;
     }
 
     try {
-      setSettingsFeedback(await importHomeModelCatalog(window.withmate));
+      setSettingsFeedback(await importHomeModelCatalog(withmateApi));
     } catch (error) {
       setSettingsFeedback(error instanceof Error ? error.message : "model catalog の読み込みに失敗したよ。");
     }
   };
 
   const handleResetAppDatabase = async () => {
-    if (!window.withmate || resettingDatabase) {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || resettingDatabase) {
       return;
     }
 
     setResettingDatabase(true);
     try {
       const result = await resetHomeDatabase({
-        api: window.withmate,
+        api: withmateApi,
         resetTargets: resetDatabaseTargets,
         confirm: (message) => window.confirm(message),
       });
@@ -422,12 +435,13 @@ export default function HomeApp() {
   };
 
   const handleSaveSettings = async () => {
-    if (!window.withmate) {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
       return;
     }
 
     try {
-      const result = await saveHomeSettings(window.withmate, persistedSettingsDraft);
+      const result = await saveHomeSettings(withmateApi, persistedSettingsDraft);
       setAppSettings(result.nextSettings);
       setSettingsDraft(result.nextSettings);
       setSettingsFeedback(result.feedback);
@@ -449,12 +463,13 @@ export default function HomeApp() {
   };
 
   const handleBrowseProviderSkillRootPath = async (providerId: string) => {
-    if (!window.withmate) {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
       return;
     }
 
     const currentSettings = getProviderAppSettings(settingsDraft, providerId);
-    const selectedPath = await window.withmate.pickDirectory(currentSettings.skillRootPath || null);
+    const selectedPath = await withmateApi.pickDirectory(currentSettings.skillRootPath || null);
     if (!selectedPath) {
       return;
     }
@@ -534,12 +549,13 @@ export default function HomeApp() {
   }, [settingsDirty]);
 
   const handleExportModelCatalog = async () => {
-    if (!window.withmate) {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
       return;
     }
 
     try {
-      setSettingsFeedback(await exportHomeModelCatalog(window.withmate));
+      setSettingsFeedback(await exportHomeModelCatalog(withmateApi));
     } catch (error) {
       setSettingsFeedback(error instanceof Error ? error.message : "model catalog の保存に失敗したよ。");
     }
@@ -576,7 +592,7 @@ export default function HomeApp() {
     />
   );
 
-  if (!isDesktopRuntime) {
+  if (!desktopRuntime) {
     return (
       <div className={homePageClassName}>
         <main className="home-layout home-layout-minimal">

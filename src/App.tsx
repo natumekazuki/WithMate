@@ -62,6 +62,7 @@ import {
   SessionMessageColumn,
   SessionRetryBanner,
 } from "./session-components.js";
+import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 
 type ActivePathReference = {
   query: string;
@@ -629,7 +630,8 @@ function clampContextRailWidth(requestedWidth: number, workbenchWidth: number): 
 }
 
 export default function App() {
-  const isDesktopRuntime = typeof window !== "undefined" && !!window.withmate;
+  const desktopRuntime = isDesktopRuntime();
+  const withmateApi = getWithMateApi();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [draft, setDraft] = useState("");
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
@@ -700,27 +702,27 @@ export default function App() {
   useEffect(() => {
     let active = true;
 
-    if (!window.withmate) {
+    if (!withmateApi) {
       return () => {
         active = false;
       };
     }
 
     if (selectedId) {
-      void window.withmate.getSession(selectedId).then((session) => {
+      void withmateApi.getSession(selectedId).then((session) => {
         if (active && session) {
           setSessions([session]);
         }
       });
     } else {
-      void window.withmate.listSessions().then((nextSessions) => {
+      void withmateApi.listSessions().then((nextSessions) => {
         if (active) {
           setSessions(nextSessions);
         }
       });
     }
 
-    const unsubscribe = window.withmate.subscribeSessions((nextSessions) => {
+    const unsubscribe = withmateApi.subscribeSessions((nextSessions) => {
       if (!active) {
         return;
       }
@@ -858,7 +860,7 @@ export default function App() {
   useEffect(() => {
     let active = true;
 
-    if (!window.withmate || !selectedSession || selectedSession.provider !== "copilot") {
+    if (!withmateApi || !selectedSession || selectedSession.provider !== "copilot") {
       setAvailableCustomAgents([]);
       setIsCustomAgentListLoading(false);
       return () => {
@@ -867,7 +869,7 @@ export default function App() {
     }
 
     setIsCustomAgentListLoading(true);
-    void window.withmate.listSessionCustomAgents(selectedSession.id).then((agents) => {
+    void withmateApi.listSessionCustomAgents(selectedSession.id).then((agents) => {
       if (active) {
         setAvailableCustomAgents(agents);
         setIsCustomAgentListLoading(false);
@@ -887,7 +889,7 @@ export default function App() {
   useEffect(() => {
     let active = true;
 
-    if (!window.withmate || !selectedSession) {
+    if (!withmateApi || !selectedSession) {
       setAvailableSkills([]);
       setIsSkillListLoading(false);
       return () => {
@@ -896,7 +898,7 @@ export default function App() {
     }
 
     setIsSkillListLoading(true);
-    void window.withmate.listSessionSkills(selectedSession.id).then((skills) => {
+    void withmateApi.listSessionSkills(selectedSession.id).then((skills) => {
       if (active) {
         setAvailableSkills(skills);
         setIsSkillListLoading(false);
@@ -996,19 +998,19 @@ export default function App() {
   useEffect(() => {
     let active = true;
 
-    if (!window.withmate) {
+    if (!withmateApi) {
       return () => {
         active = false;
       };
     }
 
-    void window.withmate.getModelCatalog(null).then((snapshot) => {
+    void withmateApi.getModelCatalog(null).then((snapshot) => {
       if (active) {
         setModelCatalog(snapshot);
       }
     });
 
-    const unsubscribe = window.withmate.subscribeModelCatalog((snapshot) => {
+    const unsubscribe = withmateApi.subscribeModelCatalog((snapshot) => {
       if (!active) {
         return;
       }
@@ -1023,19 +1025,19 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    if (!window.withmate) {
+    if (!withmateApi) {
       return () => {
         active = false;
       };
     }
 
-    void window.withmate.getAppSettings().then((settings) => {
+    void withmateApi.getAppSettings().then((settings) => {
       if (active) {
         setAppSettings(settings);
       }
     });
 
-    const unsubscribe = window.withmate.subscribeAppSettings((settings) => {
+    const unsubscribe = withmateApi.subscribeAppSettings((settings) => {
       if (active) {
         setAppSettings(settings);
       }
@@ -1049,7 +1051,6 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    const withmateApi = window.withmate;
     if (!withmateApi || !selectedSession?.characterId) {
       setResolvedCharacter(selectedSession ? null : undefined);
       return () => {
@@ -1237,7 +1238,7 @@ export default function App() {
   useEffect(() => {
     let active = true;
 
-    if (!window.withmate || !selectedSession) {
+    if (!withmateApi || !selectedSession) {
       if (active) {
         setAuditLogsState({ ownerSessionId: null, entries: [] });
       }
@@ -1251,7 +1252,7 @@ export default function App() {
         ? current
         : { ownerSessionId: selectedSession.id, entries: [] },
     );
-    void window.withmate.listSessionAuditLogs(selectedSession.id).then((nextAuditLogs) => {
+    void withmateApi.listSessionAuditLogs(selectedSession.id).then((nextAuditLogs) => {
       if (active) {
         setAuditLogsState({ ownerSessionId: selectedSession.id, entries: nextAuditLogs });
       }
@@ -1265,7 +1266,7 @@ export default function App() {
   useEffect(() => {
     let active = true;
 
-    if (!window.withmate || !selectedSession) {
+    if (!withmateApi || !selectedSession) {
       setLiveRunState({ ownerSessionId: null, state: null });
       return () => {
         active = false;
@@ -1273,13 +1274,13 @@ export default function App() {
     }
 
     setLiveRunState({ ownerSessionId: selectedSession.id, state: null });
-    void window.withmate.getLiveSessionRun(selectedSession.id).then((state) => {
+    void withmateApi.getLiveSessionRun(selectedSession.id).then((state) => {
       if (active) {
         setLiveRunState({ ownerSessionId: selectedSession.id, state });
       }
     });
 
-    const unsubscribe = window.withmate.subscribeLiveSessionRun((sessionId, state) => {
+    const unsubscribe = withmateApi.subscribeLiveSessionRun((sessionId, state) => {
       if (!active || sessionId !== selectedSession.id) {
         return;
       }
@@ -1295,7 +1296,6 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    const withmateApi = window.withmate;
     const providerId = selectedSession?.provider ?? null;
 
     if (!withmateApi || providerId !== "copilot") {
@@ -1337,7 +1337,6 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    const withmateApi = window.withmate;
     const sessionId = selectedSession?.id ?? null;
 
     if (!withmateApi || !sessionId || selectedSession?.provider !== "copilot") {
@@ -1374,7 +1373,6 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    const withmateApi = window.withmate;
     const sessionId = selectedSession?.id ?? null;
 
     if (!withmateApi || !sessionId) {
@@ -1411,7 +1409,6 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    const withmateApi = window.withmate;
     const sessionId = selectedSession?.id ?? null;
 
     if (!withmateApi || !sessionId) {
@@ -1448,7 +1445,6 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    const withmateApi = window.withmate;
     if (!withmateApi || !selectedSession) {
       setComposerPreview({ attachments: [], errors: [] });
       return () => {
@@ -1478,7 +1474,6 @@ export default function App() {
   }, [draft, selectedSession]);
   useEffect(() => {
     let active = true;
-    const withmateApi = window.withmate;
 
     if (
       !withmateApi
@@ -1914,7 +1909,7 @@ export default function App() {
   }, [workspacePathMatches]);
 
   const sendMessage = async (messageText: string, options?: { clearDraft?: boolean }) => {
-    if (!window.withmate || !selectedSession) {
+    if (!withmateApi || !selectedSession) {
       return;
     }
 
@@ -1923,7 +1918,7 @@ export default function App() {
     }
 
     const nextMessage = messageText.trim();
-    const preview = await window.withmate.previewComposerInput(selectedSession.id, messageText);
+    const preview = await withmateApi.previewComposerInput(selectedSession.id, messageText);
     setComposerPreview(preview);
     const sendability = buildComposerSendabilityState({
       runState: selectedSession.runState,
@@ -1952,7 +1947,7 @@ export default function App() {
       const request: RunSessionTurnRequest = {
         userMessage: messageText,
       };
-      const savedSession = await window.withmate.runSessionTurn(selectedSession.id, request);
+      const savedSession = await withmateApi.runSessionTurn(selectedSession.id, request);
       setSessions([savedSession]);
     } catch (error) {
       console.error(error);
@@ -1973,25 +1968,25 @@ export default function App() {
   };
 
   const handleCancelRun = async () => {
-    if (!window.withmate || !selectedSession || selectedSession.runState !== "running") {
+    if (!withmateApi || !selectedSession || selectedSession.runState !== "running") {
       return;
     }
 
     try {
-      await window.withmate.cancelSessionRun(selectedSession.id);
+      await withmateApi.cancelSessionRun(selectedSession.id);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "キャンセルに失敗したよ。");
     }
   };
 
   const handleResolveLiveApproval = async (request: LiveApprovalRequest, decision: "approve" | "deny") => {
-    if (!window.withmate || !selectedSession || approvalActionRequestId === request.requestId) {
+    if (!withmateApi || !selectedSession || approvalActionRequestId === request.requestId) {
       return;
     }
 
     setApprovalActionRequestId(request.requestId);
     try {
-      await window.withmate.resolveLiveApproval(selectedSession.id, request.requestId, decision);
+      await withmateApi.resolveLiveApproval(selectedSession.id, request.requestId, decision);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "承認要求の処理に失敗したよ。");
       setApprovalActionRequestId(null);
@@ -2120,11 +2115,11 @@ export default function App() {
   };
 
   const persistSession = async (nextSession: Session) => {
-    if (!window.withmate) {
+    if (!withmateApi) {
       throw new Error("Session Window は Electron から開いてね。");
     }
 
-    const savedSession = await window.withmate.updateSession(nextSession);
+    const savedSession = await withmateApi.updateSession(nextSession);
     setSessions([savedSession]);
     return savedSession;
   };
@@ -2186,7 +2181,7 @@ export default function App() {
   };
 
   const handleDeleteSession = async () => {
-    if (!window.withmate || !selectedSession || selectedSession.runState === "running") {
+    if (!withmateApi || !selectedSession || selectedSession.runState === "running") {
       return;
     }
 
@@ -2195,16 +2190,16 @@ export default function App() {
       return;
     }
 
-    await window.withmate.deleteSession(selectedSession.id);
+    await withmateApi.deleteSession(selectedSession.id);
     handleCloseWindow();
   };
 
   const handleOpenDiffWindow = async (diffPreview: DiffPreviewPayload) => {
-    if (!window.withmate) {
+    if (!withmateApi) {
       return;
     }
 
-    await window.withmate.openDiffWindow(diffPreview);
+    await withmateApi.openDiffWindow(diffPreview);
   };
 
   const handleChangeModel = async (model: string) => {
@@ -2337,12 +2332,12 @@ export default function App() {
   };
 
   const handleOpenInlinePath = async (target: string) => {
-    if (!window.withmate) {
+    if (!withmateApi) {
       return;
     }
 
     try {
-      await window.withmate.openPath(target, { baseDirectory: selectedSession?.workspacePath ?? null });
+      await withmateApi.openPath(target, { baseDirectory: selectedSession?.workspacePath ?? null });
     } catch {
       // 読みやすさ改善が主目的なので、開けない場合は UI を壊さない
     }
@@ -2410,12 +2405,12 @@ export default function App() {
   };
 
   const handlePickFile = async () => {
-    if (!window.withmate) {
+    if (!withmateApi) {
       return;
     }
 
     setIsSkillPickerOpen(false);
-    const selectedPath = await window.withmate.pickFile(pickerBaseDirectory || selectedSession?.workspacePath || null);
+    const selectedPath = await withmateApi.pickFile(pickerBaseDirectory || selectedSession?.workspacePath || null);
     if (!selectedPath) {
       return;
     }
@@ -2425,12 +2420,12 @@ export default function App() {
   };
 
   const handlePickFolder = async () => {
-    if (!window.withmate) {
+    if (!withmateApi) {
       return;
     }
 
     setIsSkillPickerOpen(false);
-    const selectedPath = await window.withmate.pickDirectory(pickerBaseDirectory || selectedSession?.workspacePath || null);
+    const selectedPath = await withmateApi.pickDirectory(pickerBaseDirectory || selectedSession?.workspacePath || null);
     if (!selectedPath) {
       return;
     }
@@ -2440,12 +2435,12 @@ export default function App() {
   };
 
   const handlePickImage = async () => {
-    if (!window.withmate) {
+    if (!withmateApi) {
       return;
     }
 
     setIsSkillPickerOpen(false);
-    const selectedPath = await window.withmate.pickImageFile(pickerBaseDirectory || selectedSession?.workspacePath || null);
+    const selectedPath = await withmateApi.pickImageFile(pickerBaseDirectory || selectedSession?.workspacePath || null);
     if (!selectedPath) {
       return;
     }
@@ -2455,11 +2450,11 @@ export default function App() {
   };
 
   const handleAddAdditionalDirectory = async () => {
-    if (!window.withmate || !selectedSession || selectedSession.runState === "running") {
+    if (!withmateApi || !selectedSession || selectedSession.runState === "running") {
       return;
     }
 
-    const selectedPath = await window.withmate.pickDirectory(pickerBaseDirectory || selectedSession.workspacePath || null);
+    const selectedPath = await withmateApi.pickDirectory(pickerBaseDirectory || selectedSession.workspacePath || null);
     if (!selectedPath) {
       return;
     }
@@ -2568,12 +2563,12 @@ export default function App() {
   };
 
   const handleOpenSessionTerminal = async () => {
-    if (!window.withmate || !selectedSession) {
+    if (!withmateApi || !selectedSession) {
       return;
     }
 
     try {
-      await window.withmate.openSessionTerminal(selectedSession.id);
+      await withmateApi.openSessionTerminal(selectedSession.id);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "terminal の起動に失敗したよ。");
     }
@@ -2650,7 +2645,7 @@ export default function App() {
     [contextRailWidth],
   );
 
-  if (!isDesktopRuntime) {
+  if (!desktopRuntime) {
     return (
       <div className="page-shell session-page">
         <section className="panel empty-session-card rise-2">
