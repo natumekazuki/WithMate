@@ -12,6 +12,7 @@
   - provider quota / session context / background activity / live run を `MainObservabilityFacade` に分離
   - コミット: `baef8aa` `refactor(main): extract observability facade`
   - sessions / characters / model catalog / app settings / open session windows の broadcast payload を `MainBroadcastFacade` に分離
+  - コミット: `999d5f9` `refactor(main): extract broadcast facade`
 - 残り:
   - `main.ts` に残る persistence wrapper の置き場整理
   - composition root の最終的な見通し改善

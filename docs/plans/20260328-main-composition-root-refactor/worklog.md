@@ -32,3 +32,6 @@
 - 2026-03-28: `src-electron/main-broadcast-facade.ts` を追加し、sessions / characters / model catalog / app settings / open session windows の broadcast payload 組み立てを `main.ts` から分離
 - 2026-03-28: `npm run build`
 - 2026-03-28: `node --test --import tsx scripts/tests/main-broadcast-facade.test.ts scripts/tests/main-observability-facade.test.ts scripts/tests/main-query-service.test.ts scripts/tests/main-infrastructure-registry.test.ts`
+- 2026-03-28: コミット `999d5f9` `refactor(main): extract broadcast facade`
+  - `MainBroadcastFacade` を追加
+  - sessions / characters / model catalog / app settings / open session windows の broadcast payload と forwarding を `main.ts` から分離
