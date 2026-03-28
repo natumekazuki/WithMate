@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import { createDefaultAppSettings } from "../../src/app-state.js";
+import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import { AppSettingsStorage } from "../../src-electron/app-settings-storage.js";
 
 describe("AppSettingsStorage", () => {

@@ -7,6 +7,80 @@ import {
   type ModelReasoningEffort,
 } from "./model-catalog.js";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from "./approval-mode.js";
+export {
+  cloneCharacterProfiles,
+  cloneCharacterSessionCopy,
+  DEFAULT_CHARACTER_SESSION_COPY,
+  DEFAULT_CHARACTER_THEME_COLORS,
+  getCharacterById as getCharacterProfile,
+  normalizeCharacterSessionCopy,
+  normalizeCharacterThemeColors,
+} from "./character-state.js";
+export type {
+  CharacterCatalogItem,
+  CharacterProfile,
+  CharacterSessionCopy,
+  CharacterThemeColors,
+  CharacterVisual,
+  CreateCharacterInput,
+} from "./character-state.js";
+import { normalizeCharacterThemeColors, type CharacterThemeColors, type CreateCharacterInput } from "./character-state.js";
+export {
+  createDefaultAppSettings,
+  DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS,
+  DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD,
+  DEFAULT_MEMORY_EXTRACTION_PROVIDER_SETTINGS,
+  DEFAULT_PROVIDER_APP_SETTINGS,
+  getCharacterReflectionProviderSettings,
+  getMemoryExtractionProviderSettings,
+  getProviderAppSettings,
+  getResolvedProviderSettingsBundle,
+  normalizeAppSettings,
+} from "./provider-settings-state.js";
+export type {
+  AppSettings,
+  CharacterReflectionProviderSettings,
+  MemoryExtractionProviderSettings,
+  ProviderAppSettings,
+  ResolvedProviderSettingsBundle,
+} from "./provider-settings-state.js";
+export {
+  cloneCharacterMemoryEntries,
+  cloneCharacterScopes,
+  cloneProjectMemoryEntries,
+  cloneProjectScopes,
+  createDefaultSessionMemory,
+  mergeSessionMemory,
+  normalizeCharacterMemoryDelta,
+  normalizeCharacterMemoryDeltaEntry,
+  normalizeCharacterMemoryEntry,
+  normalizeCharacterReflectionMonologue,
+  normalizeCharacterReflectionOutput,
+  normalizeCharacterScope,
+  normalizeProjectMemoryEntry,
+  normalizeProjectScope,
+  normalizeSessionMemory,
+  normalizeSessionMemoryDelta,
+} from "./memory-state.js";
+export type {
+  CharacterMemoryCategory,
+  CharacterMemoryDelta,
+  CharacterMemoryDeltaEntry,
+  CharacterMemoryEntry,
+  CharacterReflectionMonologue,
+  CharacterReflectionMonologueMood,
+  CharacterReflectionOutput,
+  CharacterScope,
+  ProjectMemoryCategory,
+  ProjectMemoryEntry,
+  ProjectScope,
+  ProjectScopeType,
+  SessionBackgroundActivityKind,
+  SessionBackgroundActivityState,
+  SessionBackgroundActivityStatus,
+  SessionMemory,
+  SessionMemoryDelta,
+} from "./memory-state.js";
 
 export type DiffRow = {
   kind: "context" | "add" | "delete" | "modify";
@@ -149,51 +223,6 @@ export type SessionContextTelemetry = {
   toolDefinitionsTokens?: number;
 };
 
-export type SessionBackgroundActivityKind = "memory-generation" | "monologue";
-
-export type SessionBackgroundActivityStatus = "running" | "completed" | "failed" | "canceled";
-
-export type SessionBackgroundActivityState = {
-  sessionId: string;
-  kind: SessionBackgroundActivityKind;
-  status: SessionBackgroundActivityStatus;
-  title: string;
-  summary: string;
-  details?: string;
-  errorMessage: string;
-  updatedAt: string;
-};
-
-export type AppSettings = {
-  systemPromptPrefix: string;
-  codingProviderSettings: Record<string, ProviderAppSettings>;
-  memoryExtractionProviderSettings: Record<string, MemoryExtractionProviderSettings>;
-  characterReflectionProviderSettings: Record<string, CharacterReflectionProviderSettings>;
-};
-
-export type ProviderAppSettings = {
-  enabled: boolean;
-  apiKey: string;
-  skillRootPath: string;
-};
-
-export type MemoryExtractionProviderSettings = {
-  model: string;
-  reasoningEffort: ModelReasoningEffort;
-  outputTokensThreshold: number;
-};
-
-export type CharacterReflectionProviderSettings = {
-  model: string;
-  reasoningEffort: ModelReasoningEffort;
-};
-
-export type ResolvedProviderSettingsBundle = {
-  coding: ProviderAppSettings;
-  memoryExtraction: MemoryExtractionProviderSettings;
-  characterReflection: CharacterReflectionProviderSettings;
-};
-
 export type DiscoveredSkillSource = "workspace" | "provider";
 
 export type DiscoveredSkill = {
@@ -267,51 +296,6 @@ export type StreamEntry = {
   text: string;
 };
 
-export type CharacterVisual = {
-  name: string;
-  iconPath: string;
-};
-
-export type CharacterThemeColors = {
-  main: string;
-  sub: string;
-};
-
-export type CharacterSessionCopy = {
-  pendingApproval: string[];
-  pendingWorking: string[];
-  pendingResponding: string[];
-  pendingPreparing: string[];
-  retryInterruptedTitle: string[];
-  retryFailedTitle: string[];
-  retryCanceledTitle: string[];
-  latestCommandWaiting: string[];
-  latestCommandEmpty: string[];
-  changedFilesEmpty: string[];
-  contextEmpty: string[];
-};
-
-export type CharacterCatalogItem = CharacterVisual & {
-  id: string;
-};
-
-export type CharacterProfile = CharacterCatalogItem & {
-  description: string;
-  roleMarkdown: string;
-  updatedAt: string;
-  themeColors: CharacterThemeColors;
-  sessionCopy: CharacterSessionCopy;
-};
-
-export type CreateCharacterInput = {
-  name: string;
-  iconPath: string;
-  description: string;
-  roleMarkdown: string;
-  themeColors: CharacterThemeColors;
-  sessionCopy: CharacterSessionCopy;
-};
-
 export type Session = {
   id: string;
   taskTitle: string;
@@ -336,103 +320,6 @@ export type Session = {
   threadId: string;
   messages: Message[];
   stream: StreamEntry[];
-};
-
-export type SessionMemory = {
-  sessionId: string;
-  workspacePath: string;
-  threadId: string;
-  schemaVersion: 1;
-  goal: string;
-  decisions: string[];
-  openQuestions: string[];
-  nextActions: string[];
-  notes: string[];
-  updatedAt: string;
-};
-
-export type SessionMemoryDelta = {
-  goal?: string | null;
-  decisions?: string[];
-  openQuestions?: string[];
-  nextActions?: string[];
-  notes?: string[];
-};
-
-export type ProjectScopeType = "git" | "directory";
-
-export type ProjectMemoryCategory = "decision" | "constraint" | "convention" | "context" | "deferred";
-
-export type ProjectScope = {
-  id: string;
-  projectType: ProjectScopeType;
-  projectKey: string;
-  workspacePath: string;
-  gitRoot: string | null;
-  gitRemoteUrl: string | null;
-  displayName: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type ProjectMemoryEntry = {
-  id: string;
-  projectScopeId: string;
-  sourceSessionId: string | null;
-  category: ProjectMemoryCategory;
-  title: string;
-  detail: string;
-  keywords: string[];
-  evidence: string[];
-  createdAt: string;
-  updatedAt: string;
-  lastUsedAt: string | null;
-};
-
-export type CharacterMemoryCategory = "preference" | "relationship" | "shared_moment" | "tone" | "boundary";
-
-export type CharacterScope = {
-  id: string;
-  characterId: string;
-  displayName: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type CharacterMemoryEntry = {
-  id: string;
-  characterScopeId: string;
-  sourceSessionId: string | null;
-  category: CharacterMemoryCategory;
-  title: string;
-  detail: string;
-  keywords: string[];
-  evidence: string[];
-  createdAt: string;
-  updatedAt: string;
-  lastUsedAt: string | null;
-};
-
-export type CharacterMemoryDeltaEntry = {
-  category: CharacterMemoryCategory;
-  title: string;
-  detail: string;
-  keywords: string[];
-  evidence: string[];
-};
-
-export type CharacterMemoryDelta = {
-  entries: CharacterMemoryDeltaEntry[];
-};
-
-export type CharacterReflectionMonologue = {
-  text: string;
-  mood: StreamEntry["mood"];
-};
-
-export type CharacterReflectionOutput = {
-  memoryDelta: CharacterMemoryDelta | null;
-  monologue: CharacterReflectionMonologue | null;
 };
 
 export type DiffPreviewPayload = {
@@ -504,684 +391,6 @@ export function currentTimestampLabel(): string {
 
 export function currentIsoTimestamp(): string {
   return new Date().toISOString();
-}
-
-export const DEFAULT_CHARACTER_THEME_COLORS: CharacterThemeColors = {
-  main: "#6f8cff",
-  sub: "#6fb8c7",
-};
-
-export const DEFAULT_CHARACTER_SESSION_COPY: CharacterSessionCopy = {
-  pendingApproval: ["承認を待機中"],
-  pendingWorking: ["処理を実行中"],
-  pendingResponding: ["応答を生成中"],
-  pendingPreparing: ["応答を準備中"],
-  retryInterruptedTitle: ["前回の依頼は中断されたままです"],
-  retryFailedTitle: ["前回の依頼は完了できませんでした"],
-  retryCanceledTitle: ["この依頼は途中で停止しました"],
-  latestCommandWaiting: ["最初の command を待機中"],
-  latestCommandEmpty: ["直近 run の command 記録はありません"],
-  changedFilesEmpty: ["ファイル変更はありません"],
-  contextEmpty: ["context usage はまだありません"],
-};
-
-export function cloneCharacterSessionCopy(copy: CharacterSessionCopy): CharacterSessionCopy {
-  return {
-    pendingApproval: [...copy.pendingApproval],
-    pendingWorking: [...copy.pendingWorking],
-    pendingResponding: [...copy.pendingResponding],
-    pendingPreparing: [...copy.pendingPreparing],
-    retryInterruptedTitle: [...copy.retryInterruptedTitle],
-    retryFailedTitle: [...copy.retryFailedTitle],
-    retryCanceledTitle: [...copy.retryCanceledTitle],
-    latestCommandWaiting: [...copy.latestCommandWaiting],
-    latestCommandEmpty: [...copy.latestCommandEmpty],
-    changedFilesEmpty: [...copy.changedFilesEmpty],
-    contextEmpty: [...copy.contextEmpty],
-  };
-}
-
-export const DEFAULT_PROVIDER_APP_SETTINGS: ProviderAppSettings = {
-  enabled: false,
-  apiKey: "",
-  skillRootPath: "",
-};
-
-export const DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD = 200;
-
-export const DEFAULT_MEMORY_EXTRACTION_PROVIDER_SETTINGS: MemoryExtractionProviderSettings = {
-  model: DEFAULT_MODEL_ID,
-  reasoningEffort: DEFAULT_REASONING_EFFORT,
-  outputTokensThreshold: DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD,
-};
-
-export const DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS: CharacterReflectionProviderSettings = {
-  model: DEFAULT_MODEL_ID,
-  reasoningEffort: DEFAULT_REASONING_EFFORT,
-};
-
-export function createDefaultAppSettings(): AppSettings {
-  return {
-    systemPromptPrefix: "",
-    codingProviderSettings: {
-      [DEFAULT_PROVIDER_ID]: {
-        enabled: true,
-        apiKey: "",
-        skillRootPath: "",
-      },
-    },
-    memoryExtractionProviderSettings: {
-      [DEFAULT_PROVIDER_ID]: { ...DEFAULT_MEMORY_EXTRACTION_PROVIDER_SETTINGS },
-    },
-    characterReflectionProviderSettings: {
-      [DEFAULT_PROVIDER_ID]: { ...DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS },
-    },
-  };
-}
-
-function normalizeProviderAppSettings(value: unknown, defaultEnabled: boolean): ProviderAppSettings {
-  if (!value || typeof value !== "object") {
-    return {
-      enabled: defaultEnabled,
-      apiKey: "",
-      skillRootPath: "",
-    };
-  }
-
-  const candidate = value as Partial<ProviderAppSettings>;
-  return {
-    enabled: typeof candidate.enabled === "boolean" ? candidate.enabled : defaultEnabled,
-    apiKey: typeof candidate.apiKey === "string" ? candidate.apiKey : "",
-    skillRootPath: typeof candidate.skillRootPath === "string" ? candidate.skillRootPath : "",
-  };
-}
-
-function normalizeOutputTokensThreshold(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD;
-  }
-
-  const normalized = Math.trunc(value);
-  if (normalized < 1) {
-    return 1;
-  }
-
-  if (normalized > 100_000) {
-    return 100_000;
-  }
-
-  return normalized;
-}
-
-function normalizeMemoryExtractionProviderSettings(value: unknown): MemoryExtractionProviderSettings {
-  if (!value || typeof value !== "object") {
-    return { ...DEFAULT_MEMORY_EXTRACTION_PROVIDER_SETTINGS };
-  }
-
-  const candidate = value as Partial<MemoryExtractionProviderSettings>;
-  return {
-    model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
-    reasoningEffort:
-      candidate.reasoningEffort === "minimal" ||
-      candidate.reasoningEffort === "low" ||
-      candidate.reasoningEffort === "medium" ||
-      candidate.reasoningEffort === "high" ||
-      candidate.reasoningEffort === "xhigh"
-        ? candidate.reasoningEffort
-        : DEFAULT_REASONING_EFFORT,
-    outputTokensThreshold: normalizeOutputTokensThreshold(candidate.outputTokensThreshold),
-  };
-}
-
-function normalizeCharacterReflectionProviderSettings(value: unknown): CharacterReflectionProviderSettings {
-  if (!value || typeof value !== "object") {
-    return { ...DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS };
-  }
-
-  const candidate = value as Partial<CharacterReflectionProviderSettings>;
-  return {
-    model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
-    reasoningEffort:
-      candidate.reasoningEffort === "minimal" ||
-      candidate.reasoningEffort === "low" ||
-      candidate.reasoningEffort === "medium" ||
-      candidate.reasoningEffort === "high" ||
-      candidate.reasoningEffort === "xhigh"
-        ? candidate.reasoningEffort
-        : DEFAULT_REASONING_EFFORT,
-  };
-}
-
-export function normalizeAppSettings(value: unknown): AppSettings {
-  const defaults = createDefaultAppSettings();
-  if (!value || typeof value !== "object") {
-    return defaults;
-  }
-
-  const candidate = value as Partial<AppSettings>;
-  const rawCodingProviderSettings =
-    candidate.codingProviderSettings && typeof candidate.codingProviderSettings === "object"
-      ? candidate.codingProviderSettings
-      : null;
-  const rawMemoryExtractionProviderSettings =
-    candidate.memoryExtractionProviderSettings && typeof candidate.memoryExtractionProviderSettings === "object"
-      ? candidate.memoryExtractionProviderSettings
-      : null;
-  const rawCharacterReflectionProviderSettings =
-    candidate.characterReflectionProviderSettings && typeof candidate.characterReflectionProviderSettings === "object"
-      ? candidate.characterReflectionProviderSettings
-      : null;
-  const codingProviderSettings: Record<string, ProviderAppSettings> = {};
-  const memoryExtractionProviderSettings: Record<string, MemoryExtractionProviderSettings> = {};
-  const characterReflectionProviderSettings: Record<string, CharacterReflectionProviderSettings> = {};
-  if (rawCodingProviderSettings) {
-    for (const [providerId, providerSettingsValue] of Object.entries(rawCodingProviderSettings)) {
-      const normalizedProviderId = normalizeProviderId(providerId);
-      codingProviderSettings[normalizedProviderId] = normalizeProviderAppSettings(
-        providerSettingsValue,
-        normalizedProviderId === DEFAULT_PROVIDER_ID,
-      );
-    }
-  }
-  if (rawMemoryExtractionProviderSettings) {
-    for (const [providerId, providerSettingsValue] of Object.entries(rawMemoryExtractionProviderSettings)) {
-      const normalizedProviderId = normalizeProviderId(providerId);
-      memoryExtractionProviderSettings[normalizedProviderId] = normalizeMemoryExtractionProviderSettings(providerSettingsValue);
-    }
-  }
-  if (rawCharacterReflectionProviderSettings) {
-    for (const [providerId, providerSettingsValue] of Object.entries(rawCharacterReflectionProviderSettings)) {
-      const normalizedProviderId = normalizeProviderId(providerId);
-      characterReflectionProviderSettings[normalizedProviderId] = normalizeCharacterReflectionProviderSettings(providerSettingsValue);
-    }
-  }
-
-  if (!codingProviderSettings[DEFAULT_PROVIDER_ID]) {
-    codingProviderSettings[DEFAULT_PROVIDER_ID] = { ...defaults.codingProviderSettings[DEFAULT_PROVIDER_ID] };
-  }
-  if (!memoryExtractionProviderSettings[DEFAULT_PROVIDER_ID]) {
-    memoryExtractionProviderSettings[DEFAULT_PROVIDER_ID] = { ...defaults.memoryExtractionProviderSettings[DEFAULT_PROVIDER_ID] };
-  }
-  if (!characterReflectionProviderSettings[DEFAULT_PROVIDER_ID]) {
-    characterReflectionProviderSettings[DEFAULT_PROVIDER_ID] = { ...defaults.characterReflectionProviderSettings[DEFAULT_PROVIDER_ID] };
-  }
-
-  return {
-    systemPromptPrefix: typeof candidate.systemPromptPrefix === "string" ? candidate.systemPromptPrefix : "",
-    codingProviderSettings,
-    memoryExtractionProviderSettings,
-    characterReflectionProviderSettings,
-  };
-}
-
-export function getProviderAppSettings(settings: AppSettings, providerId: string | null | undefined): ProviderAppSettings {
-  const normalizedProviderId = normalizeProviderId(providerId);
-  const resolvedSettings = normalizeAppSettings(settings);
-  return normalizeProviderAppSettings(
-    resolvedSettings.codingProviderSettings[normalizedProviderId],
-    normalizedProviderId === DEFAULT_PROVIDER_ID,
-  );
-}
-
-export function getMemoryExtractionProviderSettings(
-  settings: AppSettings,
-  providerId: string | null | undefined,
-): MemoryExtractionProviderSettings {
-  const normalizedProviderId = normalizeProviderId(providerId);
-  const resolvedSettings = normalizeAppSettings(settings);
-  return normalizeMemoryExtractionProviderSettings(
-    resolvedSettings.memoryExtractionProviderSettings[normalizedProviderId],
-  );
-}
-
-export function getCharacterReflectionProviderSettings(
-  settings: AppSettings,
-  providerId: string | null | undefined,
-): CharacterReflectionProviderSettings {
-  const normalizedProviderId = normalizeProviderId(providerId);
-  const resolvedSettings = normalizeAppSettings(settings);
-  return normalizeCharacterReflectionProviderSettings(
-    resolvedSettings.characterReflectionProviderSettings[normalizedProviderId],
-  );
-}
-
-export function getResolvedProviderSettingsBundle(
-  settings: AppSettings,
-  providerId: string | null | undefined,
-): ResolvedProviderSettingsBundle {
-  return {
-    coding: getProviderAppSettings(settings, providerId),
-    memoryExtraction: getMemoryExtractionProviderSettings(settings, providerId),
-    characterReflection: getCharacterReflectionProviderSettings(settings, providerId),
-  };
-}
-
-function normalizeHexColor(value: unknown, fallback: string): string {
-  if (typeof value !== "string") {
-    return fallback;
-  }
-
-  const normalized = value.trim();
-  if (!/^#[0-9a-fA-F]{6}$/.test(normalized)) {
-    return fallback;
-  }
-
-  return normalized.toLowerCase();
-}
-
-export function normalizeCharacterThemeColors(value: unknown): CharacterThemeColors {
-  if (!value || typeof value !== "object") {
-    return { ...DEFAULT_CHARACTER_THEME_COLORS };
-  }
-
-  const candidate = value as Partial<CharacterThemeColors>;
-  return {
-    main: normalizeHexColor(candidate.main, DEFAULT_CHARACTER_THEME_COLORS.main),
-    sub: normalizeHexColor(candidate.sub, DEFAULT_CHARACTER_THEME_COLORS.sub),
-  };
-}
-
-function normalizeCharacterSessionCopyValue(value: unknown, fallback: string[]): string[] {
-  if (Array.isArray(value)) {
-    const normalized = value
-      .filter((entry): entry is string => typeof entry === "string")
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0);
-    return normalized.length > 0 ? normalized : [...fallback];
-  }
-
-  if (typeof value === "string") {
-    const normalized = value
-      .split(/\r?\n/)
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0);
-    return normalized.length > 0 ? normalized : [...fallback];
-  }
-
-  return [...fallback];
-}
-
-function normalizeStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  const normalized = value
-    .filter((entry): entry is string => typeof entry === "string")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-
-  return Array.from(new Set(normalized));
-}
-
-export function normalizeCharacterSessionCopy(value: unknown): CharacterSessionCopy {
-  if (!value || typeof value !== "object") {
-    return cloneCharacterSessionCopy(DEFAULT_CHARACTER_SESSION_COPY);
-  }
-
-  const candidate = value as Partial<CharacterSessionCopy>;
-  return {
-    pendingApproval: normalizeCharacterSessionCopyValue(candidate.pendingApproval, DEFAULT_CHARACTER_SESSION_COPY.pendingApproval),
-    pendingWorking: normalizeCharacterSessionCopyValue(candidate.pendingWorking, DEFAULT_CHARACTER_SESSION_COPY.pendingWorking),
-    pendingResponding: normalizeCharacterSessionCopyValue(candidate.pendingResponding, DEFAULT_CHARACTER_SESSION_COPY.pendingResponding),
-    pendingPreparing: normalizeCharacterSessionCopyValue(candidate.pendingPreparing, DEFAULT_CHARACTER_SESSION_COPY.pendingPreparing),
-    retryInterruptedTitle: normalizeCharacterSessionCopyValue(candidate.retryInterruptedTitle, DEFAULT_CHARACTER_SESSION_COPY.retryInterruptedTitle),
-    retryFailedTitle: normalizeCharacterSessionCopyValue(candidate.retryFailedTitle, DEFAULT_CHARACTER_SESSION_COPY.retryFailedTitle),
-    retryCanceledTitle: normalizeCharacterSessionCopyValue(candidate.retryCanceledTitle, DEFAULT_CHARACTER_SESSION_COPY.retryCanceledTitle),
-    latestCommandWaiting: normalizeCharacterSessionCopyValue(candidate.latestCommandWaiting, DEFAULT_CHARACTER_SESSION_COPY.latestCommandWaiting),
-    latestCommandEmpty: normalizeCharacterSessionCopyValue(candidate.latestCommandEmpty, DEFAULT_CHARACTER_SESSION_COPY.latestCommandEmpty),
-    changedFilesEmpty: normalizeCharacterSessionCopyValue(candidate.changedFilesEmpty, DEFAULT_CHARACTER_SESSION_COPY.changedFilesEmpty),
-    contextEmpty: normalizeCharacterSessionCopyValue(candidate.contextEmpty, DEFAULT_CHARACTER_SESSION_COPY.contextEmpty),
-  };
-}
-
-export function createDefaultSessionMemory(input: Pick<Session, "id" | "workspacePath" | "threadId" | "taskTitle" | "taskSummary">): SessionMemory {
-  const goal = input.taskTitle.trim() || input.taskSummary.trim();
-  return {
-    sessionId: input.id,
-    workspacePath: input.workspacePath,
-    threadId: input.threadId,
-    schemaVersion: 1,
-    goal,
-    decisions: [],
-    openQuestions: [],
-    nextActions: [],
-    notes: [],
-    updatedAt: currentIsoTimestamp(),
-  };
-}
-
-export function normalizeSessionMemory(value: unknown): SessionMemory | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Partial<SessionMemory>;
-  if (typeof candidate.sessionId !== "string" || !candidate.sessionId.trim()) {
-    return null;
-  }
-
-  return {
-    sessionId: candidate.sessionId.trim(),
-    workspacePath: typeof candidate.workspacePath === "string" ? candidate.workspacePath : "",
-    threadId: typeof candidate.threadId === "string" ? candidate.threadId : "",
-    schemaVersion: 1,
-    goal: typeof candidate.goal === "string" ? candidate.goal.trim() : "",
-    decisions: normalizeStringList(candidate.decisions),
-    openQuestions: normalizeStringList(candidate.openQuestions),
-    nextActions: normalizeStringList(candidate.nextActions),
-    notes: normalizeStringList(candidate.notes),
-    updatedAt:
-      typeof candidate.updatedAt === "string" && candidate.updatedAt.trim()
-        ? candidate.updatedAt
-        : currentIsoTimestamp(),
-  };
-}
-
-export function normalizeSessionMemoryDelta(value: unknown): SessionMemoryDelta {
-  if (!value || typeof value !== "object") {
-    return {};
-  }
-
-  const candidate = value as Partial<SessionMemoryDelta>;
-  return {
-    goal:
-      typeof candidate.goal === "string"
-        ? candidate.goal.trim()
-        : candidate.goal === null
-          ? null
-          : undefined,
-    decisions: Array.isArray(candidate.decisions) ? normalizeStringList(candidate.decisions) : undefined,
-    openQuestions: Array.isArray(candidate.openQuestions) ? normalizeStringList(candidate.openQuestions) : undefined,
-    nextActions: Array.isArray(candidate.nextActions) ? normalizeStringList(candidate.nextActions) : undefined,
-    notes: Array.isArray(candidate.notes) ? normalizeStringList(candidate.notes) : undefined,
-  };
-}
-
-export function mergeSessionMemory(current: SessionMemory, delta: SessionMemoryDelta): SessionMemory {
-  const normalizedDelta = normalizeSessionMemoryDelta(delta);
-  return {
-    ...current,
-    goal: normalizedDelta.goal === undefined ? current.goal : normalizedDelta.goal ?? "",
-    decisions: normalizedDelta.decisions ?? current.decisions,
-    openQuestions: normalizedDelta.openQuestions ?? current.openQuestions,
-    nextActions: normalizedDelta.nextActions ?? current.nextActions,
-    notes: normalizedDelta.notes ?? current.notes,
-    updatedAt: currentIsoTimestamp(),
-  };
-}
-
-function normalizeProjectMemoryCategory(value: unknown): ProjectMemoryCategory | null {
-  return value === "decision" ||
-    value === "constraint" ||
-    value === "convention" ||
-    value === "context" ||
-    value === "deferred"
-    ? value
-    : null;
-}
-
-function normalizeCharacterMemoryCategory(value: unknown): CharacterMemoryCategory | null {
-  return value === "preference" ||
-    value === "relationship" ||
-    value === "shared_moment" ||
-    value === "tone" ||
-    value === "boundary"
-    ? value
-    : null;
-}
-
-function normalizeStreamMood(value: unknown): StreamEntry["mood"] {
-  return value === "spark" || value === "warm" || value === "calm" ? value : "calm";
-}
-
-export function normalizeProjectScope(value: unknown): ProjectScope | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Partial<ProjectScope>;
-  if (typeof candidate.id !== "string" || !candidate.id.trim()) {
-    return null;
-  }
-
-  const projectType = candidate.projectType === "git" || candidate.projectType === "directory"
-    ? candidate.projectType
-    : null;
-  if (!projectType) {
-    return null;
-  }
-
-  if (typeof candidate.projectKey !== "string" || !candidate.projectKey.trim()) {
-    return null;
-  }
-
-  return {
-    id: candidate.id.trim(),
-    projectType,
-    projectKey: candidate.projectKey.trim(),
-    workspacePath: typeof candidate.workspacePath === "string" ? candidate.workspacePath.trim() : "",
-    gitRoot:
-      typeof candidate.gitRoot === "string" && candidate.gitRoot.trim()
-        ? candidate.gitRoot.trim()
-        : null,
-    gitRemoteUrl:
-      typeof candidate.gitRemoteUrl === "string" && candidate.gitRemoteUrl.trim()
-        ? candidate.gitRemoteUrl.trim()
-        : null,
-    displayName: typeof candidate.displayName === "string" ? candidate.displayName.trim() : "",
-    createdAt:
-      typeof candidate.createdAt === "string" && candidate.createdAt.trim()
-        ? candidate.createdAt
-        : currentIsoTimestamp(),
-    updatedAt:
-      typeof candidate.updatedAt === "string" && candidate.updatedAt.trim()
-        ? candidate.updatedAt
-        : currentIsoTimestamp(),
-  };
-}
-
-export function normalizeProjectMemoryEntry(value: unknown): ProjectMemoryEntry | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Partial<ProjectMemoryEntry>;
-  if (typeof candidate.id !== "string" || !candidate.id.trim()) {
-    return null;
-  }
-
-  if (typeof candidate.projectScopeId !== "string" || !candidate.projectScopeId.trim()) {
-    return null;
-  }
-
-  const category = normalizeProjectMemoryCategory(candidate.category);
-  if (!category) {
-    return null;
-  }
-
-  return {
-    id: candidate.id.trim(),
-    projectScopeId: candidate.projectScopeId.trim(),
-    sourceSessionId:
-      typeof candidate.sourceSessionId === "string" && candidate.sourceSessionId.trim()
-        ? candidate.sourceSessionId.trim()
-        : null,
-    category,
-    title: typeof candidate.title === "string" ? candidate.title.trim() : "",
-    detail: typeof candidate.detail === "string" ? candidate.detail.trim() : "",
-    keywords: normalizeStringList(candidate.keywords),
-    evidence: normalizeStringList(candidate.evidence),
-    createdAt:
-      typeof candidate.createdAt === "string" && candidate.createdAt.trim()
-        ? candidate.createdAt
-        : currentIsoTimestamp(),
-    updatedAt:
-      typeof candidate.updatedAt === "string" && candidate.updatedAt.trim()
-        ? candidate.updatedAt
-        : currentIsoTimestamp(),
-    lastUsedAt:
-      typeof candidate.lastUsedAt === "string" && candidate.lastUsedAt.trim()
-        ? candidate.lastUsedAt
-        : null,
-  };
-}
-
-export function normalizeCharacterScope(value: unknown): CharacterScope | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Partial<CharacterScope>;
-  if (typeof candidate.id !== "string" || !candidate.id.trim()) {
-    return null;
-  }
-
-  if (typeof candidate.characterId !== "string" || !candidate.characterId.trim()) {
-    return null;
-  }
-
-  return {
-    id: candidate.id.trim(),
-    characterId: candidate.characterId.trim(),
-    displayName: typeof candidate.displayName === "string" ? candidate.displayName.trim() : "",
-    createdAt:
-      typeof candidate.createdAt === "string" && candidate.createdAt.trim()
-        ? candidate.createdAt
-        : currentIsoTimestamp(),
-    updatedAt:
-      typeof candidate.updatedAt === "string" && candidate.updatedAt.trim()
-        ? candidate.updatedAt
-        : currentIsoTimestamp(),
-  };
-}
-
-export function normalizeCharacterMemoryEntry(value: unknown): CharacterMemoryEntry | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Partial<CharacterMemoryEntry>;
-  if (typeof candidate.id !== "string" || !candidate.id.trim()) {
-    return null;
-  }
-
-  if (typeof candidate.characterScopeId !== "string" || !candidate.characterScopeId.trim()) {
-    return null;
-  }
-
-  const category = normalizeCharacterMemoryCategory(candidate.category);
-  if (!category) {
-    return null;
-  }
-
-  return {
-    id: candidate.id.trim(),
-    characterScopeId: candidate.characterScopeId.trim(),
-    sourceSessionId:
-      typeof candidate.sourceSessionId === "string" && candidate.sourceSessionId.trim()
-        ? candidate.sourceSessionId.trim()
-        : null,
-    category,
-    title: typeof candidate.title === "string" ? candidate.title.trim() : "",
-    detail: typeof candidate.detail === "string" ? candidate.detail.trim() : "",
-    keywords: normalizeStringList(candidate.keywords),
-    evidence: normalizeStringList(candidate.evidence),
-    createdAt:
-      typeof candidate.createdAt === "string" && candidate.createdAt.trim()
-        ? candidate.createdAt
-        : currentIsoTimestamp(),
-    updatedAt:
-      typeof candidate.updatedAt === "string" && candidate.updatedAt.trim()
-        ? candidate.updatedAt
-        : currentIsoTimestamp(),
-    lastUsedAt:
-      typeof candidate.lastUsedAt === "string" && candidate.lastUsedAt.trim()
-        ? candidate.lastUsedAt
-        : null,
-  };
-}
-
-export function normalizeCharacterMemoryDeltaEntry(value: unknown): CharacterMemoryDeltaEntry | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Partial<CharacterMemoryDeltaEntry>;
-  const category = normalizeCharacterMemoryCategory(candidate.category);
-  if (!category) {
-    return null;
-  }
-
-  const title = typeof candidate.title === "string" ? candidate.title.trim() : "";
-  const detail = typeof candidate.detail === "string" ? candidate.detail.trim() : "";
-  if (!title || !detail) {
-    return null;
-  }
-
-  return {
-    category,
-    title,
-    detail,
-    keywords: normalizeStringList(candidate.keywords),
-    evidence: normalizeStringList(candidate.evidence),
-  };
-}
-
-export function normalizeCharacterMemoryDelta(value: unknown): CharacterMemoryDelta | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Partial<CharacterMemoryDelta>;
-  const entries = Array.isArray(candidate.entries)
-    ? candidate.entries
-        .map((entry) => normalizeCharacterMemoryDeltaEntry(entry))
-        .filter((entry): entry is CharacterMemoryDeltaEntry => entry !== null)
-    : [];
-
-  return {
-    entries,
-  };
-}
-
-export function normalizeCharacterReflectionMonologue(value: unknown): CharacterReflectionMonologue | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Partial<CharacterReflectionMonologue>;
-  const text = typeof candidate.text === "string" ? candidate.text.trim() : "";
-  if (!text) {
-    return null;
-  }
-
-  return {
-    text,
-    mood: normalizeStreamMood(candidate.mood),
-  };
-}
-
-export function normalizeCharacterReflectionOutput(value: unknown): CharacterReflectionOutput | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Partial<CharacterReflectionOutput> & { monologueText?: unknown };
-  const memoryDelta = candidate.memoryDelta === null
-    ? null
-    : normalizeCharacterMemoryDelta(candidate.memoryDelta) ?? { entries: [] };
-  const monologue = candidate.monologue === null
-    ? null
-    : normalizeCharacterReflectionMonologue(candidate.monologue)
-      ?? (typeof candidate.monologueText === "string"
-        ? normalizeCharacterReflectionMonologue({ text: candidate.monologueText, mood: "calm" })
-        : null);
-
-  return {
-    memoryDelta,
-    monologue,
-  };
 }
 
 function normalizeDiffRow(value: unknown): DiffRow | null {
@@ -1399,30 +608,6 @@ export function normalizeSession(value: unknown): Session | null {
 
 export function cloneSessions(sessions: Session[]): Session[] {
   return JSON.parse(JSON.stringify(sessions)) as Session[];
-}
-
-export function cloneProjectScopes(scopes: ProjectScope[]): ProjectScope[] {
-  return JSON.parse(JSON.stringify(scopes)) as ProjectScope[];
-}
-
-export function cloneProjectMemoryEntries(entries: ProjectMemoryEntry[]): ProjectMemoryEntry[] {
-  return JSON.parse(JSON.stringify(entries)) as ProjectMemoryEntry[];
-}
-
-export function cloneCharacterScopes(scopes: CharacterScope[]): CharacterScope[] {
-  return JSON.parse(JSON.stringify(scopes)) as CharacterScope[];
-}
-
-export function cloneCharacterMemoryEntries(entries: CharacterMemoryEntry[]): CharacterMemoryEntry[] {
-  return JSON.parse(JSON.stringify(entries)) as CharacterMemoryEntry[];
-}
-
-export function cloneCharacterProfiles(characters: CharacterProfile[]): CharacterProfile[] {
-  return JSON.parse(JSON.stringify(characters)) as CharacterProfile[];
-}
-
-export function getCharacterProfile(characterId: string, characters: CharacterProfile[]): CharacterProfile | null {
-  return cloneCharacterProfiles(characters).find((character) => character.id === characterId) ?? null;
 }
 
 export function buildNewSession(input: CreateSessionInput): Session {

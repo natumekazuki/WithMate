@@ -1,8 +1,6 @@
 import {
   currentTimestampLabel as defaultCurrentTimestampLabel,
-  getProviderAppSettings,
   type AuditLogEntry,
-  type CharacterProfile,
   type ComposerPreview,
   type LiveApprovalDecision,
   type LiveApprovalRequest,
@@ -14,6 +12,8 @@ import {
   type SessionContextTelemetry,
   type SessionMemory,
 } from "../src/app-state.js";
+import { type CharacterProfile } from "../src/character-state.js";
+import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import { ProviderTurnError, type ProviderTurnAdapter } from "./provider-runtime.js";
 
@@ -33,7 +33,7 @@ export type SessionRuntimeServiceDeps = {
   upsertSession(session: Session): Session;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
   resolveSessionCharacter(session: Session): Promise<CharacterProfile | null>;
-  getAppSettings: () => ReturnType<typeof import("../src/app-state.js").normalizeAppSettings>;
+  getAppSettings: () => AppSettings;
   resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): {
     snapshot: ModelCatalogSnapshot;
     provider: ModelCatalogProvider;

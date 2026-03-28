@@ -25,7 +25,7 @@ import type {
   SessionContextTelemetry,
   SessionMemoryDelta,
 } from "../src/app-state.js";
-import { getProviderAppSettings } from "../src/app-state.js";
+import { getProviderAppSettings } from "../src/provider-settings-state.js";
 import { normalizeApprovalMode } from "../src/approval-mode.js";
 import { resolveModelSelection, type ResolvedModelSelection } from "../src/model-catalog.js";
 import { buildArtifactFromOperations } from "./provider-artifact.js";

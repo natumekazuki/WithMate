@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { createDefaultAppSettings, type AppSettings, type Session } from "../../src/app-state.js";
+import type { Session } from "../../src/app-state.js";
+import { createDefaultAppSettings, type AppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { SettingsCatalogService } from "../../src-electron/settings-catalog-service.js";
 

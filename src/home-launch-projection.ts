@@ -1,5 +1,5 @@
-import type { AppSettings, CharacterProfile } from "./app-state.js";
-import { getProviderAppSettings } from "./app-state.js";
+import type { CharacterProfile } from "./app-state.js";
+import { getProviderAppSettings, type AppSettings } from "./provider-settings-state.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "./model-catalog.js";
 
 export type LaunchWorkspace = {

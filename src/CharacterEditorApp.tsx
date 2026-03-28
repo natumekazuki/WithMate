@@ -2,18 +2,20 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 
 import {
   buildCharacterEditorUrl,
-  cloneCharacterSessionCopy,
   currentTimestampLabel,
-  DEFAULT_CHARACTER_SESSION_COPY,
-  DEFAULT_CHARACTER_THEME_COLORS,
   getCharacterIdFromLocation,
   getCharacterProfile,
   isCharacterCreateMode,
+} from "./app-state.js";
+import {
+  cloneCharacterSessionCopy,
+  DEFAULT_CHARACTER_SESSION_COPY,
+  DEFAULT_CHARACTER_THEME_COLORS,
   type CharacterSessionCopy,
   type CharacterThemeColors,
   type CharacterProfile,
   type CreateCharacterInput,
-} from "./app-state.js";
+} from "./character-state.js";
 import { CharacterAvatar } from "./ui-utils.js";
 
 const emptyDraft: CreateCharacterInput = {

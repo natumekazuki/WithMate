@@ -1,18 +1,17 @@
 import type {
-  AppSettings,
   AuditLogicalPrompt,
   AuditTransportPayload,
-  CharacterMemoryDelta,
-  CharacterMemoryEntry,
   CharacterProfile,
-  CharacterReflectionOutput,
   Session,
-  SessionMemory,
 } from "../src/app-state.js";
+import { getCharacterReflectionProviderSettings, type AppSettings } from "../src/provider-settings-state.js";
 import {
-  getCharacterReflectionProviderSettings,
   normalizeCharacterReflectionOutput,
-} from "../src/app-state.js";
+  type CharacterMemoryDelta,
+  type CharacterMemoryEntry,
+  type CharacterReflectionOutput,
+  type SessionMemory,
+} from "../src/memory-state.js";
 import type { ModelReasoningEffort } from "../src/model-catalog.js";
 
 export const CHARACTER_REFLECTION_CHAR_DELTA_THRESHOLD = 1200;

@@ -10,7 +10,7 @@ import {
   normalizeCharacterThemeColors,
   type CharacterProfile,
   type CreateCharacterInput,
-} from "../src/app-state.js";
+} from "../src/character-state.js";
 
 type StoredCharacterMeta = {
   id: string;

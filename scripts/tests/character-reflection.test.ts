@@ -3,10 +3,9 @@ import { describe, it } from "node:test";
 
 import {
   buildNewSession,
-  createDefaultAppSettings,
-  createDefaultSessionMemory,
-  type CharacterMemoryEntry,
 } from "../../src/app-state.js";
+import { createDefaultSessionMemory, type CharacterMemoryEntry } from "../../src/memory-state.js";
+import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import {
   buildCharacterReflectionContextSnapshot,

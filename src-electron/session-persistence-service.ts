@@ -2,11 +2,11 @@ import {
   buildNewSession,
   cloneSessions,
   createDefaultSessionMemory,
-  getProviderAppSettings,
   type CreateSessionInput,
   type Session,
   type SessionMemory,
 } from "../src/app-state.js";
+import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
 import {
   DEFAULT_PROVIDER_ID,
   getProviderCatalog,
@@ -26,7 +26,7 @@ export type SessionPersistenceServiceDeps = {
   replaceStoredSessions(sessions: Session[]): void;
   listStoredSessions(): Session[];
   deleteStoredSession(sessionId: string): void;
-  getAppSettings: () => ReturnType<typeof import("../src/app-state.js").normalizeAppSettings>;
+  getAppSettings: () => AppSettings;
   getModelCatalogSnapshot(): ModelCatalogSnapshot;
   ensureSessionMemory(session: Session): SessionMemory;
   upsertSessionMemory(memory: SessionMemory): void;

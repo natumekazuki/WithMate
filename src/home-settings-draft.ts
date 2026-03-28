@@ -5,7 +5,8 @@ import {
   type AppSettings,
   type CharacterReflectionProviderSettings,
   type MemoryExtractionProviderSettings,
-} from "./app-state.js";
+  type ProviderAppSettings,
+} from "./provider-settings-state.js";
 import { coerceModelSelection, type ModelCatalogProvider } from "./model-catalog.js";
 
 export function updateSystemPromptPrefix(
@@ -55,7 +56,7 @@ export function updateCodingProviderEnabled(
   draft: AppSettings,
   providerId: string,
   enabled: boolean,
-): Record<string, import("./app-state.js").ProviderAppSettings> {
+): Record<string, ProviderAppSettings> {
   return {
     ...draft.codingProviderSettings,
     [providerId]: {
@@ -69,7 +70,7 @@ export function updateCodingProviderApiKey(
   draft: AppSettings,
   providerId: string,
   apiKey: string,
-): Record<string, import("./app-state.js").ProviderAppSettings> {
+): Record<string, ProviderAppSettings> {
   return {
     ...draft.codingProviderSettings,
     [providerId]: {
@@ -83,7 +84,7 @@ export function updateCodingProviderSkillRootPath(
   draft: AppSettings,
   providerId: string,
   skillRootPath: string,
-): Record<string, import("./app-state.js").ProviderAppSettings> {
+): Record<string, ProviderAppSettings> {
   return {
     ...draft.codingProviderSettings,
     [providerId]: {

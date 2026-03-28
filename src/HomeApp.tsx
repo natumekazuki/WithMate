@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { type Session } from "./app-state.js";
+import { type CharacterProfile } from "./character-state.js";
 import {
   createDefaultAppSettings,
   getProviderAppSettings,
   type AppSettings,
-  type CharacterProfile,
-  type Session,
-} from "./app-state.js";
+} from "./provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "./approval-mode.js";
 import {
   type ModelCatalogSnapshot,

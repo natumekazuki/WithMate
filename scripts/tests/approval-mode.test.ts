@@ -8,7 +8,7 @@ import {
   mapApprovalModeToCodexPolicy,
   normalizeApprovalMode,
 } from "../../src/approval-mode.js";
-import { createDefaultAppSettings, getProviderAppSettings, normalizeAppSettings } from "../../src/app-state.js";
+import { createDefaultAppSettings, getProviderAppSettings, normalizeAppSettings } from "../../src/provider-settings-state.js";
 
 describe("approval mode helpers", () => {
   it("legacy/native approval 値を provider-neutral mode へ normalize できる", () => {

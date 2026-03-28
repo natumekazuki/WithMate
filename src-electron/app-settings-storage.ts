@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from "../src/app-state.js";
+import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from "../src/provider-settings-state.js";
 
 const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
 const SYSTEM_PROMPT_PREFIX_KEY = "system_prompt_prefix";

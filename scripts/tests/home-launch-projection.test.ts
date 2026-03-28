@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { createDefaultAppSettings, type CharacterProfile } from "../../src/app-state.js";
+import type { CharacterProfile } from "../../src/app-state.js";
+import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { buildHomeLaunchProjection, inferWorkspaceFromPath } from "../../src/home-launch-projection.js";
 

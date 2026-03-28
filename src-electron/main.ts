@@ -9,18 +9,14 @@ import {
   type CharacterMemoryDelta,
   type CharacterMemoryEntry,
   type CharacterReflectionMonologue,
-  cloneCharacterProfiles,
   cloneSessions,
-  type CharacterProfile,
   currentTimestampLabel,
-  type CreateCharacterInput,
   type CreateSessionInput,
   type DiscoveredCustomAgent,
   type DiscoveredSkill,
   type DiffPreviewPayload,
   type LiveApprovalDecision,
   type LiveApprovalRequest,
-  getProviderAppSettings,
   type LiveSessionRunState,
   type ProviderQuotaTelemetry,
   type RunSessionTurnRequest,
@@ -31,6 +27,12 @@ import {
   type SessionMemoryDelta,
   type SessionContextTelemetry,
 } from "../src/app-state.js";
+import {
+  cloneCharacterProfiles,
+  type CharacterProfile,
+  type CreateCharacterInput,
+} from "../src/character-state.js";
+import { getProviderAppSettings } from "../src/provider-settings-state.js";
 import {
   DEFAULT_PROVIDER_ID,
   getProviderCatalog,

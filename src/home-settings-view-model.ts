@@ -1,10 +1,10 @@
 import {
-  type AppSettings,
   getResolvedProviderSettingsBundle,
+  type AppSettings,
   type CharacterReflectionProviderSettings,
   type MemoryExtractionProviderSettings,
   type ProviderAppSettings,
-} from "./app-state.js";
+} from "./provider-settings-state.js";
 import {
   coerceModelSelection,
   getReasoningEffortOptionsForModel,

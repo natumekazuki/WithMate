@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { ProjectMemoryEntry, SessionMemory } from "../../src/app-state.js";
+import type { ProjectMemoryEntry, SessionMemory } from "../../src/memory-state.js";
 import { retrieveProjectMemoryEntries } from "../../src-electron/project-memory-retrieval.js";
 
 function makeEntry(

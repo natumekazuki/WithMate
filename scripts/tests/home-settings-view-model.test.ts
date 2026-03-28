@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { createDefaultAppSettings } from "../../src/app-state.js";
+import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import {
   buildPersistedAppSettingsFromRows,

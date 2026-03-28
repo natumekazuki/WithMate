@@ -8,9 +8,8 @@ import {
   cloneProjectScopes,
   normalizeProjectMemoryEntry,
   normalizeProjectScope,
-  type ProjectMemoryEntry,
-  type ProjectScope,
-} from "../src/app-state.js";
+} from "../src/memory-state.js";
+import type { ProjectMemoryEntry, ProjectScope } from "../src/memory-state.js";
 import type { ResolvedProjectScopeInput } from "./project-scope.js";
 
 type ProjectScopeRow = {

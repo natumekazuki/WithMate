@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { SessionMemoryDelta } from "../../src/app-state.js";
+import type { SessionMemoryDelta } from "../../src/memory-state.js";
 import { buildProjectMemoryPromotionEntries } from "../../src-electron/project-memory-promotion.js";
 
 describe("buildProjectMemoryPromotionEntries", () => {

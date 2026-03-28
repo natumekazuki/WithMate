@@ -8,9 +8,8 @@ import {
   cloneCharacterScopes,
   normalizeCharacterMemoryEntry,
   normalizeCharacterScope,
-  type CharacterMemoryEntry,
-  type CharacterScope,
-} from "../src/app-state.js";
+} from "../src/memory-state.js";
+import type { CharacterMemoryEntry, CharacterScope } from "../src/memory-state.js";
 
 type CharacterScopeRow = {
   id: string;

@@ -1,4 +1,4 @@
-import type { ProjectMemoryEntry, SessionMemory } from "../src/app-state.js";
+import type { ProjectMemoryEntry, SessionMemory } from "../src/memory-state.js";
 import { computeMemoryTimeDecayScore } from "./memory-time-decay.js";
 
 type RetrievedProjectMemory = {

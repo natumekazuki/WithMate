@@ -4,7 +4,6 @@ import { describe, it } from "node:test";
 import {
   buildNewSession,
   currentTimestampLabel,
-  normalizeAppSettings,
   type AuditLogEntry,
   type CharacterProfile,
   type ComposerPreview,
@@ -17,6 +16,7 @@ import {
   type SessionContextTelemetry,
   type SessionMemory,
 } from "../../src/app-state.js";
+import { normalizeAppSettings } from "../../src/provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { type ModelCatalogProvider } from "../../src/model-catalog.js";
 import { ProviderTurnError, type ProviderTurnAdapter } from "../../src-electron/provider-runtime.js";

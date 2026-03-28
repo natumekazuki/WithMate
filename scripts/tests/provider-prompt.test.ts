@@ -3,12 +3,11 @@ import { describe, it } from "node:test";
 
 import {
   buildNewSession,
-  createDefaultAppSettings,
-  createDefaultSessionMemory,
   DEFAULT_CHARACTER_SESSION_COPY,
   type CharacterProfile,
-  type ProjectMemoryEntry,
 } from "../../src/app-state.js";
+import { createDefaultSessionMemory, type ProjectMemoryEntry } from "../../src/memory-state.js";
+import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import { composeProviderPrompt } from "../../src-electron/provider-prompt.js";
 

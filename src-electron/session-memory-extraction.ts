@@ -7,10 +7,12 @@ import type {
   SessionMemoryDelta,
 } from "../src/app-state.js";
 import {
-  getMemoryExtractionProviderSettings,
   normalizeSessionMemoryDelta,
-  type AppSettings,
 } from "../src/app-state.js";
+import {
+  getMemoryExtractionProviderSettings,
+  type AppSettings,
+} from "../src/provider-settings-state.js";
 import type { ModelReasoningEffort } from "../src/model-catalog.js";
 
 export const SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA = {

@@ -8,7 +8,7 @@ import {
   getProviderAppSettings,
   getResolvedProviderSettingsBundle,
   normalizeAppSettings,
-} from "../../src/app-state.js";
+} from "../../src/provider-settings-state.js";
 import { coerceModelSelection, type ModelCatalogProvider } from "../../src/model-catalog.js";
 
 const providerCatalog: ModelCatalogProvider = {

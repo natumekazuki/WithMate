@@ -4,7 +4,7 @@ import {
   DEFAULT_CHARACTER_THEME_COLORS,
   normalizeCharacterThemeColors,
   type CharacterThemeColors,
-} from "./app-state.js";
+} from "./character-state.js";
 
 function hexToRgb(color: string): { r: number; g: number; b: number } {
   const normalized = /^#[0-9a-fA-F]{6}$/.test(color) ? color : DEFAULT_CHARACTER_THEME_COLORS.main;

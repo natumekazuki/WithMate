@@ -1,11 +1,8 @@
 import {
-  getProviderAppSettings,
   mergeSessionMemory,
-  type AppSettings,
   type AuditLogEntry,
   type CharacterMemoryDelta,
   type CharacterMemoryEntry,
-  type CharacterProfile,
   type CharacterReflectionMonologue,
   type Session,
   type SessionBackgroundActivityKind,
@@ -13,6 +10,11 @@ import {
   type SessionMemory,
   type SessionMemoryDelta,
 } from "../src/app-state.js";
+import { type CharacterProfile } from "../src/character-state.js";
+import {
+  getProviderAppSettings,
+  type AppSettings,
+} from "../src/provider-settings-state.js";
 import type { ProviderTurnAdapter } from "./provider-runtime.js";
 import {
   buildCharacterReflectionContextSnapshot,

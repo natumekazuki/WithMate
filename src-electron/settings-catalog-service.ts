@@ -1,10 +1,12 @@
 import {
   currentTimestampLabel,
+  type Session,
+} from "../src/app-state.js";
+import {
   getProviderAppSettings,
   normalizeAppSettings,
   type AppSettings,
-  type Session,
-} from "../src/app-state.js";
+} from "../src/provider-settings-state.js";
 import {
   coerceModelSelection,
   getProviderCatalog,

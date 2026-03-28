@@ -2,16 +2,12 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 
 import {
   type AuditLogEntry,
-  createDefaultAppSettings,
   type ComposerAttachment,
   type ComposerPreview,
   currentTimestampLabel,
-  DEFAULT_CHARACTER_SESSION_COPY,
   type DiscoveredCustomAgent,
   type DiscoveredSkill,
-  getProviderAppSettings,
   getSessionIdFromLocation,
-  type CharacterProfile,
   type DiffPreviewPayload,
   type LiveApprovalRequest,
   type LiveSessionRunState,
@@ -22,8 +18,13 @@ import {
   type SessionBackgroundActivityKind,
   type SessionBackgroundActivityState,
   type SessionContextTelemetry,
-  type AppSettings,
 } from "./app-state.js";
+import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
+import {
+  createDefaultAppSettings,
+  getProviderAppSettings,
+  type AppSettings,
+} from "./provider-settings-state.js";
 import {
   getProviderCatalog,
   getReasoningEffortOptionsForModel,

@@ -4,7 +4,6 @@ import { describe, it } from "node:test";
 import {
   buildNewSession,
   createDefaultSessionMemory,
-  normalizeAppSettings,
   type AuditLogEntry,
   type CharacterMemoryEntry,
   type CharacterProfile,
@@ -12,6 +11,7 @@ import {
   type SessionBackgroundActivityState,
   type SessionMemory,
 } from "../../src/app-state.js";
+import { normalizeAppSettings } from "../../src/provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { ProviderTurnAdapter } from "../../src-electron/provider-runtime.js";
 import { MemoryOrchestrationService } from "../../src-electron/memory-orchestration-service.js";

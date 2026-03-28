@@ -18,7 +18,7 @@ import type {
   Session,
   SessionMemoryDelta,
 } from "../src/app-state.js";
-import { getProviderAppSettings } from "../src/app-state.js";
+import { getProviderAppSettings } from "../src/provider-settings-state.js";
 import { mapApprovalModeToCodexPolicy } from "../src/approval-mode.js";
 import {
   reasoningEffortLabel,

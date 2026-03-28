@@ -4,11 +4,11 @@ import { describe, it } from "node:test";
 import {
   buildNewSession,
   createDefaultSessionMemory,
-  normalizeAppSettings,
   type CreateSessionInput,
   type Session,
   type SessionMemory,
 } from "../../src/app-state.js";
+import { normalizeAppSettings } from "../../src/provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { SessionPersistenceService } from "../../src-electron/session-persistence-service.js";

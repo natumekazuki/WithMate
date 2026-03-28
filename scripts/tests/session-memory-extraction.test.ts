@@ -3,9 +3,9 @@ import { describe, it } from "node:test";
 
 import {
   buildNewSession,
-  createDefaultAppSettings,
   createDefaultSessionMemory,
 } from "../../src/app-state.js";
+import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import {
   buildSessionMemoryExtractionPrompt,
