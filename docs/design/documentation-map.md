@@ -53,32 +53,23 @@ current 実装の正本として維持する文書。
 | `manual-test-checklist.md` | 実機テスト項目の current 一覧 |
 | `refactor-roadmap.md` | current リファクタの進行管理 |
 
-### C. Research / Capability / Review Hold
+### C. Archived Design Notes
 
-current 実装の正本ではないが、判断材料として残す文書。  
-更新頻度は低く、supporting doc よりも `研究メモ` に近い位置づけ。
+latest 実装とは一致しないが、設計経緯や調査記録として archive に退避した文書。  
+current 正本としては扱わず、必要時だけ archive を参照する。
 
-| Doc | Role |
+| Doc | Archived View |
 | --- | --- |
-| `codex-approval-research.md` | Codex approval surface の調査記録 |
-| `codex-capability-matrix.md` | Codex 観点の capability 詳細 |
-| `agent-event-ui.md` | event UI の検討メモ |
-| `skill-command-design.md` | skill command 設計メモ |
-| `slash-command-integration.md` | slash command の統合検討 |
-| `provider-sdk-pending-items.md` | SDK surface 待ち項目の review note |
-
-### D. Merge / Review Candidates
-
-current 実装の正本としては粒度が細かすぎる、または役割が `desktop-ui.md` / `window-architecture.md` / `product-direction.md` と重なりやすい文書。  
-今後は単独維持ではなく、統合または archive を検討する。
-
-| Doc | Current View |
-| --- | --- |
-| `character-chat-ui.md` | `product-direction.md` を current 正本にして historical note 化する候補 |
-| `home-ui-brushup.md` | `desktop-ui.md` を current 正本にして historical note 化する候補 |
-| `recent-sessions-ui.md` | `desktop-ui.md` を current 正本にして historical note 化する候補 |
-| `session-window-chrome-reduction.md` | `desktop-ui.md` を current 正本にして historical note 化する候補 |
-| `session-window-layout-redesign.md` | `desktop-ui.md` を current 正本にして historical note 化する候補 |
+| `archive/2026/03/character-chat-ui.md` | `product-direction.md` に current 方針が吸収済みのため archive |
+| `archive/2026/03/home-ui-brushup.md` | `desktop-ui.md` に current 要件が吸収済みのため archive |
+| `archive/2026/03/recent-sessions-ui.md` | `desktop-ui.md` に current 要件が吸収済みのため archive |
+| `archive/2026/03/session-window-chrome-reduction.md` | `desktop-ui.md` に current 要件が吸収済みのため archive |
+| `archive/2026/03/session-window-layout-redesign.md` | `desktop-ui.md` に current 要件が吸収済みのため archive |
+| `archive/2026/03/codex-approval-research.md` | approval surface の調査記録として archive |
+| `archive/2026/03/agent-event-ui.md` | event UI の検討メモとして archive |
+| `archive/2026/03/skill-command-design.md` | skill command 設計メモとして archive |
+| `archive/2026/03/slash-command-integration.md` | slash command 統合検討メモとして archive |
+| `archive/2026/03/provider-sdk-pending-items.md` | SDK pending items の review note として archive |
 
 ## Next Review Order
 
@@ -86,8 +77,8 @@ docs 精査は次の順で進める。
 
 1. `desktop-ui.md` と UI 系文書の統合方針を決める
 2. `window-architecture.md` / `electron-window-runtime.md` / `session-run-lifecycle.md` の境界を見直す
-3. provider / capability / research 系文書の正本と supporting を切り分ける
-4. Character / product ideation 系の古い文書を統合または archive する
+3. archive した調査メモから、current 正本へ戻すべき論点が出た時だけ follow-up を切る
+4. current docs に新しい historical / review 文書を増やさない運用を維持する
 
 ## Notes
 

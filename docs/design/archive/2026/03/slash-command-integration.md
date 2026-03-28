@@ -252,4 +252,4 @@ skill の最小実装では次を行う。
 - slash command は provider SDK へ passthrough しない
 - WithMate の command grammar と canonical command を先に定義する
 - adapter は command 実行層ではなく metadata translation 層に留める
-- skill picker の詳細は `docs/design/skill-command-design.md` を参照する
+- skill picker の詳細は `docs/design/archive/2026/03/skill-command-design.md` を参照する

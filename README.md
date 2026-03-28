@@ -151,4 +151,4 @@ npm run typecheck
 - coding agent の対応状況を確認するときは `docs/design/coding-agent-capability-matrix.md` を最初に見ます
 - coding agent capability に影響する実装や改修では、同じ task の中で `docs/design/coding-agent-capability-matrix.md` を更新します
 - 永続化構造、SQLite schema、JSON カラム、DB 外保存の責務に変更がある task では、同じ task の中で `docs/design/database-schema.md` も更新します
-- provider ごとの詳細設計は `docs/design/provider-adapter.md`、`docs/design/codex-approval-research.md`、`docs/design/slash-command-integration.md`、`docs/design/skill-command-design.md` を参照します
+- provider ごとの詳細設計は `docs/design/provider-adapter.md` と `docs/design/codex-capability-matrix.md` を参照します

@@ -299,4 +299,3 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 
 - `docs/design/memory-architecture.md`
 - `docs/design/monologue-provider-policy.md`
-- `docs/design/character-chat-ui.md`

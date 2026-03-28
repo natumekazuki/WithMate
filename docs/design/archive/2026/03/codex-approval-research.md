@@ -241,7 +241,7 @@ WithMate で approval を仕様確認するなら、少なくとも次の matrix
 - slash command は SDK 機能として探すより、WithMate 固有 command layer として切り出す前提で設計する
 - Copilot を含めて同じ UI を出したいなら、native approval prompt を UI 基準にせず、WithMate 側の provider-neutral approval model を先に定義する
 
-slash command の詳細整理は `docs/design/slash-command-integration.md` を参照する。
+slash command の詳細整理は `docs/design/archive/2026/03/slash-command-integration.md` を参照する。
 
 ## Adopted WithMate Direction
 

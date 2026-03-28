@@ -26,12 +26,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 ## UI Source Of Truth Boundary
 
 - current UI の正本はこの文書とする
-- 次の文書は current 実装の補足や経緯メモとして扱い、この文書より優先しない
-  - `docs/design/home-ui-brushup.md`
-  - `docs/design/recent-sessions-ui.md`
-  - `docs/design/session-window-chrome-reduction.md`
-  - `docs/design/session-window-layout-redesign.md`
-- 上記文書は、今後 `desktop-ui.md` に統合または archive する候補として扱う
+- UI の経緯メモや旧検討文書は `docs/design/archive/2026/03/` へ移しており、この文書より優先しない
 
 ## Runtime
 

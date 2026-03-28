@@ -11,7 +11,7 @@
 
 - WithMate が current 実装で Codex 相手に何をできるかを 1 枚で確認できるようにする
 - 「実装済み」「一部対応」「未対応」を分けて、次に潰す task を切りやすくする
-- `docs/design/provider-adapter.md`、`docs/design/codex-approval-research.md`、実装コードの差を current snapshot として整理する
+- `docs/design/provider-adapter.md` と実装コードの差を current snapshot として整理する
 
 ## Scope
 
@@ -98,7 +98,6 @@
 - `src-electron/main.ts`
 - `src/HomeApp.tsx`
 - `src/App.tsx`
-- `docs/design/skill-command-design.md`
 
 制約:
 
@@ -123,7 +122,6 @@
 - `src/approval-mode.ts`
 - `src-electron/codex-adapter.ts`
 - `src-electron/main.ts`
-- `docs/design/codex-approval-research.md`
 
 未対応:
 
@@ -143,7 +141,6 @@
 
 - `src-electron/codex-adapter.ts`
 - `src/App.tsx`
-- `docs/design/agent-event-ui.md`
 - `docs/design/desktop-ui.md`
 
 制約:
@@ -186,7 +183,7 @@
 
 関連 docs:
 
-- `docs/design/slash-command-integration.md`
+- `docs/design/provider-adapter.md`
 
 ### 10. Codex CLI advanced parity
 
@@ -249,7 +246,4 @@ Codex capability 棚卸し後の次 task は、次の順で切るのが自然。
 ## Related Docs
 
 - `docs/design/provider-adapter.md`
-- `docs/design/codex-approval-research.md`
-- `docs/design/slash-command-integration.md`
-- `docs/design/skill-command-design.md`
 - `docs/design/audit-log.md`

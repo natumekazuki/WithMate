@@ -79,6 +79,3 @@
 
 - `docs/design/provider-adapter.md`
 - `docs/design/codex-capability-matrix.md`
-- `docs/design/codex-approval-research.md`
-- `docs/design/slash-command-integration.md`
-- `docs/design/skill-command-design.md`
