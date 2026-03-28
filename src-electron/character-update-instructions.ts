@@ -16,3 +16,14 @@ export function buildCharacterUpdateInstructionText(characterName: string): stri
     "- 変更後は、何をどう更新したかを短く説明する",
   ].join("\n");
 }
+
+export function buildCharacterUpdateInstructionFiles(characterName: string): Array<{
+  fileName: string;
+  content: string;
+}> {
+  const content = buildCharacterUpdateInstructionText(characterName);
+  return [
+    { fileName: "AGENTS.md", content },
+    { fileName: "copilot-instructions.md", content },
+  ];
+}

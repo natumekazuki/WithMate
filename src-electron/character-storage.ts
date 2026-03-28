@@ -11,6 +11,7 @@ import {
   type CharacterProfile,
   type CreateCharacterInput,
 } from "../src/character-state.js";
+import { buildCharacterUpdateInstructionFiles } from "./character-update-instructions.js";
 
 type StoredCharacterMeta = {
   id: string;
@@ -247,9 +248,12 @@ async function writeCharacterFiles(
     updatedAt,
   };
 
+  const instructionFiles = buildCharacterUpdateInstructionFiles(nextMeta.name);
+
   await Promise.all([
     writeFile(path.join(characterDirectoryPath, "meta.json"), JSON.stringify(nextMeta, null, 2), "utf8"),
     writeFile(path.join(characterDirectoryPath, roleFile), input.roleMarkdown.trim(), "utf8"),
+    ...instructionFiles.map((file) => writeFile(path.join(characterDirectoryPath, file.fileName), file.content, "utf8")),
   ]);
 
   return materializeCharacterProfile(characterDirectoryPath, nextMeta);

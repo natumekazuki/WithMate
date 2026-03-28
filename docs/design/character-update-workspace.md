@@ -12,6 +12,7 @@
 - provider ごとに update 作業用の instruction file を配置する
   - Codex: `AGENTS.md`
   - Copilot: `copilot-instructions.md`
+- instruction file は character 保存時に character directory へ同期しておく
 - Character Memory は自動注入せず、`Memory Extract` ボタンで貼り付け用テキストを生成して表示する
 
 ## UI
@@ -59,7 +60,8 @@
 - `workspaceLabel` は character 名ベースの label を使う
 - `taskTitle` は `${character.name} の更新`
 - `branch` は固定の logical label を使う
-- provider 選択時に対応する instruction file を workspace に生成してから session を作る
+- create / update 保存時に `AGENTS.md` と `copilot-instructions.md` を同期しておく
+- update session 起動時は保存済みの instruction file をそのまま使う
 
 ## Non Goals
 

@@ -73,7 +73,8 @@ Home / Session / Character Stream で使うアイコン画像の正本。
 Renderer 側では browser 標準の file picker で画像を選び、保存時に Main Process へ渡す。
 
 ### `AGENTS.md` / `copilot-instructions.md`
-Character Update Workspace で update 用 Session を起動する時に生成する provider 向け instruction file。
+character 保存時に character directory へ同期する update 用 instruction file。  
+Character Update Workspace 起動前から存在し、初期作成直後でもそのまま update workspace として使える状態にする。
 
 責務:
 - `character.md` 更新作業の基本ルール
@@ -87,7 +88,8 @@ Character Update Workspace で update 用 Session を起動する時に生成す
 
 ## Source Of Truth
 - Character catalog の source of truth は file system 上の `meta.json + character.md + character.png`。
-- Character Update Workspace では同じ character directory を workspace として再利用し、必要時だけ provider 向け instruction file を生成する。
+- Character Update Workspace では同じ character directory を workspace として再利用する。
+- provider 向け instruction file は create / update の保存時に同期しておき、workspace 起動時はそのまま使う。
 - Renderer は Main Process 経由で catalog を読む。
 - Renderer が直接ディレクトリを走査しない。
 
