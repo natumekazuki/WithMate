@@ -66,7 +66,7 @@ import type { AppSettings } from "../src/provider-settings-state.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
 
-type MainIpcRegistrationDeps = {
+export type MainIpcRegistrationDeps = {
   resolveEventWindow(event: IpcMainInvokeEvent): MaybeWindow;
   resolveHomeWindow(): MaybeWindow;
   openSessionWindow(sessionId: string): Promise<void>;

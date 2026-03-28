@@ -19,20 +19,15 @@ import {
   type SessionContextTelemetry,
 } from "../src/app-state.js";
 import {
-  cloneCharacterProfiles,
   type CharacterProfile,
   type CreateCharacterInput,
 } from "../src/character-state.js";
 import {
-  cloneSessions,
   type CreateSessionInput,
   type DiffPreviewPayload,
   type Session,
 } from "../src/session-state.js";
-import { getProviderAppSettings } from "../src/provider-settings-state.js";
 import {
-  DEFAULT_PROVIDER_ID,
-  getProviderCatalog,
   type ModelCatalogDocument,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
@@ -77,6 +72,17 @@ import {
   PersistentStoreLifecycleService,
   type PersistentStoreBundle,
 } from "./persistent-store-lifecycle-service.js";
+import { AppLifecycleService } from "./app-lifecycle-service.js";
+import { createAppLifecycleDeps } from "./app-lifecycle-deps.js";
+import { createMainBootstrapDeps } from "./main-bootstrap-deps.js";
+import { MainInfrastructureRegistry } from "./main-infrastructure-registry.js";
+import { MainBootstrapService } from "./main-bootstrap-service.js";
+import { MainQueryService } from "./main-query-service.js";
+import {
+  fetchProviderQuotaTelemetry,
+  resolveProviderCatalogOrThrow,
+  resolveProviderTurnAdapter,
+} from "./provider-support.js";
 import {
   type CharacterReflectionTriggerReason,
 } from "./character-reflection.js";
@@ -121,13 +127,20 @@ let settingsCatalogService: SettingsCatalogService | null = null;
 let sessionObservabilityService: SessionObservabilityService | null = null;
 let sessionApprovalService: SessionApprovalService | null = null;
 let auditLogService: AuditLogService | null = null;
-let windowBroadcastService: WindowBroadcastService<BrowserWindow> | null = null;
-let windowDialogService: WindowDialogService | null = null;
 let sessionMemorySupportService: SessionMemorySupportService | null = null;
 let characterRuntimeService: CharacterRuntimeService | null = null;
-let windowEntryLoader: WindowEntryLoader | null = null;
-let auxWindowService: AuxWindowService<BrowserWindow> | null = null;
-let persistentStoreLifecycleService: PersistentStoreLifecycleService | null = null;
+let mainQueryService: MainQueryService | null = null;
+let mainInfrastructureRegistry:
+  | MainInfrastructureRegistry<
+      WindowBroadcastService<BrowserWindow>,
+      WindowDialogService,
+      WindowEntryLoader,
+      AuxWindowService<BrowserWindow>,
+      PersistentStoreLifecycleService,
+      AppLifecycleService,
+      MainBootstrapService
+    >
+  | null = null;
 
 function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0]): BrowserWindow {
   return new BrowserWindow({
@@ -145,7 +158,7 @@ function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0
 }
 
 function listSessions(): Session[] {
-  return cloneSessions(sessions);
+  return requireMainQueryService().listSessions();
 }
 
 function isRunningSession(session: Session): boolean {
@@ -160,12 +173,213 @@ function isSessionRunInFlight(sessionId: string): boolean {
   return requireSessionRuntimeService().isRunInFlight(sessionId);
 }
 
+function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
+  WindowBroadcastService<BrowserWindow>,
+  WindowDialogService,
+  WindowEntryLoader,
+  AuxWindowService<BrowserWindow>,
+  PersistentStoreLifecycleService,
+  AppLifecycleService,
+  MainBootstrapService
+> {
+  if (!mainInfrastructureRegistry) {
+    mainInfrastructureRegistry = new MainInfrastructureRegistry({
+      createWindowBroadcastService: () =>
+        new WindowBroadcastService({
+          getWindows: () => BrowserWindow.getAllWindows(),
+        }),
+      createWindowDialogService: () =>
+        new WindowDialogService({
+          async showOpenDialog(targetWindow, options) {
+            return targetWindow
+              ? dialog.showOpenDialog(targetWindow, options)
+              : dialog.showOpenDialog(options);
+          },
+          async showSaveDialog(targetWindow, options) {
+            return targetWindow
+              ? dialog.showSaveDialog(targetWindow, options)
+              : dialog.showSaveDialog(options);
+          },
+          async readTextFile(filePath) {
+            return readFile(filePath, "utf8");
+          },
+          async writeTextFile(filePath, content) {
+            await writeFile(filePath, content, "utf8");
+          },
+          importModelCatalogDocument(document) {
+            return requireSettingsCatalogService().importModelCatalogDocument(document);
+          },
+          exportModelCatalogDocument(revision) {
+            return requireSettingsCatalogService().exportModelCatalogDocument(revision);
+          },
+        }),
+      createWindowEntryLoader: () =>
+        new WindowEntryLoader({
+          devServerUrl,
+          rendererDistPath,
+        }),
+      createAuxWindowService: () =>
+        new AuxWindowService({
+          createWindow: (options) =>
+            createBaseWindow({
+              ...(options.homeBounds ? HOME_WINDOW_DEFAULT_BOUNDS : {}),
+              width: options.homeBounds ? undefined : options.width,
+              height: options.homeBounds ? undefined : options.height,
+              minWidth: options.minWidth,
+              minHeight: options.minHeight,
+              maxWidth: options.maxWidth,
+              title: options.title,
+              alwaysOnTop: options.alwaysOnTop,
+            }),
+          loadHomeEntry: (window, mode) => requireWindowEntryLoader().loadHomeEntry(window, mode),
+          loadCharacterEntry: (window, characterId) =>
+            requireWindowEntryLoader().loadCharacterEntry(window, characterId),
+          loadDiffEntry: (window, token) => requireWindowEntryLoader().loadDiffEntry(window, token),
+          generateDiffToken: () => crypto.randomUUID(),
+        }),
+      createPersistentStoreLifecycleService: () =>
+        new PersistentStoreLifecycleService({
+          createModelCatalogStorage: (nextDbPath, nextBundledModelCatalogPath) =>
+            new ModelCatalogStorage(nextDbPath, nextBundledModelCatalogPath),
+          createSessionStorage: (nextDbPath) => new SessionStorage(nextDbPath),
+          createSessionMemoryStorage: (nextDbPath) => new SessionMemoryStorage(nextDbPath),
+          createProjectMemoryStorage: (nextDbPath) => new ProjectMemoryStorage(nextDbPath),
+          createCharacterMemoryStorage: (nextDbPath) => new CharacterMemoryStorage(nextDbPath),
+          createAuditLogStorage: (nextDbPath) => new AuditLogStorage(nextDbPath),
+          createAppSettingsStorage: (nextDbPath) => new AppSettingsStorage(nextDbPath),
+          syncSessionDependencies: (session) => requireSessionMemorySupportService().syncSessionDependencies(session),
+          onBeforeClose: () => {
+            sessionApprovalService?.reset();
+            sessionObservabilityService?.dispose();
+          },
+          async removeFile(filePath) {
+            await rm(filePath, { force: true });
+          },
+        }),
+      createAppLifecycleService: () =>
+        new AppLifecycleService(
+          createAppLifecycleDeps({
+            hasInFlightSessionRuns,
+            getAllowQuitWithInFlightRuns: () => allowQuitWithInFlightRuns,
+            setAllowQuitWithInFlightRuns: (value) => {
+              allowQuitWithInFlightRuns = value;
+            },
+            createHomeWindow: async () => {
+              await createHomeWindow();
+            },
+            quitApp: () => {
+              app.quit();
+            },
+            shouldQuitWhenAllWindowsClosed: () => process.platform !== "darwin",
+            confirmQuitWhileRunning: () => {
+              const choice = dialog.showMessageBoxSync({
+                type: "warning",
+                buttons: ["戻る", "終了する"],
+                defaultId: 0,
+                cancelId: 0,
+                title: "実行中のセッション",
+                message: "実行中のセッションがあるよ。",
+                detail: "ここでアプリを終了すると、進行中の処理は中断されるよ。",
+                noLink: true,
+              });
+              return choice === 1;
+            },
+            closePersistentStores,
+          }),
+        ),
+      createMainBootstrapService: () =>
+        new MainBootstrapService(
+          createMainBootstrapDeps({
+            ipcMain,
+            registerMainIpcHandlers,
+            initializePersistentStores,
+            recoverInterruptedSessions,
+            refreshCharactersFromStorage: async () => {
+              await refreshCharactersFromStorage();
+            },
+            createHomeWindow,
+            broadcastModelCatalog,
+            resolveEventWindow: (event) => BrowserWindow.fromWebContents(event.sender) ?? null,
+            resolveHomeWindow: () => requireAuxWindowService().getHomeWindow(),
+            openSessionWindow,
+            openSessionMonitorWindow,
+            openSettingsWindow,
+            openCharacterEditorWindow,
+            openDiffWindow,
+            listSessions: () => listSessions(),
+            listSessionAuditLogs: (sessionId) => listSessionAuditLogs(sessionId),
+            listSessionSkills: (sessionId) => listSessionSkills(sessionId),
+            listSessionCustomAgents: (sessionId) => listSessionCustomAgents(sessionId),
+            listOpenSessionWindowIds: () => listOpenSessionWindowIds(),
+            getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
+            updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
+            resetAppDatabase: async (request) => requireSettingsCatalogService().resetAppDatabase(request),
+            listCharacters: async () => refreshCharactersFromStorage(),
+            getModelCatalog: (revision) => requireSettingsCatalogService().getModelCatalog(revision),
+            importModelCatalogDocument: (document) => requireSettingsCatalogService().importModelCatalogDocument(document),
+            importModelCatalogFromFile: async (targetWindow) => importModelCatalogFromFile(targetWindow),
+            exportModelCatalogDocument: (revision) => requireSettingsCatalogService().exportModelCatalogDocument(revision),
+            exportModelCatalogToFile: async (revision, targetWindow) => exportModelCatalogToFile(revision, targetWindow),
+            getSession: (sessionId) => getSession(sessionId),
+            getDiffPreview: (token) => requireAuxWindowService().getDiffPreview(token),
+            getLiveSessionRun: (sessionId) => getLiveSessionRun(sessionId),
+            getProviderQuotaTelemetry: getOrRefreshProviderQuotaTelemetry,
+            getSessionContextTelemetry: (sessionId) => getSessionContextTelemetry(sessionId),
+            getSessionBackgroundActivity: (sessionId, kind) => getSessionBackgroundActivity(sessionId, kind),
+            resolveLiveApproval,
+            getCharacter,
+            createSession: (input) => createSession(input),
+            updateSession: (session) => updateSession(session),
+            deleteSession: (sessionId) => deleteSession(sessionId),
+            previewComposerInput,
+            searchWorkspaceFiles,
+            runSessionTurn,
+            cancelSessionRun,
+            createCharacter,
+            updateCharacter,
+            deleteCharacter,
+            pickDirectory: (targetWindow, initialPath) =>
+              requireWindowDialogService().pickDirectory(targetWindow, initialPath),
+            pickFile: (targetWindow, initialPath) =>
+              requireWindowDialogService().pickFile(targetWindow, initialPath),
+            pickImageFile: (targetWindow, initialPath) =>
+              requireWindowDialogService().pickImageFile(targetWindow, initialPath),
+            openPathTarget,
+            openSessionTerminal,
+          }),
+        ),
+    });
+  }
+
+  return mainInfrastructureRegistry;
+}
+
 function requireSessionStorage(): SessionStorage {
   if (!sessionStorage) {
     throw new Error("session storage が初期化されていないよ。");
   }
 
   return sessionStorage;
+}
+
+function requireMainQueryService(): MainQueryService {
+  if (!mainQueryService) {
+    mainQueryService = new MainQueryService({
+      getSessions: () => sessions,
+      getCharacters: () => characters,
+      getAuditLogs: (sessionId) => requireAuditLogService().listSessionAuditLogs(sessionId),
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      discoverSessionSkills,
+      discoverSessionCustomAgents,
+      getStoredCharacter: (characterId) => requireCharacterRuntimeService().getCharacter(characterId),
+      refreshCharactersFromStorage: () => requireCharacterRuntimeService().refreshCharactersFromStorage(),
+      resolveComposerPreview,
+      searchWorkspaceFiles: (workspacePath, query) => searchWorkspaceFilePaths(workspacePath, query),
+      launchTerminalAtPath,
+    });
+  }
+
+  return mainQueryService;
 }
 
 function requireModelCatalogStorage(): ModelCatalogStorage {
@@ -193,44 +407,11 @@ function requireAuditLogService(): AuditLogService {
 }
 
 function requireWindowBroadcastService(): WindowBroadcastService<BrowserWindow> {
-  if (!windowBroadcastService) {
-    windowBroadcastService = new WindowBroadcastService({
-      getWindows: () => BrowserWindow.getAllWindows(),
-    });
-  }
-
-  return windowBroadcastService;
+  return requireMainInfrastructureRegistry().getWindowBroadcastService();
 }
 
 function requireWindowDialogService(): WindowDialogService {
-  if (!windowDialogService) {
-    windowDialogService = new WindowDialogService({
-      async showOpenDialog(targetWindow, options) {
-        return targetWindow
-          ? dialog.showOpenDialog(targetWindow, options)
-          : dialog.showOpenDialog(options);
-      },
-      async showSaveDialog(targetWindow, options) {
-        return targetWindow
-          ? dialog.showSaveDialog(targetWindow, options)
-          : dialog.showSaveDialog(options);
-      },
-      async readTextFile(filePath) {
-        return readFile(filePath, "utf8");
-      },
-      async writeTextFile(filePath, content) {
-        await writeFile(filePath, content, "utf8");
-      },
-      importModelCatalogDocument(document) {
-        return requireSettingsCatalogService().importModelCatalogDocument(document);
-      },
-      exportModelCatalogDocument(revision) {
-        return requireSettingsCatalogService().exportModelCatalogDocument(revision);
-      },
-    });
-  }
-
-  return windowDialogService;
+  return requireMainInfrastructureRegistry().getWindowDialogService();
 }
 
 function requireAppSettingsStorage(): AppSettingsStorage {
@@ -294,38 +475,11 @@ function requireCharacterRuntimeService(): CharacterRuntimeService {
 }
 
 function requireWindowEntryLoader(): WindowEntryLoader {
-  if (!windowEntryLoader) {
-    windowEntryLoader = new WindowEntryLoader({
-      devServerUrl,
-      rendererDistPath,
-    });
-  }
-
-  return windowEntryLoader;
+  return requireMainInfrastructureRegistry().getWindowEntryLoader();
 }
 
 function requireAuxWindowService(): AuxWindowService<BrowserWindow> {
-  if (!auxWindowService) {
-    auxWindowService = new AuxWindowService({
-      createWindow: (options) =>
-        createBaseWindow({
-          ...(options.homeBounds ? HOME_WINDOW_DEFAULT_BOUNDS : {}),
-          width: options.homeBounds ? undefined : options.width,
-          height: options.homeBounds ? undefined : options.height,
-          minWidth: options.minWidth,
-          minHeight: options.minHeight,
-          maxWidth: options.maxWidth,
-          title: options.title,
-          alwaysOnTop: options.alwaysOnTop,
-        }),
-      loadHomeEntry: (window, mode) => requireWindowEntryLoader().loadHomeEntry(window, mode),
-      loadCharacterEntry: (window, characterId) => requireWindowEntryLoader().loadCharacterEntry(window, characterId),
-      loadDiffEntry: (window, token) => requireWindowEntryLoader().loadDiffEntry(window, token),
-      generateDiffToken: () => crypto.randomUUID(),
-    });
-  }
-
-  return auxWindowService;
+  return requireMainInfrastructureRegistry().getAuxWindowService();
 }
 
 function requireSessionRuntimeService(): SessionRuntimeService {
@@ -581,28 +735,15 @@ function requireCharacterMemoryStorage(): CharacterMemoryStorage {
 }
 
 function requirePersistentStoreLifecycleService(): PersistentStoreLifecycleService {
-  if (!persistentStoreLifecycleService) {
-    persistentStoreLifecycleService = new PersistentStoreLifecycleService({
-      createModelCatalogStorage: (nextDbPath, nextBundledModelCatalogPath) =>
-        new ModelCatalogStorage(nextDbPath, nextBundledModelCatalogPath),
-      createSessionStorage: (nextDbPath) => new SessionStorage(nextDbPath),
-      createSessionMemoryStorage: (nextDbPath) => new SessionMemoryStorage(nextDbPath),
-      createProjectMemoryStorage: (nextDbPath) => new ProjectMemoryStorage(nextDbPath),
-      createCharacterMemoryStorage: (nextDbPath) => new CharacterMemoryStorage(nextDbPath),
-      createAuditLogStorage: (nextDbPath) => new AuditLogStorage(nextDbPath),
-      createAppSettingsStorage: (nextDbPath) => new AppSettingsStorage(nextDbPath),
-      syncSessionDependencies: (session) => requireSessionMemorySupportService().syncSessionDependencies(session),
-      onBeforeClose: () => {
-        sessionApprovalService?.reset();
-        sessionObservabilityService?.dispose();
-      },
-      async removeFile(filePath) {
-        await rm(filePath, { force: true });
-      },
-    });
-  }
+  return requireMainInfrastructureRegistry().getPersistentStoreLifecycleService();
+}
 
-  return persistentStoreLifecycleService;
+function requireAppLifecycleService(): AppLifecycleService {
+  return requireMainInfrastructureRegistry().getAppLifecycleService();
+}
+
+function requireMainBootstrapService(): MainBootstrapService {
+  return requireMainInfrastructureRegistry().getMainBootstrapService();
 }
 
 function applyPersistentStoreBundle(bundle: PersistentStoreBundle): ModelCatalogSnapshot {
@@ -648,13 +789,11 @@ function closePersistentStores(): void {
   settingsCatalogService = null;
   sessionObservabilityService = null;
   sessionApprovalService = null;
-  windowBroadcastService = null;
-  windowDialogService = null;
   sessionMemorySupportService = null;
   characterRuntimeService = null;
-  windowEntryLoader = null;
-  auxWindowService = null;
-  persistentStoreLifecycleService = null;
+  mainQueryService = null;
+  mainInfrastructureRegistry?.reset();
+  mainInfrastructureRegistry = null;
 }
 
 async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
@@ -676,12 +815,11 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   settingsCatalogService = null;
   sessionObservabilityService = null;
   sessionApprovalService = null;
-  windowBroadcastService = null;
-  windowDialogService = null;
   sessionMemorySupportService = null;
   characterRuntimeService = null;
-  windowEntryLoader = null;
-  auxWindowService = null;
+  mainQueryService = null;
+  mainInfrastructureRegistry?.reset();
+  mainInfrastructureRegistry = null;
   sessions = [];
 
   return applyPersistentStoreBundle(bundle);
@@ -695,17 +833,20 @@ function resolveProviderCatalog(
   providerId: string | null | undefined,
   revision?: number | null,
 ): { snapshot: ModelCatalogSnapshot; provider: ModelCatalogProvider } {
-  const snapshot = getModelCatalog(revision) ?? requireModelCatalogStorage().ensureSeeded();
-  const provider = getProviderCatalog(snapshot.providers, providerId ?? DEFAULT_PROVIDER_ID);
-  if (!provider) {
-    throw new Error("利用できる model catalog provider が見つからないよ。");
-  }
-
-  return { snapshot, provider };
+  return resolveProviderCatalogOrThrow({
+    providerId,
+    revision,
+    getModelCatalog,
+    ensureSeeded: () => requireModelCatalogStorage().ensureSeeded(),
+  });
 }
 
 function getProviderAdapter(providerId: string | null | undefined): ProviderTurnAdapter {
-  return providerId === "copilot" ? copilotAdapter : codexAdapter;
+  return resolveProviderTurnAdapter({
+    providerId,
+    codexAdapter,
+    copilotAdapter,
+  });
 }
 
 function invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void {
@@ -718,56 +859,35 @@ function invalidateAllProviderSessionThreads(): void {
 }
 
 function listCharacters(): CharacterProfile[] {
-  return cloneCharacterProfiles(characters);
+  return requireMainQueryService().listCharacters();
 }
 
 function listSessionAuditLogs(sessionId: string): AuditLogEntry[] {
-  return requireAuditLogService().listSessionAuditLogs(sessionId);
+  return requireMainQueryService().listSessionAuditLogs(sessionId);
 }
 
 function listSessionSkills(sessionId: string): DiscoveredSkill[] {
-  const session = getSession(sessionId);
-  if (!session) {
-    throw new Error("対象セッションが見つからないよ。");
-  }
-
-  const appSettings = requireAppSettingsStorage().getSettings();
-  const providerSettings = getProviderAppSettings(appSettings, session.provider);
-  return discoverSessionSkills(session.workspacePath, providerSettings.skillRootPath);
+  return requireMainQueryService().listSessionSkills(sessionId);
 }
 
 function listSessionCustomAgents(sessionId: string): DiscoveredCustomAgent[] {
-  const session = getSession(sessionId);
-  if (!session) {
-    throw new Error("対象セッションが見つからないよ。");
-  }
-
-  if (session.provider !== "copilot") {
-    return [];
-  }
-
-  return discoverSessionCustomAgents(session.workspacePath);
+  return requireMainQueryService().listSessionCustomAgents(sessionId);
 }
 
 function getSession(sessionId: string): Session | null {
-  return cloneSessions(sessions).find((session) => session.id === sessionId) ?? null;
+  return requireMainQueryService().getSession(sessionId);
 }
 
 async function openSessionTerminal(sessionId: string): Promise<void> {
-  const session = getSession(sessionId);
-  if (!session) {
-    throw new Error("対象セッションが見つからないよ。");
-  }
-
-  await launchTerminalAtPath(session.workspacePath);
+  await requireMainQueryService().openSessionTerminal(sessionId);
 }
 
 async function refreshCharactersFromStorage(): Promise<CharacterProfile[]> {
-  return requireCharacterRuntimeService().refreshCharactersFromStorage();
+  return requireMainQueryService().refreshCharactersFromStorage();
 }
 
 async function getCharacter(characterId: string): Promise<CharacterProfile | null> {
-  return requireCharacterRuntimeService().getCharacter(characterId);
+  return requireMainQueryService().getCharacter(characterId);
 }
 
 function broadcastSessions(): void {
@@ -818,10 +938,10 @@ function isProviderQuotaTelemetryStale(telemetry: ProviderQuotaTelemetry | null)
 
 async function refreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null> {
   return requireSessionObservabilityService().refreshProviderQuotaTelemetry(providerId, async () => {
-    const appSettings = requireAppSettingsStorage().getSettings();
-    return getProviderAdapter(providerId).getProviderQuotaTelemetry({
+    return fetchProviderQuotaTelemetry({
       providerId,
-      appSettings,
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      getProviderAdapter: (nextProviderId) => getProviderAdapter(nextProviderId),
     });
   });
 }
@@ -831,10 +951,10 @@ async function getOrRefreshProviderQuotaTelemetry(providerId: string): Promise<P
     providerId,
     PROVIDER_QUOTA_STALE_TTL_MS,
     async () => {
-      const appSettings = requireAppSettingsStorage().getSettings();
-      return getProviderAdapter(providerId).getProviderQuotaTelemetry({
+      return fetchProviderQuotaTelemetry({
         providerId,
-        appSettings,
+        getAppSettings: () => requireAppSettingsStorage().getSettings(),
+        getProviderAdapter: (nextProviderId) => getProviderAdapter(nextProviderId),
       });
     },
   );
@@ -842,10 +962,10 @@ async function getOrRefreshProviderQuotaTelemetry(providerId: string): Promise<P
 
 function scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void {
   requireSessionObservabilityService().scheduleProviderQuotaTelemetryRefresh(providerId, delaysMs, async () => {
-    const appSettings = requireAppSettingsStorage().getSettings();
-    return getProviderAdapter(providerId).getProviderQuotaTelemetry({
+    return fetchProviderQuotaTelemetry({
       providerId,
-      appSettings,
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      getProviderAdapter: (nextProviderId) => getProviderAdapter(nextProviderId),
     });
   });
 }
@@ -1047,21 +1167,11 @@ async function previewComposerInput(
   sessionId: string,
   userMessage: string,
 ) {
-  const session = getSession(sessionId);
-  if (!session) {
-    throw new Error("対象セッションが見つからないよ。");
-  }
-
-  return resolveComposerPreview(session, userMessage);
+  return requireMainQueryService().previewComposerInput(sessionId, userMessage);
 }
 
 async function searchWorkspaceFiles(sessionId: string, query: string): Promise<string[]> {
-  const session = getSession(sessionId);
-  if (!session) {
-    throw new Error("対象セッションが見つからないよ。");
-  }
-
-  return searchWorkspaceFilePaths(session.workspacePath, query);
+  return requireMainQueryService().searchWorkspaceFiles(sessionId, query);
 }
 
 async function openPathTarget(target: string, options?: OpenPathOptions): Promise<void> {
@@ -1112,140 +1222,19 @@ async function openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserW
 
 app.whenReady().then(async () => {
   dbPath = path.join(app.getPath("userData"), "withmate.db");
-  const activeModelCatalog = await initializePersistentStores();
-  recoverInterruptedSessions();
-  await refreshCharactersFromStorage();
-
-  registerMainIpcHandlers(ipcMain, {
-    resolveEventWindow: (event) => BrowserWindow.fromWebContents(event.sender) ?? null,
-    resolveHomeWindow: () => requireAuxWindowService().getHomeWindow(),
-    openSessionWindow: async (sessionId) => {
-      await openSessionWindow(sessionId);
-    },
-    openHomeWindow: async () => {
-      await createHomeWindow();
-    },
-    openSessionMonitorWindow: async () => {
-      await openSessionMonitorWindow();
-    },
-    openSettingsWindow: async () => {
-      await openSettingsWindow();
-    },
-    openCharacterEditorWindow: async (characterId) => {
-      await openCharacterEditorWindow(characterId);
-    },
-    openDiffWindow: async (diffPreview) => {
-      await openDiffWindow(diffPreview);
-    },
-    listSessions: () => listSessions(),
-    listSessionAuditLogs: (sessionId) => listSessionAuditLogs(sessionId),
-    listSessionSkills: (sessionId) => listSessionSkills(sessionId),
-    listSessionCustomAgents: (sessionId) => listSessionCustomAgents(sessionId),
-    listOpenSessionWindowIds: () => listOpenSessionWindowIds(),
-    getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
-    updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
-    resetAppDatabase: async (request) => requireSettingsCatalogService().resetAppDatabase(request),
-    listCharacters: async () => refreshCharactersFromStorage(),
-    getModelCatalog: (revision) => requireSettingsCatalogService().getModelCatalog(revision),
-    importModelCatalogDocument: (document) => requireSettingsCatalogService().importModelCatalogDocument(document),
-    importModelCatalogFromFile: async (targetWindow) => importModelCatalogFromFile(targetWindow),
-    exportModelCatalogDocument: (revision) => requireSettingsCatalogService().exportModelCatalogDocument(revision),
-    exportModelCatalogToFile: async (revision, targetWindow) => exportModelCatalogToFile(revision, targetWindow),
-    getSession: (sessionId) => getSession(sessionId),
-    getDiffPreview: (token) => requireAuxWindowService().getDiffPreview(token),
-    getLiveSessionRun: (sessionId) => getLiveSessionRun(sessionId),
-    getProviderQuotaTelemetry: async (providerId) => getOrRefreshProviderQuotaTelemetry(providerId),
-    getSessionContextTelemetry: (sessionId) => getSessionContextTelemetry(sessionId),
-    getSessionBackgroundActivity: (sessionId, kind) => getSessionBackgroundActivity(sessionId, kind),
-    resolveLiveApproval: (sessionId, requestId, decision) => {
-      resolveLiveApproval(sessionId, requestId, decision);
-    },
-    getCharacter: async (characterId) => getCharacter(characterId),
-    createSession: (input) => createSession(input),
-    updateSession: (session) => updateSession(session),
-    deleteSession: (sessionId) => deleteSession(sessionId),
-    previewComposerInput: async (sessionId, userMessage) => previewComposerInput(sessionId, userMessage),
-    searchWorkspaceFiles: async (sessionId, query) => searchWorkspaceFiles(sessionId, query),
-    runSessionTurn: async (sessionId, request) => runSessionTurn(sessionId, request),
-    cancelSessionRun: (sessionId) => {
-      cancelSessionRun(sessionId);
-    },
-    createCharacter: async (input) => createCharacter(input),
-    updateCharacter: async (character) => updateCharacter(character),
-    deleteCharacter: async (characterId) => deleteCharacter(characterId),
-    pickDirectory: async (targetWindow, initialPath) =>
-      requireWindowDialogService().pickDirectory(targetWindow, initialPath),
-    pickFile: async (targetWindow, initialPath) =>
-      requireWindowDialogService().pickFile(targetWindow, initialPath),
-    pickImageFile: async (targetWindow, initialPath) =>
-      requireWindowDialogService().pickImageFile(targetWindow, initialPath),
-    openPathTarget: async (target, options) => openPathTarget(target, options),
-    openSessionTerminal: async (sessionId) => openSessionTerminal(sessionId),
-  });
-
-  await createHomeWindow();
-  broadcastModelCatalog(activeModelCatalog);
+  await requireMainBootstrapService().handleReady();
 
   app.on("activate", async () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      await createHomeWindow();
-      return;
-    }
-
-    await createHomeWindow();
+    await requireAppLifecycleService().handleActivate();
   });
 });
 
 app.on("window-all-closed", () => {
-  if (hasInFlightSessionRuns()) {
-    void createHomeWindow();
-    return;
-  }
-
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
+  requireAppLifecycleService().handleWindowAllClosed();
 });
 
 app.on("before-quit", (event) => {
-  if (hasInFlightSessionRuns() && !allowQuitWithInFlightRuns) {
-    event.preventDefault();
-
-    const choice = dialog.showMessageBoxSync({
-      type: "warning",
-      buttons: ["戻る", "終了する"],
-      defaultId: 0,
-      cancelId: 0,
-      title: "実行中のセッション",
-      message: "実行中のセッションがあるよ。",
-      detail: "ここでアプリを終了すると、進行中の処理は中断されるよ。",
-      noLink: true,
-    });
-
-    if (choice !== 1) {
-      return;
-    }
-
-    allowQuitWithInFlightRuns = true;
-    app.quit();
-    return;
-  }
-
-  sessionStorage?.close();
-  sessionStorage = null;
-  sessionMemoryStorage?.close();
-  sessionMemoryStorage = null;
-  projectMemoryStorage?.close();
-  projectMemoryStorage = null;
-  characterMemoryStorage?.close();
-  characterMemoryStorage = null;
-  auditLogStorage?.close();
-  auditLogStorage = null;
-  appSettingsStorage?.close();
-  appSettingsStorage = null;
-  modelCatalogStorage?.close();
-  modelCatalogStorage = null;
-  settingsCatalogService = null;
+  requireAppLifecycleService().handleBeforeQuit(event);
 });
 
 
