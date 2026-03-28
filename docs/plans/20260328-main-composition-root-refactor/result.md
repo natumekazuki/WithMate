@@ -9,8 +9,10 @@
   - infrastructure singleton の registry 化で `main.ts` の service 変数を縮小
   - session/character query と discovery/search helper を `MainQueryService` に分離
   - コミット: `ea55957` `refactor(main): improve composition root boundaries`
+  - provider quota / session context / background activity / live run を `MainObservabilityFacade` に分離
+  - コミット: `baef8aa` `refactor(main): extract observability facade`
 - 残り:
-  - `main.ts` に残る observability / broadcast helper の置き場整理
+  - `main.ts` に残る broadcast / persistence wrapper の置き場整理
   - composition root の最終的な見通し改善
 
 ## メモ
@@ -21,4 +23,5 @@
 - third slice として lifecycle/bootstrap deps の helper 化と provider support helper の切り出しを行った
 - fourth slice として infrastructure singleton を `MainInfrastructureRegistry` にまとめた
 - fifth slice として query 系 helper を `MainQueryService` にまとめた
-- 次は observability / broadcast helper の整理へ進む
+- sixth slice として observability forwarding を `MainObservabilityFacade` にまとめた
+- 次は broadcast / persistence wrapper の整理へ進む

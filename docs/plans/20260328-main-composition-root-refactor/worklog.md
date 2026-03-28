@@ -23,3 +23,9 @@
   - `AppLifecycleService` / `MainBootstrapService` / `MainInfrastructureRegistry` / `MainQueryService` を追加
   - provider support helper と lifecycle/bootstrap deps helper を導入
   - `main.ts` の composition root と query/helper 境界を整理
+- 2026-03-28: `src-electron/main-observability-facade.ts` を追加し、provider quota / session context / background activity / live run の forwarding を `main.ts` から分離
+- 2026-03-28: `npm run build`
+- 2026-03-28: `node --test --import tsx scripts/tests/main-observability-facade.test.ts scripts/tests/session-observability-service.test.ts scripts/tests/main-query-service.test.ts scripts/tests/main-infrastructure-registry.test.ts scripts/tests/provider-support.test.ts`
+- 2026-03-28: コミット `baef8aa` `refactor(main): extract observability facade`
+  - `MainObservabilityFacade` を追加
+  - provider quota / session context / background activity / live run の forwarding を `main.ts` から分離
