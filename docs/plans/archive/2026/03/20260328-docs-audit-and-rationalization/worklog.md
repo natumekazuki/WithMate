@@ -8,3 +8,4 @@
 - 2026-03-28: provider / capability / SDK pending 系の文書に `正本 / supporting / review note` の境界注記を追加した
 - 2026-03-28: Character / ideation 系の文書に `上位正本 / supporting / historical note` の境界注記を追加した
 - 2026-03-28: research / review 系文書に `review note` / `historical note` の位置づけを明記した
+- 2026-03-28: `374f7e1` `docs(design): rationalize documentation boundaries`

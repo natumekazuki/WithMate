@@ -5,3 +5,4 @@
 - 2026-03-28: current docs から historical note 扱い UI 文書への active 参照を `desktop-ui.md` など current 正本へ置き換えた
 - 2026-03-28: historical note 文書同士の相互参照も最小化し、current 正本の入口をぶらさない状態へ寄せた
 - 2026-03-28: `session-window-layout-redesign.md` / `session-window-chrome-reduction.md` の注記重複を整理し、historical note と current 正本の関係を簡潔にした
+- 2026-03-28: `374f7e1` `docs(design): rationalize documentation boundaries`
