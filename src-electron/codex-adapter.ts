@@ -85,6 +85,16 @@ type RawDiffOp =
   | { kind: "delete"; leftNumber: number; leftText: string }
   | { kind: "add"; rightNumber: number; rightText: string };
 
+type CodexTurnStreamState = {
+  items: Map<string, ThreadItem>;
+  liveSteps: Map<string, LiveRunStep>;
+  threadId: string | null;
+  assistantText: string;
+  usage: Usage | null;
+  liveUsage: AuditLogUsage | null;
+  streamErrorMessage: string;
+};
+
 function buildFallbackDiffRows(beforeLines: string[], afterLines: string[]): DiffRow[] {
   const rows: DiffRow[] = [];
   const maxLength = Math.max(beforeLines.length, afterLines.length);
@@ -601,6 +611,52 @@ async function emitLiveState(
   });
 }
 
+function createCodexTurnStreamState(threadId: string | null): CodexTurnStreamState {
+  return {
+    items: new Map<string, ThreadItem>(),
+    liveSteps: new Map<string, LiveRunStep>(),
+    threadId,
+    assistantText: "",
+    usage: null,
+    liveUsage: null,
+    streamErrorMessage: "",
+  };
+}
+
+function applyCodexTurnEvent(state: CodexTurnStreamState, event: ThreadEvent): void {
+  switch (event.type) {
+    case "thread.started":
+      state.threadId = event.thread_id;
+      break;
+    case "turn.completed":
+      state.usage = event.usage;
+      state.liveUsage = toAuditUsage(event.usage);
+      break;
+    case "turn.failed":
+      state.streamErrorMessage = event.error.message;
+      break;
+    case "error":
+      state.streamErrorMessage = event.message;
+      break;
+    case "item.started":
+    case "item.updated":
+    case "item.completed": {
+      state.items.set(event.item.id, event.item);
+      if (event.item.type === "agent_message") {
+        state.assistantText = collectAssistantText(state.items.values());
+      }
+
+      const liveStep = buildLiveStep(event.item);
+      if (liveStep) {
+        state.liveSteps.set(liveStep.id, liveStep);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
 function buildCodexTransportPayload(prompt: ProviderPromptComposition): AuditTransportPayload {
   const fields = [
     {
@@ -735,51 +791,17 @@ export class CodexAdapter implements ProviderTurnAdapter {
   }
 
   async extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult> {
-    const { client } = this.getClient(input.session.provider, input.appSettings);
-    const thread = client.startThread({
-      workingDirectory: input.session.workspacePath,
-      skipGitRepoCheck: true,
-      sandboxMode: "read-only",
-      approvalPolicy: "never",
-      model: input.model,
-      modelReasoningEffort: input.reasoningEffort,
-    });
-
-    const extractionInput = `${input.prompt.systemText}\n\n${input.prompt.userText}`.trim();
-    const result = await thread.run(extractionInput, {
-      outputSchema: input.prompt.outputSchema,
-    });
-
+    const result = await this.runBackgroundStructuredPrompt(input, parseSessionMemoryDeltaText);
     return {
-      threadId: thread.id,
-      rawText: result.finalResponse,
-      delta: parseSessionMemoryDeltaText(result.finalResponse),
-      usage: result.usage ? toAuditUsage(result.usage) : null,
+      threadId: result.threadId,
+      rawText: result.rawText,
+      delta: result.output,
+      usage: result.usage,
     };
   }
 
   async runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult> {
-    const { client } = this.getClient(input.session.provider, input.appSettings);
-    const thread = client.startThread({
-      workingDirectory: input.session.workspacePath,
-      skipGitRepoCheck: true,
-      sandboxMode: "read-only",
-      approvalPolicy: "never",
-      model: input.model,
-      modelReasoningEffort: input.reasoningEffort,
-    });
-
-    const reflectionInput = `${input.prompt.systemText}\n\n${input.prompt.userText}`.trim();
-    const result = await thread.run(reflectionInput, {
-      outputSchema: input.prompt.outputSchema,
-    });
-
-    return {
-      threadId: thread.id,
-      rawText: result.finalResponse,
-      output: parseCharacterReflectionOutputText(result.finalResponse),
-      usage: result.usage ? toAuditUsage(result.usage) : null,
-    };
+    return this.runBackgroundStructuredPrompt(input, parseCharacterReflectionOutputText);
   }
 
   invalidateSessionThread(sessionId: string): void {
@@ -788,6 +810,42 @@ export class CodexAdapter implements ProviderTurnAdapter {
 
   invalidateAllSessionThreads(): void {
     this.threads.clear();
+  }
+
+  private buildBackgroundThreadOptions(input: ExtractSessionMemoryInput | RunCharacterReflectionInput) {
+    return {
+      workingDirectory: input.session.workspacePath,
+      skipGitRepoCheck: true as const,
+      sandboxMode: "read-only" as const,
+      approvalPolicy: "never" as const,
+      model: input.model,
+      modelReasoningEffort: input.reasoningEffort,
+    };
+  }
+
+  private async runBackgroundStructuredPrompt<TOutput>(
+    input: ExtractSessionMemoryInput | RunCharacterReflectionInput,
+    parse: (rawText: string) => TOutput | null,
+  ): Promise<{
+    threadId: string | null;
+    rawText: string;
+    output: TOutput | null;
+    usage: AuditLogUsage | null;
+  }> {
+    const { client } = this.getClient(input.session.provider, input.appSettings);
+    const thread = client.startThread(this.buildBackgroundThreadOptions(input));
+
+    const backgroundInput = `${input.prompt.systemText}\n\n${input.prompt.userText}`.trim();
+    const result = await thread.run(backgroundInput, {
+      outputSchema: input.prompt.outputSchema,
+    });
+
+    return {
+      threadId: thread.id,
+      rawText: result.finalResponse,
+      output: parse(result.finalResponse),
+      usage: result.usage ? toAuditUsage(result.usage) : null,
+    };
   }
 
   private getClient(providerId: string, appSettings: AppSettings): { client: Codex; clientKey: string } {
@@ -929,15 +987,17 @@ export class CodexAdapter implements ProviderTurnAdapter {
             ...prompt.imagePaths.map((imagePath) => ({ type: "local_image" as const, path: imagePath })),
           ]
         : prompt.logicalPrompt.composedText;
-    const items = new Map<string, ThreadItem>();
-    const liveSteps = new Map<string, LiveRunStep>();
-    let threadId = thread.id;
-    let assistantText = "";
-    let usage: Usage | null = null;
-    let liveUsage: AuditLogUsage | null = null;
-    let streamErrorMessage = "";
+    const streamState = createCodexTurnStreamState(thread.id);
 
-    await emitLiveState(onProgress, input.session.id, threadId, liveSteps, assistantText, liveUsage, streamErrorMessage);
+    await emitLiveState(
+      onProgress,
+      input.session.id,
+      streamState.threadId,
+      streamState.liveSteps,
+      streamState.assistantText,
+      streamState.liveUsage,
+      streamState.streamErrorMessage,
+    );
 
     try {
       const { events } = await thread.runStreamed(turnInput, {
@@ -945,60 +1005,46 @@ export class CodexAdapter implements ProviderTurnAdapter {
       });
 
       for await (const event of events) {
-        switch (event.type) {
-          case "thread.started":
-            threadId = event.thread_id;
-            break;
-          case "turn.completed":
-            usage = event.usage;
-            liveUsage = toAuditUsage(event.usage);
-            break;
-          case "turn.failed":
-            streamErrorMessage = event.error.message;
-            break;
-          case "error":
-            streamErrorMessage = event.message;
-            break;
-          case "item.started":
-          case "item.updated":
-          case "item.completed": {
-            items.set(event.item.id, event.item);
-            if (event.item.type === "agent_message") {
-              assistantText = collectAssistantText(items.values());
-            }
-
-            const liveStep = buildLiveStep(event.item);
-            if (liveStep) {
-              liveSteps.set(liveStep.id, liveStep);
-            }
-            break;
-          }
-          default:
-            break;
-        }
-
-        await emitLiveState(onProgress, input.session.id, threadId, liveSteps, assistantText, liveUsage, streamErrorMessage);
+        applyCodexTurnEvent(streamState, event);
+        await emitLiveState(
+          onProgress,
+          input.session.id,
+          streamState.threadId,
+          streamState.liveSteps,
+          streamState.assistantText,
+          streamState.liveUsage,
+          streamState.streamErrorMessage,
+        );
       }
 
-      if (streamErrorMessage) {
+      if (streamState.streamErrorMessage) {
         const partialResult = await this.buildTurnResult(
           input,
           prompt,
-          items,
-          usage,
-          threadId,
+          streamState.items,
+          streamState.usage,
+          streamState.threadId,
           selection,
           beforeSnapshot,
           beforeSnapshotStats,
         );
         throw new ProviderTurnError(
-          streamErrorMessage,
+          streamState.streamErrorMessage,
           partialResult,
-          Boolean(input.signal?.aborted) || isCanceledProviderMessage(streamErrorMessage),
+          Boolean(input.signal?.aborted) || isCanceledProviderMessage(streamState.streamErrorMessage),
         );
       }
 
-      return this.buildTurnResult(input, prompt, items, usage, threadId, selection, beforeSnapshot, beforeSnapshotStats);
+      return this.buildTurnResult(
+        input,
+        prompt,
+        streamState.items,
+        streamState.usage,
+        streamState.threadId,
+        selection,
+        beforeSnapshot,
+        beforeSnapshotStats,
+      );
     } catch (error) {
       if (error instanceof ProviderTurnError) {
         throw error;
@@ -1008,9 +1054,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
       const partialResult = await this.buildTurnResult(
         input,
         prompt,
-        items,
-        usage,
-        threadId,
+        streamState.items,
+        streamState.usage,
+        streamState.threadId,
         selection,
         beforeSnapshot,
         beforeSnapshotStats,

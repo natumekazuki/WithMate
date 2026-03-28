@@ -70,6 +70,18 @@ type CopilotStableRawItem = {
   data?: Record<string, unknown>;
 };
 
+type CopilotTurnStreamState = {
+  liveSteps: Map<string, LiveRunStep>;
+  permissionToStepId: Map<string, string>;
+  toolNamesByCallId: Map<string, string>;
+  events: SessionEvent[];
+  assistantText: string;
+  assistantMessages: string[];
+  assistantDraft: string;
+  usage: AuditLogUsage | null;
+  streamErrorMessage: string;
+};
+
 const COPILOT_SHELL_TOOL_NAMES = new Set(["shell", "powershell", "bash", "terminal"]);
 const COPILOT_MUTATING_TOOL_NAMES = new Set(["create", "write", "edit", "replace", "insert", "move", "rename", "delete", "remove"]);
 const COPILOT_DROPPED_RAW_EVENT_TYPES = new Set([
@@ -227,6 +239,163 @@ function toAuditUsageFromCopilot(data: { inputTokens?: number; cacheReadTokens?:
     cachedInputTokens: data.cacheReadTokens ?? 0,
     outputTokens: data.outputTokens ?? 0,
   };
+}
+
+function createCopilotTurnStreamState(): CopilotTurnStreamState {
+  return {
+    liveSteps: new Map<string, LiveRunStep>(),
+    permissionToStepId: new Map<string, string>(),
+    toolNamesByCallId: new Map<string, string>(),
+    events: [],
+    assistantText: "",
+    assistantMessages: [],
+    assistantDraft: "",
+    usage: null,
+    streamErrorMessage: "",
+  };
+}
+
+function updateCopilotCommandStep(state: CopilotTurnStreamState, nextState: CopilotCommandStepState): void {
+  state.liveSteps.set(nextState.stepId, {
+    id: nextState.stepId,
+    type: "command_execution",
+    summary: nextState.summary,
+    details: nextState.details,
+    status: nextState.status,
+  });
+}
+
+function applyCopilotTurnEvent(args: {
+  event: SessionEvent;
+  state: CopilotTurnStreamState;
+  providerId: string;
+  sessionId: string;
+  workspacePath: string;
+  onProviderQuotaTelemetry?: RunSessionTurnInput["onProviderQuotaTelemetry"];
+  onSessionContextTelemetry?: RunSessionTurnInput["onSessionContextTelemetry"];
+}): void {
+  const { event, state, providerId, sessionId, workspacePath } = args;
+  state.events.push(event);
+
+  switch (event.type) {
+    case "assistant.message_delta":
+    case "assistant.message": {
+      const nextAssistantState = applyCopilotAssistantEvent(state.assistantMessages, state.assistantDraft, event);
+      state.assistantMessages = nextAssistantState.messages;
+      state.assistantDraft = nextAssistantState.draft;
+      state.assistantText = nextAssistantState.assistantText;
+      break;
+    }
+    case "assistant.usage":
+      state.usage = toAuditUsageFromCopilot(event.data);
+      if (args.onProviderQuotaTelemetry) {
+        const telemetry = buildCopilotProviderQuotaTelemetry(
+          providerId,
+          event.data.quotaSnapshots,
+          event.timestamp,
+        );
+        if (telemetry) {
+          void args.onProviderQuotaTelemetry(telemetry);
+        }
+      }
+      break;
+    case "session.usage_info":
+      if (args.onSessionContextTelemetry) {
+        void args.onSessionContextTelemetry(
+          buildCopilotSessionContextTelemetry(
+            providerId,
+            sessionId,
+            event.data,
+            event.timestamp,
+          ),
+        );
+      }
+      break;
+    case "session.error":
+      state.streamErrorMessage = event.data.message;
+      break;
+    case "permission.requested": {
+      const request = event.data.permissionRequest;
+      const summary = buildCopilotPermissionSummary(request, workspacePath);
+      if (summary) {
+        const stepId = request.toolCallId ?? event.data.requestId;
+        state.permissionToStepId.set(event.data.requestId, stepId);
+        if (request.kind === "shell") {
+          state.toolNamesByCallId.set(stepId, "shell");
+        }
+        updateCopilotCommandStep(state, {
+          stepId,
+          summary,
+          details: request.kind === "shell" ? request.warning : undefined,
+          status: "pending",
+        });
+      }
+      break;
+    }
+    case "permission.completed": {
+      const stepId = state.permissionToStepId.get(event.data.requestId);
+      if (!stepId) {
+        break;
+      }
+
+      const current = state.liveSteps.get(stepId);
+      if (!current) {
+        break;
+      }
+
+      updateCopilotCommandStep(state, {
+        stepId,
+        summary: current.summary,
+        details: appendDetail(current.details, `permission: ${event.data.result.kind}`),
+        status: event.data.result.kind === "approved" ? "in_progress" : "failed",
+      });
+      break;
+    }
+    case "tool.execution_start":
+      state.toolNamesByCallId.set(event.data.toolCallId, event.data.toolName);
+      if (isCopilotVisibleToolName(event.data.toolName)) {
+        const current = state.liveSteps.get(event.data.toolCallId);
+        updateCopilotCommandStep(state, {
+          stepId: event.data.toolCallId,
+          summary:
+            current?.summary ?? buildCopilotToolSummary(event.data.toolName, event.data.arguments, workspacePath),
+          details: current?.details,
+          status: "in_progress",
+        });
+      }
+      break;
+    case "tool.execution_partial_result": {
+      const current = state.liveSteps.get(event.data.toolCallId);
+      if (!current) {
+        break;
+      }
+
+      updateCopilotCommandStep(state, {
+        stepId: current.id,
+        summary: current.summary,
+        details: appendDetail(current.details, event.data.partialOutput),
+        status: "in_progress",
+      });
+      break;
+    }
+    case "tool.execution_complete":
+      if (
+        state.liveSteps.has(event.data.toolCallId)
+        || isCopilotVisibleToolName(state.toolNamesByCallId.get(event.data.toolCallId) ?? "")
+      ) {
+        const current = state.liveSteps.get(event.data.toolCallId);
+        const toolName = state.toolNamesByCallId.get(event.data.toolCallId) ?? "shell";
+        updateCopilotCommandStep(state, {
+          stepId: event.data.toolCallId,
+          summary: current?.summary ?? buildCopilotToolSummary(toolName, undefined, workspacePath),
+          details: appendDetail(current?.details, extractToolExecutionDetails(event)),
+          status: event.data.success ? "completed" : "failed",
+        });
+      }
+      break;
+    default:
+      break;
+  }
 }
 
 type CopilotQuotaSnapshotLike = {
@@ -997,121 +1166,24 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     providerId: string;
     appSettings: RunSessionTurnInput["appSettings"];
   }): Promise<ProviderQuotaTelemetry | null> {
-    const clientKey = buildCopilotClientKeyFromAppSettings(providerId, appSettings);
-    const cached = this.clients.get(clientKey);
-    const client = cached ?? new CopilotClient({
-      cliPath: resolveCopilotCliPath(),
-      env: buildCopilotClientEnv(process.env),
-      ...(getProviderAppSettings(appSettings, providerId).apiKey.trim()
-        ? { githubToken: getProviderAppSettings(appSettings, providerId).apiKey.trim(), useLoggedInUser: false }
-        : {}),
-    });
-
-    if (!cached) {
-      this.clients.set(clientKey, client);
-    }
-
+    const client = this.getOrCreateClientByAppSettings(providerId, appSettings);
     await client.start();
     const quota = await client.rpc.account.getQuota();
     return buildCopilotProviderQuotaTelemetry(providerId, quota.quotaSnapshots, new Date().toISOString());
   }
 
   async extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult> {
-    const providerId = input.session.provider;
-    const clientKey = buildCopilotClientKeyFromAppSettings(providerId, input.appSettings);
-    const cached = this.clients.get(clientKey);
-    const apiKey = getProviderAppSettings(input.appSettings, providerId).apiKey.trim();
-    const client = cached ?? new CopilotClient({
-      cliPath: resolveCopilotCliPath(),
-      env: buildCopilotClientEnv(process.env),
-      ...(apiKey ? { githubToken: apiKey, useLoggedInUser: false } : {}),
-    });
-
-    if (!cached) {
-      this.clients.set(clientKey, client);
-    }
-
-    await client.start();
-    let usage: AuditLogUsage | null = null;
-
-    const denyAllPermissions: PermissionHandler = () => ({ kind: "denied-interactively-by-user" });
-    const extractionSession = await client.createSession({
-      model: input.model,
-      reasoningEffort: input.reasoningEffort === "minimal" ? "low" : input.reasoningEffort,
-      workingDirectory: input.session.workspacePath,
-      streaming: false,
-      onPermissionRequest: denyAllPermissions,
-      systemMessage: {
-        mode: "append",
-        content: input.prompt.systemText,
-      },
-    });
-    const unsubscribeUsage = extractionSession.on("assistant.usage", (event) => {
-      usage = toAuditUsageFromCopilot(event.data);
-    });
-
-    try {
-      const response = await extractionSession.sendAndWait({ prompt: input.prompt.userText }, 60_000);
-      const rawText = response?.data.content ?? "";
-      return {
-        threadId: extractionSession.sessionId,
-        rawText,
-        delta: parseSessionMemoryDeltaText(rawText),
-        usage,
-      };
-    } finally {
-      unsubscribeUsage();
-      await extractionSession.disconnect().catch(() => undefined);
-    }
+    const result = await this.runBackgroundPrompt(input, parseSessionMemoryDeltaText);
+    return {
+      threadId: result.threadId,
+      rawText: result.rawText,
+      delta: result.output,
+      usage: result.usage,
+    };
   }
 
   async runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult> {
-    const providerId = input.session.provider;
-    const clientKey = buildCopilotClientKeyFromAppSettings(providerId, input.appSettings);
-    const cached = this.clients.get(clientKey);
-    const apiKey = getProviderAppSettings(input.appSettings, providerId).apiKey.trim();
-    const client = cached ?? new CopilotClient({
-      cliPath: resolveCopilotCliPath(),
-      env: buildCopilotClientEnv(process.env),
-      ...(apiKey ? { githubToken: apiKey, useLoggedInUser: false } : {}),
-    });
-
-    if (!cached) {
-      this.clients.set(clientKey, client);
-    }
-
-    await client.start();
-    let usage: AuditLogUsage | null = null;
-
-    const denyAllPermissions: PermissionHandler = () => ({ kind: "denied-interactively-by-user" });
-    const extractionSession = await client.createSession({
-      model: input.model,
-      reasoningEffort: input.reasoningEffort === "minimal" ? "low" : input.reasoningEffort,
-      workingDirectory: input.session.workspacePath,
-      streaming: false,
-      onPermissionRequest: denyAllPermissions,
-      systemMessage: {
-        mode: "append",
-        content: input.prompt.systemText,
-      },
-    });
-    const unsubscribeUsage = extractionSession.on("assistant.usage", (event) => {
-      usage = toAuditUsageFromCopilot(event.data);
-    });
-
-    try {
-      const response = await extractionSession.sendAndWait({ prompt: input.prompt.userText }, 60_000);
-      const rawText = response?.data.content ?? "";
-      return {
-        threadId: extractionSession.sessionId,
-        rawText,
-        output: parseCharacterReflectionOutputText(rawText),
-        usage,
-      };
-    } finally {
-      unsubscribeUsage();
-      await extractionSession.disconnect().catch(() => undefined);
-    }
+    return this.runBackgroundPrompt(input, parseCharacterReflectionOutputText);
   }
 
   private getClient(providerId: string, input: RunSessionTurnInput): { client: CopilotClient; clientKey: string } {
@@ -1130,6 +1202,71 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     });
     this.clients.set(clientKey, client);
     return { client, clientKey };
+  }
+
+  private getOrCreateClientByAppSettings(providerId: string, appSettings: RunSessionTurnInput["appSettings"]): CopilotClient {
+    const clientKey = buildCopilotClientKeyFromAppSettings(providerId, appSettings);
+    const cached = this.clients.get(clientKey);
+    if (cached) {
+      return cached;
+    }
+
+    const apiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
+    const client = new CopilotClient({
+      cliPath: resolveCopilotCliPath(),
+      env: buildCopilotClientEnv(process.env),
+      ...(apiKey ? { githubToken: apiKey, useLoggedInUser: false } : {}),
+    });
+    this.clients.set(clientKey, client);
+    return client;
+  }
+
+  private buildBackgroundSessionConfig(input: ExtractSessionMemoryInput | RunCharacterReflectionInput): SessionConfig {
+    const denyAllPermissions: PermissionHandler = () => ({ kind: "denied-interactively-by-user" });
+    return {
+      model: input.model,
+      reasoningEffort: input.reasoningEffort === "minimal" ? "low" : input.reasoningEffort,
+      workingDirectory: input.session.workspacePath,
+      streaming: false,
+      onPermissionRequest: denyAllPermissions,
+      systemMessage: {
+        mode: "append",
+        content: input.prompt.systemText,
+      },
+    };
+  }
+
+  private async runBackgroundPrompt<TOutput>(
+    input: ExtractSessionMemoryInput | RunCharacterReflectionInput,
+    parse: (rawText: string) => TOutput | null,
+  ): Promise<{
+    threadId: string | null;
+    rawText: string;
+    output: TOutput | null;
+    usage: AuditLogUsage | null;
+  }> {
+    const client = this.getOrCreateClientByAppSettings(input.session.provider, input.appSettings);
+    await client.start();
+    let usage: AuditLogUsage | null = null;
+
+    const extractionSession = await client.createSession(this.buildBackgroundSessionConfig(input));
+    const unsubscribeUsage = extractionSession.on("assistant.usage", (event) => {
+      usage = toAuditUsageFromCopilot(event.data);
+    });
+
+    try {
+      const response = await extractionSession.sendAndWait({ prompt: input.prompt.userText }, 60_000);
+      const rawText = response?.data.content ?? "";
+      return {
+        threadId: extractionSession.sessionId,
+        rawText,
+        output: parse(rawText),
+        usage,
+      };
+    } finally {
+      unsubscribeUsage();
+      await extractionSession.disconnect().catch(() => undefined);
+    }
   }
 
   private async disposeSessionCache(sessionId: string): Promise<void> {
@@ -1312,157 +1449,43 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         Boolean(input.signal?.aborted) || isCanceledProviderMessage(message),
       );
     }
-    const liveSteps = new Map<string, LiveRunStep>();
-    const permissionToStepId = new Map<string, string>();
-    const toolNamesByCallId = new Map<string, string>();
-    const events: SessionEvent[] = [];
-    let assistantText = "";
-    let assistantMessages: string[] = [];
-    let assistantDraft = "";
-    let usage: AuditLogUsage | null = null;
-    let streamErrorMessage = "";
+    const streamState = createCopilotTurnStreamState();
     let progressChain = Promise.resolve();
     const scheduleLiveState = () => {
       progressChain = progressChain.then(() =>
-        emitLiveState(onProgress, input.session.id, session.sessionId, liveSteps, assistantText, usage, streamErrorMessage),
+        emitLiveState(
+          onProgress,
+          input.session.id,
+          session.sessionId,
+          streamState.liveSteps,
+          streamState.assistantText,
+          streamState.usage,
+          streamState.streamErrorMessage,
+        ),
       );
       return progressChain;
     };
 
-    const updateCommandStep = (nextState: CopilotCommandStepState) => {
-      liveSteps.set(nextState.stepId, {
-        id: nextState.stepId,
-        type: "command_execution",
-        summary: nextState.summary,
-        details: nextState.details,
-        status: nextState.status,
-      });
-    };
-
-    await emitLiveState(onProgress, input.session.id, session.sessionId, liveSteps, assistantText, usage, streamErrorMessage);
+    await emitLiveState(
+      onProgress,
+      input.session.id,
+      session.sessionId,
+      streamState.liveSteps,
+      streamState.assistantText,
+      streamState.usage,
+      streamState.streamErrorMessage,
+    );
 
     const unsubscribe = session.on((event) => {
-      events.push(event);
-
-      switch (event.type) {
-        case "assistant.message_delta":
-        case "assistant.message": {
-          const nextAssistantState = applyCopilotAssistantEvent(assistantMessages, assistantDraft, event);
-          assistantMessages = nextAssistantState.messages;
-          assistantDraft = nextAssistantState.draft;
-          assistantText = nextAssistantState.assistantText;
-          break;
-        }
-        case "assistant.usage":
-          usage = toAuditUsageFromCopilot(event.data);
-          if (input.onProviderQuotaTelemetry) {
-            const telemetry = buildCopilotProviderQuotaTelemetry(
-              input.providerCatalog.id,
-              event.data.quotaSnapshots,
-              event.timestamp,
-            );
-            if (telemetry) {
-              void input.onProviderQuotaTelemetry(telemetry);
-            }
-          }
-          break;
-        case "session.usage_info":
-          if (input.onSessionContextTelemetry) {
-            void input.onSessionContextTelemetry(
-              buildCopilotSessionContextTelemetry(
-                input.providerCatalog.id,
-                input.session.id,
-                event.data,
-                event.timestamp,
-              ),
-            );
-          }
-          break;
-        case "session.error":
-          streamErrorMessage = event.data.message;
-          break;
-        case "permission.requested": {
-          const request = event.data.permissionRequest;
-          const summary = buildCopilotPermissionSummary(request, input.session.workspacePath);
-          if (summary) {
-            const stepId = request.toolCallId ?? event.data.requestId;
-            permissionToStepId.set(event.data.requestId, stepId);
-            if (request.kind === "shell") {
-              toolNamesByCallId.set(stepId, "shell");
-            }
-            updateCommandStep({
-              stepId,
-              summary,
-              details: request.kind === "shell" ? request.warning : undefined,
-              status: "pending",
-            });
-          }
-          break;
-        }
-        case "permission.completed": {
-          const stepId = permissionToStepId.get(event.data.requestId);
-          if (!stepId) {
-            break;
-          }
-
-          const current = liveSteps.get(stepId);
-          if (!current) {
-            break;
-          }
-
-          updateCommandStep({
-            stepId,
-            summary: current.summary,
-            details: appendDetail(current.details, `permission: ${event.data.result.kind}`),
-            status: event.data.result.kind === "approved" ? "in_progress" : "failed",
-          });
-          break;
-        }
-        case "tool.execution_start":
-          toolNamesByCallId.set(event.data.toolCallId, event.data.toolName);
-          if (isCopilotVisibleToolName(event.data.toolName)) {
-            const current = liveSteps.get(event.data.toolCallId);
-            updateCommandStep({
-              stepId: event.data.toolCallId,
-              summary: current?.summary ?? buildCopilotToolSummary(event.data.toolName, event.data.arguments, input.session.workspacePath),
-              details: current?.details,
-              status: "in_progress",
-            });
-          }
-          break;
-        case "tool.execution_partial_result": {
-          const current = liveSteps.get(event.data.toolCallId);
-          if (!current) {
-            break;
-          }
-
-          updateCommandStep({
-            stepId: current.id,
-            summary: current.summary,
-            details: appendDetail(current.details, event.data.partialOutput),
-            status: "in_progress",
-          });
-          break;
-        }
-        case "tool.execution_complete":
-          if (
-            liveSteps.has(event.data.toolCallId)
-            || isCopilotVisibleToolName(toolNamesByCallId.get(event.data.toolCallId) ?? "")
-          ) {
-            const current = liveSteps.get(event.data.toolCallId);
-            const toolName = toolNamesByCallId.get(event.data.toolCallId) ?? "shell";
-            updateCommandStep({
-              stepId: event.data.toolCallId,
-              summary: current?.summary ?? buildCopilotToolSummary(toolName, undefined, input.session.workspacePath),
-              details: appendDetail(current?.details, extractToolExecutionDetails(event)),
-              status: event.data.success ? "completed" : "failed",
-            });
-          }
-          break;
-        default:
-          break;
-      }
-
+      applyCopilotTurnEvent({
+        event,
+        state: streamState,
+        providerId: input.providerCatalog.id,
+        sessionId: input.session.id,
+        workspacePath: input.session.workspacePath,
+        onProviderQuotaTelemetry: input.onProviderQuotaTelemetry,
+        onSessionContextTelemetry: input.onSessionContextTelemetry,
+      });
       void scheduleLiveState();
     });
 
@@ -1485,15 +1508,15 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       }
       await progressChain;
 
-      if (streamErrorMessage) {
+      if (streamState.streamErrorMessage) {
         const partialResult = await this.buildTurnResult(
           prompt,
           messageAttachments,
           session.sessionId,
-          assistantText,
-          liveSteps,
-          usage,
-          events,
+          streamState.assistantText,
+          streamState.liveSteps,
+          streamState.usage,
+          streamState.events,
           input.session.workspacePath,
           input.session,
           input.providerCatalog,
@@ -1502,9 +1525,9 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           beforeSnapshotStats,
         );
         throw new ProviderTurnError(
-          streamErrorMessage,
+          streamState.streamErrorMessage,
           partialResult,
-          Boolean(input.signal?.aborted) || isCanceledProviderMessage(streamErrorMessage),
+          Boolean(input.signal?.aborted) || isCanceledProviderMessage(streamState.streamErrorMessage),
         );
       }
 
@@ -1512,10 +1535,10 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         prompt,
         messageAttachments,
         session.sessionId,
-        assistantText,
-        liveSteps,
-        usage,
-        events,
+        streamState.assistantText,
+        streamState.liveSteps,
+        streamState.usage,
+        streamState.events,
         input.session.workspacePath,
         input.session,
         input.providerCatalog,
@@ -1533,10 +1556,10 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         prompt,
         messageAttachments,
         session.sessionId,
-        assistantText,
-        liveSteps,
-        usage,
-        events,
+        streamState.assistantText,
+        streamState.liveSteps,
+        streamState.usage,
+        streamState.events,
         input.session.workspacePath,
         input.session,
         input.providerCatalog,
