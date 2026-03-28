@@ -6,7 +6,7 @@ import { buildHomeSettingsProjection } from "../../src/home-settings-projection.
 describe("home-settings-projection", () => {
   it("loading と reset target 派生状態を返す", () => {
     const projection = buildHomeSettingsProjection({
-      appSettingsLoaded: true,
+      settingsDraftLoaded: true,
       modelCatalogLoaded: false,
       resetDatabaseTargets: ["sessions"],
       resettingDatabase: false,
@@ -20,5 +20,16 @@ describe("home-settings-projection", () => {
       checked: false,
       disabled: true,
     });
+  });
+
+  it("settings draft が hydrate されるまでは ready にしない", () => {
+    const projection = buildHomeSettingsProjection({
+      settingsDraftLoaded: false,
+      modelCatalogLoaded: true,
+      resetDatabaseTargets: ["appSettings"],
+      resettingDatabase: false,
+    });
+
+    assert.equal(projection.settingsWindowReady, false);
   });
 });

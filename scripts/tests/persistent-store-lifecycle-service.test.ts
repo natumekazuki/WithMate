@@ -18,7 +18,6 @@ function createClosableStore(name: string, closeCalls: string[]) {
 }
 
 test("PersistentStoreLifecycleService は store を初期化して session dependency を同期する", async () => {
-  const syncedSessionIds: string[] = [];
   const closeCalls: string[] = [];
   const sessions = [{ id: "session-1" }, { id: "session-2" }] as Session[];
   const activeModelCatalog = { revision: 1, providers: [] } as ModelCatalogSnapshot;
@@ -43,9 +42,6 @@ test("PersistentStoreLifecycleService は store を初期化して session depen
     createCharacterMemoryStorage: () => createClosableStore("character-memory", closeCalls) as never,
     createAuditLogStorage: () => createClosableStore("audit", closeCalls) as never,
     createAppSettingsStorage: () => createClosableStore("settings", closeCalls) as never,
-    syncSessionDependencies: (session) => {
-      syncedSessionIds.push(session.id);
-    },
     onBeforeClose: () => {
       closeCalls.push("before-close");
     },
@@ -56,7 +52,6 @@ test("PersistentStoreLifecycleService は store を初期化して session depen
 
   assert.equal(bundle.activeModelCatalog, activeModelCatalog);
   assert.deepEqual(bundle.sessions, sessions);
-  assert.deepEqual(syncedSessionIds, ["session-1", "session-2"]);
 });
 
 test("PersistentStoreLifecycleService は close 時に hook と各 store close を呼ぶ", () => {
@@ -69,7 +64,6 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     createCharacterMemoryStorage: () => null as never,
     createAuditLogStorage: () => null as never,
     createAppSettingsStorage: () => null as never,
-    syncSessionDependencies: () => {},
     onBeforeClose: () => {
       closeCalls.push("before-close");
     },
@@ -118,7 +112,6 @@ test("PersistentStoreLifecycleService は DB を再生成して再初期化す�
     createCharacterMemoryStorage: () => ({ close() {} }) as never,
     createAuditLogStorage: () => ({ close() {} }) as never,
     createAppSettingsStorage: () => ({ close() {} }) as never,
-    syncSessionDependencies: () => {},
     onBeforeClose: () => {},
     async removeFile(filePath) {
       removedPaths.push(filePath);

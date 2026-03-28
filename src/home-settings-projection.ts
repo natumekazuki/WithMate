@@ -18,12 +18,12 @@ export type HomeSettingsProjection = {
 };
 
 export function buildHomeSettingsProjection({
-  appSettingsLoaded,
+  settingsDraftLoaded,
   modelCatalogLoaded,
   resetDatabaseTargets,
   resettingDatabase,
 }: {
-  appSettingsLoaded: boolean;
+  settingsDraftLoaded: boolean;
   modelCatalogLoaded: boolean;
   resetDatabaseTargets: readonly ResetAppDatabaseTarget[];
   resettingDatabase: boolean;
@@ -35,7 +35,7 @@ export function buildHomeSettingsProjection({
   }));
 
   return {
-    settingsWindowReady: appSettingsLoaded && modelCatalogLoaded,
+    settingsWindowReady: settingsDraftLoaded && modelCatalogLoaded,
     selectedResetTargetsDescription: describeResetDatabaseTargets(resetDatabaseTargets),
     resetTargetItems,
     canResetDatabase: !resettingDatabase && resetDatabaseTargets.length > 0,

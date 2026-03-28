@@ -257,7 +257,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           createCharacterMemoryStorage: (nextDbPath) => new CharacterMemoryStorage(nextDbPath),
           createAuditLogStorage: (nextDbPath) => new AuditLogStorage(nextDbPath),
           createAppSettingsStorage: (nextDbPath) => new AppSettingsStorage(nextDbPath),
-          syncSessionDependencies: (session) => requireSessionMemorySupportService().syncSessionDependencies(session),
           onBeforeClose: () => {
             sessionApprovalService?.reset();
             sessionObservabilityService?.dispose();
@@ -901,6 +900,9 @@ function applyPersistentStoreBundle(bundle: PersistentStoreBundle): ModelCatalog
   auditLogStorage = bundle.auditLogStorage;
   appSettingsStorage = bundle.appSettingsStorage;
   sessions = bundle.sessions;
+  for (const session of sessions) {
+    requireSessionMemorySupportService().syncSessionDependencies(session);
+  }
   return bundle.activeModelCatalog;
 }
 

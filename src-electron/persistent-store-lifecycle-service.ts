@@ -41,7 +41,6 @@ type PersistentStoreLifecycleDeps = {
   createCharacterMemoryStorage(dbPath: string): CharacterMemoryStorage;
   createAuditLogStorage(dbPath: string): AuditLogStorage;
   createAppSettingsStorage(dbPath: string): AppSettingsStorage;
-  syncSessionDependencies(session: Session): void;
   onBeforeClose(): void;
   removeFile(filePath: string): Promise<void>;
 };
@@ -59,10 +58,6 @@ export class PersistentStoreLifecycleService {
     const auditLogStorage = this.deps.createAuditLogStorage(dbPath);
     const appSettingsStorage = this.deps.createAppSettingsStorage(dbPath);
     const sessions = sessionStorage.listSessions();
-
-    for (const session of sessions) {
-      this.deps.syncSessionDependencies(session);
-    }
 
     return {
       modelCatalogStorage,
@@ -122,7 +117,6 @@ export function createPersistentStoreLifecycleService(): PersistentStoreLifecycl
     createCharacterMemoryStorage: (dbPath) => new CharacterMemoryStorage(dbPath),
     createAuditLogStorage: (dbPath) => new AuditLogStorage(dbPath),
     createAppSettingsStorage: (dbPath) => new AppSettingsStorage(dbPath),
-    syncSessionDependencies: () => {},
     onBeforeClose: () => {},
     removeFile: async (filePath) => {
       await rm(filePath, { force: true });

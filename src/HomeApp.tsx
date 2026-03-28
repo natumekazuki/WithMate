@@ -113,7 +113,7 @@ export default function HomeApp() {
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(createDefaultAppSettings());
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
-  const [appSettingsLoaded, setAppSettingsLoaded] = useState(!isSettingsWindowMode);
+  const [settingsDraftLoaded, setSettingsDraftLoaded] = useState(!isSettingsWindowMode);
   const [modelCatalogLoaded, setModelCatalogLoaded] = useState(!isSettingsWindowMode);
   const [resettingDatabase, setResettingDatabase] = useState(false);
   const [resetDatabaseTargets, setResetDatabaseTargets] = useState<ResetAppDatabaseTarget[]>([...ALL_RESET_APP_DATABASE_TARGETS]);
@@ -128,7 +128,7 @@ export default function HomeApp() {
         options?.force || !isSettingsWindowMode || !settingsHydratedRef.current || !settingsDirtyRef.current;
       return shouldHydrateDrafts ? settings : current;
     });
-    setAppSettingsLoaded(true);
+    setSettingsDraftLoaded(true);
     if (options?.force || !isSettingsWindowMode || !settingsHydratedRef.current || !settingsDirtyRef.current) {
       settingsHydratedRef.current = true;
     }
@@ -495,12 +495,12 @@ export default function HomeApp() {
   const settingsProjection = useMemo(
     () =>
       buildHomeSettingsProjection({
-        appSettingsLoaded,
+        settingsDraftLoaded,
         modelCatalogLoaded,
         resetDatabaseTargets,
         resettingDatabase,
       }),
-    [appSettingsLoaded, modelCatalogLoaded, resetDatabaseTargets, resettingDatabase],
+    [modelCatalogLoaded, resetDatabaseTargets, resettingDatabase, settingsDraftLoaded],
   );
   const {
     settingsWindowReady,

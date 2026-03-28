@@ -145,7 +145,11 @@ export function normalizeCharacterSessionCopy(value: unknown): CharacterSessionC
 }
 
 export function cloneCharacterProfiles(characters: CharacterProfile[]): CharacterProfile[] {
-  return characters.map((character) => ({ ...character, themeColors: { ...character.themeColors } }));
+  return characters.map((character) => ({
+    ...character,
+    themeColors: { ...character.themeColors },
+    sessionCopy: cloneCharacterSessionCopy(character.sessionCopy),
+  }));
 }
 
 export function getCharacterById(characters: CharacterProfile[], characterId: string): CharacterProfile | null {

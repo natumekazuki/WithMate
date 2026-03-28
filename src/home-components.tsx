@@ -788,7 +788,7 @@ export function HomeRightPane({
         <section className="home-monitor-panel" role="tabpanel" aria-label="Session Monitor">
           <HomeMonitorContent
             runningEntries={runningMonitorEntries}
-            nonRunningEntries={nonRunningEntries}
+            nonRunningEntries={nonRunningMonitorEntries}
             runningEmptyMessage={monitorRunningEmptyMessage}
             completedEmptyMessage={monitorCompletedEmptyMessage}
             onOpenSession={onOpenSession}
