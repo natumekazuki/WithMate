@@ -15,6 +15,11 @@ import {
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
 import {
+  buildHomeSessionProjection,
+  type HomeMonitorEntry,
+  type HomeSessionState,
+} from "./home-session-projection.js";
+import {
   buildHomeProviderSettingRows,
   buildPersistedAppSettingsFromRows,
   type HomeProviderSettingRow,
@@ -53,7 +58,7 @@ import {
   SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL,
   SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL,
 } from "./settings-ui.js";
-import { buildCardThemeStyle, CharacterAvatar, modelOptionLabel, reasoningDepthLabel, sessionStateLabel } from "./ui-utils.js";
+import { buildCardThemeStyle, CharacterAvatar, modelOptionLabel, reasoningDepthLabel } from "./ui-utils.js";
 import {
   ALL_RESET_APP_DATABASE_TARGETS,
   normalizeResetAppDatabaseTargets,
@@ -119,16 +124,6 @@ async function openCharacterEditor(characterId?: string | null) {
   await window.withmate.openCharacterEditor(characterId);
 }
 
-type HomeSessionState = {
-  kind: "running" | "interrupted" | "error" | "neutral";
-  label: string;
-};
-
-type HomeMonitorEntry = {
-  session: Session;
-  state: HomeSessionState;
-};
-
 type HomeRightPaneView = "monitor" | "characters";
 type HomeWindowMode = "home" | "monitor" | "settings";
 
@@ -139,41 +134,6 @@ function getHomeWindowMode(): HomeWindowMode {
 
   const mode = new URLSearchParams(window.location.search).get("mode");
   return mode === "monitor" || mode === "settings" ? mode : "home";
-}
-
-function getHomeSessionState(session: Session): HomeSessionState {
-  if (session.status === "running" || session.runState === "running") {
-    return {
-      kind: "running",
-      label: "実行中",
-    };
-  }
-
-  if (session.runState === "interrupted") {
-    return {
-      kind: "interrupted",
-      label: "中断",
-    };
-  }
-
-  if (session.runState === "error") {
-    return {
-      kind: "error",
-      label: "エラー",
-    };
-  }
-
-  if (session.runState && session.runState !== "idle") {
-    return {
-      kind: "neutral",
-      label: session.runState,
-    };
-  }
-
-  return {
-    kind: "neutral",
-    label: sessionStateLabel(session),
-  };
 }
 
 type HomeMonitorContentProps = {
@@ -411,37 +371,17 @@ export default function HomeApp() {
     [characters, launchCharacterId],
   );
 
-  const normalizedSessionSearch = useMemo(() => sessionSearchText.trim().toLocaleLowerCase(), [sessionSearchText]);
-  const matchesSessionSearch = (session: Session) => {
-    if (!normalizedSessionSearch) {
-      return true;
-    }
-
-    const haystacks = [session.taskTitle, session.workspacePath, session.workspaceLabel]
-      .map((value) => value.toLocaleLowerCase());
-    return haystacks.some((value) => value.includes(normalizedSessionSearch));
-  };
-  const filteredSessionEntries = useMemo(
-    () =>
-      sessions.filter(matchesSessionSearch).map((session) => ({
-        session,
-        state: getHomeSessionState(session),
-      })),
-    [sessions, normalizedSessionSearch],
+  const sessionProjection = useMemo(
+    () => buildHomeSessionProjection(sessions, openSessionWindowIds, sessionSearchText),
+    [openSessionWindowIds, sessionSearchText, sessions],
   );
-  const openSessionWindowIdSet = useMemo(() => new Set(openSessionWindowIds), [openSessionWindowIds]);
-  const monitorEntries = useMemo<HomeMonitorEntry[]>(
-    () => filteredSessionEntries.filter(({ session }) => openSessionWindowIdSet.has(session.id)),
-    [filteredSessionEntries, openSessionWindowIdSet],
-  );
-  const runningMonitorEntries = useMemo(
-    () => monitorEntries.filter(({ state }) => state.kind === "running"),
-    [monitorEntries],
-  );
-  const nonRunningMonitorEntries = useMemo(
-    () => monitorEntries.filter(({ state }) => state.kind !== "running"),
-    [monitorEntries],
-  );
+  const {
+    filteredSessionEntries,
+    runningMonitorEntries,
+    nonRunningMonitorEntries,
+    monitorRunningEmptyMessage,
+    monitorCompletedEmptyMessage,
+  } = sessionProjection;
   const normalizedCharacterSearch = useMemo(() => characterSearchText.trim().toLocaleLowerCase(), [characterSearchText]);
   const filteredCharacters = useMemo(() => {
     if (!normalizedCharacterSearch) {
@@ -505,19 +445,6 @@ export default function HomeApp() {
       />
     </svg>
   );
-  const hasOpenSessionWindows = openSessionWindowIds.length > 0;
-  const monitorBaseEmptyMessage =
-    filteredSessionEntries.length === 0
-      ? normalizedSessionSearch
-        ? "一致するセッションはないよ。"
-        : "表示できるセッションはまだないよ。"
-      : hasOpenSessionWindows
-        ? "一致する開いているセッションはないよ。"
-        : "開いているセッションはないよ。";
-  const monitorRunningEmptyMessage =
-    monitorEntries.length > 0 ? "実行中はないよ。" : monitorBaseEmptyMessage;
-  const monitorCompletedEmptyMessage =
-    monitorEntries.length > 0 ? "停止・完了はないよ。" : monitorBaseEmptyMessage;
   const homePageClassName = `page-shell home-page${isMonitorWindowMode ? " home-page-monitor-window" : ""}`;
 
   const handleBrowseWorkspace = async () => {
