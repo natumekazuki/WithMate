@@ -97,6 +97,8 @@
 - renderer 側の provider settings draft 更新は `home-settings-draft` の pure function を経由する
 - `HomeApp.tsx` は `systemPromptPrefix` と 3 種の provider settings を別 state で持たず、単一の `AppSettings draft` を編集する
 - save 時の payload は `home-settings-view-model` が resolved model / reasoning を反映した `persisted settings` として組み立てる
+- Settings Window の `loading/reset` 派生状態は `home-settings-projection` が組み立てる
+- Settings Window の `import / export / save / reset` の文言組み立てと戻り値解釈は `home-settings-actions` が担当する
 - DB reset 成功時は renderer 側で reset 後の `appSettings` を draft に同期し、dirty 状態を解消する
 - reset 実行 API は選択対象を Main Process へ渡し、戻り値の current `sessions / appSettings / modelCatalog` で renderer を再同期する
 
