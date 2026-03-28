@@ -10,6 +10,8 @@ export function buildCharacterUpdateInstructionText(characterName: string): stri
     "- 主な編集対象は character.md と character-notes.md の 2 つとする",
     "- character.md はコーディングエージェントや対話 AI で使うキャラクターロール定義の正本である",
     "- character.md は prompt の Character section に入る前提で更新する",
+    "- 実行時には app 側が # Character 見出しを付け、その下に character.md 全体がそのまま本文として入る",
+    "- そのため character.md 単体で読んでも、キャラクター定義として完結している必要がある",
     "- character-notes.md は更新判断の補助情報であり、prompt の直接入力ではない",
     "",
     "## 優先順位",

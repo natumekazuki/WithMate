@@ -38,6 +38,9 @@ test("instruction text は update workspace のルールを含む", () => {
   assert.match(text, /禁止、許可、判断基準、優先順位/);
   assert.match(text, /コーディングエージェントや対話 AI で使うキャラクターロール定義/);
   assert.match(text, /Character section/);
+  assert.match(text, /# Character 見出しを付け/);
+  assert.match(text, /character\.md 全体がそのまま本文として入る/);
+  assert.match(text, /character\.md 単体で読んでも、キャラクター定義として完結/);
   assert.match(text, /prompt の直接入力ではない/);
   assert.match(text, /Noa/);
 });
