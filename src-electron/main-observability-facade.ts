@@ -6,14 +6,14 @@ import type {
   SessionContextTelemetry,
 } from "../src/app-state.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
-import type { ProviderTurnAdapter } from "./provider-runtime.js";
+import type { ProviderCodingAdapter } from "./provider-runtime.js";
 import { fetchProviderQuotaTelemetry } from "./provider-support.js";
 import { SessionObservabilityService } from "./session-observability-service.js";
 
 type MainObservabilityFacadeDeps = {
   getSessionObservabilityService(): SessionObservabilityService;
   getAppSettings(): AppSettings;
-  getProviderAdapter(providerId: string): ProviderTurnAdapter;
+  getProviderCodingAdapter(providerId: string): ProviderCodingAdapter;
   providerQuotaStaleTtlMs: number;
 };
 
@@ -46,10 +46,10 @@ export class MainObservabilityFacade {
 
   async refreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null> {
     return this.deps.getSessionObservabilityService().refreshProviderQuotaTelemetry(providerId, async () =>
-      fetchProviderQuotaTelemetry({
+        fetchProviderQuotaTelemetry({
         providerId,
         getAppSettings: () => this.deps.getAppSettings(),
-        getProviderAdapter: (nextProviderId) => this.deps.getProviderAdapter(nextProviderId),
+        getProviderCodingAdapter: (nextProviderId) => this.deps.getProviderCodingAdapter(nextProviderId),
       }),
     );
   }
@@ -62,7 +62,7 @@ export class MainObservabilityFacade {
         fetchProviderQuotaTelemetry({
           providerId,
           getAppSettings: () => this.deps.getAppSettings(),
-          getProviderAdapter: (nextProviderId) => this.deps.getProviderAdapter(nextProviderId),
+          getProviderCodingAdapter: (nextProviderId) => this.deps.getProviderCodingAdapter(nextProviderId),
         }),
     );
   }
@@ -72,7 +72,7 @@ export class MainObservabilityFacade {
       fetchProviderQuotaTelemetry({
         providerId,
         getAppSettings: () => this.deps.getAppSettings(),
-        getProviderAdapter: (nextProviderId) => this.deps.getProviderAdapter(nextProviderId),
+        getProviderCodingAdapter: (nextProviderId) => this.deps.getProviderCodingAdapter(nextProviderId),
       }),
     );
   }

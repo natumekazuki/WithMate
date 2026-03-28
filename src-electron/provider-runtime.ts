@@ -122,11 +122,9 @@ export class ProviderTurnError extends Error {
   }
 }
 
-export type ProviderTurnAdapter = {
+export type ProviderCodingAdapter = {
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition;
   getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput): Promise<ProviderQuotaTelemetry | null>;
-  extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult>;
-  runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult>;
   invalidateSessionThread(sessionId: string): void;
   invalidateAllSessionThreads(): void;
   runSessionTurn(
@@ -134,3 +132,10 @@ export type ProviderTurnAdapter = {
     onProgress?: RunSessionTurnProgressHandler,
   ): Promise<RunSessionTurnResult>;
 };
+
+export type ProviderBackgroundAdapter = {
+  extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult>;
+  runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult>;
+};
+
+export type ProviderTurnAdapter = ProviderCodingAdapter & ProviderBackgroundAdapter;

@@ -13,7 +13,7 @@ import {
 } from "../../src/app-state.js";
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import type { ProviderTurnAdapter } from "../../src-electron/provider-runtime.js";
+import type { ProviderBackgroundAdapter } from "../../src-electron/provider-runtime.js";
 import { MemoryOrchestrationService } from "../../src-electron/memory-orchestration-service.js";
 
 function createSession(overrides?: Partial<Session>): Session {
@@ -91,13 +91,7 @@ describe("MemoryOrchestrationService", () => {
     const savedMemories: SessionMemory[] = [];
     const promoted: Array<{ sessionId: string; goal: string | undefined }> = [];
 
-    const providerAdapter: ProviderTurnAdapter = {
-      composePrompt() {
-        throw new Error("not used");
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
+    const providerAdapter: ProviderBackgroundAdapter = {
       async extractSessionMemoryDelta() {
         return {
           threadId: "thread-memory",
@@ -107,11 +101,6 @@ describe("MemoryOrchestrationService", () => {
         };
       },
       async runCharacterReflection() {
-        throw new Error("not used");
-      },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
-      async runSessionTurn() {
         throw new Error("not used");
       },
     };
@@ -132,7 +121,7 @@ describe("MemoryOrchestrationService", () => {
       getAppSettings() {
         return normalizeAppSettings({});
       },
-      getProviderAdapter() {
+      getProviderBackgroundAdapter() {
         return providerAdapter;
       },
       ensureSessionMemory() {
@@ -188,13 +177,7 @@ describe("MemoryOrchestrationService", () => {
     const appendedMonologues: string[] = [];
     let savedCharacterCount = 0;
 
-    const providerAdapter: ProviderTurnAdapter = {
-      composePrompt() {
-        throw new Error("not used");
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
+    const providerAdapter: ProviderBackgroundAdapter = {
       async extractSessionMemoryDelta() {
         throw new Error("not used");
       },
@@ -208,11 +191,6 @@ describe("MemoryOrchestrationService", () => {
           },
           usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 80 },
         };
-      },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
-      async runSessionTurn() {
-        throw new Error("not used");
       },
     };
 
@@ -232,7 +210,7 @@ describe("MemoryOrchestrationService", () => {
       getAppSettings() {
         return normalizeAppSettings({});
       },
-      getProviderAdapter() {
+      getProviderBackgroundAdapter() {
         return providerAdapter;
       },
       ensureSessionMemory(current) {
@@ -278,13 +256,7 @@ describe("MemoryOrchestrationService", () => {
     const usedEntryIds: string[][] = [];
     const savedCharacterMemory: Array<{ sessionId: string; count: number }> = [];
 
-    const providerAdapter: ProviderTurnAdapter = {
-      composePrompt() {
-        throw new Error("not used");
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
+    const providerAdapter: ProviderBackgroundAdapter = {
       async extractSessionMemoryDelta() {
         throw new Error("not used");
       },
@@ -308,11 +280,6 @@ describe("MemoryOrchestrationService", () => {
           },
           usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 120 },
         };
-      },
-      invalidateSessionThread() {},
-      invalidateAllSessionThreads() {},
-      async runSessionTurn() {
-        throw new Error("not used");
       },
     };
 
@@ -346,7 +313,7 @@ describe("MemoryOrchestrationService", () => {
       getAppSettings() {
         return normalizeAppSettings({});
       },
-      getProviderAdapter() {
+      getProviderBackgroundAdapter() {
         return providerAdapter;
       },
       ensureSessionMemory(current) {

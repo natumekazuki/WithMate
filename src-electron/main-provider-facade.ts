@@ -1,6 +1,15 @@
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type { ProviderTurnAdapter } from "./provider-runtime.js";
-import { resolveProviderCatalogOrThrow, resolveProviderTurnAdapter } from "./provider-support.js";
+import type {
+  ProviderBackgroundAdapter,
+  ProviderCodingAdapter,
+  ProviderTurnAdapter,
+} from "./provider-runtime.js";
+import {
+  resolveProviderBackgroundAdapter,
+  resolveProviderCatalogOrThrow,
+  resolveProviderCodingAdapter,
+  resolveProviderTurnAdapter,
+} from "./provider-support.js";
 
 type MainProviderFacadeDeps = {
   getModelCatalog(revision?: number | null): ModelCatalogSnapshot | null;
@@ -36,8 +45,24 @@ export class MainProviderFacade {
     });
   }
 
+  getProviderCodingAdapter(providerId: string | null | undefined): ProviderCodingAdapter {
+    return resolveProviderCodingAdapter({
+      providerId,
+      codexAdapter: this.deps.codexAdapter,
+      copilotAdapter: this.deps.copilotAdapter,
+    });
+  }
+
+  getProviderBackgroundAdapter(providerId: string | null | undefined): ProviderBackgroundAdapter {
+    return resolveProviderBackgroundAdapter({
+      providerId,
+      codexAdapter: this.deps.codexAdapter,
+      copilotAdapter: this.deps.copilotAdapter,
+    });
+  }
+
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void {
-    this.getProviderAdapter(providerId).invalidateSessionThread(sessionId);
+    this.getProviderCodingAdapter(providerId).invalidateSessionThread(sessionId);
   }
 
   invalidateAllProviderSessionThreads(): void {

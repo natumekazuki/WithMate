@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ProviderTurnAdapter } from "../../src-electron/provider-runtime.js";
+import type { ProviderCodingAdapter } from "../../src-electron/provider-runtime.js";
 import { MainObservabilityFacade } from "../../src-electron/main-observability-facade.js";
 import { SessionObservabilityService } from "../../src-electron/session-observability-service.js";
 
@@ -40,7 +40,7 @@ test("MainObservabilityFacade は observability service を透過し quota refre
     async runSessionTurn() {
       throw new Error("not used");
     },
-  } satisfies ProviderTurnAdapter;
+  } satisfies ProviderCodingAdapter;
 
   const facade = new MainObservabilityFacade({
     getSessionObservabilityService: () => service,
@@ -51,7 +51,7 @@ test("MainObservabilityFacade は observability service を透過し quota refre
         memoryExtractionProviderSettings: {},
         characterReflectionProviderSettings: {},
       }) as never,
-    getProviderAdapter() {
+    getProviderCodingAdapter() {
       return adapter;
     },
     providerQuotaStaleTtlMs: 1000,

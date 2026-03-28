@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ProviderTurnAdapter } from "../../src-electron/provider-runtime.js";
+import type { ProviderCodingAdapter, ProviderTurnAdapter } from "../../src-electron/provider-runtime.js";
 import {
   fetchProviderQuotaTelemetry,
   resolveProviderCatalogOrThrow,
+  resolveProviderBackgroundAdapter,
+  resolveProviderCodingAdapter,
   resolveProviderTurnAdapter,
 } from "../../src-electron/provider-support.js";
 
@@ -61,6 +63,28 @@ test("resolveProviderTurnAdapter は providerId に応じて adapter を返す",
   );
 });
 
+test("resolveProviderCodingAdapter と resolveProviderBackgroundAdapter は providerId に応じて adapter を返す", () => {
+  const codexAdapter = { kind: "codex" } as ProviderTurnAdapter;
+  const copilotAdapter = { kind: "copilot" } as ProviderTurnAdapter;
+
+  assert.equal(
+    resolveProviderCodingAdapter({
+      providerId: "codex",
+      codexAdapter,
+      copilotAdapter,
+    }),
+    codexAdapter,
+  );
+  assert.equal(
+    resolveProviderBackgroundAdapter({
+      providerId: "copilot",
+      codexAdapter,
+      copilotAdapter,
+    }),
+    copilotAdapter,
+  );
+});
+
 test("fetchProviderQuotaTelemetry は adapter と app settings を使って quota を取得する", async () => {
   const calls: string[] = [];
   const telemetry = { provider: "codex", remainingPercentage: 50 } as never;
@@ -83,7 +107,7 @@ test("fetchProviderQuotaTelemetry は adapter と app settings を使って quot
     async runSessionTurn() {
       throw new Error("not used");
     },
-  } satisfies ProviderTurnAdapter;
+  } satisfies ProviderCodingAdapter;
 
   const result = await fetchProviderQuotaTelemetry({
     providerId: "codex",
@@ -94,7 +118,7 @@ test("fetchProviderQuotaTelemetry は adapter と app settings を使って quot
         memoryExtractionProviderSettings: {},
         characterReflectionProviderSettings: {},
       }) as never,
-    getProviderAdapter() {
+    getProviderCodingAdapter() {
       return adapter;
     },
   });

@@ -6,7 +6,11 @@ import {
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
-import type { ProviderTurnAdapter } from "./provider-runtime.js";
+import type {
+  ProviderBackgroundAdapter,
+  ProviderCodingAdapter,
+  ProviderTurnAdapter,
+} from "./provider-runtime.js";
 
 type ResolveProviderCatalogArgs = {
   providerId: string | null | undefined;
@@ -24,7 +28,7 @@ type ResolveProviderTurnAdapterArgs = {
 type FetchProviderQuotaTelemetryArgs = {
   providerId: string;
   getAppSettings(): AppSettings;
-  getProviderAdapter(providerId: string): ProviderTurnAdapter;
+  getProviderCodingAdapter(providerId: string): ProviderCodingAdapter;
 };
 
 export function resolveProviderCatalogOrThrow(
@@ -43,10 +47,18 @@ export function resolveProviderTurnAdapter(args: ResolveProviderTurnAdapterArgs)
   return args.providerId === "copilot" ? args.copilotAdapter : args.codexAdapter;
 }
 
+export function resolveProviderCodingAdapter(args: ResolveProviderTurnAdapterArgs): ProviderCodingAdapter {
+  return resolveProviderTurnAdapter(args);
+}
+
+export function resolveProviderBackgroundAdapter(args: ResolveProviderTurnAdapterArgs): ProviderBackgroundAdapter {
+  return resolveProviderTurnAdapter(args);
+}
+
 export async function fetchProviderQuotaTelemetry(
   args: FetchProviderQuotaTelemetryArgs,
 ): Promise<ProviderQuotaTelemetry | null> {
-  return args.getProviderAdapter(args.providerId).getProviderQuotaTelemetry({
+  return args.getProviderCodingAdapter(args.providerId).getProviderQuotaTelemetry({
     providerId: args.providerId,
     appSettings: args.getAppSettings(),
   });

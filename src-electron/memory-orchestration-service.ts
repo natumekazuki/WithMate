@@ -15,7 +15,7 @@ import {
   type AppSettings,
 } from "../src/provider-settings-state.js";
 import { type Session } from "../src/session-state.js";
-import type { ProviderTurnAdapter } from "./provider-runtime.js";
+import type { ProviderBackgroundAdapter } from "./provider-runtime.js";
 import {
   buildCharacterReflectionContextSnapshot,
   buildCharacterReflectionLogicalPrompt,
@@ -45,7 +45,7 @@ export type MemoryOrchestrationServiceDeps = {
   isRunningSession(session: Session): boolean;
   resolveSessionCharacter(session: Session): Promise<CharacterProfile | null>;
   getAppSettings(): AppSettings;
-  getProviderAdapter(providerId: string): ProviderTurnAdapter;
+  getProviderBackgroundAdapter(providerId: string): ProviderBackgroundAdapter;
   ensureSessionMemory(session: Session): SessionMemory;
   upsertSessionMemory(memory: SessionMemory): void;
   promoteSessionMemoryDeltaToProjectMemory(session: Session, delta: SessionMemoryDelta): void;
@@ -120,7 +120,7 @@ export class MemoryOrchestrationService {
       return;
     }
 
-    const providerAdapter = this.deps.getProviderAdapter(latestSession.provider);
+    const providerAdapter = this.deps.getProviderBackgroundAdapter(latestSession.provider);
     const sessionMemory = this.deps.ensureSessionMemory(latestSession);
     const characterMemoryEntries = this.deps.resolveCharacterMemoryEntriesForReflection(latestSession);
     const reflectionSettings = getCharacterReflectionSettings(appSettings, latestSession.provider);
@@ -304,7 +304,7 @@ export class MemoryOrchestrationService {
       extractionSettings,
       triggerReason,
     );
-    const providerAdapter = this.deps.getProviderAdapter(latestSession.provider);
+    const providerAdapter = this.deps.getProviderBackgroundAdapter(latestSession.provider);
     const runningAuditLog = this.deps.createAuditLog({
       sessionId: latestSession.id,
       createdAt: new Date().toISOString(),

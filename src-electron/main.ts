@@ -446,7 +446,7 @@ function requireMainObservabilityFacade(): MainObservabilityFacade {
     mainObservabilityFacade = new MainObservabilityFacade({
       getSessionObservabilityService: () => requireSessionObservabilityService(),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
-      getProviderAdapter: (providerId) => getProviderAdapter(providerId),
+      getProviderCodingAdapter: (providerId) => getProviderCodingAdapter(providerId),
       providerQuotaStaleTtlMs: PROVIDER_QUOTA_STALE_TTL_MS,
     });
   }
@@ -732,7 +732,7 @@ function requireMemoryOrchestrationService(): MemoryOrchestrationService {
       isRunningSession,
       resolveSessionCharacter: (session) => requireCharacterRuntimeService().resolveSessionCharacter(session),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
-      getProviderAdapter,
+      getProviderBackgroundAdapter,
       ensureSessionMemory: (session) => requireSessionMemoryStorage().ensureSessionMemory(session),
       upsertSessionMemory: (memory) => requireSessionMemoryStorage().upsertSessionMemory(memory),
       promoteSessionMemoryDeltaToProjectMemory: (session, delta) =>
@@ -968,6 +968,14 @@ function resolveProviderCatalog(
 
 function getProviderAdapter(providerId: string | null | undefined): ProviderTurnAdapter {
   return requireMainProviderFacade().getProviderAdapter(providerId);
+}
+
+function getProviderCodingAdapter(providerId: string | null | undefined) {
+  return requireMainProviderFacade().getProviderCodingAdapter(providerId);
+}
+
+function getProviderBackgroundAdapter(providerId: string | null | undefined) {
+  return requireMainProviderFacade().getProviderBackgroundAdapter(providerId);
 }
 
 function invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void {
