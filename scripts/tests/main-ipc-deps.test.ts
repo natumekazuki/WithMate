@@ -27,6 +27,9 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
       async openCharacterEditorWindow() {
         return {} as never;
       },
+      async openCharacterUpdateWindow() {
+        return {} as never;
+      },
       async openDiffWindow() {
         return {} as never;
       },
@@ -98,6 +101,15 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
       },
       async getCharacter() {
         return null;
+      },
+      async getCharacterUpdateWorkspace() {
+        return null;
+      },
+      async extractCharacterUpdateMemory() {
+        return { characterId: "char-1", generatedAt: "", entryCount: 0, text: "" };
+      },
+      async createCharacterUpdateSession() {
+        return {} as never;
       },
       async createCharacter() {
         return {} as never;

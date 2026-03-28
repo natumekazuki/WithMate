@@ -64,6 +64,9 @@ npm run electron:start
 | MT-020 | Character persistence | character を作成 / 編集 / 削除する | `characters/` 相当の保存内容が Home と Session に反映される |
 | MT-020A | Character session copy persistence | Character Editor の `Session Copy` を編集して保存し、editor を開き直す | 各 slot の文言が保持され、再読込後も同じ値が表示される |
 | MT-020B | Character session copy list edit | Character Editor の `Session Copy` で `+` と `×` を使って候補を追加・削除する | session-copy tab 自体が card 内でスクロールし、各 slot は複数候補を行単位で保持したまま保存できる |
+| MT-020C | Character update workspace open | Character Editor で既存 character を開き、footer の `Update Workspace` を押す | `Character Update Window` が開き、character 名、workspace path、provider 選択、`Start Update Session`、`Extract Memory`、`Copy` が表示される |
+| MT-020D | Character update session start | `Character Update Window` で provider を選んで `Start Update Session` を押す | character directory を workspace にした Session が作成され、選んだ provider に応じて `AGENTS.md` または `copilot-instructions.md` が workspace に生成されてから `Session Window` が開く |
+| MT-020E | Character memory extract helper | `Character Update Window` で `Extract Memory` を押し、結果を `Copy` する | `character_memory_entries` 由来の grouped markdown が read-only textarea に表示され、`Copy` で clipboard へコピーできる |
 | MT-021 | Character editor title theme | Home から Character Editor を開く | header title の文字色が現在のキャラ `main` 色で表示される |
 | MT-022 | Session theme accent | Session Window を開く | header title、assistant / pending bubble、composer settings、`Send / Cancel`、Details 展開後の artifact block に character theme の accent が反映され、`user-bubble` は neutral tone を維持する |
 | MT-023 | Diff theme accent | Session から Diff を開く | `titlebar / subbar / pane header` に character theme の薄い accent が反映され、`Before / After` の文字が背景色に埋もれず読める |

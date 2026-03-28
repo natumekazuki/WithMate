@@ -165,10 +165,18 @@ export function buildCharacterEditorUrl(characterId: string): string {
   return `?characterId=${encodeURIComponent(characterId)}`;
 }
 
+export function buildCharacterUpdateUrl(characterId: string): string {
+  return `?mode=update&characterId=${encodeURIComponent(characterId)}`;
+}
+
 export function getCharacterIdFromLocation(): string | null {
   return new URLSearchParams(getLocationSearch()).get("characterId");
 }
 
 export function isCharacterCreateMode(): boolean {
   return new URLSearchParams(getLocationSearch()).get("mode") === "create";
+}
+
+export function isCharacterUpdateMode(): boolean {
+  return new URLSearchParams(getLocationSearch()).get("mode") === "update";
 }

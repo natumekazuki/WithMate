@@ -319,6 +319,14 @@ export default function CharacterEditorApp() {
     window.close();
   };
 
+  const handleOpenUpdateWorkspace = async () => {
+    if (!selectedCharacter) {
+      return;
+    }
+
+    await withWithMateApi((api) => api.openCharacterUpdate(selectedCharacter.id));
+  };
+
   if (!desktopRuntime) {
     return (
       <div className="page-shell character-editor-page">
@@ -558,6 +566,11 @@ export default function CharacterEditorApp() {
           <button className="start-session-button" type="button" onClick={() => void handleSave()}>
             Save
           </button>
+          {!isCreateMode && selectedCharacter ? (
+            <button className="launch-toggle" type="button" onClick={() => void handleOpenUpdateWorkspace()}>
+              Update Workspace
+            </button>
+          ) : null}
           {!isCreateMode && selectedCharacter ? (
             <button className="danger-button" type="button" onClick={() => void handleDelete()}>
               Delete

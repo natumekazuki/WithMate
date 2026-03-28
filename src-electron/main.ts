@@ -34,6 +34,7 @@ import type { OpenPathOptions } from "../src/withmate-window-types.js";
 import {
   createStoredCharacter,
   deleteStoredCharacter,
+  getStoredCharacterDirectoryPath,
   getStoredCharacter,
   listStoredCharacters,
   updateStoredCharacter,
@@ -63,6 +64,7 @@ import { WindowBroadcastService } from "./window-broadcast-service.js";
 import { WindowDialogService } from "./window-dialog-service.js";
 import { SessionMemorySupportService } from "./session-memory-support-service.js";
 import { CharacterRuntimeService } from "./character-runtime-service.js";
+import { CharacterUpdateWorkspaceService } from "./character-update-workspace-service.js";
 import { WindowEntryLoader } from "./window-entry-loader.js";
 import { AuxWindowService } from "./aux-window-service.js";
 import { registerMainIpcHandlers } from "./main-ipc-registration.js";
@@ -129,6 +131,7 @@ let sessionApprovalService: SessionApprovalService | null = null;
 let auditLogService: AuditLogService | null = null;
 let sessionMemorySupportService: SessionMemorySupportService | null = null;
 let characterRuntimeService: CharacterRuntimeService | null = null;
+let characterUpdateWorkspaceService: CharacterUpdateWorkspaceService | null = null;
 let mainBroadcastFacade: MainBroadcastFacade<BrowserWindow> | null = null;
 let mainCharacterFacade: MainCharacterFacade | null = null;
 let mainObservabilityFacade: MainObservabilityFacade | null = null;
@@ -315,6 +318,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openSessionMonitorWindow,
                 openSettingsWindow,
                 openCharacterEditorWindow,
+                openCharacterUpdateWindow: (characterId) => requireMainWindowFacade().openCharacterUpdateWindow(characterId),
                 openDiffWindow,
                 pickDirectory: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickDirectory(targetWindow, initialPath),
@@ -363,6 +367,12 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               character: {
                 listCharacters: async () => refreshCharactersFromStorage(),
                 getCharacter,
+                getCharacterUpdateWorkspace: (characterId) =>
+                  requireMainCharacterFacade().getCharacterUpdateWorkspace(characterId),
+                extractCharacterUpdateMemory: (characterId) =>
+                  requireMainCharacterFacade().extractCharacterUpdateMemory(characterId),
+                createCharacterUpdateSession: (characterId, providerId) =>
+                  requireMainCharacterFacade().createCharacterUpdateSession(characterId, providerId),
                 createCharacter,
                 updateCharacter,
                 deleteCharacter,
@@ -424,6 +434,7 @@ function requireMainCharacterFacade(): MainCharacterFacade {
     mainCharacterFacade = new MainCharacterFacade({
       getMainQueryService: () => requireMainQueryService(),
       getCharacterRuntimeService: () => requireCharacterRuntimeService(),
+      getCharacterUpdateWorkspaceService: () => requireCharacterUpdateWorkspaceService(),
     });
   }
 
@@ -587,6 +598,25 @@ function requireCharacterRuntimeService(): CharacterRuntimeService {
   }
 
   return characterRuntimeService;
+}
+
+function requireCharacterUpdateWorkspaceService(): CharacterUpdateWorkspaceService {
+  if (!characterUpdateWorkspaceService) {
+    characterUpdateWorkspaceService = new CharacterUpdateWorkspaceService({
+      getCharacter: (characterId) => requireCharacterRuntimeService().getCharacter(characterId),
+      getCharacterDirectoryPath: (characterId) => getStoredCharacterDirectoryPath(characterId),
+      getCharacterScopeByCharacterId: (characterId) =>
+        requireCharacterMemoryStorage().getCharacterScopeByCharacterId(characterId),
+      listCharacterMemoryEntries: (characterScopeId) =>
+        requireCharacterMemoryStorage().listCharacterMemoryEntries(characterScopeId),
+      writeTextFile: async (filePath, content) => {
+        await writeFile(filePath, content, "utf8");
+      },
+      createSession: (input) => requireMainSessionCommandFacade().createSession(input),
+    });
+  }
+
+  return characterUpdateWorkspaceService;
 }
 
 function requireWindowEntryLoader(): WindowEntryLoader {
@@ -907,6 +937,7 @@ function closePersistentStores(): void {
   sessionApprovalService = null;
   sessionMemorySupportService = null;
   characterRuntimeService = null;
+  characterUpdateWorkspaceService = null;
   mainBroadcastFacade = null;
   mainCharacterFacade = null;
   mainObservabilityFacade = null;
@@ -940,6 +971,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   sessionApprovalService = null;
   sessionMemorySupportService = null;
   characterRuntimeService = null;
+  characterUpdateWorkspaceService = null;
   mainBroadcastFacade = null;
   mainCharacterFacade = null;
   mainObservabilityFacade = null;
@@ -1232,6 +1264,10 @@ async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {
 
 async function openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {
   return requireMainWindowFacade().openCharacterEditorWindow(characterId);
+}
+
+async function openCharacterUpdateWindow(characterId: string): Promise<BrowserWindow> {
+  return requireMainWindowFacade().openCharacterUpdateWindow(characterId);
 }
 
 async function openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow> {

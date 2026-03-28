@@ -17,6 +17,7 @@ import type {
   RunSessionTurnRequest,
   Session,
 } from "./app-state.js";
+import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "./character-update-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
 import type { OpenPathOptions, ResetAppDatabaseRequest, ResetAppDatabaseResult } from "./withmate-window-types.js";
 
@@ -26,6 +27,7 @@ export type WithMateWindowNavigationApi = {
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
   openCharacterEditor(characterId?: string | null): Promise<void>;
+  openCharacterUpdate(characterId: string): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openPath(target: string, options?: OpenPathOptions): Promise<void>;
   openSessionTerminal(sessionId: string): Promise<void>;
@@ -76,6 +78,9 @@ export type WithMateWindowSettingsApi = {
 export type WithMateWindowCharacterApi = {
   listCharacters(): Promise<CharacterProfile[]>;
   getCharacter(characterId: string): Promise<CharacterProfile | null>;
+  getCharacterUpdateWorkspace(characterId: string): Promise<CharacterUpdateWorkspace | null>;
+  extractCharacterUpdateMemory(characterId: string): Promise<CharacterUpdateMemoryExtract>;
+  createCharacterUpdateSession(characterId: string, providerId: string): Promise<Session>;
   createCharacter(input: CreateCharacterInput): Promise<CharacterProfile>;
   updateCharacter(character: CharacterProfile): Promise<CharacterProfile>;
   deleteCharacter(characterId: string): Promise<void>;

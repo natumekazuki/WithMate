@@ -7,13 +7,16 @@ import { registerMainIpcHandlers } from "../../src-electron/main-ipc-registratio
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
+  WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
+  WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
+  WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
@@ -30,6 +33,7 @@ import {
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSIONS_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
+  WITHMATE_OPEN_CHARACTER_UPDATE_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
@@ -85,6 +89,9 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     async openCharacterEditorWindow(characterId) {
       calls.push(`openCharacter:${characterId ?? ""}`);
     },
+    async openCharacterUpdateWindow(characterId) {
+      calls.push(`openCharacterUpdate:${characterId}`);
+    },
     async openDiffWindow() {
       calls.push("openDiff");
     },
@@ -123,6 +130,15 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     },
     async getCharacter() {
       return null;
+    },
+    async getCharacterUpdateWorkspace() {
+      return null;
+    },
+    async extractCharacterUpdateMemory() {
+      return { characterId: "c-1", generatedAt: "", entryCount: 0, text: "" };
+    },
+    async createCharacterUpdateSession() {
+      return {} as never;
     },
     createSession: () => ({}) as never,
     updateSession: () => ({}) as never,
@@ -172,11 +188,13 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   assert.ok(handlers.has("withmate:run-session-turn"));
 
   await handlers.get("withmate:open-session")?.({}, "session-1");
+  await handlers.get("withmate:open-character-update")?.({}, "c-1");
   handlers.get("withmate:cancel-session-run")?.({}, "session-1");
   await handlers.get("withmate:open-path")?.({}, "target", null);
 
   assert.deepEqual(calls, [
     "openSession:session-1",
+    "openCharacterUpdate:c-1",
     "cancelRun",
     "openPath",
   ]);
@@ -193,6 +211,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async openSessionMonitorWindow() {},
     async openSettingsWindow() {},
     async openCharacterEditorWindow() {},
+    async openCharacterUpdateWindow() {},
     async openDiffWindow() {},
     listSessions: () => [],
     listSessionAuditLogs: () => [],
@@ -216,6 +235,9 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     getSessionBackgroundActivity: () => null,
     resolveLiveApproval() {},
     async getCharacter() { return null; },
+    async getCharacterUpdateWorkspace() { return null; },
+    async extractCharacterUpdateMemory() { return { characterId: "c-1", generatedAt: "", entryCount: 0, text: "" }; },
+    async createCharacterUpdateSession() { return {} as never; },
     createSession: () => ({}) as never,
     updateSession: () => ({}) as never,
     deleteSession() {},
@@ -239,6 +261,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
     WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
     WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
+    WITHMATE_OPEN_CHARACTER_UPDATE_CHANNEL,
     WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
     WITHMATE_PICK_DIRECTORY_CHANNEL,
     WITHMATE_PICK_FILE_CHANNEL,
@@ -274,6 +297,9 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
     WITHMATE_LIST_CHARACTERS_CHANNEL,
     WITHMATE_GET_CHARACTER_CHANNEL,
+    WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
+    WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
+    WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
     WITHMATE_CREATE_CHARACTER_CHANNEL,
     WITHMATE_UPDATE_CHARACTER_CHANNEL,
     WITHMATE_DELETE_CHARACTER_CHANNEL,

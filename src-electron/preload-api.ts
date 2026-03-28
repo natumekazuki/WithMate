@@ -16,13 +16,16 @@ import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CHARACTERS_CHANGED_EVENT,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
+  WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
+  WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
+  WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
@@ -41,6 +44,7 @@ import {
   WITHMATE_LIVE_SESSION_RUN_EVENT,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
+  WITHMATE_OPEN_CHARACTER_UPDATE_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
@@ -118,6 +122,9 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     },
     openCharacterEditor(characterId) {
       return ipcRenderer.invoke(WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL, characterId ?? null);
+    },
+    openCharacterUpdate(characterId) {
+      return ipcRenderer.invoke(WITHMATE_OPEN_CHARACTER_UPDATE_CHANNEL, characterId);
     },
     openDiffWindow(diffPreview) {
       return ipcRenderer.invoke(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, diffPreview);
@@ -245,6 +252,15 @@ function createCharacterApi(ipcRenderer: IpcRendererLike): WithMateWindowCharact
     },
     getCharacter(characterId) {
       return ipcRenderer.invoke(WITHMATE_GET_CHARACTER_CHANNEL, characterId);
+    },
+    getCharacterUpdateWorkspace(characterId) {
+      return ipcRenderer.invoke(WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL, characterId);
+    },
+    extractCharacterUpdateMemory(characterId) {
+      return ipcRenderer.invoke(WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL, characterId);
+    },
+    createCharacterUpdateSession(characterId, providerId) {
+      return ipcRenderer.invoke(WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL, characterId, providerId);
     },
     createCharacter(input) {
       return ipcRenderer.invoke(WITHMATE_CREATE_CHARACTER_CHANNEL, input);

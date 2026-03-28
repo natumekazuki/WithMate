@@ -5,7 +5,7 @@
 
 ## Goal
 
-Electron デスクトップアプリとして、`Home Window` / `Session Window` / `Character Editor Window` / `Diff Window` の責務を整理し、現行 UI の入口を 1 枚で把握できるようにする。
+Electron デスクトップアプリとして、`Home Window` / `Session Window` / `Character Editor Window` / `Character Update Window` / `Diff Window` の責務を整理し、現行 UI の入口を 1 枚で把握できるようにする。
 
 ## Manual Test Maintenance
 
@@ -19,6 +19,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - Session Monitor Window
 - Session の coding agent 作業 UI
 - Character Editor の編集 UI
+- Character Update Window の更新支援 UI
 - Diff Window の閲覧 UI
 - Settings Window と model catalog 操作
 - Session の監査ログ閲覧 UI
@@ -248,6 +249,23 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `character.md`
 - create / update / delete
 - 小さい window では縦積みと外側スクロールを優先し、内部スクロールの多重化を避ける
+- 既存 character では footer に `Update Workspace` を表示し、`Character Update Window` を開ける
+
+## Character Update Window
+
+- character directory をそのまま workspace に使う更新支援 window
+- `Character Editor` から開く
+- provider 選択
+- `character.md` と provider ごとの instruction file パス表示
+  - `Codex`: `AGENTS.md`
+  - `Copilot`: `copilot-instructions.md`
+- `Start Update Session`
+  - 選択 provider 向け instruction file を workspace に生成してから通常の `Session Window` を開く
+- `Extract Memory`
+  - `character_memory_entries` から deterministic な貼り付け用 markdown を生成する
+- `Copy`
+  - extract 結果を clipboard へコピーする
+- hidden な `character.md` rewrite は行わず、更新自体は通常の agent session でユーザーが進める
 
 ## Diff Window
 
@@ -261,6 +279,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 ## Interaction Notes
 
 - Home から Session / Character Editor を開く
+- Character Editor から Character Update Window を開く
 - Session の作成・更新・削除は Main Process 経由で永続化する
 - Session の実行中イベントは Main Process から live state として IPC 中継する
 - Home の `Session Monitor` は Main Process の `sessionWindows` を thin IPC bridge で参照し、開いている `Session Window` の session だけを表示する
@@ -271,6 +290,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `Settings Window` の `DB を初期化` 成功時は各 window が reset 後 `appSettings` / `modelCatalog` / `sessions` へ同期し、settings draft の dirty を解消する
 - character は `userData/characters/` を正本とする
 - `userData` は `<appData>/WithMate/` に固定する
+- Character Update Window も同じ character directory を workspace として再利用する
 - Session は character の `main / sub` theme color snapshot を保持し、現在は header title、assistant / pending bubble、composer settings、`Send / Cancel`、artifact block、Session から開く Diff の `titlebar / subbar / pane header` の限定的な accent に使う
 - session は SQLite を正本とする
 - model catalog は DB の active revision を読む

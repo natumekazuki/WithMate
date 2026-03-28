@@ -1,11 +1,13 @@
 import type { CharacterProfile, CreateCharacterInput } from "../src/character-state.js";
 import type { Session } from "../src/session-state.js";
 import type { CharacterRuntimeService } from "./character-runtime-service.js";
+import type { CharacterUpdateWorkspaceService } from "./character-update-workspace-service.js";
 import type { MainQueryService } from "./main-query-service.js";
 
 type MainCharacterFacadeDeps = {
   getMainQueryService(): MainQueryService;
   getCharacterRuntimeService(): CharacterRuntimeService;
+  getCharacterUpdateWorkspaceService(): CharacterUpdateWorkspaceService;
 };
 
 export class MainCharacterFacade {
@@ -37,5 +39,17 @@ export class MainCharacterFacade {
 
   async resolveSessionCharacter(session: Session): Promise<CharacterProfile | null> {
     return this.deps.getCharacterRuntimeService().resolveSessionCharacter(session);
+  }
+
+  async getCharacterUpdateWorkspace(characterId: string) {
+    return this.deps.getCharacterUpdateWorkspaceService().getWorkspace(characterId);
+  }
+
+  async extractCharacterUpdateMemory(characterId: string) {
+    return this.deps.getCharacterUpdateWorkspaceService().buildMemoryExtract(characterId);
+  }
+
+  async createCharacterUpdateSession(characterId: string, providerId: string): Promise<Session> {
+    return this.deps.getCharacterUpdateWorkspaceService().createUpdateSession(characterId, providerId);
   }
 }

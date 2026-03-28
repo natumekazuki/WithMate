@@ -12,6 +12,7 @@ import type {
   SessionContextTelemetry,
 } from "../src/app-state.js";
 import type { CreateCharacterInput } from "../src/character-state.js";
+import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
@@ -19,13 +20,16 @@ import type { CreateSessionInput, DiffPreviewPayload, Session } from "../src/ses
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
+  WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
+  WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
+  WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
@@ -42,6 +46,7 @@ import {
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSIONS_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
+  WITHMATE_OPEN_CHARACTER_UPDATE_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
@@ -73,6 +78,7 @@ export type MainIpcRegistrationDeps = {
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
+  openCharacterUpdateWindow(characterId: string): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   listSessions(): Session[];
   listSessionAuditLogs(sessionId: string): AuditLogEntry[];
@@ -99,6 +105,9 @@ export type MainIpcRegistrationDeps = {
   ): SessionBackgroundActivityState | null;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void;
   getCharacter(characterId: string): Promise<CharacterProfile | null>;
+  getCharacterUpdateWorkspace(characterId: string): Promise<CharacterUpdateWorkspace | null>;
+  extractCharacterUpdateMemory(characterId: string): Promise<CharacterUpdateMemoryExtract>;
+  createCharacterUpdateSession(characterId: string, providerId: string): Promise<Session>;
   createSession(input: CreateSessionInput): Session;
   updateSession(session: Session): Session;
   deleteSession(sessionId: string): void;
@@ -125,6 +134,7 @@ type MainIpcWindowDeps = Pick<
   | "openSessionMonitorWindow"
   | "openSettingsWindow"
   | "openCharacterEditorWindow"
+  | "openCharacterUpdateWindow"
   | "openDiffWindow"
   | "openPathTarget"
   | "openSessionTerminal"
@@ -178,7 +188,14 @@ type MainIpcSessionRuntimeDeps = Pick<
 
 type MainIpcCharacterDeps = Pick<
   MainIpcRegistrationDeps,
-  "listCharacters" | "getCharacter" | "createCharacter" | "updateCharacter" | "deleteCharacter"
+  | "listCharacters"
+  | "getCharacter"
+  | "getCharacterUpdateWorkspace"
+  | "extractCharacterUpdateMemory"
+  | "createCharacterUpdateSession"
+  | "createCharacter"
+  | "updateCharacter"
+  | "deleteCharacter"
 >;
 
 function resolveTargetWindow(
@@ -206,6 +223,9 @@ function registerWindowHandlers(ipcMain: IpcMain, deps: MainIpcWindowDeps): void
   });
   ipcMain.handle(WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL, async (_event, characterId: string | null) => {
     await deps.openCharacterEditorWindow(characterId);
+  });
+  ipcMain.handle(WITHMATE_OPEN_CHARACTER_UPDATE_CHANNEL, async (_event, characterId: string) => {
+    await deps.openCharacterUpdateWindow(characterId);
   });
   ipcMain.handle(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, async (_event, diffPreview: DiffPreviewPayload) => {
     await deps.openDiffWindow(diffPreview);
@@ -332,6 +352,19 @@ function registerCharacterHandlers(ipcMain: IpcMain, deps: MainIpcCharacterDeps)
     }
     return deps.getCharacter(characterId);
   });
+  ipcMain.handle(WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL, async (_event, characterId: string) => {
+    if (!characterId) {
+      return null;
+    }
+    return deps.getCharacterUpdateWorkspace(characterId);
+  });
+  ipcMain.handle(WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL, async (_event, characterId: string) =>
+    deps.extractCharacterUpdateMemory(characterId),
+  );
+  ipcMain.handle(
+    WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
+    async (_event, characterId: string, providerId: string) => deps.createCharacterUpdateSession(characterId, providerId),
+  );
   ipcMain.handle(WITHMATE_CREATE_CHARACTER_CHANNEL, async (_event, input: CreateCharacterInput) => deps.createCharacter(input));
   ipcMain.handle(WITHMATE_UPDATE_CHARACTER_CHANNEL, async (_event, character: CharacterProfile) => deps.updateCharacter(character));
   ipcMain.handle(WITHMATE_DELETE_CHARACTER_CHANNEL, async (_event, characterId: string) => deps.deleteCharacter(characterId));

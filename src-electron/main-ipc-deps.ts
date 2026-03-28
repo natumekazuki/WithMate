@@ -12,6 +12,7 @@ import type {
   SessionContextTelemetry,
 } from "../src/app-state.js";
 import type { CreateCharacterInput } from "../src/character-state.js";
+import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
@@ -29,6 +30,7 @@ export type MainIpcWindowDepsArgs = {
   openSessionMonitorWindow(): Promise<BrowserWindow>;
   openSettingsWindow(): Promise<BrowserWindow>;
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
+  openCharacterUpdateWindow(characterId: string): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
@@ -82,6 +84,9 @@ export type MainIpcSessionRuntimeDepsArgs = {
 export type MainIpcCharacterDepsArgs = {
   listCharacters(): Promise<CharacterProfile[]>;
   getCharacter(characterId: string): Promise<CharacterProfile | null>;
+  getCharacterUpdateWorkspace(characterId: string): Promise<CharacterUpdateWorkspace | null>;
+  extractCharacterUpdateMemory(characterId: string): Promise<CharacterUpdateMemoryExtract>;
+  createCharacterUpdateSession(characterId: string, providerId: string): Promise<Session>;
   createCharacter(input: CreateCharacterInput): Promise<CharacterProfile>;
   updateCharacter(character: CharacterProfile): Promise<CharacterProfile>;
   deleteCharacter(characterId: string): Promise<void>;
@@ -116,6 +121,9 @@ export function createMainIpcRegistrationDeps(
     },
     openCharacterEditorWindow: async (characterId) => {
       await args.window.openCharacterEditorWindow(characterId);
+    },
+    openCharacterUpdateWindow: async (characterId) => {
+      await args.window.openCharacterUpdateWindow(characterId);
     },
     openDiffWindow: async (diffPreview) => {
       await args.window.openDiffWindow(diffPreview);
@@ -154,6 +162,9 @@ export function createMainIpcRegistrationDeps(
     cancelSessionRun: args.sessionRuntime.cancelSessionRun,
     listCharacters: args.character.listCharacters,
     getCharacter: args.character.getCharacter,
+    getCharacterUpdateWorkspace: args.character.getCharacterUpdateWorkspace,
+    extractCharacterUpdateMemory: args.character.extractCharacterUpdateMemory,
+    createCharacterUpdateSession: args.character.createCharacterUpdateSession,
     createCharacter: args.character.createCharacter,
     updateCharacter: args.character.updateCharacter,
     deleteCharacter: args.character.deleteCharacter,

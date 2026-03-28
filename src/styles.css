@@ -5179,6 +5179,101 @@ button:disabled {
   box-shadow: 0 10px 22px color-mix(in srgb, var(--character-main) 28%, transparent);
 }
 
+.character-update-page {
+  min-height: 100vh;
+}
+
+.character-update-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+
+.character-update-main {
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+}
+
+.character-update-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.character-update-head-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.character-update-head-copy strong,
+.character-update-head-copy span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.character-update-head-copy span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.character-update-section {
+  display: grid;
+  gap: 12px;
+}
+
+.character-update-file-list {
+  display: grid;
+  gap: 8px;
+}
+
+.character-update-file-list code {
+  display: block;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(13, 17, 23, 0.72);
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.character-update-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.character-update-actions > button {
+  flex: 1 1 180px;
+}
+
+.character-update-extract-section {
+  min-height: 0;
+}
+
+.character-update-extract-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--muted);
+}
+
+.character-update-extract {
+  width: 100%;
+  min-height: 360px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  resize: vertical;
+  background: #161b27;
+  color: #f4f7fb;
+  line-height: 1.7;
+  font-family: "Cascadia Code", "Consolas", monospace;
+}
+
 .diff-titlebar,
 .diff-subbar,
 .diff-pane-head {

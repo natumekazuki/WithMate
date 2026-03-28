@@ -33,6 +33,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:open-session",
     args: ["session-1"],
   });
+  assert.deepEqual(await api.openCharacterUpdate("char-1"), {
+    channel: "withmate:open-character-update",
+    args: ["char-1"],
+  });
   assert.deepEqual(await api.resetAppDatabase({ targets: ["appSettings"] }), {
     channel: "withmate:reset-app-database",
     args: [{ targets: ["appSettings"] }],
@@ -51,13 +55,16 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
   const expectedKeys = [
     "cancelSessionRun",
     "createCharacter",
+    "createCharacterUpdateSession",
     "createSession",
     "deleteCharacter",
     "deleteSession",
     "exportModelCatalog",
     "exportModelCatalogFile",
+    "extractCharacterUpdateMemory",
     "getAppSettings",
     "getCharacter",
+    "getCharacterUpdateWorkspace",
     "getDiffPreview",
     "getLiveSessionRun",
     "getModelCatalog",
@@ -74,6 +81,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionSkills",
     "listSessions",
     "openCharacterEditor",
+    "openCharacterUpdate",
     "openDiffWindow",
     "openHomeWindow",
     "openPath",

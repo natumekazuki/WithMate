@@ -32,6 +32,10 @@ export class MainWindowFacade {
     return this.deps.getAuxWindowService().openCharacterEditorWindow(characterId);
   }
 
+  async openCharacterUpdateWindow(characterId: string): Promise<BrowserWindow> {
+    return this.deps.getAuxWindowService().openCharacterUpdateWindow(characterId);
+  }
+
   async openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow> {
     return this.deps.getAuxWindowService().openDiffWindow(diffPreview);
   }

@@ -6,6 +6,7 @@ export type WindowLike = {
 };
 
 export type HomeEntryMode = "home" | "monitor" | "settings";
+export type CharacterEntryMode = "editor" | "update";
 
 export type WindowEntryLoaderDeps = {
   devServerUrl?: string | null;
@@ -25,9 +26,13 @@ export class WindowEntryLoader {
     await this.load(window, "session.html", search);
   }
 
-  async loadCharacterEntry(window: WindowLike, characterId?: string | null): Promise<void> {
+  async loadCharacterEntry(
+    window: WindowLike,
+    characterId?: string | null,
+    mode: CharacterEntryMode = "editor",
+  ): Promise<void> {
     const search = characterId
-      ? `?characterId=${encodeURIComponent(characterId)}`
+      ? `?${mode === "update" ? "mode=update&" : ""}characterId=${encodeURIComponent(characterId)}`
       : "?mode=create";
     await this.load(window, "character.html", search);
   }

@@ -39,6 +39,21 @@ test("MainCharacterFacade は query/runtime service を束ねる", async () => {
           return { id: session.characterId };
         },
       }) as never,
+    getCharacterUpdateWorkspaceService: () =>
+      ({
+        async getWorkspace(characterId) {
+          calls.push(`workspace:${characterId}`);
+          return { characterId };
+        },
+        buildMemoryExtract(characterId) {
+          calls.push(`extract:${characterId}`);
+          return { characterId, generatedAt: "", entryCount: 0, text: "" };
+        },
+        async createUpdateSession(characterId, providerId) {
+          calls.push(`update-session:${characterId}:${providerId}`);
+          return { id: "session-1" };
+        },
+      }) as never,
   });
 
   assert.equal(facade.listCharacters().length, 1);
@@ -48,6 +63,9 @@ test("MainCharacterFacade は query/runtime service を束ねる", async () => {
   await facade.updateCharacter({ id: "c-1" } as never);
   await facade.deleteCharacter("c-1");
   const resolved = await facade.resolveSessionCharacter({ id: "s-1", characterId: "c-1" } as never);
+  await facade.getCharacterUpdateWorkspace("c-1");
+  await facade.extractCharacterUpdateMemory("c-1");
+  await facade.createCharacterUpdateSession("c-1", "codex");
 
   assert.equal(resolved?.id, "c-1");
   assert.deepEqual(calls, [
@@ -58,5 +76,8 @@ test("MainCharacterFacade は query/runtime service を束ねる", async () => {
     "update:c-1",
     "delete:c-1",
     "resolve:s-1",
+    "workspace:c-1",
+    "extract:c-1",
+    "update-session:c-1:codex",
   ]);
 });

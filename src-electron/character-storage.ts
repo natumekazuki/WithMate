@@ -342,3 +342,7 @@ export function getCharacterStorageRootPath(): string {
   return getCharacterRootPath();
 }
 
+export function getStoredCharacterDirectoryPath(characterId: string): string {
+  return getCharacterDirectoryPath(characterId);
+}
+
