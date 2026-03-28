@@ -4,7 +4,6 @@ import {
   type CharacterMemoryDelta,
   type CharacterMemoryEntry,
   type CharacterReflectionMonologue,
-  type Session,
   type SessionBackgroundActivityKind,
   type SessionBackgroundActivityState,
   type SessionMemory,
@@ -15,6 +14,7 @@ import {
   getProviderAppSettings,
   type AppSettings,
 } from "../src/provider-settings-state.js";
+import { type Session } from "../src/session-state.js";
 import type { ProviderTurnAdapter } from "./provider-runtime.js";
 import {
   buildCharacterReflectionContextSnapshot,

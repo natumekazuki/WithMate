@@ -11,10 +11,8 @@ import {
   type DiffPreviewPayload,
   type LiveApprovalRequest,
   type LiveSessionRunState,
-  type Message,
   type ProviderQuotaTelemetry,
   type RunSessionTurnRequest,
-  type Session,
   type SessionBackgroundActivityKind,
   type SessionBackgroundActivityState,
   type SessionContextTelemetry,
@@ -25,6 +23,12 @@ import {
   getProviderAppSettings,
   type AppSettings,
 } from "./provider-settings-state.js";
+import {
+  getSessionIdFromLocation,
+  type DiffPreviewPayload,
+  type Message,
+  type Session,
+} from "./session-state.js";
 import {
   getProviderCatalog,
   getReasoningEffortOptionsForModel,

@@ -151,3 +151,24 @@ export function cloneCharacterProfiles(characters: CharacterProfile[]): Characte
 export function getCharacterById(characters: CharacterProfile[], characterId: string): CharacterProfile | null {
   return cloneCharacterProfiles(characters).find((character) => character.id === characterId) ?? null;
 }
+
+function getLocationSearch(): string {
+  const browserWindow = (globalThis as typeof globalThis & { window?: { location?: { search?: string } } }).window;
+  if (!browserWindow?.location?.search) {
+    return "";
+  }
+
+  return browserWindow.location.search;
+}
+
+export function buildCharacterEditorUrl(characterId: string): string {
+  return `?characterId=${encodeURIComponent(characterId)}`;
+}
+
+export function getCharacterIdFromLocation(): string | null {
+  return new URLSearchParams(getLocationSearch()).get("characterId");
+}
+
+export function isCharacterCreateMode(): boolean {
+  return new URLSearchParams(getLocationSearch()).get("mode") === "create";
+}

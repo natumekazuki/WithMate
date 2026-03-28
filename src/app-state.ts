@@ -1,18 +1,63 @@
-import {
-  DEFAULT_CATALOG_REVISION,
-  DEFAULT_MODEL_ID,
-  DEFAULT_PROVIDER_ID,
-  DEFAULT_REASONING_EFFORT,
-  normalizeProviderId,
-  type ModelReasoningEffort,
-} from "./model-catalog.js";
-import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from "./approval-mode.js";
+import { type ModelReasoningEffort } from "./model-catalog.js";
+import { type ApprovalMode } from "./approval-mode.js";
 export {
+  buildNewSession,
+  cloneSessions,
+  getDiffTokenFromLocation,
+  getSessionIdFromLocation,
+  normalizeSession,
+} from "./session-state.js";
+export type {
+  CreateSessionInput,
+  DiffPreviewPayload,
+  Message,
+  MessageArtifact,
+  Session,
+  StreamEntry,
+} from "./session-state.js";
+export {
+  makeDiffRows,
+} from "./runtime-state.js";
+export type {
+  AuditLogEntry,
+  AuditLogOperation,
+  AuditLogPhase,
+  AuditLogUsage,
+  AuditLogicalPrompt,
+  AuditTransportField,
+  AuditTransportPayload,
+  ChangedFile,
+  ComposerAttachment,
+  ComposerAttachmentInput,
+  ComposerAttachmentKind,
+  ComposerAttachmentSource,
+  ComposerPreview,
+  DiffRow,
+  DiscoveredCustomAgent,
+  DiscoveredCustomAgentSource,
+  DiscoveredSkill,
+  DiscoveredSkillSource,
+  LiveApprovalDecision,
+  LiveApprovalDecisionMode,
+  LiveApprovalRequest,
+  LiveRunStep,
+  LiveRunStepStatus,
+  LiveSessionRunState,
+  ProviderQuotaSnapshot,
+  ProviderQuotaTelemetry,
+  RunCheck,
+  RunSessionTurnRequest,
+  SessionContextTelemetry,
+} from "./runtime-state.js";
+export {
+  buildCharacterEditorUrl,
   cloneCharacterProfiles,
   cloneCharacterSessionCopy,
   DEFAULT_CHARACTER_SESSION_COPY,
   DEFAULT_CHARACTER_THEME_COLORS,
+  getCharacterIdFromLocation,
   getCharacterById as getCharacterProfile,
+  isCharacterCreateMode,
   normalizeCharacterSessionCopy,
   normalizeCharacterThemeColors,
 } from "./character-state.js";
@@ -24,7 +69,6 @@ export type {
   CharacterVisual,
   CreateCharacterInput,
 } from "./character-state.js";
-import { normalizeCharacterThemeColors, type CharacterThemeColors, type CreateCharacterInput } from "./character-state.js";
 export {
   createDefaultAppSettings,
   DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS,
@@ -82,291 +126,6 @@ export type {
   SessionMemoryDelta,
 } from "./memory-state.js";
 
-export type DiffRow = {
-  kind: "context" | "add" | "delete" | "modify";
-  leftNumber?: number;
-  rightNumber?: number;
-  leftText?: string;
-  rightText?: string;
-};
-
-export type ChangedFile = {
-  kind: "add" | "edit" | "delete";
-  path: string;
-  summary: string;
-  diffRows: DiffRow[];
-};
-
-export type RunCheck = {
-  label: string;
-  value: string;
-};
-
-export type AuditLogPhase =
-  | "running"
-  | "completed"
-  | "failed"
-  | "canceled"
-  | "started"
-  | "background-running"
-  | "background-completed"
-  | "background-failed"
-  | "background-canceled";
-
-export type AuditLogOperation = {
-  type: string;
-  summary: string;
-  details?: string;
-};
-
-export type AuditLogUsage = {
-  inputTokens: number;
-  cachedInputTokens: number;
-  outputTokens: number;
-};
-
-export type AuditLogicalPrompt = {
-  systemText: string;
-  inputText: string;
-  composedText: string;
-};
-
-export type AuditTransportField = {
-  label: string;
-  value: string;
-};
-
-export type AuditTransportPayload = {
-  summary: string;
-  fields: AuditTransportField[];
-};
-
-export type AuditLogEntry = {
-  id: number;
-  sessionId: string;
-  createdAt: string;
-  phase: AuditLogPhase;
-  provider: string;
-  model: string;
-  reasoningEffort: ModelReasoningEffort;
-  approvalMode: ApprovalMode;
-  threadId: string;
-  logicalPrompt: AuditLogicalPrompt;
-  transportPayload: AuditTransportPayload | null;
-  assistantText: string;
-  operations: AuditLogOperation[];
-  rawItemsJson: string;
-  usage: AuditLogUsage | null;
-  errorMessage: string;
-};
-
-export type LiveRunStepStatus = "in_progress" | "completed" | "failed" | "canceled" | "pending" | (string & {});
-
-export type LiveRunStep = {
-  id: string;
-  type: string;
-  summary: string;
-  details?: string;
-  status: LiveRunStepStatus;
-};
-
-export type LiveApprovalDecision = "approve" | "deny";
-
-export type LiveApprovalDecisionMode = "direct-decision" | "retry-with-policy-change";
-
-export type LiveApprovalRequest = {
-  requestId: string;
-  provider: string;
-  kind: string;
-  title: string;
-  summary: string;
-  details?: string;
-  warning?: string;
-  decisionMode: LiveApprovalDecisionMode;
-};
-
-export type LiveSessionRunState = {
-  sessionId: string;
-  threadId: string;
-  assistantText: string;
-  steps: LiveRunStep[];
-  usage: AuditLogUsage | null;
-  errorMessage: string;
-  approvalRequest: LiveApprovalRequest | null;
-};
-
-export type ProviderQuotaSnapshot = {
-  quotaKey: string;
-  entitlementRequests: number;
-  usedRequests: number;
-  remainingPercentage: number;
-  overage: number;
-  overageAllowedWithExhaustedQuota: boolean;
-  resetDate?: string;
-};
-
-export type ProviderQuotaTelemetry = {
-  provider: string;
-  updatedAt: string;
-  snapshots: ProviderQuotaSnapshot[];
-};
-
-export type SessionContextTelemetry = {
-  provider: string;
-  sessionId: string;
-  updatedAt: string;
-  tokenLimit: number;
-  currentTokens: number;
-  messagesLength: number;
-  systemTokens?: number;
-  conversationTokens?: number;
-  toolDefinitionsTokens?: number;
-};
-
-export type DiscoveredSkillSource = "workspace" | "provider";
-
-export type DiscoveredSkill = {
-  id: string;
-  name: string;
-  description: string;
-  source: DiscoveredSkillSource;
-  sourcePath: string;
-  sourceLabel: string;
-};
-
-export type DiscoveredCustomAgentSource = "workspace" | "global";
-
-export type DiscoveredCustomAgent = {
-  id: string;
-  name: string;
-  displayName: string;
-  description: string;
-  source: DiscoveredCustomAgentSource;
-  sourcePath: string;
-  sourceLabel: string;
-};
-
-export type ComposerAttachmentKind = "file" | "folder" | "image";
-
-export type ComposerAttachmentSource = "text";
-
-export type ComposerAttachmentInput = {
-  path: string;
-  source: ComposerAttachmentSource;
-  kind?: ComposerAttachmentKind;
-};
-
-export type ComposerAttachment = {
-  id: string;
-  kind: ComposerAttachmentKind;
-  source: ComposerAttachmentSource;
-  absolutePath: string;
-  displayPath: string;
-  workspaceRelativePath: string | null;
-  isOutsideWorkspace: boolean;
-};
-
-export type ComposerPreview = {
-  attachments: ComposerAttachment[];
-  errors: string[];
-};
-
-export type RunSessionTurnRequest = {
-  userMessage: string;
-};
-
-export type MessageArtifact = {
-  title: string;
-  activitySummary: string[];
-  operationTimeline?: AuditLogOperation[];
-  changedFiles: ChangedFile[];
-  runChecks: RunCheck[];
-};
-
-export type Message = {
-  role: "user" | "assistant";
-  text: string;
-  accent?: boolean;
-  artifact?: MessageArtifact;
-};
-
-export type StreamEntry = {
-  mood: "spark" | "calm" | "warm";
-  time: string;
-  text: string;
-};
-
-export type Session = {
-  id: string;
-  taskTitle: string;
-  taskSummary: string;
-  status: "running" | "idle" | "saved";
-  updatedAt: string;
-  provider: string;
-  catalogRevision: number;
-  workspaceLabel: string;
-  workspacePath: string;
-  branch: string;
-  characterId: string;
-  character: string;
-  characterIconPath: string;
-  characterThemeColors: CharacterThemeColors;
-  runState: string;
-  approvalMode: ApprovalMode;
-  model: string;
-  reasoningEffort: ModelReasoningEffort;
-  customAgentName: string;
-  allowedAdditionalDirectories: string[];
-  threadId: string;
-  messages: Message[];
-  stream: StreamEntry[];
-};
-
-export type DiffPreviewPayload = {
-  title: string;
-  file: ChangedFile;
-  themeColors: CharacterThemeColors;
-};
-
-export type CreateSessionInput = {
-  provider?: string;
-  catalogRevision?: number;
-  taskTitle: string;
-  workspaceLabel: string;
-  workspacePath: string;
-  branch: string;
-  characterId: string;
-  character: string;
-  characterIconPath: string;
-  characterThemeColors: CharacterThemeColors;
-  approvalMode: ApprovalMode;
-  model?: string;
-  reasoningEffort?: ModelReasoningEffort;
-  customAgentName?: string;
-  allowedAdditionalDirectories?: string[];
-};
-
-function getLocationSearch(): string {
-  const browserWindow = (globalThis as typeof globalThis & { window?: { location?: { search?: string } } }).window;
-  if (!browserWindow?.location?.search) {
-    return "";
-  }
-
-  return browserWindow.location.search;
-}
-
-export function makeDiffRows(
-  rows: Array<[DiffRow["kind"], number | undefined, string | undefined, number | undefined, string | undefined]>,
-): DiffRow[] {
-  return rows.map(([kind, leftNumber, leftText, rightNumber, rightText]) => ({
-    kind,
-    leftNumber,
-    leftText,
-    rightNumber,
-    rightText,
-  }));
-}
-
 function padDatePart(value: number): string {
   return String(value).padStart(2, "0");
 }
@@ -391,279 +150,4 @@ export function currentTimestampLabel(): string {
 
 export function currentIsoTimestamp(): string {
   return new Date().toISOString();
-}
-
-function normalizeDiffRow(value: unknown): DiffRow | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Partial<DiffRow>;
-  if (candidate.kind !== "context" && candidate.kind !== "add" && candidate.kind !== "delete" && candidate.kind !== "modify") {
-    return null;
-  }
-
-  return {
-    kind: candidate.kind,
-    leftNumber: typeof candidate.leftNumber === "number" ? candidate.leftNumber : undefined,
-    rightNumber: typeof candidate.rightNumber === "number" ? candidate.rightNumber : undefined,
-    leftText: typeof candidate.leftText === "string" ? candidate.leftText : undefined,
-    rightText: typeof candidate.rightText === "string" ? candidate.rightText : undefined,
-  };
-}
-
-function normalizeChangedFile(value: unknown): ChangedFile | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Partial<ChangedFile>;
-  if (candidate.kind !== "add" && candidate.kind !== "edit" && candidate.kind !== "delete") {
-    return null;
-  }
-
-  return {
-    kind: candidate.kind,
-    path: typeof candidate.path === "string" ? candidate.path : "",
-    summary: typeof candidate.summary === "string" ? candidate.summary : "",
-    diffRows: Array.isArray(candidate.diffRows)
-      ? candidate.diffRows
-          .map((row) => normalizeDiffRow(row))
-          .filter((row): row is DiffRow => row !== null)
-      : [],
-  };
-}
-
-function normalizeAuditLogOperation(value: unknown): AuditLogOperation | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Partial<AuditLogOperation>;
-  if (typeof candidate.type !== "string" || !candidate.type.trim()) {
-    return null;
-  }
-
-  return {
-    type: candidate.type,
-    summary: typeof candidate.summary === "string" ? candidate.summary : "",
-    details: typeof candidate.details === "string" ? candidate.details : undefined,
-  };
-}
-
-function normalizeRunCheckValue(label: string, value: unknown): string {
-  const normalizedValue = typeof value === "string" ? value : "";
-  return label.trim().toLowerCase() === "approval"
-    ? normalizeApprovalMode(normalizedValue, DEFAULT_APPROVAL_MODE)
-    : normalizedValue;
-}
-
-function normalizeRunCheck(value: unknown): RunCheck | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Partial<RunCheck>;
-  if (typeof candidate.label !== "string" || !candidate.label.trim()) {
-    return null;
-  }
-
-  return {
-    label: candidate.label,
-    value: normalizeRunCheckValue(candidate.label, candidate.value),
-  };
-}
-
-function normalizeMessageArtifact(value: unknown): MessageArtifact | undefined {
-  if (!value || typeof value !== "object") {
-    return undefined;
-  }
-
-  const candidate = value as Partial<MessageArtifact>;
-  const operationTimeline = Array.isArray(candidate.operationTimeline)
-    ? candidate.operationTimeline
-        .map((operation) => normalizeAuditLogOperation(operation))
-        .filter((operation): operation is AuditLogOperation => operation !== null)
-    : undefined;
-
-  return {
-    title: typeof candidate.title === "string" ? candidate.title : "",
-    activitySummary: Array.isArray(candidate.activitySummary)
-      ? candidate.activitySummary.filter((item): item is string => typeof item === "string")
-      : [],
-    operationTimeline,
-    changedFiles: Array.isArray(candidate.changedFiles)
-      ? candidate.changedFiles
-          .map((file) => normalizeChangedFile(file))
-          .filter((file): file is ChangedFile => file !== null)
-      : [],
-    runChecks: Array.isArray(candidate.runChecks)
-      ? candidate.runChecks
-          .map((check) => normalizeRunCheck(check))
-          .filter((check): check is RunCheck => check !== null)
-      : [],
-  };
-}
-
-function normalizeMessage(value: unknown): Message | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Partial<Message>;
-  if (candidate.role !== "user" && candidate.role !== "assistant") {
-    return null;
-  }
-
-  return {
-    role: candidate.role,
-    text: typeof candidate.text === "string" ? candidate.text : "",
-    accent: typeof candidate.accent === "boolean" ? candidate.accent : undefined,
-    artifact: normalizeMessageArtifact(candidate.artifact),
-  };
-}
-
-export function normalizeSession(value: unknown): Session | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as Partial<Session>;
-  const characterName = typeof candidate.character === "string" && candidate.character.trim() ? candidate.character : "キャラクター";
-
-  return {
-    id: typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : `legacy-${Date.now()}`,
-    taskTitle:
-      typeof candidate.taskTitle === "string" && candidate.taskTitle.trim()
-        ? candidate.taskTitle
-        : typeof candidate.taskSummary === "string" && candidate.taskSummary.trim()
-          ? candidate.taskSummary
-          : "既存セッション",
-    taskSummary: typeof candidate.taskSummary === "string" ? candidate.taskSummary : "",
-    status:
-      candidate.status === "running" || candidate.status === "idle" || candidate.status === "saved"
-        ? candidate.status
-        : "idle",
-    updatedAt:
-      typeof candidate.updatedAt === "string" && candidate.updatedAt.trim()
-        ? candidate.updatedAt === "just now"
-          ? currentTimestampLabel()
-          : candidate.updatedAt
-        : currentTimestampLabel(),
-    provider: normalizeProviderId(candidate.provider),
-    catalogRevision:
-      typeof candidate.catalogRevision === "number" && Number.isInteger(candidate.catalogRevision) && candidate.catalogRevision > 0
-        ? candidate.catalogRevision
-        : DEFAULT_CATALOG_REVISION,
-    workspaceLabel:
-      typeof candidate.workspaceLabel === "string" && candidate.workspaceLabel.trim()
-        ? candidate.workspaceLabel
-        : "workspace",
-    workspacePath: typeof candidate.workspacePath === "string" ? candidate.workspacePath : "",
-    branch: typeof candidate.branch === "string" && candidate.branch.trim() ? candidate.branch : "main",
-    characterId:
-      typeof candidate.characterId === "string" && candidate.characterId.trim()
-        ? candidate.characterId
-        : typeof candidate.character === "string" && candidate.character.trim()
-          ? candidate.character.trim()
-          : "unknown-character",
-    character: characterName,
-    characterIconPath:
-      typeof candidate.characterIconPath === "string" && candidate.characterIconPath.trim()
-        ? candidate.characterIconPath
-        : "",
-    characterThemeColors: normalizeCharacterThemeColors(candidate.characterThemeColors),
-    runState: typeof candidate.runState === "string" && candidate.runState.trim() ? candidate.runState : "idle",
-    approvalMode: normalizeApprovalMode(candidate.approvalMode, DEFAULT_APPROVAL_MODE),
-    model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
-    reasoningEffort:
-      candidate.reasoningEffort === "minimal" ||
-      candidate.reasoningEffort === "low" ||
-      candidate.reasoningEffort === "medium" ||
-      candidate.reasoningEffort === "high" ||
-      candidate.reasoningEffort === "xhigh"
-        ? candidate.reasoningEffort
-        : DEFAULT_REASONING_EFFORT,
-    customAgentName: typeof candidate.customAgentName === "string" ? candidate.customAgentName.trim() : "",
-    allowedAdditionalDirectories: Array.isArray((candidate as { allowedAdditionalDirectories?: unknown[] }).allowedAdditionalDirectories)
-      ? (candidate as { allowedAdditionalDirectories?: unknown[] }).allowedAdditionalDirectories
-          ?.filter((directory): directory is string => typeof directory === "string")
-          .map((directory) => directory.trim())
-          .filter((directory) => directory.length > 0) ?? []
-      : [],
-    threadId:
-      typeof candidate.threadId === "string"
-        ? candidate.threadId
-        : typeof (candidate as { threadLabel?: string }).threadLabel === "string"
-          ? (candidate as { threadLabel?: string }).threadLabel ?? ""
-          : "",
-    messages: Array.isArray(candidate.messages)
-      ? candidate.messages
-          .map((message) => normalizeMessage(message))
-          .filter((message): message is Message => message !== null)
-      : [],
-    stream: Array.isArray(candidate.stream) ? candidate.stream : [],
-  };
-}
-
-export function cloneSessions(sessions: Session[]): Session[] {
-  return JSON.parse(JSON.stringify(sessions)) as Session[];
-}
-
-export function buildNewSession(input: CreateSessionInput): Session {
-  const normalizedTaskTitle = input.taskTitle.trim() || `${input.workspaceLabel} で新規作業を開始する`;
-  return {
-    id: `launch-${Date.now()}`,
-    taskTitle: normalizedTaskTitle,
-    taskSummary: `${input.workspaceLabel} で新規セッションを開始。${input.character} のロールを保ったまま、ここから最初の指示を待つ。`,
-    status: "idle",
-    updatedAt: currentTimestampLabel(),
-    provider: normalizeProviderId(input.provider ?? DEFAULT_PROVIDER_ID),
-    catalogRevision:
-      typeof input.catalogRevision === "number" && Number.isInteger(input.catalogRevision) && input.catalogRevision > 0
-        ? input.catalogRevision
-        : DEFAULT_CATALOG_REVISION,
-    workspaceLabel: input.workspaceLabel,
-    workspacePath: input.workspacePath,
-    branch: input.branch,
-    characterId: input.characterId,
-    character: input.character,
-    characterIconPath: input.characterIconPath,
-    characterThemeColors: normalizeCharacterThemeColors(input.characterThemeColors),
-    runState: "idle",
-    approvalMode: normalizeApprovalMode(input.approvalMode, DEFAULT_APPROVAL_MODE),
-    model: input.model?.trim() || DEFAULT_MODEL_ID,
-    reasoningEffort: input.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
-    customAgentName: input.customAgentName?.trim() || "",
-    allowedAdditionalDirectories: Array.isArray(input.allowedAdditionalDirectories)
-      ? input.allowedAdditionalDirectories.map((directory) => directory.trim()).filter((directory) => directory.length > 0)
-      : [],
-    threadId: "",
-    messages: [],
-    stream: [],
-  };
-}
-
-export function buildCharacterEditorUrl(characterId?: string | null): string {
-  if (!characterId) {
-    return "./character.html?mode=create";
-  }
-
-  return `./character.html?characterId=${encodeURIComponent(characterId)}`;
-}
-
-export function getSessionIdFromLocation(): string | null {
-  return new URLSearchParams(getLocationSearch()).get("sessionId");
-}
-
-export function getCharacterIdFromLocation(): string | null {
-  return new URLSearchParams(getLocationSearch()).get("characterId");
-}
-
-export function getDiffTokenFromLocation(): string | null {
-  return new URLSearchParams(getLocationSearch()).get("token");
-}
-
-export function isCharacterCreateMode(): boolean {
-  return new URLSearchParams(getLocationSearch()).get("mode") === "create";
 }

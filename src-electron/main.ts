@@ -9,18 +9,14 @@ import {
   type CharacterMemoryDelta,
   type CharacterMemoryEntry,
   type CharacterReflectionMonologue,
-  cloneSessions,
   currentTimestampLabel,
-  type CreateSessionInput,
   type DiscoveredCustomAgent,
   type DiscoveredSkill,
-  type DiffPreviewPayload,
   type LiveApprovalDecision,
   type LiveApprovalRequest,
   type LiveSessionRunState,
   type ProviderQuotaTelemetry,
   type RunSessionTurnRequest,
-  type Session,
   type SessionBackgroundActivityKind,
   type SessionBackgroundActivityState,
   type SessionMemory,
@@ -32,6 +28,12 @@ import {
   type CharacterProfile,
   type CreateCharacterInput,
 } from "../src/character-state.js";
+import {
+  cloneSessions,
+  type CreateSessionInput,
+  type DiffPreviewPayload,
+  type Session,
+} from "../src/session-state.js";
 import { getProviderAppSettings } from "../src/provider-settings-state.js";
 import {
   DEFAULT_PROVIDER_ID,
@@ -48,6 +50,7 @@ import {
   updateStoredCharacter,
 } from "./character-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
+import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { CodexAdapter } from "./codex-adapter.js";
 import { CopilotAdapter } from "./copilot-adapter.js";
@@ -65,6 +68,8 @@ import { SessionPersistenceService } from "./session-persistence-service.js";
 import { SessionWindowBridge } from "./session-window-bridge.js";
 import { MemoryOrchestrationService } from "./memory-orchestration-service.js";
 import { SettingsCatalogService } from "./settings-catalog-service.js";
+import { SessionObservabilityService } from "./session-observability-service.js";
+import { SessionApprovalService } from "./session-approval-service.js";
 import { buildProjectMemoryPromotionEntries } from "./project-memory-promotion.js";
 import { retrieveProjectMemoryEntries } from "./project-memory-retrieval.js";
 import {
@@ -155,13 +160,6 @@ let settingsWindow: BrowserWindow | null = null;
 const characterEditorWindows = new Map<string, BrowserWindow>();
 const diffWindows = new Map<string, BrowserWindow>();
 const diffPreviewStore = new Map<string, DiffPreviewPayload>();
-const liveSessionRuns = new Map<string, LiveSessionRunState>();
-const providerQuotaTelemetryByProvider = new Map<string, ProviderQuotaTelemetry>();
-const sessionContextTelemetryBySessionId = new Map<string, SessionContextTelemetry>();
-const sessionBackgroundActivities = new Map<string, SessionBackgroundActivityState>();
-const providerQuotaRefreshPromises = new Map<string, Promise<ProviderQuotaTelemetry | null>>();
-const providerQuotaRefreshTimers = new Map<string, NodeJS.Timeout[]>();
-const pendingSessionApprovalRequests = new Map<string, { requestId: string; resolve: (decision: LiveApprovalDecision) => void }>();
 let sessions: Session[] = [];
 let characters: CharacterProfile[] = [];
 let sessionStorage: SessionStorage | null = null;
@@ -179,6 +177,9 @@ let sessionPersistenceService: SessionPersistenceService | null = null;
 let sessionWindowBridge: SessionWindowBridge<BrowserWindow> | null = null;
 let memoryOrchestrationService: MemoryOrchestrationService | null = null;
 let settingsCatalogService: SettingsCatalogService | null = null;
+let sessionObservabilityService: SessionObservabilityService | null = null;
+let sessionApprovalService: SessionApprovalService | null = null;
+let auditLogService: AuditLogService | null = null;
 
 function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0]): BrowserWindow {
   return new BrowserWindow({
@@ -235,6 +236,14 @@ function requireAuditLogStorage(): AuditLogStorage {
   return auditLogStorage;
 }
 
+function requireAuditLogService(): AuditLogService {
+  if (!auditLogService) {
+    auditLogService = new AuditLogService(requireAuditLogStorage());
+  }
+
+  return auditLogService;
+}
+
 function requireAppSettingsStorage(): AppSettingsStorage {
   if (!appSettingsStorage) {
     throw new Error("app settings storage が初期化されていないよ。");
@@ -255,8 +264,8 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       getProviderAdapter,
       getSessionMemory: (session) => requireSessionMemoryStorage().ensureSessionMemory(session),
       resolveProjectMemoryEntriesForPrompt,
-      createAuditLog: (entry) => requireAuditLogStorage().createAuditLog(entry),
-      updateAuditLog: (id, entry) => requireAuditLogStorage().updateAuditLog(id, entry),
+      createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
+      updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
       setLiveSessionRun,
       getLiveSessionRun,
       waitForApprovalDecision: (sessionId, request, signal) =>
@@ -278,9 +287,10 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       clearWorkspaceFileIndex,
       broadcastLiveSessionRun,
       resolvePendingApprovalRequest: (sessionId, decision) => {
-        const pendingApprovalRequest = pendingSessionApprovalRequests.get(sessionId);
-        if (pendingApprovalRequest) {
-          pendingApprovalRequest.resolve(decision);
+        const liveRun = getLiveSessionRun(sessionId);
+        const requestId = liveRun?.approvalRequest?.requestId;
+        if (requestId) {
+          requireSessionApprovalService().resolveLiveApproval(sessionId, requestId, decision);
         }
       },
       currentTimestampLabel,
@@ -391,8 +401,8 @@ function requireMemoryOrchestrationService(): MemoryOrchestrationService {
       markCharacterMemoryEntriesUsed: (entryIds) => requireCharacterMemoryStorage().markCharacterMemoryEntriesUsed(entryIds),
       saveCharacterMemoryDelta: applyCharacterMemoryDelta,
       appendMonologueToSession,
-      createAuditLog: (entry) => requireAuditLogStorage().createAuditLog(entry),
-      updateAuditLog: (id, entry) => requireAuditLogStorage().updateAuditLog(id, entry),
+      createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
+      updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
       setSessionBackgroundActivity,
     });
   }
@@ -417,7 +427,7 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       clearProviderQuotaTelemetry,
       clearSessionContextTelemetry,
       invalidateProviderSessionThread,
-      clearAuditLogs: () => requireAuditLogStorage().clearAuditLogs(),
+      clearAuditLogs: () => requireAuditLogService().clearAuditLogs(),
       resetAppSettings: () => requireAppSettingsStorage().resetSettings(),
       resetModelCatalogToBundled: () => requireModelCatalogStorage().resetToBundled(),
       clearProjectMemories: () => requireProjectMemoryStorage().clearProjectMemories(),
@@ -437,6 +447,54 @@ function requireSettingsCatalogService(): SettingsCatalogService {
   }
 
   return settingsCatalogService;
+}
+
+function requireSessionObservabilityService(): SessionObservabilityService {
+  if (!sessionObservabilityService) {
+    sessionObservabilityService = new SessionObservabilityService({
+      onProviderQuotaTelemetryChanged: (providerId, telemetry) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) {
+            window.webContents.send(WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT, { providerId, telemetry });
+          }
+        }
+      },
+      onSessionContextTelemetryChanged: (sessionId, telemetry) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) {
+            window.webContents.send(WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT, { sessionId, telemetry });
+          }
+        }
+      },
+      onSessionBackgroundActivityChanged: (sessionId, kind, state) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) {
+            window.webContents.send(WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT, { sessionId, kind, state });
+          }
+        }
+      },
+      onLiveSessionRunChanged: (sessionId, state) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) {
+            window.webContents.send(WITHMATE_LIVE_SESSION_RUN_EVENT, { sessionId, state });
+          }
+        }
+      },
+    });
+  }
+
+  return sessionObservabilityService;
+}
+
+function requireSessionApprovalService(): SessionApprovalService {
+  if (!sessionApprovalService) {
+    sessionApprovalService = new SessionApprovalService({
+      updateLiveSessionRun: (sessionId, recipe) =>
+        requireSessionObservabilityService().updateLiveSessionRun(sessionId, recipe),
+    });
+  }
+
+  return sessionApprovalService;
 }
 
 function requireSessionMemoryStorage(): SessionMemoryStorage {
@@ -489,6 +547,8 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
 }
 
 function closePersistentStores(): void {
+  sessionApprovalService?.reset();
+  sessionObservabilityService?.dispose();
   modelCatalogStorage?.close();
   sessionStorage?.close();
   sessionMemoryStorage?.close();
@@ -502,8 +562,11 @@ function closePersistentStores(): void {
   projectMemoryStorage = null;
   characterMemoryStorage = null;
   auditLogStorage = null;
+  auditLogService = null;
   appSettingsStorage = null;
   settingsCatalogService = null;
+  sessionObservabilityService = null;
+  sessionApprovalService = null;
 }
 
 async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
@@ -556,7 +619,7 @@ function listCharacters(): CharacterProfile[] {
 }
 
 function listSessionAuditLogs(sessionId: string): AuditLogEntry[] {
-  return requireAuditLogStorage().listSessionAuditLogs(sessionId);
+  return requireAuditLogService().listSessionAuditLogs(sessionId);
 }
 
 function listSessionSkills(sessionId: string): DiscoveredSkill[] {
@@ -652,166 +715,99 @@ function broadcastAppSettings(settings?: ReturnType<AppSettingsStorage["getSetti
 }
 
 function getProviderQuotaTelemetry(providerId: string): ProviderQuotaTelemetry | null {
-  return providerQuotaTelemetryByProvider.get(providerId) ?? null;
+  return requireSessionObservabilityService().getProviderQuotaTelemetry(providerId);
 }
 
 function broadcastProviderQuotaTelemetry(providerId: string): void {
-  const telemetry = getProviderQuotaTelemetry(providerId);
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT, { providerId, telemetry });
-    }
-  }
+  requireSessionObservabilityService().setProviderQuotaTelemetry(providerId, getProviderQuotaTelemetry(providerId));
 }
 
 function setProviderQuotaTelemetry(providerId: string, telemetry: ProviderQuotaTelemetry | null): void {
-  if (telemetry) {
-    providerQuotaTelemetryByProvider.set(providerId, telemetry);
-  } else {
-    providerQuotaTelemetryByProvider.delete(providerId);
-  }
-
-  broadcastProviderQuotaTelemetry(providerId);
+  requireSessionObservabilityService().setProviderQuotaTelemetry(providerId, telemetry);
 }
 
 function clearProviderQuotaTelemetry(providerId: string): void {
-  providerQuotaRefreshPromises.delete(providerId);
-  const scheduledTimers = providerQuotaRefreshTimers.get(providerId) ?? [];
-  for (const timer of scheduledTimers) {
-    clearTimeout(timer);
-  }
-  providerQuotaRefreshTimers.delete(providerId);
-  setProviderQuotaTelemetry(providerId, null);
+  requireSessionObservabilityService().clearProviderQuotaTelemetry(providerId);
 }
 
 function clearAllProviderQuotaTelemetry(): void {
-  const providerIds = new Set<string>([
-    ...providerQuotaTelemetryByProvider.keys(),
-    ...providerQuotaRefreshPromises.keys(),
-  ]);
-  providerQuotaRefreshPromises.clear();
-  providerQuotaTelemetryByProvider.clear();
-  for (const providerId of providerIds) {
-    broadcastProviderQuotaTelemetry(providerId);
-  }
+  requireSessionObservabilityService().clearAllProviderQuotaTelemetry();
 }
 
 function isProviderQuotaTelemetryStale(telemetry: ProviderQuotaTelemetry | null): boolean {
-  if (!telemetry) {
-    return true;
-  }
-
-  const updatedAt = Date.parse(telemetry.updatedAt);
-  if (Number.isNaN(updatedAt)) {
-    return true;
-  }
-
-  return Date.now() - updatedAt >= PROVIDER_QUOTA_STALE_TTL_MS;
+  return telemetry ? requireSessionObservabilityService().isProviderQuotaTelemetryStale(telemetry.provider, PROVIDER_QUOTA_STALE_TTL_MS) : true;
 }
 
 async function refreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null> {
-  const inFlight = providerQuotaRefreshPromises.get(providerId);
-  if (inFlight) {
-    return inFlight;
-  }
-
-  const refreshPromise = (async () => {
+  return requireSessionObservabilityService().refreshProviderQuotaTelemetry(providerId, async () => {
     const appSettings = requireAppSettingsStorage().getSettings();
-    const telemetry = await getProviderAdapter(providerId).getProviderQuotaTelemetry({
+    return getProviderAdapter(providerId).getProviderQuotaTelemetry({
       providerId,
       appSettings,
     });
-    setProviderQuotaTelemetry(providerId, telemetry);
-    return telemetry;
-  })();
-
-  providerQuotaRefreshPromises.set(providerId, refreshPromise);
-  try {
-    return await refreshPromise;
-  } finally {
-    providerQuotaRefreshPromises.delete(providerId);
-  }
+  });
 }
 
 async function getOrRefreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null> {
-  const current = getProviderQuotaTelemetry(providerId);
-  if (!isProviderQuotaTelemetryStale(current)) {
-    return current;
-  }
-
-  return refreshProviderQuotaTelemetry(providerId);
+  return requireSessionObservabilityService().getOrRefreshProviderQuotaTelemetry(
+    providerId,
+    PROVIDER_QUOTA_STALE_TTL_MS,
+    async () => {
+      const appSettings = requireAppSettingsStorage().getSettings();
+      return getProviderAdapter(providerId).getProviderQuotaTelemetry({
+        providerId,
+        appSettings,
+      });
+    },
+  );
 }
 
 function scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void {
-  const existingTimers = providerQuotaRefreshTimers.get(providerId) ?? [];
-  for (const timer of existingTimers) {
-    clearTimeout(timer);
-  }
-
-  const timers = delaysMs.map((delayMs) =>
-    setTimeout(() => {
-      void refreshProviderQuotaTelemetry(providerId).catch(() => undefined);
-    }, delayMs),
-  );
-  providerQuotaRefreshTimers.set(providerId, timers);
+  requireSessionObservabilityService().scheduleProviderQuotaTelemetryRefresh(providerId, delaysMs, async () => {
+    const appSettings = requireAppSettingsStorage().getSettings();
+    return getProviderAdapter(providerId).getProviderQuotaTelemetry({
+      providerId,
+      appSettings,
+    });
+  });
 }
 
 function getSessionContextTelemetry(sessionId: string): SessionContextTelemetry | null {
-  return sessionContextTelemetryBySessionId.get(sessionId) ?? null;
+  return requireSessionObservabilityService().getSessionContextTelemetry(sessionId);
 }
 
 function broadcastSessionContextTelemetry(sessionId: string): void {
-  const telemetry = getSessionContextTelemetry(sessionId);
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT, { sessionId, telemetry });
-    }
-  }
+  requireSessionObservabilityService().setSessionContextTelemetry(sessionId, getSessionContextTelemetry(sessionId));
 }
 
 function setSessionContextTelemetry(sessionId: string, telemetry: SessionContextTelemetry | null): void {
-  if (telemetry) {
-    sessionContextTelemetryBySessionId.set(sessionId, telemetry);
-  } else {
-    sessionContextTelemetryBySessionId.delete(sessionId);
-  }
-
-  broadcastSessionContextTelemetry(sessionId);
+  requireSessionObservabilityService().setSessionContextTelemetry(sessionId, telemetry);
 }
 
 function clearSessionContextTelemetry(sessionId: string): void {
-  setSessionContextTelemetry(sessionId, null);
+  requireSessionObservabilityService().clearSessionContextTelemetry(sessionId);
 }
 
 function clearAllSessionContextTelemetry(): void {
-  const sessionIds = Array.from(sessionContextTelemetryBySessionId.keys());
-  sessionContextTelemetryBySessionId.clear();
-  for (const sessionId of sessionIds) {
-    broadcastSessionContextTelemetry(sessionId);
-  }
-}
-
-function buildSessionBackgroundActivityKey(sessionId: string, kind: SessionBackgroundActivityKind): string {
-  return `${sessionId}\u001f${kind}`;
+  requireSessionObservabilityService().clearAllSessionContextTelemetry();
 }
 
 function getSessionBackgroundActivity(
   sessionId: string,
   kind: SessionBackgroundActivityKind,
 ): SessionBackgroundActivityState | null {
-  return sessionBackgroundActivities.get(buildSessionBackgroundActivityKey(sessionId, kind)) ?? null;
+  return requireSessionObservabilityService().getSessionBackgroundActivity(sessionId, kind);
 }
 
 function broadcastSessionBackgroundActivity(
   sessionId: string,
   kind: SessionBackgroundActivityKind,
 ): void {
-  const state = getSessionBackgroundActivity(sessionId, kind);
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT, { sessionId, kind, state });
-    }
-  }
+  requireSessionObservabilityService().setSessionBackgroundActivity(
+    sessionId,
+    kind,
+    getSessionBackgroundActivity(sessionId, kind),
+  );
 }
 
 function setSessionBackgroundActivity(
@@ -819,30 +815,15 @@ function setSessionBackgroundActivity(
   kind: SessionBackgroundActivityKind,
   state: SessionBackgroundActivityState | null,
 ): void {
-  const key = buildSessionBackgroundActivityKey(sessionId, kind);
-  if (state) {
-    sessionBackgroundActivities.set(key, state);
-  } else {
-    sessionBackgroundActivities.delete(key);
-  }
-
-  broadcastSessionBackgroundActivity(sessionId, kind);
+  requireSessionObservabilityService().setSessionBackgroundActivity(sessionId, kind, state);
 }
 
 function clearSessionBackgroundActivities(sessionId: string): void {
-  setSessionBackgroundActivity(sessionId, "memory-generation", null);
-  setSessionBackgroundActivity(sessionId, "monologue", null);
+  requireSessionObservabilityService().clearSessionBackgroundActivities(sessionId);
 }
 
 function clearAllSessionBackgroundActivities(): void {
-  const activityKeys = Array.from(sessionBackgroundActivities.keys());
-  sessionBackgroundActivities.clear();
-  for (const key of activityKeys) {
-    const [sessionId, kind] = key.split("\u001f") as [string | undefined, SessionBackgroundActivityKind | undefined];
-    if (sessionId && kind) {
-      broadcastSessionBackgroundActivity(sessionId, kind);
-    }
-  }
+  requireSessionObservabilityService().clearAllSessionBackgroundActivities();
 }
 
 function listOpenSessionWindowIds(): string[] {
@@ -875,40 +856,22 @@ function closeResetTargetWindows(): void {
 }
 
 function getLiveSessionRun(sessionId: string): LiveSessionRunState | null {
-  return liveSessionRuns.get(sessionId) ?? null;
+  return requireSessionObservabilityService().getLiveSessionRun(sessionId);
 }
 
 function setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void {
-  if (state) {
-    liveSessionRuns.set(sessionId, state);
-  } else {
-    liveSessionRuns.delete(sessionId);
-  }
-
-  broadcastLiveSessionRun(sessionId);
+  requireSessionObservabilityService().setLiveSessionRun(sessionId, state);
 }
 
 function updateLiveSessionRun(
   sessionId: string,
   recipe: (current: LiveSessionRunState) => LiveSessionRunState,
 ): LiveSessionRunState | null {
-  const current = getLiveSessionRun(sessionId);
-  if (!current) {
-    return null;
-  }
-
-  const next = recipe(current);
-  setLiveSessionRun(sessionId, next);
-  return next;
+  return requireSessionObservabilityService().updateLiveSessionRun(sessionId, recipe);
 }
 
 function broadcastLiveSessionRun(sessionId: string): void {
-  const state = getLiveSessionRun(sessionId);
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(WITHMATE_LIVE_SESSION_RUN_EVENT, { sessionId, state });
-    }
-  }
+  requireSessionObservabilityService().setLiveSessionRun(sessionId, getLiveSessionRun(sessionId));
 }
 
 function cancelSessionRun(sessionId: string): void {
@@ -916,12 +879,7 @@ function cancelSessionRun(sessionId: string): void {
 }
 
 function resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void {
-  const pendingRequest = pendingSessionApprovalRequests.get(sessionId);
-  if (!pendingRequest || pendingRequest.requestId !== requestId) {
-    throw new Error("対象の承認要求はもう存在しないよ。");
-  }
-
-  pendingRequest.resolve(decision);
+  requireSessionApprovalService().resolveLiveApproval(sessionId, requestId, decision);
 }
 
 function waitForLiveApprovalDecision(
@@ -929,44 +887,7 @@ function waitForLiveApprovalDecision(
   request: LiveApprovalRequest,
   signal: AbortSignal,
 ): Promise<LiveApprovalDecision> {
-  if (signal.aborted) {
-    return Promise.resolve("deny");
-  }
-
-  return new Promise<LiveApprovalDecision>((resolve) => {
-    const handleAbort = () => {
-      settle("deny");
-    };
-
-    const cleanup = () => {
-      signal.removeEventListener("abort", handleAbort);
-      const currentPendingRequest = pendingSessionApprovalRequests.get(sessionId);
-      if (currentPendingRequest?.requestId === request.requestId) {
-        pendingSessionApprovalRequests.delete(sessionId);
-      }
-
-      updateLiveSessionRun(sessionId, (current) =>
-        current.approvalRequest?.requestId === request.requestId
-          ? { ...current, approvalRequest: null }
-          : current,
-      );
-    };
-
-    const settle = (decision: LiveApprovalDecision) => {
-      cleanup();
-      resolve(decision);
-    };
-
-    signal.addEventListener("abort", handleAbort, { once: true });
-    pendingSessionApprovalRequests.set(sessionId, {
-      requestId: request.requestId,
-      resolve: settle,
-    });
-    updateLiveSessionRun(sessionId, (current) => ({
-      ...current,
-      approvalRequest: request,
-    }));
-  });
+  return requireSessionApprovalService().waitForLiveApprovalDecision(sessionId, request, signal);
 }
 
 async function importModelCatalogFromFile(targetWindow?: BrowserWindow | null): Promise<ModelCatalogSnapshot | null> {

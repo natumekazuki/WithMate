@@ -8,12 +8,12 @@ import {
   type ProviderQuotaTelemetry,
   type ProjectMemoryEntry,
   type RunSessionTurnRequest,
-  type Session,
   type SessionContextTelemetry,
   type SessionMemory,
 } from "../src/app-state.js";
 import { type CharacterProfile } from "../src/character-state.js";
 import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
+import { type Session } from "../src/session-state.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import { ProviderTurnError, type ProviderTurnAdapter } from "./provider-runtime.js";
 
