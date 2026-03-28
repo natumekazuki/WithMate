@@ -14,6 +14,13 @@
 WithMate における Memory を、`coding agent の継続性` と `character との積み重ね` を支える基盤として定義する。  
 current milestone では、Memory をまず `Project`、`Session`、`Character` の 3 層に分け、何をどこへ残すかの判断基準を固定する。
 
+## Position
+
+- Memory 全体方針の正本はこの文書とする
+- `Project Memory` の storage / promotion / retrieval detail は `docs/design/project-memory-storage.md` を参照する
+- `Character Memory` と `character reflection cycle` の detail は `docs/design/character-memory-storage.md` を参照する
+- coding plane への prompt 注入 detail は `docs/design/prompt-composition.md` を参照する
+
 ## Issue Mapping
 
 - `#3`
@@ -107,7 +114,7 @@ character との積み重ねは、project や session に閉じない。
 - 一緒に過ごした結果として残したい印象
 
 このため、`Project Memory` とも `Session Memory` とも別に持つ。  
-利用先は主に `Character Stream`、将来の character definition update、関係性 summary の生成補助である。
+利用先は主に `独り言`、将来の character definition update、関係性 summary の生成補助である。
 
 ## Internal Processing Policy
 
@@ -372,7 +379,7 @@ type SessionMemoryV1 = {
 
 主用途:
 
-- `Character Stream` の入力
+- `独り言` / `character reflection cycle` の入力
 - 将来の character definition update 補助
 - 関係性 summary の生成
 
@@ -660,7 +667,7 @@ background memory extraction では次を監査対象にする。
 
 - どの会話 turn の後で memory が更新されたか追える
 - threshold や固定 prompt の挙動を後から検証できる
-- Character Stream のような別の background task が増えても、同じ audit policy で扱える
+- 独り言や別の background task が増えても、同じ audit policy で扱える
 
 ### Why
 
@@ -686,102 +693,49 @@ Copilot SDK では response schema を厳密固定する surface が現時点で
 - memory extraction plane は別 request / 別モデルで扱う
 - 形式が合った時だけ保存する
 
-## Relationship To Character Stream
+## Relationship To Monologue
 
-Memory extraction plane は `Character Stream` と違い、セッション継続性のための内部処理である。
+memory extraction plane は `独り言` / `character reflection cycle` と違い、セッション継続性のための内部処理である。
 
 - 主目的は体験演出ではない
 - 本体 turn に従属して発火する
 - 裏処理として説明しやすい
 
-このため、Character Stream で懸念していた `機械的な自動実行` とは切り分けて扱う。
+このため、`独り言` backend とは trigger や用途が近くても、同じ目的の plane としては扱わない。
 
 ## Prompt Injection Policy
 
-Memory は 3 層すべてを同じように prompt へ入れない。
+Memory は 3 層すべてを同じように coding plane prompt へ入れない。
 
-### 1. Character
-
-- `character.md` や UI copy と同じく、character は session の基本前提として扱う
-- `Character Memory` はここには含めない
-- 関係性の記憶は main の coding session prompt ではなく、monologue / character update 側で使う
-
-### 2. Session Memory
-
-- `Session Memory` は prompt の骨格に近い
-- 毎 turn の継続性に必要なので、常設注入を基本とする
-- まずは次の最小 summary を常設候補とする
-  - 目的
-  - 決定事項
-  - 未解決論点
-  - 次にやること
-
-### 3. Project Memory
-
-- `Project Memory` は常設しない
-- 毎 turn 全量を入れるのではなく、必要な時だけ検索して数件を注入する
-- つまり RAG 的な検索注入を基本とする
-
-### 4. Character Memory
-
-- `Character Memory` は main の coding session prompt には入れない
-- 主な用途は `Character Stream`、関係性 summary、将来の character update 補助である
-- current milestone では coding plane の prompt 設計対象から外す
+- `Session Memory`
+  - coding plane prompt の骨格として常設注入する
+- `Project Memory`
+  - 常設せず、必要時だけ retrieval して数件を補助知識として入れる
+- `Character Memory`
+  - coding plane prompt には入れず、独り言 / character update 側だけで使う
 
 ## Injection Order
 
-current の設計では、実際の coding session prompt 組み込み順は次の考え方を基本にする。
+current の coding plane prompt は次の順序を基本にする。
 
 1. app / provider の system 指示
 2. `character.md`
-3. `Session Memory` summary
-4. 必要時に検索した `Project Memory`
+3. `Session Memory`
+4. 必要時の `Project Memory`
 5. ユーザー入力
 
-つまり:
+つまり、
 
 - `Session Memory` は骨格
 - `Project Memory` は必要時の補助知識
-- `Character Memory` は coding plane の prompt 注入対象ではない
+- `Character Memory` は coding plane prompt の対象外
 
 として扱う。
 
-## Retrieval Policy
+## Prompt Composition Boundary
 
-### Always Included
-
-- `character.md`
-- `Session Memory` summary
-
-### Retrieved On Demand
-
-- `Project Memory`
-
-検索注入の契機は今後の実装で詰めるが、少なくとも次のような場面を想定する。
-
-- project 固有の方針や過去判断が関係しそうなとき
-- session 内で「前に決めた project 全体の方針」を参照したいとき
-
-## Non Goals For Prompt Injection
-
-- `Project Memory` を毎 turn 全量投入すること
-- `Session Memory` と `Project Memory` を同一形式で扱うこと
-- `Character Memory` を main の coding session prompt へ注入すること
-- 初期段階から local model に注入判定すべてを任せること
-
-## Connection To Prompt Composition
-
-`docs/design/prompt-composition.md` は prompt の合成レイヤーを扱う。  
-本書は、そのうち `Memory をどの層でどう差し込むか` の判断基準を扱う。
-
-実装時は次の責務分離を前提にする。
-
-- `prompt-composition.md`
-  - character、system prefix、user input の合成
-- `memory-architecture.md`
-  - Session / Project / Character memory の選択と注入条件
-
-具体的な section 書式、件数上限、provider transport への分配方法は `docs/design/prompt-composition.md` を正本にする。
+本書は `Memory をどの層でどう差し込むか` の判断基準を扱う。  
+具体的な section 書式、件数上限、format detail、provider transport への分配方法は `docs/design/prompt-composition.md` を正本にする。
 
 ## Non Goals
 

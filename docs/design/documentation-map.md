@@ -23,9 +23,6 @@ current 実装の正本として維持する文書。
 | `provider-adapter.md` | provider 差分と adapter 責務 |
 | `coding-agent-capability-matrix.md` | current の provider capability 一覧 |
 | `memory-architecture.md` | Memory 全体設計の正本 |
-| `project-memory-storage.md` | Project Memory の保存 / retrieval 詳細 |
-| `character-memory-storage.md` | Character Memory と reflection cycle の正本 |
-| `prompt-composition.md` | coding plane prompt の組み立て順 |
 | `settings-ui.md` | Settings Window と設定責務 |
 | `audit-log.md` | audit 記録の current 仕様 |
 | `database-schema.md` | current 保存構造と DB 定義の正本 |
@@ -41,6 +38,9 @@ current 実装の正本として維持する文書。
 | --- | --- |
 | `character-management-ui.md` | Character Editor の UI 詳細 |
 | `character-storage.md` | character catalog の保存詳細 |
+| `project-memory-storage.md` | Project Memory の storage / promotion / retrieval detail |
+| `character-memory-storage.md` | Character Memory と reflection cycle の detail |
+| `prompt-composition.md` | coding plane prompt の section / format detail |
 | `monologue-provider-policy.md` | 独り言 / character reflection backend の provider 方針 |
 | `message-rich-text.md` | message renderer の仕様 |
 | `session-character-copy.md` | Session copy slot の詳細 |

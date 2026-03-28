@@ -8,6 +8,12 @@
 
 WithMate が保持する system 指示、character 定義、memory、ユーザー入力を、coding plane の prompt へ安定注入するための責務分離を定義する。
 
+## Position
+
+- この文書は coding plane prompt の section 順序と format detail を持つ supporting doc として扱う
+- prompt に注入する Memory の全体方針は `docs/design/memory-architecture.md` を参照する
+- provider 境界は `docs/design/provider-adapter.md` を参照する
+
 ## Source Of Truth
 
 - キャラクター定義の正本は `character.md`
