@@ -76,11 +76,13 @@ import { createMainBootstrapDeps } from "./main-bootstrap-deps.js";
 import { MainInfrastructureRegistry } from "./main-infrastructure-registry.js";
 import { MainBootstrapService } from "./main-bootstrap-service.js";
 import { MainBroadcastFacade } from "./main-broadcast-facade.js";
+import { MainCharacterFacade } from "./main-character-facade.js";
 import { MainObservabilityFacade } from "./main-observability-facade.js";
+import { MainProviderFacade } from "./main-provider-facade.js";
 import { MainSessionCommandFacade } from "./main-session-command-facade.js";
 import { MainSessionPersistenceFacade } from "./main-session-persistence-facade.js";
+import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
-import { resolveProviderCatalogOrThrow, resolveProviderTurnAdapter } from "./provider-support.js";
 import {
   type CharacterReflectionTriggerReason,
 } from "./character-reflection.js";
@@ -128,9 +130,12 @@ let auditLogService: AuditLogService | null = null;
 let sessionMemorySupportService: SessionMemorySupportService | null = null;
 let characterRuntimeService: CharacterRuntimeService | null = null;
 let mainBroadcastFacade: MainBroadcastFacade<BrowserWindow> | null = null;
+let mainCharacterFacade: MainCharacterFacade | null = null;
 let mainObservabilityFacade: MainObservabilityFacade | null = null;
+let mainProviderFacade: MainProviderFacade | null = null;
 let mainSessionCommandFacade: MainSessionCommandFacade | null = null;
 let mainSessionPersistenceFacade: MainSessionPersistenceFacade | null = null;
+let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
 let mainInfrastructureRegistry:
   | MainInfrastructureRegistry<
@@ -399,6 +404,28 @@ function requireMainBroadcastFacade(): MainBroadcastFacade<BrowserWindow> {
   return mainBroadcastFacade;
 }
 
+function requireMainCharacterFacade(): MainCharacterFacade {
+  if (!mainCharacterFacade) {
+    mainCharacterFacade = new MainCharacterFacade({
+      getMainQueryService: () => requireMainQueryService(),
+      getCharacterRuntimeService: () => requireCharacterRuntimeService(),
+    });
+  }
+
+  return mainCharacterFacade;
+}
+
+function requireMainWindowFacade(): MainWindowFacade {
+  if (!mainWindowFacade) {
+    mainWindowFacade = new MainWindowFacade({
+      getAuxWindowService: () => requireAuxWindowService(),
+      getSessionWindowBridge: () => requireSessionWindowBridge(),
+    });
+  }
+
+  return mainWindowFacade;
+}
+
 function requireMainObservabilityFacade(): MainObservabilityFacade {
   if (!mainObservabilityFacade) {
     mainObservabilityFacade = new MainObservabilityFacade({
@@ -410,6 +437,19 @@ function requireMainObservabilityFacade(): MainObservabilityFacade {
   }
 
   return mainObservabilityFacade;
+}
+
+function requireMainProviderFacade(): MainProviderFacade {
+  if (!mainProviderFacade) {
+    mainProviderFacade = new MainProviderFacade({
+      getModelCatalog: (revision) => requireModelCatalogStorage().getCatalog(revision ?? null),
+      ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
+      codexAdapter,
+      copilotAdapter,
+    });
+  }
+
+  return mainProviderFacade;
 }
 
 function requireMainSessionCommandFacade(): MainSessionCommandFacade {
@@ -853,9 +893,12 @@ function closePersistentStores(): void {
   sessionMemorySupportService = null;
   characterRuntimeService = null;
   mainBroadcastFacade = null;
+  mainCharacterFacade = null;
   mainObservabilityFacade = null;
+  mainProviderFacade = null;
   mainSessionCommandFacade = null;
   mainSessionPersistenceFacade = null;
+  mainWindowFacade = null;
   mainQueryService = null;
   mainInfrastructureRegistry?.reset();
   mainInfrastructureRegistry = null;
@@ -883,9 +926,12 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   sessionMemorySupportService = null;
   characterRuntimeService = null;
   mainBroadcastFacade = null;
+  mainCharacterFacade = null;
   mainObservabilityFacade = null;
+  mainProviderFacade = null;
   mainSessionCommandFacade = null;
   mainSessionPersistenceFacade = null;
+  mainWindowFacade = null;
   mainQueryService = null;
   mainInfrastructureRegistry?.reset();
   mainInfrastructureRegistry = null;
@@ -895,40 +941,30 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
 }
 
 function getModelCatalog(revision?: number | null): ModelCatalogSnapshot | null {
-  return requireModelCatalogStorage().getCatalog(revision ?? null);
+  return requireMainProviderFacade().getModelCatalog(revision);
 }
 
 function resolveProviderCatalog(
   providerId: string | null | undefined,
   revision?: number | null,
 ): { snapshot: ModelCatalogSnapshot; provider: ModelCatalogProvider } {
-  return resolveProviderCatalogOrThrow({
-    providerId,
-    revision,
-    getModelCatalog,
-    ensureSeeded: () => requireModelCatalogStorage().ensureSeeded(),
-  });
+  return requireMainProviderFacade().resolveProviderCatalog(providerId, revision);
 }
 
 function getProviderAdapter(providerId: string | null | undefined): ProviderTurnAdapter {
-  return resolveProviderTurnAdapter({
-    providerId,
-    codexAdapter,
-    copilotAdapter,
-  });
+  return requireMainProviderFacade().getProviderAdapter(providerId);
 }
 
 function invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void {
-  getProviderAdapter(providerId).invalidateSessionThread(sessionId);
+  requireMainProviderFacade().invalidateProviderSessionThread(providerId, sessionId);
 }
 
 function invalidateAllProviderSessionThreads(): void {
-  codexAdapter.invalidateAllSessionThreads();
-  copilotAdapter.invalidateAllSessionThreads();
+  requireMainProviderFacade().invalidateAllProviderSessionThreads();
 }
 
 function listCharacters(): CharacterProfile[] {
-  return requireMainQueryService().listCharacters();
+  return requireMainCharacterFacade().listCharacters();
 }
 
 function listSessionAuditLogs(sessionId: string): AuditLogEntry[] {
@@ -952,11 +988,11 @@ async function openSessionTerminal(sessionId: string): Promise<void> {
 }
 
 async function refreshCharactersFromStorage(): Promise<CharacterProfile[]> {
-  return requireMainQueryService().refreshCharactersFromStorage();
+  return requireMainCharacterFacade().refreshCharactersFromStorage();
 }
 
 async function getCharacter(characterId: string): Promise<CharacterProfile | null> {
-  return requireMainQueryService().getCharacter(characterId);
+  return requireMainCharacterFacade().getCharacter(characterId);
 }
 
 function broadcastSessions(): void {
@@ -1047,7 +1083,7 @@ function clearAllSessionBackgroundActivities(): void {
 }
 
 function listOpenSessionWindowIds(): string[] {
-  return requireSessionWindowBridge().listOpenSessionWindowIds();
+  return requireMainWindowFacade().listOpenSessionWindowIds();
 }
 
 function broadcastOpenSessionWindowIds(): void {
@@ -1059,8 +1095,7 @@ function hasRunningSessions(): boolean {
 }
 
 function closeResetTargetWindows(): void {
-  requireSessionWindowBridge().closeAllSessionWindows();
-  requireAuxWindowService().closeResetTargetWindows();
+  requireMainWindowFacade().closeResetTargetWindows();
 }
 
 function getLiveSessionRun(sessionId: string): LiveSessionRunState | null {
@@ -1121,19 +1156,19 @@ function recoverInterruptedSessions(): void {
 }
 
 async function createCharacter(input: CreateCharacterInput): Promise<CharacterProfile> {
-  return requireCharacterRuntimeService().createCharacter(input);
+  return requireMainCharacterFacade().createCharacter(input);
 }
 
 async function updateCharacter(nextCharacter: CharacterProfile): Promise<CharacterProfile> {
-  return requireCharacterRuntimeService().updateCharacter(nextCharacter);
+  return requireMainCharacterFacade().updateCharacter(nextCharacter);
 }
 
 async function deleteCharacter(characterId: string): Promise<void> {
-  await requireCharacterRuntimeService().deleteCharacter(characterId);
+  await requireMainCharacterFacade().deleteCharacter(characterId);
 }
 
 async function resolveSessionCharacter(session: Session): Promise<CharacterProfile | null> {
-  return requireCharacterRuntimeService().resolveSessionCharacter(session);
+  return requireMainCharacterFacade().resolveSessionCharacter(session);
 }
 
 async function previewComposerInput(
@@ -1161,27 +1196,27 @@ async function openPathTarget(target: string, options?: OpenPathOptions): Promis
 }
 
 async function createHomeWindow(): Promise<BrowserWindow> {
-  return requireAuxWindowService().openHomeWindow();
+  return requireMainWindowFacade().openHomeWindow();
 }
 
 async function openSessionMonitorWindow(): Promise<BrowserWindow> {
-  return requireAuxWindowService().openSessionMonitorWindow();
+  return requireMainWindowFacade().openSessionMonitorWindow();
 }
 
 async function openSettingsWindow(): Promise<BrowserWindow> {
-  return requireAuxWindowService().openSettingsWindow();
+  return requireMainWindowFacade().openSettingsWindow();
 }
 
 async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {
-  return requireSessionWindowBridge().openSessionWindow(sessionId);
+  return requireMainWindowFacade().openSessionWindow(sessionId);
 }
 
 async function openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {
-  return requireAuxWindowService().openCharacterEditorWindow(characterId);
+  return requireMainWindowFacade().openCharacterEditorWindow(characterId);
 }
 
 async function openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow> {
-  return requireAuxWindowService().openDiffWindow(diffPreview);
+  return requireMainWindowFacade().openDiffWindow(diffPreview);
 }
 
 app.whenReady().then(async () => {
