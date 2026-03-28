@@ -83,6 +83,79 @@ function createMemoryEntry(): CharacterMemoryEntry {
 }
 
 describe("MemoryOrchestrationService", () => {
+  it("memory generation が OFF の時は Session Memory extraction も Character reflection も走らない", async () => {
+    const session = createSession({ id: "memory-disabled" });
+    let extractionCalled = 0;
+    let reflectionCalled = 0;
+    let auditCreated = 0;
+
+    const providerAdapter: ProviderBackgroundAdapter = {
+      async extractSessionMemoryDelta() {
+        extractionCalled += 1;
+        throw new Error("should not run");
+      },
+      async runCharacterReflection() {
+        reflectionCalled += 1;
+        throw new Error("should not run");
+      },
+    };
+
+    const service = new MemoryOrchestrationService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      isRunningSession() {
+        return false;
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({ memoryGenerationEnabled: false });
+      },
+      getProviderBackgroundAdapter() {
+        return providerAdapter;
+      },
+      ensureSessionMemory(current) {
+        return createDefaultSessionMemory(current);
+      },
+      upsertSessionMemory() {},
+      promoteSessionMemoryDeltaToProjectMemory() {
+        return 0;
+      },
+      resolveCharacterMemoryEntriesForReflection() {
+        return [createMemoryEntry()];
+      },
+      markCharacterMemoryEntriesUsed() {},
+      saveCharacterMemoryDelta() {
+        return 0;
+      },
+      appendMonologueToSession(nextSession) {
+        return nextSession;
+      },
+      createAuditLog(input) {
+        auditCreated += 1;
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setSessionBackgroundActivity() {},
+    });
+
+    await service.runSessionMemoryExtraction(
+      session,
+      { inputTokens: 1, cachedInputTokens: 0, outputTokens: 400 },
+      { triggerReason: "outputTokensThreshold" },
+    );
+    await service.runCharacterReflection(session, { triggerReason: "session-start" });
+
+    assert.equal(extractionCalled, 0);
+    assert.equal(reflectionCalled, 0);
+    assert.equal(auditCreated, 0);
+  });
+
   it("Session Memory extraction の成功時に audit / activity / promotion を更新する", async () => {
     const session = createSession({ id: "session-memory" });
     const memory = createDefaultSessionMemory(session);

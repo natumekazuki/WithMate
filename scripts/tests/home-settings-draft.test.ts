@@ -20,6 +20,7 @@ import {
   updateMemoryExtractionReasoningEffortDraft,
   updateMemoryExtractionThreshold,
   updateMemoryExtractionThresholdDraft,
+  updateMemoryGenerationEnabled,
   updateSystemPromptPrefix,
 } from "../../src/home-settings-draft.js";
 
@@ -121,7 +122,7 @@ describe("home-settings-draft", () => {
               updateCodingProviderSkillRootPathDraft(
                 updateCodingProviderApiKeyDraft(
                   updateCodingProviderEnabledDraft(
-                    updateSystemPromptPrefix(draft, "prefix"),
+                    updateMemoryGenerationEnabled(updateSystemPromptPrefix(draft, "prefix"), false),
                     "codex",
                     false,
                   ),
@@ -150,6 +151,7 @@ describe("home-settings-draft", () => {
     );
 
     assert.equal(next.systemPromptPrefix, "prefix");
+    assert.equal(next.memoryGenerationEnabled, false);
     assert.equal(next.codingProviderSettings.codex.enabled, false);
     assert.equal(next.codingProviderSettings.codex.apiKey, "key");
     assert.equal(next.codingProviderSettings.codex.skillRootPath, "C:/skills");

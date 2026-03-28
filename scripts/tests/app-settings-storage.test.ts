@@ -16,6 +16,7 @@ describe("AppSettingsStorage", () => {
       const storage = new AppSettingsStorage(dbPath);
       const updated = storage.updateSettings({
         systemPromptPrefix: "prefix",
+        memoryGenerationEnabled: false,
         codingProviderSettings: {
           codex: {
             enabled: false,
@@ -71,6 +72,7 @@ describe("AppSettingsStorage", () => {
       const storage = new AppSettingsStorage(dbPath);
       storage.updateSettings({
         systemPromptPrefix: "custom-prefix",
+        memoryGenerationEnabled: false,
         codingProviderSettings: {
           codex: {
             enabled: false,

@@ -106,6 +106,7 @@ current v1 の通常 trigger は、前回 reflection 以降の増分で判定す
 - reflection 実行中は再実行しない
 - `SessionStart` は cooldown を無視して実行してよい
 - `session close` は trigger に使わない
+- Settings の `Memory Generation` global toggle が OFF の時は、`character reflection cycle` 自体を実行しない
 
 この設計では、`独り言のタイミングを流用する` のではなく、  
 `Character Memory` と `独り言` の共通 trigger を `character reflection cycle` として持つ。  

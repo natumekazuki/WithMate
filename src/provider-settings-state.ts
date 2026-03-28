@@ -8,6 +8,7 @@ import {
 
 export type AppSettings = {
   systemPromptPrefix: string;
+  memoryGenerationEnabled: boolean;
   codingProviderSettings: Record<string, ProviderAppSettings>;
   memoryExtractionProviderSettings: Record<string, MemoryExtractionProviderSettings>;
   characterReflectionProviderSettings: Record<string, CharacterReflectionProviderSettings>;
@@ -58,6 +59,7 @@ export const DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS: CharacterReflection
 export function createDefaultAppSettings(): AppSettings {
   return {
     systemPromptPrefix: "",
+    memoryGenerationEnabled: true,
     codingProviderSettings: {
       [DEFAULT_PROVIDER_ID]: {
         enabled: true,
@@ -203,6 +205,8 @@ export function normalizeAppSettings(value: unknown): AppSettings {
 
   return {
     systemPromptPrefix: typeof candidate.systemPromptPrefix === "string" ? candidate.systemPromptPrefix : "",
+    memoryGenerationEnabled:
+      typeof candidate.memoryGenerationEnabled === "boolean" ? candidate.memoryGenerationEnabled : true,
     codingProviderSettings,
     memoryExtractionProviderSettings,
     characterReflectionProviderSettings,

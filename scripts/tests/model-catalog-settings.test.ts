@@ -53,6 +53,7 @@ describe("app settings provider helpers", () => {
 
     assert.equal(getProviderAppSettings(settings, "codex").enabled, true);
     assert.equal(getProviderAppSettings(settings, "copilot").enabled, false);
+    assert.equal(settings.memoryGenerationEnabled, true);
   });
 
   it("provider ごとの enabled と apiKey を保持する", () => {
@@ -153,6 +154,7 @@ describe("app settings provider helpers", () => {
   it("resolved provider settings bundle で 3 種の設定をまとめて取得できる", () => {
     const settings = normalizeAppSettings({
       ...createDefaultAppSettings(),
+      memoryGenerationEnabled: false,
       codingProviderSettings: {
         codex: {
           enabled: false,
@@ -191,5 +193,6 @@ describe("app settings provider helpers", () => {
         reasoningEffort: "medium",
       },
     });
+    assert.equal(settings.memoryGenerationEnabled, false);
   });
 });

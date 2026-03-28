@@ -118,6 +118,9 @@ export class MemoryOrchestrationService {
     }
 
     const appSettings = this.deps.getAppSettings();
+    if (!appSettings.memoryGenerationEnabled) {
+      return;
+    }
     if (!getProviderAppSettings(appSettings, latestSession.provider).enabled) {
       return;
     }
@@ -342,6 +345,9 @@ export class MemoryOrchestrationService {
     }
 
     const appSettings = this.deps.getAppSettings();
+    if (!appSettings.memoryGenerationEnabled) {
+      return;
+    }
     const extractionSettings = getSessionMemoryExtractionSettings(appSettings, session.provider);
     const shouldRun = shouldTriggerSessionMemoryExtraction(
       usage,

@@ -26,6 +26,8 @@ import {
   SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL,
   SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL,
   SETTINGS_MEMORY_EXTRACTION_HELP,
+  SETTINGS_MEMORY_GENERATION_HELP,
+  SETTINGS_MEMORY_GENERATION_LABEL,
   SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL,
   SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL,
   SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL,
@@ -50,6 +52,7 @@ export type HomeSettingsContentProps = {
   onOpenHome: () => void;
   onCloseWindow: () => void;
   onChangeSystemPromptPrefix: (value: string) => void;
+  onChangeMemoryGenerationEnabled: (enabled: boolean) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
   onChangeProviderApiKey: (providerId: string, apiKey: string) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
@@ -85,6 +88,7 @@ export function HomeSettingsContent({
   onOpenHome,
   onCloseWindow,
   onChangeSystemPromptPrefix,
+  onChangeMemoryGenerationEnabled,
   onChangeProviderEnabled,
   onChangeProviderApiKey,
   onChangeProviderSkillRootPath,
@@ -211,10 +215,19 @@ export function HomeSettingsContent({
               </section>
 
               <section className="settings-section-card">
-                <div className="settings-field">
-                  <strong>Memory Extraction</strong>
-                  <p className="settings-help">{SETTINGS_MEMORY_EXTRACTION_HELP}</p>
-                  <div className="settings-provider-list">
+              <div className="settings-field">
+                <strong>Memory Extraction</strong>
+                <p className="settings-help">{SETTINGS_MEMORY_EXTRACTION_HELP}</p>
+                <label className="settings-provider-toggle-row settings-section-toggle">
+                  <span className="settings-provider-name">{SETTINGS_MEMORY_GENERATION_LABEL}</span>
+                  <input
+                    type="checkbox"
+                    checked={settingsDraft.memoryGenerationEnabled}
+                    onChange={(event) => onChangeMemoryGenerationEnabled(event.target.checked)}
+                  />
+                </label>
+                <p className="settings-help">{SETTINGS_MEMORY_GENERATION_HELP}</p>
+                <div className="settings-provider-list">
                     {providerSettingRows.map((row) => (
                       <section key={row.provider.id} className="settings-provider-card">
                         <p className="settings-provider-name">{row.provider.label}</p>

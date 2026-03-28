@@ -19,6 +19,16 @@ export function updateSystemPromptPrefix(
   };
 }
 
+export function updateMemoryGenerationEnabled(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return {
+    ...draft,
+    memoryGenerationEnabled: enabled,
+  };
+}
+
 export function updateCodingProviderEnabledDraft(
   draft: AppSettings,
   providerId: string,

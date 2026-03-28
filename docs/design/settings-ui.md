@@ -13,6 +13,7 @@
 - 設定は `Home Window` から開く独立 `Settings Window` とする
 - `System Prompt Prefix` は `Settings Window` で定義し、prompt composition に渡す
 - `System Prompt Prefix` は保存時に `# System Prompt` 配下へ組み込まれる
+- `Memory Generation` は global toggle とし、OFF 時は Session Memory extraction / Character Reflection / Monologue の background 実行をまとめて止める
 - current 実装では `System Prompt Prefix`、`Coding Agent Providers`、`Coding Agent Credentials`、`Memory Extraction`、`Character Reflection`、`Model Catalog`、`Danger Zone` を置く
 - 現在の provider / credential 設定は coding plane 専用として扱うが、current v1 の Character Reflection backend は同じ provider client を流用する
 - 初回リリース前のため後方互換性は考慮しない。非互換変更が入った場合は Settings の `DB を初期化` で回復する運用を正本とする
@@ -50,6 +51,7 @@
     - current 実装では coding plane credential を正本とし、Character Reflection backend も同じ provider client を流用する note
     - future で独立 monologue plane を分ける場合は別責務の credential 欄を追加する note
 - `Memory Extraction`
+  - `Memory Generation` global toggle
   - provider ごとの `Model`
   - provider ごとの `Reasoning Depth`
   - provider ごとの `Output Tokens Threshold`
@@ -76,6 +78,7 @@
 - coding provider ごとの `OpenAI API Key (Coding Agent)` 入力保存
 - provider ごとの `Memory Extraction model / reasoning depth / outputTokens threshold` 入力保存
 - provider ごとの `Character Reflection model / reasoning depth` 入力保存
+- `Memory Generation` global toggle の入力保存
 - `model catalog` の import
 - `model catalog` の export
 - `DB を初期化` による設定・セッション系ストレージのリカバリ
@@ -88,6 +91,7 @@
 - current milestone では provider readiness / preflight を must-have にしない
 - coding credential は Settings 保存後すぐ Main Process から各 window へ broadcast し、Session Window の実行可否表示も即時更新する
 - provider 実装は保存済み coding credential を runtime の SDK client へ渡し、空文字のときだけ従来どおり環境依存 fallback を許可する
+- `Memory Generation` が OFF の時は、Session Memory extraction / Character Reflection / Monologue の background 実行をまとめて止める
 - Memory extraction 設定は provider ごとに保持し、trigger engine は現在 provider の `model / reasoning depth / outputTokens threshold` を参照する
 - current 実装では、memory extraction の通常発火は `outputTokens threshold` だけで判定する
 - Character reflection 設定は provider ごとに保持し、current v1 の `character reflection cycle` 実行時に `model / reasoning depth` を参照する

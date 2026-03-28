@@ -18,6 +18,9 @@ export const SETTINGS_SKILL_ROOT_HELP =
 export const SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL = "Model";
 export const SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL = "Reasoning Depth";
 export const SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL = "Output Tokens Threshold";
+export const SETTINGS_MEMORY_GENERATION_LABEL = "Memory Generation";
+export const SETTINGS_MEMORY_GENERATION_HELP =
+  "OFF にすると Session Memory extraction / Character Reflection / Monologue の background 実行をまとめて止める。model / reasoning / threshold の設定値は保持される。";
 export const SETTINGS_MEMORY_EXTRACTION_HELP =
   "Memory extraction は provider ごとに専用 model / reasoning depth / outputTokens threshold を持つ。`compact 前` と `session close 前` は threshold に関係なく強制実行する。";
 export const SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL = "Model";

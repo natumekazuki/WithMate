@@ -57,6 +57,7 @@ import {
   updateMemoryExtractionModelDraft,
   updateMemoryExtractionReasoningEffortDraft,
   updateMemoryExtractionThresholdDraft,
+  updateMemoryGenerationEnabled,
   updateSystemPromptPrefix,
 } from "./home-settings-draft.js";
 import {
@@ -539,6 +540,9 @@ export default function HomeApp() {
       onOpenHome={() => void openHomeWindow()}
       onCloseWindow={() => window.close()}
       onChangeSystemPromptPrefix={(value) => setSettingsDraft((current) => updateSystemPromptPrefix(current, value))}
+      onChangeMemoryGenerationEnabled={(enabled) =>
+        setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled))
+      }
       onChangeProviderEnabled={handleChangeProviderEnabled}
       onChangeProviderApiKey={handleChangeProviderApiKey}
       onChangeProviderSkillRootPath={handleChangeProviderSkillRootPath}
