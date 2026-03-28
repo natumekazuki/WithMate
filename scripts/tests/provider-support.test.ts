@@ -7,7 +7,6 @@ import {
   resolveProviderCatalogOrThrow,
   resolveProviderBackgroundAdapter,
   resolveProviderCodingAdapter,
-  resolveProviderTurnAdapter,
 } from "../../src-electron/provider-support.js";
 
 test("resolveProviderCatalogOrThrow は指定 provider の catalog を返す", () => {
@@ -41,12 +40,12 @@ test("resolveProviderCatalogOrThrow は指定 provider の catalog を返す", (
   assert.equal(result.provider.id, "copilot");
 });
 
-test("resolveProviderTurnAdapter は providerId に応じて adapter を返す", () => {
+test("resolveProviderCodingAdapter と resolveProviderBackgroundAdapter は providerId に応じて adapter を返す", () => {
   const codexAdapter = { kind: "codex" } as ProviderTurnAdapter;
   const copilotAdapter = { kind: "copilot" } as ProviderTurnAdapter;
 
   assert.equal(
-    resolveProviderTurnAdapter({
+    resolveProviderCodingAdapter({
       providerId: "codex",
       codexAdapter,
       copilotAdapter,
@@ -54,21 +53,15 @@ test("resolveProviderTurnAdapter は providerId に応じて adapter を返す",
     codexAdapter,
   );
   assert.equal(
-    resolveProviderTurnAdapter({
+    resolveProviderCodingAdapter({
       providerId: "copilot",
       codexAdapter,
       copilotAdapter,
     }),
     copilotAdapter,
   );
-});
-
-test("resolveProviderCodingAdapter と resolveProviderBackgroundAdapter は providerId に応じて adapter を返す", () => {
-  const codexAdapter = { kind: "codex" } as ProviderTurnAdapter;
-  const copilotAdapter = { kind: "copilot" } as ProviderTurnAdapter;
-
   assert.equal(
-    resolveProviderCodingAdapter({
+    resolveProviderBackgroundAdapter({
       providerId: "codex",
       codexAdapter,
       copilotAdapter,

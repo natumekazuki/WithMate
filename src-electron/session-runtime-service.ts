@@ -15,7 +15,7 @@ import { type CharacterProfile } from "../src/character-state.js";
 import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
 import { type Session } from "../src/session-state.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src/model-catalog.js";
-import { ProviderTurnError, type ProviderTurnAdapter } from "./provider-runtime.js";
+import { ProviderTurnError, type ProviderCodingAdapter } from "./provider-runtime.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
@@ -38,7 +38,7 @@ export type SessionRuntimeServiceDeps = {
     snapshot: ModelCatalogSnapshot;
     provider: ModelCatalogProvider;
   };
-  getProviderAdapter(providerId: string | null | undefined): ProviderTurnAdapter;
+  getProviderCodingAdapter(providerId: string | null | undefined): ProviderCodingAdapter;
   getSessionMemory(session: Session): SessionMemory;
   resolveProjectMemoryEntriesForPrompt(
     session: Session,
@@ -138,7 +138,7 @@ export class SessionRuntimeService {
     }
 
     const { provider } = this.deps.resolveProviderCatalog(session.provider, session.catalogRevision);
-    const providerAdapter = this.deps.getProviderAdapter(provider.id);
+    const providerAdapter = this.deps.getProviderCodingAdapter(provider.id);
     const sessionMemory = this.deps.getSessionMemory(session);
     const projectMemoryEntries = this.deps.resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
     const promptForAudit = providerAdapter.composePrompt({

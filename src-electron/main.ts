@@ -43,7 +43,7 @@ import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { CodexAdapter } from "./codex-adapter.js";
 import { CopilotAdapter } from "./copilot-adapter.js";
-import { ProviderTurnError, type ProviderTurnAdapter } from "./provider-runtime.js";
+import { ProviderTurnError } from "./provider-runtime.js";
 import { resolveComposerPreview } from "./composer-attachments.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { resolveOpenPathTarget } from "./open-path.js";
@@ -606,7 +606,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       resolveSessionCharacter,
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
-      getProviderAdapter,
+      getProviderCodingAdapter,
       getSessionMemory: (session) => requireSessionMemoryStorage().ensureSessionMemory(session),
       resolveProjectMemoryEntriesForPrompt: (session, userMessage, sessionMemory) =>
         requireSessionMemorySupportService().resolveProjectMemoryEntriesForPrompt(session, userMessage, sessionMemory),
@@ -964,10 +964,6 @@ function resolveProviderCatalog(
   revision?: number | null,
 ): { snapshot: ModelCatalogSnapshot; provider: ModelCatalogProvider } {
   return requireMainProviderFacade().resolveProviderCatalog(providerId, revision);
-}
-
-function getProviderAdapter(providerId: string | null | undefined): ProviderTurnAdapter {
-  return requireMainProviderFacade().getProviderAdapter(providerId);
 }
 
 function getProviderCodingAdapter(providerId: string | null | undefined) {

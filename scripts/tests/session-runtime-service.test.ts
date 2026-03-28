@@ -19,7 +19,7 @@ import {
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { type ModelCatalogProvider } from "../../src/model-catalog.js";
-import { ProviderTurnError, type ProviderTurnAdapter } from "../../src-electron/provider-runtime.js";
+import { ProviderTurnError, type ProviderCodingAdapter } from "../../src-electron/provider-runtime.js";
 import { SessionRuntimeService } from "../../src-electron/session-runtime-service.js";
 
 function createSession(overrides?: Partial<Session>): Session {
@@ -105,7 +105,7 @@ describe("SessionRuntimeService", () => {
     const liveStates: Array<LiveSessionRunState | null> = [];
     const memoryTriggers: Array<{ sessionId: string; triggerReason: string }> = [];
     const reflectionTriggers: Array<{ sessionId: string; triggerReason: string }> = [];
-    const adapter: ProviderTurnAdapter = {
+    const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
           systemBodyText: "system",
@@ -117,12 +117,6 @@ describe("SessionRuntimeService", () => {
       },
       async getProviderQuotaTelemetry() {
         return null;
-      },
-      async extractSessionMemoryDelta() {
-        throw new Error("not used");
-      },
-      async runCharacterReflection() {
-        throw new Error("not used");
       },
       invalidateSessionThread() {},
       invalidateAllSessionThreads() {},
@@ -168,7 +162,7 @@ describe("SessionRuntimeService", () => {
       resolveProviderCatalog() {
         return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
-      getProviderAdapter() {
+      getProviderCodingAdapter() {
         return adapter;
       },
       getSessionMemory(current) {
@@ -236,7 +230,7 @@ describe("SessionRuntimeService", () => {
       rawItemsJson: "[]",
       usage: null,
     };
-    const adapter: ProviderTurnAdapter = {
+    const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
           systemBodyText: "system",
@@ -248,12 +242,6 @@ describe("SessionRuntimeService", () => {
       },
       async getProviderQuotaTelemetry() {
         return null;
-      },
-      async extractSessionMemoryDelta() {
-        throw new Error("not used");
-      },
-      async runCharacterReflection() {
-        throw new Error("not used");
       },
       invalidateSessionThread(sessionId) {
         canceledSessionId = sessionId;
@@ -284,7 +272,7 @@ describe("SessionRuntimeService", () => {
       resolveProviderCatalog() {
         return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
-      getProviderAdapter() {
+      getProviderCodingAdapter() {
         return adapter;
       },
       getSessionMemory(current) {
@@ -340,7 +328,7 @@ describe("SessionRuntimeService", () => {
       usage: null;
     }) => void) | null = null;
 
-    const adapter: ProviderTurnAdapter = {
+    const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
           systemBodyText: "system",
@@ -352,12 +340,6 @@ describe("SessionRuntimeService", () => {
       },
       async getProviderQuotaTelemetry() {
         return null;
-      },
-      async extractSessionMemoryDelta() {
-        throw new Error("not used");
-      },
-      async runCharacterReflection() {
-        throw new Error("not used");
       },
       invalidateSessionThread() {},
       invalidateAllSessionThreads() {},
@@ -387,7 +369,7 @@ describe("SessionRuntimeService", () => {
       resolveProviderCatalog() {
         return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
-      getProviderAdapter() {
+      getProviderCodingAdapter() {
         return adapter;
       },
       getSessionMemory(current) {

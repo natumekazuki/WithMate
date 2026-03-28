@@ -1,14 +1,9 @@
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type {
-  ProviderBackgroundAdapter,
-  ProviderCodingAdapter,
-  ProviderTurnAdapter,
-} from "./provider-runtime.js";
+import type { ProviderBackgroundAdapter, ProviderCodingAdapter, ProviderTurnAdapter } from "./provider-runtime.js";
 import {
   resolveProviderBackgroundAdapter,
   resolveProviderCatalogOrThrow,
   resolveProviderCodingAdapter,
-  resolveProviderTurnAdapter,
 } from "./provider-support.js";
 
 type MainProviderFacadeDeps = {
@@ -34,14 +29,6 @@ export class MainProviderFacade {
       revision,
       getModelCatalog: (nextRevision) => this.getModelCatalog(nextRevision),
       ensureSeeded: () => this.deps.ensureModelCatalogSeeded(),
-    });
-  }
-
-  getProviderAdapter(providerId: string | null | undefined): ProviderTurnAdapter {
-    return resolveProviderTurnAdapter({
-      providerId,
-      codexAdapter: this.deps.codexAdapter,
-      copilotAdapter: this.deps.copilotAdapter,
     });
   }
 

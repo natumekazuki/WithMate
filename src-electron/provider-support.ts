@@ -19,7 +19,7 @@ type ResolveProviderCatalogArgs = {
   ensureSeeded(): ModelCatalogSnapshot;
 };
 
-type ResolveProviderTurnAdapterArgs = {
+type ResolveProviderAdapterArgs = {
   providerId: string | null | undefined;
   codexAdapter: ProviderTurnAdapter;
   copilotAdapter: ProviderTurnAdapter;
@@ -43,16 +43,16 @@ export function resolveProviderCatalogOrThrow(
   return { snapshot, provider };
 }
 
-export function resolveProviderTurnAdapter(args: ResolveProviderTurnAdapterArgs): ProviderTurnAdapter {
+function resolveProviderAdapter(args: ResolveProviderAdapterArgs): ProviderTurnAdapter {
   return args.providerId === "copilot" ? args.copilotAdapter : args.codexAdapter;
 }
 
-export function resolveProviderCodingAdapter(args: ResolveProviderTurnAdapterArgs): ProviderCodingAdapter {
-  return resolveProviderTurnAdapter(args);
+export function resolveProviderCodingAdapter(args: ResolveProviderAdapterArgs): ProviderCodingAdapter {
+  return resolveProviderAdapter(args);
 }
 
-export function resolveProviderBackgroundAdapter(args: ResolveProviderTurnAdapterArgs): ProviderBackgroundAdapter {
-  return resolveProviderTurnAdapter(args);
+export function resolveProviderBackgroundAdapter(args: ResolveProviderAdapterArgs): ProviderBackgroundAdapter {
+  return resolveProviderAdapter(args);
 }
 
 export async function fetchProviderQuotaTelemetry(
