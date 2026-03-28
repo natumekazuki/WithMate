@@ -6,7 +6,6 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 
 import {
   type AuditLogEntry,
-  buildNewSession,
   type CharacterMemoryDelta,
   type CharacterMemoryEntry,
   type CharacterReflectionMonologue,
@@ -39,7 +38,6 @@ import {
   DEFAULT_PROVIDER_ID,
   getProviderCatalog,
   parseModelCatalogDocument,
-  resolveModelSelection,
   type ModelCatalogDocument,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
@@ -57,7 +55,6 @@ import { CodexAdapter } from "./codex-adapter.js";
 import { CopilotAdapter } from "./copilot-adapter.js";
 import { ProviderTurnError, type ProviderTurnAdapter } from "./provider-runtime.js";
 import { resolveComposerPreview } from "./composer-attachments.js";
-import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { resolveOpenPathTarget } from "./open-path.js";
 import { launchTerminalAtPath } from "./open-terminal.js";
@@ -65,6 +62,9 @@ import { SessionStorage } from "./session-storage.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
 import { ProjectMemoryStorage } from "./project-memory-storage.js";
 import { CharacterMemoryStorage } from "./character-memory-storage.js";
+import { SessionRuntimeService } from "./session-runtime-service.js";
+import { SessionPersistenceService } from "./session-persistence-service.js";
+import { SessionWindowBridge } from "./session-window-bridge.js";
 import { buildProjectMemoryPromotionEntries } from "./project-memory-promotion.js";
 import { retrieveProjectMemoryEntries } from "./project-memory-retrieval.js";
 import {
@@ -169,13 +169,9 @@ const copilotAdapter = new CopilotAdapter();
 let homeWindow: BrowserWindow | null = null;
 let sessionMonitorWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
-const sessionWindows = new Map<string, BrowserWindow>();
 const characterEditorWindows = new Map<string, BrowserWindow>();
 const diffWindows = new Map<string, BrowserWindow>();
 const diffPreviewStore = new Map<string, DiffPreviewPayload>();
-const inFlightSessionRuns = new Set<string>();
-const sessionRunControllers = new Map<string, AbortController>();
-const allowCloseSessionWindows = new Set<string>();
 const liveSessionRuns = new Map<string, LiveSessionRunState>();
 const characterReflectionCheckpoints = new Map<string, CharacterReflectionCheckpoint>();
 const providerQuotaTelemetryByProvider = new Map<string, ProviderQuotaTelemetry>();
@@ -198,6 +194,9 @@ let appSettingsStorage: AppSettingsStorage | null = null;
 let allowQuitWithInFlightRuns = false;
 let dbPath = "";
 const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
+let sessionRuntimeService: SessionRuntimeService | null = null;
+let sessionPersistenceService: SessionPersistenceService | null = null;
+let sessionWindowBridge: SessionWindowBridge<BrowserWindow> | null = null;
 
 function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0]): BrowserWindow {
   return new BrowserWindow({
@@ -223,11 +222,11 @@ function isRunningSession(session: Session): boolean {
 }
 
 function hasInFlightSessionRuns(): boolean {
-  return inFlightSessionRuns.size > 0;
+  return requireSessionRuntimeService().hasInFlightRuns();
 }
 
 function isSessionRunInFlight(sessionId: string): boolean {
-  return inFlightSessionRuns.has(sessionId);
+  return requireSessionRuntimeService().isRunInFlight(sessionId);
 }
 
 function requireSessionStorage(): SessionStorage {
@@ -260,6 +259,138 @@ function requireAppSettingsStorage(): AppSettingsStorage {
   }
 
   return appSettingsStorage;
+}
+
+function requireSessionRuntimeService(): SessionRuntimeService {
+  if (!sessionRuntimeService) {
+    sessionRuntimeService = new SessionRuntimeService({
+      getSession,
+      upsertSession,
+      resolveComposerPreview,
+      resolveSessionCharacter,
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      resolveProviderCatalog,
+      getProviderAdapter,
+      getSessionMemory: (session) => requireSessionMemoryStorage().ensureSessionMemory(session),
+      resolveProjectMemoryEntriesForPrompt,
+      createAuditLog: (entry) => requireAuditLogStorage().createAuditLog(entry),
+      updateAuditLog: (id, entry) => requireAuditLogStorage().updateAuditLog(id, entry),
+      setLiveSessionRun,
+      getLiveSessionRun,
+      waitForApprovalDecision: (sessionId, request, signal) =>
+        waitForLiveApprovalDecision(sessionId, request, signal),
+      setProviderQuotaTelemetry: (telemetry) => {
+        setProviderQuotaTelemetry(telemetry.provider, telemetry);
+      },
+      setSessionContextTelemetry: (telemetry) => {
+        setSessionContextTelemetry(telemetry.sessionId, telemetry);
+      },
+      invalidateProviderSessionThread,
+      scheduleProviderQuotaTelemetryRefresh,
+      runSessionMemoryExtraction: (session, usage, options) => {
+        void runSessionMemoryExtraction(session, usage, options);
+      },
+      runCharacterReflection: (session, options) => {
+        void runCharacterReflection(session, options);
+      },
+      clearWorkspaceFileIndex,
+      broadcastLiveSessionRun,
+      resolvePendingApprovalRequest: (sessionId, decision) => {
+        const pendingApprovalRequest = pendingSessionApprovalRequests.get(sessionId);
+        if (pendingApprovalRequest) {
+          pendingApprovalRequest.resolve(decision);
+        }
+      },
+      currentTimestampLabel,
+    });
+  }
+
+  return sessionRuntimeService;
+}
+
+function requireSessionPersistenceService(): SessionPersistenceService {
+  if (!sessionPersistenceService) {
+    sessionPersistenceService = new SessionPersistenceService({
+      getSessions: () => sessions,
+      setSessions: (nextSessions) => {
+        sessions = nextSessions;
+      },
+      getSession,
+      isSessionRunInFlight,
+      upsertStoredSession: (session) => requireSessionStorage().upsertSession(session),
+      replaceStoredSessions: (nextSessions) => {
+        requireSessionStorage().replaceSessions(nextSessions);
+      },
+      listStoredSessions: () => requireSessionStorage().listSessions(),
+      deleteStoredSession: (sessionId) => requireSessionStorage().deleteSession(sessionId),
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
+      ensureSessionMemory: (session) => requireSessionMemoryStorage().ensureSessionMemory(session),
+      upsertSessionMemory: (memory) => requireSessionMemoryStorage().upsertSessionMemory(memory),
+      ensureProjectScope: (scope) => {
+        requireProjectMemoryStorage().ensureProjectScope(scope);
+      },
+      ensureCharacterScope: ({ characterId, displayName }) => {
+        requireCharacterMemoryStorage().ensureCharacterScope({ characterId, displayName });
+      },
+      clearSessionContextTelemetry,
+      clearSessionBackgroundActivities,
+      clearCharacterReflectionCheckpoint: (sessionId) => {
+        setCharacterReflectionCheckpoint(sessionId, null);
+      },
+      clearInFlightCharacterReflection: (sessionId) => {
+        inFlightCharacterReflections.delete(sessionId);
+      },
+      invalidateProviderSessionThread,
+      closeSessionWindow: (sessionId) => {
+        requireSessionWindowBridge().closeSessionWindow(sessionId);
+      },
+      broadcastSessions,
+    });
+  }
+
+  return sessionPersistenceService;
+}
+
+function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
+  if (!sessionWindowBridge) {
+    sessionWindowBridge = new SessionWindowBridge({
+      createWindow: (sessionId) =>
+        createBaseWindow({
+          width: 1520,
+          height: 940,
+          minWidth: 1120,
+          minHeight: 760,
+          title: `WithMate Session - ${sessionId}`,
+        }),
+      loadSessionEntry,
+      getSession,
+      isRunInFlight: isSessionRunInFlight,
+      getAllowQuitWithInFlightRuns: () => allowQuitWithInFlightRuns,
+      confirmCloseWhileRunning: (window) => {
+        const choice = dialog.showMessageBoxSync(window, {
+          type: "warning",
+          buttons: ["閉じない", "閉じて続行"],
+          defaultId: 0,
+          cancelId: 0,
+          title: "実行中のセッション",
+          message: "このセッションはまだ実行中だよ。",
+          detail: "閉じても処理は Main Process 側で続くよ。進捗はあとで開き直して確認してね。",
+          noLink: true,
+        });
+        return choice === 1;
+      },
+      broadcastOpenSessionWindowIds,
+      runSessionMemoryExtraction: (session, usage, options) => {
+        void runSessionMemoryExtraction(session, usage, options);
+      },
+      runCharacterReflection: (session, options) => {
+        void runCharacterReflection(session, options);
+      },
+    });
+  }
+
+  return sessionWindowBridge;
 }
 
 function requireSessionMemoryStorage(): SessionMemoryStorage {
@@ -681,16 +812,7 @@ function clearAllSessionBackgroundActivities(): void {
 }
 
 function listOpenSessionWindowIds(): string[] {
-  const openSessionIds: string[] = [];
-  for (const [sessionId, window] of sessionWindows.entries()) {
-    if (window.isDestroyed()) {
-      continue;
-    }
-
-    openSessionIds.push(sessionId);
-  }
-
-  return openSessionIds;
+  return requireSessionWindowBridge().listOpenSessionWindowIds();
 }
 
 function broadcastOpenSessionWindowIds(): void {
@@ -707,15 +829,7 @@ function hasRunningSessions(): boolean {
 }
 
 function closeResetTargetWindows(): void {
-  for (const [sessionId, window] of sessionWindows.entries()) {
-    if (!window.isDestroyed()) {
-      allowCloseSessionWindows.add(sessionId);
-      window.close();
-    }
-  }
-  sessionWindows.clear();
-  allowCloseSessionWindows.clear();
-  broadcastOpenSessionWindowIds();
+  requireSessionWindowBridge().closeAllSessionWindows();
 
   for (const [token, window] of diffWindows.entries()) {
     if (!window.isDestroyed()) {
@@ -756,15 +870,12 @@ async function resetAppDatabase(request?: ResetAppDatabaseRequest | null): Promi
       requireAuditLogStorage().clearAuditLogs();
     }
     if (appliedTargets.has("sessions")) {
-      requireSessionStorage().clearSessions();
-      sessions = [];
+      replaceAllSessions([], { broadcast: false });
       liveSessionRuns.clear();
       characterReflectionCheckpoints.clear();
       inFlightCharacterReflections.clear();
       clearAllSessionBackgroundActivities();
-      sessionRunControllers.clear();
-      inFlightSessionRuns.clear();
-      clearAllSessionContextTelemetry();
+      requireSessionRuntimeService().reset();
       invalidateAllProviderSessionThreads();
     }
     if (appliedTargets.has("appSettings")) {
@@ -848,17 +959,7 @@ function isCanceledRunError(error: unknown): boolean {
 }
 
 function cancelSessionRun(sessionId: string): void {
-  const pendingApprovalRequest = pendingSessionApprovalRequests.get(sessionId);
-  if (pendingApprovalRequest) {
-    pendingApprovalRequest.resolve("deny");
-  }
-
-  const controller = sessionRunControllers.get(sessionId);
-  if (!controller) {
-    return;
-  }
-
-  controller.abort();
+  requireSessionRuntimeService().cancelRun(sessionId);
 }
 
 function resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void {
@@ -964,119 +1065,19 @@ async function exportModelCatalogToFile(revision: number | null | undefined, tar
 }
 
 function createSession(input: CreateSessionInput): Session {
-  const appSettings = requireAppSettingsStorage().getSettings();
-  const snapshot = getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded();
-  const provider = resolveEnabledProviderCatalog(snapshot, appSettings, input.provider);
-  const selection = resolveModelSelection(
-    provider,
-    input.model ?? provider.defaultModelId,
-    input.reasoningEffort ?? provider.defaultReasoningEffort,
-  );
-  const created = buildNewSession({
-    ...input,
-    provider: provider.id,
-    catalogRevision: snapshot.revision,
-    model: selection.resolvedModel,
-    reasoningEffort: selection.resolvedReasoningEffort,
-    allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
-      input.workspacePath,
-      input.allowedAdditionalDirectories ?? [],
-    ),
-  });
-  return upsertSession(created);
-}
-
-function resolveEnabledProviderCatalog(
-  snapshot: ModelCatalogSnapshot,
-  appSettings = requireAppSettingsStorage().getSettings(),
-  requestedProviderId?: string | null,
-): ModelCatalogProvider {
-  const requestedProvider = requestedProviderId ? getProviderCatalog(snapshot.providers, requestedProviderId) : null;
-  if (requestedProvider && getProviderAppSettings(appSettings, requestedProvider.id).enabled) {
-    return requestedProvider;
-  }
-
-  const defaultProvider = snapshot.providers.find((provider) => provider.id === DEFAULT_PROVIDER_ID) ?? null;
-  if (defaultProvider && getProviderAppSettings(appSettings, defaultProvider.id).enabled) {
-    return defaultProvider;
-  }
-
-  const firstEnabledProvider = snapshot.providers.find((provider) => getProviderAppSettings(appSettings, provider.id).enabled);
-  if (firstEnabledProvider) {
-    return firstEnabledProvider;
-  }
-
-  throw new Error("有効な provider が Settings に見つからないよ。");
+  return requireSessionPersistenceService().createSession(input);
 }
 
 function updateSession(nextSession: Session): Session {
-  const currentSession = getSession(nextSession.id);
-  if (!currentSession) {
-    throw new Error("対象セッションが見つからないよ。");
-  }
-
-  if (isSessionRunInFlight(nextSession.id) || isRunningSession(currentSession)) {
-    throw new Error("実行中のセッションは更新できないよ。");
-  }
-
-  const updatedSession = upsertSession({
-    ...nextSession,
-    allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
-      nextSession.workspacePath,
-      nextSession.allowedAdditionalDirectories,
-    ),
-  });
-
-  if (currentSession.provider !== updatedSession.provider) {
-    clearSessionContextTelemetry(updatedSession.id);
-  }
-
-  return updatedSession;
+  return requireSessionPersistenceService().updateSession(nextSession);
 }
 
 function deleteSession(sessionId: string): void {
-  const session = getSession(sessionId);
-  if (!session) {
-    return;
-  }
-
-  if (isSessionRunInFlight(sessionId) || isRunningSession(session)) {
-    throw new Error("実行中のセッションは削除できないよ。");
-  }
-
-  requireSessionStorage().deleteSession(sessionId);
-  sessions = requireSessionStorage().listSessions();
-  clearSessionContextTelemetry(sessionId);
-  clearSessionBackgroundActivities(sessionId);
-  setCharacterReflectionCheckpoint(sessionId, null);
-  inFlightCharacterReflections.delete(sessionId);
-
-  const window = sessionWindows.get(sessionId);
-  if (window && !window.isDestroyed()) {
-    allowCloseSessionWindows.add(sessionId);
-    window.close();
-  }
-
-  sessionWindows.delete(sessionId);
-  broadcastOpenSessionWindowIds();
-  broadcastSessions();
+  requireSessionPersistenceService().deleteSession(sessionId);
 }
 
 function upsertSession(nextSession: Session): Session {
-  const storage = requireSessionStorage();
-  const stored = storage.upsertSession({
-    ...nextSession,
-    allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
-      nextSession.workspacePath,
-      nextSession.allowedAdditionalDirectories,
-    ),
-  });
-  syncSessionMemoryForSession(stored);
-  syncProjectScopeForSession(stored);
-  syncCharacterScopeForSession(stored);
-  sessions = storage.listSessions();
-  broadcastSessions();
-  return cloneSessions([stored])[0];
+  return requireSessionPersistenceService().upsertSession(nextSession);
 }
 
 function syncSessionMemoryForSession(session: Session): void {
@@ -1542,42 +1543,7 @@ function replaceAllSessions(
     invalidateSessionIds?: Iterable<string>;
   },
 ): Session[] {
-  const storage = requireSessionStorage();
-  const previousSessions = sessions;
-  storage.replaceSessions(nextSessions);
-  sessions = storage.listSessions();
-  for (const session of sessions) {
-    syncSessionMemoryForSession(session);
-    syncProjectScopeForSession(session);
-    syncCharacterScopeForSession(session);
-  }
-
-  const nextSessionsById = new Map(sessions.map((session) => [session.id, session] as const));
-  for (const previousSession of previousSessions) {
-    const nextSession = nextSessionsById.get(previousSession.id);
-    if (!nextSession || nextSession.provider !== previousSession.provider) {
-      clearSessionContextTelemetry(previousSession.id);
-    }
-    if (!nextSession) {
-      clearSessionBackgroundActivities(previousSession.id);
-      setCharacterReflectionCheckpoint(previousSession.id, null);
-      inFlightCharacterReflections.delete(previousSession.id);
-    }
-  }
-
-  for (const sessionId of options?.invalidateSessionIds ?? []) {
-    const sessionProvider =
-      nextSessions.find((session) => session.id === sessionId)?.provider
-      ?? sessions.find((session) => session.id === sessionId)?.provider
-      ?? null;
-    invalidateProviderSessionThread(sessionProvider, sessionId);
-  }
-
-  if (options?.broadcast ?? true) {
-    broadcastSessions();
-  }
-
-  return listSessions();
+  return requireSessionPersistenceService().replaceAllSessions(nextSessions, options);
 }
 
 function syncSessionsForCharacter(character: CharacterProfile): void {
@@ -1880,219 +1846,11 @@ async function openPathTarget(target: string, options?: OpenPathOptions): Promis
 
 async function runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {
   const session = getSession(sessionId);
-  if (!session) {
-    throw new Error("対象セッションが見つからないよ。");
+  if (session?.provider === "copilot" && isProviderQuotaTelemetryStale(getProviderQuotaTelemetry(session.provider))) {
+    void refreshProviderQuotaTelemetry(session.provider).catch(() => undefined);
   }
 
-  if (session.runState === "running") {
-    throw new Error("このセッションはまだ実行中だよ。");
-  }
-
-  const nextMessage = request.userMessage.trim();
-  if (!nextMessage) {
-    throw new Error("送信するメッセージが空だよ。");
-  }
-
-  const composerPreview = await resolveComposerPreview(session, request.userMessage);
-  if (composerPreview.errors.length > 0) {
-    throw new Error(composerPreview.errors[0] ?? "添付の解決に失敗したよ。");
-  }
-
-  const character = await resolveSessionCharacter(session);
-  if (!character) {
-    throw new Error("キャラクター定義が見つからないよ。");
-  }
-
-  const appSettings = requireAppSettingsStorage().getSettings();
-  if (!getProviderAppSettings(appSettings, session.provider).enabled) {
-    throw new Error("この provider は Settings で無効になっているよ。");
-  }
-
-  const { provider } = resolveProviderCatalog(session.provider, session.catalogRevision);
-  const providerAdapter = getProviderAdapter(provider.id);
-  const sessionMemory = requireSessionMemoryStorage().ensureSessionMemory(session);
-  const projectMemoryEntries = resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
-  const promptForAudit = providerAdapter.composePrompt({
-    session,
-    sessionMemory,
-    projectMemoryEntries,
-    character,
-    providerCatalog: provider,
-    userMessage: nextMessage,
-    appSettings,
-    attachments: composerPreview.attachments,
-  });
-
-  const runningSession: Session = {
-    ...session,
-    updatedAt: currentTimestampLabel(),
-    status: "running",
-    runState: "running",
-    messages: [...session.messages, { role: "user", text: nextMessage }],
-  };
-
-  upsertSession(runningSession);
-  inFlightSessionRuns.add(sessionId);
-  const runAbortController = new AbortController();
-  sessionRunControllers.set(sessionId, runAbortController);
-  setLiveSessionRun(sessionId, {
-    sessionId,
-    threadId: runningSession.threadId,
-    assistantText: "",
-    steps: [],
-    usage: null,
-    errorMessage: "",
-    approvalRequest: null,
-  });
-
-  const runningAuditLog = requireAuditLogStorage().createAuditLog({
-    sessionId,
-    createdAt: new Date().toISOString(),
-    phase: "running",
-    provider: runningSession.provider,
-    model: runningSession.model,
-    reasoningEffort: runningSession.reasoningEffort,
-    approvalMode: runningSession.approvalMode,
-    threadId: runningSession.threadId,
-    logicalPrompt: promptForAudit.logicalPrompt,
-    transportPayload: null,
-    assistantText: "",
-    operations: [],
-    rawItemsJson: "[]",
-    usage: null,
-    errorMessage: "",
-  });
-
-  try {
-    if (runningSession.provider === "copilot" && isProviderQuotaTelemetryStale(getProviderQuotaTelemetry(runningSession.provider))) {
-      void refreshProviderQuotaTelemetry(runningSession.provider).catch(() => undefined);
-    }
-
-    const result = await providerAdapter.runSessionTurn({
-      session: runningSession,
-      sessionMemory,
-      projectMemoryEntries,
-      character,
-      providerCatalog: provider,
-      userMessage: nextMessage,
-      appSettings,
-      attachments: composerPreview.attachments,
-      signal: runAbortController.signal,
-      onApprovalRequest: (request) => waitForLiveApprovalDecision(sessionId, request, runAbortController.signal),
-      onProviderQuotaTelemetry: (telemetry) => {
-        setProviderQuotaTelemetry(telemetry.provider, telemetry);
-      },
-      onSessionContextTelemetry: (telemetry) => {
-        setSessionContextTelemetry(telemetry.sessionId, telemetry);
-      },
-    }, (state) => {
-      setLiveSessionRun(sessionId, {
-        ...state,
-        approvalRequest: getLiveSessionRun(sessionId)?.approvalRequest ?? null,
-      });
-    });
-
-    requireAuditLogStorage().updateAuditLog(runningAuditLog.id, {
-      sessionId,
-      createdAt: runningAuditLog.createdAt,
-      phase: "completed",
-      provider: runningSession.provider,
-      model: runningSession.model,
-      reasoningEffort: runningSession.reasoningEffort,
-      approvalMode: runningSession.approvalMode,
-      threadId: result.threadId ?? runningSession.threadId,
-      logicalPrompt: result.logicalPrompt,
-      transportPayload: result.transportPayload,
-      assistantText: result.assistantText,
-      operations: result.operations,
-      rawItemsJson: result.rawItemsJson,
-      usage: result.usage,
-      errorMessage: "",
-    });
-
-    const completedSession: Session = {
-      ...runningSession,
-      updatedAt: currentTimestampLabel(),
-      status: "idle",
-      runState: "idle",
-      threadId: result.threadId ?? runningSession.threadId,
-      messages: [
-        ...runningSession.messages,
-        {
-          role: "assistant",
-          text: result.assistantText,
-          artifact: result.artifact,
-        },
-      ],
-    };
-
-    const storedCompletedSession = upsertSession(completedSession);
-    void runSessionMemoryExtraction(storedCompletedSession, result.usage, { triggerReason: "outputTokensThreshold" });
-    void runCharacterReflection(storedCompletedSession, { triggerReason: "context-growth" });
-    return storedCompletedSession;
-  } catch (error: unknown) {
-    const providerTurnError = error instanceof ProviderTurnError ? error : null;
-    const canceled = providerTurnError ? providerTurnError.canceled : isCanceledRunError(error);
-    const message = error instanceof Error ? error.message : String(error);
-    const partialResult = providerTurnError?.partialResult;
-    if (canceled) {
-      invalidateProviderSessionThread(runningSession.provider, sessionId);
-    }
-    requireAuditLogStorage().updateAuditLog(runningAuditLog.id, {
-      sessionId,
-      createdAt: runningAuditLog.createdAt,
-      phase: canceled ? "canceled" : "failed",
-      provider: runningSession.provider,
-      model: runningSession.model,
-      reasoningEffort: runningSession.reasoningEffort,
-      approvalMode: runningSession.approvalMode,
-      threadId: partialResult?.threadId ?? runningSession.threadId,
-      logicalPrompt: partialResult?.logicalPrompt ?? promptForAudit.logicalPrompt,
-      transportPayload: partialResult?.transportPayload ?? null,
-      assistantText: partialResult?.assistantText ?? "",
-      operations: partialResult?.operations ?? [],
-      rawItemsJson: partialResult?.rawItemsJson ?? "[]",
-      usage: partialResult?.usage ?? null,
-      errorMessage: canceled ? "ユーザーがキャンセルしたよ。" : message,
-    });
-    const fallbackNotice = canceled ? "実行をキャンセルしたよ。" : `実行に失敗したよ。\n${message}`;
-    const assistantText = partialResult?.assistantText.trim()
-      ? `${partialResult.assistantText}\n\n${fallbackNotice}`
-      : fallbackNotice;
-    const failedSession: Session = {
-      ...runningSession,
-      updatedAt: currentTimestampLabel(),
-      status: "idle",
-      runState: canceled ? "idle" : "error",
-      threadId: partialResult?.threadId ?? runningSession.threadId,
-      messages: [
-        ...runningSession.messages,
-        {
-          role: "assistant",
-          text: assistantText,
-          artifact: partialResult?.artifact,
-          accent: true,
-        },
-      ],
-    };
-
-    const storedFailedSession = upsertSession(failedSession);
-    void runSessionMemoryExtraction(storedFailedSession, partialResult?.usage ?? null, { triggerReason: "outputTokensThreshold" });
-    return storedFailedSession;
-  } finally {
-    if (runningSession.provider === "copilot") {
-      scheduleProviderQuotaTelemetryRefresh(runningSession.provider, [0, 3000, 10000]);
-    }
-    const pendingApprovalRequest = pendingSessionApprovalRequests.get(sessionId);
-    if (pendingApprovalRequest) {
-      pendingApprovalRequest.resolve("deny");
-    }
-    inFlightSessionRuns.delete(sessionId);
-    sessionRunControllers.delete(sessionId);
-    liveSessionRuns.delete(sessionId);
-    clearWorkspaceFileIndex(session.workspacePath);
-    broadcastLiveSessionRun(sessionId);
-  }
+  return requireSessionRuntimeService().runSessionTurn(sessionId, request);
 }
 
 async function loadHomeEntry(window: BrowserWindow, mode: "home" | "monitor" | "settings" = "home"): Promise<void> {
@@ -2227,77 +1985,7 @@ async function openSettingsWindow(): Promise<BrowserWindow> {
 }
 
 async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {
-  const existingWindow = sessionWindows.get(sessionId);
-  if (existingWindow && !existingWindow.isDestroyed()) {
-    if (existingWindow.isMinimized()) {
-      existingWindow.restore();
-    }
-
-    existingWindow.focus();
-    return existingWindow;
-  }
-
-  const window = createBaseWindow({
-    width: 1520,
-    height: 940,
-    minWidth: 1120,
-    minHeight: 760,
-    title: `WithMate Session - ${sessionId}`,
-  });
-
-  sessionWindows.set(sessionId, window);
-  broadcastOpenSessionWindowIds();
-  window.once("ready-to-show", () => window.show());
-  window.on("close", (event) => {
-    if (allowQuitWithInFlightRuns) {
-      return;
-    }
-
-    if (allowCloseSessionWindows.has(sessionId)) {
-      allowCloseSessionWindows.delete(sessionId);
-      return;
-    }
-
-    if (!isSessionRunInFlight(sessionId)) {
-      return;
-    }
-
-    event.preventDefault();
-
-    const choice = dialog.showMessageBoxSync(window, {
-      type: "warning",
-      buttons: ["閉じない", "閉じて続行"],
-      defaultId: 0,
-      cancelId: 0,
-      title: "実行中のセッション",
-      message: "このセッションはまだ実行中だよ。",
-      detail: "閉じても処理は Main Process 側で続くよ。進捗はあとで開き直して確認してね。",
-      noLink: true,
-    });
-
-    if (choice !== 1) {
-      return;
-    }
-
-    allowCloseSessionWindows.add(sessionId);
-    window.close();
-  });
-  window.on("closed", () => {
-    allowCloseSessionWindows.delete(sessionId);
-    sessionWindows.delete(sessionId);
-    broadcastOpenSessionWindowIds();
-    const closedSession = getSession(sessionId);
-    if (closedSession && !isSessionRunInFlight(sessionId)) {
-      void runSessionMemoryExtraction(closedSession, null, { force: true, triggerReason: "session-window-close" });
-    }
-  });
-
-  await loadSessionEntry(window, sessionId);
-  const openedSession = getSession(sessionId);
-  if (openedSession) {
-    void runCharacterReflection(openedSession, { triggerReason: "session-start" });
-  }
-  return window;
+  return requireSessionWindowBridge().openSessionWindow(sessionId);
 }
 
 async function openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {

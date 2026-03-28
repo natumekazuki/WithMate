@@ -39,9 +39,32 @@ window は上の状態機械とは分離する。
 ### Main Process
 
 - 実行中 session の registry
-- `runSessionTurn()` の開始と完了
+- `SessionRuntimeService` を通した `runSessionTurn()` の開始と完了
 - session metadata / message persistence
 - close / quit 時の保護判定
+
+### SessionRuntimeService
+
+- `runSessionTurn()` の事前検証
+- in-flight 管理
+- provider adapter 実行
+- audit log の running/completed/failed/canceled 更新
+- live run state の更新
+- turn 完了後の background task 起動
+
+`session 起動 / 再開` と window 生成はまだ `main.ts` 側の責務として残し、  
+first slice では `turn 実行 / cancel / in-flight` だけを service に切り出す。
+
+### SessionWindowBridge
+
+- `Session Window` の registry
+- 既存 window の再利用
+- running 中 close の確認ダイアログ制御
+- `session-start` の character reflection 起動
+- `session-window-close` の Session Memory extraction 起動
+
+`BrowserWindow` の生成自体は `main.ts` に残し、  
+生成済み window の lifecycle wiring と session hook だけを bridge に寄せる。
 
 ### Session Window
 
@@ -126,3 +149,5 @@ MVP では tray 常駐までは行わない。
   - Electron Main Process の lifecycle
 - [session-persistence.md](./session-persistence.md)
   - session metadata の永続化
+- [refactor-roadmap.md](./refactor-roadmap.md)
+  - runtime orchestration の段階的分離方針

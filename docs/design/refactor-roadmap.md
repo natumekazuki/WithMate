@@ -1,0 +1,406 @@
+# Refactor Roadmap
+
+- 作成日: 2026-03-28
+- 対象: current 実装の機能棚卸しとリファクタ優先順
+
+## Goal
+
+WithMate の current 実装を、`今ある機能が何で、どこに責務が散っていて、どこから直すのが安全か` の観点で整理する。  
+この文書は docs 精査の前段として、実装リファクタの優先順を固定するための土台にする。
+
+## Why Refactor First
+
+現時点の docs は current 実装へかなり追従しているが、まだ最終形ではない。  
+この状態で docs を先に厳密化すると、リファクタで責務や構成が動いた時に手戻りが増える。
+
+そのため順序は次のようにする。
+
+1. 実装リファクタ
+2. docs 精査
+
+## Current Feature Map
+
+current 実装は、大きく次の 8 ドメインに分けて考える。
+
+### 1. Window / Navigation
+
+- `Home Window`
+- `Session Window`
+- `Character Editor Window`
+- `Diff Window`
+- `Settings Window`
+- `Session Monitor Window`
+
+責務:
+
+- window の生成 / 再利用 / focus
+- 起動導線
+- mode ごとの renderer 切り替え
+
+主な実装:
+
+- `src-electron/main.ts`
+- `src-electron/preload.ts`
+- `src/withmate-window.ts`
+- `src/HomeApp.tsx`
+- `src/App.tsx`
+
+### 2. Session Runtime
+
+- session 作成
+- session 再開
+- turn 実行
+- approval
+- additional directories
+- terminal 起動
+- diff / artifact
+- run 状態更新
+
+責務:
+
+- coding session のライフサイクル
+- 実行中 state と UI 投影
+
+主な実装:
+
+- `src-electron/main.ts`
+- `src-electron/session-storage.ts`
+- `src-electron/provider-runtime.ts`
+- `src-electron/provider-artifact.ts`
+- `src/App.tsx`
+
+### 3. Provider Integration
+
+- Codex adapter
+- Copilot adapter
+- provider 共通 prompt 合成
+- model / reasoning / approval / custom agent
+
+責務:
+
+- provider 差分の吸収
+- provider ごとの transport 変換
+
+主な実装:
+
+- `src-electron/codex-adapter.ts`
+- `src-electron/copilot-adapter.ts`
+- `src-electron/provider-prompt.ts`
+- `src-electron/provider-runtime.ts`
+
+### 4. Memory System
+
+- `Session Memory`
+- `Project Memory`
+- `Character Memory`
+- memory extraction
+- project promotion
+- retrieval / ranking
+- 時間減衰
+
+責務:
+
+- 記憶の保存
+- 記憶の抽出
+- prompt / monologue への再利用
+
+主な実装:
+
+- `src-electron/session-memory-storage.ts`
+- `src-electron/session-memory-extraction.ts`
+- `src-electron/project-memory-storage.ts`
+- `src-electron/project-memory-promotion.ts`
+- `src-electron/project-memory-retrieval.ts`
+- `src-electron/character-memory-storage.ts`
+- `src-electron/character-memory-retrieval.ts`
+- `src-electron/character-reflection.ts`
+- `src-electron/memory-time-decay.ts`
+
+### 5. Character System
+
+- character storage
+- character editor
+- session copy
+- monologue stream
+
+責務:
+
+- character 定義の保存と編集
+- character 体験の UI 投影
+
+主な実装:
+
+- `src-electron/character-storage.ts`
+- `src/CharacterEditorApp.tsx`
+- `src/App.tsx`
+- `src/app-state.ts`
+
+### 6. Settings / Catalog
+
+- coding provider settings
+- memory extraction settings
+- character reflection settings
+- model catalog
+- reset targets
+
+責務:
+
+- app-wide 設定の正本
+- provider / model 選択肢の正本
+
+主な実装:
+
+- `src-electron/app-settings-storage.ts`
+- `src-electron/model-catalog-storage.ts`
+- `src/settings-ui.ts`
+- `src/HomeApp.tsx`
+
+### 7. Persistence / Audit
+
+- sessions
+- session memories
+- project memories
+- character memories
+- audit logs
+- database reset
+
+責務:
+
+- SQLite schema
+- migration
+- reset policy
+- traceability
+
+主な実装:
+
+- `src-electron/session-storage.ts`
+- `src-electron/audit-log-storage.ts`
+- `src-electron/*-memory-storage.ts`
+- `src-electron/main.ts`
+
+### 8. UI Projection / Activity
+
+- right pane activity
+- latest command
+- memory generation
+- monologue
+- rate limit / context usage
+
+責務:
+
+- backend state を Session UI に見える形で投影する
+
+主な実装:
+
+- `src/App.tsx`
+- `src/styles.css`
+- `src/app-state.ts`
+
+## Current Hotspots
+
+リファクタ優先度が高いのは次の 4 点である。
+
+### 1. `src-electron/main.ts` への責務集中
+
+current の `main.ts` は次を同時に持っている。
+
+- window lifecycle
+- session runtime orchestration
+- memory / character reflection orchestration
+- background activity 管理
+- audit 記録
+- reset 処理
+
+最もリファクタ効果が大きい hotspot はここである。
+
+### 2. `src/app-state.ts` の shared type 集中
+
+`app-state.ts` は正本 type と normalize helper の置き場として機能しているが、domain ごとの境界がかなり厚くなっている。
+
+特に:
+
+- Session
+- Memory
+- Character
+- Background Activity
+
+が 1 ファイルに集中しているため、domain 単位で分ける余地がある。
+
+### 3. Memory orchestration の分散
+
+保存基盤と retrieval は分かれ始めているが、
+
+- trigger 判定
+- provider 実行
+- audit
+- UI 状態更新
+
+はまだ `main.ts` に強く残っている。
+
+### 4. UI state と backend projection の混在
+
+`App.tsx` は Session Window の正本だが、
+
+- command
+- memory generation
+- monologue
+- audit overlay
+- provider telemetry
+
+まで 1 component に寄っている。
+
+## Refactor Principles
+
+### 1. File 単位ではなく機能単位で切る
+
+先に `main.ts を小さくする` だけを目的にしない。  
+`Session Runtime`、`Memory`、`Character Reflection` のように機能単位で切る。
+
+### 2. Orchestration と Persistence を分ける
+
+保存基盤と trigger / 実行制御を同じ service に混ぜない。  
+最低限、次を分ける。
+
+- storage
+- retrieval
+- orchestration
+
+### 3. UI projection は最後に触る
+
+backend の責務整理が先で、UI はその投影先として後から整える。
+
+### 4. docs の大掃除は後回し
+
+refactor で責務が固まってから、必要 / 不要 / 重複を精査する。
+
+## Refactor Order
+
+### Phase 1. Session Runtime Orchestration
+
+最初に切る。
+
+対象:
+
+- session 起動 / 再開 / turn 実行
+- background task の起動点
+- in-flight 管理
+- window close 時の session 連動
+
+目的:
+
+- `main.ts` から session 実行責務を剥がす
+
+想定の受け皿:
+
+- `src-electron/session-runtime-service.ts`
+- `src-electron/session-window-bridge.ts`
+- `src-electron/session-persistence-service.ts`
+
+### Phase 2. Memory Orchestration
+
+次に切る。
+
+対象:
+
+- Session Memory extraction trigger
+- Project promotion
+- Character reflection trigger
+- background audit
+
+目的:
+
+- `main.ts` から Memory / Character の orchestration を剥がす
+
+想定の受け皿:
+
+- `src-electron/session-memory-service.ts`
+- `src-electron/project-memory-service.ts`
+- `src-electron/character-reflection-service.ts`
+
+### Phase 3. Provider Boundary
+
+対象:
+
+- provider runtime interface
+- prompt composition
+- provider-specific background execution
+
+目的:
+
+- coding plane と background plane の実行境界を揃える
+
+### Phase 4. Settings / Catalog Boundary
+
+対象:
+
+- app settings 読み書き
+- model catalog 参照
+- provider 設定の正規化
+
+目的:
+
+- renderer と main の両方から設定を参照する経路を整理する
+
+### Phase 5. UI Projection
+
+対象:
+
+- Session Window の right pane
+- provider telemetry
+- monologue / memory generation 表示
+
+目的:
+
+- `App.tsx` を domain ごとの view model へ分ける
+
+## First Refactor Slice
+
+最初の具体タスクは `Session Runtime Orchestration` を切り出す。  
+理由:
+
+- `main.ts` の責務集中を最も直接的に減らせる
+- Memory / Character 系の background task もここに依存している
+- ここが整うと後続の `Memory Orchestration` も切りやすい
+
+最初に扱う詳細:
+
+1. turn 実行
+2. cancel
+3. in-flight 管理
+4. live run / background task 起動点
+
+current の first slice では、上の 4 点を `SessionRuntimeService` として切り出す。  
+`session 起動 / 再開` は window lifecycle との結合がまだ強いため、次の slice で `session open/resume bridge` として分ける。
+
+## Current Progress
+
+- `SessionRuntimeService`
+  - 完了
+  - `turn 実行 / cancel / in-flight / live run / background task 起動点`
+- `SessionWindowBridge`
+  - 完了
+  - `Session Window` の registry / close policy / session-start / session-window-close hook
+- `SessionPersistenceService`
+  - 完了
+  - `create / update / delete / upsert`
+  - provider/model 解決
+  - session memory / scope 同期
+  - bulk replace / migration / rollback / reset の write path
+- 次の候補
+  - Memory orchestration の service 分離
+  - character 同期と session metadata bulk update の責務整理
+
+## After Refactor
+
+実装の責務が固まった後で、次を行う。
+
+1. docs 精査
+2. 不要 doc の統合 / 削除判断
+3. `database-schema.md` を含む current 正本群の再整理
+
+## Related
+
+- `docs/design/window-architecture.md`
+- `docs/design/provider-adapter.md`
+- `docs/design/memory-architecture.md`
+- `docs/design/database-schema.md`
