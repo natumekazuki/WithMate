@@ -7,6 +7,13 @@
 
 Renderer が provider ごとの差異を知らずに、`Session Window` の送信と結果反映を扱えるようにする。
 
+## Position
+
+- provider 実行境界と current adapter 責務の正本はこの文書とする
+- current capability の一覧は `docs/design/coding-agent-capability-matrix.md` を参照する
+- provider ごとの詳細 snapshot は `docs/design/codex-capability-matrix.md` などの supporting doc を参照する
+- SDK surface 不足で保留している項目は `docs/design/provider-sdk-pending-items.md` を参照する
+
 ## Boundary
 
 WithMate では provider 実行境界を Main Process に置く。

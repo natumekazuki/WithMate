@@ -8,6 +8,12 @@
 provider 側 SDK の surface 不足で、WithMate では実装しないか provider 限定に留めている項目を一覧化する。  
 「未実装」と「現状では実装筋が悪い」を分けて扱うためのメモ。
 
+## Position
+
+- 状態: review note
+- current 実装の正本ではなく、SDK surface 待ちで保留している論点を残すための文書として扱う
+- 実装済み capability や adapter 境界の正本は `docs/design/provider-adapter.md` と `docs/design/coding-agent-capability-matrix.md` を参照する
+
 ## Summary Table
 
 | 項目 | Codex | Copilot | 現在の判断 |

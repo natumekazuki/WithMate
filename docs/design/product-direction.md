@@ -11,6 +11,12 @@ WithMate を「キャラ付きチャットアプリ」ではなく、`Codex CLI 
 
 この文書は、current milestone で何を主役にし、何をまだ主役にしないかを判断するための上位方針とする。
 
+## Position
+
+- プロダクト全体の優先順位と Character / Memory / Monologue の位置づけの正本はこの文書とする
+- current UI の具体仕様は `docs/design/desktop-ui.md` を参照する
+- monologue / reflection backend の詳細は `docs/design/monologue-provider-policy.md` を参照する
+
 ## Product Thesis
 
 WithMate で実現したい体験は次の三層で構成される。

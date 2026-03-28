@@ -125,5 +125,4 @@ flowchart TB
 ## References
 
 - `docs/design/desktop-ui.md`
-- `docs/design/session-window-layout-redesign.md`
 - `docs/design/audit-log.md`

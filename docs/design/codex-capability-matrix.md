@@ -1,7 +1,11 @@
 # Codex Capability Matrix
 
-> 注記: cross-provider の正本一覧は `docs/design/coding-agent-capability-matrix.md` を参照する。  
-> 本書は `Codex` 側の current snapshot を詳しく見るための補助 doc として扱う。
+## Position
+
+- 状態: supporting doc
+- cross-provider の正本一覧は `docs/design/coding-agent-capability-matrix.md`
+- provider 境界の正本は `docs/design/provider-adapter.md`
+- 本書は `Codex` 側の current snapshot を詳しく見るための補助文書として扱う
 
 ## Goal
 
@@ -140,7 +144,7 @@
 - `src-electron/codex-adapter.ts`
 - `src/App.tsx`
 - `docs/design/agent-event-ui.md`
-- `docs/design/session-window-layout-redesign.md`
+- `docs/design/desktop-ui.md`
 
 制約:
 

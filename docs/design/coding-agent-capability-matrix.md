@@ -6,6 +6,12 @@
 - capability ごとに `Codex`、`GitHub Copilot CLI`、`WithMate current` の対応状況を同じ表で確認できるようにする
 - 今後の実装や改修で、何を更新すべきかの正本 doc とする
 
+## Position
+
+- cross-provider capability 一覧の正本はこの文書とする
+- provider 実行境界そのものの仕様は `docs/design/provider-adapter.md` を正本とする
+- provider 個別の詳細 snapshot は `docs/design/codex-capability-matrix.md` などの supporting doc を参照する
+
 ## How To Use
 
 - 行は `WithMate が canonical UI / metadata として持ちたい capability` を表す

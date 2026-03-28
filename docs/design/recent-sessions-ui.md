@@ -1,5 +1,10 @@
 # Recent Sessions UI
 
+## Status
+
+- 状態: historical note
+- current の UI 正本は `docs/design/desktop-ui.md`
+
 - 作成日: 2026-03-11
 - 対象: `Home Window` 内のセッション一覧
 

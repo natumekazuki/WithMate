@@ -1,5 +1,10 @@
 # Home UI Brushup
 
+## Status
+
+- 状態: historical note
+- current の UI 正本は `docs/design/desktop-ui.md`
+
 - 作成日: 2026-03-14
 - 対象: `Home Window` の UI 改善検討
 
@@ -194,6 +199,5 @@ Home 本体の情報設計が固まってから十分。
 
 - `docs/design/desktop-ui.md`
 - `docs/design/window-architecture.md`
-- `docs/design/recent-sessions-ui.md`
 - `docs/design/session-launch-ui.md`
 - `docs/design/settings-ui.md`

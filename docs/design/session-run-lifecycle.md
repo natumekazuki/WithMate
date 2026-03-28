@@ -8,6 +8,12 @@
 実行中の coding agent session が、`Session Window` の close やアプリ終了操作で意図せず失われにくいようにする。
 session 実行の正本を Main Process に置き、window はその投影であることを明確にする。
 
+## Position
+
+- この文書は window 構成全体ではなく、`running` session の lifecycle と保護制御を正本とする
+- window の上位責務は `docs/design/window-architecture.md` を参照する
+- Electron runtime detail は `docs/design/electron-window-runtime.md` を参照する
+
 ## Decision
 
 - session 実行は Main Process が保持する

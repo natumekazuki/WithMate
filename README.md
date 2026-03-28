@@ -109,6 +109,8 @@ npm run typecheck
 
 - `docs/design/product-direction.md`
   - WithMate の優先順位と価値仮説
+- `docs/design/documentation-map.md`
+  - `docs/design/` の current 正本 / supporting / 統合候補の棚卸し
 - `docs/design/coding-agent-capability-matrix.md`
   - coding agent wrapper 観点の対応機能一覧と current status
 - `docs/design/window-architecture.md`

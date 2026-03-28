@@ -1,5 +1,11 @@
 # Slash Command Integration
 
+## Position
+
+- 状態: review note
+- current 実装では slash command 吸収は未着手であり、本書は将来の統合判断メモとして扱う
+- current provider 実装の正本は `docs/design/provider-adapter.md`
+
 ## Goal
 
 - Codex と GitHub Copilot CLI の `"/"` コマンドを整理する

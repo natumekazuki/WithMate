@@ -1,5 +1,11 @@
 # Codex Approval Research
 
+## Position
+
+- 状態: review note
+- current 実装の正本ではなく、approval / slash command の判断材料を残すための調査記録として扱う
+- current adapter 仕様は `docs/design/provider-adapter.md` を、cross-provider capability は `docs/design/coding-agent-capability-matrix.md` を参照する
+
 ## Goal
 
 - WithMate から `@openai/codex-sdk` を使うときの `Approval` 境界を整理する

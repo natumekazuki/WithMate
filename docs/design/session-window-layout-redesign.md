@@ -1,11 +1,14 @@
 # Session Window Layout Redesign
 
+## Position
+
+- 状態: historical note
+- current の UI 正本は `docs/design/desktop-ui.md`
+
 ## Status
 
-- 状態: current design
 - 前提: `1920x1080` のディスプレイで `Session Window` をフル表示した利用を基準にする
 - 実装状況: `conversation + latest command` の中央 2 分割、下段 `Action Dock`、splitter、compact な `Top Bar` を実装済み
-- chrome 削減を含む現仕様は `docs/design/session-window-chrome-reduction.md` を参照する
 
 ## Goal
 
@@ -92,4 +95,3 @@ flowchart TB
 
 - `docs/design/desktop-ui.md`
 - `docs/design/session-live-activity-monitor.md`
-- `docs/design/session-window-chrome-reduction.md`

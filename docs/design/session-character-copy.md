@@ -7,6 +7,12 @@
 
 SessionWindow の固定文言を character 体験へ寄せつつ、character 未設定時は bland な default copy で運用できるようにする。
 
+## Position
+
+- 状態: supporting doc
+- current UI 全体の正本は `docs/design/desktop-ui.md`
+- この文書は Session copy slot の詳細仕様だけを扱う
+
 ## State Model
 
 `CharacterProfile` に session copy 設定を持たせる。

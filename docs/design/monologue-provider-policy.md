@@ -13,6 +13,12 @@
 `Character Stream` / 独り言機能を、coding agent 本体とは分離した安全で説明しやすい実行方式として定義する。
 特に、認証方式、発火条件、モデル固定、Memory との関係を明文化し、後続実装の判断基準にする。
 
+## Position
+
+- monologue / character reflection backend と trigger policy の正本はこの文書とする
+- プロダクト上の優先順位は `docs/design/product-direction.md` を参照する
+- Character Memory の保存構造は `docs/design/character-memory-storage.md` を参照する
+
 ## Decision Summary
 
 1. coding agent 本体は current 実装では `Codex` 中心だが、Character Stream 着手前に `Codex` と `CopilotCLI` の target scope を揃える

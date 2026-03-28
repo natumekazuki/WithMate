@@ -1,5 +1,11 @@
 # Agent Event UI
 
+## Position
+
+- 状態: historical note / supporting draft
+- current Session UI の正本は `docs/design/desktop-ui.md` と `docs/design/session-live-activity-monitor.md`
+- 本書は event UI の検討経緯と背景メモとして扱う
+
 - 作成日: 2026-03-11
 - 対象: React モックと後続 Renderer 実装におけるエージェント実行可視化
 

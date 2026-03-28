@@ -1,5 +1,11 @@
 # Character Chat UI
 
+## Position
+
+- 状態: historical note
+- current の上位方針は `docs/design/product-direction.md`
+- current UI 正本は `docs/design/desktop-ui.md`
+
 - 作成日: 2026-03-11
 - 対象: React モックのチャット面とキャラ画像表示
 

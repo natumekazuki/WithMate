@@ -1,5 +1,11 @@
 # Agent And Skill Command Design
 
+## Position
+
+- 状態: review note
+- current skill 実装の正本は `docs/design/provider-adapter.md`
+- 本書は skill / agent command の設計判断メモとして扱う
+
 ## Goal
 
 - WithMate の `/agent` と skill UI をどこまで共通化できるか整理する

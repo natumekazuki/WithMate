@@ -1,8 +1,12 @@
 # Session Window Chrome Reduction
 
+## Position
+
+- 状態: historical note
+- current の UI 正本は `docs/design/desktop-ui.md`
+
 ## Status
 
-- 状態: current design
 - 前提: SessionWindow の主要機能は揃っており、現段階では viewport の広さと面の圧迫感を優先して改善する
 
 ## Goal
@@ -82,5 +86,4 @@ flowchart TB
 ## References
 
 - `docs/design/desktop-ui.md`
-- `docs/design/session-window-layout-redesign.md`
 - `docs/design/session-live-activity-monitor.md`

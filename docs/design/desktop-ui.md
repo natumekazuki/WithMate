@@ -23,6 +23,16 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - Settings Window と model catalog 操作
 - Session の監査ログ閲覧 UI
 
+## UI Source Of Truth Boundary
+
+- current UI の正本はこの文書とする
+- 次の文書は current 実装の補足や経緯メモとして扱い、この文書より優先しない
+  - `docs/design/home-ui-brushup.md`
+  - `docs/design/recent-sessions-ui.md`
+  - `docs/design/session-window-chrome-reduction.md`
+  - `docs/design/session-window-layout-redesign.md`
+- 上記文書は、今後 `desktop-ui.md` に統合または archive する候補として扱う
+
 ## Runtime
 
 - 対応 runtime は Electron のみ
@@ -204,8 +214,6 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `Send / Cancel` は character `main`
 - sendability 判定は `src/App.tsx` の単一導出に寄せ、`sessionExecutionBlockedReason` / `composerPreview.errors` を Send 近傍の単一 feedback area で扱う
 - 実行中の latest command 監視の詳細は `docs/design/session-live-activity-monitor.md` を参照する
-- wide desktop の再配置詳細は `docs/design/session-window-layout-redesign.md` を参照する
-- chrome 削減の現仕様は `docs/design/session-window-chrome-reduction.md` を参照する
 - Send disabled 条件は submit button / `Ctrl+Enter` / `Cmd+Enter` guard で一致させ、blank / whitespace-only draft の no-op 送信を通さない
 - `runState === "running"` では `Cancel` 主体の既存 UX を維持し、送信不可説明を主表示しない
 - `Details` 展開後の artifact block 背景は `main / sub` の薄い accent を持つ
