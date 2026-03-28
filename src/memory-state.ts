@@ -1,3 +1,5 @@
+import { currentIsoTimestamp } from "./time-state.js";
+
 export type SessionBackgroundActivityKind = "memory-generation" | "monologue";
 
 export type SessionBackgroundActivityStatus = "running" | "completed" | "failed" | "canceled";
@@ -119,10 +121,6 @@ type CreateDefaultSessionMemoryInput = {
   taskTitle: string;
   taskSummary: string;
 };
-
-function currentIsoTimestamp(): string {
-  return new Date().toISOString();
-}
 
 function normalizeStringList(value: unknown): string[] {
   if (!Array.isArray(value)) {

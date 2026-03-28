@@ -14,6 +14,7 @@ import {
   type DiffRow,
   type RunCheck,
 } from "./runtime-state.js";
+import { currentTimestampLabel } from "./time-state.js";
 
 export type MessageArtifact = {
   title: string;
@@ -93,20 +94,6 @@ function getLocationSearch(): string {
   }
 
   return browserWindow.location.search;
-}
-
-function padDatePart(value: number): string {
-  return String(value).padStart(2, "0");
-}
-
-function currentTimestampLabel(): string {
-  const timestamp = new Date();
-  const year = timestamp.getFullYear();
-  const month = padDatePart(timestamp.getMonth() + 1);
-  const day = padDatePart(timestamp.getDate());
-  const hours = padDatePart(timestamp.getHours());
-  const minutes = padDatePart(timestamp.getMinutes());
-  return `${year}/${month}/${day} ${hours}:${minutes}`;
 }
 
 function normalizeDiffRow(value: unknown): DiffRow | null {

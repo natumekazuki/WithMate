@@ -1,7 +1,3 @@
-import {
-  createDefaultSessionMemory,
-  type SessionMemory,
-} from "../src/app-state.js";
 import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
 import {
   buildNewSession,
@@ -17,7 +13,6 @@ import {
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
-import { resolveProjectScope, type ResolvedProjectScopeInput } from "./project-scope.js";
 
 export type SessionPersistenceServiceDeps = {
   getSessions(): Session[];
@@ -30,10 +25,7 @@ export type SessionPersistenceServiceDeps = {
   deleteStoredSession(sessionId: string): void;
   getAppSettings: () => AppSettings;
   getModelCatalogSnapshot(): ModelCatalogSnapshot;
-  ensureSessionMemory(session: Session): SessionMemory;
-  upsertSessionMemory(memory: SessionMemory): void;
-  ensureProjectScope(scope: ResolvedProjectScopeInput): void;
-  ensureCharacterScope(input: { characterId: string; displayName: string }): void;
+  syncSessionDependencies(session: Session): void;
   clearSessionContextTelemetry(sessionId: string): void;
   clearSessionBackgroundActivities(sessionId: string): void;
   clearCharacterReflectionCheckpoint(sessionId: string): void;
@@ -216,17 +208,6 @@ export class SessionPersistenceService {
   }
 
   private syncStoredSession(stored: Session): void {
-    const existingMemory = this.deps.ensureSessionMemory(stored);
-    this.deps.upsertSessionMemory({
-      ...existingMemory,
-      workspacePath: stored.workspacePath,
-      threadId: stored.threadId,
-      goal: existingMemory.goal.trim() ? existingMemory.goal : createDefaultSessionMemory(stored).goal,
-    });
-    this.deps.ensureProjectScope(resolveProjectScope(stored.workspacePath));
-    this.deps.ensureCharacterScope({
-      characterId: stored.characterId,
-      displayName: stored.character,
-    });
+    this.deps.syncSessionDependencies(stored);
   }
 }

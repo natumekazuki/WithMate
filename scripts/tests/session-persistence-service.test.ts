@@ -3,10 +3,8 @@ import { describe, it } from "node:test";
 
 import {
   buildNewSession,
-  createDefaultSessionMemory,
   type CreateSessionInput,
   type Session,
-  type SessionMemory,
 } from "../../src/app-state.js";
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
@@ -59,7 +57,7 @@ function createSnapshot(): ModelCatalogSnapshot {
 describe("SessionPersistenceService", () => {
   it("createSession は有効な provider と model を解決して保存する", () => {
     const storedSessions: Session[] = [];
-    const syncedMemories: SessionMemory[] = [];
+    const syncedSessionIds: string[] = [];
     let broadcastCount = 0;
     const snapshot = createSnapshot();
 
@@ -98,14 +96,9 @@ describe("SessionPersistenceService", () => {
       getModelCatalogSnapshot() {
         return snapshot;
       },
-      ensureSessionMemory(session) {
-        return createDefaultSessionMemory(session);
+      syncSessionDependencies(session) {
+        syncedSessionIds.push(session.id);
       },
-      upsertSessionMemory(memory) {
-        syncedMemories.push(memory);
-      },
-      ensureProjectScope() {},
-      ensureCharacterScope() {},
       clearSessionContextTelemetry() {},
       clearSessionBackgroundActivities() {},
       clearCharacterReflectionCheckpoint() {},
@@ -139,7 +132,7 @@ describe("SessionPersistenceService", () => {
     assert.equal(created.model, "codex-default");
     assert.equal(created.catalogRevision, 2);
     assert.equal(created.allowedAdditionalDirectories.length, 1);
-    assert.deepEqual(syncedMemories.at(-1)?.goal, "New Session");
+    assert.deepEqual(syncedSessionIds, [created.id]);
     assert.equal(broadcastCount, 1);
   });
 
@@ -177,12 +170,7 @@ describe("SessionPersistenceService", () => {
       getModelCatalogSnapshot() {
         return createSnapshot();
       },
-      ensureSessionMemory(session) {
-        return createDefaultSessionMemory(session);
-      },
-      upsertSessionMemory() {},
-      ensureProjectScope() {},
-      ensureCharacterScope() {},
+      syncSessionDependencies() {},
       clearSessionContextTelemetry(sessionId) {
         clearedTelemetry.push(sessionId);
       },
@@ -246,12 +234,7 @@ describe("SessionPersistenceService", () => {
       getModelCatalogSnapshot() {
         return createSnapshot();
       },
-      ensureSessionMemory(current) {
-        return createDefaultSessionMemory(current);
-      },
-      upsertSessionMemory() {},
-      ensureProjectScope() {},
-      ensureCharacterScope() {},
+      syncSessionDependencies() {},
       clearSessionContextTelemetry() {},
       clearSessionBackgroundActivities(sessionId) {
         clearedBackground.push(sessionId);
@@ -315,12 +298,7 @@ describe("SessionPersistenceService", () => {
       getModelCatalogSnapshot() {
         return createSnapshot();
       },
-      ensureSessionMemory(current) {
-        return createDefaultSessionMemory(current);
-      },
-      upsertSessionMemory() {},
-      ensureProjectScope() {},
-      ensureCharacterScope() {},
+      syncSessionDependencies() {},
       clearSessionContextTelemetry(sessionId) {
         clearedTelemetry.push(sessionId);
       },
