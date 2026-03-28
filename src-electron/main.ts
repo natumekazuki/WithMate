@@ -77,12 +77,9 @@ import { createAppLifecycleDeps } from "./app-lifecycle-deps.js";
 import { createMainBootstrapDeps } from "./main-bootstrap-deps.js";
 import { MainInfrastructureRegistry } from "./main-infrastructure-registry.js";
 import { MainBootstrapService } from "./main-bootstrap-service.js";
+import { MainObservabilityFacade } from "./main-observability-facade.js";
 import { MainQueryService } from "./main-query-service.js";
-import {
-  fetchProviderQuotaTelemetry,
-  resolveProviderCatalogOrThrow,
-  resolveProviderTurnAdapter,
-} from "./provider-support.js";
+import { resolveProviderCatalogOrThrow, resolveProviderTurnAdapter } from "./provider-support.js";
 import {
   type CharacterReflectionTriggerReason,
 } from "./character-reflection.js";
@@ -129,6 +126,7 @@ let sessionApprovalService: SessionApprovalService | null = null;
 let auditLogService: AuditLogService | null = null;
 let sessionMemorySupportService: SessionMemorySupportService | null = null;
 let characterRuntimeService: CharacterRuntimeService | null = null;
+let mainObservabilityFacade: MainObservabilityFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
 let mainInfrastructureRegistry:
   | MainInfrastructureRegistry<
@@ -380,6 +378,19 @@ function requireMainQueryService(): MainQueryService {
   }
 
   return mainQueryService;
+}
+
+function requireMainObservabilityFacade(): MainObservabilityFacade {
+  if (!mainObservabilityFacade) {
+    mainObservabilityFacade = new MainObservabilityFacade({
+      getSessionObservabilityService: () => requireSessionObservabilityService(),
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      getProviderAdapter: (providerId) => getProviderAdapter(providerId),
+      providerQuotaStaleTtlMs: PROVIDER_QUOTA_STALE_TTL_MS,
+    });
+  }
+
+  return mainObservabilityFacade;
 }
 
 function requireModelCatalogStorage(): ModelCatalogStorage {
@@ -791,6 +802,7 @@ function closePersistentStores(): void {
   sessionApprovalService = null;
   sessionMemorySupportService = null;
   characterRuntimeService = null;
+  mainObservabilityFacade = null;
   mainQueryService = null;
   mainInfrastructureRegistry?.reset();
   mainInfrastructureRegistry = null;
@@ -817,6 +829,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   sessionApprovalService = null;
   sessionMemorySupportService = null;
   characterRuntimeService = null;
+  mainObservabilityFacade = null;
   mainQueryService = null;
   mainInfrastructureRegistry?.reset();
   mainInfrastructureRegistry = null;
@@ -913,99 +926,58 @@ function broadcastAppSettings(settings?: ReturnType<AppSettingsStorage["getSetti
 }
 
 function getProviderQuotaTelemetry(providerId: string): ProviderQuotaTelemetry | null {
-  return requireSessionObservabilityService().getProviderQuotaTelemetry(providerId);
-}
-
-function broadcastProviderQuotaTelemetry(providerId: string): void {
-  requireSessionObservabilityService().setProviderQuotaTelemetry(providerId, getProviderQuotaTelemetry(providerId));
+  return requireMainObservabilityFacade().getProviderQuotaTelemetry(providerId);
 }
 
 function setProviderQuotaTelemetry(providerId: string, telemetry: ProviderQuotaTelemetry | null): void {
-  requireSessionObservabilityService().setProviderQuotaTelemetry(providerId, telemetry);
+  requireMainObservabilityFacade().setProviderQuotaTelemetry(providerId, telemetry);
 }
 
 function clearProviderQuotaTelemetry(providerId: string): void {
-  requireSessionObservabilityService().clearProviderQuotaTelemetry(providerId);
+  requireMainObservabilityFacade().clearProviderQuotaTelemetry(providerId);
 }
 
 function clearAllProviderQuotaTelemetry(): void {
-  requireSessionObservabilityService().clearAllProviderQuotaTelemetry();
+  requireMainObservabilityFacade().clearAllProviderQuotaTelemetry();
 }
 
 function isProviderQuotaTelemetryStale(telemetry: ProviderQuotaTelemetry | null): boolean {
-  return telemetry ? requireSessionObservabilityService().isProviderQuotaTelemetryStale(telemetry.provider, PROVIDER_QUOTA_STALE_TTL_MS) : true;
+  return requireMainObservabilityFacade().isProviderQuotaTelemetryStale(telemetry);
 }
 
 async function refreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null> {
-  return requireSessionObservabilityService().refreshProviderQuotaTelemetry(providerId, async () => {
-    return fetchProviderQuotaTelemetry({
-      providerId,
-      getAppSettings: () => requireAppSettingsStorage().getSettings(),
-      getProviderAdapter: (nextProviderId) => getProviderAdapter(nextProviderId),
-    });
-  });
+  return requireMainObservabilityFacade().refreshProviderQuotaTelemetry(providerId);
 }
 
 async function getOrRefreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null> {
-  return requireSessionObservabilityService().getOrRefreshProviderQuotaTelemetry(
-    providerId,
-    PROVIDER_QUOTA_STALE_TTL_MS,
-    async () => {
-      return fetchProviderQuotaTelemetry({
-        providerId,
-        getAppSettings: () => requireAppSettingsStorage().getSettings(),
-        getProviderAdapter: (nextProviderId) => getProviderAdapter(nextProviderId),
-      });
-    },
-  );
+  return requireMainObservabilityFacade().getOrRefreshProviderQuotaTelemetry(providerId);
 }
 
 function scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void {
-  requireSessionObservabilityService().scheduleProviderQuotaTelemetryRefresh(providerId, delaysMs, async () => {
-    return fetchProviderQuotaTelemetry({
-      providerId,
-      getAppSettings: () => requireAppSettingsStorage().getSettings(),
-      getProviderAdapter: (nextProviderId) => getProviderAdapter(nextProviderId),
-    });
-  });
+  requireMainObservabilityFacade().scheduleProviderQuotaTelemetryRefresh(providerId, delaysMs);
 }
 
 function getSessionContextTelemetry(sessionId: string): SessionContextTelemetry | null {
-  return requireSessionObservabilityService().getSessionContextTelemetry(sessionId);
-}
-
-function broadcastSessionContextTelemetry(sessionId: string): void {
-  requireSessionObservabilityService().setSessionContextTelemetry(sessionId, getSessionContextTelemetry(sessionId));
+  return requireMainObservabilityFacade().getSessionContextTelemetry(sessionId);
 }
 
 function setSessionContextTelemetry(sessionId: string, telemetry: SessionContextTelemetry | null): void {
-  requireSessionObservabilityService().setSessionContextTelemetry(sessionId, telemetry);
+  requireMainObservabilityFacade().setSessionContextTelemetry(sessionId, telemetry);
 }
 
 function clearSessionContextTelemetry(sessionId: string): void {
-  requireSessionObservabilityService().clearSessionContextTelemetry(sessionId);
+  requireMainObservabilityFacade().clearSessionContextTelemetry(sessionId);
 }
 
 function clearAllSessionContextTelemetry(): void {
-  requireSessionObservabilityService().clearAllSessionContextTelemetry();
+  requireMainObservabilityFacade().clearAllSessionContextTelemetry();
 }
 
 function getSessionBackgroundActivity(
   sessionId: string,
   kind: SessionBackgroundActivityKind,
 ): SessionBackgroundActivityState | null {
-  return requireSessionObservabilityService().getSessionBackgroundActivity(sessionId, kind);
-}
-
-function broadcastSessionBackgroundActivity(
-  sessionId: string,
-  kind: SessionBackgroundActivityKind,
-): void {
-  requireSessionObservabilityService().setSessionBackgroundActivity(
-    sessionId,
-    kind,
-    getSessionBackgroundActivity(sessionId, kind),
-  );
+  return requireMainObservabilityFacade().getSessionBackgroundActivity(sessionId, kind);
 }
 
 function setSessionBackgroundActivity(
@@ -1013,15 +985,15 @@ function setSessionBackgroundActivity(
   kind: SessionBackgroundActivityKind,
   state: SessionBackgroundActivityState | null,
 ): void {
-  requireSessionObservabilityService().setSessionBackgroundActivity(sessionId, kind, state);
+  requireMainObservabilityFacade().setSessionBackgroundActivity(sessionId, kind, state);
 }
 
 function clearSessionBackgroundActivities(sessionId: string): void {
-  requireSessionObservabilityService().clearSessionBackgroundActivities(sessionId);
+  requireMainObservabilityFacade().clearSessionBackgroundActivities(sessionId);
 }
 
 function clearAllSessionBackgroundActivities(): void {
-  requireSessionObservabilityService().clearAllSessionBackgroundActivities();
+  requireMainObservabilityFacade().clearAllSessionBackgroundActivities();
 }
 
 function listOpenSessionWindowIds(): string[] {
@@ -1042,22 +1014,22 @@ function closeResetTargetWindows(): void {
 }
 
 function getLiveSessionRun(sessionId: string): LiveSessionRunState | null {
-  return requireSessionObservabilityService().getLiveSessionRun(sessionId);
+  return requireMainObservabilityFacade().getLiveSessionRun(sessionId);
 }
 
 function setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void {
-  requireSessionObservabilityService().setLiveSessionRun(sessionId, state);
+  requireMainObservabilityFacade().setLiveSessionRun(sessionId, state);
 }
 
 function updateLiveSessionRun(
   sessionId: string,
   recipe: (current: LiveSessionRunState) => LiveSessionRunState,
 ): LiveSessionRunState | null {
-  return requireSessionObservabilityService().updateLiveSessionRun(sessionId, recipe);
+  return requireMainObservabilityFacade().updateLiveSessionRun(sessionId, recipe);
 }
 
 function broadcastLiveSessionRun(sessionId: string): void {
-  requireSessionObservabilityService().setLiveSessionRun(sessionId, getLiveSessionRun(sessionId));
+  requireMainObservabilityFacade().setLiveSessionRun(sessionId, getLiveSessionRun(sessionId));
 }
 
 function cancelSessionRun(sessionId: string): void {
