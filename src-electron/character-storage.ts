@@ -11,7 +11,11 @@ import {
   type CharacterProfile,
   type CreateCharacterInput,
 } from "../src/character-state.js";
-import { buildCharacterNotesTemplate, buildCharacterUpdateInstructionFiles } from "./character-update-instructions.js";
+import {
+  buildCharacterMarkdownTemplate,
+  buildCharacterNotesTemplate,
+  buildCharacterUpdateInstructionFiles,
+} from "./character-update-instructions.js";
 
 type StoredCharacterMeta = {
   id: string;
@@ -253,11 +257,17 @@ async function writeCharacterFiles(
   };
 
   const instructionFiles = buildCharacterUpdateInstructionFiles(nextMeta.name);
+  const rolePath = path.join(characterDirectoryPath, roleFile);
+  const shouldSeedRole = !(await pathExists(rolePath));
   const shouldSeedNotes = !(await pathExists(notesPath));
 
   await Promise.all([
     writeFile(path.join(characterDirectoryPath, "meta.json"), JSON.stringify(nextMeta, null, 2), "utf8"),
-    writeFile(path.join(characterDirectoryPath, roleFile), input.roleMarkdown.trim(), "utf8"),
+    writeFile(
+      rolePath,
+      input.roleMarkdown.trim() || (shouldSeedRole ? buildCharacterMarkdownTemplate(nextMeta.name) : ""),
+      "utf8",
+    ),
     writeFile(
       notesPath,
       input.notesMarkdown.trim() || (shouldSeedNotes ? buildCharacterNotesTemplate(nextMeta.name) : ""),

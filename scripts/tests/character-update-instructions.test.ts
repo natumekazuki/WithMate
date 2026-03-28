@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildCharacterMarkdownTemplate,
   buildCharacterNotesTemplate,
   buildCharacterUpdateInstructionFiles,
   buildCharacterUpdateInstructionText,
@@ -29,7 +30,15 @@ test("instruction text は update workspace のルールを含む", () => {
 
   assert.match(text, /character\.md/);
   assert.match(text, /character-notes\.md/);
-  assert.match(text, /ユーザーの今回の指示を最優先/);
+  assert.match(text, /## 優先順位/);
+  assert.match(text, /1\. ユーザーの今回の指示/);
+  assert.match(text, /既存の character\.md を先に読み/);
+  assert.match(text, /無意味に全消ししない/);
+  assert.match(text, /自己チェック/);
+  assert.match(text, /禁止、許可、判断基準、優先順位/);
+  assert.match(text, /コーディングエージェントや対話 AI で使うキャラクターロール定義/);
+  assert.match(text, /Character section/);
+  assert.match(text, /prompt の直接入力ではない/);
   assert.match(text, /Noa/);
 });
 
@@ -41,4 +50,20 @@ test("notes template は初期ノート構成を返す", () => {
   assert.match(text, /## Sources/);
   assert.match(text, /## Open Questions/);
   assert.match(text, /## Revision Notes/);
+});
+
+test("character markdown template は初期定義の骨格を返す", () => {
+  const text = buildCharacterMarkdownTemplate("Noa");
+
+  assert.match(text, /^---/);
+  assert.match(text, /name: "Noa"/);
+  assert.match(text, /## Character Overview/);
+  assert.match(text, /## Core Persona/);
+  assert.match(text, /## Relationship With User/);
+  assert.match(text, /## Voice And Style/);
+  assert.match(text, /## Behavioral Rules/);
+  assert.match(text, /## Boundaries/);
+  assert.match(text, /## Example Lines/);
+  assert.doesNotMatch(text, /^# Noa$/m);
+  assert.doesNotMatch(text, /## System Prompt/);
 });

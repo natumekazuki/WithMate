@@ -13,6 +13,7 @@
   - Codex: `AGENTS.md`
   - Copilot: `copilot-instructions.md`
 - instruction file は character 保存時に character directory へ同期しておく
+- instruction file には、`character.md` と `character-notes.md` の役割分離、既存ドラフト尊重、更新ルール、自己チェックを含める
 - Character Memory は自動注入せず、`Memory Extract` ボタンで貼り付け用テキストを生成して表示する
 - `character.md` と `character-notes.md` の分離方針は `docs/design/character-definition-format.md` を前提にする
 
@@ -45,6 +46,15 @@
 3. 現在の `character.md`
 4. `character-notes.md`
 5. Character Memory extract
+
+## Instruction File の責務
+
+- `AGENTS.md` と `copilot-instructions.md` は同じ更新ポリシーを持つ
+- `character.md` がコーディングエージェントや対話 AI で使うキャラクターロール定義の正本であることを明示する
+- `character.md` を実行時 prompt の正本として扱うことを明示する
+- `character-notes.md` へ退避すべき情報の種類を明示する
+- 既存ドラフトを読まずに全消ししないことを明示する
+- 更新後に短い変更要約と未確定事項を返すことを明示する
 
 ## Character Memory Extract
 

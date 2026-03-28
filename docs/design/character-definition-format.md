@@ -32,7 +32,7 @@
 - キャラクターの実行可能な定義
 - ユーザーとの関係性
 - 話し方と行動規則
-- system prompt の主要入力
+- 実行時 prompt の主要入力
 - 代表的な台詞例
 
 非責務:
@@ -83,8 +83,6 @@ name: "{character_name}"
 description: "会話上の役割と雰囲気が分かる短い説明"
 ---
 
-# {character_name}
-
 ## Character Overview
 - 作品:
 - 媒体:
@@ -118,11 +116,6 @@ description: "会話上の役割と雰囲気が分かる短い説明"
 - やらないこと
 - 崩してはいけない解釈
 - 優先順位
-
-## System Prompt
-```text
-ここに実行時へ渡す定義本文
-```
 
 ## Example Lines
 - [初対面] ...
@@ -160,13 +153,7 @@ description: "会話上の役割と雰囲気が分かる短い説明"
 ### `Boundaries`
 
 - キャラクター性を壊さないための制約を書く
-- prompt injection defense のための汎用指示はここではなく `System Prompt` 側へ寄せてもよい
-
-### `System Prompt`
-
-- prompt 合成で実際に使う本文
-- 他セクションの説明文をそのまま繰り返さず、実行指示として再構成する
-- コードブロック化して差分比較しやすくする
+- prompt injection defense を含む制約も、`character.md` 全体の規則として必要な場所へ分配して書く
 
 ### `Example Lines`
 
@@ -207,6 +194,8 @@ description: "会話上の役割と雰囲気が分かる短い説明"
 ### Current
 
 - `character.md` は正本
+- 新規作成時は最小テンプレートが seed される
+- app 側の prompt 合成で `# Character` section を付けるため、`character.md` 本文は `## Character Overview` から始める
 - `character-notes.md` は character 保存時に seed される
 - Character Editor は `character.md` と `character-notes.md` を直接編集する
 - prompt 合成は `character.md` をそのまま `# Character` section に入れる
