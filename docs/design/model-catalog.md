@@ -118,7 +118,7 @@ SQLite では次の 4 テーブルで保持する。
 
 ### Home / New Session
 
-- Home の `Settings` overlay から `Import Models` / `Export Models` を実行できる
+- `Settings Window` から `Import Models` / `Export Models` を実行できる
 - file picker / save dialog は Main Process が開く
 - import 成功時は active revision を切り替え、既存 session も同じタイミングで migrate する
 - current milestone では model / depth を出さない

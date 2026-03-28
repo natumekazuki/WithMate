@@ -41,7 +41,7 @@ current 実装の正本として維持する文書。
 | --- | --- |
 | `character-management-ui.md` | Character Editor の UI 詳細 |
 | `character-storage.md` | character catalog の保存詳細 |
-| `monologue-provider-policy.md` | monologue / character reflection の provider 方針 |
+| `monologue-provider-policy.md` | 独り言 / character reflection backend の provider 方針 |
 | `message-rich-text.md` | message renderer の仕様 |
 | `session-character-copy.md` | Session copy slot の詳細 |
 | `session-live-activity-monitor.md` | Session 右ペイン activity 表示の詳細 |

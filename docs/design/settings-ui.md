@@ -47,8 +47,8 @@
   - `Coding Agent Credentials`
     - provider label を維持した credential card
     - `OpenAI API Key (Coding Agent)` 入力
-    - `Character Stream 用ではない` 補助文
-    - future で Character Stream 用 API 欄を別責務で追加する note
+    - current 実装では coding plane credential を正本とし、Character Reflection backend も同じ provider client を流用する note
+    - future で独立 monologue plane を分ける場合は別責務の credential 欄を追加する note
 - `Memory Extraction`
   - provider ごとの `Model`
   - provider ごとの `Reasoning Depth`
@@ -104,7 +104,7 @@
 
 ## Future Scope
 
-- Character Stream / monologue 用 API 設定
+- 独立 monologue plane 用 API 設定
 - 新規 workspace の root directory 設定
 - provider ごとの既定値
 - Memory extraction の trigger mode 切替
@@ -112,4 +112,4 @@
 ## Non Goals
 
 - Home に設定項目を常設すること
-- Character Stream 用設定欄を current milestone で追加すること
+- 独立 monologue plane 用設定欄を current milestone で追加すること
