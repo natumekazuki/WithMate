@@ -20,7 +20,6 @@ import {
   type DiffPreviewPayload,
   type LiveApprovalDecision,
   type LiveApprovalRequest,
-  mergeSessionMemory,
   getProviderAppSettings,
   normalizeAppSettings,
   type LiveSessionRunState,
@@ -65,26 +64,14 @@ import { CharacterMemoryStorage } from "./character-memory-storage.js";
 import { SessionRuntimeService } from "./session-runtime-service.js";
 import { SessionPersistenceService } from "./session-persistence-service.js";
 import { SessionWindowBridge } from "./session-window-bridge.js";
+import { MemoryOrchestrationService } from "./memory-orchestration-service.js";
 import { buildProjectMemoryPromotionEntries } from "./project-memory-promotion.js";
 import { retrieveProjectMemoryEntries } from "./project-memory-retrieval.js";
 import {
-  buildCharacterReflectionContextSnapshot,
-  buildCharacterReflectionLogicalPrompt,
-  buildCharacterReflectionPrompt,
-  buildCharacterReflectionTransportPayload,
-  getCharacterReflectionSettings,
-  hasCharacterMemoryDeltaContent,
-  shouldTriggerCharacterReflection,
-  type CharacterReflectionCheckpoint,
   type CharacterReflectionTriggerReason,
 } from "./character-reflection.js";
 import { retrieveCharacterMemoryEntries } from "./character-memory-retrieval.js";
 import {
-  buildSessionMemoryExtractionLogicalPrompt,
-  buildSessionMemoryExtractionPrompt,
-  buildSessionMemoryExtractionTransportPayload,
-  getSessionMemoryExtractionSettings,
-  shouldTriggerSessionMemoryExtraction,
   type SessionMemoryExtractionTriggerReason,
 } from "./session-memory-extraction.js";
 import { resolveProjectScope } from "./project-scope.js";
@@ -173,15 +160,12 @@ const characterEditorWindows = new Map<string, BrowserWindow>();
 const diffWindows = new Map<string, BrowserWindow>();
 const diffPreviewStore = new Map<string, DiffPreviewPayload>();
 const liveSessionRuns = new Map<string, LiveSessionRunState>();
-const characterReflectionCheckpoints = new Map<string, CharacterReflectionCheckpoint>();
 const providerQuotaTelemetryByProvider = new Map<string, ProviderQuotaTelemetry>();
 const sessionContextTelemetryBySessionId = new Map<string, SessionContextTelemetry>();
 const sessionBackgroundActivities = new Map<string, SessionBackgroundActivityState>();
 const providerQuotaRefreshPromises = new Map<string, Promise<ProviderQuotaTelemetry | null>>();
 const providerQuotaRefreshTimers = new Map<string, NodeJS.Timeout[]>();
 const pendingSessionApprovalRequests = new Map<string, { requestId: string; resolve: (decision: LiveApprovalDecision) => void }>();
-const inFlightSessionMemoryExtractions = new Set<string>();
-const inFlightCharacterReflections = new Set<string>();
 let sessions: Session[] = [];
 let characters: CharacterProfile[] = [];
 let sessionStorage: SessionStorage | null = null;
@@ -197,6 +181,7 @@ const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
 let sessionRuntimeService: SessionRuntimeService | null = null;
 let sessionPersistenceService: SessionPersistenceService | null = null;
 let sessionWindowBridge: SessionWindowBridge<BrowserWindow> | null = null;
+let memoryOrchestrationService: MemoryOrchestrationService | null = null;
 
 function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0]): BrowserWindow {
   return new BrowserWindow({
@@ -288,10 +273,10 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       invalidateProviderSessionThread,
       scheduleProviderQuotaTelemetryRefresh,
       runSessionMemoryExtraction: (session, usage, options) => {
-        void runSessionMemoryExtraction(session, usage, options);
+        void requireMemoryOrchestrationService().runSessionMemoryExtraction(session, usage, options);
       },
       runCharacterReflection: (session, options) => {
-        void runCharacterReflection(session, options);
+        void requireMemoryOrchestrationService().runCharacterReflection(session, options);
       },
       clearWorkspaceFileIndex,
       broadcastLiveSessionRun,
@@ -336,10 +321,10 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       clearSessionContextTelemetry,
       clearSessionBackgroundActivities,
       clearCharacterReflectionCheckpoint: (sessionId) => {
-        setCharacterReflectionCheckpoint(sessionId, null);
+        requireMemoryOrchestrationService().clearCharacterReflectionCheckpoint(sessionId);
       },
       clearInFlightCharacterReflection: (sessionId) => {
-        inFlightCharacterReflections.delete(sessionId);
+        requireMemoryOrchestrationService().clearInFlightCharacterReflection(sessionId);
       },
       invalidateProviderSessionThread,
       closeSessionWindow: (sessionId) => {
@@ -382,15 +367,40 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
       },
       broadcastOpenSessionWindowIds,
       runSessionMemoryExtraction: (session, usage, options) => {
-        void runSessionMemoryExtraction(session, usage, options);
+        void requireMemoryOrchestrationService().runSessionMemoryExtraction(session, usage, options);
       },
       runCharacterReflection: (session, options) => {
-        void runCharacterReflection(session, options);
+        void requireMemoryOrchestrationService().runCharacterReflection(session, options);
       },
     });
   }
 
   return sessionWindowBridge;
+}
+
+function requireMemoryOrchestrationService(): MemoryOrchestrationService {
+  if (!memoryOrchestrationService) {
+    memoryOrchestrationService = new MemoryOrchestrationService({
+      getSession,
+      isSessionRunInFlight,
+      isRunningSession,
+      resolveSessionCharacter,
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      getProviderAdapter,
+      ensureSessionMemory: (session) => requireSessionMemoryStorage().ensureSessionMemory(session),
+      upsertSessionMemory: (memory) => requireSessionMemoryStorage().upsertSessionMemory(memory),
+      promoteSessionMemoryDeltaToProjectMemory,
+      resolveCharacterMemoryEntriesForReflection,
+      markCharacterMemoryEntriesUsed: (entryIds) => requireCharacterMemoryStorage().markCharacterMemoryEntriesUsed(entryIds),
+      saveCharacterMemoryDelta: applyCharacterMemoryDelta,
+      appendMonologueToSession,
+      createAuditLog: (entry) => requireAuditLogStorage().createAuditLog(entry),
+      updateAuditLog: (id, entry) => requireAuditLogStorage().updateAuditLog(id, entry),
+      setSessionBackgroundActivity,
+    });
+  }
+
+  return memoryOrchestrationService;
 }
 
 function requireSessionMemoryStorage(): SessionMemoryStorage {
@@ -787,19 +797,6 @@ function clearSessionBackgroundActivities(sessionId: string): void {
   setSessionBackgroundActivity(sessionId, "monologue", null);
 }
 
-function getCharacterReflectionCheckpoint(sessionId: string): CharacterReflectionCheckpoint | null {
-  return characterReflectionCheckpoints.get(sessionId) ?? null;
-}
-
-function setCharacterReflectionCheckpoint(sessionId: string, checkpoint: CharacterReflectionCheckpoint | null): void {
-  if (checkpoint) {
-    characterReflectionCheckpoints.set(sessionId, checkpoint);
-    return;
-  }
-
-  characterReflectionCheckpoints.delete(sessionId);
-}
-
 function clearAllSessionBackgroundActivities(): void {
   const activityKeys = Array.from(sessionBackgroundActivities.keys());
   sessionBackgroundActivities.clear();
@@ -872,8 +869,7 @@ async function resetAppDatabase(request?: ResetAppDatabaseRequest | null): Promi
     if (appliedTargets.has("sessions")) {
       replaceAllSessions([], { broadcast: false });
       liveSessionRuns.clear();
-      characterReflectionCheckpoints.clear();
-      inFlightCharacterReflections.clear();
+      requireMemoryOrchestrationService().reset();
       clearAllSessionBackgroundActivities();
       requireSessionRuntimeService().reset();
       invalidateAllProviderSessionThreads();
@@ -944,18 +940,6 @@ function broadcastLiveSessionRun(sessionId: string): void {
       window.webContents.send(WITHMATE_LIVE_SESSION_RUN_EVENT, { sessionId, state });
     }
   }
-}
-
-function isCanceledRunError(error: unknown): boolean {
-  if (error && typeof error === "object") {
-    const candidate = error as { name?: unknown; code?: unknown };
-    if (candidate.name === "AbortError" || candidate.code === "ABORT_ERR") {
-      return true;
-    }
-  }
-
-  const message = error instanceof Error ? error.message : String(error);
-  return /abort|aborted|cancel|canceled|cancelled/i.test(message);
 }
 
 function cancelSessionRun(sessionId: string): void {
@@ -1134,14 +1118,6 @@ function resolveCharacterMemoryEntriesForReflection(session: Session): Character
   return retrieveCharacterMemoryEntries(entries, session);
 }
 
-function buildMonologueSummary(monologue: CharacterReflectionMonologue | null): string {
-  if (!monologue) {
-    return "更新はありませんでした。";
-  }
-
-  return monologue.text.length > 72 ? `${monologue.text.slice(0, 72)}…` : monologue.text;
-}
-
 function applyCharacterMemoryDelta(
   session: Session,
   entries: CharacterMemoryDelta["entries"],
@@ -1185,355 +1161,6 @@ function appendMonologueToSession(
     updatedAt: currentTimestampLabel(),
     stream: nextStream,
   });
-}
-
-async function runCharacterReflection(
-  session: Session,
-  options: { triggerReason: CharacterReflectionTriggerReason },
-): Promise<void> {
-  if (inFlightCharacterReflections.has(session.id)) {
-    return;
-  }
-
-  const latestSession = getSession(session.id) ?? session;
-  if (isSessionRunInFlight(latestSession.id) || isRunningSession(latestSession)) {
-    return;
-  }
-
-  const checkpoint = getCharacterReflectionCheckpoint(latestSession.id);
-  const currentSnapshot = buildCharacterReflectionContextSnapshot(latestSession);
-  if (!shouldTriggerCharacterReflection(currentSnapshot, checkpoint, options.triggerReason)) {
-    return;
-  }
-
-  const character = await resolveSessionCharacter(latestSession);
-  if (!character) {
-    return;
-  }
-
-  const appSettings = requireAppSettingsStorage().getSettings();
-  if (!getProviderAppSettings(appSettings, latestSession.provider).enabled) {
-    return;
-  }
-
-  const providerAdapter = getProviderAdapter(latestSession.provider);
-  const sessionMemory = requireSessionMemoryStorage().ensureSessionMemory(latestSession);
-  const characterMemoryEntries = resolveCharacterMemoryEntriesForReflection(latestSession);
-  const reflectionSettings = getCharacterReflectionSettings(appSettings, latestSession.provider);
-  const prompt = buildCharacterReflectionPrompt({
-    session: latestSession,
-    sessionMemory,
-    character,
-    characterMemoryEntries,
-    triggerReason: options.triggerReason,
-  });
-  const logicalPrompt = buildCharacterReflectionLogicalPrompt(prompt);
-  const transportPayload = buildCharacterReflectionTransportPayload(
-    latestSession.provider,
-    reflectionSettings,
-    options.triggerReason,
-  );
-  const runningAuditLog = requireAuditLogStorage().createAuditLog({
-    sessionId: latestSession.id,
-    createdAt: new Date().toISOString(),
-    phase: "background-running",
-    provider: latestSession.provider,
-    model: reflectionSettings.model,
-    reasoningEffort: reflectionSettings.reasoningEffort,
-    approvalMode: latestSession.approvalMode,
-    threadId: latestSession.threadId,
-    logicalPrompt,
-    transportPayload,
-    assistantText: "",
-    operations: [],
-    rawItemsJson: "[]",
-    usage: null,
-    errorMessage: "",
-  });
-
-  inFlightCharacterReflections.add(latestSession.id);
-  setSessionBackgroundActivity(latestSession.id, "monologue", {
-    sessionId: latestSession.id,
-    kind: "monologue",
-    status: "running",
-    title: "Monologue",
-    summary: options.triggerReason === "session-start"
-      ? "SessionStart の独り言を生成しています。"
-      : "独り言と Character Memory を整理しています。",
-    details: `trigger: ${options.triggerReason}\nmodel: ${reflectionSettings.model}\nreasoning: ${reflectionSettings.reasoningEffort}`,
-    errorMessage: "",
-    updatedAt: new Date().toISOString(),
-  });
-
-  try {
-    const reflectionResult = await providerAdapter.runCharacterReflection({
-      session: latestSession,
-      sessionMemory,
-      character,
-      characterMemoryEntries,
-      appSettings,
-      model: reflectionSettings.model,
-      reasoningEffort: reflectionSettings.reasoningEffort,
-      triggerReason: options.triggerReason,
-      prompt,
-    });
-
-    if (!reflectionResult.output) {
-      throw new Error("Character reflection の JSON parse に失敗したよ。");
-    }
-
-    const memoryEntries = reflectionResult.output.memoryDelta?.entries ?? [];
-    const monologue = reflectionResult.output.monologue;
-    requireAuditLogStorage().updateAuditLog(runningAuditLog.id, {
-      sessionId: latestSession.id,
-      createdAt: runningAuditLog.createdAt,
-      phase: "background-completed",
-      provider: latestSession.provider,
-      model: reflectionSettings.model,
-      reasoningEffort: reflectionSettings.reasoningEffort,
-      approvalMode: latestSession.approvalMode,
-      threadId: reflectionResult.threadId ?? latestSession.threadId,
-      logicalPrompt,
-      transportPayload,
-      assistantText: reflectionResult.rawText,
-      operations: [],
-      rawItemsJson: "[]",
-      usage: reflectionResult.usage,
-      errorMessage: "",
-    });
-
-    if (characterMemoryEntries.length > 0) {
-      requireCharacterMemoryStorage().markCharacterMemoryEntriesUsed(characterMemoryEntries.map((entry) => entry.id));
-    }
-
-    const savedCount = options.triggerReason === "session-start" || !hasCharacterMemoryDeltaContent(reflectionResult.output.memoryDelta)
-      ? 0
-      : applyCharacterMemoryDelta(latestSession, memoryEntries);
-    let sessionForCheckpoint = getSession(latestSession.id) ?? latestSession;
-    if (monologue) {
-      sessionForCheckpoint = appendMonologueToSession(sessionForCheckpoint, monologue);
-    }
-
-    setCharacterReflectionCheckpoint(latestSession.id, {
-      ...currentSnapshot,
-      reflectedAt: new Date().toISOString(),
-    });
-    setSessionBackgroundActivity(latestSession.id, "monologue", {
-      sessionId: latestSession.id,
-      kind: "monologue",
-      status: "completed",
-      title: "Monologue",
-      summary: monologue ? buildMonologueSummary(monologue) : "更新はありませんでした。",
-      details: [
-        `trigger: ${options.triggerReason}`,
-        `model: ${reflectionSettings.model}`,
-        `reasoning: ${reflectionSettings.reasoningEffort}`,
-        savedCount > 0 ? `characterMemory: ${savedCount}件更新` : "",
-      ].filter((line) => line.length > 0).join("\n"),
-      errorMessage: "",
-      updatedAt: new Date().toISOString(),
-    });
-  } catch (error) {
-    requireAuditLogStorage().updateAuditLog(runningAuditLog.id, {
-      sessionId: latestSession.id,
-      createdAt: runningAuditLog.createdAt,
-      phase: isCanceledRunError(error) ? "background-canceled" : "background-failed",
-      provider: latestSession.provider,
-      model: reflectionSettings.model,
-      reasoningEffort: reflectionSettings.reasoningEffort,
-      approvalMode: latestSession.approvalMode,
-      threadId: latestSession.threadId,
-      logicalPrompt,
-      transportPayload,
-      assistantText: "",
-      operations: [],
-      rawItemsJson: "[]",
-      usage: null,
-      errorMessage: error instanceof Error ? error.message : String(error),
-    });
-    setSessionBackgroundActivity(latestSession.id, "monologue", {
-      sessionId: latestSession.id,
-      kind: "monologue",
-      status: isCanceledRunError(error) ? "canceled" : "failed",
-      title: "Monologue",
-      summary: isCanceledRunError(error) ? "独り言生成はキャンセルされました。" : "独り言生成に失敗しました。",
-      details: `trigger: ${options.triggerReason}\nmodel: ${reflectionSettings.model}\nreasoning: ${reflectionSettings.reasoningEffort}`,
-      errorMessage: error instanceof Error ? error.message : String(error),
-      updatedAt: new Date().toISOString(),
-    });
-    console.error("character reflection failed", {
-      sessionId: latestSession.id,
-      provider: latestSession.provider,
-      error,
-    });
-  } finally {
-    inFlightCharacterReflections.delete(latestSession.id);
-  }
-}
-
-async function runSessionMemoryExtraction(
-  session: Session,
-  usage: AuditLogEntry["usage"],
-  options?: { force?: boolean; triggerReason?: SessionMemoryExtractionTriggerReason },
-): Promise<void> {
-  if (inFlightSessionMemoryExtractions.has(session.id)) {
-    return;
-  }
-
-  const appSettings = requireAppSettingsStorage().getSettings();
-  const extractionSettings = getSessionMemoryExtractionSettings(appSettings, session.provider);
-  const shouldRun = shouldTriggerSessionMemoryExtraction(
-    usage,
-    extractionSettings.outputTokensThreshold,
-    options?.force ?? false,
-  );
-  if (!shouldRun) {
-    return;
-  }
-
-  const sessionMemoryStore = requireSessionMemoryStorage();
-  const latestSession = getSession(session.id) ?? session;
-  const currentMemory = sessionMemoryStore.ensureSessionMemory(latestSession);
-  const prompt = buildSessionMemoryExtractionPrompt(latestSession, currentMemory);
-  const logicalPrompt = buildSessionMemoryExtractionLogicalPrompt(prompt);
-  const triggerReason = options?.triggerReason ?? (options?.force ? "session-window-close" : "outputTokensThreshold");
-  const transportPayload = buildSessionMemoryExtractionTransportPayload(
-    latestSession.provider,
-    extractionSettings,
-    triggerReason,
-  );
-  const providerAdapter = getProviderAdapter(latestSession.provider);
-  const runningAuditLog = requireAuditLogStorage().createAuditLog({
-    sessionId: latestSession.id,
-    createdAt: new Date().toISOString(),
-    phase: "background-running",
-    provider: latestSession.provider,
-    model: extractionSettings.model,
-    reasoningEffort: extractionSettings.reasoningEffort,
-    approvalMode: latestSession.approvalMode,
-    threadId: latestSession.threadId,
-    logicalPrompt,
-    transportPayload,
-    assistantText: "",
-    operations: [],
-    rawItemsJson: "[]",
-    usage: null,
-    errorMessage: "",
-  });
-
-  inFlightSessionMemoryExtractions.add(session.id);
-  setSessionBackgroundActivity(session.id, "memory-generation", {
-    sessionId: session.id,
-    kind: "memory-generation",
-    status: "running",
-    title: "Memory生成",
-    summary: "Session Memory を整理しています。",
-    details: `trigger: ${triggerReason}\nmodel: ${extractionSettings.model}\nreasoning: ${extractionSettings.reasoningEffort}`,
-    errorMessage: "",
-    updatedAt: new Date().toISOString(),
-  });
-  try {
-    const extractionResult = await providerAdapter.extractSessionMemoryDelta({
-      session: latestSession,
-      appSettings,
-      model: extractionSettings.model,
-      reasoningEffort: extractionSettings.reasoningEffort,
-      prompt,
-    });
-    const delta = extractionResult.delta;
-    requireAuditLogStorage().updateAuditLog(runningAuditLog.id, {
-      sessionId: latestSession.id,
-      createdAt: runningAuditLog.createdAt,
-      phase: "background-completed",
-      provider: latestSession.provider,
-      model: extractionSettings.model,
-      reasoningEffort: extractionSettings.reasoningEffort,
-      approvalMode: latestSession.approvalMode,
-      threadId: extractionResult.threadId ?? latestSession.threadId,
-      logicalPrompt,
-      transportPayload,
-      assistantText: extractionResult.rawText,
-      operations: [],
-      rawItemsJson: "[]",
-      usage: extractionResult.usage,
-      errorMessage: "",
-    });
-    const memoryFieldLabels = delta
-      ? [
-        delta.goal !== undefined ? "goal" : null,
-        delta.decisions?.length ? "decisions" : null,
-        delta.openQuestions?.length ? "openQuestions" : null,
-        delta.nextActions?.length ? "nextActions" : null,
-        delta.notes?.length ? "notes" : null,
-      ].filter((value): value is string => !!value)
-      : [];
-    setSessionBackgroundActivity(session.id, "memory-generation", {
-      sessionId: session.id,
-      kind: "memory-generation",
-      status: "completed",
-      title: "Memory生成",
-      summary: memoryFieldLabels.length > 0
-        ? `Session Memory を更新しました: ${memoryFieldLabels.join(", ")}`
-        : "更新は不要でした。",
-      details: `trigger: ${triggerReason}\nmodel: ${extractionSettings.model}\nreasoning: ${extractionSettings.reasoningEffort}`,
-      errorMessage: "",
-      updatedAt: new Date().toISOString(),
-    });
-    if (!delta) {
-      return;
-    }
-
-    const sessionForSave = getSession(session.id) ?? latestSession;
-    const currentForSave = sessionMemoryStore.ensureSessionMemory(sessionForSave);
-    sessionMemoryStore.upsertSessionMemory(
-      mergeSessionMemory(
-        {
-          ...currentForSave,
-          workspacePath: sessionForSave.workspacePath,
-          threadId: sessionForSave.threadId,
-        },
-        delta,
-      ),
-    );
-    promoteSessionMemoryDeltaToProjectMemory(sessionForSave, delta);
-  } catch (error) {
-    requireAuditLogStorage().updateAuditLog(runningAuditLog.id, {
-      sessionId: latestSession.id,
-      createdAt: runningAuditLog.createdAt,
-      phase: "background-failed",
-      provider: latestSession.provider,
-      model: extractionSettings.model,
-      reasoningEffort: extractionSettings.reasoningEffort,
-      approvalMode: latestSession.approvalMode,
-      threadId: latestSession.threadId,
-      logicalPrompt,
-      transportPayload,
-      assistantText: "",
-      operations: [],
-      rawItemsJson: "[]",
-      usage: null,
-      errorMessage: error instanceof Error ? error.message : String(error),
-    });
-    setSessionBackgroundActivity(session.id, "memory-generation", {
-      sessionId: session.id,
-      kind: "memory-generation",
-      status: isCanceledRunError(error) ? "canceled" : "failed",
-      title: "Memory生成",
-      summary: isCanceledRunError(error)
-        ? "Memory 生成はキャンセルされました。"
-        : "Memory 生成に失敗しました。",
-      details: `trigger: ${triggerReason}\nmodel: ${extractionSettings.model}\nreasoning: ${extractionSettings.reasoningEffort}`,
-      errorMessage: error instanceof Error ? error.message : String(error),
-      updatedAt: new Date().toISOString(),
-    });
-    console.error("session memory extraction failed", {
-      sessionId: session.id,
-      provider: session.provider,
-      error,
-    });
-  } finally {
-    inFlightSessionMemoryExtractions.delete(session.id);
-  }
 }
 
 function replaceAllSessions(
