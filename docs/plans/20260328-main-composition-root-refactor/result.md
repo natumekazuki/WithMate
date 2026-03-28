@@ -15,6 +15,7 @@
   - コミット: `999d5f9` `refactor(main): extract broadcast facade`
   - session create/update/delete/run/cancel の forwarding と Copilot quota refresh 前処理を `MainSessionCommandFacade` に分離
   - `upsertSession / replaceAllSessions / recoverInterruptedSessions` を `MainSessionPersistenceFacade` に分離
+  - コミット: `72e1610` `refactor(main): extract session command facades`
 - 残り:
   - `main.ts` に残る thin wrapper / wiring の最終整理
   - composition root の最終的な見通し改善

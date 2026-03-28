@@ -41,3 +41,6 @@
 - 2026-03-28: `src-electron/main-session-persistence-facade.ts` を追加し、`upsertSession / replaceAllSessions / recoverInterruptedSessions` を `main.ts` から分離
 - 2026-03-28: `npm run build`
 - 2026-03-28: `node --test --import tsx scripts/tests/main-session-persistence-facade.test.ts scripts/tests/main-session-command-facade.test.ts scripts/tests/main-broadcast-facade.test.ts scripts/tests/main-observability-facade.test.ts scripts/tests/main-query-service.test.ts scripts/tests/main-infrastructure-registry.test.ts`
+- 2026-03-28: コミット `72e1610` `refactor(main): extract session command facades`
+  - `MainSessionCommandFacade` と `MainSessionPersistenceFacade` を追加
+  - session create/update/delete/run/cancel と `upsertSession / replaceAllSessions / recoverInterruptedSessions` を `main.ts` から分離
