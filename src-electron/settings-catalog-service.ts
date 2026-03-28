@@ -12,6 +12,13 @@ import {
   type ModelCatalogDocument,
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
+import {
+  areAllResetAppDatabaseTargetsSelected,
+  normalizeResetAppDatabaseTargets,
+  type ResetAppDatabaseRequest,
+  type ResetAppDatabaseResult,
+  type ResetAppDatabaseTarget,
+} from "../src/withmate-window.js";
 
 export type SettingsCatalogServiceDeps = {
   hasInFlightSessionRuns(): boolean;
@@ -37,6 +44,19 @@ export type SettingsCatalogServiceDeps = {
   clearProviderQuotaTelemetry(providerId: string): void;
   clearSessionContextTelemetry(sessionId: string): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
+  clearAuditLogs(): void;
+  resetAppSettings(): AppSettings;
+  resetModelCatalogToBundled(): ModelCatalogSnapshot;
+  clearProjectMemories(): void;
+  clearCharacterMemories(): void;
+  resetSessionRuntime(): void;
+  resetMemoryOrchestration(): void;
+  clearAllProviderQuotaTelemetry(): void;
+  clearAllSessionContextTelemetry(): void;
+  clearAllSessionBackgroundActivities(): void;
+  invalidateAllProviderSessionThreads(): void;
+  closeResetTargetWindows(): void;
+  recreateDatabaseFile(): Promise<ModelCatalogSnapshot>;
   broadcastSessions(): void;
   broadcastAppSettings(settings?: AppSettings): void;
   broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): void;
@@ -87,6 +107,10 @@ export class SettingsCatalogService {
 
   getModelCatalog(revision?: number | null): ModelCatalogSnapshot | null {
     return this.deps.getModelCatalog(revision);
+  }
+
+  exportModelCatalogDocument(revision?: number | null): ModelCatalogDocument | null {
+    return this.deps.exportModelCatalogDocument(revision);
   }
 
   updateAppSettings(nextSettingsInput: AppSettings): AppSettings {
@@ -216,5 +240,70 @@ export class SettingsCatalogService {
 
       throw error;
     }
+  }
+
+  async resetAppDatabase(request?: ResetAppDatabaseRequest | null): Promise<ResetAppDatabaseResult> {
+    if (this.deps.hasInFlightSessionRuns() || this.deps.listSessions().some((session) => this.deps.isRunningSession(session))) {
+      throw new Error("実行中の session があるため、DB を初期化できないよ。完了またはキャンセル後に試してね。");
+    }
+
+    const resetTargets = normalizeResetAppDatabaseTargets(request?.targets);
+    if (resetTargets.length === 0) {
+      throw new Error("初期化対象が選ばれていないよ。");
+    }
+
+    if (resetTargets.includes("sessions")) {
+      this.deps.closeResetTargetWindows();
+    }
+
+    let modelCatalog: ModelCatalogSnapshot;
+    let appSettings: AppSettings;
+
+    if (areAllResetAppDatabaseTargetsSelected(resetTargets)) {
+      modelCatalog = await this.deps.recreateDatabaseFile();
+      this.deps.clearAllProviderQuotaTelemetry();
+      this.deps.clearAllSessionContextTelemetry();
+      appSettings = this.deps.getAppSettings();
+    } else {
+      const appliedTargets = new Set<ResetAppDatabaseTarget>(resetTargets);
+
+      if (appliedTargets.has("auditLogs")) {
+        this.deps.clearAuditLogs();
+      }
+      if (appliedTargets.has("sessions")) {
+        this.deps.replaceAllSessions([], { broadcast: false });
+        this.deps.resetMemoryOrchestration();
+        this.deps.resetSessionRuntime();
+        this.deps.clearAllSessionBackgroundActivities();
+        this.deps.invalidateAllProviderSessionThreads();
+      }
+      if (appliedTargets.has("appSettings")) {
+        this.deps.resetAppSettings();
+        this.deps.clearAllProviderQuotaTelemetry();
+      }
+      if (appliedTargets.has("modelCatalog")) {
+        this.deps.resetModelCatalogToBundled();
+      }
+      if (appliedTargets.has("projectMemory")) {
+        this.deps.clearProjectMemories();
+      }
+      if (appliedTargets.has("characterMemory")) {
+        this.deps.clearCharacterMemories();
+      }
+
+      modelCatalog = this.deps.getModelCatalog(null) ?? this.deps.ensureModelCatalogSeeded();
+      appSettings = this.deps.getAppSettings();
+    }
+
+    this.deps.broadcastSessions();
+    this.deps.broadcastAppSettings(appSettings);
+    this.deps.broadcastModelCatalog(modelCatalog);
+
+    return {
+      resetTargets,
+      sessions: this.deps.listSessions(),
+      appSettings,
+      modelCatalog,
+    };
   }
 }

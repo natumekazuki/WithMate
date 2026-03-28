@@ -92,7 +92,9 @@
 - current 実装では、memory extraction の通常発火は `outputTokens threshold` だけで判定する
 - Character reflection 設定は provider ごとに保持し、current v1 の `character reflection cycle` 実行時に `model / reasoning depth` を参照する
 - Main Process 側の `app settings` 更新、`model catalog` import、rollback、関連 session / telemetry invalidation は `SettingsCatalogService` が担当する
+- `DB を初期化` の partial reset / full reset orchestration と `model catalog export` の document 取得も `SettingsCatalogService` が担当する
 - renderer 側では `HomeApp.tsx` が storage 正規化を直接持たず、`home-settings-view-model` の derived data を使って provider row を描画する
+- renderer 側の provider settings draft 更新は `home-settings-draft` の pure function を経由する
 - DB reset 成功時は renderer 側で reset 後の `appSettings` を draft に同期し、dirty 状態を解消する
 - reset 実行 API は選択対象を Main Process へ渡し、戻り値の current `sessions / appSettings / modelCatalog` で renderer を再同期する
 

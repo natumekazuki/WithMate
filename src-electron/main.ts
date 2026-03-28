@@ -78,7 +78,6 @@ import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
 import { clearWorkspaceFileIndex, searchWorkspaceFilePaths } from "./workspace-file-search.js";
 import {
-  areAllResetAppDatabaseTargetsSelected,
   WITHMATE_CHARACTERS_CHANGED_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
@@ -131,11 +130,8 @@ import {
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
-  normalizeResetAppDatabaseTargets,
   type OpenPathOptions,
   type ResetAppDatabaseRequest,
-  type ResetAppDatabaseResult,
-  type ResetAppDatabaseTarget,
 } from "../src/withmate-window.js";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
@@ -419,6 +415,19 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       clearProviderQuotaTelemetry,
       clearSessionContextTelemetry,
       invalidateProviderSessionThread,
+      clearAuditLogs: () => requireAuditLogStorage().clearAuditLogs(),
+      resetAppSettings: () => requireAppSettingsStorage().resetSettings(),
+      resetModelCatalogToBundled: () => requireModelCatalogStorage().resetToBundled(),
+      clearProjectMemories: () => requireProjectMemoryStorage().clearProjectMemories(),
+      clearCharacterMemories: () => requireCharacterMemoryStorage().clearCharacterMemories(),
+      resetSessionRuntime: () => requireSessionRuntimeService().reset(),
+      resetMemoryOrchestration: () => requireMemoryOrchestrationService().reset(),
+      clearAllProviderQuotaTelemetry,
+      clearAllSessionContextTelemetry,
+      clearAllSessionBackgroundActivities,
+      invalidateAllProviderSessionThreads,
+      closeResetTargetWindows,
+      recreateDatabaseFile,
       broadcastSessions,
       broadcastAppSettings,
       broadcastModelCatalog,
@@ -863,74 +872,6 @@ function closeResetTargetWindows(): void {
   diffWindows.clear();
 }
 
-async function resetAppDatabase(request?: ResetAppDatabaseRequest | null): Promise<ResetAppDatabaseResult> {
-  if (hasInFlightSessionRuns() || hasRunningSessions()) {
-    throw new Error("実行中の session があるため、DB を初期化できないよ。完了またはキャンセル後に試してね。");
-  }
-
-  const resetTargets = normalizeResetAppDatabaseTargets(request?.targets);
-  if (resetTargets.length === 0) {
-    throw new Error("初期化対象が選ばれていないよ。");
-  }
-
-  const shouldResetSessions = resetTargets.includes("sessions");
-  if (shouldResetSessions) {
-    closeResetTargetWindows();
-  }
-
-  let modelCatalog: ModelCatalogSnapshot;
-  let appSettings: ReturnType<AppSettingsStorage["getSettings"]>;
-
-  if (areAllResetAppDatabaseTargetsSelected(resetTargets)) {
-    modelCatalog = await recreateDatabaseFile();
-    clearAllProviderQuotaTelemetry();
-    clearAllSessionContextTelemetry();
-    appSettings = requireAppSettingsStorage().getSettings();
-  } else {
-    const appliedTargets = new Set<ResetAppDatabaseTarget>(resetTargets);
-
-    if (appliedTargets.has("auditLogs")) {
-      requireAuditLogStorage().clearAuditLogs();
-    }
-    if (appliedTargets.has("sessions")) {
-      replaceAllSessions([], { broadcast: false });
-      liveSessionRuns.clear();
-      requireMemoryOrchestrationService().reset();
-      clearAllSessionBackgroundActivities();
-      requireSessionRuntimeService().reset();
-      invalidateAllProviderSessionThreads();
-    }
-    if (appliedTargets.has("appSettings")) {
-      requireAppSettingsStorage().resetSettings();
-      clearAllProviderQuotaTelemetry();
-    }
-    if (appliedTargets.has("modelCatalog")) {
-      requireModelCatalogStorage().resetToBundled();
-    }
-    if (appliedTargets.has("projectMemory")) {
-      requireProjectMemoryStorage().clearProjectMemories();
-    }
-    if (appliedTargets.has("characterMemory")) {
-      requireCharacterMemoryStorage().clearCharacterMemories();
-    }
-
-    sessions = requireSessionStorage().listSessions();
-    modelCatalog = getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded();
-    appSettings = requireAppSettingsStorage().getSettings();
-  }
-
-  broadcastSessions();
-  broadcastAppSettings(appSettings);
-  broadcastModelCatalog(modelCatalog);
-
-  return {
-    resetTargets,
-    sessions: listSessions(),
-    appSettings,
-    modelCatalog,
-  };
-}
-
 function getLiveSessionRun(sessionId: string): LiveSessionRunState | null {
   return liveSessionRuns.get(sessionId) ?? null;
 }
@@ -1049,7 +990,7 @@ async function importModelCatalogFromFile(targetWindow?: BrowserWindow | null): 
 }
 
 async function exportModelCatalogToFile(revision: number | null | undefined, targetWindow?: BrowserWindow | null): Promise<string | null> {
-  const document = requireModelCatalogStorage().exportCatalogDocument(revision);
+  const document = requireSettingsCatalogService().exportModelCatalogDocument(revision);
   if (!document) {
     return null;
   }
@@ -1563,7 +1504,7 @@ app.whenReady().then(async () => {
     requireSettingsCatalogService().updateAppSettings(settings),
   );
   ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, (_event, request: ResetAppDatabaseRequest | null | undefined) =>
-    resetAppDatabase(request),
+    requireSettingsCatalogService().resetAppDatabase(request),
   );
   ipcMain.handle(WITHMATE_LIST_CHARACTERS_CHANNEL, async () => refreshCharactersFromStorage());
   ipcMain.handle(WITHMATE_GET_MODEL_CATALOG_CHANNEL, (_event, revision: number | null) =>
@@ -1577,7 +1518,7 @@ app.whenReady().then(async () => {
     return importModelCatalogFromFile(targetWindow);
   });
   ipcMain.handle(WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL, (_event, revision: number | null) =>
-    requireModelCatalogStorage().exportCatalogDocument(revision),
+    requireSettingsCatalogService().exportModelCatalogDocument(revision),
   );
   ipcMain.handle(WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL, async (event, revision: number | null) => {
     const targetWindow = BrowserWindow.fromWebContents(event.sender) ?? homeWindow ?? undefined;

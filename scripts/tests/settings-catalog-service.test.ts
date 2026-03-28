@@ -271,4 +271,192 @@ describe("SettingsCatalogService", () => {
     assert.equal(replacedSessions[0]?.model, "gpt-5.4");
     assert.equal(broadcasted, true);
   });
+
+  it("model catalog export は storage の document をそのまま返す", () => {
+    const document = { providers: createCatalogSnapshot(1).providers };
+    const service = new SettingsCatalogService({
+      hasInFlightSessionRuns() {
+        return false;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      isRunningSession() {
+        return false;
+      },
+      listSessions() {
+        return [];
+      },
+      getAppSettings() {
+        return createDefaultAppSettings();
+      },
+      updateAppSettings(settings) {
+        return settings;
+      },
+      getModelCatalog() {
+        return createCatalogSnapshot(1);
+      },
+      ensureModelCatalogSeeded() {
+        return createCatalogSnapshot(1);
+      },
+      importModelCatalogDocument() {
+        return createCatalogSnapshot(1);
+      },
+      exportModelCatalogDocument() {
+        return document;
+      },
+      replaceAllSessions(nextSessions) {
+        return nextSessions;
+      },
+      clearProviderQuotaTelemetry() {},
+      clearSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      clearAuditLogs() {},
+      resetAppSettings() {
+        return createDefaultAppSettings();
+      },
+      resetModelCatalogToBundled() {
+        return createCatalogSnapshot(1);
+      },
+      clearProjectMemories() {},
+      clearCharacterMemories() {},
+      resetSessionRuntime() {},
+      resetMemoryOrchestration() {},
+      clearAllProviderQuotaTelemetry() {},
+      clearAllSessionContextTelemetry() {},
+      clearAllSessionBackgroundActivities() {},
+      invalidateAllProviderSessionThreads() {},
+      closeResetTargetWindows() {},
+      async recreateDatabaseFile() {
+        return createCatalogSnapshot(1);
+      },
+      broadcastSessions() {},
+      broadcastAppSettings() {},
+      broadcastModelCatalog() {},
+    });
+
+    assert.deepEqual(service.exportModelCatalogDocument(1), document);
+  });
+
+  it("partial reset は target ごとの clear/reset と broadcast を実行する", async () => {
+    const sessions = [createSession()];
+    const calls: string[] = [];
+    const service = new SettingsCatalogService({
+      hasInFlightSessionRuns() {
+        return false;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      isRunningSession() {
+        return false;
+      },
+      listSessions() {
+        return sessions;
+      },
+      getAppSettings() {
+        return createDefaultAppSettings();
+      },
+      updateAppSettings(settings) {
+        return settings;
+      },
+      getModelCatalog() {
+        return createCatalogSnapshot(1);
+      },
+      ensureModelCatalogSeeded() {
+        return createCatalogSnapshot(1);
+      },
+      importModelCatalogDocument() {
+        return createCatalogSnapshot(1);
+      },
+      exportModelCatalogDocument() {
+        return { providers: createCatalogSnapshot(1).providers };
+      },
+      replaceAllSessions(nextSessions) {
+        calls.push(`replace:${nextSessions.length}`);
+        return nextSessions;
+      },
+      clearProviderQuotaTelemetry(providerId) {
+        calls.push(`clearQuota:${providerId}`);
+      },
+      clearSessionContextTelemetry(sessionId) {
+        calls.push(`clearContext:${sessionId}`);
+      },
+      invalidateProviderSessionThread(providerId, sessionId) {
+        calls.push(`invalidate:${providerId}:${sessionId}`);
+      },
+      clearAuditLogs() {
+        calls.push("clearAudit");
+      },
+      resetAppSettings() {
+        calls.push("resetAppSettings");
+        return createDefaultAppSettings();
+      },
+      resetModelCatalogToBundled() {
+        calls.push("resetCatalog");
+        return createCatalogSnapshot(2);
+      },
+      clearProjectMemories() {
+        calls.push("clearProject");
+      },
+      clearCharacterMemories() {
+        calls.push("clearCharacter");
+      },
+      resetSessionRuntime() {
+        calls.push("resetRuntime");
+      },
+      resetMemoryOrchestration() {
+        calls.push("resetMemory");
+      },
+      clearAllProviderQuotaTelemetry() {
+        calls.push("clearAllQuota");
+      },
+      clearAllSessionContextTelemetry() {
+        calls.push("clearAllContext");
+      },
+      clearAllSessionBackgroundActivities() {
+        calls.push("clearAllActivity");
+      },
+      invalidateAllProviderSessionThreads() {
+        calls.push("invalidateAllThreads");
+      },
+      closeResetTargetWindows() {
+        calls.push("closeResetWindows");
+      },
+      async recreateDatabaseFile() {
+        calls.push("recreateDb");
+        return createCatalogSnapshot(3);
+      },
+      broadcastSessions() {
+        calls.push("broadcastSessions");
+      },
+      broadcastAppSettings() {
+        calls.push("broadcastSettings");
+      },
+      broadcastModelCatalog() {
+        calls.push("broadcastCatalog");
+      },
+    });
+
+    const result = await service.resetAppDatabase({
+      targets: ["sessions", "appSettings", "projectMemory"],
+    });
+
+    assert.deepEqual(result.resetTargets, ["sessions", "auditLogs", "appSettings", "projectMemory"]);
+    assert.deepEqual(calls, [
+      "closeResetWindows",
+      "clearAudit",
+      "replace:0",
+      "resetMemory",
+      "resetRuntime",
+      "clearAllActivity",
+      "invalidateAllThreads",
+      "resetAppSettings",
+      "clearAllQuota",
+      "clearProject",
+      "broadcastSessions",
+      "broadcastSettings",
+      "broadcastCatalog",
+    ]);
+  });
 });
