@@ -11,3 +11,12 @@ export function getWithMateApi(): WithMateWindowApi | null {
 export function isDesktopRuntime(): boolean {
   return getWithMateApi() !== null;
 }
+
+export function withWithMateApi<T>(run: (api: WithMateWindowApi) => T): T | null {
+  const api = getWithMateApi();
+  if (!api) {
+    return null;
+  }
+
+  return run(api);
+}

@@ -64,51 +64,26 @@ import {
   normalizeResetAppDatabaseTargets,
   type ResetAppDatabaseTarget,
 } from "./withmate-window-types.js";
-import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
+import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-withmate-api.js";
 
 async function openSessionWindow(sessionId: string) {
-  const withmateApi = getWithMateApi();
-  if (!withmateApi) {
-    return;
-  }
-
-  await withmateApi.openSession(sessionId);
+  await withWithMateApi((api) => api.openSession(sessionId));
 }
 
 async function openHomeWindow() {
-  const withmateApi = getWithMateApi();
-  if (!withmateApi) {
-    return;
-  }
-
-  await withmateApi.openHomeWindow();
+  await withWithMateApi((api) => api.openHomeWindow());
 }
 
 async function openSessionMonitorWindow() {
-  const withmateApi = getWithMateApi();
-  if (!withmateApi) {
-    return;
-  }
-
-  await withmateApi.openSessionMonitorWindow();
+  await withWithMateApi((api) => api.openSessionMonitorWindow());
 }
 
 async function openSettingsWindow() {
-  const withmateApi = getWithMateApi();
-  if (!withmateApi) {
-    return;
-  }
-
-  await withmateApi.openSettingsWindow();
+  await withWithMateApi((api) => api.openSettingsWindow());
 }
 
 async function openCharacterEditor(characterId?: string | null) {
-  const withmateApi = getWithMateApi();
-  if (!withmateApi) {
-    return;
-  }
-
-  await withmateApi.openCharacterEditor(characterId);
+  await withWithMateApi((api) => api.openCharacterEditor(characterId));
 }
 
 type HomeRightPaneView = "monitor" | "characters";
@@ -343,12 +318,7 @@ export default function HomeApp() {
   const homePageClassName = `page-shell home-page${isMonitorWindowMode ? " home-page-monitor-window" : ""}`;
 
   const handleBrowseWorkspace = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-
-    const selectedPath = await withmateApi.pickDirectory();
+    const selectedPath = await withWithMateApi((api) => api.pickDirectory());
     if (!selectedPath) {
       return;
     }
@@ -365,11 +335,6 @@ export default function HomeApp() {
   };
 
   const handleStartSession = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-
     const sessionInput = buildCreateSessionInputFromLaunchDraft({
       draft: launchDraft,
       selectedCharacter,
@@ -380,7 +345,10 @@ export default function HomeApp() {
       return;
     }
 
-    const createdSession = await withmateApi.createSession(sessionInput);
+    const createdSession = await withWithMateApi((api) => api.createSession(sessionInput));
+    if (!createdSession) {
+      return;
+    }
     closeLaunchDialog();
     await openSessionWindow(createdSession.id);
   };
