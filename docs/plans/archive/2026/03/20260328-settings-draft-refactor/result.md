@@ -15,3 +15,4 @@
 ## Notes
 
 - renderer 側の settings state はまだ `HomeApp.tsx` に残るが、更新ロジック自体は helper に隔離できた
+- 対応コミット: `0cf1148` `refactor(settings): extract catalog and draft helpers`

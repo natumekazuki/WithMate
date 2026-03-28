@@ -15,3 +15,4 @@
 ## Notes
 
 - catalog export / reset 経路の完全集約は follow-up に残す
+- 対応コミット: `0cf1148` `refactor(settings): extract catalog and draft helpers`
