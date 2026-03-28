@@ -14,6 +14,7 @@ WithMate が現在どこに何を保存しているかを、1 枚で把握でき
 - 永続化構造、SQLite schema、JSON カラム、DB 外保存の責務に変更がある task では、この文書を同じ task の中で更新する
 - current 実装と future design を混ぜない
 - future design しかない項目は `Current / Future Boundary` に分けて書く
+- service 責務、IPC、window lifecycle の説明はこの文書で持たず、`electron-session-store.md`、`session-run-lifecycle.md`、`electron-window-runtime.md` に分ける
 
 ## Scope
 
