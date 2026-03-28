@@ -31,16 +31,32 @@ current runtime は shared contract の上に次の 2 adapter を持つ。
 - `CopilotAdapter`
 
 ```ts
-type ProviderAdapter = {
+type ProviderCodingAdapter = {
+  composePrompt(input: RunSessionTurnInput): ProviderPromptComposition;
+  getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput): Promise<ProviderQuotaTelemetry | null>;
+  invalidateSessionThread(sessionId: string): void;
+  invalidateAllSessionThreads(): void;
   runSessionTurn(input: {
     session: Session;
+    sessionMemory: SessionMemory;
+    projectMemoryEntries: ProjectMemoryEntry[];
     character: CharacterProfile;
+    providerCatalog: ModelCatalogProvider;
     userMessage: string;
     appSettings: AppSettings;
     attachments: ComposerAttachment[];
     signal?: AbortSignal;
     onApprovalRequest?: (request: LiveApprovalRequest) => Promise<"approve" | "deny">;
-  }, onProgress?: (state: LiveSessionRunState) => Promise<void>): Promise<ProviderTurnResult>;
+    onProviderQuotaTelemetry?: (telemetry: ProviderQuotaTelemetry) => void | Promise<void>;
+    onSessionContextTelemetry?: (telemetry: SessionContextTelemetry) => void | Promise<void>;
+  }, onProgress?: (state: LiveSessionRunState) => void | Promise<void>): Promise<ProviderTurnResult>;
+};
+```
+
+```ts
+type ProviderBackgroundAdapter = {
+  extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult>;
+  runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult>;
 };
 ```
 
@@ -64,7 +80,12 @@ type ProviderTurnResult = {
 };
 ```
 
+```ts
+type ProviderTurnAdapter = ProviderCodingAdapter & ProviderBackgroundAdapter;
+```
+
 監査用途では、provider 実行結果から `logical prompt`、`transport payload`、operations、raw items、usage も Main Process へ返し、SQLite の監査ログに保存する。
+Main Process では `MainProviderFacade` が `coding plane` と `background plane` の入口を分けて解決し、`SessionRuntimeService` は coding plane、`MemoryOrchestrationService` は background plane だけを見る。
 
 current milestone の provider ごとの差は次。
 
@@ -88,6 +109,35 @@ current milestone の provider ごとの差は次。
   - `Premium Requests` は `client.rpc.account.getQuota()` と `assistant.usage.quotaSnapshots` から app-wide telemetry として更新する
   - `Context Usage` は `session.usage_info` を session local telemetry として Main Process memory に保持する
 
+## Plane Separation
+
+provider 境界は current 実装で次の 2 plane に分けて扱う。
+
+### Coding Plane
+
+- Session の通常 turn 実行
+- prompt composition
+- live state / approval / quota / context telemetry
+- thread invalidation
+
+利用側:
+
+- `SessionRuntimeService`
+- `MainObservabilityFacade`
+- `MainProviderFacade#getProviderCodingAdapter()`
+
+### Background Plane
+
+- `Session Memory extraction`
+- `character reflection cycle`
+
+利用側:
+
+- `MemoryOrchestrationService`
+- `MainProviderFacade#getProviderBackgroundAdapter()`
+
+この分離により、通常の coding turn と裏で走る memory / monologue 系処理の責務を adapter の入口で混ぜない。
+
 ## Session Flow
 
 1. Renderer が `runSessionTurn(sessionId, { userMessage })` を IPC で Main Process に送る
@@ -98,7 +148,7 @@ current milestone の provider ごとの差は次。
 5. Main Process が app settings から `System Prompt Prefix` を読む
 6. prompt composer が `# System Prompt + (system prompt prefix + roleMarkdown) + # User Input Prompt + userMessage` を空行区切りで合成する
 7. Main Process が session の `catalogRevision` と `provider` から provider catalog を解決する
-8. provider adapter が `model / reasoningEffort` を検証し、provider-native SDK 実行へ変換する
+8. `MainProviderFacade` が coding plane adapter を解決し、`model / reasoningEffort` を検証したうえで provider-native SDK 実行へ変換する
    - `CodexAdapter`: file / folder の workspace 外 access は session metadata `allowedAdditionalDirectories` だけを `additionalDirectories` へ変換し、画像は structured input にして `thread.runStreamed()` を実行する
    - `CopilotAdapter`: `systemPromptPrefix + roleMarkdown` は `SessionConfig.systemMessage` `mode: "append"` に載せ、`session.send()` には user input 本文だけを送る。file / folder は `session.send({ attachments })` の `file` / `directory` へ変換して同時に渡す。image も `file` attachment として吸収し、renderer 側では共通の `Image` 導線を維持する。workspace 外 path は WithMate 側の `allowedAdditionalDirectories` 判定だけを正本にして許可する。`provider-controlled` では permission request を Main Process へ返し、Session UI の approval card と往復する。Electron では native CLI binary を明示して起動し、bootstrap failure 時は audit log に debug metadata を残す
 9. Main Process が stream event から live state と provider telemetry を組み立て、IPC で Session Window へ中継する
@@ -285,6 +335,7 @@ diff 本文は turn items からは直接取れないため、MVP では Main Pr
 - provider ごとの prompt composer 差し替え
 - artifact summary の richer な構造化
 - Character Stream 用 provider / credential 設定の別系統化
+- background plane の provider を coding plane と独立させる
 
 ## References
 

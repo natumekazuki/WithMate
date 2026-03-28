@@ -31,7 +31,6 @@ current 実装の正本として維持する文書。
 | `database-schema.md` | current 保存構造と DB 定義の正本 |
 | `model-catalog.md` | model catalog 保存 / 解決ロジック |
 | `session-run-lifecycle.md` | session 実行 lifecycle と background task のつながり |
-| `provider-usage-telemetry.md` | Copilot usage telemetry の current 仕様 |
 
 ### B. Supporting / Domain Detail
 
@@ -50,6 +49,7 @@ current 実装の正本として維持する文書。
 | `electron-session-store.md` | Electron 側 session / audit / memory storage 実装詳細 |
 | `electron-window-runtime.md` | BrowserWindow / preload / runtime 詳細 |
 | `manual-test-checklist.md` | 実機テスト項目の current 一覧 |
+| `provider-usage-telemetry.md` | Copilot quota / context telemetry の詳細 |
 | `refactor-roadmap.md` | current リファクタの進行管理 |
 
 ### C. Archived Design Notes

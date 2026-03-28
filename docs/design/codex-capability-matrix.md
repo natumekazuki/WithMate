@@ -22,6 +22,7 @@
 ## Snapshot
 
 - current runtime provider 実装: `CodexAdapter` と `CopilotAdapter`
+- provider 境界は `coding plane` と `background plane` に分かれ、Codex は通常 turn と Session Memory / Character Reflection の両方を current adapter で担う
 - provider-neutral な session / approval / skill UI は一部先行している
 - `GitHub Copilot CLI` は basic turn 実行の最小 runtime が入り、full parity はこれから
 
