@@ -31,7 +31,11 @@ test("instruction text は update workspace のルールを含む", () => {
   assert.match(text, /character\.md/);
   assert.match(text, /character-notes\.md/);
   assert.match(text, /## 優先順位/);
+  assert.match(text, /## 調査方針/);
   assert.match(text, /1\. ユーザーの今回の指示/);
+  assert.match(text, /検索不要と明示していない限り/);
+  assert.match(text, /web や wiki を参照してよい/);
+  assert.match(text, /公式、一次情報に近い資料、出典が明記された wiki を優先/);
   assert.match(text, /既存の character\.md を先に読み/);
   assert.match(text, /無意味に全消ししない/);
   assert.match(text, /自己チェック/);

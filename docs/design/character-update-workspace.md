@@ -53,6 +53,8 @@
 - `character.md` がコーディングエージェントや対話 AI で使うキャラクターロール定義の正本であることを明示する
 - `character.md` を実行時 prompt の正本として扱うことを明示する
 - `character.md` 全体が app 側で `# Character` section の本文としてそのまま入ることを明示する
+- ユーザーが検索不要と明示していない限り、精度確保に必要な web / wiki 調査を許可する
+- 外部調査で採用した根拠を `character-notes.md` へ残すことを明示する
 - `character-notes.md` へ退避すべき情報の種類を明示する
 - 既存ドラフトを読まずに全消ししないことを明示する
 - 更新後に短い変更要約と未確定事項を返すことを明示する
@@ -98,3 +100,7 @@
 - `character.md` の hidden rewrite
 - Character Memory の hidden prompt injection
 - update session 起動時の自動 web 調査
+
+補足:
+
+- 調査は hidden automation ではなく、Character Update Session 内での agent 作業として行う
