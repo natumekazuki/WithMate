@@ -110,8 +110,9 @@ flowchart TB
 ## Data Mapping
 
 - provider adapter や `liveRun` schema は変更しない
-- Renderer 側で `liveRun.steps` と terminal Audit Log から最新 command だけを抽出する
+- Renderer 側では `session-ui-projection` helper が `liveRun.steps` と terminal Audit Log から最新 command だけを抽出する
 - `Memory生成` と `独り言` は session 単位の background activity state を main process から IPC event で受ける
+- Copilot quota summary と active tab の badge / tone / 自動切り替えも `session-ui-projection` helper に寄せる
 - command 以外の live step は right pane へ出さない
 
 ## Non-Goals

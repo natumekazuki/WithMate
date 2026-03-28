@@ -18,7 +18,6 @@ import {
   type LiveApprovalRequest,
   type LiveSessionRunState,
   type Message,
-  type ProviderQuotaSnapshot,
   type ProviderQuotaTelemetry,
   type RunSessionTurnRequest,
   type Session,
@@ -41,13 +40,23 @@ import {
   CharacterAvatar,
   fileKindLabel,
   liveRunStepDetailsLabel,
-  liveRunStepStatusLabel,
   modelDisplayLabel,
   modelOptionLabel,
   operationTypeLabel,
   reasoningDepthLabel,
 } from "./ui-utils.js";
 import { MessageRichText } from "./MessageRichText.js";
+import {
+  buildContextPaneProjection,
+  buildCopilotQuotaProjection,
+  buildLatestCommandView,
+  buildSessionContextTelemetryProjection,
+  contextPaneTabLabel,
+  cycleContextPaneTab,
+  type ContextPaneTabKey,
+  resolveAutoContextPaneTab,
+  sessionBackgroundActivityStatusLabel,
+} from "./session-ui-projection.js";
 
 type ActivePathReference = {
   query: string;
@@ -90,10 +99,6 @@ type SessionOwnedBackgroundActivity = {
   kind: SessionBackgroundActivityKind;
   state: SessionBackgroundActivityState | null;
 };
-
-type ContextPaneTabKey = "latest-command" | "memory-generation" | "monologue";
-
-const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = ["latest-command", "memory-generation", "monologue"];
 
 type ComposerSendabilityState = {
   isRunning: boolean;
@@ -389,31 +394,10 @@ function liveRunStepBucketPriority(status: string): number {
   }
 }
 
-function liveRunStepToneClassName(status: string): string {
-  switch (status) {
-    case "in_progress":
-    case "completed":
-    case "failed":
-    case "canceled":
-    case "pending":
-      return status;
-    default:
-      return "unknown";
-  }
-}
-
 type ParsedFileChangeSummaryLine = {
   actionLabel: string;
   toneClassName: "add" | "edit" | "delete" | "rename";
   path: string;
-};
-
-type LatestCommandView = {
-  status: string;
-  summary: string;
-  details?: string;
-  sourceLabel: string;
-  riskLabels: string[];
 };
 
 const FILE_CHANGE_SUMMARY_ACTION_META: Record<string, Pick<ParsedFileChangeSummaryLine, "actionLabel" | "toneClassName">> = {
@@ -470,36 +454,6 @@ function parseFileChangeSummary(summary: string): ParsedFileChangeSummaryLine[] 
   });
 
   return parsedLines.every((line) => line !== null) ? parsedLines : null;
-}
-
-function buildCommandRiskLabels(command: string): string[] {
-  const normalizedCommand = command.toLowerCase();
-  const labels: string[] = [];
-
-  if (
-    /\b(rm|del|rmdir|rd|truncate|delete|remove)\b/.test(normalizedCommand)
-    || /\b(remove-item|remove-itemproperty)\b/.test(normalizedCommand)
-  ) {
-    labels.push("DELETE");
-  }
-
-  if (
-    /\b(mv|move|cp|copy|mkdir|md|touch|tee|create|edit|replace|insert|write|rename)\b/.test(normalizedCommand)
-    || /\b(new-item|set-content|add-content|out-file|rename-item|move-item|copy-item)\b/.test(normalizedCommand)
-    || /\b(git apply|git checkout|git restore|git clean)\b/.test(normalizedCommand)
-  ) {
-    labels.push("WRITE");
-  }
-
-  if (
-    /\b(curl|wget)\b/.test(normalizedCommand)
-    || /\b(invoke-webrequest|invoke-restmethod|iwr|irm)\b/.test(normalizedCommand)
-    || /\b(npm|pnpm|yarn|pip|uv|cargo|go)\s+(install|add|get)\b/.test(normalizedCommand)
-  ) {
-    labels.push("NETWORK");
-  }
-
-  return labels;
 }
 
 function buildDisplayedMessagesScrollSignature(messages: Message[]): string {
@@ -650,68 +604,6 @@ function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): strin
       .map((step) => [step.id, step.type, step.status, step.summary, step.details ?? ""].join("\u001d"))
       .join("\u001c"),
   ].join("\u001b");
-}
-
-function selectPrimaryQuotaSnapshot(telemetry: ProviderQuotaTelemetry | null): ProviderQuotaSnapshot | null {
-  if (!telemetry || telemetry.snapshots.length === 0) {
-    return null;
-  }
-
-  const preferredKeys = ["premium_interactions", "premium_requests", "premium", "chat"];
-  for (const preferredKey of preferredKeys) {
-    const matched = telemetry.snapshots.find((snapshot) => snapshot.quotaKey === preferredKey);
-    if (matched) {
-      return matched;
-    }
-  }
-
-  return telemetry.snapshots[0] ?? null;
-}
-
-function formatQuotaResetLabel(resetDate: string | undefined): string {
-  if (!resetDate?.trim()) {
-    return "未確認";
-  }
-
-  const parsed = new Date(resetDate);
-  if (Number.isNaN(parsed.getTime())) {
-    return resetDate;
-  }
-
-  return parsed.toLocaleString("ja-JP", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function sessionBackgroundActivityStatusLabel(status: string): string {
-  switch (status) {
-    case "running":
-      return "実行中";
-    case "completed":
-      return "完了";
-    case "failed":
-      return "失敗";
-    case "canceled":
-      return "キャンセル";
-    default:
-      return status;
-  }
-}
-
-function contextPaneTabLabel(tab: ContextPaneTabKey): string {
-  switch (tab) {
-    case "latest-command":
-      return "LatestCommand";
-    case "memory-generation":
-      return "MemoryGeneration";
-    case "monologue":
-      return "Monologue";
-    default:
-      return tab;
-  }
 }
 
 function hashStringToPositiveInt(value: string): number {
@@ -1642,31 +1534,16 @@ export default function App() {
     [modelCatalog, selectedSession],
   );
   const isCopilotSession = selectedSession?.provider === "copilot";
-  const selectedCopilotQuotaSnapshot = useMemo(
-    () => (isCopilotSession ? selectPrimaryQuotaSnapshot(selectedProviderQuotaTelemetry) : null),
+  const selectedCopilotQuotaProjection = useMemo(
+    () => (isCopilotSession ? buildCopilotQuotaProjection(selectedProviderQuotaTelemetry) : null),
     [isCopilotSession, selectedProviderQuotaTelemetry],
   );
-  const selectedCopilotRemainingPercentLabel = useMemo(() => {
-    if (!selectedCopilotQuotaSnapshot) {
-      return "unavailable";
-    }
-
-    return `${Math.max(0, Math.round(selectedCopilotQuotaSnapshot.remainingPercentage))}% left`;
-  }, [selectedCopilotQuotaSnapshot]);
-  const selectedCopilotRemainingRequestsLabel = useMemo(() => {
-    if (!selectedCopilotQuotaSnapshot) {
-      return "usage unavailable";
-    }
-
-    const remainingRequests = Math.max(
-      0,
-      selectedCopilotQuotaSnapshot.entitlementRequests - selectedCopilotQuotaSnapshot.usedRequests,
-    );
-    return `${remainingRequests} / ${selectedCopilotQuotaSnapshot.entitlementRequests} left`;
-  }, [selectedCopilotQuotaSnapshot]);
-  const selectedCopilotQuotaResetLabel = useMemo(
-    () => formatQuotaResetLabel(selectedCopilotQuotaSnapshot?.resetDate),
-    [selectedCopilotQuotaSnapshot?.resetDate],
+  const selectedCopilotRemainingPercentLabel = selectedCopilotQuotaProjection?.remainingPercentLabel ?? "unavailable";
+  const selectedCopilotRemainingRequestsLabel = selectedCopilotQuotaProjection?.remainingRequestsLabel ?? "usage unavailable";
+  const selectedCopilotQuotaResetLabel = selectedCopilotQuotaProjection?.resetLabel ?? "未確認";
+  const selectedSessionContextTelemetryProjection = useMemo(
+    () => buildSessionContextTelemetryProjection(selectedSessionContextTelemetry),
+    [selectedSessionContextTelemetry],
   );
   const availableReasoningEfforts = useMemo(
     () =>
@@ -1734,33 +1611,14 @@ export default function App() {
 
     return null;
   }, [latestTerminalAuditLog]);
-  const latestCommandView = useMemo<LatestCommandView | null>(() => {
-    if (latestLiveCommandStep) {
-      return {
-        status: latestLiveCommandStep.status,
-        summary: latestLiveCommandStep.summary,
-        details: latestLiveCommandStep.details,
-        sourceLabel: "live",
-        riskLabels: buildCommandRiskLabels(latestLiveCommandStep.summary),
-      };
-    }
-
-    if (latestAuditCommandOperation) {
-      return {
-        status: latestTerminalAuditLog?.phase === "failed"
-          ? "failed"
-          : latestTerminalAuditLog?.phase === "canceled"
-            ? "canceled"
-            : "completed",
-        summary: latestAuditCommandOperation.summary,
-        details: latestAuditCommandOperation.details,
-        sourceLabel: "latest run",
-        riskLabels: buildCommandRiskLabels(latestAuditCommandOperation.summary),
-      };
-    }
-
-    return null;
-  }, [latestAuditCommandOperation, latestLiveCommandStep, latestTerminalAuditLog?.phase]);
+  const latestCommandView = useMemo(
+    () => buildLatestCommandView({
+      latestLiveCommandStep,
+      latestAuditCommandOperation,
+      latestTerminalAuditPhase: latestTerminalAuditLog?.phase,
+    }),
+    [latestAuditCommandOperation, latestLiveCommandStep, latestTerminalAuditLog?.phase],
+  );
   const orderedLiveRunSteps = useMemo(
     () =>
       (selectedSessionLiveRun?.steps ?? [])
@@ -2676,64 +2534,28 @@ export default function App() {
         );
   const pendingRunIndicatorAnnouncement = pendingRunIndicatorText;
   const isSelectedSessionRunning = selectedSession?.runState === "running";
-  const latestCommandToneClassName = latestCommandView ? liveRunStepToneClassName(latestCommandView.status) : "unknown";
-  const latestCommandStatusLabel = latestCommandView ? liveRunStepStatusLabel(latestCommandView.status) : "待機";
-  const latestCommandSourceCopy = latestCommandView?.sourceLabel === "live" ? "RUN LIVE" : "LAST RUN";
-  const memoryGenerationToneClassName = selectedMemoryGenerationActivity?.status ?? "unknown";
-  const monologueToneClassName = selectedMonologueActivity?.status ?? "unknown";
-  const activeContextPaneBadgeLabel = useMemo(() => {
-    switch (activeContextPaneTab) {
-      case "latest-command":
-        return "";
-      case "memory-generation":
-        return selectedMemoryGenerationActivity
-          ? sessionBackgroundActivityStatusLabel(selectedMemoryGenerationActivity.status)
-          : "";
-      case "monologue":
-        return selectedMonologueActivity
-          ? sessionBackgroundActivityStatusLabel(selectedMonologueActivity.status)
-          : "";
-      default:
-        return "";
-    }
-  }, [
-    activeContextPaneTab,
-    selectedMemoryGenerationActivity,
-    selectedMonologueActivity,
-  ]);
-  const activeContextPaneToneClassName = useMemo(() => {
-    switch (activeContextPaneTab) {
-      case "latest-command":
-        return latestCommandToneClassName;
-      case "memory-generation":
-        return memoryGenerationToneClassName;
-      case "monologue":
-        return monologueToneClassName;
-      default:
-        return "unknown";
-    }
-  }, [activeContextPaneTab, latestCommandToneClassName, memoryGenerationToneClassName, monologueToneClassName]);
+  const contextPaneProjection = useMemo(
+    () => buildContextPaneProjection({
+      activeContextPaneTab,
+      latestCommandView,
+      selectedMemoryGenerationActivity,
+      selectedMonologueActivity,
+    }),
+    [activeContextPaneTab, latestCommandView, selectedMemoryGenerationActivity, selectedMonologueActivity],
+  );
 
   useEffect(() => {
-    if (isSelectedSessionRunning) {
-      setActiveContextPaneTab("latest-command");
-      return;
-    }
-
-    if (selectedMemoryGenerationActivity?.status === "running") {
-      setActiveContextPaneTab("memory-generation");
-      return;
-    }
-
-    if (selectedMonologueActivity?.status === "running") {
-      setActiveContextPaneTab("monologue");
+    const nextTab = resolveAutoContextPaneTab({
+      isSelectedSessionRunning,
+      selectedMemoryGenerationActivity,
+      selectedMonologueActivity,
+    });
+    if (nextTab) {
+      setActiveContextPaneTab(nextTab);
     }
   }, [isSelectedSessionRunning, selectedMemoryGenerationActivity?.status, selectedMonologueActivity?.status]);
   const handleCycleContextPaneTab = (direction: -1 | 1) => {
-    const currentIndex = CONTEXT_PANE_TAB_ORDER.indexOf(activeContextPaneTab);
-    const safeIndex = currentIndex >= 0 ? currentIndex : 0;
-    const nextIndex = (safeIndex + direction + CONTEXT_PANE_TAB_ORDER.length) % CONTEXT_PANE_TAB_ORDER.length;
-    setActiveContextPaneTab(CONTEXT_PANE_TAB_ORDER[nextIndex] ?? "latest-command");
+    setActiveContextPaneTab((current) => cycleContextPaneTab(current, direction));
   };
   const sessionWorkbenchStyle = useMemo(
     () =>
@@ -3055,9 +2877,9 @@ export default function App() {
                         ‹
                       </button>
                       <div className="command-monitor-switcher-current">
-                        {activeContextPaneBadgeLabel ? (
-                          <span className={`command-monitor-badge ${activeContextPaneToneClassName}`}>
-                            {activeContextPaneBadgeLabel}
+                        {contextPaneProjection.badgeLabel ? (
+                          <span className={`command-monitor-badge ${contextPaneProjection.toneClassName}`}>
+                            {contextPaneProjection.badgeLabel}
                           </span>
                         ) : null}
                         <span className="command-monitor-switcher-label">
@@ -3080,9 +2902,9 @@ export default function App() {
                       <div className="command-monitor-card">
                         <div className="command-monitor-card-head">
                           <div className="command-monitor-meta">
-                            <span className={`live-run-step-status ${latestCommandToneClassName}`}>{latestCommandStatusLabel}</span>
+                            <span className={`live-run-step-status ${contextPaneProjection.latestCommandToneClassName}`}>{contextPaneProjection.latestCommandStatusLabel}</span>
                             <span className="live-run-step-type">Command</span>
-                            <span className="command-monitor-source">{latestCommandSourceCopy}</span>
+                            <span className="command-monitor-source">{contextPaneProjection.latestCommandSourceCopy}</span>
                           </div>
                           {latestCommandView.riskLabels.length > 0 ? (
                             <div className="command-monitor-risk-list" aria-label="command risk">
@@ -3133,7 +2955,7 @@ export default function App() {
                       <div className="command-monitor-card">
                         <div className="command-monitor-card-head">
                           <div className="command-monitor-meta">
-                            <span className={`live-run-step-status ${memoryGenerationToneClassName}`}>
+                            <span className={`live-run-step-status ${contextPaneProjection.memoryGenerationToneClassName}`}>
                               {sessionBackgroundActivityStatusLabel(selectedMemoryGenerationActivity.status)}
                             </span>
                             <span className="live-run-step-type">Background</span>
@@ -3172,7 +2994,7 @@ export default function App() {
                           <div className="command-monitor-card">
                             <div className="command-monitor-card-head">
                               <div className="command-monitor-meta">
-                                <span className={`live-run-step-status ${monologueToneClassName}`}>
+                                <span className={`live-run-step-status ${contextPaneProjection.monologueToneClassName}`}>
                                   {sessionBackgroundActivityStatusLabel(selectedMonologueActivity.status)}
                                 </span>
                                 <span className="live-run-step-type">Background</span>
@@ -3240,32 +3062,30 @@ export default function App() {
                       <summary>
                         <span>Context</span>
                         <span className="provider-context-summary-value">
-                          {selectedSessionContextTelemetry
-                            ? `${selectedSessionContextTelemetry.currentTokens.toLocaleString()} / ${selectedSessionContextTelemetry.tokenLimit.toLocaleString()}`
-                            : "unavailable"}
+                          {selectedSessionContextTelemetryProjection.summaryLabel}
                         </span>
                       </summary>
                       {selectedSessionContextTelemetry ? (
                         <div className="provider-context-grid">
                           <div className="provider-context-item">
                             <span>Current</span>
-                            <strong>{selectedSessionContextTelemetry.currentTokens.toLocaleString()}</strong>
+                            <strong>{selectedSessionContextTelemetryProjection.currentTokensLabel}</strong>
                           </div>
                           <div className="provider-context-item">
                             <span>Limit</span>
-                            <strong>{selectedSessionContextTelemetry.tokenLimit.toLocaleString()}</strong>
+                            <strong>{selectedSessionContextTelemetryProjection.tokenLimitLabel}</strong>
                           </div>
                           <div className="provider-context-item">
                             <span>Messages</span>
-                            <strong>{selectedSessionContextTelemetry.messagesLength}</strong>
+                            <strong>{selectedSessionContextTelemetryProjection.messagesLengthLabel}</strong>
                           </div>
                           <div className="provider-context-item">
                             <span>System</span>
-                            <strong>{selectedSessionContextTelemetry.systemTokens?.toLocaleString() ?? "-"}</strong>
+                            <strong>{selectedSessionContextTelemetryProjection.systemTokensLabel}</strong>
                           </div>
                           <div className="provider-context-item wide">
                             <span>Conversation</span>
-                            <strong>{selectedSessionContextTelemetry.conversationTokens?.toLocaleString() ?? "-"}</strong>
+                            <strong>{selectedSessionContextTelemetryProjection.conversationTokensLabel}</strong>
                           </div>
                           <div className="provider-context-item wide">
                             <span>Reset</span>
