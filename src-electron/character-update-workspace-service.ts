@@ -7,6 +7,8 @@ import type { CharacterMemoryEntry, CharacterScope } from "../src/memory-state.j
 import type { Session } from "../src/session-state.js";
 import { buildCharacterUpdateMemoryExtract } from "./character-update-memory-extract.js";
 import {
+  CHARACTER_UPDATE_SKILL_FILE_PATH,
+  buildCharacterUpdateSkillMarkdown,
   buildCharacterUpdateInstructionText,
   getCharacterUpdateInstructionFileName,
 } from "./character-update-instructions.js";
@@ -48,6 +50,7 @@ export class CharacterUpdateWorkspaceService {
       workspacePath,
       characterMarkdownPath: path.join(workspacePath, "character.md"),
       characterNotesPath: path.join(workspacePath, "character-notes.md"),
+      skillPath: path.join(workspacePath, CHARACTER_UPDATE_SKILL_FILE_PATH),
       codexInstructionPath: path.join(workspacePath, "AGENTS.md"),
       copilotInstructionPath: path.join(workspacePath, "copilot-instructions.md"),
     };
@@ -79,6 +82,10 @@ export class CharacterUpdateWorkspaceService {
     await this.deps.writeTextFile(
       instructionFilePath,
       buildCharacterUpdateInstructionText(character.name),
+    );
+    await this.deps.writeTextFile(
+      path.join(workspacePath, CHARACTER_UPDATE_SKILL_FILE_PATH),
+      buildCharacterUpdateSkillMarkdown(),
     );
 
     return this.deps.createSession({

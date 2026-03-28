@@ -14,7 +14,7 @@ import {
 import {
   buildCharacterMarkdownTemplate,
   buildCharacterNotesTemplate,
-  buildCharacterUpdateInstructionFiles,
+  buildCharacterUpdateWorkspaceFiles,
 } from "./character-update-instructions.js";
 
 type StoredCharacterMeta = {
@@ -256,7 +256,7 @@ async function writeCharacterFiles(
     updatedAt,
   };
 
-  const instructionFiles = buildCharacterUpdateInstructionFiles(nextMeta.name);
+  const workspaceFiles = buildCharacterUpdateWorkspaceFiles(nextMeta.name);
   const rolePath = path.join(characterDirectoryPath, roleFile);
   const shouldSeedRole = !(await pathExists(rolePath));
   const shouldSeedNotes = !(await pathExists(notesPath));
@@ -273,7 +273,11 @@ async function writeCharacterFiles(
       input.notesMarkdown.trim() || (shouldSeedNotes ? buildCharacterNotesTemplate(nextMeta.name) : ""),
       "utf8",
     ),
-    ...instructionFiles.map((file) => writeFile(path.join(characterDirectoryPath, file.fileName), file.content, "utf8")),
+    ...workspaceFiles.map(async (file) => {
+      const filePath = path.join(characterDirectoryPath, file.fileName);
+      await mkdir(path.dirname(filePath), { recursive: true });
+      await writeFile(filePath, file.content, "utf8");
+    }),
   ]);
 
   return materializeCharacterProfile(characterDirectoryPath, nextMeta);

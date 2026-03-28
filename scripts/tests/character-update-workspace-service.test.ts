@@ -53,6 +53,7 @@ test("CharacterUpdateWorkspaceService は workspace 情報と extract を返す"
   assert.equal(workspace?.workspacePath, "C:/WithMate/characters/char-1");
   assert.match(workspace?.codexInstructionPath ?? "", /AGENTS\.md$/);
   assert.match(workspace?.characterNotesPath ?? "", /character-notes\.md$/);
+  assert.match(workspace?.skillPath ?? "", /skills[\\/]character-definition-update[\\/]SKILL\.md$/);
   assert.equal(extract.entryCount, 1);
 });
 
@@ -92,7 +93,9 @@ test("CharacterUpdateWorkspaceService は update session 作成時に instructio
   const session = await service.createUpdateSession("char-1", "copilot");
 
   assert.equal(session.id, "session-1");
-  assert.equal(writes.length, 1);
+  assert.equal(writes.length, 2);
   assert.match(writes[0].path, /copilot-instructions\.md$/);
   assert.match(writes[0].content, /Character Update Workspace/);
+  assert.match(writes[1].path, /skills[\\/]character-definition-update[\\/]SKILL\.md$/);
+  assert.match(writes[1].content, /Character Definition Update/);
 });
