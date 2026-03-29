@@ -27,6 +27,7 @@ import {
   type DiffPreviewPayload,
   type Message,
   applyCopilotCustomAgentSelection,
+  applySessionModelMetadataUpdate,
   type Session,
 } from "./session-state.js";
 import {
@@ -2322,14 +2323,12 @@ export default function App() {
     }
 
     const selection = resolveModelSelection(selectedProviderCatalog, model, selectedSession.reasoningEffort);
-    const nextSession: Session = {
-      ...selectedSession,
-      catalogRevision: modelCatalog.revision,
-      model: selection.resolvedModel,
-      reasoningEffort: selection.resolvedReasoningEffort,
-      threadId: "",
-      updatedAt: currentTimestampLabel(),
-    };
+    const nextSession: Session = applySessionModelMetadataUpdate(
+      selectedSession,
+      selection,
+      modelCatalog.revision,
+      currentTimestampLabel(),
+    );
 
     await persistSession(nextSession);
   };
@@ -2340,14 +2339,12 @@ export default function App() {
     }
 
     const selection = resolveModelSelection(selectedProviderCatalog, selectedSession.model, reasoningEffort);
-    const nextSession: Session = {
-      ...selectedSession,
-      catalogRevision: modelCatalog.revision,
-      model: selection.resolvedModel,
-      reasoningEffort: selection.resolvedReasoningEffort,
-      threadId: "",
-      updatedAt: currentTimestampLabel(),
-    };
+    const nextSession: Session = applySessionModelMetadataUpdate(
+      selectedSession,
+      selection,
+      modelCatalog.revision,
+      currentTimestampLabel(),
+    );
 
     await persistSession(nextSession);
   };

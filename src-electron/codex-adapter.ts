@@ -95,6 +95,29 @@ type CodexTurnStreamState = {
   streamErrorMessage: string;
 };
 
+export type CodexThreadOptions = {
+  workingDirectory: string;
+  skipGitRepoCheck: true;
+  sandboxMode: "workspace-write";
+  approvalPolicy: "never" | "on-request" | "untrusted";
+  model: string;
+  modelReasoningEffort: ModelReasoningEffort;
+  additionalDirectories?: string[];
+};
+
+export type CodexThreadSettings = {
+  options: CodexThreadOptions;
+  selection: ResolvedModelSelection;
+  settingsKey: string;
+};
+
+type CodexThreadConnector = Pick<Codex, "resumeThread" | "startThread">;
+
+type CachedCodexThread = {
+  thread: Thread;
+  settingsKey: string;
+};
+
 function buildFallbackDiffRows(beforeLines: string[], afterLines: string[]): DiffRow[] {
   const rows: DiffRow[] = [];
   const maxLength = Math.max(beforeLines.length, afterLines.length);
@@ -780,7 +803,7 @@ async function buildArtifact(
 
 export class CodexAdapter implements ProviderTurnAdapter {
   private readonly clients = new Map<string, Codex>();
-  private readonly threads = new Map<string, { thread: Thread; settingsKey: string }>();
+  private readonly threads = new Map<string, CachedCodexThread>();
 
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
     return composeProviderPrompt(input);
@@ -877,73 +900,23 @@ export class CodexAdapter implements ProviderTurnAdapter {
     return { client, clientKey };
   }
 
-  private buildThreadSettings(
-    session: Session,
-    providerCatalog: ModelCatalogProvider,
-    clientKey: string,
-  ): {
-    options: {
-      workingDirectory: string;
-      skipGitRepoCheck: true;
-      sandboxMode: "workspace-write";
-      approvalPolicy: "never" | "on-request" | "untrusted";
-      model: string;
-      modelReasoningEffort: ModelReasoningEffort;
-      additionalDirectories?: string[];
-    };
-    selection: ResolvedModelSelection;
-    settingsKey: string;
-  } {
-    const selection = resolveModelSelection(providerCatalog, session.model, session.reasoningEffort);
-    const additionalDirectories = normalizeAllowedAdditionalDirectories(
-      session.workspacePath,
-      session.allowedAdditionalDirectories,
-    );
-    const options = {
-      workingDirectory: session.workspacePath,
-      skipGitRepoCheck: true as const,
-      sandboxMode: "workspace-write" as const,
-      approvalPolicy: mapApprovalModeToCodexPolicy(session.approvalMode),
-      model: selection.resolvedModel,
-      modelReasoningEffort: selection.resolvedReasoningEffort,
-      ...(additionalDirectories.length > 0 ? { additionalDirectories } : {}),
-    };
-
-    return {
-      options,
-      selection,
-      settingsKey: JSON.stringify([
-        options.workingDirectory,
-        options.approvalPolicy,
-        options.model,
-        options.modelReasoningEffort,
-        additionalDirectories,
-        clientKey,
-      ]),
-    };
-  }
-
   private getThread(input: RunSessionTurnInput): { thread: Thread; selection: ResolvedModelSelection } {
     const { client, clientKey } = this.getClient(input.providerCatalog.id, input.appSettings);
-    const nextSettings = this.buildThreadSettings(input.session, input.providerCatalog, clientKey);
-    const cached = this.threads.get(input.session.id);
-    if (cached && cached.settingsKey === nextSettings.settingsKey) {
-      return {
-        thread: cached.thread,
-        selection: nextSettings.selection,
-      };
-    }
-
-    const thread = input.session.threadId
-      ? client.resumeThread(input.session.threadId, nextSettings.options)
-      : client.startThread(nextSettings.options);
+    const nextSettings = buildCodexThreadSettings(input.session, input.providerCatalog, clientKey);
+    const resolved = resolveCodexThreadForSettings({
+      cached: this.threads.get(input.session.id),
+      nextSettingsKey: nextSettings.settingsKey,
+      threadId: input.session.threadId,
+      options: nextSettings.options,
+      client,
+    });
 
     this.threads.set(input.session.id, {
-      thread,
+      thread: resolved.thread,
       settingsKey: nextSettings.settingsKey,
     });
     return {
-      thread,
+      thread: resolved.thread,
       selection: nextSettings.selection,
     };
   }
@@ -1085,5 +1058,69 @@ export class CodexAdapter implements ProviderTurnAdapter {
       );
     }
   }
+}
+
+export function buildCodexThreadSettings(
+  session: Session,
+  providerCatalog: ModelCatalogProvider,
+  clientKey: string,
+): CodexThreadSettings {
+  const selection = resolveModelSelection(providerCatalog, session.model, session.reasoningEffort);
+  const additionalDirectories = normalizeAllowedAdditionalDirectories(
+    session.workspacePath,
+    session.allowedAdditionalDirectories,
+  );
+  const options: CodexThreadOptions = {
+    workingDirectory: session.workspacePath,
+    skipGitRepoCheck: true,
+    sandboxMode: "workspace-write",
+    approvalPolicy: mapApprovalModeToCodexPolicy(session.approvalMode),
+    model: selection.resolvedModel,
+    modelReasoningEffort: selection.resolvedReasoningEffort,
+    ...(additionalDirectories.length > 0 ? { additionalDirectories } : {}),
+  };
+
+  return {
+    options,
+    selection,
+    settingsKey: JSON.stringify([
+      options.workingDirectory,
+      options.approvalPolicy,
+      options.model,
+      options.modelReasoningEffort,
+      additionalDirectories,
+      clientKey,
+    ]),
+  };
+}
+
+export function resolveCodexThreadForSettings(args: {
+  cached: CachedCodexThread | undefined;
+  nextSettingsKey: string;
+  threadId: string | null;
+  options: CodexThreadOptions;
+  client: CodexThreadConnector;
+}): { thread: Thread; reusedCached: boolean } {
+  const {
+    cached,
+    nextSettingsKey,
+    threadId,
+    options,
+    client,
+  } = args;
+
+  if (cached && cached.settingsKey === nextSettingsKey) {
+    return {
+      thread: cached.thread,
+      reusedCached: true,
+    };
+  }
+
+  return {
+    thread: threadId?.trim()
+      ? client.resumeThread(threadId, options)
+      : client.startThread(options),
+    reusedCached: false,
+  };
 }
 

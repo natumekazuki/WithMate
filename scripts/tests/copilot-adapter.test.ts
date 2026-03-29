@@ -59,6 +59,11 @@ const COPILOT_PROVIDER_CATALOG: ModelCatalogProvider = {
       label: "GPT-4.1",
       reasoningEfforts: ["low", "medium", "high"],
     },
+    {
+      id: "gpt-4.1-mini",
+      label: "GPT-4.1 mini",
+      reasoningEfforts: ["low", "medium"],
+    },
   ],
 };
 
@@ -98,7 +103,18 @@ function resolveCustomAgents(_workspacePath: string, selectedAgentName: string) 
   };
 }
 
-function createRunSessionInput(customAgentName: string, threadId: string): RunSessionTurnInput {
+function createRunSessionInput(options?: {
+  customAgentName?: string;
+  threadId?: string;
+  model?: string;
+  reasoningEffort?: RunSessionTurnInput["session"]["reasoningEffort"];
+}): RunSessionTurnInput {
+  const {
+    customAgentName = "reviewer",
+    threadId = "",
+    model = "gpt-4.1",
+    reasoningEffort = "high",
+  } = options ?? {};
   const session = {
     ...buildNewSession({
       provider: "copilot",
@@ -111,8 +127,8 @@ function createRunSessionInput(customAgentName: string, threadId: string): RunSe
       characterIconPath: "",
       characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
       approvalMode: DEFAULT_APPROVAL_MODE,
-      model: "gpt-4.1",
-      reasoningEffort: "high",
+      model,
+      reasoningEffort,
       customAgentName,
     }),
     threadId,
@@ -552,8 +568,8 @@ describe("CopilotAdapter env", () => {
 
 describe("CopilotAdapter session settings", () => {
   it("custom agent 変更後の session settings は新 agent 情報を反映する", () => {
-    const previousInput = createRunSessionInput("reviewer", "thread-1");
-    const nextInput = createRunSessionInput("planner", "thread-1");
+    const previousInput = createRunSessionInput({ customAgentName: "reviewer", threadId: "thread-1" });
+    const nextInput = createRunSessionInput({ customAgentName: "planner", threadId: "thread-1" });
     const previousSettings = buildCopilotSessionSettings(previousInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
     const nextSettings = buildCopilotSessionSettings(nextInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
 
@@ -562,9 +578,31 @@ describe("CopilotAdapter session settings", () => {
     assert.deepEqual(nextSettings.config.customAgents, CUSTOM_AGENT_CONFIGS);
   });
 
+  it("model / reasoning 変更後の session settings は新 config を反映する", () => {
+    const previousInput = createRunSessionInput({
+      customAgentName: "reviewer",
+      threadId: "thread-1",
+      model: "gpt-4.1",
+      reasoningEffort: "high",
+    });
+    const nextInput = createRunSessionInput({
+      customAgentName: "reviewer",
+      threadId: "thread-1",
+      model: "gpt-4.1-mini",
+      reasoningEffort: "low",
+    });
+    const previousSettings = buildCopilotSessionSettings(previousInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    const nextSettings = buildCopilotSessionSettings(nextInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+
+    assert.notEqual(previousSettings.settingsKey, nextSettings.settingsKey);
+    assert.equal(nextSettings.config.agent, "reviewer");
+    assert.equal(nextSettings.config.model, "gpt-4.1-mini");
+    assert.equal(nextSettings.config.reasoningEffort, "low");
+  });
+
   it("threadId がある custom agent 切り替え後は createSession ではなく resumeSession を使う", async () => {
-    const previousInput = createRunSessionInput("reviewer", "thread-1");
-    const nextInput = createRunSessionInput("planner", "thread-1");
+    const previousInput = createRunSessionInput({ customAgentName: "reviewer", threadId: "thread-1" });
+    const nextInput = createRunSessionInput({ customAgentName: "planner", threadId: "thread-1" });
     const previousSettings = buildCopilotSessionSettings(previousInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
     const nextSettings = buildCopilotSessionSettings(nextInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
     const cachedDisconnectCalls: string[] = [];
@@ -614,5 +652,71 @@ describe("CopilotAdapter session settings", () => {
     assert.equal(resumeCalls[0]?.threadId, "thread-1");
     assert.equal(resumeCalls[0]?.config.agent, "planner");
     assert.deepEqual(resumeCalls[0]?.config.customAgents, CUSTOM_AGENT_CONFIGS);
+  });
+
+  it("threadId がある model / reasoning 変更後は新 config 付き resumeSession を使う", async () => {
+    const previousInput = createRunSessionInput({
+      customAgentName: "reviewer",
+      threadId: "thread-1",
+      model: "gpt-4.1",
+      reasoningEffort: "high",
+    });
+    const nextInput = createRunSessionInput({
+      customAgentName: "reviewer",
+      threadId: "thread-1",
+      model: "gpt-4.1-mini",
+      reasoningEffort: "low",
+    });
+    const previousSettings = buildCopilotSessionSettings(previousInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    const nextSettings = buildCopilotSessionSettings(nextInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    const cachedDisconnectCalls: string[] = [];
+    const resumeCalls: Array<{
+      threadId: string;
+      config: {
+        agent?: string;
+        model?: string;
+        reasoningEffort?: string;
+      };
+    }> = [];
+    const createCalls: unknown[] = [];
+    const resumedSession = {
+      disconnect: async () => undefined,
+    } as never;
+
+    assert.notEqual(previousSettings.settingsKey, nextSettings.settingsKey);
+
+    const result = await resolveCopilotSessionForSettings({
+      cached: {
+        session: {
+          disconnect: async () => {
+            cachedDisconnectCalls.push("disconnect");
+          },
+        } as never,
+        settingsKey: previousSettings.settingsKey,
+      },
+      nextSettingsKey: nextSettings.settingsKey,
+      threadId: nextInput.session.threadId,
+      config: nextSettings.config,
+      client: {
+        resumeSession: async (threadId: string, config: { model?: string; reasoningEffort?: string }) => {
+          resumeCalls.push({ threadId, config });
+          return resumedSession;
+        },
+        createSession: async (config: unknown) => {
+          createCalls.push(config);
+          return resumedSession;
+        },
+      },
+    });
+
+    assert.equal(result.session, resumedSession);
+    assert.equal(result.reusedCached, false);
+    assert.equal(createCalls.length, 0);
+    assert.equal(resumeCalls.length, 1);
+    assert.deepEqual(cachedDisconnectCalls, ["disconnect"]);
+    assert.equal(resumeCalls[0]?.threadId, "thread-1");
+    assert.equal(resumeCalls[0]?.config.agent, "reviewer");
+    assert.equal(resumeCalls[0]?.config.model, "gpt-4.1-mini");
+    assert.equal(resumeCalls[0]?.config.reasoningEffort, "low");
   });
 });

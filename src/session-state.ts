@@ -7,6 +7,7 @@ import {
   DEFAULT_REASONING_EFFORT,
   normalizeProviderId,
   type ModelReasoningEffort,
+  type ResolvedModelSelection,
 } from "./model-catalog.js";
 import {
   type AuditLogOperation,
@@ -351,6 +352,37 @@ export function buildNewSession(input: CreateSessionInput): Session {
     messages: [],
     stream: [],
   };
+}
+
+const MODEL_METADATA_CONTINUITY_PROVIDER_IDS = new Set(["copilot", "codex"]);
+
+function shouldPreserveThreadIdOnModelMetadataUpdate(providerId: string): boolean {
+  return MODEL_METADATA_CONTINUITY_PROVIDER_IDS.has(providerId);
+}
+
+export function applySessionModelMetadataUpdate(
+  session: Session,
+  selection: ResolvedModelSelection,
+  catalogRevision: number,
+  updatedAt: string,
+): Session {
+  return {
+    ...session,
+    catalogRevision,
+    model: selection.resolvedModel,
+    reasoningEffort: selection.resolvedReasoningEffort,
+    threadId: shouldPreserveThreadIdOnModelMetadataUpdate(session.provider) ? session.threadId : "",
+    updatedAt,
+  };
+}
+
+export function applySessionModelSelection(
+  session: Session,
+  selection: ResolvedModelSelection,
+  catalogRevision: number,
+  updatedAt: string,
+): Session {
+  return applySessionModelMetadataUpdate(session, selection, catalogRevision, updatedAt);
 }
 
 export function applyCopilotCustomAgentSelection(
