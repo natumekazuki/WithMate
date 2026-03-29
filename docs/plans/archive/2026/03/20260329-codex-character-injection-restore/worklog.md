@@ -17,3 +17,5 @@
 - `npm run typecheck` は既存 baseline failure により失敗したが、今回の変更ファイル `src-electron/provider-prompt.ts` / `scripts/tests/provider-prompt.test.ts` に新規起因はないことを確認した
 - manual 実機確認は未実施で、必要なら Codex 実行時の実応答反映を次段で確認する
 - docs-sync 判断として `docs/design` / `README.md` / `.ai_context` は更新不要と整理した
+- implementation commit `7cc9b93`（`fix(codex): character注入漏れを復元`）作成済みであることを反映した
+- post-commit 締めとして `result.md` / session plan を完了状態へ更新し、plan 一式を `docs/plans/archive/2026/03/20260329-codex-character-injection-restore/` へ移動した

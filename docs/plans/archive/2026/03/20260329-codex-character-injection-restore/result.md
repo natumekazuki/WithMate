@@ -2,15 +2,16 @@
 
 ## Status
 
-- 状態: 実装完了（未コミット・自動検証反映済み・manual 未実施）
+- 状態: 完了（commit `7cc9b93` / archived / manual 未実施）
 
 ## Current Output
 
+- implementation commit: `7cc9b93` `fix(codex): character注入漏れを復元`
 - `src-electron/provider-prompt.ts` で、Codex が参照する `logicalPrompt.systemText` / `logicalPrompt.composedText` に character を復元した
 - `logicalPrompt.systemText` を `systemBodyText` と整合する system-level prompt に統一した
 - `scripts/tests/provider-prompt.test.ts` の assertion を強化し、`assertSectionOrder` で missing を見逃さない回帰検知にした
-- `docs/plans/20260329-codex-character-injection-restore/` に調査方針・原因候補・実装内容を記録した
-- session plan を current task 向けへ更新した
+- `docs/plans/archive/2026/03/20260329-codex-character-injection-restore/` に調査方針・原因候補・実装内容を保管した
+- session plan を archive 済み完了状態へ更新した
 
 ## Verification
 
@@ -38,5 +39,5 @@
 
 ## Remaining
 
-- 未コミット状態のまま保持する
 - manual 実機確認が必要なら Codex turn で character が実応答に反映されるかを確認する
+- archive 先 `docs/plans/archive/2026/03/20260329-codex-character-injection-restore/` で記録を保管する
