@@ -20,6 +20,7 @@
 - `npm run build` の成功を確認した
 - `npm run typecheck` の既存 baseline 失敗が継続していることを確認した
 - plan 一式を `docs/plans/archive/2026/03/20260329-runtime-residue-cleanup/` へ archive し、旧 `docs/plans/20260329-runtime-residue-cleanup/` を廃止した
+- 対応コミット `6de2c41` `chore(runtime): remove repository residue` を archive 記録へひも付けた
 
 ## remaining
 
