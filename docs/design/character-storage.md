@@ -95,6 +95,10 @@ Home / Session / Character Stream で使うアイコン画像の正本。
 実装上は source image を character directory へコピーし、実際のファイル名は `meta.json` の `iconFile` を正本とする。
 Renderer 側では browser 標準の file picker で画像を選び、保存時に Main Process へ渡す。
 
+補足:
+- Character Update workflow では paired asset として扱う
+- current 実装では workspace 内に `character.png` がある場合、表示時はそれを優先して使う
+
 ### `AGENTS.md` / `copilot-instructions.md`
 character 保存時に character directory へ同期する update 用 instruction file。  
 Character Update Workspace 起動前から存在し、初期作成直後でもそのまま update workspace として使える状態にする。
@@ -159,10 +163,11 @@ Main Process は以下を担当する。
 - session に保存された `characterId` または snapshot metadata を使って avatar を表示する
 - 実行時に必要なら Main Process から最新 character metadata を再取得する
 
-### Character Update Window
-- character directory を workspace として表示する
-- provider を選んで update 用 Session を起動する
-- Character Memory から貼り付け用 extract を表示 / copy する
+### Character Update Session
+- Character Editor から provider を選んで起動する
+- `workspacePath` は character directory をそのまま使う
+- 表示面は専用 window ではなく `Session Window` の `character-update` variant とする
+- 右ペインでは `LatestCommand / MemoryExtract` を表示する
 - file system 直接操作はしない
 
 ## Data Model

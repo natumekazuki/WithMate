@@ -30,7 +30,6 @@ export type MainIpcWindowDepsArgs = {
   openSessionMonitorWindow(): Promise<BrowserWindow>;
   openSettingsWindow(): Promise<BrowserWindow>;
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
-  openCharacterUpdateWindow(characterId: string): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
@@ -121,9 +120,6 @@ export function createMainIpcRegistrationDeps(
     },
     openCharacterEditorWindow: async (characterId) => {
       await args.window.openCharacterEditorWindow(characterId);
-    },
-    openCharacterUpdateWindow: async (characterId) => {
-      await args.window.openCharacterUpdateWindow(characterId);
     },
     openDiffWindow: async (diffPreview) => {
       await args.window.openDiffWindow(diffPreview);

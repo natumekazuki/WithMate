@@ -57,6 +57,7 @@ function createDiffPreview(): DiffPreviewPayload {
 test("AuxWindowService は singleton window を再利用する", async () => {
   const created: unknown[] = [];
   const homeLoads: string[] = [];
+  const characterLoads: Array<string | null | undefined> = [];
   const service = new AuxWindowService({
     createWindow() {
       const stub = createWindowStub();
@@ -66,7 +67,9 @@ test("AuxWindowService は singleton window を再利用する", async () => {
     async loadHomeEntry(_window, mode) {
       homeLoads.push(mode);
     },
-    async loadCharacterEntry() {},
+    async loadCharacterEntry(_window, characterId) {
+      characterLoads.push(characterId);
+    },
     async loadDiffEntry() {},
     generateDiffToken() {
       return "diff-token";
@@ -81,6 +84,10 @@ test("AuxWindowService は singleton window を再利用する", async () => {
   assert.notEqual(first, settings);
   assert.deepEqual(homeLoads, ["home", "settings"]);
   assert.equal(created.length, 2);
+  await service.openCharacterEditorWindow("char-1");
+  const reopened = await service.openCharacterEditorWindow("char-1");
+  assert.equal(created[2], reopened);
+  assert.deepEqual(characterLoads, ["char-1"]);
 });
 
 test("AuxWindowService は diff preview を保持し reset 時に close する", async () => {

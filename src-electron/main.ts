@@ -317,7 +317,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openSessionMonitorWindow,
                 openSettingsWindow,
                 openCharacterEditorWindow,
-                openCharacterUpdateWindow: (characterId) => requireMainWindowFacade().openCharacterUpdateWindow(characterId),
                 openDiffWindow,
                 pickDirectory: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickDirectory(targetWindow, initialPath),
@@ -1266,10 +1265,6 @@ async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {
 
 async function openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {
   return requireMainWindowFacade().openCharacterEditorWindow(characterId);
-}
-
-async function openCharacterUpdateWindow(characterId: string): Promise<BrowserWindow> {
-  return requireMainWindowFacade().openCharacterUpdateWindow(characterId);
 }
 
 async function openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow> {

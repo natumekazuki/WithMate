@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -130,6 +131,27 @@ describe("SessionStorage", () => {
       assert.ok(loaded);
       assert.equal(loaded.customAgentName, "reviewer");
       assert.deepEqual(loaded.allowedAdditionalDirectories, ["C:/shared/reference"]);
+    } finally {
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("sessionKind を含む session を保存して読み戻せる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new SessionStorage(dbPath);
+      const session = storage.upsertSession({
+        ...createSession("character update", "workspace-character", "char-a", "A"),
+        sessionKind: "character-update",
+      });
+
+      const loaded = storage.getSession(session.id);
+      storage.close();
+
+      assert.ok(loaded);
+      assert.equal(loaded.sessionKind, "character-update");
     } finally {
       await removeDirectoryWithRetry(tempDirectory);
     }

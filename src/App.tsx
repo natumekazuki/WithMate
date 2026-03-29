@@ -17,6 +17,7 @@ import {
   type SessionContextTelemetry,
 } from "./app-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
+import type { CharacterUpdateMemoryExtract } from "./character-update-state.js";
 import {
   createDefaultAppSettings,
   getProviderAppSettings,
@@ -54,6 +55,8 @@ import {
   SessionComposerExpanded,
   SessionActionDockCompactRow,
   SessionAuditLogModal,
+  CharacterUpdateContextPane,
+  SessionPaneErrorBoundary,
   SessionContextPane,
   SessionDiffModal,
   SessionHeader,
@@ -102,6 +105,11 @@ type SessionOwnedBackgroundActivity = {
   ownerSessionId: string | null;
   kind: SessionBackgroundActivityKind;
   state: SessionBackgroundActivityState | null;
+};
+
+type CharacterOwnedMemoryExtract = {
+  ownerCharacterId: string | null;
+  extract: CharacterUpdateMemoryExtract | null;
 };
 
 type ComposerSendabilityState = {
@@ -664,6 +672,12 @@ export default function App() {
     state: null,
   });
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
+  const [activeCharacterUpdatePaneTab, setActiveCharacterUpdatePaneTab] = useState<"latest-command" | "memory-extract">("latest-command");
+  const [characterUpdateMemoryExtractState, setCharacterUpdateMemoryExtractState] = useState<CharacterOwnedMemoryExtract>({
+    ownerCharacterId: null,
+    extract: null,
+  });
+  const [isCharacterUpdateMemoryExtractLoading, setIsCharacterUpdateMemoryExtractLoading] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [resolvedCharacter, setResolvedCharacter] = useState<CharacterProfile | null | undefined>(undefined);
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>({ attachments: [], errors: [] });
@@ -815,6 +829,7 @@ export default function App() {
         : null,
     [selectedSession],
   );
+  const isCharacterUpdateSession = selectedSession?.sessionKind === "character-update";
   const sessionThemeStyle = useMemo(
     () => (selectedSession ? buildCharacterThemeStyle(selectedSession.characterThemeColors) : undefined),
     [selectedSession],
@@ -834,6 +849,15 @@ export default function App() {
   const selectedSessionCopy = useMemo(
     () => resolvedCharacter?.sessionCopy ?? DEFAULT_CHARACTER_SESSION_COPY,
     [resolvedCharacter],
+  );
+  const selectedCharacterUpdateMemoryExtract = useMemo(
+    () => (
+      selectedSession?.characterId
+      && characterUpdateMemoryExtractState.ownerCharacterId === selectedSession.characterId
+        ? characterUpdateMemoryExtractState.extract
+        : null
+    ),
+    [characterUpdateMemoryExtractState.extract, characterUpdateMemoryExtractState.ownerCharacterId, selectedSession?.characterId],
   );
   const isSelectedProviderEnabled = useMemo(
     () => !!selectedSession && getProviderAppSettings(appSettings, selectedSession.provider).enabled,
@@ -927,6 +951,43 @@ export default function App() {
   }, [appSettings, selectedSession]);
 
   useEffect(() => {
+    let active = true;
+
+    if (!withmateApi || !selectedSession?.characterId || !isCharacterUpdateSession) {
+      setCharacterUpdateMemoryExtractState({ ownerCharacterId: null, extract: null });
+      setIsCharacterUpdateMemoryExtractLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    setIsCharacterUpdateMemoryExtractLoading(true);
+    void withmateApi.extractCharacterUpdateMemory(selectedSession.characterId).then((extract) => {
+      if (!active) {
+        return;
+      }
+      setCharacterUpdateMemoryExtractState({
+        ownerCharacterId: selectedSession.characterId,
+        extract,
+      });
+      setIsCharacterUpdateMemoryExtractLoading(false);
+    }).catch(() => {
+      if (!active) {
+        return;
+      }
+      setCharacterUpdateMemoryExtractState({
+        ownerCharacterId: selectedSession.characterId,
+        extract: null,
+      });
+      setIsCharacterUpdateMemoryExtractLoading(false);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [isCharacterUpdateSession, selectedSession?.characterId, withmateApi]);
+
+  useEffect(() => {
     setIsAgentPickerOpen(false);
     setIsSkillPickerOpen(false);
   }, [selectedSessionId]);
@@ -937,6 +998,12 @@ export default function App() {
       setIsSkillPickerOpen(false);
     }
   }, [selectedSession?.runState]);
+
+  useEffect(() => {
+    if (isCharacterUpdateSession && selectedSession?.runState === "running") {
+      setActiveCharacterUpdatePaneTab("latest-command");
+    }
+  }, [isCharacterUpdateSession, selectedSession?.runState]);
 
   useEffect(() => {
     contextRailWidthRef.current = contextRailWidth;
@@ -2686,6 +2753,29 @@ export default function App() {
   const handleCycleContextPaneTab = (direction: -1 | 1) => {
     setActiveContextPaneTab((current) => cycleContextPaneTab(current, direction));
   };
+  const handleRefreshCharacterUpdateMemoryExtract = async () => {
+    if (!withmateApi || !selectedSession?.characterId || !isCharacterUpdateSession || isCharacterUpdateMemoryExtractLoading) {
+      return;
+    }
+
+    setIsCharacterUpdateMemoryExtractLoading(true);
+    try {
+      const extract = await withmateApi.extractCharacterUpdateMemory(selectedSession.characterId);
+      setCharacterUpdateMemoryExtractState({
+        ownerCharacterId: selectedSession.characterId,
+        extract,
+      });
+    } finally {
+      setIsCharacterUpdateMemoryExtractLoading(false);
+    }
+  };
+  const handleCopyCharacterUpdateMemoryExtract = async () => {
+    if (!selectedCharacterUpdateMemoryExtract?.text) {
+      return;
+    }
+
+    await navigator.clipboard.writeText(selectedCharacterUpdateMemoryExtract.text);
+  };
   const sessionWorkbenchStyle = useMemo(
     () =>
       ({
@@ -2727,6 +2817,8 @@ export default function App() {
         isEditingTitle={isEditingTitle}
         titleDraft={titleDraft}
         isRunning={selectedSession.runState === "running"}
+        showTerminalButton={!isCharacterUpdateSession}
+        showMoreButton={!isCharacterUpdateSession}
         onToggleExpanded={handleToggleHeaderExpanded}
         onClose={handleCloseWindow}
         onOpenAuditLog={() => setAuditLogsOpen(true)}
@@ -2788,26 +2880,41 @@ export default function App() {
                 title="左右の幅をドラッグで調整"
               />
 
-              <SessionContextPane
-                activeContextPaneTab={activeContextPaneTab}
-                contextPaneProjection={contextPaneProjection}
-                latestCommandView={latestCommandView}
-                selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
-                isSelectedSessionRunning={isSelectedSessionRunning}
-                selectedSessionCharacter={selectedSessionCharacter}
-                selectedMemoryGenerationActivity={selectedMemoryGenerationActivity}
-                selectedCharacterMemoryGenerationActivity={selectedCharacterMemoryGenerationActivity}
-                selectedMonologueActivity={selectedMonologueActivity}
-                selectedMonologueEntries={selectedMonologueEntries}
-                isCopilotSession={isCopilotSession}
-                selectedCopilotRemainingPercentLabel={selectedCopilotRemainingPercentLabel}
-                selectedCopilotRemainingRequestsLabel={selectedCopilotRemainingRequestsLabel}
-                selectedCopilotQuotaResetLabel={selectedCopilotQuotaResetLabel}
-                selectedSessionContextTelemetry={selectedSessionContextTelemetry}
-                selectedSessionContextTelemetryProjection={selectedSessionContextTelemetryProjection}
-                contextEmptyText={selectedContextEmptyText}
-                onCycleContextPaneTab={handleCycleContextPaneTab}
-              />
+              <SessionPaneErrorBoundary>
+                {isCharacterUpdateSession ? (
+                  <CharacterUpdateContextPane
+                    activePaneTab={activeCharacterUpdatePaneTab}
+                    latestCommandView={latestCommandView}
+                    selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
+                    memoryExtract={selectedCharacterUpdateMemoryExtract}
+                    isLoadingMemoryExtract={isCharacterUpdateMemoryExtractLoading}
+                    onSelectPaneTab={setActiveCharacterUpdatePaneTab}
+                    onRefreshMemoryExtract={() => void handleRefreshCharacterUpdateMemoryExtract()}
+                    onCopyMemoryExtract={() => void handleCopyCharacterUpdateMemoryExtract()}
+                  />
+                ) : (
+                  <SessionContextPane
+                    activeContextPaneTab={activeContextPaneTab}
+                    contextPaneProjection={contextPaneProjection}
+                    latestCommandView={latestCommandView}
+                    selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
+                    isSelectedSessionRunning={isSelectedSessionRunning}
+                    selectedSessionCharacter={selectedSessionCharacter}
+                    selectedMemoryGenerationActivity={selectedMemoryGenerationActivity}
+                    selectedCharacterMemoryGenerationActivity={selectedCharacterMemoryGenerationActivity}
+                    selectedMonologueActivity={selectedMonologueActivity}
+                    selectedMonologueEntries={selectedMonologueEntries}
+                    isCopilotSession={isCopilotSession}
+                    selectedCopilotRemainingPercentLabel={selectedCopilotRemainingPercentLabel}
+                    selectedCopilotRemainingRequestsLabel={selectedCopilotRemainingRequestsLabel}
+                    selectedCopilotQuotaResetLabel={selectedCopilotQuotaResetLabel}
+                    selectedSessionContextTelemetry={selectedSessionContextTelemetry}
+                    selectedSessionContextTelemetryProjection={selectedSessionContextTelemetryProjection}
+                    contextEmptyText={selectedContextEmptyText}
+                    onCycleContextPaneTab={handleCycleContextPaneTab}
+                  />
+                )}
+              </SessionPaneErrorBoundary>
             </div>
 
             <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
@@ -2831,7 +2938,9 @@ export default function App() {
                     )}
                     isRunning={selectedSession.runState === "running"}
                     composerBlocked={!!composerBlockedReason}
-                    canSelectCustomAgent={selectedSession.provider === "copilot"}
+                    canSelectCustomAgent={!isCharacterUpdateSession && selectedSession.provider === "copilot"}
+                    showCustomAgentPicker={!isCharacterUpdateSession}
+                    showSkillPicker={!isCharacterUpdateSession}
                     isAgentPickerOpen={isAgentPickerOpen}
                     isSkillPickerOpen={isSkillPickerOpen}
                     isAdditionalDirectoryListOpen={isAdditionalDirectoryListOpen}

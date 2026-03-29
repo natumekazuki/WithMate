@@ -53,6 +53,7 @@ test("CharacterUpdateWorkspaceService は workspace 情報と extract を返す"
   assert.equal(workspace?.workspacePath, "C:/WithMate/characters/char-1");
   assert.match(workspace?.codexInstructionPath ?? "", /AGENTS\.md$/);
   assert.match(workspace?.characterNotesPath ?? "", /character-notes\.md$/);
+  assert.match(workspace?.characterImagePath ?? "", /character\.png$/);
   assert.match(workspace?.skillPath ?? "", /skills[\\/]character-definition-update[\\/]SKILL\.md$/);
   assert.equal(extract.entryCount, 1);
 });

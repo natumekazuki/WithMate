@@ -27,7 +27,6 @@ export type WithMateWindowNavigationApi = {
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
   openCharacterEditor(characterId?: string | null): Promise<void>;
-  openCharacterUpdate(characterId: string): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openPath(target: string, options?: OpenPathOptions): Promise<void>;
   openSessionTerminal(sessionId: string): Promise<void>;

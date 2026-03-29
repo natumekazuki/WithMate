@@ -16,6 +16,9 @@ import {
   type CharacterProfile,
   type CreateCharacterInput,
 } from "./character-state.js";
+import type { CharacterUpdateWorkspace } from "./character-update-state.js";
+import { createDefaultAppSettings, getProviderAppSettings, type AppSettings } from "./provider-settings-state.js";
+import type { ModelCatalogSnapshot } from "./model-catalog.js";
 import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-withmate-api.js";
 import { CharacterAvatar } from "./ui-utils.js";
 
@@ -117,6 +120,10 @@ function toDraft(character: CharacterProfile | null): CreateCharacterInput {
   };
 }
 
+function areDraftsEqual(left: CreateCharacterInput, right: CreateCharacterInput): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 export default function CharacterEditorApp() {
   const desktopRuntime = isDesktopRuntime();
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
@@ -124,6 +131,14 @@ export default function CharacterEditorApp() {
   const [characterId, setCharacterId] = useState<string | null>(() => getCharacterIdFromLocation());
   const [isCreateMode, setIsCreateMode] = useState<boolean>(() => isCharacterCreateMode() || !getCharacterIdFromLocation());
   const [editorTab, setEditorTab] = useState<"profile" | "character-md" | "character-notes" | "session-copy">("profile");
+  const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
+  const [updateLaunchOpen, setUpdateLaunchOpen] = useState(false);
+  const [updateWorkspace, setUpdateWorkspace] = useState<CharacterUpdateWorkspace | null>(null);
+  const [selectedUpdateProviderId, setSelectedUpdateProviderId] = useState("");
+  const [startingUpdateSession, setStartingUpdateSession] = useState(false);
+  const [isReloadingCharacter, setIsReloadingCharacter] = useState(false);
+  const [isOpeningCharacterFolder, setIsOpeningCharacterFolder] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -145,6 +160,16 @@ export default function CharacterEditorApp() {
       const currentCharacter = characterId ? getCharacterProfile(nextCharacters, characterId) : null;
       setDraft(toDraft(currentCharacter));
     });
+    void Promise.all([
+      withmateApi.getAppSettings(),
+      withmateApi.getModelCatalog(null),
+    ]).then(([nextSettings, nextCatalog]) => {
+      if (!active) {
+        return;
+      }
+      setAppSettings(nextSettings);
+      setModelCatalog(nextCatalog);
+    });
 
     const unsubscribe = withmateApi.subscribeCharacters((nextCharacters) => {
       if (!active) {
@@ -157,10 +182,22 @@ export default function CharacterEditorApp() {
         setDraft(toDraft(currentCharacter));
       }
     });
+    const unsubscribeAppSettings = withmateApi.subscribeAppSettings((nextSettings) => {
+      if (active) {
+        setAppSettings(nextSettings);
+      }
+    });
+    const unsubscribeModelCatalog = withmateApi.subscribeModelCatalog((nextCatalog) => {
+      if (active) {
+        setModelCatalog(nextCatalog);
+      }
+    });
 
     return () => {
       active = false;
       unsubscribe();
+      unsubscribeAppSettings();
+      unsubscribeModelCatalog();
     };
   }, [characterId]);
 
@@ -178,6 +215,19 @@ export default function CharacterEditorApp() {
   );
 
   const editorThemeStyle = useMemo(() => buildEditorThemeStyle(draft.themeColors), [draft.themeColors]);
+  const isDirty = useMemo(
+    () => areDraftsEqual(draft, toDraft(selectedCharacter)) === false,
+    [draft, selectedCharacter],
+  );
+  const enabledUpdateProviders = useMemo(() => {
+    return (modelCatalog?.providers ?? []).filter((provider) => getProviderAppSettings(appSettings, provider.id).enabled);
+  }, [appSettings, modelCatalog]);
+
+  useEffect(() => {
+    if (!enabledUpdateProviders.find((provider) => provider.id === selectedUpdateProviderId)) {
+      setSelectedUpdateProviderId(enabledUpdateProviders[0]?.id ?? "");
+    }
+  }, [enabledUpdateProviders, selectedUpdateProviderId]);
 
   const handleChange = <K extends keyof CreateCharacterInput>(key: K, value: CreateCharacterInput[K]) => {
     setDraft((current) => ({
@@ -321,12 +371,81 @@ export default function CharacterEditorApp() {
     window.close();
   };
 
+  const handleReload = async () => {
+    if (!selectedCharacter || isReloadingCharacter) {
+      return;
+    }
+
+    if (isDirty) {
+      const confirmed = window.confirm("今の未保存の変更を破棄して、保存済みの character 定義を読み直す？");
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setIsReloadingCharacter(true);
+    try {
+      await withWithMateApi(async (api) => {
+        const refreshed = await api.getCharacter(selectedCharacter.id);
+        if (!refreshed) {
+          return;
+        }
+
+        setCharacters((current) =>
+          current.map((character) => (character.id === refreshed.id ? refreshed : character)),
+        );
+        setDraft(toDraft(refreshed));
+      });
+    } finally {
+      setIsReloadingCharacter(false);
+    }
+  };
+
   const handleOpenUpdateWorkspace = async () => {
     if (!selectedCharacter) {
       return;
     }
+    await withWithMateApi(async (api) => {
+      setUpdateWorkspace(await api.getCharacterUpdateWorkspace(selectedCharacter.id));
+    });
+    setUpdateLaunchOpen(true);
+  };
 
-    await withWithMateApi((api) => api.openCharacterUpdate(selectedCharacter.id));
+  const handleOpenCharacterFolder = async () => {
+    if (!selectedCharacter || isOpeningCharacterFolder) {
+      return;
+    }
+
+    setIsOpeningCharacterFolder(true);
+    try {
+      await withWithMateApi(async (api) => {
+        const workspace = await api.getCharacterUpdateWorkspace(selectedCharacter.id);
+        if (!workspace?.workspacePath) {
+          return;
+        }
+
+        await api.openPath(workspace.workspacePath);
+      });
+    } finally {
+      setIsOpeningCharacterFolder(false);
+    }
+  };
+
+  const handleStartUpdateSession = async () => {
+    if (!selectedCharacter || !selectedUpdateProviderId || startingUpdateSession) {
+      return;
+    }
+
+    setStartingUpdateSession(true);
+    try {
+      await withWithMateApi(async (api) => {
+        const session = await api.createCharacterUpdateSession(selectedCharacter.id, selectedUpdateProviderId);
+        await api.openSession(session.id);
+      });
+      setUpdateLaunchOpen(false);
+    } finally {
+      setStartingUpdateSession(false);
+    }
   };
 
   if (!desktopRuntime) {
@@ -345,9 +464,31 @@ export default function CharacterEditorApp() {
     <div className="page-shell character-editor-page" style={editorThemeStyle}>
       <header className="panel session-window-bar rise-1">
         <span className="session-window-title character-editor-title-accent">{isCreateMode ? "Add Character" : draft.name || selectedCharacter?.name || "Character Editor"}</span>
-        <button className="drawer-toggle" type="button" onClick={() => window.close()}>
-          Close Window
-        </button>
+        <div className="character-editor-header-actions">
+          {!isCreateMode && selectedCharacter ? (
+            <button className="drawer-toggle" type="button" onClick={() => void handleReload()} disabled={isReloadingCharacter}>
+              {isReloadingCharacter ? "Reloading..." : "Reload"}
+            </button>
+          ) : null}
+          {!isCreateMode && selectedCharacter ? (
+            <button
+              className="drawer-toggle"
+              type="button"
+              onClick={() => void handleOpenCharacterFolder()}
+              disabled={isOpeningCharacterFolder}
+            >
+              {isOpeningCharacterFolder ? "Opening..." : "Open Folder"}
+            </button>
+          ) : null}
+          {!isCreateMode && selectedCharacter ? (
+            <button className="launch-toggle" type="button" onClick={() => void handleOpenUpdateWorkspace()}>
+              Open Update Workspace
+            </button>
+          ) : null}
+          <button className="drawer-toggle" type="button" onClick={() => window.close()}>
+            Close Window
+          </button>
+        </div>
       </header>
 
       <div className="character-editor-tabs-row">
@@ -368,7 +509,7 @@ export default function CharacterEditorApp() {
             className={`character-editor-tab${editorTab === "character-md" ? " active" : ""}`}
             onClick={() => setEditorTab("character-md")}
           >
-            システムプロンプト
+            character.md
           </button>
           <button
             type="button"
@@ -514,7 +655,7 @@ export default function CharacterEditorApp() {
               <div className="character-markdown-card">
                 <div className="character-markdown-note">
                   <strong>character.md</strong>
-                  <p>この内容はキャラクター定義の正本として保存され、セッション実行時のプロンプト合成に使われる。</p>
+                  <p>この内容はキャラクター定義の正本として保存され、実行時の Character section にそのまま使われる。</p>
                 </div>
                 <label className="markdown-editor-shell character-markdown-shell">
                   <textarea
@@ -595,17 +736,91 @@ export default function CharacterEditorApp() {
             Save
           </button>
           {!isCreateMode && selectedCharacter ? (
-            <button className="launch-toggle" type="button" onClick={() => void handleOpenUpdateWorkspace()}>
-              Update Workspace
-            </button>
-          ) : null}
-          {!isCreateMode && selectedCharacter ? (
             <button className="danger-button" type="button" onClick={() => void handleDelete()}>
               Delete
             </button>
           ) : null}
         </div>
       </footer>
+
+      {updateLaunchOpen && selectedCharacter ? (
+        <div className="launch-modal" role="dialog" aria-modal="true" onClick={() => setUpdateLaunchOpen(false)}>
+          <section className="launch-dialog panel" onClick={(event) => event.stopPropagation()}>
+            <div className="launch-dialog-head minimal">
+              <button className="diff-close" type="button" onClick={() => setUpdateLaunchOpen(false)}>
+                Close
+              </button>
+            </div>
+
+            <div className="launch-panel minimal">
+              <section className="launch-section minimal">
+                <div className="launch-field">
+                  <label className="launch-field-label" htmlFor="character-update-launch-title">
+                    セッションタイトル
+                  </label>
+                  <input
+                    id="character-update-launch-title"
+                    className="launch-field-input"
+                    type="text"
+                    value={`${selectedCharacter.name} の更新`}
+                    readOnly
+                  />
+                </div>
+              </section>
+
+              <section className="launch-section workspace-picker minimal">
+                <div className="section-head compact-actions">
+                  <strong>Workspace</strong>
+                </div>
+                <p className="launch-path selected">{updateWorkspace?.workspacePath ?? "workspace を読み込み中"}</p>
+              </section>
+
+              <section className="launch-section minimal">
+                <div className="launch-field">
+                  <label className="launch-field-label" htmlFor="character-update-provider-picker">
+                    Coding Provider
+                  </label>
+                  {enabledUpdateProviders.length > 0 ? (
+                    <div
+                      id="character-update-provider-picker"
+                      className="choice-list launch-provider-list"
+                      role="listbox"
+                      aria-label="Character Update Provider"
+                    >
+                      {enabledUpdateProviders.map((provider) => (
+                        <button
+                          key={provider.id}
+                          className={`choice-chip${provider.id === selectedUpdateProviderId ? " active" : ""}`}
+                          type="button"
+                          aria-selected={provider.id === selectedUpdateProviderId}
+                          onClick={() => setSelectedUpdateProviderId(provider.id)}
+                        >
+                          {provider.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <article className="empty-list-card compact">
+                      <p>有効な Coding Provider がないよ。</p>
+                    </article>
+                  )}
+                </div>
+              </section>
+            </div>
+
+            <div className="launch-dialog-foot minimal">
+              <button
+                className="start-session-button"
+                type="button"
+                disabled={!selectedUpdateProviderId || startingUpdateSession}
+                onClick={() => void handleStartUpdateSession()}
+              >
+                {startingUpdateSession ? "Starting..." : "Start Update Session"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

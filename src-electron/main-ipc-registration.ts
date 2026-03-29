@@ -46,7 +46,6 @@ import {
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSIONS_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
-  WITHMATE_OPEN_CHARACTER_UPDATE_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
@@ -78,7 +77,6 @@ export type MainIpcRegistrationDeps = {
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
-  openCharacterUpdateWindow(characterId: string): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   listSessions(): Session[];
   listSessionAuditLogs(sessionId: string): AuditLogEntry[];
@@ -134,7 +132,6 @@ type MainIpcWindowDeps = Pick<
   | "openSessionMonitorWindow"
   | "openSettingsWindow"
   | "openCharacterEditorWindow"
-  | "openCharacterUpdateWindow"
   | "openDiffWindow"
   | "openPathTarget"
   | "openSessionTerminal"
@@ -223,9 +220,6 @@ function registerWindowHandlers(ipcMain: IpcMain, deps: MainIpcWindowDeps): void
   });
   ipcMain.handle(WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL, async (_event, characterId: string | null) => {
     await deps.openCharacterEditorWindow(characterId);
-  });
-  ipcMain.handle(WITHMATE_OPEN_CHARACTER_UPDATE_CHANNEL, async (_event, characterId: string) => {
-    await deps.openCharacterUpdateWindow(characterId);
   });
   ipcMain.handle(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, async (_event, diffPreview: DiffPreviewPayload) => {
     await deps.openDiffWindow(diffPreview);

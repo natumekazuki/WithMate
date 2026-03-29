@@ -35,6 +35,7 @@ type StoredCharacterMeta = {
 const CHARACTER_ROOT_DIRECTORY = "characters";
 const DEFAULT_ROLE_FILE = "character.md";
 const DEFAULT_NOTES_FILE = "character-notes.md";
+const DEFAULT_ICON_FILE = "character.png";
 const LEGACY_SAMPLE_CHARACTER_IDS = ["kuramochi-melto", "ishigami-nozomi", "ozora-subaru", "inui-toko"];
 
 function nowIso(): string {
@@ -137,9 +138,12 @@ async function readOptionalText(filePath: string): Promise<string> {
 async function materializeCharacterProfile(characterDirectoryPath: string, meta: StoredCharacterMeta): Promise<CharacterProfile> {
   const roleMarkdown = await readOptionalText(path.join(characterDirectoryPath, meta.roleFile));
   const notesMarkdown = await readOptionalText(path.join(characterDirectoryPath, DEFAULT_NOTES_FILE));
-  const iconPath =
-    meta.iconFile && (await pathExists(path.join(characterDirectoryPath, meta.iconFile)))
-      ? path.join(characterDirectoryPath, meta.iconFile)
+  const canonicalIconPath = path.join(characterDirectoryPath, DEFAULT_ICON_FILE);
+  const metaIconPath = meta.iconFile ? path.join(characterDirectoryPath, meta.iconFile) : "";
+  const iconPath = await pathExists(canonicalIconPath)
+    ? canonicalIconPath
+    : metaIconPath && (await pathExists(metaIconPath))
+      ? metaIconPath
       : "";
 
   return {

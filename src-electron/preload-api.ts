@@ -44,7 +44,6 @@ import {
   WITHMATE_LIVE_SESSION_RUN_EVENT,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
-  WITHMATE_OPEN_CHARACTER_UPDATE_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
@@ -122,9 +121,6 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     },
     openCharacterEditor(characterId) {
       return ipcRenderer.invoke(WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL, characterId ?? null);
-    },
-    openCharacterUpdate(characterId) {
-      return ipcRenderer.invoke(WITHMATE_OPEN_CHARACTER_UPDATE_CHANNEL, characterId);
     },
     openDiffWindow(diffPreview) {
       return ipcRenderer.invoke(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, diffPreview);

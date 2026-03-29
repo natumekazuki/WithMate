@@ -24,10 +24,6 @@ test("MainWindowFacade は aux/session window service を束ねる", async () =>
           calls.push(`character:${characterId ?? "new"}`);
           return { id: "character" };
         },
-        async openCharacterUpdateWindow(characterId: string) {
-          calls.push(`character-update:${characterId}`);
-          return { id: "character-update" };
-        },
         async openDiffWindow() {
           calls.push("diff");
           return { id: "diff" };
@@ -57,7 +53,6 @@ test("MainWindowFacade は aux/session window service を束ねる", async () =>
   await facade.openSettingsWindow();
   await facade.openSessionWindow("s-1");
   await facade.openCharacterEditorWindow("c-1");
-  await facade.openCharacterUpdateWindow("c-1");
   await facade.openDiffWindow({ token: "d-1" } as never);
   assert.deepEqual(facade.listOpenSessionWindowIds(), ["s-1", "s-2"]);
   facade.closeResetTargetWindows();
@@ -68,7 +63,6 @@ test("MainWindowFacade は aux/session window service を束ねる", async () =>
     "settings",
     "session:s-1",
     "character:c-1",
-    "character-update:c-1",
     "diff",
     "list-session",
     "close-session",

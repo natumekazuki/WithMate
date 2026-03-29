@@ -27,9 +27,6 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
       async openCharacterEditorWindow() {
         return {} as never;
       },
-      async openCharacterUpdateWindow() {
-        return {} as never;
-      },
       async openDiffWindow() {
         return {} as never;
       },

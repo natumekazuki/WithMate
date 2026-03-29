@@ -1,5 +1,5 @@
 import type { DiffPreviewPayload } from "../src/session-state.js";
-import type { CharacterEntryMode, HomeEntryMode, WindowLike } from "./window-entry-loader.js";
+import type { HomeEntryMode, WindowLike } from "./window-entry-loader.js";
 
 type BaseWindowLike = WindowLike & {
   isDestroyed(): boolean;
@@ -25,7 +25,7 @@ export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
     homeBounds?: boolean;
   }): TWindow;
   loadHomeEntry(window: TWindow, mode: HomeEntryMode): Promise<void>;
-  loadCharacterEntry(window: TWindow, characterId?: string | null, mode?: CharacterEntryMode): Promise<void>;
+  loadCharacterEntry(window: TWindow, characterId?: string | null): Promise<void>;
   loadDiffEntry(window: TWindow, token: string): Promise<void>;
   generateDiffToken(): string;
 };
@@ -35,7 +35,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   private sessionMonitorWindow: TWindow | null = null;
   private settingsWindow: TWindow | null = null;
   private readonly characterEditorWindows = new Map<string, TWindow>();
-  private readonly characterUpdateWindows = new Map<string, TWindow>();
   private readonly diffWindows = new Map<string, TWindow>();
   private readonly diffPreviewStore = new Map<string, DiffPreviewPayload>();
 
@@ -141,28 +140,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return window;
   }
 
-  async openCharacterUpdateWindow(characterId: string): Promise<TWindow> {
-    const existing = this.reuseWindow(this.characterUpdateWindows.get(characterId) ?? null);
-    if (existing) {
-      return existing;
-    }
-
-    const window = this.deps.createWindow({
-      width: 1080,
-      height: 860,
-      minWidth: 820,
-      minHeight: 700,
-      title: `Character Update - ${characterId}`,
-    });
-    this.characterUpdateWindows.set(characterId, window);
-    window.once("ready-to-show", () => window.show());
-    window.on("closed", () => {
-      this.characterUpdateWindows.delete(characterId);
-    });
-    await this.deps.loadCharacterEntry(window, characterId, "update");
-    return window;
-  }
-
   async openDiffWindow(diffPreview: DiffPreviewPayload): Promise<TWindow> {
     const token = this.deps.generateDiffToken();
     const window = this.deps.createWindow({
@@ -188,15 +165,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     const window = this.characterEditorWindows.get(characterId);
     if (!window || window.isDestroyed()) {
       this.characterEditorWindows.delete(characterId);
-      return;
-    }
-    window.close();
-  }
-
-  closeCharacterUpdate(characterId: string): void {
-    const window = this.characterUpdateWindows.get(characterId);
-    if (!window || window.isDestroyed()) {
-      this.characterUpdateWindows.delete(characterId);
       return;
     }
     window.close();

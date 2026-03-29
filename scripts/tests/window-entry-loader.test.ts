@@ -28,14 +28,14 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
   await loader.loadHomeEntry(stub.window, "settings");
   await loader.loadSessionEntry(stub.window, "session 1");
   await loader.loadCharacterEntry(stub.window, null);
-  await loader.loadCharacterEntry(stub.window, "char-1", "update");
+  await loader.loadCharacterEntry(stub.window, "char-1");
   await loader.loadDiffEntry(stub.window, "diff#1");
 
   assert.deepEqual(stub.calls, [
     { kind: "url", value: "http://localhost:5173?mode=settings" },
     { kind: "url", value: "http://localhost:5173/session.html?sessionId=session%201" },
     { kind: "url", value: "http://localhost:5173/character.html?mode=create" },
-    { kind: "url", value: "http://localhost:5173/character.html?mode=update&characterId=char-1" },
+    { kind: "url", value: "http://localhost:5173/character.html?characterId=char-1" },
     { kind: "url", value: "http://localhost:5173/diff.html?token=diff%231" },
   ]);
 });
@@ -49,9 +49,11 @@ test("WindowEntryLoader は production build で loadFile する", async () => {
 
   await loader.loadHomeEntry(stub.window);
   await loader.loadCharacterEntry(stub.window, "char-1");
+  await loader.loadHomeEntry(stub.window, "settings");
 
   assert.deepEqual(stub.calls, [
     { kind: "file", value: "F:\\dist\\index.html", search: undefined },
-    { kind: "file", value: "F:\\dist\\character.html", search: "characterId=char-1" },
+    { kind: "file", value: "F:\\dist\\character.html", search: "?characterId=char-1" },
+    { kind: "file", value: "F:\\dist\\index.html", search: "?mode=settings" },
   ]);
 });

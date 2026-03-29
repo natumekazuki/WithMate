@@ -34,6 +34,7 @@ test("instruction text は update workspace のルールを含む", () => {
 
   assert.match(text, /character\.md/);
   assert.match(text, /character-notes\.md/);
+  assert.match(text, /character\.png/);
   assert.match(text, new RegExp(CHARACTER_UPDATE_SKILL_NAME));
   assert.match(text, /## Workspace Files/);
   assert.match(text, /## Prompt Shape/);
@@ -57,8 +58,10 @@ test("skill markdown は固定 workflow を定義する", () => {
   assert.match(text, new RegExp(`name: ${CHARACTER_UPDATE_SKILL_NAME}`));
   assert.match(text, /character\.md/);
   assert.match(text, /character-notes\.md/);
+  assert.match(text, /character\.png/);
   assert.match(text, /## 外部調査/);
   assert.match(text, /## 更新手順/);
+  assert.match(text, /## 画像方針/);
   assert.match(text, /## 自己チェック/);
 });
 
@@ -78,6 +81,8 @@ test("character markdown template は初期定義の骨格を返す", () => {
   assert.match(text, /^---/);
   assert.match(text, /name: "Noa"/);
   assert.match(text, /## Character Overview/);
+  assert.match(text, /## Assets/);
+  assert.match(text, /!\[Noa icon\]\(\.\/character\.png\)/);
   assert.match(text, /## Core Persona/);
   assert.match(text, /## Relationship With User/);
   assert.match(text, /## Voice And Style/);

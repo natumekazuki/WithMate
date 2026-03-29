@@ -50,6 +50,7 @@ export class CharacterUpdateWorkspaceService {
       workspacePath,
       characterMarkdownPath: path.join(workspacePath, "character.md"),
       characterNotesPath: path.join(workspacePath, "character-notes.md"),
+      characterImagePath: path.join(workspacePath, "character.png"),
       skillPath: path.join(workspacePath, CHARACTER_UPDATE_SKILL_FILE_PATH),
       codexInstructionPath: path.join(workspacePath, "AGENTS.md"),
       copilotInstructionPath: path.join(workspacePath, "copilot-instructions.md"),

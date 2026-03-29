@@ -33,7 +33,6 @@ import {
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSIONS_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
-  WITHMATE_OPEN_CHARACTER_UPDATE_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
@@ -88,9 +87,6 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     },
     async openCharacterEditorWindow(characterId) {
       calls.push(`openCharacter:${characterId ?? ""}`);
-    },
-    async openCharacterUpdateWindow(characterId) {
-      calls.push(`openCharacterUpdate:${characterId}`);
     },
     async openDiffWindow() {
       calls.push("openDiff");
@@ -188,13 +184,11 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   assert.ok(handlers.has("withmate:run-session-turn"));
 
   await handlers.get("withmate:open-session")?.({}, "session-1");
-  await handlers.get("withmate:open-character-update")?.({}, "c-1");
   handlers.get("withmate:cancel-session-run")?.({}, "session-1");
   await handlers.get("withmate:open-path")?.({}, "target", null);
 
   assert.deepEqual(calls, [
     "openSession:session-1",
-    "openCharacterUpdate:c-1",
     "cancelRun",
     "openPath",
   ]);
@@ -211,7 +205,6 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async openSessionMonitorWindow() {},
     async openSettingsWindow() {},
     async openCharacterEditorWindow() {},
-    async openCharacterUpdateWindow() {},
     async openDiffWindow() {},
     listSessions: () => [],
     listSessionAuditLogs: () => [],
@@ -261,7 +254,6 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
     WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
     WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
-    WITHMATE_OPEN_CHARACTER_UPDATE_CHANNEL,
     WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
     WITHMATE_PICK_DIRECTORY_CHANNEL,
     WITHMATE_PICK_FILE_CHANNEL,

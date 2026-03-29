@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEventHandler, type ReactNode, type RefObject, type UIEventHandler } from "react";
+import { Component, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type UIEventHandler } from "react";
 
 import type {
   AuditLogEntry,
@@ -13,15 +13,17 @@ import type {
 } from "./app-state.js";
 import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
 import { MessageRichText } from "./MessageRichText.js";
-import { approvalModeLabel, CharacterAvatar, fileKindLabel, operationTypeLabel } from "./ui-utils.js";
+import { approvalModeLabel, CharacterAvatar, fileKindLabel, liveRunStepStatusLabel, operationTypeLabel } from "./ui-utils.js";
 import {
   contextPaneTabLabel,
+  liveRunStepToneClassName,
   sessionBackgroundActivityStatusLabel,
   type ContextPaneProjection,
   type ContextPaneTabKey,
   type LatestCommandView,
   type SessionContextTelemetryProjection,
 } from "./session-ui-projection.js";
+import type { CharacterUpdateMemoryExtract } from "./character-update-state.js";
 
 function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
@@ -92,6 +94,8 @@ export type SessionHeaderProps = {
   isEditingTitle: boolean;
   titleDraft: string;
   isRunning: boolean;
+  showTerminalButton?: boolean;
+  showMoreButton?: boolean;
   onToggleExpanded: () => void;
   onClose: () => void;
   onOpenAuditLog: () => void;
@@ -111,6 +115,8 @@ export function SessionHeader({
   isEditingTitle,
   titleDraft,
   isRunning,
+  showTerminalButton = true,
+  showMoreButton = true,
   onToggleExpanded,
   onClose,
   onOpenAuditLog,
@@ -132,15 +138,17 @@ export function SessionHeader({
           <button className="drawer-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
             Audit Log
           </button>
-          <button
-            className="drawer-toggle compact secondary"
-            type="button"
-            onClick={onOpenTerminal}
-            title={workspacePath}
-          >
-            Terminal
-          </button>
-          {!isEditingTitle ? (
+          {showTerminalButton ? (
+            <button
+              className="drawer-toggle compact secondary"
+              type="button"
+              onClick={onOpenTerminal}
+              title={workspacePath}
+            >
+              Terminal
+            </button>
+          ) : null}
+          {showMoreButton && !isEditingTitle ? (
             <button
               className="drawer-toggle compact secondary"
               type="button"
@@ -438,6 +446,67 @@ export type SessionContextPaneProps = {
   onCycleContextPaneTab: (direction: -1 | 1) => void;
 };
 
+type SessionPaneErrorBoundaryProps = {
+  children: ReactNode;
+};
+
+type SessionPaneErrorBoundaryState = {
+  errorMessage: string | null;
+};
+
+export class SessionPaneErrorBoundary extends Component<
+  SessionPaneErrorBoundaryProps,
+  SessionPaneErrorBoundaryState
+> {
+  state: SessionPaneErrorBoundaryState = {
+    errorMessage: null,
+  };
+
+  static getDerivedStateFromError(error: Error): SessionPaneErrorBoundaryState {
+    return {
+      errorMessage: error.message || "右ペインの描画に失敗したよ。",
+    };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    console.error("Session pane render failed", error, errorInfo);
+  }
+
+  render(): ReactNode {
+    if (this.state.errorMessage) {
+      return (
+        <aside className="session-context-pane">
+          <section className="command-monitor-shell" aria-label="right pane error">
+            <div className="command-monitor-content">
+              <div className="command-monitor-stack">
+                <div className="command-monitor-card">
+                  <div className="live-run-error-block" role="alert">
+                    <strong>右ペイン描画エラー</strong>
+                    <p className="live-run-error">{this.state.errorMessage}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </aside>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+export type CharacterUpdateContextPaneProps = {
+  activePaneTab: "latest-command" | "memory-extract";
+  latestCommandView: LatestCommandView | null;
+  selectedSessionLiveRunErrorMessage: string;
+  memoryExtract: CharacterUpdateMemoryExtract | null;
+  isLoadingMemoryExtract: boolean;
+  onSelectPaneTab: (tab: "latest-command" | "memory-extract") => void;
+  onRefreshMemoryExtract: () => void;
+  onCopyMemoryExtract: () => void;
+};
+
 export function SessionContextPane({
   activeContextPaneTab,
   contextPaneProjection,
@@ -716,6 +785,136 @@ export function SessionContextPane({
           </details>
         </section>
       ) : null}
+    </aside>
+  );
+}
+
+export function CharacterUpdateContextPane({
+  activePaneTab,
+  latestCommandView,
+  selectedSessionLiveRunErrorMessage,
+  memoryExtract,
+  isLoadingMemoryExtract,
+  onSelectPaneTab,
+  onRefreshMemoryExtract,
+  onCopyMemoryExtract,
+}: CharacterUpdateContextPaneProps) {
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const contentScrollKey = useMemo(() => {
+    if (activePaneTab === "latest-command") {
+      return [
+        latestCommandView?.status ?? "",
+        latestCommandView?.summary ?? "",
+        latestCommandView?.details ?? "",
+        selectedSessionLiveRunErrorMessage,
+      ].join("|");
+    }
+
+    return [
+      memoryExtract?.generatedAt ?? "",
+      memoryExtract?.entryCount ?? 0,
+      memoryExtract?.text ?? "",
+      isLoadingMemoryExtract ? "loading" : "idle",
+    ].join("|");
+  }, [activePaneTab, isLoadingMemoryExtract, latestCommandView, memoryExtract, selectedSessionLiveRunErrorMessage]);
+
+  useLayoutEffect(() => {
+    const contentNode = contentRef.current;
+    if (!contentNode) {
+      return;
+    }
+
+    contentNode.scrollTop = contentNode.scrollHeight;
+  }, [contentScrollKey]);
+
+  return (
+    <aside className="session-context-pane">
+      <section className="command-monitor-shell" aria-label="character update monitor">
+        <div className="command-monitor-head">
+          <div className="audit-log-segmented session-context-segmented" aria-label="右ペイン表示切り替え">
+            <button
+              type="button"
+              className={`audit-log-segmented-button${activePaneTab === "latest-command" ? " is-active" : ""}`}
+              onClick={() => onSelectPaneTab("latest-command")}
+            >
+              LatestCommand
+            </button>
+            <button
+              type="button"
+              className={`audit-log-segmented-button${activePaneTab === "memory-extract" ? " is-active" : ""}`}
+              onClick={() => onSelectPaneTab("memory-extract")}
+            >
+              MemoryExtract
+            </button>
+          </div>
+        </div>
+
+        <div ref={contentRef} className="command-monitor-content">
+          <div className="command-monitor-stack">
+            {activePaneTab === "latest-command" ? (
+              latestCommandView ? (
+                <div className="command-monitor-card">
+                  <div className="command-monitor-card-head">
+                    <div className="command-monitor-meta">
+                      <span className={`live-run-step-status ${liveRunStepToneClassName(latestCommandView.status)}`}>
+                        {liveRunStepStatusLabel(latestCommandView.status)}
+                      </span>
+                      <span className="live-run-step-type">Command</span>
+                      <span className="command-monitor-source">
+                        {latestCommandView.sourceLabel === "live" ? "RUN LIVE" : "LAST RUN"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="live-run-command-summary" aria-label="実行コマンド">
+                    <span className="live-run-command-prefix" aria-hidden="true">
+                      $
+                    </span>
+                    <code className="live-run-command-text">{latestCommandView.summary}</code>
+                  </div>
+
+                  {latestCommandView.details ? (
+                    <details className="command-monitor-details live-run-step-details">
+                      <summary>command_execution の詳細</summary>
+                      <pre>{latestCommandView.details}</pre>
+                    </details>
+                  ) : null}
+
+                  {selectedSessionLiveRunErrorMessage ? (
+                    <div className="live-run-error-block" role="alert">
+                      <strong>実行エラー</strong>
+                      <p className="live-run-error">{selectedSessionLiveRunErrorMessage}</p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null
+            ) : (
+              <div className="command-monitor-card character-update-extract-card">
+                <div className="character-update-extract-head">
+                  <div className="command-monitor-meta">
+                    <strong>Memory Extract</strong>
+                    <span className="command-monitor-source">{memoryExtract?.entryCount ?? 0}</span>
+                  </div>
+                  <div className="character-update-extract-actions">
+                    <button className="launch-toggle compact" type="button" onClick={onRefreshMemoryExtract} disabled={isLoadingMemoryExtract}>
+                      {isLoadingMemoryExtract ? "Extracting..." : "Refresh"}
+                    </button>
+                    <button className="launch-toggle compact" type="button" onClick={onCopyMemoryExtract} disabled={!memoryExtract?.text}>
+                      Copy
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  className="character-update-extract"
+                  value={memoryExtract?.text ?? ""}
+                  readOnly
+                  spellCheck={false}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
     </aside>
   );
 }
@@ -1168,6 +1367,8 @@ export type SessionComposerExpandedProps = {
   isRunning: boolean;
   composerBlocked: boolean;
   canSelectCustomAgent: boolean;
+  showCustomAgentPicker?: boolean;
+  showSkillPicker?: boolean;
   isAgentPickerOpen: boolean;
   isSkillPickerOpen: boolean;
   isAdditionalDirectoryListOpen: boolean;
@@ -1225,6 +1426,8 @@ export function SessionComposerExpanded({
   isRunning,
   composerBlocked,
   canSelectCustomAgent,
+  showCustomAgentPicker = true,
+  showSkillPicker = true,
   isAgentPickerOpen,
   isSkillPickerOpen,
   isAdditionalDirectoryListOpen,
@@ -1291,30 +1494,34 @@ export function SessionComposerExpanded({
             Image
           </button>
         </div>
-        <div className="composer-agent-toolbar">
+        {showCustomAgentPicker ? (
+          <div className="composer-agent-toolbar">
+            <button
+              className={`drawer-toggle compact secondary composer-skill-button${isAgentPickerOpen ? " is-open" : ""}`}
+              type="button"
+              onClick={onToggleAgentPicker}
+              disabled={!canSelectCustomAgent || isRunning || composerBlocked}
+              aria-expanded={isAgentPickerOpen}
+              aria-haspopup="listbox"
+              aria-label="Copilot custom agent を選択"
+              title={selectedCustomAgentTitle}
+            >
+              {selectedCustomAgentLabel}
+            </button>
+          </div>
+        ) : null}
+        {showSkillPicker ? (
           <button
-            className={`drawer-toggle compact secondary composer-skill-button${isAgentPickerOpen ? " is-open" : ""}`}
+            className={`drawer-toggle compact secondary composer-skill-button${isSkillPickerOpen ? " is-open" : ""}`}
             type="button"
-            onClick={onToggleAgentPicker}
-            disabled={!canSelectCustomAgent || isRunning || composerBlocked}
-            aria-expanded={isAgentPickerOpen}
+            onClick={onToggleSkillPicker}
+            disabled={isRunning || composerBlocked}
+            aria-expanded={isSkillPickerOpen}
             aria-haspopup="listbox"
-            aria-label="Copilot custom agent を選択"
-            title={selectedCustomAgentTitle}
           >
-            {selectedCustomAgentLabel}
+            Skill
           </button>
-        </div>
-        <button
-          className={`drawer-toggle compact secondary composer-skill-button${isSkillPickerOpen ? " is-open" : ""}`}
-          type="button"
-          onClick={onToggleSkillPicker}
-          disabled={isRunning || composerBlocked}
-          aria-expanded={isSkillPickerOpen}
-          aria-haspopup="listbox"
-        >
-          Skill
-        </button>
+        ) : null}
         <div className="composer-additional-directory-toolbar">
           <button
             className="drawer-toggle compact secondary composer-skill-button"
@@ -1341,7 +1548,7 @@ export function SessionComposerExpanded({
         ) : null}
       </div>
 
-      {isAgentPickerOpen ? (
+      {showCustomAgentPicker && isAgentPickerOpen ? (
         <div
           className="composer-path-match-list composer-skill-picker-list"
           role="listbox"
@@ -1373,7 +1580,7 @@ export function SessionComposerExpanded({
         </div>
       ) : null}
 
-      {isSkillPickerOpen ? (
+      {showSkillPicker && isSkillPickerOpen ? (
         <div
           className="composer-path-match-list composer-skill-picker-list"
           role={skillItems.length > 0 ? "listbox" : "status"}

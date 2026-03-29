@@ -34,6 +34,7 @@
 - 話し方と行動規則
 - 実行時 prompt の主要入力
 - 代表的な台詞例
+- 対になる画像 asset への参照
 
 非責務:
 
@@ -68,6 +69,7 @@
   character.png
   AGENTS.md
   copilot-instructions.md
+  skills/character-definition-update/SKILL.md
 ```
 
 補足:
@@ -87,6 +89,10 @@ description: "会話上の役割と雰囲気が分かる短い説明"
 - 作品:
 - 媒体:
 - 会話用途:
+
+## Assets
+- icon_path: `./character.png`
+![{character_name} icon](./character.png)
 
 ## Core Persona
 - 中核となる価値観
@@ -129,6 +135,12 @@ description: "会話上の役割と雰囲気が分かる短い説明"
 
 - 人間が読み返すための最小限の文脈だけを持つ
 - 長い設定解説は入れない
+
+### `Assets`
+
+- 対になる代表画像を相対パスで参照する
+- 画像が未取得でも構造自体は維持し、後から `character.png` を差し込める形にする
+- 画像の取得経緯や出典は `character-notes.md` に残す
 
 ### `Core Persona`
 
@@ -188,6 +200,7 @@ description: "会話上の役割と雰囲気が分かる短い説明"
 - `character.md` に調査ログを肥大化させない
 - 強い根拠が必要な変更は `character-notes.md` に残してから採用する
 - `Character Memory` は `Relationship With User`、`Voice And Style`、`Behavioral Rules` の差分更新に使う
+- 画像を更新した場合の採用理由や出典は `character-notes.md` に残す
 
 ## Current / Target Boundary
 
@@ -197,9 +210,10 @@ description: "会話上の役割と雰囲気が分かる短い説明"
 - 新規作成時は最小テンプレートが seed される
 - app 側の prompt 合成で `# Character` section を付けるため、`character.md` 本文は `## Character Overview` から始める
 - `character-notes.md` は character 保存時に seed される
+- `character.png` は paired asset として update workflow の対象に含む
 - Character Editor は `character.md` と `character-notes.md` を直接編集する
 - prompt 合成は `character.md` をそのまま `# Character` section に入れる
-- instruction file は `character.md` / `character-notes.md` の分離前提で同期される
+- instruction file と update skill は `character.md` / `character-notes.md` / `character.png` の分離前提で同期される
 
 ### Target
 

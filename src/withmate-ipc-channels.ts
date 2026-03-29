@@ -3,7 +3,6 @@ export const WITHMATE_OPEN_HOME_WINDOW_CHANNEL = "withmate:open-home-window";
 export const WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL = "withmate:open-session-monitor-window";
 export const WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL = "withmate:open-settings-window";
 export const WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL = "withmate:open-character-editor";
-export const WITHMATE_OPEN_CHARACTER_UPDATE_CHANNEL = "withmate:open-character-update";
 export const WITHMATE_OPEN_DIFF_WINDOW_CHANNEL = "withmate:open-diff-window";
 export const WITHMATE_LIST_SESSIONS_CHANNEL = "withmate:list-sessions";
 export const WITHMATE_GET_SESSION_CHANNEL = "withmate:get-session";
