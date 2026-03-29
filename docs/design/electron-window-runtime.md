@@ -140,12 +140,13 @@ current 実装の API surface は次の domain に分かれる。
 
 - `contextIsolation: true`
 - `nodeIntegration: false`
-- `sandbox: true`
+- `sandbox: false`
 - entry HTML には meta CSP を入れ、renderer script / style / connect を `self` と Vite dev server (`http://localhost:4173`, `ws://localhost:4173`) に限定する
 - preload 経由で必要最小限の API だけ渡す
 
 current 実装では preload が `contextBridge` と `ipcRenderer.invoke/on` の薄い橋渡しだけを担当し、Codex SDK / GitHub Copilot SDK は main process 側で動かしている。  
-このため current remediation では `sandbox: true` を有効化しても renderer から必要な API surface を維持できる前提で運用する。
+ただし `npm run electron:start` の Home Window では `sandbox: true` が入ると `window.withmate` 注入が回帰し、renderer が `Home は Electron から起動してね。` の fallback へ落ちる事象を確認した。  
+archive 済み decision `docs/plans/archive/2026/03/20260329-review-findings-remediation/decisions.md` の issue 3 に従い、preload API / IPC の成立を優先して current 実装は `sandbox: false` を維持する。
 
 ## Local Path Operation Boundary
 
@@ -170,4 +171,4 @@ current 実装では preload が `contextBridge` と `ipcRenderer.invoke/on` の
 
 - Home Window を閉じたあと Session / Character Editor だけを残す運用をどこまで許容するか
 - app メニューやショートカットをどの window に割り当てるか
-- sandbox / hardened runtime をどの段階で再評価するか
+- sandbox / hardened runtime を `window.withmate` 注入回帰を解消できる条件がそろった段階でどう再評価するか
