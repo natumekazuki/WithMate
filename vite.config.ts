@@ -1,6 +1,9 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig, searchForWorkspaceRoot } from "vite";
 import react from "@vitejs/plugin-react";
+
+const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   base: "./",
@@ -8,16 +11,16 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
-        home: path.resolve(process.cwd(), "index.html"),
-        session: path.resolve(process.cwd(), "session.html"),
-        character: path.resolve(process.cwd(), "character.html"),
-        diff: path.resolve(process.cwd(), "diff.html"),
+        home: path.resolve(projectRoot, "index.html"),
+        session: path.resolve(projectRoot, "session.html"),
+        character: path.resolve(projectRoot, "character.html"),
+        diff: path.resolve(projectRoot, "diff.html"),
       },
     },
   },
   server: {
     fs: {
-      allow: [searchForWorkspaceRoot(process.cwd())],
+      allow: [searchForWorkspaceRoot(projectRoot)],
     },
     port: 4173,
   },

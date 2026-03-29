@@ -95,6 +95,10 @@ export class SessionRuntimeService {
   }
 
   reset(): void {
+    for (const sessionId of this.inFlightSessionRuns) {
+      this.deps.resolvePendingApprovalRequest(sessionId, "deny");
+      this.sessionRunControllers.get(sessionId)?.abort();
+    }
     this.inFlightSessionRuns.clear();
     this.sessionRunControllers.clear();
   }

@@ -78,6 +78,12 @@ npm run electron:dev
 npm run build
 ```
 
+### テスト
+
+```bash
+npm test
+```
+
 ### ビルド済みアプリの起動
 
 ```bash

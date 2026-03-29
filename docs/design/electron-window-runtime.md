@@ -140,11 +140,20 @@ current 実装の API surface は次の domain に分かれる。
 
 - `contextIsolation: true`
 - `nodeIntegration: false`
-- `sandbox: false`
+- `sandbox: true`
+- entry HTML には meta CSP を入れ、renderer script / style / connect を `self` と Vite dev server (`http://localhost:4173`, `ws://localhost:4173`) に限定する
 - preload 経由で必要最小限の API だけ渡す
 
-current 実装では `window.withmate` の安定露出を優先し、sandbox は無効にしている。  
-将来 hardened runtime を詰める段階で再評価する。
+current 実装では preload が `contextBridge` と `ipcRenderer.invoke/on` の薄い橋渡しだけを担当し、Codex SDK / GitHub Copilot SDK は main process 側で動かしている。  
+このため current remediation では `sandbox: true` を有効化しても renderer から必要な API surface を維持できる前提で運用する。
+
+## Local Path Operation Boundary
+
+- `openPath` は current UX を優先し、任意 target を受け取れる仕様を維持する
+- main process 側では target を external URL / local path へ正規化するが、path allowlist の強制ガードは入れない
+- `AddDirectory` は prompt / workspace 操作で許可対象ディレクトリを広げる既存機能であり、`openPath` 自体の強制ガードではない
+- `openSessionTerminal` は session の `workspacePath` を terminal で開く用途に限定する
+- したがって local path operation の制約は一律 block ではなく、renderer 導線と main process 正規化の責務分離で扱う
 
 ## Relation To Existing Docs
 

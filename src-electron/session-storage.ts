@@ -141,8 +141,36 @@ const DELETE_SESSION_SQL = `
   WHERE id = ?
 `;
 
-function rowToSession(row: SessionRow): Session | null {
-  return normalizeSession({
+type SessionRowParseMode = "skip" | "throw";
+
+function parseSessionJson<T>(row: SessionRow, columnName: keyof Pick<
+  SessionRow,
+  "allowed_additional_directories_json" | "messages_json" | "stream_json"
+>, mode: SessionRowParseMode): T | null {
+  try {
+    return JSON.parse(row[columnName]) as T;
+  } catch (error) {
+    console.error("stored session JSON parse failed", {
+      sessionId: row.id,
+      columnName,
+      error,
+    });
+    if (mode === "throw") {
+      throw new Error(`保存済み session ${row.id} の ${columnName} が壊れているよ。`);
+    }
+    return null;
+  }
+}
+
+function rowToSession(row: SessionRow, mode: SessionRowParseMode = "skip"): Session | null {
+  const allowedAdditionalDirectories = parseSessionJson<string[]>(row, "allowed_additional_directories_json", mode);
+  const messages = parseSessionJson<Session["messages"]>(row, "messages_json", mode);
+  const stream = parseSessionJson<Session["stream"]>(row, "stream_json", mode);
+  if (!allowedAdditionalDirectories || !messages || !stream) {
+    return null;
+  }
+
+  const session = normalizeSession({
     id: row.id,
     taskTitle: row.task_title,
     taskSummary: row.task_summary,
@@ -166,11 +194,19 @@ function rowToSession(row: SessionRow): Session | null {
     model: row.model,
     reasoningEffort: row.reasoning_effort,
     customAgentName: row.custom_agent_name,
-    allowedAdditionalDirectories: JSON.parse(row.allowed_additional_directories_json),
+    allowedAdditionalDirectories,
     threadId: row.thread_id,
-    messages: JSON.parse(row.messages_json),
-    stream: JSON.parse(row.stream_json),
+    messages,
+    stream,
   });
+  if (!session) {
+    console.error("stored session normalization failed", { sessionId: row.id });
+    if (mode === "throw") {
+      throw new Error(`保存済み session ${row.id} が壊れているよ。`);
+    }
+  }
+
+  return session;
 }
 
 function sqlStringLiteral(value: string): string {
@@ -291,7 +327,7 @@ export class SessionStorage {
 
   listSessions(): Session[] {
     const rows = this.db.prepare(LIST_SESSIONS_SQL).all() as SessionRow[];
-    return cloneSessions(rows.map(rowToSession).filter((session): session is Session => session !== null));
+    return cloneSessions(rows.map((row) => rowToSession(row)).filter((session): session is Session => session !== null));
   }
 
   getSession(sessionId: string): Session | null {
@@ -300,7 +336,7 @@ export class SessionStorage {
       return null;
     }
 
-    const session = rowToSession(row);
+    const session = rowToSession(row, "throw");
     return session ? cloneSessions([session])[0] : null;
   }
 

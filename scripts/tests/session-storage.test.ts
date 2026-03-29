@@ -156,4 +156,66 @@ describe("SessionStorage", () => {
       await removeDirectoryWithRetry(tempDirectory);
     }
   });
+
+  it("破損 JSON を含む row は listSessions で skip しつつ正常 row を返す", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    const originalConsoleError = console.error;
+    const errors: unknown[][] = [];
+    console.error = (...args: unknown[]) => {
+      errors.push(args);
+    };
+
+    try {
+      const storage = new SessionStorage(dbPath);
+      const healthy = storage.upsertSession(createSession("healthy", "workspace-healthy", "char-a", "A"));
+      const corrupted = storage.upsertSession(createSession("corrupted", "workspace-corrupted", "char-b", "B"));
+      storage.close();
+
+      const db = new DatabaseSync(dbPath);
+      db.prepare("UPDATE sessions SET messages_json = ? WHERE id = ?").run("{", corrupted.id);
+      db.close();
+
+      const reopened = new SessionStorage(dbPath);
+      const sessions = reopened.listSessions();
+      reopened.close();
+
+      assert.deepEqual(sessions.map((session) => session.id), [healthy.id]);
+      assert.equal(errors.length, 1);
+      assert.equal(errors[0]?.[0], "stored session JSON parse failed");
+    } finally {
+      console.error = originalConsoleError;
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("破損 JSON を含む row は getSession で throw する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    const originalConsoleError = console.error;
+    const errors: unknown[][] = [];
+    console.error = (...args: unknown[]) => {
+      errors.push(args);
+    };
+
+    try {
+      const storage = new SessionStorage(dbPath);
+      const session = storage.upsertSession(createSession("broken", "workspace-broken", "char-a", "A"));
+      storage.close();
+
+      const db = new DatabaseSync(dbPath);
+      db.prepare("UPDATE sessions SET stream_json = ? WHERE id = ?").run("{", session.id);
+      db.close();
+
+      const reopened = new SessionStorage(dbPath);
+      assert.throws(() => reopened.getSession(session.id), /stream_json が壊れている/);
+      reopened.close();
+
+      assert.equal(errors.length, 1);
+      assert.equal(errors[0]?.[0], "stored session JSON parse failed");
+    } finally {
+      console.error = originalConsoleError;
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
 });

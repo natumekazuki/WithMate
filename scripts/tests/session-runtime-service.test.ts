@@ -19,8 +19,15 @@ import {
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { type ModelCatalogProvider } from "../../src/model-catalog.js";
-import { ProviderTurnError, type ProviderCodingAdapter } from "../../src-electron/provider-runtime.js";
-import { SessionRuntimeService } from "../../src-electron/session-runtime-service.js";
+import {
+  ProviderTurnError,
+  type ProviderCodingAdapter,
+  type RunSessionTurnResult,
+} from "../../src-electron/provider-runtime.js";
+import {
+  SessionRuntimeService,
+  type SessionRuntimeServiceDeps,
+} from "../../src-electron/session-runtime-service.js";
 
 function createSession(overrides?: Partial<Session>): Session {
   return {
@@ -61,6 +68,7 @@ function createCharacter(): CharacterProfile {
     iconPath: "",
     roleMarkdown: "落ち着いて伴走する。",
     description: "",
+    notesMarkdown: "",
     themeColors: { main: "#6f8cff", sub: "#6fb8c7" },
     sessionCopy: {
       pendingApproval: [],
@@ -75,7 +83,6 @@ function createCharacter(): CharacterProfile {
       changedFilesEmpty: [],
       contextEmpty: [],
     },
-    createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -90,7 +97,10 @@ function createProviderCatalog(id = "codex"): ModelCatalogProvider {
   };
 }
 
-function createAuditLogBase(input: Omit<AuditLogEntry, "id">): AuditLogEntry {
+type CreateAuditLogInput = Parameters<SessionRuntimeServiceDeps["createAuditLog"]>[0];
+type UpdateAuditLogInput = Parameters<SessionRuntimeServiceDeps["updateAuditLog"]>[1];
+
+function createAuditLogBase(input: CreateAuditLogInput): AuditLogEntry {
   return {
     id: 1,
     ...input,
@@ -101,7 +111,7 @@ describe("SessionRuntimeService", () => {
   it("成功時に running -> idle を保存し、background task を起動する", async () => {
     const session = createSession();
     const storedSessions: Session[] = [];
-    const auditUpdates: AuditLogEntry[] = [];
+    const auditUpdates: UpdateAuditLogInput[] = [];
     const liveStates: Array<LiveSessionRunState | null> = [];
     const memoryTriggers: Array<{ sessionId: string; triggerReason: string }> = [];
     const reflectionTriggers: Array<{ sessionId: string; triggerReason: string }> = [];
@@ -198,8 +208,8 @@ describe("SessionRuntimeService", () => {
       getLiveSessionRun() {
         return null;
       },
-      async waitForApprovalDecision(_sessionId, _request, _signal) {
-        return "approve" satisfies LiveApprovalDecision;
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
       },
       setProviderQuotaTelemetry(_telemetry: ProviderQuotaTelemetry) {},
       setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
@@ -246,9 +256,9 @@ describe("SessionRuntimeService", () => {
   it("provider failure 時は error session を保存し、cancel 時は idle へ戻す", async () => {
     const baseSession = createSession();
     const storedSessions: Session[] = [];
-    const auditUpdates: AuditLogEntry[] = [];
+    const auditUpdates: UpdateAuditLogInput[] = [];
     let canceledSessionId: string | null = null;
-    const partialResult = {
+    const partialResult: RunSessionTurnResult = {
       threadId: "thread-2",
       assistantText: "",
       logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
@@ -318,7 +328,7 @@ describe("SessionRuntimeService", () => {
       getLiveSessionRun() {
         return null;
       },
-      async waitForApprovalDecision(_sessionId, _request, _signal) {
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
         return "deny";
       },
       setProviderQuotaTelemetry() {},
@@ -345,15 +355,7 @@ describe("SessionRuntimeService", () => {
 
   it("実行中の session は in-flight として見え、完了後に解放される", async () => {
     const session = createSession();
-    let resolveRun: ((value: {
-      threadId: string | null;
-      assistantText: string;
-      logicalPrompt: { systemText: string; inputText: string; composedText: string };
-      transportPayload: null;
-      operations: [];
-      rawItemsJson: string;
-      usage: null;
-    }) => void) | null = null;
+    let resolveRun: ((value: RunSessionTurnResult) => void) | null = null;
 
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
@@ -371,7 +373,7 @@ describe("SessionRuntimeService", () => {
       invalidateSessionThread() {},
       invalidateAllSessionThreads() {},
       runSessionTurn() {
-        return new Promise((resolve) => {
+        return new Promise<RunSessionTurnResult>((resolve) => {
           resolveRun = resolve;
         });
       },
@@ -413,7 +415,7 @@ describe("SessionRuntimeService", () => {
       getLiveSessionRun() {
         return null;
       },
-      async waitForApprovalDecision(_sessionId, _request, _signal) {
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
         return "approve";
       },
       setProviderQuotaTelemetry() {},
@@ -431,7 +433,11 @@ describe("SessionRuntimeService", () => {
     const promise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(service.isRunInFlight(session.id), true);
-    resolveRun?.({
+    if (!resolveRun) {
+      throw new Error("runSessionTurn の resolve が取得できていないよ。");
+    }
+    const completeRun: (value: RunSessionTurnResult) => void = resolveRun;
+    completeRun({
       threadId: "thread-3",
       assistantText: "完了したよ。",
       logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
@@ -442,5 +448,122 @@ describe("SessionRuntimeService", () => {
     });
     await promise;
     assert.equal(service.isRunInFlight(session.id), false);
+  });
+
+  it("reset は in-flight run を abort して pending approval も deny する", async () => {
+    const session = createSession();
+    const approvalResolutions: Array<{ sessionId: string; decision: LiveApprovalDecision }> = [];
+    let observedAbortSignal: AbortSignal | undefined;
+    let observedAbort = false;
+    const abortedPartialResult: RunSessionTurnResult = {
+      threadId: null,
+      assistantText: "",
+      logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+      transportPayload: null,
+      operations: [],
+      rawItemsJson: "[]",
+      usage: null,
+    };
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      runSessionTurn(input) {
+        observedAbortSignal = input.signal;
+        if (!input.signal) {
+          throw new Error("AbortSignal が渡されていないよ。");
+        }
+        const signal = input.signal;
+        signal.addEventListener("abort", () => {
+          observedAbort = true;
+        }, { once: true });
+        return new Promise<RunSessionTurnResult>((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            reject(new ProviderTurnError("aborted", abortedPartialResult, true));
+          }, { once: true });
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession() {
+        return session;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest(sessionId, decision) {
+        approvalResolutions.push({ sessionId, decision });
+      },
+      currentTimestampLabel,
+    });
+
+    const promise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    service.reset();
+    const result = await promise;
+
+    if (!observedAbortSignal) {
+      throw new Error("abort signal が観測できていないよ。");
+    }
+    assert.equal(observedAbort, true);
+    assert.equal(result.runState, "idle");
+    assert.equal(service.hasInFlightRuns(), false);
+    assert.deepEqual(approvalResolutions, [
+      { sessionId: session.id, decision: "deny" },
+      { sessionId: session.id, decision: "deny" },
+    ]);
   });
 });

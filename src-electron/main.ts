@@ -161,7 +161,7 @@ function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
     ...options,
   });
