@@ -17,10 +17,7 @@ export default defineConfig({
   },
   server: {
     fs: {
-      allow: [
-        searchForWorkspaceRoot(process.cwd()),
-        path.resolve("C:/Users/zgmfx/.codex/characters"),
-      ],
+      allow: [searchForWorkspaceRoot(process.cwd())],
     },
     port: 4173,
   },

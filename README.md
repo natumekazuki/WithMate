@@ -100,10 +100,6 @@ npm run typecheck
   - 現在の仕様と設計メモ
 - `docs/plans/`
   - 実装タスクの計画と進捗ログ
-- `.ai_context/`
-  - AI エージェント向けの高密度コンテキスト置き場
-- `characters/`
-  - キャラクター定義の管理領域
 
 ## まず読むとよいドキュメント
 
@@ -137,17 +133,17 @@ npm run typecheck
 ## 現在の状態
 
 - Electron 実行を正本とする desktop アプリ構成です
-- セッション情報は Electron 側で保持され、キャラクター情報はストレージから読み込みます
+- セッション情報は Electron 側で保持され、キャラクター情報はアプリ管理領域のストレージから読み込みます
 - Settings Window では `System Prompt Prefix`、`Coding Agent Providers`、`Coding Agent Credentials`、`Memory Extraction`、`Character Reflection`、model catalog、`Danger Zone` の DB 初期化を管理します
 - current の provider credential は coding plane を正本にし、Character Reflection も同じ provider client を流用します。独立した monologue / Character Stream 用 API 入力欄は current milestone では追加していません
 - 初回リリース前のため後方互換性は考慮しません。互換性のない変更が入った場合は Settings の `DB を初期化` で回復する前提です
-- `DB を初期化` は `sessions / audit logs / app settings / model catalog / project memory / character memory` を初期状態へ戻し、`characters` は削除しません
+- `DB を初期化` は `sessions / audit logs / app settings / model catalog / project memory / character memory` を初期状態へ戻し、アプリ管理領域の character データは削除しません
 - `Character Stream` は価値仮説として保持しているものの、current milestone では未着手です
 
 ## 補足
 
 - ルート `README.md` は人間向けの入口として維持します
-- 詳細仕様は `docs/` を正本とし、構造化された AI 向け情報は `.ai_context/` に集約する想定です
+- 詳細仕様は `docs/` を正本とし、関連する設計・運用情報も `docs/` 配下で管理します
 - coding agent の対応状況を確認するときは `docs/design/coding-agent-capability-matrix.md` を最初に見ます
 - coding agent capability に影響する実装や改修では、同じ task の中で `docs/design/coding-agent-capability-matrix.md` を更新します
 - 永続化構造、SQLite schema、JSON カラム、DB 外保存の責務に変更がある task では、同じ task の中で `docs/design/database-schema.md` も更新します
