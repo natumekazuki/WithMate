@@ -2,8 +2,13 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { describe, it } from "node:test";
 
+import { buildNewSession, createDefaultSessionMemory } from "../../src/app-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import type { ModelCatalogProvider } from "../../src/model-catalog.js";
+import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import {
   applyCopilotAssistantEvent,
+  buildCopilotSessionSettings,
   buildCopilotMessageAttachments,
   buildCopilotProviderQuotaTelemetry,
   buildCopilotSessionContextTelemetry,
@@ -14,11 +19,17 @@ import {
   isCopilotVisibleToolName,
   isRecoverableCopilotConnectionErrorMessage,
   resolveCopilotCliPath,
+  resolveCopilotSessionForSettings,
   resolveNativeCopilotPackageName,
   shouldRetryCopilotTurn,
   toProviderQuotaSnapshots,
 } from "../../src-electron/copilot-adapter.js";
-import { ProviderTurnError, type RunSessionTurnResult } from "../../src-electron/provider-runtime.js";
+import {
+  ProviderTurnError,
+  type ProviderPromptComposition,
+  type RunSessionTurnInput,
+  type RunSessionTurnResult,
+} from "../../src-electron/provider-runtime.js";
 
 function createPartialResult(overrides?: Partial<RunSessionTurnResult>): RunSessionTurnResult {
   return {
@@ -34,6 +45,88 @@ function createPartialResult(overrides?: Partial<RunSessionTurnResult>): RunSess
     rawItemsJson: "[]",
     usage: null,
     ...overrides,
+  };
+}
+
+const COPILOT_PROVIDER_CATALOG: ModelCatalogProvider = {
+  id: "copilot",
+  label: "GitHub Copilot",
+  defaultModelId: "gpt-4.1",
+  defaultReasoningEffort: "high",
+  models: [
+    {
+      id: "gpt-4.1",
+      label: "GPT-4.1",
+      reasoningEfforts: ["low", "medium", "high"],
+    },
+  ],
+};
+
+const EMPTY_PROMPT: ProviderPromptComposition = {
+  systemBodyText: "",
+  inputBodyText: "hello",
+  logicalPrompt: {
+    systemText: "",
+    inputText: "",
+    composedText: "",
+  },
+  imagePaths: [],
+  additionalDirectories: [],
+};
+
+const CUSTOM_AGENT_CONFIGS = [
+  {
+    name: "reviewer",
+    displayName: "Reviewer",
+    description: "review agent",
+    prompt: "Review carefully.",
+    tools: null,
+  },
+  {
+    name: "planner",
+    displayName: "Planner",
+    description: "planning agent",
+    prompt: "Plan carefully.",
+    tools: null,
+  },
+] as const;
+
+function resolveCustomAgents(_workspacePath: string, selectedAgentName: string) {
+  return {
+    customAgents: [...CUSTOM_AGENT_CONFIGS],
+    selectedAgentName: selectedAgentName.trim() || null,
+  };
+}
+
+function createRunSessionInput(customAgentName: string, threadId: string): RunSessionTurnInput {
+  const session = {
+    ...buildNewSession({
+      provider: "copilot",
+      taskTitle: "copilot",
+      workspaceLabel: "workspace",
+      workspacePath: "F:/repo",
+      branch: "main",
+      characterId: "char-a",
+      character: "A",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      approvalMode: DEFAULT_APPROVAL_MODE,
+      model: "gpt-4.1",
+      reasoningEffort: "high",
+      customAgentName,
+    }),
+    threadId,
+  };
+
+  return {
+    session,
+    sessionMemory: createDefaultSessionMemory(session),
+    projectMemoryEntries: [],
+    character: {} as never,
+    providerCatalog: COPILOT_PROVIDER_CATALOG,
+    userMessage: "hello",
+    appSettings: createDefaultAppSettings(),
+    attachments: [],
   };
 }
 
@@ -454,5 +547,72 @@ describe("CopilotAdapter env", () => {
 
     assert.equal(shouldRetryCopilotTurn(emptyPartial), true);
     assert.equal(shouldRetryCopilotTurn(withAssistantText), false);
+  });
+});
+
+describe("CopilotAdapter session settings", () => {
+  it("custom agent 変更後の session settings は新 agent 情報を反映する", () => {
+    const previousInput = createRunSessionInput("reviewer", "thread-1");
+    const nextInput = createRunSessionInput("planner", "thread-1");
+    const previousSettings = buildCopilotSessionSettings(previousInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    const nextSettings = buildCopilotSessionSettings(nextInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+
+    assert.notEqual(previousSettings.settingsKey, nextSettings.settingsKey);
+    assert.equal(nextSettings.config.agent, "planner");
+    assert.deepEqual(nextSettings.config.customAgents, CUSTOM_AGENT_CONFIGS);
+  });
+
+  it("threadId がある custom agent 切り替え後は createSession ではなく resumeSession を使う", async () => {
+    const previousInput = createRunSessionInput("reviewer", "thread-1");
+    const nextInput = createRunSessionInput("planner", "thread-1");
+    const previousSettings = buildCopilotSessionSettings(previousInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    const nextSettings = buildCopilotSessionSettings(nextInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    const cachedDisconnectCalls: string[] = [];
+    const resumeCalls: Array<{
+      threadId: string;
+      config: {
+        agent?: string;
+        customAgents?: Array<{ name: string; prompt: string }>;
+      };
+    }> = [];
+    const createCalls: unknown[] = [];
+    const resumedSession = {
+      disconnect: async () => undefined,
+    } as never;
+
+    assert.notEqual(previousSettings.settingsKey, nextSettings.settingsKey);
+
+    const result = await resolveCopilotSessionForSettings({
+      cached: {
+        session: {
+          disconnect: async () => {
+            cachedDisconnectCalls.push("disconnect");
+          },
+        } as never,
+        settingsKey: previousSettings.settingsKey,
+      },
+      nextSettingsKey: nextSettings.settingsKey,
+      threadId: nextInput.session.threadId,
+      config: nextSettings.config,
+      client: {
+        resumeSession: async (threadId: string, config: { agent?: string; customAgents?: Array<{ name: string; prompt: string }> }) => {
+          resumeCalls.push({ threadId, config });
+          return resumedSession;
+        },
+        createSession: async (config: unknown) => {
+          createCalls.push(config);
+          return resumedSession;
+        },
+      },
+    });
+
+    assert.equal(result.session, resumedSession);
+    assert.equal(result.reusedCached, false);
+    assert.equal(createCalls.length, 0);
+    assert.equal(resumeCalls.length, 1);
+    assert.deepEqual(cachedDisconnectCalls, ["disconnect"]);
+    assert.equal(resumeCalls[0]?.threadId, "thread-1");
+    assert.equal(resumeCalls[0]?.config.agent, "planner");
+    assert.deepEqual(resumeCalls[0]?.config.customAgents, CUSTOM_AGENT_CONFIGS);
   });
 });

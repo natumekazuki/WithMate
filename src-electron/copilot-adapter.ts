@@ -82,6 +82,14 @@ type CopilotTurnStreamState = {
   streamErrorMessage: string;
 };
 
+export type CopilotSessionSettings = {
+  config: SessionConfig;
+  selection: ResolvedModelSelection;
+  settingsKey: string;
+};
+
+type CopilotSessionConnector = Pick<CopilotClient, "createSession" | "resumeSession">;
+
 const COPILOT_SHELL_TOOL_NAMES = new Set(["shell", "powershell", "bash", "terminal"]);
 const COPILOT_MUTATING_TOOL_NAMES = new Set(["create", "write", "edit", "replace", "insert", "move", "rename", "delete", "remove"]);
 const COPILOT_DROPPED_RAW_EVENT_TYPES = new Set([
@@ -1141,6 +1149,94 @@ function waitForCopilotSessionCompletion(
   };
 }
 
+export function buildCopilotSessionSettings(
+  input: RunSessionTurnInput,
+  prompt: ProviderPromptComposition,
+  clientKey: string,
+  resolveCustomAgents: typeof resolveSessionCustomAgentConfigs = resolveSessionCustomAgentConfigs,
+): CopilotSessionSettings {
+  const selection = resolveModelSelection(input.providerCatalog, input.session.model, input.session.reasoningEffort);
+  const resolvedCustomAgents = resolveCustomAgents(
+    input.session.workspacePath,
+    input.session.customAgentName,
+  );
+  const systemMessage = buildCopilotSystemMessage(prompt);
+  const config: SessionConfig = {
+    model: selection.resolvedModel,
+    reasoningEffort: selection.resolvedReasoningEffort === "minimal" ? "low" : selection.resolvedReasoningEffort,
+    workingDirectory: input.session.workspacePath,
+    streaming: true,
+    onPermissionRequest: buildPermissionHandler(input),
+    ...(systemMessage ? { systemMessage } : {}),
+    ...(resolvedCustomAgents.customAgents.length > 0 ? { customAgents: resolvedCustomAgents.customAgents } : {}),
+    ...(resolvedCustomAgents.selectedAgentName ? { agent: resolvedCustomAgents.selectedAgentName } : {}),
+  };
+
+  return {
+    config,
+    selection,
+    settingsKey: JSON.stringify([
+      clientKey,
+      config.model,
+      config.reasoningEffort,
+      config.workingDirectory,
+      input.session.approvalMode,
+      systemMessage?.mode ?? "",
+      systemMessage?.content ?? "",
+      input.session.customAgentName,
+      resolvedCustomAgents.customAgents.map((agent) => JSON.stringify({
+        name: agent.name,
+        displayName: agent.displayName ?? "",
+        description: agent.description ?? "",
+        prompt: agent.prompt,
+        tools: agent.tools ?? null,
+      })).join("\u001f"),
+    ]),
+  };
+}
+
+async function createOrResumeCopilotSession(
+  client: CopilotSessionConnector,
+  threadId: string | null,
+  config: SessionConfig,
+): Promise<CopilotSession> {
+  return threadId?.trim()
+    ? await client.resumeSession(threadId, config)
+    : await client.createSession(config);
+}
+
+export async function resolveCopilotSessionForSettings(args: {
+  cached: { session: CopilotSession; settingsKey: string } | undefined;
+  nextSettingsKey: string;
+  threadId: string | null;
+  config: SessionConfig;
+  client: CopilotSessionConnector;
+}): Promise<{ session: CopilotSession; reusedCached: boolean }> {
+  const {
+    cached,
+    nextSettingsKey,
+    threadId,
+    config,
+    client,
+  } = args;
+
+  if (cached && cached.settingsKey === nextSettingsKey) {
+    return {
+      session: cached.session,
+      reusedCached: true,
+    };
+  }
+
+  if (cached) {
+    void cached.session.disconnect().catch(() => undefined);
+  }
+
+  return {
+    session: await createOrResumeCopilotSession(client, threadId, config),
+    reusedCached: false,
+  };
+}
+
 export class CopilotAdapter implements ProviderTurnAdapter {
   private readonly clients = new Map<string, CopilotClient>();
   private readonly sessions = new Map<string, CachedCopilotSession>();
@@ -1300,84 +1396,34 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     this.clients.delete(buildCopilotClientKey(input.providerCatalog.id, input));
   }
 
-  private buildSessionConfig(
-    input: RunSessionTurnInput,
-    prompt: ProviderPromptComposition,
-    clientKey: string,
-  ): {
-    config: SessionConfig;
-    selection: ResolvedModelSelection;
-    settingsKey: string;
-  } {
-    const selection = resolveModelSelection(input.providerCatalog, input.session.model, input.session.reasoningEffort);
-    const resolvedCustomAgents = resolveSessionCustomAgentConfigs(
-      input.session.workspacePath,
-      input.session.customAgentName,
-    );
-    const systemMessage = buildCopilotSystemMessage(prompt);
-    const config: SessionConfig = {
-      model: selection.resolvedModel,
-      reasoningEffort: selection.resolvedReasoningEffort === "minimal" ? "low" : selection.resolvedReasoningEffort,
-      workingDirectory: input.session.workspacePath,
-      streaming: true,
-      onPermissionRequest: buildPermissionHandler(input),
-      ...(systemMessage ? { systemMessage } : {}),
-      ...(resolvedCustomAgents.customAgents.length > 0 ? { customAgents: resolvedCustomAgents.customAgents } : {}),
-      ...(resolvedCustomAgents.selectedAgentName ? { agent: resolvedCustomAgents.selectedAgentName } : {}),
-    };
-
-    return {
-      config,
-      selection,
-      settingsKey: JSON.stringify([
-        clientKey,
-        config.model,
-        config.reasoningEffort,
-        config.workingDirectory,
-        input.session.approvalMode,
-        systemMessage?.mode ?? "",
-        systemMessage?.content ?? "",
-        input.session.customAgentName,
-        resolvedCustomAgents.customAgents.map((agent) => JSON.stringify({
-          name: agent.name,
-          displayName: agent.displayName ?? "",
-          description: agent.description ?? "",
-          prompt: agent.prompt,
-          tools: agent.tools ?? null,
-        })).join("\u001f"),
-      ]),
-    };
-  }
-
   private async getSession(
     input: RunSessionTurnInput,
     prompt: ProviderPromptComposition,
   ): Promise<{ session: CopilotSession; selection: ResolvedModelSelection }> {
     const { client, clientKey } = this.getClient(input.providerCatalog.id, input);
-    const nextSettings = this.buildSessionConfig(input, prompt, clientKey);
+    const nextSettings = buildCopilotSessionSettings(input, prompt, clientKey);
     const cached = this.sessions.get(input.session.id);
-    if (cached && cached.settingsKey === nextSettings.settingsKey) {
+    const resolved = await resolveCopilotSessionForSettings({
+      cached,
+      nextSettingsKey: nextSettings.settingsKey,
+      threadId: input.session.threadId,
+      config: nextSettings.config,
+      client,
+    });
+    if (resolved.reusedCached) {
       return {
-        session: cached.session,
+        session: resolved.session,
         selection: nextSettings.selection,
       };
     }
 
-    if (cached) {
-      void cached.session.disconnect().catch(() => undefined);
-    }
-
-    const session = input.session.threadId.trim()
-      ? await client.resumeSession(input.session.threadId, nextSettings.config)
-      : await client.createSession(nextSettings.config);
-
     this.sessions.set(input.session.id, {
-      session,
+      session: resolved.session,
       settingsKey: nextSettings.settingsKey,
     });
 
     return {
-      session,
+      session: resolved.session,
       selection: nextSettings.selection,
     };
   }

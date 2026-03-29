@@ -353,6 +353,19 @@ export function buildNewSession(input: CreateSessionInput): Session {
   };
 }
 
+export function applyCopilotCustomAgentSelection(
+  session: Session,
+  customAgentName: string,
+  updatedAt: string,
+): Session {
+  return {
+    ...session,
+    customAgentName: customAgentName.trim(),
+    threadId: session.threadId,
+    updatedAt,
+  };
+}
+
 export function getSessionIdFromLocation(): string | null {
   return new URLSearchParams(getLocationSearch()).get("sessionId");
 }

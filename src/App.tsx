@@ -26,6 +26,7 @@ import {
 import {
   type DiffPreviewPayload,
   type Message,
+  applyCopilotCustomAgentSelection,
   type Session,
 } from "./session-state.js";
 import {
@@ -2217,12 +2218,11 @@ export default function App() {
       return;
     }
 
-    const nextSession: Session = {
-      ...selectedSession,
-      customAgentName: nextCustomAgentName,
-      threadId: "",
-      updatedAt: currentTimestampLabel(),
-    };
+    const nextSession: Session = applyCopilotCustomAgentSelection(
+      selectedSession,
+      nextCustomAgentName,
+      currentTimestampLabel(),
+    );
 
     await persistSession(nextSession);
     setIsAgentPickerOpen(false);
