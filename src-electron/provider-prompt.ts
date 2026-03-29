@@ -45,13 +45,13 @@ function renderProjectMemorySection(input: RunSessionTurnInput): string {
 }
 
 export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromptComposition {
-  const systemPromptText = input.appSettings.systemPromptPrefix.trim()
+  const systemPromptPrefixText = input.appSettings.systemPromptPrefix.trim()
     ? `# System Prompt\n\n${input.appSettings.systemPromptPrefix.trim()}`
     : "";
   const characterText = input.character.roleMarkdown.trim()
     ? `# Character\n\n${input.character.roleMarkdown.trim()}`
     : "# Character\n\nキャラクター定義は未設定。";
-  const systemSections = [systemPromptText, characterText].filter((section) => section.trim().length > 0);
+  const systemSections = [systemPromptPrefixText, characterText].filter((section) => section.trim().length > 0);
   const systemPromptBody = systemSections.join("\n\n");
   const referencedImages = input.attachments.filter((attachment) => attachment.kind === "image");
   const inputSections: string[] = [];
@@ -69,7 +69,7 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
   inputSections.push(`# User Input\n\n${input.userMessage.trim()}`);
   const inputPromptBody = inputSections.join("\n\n");
   const inputPromptText = inputPromptBody;
-  const composedPromptText = [systemPromptText, inputPromptText]
+  const composedPromptText = [systemPromptBody, inputPromptText]
     .filter((section) => section.trim().length > 0)
     .join("\n\n");
 
@@ -77,7 +77,7 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
     systemBodyText: systemPromptBody,
     inputBodyText: inputPromptBody,
     logicalPrompt: {
-      systemText: systemPromptText,
+      systemText: systemPromptBody,
       inputText: inputPromptText,
       composedText: composedPromptText,
     },
