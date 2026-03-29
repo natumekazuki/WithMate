@@ -20,9 +20,11 @@
 - `npm run typecheck` は fail のままだが、今回変更範囲の回帰ではなく repository 既知の baseline fail 継続として扱うことを記録した
 - 今回 task の検証結果は、変更したスライスに対して成功した `npm test` / `npm run build` / `npm exec -- tsc -p tsconfig.electron.json --noEmit --pretty false` を採用し、手動テスト待ちは継続する方針を反映した
 - ユーザー手動テスト結果を反映し、会話冒頭で特定フレーズを指示した後に custom agent を切り替えても、切り替え後応答の先頭で同フレーズが維持され、会話継続性に問題がないことを確認済みとして記録した
-- 手動テスト完了により current task を完了扱いへ更新し、commit / archive 準備完了の状態へ移行した
+- 手動テスト完了により current task を完了扱いへ更新し、実装コミット記録後に archive 済み状態へ更新した
+- 2026-03-29: `efd8ceae2494a19bcc08909b42b243b5bb70cd92` `fix(copilot): custom agent切替でthreadIdを維持`
+  - custom agent 切り替え時の `threadId` 維持と adapter resume 挙動修正の実装コミットとして記録した
 
 ## Next Checkpoint
 
-- current task は手動テスト完了・commit / archive 準備完了
+- current task は実装コミット記録済み・archive 済み
 - `model / reasoningEffort` 変更時の `threadId` reset を別 task として扱うか判断する

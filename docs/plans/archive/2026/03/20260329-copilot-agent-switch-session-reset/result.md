@@ -5,6 +5,7 @@
 - 状態: 完了
 - 実装: 完了
 - 手動検証: 完了
+- archive: 完了
 
 ## Current Expected Output
 
@@ -37,8 +38,9 @@
 - `docs/design/` / `.ai_context/` / `README.md` は更新不要と判断した
 - 理由: 既存設計書は「Copilot session は `threadId` を保持して `resumeSession()` する」「custom agent は session metadata を `customAgents` / `agent` へ変換する」という意図をすでに記述しており、今回の変更は実装差分の是正と自動テスト補強に留まるため
 
-## Archive Readiness
+## Archive
 
-- `result.md` / `worklog.md` / `plan.md` を完了状態へ同期済み
-- commit / archive 準備完了
+- archive 先: `docs/plans/archive/2026/03/20260329-copilot-agent-switch-session-reset/`
+- 対応コミット:
+  - `efd8ceae2494a19bcc08909b42b243b5bb70cd92` `fix(copilot): custom agent切替でthreadIdを維持`
 - 未解決事項は `model / reasoningEffort` の reset 問題のみで、今回 task の scope 外 follow-up 候補として分離済み

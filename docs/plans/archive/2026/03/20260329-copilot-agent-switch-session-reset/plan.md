@@ -83,4 +83,5 @@
 - 状態: 完了
 - 手動テスト: ユーザー実施により完了。会話冒頭で特定フレーズを指示した後に custom agent を切り替えても、切り替え後応答の先頭で同フレーズが維持され、会話継続性に問題がないことを確認済み
 - Remaining: なし（`model / reasoningEffort` の reset 問題は今回 scope 外の follow-up 候補として維持）
-- Archive Readiness: `result.md` / `worklog.md` を含めて完了状態へ更新し、commit / archive 準備完了
+- Archive: `docs/plans/archive/2026/03/20260329-copilot-agent-switch-session-reset/` へ移動済み
+- 実装コミット: `efd8ceae2494a19bcc08909b42b243b5bb70cd92` `fix(copilot): custom agent切替でthreadIdを維持`
