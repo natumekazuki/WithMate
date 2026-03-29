@@ -38,8 +38,13 @@
 - `npm run typecheck` は引き続き既存 baseline failure のままで、今回変更に紐づく `scripts/tests/codex-adapter.test.ts` / `src-electron/codex-adapter.ts` の新規型エラーは残していないことを確認した
 - ユーザーから manual smoke の結果として「OKよさそう」を受領し、Copilot / Codex の model / reasoningEffort 変更後も thread continuity が実運用上問題ない前提で承認済みと記録した
 - `docs/plans/20260329-copilot-model-reasoning-threadid-continuity/plan.md` / `worklog.md` / `result.md` と session plan を、manual smoke 確認済みかつ implementation commit ready の状態へ更新した
+- implementation commit `5021984` `fix(session): model変更時のthread continuityを維持` を確認し、model / reasoningEffort 変更時も Copilot / Codex の既存 `threadId` を維持する修正として `worklog.md` / `result.md` へ要約を追記した
+- post-commit closing として plan の状態を完了へ更新し、docs-sync 方針は plan / worklog / result 更新のみのまま維持した
+- current plan directory を `docs/plans/archive/2026/03/20260329-copilot-model-reasoning-threadid-continuity/` へ移動し、archive 完了を記録した
+- session plan は current progress を完了済み task ベースへ更新し、next step として Codex のキャラ定義注入調査を短く反映した
 
 ## Next Checkpoint
 
-- implementation commit 前のドキュメント更新まで完了。次は main agent 側で commit / archive 実施タイミングを判断する
+- current task は implementation commit `5021984` 記録と archive 移動まで完了
+- next: Codex のキャラ定義注入調査の current progress を整理する
 - `npm run typecheck` baseline failure は別 task 扱いを維持し、今回 task では広げない

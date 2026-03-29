@@ -96,8 +96,8 @@
 
 ## Status
 
-- 状態: implementation commit ready
-- 実装: 完了
+- 状態: 完了
+- 実装: 完了（commit: `5021984` `fix(session): model変更時のthread continuityを維持`）
 - 手動テスト: ユーザー確認済み（「OKよさそう」）
-- archive: 未対応
+- archive: `docs/plans/archive/2026/03/20260329-copilot-model-reasoning-threadid-continuity/` へ移動済み
 - docs-sync: plan / worklog / result 更新のみで維持

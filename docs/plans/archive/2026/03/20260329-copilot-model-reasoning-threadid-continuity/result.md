@@ -2,10 +2,10 @@
 
 ## Status
 
-- 状態: implementation commit ready
+- 状態: 完了
 - 実装: 完了
 - 手動検証: ユーザー確認済み（「OKよさそう」）
-- archive: 未対応
+- archive: 完了
 
 ## Current Expected Output
 
@@ -15,7 +15,7 @@
 
 ## Remaining
 
-- implementation commit / archive 実施
+- なし
 - `npm run typecheck` baseline failure の解消は別 task が必要
 
 ## Validation Plan
@@ -37,6 +37,7 @@
 - 今回変更ファイル `src/session-state.ts` / `src-electron/codex-adapter.ts` / `scripts/tests/session-state.test.ts` / `scripts/tests/copilot-adapter.test.ts` / `scripts/tests/codex-adapter.test.ts`: 新規エラーなし
 - `src/App.tsx`: 既存 repository baseline 側の typecheck エラーが残存。ただし今回差分で悪化させていない前提で据え置き
 - manual smoke: ユーザー確認済み（2026-03-29、「OKよさそう」）
+- implementation commit: `5021984` `fix(session): model変更時のthread continuityを維持`
 
 ## Docs Sync
 
@@ -55,8 +56,9 @@
 ## Archive Check
 
 - archive 予定先: `docs/plans/archive/2026/03/20260329-copilot-model-reasoning-threadid-continuity/`
-- archive blocker:
-  - implementation commit / archive 自体は未実施
+- archive 実施:
+  - implementation commit `5021984` `fix(session): model変更時のthread continuityを維持` を記録した
+  - plan directory を archive 先へ移動済み
 - 未解決事項:
   - provider 実機での model 切替 semantics の完全保証は scope 外
   - Copilot / Codex 以外を含む provider 横断の reset ルール見直しは別 task 候補
@@ -67,4 +69,4 @@
 - scope 内実装が完了している
 - 自動検証結果が記録されている
 - `npm run typecheck` の baseline 観測結果が記録されている
-- manual smoke の結果または未実施理由が記録され、archive-ready と判断できる
+- manual smoke の結果が記録され、implementation commit / archive 完了まで反映されている
