@@ -10,3 +10,4 @@
 - `docs/design/` 一覧を確認し、関連 docs は参照元の追加で足りると判断した
 - repo 直下に `.ai_context` が存在しないことを確認し、更新対象なしとして記録する
 - `docs/task-backlog.md` に `#16` 〜 `#29` の管理行、Memory 関連整理、推奨順、参照元を追記・更新した
+- 2026-03-30: `1bee6df` `docs(task-backlog): GitHub issue backlog を同期`
