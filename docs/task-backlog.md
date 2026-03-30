@@ -50,7 +50,7 @@
 | P3 | 未着手 | GitHub | [#15](https://github.com/natumekazuki/WithMate/issues/15) | キャラストリームをメモリー生成の一部にする | memory extraction のレスポンスに独り言を載せる構成を検討する | `#3` `#1` `#5` の後で判断。Memory と Character Stream を橋渡しする応用 task |
 | P3 | 見送り | GitHub | [#5](https://github.com/natumekazuki/WithMate/issues/5) | 独り言システム pending | Character Stream / monologue UI 適用を保留にする | issue は open のまま、parity 完了後に着手判断 |
 | P3 | 未着手 | GitHub | [#4](https://github.com/natumekazuki/WithMate/issues/4) | キャラ定義の自己改善 | エージェントがキャラ定義自体を改善できるようにする | Memory / Character 運用が固まってからでないと広がりすぎる |
-| P3 | 未着手 | GitHub | [#29](https://github.com/natumekazuki/WithMate/issues/29) | マルチエージェント化 | WithMate 内部のエージェント呼び出しを MCP ベースで多段化できるか検討する | 既存 provider / session / approval モデルへの影響が大きく、単独の plan 切り出しが必要な探索テーマ |
+| P3 | 見送り | GitHub | [#29](https://github.com/natumekazuki/WithMate/issues/29) | マルチエージェント化 | WithMate 内部のエージェント呼び出しを MCP ベースで多段化できるか検討する | current は `single-agent runtime` を正本とし、multi-agent は optional な delegation architecture として保留する。まずは `Copilot only` / `Codex only` の片系でも成立する構成を優先し、今のところ再開予定はない |
 | P3 | 未着手 | Local | `character-chat-ui` | キャラ画像まわりの polish | 画像 path 正規化、assistant bubble 表現、avatar 表現差など | `docs/design/character-chat-ui.md` の open points |
 | P3 | 未着手 | Local | `home/session polish` | split ratio などの永続化 | Session layout / Home layout の local state を必要なら永続化する | `docs/design/desktop-ui.md` と `docs/design/window-architecture.md` の follow-up として扱う |
 
@@ -118,7 +118,7 @@
 9. `#10 Copilot custom slash command`
 10. `#17 tasks コマンドの SDK 調査と実装`
 11. `#28 データ export / import`
-12. `#15` `#29` と各種 polish
+12. `#15` と各種 polish
 
 ## 参照元
 
