@@ -11,6 +11,7 @@
 - `#14` は repo 上では実装済みのため backlog の `実装状況` は `完了` を維持しつつ、issue が open のままであることをメモへ明記した
 - `docs/design` は参照元追加のみで十分と判断し、本文更新は行っていない
 - `.ai_context` は repo 直下に存在しなかったため更新していない
+- archive 後の後処理として、`docs/task-backlog.md` の参照元パスを archive 先の `docs/plans/archive/2026/03/20260330-issue-backlog-sync/result.md` へ修正した
 
 ## 実装コミット
 - 実装コミット: `1bee6df` `docs(task-backlog): GitHub issue backlog を同期`
