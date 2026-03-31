@@ -9,4 +9,5 @@
 - `#24` の依存 / メモを最小限更新し、`#32` と同じ復旧系クラスタであることが分かるようにした
 - CLOSED の `#2` `#6` `#8` `#9` は今回も backlog に再追加しなかった
 - `docs/plans/20260331-issue-backlog-sync/` と session 側の planning artifact を新規作成し、今回の同期判断を記録した
-- コミットは行っていない
+- `git diff --check` が clean で、doc review でも major な指摘がないことを確認した
+- `3012d43 docs(task-backlog): GitHub issue backlog を同期` を作成し、backlog 更新と active plan artifacts を記録した

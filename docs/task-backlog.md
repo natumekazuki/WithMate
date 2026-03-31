@@ -136,6 +136,7 @@
 
 - `docs/plans/20260322-copilot-capability-rollout/result.md`
 - `docs/plans/archive/2026/03/20260330-issue-backlog-sync/result.md`
+- `docs/plans/archive/2026/03/20260331-issue-backlog-sync/result.md`
 - `docs/design/coding-agent-capability-matrix.md`
 - `docs/design/provider-adapter.md`
 - `docs/design/archive/2026/03/provider-sdk-pending-items.md`

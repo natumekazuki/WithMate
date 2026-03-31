@@ -1,6 +1,6 @@
 # 状態
 
-- 進行中（backlog 同期反映済み・未コミット）
+- 完了（backlog 同期の反映・検証・記録が完了）
 
 # 結果メモ
 
@@ -8,5 +8,6 @@
 - 新規 issue `#32` `#31` `#33` `#30` を、それぞれ session 復旧、Memory 管理、provider capability、Session UI 密度改善のクラスタへ追加した
 - Memory 関連タスク整理へ `#31` を追加し、参照元へ `docs/design/provider-adapter.md` と `docs/design/character-memory-storage.md` を加えた
 - `GitHub Issues` の記載範囲を `#33` まで拡張しつつ、CLOSED の `#2` `#6` `#8` `#9` は引き続き掲載していない
-- repo plan artifacts と session 側の planning artifact を作成した
-- 次の main agent 作業は diff 確認と必要ならコミット / archive 判断
+- `git diff --check` が clean で、doc review でも major な指摘がないことを確認した
+- `3012d43 docs(task-backlog): GitHub issue backlog を同期` で backlog 更新と active plan artifacts をコミットした
+- repo plan artifacts に検証結果とコミット記録を反映し、archive へ移せる状態でクローズした
