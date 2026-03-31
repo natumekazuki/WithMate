@@ -19,3 +19,5 @@
   - `## UI/UX review follow-up整理` を新規追加
   - `## 推奨順` を review 起点の着手順が分かる並びへ更新
   - `## 参照元` へ `docs/reviews/review-20260329-1438.md` を追加
+- docs-only task として最終 doc validation / review / test checks passed を確認した
+- `131e378 docs(task-backlog): UI review backlog を統合` を作成し、backlog 統合と active plan artifacts を記録した
