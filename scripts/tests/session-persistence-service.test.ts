@@ -136,10 +136,11 @@ describe("SessionPersistenceService", () => {
     assert.equal(broadcastCount, 1);
   });
 
-  it("updateSession は provider 変更時に telemetry をクリアし、running session は拒否する", () => {
-    const baseSession = createSession({ provider: "codex", model: "codex-default" });
+  it("updateSession は provider 変更時に telemetry をクリアし、thread reset 時は provider cache を invalidate する", () => {
+    const baseSession = createSession({ provider: "codex", model: "codex-default", threadId: "thread-1" });
     const storedSessions: Session[] = [baseSession];
     const clearedTelemetry: string[] = [];
+    const invalidatedThreads: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
     const service = new SessionPersistenceService({
       getSessions() {
         return storedSessions;
@@ -177,20 +178,87 @@ describe("SessionPersistenceService", () => {
       clearSessionBackgroundActivities() {},
       clearCharacterReflectionCheckpoint() {},
       clearInFlightCharacterReflection() {},
-      invalidateProviderSessionThread() {},
+      invalidateProviderSessionThread(providerId, sessionId) {
+        invalidatedThreads.push({ providerId, sessionId });
+      },
       closeSessionWindow() {},
       broadcastSessions() {},
     });
 
     const updated = service.updateSession({ ...baseSession, provider: "copilot", model: "copilot-default" });
     assert.equal(updated.provider, "copilot");
+    assert.equal(updated.threadId, "");
     assert.deepEqual(clearedTelemetry, [baseSession.id]);
+    assert.deepEqual(invalidatedThreads, [{ providerId: "codex", sessionId: baseSession.id }]);
 
     storedSessions.splice(0, storedSessions.length, createSession({ id: baseSession.id, runState: "running", status: "running" }));
     assert.throws(
       () => service.updateSession({ ...storedSessions[0], taskTitle: "blocked" }),
       /実行中のセッションは更新できない/,
     );
+  });
+
+  it("updateSession は model / reasoning 変更時に threadId を空にして invalidate する", () => {
+    const baseSession = createSession({
+      provider: "copilot",
+      model: "copilot-default",
+      reasoningEffort: "medium",
+      threadId: "thread-keep",
+    });
+    const storedSessions: Session[] = [baseSession];
+    const invalidatedThreads: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return storedSessions.find((session) => session.id === sessionId) ?? null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      upsertStoredSession(session) {
+        storedSessions.splice(0, storedSessions.length, session);
+        return session;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      deleteStoredSession() {},
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      clearCharacterReflectionCheckpoint() {},
+      clearInFlightCharacterReflection() {},
+      invalidateProviderSessionThread(providerId, sessionId) {
+        invalidatedThreads.push({ providerId, sessionId });
+      },
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    const updated = service.updateSession({
+      ...baseSession,
+      model: "copilot-default",
+      reasoningEffort: "high",
+      threadId: "thread-keep",
+    });
+
+    assert.equal(updated.threadId, "");
+    assert.deepEqual(invalidatedThreads, [{ providerId: "copilot", sessionId: baseSession.id }]);
   });
 
   it("deleteSession は関連状態を片付けて window close を呼ぶ", () => {

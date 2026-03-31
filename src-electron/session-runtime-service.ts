@@ -5,6 +5,7 @@ import {
   type LiveApprovalDecision,
   type LiveApprovalRequest,
   type LiveSessionRunState,
+  type MessageArtifact,
   type ProviderQuotaTelemetry,
   type ProjectMemoryEntry,
   type RunSessionTurnRequest,
@@ -15,7 +16,7 @@ import { type CharacterProfile } from "../src/character-state.js";
 import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
 import { type Session } from "../src/session-state.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src/model-catalog.js";
-import { ProviderTurnError, type ProviderCodingAdapter } from "./provider-runtime.js";
+import { ProviderTurnError, type ProviderCodingAdapter, type RunSessionTurnResult } from "./provider-runtime.js";
 import { appendQuotaTelemetryToTransportPayload } from "./audit-log-quota.js";
 import { appendTransportPayloadFields, calculateAuditDurationMs } from "./audit-log-metadata.js";
 
@@ -78,6 +79,82 @@ export function isCanceledRunError(error: unknown): boolean {
 
   const message = error instanceof Error ? error.message : String(error);
   return /abort|aborted|cancel|canceled|cancelled/i.test(message);
+}
+
+function hasMeaningfulArtifact(artifact: MessageArtifact | undefined): boolean {
+  if (!artifact) {
+    return false;
+  }
+
+  return artifact.changedFiles.length > 0 ||
+    artifact.activitySummary.some((summary) => summary.trim().length > 0) ||
+    (artifact.operationTimeline?.length ?? 0) > 0 ||
+    artifact.runChecks.length > 0;
+}
+
+export function hasMeaningfulPartialRunResult(partialResult: RunSessionTurnResult | null | undefined): boolean {
+  if (!partialResult) {
+    return false;
+  }
+
+  return partialResult.assistantText.trim().length > 0 ||
+    partialResult.operations.length > 0 ||
+    hasMeaningfulArtifact(partialResult.artifact);
+}
+
+function normalizeProviderErrorCode(error: unknown): string {
+  if (!error || typeof error !== "object") {
+    return "";
+  }
+
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code.trim().toLowerCase() : "";
+}
+
+export function isRetryableStaleThreadSessionError(error: unknown): boolean {
+  const code = normalizeProviderErrorCode(error);
+  if (
+    code === "thread_not_found" ||
+    code === "session_not_found" ||
+    code === "thread_expired" ||
+    code === "session_expired" ||
+    code === "invalid_thread" ||
+    code === "invalid_session" ||
+    code === "invalid-thread" ||
+    code === "invalid-session"
+  ) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  const normalizedMessage = message.trim().toLowerCase();
+  if (!normalizedMessage) {
+    return false;
+  }
+
+  return (
+    /\b(thread|session)\b.*\bnot found\b/.test(normalizedMessage) ||
+    /\bnot found\b.*\b(thread|session)\b/.test(normalizedMessage) ||
+    /\b(thread|session)\b.*\bexpired\b/.test(normalizedMessage) ||
+    /\bexpired\b.*\b(thread|session)\b/.test(normalizedMessage) ||
+    /\binvalid[-\s]+(thread|session)\b/.test(normalizedMessage) ||
+    /\b(thread|session)\b.*\binvalid\b/.test(normalizedMessage) ||
+    /\binvalid[-\s]*thread\b/.test(normalizedMessage) ||
+    /\b(thread|session)\b.*\bmodel\b.*\bincompatible\b/.test(normalizedMessage) ||
+    /\bmodel\b.*\b(thread|session)\b.*\bincompatible\b/.test(normalizedMessage)
+  );
+}
+
+function buildEmptyLiveSessionRunState(sessionId: string, threadId: string): LiveSessionRunState {
+  return {
+    sessionId,
+    threadId,
+    assistantText: "",
+    steps: [],
+    usage: null,
+    errorMessage: "",
+    approvalRequest: null,
+  };
 }
 
 export class SessionRuntimeService {
@@ -171,15 +248,7 @@ export class SessionRuntimeService {
     this.inFlightSessionRuns.add(sessionId);
     const runAbortController = new AbortController();
     this.sessionRunControllers.set(sessionId, runAbortController);
-    this.deps.setLiveSessionRun(sessionId, {
-      sessionId,
-      threadId: runningSession.threadId,
-      assistantText: "",
-      steps: [],
-      usage: null,
-      errorMessage: "",
-      approvalRequest: null,
-    });
+    this.deps.setLiveSessionRun(sessionId, buildEmptyLiveSessionRunState(sessionId, runningSession.threadId));
 
     const runningAuditLog = this.deps.createAuditLog({
       sessionId,
@@ -199,9 +268,10 @@ export class SessionRuntimeService {
       errorMessage: "",
     });
 
-    try {
-      const result = await providerAdapter.runSessionTurn({
-        session: runningSession,
+    let activeRunningSession = runningSession;
+    const runProviderTurn = (turnSession: Session) =>
+      providerAdapter.runSessionTurn({
+        session: turnSession,
         sessionMemory,
         projectMemoryEntries,
         character,
@@ -224,6 +294,42 @@ export class SessionRuntimeService {
           approvalRequest: this.deps.getLiveSessionRun(sessionId)?.approvalRequest ?? null,
         });
       });
+
+    try {
+      let result: RunSessionTurnResult | null = null;
+      let didInternalRetry = false;
+      while (true) {
+        try {
+          result = await runProviderTurn(activeRunningSession);
+          break;
+        } catch (error) {
+          const providerTurnError = error instanceof ProviderTurnError ? error : null;
+          const shouldRetry =
+            !didInternalRetry &&
+            !isCanceledRunError(error) &&
+            isRetryableStaleThreadSessionError(error) &&
+            !hasMeaningfulPartialRunResult(providerTurnError?.partialResult);
+
+          if (!shouldRetry) {
+            throw error;
+          }
+
+          didInternalRetry = true;
+          this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId);
+          if (activeRunningSession.threadId) {
+            activeRunningSession = this.deps.upsertSession({
+              ...activeRunningSession,
+              threadId: "",
+              updatedAt: currentTimestampLabel(),
+            });
+          }
+          this.deps.setLiveSessionRun(sessionId, buildEmptyLiveSessionRunState(sessionId, ""));
+        }
+      }
+      if (!result) {
+        throw new Error("provider turn result を確定できなかったよ。");
+      }
+
       const completedAt = new Date().toISOString();
       const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
 
@@ -231,11 +337,11 @@ export class SessionRuntimeService {
         sessionId,
         createdAt: runningAuditLog.createdAt,
         phase: "completed",
-        provider: runningSession.provider,
-        model: runningSession.model,
-        reasoningEffort: runningSession.reasoningEffort,
-        approvalMode: runningSession.approvalMode,
-        threadId: result.threadId ?? runningSession.threadId,
+        provider: activeRunningSession.provider,
+        model: activeRunningSession.model,
+        reasoningEffort: activeRunningSession.reasoningEffort,
+        approvalMode: activeRunningSession.approvalMode,
+        threadId: result.threadId ?? activeRunningSession.threadId,
         logicalPrompt: result.logicalPrompt,
         transportPayload: appendTransportPayloadFields(
           appendQuotaTelemetryToTransportPayload(
@@ -256,13 +362,13 @@ export class SessionRuntimeService {
       });
 
       const completedSession: Session = {
-        ...runningSession,
+        ...activeRunningSession,
         updatedAt: currentTimestampLabel(),
         status: "idle",
         runState: "idle",
-        threadId: result.threadId ?? runningSession.threadId,
+        threadId: result.threadId ?? activeRunningSession.threadId,
         messages: [
-          ...runningSession.messages,
+          ...activeRunningSession.messages,
           {
             role: "assistant",
             text: result.assistantText,
@@ -283,18 +389,18 @@ export class SessionRuntimeService {
       const completedAt = new Date().toISOString();
       const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
       if (canceled) {
-        this.deps.invalidateProviderSessionThread(runningSession.provider, sessionId);
+        this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId);
       }
 
       this.deps.updateAuditLog(runningAuditLog.id, {
         sessionId,
         createdAt: runningAuditLog.createdAt,
         phase: canceled ? "canceled" : "failed",
-        provider: runningSession.provider,
-        model: runningSession.model,
-        reasoningEffort: runningSession.reasoningEffort,
-        approvalMode: runningSession.approvalMode,
-        threadId: partialResult?.threadId ?? runningSession.threadId,
+        provider: activeRunningSession.provider,
+        model: activeRunningSession.model,
+        reasoningEffort: activeRunningSession.reasoningEffort,
+        approvalMode: activeRunningSession.approvalMode,
+        threadId: partialResult?.threadId ?? activeRunningSession.threadId,
         logicalPrompt: partialResult?.logicalPrompt ?? promptForAudit.logicalPrompt,
         transportPayload: appendTransportPayloadFields(
           appendQuotaTelemetryToTransportPayload(
@@ -319,13 +425,13 @@ export class SessionRuntimeService {
         ? `${partialResult.assistantText}\n\n${fallbackNotice}`
         : fallbackNotice;
       const failedSession: Session = {
-        ...runningSession,
+        ...activeRunningSession,
         updatedAt: currentTimestampLabel(),
         status: "idle",
         runState: canceled ? "idle" : "error",
-        threadId: partialResult?.threadId ?? runningSession.threadId,
+        threadId: partialResult?.threadId ?? activeRunningSession.threadId,
         messages: [
-          ...runningSession.messages,
+          ...activeRunningSession.messages,
           {
             role: "assistant",
             text: assistantText,

@@ -92,7 +92,7 @@ describe("session-state custom agent selection", () => {
 });
 
 describe("session-state model selection", () => {
-  it("Copilot session の model 更新時は threadId を維持しつつ正規化後の設定を保存する", () => {
+  it("Copilot session の model 更新時は threadId を reset して正規化後の設定を保存する", () => {
     const session = {
       ...createSession("copilot"),
       threadId: "thread-keep",
@@ -101,14 +101,14 @@ describe("session-state model selection", () => {
 
     const next = applySessionModelMetadataUpdate(session, selection, 7, "2026-03-29 12:30");
 
-    assert.equal(next.threadId, "thread-keep");
+    assert.equal(next.threadId, "");
     assert.equal(next.model, "gpt-4.1-mini");
     assert.equal(next.reasoningEffort, "medium");
     assert.equal(next.catalogRevision, 7);
     assert.equal(next.updatedAt, "2026-03-29 12:30");
   });
 
-  it("Copilot session の reasoning 更新時も threadId を維持する", () => {
+  it("Copilot session の reasoning 更新時も threadId を reset する", () => {
     const session = {
       ...createSession("copilot"),
       threadId: "thread-keep",
@@ -117,14 +117,14 @@ describe("session-state model selection", () => {
 
     const next = applySessionModelMetadataUpdate(session, selection, 8, "2026-03-29 12:45");
 
-    assert.equal(next.threadId, "thread-keep");
+    assert.equal(next.threadId, "");
     assert.equal(next.model, "gpt-4.1");
     assert.equal(next.reasoningEffort, "low");
     assert.equal(next.catalogRevision, 8);
     assert.equal(next.updatedAt, "2026-03-29 12:45");
   });
 
-  it("Codex session の model 更新時も threadId を維持する", () => {
+  it("Codex session の model 更新時も threadId を reset する", () => {
     const session = {
       ...createSession("codex"),
       threadId: "thread-keep",
@@ -133,7 +133,7 @@ describe("session-state model selection", () => {
 
     const next = applySessionModelMetadataUpdate(session, selection, 9, "2026-03-29 13:00");
 
-    assert.equal(next.threadId, "thread-keep");
+    assert.equal(next.threadId, "");
     assert.equal(next.model, "gpt-5.4-mini");
     assert.equal(next.reasoningEffort, "low");
     assert.equal(next.catalogRevision, 9);
