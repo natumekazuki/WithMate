@@ -13,3 +13,9 @@
 - `src/session-state.ts` と `src-electron/session-persistence-service.ts` で model / reasoningEffort change 時の pre-send reset を `threadId` クリア + provider cache invalidate の組で反映した
 - `scripts/tests/session-runtime-service.test.ts`、`scripts/tests/session-persistence-service.test.ts`、`scripts/tests/session-state.test.ts` を更新し、retry 条件と pre-send reset 条件を回帰テストへ追加した
 - `docs/design/provider-adapter.md`、`docs/design/session-run-lifecycle.md`、`docs/manual-test-checklist.md` を current behavior に合わせて更新した
+
+### クローズ記録
+
+- final targeted validation として `git diff --check` clean、targeted tests pass、final review に重大な指摘なしを確認した
+- 2026-03-31: `8ecbc492419377ab594ff6144bddca5717abe2fa` `fix(session-runtime): stale thread を自動リセットして再試行`
+  - narrow stale classifier、1 回だけの internal retry、`threadId` clear + provider cache invalidate、model / reasoningEffort pre-send reset、tests / docs 更新、active plan artifacts を含む実装コミットとして記録した
