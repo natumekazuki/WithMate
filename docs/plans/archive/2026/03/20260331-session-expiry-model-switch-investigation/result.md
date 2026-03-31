@@ -2,9 +2,9 @@
 
 ## Status
 
-- 状態: 調査完了寄り
-- 実装: 未着手
-- クローズ条件: main agent が issue / backlog 更新と follow-up 切り出し方針を確認できれば research task として閉じやすい状態
+- 状態: 完了（`#24` / `#32` の調査結果、backlog 反映、plan 記録まで完了）
+- 実装: 未着手（research / docs task として完了）
+- クローズ条件: 達成済み。issue / backlog 更新と follow-up 切り出し方針を確認し、active plan artifacts をコミットした
 
 ## 結論
 
@@ -50,3 +50,10 @@
 - model switch policy を provider ごとに明文化し、design doc と runtime を一致させる
 - audit log / telemetry に resume failure classification を追加する
 - 必要なら暫定で `applySessionModelMetadataUpdate()` の `threadId` 維持方針を見直す
+
+## 完了記録
+
+- 調査結果として、`#24` と `#32` を同一の session resume / provider thread lifetime クラスタとして扱い、expiry・model-switch 非互換・recovery 不足の 3 層で切り分ける方針を確定した
+- backlog では `#24` と `#32` の依存 / メモを更新し、`#32` を基準ケース、`#24` を model-switch 固有要因の切り分けケースとして整理した
+- final doc validation / review passed を確認した
+- `2dc744c docs(task-backlog): #24 と #32 の調査結果を整理` で調査結果 docs・backlog メモ更新・active plan artifacts を記録した
