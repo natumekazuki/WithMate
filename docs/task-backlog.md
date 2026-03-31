@@ -30,6 +30,9 @@
 | P1 | 未着手 | GitHub | [#16](https://github.com/natumekazuki/WithMate/issues/16) | セッション close 時の Memory 生成 | window close やアプリ終了時に Memory 生成を走らせる設計の妥当性を見直す | 保存安定性と request 数の読みにくさが論点。`#3` `#27` の trigger policy とセットで扱う |
 | P1 | 未着手 | GitHub | [#21](https://github.com/natumekazuki/WithMate/issues/21) | 実行中 Details 更新 | turn 実行中でも確定した Details を順次右 pane へ出したい | `docs/design/session-run-lifecycle.md` と current Details UI を見ながら partial update の扱いを決める |
 | P1 | 未着手 | GitHub | [#25](https://github.com/natumekazuki/WithMate/issues/25) | 独り言生成タイミング | session を開くたびに独り言を生成せず、main chat と monologue の新しさで trigger したい | `#1` の monologue policy と `#5` の pending 方針が前提。`#16` `#27` と同じ trigger 設計の論点 |
+| P1 | 未着手 | Local | `session-keyboard-a11y` | セッション周辺のキーボード操作基盤 | モーダル、選択系 UI、Diff 閲覧、`@path` 候補のキーボード操作を WAI-ARIA / desktop UX に沿って揃える | `docs/reviews/review-20260329-1438.md #1 #2 #5 #11`。Session 周辺の keyboard / accessibility クラスタとして先行着手候補 |
+| P1 | 未着手 | GitHub | [#20](https://github.com/natumekazuki/WithMate/issues/20) | Session 入力エリア幅調整 | 右 pane を下まで伸ばし、入力エリア幅を chat UI と揃えたい | `docs/design/desktop-ui.md` の pane balance 見直しに近い。`docs/reviews/review-20260329-1438.md #7` を統合し、1400px 付近での right pane 到達性もここで扱う。review 起点では responsive 到達性クラスタの入口として `P1` 扱い |
+| P1 | 未着手 | Local | `session-responsive-guardrails` | Session / Diff のレスポンシブ・画面制約 | Session と Diff の最小サイズ、狭幅時の到達性、composer 添付 UI のオーバーフロー制御をまとめて扱う | `docs/reviews/review-20260329-1438.md #8 #9`。`#20` と並ぶ UI responsive guardrails として切り出す |
 | P1 | 完了 | GitHub | [#13](https://github.com/natumekazuki/WithMate/issues/13) | `add-dir` 対応 | 追加 directory の許可リスト、外部添付制御、変更追跡まで実装済み | `docs/plans/archive/2026/03/20260325-additional-directory-allowlist/result.md` |
 | P1 | 完了 | GitHub | [#12](https://github.com/natumekazuki/WithMate/issues/12) | 実行中セッション監視 window | Home から切り出した常時前面 monitor window を実装済み | `docs/plans/archive/2026/03/20260325-session-monitor-window/result.md` |
 | P1 | 完了 | GitHub | [#11](https://github.com/natumekazuki/WithMate/issues/11) | レートリミット可視化 | Copilot 先行で premium requests と context usage を UI へ出した | plan: `docs/plans/archive/2026/03/20260325-copilot-rate-limit-visibility/`、design: `docs/design/provider-usage-telemetry.md` |
@@ -42,7 +45,8 @@
 | P2 | 未着手 | GitHub | [#28](https://github.com/natumekazuki/WithMate/issues/28) | データ export / import | 少なくともキャラ定義を持ち運べる export / import 手段を検討する | Memory 同期まで含めると広いため slice 分割前提。`docs/design/character-storage.md` `docs/design/project-memory-storage.md` の確認が必要 |
 | P2 | 未着手 | GitHub | [#26](https://github.com/natumekazuki/WithMate/issues/26) | ウインドウ生成場所 | 新規 window をカーソル位置起点で生成したい | `docs/design/window-architecture.md` と Electron window 起動 policy の調整が必要 |
 | P2 | 未着手 | GitHub | [#23](https://github.com/natumekazuki/WithMate/issues/23) | `**message**` markdown 未反映 | Session Window で `**message**` が markdown として render されない | `docs/design/message-rich-text.md` の current renderer と差分確認が必要 |
-| P2 | 未着手 | GitHub | [#20](https://github.com/natumekazuki/WithMate/issues/20) | Session 入力エリア幅調整 | 右 pane を下まで伸ばし、入力エリア幅を chat UI と揃えたい | `docs/design/desktop-ui.md` の pane balance 見直しに近い |
+| P2 | 未着手 | Local | `session-feedback-recovery` | 通知整理と復帰導線 | live region の集約、送信不可時の理由提示、Error Boundary からの回復導線をまとめて整理する | `docs/reviews/review-20260329-1438.md #3 #4 #10`。Session の feedback / recovery UX を一体で扱う |
+| P2 | 未着手 | Local | `theme-wcag-contrast` | テーマ色の WCAG コントラスト準拠 | character theme の文字色決定を WCAG 比率ベースへ置き換え、Home / Session / Character Editor / Diff の共通判定へ寄せる | `docs/reviews/review-20260329-1438.md #6`。theme 視認性の横断 task |
 | P2 | 未着手 | GitHub | [#30](https://github.com/natumekazuki/WithMate/issues/30) | 送信後フッター自動折りたたみ | 送信後に Session Window 下段フッターを既定で自動で閉じ、必要ならチェックボックスで挙動を切り替えられるようにする | `#20` `#19` と同じ Session UI 密度改善クラスタ。`docs/design/desktop-ui.md` の Action Dock 仕様に寄せて扱う |
 | P2 | 未着手 | GitHub | [#19](https://github.com/natumekazuki/WithMate/issues/19) | Details 長文化対策 | Details が長くなるため、command 単位で折りたたみたい | `#21` と合わせて Details UI の情報密度を整理したい |
 | P2 | 未着手 | GitHub | [#18](https://github.com/natumekazuki/WithMate/issues/18) | フル HD 時の文字サイズ | Full HD では全体的に圧迫感があり文字が大きい | `docs/design/desktop-ui.md` の density 調整として扱う |
@@ -113,6 +117,24 @@
   - `Character Memory` は main session prompt ではなく、この系統で使う
   - UI 適用は `#5` の pending 解消後に判断する
 
+## UI/UX review follow-up整理
+
+1. キーボード操作 / アクセシビリティ
+   - `session-keyboard-a11y` ← review `#1 #2 #5 #11`
+2. レスポンシブ / 画面制約
+   - `#20 Session 入力エリア幅調整` ← review `#7` を統合
+   - `session-responsive-guardrails` ← review `#8 #9`
+3. フィードバック / 復帰
+   - `session-feedback-recovery` ← review `#3 #4 #10`
+4. テーマ / 視認性
+   - `theme-wcag-contrast` ← review `#6`
+5. UI review 起点の着手順
+   1. `session-keyboard-a11y`
+   2. `#20` の review `#7` 統合確認
+   3. `session-responsive-guardrails`
+   4. `session-feedback-recovery`
+   5. `theme-wcag-contrast`
+
 ## 推奨順
 
 1. `#24 モデル切り替えバグ`
@@ -121,19 +143,25 @@
 4. `#27 Memory 生成頻度見直し`
 5. `#16 セッション close 時の Memory 生成`
 6. `#21 実行中 Details 更新`
-7. `#22 MemoryGeneration 詳細表示`
-8. `#31 Memory 管理 UI`
-9. `#1 独り言の API 運用`
-10. `#25 独り言生成タイミング`
-11. `#10 Copilot custom slash command`
-12. `#17 tasks コマンドの SDK 調査と実装`
-13. `#33 Copilot elicitation API 対応`
-14. `#28 データ export / import`
-15. `#30 送信後フッター自動折りたたみ`
-16. `#15` と各種 polish
+7. `session-keyboard-a11y`
+8. `#20 Session 入力エリア幅調整`（review `#7` 統合確認）
+9. `session-responsive-guardrails`
+10. `#22 MemoryGeneration 詳細表示`
+11. `#31 Memory 管理 UI`
+12. `session-feedback-recovery`
+13. `theme-wcag-contrast`
+14. `#1 独り言の API 運用`
+15. `#25 独り言生成タイミング`
+16. `#10 Copilot custom slash command`
+17. `#17 tasks コマンドの SDK 調査と実装`
+18. `#33 Copilot elicitation API 対応`
+19. `#28 データ export / import`
+20. `#30 送信後フッター自動折りたたみ`
+21. `#15` と各種 polish
 
 ## 参照元
 
+- `docs/reviews/review-20260329-1438.md`
 - `docs/plans/20260322-copilot-capability-rollout/result.md`
 - `docs/plans/archive/2026/03/20260330-issue-backlog-sync/result.md`
 - `docs/plans/archive/2026/03/20260331-issue-backlog-sync/result.md`
