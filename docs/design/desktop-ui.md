@@ -154,6 +154,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `Action Dock`
   - compact / expanded の 2 状態を持つ
   - compact では draft preview 全体を reopen hit area にし、`Send / Cancel` だけを残す
+  - default では通常送信の直後に compact へ戻す
+  - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
   - retry banner、skill picker、`@path` 候補、blocked feedback がある時は expanded を維持する
 - work surface は外側 card を持たず、padding / gap を抑えて message viewport を優先する
 - message list は条件付き follow mode で動かす

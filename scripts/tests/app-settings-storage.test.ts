@@ -17,6 +17,7 @@ describe("AppSettingsStorage", () => {
       const updated = storage.updateSettings({
         systemPromptPrefix: "prefix",
         memoryGenerationEnabled: false,
+        autoCollapseActionDockOnSend: false,
         codingProviderSettings: {
           codex: {
             enabled: false,
@@ -73,6 +74,7 @@ describe("AppSettingsStorage", () => {
       storage.updateSettings({
         systemPromptPrefix: "custom-prefix",
         memoryGenerationEnabled: false,
+        autoCollapseActionDockOnSend: false,
         codingProviderSettings: {
           codex: {
             enabled: false,

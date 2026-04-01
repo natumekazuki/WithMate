@@ -70,6 +70,7 @@ describe("home-settings-view-model", () => {
   it("persisted settings は draft の system prompt を維持したまま resolved provider settings を埋め込む", () => {
     const draft = createDefaultAppSettings();
     draft.systemPromptPrefix = "prefix";
+    draft.autoCollapseActionDockOnSend = false;
     draft.memoryExtractionProviderSettings.codex = {
       model: "missing-model",
       reasoningEffort: "high",
@@ -80,6 +81,7 @@ describe("home-settings-view-model", () => {
     const persisted = buildPersistedAppSettingsFromRows(draft, rows);
 
     assert.equal(persisted.systemPromptPrefix, "prefix");
+    assert.equal(persisted.autoCollapseActionDockOnSend, false);
     assert.deepEqual(persisted.memoryExtractionProviderSettings.codex, {
       model: "gpt-5.4",
       reasoningEffort: "high",

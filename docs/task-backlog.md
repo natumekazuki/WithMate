@@ -37,7 +37,7 @@
 | P1 | 見送り | Local | `copilot-rollout` | slash command 吸収 | `/agent` `/model` など provider-native slash command を GUI state に吸収するかを整理する | `docs/plans/20260322-copilot-capability-rollout/result.md` の remaining。Issue [#10](https://github.com/natumekazuki/WithMate/issues/10) と接続 |
 | P2 | 未着手 | GitHub | [#33](https://github.com/natumekazuki/WithMate/issues/33) | handlePendingElicitation | Copilot SDK の対話型 elicitation callback を WithMate の approval / prompt flow へ取り込めるか検討する | SDK surface の調査と UI contract の見直しが必要。`docs/design/provider-sdk-pending-items.md` と接続 |
 | P2 | 未着手 | GitHub | [#31](https://github.com/natumekazuki/WithMate/issues/31) | Memory 管理機能 | Session / Project / Character Memory の閲覧と少なくとも delete をできるようにしたい | `#3` の永続化基盤は前提クリア。UI と削除ポリシー設計が必要 |
-| P2 | 未着手 | GitHub | [#30](https://github.com/natumekazuki/WithMate/issues/30) | 送信後フッター自動 close | Session Window の送信後に footer を自動で閉じる設定を追加したい | current Action Dock compact/expanded と相性が良く、UI polish 系として独立に切れる |
+| P2 | 完了 | GitHub | [#30](https://github.com/natumekazuki/WithMate/issues/30) | 送信後フッター自動 close | Session Window の通常送信後に `Action Dock` を自動で compact へ戻す設定を追加した | `AppSettings` に checkbox を追加し、default は ON とした。force-expanded 条件がある時は既存どおり expanded を維持する |
 | P2 | 完了 | GitHub | [#22](https://github.com/natumekazuki/WithMate/issues/22) | MemoryGeneration 詳細表示 | 右 pane の `MemoryGeneration` details から、更新された Session / Character Memory 内容を確認できるようにした | background activity details に updated field / entry 内容を含めるようにし、Memory tuning 時の観測性を上げた |
 | P2 | 未着手 | GitHub | [#10](https://github.com/natumekazuki/WithMate/issues/10) | Copilot custom slash command | GitHub Copilot SDK v1.0.10 の独自 slash command をどう使うか | まず `slash command 吸収` 方針を決めてから着手したい |
 | P2 | 未着手 | GitHub | [#17](https://github.com/natumekazuki/WithMate/issues/17) | `tasks` コマンドの SDK 調査と実装 | Copilot `/tasks` 相当の background task 取得が SDK から扱えるか、Codex parity も含めて調べる | `docs/design/coding-agent-capability-matrix.md` の provider capability 整理と接続する調査寄り task |
@@ -118,9 +118,8 @@
 4. `#1 独り言の API 運用`
 5. `#25 独り言生成タイミング`
 6. `#33 handlePendingElicitation`
-7. `#30 送信後フッター自動 close`
-8. `#28 データ export / import`
-9. `#15` と各種 polish
+7. `#28 データ export / import`
+8. `#15` と各種 polish
 
 ## 参照元
 

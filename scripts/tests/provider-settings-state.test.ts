@@ -13,6 +13,7 @@ describe("provider-settings-state", () => {
 
     assert.equal(DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD, 300000);
     assert.equal(settings.memoryExtractionProviderSettings.codex.outputTokensThreshold, 300000);
+    assert.equal(settings.autoCollapseActionDockOnSend, true);
   });
 
   it("memory extraction threshold は normalize で 1000000 に clamp する", () => {
@@ -27,5 +28,10 @@ describe("provider-settings-state", () => {
     });
 
     assert.equal(settings.memoryExtractionProviderSettings.codex.outputTokensThreshold, 1000000);
+  });
+
+  it("action dock auto close は normalize で boolean を保持し、未設定時は true に寄せる", () => {
+    assert.equal(normalizeAppSettings({ autoCollapseActionDockOnSend: false }).autoCollapseActionDockOnSend, false);
+    assert.equal(normalizeAppSettings({}).autoCollapseActionDockOnSend, true);
   });
 });

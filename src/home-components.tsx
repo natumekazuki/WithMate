@@ -25,6 +25,8 @@ import {
   SETTINGS_CHARACTER_REFLECTION_HELP,
   SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL,
   SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL,
+  SETTINGS_ACTION_DOCK_AUTO_CLOSE_HELP,
+  SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
   SETTINGS_MEMORY_EXTRACTION_HELP,
   SETTINGS_MEMORY_GENERATION_HELP,
   SETTINGS_MEMORY_GENERATION_LABEL,
@@ -53,6 +55,7 @@ export type HomeSettingsContentProps = {
   onCloseWindow: () => void;
   onChangeSystemPromptPrefix: (value: string) => void;
   onChangeMemoryGenerationEnabled: (enabled: boolean) => void;
+  onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
   onChangeProviderApiKey: (providerId: string, apiKey: string) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
@@ -89,6 +92,7 @@ export function HomeSettingsContent({
   onCloseWindow,
   onChangeSystemPromptPrefix,
   onChangeMemoryGenerationEnabled,
+  onChangeAutoCollapseActionDockOnSend,
   onChangeProviderEnabled,
   onChangeProviderApiKey,
   onChangeProviderSkillRootPath,
@@ -128,6 +132,21 @@ export function HomeSettingsContent({
                 onChange={(event) => onChangeSystemPromptPrefix(event.target.value)}
                 rows={8}
               />
+            </div>
+          </section>
+
+          <section className="settings-section-card">
+            <div className="settings-field">
+              <strong>Session Window</strong>
+              <label className="settings-provider-toggle-row settings-section-toggle">
+                <span className="settings-provider-name">{SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL}</span>
+                <input
+                  type="checkbox"
+                  checked={settingsDraft.autoCollapseActionDockOnSend}
+                  onChange={(event) => onChangeAutoCollapseActionDockOnSend(event.target.checked)}
+                />
+              </label>
+              <p className="settings-help">{SETTINGS_ACTION_DOCK_AUTO_CLOSE_HELP}</p>
             </div>
           </section>
 

@@ -2032,7 +2032,7 @@ export default function App() {
     setActiveWorkspacePathMatchIndex(workspacePathMatches.length > 0 ? 0 : -1);
   }, [workspacePathMatches]);
 
-  const sendMessage = async (messageText: string, options?: { clearDraft?: boolean }) => {
+  const sendMessage = async (messageText: string, options?: { clearDraft?: boolean; collapseActionDock?: boolean }) => {
     if (!withmateApi || !selectedSession) {
       return;
     }
@@ -2054,6 +2054,9 @@ export default function App() {
       throw new Error(sendability.primaryFeedback || "送信できない状態だよ。");
     }
 
+    if (options?.collapseActionDock) {
+      setIsActionDockPinnedExpanded(false);
+    }
     if (options?.clearDraft ?? true) {
       setDraft("");
     }
@@ -2085,7 +2088,10 @@ export default function App() {
     }
 
     try {
-      await sendMessage(draft, { clearDraft: true });
+      await sendMessage(draft, {
+        clearDraft: true,
+        collapseActionDock: appSettings.autoCollapseActionDockOnSend,
+      });
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "送信に失敗したよ。");
     }

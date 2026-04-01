@@ -51,6 +51,7 @@ import { buildHomeSettingsProjection } from "./home-settings-projection.js";
 import {
   updateCharacterReflectionModelDraft,
   updateCharacterReflectionReasoningEffortDraft,
+  updateAutoCollapseActionDockOnSend,
   updateCodingProviderApiKeyDraft,
   updateCodingProviderEnabledDraft,
   updateCodingProviderSkillRootPathDraft,
@@ -542,6 +543,9 @@ export default function HomeApp() {
       onChangeSystemPromptPrefix={(value) => setSettingsDraft((current) => updateSystemPromptPrefix(current, value))}
       onChangeMemoryGenerationEnabled={(enabled) =>
         setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled))
+      }
+      onChangeAutoCollapseActionDockOnSend={(enabled) =>
+        setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, enabled))
       }
       onChangeProviderEnabled={handleChangeProviderEnabled}
       onChangeProviderApiKey={handleChangeProviderApiKey}

@@ -29,6 +29,16 @@ export function updateMemoryGenerationEnabled(
   };
 }
 
+export function updateAutoCollapseActionDockOnSend(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return {
+    ...draft,
+    autoCollapseActionDockOnSend: enabled,
+  };
+}
+
 export function updateCodingProviderEnabledDraft(
   draft: AppSettings,
   providerId: string,

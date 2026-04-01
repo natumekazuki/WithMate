@@ -9,6 +9,7 @@ import {
 export type AppSettings = {
   systemPromptPrefix: string;
   memoryGenerationEnabled: boolean;
+  autoCollapseActionDockOnSend: boolean;
   codingProviderSettings: Record<string, ProviderAppSettings>;
   memoryExtractionProviderSettings: Record<string, MemoryExtractionProviderSettings>;
   characterReflectionProviderSettings: Record<string, CharacterReflectionProviderSettings>;
@@ -60,6 +61,7 @@ export function createDefaultAppSettings(): AppSettings {
   return {
     systemPromptPrefix: "",
     memoryGenerationEnabled: true,
+    autoCollapseActionDockOnSend: true,
     codingProviderSettings: {
       [DEFAULT_PROVIDER_ID]: {
         enabled: true,
@@ -207,6 +209,8 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     systemPromptPrefix: typeof candidate.systemPromptPrefix === "string" ? candidate.systemPromptPrefix : "",
     memoryGenerationEnabled:
       typeof candidate.memoryGenerationEnabled === "boolean" ? candidate.memoryGenerationEnabled : true,
+    autoCollapseActionDockOnSend:
+      typeof candidate.autoCollapseActionDockOnSend === "boolean" ? candidate.autoCollapseActionDockOnSend : true,
     codingProviderSettings,
     memoryExtractionProviderSettings,
     characterReflectionProviderSettings,

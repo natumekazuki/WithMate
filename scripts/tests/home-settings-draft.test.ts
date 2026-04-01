@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
+  updateAutoCollapseActionDockOnSend,
   updateCharacterReflectionModel,
   updateCharacterReflectionModelDraft,
   updateCharacterReflectionReasoningEffort,
@@ -130,7 +131,10 @@ describe("home-settings-draft", () => {
               updateCodingProviderSkillRootPathDraft(
                 updateCodingProviderApiKeyDraft(
                   updateCodingProviderEnabledDraft(
-                    updateMemoryGenerationEnabled(updateSystemPromptPrefix(draft, "prefix"), false),
+                    updateAutoCollapseActionDockOnSend(
+                      updateMemoryGenerationEnabled(updateSystemPromptPrefix(draft, "prefix"), false),
+                      false,
+                    ),
                     "codex",
                     false,
                   ),
@@ -160,10 +164,19 @@ describe("home-settings-draft", () => {
 
     assert.equal(next.systemPromptPrefix, "prefix");
     assert.equal(next.memoryGenerationEnabled, false);
+    assert.equal(next.autoCollapseActionDockOnSend, false);
     assert.equal(next.codingProviderSettings.codex.enabled, false);
     assert.equal(next.codingProviderSettings.codex.apiKey, "key");
     assert.equal(next.codingProviderSettings.codex.skillRootPath, "C:/skills");
     assert.equal(next.memoryExtractionProviderSettings.codex.outputTokensThreshold, 321);
     assert.equal(next.characterReflectionProviderSettings.codex.reasoningEffort, "medium");
+  });
+
+  it("action dock auto close を toggle できる", () => {
+    const draft = createDefaultAppSettings();
+
+    const next = updateAutoCollapseActionDockOnSend(draft, false);
+
+    assert.equal(next.autoCollapseActionDockOnSend, false);
   });
 });

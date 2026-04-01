@@ -7,6 +7,7 @@ import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from
 const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
 const SYSTEM_PROMPT_PREFIX_KEY = "system_prompt_prefix";
 const MEMORY_GENERATION_ENABLED_KEY = "memory_generation_enabled";
+const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
 const CHARACTER_REFLECTION_PROVIDER_SETTINGS_KEY = "character_reflection_provider_settings_json";
@@ -56,6 +57,17 @@ export class AppSettingsStorage {
         VALUES (?, ?, ?)
         ON CONFLICT(setting_key) DO NOTHING
       `)
+      .run(
+        AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY,
+        String(DEFAULT_APP_SETTINGS.autoCollapseActionDockOnSend),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
       .run(CODING_PROVIDER_SETTINGS_KEY, JSON.stringify(DEFAULT_APP_SETTINGS.codingProviderSettings), updatedAt);
     this.db
       .prepare(`
@@ -97,6 +109,10 @@ export class AppSettingsStorage {
       }
       if (row.setting_key === MEMORY_GENERATION_ENABLED_KEY) {
         settings.memoryGenerationEnabled = row.setting_value === "true";
+        continue;
+      }
+      if (row.setting_key === AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY) {
+        settings.autoCollapseActionDockOnSend = row.setting_value === "true";
         continue;
       }
     }
@@ -168,6 +184,19 @@ export class AppSettingsStorage {
             updated_at = excluded.updated_at
         `)
         .run(MEMORY_GENERATION_ENABLED_KEY, String(normalized.memoryGenerationEnabled), updatedAt);
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY,
+          String(normalized.autoCollapseActionDockOnSend),
+          updatedAt,
+        );
       this.db
         .prepare(`
           INSERT INTO app_settings (setting_key, setting_value, updated_at)
