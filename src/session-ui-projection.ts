@@ -21,6 +21,14 @@ export type LatestCommandView = {
   riskLabels: string[];
 };
 
+export type RunningDetailsEntry = {
+  id: string;
+  type: string;
+  status: string;
+  summary: string;
+  details?: string;
+};
+
 export type CopilotQuotaProjection = {
   snapshot: ProviderQuotaSnapshot | null;
   remainingPercentLabel: string;
@@ -126,6 +134,29 @@ export function buildLatestCommandView({
   }
 
   return null;
+}
+
+export function buildRunningDetailsEntries({
+  liveSteps,
+  latestLiveCommandStepId,
+  maxEntries = 3,
+}: {
+  liveSteps: LiveRunStep[];
+  latestLiveCommandStepId?: string | null;
+  maxEntries?: number;
+}): RunningDetailsEntry[] {
+  return liveSteps
+    .filter((step) => step.id !== latestLiveCommandStepId)
+    .filter((step) => step.status !== "in_progress" && step.status !== "pending")
+    .filter((step) => step.summary.trim().length > 0 || (step.details?.trim().length ?? 0) > 0)
+    .slice(-maxEntries)
+    .map((step) => ({
+      id: step.id,
+      type: step.type,
+      status: step.status,
+      summary: step.summary,
+      details: step.details,
+    }));
 }
 
 export function selectPrimaryQuotaSnapshot(telemetry: ProviderQuotaTelemetry | null): ProviderQuotaSnapshot | null {

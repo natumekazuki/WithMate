@@ -48,6 +48,7 @@ import {
   buildContextPaneProjection,
   buildCopilotQuotaProjection,
   buildLatestCommandView,
+  buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
   cycleContextPaneTab,
   type ContextPaneTabKey,
@@ -1724,6 +1725,13 @@ export default function App() {
         .map(({ step }) => step),
     [selectedSessionLiveRun?.steps],
   );
+  const runningDetailsEntries = useMemo(
+    () => buildRunningDetailsEntries({
+      liveSteps: orderedLiveRunSteps,
+      latestLiveCommandStepId: latestLiveCommandStep?.id ?? null,
+    }),
+    [latestLiveCommandStep?.id, orderedLiveRunSteps],
+  );
 
   const hasInProgressLiveRunStep = useMemo(
     () => orderedLiveRunSteps.some((step) => step.status === "in_progress"),
@@ -2882,6 +2890,7 @@ export default function App() {
                   <CharacterUpdateContextPane
                     activePaneTab={activeCharacterUpdatePaneTab}
                     latestCommandView={latestCommandView}
+                    runningDetailsEntries={runningDetailsEntries}
                     selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
                     memoryExtract={selectedCharacterUpdateMemoryExtract}
                     isLoadingMemoryExtract={isCharacterUpdateMemoryExtractLoading}
@@ -2894,6 +2903,7 @@ export default function App() {
                     activeContextPaneTab={activeContextPaneTab}
                     contextPaneProjection={contextPaneProjection}
                     latestCommandView={latestCommandView}
+                    runningDetailsEntries={runningDetailsEntries}
                     selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
                     isSelectedSessionRunning={isSelectedSessionRunning}
                     selectedSessionCharacter={selectedSessionCharacter}

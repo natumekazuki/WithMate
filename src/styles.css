@@ -3561,6 +3561,38 @@ button:disabled {
   white-space: pre-wrap;
 }
 
+.command-monitor-card-head.compact {
+  margin-bottom: 8px;
+}
+
+.live-run-command-summary.compact {
+  padding: 8px 10px;
+  margin-bottom: 0;
+}
+
+.command-monitor-confirmed-list {
+  display: grid;
+  gap: 12px;
+}
+
+.command-monitor-confirmed-item {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.command-monitor-confirmed-item:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.command-monitor-confirmed-summary {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .live-run-usage {
   justify-content: flex-end;
   color: var(--muted);

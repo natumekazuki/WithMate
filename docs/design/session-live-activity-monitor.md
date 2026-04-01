@@ -26,6 +26,9 @@
 - `Latest Command` は次の優先順で決める
   - 実行中なら `liveRun.steps` の最後の `command_execution`
   - 待機中なら直近 terminal Audit Log に含まれる最後の `command_execution`
+- run 中は `Latest Command` の下に、確定済み live step のうち直近数件だけを `Details` 面として補助表示してよい
+  - 対象は `completed / failed / canceled` の step
+  - 直近の in-progress command と full timeline は常設しない
 - `Memory生成` は専用 background activity state を main process から受ける
 - `独り言` は background activity と recent monologue stream を表示する
 - それ以外の step list や詳細な実況履歴は right pane 常設から外し、確定後は artifact timeline / Audit Log を見る
@@ -64,6 +67,9 @@ flowchart TB
   - source label (`live` / `last run`)
   - 危険度の rough badge (`DELETE / WRITE / NETWORK`)
   - 必要時だけ開く `details`
+- run 中に確定した step があれば、同じ面の下段に `CONFIRMED Details` として数件だけ補助表示してよい
+  - `command_execution` は command block を維持する
+  - `mcp_tool_call` / `todo_list` / `file_change` / `reasoning` などは summary + optional `details` を出す
 - `liveRun.errorMessage` がある時は card 内の alert として併記する
 
 #### MemoryGeneration
@@ -112,11 +118,13 @@ flowchart TB
 - Renderer 側では `session-ui-projection` helper が `liveRun.steps` と terminal Audit Log から最新 command だけを抽出する
 - `Memory生成` と `独り言` は session 単位の background activity state を main process から IPC event で受ける
 - Copilot quota summary と active tab の badge / tone / 自動切り替えも `session-ui-projection` helper に寄せる
-- command 以外の live step は right pane へ出さない
+- in-progress の command 以外は right pane へ主表示しない
+- 確定済み step だけは補助表示してよいが、常設 timeline へは戻さない
 
 ## Non-Goals
 
 - full step timeline の常設表示
+- 確定済み step を無制限に並べること
 - monologue 専用 plane の独立 provider 化
 - command の危険度判定を完全自動化すること
 - Audit Log の構造変更

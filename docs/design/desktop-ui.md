@@ -173,6 +173,9 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `独り言` は background state と recent monologue を表示する
 - right pane の empty / idle copy は説明過多にせず、使えば分かる最小表現を優先する
 - `Latest Command` には raw command、status、source、rough risk badge、必要時だけ開く `details` を出す
+- 実行中に確定した live step があれば、`Latest Command` の下に `CONFIRMED Details` として直近数件だけ補助表示してよい
+  - 直近の in-progress command とは分ける
+  - full timeline には戻さず、summary + optional `details` に留める
 - `Memory生成` には background activity の status、summary、必要時だけ開く `details` を出す
 - provider が `Copilot` の時だけ、`Latest Command` の下に `Premium Requests` の薄い strip を常設し、残量だけを即読できるようにする
 - `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない

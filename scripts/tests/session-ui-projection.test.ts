@@ -10,6 +10,7 @@ import {
   buildContextPaneProjection,
   buildCopilotQuotaProjection,
   buildLatestCommandView,
+  buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
   cycleContextPaneTab,
   resolveAutoContextPaneTab,
@@ -127,6 +128,107 @@ describe("session-ui-projection", () => {
     assert.equal(projection.latestCommandSourceCopy, "LAST RUN");
     assert.equal(projection.memoryGenerationToneClassName, "running");
     assert.equal(projection.characterMemoryGenerationToneClassName, "completed");
+  });
+
+  it("running details は確定済み step だけを末尾から拾い、最新 command は重複表示しない", () => {
+    const entries = buildRunningDetailsEntries({
+      liveSteps: [
+        {
+          id: "cmd-old",
+          type: "command_execution",
+          summary: "npm test",
+          details: "ok",
+          status: "completed",
+        },
+        {
+          id: "tool-1",
+          type: "mcp_tool_call",
+          summary: "github/search",
+          details: "{\"count\":1}",
+          status: "completed",
+        },
+        {
+          id: "cmd-live",
+          type: "command_execution",
+          summary: "npm run build",
+          details: "building",
+          status: "in_progress",
+        },
+      ],
+      latestLiveCommandStepId: "cmd-live",
+    });
+
+    assert.deepEqual(entries, [
+      {
+        id: "cmd-old",
+        type: "command_execution",
+        status: "completed",
+        summary: "npm test",
+        details: "ok",
+      },
+      {
+        id: "tool-1",
+        type: "mcp_tool_call",
+        status: "completed",
+        summary: "github/search",
+        details: "{\"count\":1}",
+      },
+    ]);
+  });
+
+  it("running details は pending / in_progress を除外し、件数を絞る", () => {
+    const entries = buildRunningDetailsEntries({
+      liveSteps: [
+        {
+          id: "1",
+          type: "reasoning",
+          summary: "first",
+          status: "completed",
+        },
+        {
+          id: "2",
+          type: "reasoning",
+          summary: "second",
+          status: "completed",
+        },
+        {
+          id: "3",
+          type: "reasoning",
+          summary: "third",
+          status: "completed",
+        },
+        {
+          id: "4",
+          type: "reasoning",
+          summary: "fourth",
+          status: "completed",
+        },
+        {
+          id: "5",
+          type: "mcp_tool_call",
+          summary: "pending",
+          status: "pending",
+        },
+      ],
+      maxEntries: 2,
+    });
+
+    assert.deepEqual(entries, [
+      {
+        id: "3",
+        type: "reasoning",
+        status: "completed",
+        summary: "third",
+        details: undefined,
+      },
+      {
+        id: "4",
+        type: "reasoning",
+        status: "completed",
+        summary: "fourth",
+        details: undefined,
+      },
+    ]);
   });
 
   it("SessionContextTelemetry projection は表示用の文字列をまとめる", () => {

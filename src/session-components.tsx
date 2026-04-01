@@ -13,7 +13,14 @@ import type {
 } from "./app-state.js";
 import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
 import { MessageRichText } from "./MessageRichText.js";
-import { approvalModeLabel, CharacterAvatar, fileKindLabel, liveRunStepStatusLabel, operationTypeLabel } from "./ui-utils.js";
+import {
+  approvalModeLabel,
+  CharacterAvatar,
+  fileKindLabel,
+  liveRunStepDetailsLabel,
+  liveRunStepStatusLabel,
+  operationTypeLabel,
+} from "./ui-utils.js";
 import {
   contextPaneTabLabel,
   liveRunStepToneClassName,
@@ -21,6 +28,7 @@ import {
   type ContextPaneProjection,
   type ContextPaneTabKey,
   type LatestCommandView,
+  type RunningDetailsEntry,
   type SessionContextTelemetryProjection,
 } from "./session-ui-projection.js";
 import type { CharacterUpdateMemoryExtract } from "./character-update-state.js";
@@ -429,6 +437,7 @@ export type SessionContextPaneProps = {
   activeContextPaneTab: ContextPaneTabKey;
   contextPaneProjection: ContextPaneProjection;
   latestCommandView: LatestCommandView | null;
+  runningDetailsEntries: RunningDetailsEntry[];
   selectedSessionLiveRunErrorMessage: string;
   isSelectedSessionRunning: boolean;
   selectedSessionCharacter: { name: string; iconPath: string } | null;
@@ -499,6 +508,7 @@ export class SessionPaneErrorBoundary extends Component<
 export type CharacterUpdateContextPaneProps = {
   activePaneTab: "latest-command" | "memory-extract";
   latestCommandView: LatestCommandView | null;
+  runningDetailsEntries: RunningDetailsEntry[];
   selectedSessionLiveRunErrorMessage: string;
   memoryExtract: CharacterUpdateMemoryExtract | null;
   isLoadingMemoryExtract: boolean;
@@ -511,6 +521,7 @@ export function SessionContextPane({
   activeContextPaneTab,
   contextPaneProjection,
   latestCommandView,
+  runningDetailsEntries,
   selectedSessionLiveRunErrorMessage,
   isSelectedSessionRunning,
   selectedSessionCharacter,
@@ -542,6 +553,9 @@ export function SessionContextPane({
           latestCommandView?.status ?? "",
           latestCommandView?.summary ?? "",
           latestCommandView?.details ?? "",
+          runningDetailsEntries
+            .map((entry) => `${entry.id}:${entry.type}:${entry.status}:${entry.summary}:${entry.details ?? ""}`)
+            .join("\u001f"),
           selectedSessionLiveRunErrorMessage,
         ].join("|");
       case "memory-generation":
@@ -558,6 +572,7 @@ export function SessionContextPane({
   }, [
     activeContextPaneTab,
     latestCommandView,
+    runningDetailsEntries,
     memoryGenerationActivities,
     selectedMonologueEntries,
     selectedSessionLiveRunErrorMessage,
@@ -654,6 +669,48 @@ export function SessionContextPane({
                   ) : null}
                 </div>
               )
+            ) : null}
+
+            {activeContextPaneTab === "latest-command" && runningDetailsEntries.length > 0 ? (
+              <div className="command-monitor-card">
+                <div className="command-monitor-card-head">
+                  <div className="command-monitor-meta">
+                    <span className="live-run-step-type">Details</span>
+                    <span className="command-monitor-source">CONFIRMED</span>
+                  </div>
+                </div>
+
+                <div className="command-monitor-confirmed-list">
+                  {runningDetailsEntries.map((entry) => (
+                    <article key={entry.id} className="command-monitor-confirmed-item">
+                      <div className="command-monitor-card-head compact">
+                        <div className="command-monitor-meta">
+                          <span className={`live-run-step-status ${liveRunStepToneClassName(entry.status)}`}>
+                            {liveRunStepStatusLabel(entry.status)}
+                          </span>
+                          <span className="live-run-step-type">{operationTypeLabel(entry.type)}</span>
+                        </div>
+                      </div>
+
+                      {entry.type === "command_execution" ? (
+                        <div className="live-run-command-summary compact" aria-label="確定した command">
+                          <span className="live-run-command-prefix" aria-hidden="true">$</span>
+                          <code className="live-run-command-text">{entry.summary}</code>
+                        </div>
+                      ) : (
+                        <p className="command-monitor-confirmed-summary">{entry.summary}</p>
+                      )}
+
+                      {entry.details ? (
+                        <details className="command-monitor-details live-run-step-details">
+                          <summary>{liveRunStepDetailsLabel(entry.type)}</summary>
+                          <pre>{entry.details}</pre>
+                        </details>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              </div>
             ) : null}
 
             {activeContextPaneTab === "memory-generation" ? (
@@ -792,6 +849,7 @@ export function SessionContextPane({
 export function CharacterUpdateContextPane({
   activePaneTab,
   latestCommandView,
+  runningDetailsEntries,
   selectedSessionLiveRunErrorMessage,
   memoryExtract,
   isLoadingMemoryExtract,
@@ -806,6 +864,9 @@ export function CharacterUpdateContextPane({
         latestCommandView?.status ?? "",
         latestCommandView?.summary ?? "",
         latestCommandView?.details ?? "",
+        runningDetailsEntries
+          .map((entry) => `${entry.id}:${entry.type}:${entry.status}:${entry.summary}:${entry.details ?? ""}`)
+          .join("\u001f"),
         selectedSessionLiveRunErrorMessage,
       ].join("|");
     }
@@ -816,7 +877,7 @@ export function CharacterUpdateContextPane({
       memoryExtract?.text ?? "",
       isLoadingMemoryExtract ? "loading" : "idle",
     ].join("|");
-  }, [activePaneTab, isLoadingMemoryExtract, latestCommandView, memoryExtract, selectedSessionLiveRunErrorMessage]);
+  }, [activePaneTab, isLoadingMemoryExtract, latestCommandView, memoryExtract, runningDetailsEntries, selectedSessionLiveRunErrorMessage]);
 
   useLayoutEffect(() => {
     const contentNode = contentRef.current;
@@ -912,6 +973,48 @@ export function CharacterUpdateContextPane({
                 />
               </div>
             )}
+
+            {activePaneTab === "latest-command" && runningDetailsEntries.length > 0 ? (
+              <div className="command-monitor-card">
+                <div className="command-monitor-card-head">
+                  <div className="command-monitor-meta">
+                    <span className="live-run-step-type">Details</span>
+                    <span className="command-monitor-source">CONFIRMED</span>
+                  </div>
+                </div>
+
+                <div className="command-monitor-confirmed-list">
+                  {runningDetailsEntries.map((entry) => (
+                    <article key={entry.id} className="command-monitor-confirmed-item">
+                      <div className="command-monitor-card-head compact">
+                        <div className="command-monitor-meta">
+                          <span className={`live-run-step-status ${liveRunStepToneClassName(entry.status)}`}>
+                            {liveRunStepStatusLabel(entry.status)}
+                          </span>
+                          <span className="live-run-step-type">{operationTypeLabel(entry.type)}</span>
+                        </div>
+                      </div>
+
+                      {entry.type === "command_execution" ? (
+                        <div className="live-run-command-summary compact" aria-label="確定した command">
+                          <span className="live-run-command-prefix" aria-hidden="true">$</span>
+                          <code className="live-run-command-text">{entry.summary}</code>
+                        </div>
+                      ) : (
+                        <p className="command-monitor-confirmed-summary">{entry.summary}</p>
+                      )}
+
+                      {entry.details ? (
+                        <details className="command-monitor-details live-run-step-details">
+                          <summary>{liveRunStepDetailsLabel(entry.type)}</summary>
+                          <pre>{entry.details}</pre>
+                        </details>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       </section>
