@@ -10,3 +10,4 @@
 - `docs/design/memory-architecture.md`、`docs/design/database-schema.md`、`docs/task-backlog.md` を current 実装へ同期した
 - GitHub issue `#27` に 2026-04-01 の対応コメントを追加した
 - `node --import tsx scripts/tests/provider-settings-state.test.ts`、`scripts/tests/home-settings-view-model.test.ts`、`scripts/tests/home-settings-draft.test.ts`、`scripts/tests/session-memory-extraction.test.ts` と `npm run build` の成功を確認した
+- コミット `49887bf` `fix(memory): raise extraction threshold default` を作成し、default threshold 引き上げ・normalize 上限拡張・関連 docs/tests 同期を保存した

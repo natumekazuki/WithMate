@@ -2,7 +2,7 @@
 
 ## Status
 
-- 進行中
+- 完了
 
 ## Entries
 
