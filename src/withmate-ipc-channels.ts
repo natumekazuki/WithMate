@@ -43,6 +43,7 @@ export const WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL = "withmate:get-provi
 export const WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL = "withmate:get-session-context-telemetry";
 export const WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL = "withmate:get-session-background-activity";
 export const WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL = "withmate:resolve-live-approval";
+export const WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL = "withmate:resolve-live-elicitation";
 export const WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL = "withmate:list-open-session-window-ids";
 export const WITHMATE_SESSIONS_CHANGED_EVENT = "withmate:sessions-changed";
 export const WITHMATE_CHARACTERS_CHANGED_EVENT = "withmate:characters-changed";

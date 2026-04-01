@@ -4,6 +4,7 @@ import type {
   AuditLogEntry,
   CharacterProfile,
   LiveApprovalDecision,
+  LiveElicitationResponse,
   LiveSessionRunState,
   ProviderQuotaTelemetry,
   RunSessionTurnRequest,
@@ -59,6 +60,7 @@ import {
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
+  WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
@@ -102,6 +104,7 @@ export type MainIpcRegistrationDeps = {
     kind: SessionBackgroundActivityKind,
   ): SessionBackgroundActivityState | null;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void;
+  resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): void;
   getCharacter(characterId: string): Promise<CharacterProfile | null>;
   getCharacterUpdateWorkspace(characterId: string): Promise<CharacterUpdateWorkspace | null>;
   extractCharacterUpdateMemory(characterId: string): Promise<CharacterUpdateMemoryExtract>;
@@ -176,6 +179,7 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "getSessionContextTelemetry"
   | "getSessionBackgroundActivity"
   | "resolveLiveApproval"
+  | "resolveLiveElicitation"
   | "createSession"
   | "updateSession"
   | "deleteSession"
@@ -325,6 +329,12 @@ function registerSessionRuntimeHandlers(ipcMain: IpcMain, deps: MainIpcSessionRu
     WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
     (_event, sessionId: string, requestId: string, decision: LiveApprovalDecision) => {
       deps.resolveLiveApproval(sessionId, requestId, decision);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
+    (_event, sessionId: string, requestId: string, response: LiveElicitationResponse) => {
+      deps.resolveLiveElicitation(sessionId, requestId, response);
     },
   );
   ipcMain.handle(WITHMATE_CREATE_SESSION_CHANNEL, (_event, input: CreateSessionInput) => deps.createSession(input));

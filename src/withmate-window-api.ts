@@ -9,6 +9,7 @@ import type {
   DiscoveredSkill,
   DiffPreviewPayload,
   LiveApprovalDecision,
+  LiveElicitationResponse,
   LiveSessionRunState,
   ProviderQuotaTelemetry,
   SessionBackgroundActivityKind,
@@ -56,6 +57,7 @@ export type WithMateWindowSessionApi = {
   listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
   getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): Promise<void>;
+  resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): Promise<void>;
 };
 
 export type WithMateWindowObservabilityApi = {

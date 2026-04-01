@@ -13,6 +13,7 @@ function createLiveRunState(): LiveSessionRunState {
     usage: null,
     errorMessage: "",
     approvalRequest: null,
+    elicitationRequest: null,
   };
 }
 

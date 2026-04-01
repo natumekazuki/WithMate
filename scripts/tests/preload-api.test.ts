@@ -90,6 +90,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "previewComposerInput",
     "resetAppDatabase",
     "resolveLiveApproval",
+    "resolveLiveElicitation",
     "runSessionTurn",
     "searchWorkspaceFiles",
     "subscribeAppSettings",

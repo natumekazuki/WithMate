@@ -41,6 +41,7 @@ test("SessionObservabilityService „ÅØ live run / telemetry / background state „Ç
     usage: null,
     errorMessage: "",
     approvalRequest: null,
+    elicitationRequest: null,
   };
   const quota: ProviderQuotaTelemetry = {
     provider: "copilot",

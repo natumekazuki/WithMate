@@ -3074,6 +3074,96 @@ button:disabled {
   opacity: 0.52;
 }
 
+.live-elicitation-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(59, 130, 246, 0.18);
+  border-radius: 16px;
+  background: rgba(240, 247, 255, 0.96);
+}
+
+.session-page .live-elicitation-card {
+  border-color: rgba(125, 211, 252, 0.18);
+  background: rgba(20, 39, 68, 0.56);
+}
+
+.live-elicitation-source {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.live-elicitation-url {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.live-elicitation-url code {
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.08);
+  font: 0.78rem/1.5 "IBM Plex Mono", monospace;
+  word-break: break-all;
+}
+
+.live-elicitation-form {
+  display: grid;
+  gap: 12px;
+}
+
+.live-elicitation-field {
+  display: grid;
+  gap: 8px;
+}
+
+.live-elicitation-label {
+  font-weight: 600;
+}
+
+.live-elicitation-description {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.live-elicitation-field input,
+.live-elicitation-field select,
+.live-elicitation-field textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
+  font: inherit;
+}
+
+.session-page .live-elicitation-field input,
+.session-page .live-elicitation-field select,
+.session-page .live-elicitation-field textarea {
+  background: rgba(15, 23, 42, 0.58);
+  color: #f8fafc;
+}
+
+.live-elicitation-field textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.live-elicitation-checkbox,
+.live-elicitation-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-elicitation-options {
+  display: grid;
+  gap: 8px;
+}
+
 .activity-monitor-shell {
   display: grid;
   gap: 12px;

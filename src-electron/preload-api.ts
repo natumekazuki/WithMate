@@ -59,6 +59,7 @@ import {
   WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
+  WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SESSIONS_CHANGED_EVENT,
@@ -200,6 +201,9 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     resolveLiveApproval(sessionId, requestId, decision) {
       return ipcRenderer.invoke(WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL, sessionId, requestId, decision);
+    },
+    resolveLiveElicitation(sessionId, requestId, response) {
+      return ipcRenderer.invoke(WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL, sessionId, requestId, response);
     },
   };
 }

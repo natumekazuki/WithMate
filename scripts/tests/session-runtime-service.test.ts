@@ -139,6 +139,7 @@ describe("SessionRuntimeService", () => {
           usage: null,
           errorMessage: "",
           approvalRequest: null,
+          elicitationRequest: null,
         });
         return {
           threadId: "thread-1",
@@ -211,6 +212,9 @@ describe("SessionRuntimeService", () => {
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
         return "approve";
       },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
       setProviderQuotaTelemetry(_telemetry: ProviderQuotaTelemetry) {},
       setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
       invalidateProviderSessionThread() {},
@@ -224,6 +228,7 @@ describe("SessionRuntimeService", () => {
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
       currentTimestampLabel,
     });
 
@@ -331,6 +336,9 @@ describe("SessionRuntimeService", () => {
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
         return "deny";
       },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread(providerId, sessionId) {
@@ -342,6 +350,7 @@ describe("SessionRuntimeService", () => {
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
       currentTimestampLabel,
     });
 
@@ -418,6 +427,9 @@ describe("SessionRuntimeService", () => {
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
         return "approve";
       },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
@@ -427,6 +439,7 @@ describe("SessionRuntimeService", () => {
       clearWorkspaceFileIndex() {},
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
       currentTimestampLabel,
     });
 
@@ -536,6 +549,9 @@ describe("SessionRuntimeService", () => {
       async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
         return "approve";
       },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
@@ -547,6 +563,7 @@ describe("SessionRuntimeService", () => {
       resolvePendingApprovalRequest(sessionId, decision) {
         approvalResolutions.push({ sessionId, decision });
       },
+      resolvePendingElicitationRequest() {},
       currentTimestampLabel,
     });
 

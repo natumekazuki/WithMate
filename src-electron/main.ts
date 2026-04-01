@@ -11,6 +11,8 @@ import {
   type DiscoveredSkill,
   type LiveApprovalDecision,
   type LiveApprovalRequest,
+  type LiveElicitationRequest,
+  type LiveElicitationResponse,
   type LiveSessionRunState,
   type ProviderQuotaTelemetry,
   type SessionBackgroundActivityKind,
@@ -60,6 +62,7 @@ import { MemoryOrchestrationService } from "./memory-orchestration-service.js";
 import { SettingsCatalogService } from "./settings-catalog-service.js";
 import { SessionObservabilityService } from "./session-observability-service.js";
 import { SessionApprovalService } from "./session-approval-service.js";
+import { SessionElicitationService } from "./session-elicitation-service.js";
 import { WindowBroadcastService } from "./window-broadcast-service.js";
 import { WindowDialogService } from "./window-dialog-service.js";
 import { SessionMemorySupportService } from "./session-memory-support-service.js";
@@ -128,6 +131,7 @@ let memoryOrchestrationService: MemoryOrchestrationService | null = null;
 let settingsCatalogService: SettingsCatalogService | null = null;
 let sessionObservabilityService: SessionObservabilityService | null = null;
 let sessionApprovalService: SessionApprovalService | null = null;
+let sessionElicitationService: SessionElicitationService | null = null;
 let auditLogService: AuditLogService | null = null;
 let sessionMemorySupportService: SessionMemorySupportService | null = null;
 let characterRuntimeService: CharacterRuntimeService | null = null;
@@ -259,6 +263,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           createAppSettingsStorage: (nextDbPath) => new AppSettingsStorage(nextDbPath),
           onBeforeClose: () => {
             sessionApprovalService?.reset();
+            sessionElicitationService?.reset();
             sessionObservabilityService?.dispose();
           },
           async removeFile(filePath) {
@@ -356,6 +361,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getSessionContextTelemetry: (sessionId) => getSessionContextTelemetry(sessionId),
                 getSessionBackgroundActivity: (sessionId, kind) => getSessionBackgroundActivity(sessionId, kind),
                 resolveLiveApproval,
+                resolveLiveElicitation,
                 createSession: (input) => requireMainSessionCommandFacade().createSession(input),
                 updateSession: (session) => requireMainSessionCommandFacade().updateSession(session),
                 deleteSession: (sessionId) => requireMainSessionCommandFacade().deleteSession(sessionId),
@@ -644,6 +650,8 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       getLiveSessionRun,
       waitForApprovalDecision: (sessionId, request, signal) =>
         waitForLiveApprovalDecision(sessionId, request, signal),
+      waitForElicitationResponse: (sessionId, request, signal) =>
+        waitForLiveElicitationResponse(sessionId, request, signal),
       setProviderQuotaTelemetry: (telemetry) => {
         setProviderQuotaTelemetry(telemetry.provider, telemetry);
       },
@@ -665,6 +673,13 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         const requestId = liveRun?.approvalRequest?.requestId;
         if (requestId) {
           requireSessionApprovalService().resolveLiveApproval(sessionId, requestId, decision);
+        }
+      },
+      resolvePendingElicitationRequest: (sessionId, response) => {
+        const liveRun = getLiveSessionRun(sessionId);
+        const requestId = liveRun?.elicitationRequest?.requestId;
+        if (requestId) {
+          requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response);
         }
       },
       currentTimestampLabel,
@@ -854,6 +869,17 @@ function requireSessionApprovalService(): SessionApprovalService {
   return sessionApprovalService;
 }
 
+function requireSessionElicitationService(): SessionElicitationService {
+  if (!sessionElicitationService) {
+    sessionElicitationService = new SessionElicitationService({
+      updateLiveSessionRun: (sessionId, recipe) =>
+        requireSessionObservabilityService().updateLiveSessionRun(sessionId, recipe),
+    });
+  }
+
+  return sessionElicitationService;
+}
+
 function requireSessionMemoryStorage(): SessionMemoryStorage {
   if (!sessionMemoryStorage) {
     throw new Error("session memory storage が初期化されていないよ。");
@@ -936,6 +962,7 @@ function closePersistentStores(): void {
   settingsCatalogService = null;
   sessionObservabilityService = null;
   sessionApprovalService = null;
+  sessionElicitationService = null;
   sessionMemorySupportService = null;
   characterRuntimeService = null;
   characterUpdateWorkspaceService = null;
@@ -970,6 +997,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   settingsCatalogService = null;
   sessionObservabilityService = null;
   sessionApprovalService = null;
+  sessionElicitationService = null;
   sessionMemorySupportService = null;
   characterRuntimeService = null;
   characterUpdateWorkspaceService = null;
@@ -1179,6 +1207,22 @@ function waitForLiveApprovalDecision(
   signal: AbortSignal,
 ): Promise<LiveApprovalDecision> {
   return requireSessionApprovalService().waitForLiveApprovalDecision(sessionId, request, signal);
+}
+
+function resolveLiveElicitation(
+  sessionId: string,
+  requestId: string,
+  response: LiveElicitationResponse,
+): void {
+  requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response);
+}
+
+function waitForLiveElicitationResponse(
+  sessionId: string,
+  request: LiveElicitationRequest,
+  signal: AbortSignal,
+): Promise<LiveElicitationResponse> {
+  return requireSessionElicitationService().waitForLiveElicitationResponse(sessionId, request, signal);
 }
 
 async function importModelCatalogFromFile(targetWindow?: BrowserWindow | null): Promise<ModelCatalogSnapshot | null> {

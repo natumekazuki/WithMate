@@ -631,6 +631,7 @@ async function emitLiveState(
     usage,
     errorMessage,
     approvalRequest: null,
+    elicitationRequest: null,
   });
 }
 

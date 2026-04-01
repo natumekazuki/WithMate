@@ -165,6 +165,9 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - 追従停止中は `新着あり` / `読み返し中` の最小 banner を表示し、`末尾へ移動` で復帰できる
 - pending 中の live activity / streaming response
 - pending bubble は会話本文の面として扱い、`assistantText` と run indicator を表示する
+- pending bubble には provider-native pending item を差し込める
+  - `approvalRequest`: `今回だけ許可 / 拒否`
+  - `elicitationRequest`: form または URL completion の `送信 / 拒否 / 閉じる`
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
 - right pane は `Latest Command / Memory生成 / 独り言` の tab host とする
 - `character-update` variant では right pane を `LatestCommand / MemoryExtract` の 2 面に切り替える

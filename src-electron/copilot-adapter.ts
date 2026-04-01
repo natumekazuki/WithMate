@@ -18,6 +18,9 @@ import type {
   AuditLogUsage,
   AuditTransportPayload,
   LiveApprovalRequest,
+  LiveElicitationField,
+  LiveElicitationRequest,
+  LiveElicitationResponse,
   LiveRunStep,
   ProviderQuotaSnapshot,
   ProviderQuotaTelemetry,
@@ -1103,6 +1106,7 @@ async function emitLiveState(
     usage,
     errorMessage,
     approvalRequest: null,
+    elicitationRequest: null,
   });
 }
 
@@ -1221,6 +1225,213 @@ async function createOrResumeCopilotSession(
 
     return client.createSession(config);
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const items = value.filter((item): item is string => typeof item === "string");
+  return items.length === value.length ? items : undefined;
+}
+
+function buildLiveElicitationChoiceOptions(
+  options: string[] | undefined,
+  optionNames: string[] | undefined,
+): Array<{ value: string; label: string }> {
+  return (options ?? []).map((value, index) => ({
+    value,
+    label: optionNames?.[index]?.trim() || value,
+  }));
+}
+
+export function buildLiveElicitationFieldFromCopilotSchema(
+  name: string,
+  schema: unknown,
+  required: boolean,
+): LiveElicitationField | null {
+  if (!isRecord(schema)) {
+    return null;
+  }
+
+  const title = typeof schema.title === "string" && schema.title.trim() ? schema.title.trim() : name;
+  const description = typeof schema.description === "string" && schema.description.trim()
+    ? schema.description.trim()
+    : undefined;
+
+  if (schema.type === "string") {
+    const enumValues = toStringArray(schema.enum);
+    if (enumValues) {
+      return {
+        type: "select",
+        name,
+        title,
+        description,
+        required,
+        options: buildLiveElicitationChoiceOptions(enumValues, toStringArray(schema.enumNames)),
+        defaultValue: typeof schema.default === "string" ? schema.default : undefined,
+      };
+    }
+
+    if (Array.isArray(schema.oneOf)) {
+      const options = schema.oneOf
+        .filter((item): item is { const: string; title: string } =>
+          isRecord(item) && typeof item.const === "string" && typeof item.title === "string")
+        .map((item) => ({ value: item.const, label: item.title }));
+      if (options.length > 0) {
+        return {
+          type: "select",
+          name,
+          title,
+          description,
+          required,
+          options,
+          defaultValue: typeof schema.default === "string" ? schema.default : undefined,
+        };
+      }
+    }
+
+    return {
+      type: "text",
+      name,
+      title,
+      description,
+      required,
+      defaultValue: typeof schema.default === "string" ? schema.default : undefined,
+      minLength: typeof schema.minLength === "number" ? schema.minLength : undefined,
+      maxLength: typeof schema.maxLength === "number" ? schema.maxLength : undefined,
+      format:
+        schema.format === "email" || schema.format === "uri" || schema.format === "date" || schema.format === "date-time"
+          ? schema.format
+          : undefined,
+    };
+  }
+
+  if (schema.type === "array" && isRecord(schema.items)) {
+    const enumValues = toStringArray(schema.items.enum);
+    if (enumValues) {
+      return {
+        type: "multi-select",
+        name,
+        title,
+        description,
+        required,
+        options: buildLiveElicitationChoiceOptions(enumValues, undefined),
+        defaultValue: toStringArray(schema.default),
+        minItems: typeof schema.minItems === "number" ? schema.minItems : undefined,
+        maxItems: typeof schema.maxItems === "number" ? schema.maxItems : undefined,
+      };
+    }
+
+    if (Array.isArray(schema.items.anyOf)) {
+      const options = schema.items.anyOf
+        .filter((item): item is { const: string; title: string } =>
+          isRecord(item) && typeof item.const === "string" && typeof item.title === "string")
+        .map((item) => ({ value: item.const, label: item.title }));
+      if (options.length > 0) {
+        return {
+          type: "multi-select",
+          name,
+          title,
+          description,
+          required,
+          options,
+          defaultValue: toStringArray(schema.default),
+          minItems: typeof schema.minItems === "number" ? schema.minItems : undefined,
+          maxItems: typeof schema.maxItems === "number" ? schema.maxItems : undefined,
+        };
+      }
+    }
+  }
+
+  if (schema.type === "boolean") {
+    return {
+      type: "boolean",
+      name,
+      title,
+      description,
+      required,
+      defaultValue: typeof schema.default === "boolean" ? schema.default : undefined,
+    };
+  }
+
+  if (schema.type === "number" || schema.type === "integer") {
+    return {
+      type: "number",
+      numberKind: schema.type,
+      name,
+      title,
+      description,
+      required,
+      defaultValue: typeof schema.default === "number" ? schema.default : undefined,
+      minimum: typeof schema.minimum === "number" ? schema.minimum : undefined,
+      maximum: typeof schema.maximum === "number" ? schema.maximum : undefined,
+    };
+  }
+
+  return null;
+}
+
+export function buildLiveElicitationRequestFromCopilotEvent(
+  providerId: string,
+  event: Extract<SessionEvent, { type: "elicitation.requested" }>,
+): LiveElicitationRequest {
+  const requiredNames = new Set(Array.isArray(event.data.requestedSchema?.required) ? event.data.requestedSchema.required : []);
+  const schemaProperties = isRecord(event.data.requestedSchema?.properties)
+    ? event.data.requestedSchema.properties
+    : {};
+  const fields = Object.entries(schemaProperties)
+    .map(([name, schema]) => buildLiveElicitationFieldFromCopilotSchema(name, schema, requiredNames.has(name)))
+    .filter((field): field is LiveElicitationField => field !== null);
+
+  return {
+    requestId: event.data.requestId,
+    provider: providerId,
+    mode: event.data.mode === "url" ? "url" : "form",
+    message: event.data.message,
+    source: event.data.elicitationSource,
+    fields,
+    url: typeof event.data.url === "string" ? event.data.url : undefined,
+  };
+}
+
+async function respondToCopilotElicitation(
+  session: CopilotSession,
+  requestId: string,
+  response: LiveElicitationResponse,
+): Promise<void> {
+  const rpc = session.rpc as unknown as {
+    ui: {
+      elicitation: (params: Record<string, unknown>) => Promise<unknown>;
+    };
+  };
+  const payloads: Record<string, unknown>[] = [
+    {
+      requestId,
+      result: response,
+    },
+    {
+      requestId,
+      action: response.action,
+      ...(response.content ? { content: response.content } : {}),
+    },
+  ];
+  let lastError: unknown = null;
+  for (const payload of payloads) {
+    try {
+      await rpc.ui.elicitation(payload);
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("elicitation response の送信に失敗したよ。");
 }
 
 export async function resolveCopilotSessionForSettings(args: {
@@ -1571,6 +1782,22 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         onProviderQuotaTelemetry: input.onProviderQuotaTelemetry,
         onSessionContextTelemetry: input.onSessionContextTelemetry,
       });
+      if (event.type === "elicitation.requested" && input.onElicitationRequest) {
+        const request = buildLiveElicitationRequestFromCopilotEvent(input.providerCatalog.id, event);
+        void Promise.resolve(input.onElicitationRequest(request))
+          .then((response) => respondToCopilotElicitation(session, request.requestId, response))
+          .catch((error: unknown) => {
+            logCopilotRuntime("elicitation handling failed", {
+              provider: input.providerCatalog.id,
+              model: input.session.model,
+              workspacePath: input.session.workspacePath,
+              threadId: session.sessionId,
+              requestId: request.requestId,
+              message: error instanceof Error ? error.message : String(error),
+            });
+            void session.abort().catch(() => undefined);
+          });
+      }
       void scheduleLiveState();
     });
 

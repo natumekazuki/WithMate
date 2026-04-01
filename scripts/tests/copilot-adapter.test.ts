@@ -8,6 +8,8 @@ import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import {
   applyCopilotAssistantEvent,
+  buildLiveElicitationFieldFromCopilotSchema,
+  buildLiveElicitationRequestFromCopilotEvent,
   buildCopilotSessionSettings,
   buildCopilotMessageAttachments,
   buildCopilotProviderQuotaTelemetry,
@@ -563,6 +565,135 @@ describe("CopilotAdapter env", () => {
 
     assert.equal(shouldRetryCopilotTurn(emptyPartial), true);
     assert.equal(shouldRetryCopilotTurn(withAssistantText), false);
+  });
+
+  it("Copilot elicitation schema の enum / anyOf / number を live field へ正規化する", () => {
+    assert.deepEqual(
+      buildLiveElicitationFieldFromCopilotSchema("environment", {
+        type: "string",
+        title: "Environment",
+        enum: ["dev", "prod"],
+        enumNames: ["Development", "Production"],
+        default: "dev",
+      }, true),
+      {
+        type: "select",
+        name: "environment",
+        title: "Environment",
+        description: undefined,
+        required: true,
+        options: [
+          { value: "dev", label: "Development" },
+          { value: "prod", label: "Production" },
+        ],
+        defaultValue: "dev",
+      },
+    );
+    assert.deepEqual(
+      buildLiveElicitationFieldFromCopilotSchema("targets", {
+        type: "array",
+        title: "Targets",
+        minItems: 1,
+        items: {
+          anyOf: [
+            { const: "web", title: "Web" },
+            { const: "desktop", title: "Desktop" },
+          ],
+        },
+      }, false),
+      {
+        type: "multi-select",
+        name: "targets",
+        title: "Targets",
+        description: undefined,
+        required: false,
+        options: [
+          { value: "web", label: "Web" },
+          { value: "desktop", label: "Desktop" },
+        ],
+        defaultValue: undefined,
+        minItems: 1,
+        maxItems: undefined,
+      },
+    );
+    assert.deepEqual(
+      buildLiveElicitationFieldFromCopilotSchema("retries", {
+        type: "integer",
+        title: "Retries",
+        minimum: 0,
+        maximum: 3,
+        default: 1,
+      }, false),
+      {
+        type: "number",
+        numberKind: "integer",
+        name: "retries",
+        title: "Retries",
+        description: undefined,
+        required: false,
+        defaultValue: 1,
+        minimum: 0,
+        maximum: 3,
+      },
+    );
+  });
+
+  it("elicitation.requested event を live elicitation request へ変換する", () => {
+    const request = buildLiveElicitationRequestFromCopilotEvent("copilot", {
+      type: "elicitation.requested",
+      data: {
+        requestId: "elic-1",
+        elicitationSource: "server-a",
+        message: "入力してね",
+        mode: "form",
+        requestedSchema: {
+          type: "object",
+          properties: {
+            projectName: {
+              type: "string",
+              title: "Project Name",
+              minLength: 3,
+            },
+            confirm: {
+              type: "boolean",
+              title: "Confirm",
+              default: true,
+            },
+          },
+          required: ["projectName"],
+        },
+      },
+    } as never);
+
+    assert.deepEqual(request, {
+      requestId: "elic-1",
+      provider: "copilot",
+      mode: "form",
+      message: "入力してね",
+      source: "server-a",
+      fields: [
+        {
+          type: "text",
+          name: "projectName",
+          title: "Project Name",
+          description: undefined,
+          required: true,
+          defaultValue: undefined,
+          minLength: 3,
+          maxLength: undefined,
+          format: undefined,
+        },
+        {
+          type: "boolean",
+          name: "confirm",
+          title: "Confirm",
+          description: undefined,
+          required: false,
+          defaultValue: true,
+        },
+      ],
+      url: undefined,
+    });
   });
 });
 

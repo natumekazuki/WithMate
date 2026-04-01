@@ -10,6 +10,8 @@ import type {
   ComposerAttachment,
   LiveApprovalDecision,
   LiveApprovalRequest,
+  LiveElicitationRequest,
+  LiveElicitationResponse,
   LiveSessionRunState,
   MessageArtifact,
   ProjectMemoryEntry,
@@ -42,6 +44,7 @@ export type RunSessionTurnInput = {
   attachments: ComposerAttachment[];
   signal?: AbortSignal;
   onApprovalRequest?: RunSessionTurnApprovalRequestHandler;
+  onElicitationRequest?: RunSessionTurnElicitationRequestHandler;
   onProviderQuotaTelemetry?: RunSessionTurnProviderQuotaTelemetryHandler;
   onSessionContextTelemetry?: RunSessionTurnSessionContextTelemetryHandler;
 };
@@ -51,6 +54,10 @@ export type RunSessionTurnProgressHandler = (state: LiveSessionRunState) => void
 export type RunSessionTurnApprovalRequestHandler = (
   request: LiveApprovalRequest,
 ) => Promise<LiveApprovalDecision> | LiveApprovalDecision;
+
+export type RunSessionTurnElicitationRequestHandler = (
+  request: LiveElicitationRequest,
+) => Promise<LiveElicitationResponse> | LiveElicitationResponse;
 
 export type RunSessionTurnProviderQuotaTelemetryHandler = (
   telemetry: ProviderQuotaTelemetry,

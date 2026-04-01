@@ -104,6 +104,79 @@ export type LiveApprovalRequest = {
   decisionMode: LiveApprovalDecisionMode;
 };
 
+export type LiveElicitationAction = "accept" | "decline" | "cancel";
+
+export type LiveElicitationValue = string | number | boolean | string[];
+
+export type LiveElicitationResponse = {
+  action: LiveElicitationAction;
+  content?: Record<string, LiveElicitationValue>;
+};
+
+export type LiveElicitationChoiceOption = {
+  value: string;
+  label: string;
+};
+
+type LiveElicitationFieldBase = {
+  name: string;
+  title: string;
+  description?: string;
+  required: boolean;
+};
+
+export type LiveElicitationSelectField = LiveElicitationFieldBase & {
+  type: "select";
+  options: LiveElicitationChoiceOption[];
+  defaultValue?: string;
+};
+
+export type LiveElicitationMultiSelectField = LiveElicitationFieldBase & {
+  type: "multi-select";
+  options: LiveElicitationChoiceOption[];
+  defaultValue?: string[];
+  minItems?: number;
+  maxItems?: number;
+};
+
+export type LiveElicitationBooleanField = LiveElicitationFieldBase & {
+  type: "boolean";
+  defaultValue?: boolean;
+};
+
+export type LiveElicitationTextField = LiveElicitationFieldBase & {
+  type: "text";
+  defaultValue?: string;
+  minLength?: number;
+  maxLength?: number;
+  format?: "email" | "uri" | "date" | "date-time";
+};
+
+export type LiveElicitationNumberField = LiveElicitationFieldBase & {
+  type: "number";
+  numberKind: "number" | "integer";
+  defaultValue?: number;
+  minimum?: number;
+  maximum?: number;
+};
+
+export type LiveElicitationField =
+  | LiveElicitationSelectField
+  | LiveElicitationMultiSelectField
+  | LiveElicitationBooleanField
+  | LiveElicitationTextField
+  | LiveElicitationNumberField;
+
+export type LiveElicitationRequest = {
+  requestId: string;
+  provider: string;
+  mode: "form" | "url";
+  message: string;
+  source?: string;
+  fields: LiveElicitationField[];
+  url?: string;
+};
+
 export type LiveSessionRunState = {
   sessionId: string;
   threadId: string;
@@ -112,6 +185,7 @@ export type LiveSessionRunState = {
   usage: AuditLogUsage | null;
   errorMessage: string;
   approvalRequest: LiveApprovalRequest | null;
+  elicitationRequest: LiveElicitationRequest | null;
 };
 
 export type ProviderQuotaSnapshot = {

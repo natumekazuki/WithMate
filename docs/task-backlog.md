@@ -35,7 +35,7 @@
 | P1 | 完了 | GitHub | [#12](https://github.com/natumekazuki/WithMate/issues/12) | 実行中セッション監視 window | Home から切り出した常時前面 monitor window を実装済み | `docs/plans/archive/2026/03/20260325-session-monitor-window/result.md` |
 | P1 | 完了 | GitHub | [#11](https://github.com/natumekazuki/WithMate/issues/11) | レートリミット可視化 | Copilot 先行で premium requests と context usage を UI へ出した | plan: `docs/plans/archive/2026/03/20260325-copilot-rate-limit-visibility/`、design: `docs/design/provider-usage-telemetry.md` |
 | P1 | 見送り | Local | `copilot-rollout` | slash command 吸収 | `/agent` `/model` など provider-native slash command を GUI state に吸収するかを整理する | `docs/plans/20260322-copilot-capability-rollout/result.md` の remaining。Issue [#10](https://github.com/natumekazuki/WithMate/issues/10) と接続 |
-| P2 | 未着手 | GitHub | [#33](https://github.com/natumekazuki/WithMate/issues/33) | handlePendingElicitation | Copilot SDK の対話型 elicitation callback を WithMate の approval / prompt flow へ取り込めるか検討する | SDK surface の調査と UI contract の見直しが必要。`docs/design/provider-sdk-pending-items.md` と接続 |
+| P2 | 完了 | GitHub | [#33](https://github.com/natumekazuki/WithMate/issues/33) | handlePendingElicitation | Copilot SDK の対話型 elicitation callback を Session pending bubble の form / url UI へ取り込み、`accept / decline / cancel` を返せるようにした | `approvalRequest` とは別に `elicitationRequest` を live state へ追加し、main / preload / renderer / docs を同期した。SDK pending の current 状態は `docs/design/provider-sdk-pending-items.md` を正本にする |
 | P2 | 未着手 | GitHub | [#31](https://github.com/natumekazuki/WithMate/issues/31) | Memory 管理機能 | Session / Project / Character Memory の閲覧と少なくとも delete をできるようにしたい | `#3` の永続化基盤は前提クリア。UI と削除ポリシー設計が必要 |
 | P2 | 完了 | GitHub | [#30](https://github.com/natumekazuki/WithMate/issues/30) | 送信後フッター自動 close | Session Window の通常送信後に `Action Dock` を自動で compact へ戻す設定を追加した | `AppSettings` に checkbox を追加し、default は ON とした。force-expanded 条件がある時は既存どおり expanded を維持する |
 | P2 | 完了 | GitHub | [#22](https://github.com/natumekazuki/WithMate/issues/22) | MemoryGeneration 詳細表示 | 右 pane の `MemoryGeneration` details から、更新された Session / Character Memory 内容を確認できるようにした | background activity details に updated field / entry 内容を含めるようにし、Memory tuning 時の観測性を上げた |
@@ -117,9 +117,8 @@
 3. `#31 Memory 管理機能`
 4. `#1 独り言の API 運用`
 5. `#25 独り言生成タイミング`
-6. `#33 handlePendingElicitation`
-7. `#28 データ export / import`
-8. `#15` と各種 polish
+6. `#28 データ export / import`
+7. `#15` と各種 polish
 
 ## 参照元
 

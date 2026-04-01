@@ -76,6 +76,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         getSessionContextTelemetry: () => null,
         getSessionBackgroundActivity: () => null,
         resolveLiveApproval: () => {},
+        resolveLiveElicitation: () => {},
         createSession: () => ({}) as never,
         updateSession: () => ({}) as never,
         deleteSession: () => {},

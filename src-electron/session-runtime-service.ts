@@ -4,6 +4,8 @@ import {
   type ComposerPreview,
   type LiveApprovalDecision,
   type LiveApprovalRequest,
+  type LiveElicitationRequest,
+  type LiveElicitationResponse,
   type LiveSessionRunState,
   type ProviderQuotaTelemetry,
   type ProjectMemoryEntry,
@@ -56,6 +58,11 @@ export type SessionRuntimeServiceDeps = {
     request: LiveApprovalRequest,
     signal: AbortSignal,
   ): Promise<LiveApprovalDecision> | LiveApprovalDecision;
+  waitForElicitationResponse(
+    sessionId: string,
+    request: LiveElicitationRequest,
+    signal: AbortSignal,
+  ): Promise<LiveElicitationResponse> | LiveElicitationResponse;
   setProviderQuotaTelemetry(telemetry: ProviderQuotaTelemetry): void;
   setSessionContextTelemetry(telemetry: SessionContextTelemetry): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
@@ -65,6 +72,7 @@ export type SessionRuntimeServiceDeps = {
   clearWorkspaceFileIndex(workspacePath: string): void;
   broadcastLiveSessionRun(sessionId: string): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
+  resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
   currentTimestampLabel?: () => string;
 };
 
@@ -97,6 +105,7 @@ export class SessionRuntimeService {
   reset(): void {
     for (const sessionId of this.inFlightSessionRuns) {
       this.deps.resolvePendingApprovalRequest(sessionId, "deny");
+      this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
       this.sessionRunControllers.get(sessionId)?.abort();
     }
     this.inFlightSessionRuns.clear();
@@ -105,6 +114,7 @@ export class SessionRuntimeService {
 
   cancelRun(sessionId: string): void {
     this.deps.resolvePendingApprovalRequest(sessionId, "deny");
+    this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
     const controller = this.sessionRunControllers.get(sessionId);
     if (!controller) {
       return;
@@ -179,6 +189,7 @@ export class SessionRuntimeService {
       usage: null,
       errorMessage: "",
       approvalRequest: null,
+      elicitationRequest: null,
     });
 
     const runningAuditLog = this.deps.createAuditLog({
@@ -212,6 +223,8 @@ export class SessionRuntimeService {
         signal: runAbortController.signal,
         onApprovalRequest: (approvalRequest) =>
           this.deps.waitForApprovalDecision(sessionId, approvalRequest, runAbortController.signal),
+        onElicitationRequest: (elicitationRequest) =>
+          this.deps.waitForElicitationResponse(sessionId, elicitationRequest, runAbortController.signal),
         onProviderQuotaTelemetry: (telemetry) => {
           this.deps.setProviderQuotaTelemetry(telemetry);
         },
@@ -222,6 +235,7 @@ export class SessionRuntimeService {
         this.deps.setLiveSessionRun(sessionId, {
           ...state,
           approvalRequest: this.deps.getLiveSessionRun(sessionId)?.approvalRequest ?? null,
+          elicitationRequest: this.deps.getLiveSessionRun(sessionId)?.elicitationRequest ?? null,
         });
       });
       const completedAt = new Date().toISOString();
@@ -345,6 +359,7 @@ export class SessionRuntimeService {
         this.deps.scheduleProviderQuotaTelemetryRefresh(runningSession.provider, [0, 3000, 10000]);
       }
       this.deps.resolvePendingApprovalRequest(sessionId, "deny");
+      this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
       this.inFlightSessionRuns.delete(sessionId);
       this.sessionRunControllers.delete(sessionId);
       this.deps.setLiveSessionRun(sessionId, null);

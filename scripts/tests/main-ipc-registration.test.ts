@@ -46,6 +46,7 @@ import {
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
+  WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
@@ -123,6 +124,9 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     getSessionBackgroundActivity: () => null,
     resolveLiveApproval: () => {
       calls.push("resolveApproval");
+    },
+    resolveLiveElicitation: () => {
+      calls.push("resolveElicitation");
     },
     async getCharacter() {
       return null;
@@ -227,6 +231,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     getSessionContextTelemetry: () => null,
     getSessionBackgroundActivity: () => null,
     resolveLiveApproval() {},
+    resolveLiveElicitation() {},
     async getCharacter() { return null; },
     async getCharacterUpdateWorkspace() { return null; },
     async extractCharacterUpdateMemory() { return { characterId: "c-1", generatedAt: "", entryCount: 0, text: "" }; },
@@ -282,6 +287,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
     WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
     WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
+    WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
     WITHMATE_CREATE_SESSION_CHANNEL,
     WITHMATE_UPDATE_SESSION_CHANNEL,
     WITHMATE_DELETE_SESSION_CHANNEL,

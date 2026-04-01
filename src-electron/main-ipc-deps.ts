@@ -4,6 +4,7 @@ import type {
   AuditLogEntry,
   CharacterProfile,
   LiveApprovalDecision,
+  LiveElicitationResponse,
   LiveSessionRunState,
   ProviderQuotaTelemetry,
   RunSessionTurnRequest,
@@ -73,6 +74,7 @@ export type MainIpcSessionRuntimeDepsArgs = {
     kind: SessionBackgroundActivityKind,
   ): SessionBackgroundActivityState | null;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void;
+  resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): void;
   createSession(input: CreateSessionInput): Session;
   updateSession(session: Session): Session;
   deleteSession(sessionId: string): void;
@@ -151,6 +153,7 @@ export function createMainIpcRegistrationDeps(
     getSessionContextTelemetry: args.sessionRuntime.getSessionContextTelemetry,
     getSessionBackgroundActivity: args.sessionRuntime.getSessionBackgroundActivity,
     resolveLiveApproval: args.sessionRuntime.resolveLiveApproval,
+    resolveLiveElicitation: args.sessionRuntime.resolveLiveElicitation,
     createSession: args.sessionRuntime.createSession,
     updateSession: args.sessionRuntime.updateSession,
     deleteSession: args.sessionRuntime.deleteSession,

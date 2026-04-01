@@ -9,6 +9,8 @@ import {
   type DiscoveredSkill,
   getSessionIdFromLocation,
   type LiveApprovalRequest,
+  type LiveElicitationRequest,
+  type LiveElicitationResponse,
   type LiveSessionRunState,
   type ProviderQuotaTelemetry,
   type RunSessionTurnRequest,
@@ -589,6 +591,14 @@ function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): strin
           liveRun.approvalRequest.warning ?? "",
         ].join("\u001d")
       : "",
+    liveRun.elicitationRequest
+      ? [
+          liveRun.elicitationRequest.requestId,
+          liveRun.elicitationRequest.mode,
+          liveRun.elicitationRequest.message,
+          liveRun.elicitationRequest.url ?? "",
+        ].join("\u001d")
+      : "",
     liveRun.usage
       ? [liveRun.usage.inputTokens, liveRun.usage.cachedInputTokens, liveRun.usage.outputTokens].join(":")
       : "",
@@ -705,6 +715,7 @@ export default function App() {
   const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
   const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
+  const [elicitationActionRequestId, setElicitationActionRequestId] = useState<string | null>(null);
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
   const [isActionDockPinnedExpanded, setIsActionDockPinnedExpanded] = useState(false);
   const messageListRef = useRef<HTMLDivElement | null>(null);
@@ -1177,10 +1188,18 @@ export default function App() {
               selectedSessionLiveRun.approvalRequest.warning ?? "",
             ].join("\u001d")
           : "",
+        selectedSessionLiveRun?.elicitationRequest
+          ? [
+              selectedSessionLiveRun.elicitationRequest.requestId,
+              selectedSessionLiveRun.elicitationRequest.message,
+              selectedSessionLiveRun.elicitationRequest.url ?? "",
+            ].join("\u001d")
+          : "",
       ].join("\u001b"),
     [
       selectedSession?.runState,
       selectedSessionLiveRun?.approvalRequest,
+      selectedSessionLiveRun?.elicitationRequest,
       selectedSessionLiveRun?.assistantText,
       selectedSessionLiveRun?.errorMessage,
     ],
@@ -1223,6 +1242,7 @@ export default function App() {
     setSessionContextTelemetryState({ ownerSessionId: selectedSessionId, telemetry: null });
     setIsRetryDraftReplacePending(false);
     setApprovalActionRequestId(null);
+    setElicitationActionRequestId(null);
     setIsHeaderExpanded(false);
     setIsActionDockPinnedExpanded(false);
   }, [selectedSession?.provider, selectedSessionId]);
@@ -1230,6 +1250,10 @@ export default function App() {
   useEffect(() => {
     setApprovalActionRequestId(null);
   }, [selectedSessionLiveRun?.approvalRequest?.requestId]);
+
+  useEffect(() => {
+    setElicitationActionRequestId(null);
+  }, [selectedSessionLiveRun?.elicitationRequest?.requestId]);
 
   useEffect(() => {
     if (!draft.trim()) {
@@ -1740,7 +1764,9 @@ export default function App() {
 
   const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
   const liveApprovalRequest = selectedSessionLiveRun?.approvalRequest ?? null;
+  const liveElicitationRequest = selectedSessionLiveRun?.elicitationRequest ?? null;
   const isApprovalRequestPending = !!liveApprovalRequest;
+  const isElicitationRequestPending = !!liveElicitationRequest;
   const hasLiveRunAssistantText = liveRunAssistantText.length > 0;
   const pendingIndicatorCharacterName = useMemo(() => {
     const candidateNames = [selectedSessionCharacter?.name, resolvedCharacter?.name]
@@ -2120,6 +2146,23 @@ export default function App() {
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "承認要求の処理に失敗したよ。");
       setApprovalActionRequestId(null);
+    }
+  };
+
+  const handleResolveLiveElicitation = async (
+    request: LiveElicitationRequest,
+    response: LiveElicitationResponse,
+  ) => {
+    if (!withmateApi || !selectedSession || elicitationActionRequestId === request.requestId) {
+      return;
+    }
+
+    setElicitationActionRequestId(request.requestId);
+    try {
+      await withmateApi.resolveLiveElicitation(selectedSession.id, request.requestId, response);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "入力要求の処理に失敗したよ。");
+      setElicitationActionRequestId(null);
     }
   };
 
@@ -2714,11 +2757,14 @@ export default function App() {
     setIsContextRailResizing(true);
   };
 
-  const pendingRunIndicatorText = isApprovalRequestPending
+  const pendingRunIndicatorText = isApprovalRequestPending || isElicitationRequestPending
     ? renderCharacterSessionCopy(
       selectedSessionCopy.pendingApproval,
       pendingIndicatorCharacterName,
-      `pending:approval:${selectedSession?.id ?? ""}:${liveApprovalRequest?.requestId ?? ""}`,
+      [
+        `pending:approval:${selectedSession?.id ?? ""}:${liveApprovalRequest?.requestId ?? ""}`,
+        `pending:elicitation:${selectedSession?.id ?? ""}:${liveElicitationRequest?.requestId ?? ""}`,
+      ].join("|"),
     )
     : hasInProgressLiveRunStep
       ? renderCharacterSessionCopy(
@@ -2857,6 +2903,8 @@ export default function App() {
                 pendingRunIndicatorText={pendingRunIndicatorText}
                 liveApprovalRequest={liveApprovalRequest}
                 approvalActionRequestId={approvalActionRequestId}
+                liveElicitationRequest={liveElicitationRequest}
+                elicitationActionRequestId={elicitationActionRequestId}
                 liveRunAssistantText={liveRunAssistantText}
                 hasLiveRunAssistantText={hasLiveRunAssistantText}
                 liveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
@@ -2871,6 +2919,7 @@ export default function App() {
                     themeColors: selectedSession.characterThemeColors,
                   })}
                 onResolveLiveApproval={(request, decision) => void handleResolveLiveApproval(request, decision)}
+                onResolveLiveElicitation={(request, response) => void handleResolveLiveElicitation(request, response)}
                 onJumpToBottom={handleJumpToMessageListBottom}
                 onOpenPath={handleOpenInlinePath}
                 getChangedFilesEmptyText={(artifactKey, artifactHasSnapshotRisk) =>
