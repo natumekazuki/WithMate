@@ -197,6 +197,13 @@ export function isRecoverableCopilotConnectionErrorMessage(message: string): boo
     || normalized.includes("cli server exited with code 0");
 }
 
+function isRecoverableCopilotMissingSessionErrorMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes("sessionnotfound")
+    || normalized.includes("session not found")
+    || normalized.includes("thread not found");
+}
+
 function hasMeaningfulPartialResult(partialResult: RunSessionTurnResult): boolean {
   return partialResult.assistantText.trim().length > 0
     || partialResult.operations.length > 0
@@ -1200,9 +1207,20 @@ async function createOrResumeCopilotSession(
   threadId: string | null,
   config: SessionConfig,
 ): Promise<CopilotSession> {
-  return threadId?.trim()
-    ? await client.resumeSession(threadId, config)
-    : await client.createSession(config);
+  if (!threadId?.trim()) {
+    return client.createSession(config);
+  }
+
+  try {
+    return await client.resumeSession(threadId, config);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isRecoverableCopilotMissingSessionErrorMessage(message)) {
+      throw error;
+    }
+
+    return client.createSession(config);
+  }
 }
 
 export async function resolveCopilotSessionForSettings(args: {

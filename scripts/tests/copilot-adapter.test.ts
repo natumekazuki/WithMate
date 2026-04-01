@@ -719,4 +719,71 @@ describe("CopilotAdapter session settings", () => {
     assert.equal(resumeCalls[0]?.config.model, "gpt-4.1-mini");
     assert.equal(resumeCalls[0]?.config.reasoningEffort, "low");
   });
+
+  it("threadId が失効して SessionNotFound が返った時は createSession に fallback する", async () => {
+    const input = createRunSessionInput({
+      customAgentName: "reviewer",
+      threadId: "thread-stale",
+    });
+    const settings = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    const resumeCalls: string[] = [];
+    const createCalls: unknown[] = [];
+    const createdSession = {
+      disconnect: async () => undefined,
+    } as never;
+
+    const result = await resolveCopilotSessionForSettings({
+      cached: undefined,
+      nextSettingsKey: settings.settingsKey,
+      threadId: input.session.threadId,
+      config: settings.config,
+      client: {
+        resumeSession: async (threadId: string) => {
+          resumeCalls.push(threadId);
+          throw new Error("SessionNotFound: session not found");
+        },
+        createSession: async (config: unknown) => {
+          createCalls.push(config);
+          return createdSession;
+        },
+      },
+    });
+
+    assert.equal(result.session, createdSession);
+    assert.equal(result.reusedCached, false);
+    assert.deepEqual(resumeCalls, ["thread-stale"]);
+    assert.equal(createCalls.length, 1);
+  });
+
+  it("threadId があっても unrelated error は createSession へ握りつぶさない", async () => {
+    const input = createRunSessionInput({
+      customAgentName: "reviewer",
+      threadId: "thread-stale",
+    });
+    const settings = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    const createCalls: unknown[] = [];
+
+    await assert.rejects(
+      resolveCopilotSessionForSettings({
+        cached: undefined,
+        nextSettingsKey: settings.settingsKey,
+        threadId: input.session.threadId,
+        config: settings.config,
+        client: {
+          resumeSession: async () => {
+            throw new Error("Permission denied");
+          },
+          createSession: async (config: unknown) => {
+            createCalls.push(config);
+            return {
+              disconnect: async () => undefined,
+            } as never;
+          },
+        },
+      }),
+      /Permission denied/,
+    );
+
+    assert.equal(createCalls.length, 0);
+  });
 });
