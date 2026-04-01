@@ -755,6 +755,79 @@ describe("CopilotAdapter session settings", () => {
     assert.equal(createCalls.length, 1);
   });
 
+  it("threadId がある model 変更後でも stale session なら createSession に fallback する", async () => {
+    const previousInput = createRunSessionInput({
+      customAgentName: "reviewer",
+      threadId: "thread-1",
+      model: "gpt-4.1",
+      reasoningEffort: "high",
+    });
+    const nextInput = createRunSessionInput({
+      customAgentName: "reviewer",
+      threadId: "thread-1",
+      model: "gpt-4.1-mini",
+      reasoningEffort: "low",
+    });
+    const previousSettings = buildCopilotSessionSettings(previousInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    const nextSettings = buildCopilotSessionSettings(nextInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    const cachedDisconnectCalls: string[] = [];
+    const resumeCalls: Array<{ threadId: string; model?: string; reasoningEffort?: string }> = [];
+    const createCalls: Array<{ model?: string; reasoningEffort?: string }> = [];
+    const createdSession = {
+      disconnect: async () => undefined,
+    } as never;
+
+    assert.notEqual(previousSettings.settingsKey, nextSettings.settingsKey);
+
+    const result = await resolveCopilotSessionForSettings({
+      cached: {
+        session: {
+          disconnect: async () => {
+            cachedDisconnectCalls.push("disconnect");
+          },
+        } as never,
+        settingsKey: previousSettings.settingsKey,
+      },
+      nextSettingsKey: nextSettings.settingsKey,
+      threadId: nextInput.session.threadId,
+      config: nextSettings.config,
+      client: {
+        resumeSession: async (threadId: string, config: { model?: string; reasoningEffort?: string }) => {
+          resumeCalls.push({
+            threadId,
+            model: config.model,
+            reasoningEffort: config.reasoningEffort,
+          });
+          throw new Error("SessionNotFound: session not found");
+        },
+        createSession: async (config: { model?: string; reasoningEffort?: string }) => {
+          createCalls.push({
+            model: config.model,
+            reasoningEffort: config.reasoningEffort,
+          });
+          return createdSession;
+        },
+      },
+    });
+
+    assert.equal(result.session, createdSession);
+    assert.equal(result.reusedCached, false);
+    assert.deepEqual(cachedDisconnectCalls, ["disconnect"]);
+    assert.deepEqual(resumeCalls, [
+      {
+        threadId: "thread-1",
+        model: "gpt-4.1-mini",
+        reasoningEffort: "low",
+      },
+    ]);
+    assert.deepEqual(createCalls, [
+      {
+        model: "gpt-4.1-mini",
+        reasoningEffort: "low",
+      },
+    ]);
+  });
+
   it("threadId があっても unrelated error は createSession へ握りつぶさない", async () => {
     const input = createRunSessionInput({
       customAgentName: "reviewer",
