@@ -8,3 +8,4 @@
 - `docs/design/session-live-activity-monitor.md`、`docs/design/desktop-ui.md`、`docs/manual-test-checklist.md`、`docs/task-backlog.md` を current 実装へ同期した
 - GitHub issue `#22` に 2026-04-01 の対応コメントを追加した
 - `node --import tsx scripts/tests/memory-orchestration-service.test.ts` と `npm run build` の成功を確認した
+- コミット `c4b1516` `feat(session): show memory generation updates` を作成し、実装・docs・tests・plan を保存した
