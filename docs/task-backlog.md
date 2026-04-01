@@ -23,7 +23,7 @@
 
 | Priority | 実装状況 | Source | ID | テーマ | 概要 | 依存 / メモ |
 | --- | --- | --- | --- | --- | --- | --- |
-| P1 | 未着手 | GitHub | [#21](https://github.com/natumekazuki/WithMate/issues/21) | 実行中 Details 更新 | turn 実行中でも確定した Details を順次 right pane へ出したい | `docs/design/session-run-lifecycle.md` と current Details UI を見ながら partial update の扱いを決める |
+| P1 | 完了 | GitHub | [#21](https://github.com/natumekazuki/WithMate/issues/21) | 実行中 Details 更新 | turn 実行中でも確定した Details を right pane の `CONFIRMED Details` として順次出せるようにした | `fe63d5e` で `Latest Command` 配下に completed / failed / canceled step の補助表示を追加済み |
 | P1 | 完了 | GitHub | [#24](https://github.com/natumekazuki/WithMate/issues/24) | モデル切り替えバグ | model 変更時の `session not found` は continuity 維持と stale session recovery の組み合わせで再発防止済み | `5021984` で model / reasoning 変更時の `threadId` continuity を維持し、`3776858` で失効 session の fallback recovery を追加した。さらに `2026-04-01` に `scripts/tests/copilot-adapter.test.ts` へ model 変更後の stale session fallback 回帰テストを追加。GitHub issue は open のままなので close 判断だけ残る |
 | P1 | 進行中 | GitHub | [#3](https://github.com/natumekazuki/WithMate/issues/3) | Memory 永続化と共有 | Project / Session / Character Memory を永続化し、抽出 plane と retrieval の基盤を作る | `Session Memory` の SQLite 基盤と extraction trigger、`Project Memory` の persistence foundation、`Session -> Project` の rule-based 昇格保存、coding plane への lexical retrieval 注入、日本語 query 対応、`lastUsedAt` 更新、`minimum score / user coverage / duplicate suppression / 時間減衰`、`Character Memory` の保存基盤、`character reflection cycle`、monologue の session `stream` 追記、Character Memory retrieval / ranking まで完了。次は trigger policy と monologue plane の整理。 |
 | P1 | 完了 | GitHub | [#27](https://github.com/natumekazuki/WithMate/issues/27) | Memory 生成頻度見直し | 初期値 `200` は高頻度すぎたため、default threshold を `300_000` へ引き上げて実運用寄りへ調整した | normalize 上限も `1_000_000` へ拡張し、Settings / trigger 判定 / schema doc / 回帰テストを同期した。追加の trigger policy は `#16` `#25` で継続検討する |
@@ -38,7 +38,7 @@
 | P2 | 未着手 | GitHub | [#33](https://github.com/natumekazuki/WithMate/issues/33) | handlePendingElicitation | Copilot SDK の対話型 elicitation callback を WithMate の approval / prompt flow へ取り込めるか検討する | SDK surface の調査と UI contract の見直しが必要。`docs/design/provider-sdk-pending-items.md` と接続 |
 | P2 | 未着手 | GitHub | [#31](https://github.com/natumekazuki/WithMate/issues/31) | Memory 管理機能 | Session / Project / Character Memory の閲覧と少なくとも delete をできるようにしたい | `#3` の永続化基盤は前提クリア。UI と削除ポリシー設計が必要 |
 | P2 | 未着手 | GitHub | [#30](https://github.com/natumekazuki/WithMate/issues/30) | 送信後フッター自動 close | Session Window の送信後に footer を自動で閉じる設定を追加したい | current Action Dock compact/expanded と相性が良く、UI polish 系として独立に切れる |
-| P2 | 未着手 | GitHub | [#22](https://github.com/natumekazuki/WithMate/issues/22) | MemoryGeneration 詳細表示 | 右 pane の `MemoryGeneration` から更新された Memory 内容を確認できるようにしたい | `#21` の partial Details 可視化と同系統。Memory tuning の観測面として `#27` と相性が良い |
+| P2 | 完了 | GitHub | [#22](https://github.com/natumekazuki/WithMate/issues/22) | MemoryGeneration 詳細表示 | 右 pane の `MemoryGeneration` details から、更新された Session / Character Memory 内容を確認できるようにした | background activity details に updated field / entry 内容を含めるようにし、Memory tuning 時の観測性を上げた |
 | P2 | 未着手 | GitHub | [#10](https://github.com/natumekazuki/WithMate/issues/10) | Copilot custom slash command | GitHub Copilot SDK v1.0.10 の独自 slash command をどう使うか | まず `slash command 吸収` 方針を決めてから着手したい |
 | P2 | 未着手 | GitHub | [#17](https://github.com/natumekazuki/WithMate/issues/17) | `tasks` コマンドの SDK 調査と実装 | Copilot `/tasks` 相当の background task 取得が SDK から扱えるか、Codex parity も含めて調べる | `docs/design/coding-agent-capability-matrix.md` の provider capability 整理と接続する調査寄り task |
 | P2 | 未着手 | GitHub | [#28](https://github.com/natumekazuki/WithMate/issues/28) | データ export / import | 少なくともキャラ定義を持ち運べる export / import 手段を検討する | Memory 同期まで含めると広いため slice 分割前提。`docs/design/character-storage.md` `docs/design/project-memory-storage.md` の確認が必要 |
@@ -112,17 +112,15 @@
 
 ## 推奨順
 
-1. `#21 実行中 Details 更新`
-2. `#3 Memory 永続化と共有`
-3. `#27 Memory 生成頻度見直し`
-4. `#16 セッション close 時の Memory 生成`
-5. `#22 MemoryGeneration 詳細表示`
-6. `#31 Memory 管理機能`
-7. `#1 独り言の API 運用`
-8. `#25 独り言生成タイミング`
-9. `#33 handlePendingElicitation`
-11. `#28 データ export / import`
-12. `#15` と各種 polish
+1. `#3 Memory 永続化と共有`
+2. `#16 セッション close 時の Memory 生成`
+3. `#31 Memory 管理機能`
+4. `#1 独り言の API 運用`
+5. `#25 独り言生成タイミング`
+6. `#33 handlePendingElicitation`
+7. `#30 送信後フッター自動 close`
+8. `#28 データ export / import`
+9. `#15` と各種 polish
 
 ## 参照元
 

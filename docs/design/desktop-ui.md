@@ -177,6 +177,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - 直近の in-progress command とは分ける
   - full timeline には戻さず、summary + optional `details` に留める
 - `Memory生成` には background activity の status、summary、必要時だけ開く `details` を出す
+  - `details` には trigger / model / reasoning に加えて、更新された Session / Character Memory の内容を含めてよい
 - provider が `Copilot` の時だけ、`Latest Command` の下に `Premium Requests` の薄い strip を常設し、残量だけを即読できるようにする
 - `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない
 - `assistantText` は pending bubble の会話本文としてのみ扱い、`agent_message` を activity row へ戻さない

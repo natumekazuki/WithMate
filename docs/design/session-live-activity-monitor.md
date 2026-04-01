@@ -78,7 +78,7 @@ flowchart TB
 - 内容は次に絞る
   - status badge
   - summary
-  - trigger / model / reasoning を含む `details`
+  - trigger / model / reasoning と、更新された Memory 内容を含む `details`
   - failure 時の error block
 
 #### Monologue

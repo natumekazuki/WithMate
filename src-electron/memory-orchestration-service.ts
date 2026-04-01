@@ -72,6 +72,84 @@ function buildMonologueSummary(monologue: CharacterReflectionMonologue | null): 
   return monologue.text.length > 72 ? `${monologue.text.slice(0, 72)}…` : monologue.text;
 }
 
+function buildBackgroundActivityMetadataLines(input: {
+  triggerReason: string;
+  model: string;
+  reasoningEffort: string;
+}): string[] {
+  return [
+    `trigger: ${input.triggerReason}`,
+    `model: ${input.model}`,
+    `reasoning: ${input.reasoningEffort}`,
+  ];
+}
+
+function appendDetailBlock(lines: string[], label: string, values: string[]): void {
+  const normalizedValues = values
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  if (normalizedValues.length === 0) {
+    return;
+  }
+
+  lines.push("", `${label}:`);
+  lines.push(...normalizedValues.map((value) => `- ${value}`));
+}
+
+function buildSessionMemoryActivityDetails(input: {
+  triggerReason: SessionMemoryExtractionTriggerReason;
+  model: string;
+  reasoningEffort: string;
+  delta: SessionMemoryDelta | null;
+  projectMemoryPromotions?: number;
+}): string {
+  const lines = buildBackgroundActivityMetadataLines(input);
+  if (!input.delta) {
+    return lines.join("\n");
+  }
+
+  appendDetailBlock(lines, "updated goal", input.delta.goal === null ? ["<cleared>"] : input.delta.goal ? [input.delta.goal] : []);
+  appendDetailBlock(lines, "updated decisions", input.delta.decisions ?? []);
+  appendDetailBlock(lines, "updated openQuestions", input.delta.openQuestions ?? []);
+  appendDetailBlock(lines, "updated nextActions", input.delta.nextActions ?? []);
+  appendDetailBlock(lines, "updated notes", input.delta.notes ?? []);
+  if (typeof input.projectMemoryPromotions === "number") {
+    lines.push("", `projectMemoryPromotions: ${input.projectMemoryPromotions}`);
+  }
+  return lines.join("\n");
+}
+
+function buildCharacterMemoryEntryDetail(entry: CharacterMemoryDelta["entries"][number]): string {
+  const title = entry.title.trim();
+  const detail = entry.detail.trim();
+  return detail.length > 0
+    ? `[${entry.category}] ${title} | ${detail}`
+    : `[${entry.category}] ${title}`;
+}
+
+function buildCharacterMemoryActivityDetails(input: {
+  triggerReason: string;
+  model: string;
+  reasoningEffort: string;
+  entries: CharacterMemoryDelta["entries"];
+  monologueUpdated?: boolean;
+}): string {
+  const lines = buildBackgroundActivityMetadataLines(input);
+  if (input.monologueUpdated) {
+    lines.push("", "monologue: updated");
+  }
+
+  const detailEntries = input.entries
+    .slice(0, 5)
+    .map((entry) => buildCharacterMemoryEntryDetail(entry));
+  appendDetailBlock(lines, "updated entries", detailEntries);
+  if (input.entries.length > 5) {
+    lines.push(`- ...and ${input.entries.length - 5} more`);
+  }
+
+  return lines.join("\n");
+}
+
 export class MemoryOrchestrationService {
   private readonly inFlightSessionMemoryExtractions = new Set<string>();
   private readonly inFlightCharacterReflections = new Set<string>();
@@ -168,7 +246,12 @@ export class MemoryOrchestrationService {
         status: "running",
         title: "CharacterMemory",
         summary: "Character Memory を整理しています。",
-        details: `trigger: ${options.triggerReason}\nmodel: ${reflectionSettings.model}\nreasoning: ${reflectionSettings.reasoningEffort}`,
+        details: buildCharacterMemoryActivityDetails({
+          triggerReason: options.triggerReason,
+          model: reflectionSettings.model,
+          reasoningEffort: reflectionSettings.reasoningEffort,
+          entries: [],
+        }),
         errorMessage: "",
         updatedAt: new Date().toISOString(),
       });
@@ -181,7 +264,11 @@ export class MemoryOrchestrationService {
       summary: options.triggerReason === "session-start"
         ? "SessionStart の独り言を生成しています。"
         : "独り言と Character Memory を整理しています。",
-      details: `trigger: ${options.triggerReason}\nmodel: ${reflectionSettings.model}\nreasoning: ${reflectionSettings.reasoningEffort}`,
+      details: buildBackgroundActivityMetadataLines({
+        triggerReason: options.triggerReason,
+        model: reflectionSettings.model,
+        reasoningEffort: reflectionSettings.reasoningEffort,
+      }).join("\n"),
       errorMessage: "",
       updatedAt: new Date().toISOString(),
     });
@@ -255,12 +342,13 @@ export class MemoryOrchestrationService {
           status: "completed",
           title: "CharacterMemory",
           summary: savedCount > 0 ? `Character Memory を更新しました: ${savedCount}件` : "更新は不要でした。",
-          details: [
-            `trigger: ${options.triggerReason}`,
-            `model: ${reflectionSettings.model}`,
-            `reasoning: ${reflectionSettings.reasoningEffort}`,
-            monologue ? "monologue: updated" : "",
-          ].filter((line) => line.length > 0).join("\n"),
+          details: buildCharacterMemoryActivityDetails({
+            triggerReason: options.triggerReason,
+            model: reflectionSettings.model,
+            reasoningEffort: reflectionSettings.reasoningEffort,
+            entries: savedCount > 0 ? memoryEntries : [],
+            monologueUpdated: !!monologue,
+          }),
           errorMessage: "",
           updatedAt: new Date().toISOString(),
         });
@@ -272,11 +360,13 @@ export class MemoryOrchestrationService {
         title: "Monologue",
         summary: buildMonologueSummary(monologue),
         details: [
-          `trigger: ${options.triggerReason}`,
-          `model: ${reflectionSettings.model}`,
-          `reasoning: ${reflectionSettings.reasoningEffort}`,
-          savedCount > 0 ? `characterMemory: ${savedCount}件更新` : "",
-        ].filter((line) => line.length > 0).join("\n"),
+          ...buildBackgroundActivityMetadataLines({
+            triggerReason: options.triggerReason,
+            model: reflectionSettings.model,
+            reasoningEffort: reflectionSettings.reasoningEffort,
+          }),
+          ...(savedCount > 0 ? ["", `characterMemory: ${savedCount}件更新`] : []),
+        ].join("\n"),
         errorMessage: "",
         updatedAt: new Date().toISOString(),
       });
@@ -290,7 +380,12 @@ export class MemoryOrchestrationService {
           status: isCanceledRunError(error) ? "canceled" : "failed",
           title: "CharacterMemory",
           summary: isCanceledRunError(error) ? "Character Memory 更新はキャンセルされました。" : "Character Memory 更新に失敗しました。",
-          details: `trigger: ${options.triggerReason}\nmodel: ${reflectionSettings.model}\nreasoning: ${reflectionSettings.reasoningEffort}`,
+          details: buildCharacterMemoryActivityDetails({
+            triggerReason: options.triggerReason,
+            model: reflectionSettings.model,
+            reasoningEffort: reflectionSettings.reasoningEffort,
+            entries: [],
+          }),
           errorMessage: error instanceof Error ? error.message : String(error),
           updatedAt: new Date().toISOString(),
         });
@@ -321,7 +416,11 @@ export class MemoryOrchestrationService {
         status: isCanceledRunError(error) ? "canceled" : "failed",
         title: "Monologue",
         summary: isCanceledRunError(error) ? "独り言生成はキャンセルされました。" : "独り言生成に失敗しました。",
-        details: `trigger: ${options.triggerReason}\nmodel: ${reflectionSettings.model}\nreasoning: ${reflectionSettings.reasoningEffort}`,
+        details: buildBackgroundActivityMetadataLines({
+          triggerReason: options.triggerReason,
+          model: reflectionSettings.model,
+          reasoningEffort: reflectionSettings.reasoningEffort,
+        }).join("\n"),
         errorMessage: error instanceof Error ? error.message : String(error),
         updatedAt: new Date().toISOString(),
       });
@@ -394,7 +493,12 @@ export class MemoryOrchestrationService {
       status: "running",
       title: "Memory生成",
       summary: "Session Memory を整理しています。",
-      details: `trigger: ${triggerReason}\nmodel: ${extractionSettings.model}\nreasoning: ${extractionSettings.reasoningEffort}`,
+      details: buildSessionMemoryActivityDetails({
+        triggerReason,
+        model: extractionSettings.model,
+        reasoningEffort: extractionSettings.reasoningEffort,
+        delta: null,
+      }),
       errorMessage: "",
       updatedAt: new Date().toISOString(),
     });
@@ -453,7 +557,13 @@ export class MemoryOrchestrationService {
         summary: memoryFieldLabels.length > 0
           ? `Session Memory を更新しました: ${memoryFieldLabels.join(", ")}`
           : "更新は不要でした。",
-        details: `trigger: ${triggerReason}\nmodel: ${extractionSettings.model}\nreasoning: ${extractionSettings.reasoningEffort}`,
+        details: buildSessionMemoryActivityDetails({
+          triggerReason,
+          model: extractionSettings.model,
+          reasoningEffort: extractionSettings.reasoningEffort,
+          delta,
+          projectMemoryPromotions: promotedCount,
+        }),
         errorMessage: "",
         updatedAt: new Date().toISOString(),
       });
@@ -503,7 +613,12 @@ export class MemoryOrchestrationService {
         summary: isCanceledRunError(error)
           ? "Memory 生成はキャンセルされました。"
           : "Memory 生成に失敗しました。",
-        details: `trigger: ${triggerReason}\nmodel: ${extractionSettings.model}\nreasoning: ${extractionSettings.reasoningEffort}`,
+        details: buildSessionMemoryActivityDetails({
+          triggerReason,
+          model: extractionSettings.model,
+          reasoningEffort: extractionSettings.reasoningEffort,
+          delta: null,
+        }),
         errorMessage: error instanceof Error ? error.message : String(error),
         updatedAt: new Date().toISOString(),
       });

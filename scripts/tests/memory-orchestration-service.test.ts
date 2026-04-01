@@ -248,7 +248,7 @@ describe("MemoryOrchestrationService", () => {
 
     await service.runSessionMemoryExtraction(
       session,
-      { inputTokens: 1, cachedInputTokens: 0, outputTokens: 250 },
+      { inputTokens: 1, cachedInputTokens: 0, outputTokens: 300001 },
       { triggerReason: "outputTokensThreshold" },
     );
 
@@ -267,6 +267,11 @@ describe("MemoryOrchestrationService", () => {
     assert.deepEqual(promoted, [{ sessionId: session.id, goal: "整理する" }]);
     assert.equal(activities.at(0)?.status, "running");
     assert.equal(activities.at(-1)?.status, "completed");
+    assert.match(activities.at(-1)?.details ?? "", /updated goal:/);
+    assert.match(activities.at(-1)?.details ?? "", /整理する/);
+    assert.match(activities.at(-1)?.details ?? "", /updated nextActions:/);
+    assert.match(activities.at(-1)?.details ?? "", /次をやる/);
+    assert.match(activities.at(-1)?.details ?? "", /projectMemoryPromotions: 1/);
   });
 
   it("Character reflection の session-start は monologue のみを保存する", async () => {
@@ -358,6 +363,7 @@ describe("MemoryOrchestrationService", () => {
     const session = createSession({ id: "session-growth" });
     const usedEntryIds: string[][] = [];
     const savedCharacterMemory: Array<{ sessionId: string; count: number }> = [];
+    const activities: SessionBackgroundActivityState[] = [];
 
     const providerAdapter: ProviderBackgroundAdapter = {
       async extractSessionMemoryDelta() {
@@ -445,12 +451,20 @@ describe("MemoryOrchestrationService", () => {
         return createAuditLogBase(input);
       },
       updateAuditLog() {},
-      setSessionBackgroundActivity() {},
+      setSessionBackgroundActivity(_sessionId, _kind, state) {
+        if (state) {
+          activities.push(state);
+        }
+      },
     });
 
     await service.runCharacterReflection(session, { triggerReason: "context-growth" });
 
     assert.deepEqual(usedEntryIds, [["entry-1"]]);
     assert.deepEqual(savedCharacterMemory, [{ sessionId: session.id, count: 1 }]);
+    assert.equal(activities.at(-2)?.kind, "character-memory-generation");
+    assert.equal(activities.at(-2)?.status, "completed");
+    assert.match(activities.at(-2)?.details ?? "", /updated entries:/);
+    assert.match(activities.at(-2)?.details ?? "", /\[relationship\] 距離感 \| 少し砕けた会話を好む/);
   });
 });
