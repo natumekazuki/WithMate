@@ -15,3 +15,5 @@
   - `node --import tsx scripts/tests/main-ipc-registration.test.ts`
   - `node --import tsx scripts/tests/main-ipc-deps.test.ts`
 - GitHub issue `#33` に完了コメントを追加
+- コミット:
+  - `2d65f89` `feat(session): support copilot elicitation`
