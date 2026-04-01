@@ -69,7 +69,7 @@ describe("home-settings-draft", () => {
     draft.memoryExtractionProviderSettings.codex = {
       model: "gpt-5.4",
       reasoningEffort: "high",
-      outputTokensThreshold: 200,
+      outputTokensThreshold: 300000,
     };
 
     const next = updateMemoryExtractionModel(draft, providerCatalog, "codex", "gpt-5.4-mini");
@@ -90,6 +90,14 @@ describe("home-settings-draft", () => {
 
     assert.equal(nextThreshold.codex.reasoningEffort, "medium");
     assert.equal(nextThreshold.codex.outputTokensThreshold, 1);
+  });
+
+  it("memory extraction threshold の draft は大きい値もそのまま保持する", () => {
+    const draft = createDefaultAppSettings();
+
+    const nextThreshold = updateMemoryExtractionThreshold(draft, "codex", "300000");
+
+    assert.equal(nextThreshold.codex.outputTokensThreshold, 300000);
   });
 
   it("character reflection model / reasoning を更新できる", () => {

@@ -56,7 +56,7 @@ describe("home-settings-view-model", () => {
       codex: {
         model: "gpt-5.4",
         reasoningEffort: "high",
-        outputTokensThreshold: 200,
+        outputTokensThreshold: 300000,
       },
     });
     assert.deepEqual(buildNormalizedCharacterReflectionProviderSettings(rows), {

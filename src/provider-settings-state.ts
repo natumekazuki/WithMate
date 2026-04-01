@@ -43,7 +43,7 @@ export const DEFAULT_PROVIDER_APP_SETTINGS: ProviderAppSettings = {
   skillRootPath: "",
 };
 
-export const DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD = 200;
+export const DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD = 300_000;
 
 export const DEFAULT_MEMORY_EXTRACTION_PROVIDER_SETTINGS: MemoryExtractionProviderSettings = {
   model: DEFAULT_MODEL_ID,
@@ -103,8 +103,8 @@ function normalizeOutputTokensThreshold(value: unknown): number {
     return 1;
   }
 
-  if (normalized > 100_000) {
-    return 100_000;
+  if (normalized > 1_000_000) {
+    return 1_000_000;
   }
 
   return normalized;

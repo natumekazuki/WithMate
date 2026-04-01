@@ -51,14 +51,14 @@ describe("session-memory-extraction", () => {
 
   it("outputTokens threshold または force で発火判定する", () => {
     assert.equal(
-      shouldTriggerSessionMemoryExtraction({ inputTokens: 10, cachedInputTokens: 0, outputTokens: 220 }, 200),
+      shouldTriggerSessionMemoryExtraction({ inputTokens: 10, cachedInputTokens: 0, outputTokens: 320000 }, 300000),
       true,
     );
     assert.equal(
-      shouldTriggerSessionMemoryExtraction({ inputTokens: 10, cachedInputTokens: 0, outputTokens: 120 }, 200),
+      shouldTriggerSessionMemoryExtraction({ inputTokens: 10, cachedInputTokens: 0, outputTokens: 120000 }, 300000),
       false,
     );
-    assert.equal(shouldTriggerSessionMemoryExtraction(null, 200, true), true);
+    assert.equal(shouldTriggerSessionMemoryExtraction(null, 300000, true), true);
   });
 
   it("prompt に current memory と recent messages を含める", () => {

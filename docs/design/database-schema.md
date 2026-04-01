@@ -339,12 +339,12 @@ current 実装の key:
   "codex": {
     "model": "gpt-5.4-mini",
     "reasoningEffort": "medium",
-    "outputTokensThreshold": 200
+    "outputTokensThreshold": 300000
   },
   "copilot": {
     "model": "gpt-5.4-mini",
     "reasoningEffort": "medium",
-    "outputTokensThreshold": 200
+    "outputTokensThreshold": 300000
   }
 }
 ```

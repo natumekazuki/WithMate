@@ -680,6 +680,7 @@ background memory extraction では次を監査対象にする。
 
 - threshold は provider ごとに持つ
 - 初期値は app 側の固定値とする
+  - current default は `300_000`
 - 将来の自動調整は必須にしない
 - ユーザーが必要なら Settings から手動で上書きできる形を想定する
 
