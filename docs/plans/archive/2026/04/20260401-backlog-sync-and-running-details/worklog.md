@@ -17,3 +17,5 @@
 
 - `925d659` `docs(task-backlog): sync issues through #34`
   - `docs/task-backlog.md` の issue 同期と推奨順更新を独立コミットとして切り出した
+- `fe63d5e` `feat(session): show confirmed running details`
+  - `#21` 対応の UI / projection / test / design / plan artefact を同一コミットにまとめた

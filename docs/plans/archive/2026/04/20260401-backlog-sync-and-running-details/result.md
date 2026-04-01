@@ -18,3 +18,8 @@
 ## Related Commits
 
 - `925d659` `docs(task-backlog): sync issues through #34`
+- `fe63d5e` `feat(session): show confirmed running details`
+
+## Archive
+
+- archive 予定先: `docs/plans/archive/2026/04/20260401-backlog-sync-and-running-details/`
