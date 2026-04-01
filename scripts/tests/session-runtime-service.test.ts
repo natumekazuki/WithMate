@@ -26,6 +26,8 @@ import {
 } from "../../src-electron/provider-runtime.js";
 import {
   SessionRuntimeService,
+  hasMeaningfulPartialRunResult,
+  isRetryableStaleThreadSessionError,
   type SessionRuntimeServiceDeps,
 } from "../../src-electron/session-runtime-service.js";
 
@@ -106,6 +108,48 @@ function createAuditLogBase(input: CreateAuditLogInput): AuditLogEntry {
     ...input,
   };
 }
+
+function createPartialResult(overrides?: Partial<RunSessionTurnResult>): RunSessionTurnResult {
+  return {
+    threadId: null,
+    assistantText: "",
+    logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+    transportPayload: null,
+    operations: [],
+    rawItemsJson: "[]",
+    usage: null,
+    ...overrides,
+  };
+}
+
+describe("SessionRuntimeService stale retry helpers", () => {
+  it("stale classifier は narrow な thread / session 系だけを対象にする", () => {
+    assert.equal(isRetryableStaleThreadSessionError(new Error("thread not found")), true);
+    assert.equal(isRetryableStaleThreadSessionError(new Error("session expired on provider side")), true);
+    assert.equal(isRetryableStaleThreadSessionError(new Error("invalid-thread identifier")), true);
+    assert.equal(isRetryableStaleThreadSessionError(new Error("thread model incompatible with selected model")), true);
+    assert.equal(isRetryableStaleThreadSessionError({ code: "thread_not_found" }), true);
+    assert.equal(isRetryableStaleThreadSessionError({ code: "not_found" }), false);
+    assert.equal(isRetryableStaleThreadSessionError({ code: "model_incompatible" }), false);
+    assert.equal(isRetryableStaleThreadSessionError(new Error("Connection is closed.")), false);
+    assert.equal(isRetryableStaleThreadSessionError(new Error("socket hang up")), false);
+  });
+
+  it("meaningful partial 判定は assistantText / operations / artifact を見る", () => {
+    assert.equal(hasMeaningfulPartialRunResult(createPartialResult()), false);
+    assert.equal(hasMeaningfulPartialRunResult(createPartialResult({ rawItemsJson: "[{\"kind\":\"trace\"}]" })), false);
+    assert.equal(hasMeaningfulPartialRunResult(createPartialResult({ assistantText: "partial" })), true);
+    assert.equal(hasMeaningfulPartialRunResult(createPartialResult({ operations: [{ type: "command_execution", summary: "npm test" }] })), true);
+    assert.equal(hasMeaningfulPartialRunResult(createPartialResult({
+      artifact: {
+        title: "Artifact",
+        activitySummary: [],
+        changedFiles: [{ kind: "edit", path: "src/a.ts", summary: "updated", diffRows: [] }],
+        runChecks: [],
+      },
+    })), true);
+  });
+});
 
 describe("SessionRuntimeService", () => {
   it("成功時に running -> idle を保存し、background task を起動する", async () => {
@@ -582,5 +626,306 @@ describe("SessionRuntimeService", () => {
       { sessionId: session.id, decision: "deny" },
       { sessionId: session.id, decision: "deny" },
     ]);
+  });
+
+  it("stale thread / session error で meaningful partial が無い時だけ thread reset 後に 1 回 retry する", async () => {
+    const session = createSession({ provider: "codex", threadId: "thread-stale" });
+    const storedSessions: Session[] = [];
+    const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
+    const auditUpdates: UpdateAuditLogInput[] = [];
+    const seenThreadIds: string[] = [];
+    let attempt = 0;
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn(input) {
+        attempt += 1;
+        seenThreadIds.push(input.session.threadId);
+        if (attempt === 1) {
+          throw new ProviderTurnError("thread not found", createPartialResult({ threadId: "thread-stale" }), false);
+        }
+
+        return createPartialResult({
+          threadId: "thread-fresh",
+          assistantText: "再試行で成功したよ。",
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        storedSessions.push(next);
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog(_id, entry) {
+        auditUpdates.push(entry);
+      },
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread(providerId, retrySessionId) {
+        invalidated.push({ providerId, sessionId: retrySessionId });
+      },
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    assert.equal(result.runState, "idle");
+    assert.equal(result.threadId, "thread-fresh");
+    assert.equal(result.messages.filter((message) => message.role === "user").length, 1);
+    assert.equal(result.messages.filter((message) => message.role === "assistant").length, 1);
+    assert.deepEqual(seenThreadIds, ["thread-stale", ""]);
+    assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
+    assert.equal(storedSessions.length, 3);
+    assert.equal(storedSessions[1]?.threadId, "");
+    assert.equal(auditUpdates.length, 1);
+    assert.equal(auditUpdates[0]?.phase, "completed");
+  });
+
+  it("meaningful partial が出た stale error は internal retry しない", async () => {
+    const session = createSession({ provider: "codex", threadId: "thread-stale" });
+    const storedSessions: Session[] = [];
+    const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
+    let attempt = 0;
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        attempt += 1;
+        throw new ProviderTurnError("thread not found", createPartialResult({ assistantText: "途中まで出たよ。" }), false);
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession() {
+        return session;
+      },
+      upsertSession(next) {
+        storedSessions.push(next);
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread(providerId, retrySessionId) {
+        invalidated.push({ providerId, sessionId: retrySessionId });
+      },
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    assert.equal(attempt, 1);
+    assert.equal(result.runState, "error");
+    assert.match(result.messages.at(-1)?.text ?? "", /途中まで出たよ。/);
+    assert.deepEqual(invalidated, []);
+    assert.equal(storedSessions.length, 2);
+  });
+
+  it("not_found 単独 code の provider error では internal retry しない", async () => {
+    const session = createSession({ provider: "codex", threadId: "thread-stale" });
+    const storedSessions: Session[] = [];
+    const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
+    let attempt = 0;
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        attempt += 1;
+        const error = new ProviderTurnError("resource not found", createPartialResult(), false) as ProviderTurnError & { code?: string };
+        error.code = "not_found";
+        throw error;
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession() {
+        return session;
+      },
+      upsertSession(next) {
+        storedSessions.push(next);
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread(providerId, retrySessionId) {
+        invalidated.push({ providerId, sessionId: retrySessionId });
+      },
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    assert.equal(attempt, 1);
+    assert.equal(result.runState, "error");
+    assert.match(result.messages.at(-1)?.text ?? "", /resource not found/);
+    assert.deepEqual(invalidated, []);
+    assert.equal(storedSessions.length, 2);
   });
 });

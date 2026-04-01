@@ -81,8 +81,15 @@ export class SessionPersistenceService {
       throw new Error("実行中のセッションは更新できないよ。");
     }
 
+    const shouldResetThreadId =
+      Boolean(currentSession.threadId) &&
+      (currentSession.provider !== nextSession.provider ||
+        currentSession.model !== nextSession.model ||
+        currentSession.reasoningEffort !== nextSession.reasoningEffort);
+
     const updatedSession = this.upsertSession({
       ...nextSession,
+      threadId: shouldResetThreadId ? "" : nextSession.threadId,
       allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
         nextSession.workspacePath,
         nextSession.allowedAdditionalDirectories,
@@ -91,6 +98,10 @@ export class SessionPersistenceService {
 
     if (currentSession.provider !== updatedSession.provider) {
       this.deps.clearSessionContextTelemetry(updatedSession.id);
+    }
+
+    if (currentSession.threadId && !updatedSession.threadId) {
+      this.deps.invalidateProviderSessionThread(currentSession.provider, updatedSession.id);
     }
 
     return updatedSession;

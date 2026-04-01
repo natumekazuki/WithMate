@@ -354,12 +354,6 @@ export function buildNewSession(input: CreateSessionInput): Session {
   };
 }
 
-const MODEL_METADATA_CONTINUITY_PROVIDER_IDS = new Set(["copilot", "codex"]);
-
-function shouldPreserveThreadIdOnModelMetadataUpdate(providerId: string): boolean {
-  return MODEL_METADATA_CONTINUITY_PROVIDER_IDS.has(providerId);
-}
-
 export function applySessionModelMetadataUpdate(
   session: Session,
   selection: ResolvedModelSelection,
@@ -371,7 +365,7 @@ export function applySessionModelMetadataUpdate(
     catalogRevision,
     model: selection.resolvedModel,
     reasoningEffort: selection.resolvedReasoningEffort,
-    threadId: shouldPreserveThreadIdOnModelMetadataUpdate(session.provider) ? session.threadId : "",
+    threadId: "",
     updatedAt,
   };
 }
