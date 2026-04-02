@@ -1,6 +1,6 @@
 # Task Backlog
 
-- 更新日: 2026-04-01
+- 更新日: 2026-04-02
 - 対象: GitHub issue と repo 内の残タスクの統合管理
 
 ## 方針
@@ -47,7 +47,7 @@
 | P2 | 未着手 | GitHub | [#28](https://github.com/natumekazuki/WithMate/issues/28) | データ export / import | 少なくともキャラ定義を持ち運べる export / import 手段を検討する | Memory 同期まで含めると広いため slice 分割前提。`docs/design/character-storage.md` `docs/design/project-memory-storage.md` の確認が必要 |
 | P2 | 未着手 | GitHub | [#26](https://github.com/natumekazuki/WithMate/issues/26) | ウインドウ生成場所 | 新規 window をカーソル位置起点で生成したい | `docs/design/window-architecture.md` と Electron window 起動 policy の調整が必要 |
 | P2 | 未着手 | GitHub | [#23](https://github.com/natumekazuki/WithMate/issues/23) | `**message**` markdown 未反映 | Session Window で `**message**` が markdown として render されない | `docs/design/message-rich-text.md` の current renderer と差分確認が必要 |
-| P2 | 未着手 | Local | `session-feedback-recovery` | 通知整理と復帰導線 | live region の集約、送信不可時の理由提示、Error Boundary からの回復導線をまとめて整理する | `docs/reviews/review-20260329-1438.md #3 #4 #10`。Session の feedback / recovery UX を一体で扱う |
+| P2 | 完了 | Local | `session-feedback-recovery` | 通知整理と復帰導線 | live region の集約、送信不可時の理由提示、Error Boundary からの回復導線をまとめて整理した | explicit live region を pending indicator 中心へ寄せ、blocked shortcut 時の inline feedback / button title、window-level / pane-level の retry 導線を追加済み |
 | P2 | 未着手 | Local | `theme-wcag-contrast` | テーマ色の WCAG コントラスト準拠 | character theme の文字色決定を WCAG 比率ベースへ置き換え、Home / Session / Character Editor / Diff の共通判定へ寄せる | `docs/reviews/review-20260329-1438.md #6`。theme 視認性の横断 task |
 | P2 | 見送り | Local | `sdk-pending` | provider SDK 対応待ち | approval parity、plan / compact parity、quota parity など、SDK surface 待ちの項目を整理する | `docs/design/provider-sdk-pending-items.md` |
 | P2 | 完了 | GitHub | [#14](https://github.com/natumekazuki/WithMate/issues/14) | memory の時間経過評価 | 古い記憶の価値を下げる評価値を導入する | `Project / Character Memory` の retrieval score 補正として `lastUsedAt ?? updatedAt` ベースの時間減衰を実装済み |
@@ -126,23 +126,21 @@
    - `#20 Session 入力エリア幅調整` ← 完了
    - `session-responsive-guardrails` ← 完了
 3. フィードバック / 復帰
-   - `session-feedback-recovery` ← review `#3 #4 #10`
+   - `session-feedback-recovery` ← 完了
 4. テーマ / 視認性
    - `theme-wcag-contrast` ← review `#6`
 5. UI review 起点の着手順
-   1. `session-feedback-recovery`
-   2. `theme-wcag-contrast`
+   1. `theme-wcag-contrast`
 
 ## 推奨順
 
 1. `#3 Memory 永続化と共有`
 2. `#16 セッション close 時の Memory 生成`
 3. `#31 Memory 管理 UI`
-4. `session-feedback-recovery`
-5. `theme-wcag-contrast`
-6. `#1 独り言の API 運用`
-7. `#25 独り言生成タイミング`
-8. `#28 データ export / import`
+4. `theme-wcag-contrast`
+5. `#1 独り言の API 運用`
+6. `#25 独り言生成タイミング`
+7. `#28 データ export / import`
 
 ## 参照元
 

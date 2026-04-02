@@ -1,4 +1,4 @@
-import { Component, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type UIEventHandler } from "react";
+import { Component, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type UIEventHandler } from "react";
 
 import type {
   AuditLogEntry,
@@ -804,6 +804,7 @@ type SessionPaneErrorBoundaryProps = {
 
 type SessionPaneErrorBoundaryState = {
   errorMessage: string | null;
+  resetNonce: number;
 };
 
 export class SessionPaneErrorBoundary extends Component<
@@ -812,6 +813,7 @@ export class SessionPaneErrorBoundary extends Component<
 > {
   state: SessionPaneErrorBoundaryState = {
     errorMessage: null,
+    resetNonce: 0,
   };
 
   static getDerivedStateFromError(error: Error): SessionPaneErrorBoundaryState {
@@ -824,6 +826,17 @@ export class SessionPaneErrorBoundary extends Component<
     console.error("Session pane render failed", error, errorInfo);
   }
 
+  private handleRetry = () => {
+    this.setState((current) => ({
+      errorMessage: null,
+      resetNonce: current.resetNonce + 1,
+    }));
+  };
+
+  private handleReload = () => {
+    window.location.reload();
+  };
+
   render(): ReactNode {
     if (this.state.errorMessage) {
       return (
@@ -835,6 +848,14 @@ export class SessionPaneErrorBoundary extends Component<
                   <div className="live-run-error-block" role="alert">
                     <strong>右ペイン描画エラー</strong>
                     <p className="live-run-error">{this.state.errorMessage}</p>
+                    <div className="window-error-actions pane-error-actions">
+                      <button type="button" onClick={this.handleRetry}>
+                        右ペインを再描画
+                      </button>
+                      <button className="drawer-toggle secondary" type="button" onClick={this.handleReload}>
+                        Window を再読み込み
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -844,7 +865,7 @@ export class SessionPaneErrorBoundary extends Component<
       );
     }
 
-    return this.props.children;
+    return <Fragment key={this.state.resetNonce}>{this.props.children}</Fragment>;
   }
 }
 
@@ -1432,7 +1453,7 @@ export function SessionRetryBanner({
         </button>
       </div>
       {isRetryDraftReplacePending ? (
-        <div className="resume-banner-conflict" role="status" aria-live="polite">
+        <div className="resume-banner-conflict">
           <p>今の下書きは残しています。</p>
           <div className="resume-banner-conflict-actions">
             <button type="button" onClick={onConfirmRetryDraftReplace} disabled={isRetryEditDisabled}>
@@ -1696,7 +1717,7 @@ export function SessionMessageColumn({
       </div>
 
       {!isMessageListFollowing ? (
-        <aside className={`message-follow-banner ${hasMessageListUnread ? "has-unread" : "idle"}`} aria-live="polite">
+        <aside className={`message-follow-banner ${hasMessageListUnread ? "has-unread" : "idle"}`}>
           <div className="message-follow-banner-copy">
             <span className="message-follow-banner-badge">{hasMessageListUnread ? "新着あり" : "読み返し中"}</span>
             <p>{hasMessageListUnread ? "追従を止めている間に新しい表示が来たよ。" : "今は読み返し位置を維持しているよ。"}</p>
@@ -1716,6 +1737,7 @@ export type SessionActionDockCompactRowProps = {
   attachmentCount: number;
   isRunning: boolean;
   isSendDisabled: boolean;
+  sendButtonTitle?: string;
   onExpand: () => void;
   onSendOrCancel: () => void;
 };
@@ -1726,6 +1748,7 @@ export function SessionActionDockCompactRow({
   attachmentCount,
   isRunning,
   isSendDisabled,
+  sendButtonTitle,
   onExpand,
   onSendOrCancel,
 }: SessionActionDockCompactRowProps) {
@@ -1756,6 +1779,7 @@ export function SessionActionDockCompactRow({
           type="button"
           onClick={onSendOrCancel}
           disabled={!isRunning && isSendDisabled}
+          title={sendButtonTitle}
         >
           {isRunning ? "Cancel" : "Send"}
         </button>
@@ -1848,6 +1872,8 @@ export type SessionComposerExpandedProps = {
   isComposerDisabled: boolean;
   isSendDisabled: boolean;
   composerSendability: SessionComposerSendabilityView;
+  sendButtonTitle?: string;
+  isComposerBlockedFeedbackActive: boolean;
   approvalOptions: SessionSelectOption[];
   selectedApprovalMode: string;
   modelOptions: SessionSelectOption[];
@@ -1907,6 +1933,8 @@ export function SessionComposerExpanded({
   isComposerDisabled,
   isSendDisabled,
   composerSendability,
+  sendButtonTitle,
+  isComposerBlockedFeedbackActive,
   approvalOptions,
   selectedApprovalMode,
   modelOptions,
@@ -2169,7 +2197,7 @@ export function SessionComposerExpanded({
         </div>
       ) : null}
 
-      <div className="composer-box">
+      <div className={`composer-box${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
         <textarea
           ref={composerTextareaRef}
           value={draft}
@@ -2185,12 +2213,14 @@ export function SessionComposerExpanded({
           aria-controls={workspacePathMatchItems.length > 0 ? "composer-workspace-path-match-list" : undefined}
           aria-activedescendant={activeWorkspacePathMatchId}
           aria-describedby={composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined}
+          aria-invalid={composerSendability.feedbackTone === "blocked" ? true : undefined}
         />
         <button
           className={isRunning ? "danger session-send-button" : "session-send-button"}
           type="button"
           onClick={onSendOrCancel}
           disabled={!isRunning && isSendDisabled}
+          title={sendButtonTitle}
         >
           {isRunning ? "Cancel" : "Send"}
         </button>
@@ -2198,8 +2228,6 @@ export function SessionComposerExpanded({
           <div
             id="composer-sendability-feedback"
             className={`composer-sendability-feedback ${composerSendability.feedbackTone ?? "helper"}`}
-            role={composerSendability.feedbackTone === "blocked" ? "alert" : "status"}
-            aria-live={composerSendability.feedbackTone === "blocked" ? "assertive" : "polite"}
           >
             {composerSendability.primaryFeedback ? <p>{composerSendability.primaryFeedback}</p> : null}
             {composerSendability.secondaryFeedback.length > 0 ? (

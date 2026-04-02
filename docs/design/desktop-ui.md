@@ -33,6 +33,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - 対応 runtime は Electron のみ
 - renderer は `window.withmate` を前提に動作する
 - Vite dev server は Electron 開発時の配信面として使い、browser 単体での利用はサポートしない
+- 各 renderer entry point は window-level error boundary を持ち、描画クラッシュ時も `再試行` / `再読み込み` で復帰を試せるようにする
 
 ## Home Window
 
@@ -199,9 +200,11 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `assistantText` 未着でも right pane の `Latest Command` があれば raw command を表示し、command 未到着の局面では empty state と pending bubble の run indicator で待機を示す
 - `Latest Command` の waiting / empty copy、retry banner title、`Changed Files` empty copy も character ごとに差し替えられる
 - pending bubble の実行中 indicator は本文と同居できる先頭 status row とし、screen reader には bubble 全体ではなく状態変化だけを最小限に通知して再アナウンス過多を避ける
+- explicit な `aria-live` は pending bubble の status change に寄せ、retry draft conflict、message follow banner、composer feedback は visible text を正本にして常時 live 通知しない
 - `command_execution` は通常 paragraph ではなく shell command と即判別できる専用の monospace block で表示する
 - `details` は stdout / stderr など二次情報だけを折りたたみ表示する
 - `liveRun.errorMessage` は `Latest Command` card 内の alert block として扱う
+- right pane 自体の描画失敗は pane 専用 fallback に切り替え、`右ペインを再描画` と `Window を再読み込み` を出す
 - right pane は run 中の command 安全確認面として扱い、full timeline や `Turn Inspector` は常設しない
 - 実行中は `Send` の代わりに `Cancel` を表示
 - assistant message ごとの `Turn Summary`
@@ -234,6 +237,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - sendability 判定は `src/App.tsx` の単一導出に寄せ、`sessionExecutionBlockedReason` / `composerPreview.errors` を Send 近傍の単一 feedback area で扱う
 - 実行中の latest command 監視の詳細は `docs/design/session-live-activity-monitor.md` を参照する
 - Send disabled 条件は submit button / `Ctrl+Enter` / `Cmd+Enter` guard で一致させ、blank / whitespace-only draft の no-op 送信を通さない
+- blank / whitespace-only draft は通常時は helper 文言を常時出さないが、blocked 送信ショートカットを押した時だけ inline reason を見せる
+- send button の `title` には current blocked reason を載せ、hover でも送信不可理由を確認できるようにする
 - `runState === "running"` では `Cancel` 主体の既存 UX を維持し、送信不可説明を主表示しない
 - `Details` 展開後の artifact block 背景は `main / sub` の薄い accent を持つ
 - `Ctrl+Enter` / `Cmd+Enter` 送信

@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 
 import App from "./App.js";
+import { WindowErrorBoundary } from "./error-boundary.js";
 import "./styles.css";
 
 window.addEventListener("error", (event) => {
@@ -14,6 +15,8 @@ window.addEventListener("unhandledrejection", (event) => {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <WindowErrorBoundary pageClassName="session-page" windowLabel="Session">
+      <App />
+    </WindowErrorBoundary>
   </React.StrictMode>,
 );

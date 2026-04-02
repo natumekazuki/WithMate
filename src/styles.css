@@ -232,6 +232,36 @@ button:disabled {
   padding: 28px;
 }
 
+.window-error-card {
+  justify-items: start;
+  max-width: 640px;
+}
+
+.window-error-card h2,
+.window-error-card p {
+  margin: 0;
+}
+
+.window-error-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(248, 113, 113, 0.14);
+  color: #b91c1c;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.window-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+
 .app-badge,
 .home-status-card,
 .catalog-panel,
@@ -3724,6 +3754,11 @@ button:disabled {
   background: rgba(76, 39, 25, 0.62);
 }
 
+.session-page .window-error-badge {
+  background: rgba(248, 113, 113, 0.18);
+  color: #fecaca;
+}
+
 .live-run-error-block strong {
   font-size: 0.82rem;
   letter-spacing: 0.04em;
@@ -4415,6 +4450,11 @@ button:disabled {
   border-color: rgba(203, 213, 225, 0.14);
   background: rgba(255, 255, 255, 0.04);
   color: var(--muted);
+}
+
+.composer-box.blocked-feedback-active {
+  border-color: rgba(248, 113, 113, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.12);
 }
 
 .composer-sendability-feedback p,

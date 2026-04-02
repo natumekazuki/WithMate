@@ -120,6 +120,7 @@ npm run electron:start
 | MT-046 | Session boundary no-bleed after switch | session A で canceled banner または pending / live run を表示したまま、Home か session 一覧から session B へ切り替え、切替直後の composer / message list / Audit Log を確認する | session B では retry banner 判定、`停止地点` summary、pending / live run 表示、Audit Log が session A の値を一瞬も引きずらず、session B 自身の state だけを表示する |
 | MT-047 | Composer sendability feedback 統合 | provider 無効化、壊れた `@path`、blank / whitespace draft をそれぞれ作り、composer を確認する | `sessionExecutionBlockedReason` / 添付 error が Send 近傍の単一 feedback area に集約される。blank / whitespace draft は helper 文言を出さず、`Send` disabled だけになる |
 | MT-048 | Composer send guard 一致 | blank / whitespace draft のまま Send、`Ctrl+Enter`、`Cmd+Enter` をそれぞれ試し、続けて有効な draft で再試行する | blank / whitespace draft は button と shortcut の両方で送信されず、textarea 内で no-op turn も作られない。有効な draft では button と shortcut の両方で同じ条件で送信できる |
+| MT-048A | Composer blocked feedback | blank / whitespace draft、browse-only session、壊れた `@path` など blocked 条件を作り、`Ctrl+Enter` または `Cmd+Enter` を押す | `Action Dock` は expanded を維持し、Send 近傍の inline feedback area に blocked reason が出る。Send button の hover title でも同じ理由を確認できる |
 | MT-049 | Running composer priority | `runState === "running"` の間に composer を確認する | composer では `Cancel` が主表示のまま残り、sendability feedback が主表示に割り込まない。retry banner も出ない |
 | MT-050 | Attachment chip readability | workspace 内 file / folder / image と workspace 外 path をそれぞれ `@path` で添付し、長い path も含めて composer を確認する | attachment chip が kind、basename、`ワークスペース内` / `ワークスペース外` を見分けやすく表示し、長い path でも basename が先に読める |
 | MT-050A | Attachment overflow guardrail | file / folder / image を多数添付した状態で composer を確認する | attachment list は高さ上限つき scroll へ切り替わり、textarea と `Send` が画面外へ押し出されない |
@@ -142,6 +143,8 @@ npm run electron:start
 | MT-064 | Skill picker empty state | skill が 0 件の session で `Skill` を開く | 空状態メッセージが出て、textarea の通常入力や送信導線は固まらない |
 | MT-065 | Copilot custom agent picker | provider を `GitHub Copilot` にした session で `Agent` を開き、workspace `.github/agents` または `~/.copilot/agents` にある custom agent を選ぶ | `user-invocable: true` の custom agent だけが dropdown に出る。同名なら workspace が優先され、選択後の turn では Copilot session config に反映される |
 | MT-066 | Copilot selected agent visibility | provider を `GitHub Copilot` にした session で custom agent を選択し、composer の `Agent` ボタンを見る | `Agent` ボタン自体が現在値を表示し、`Default Agent` と custom agent 名を見分けられる |
+| MT-067 | Window error recovery | Home / Session / Character Editor / Diff のいずれかで renderer render error を再現する | window-level fallback が出て、`再試行` で再描画を試せる。復帰しない場合も `再読み込み` が使える |
+| MT-067A | Right pane error recovery | `Session Window` の right pane だけで render error を再現する | pane 専用 fallback が出て、`右ペインを再描画` と `Window を再読み込み` の両方が表示される |
 
 ## 補足
 

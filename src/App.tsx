@@ -68,6 +68,12 @@ import {
   SessionMessageColumn,
   SessionRetryBanner,
 } from "./session-components.js";
+import {
+  buildComposerSendabilityState,
+  getComposerSendButtonTitle,
+  withForcedComposerBlockedFeedback,
+  type ComposerSendabilityState,
+} from "./session-composer-feedback.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 
 type ActivePathReference = {
@@ -115,18 +121,6 @@ type SessionOwnedBackgroundActivity = {
 type CharacterOwnedMemoryExtract = {
   ownerCharacterId: string | null;
   extract: CharacterUpdateMemoryExtract | null;
-};
-
-type ComposerSendabilityState = {
-  isRunning: boolean;
-  isBlankDraft: boolean;
-  blockedReason: string;
-  inputErrors: string[];
-  primaryFeedback: string;
-  secondaryFeedback: string[];
-  feedbackTone: "blocked" | "helper" | null;
-  shouldShowFeedback: boolean;
-  isSendDisabled: boolean;
 };
 
 type ComposerAttachmentDisplay = {
@@ -329,59 +323,6 @@ function buildSelectedCustomAgentDisplay(
   return {
     label: session.customAgentName.trim(),
     title: session.customAgentName.trim(),
-  };
-}
-
-function buildComposerSendabilityState({
-  runState,
-  blockedReason,
-  inputErrors,
-  draftText,
-}: {
-  runState: string | null | undefined;
-  blockedReason: string;
-  inputErrors: string[];
-  draftText: string;
-}): ComposerSendabilityState {
-  const normalizedBlockedReason = blockedReason.trim();
-  const normalizedInputErrors = inputErrors.map((error) => error.trim()).filter(Boolean);
-  const isRunning = runState === "running";
-  const isBlankDraft = draftText.trim().length === 0;
-
-  if (isRunning) {
-    return {
-      isRunning,
-      isBlankDraft,
-      blockedReason: normalizedBlockedReason,
-      inputErrors: normalizedInputErrors,
-      primaryFeedback: "",
-      secondaryFeedback: [],
-      feedbackTone: null,
-      shouldShowFeedback: false,
-      isSendDisabled: true,
-    };
-  }
-
-  const primaryFeedback =
-    normalizedBlockedReason
-    || normalizedInputErrors[0];
-  const secondaryFeedback = normalizedBlockedReason ? normalizedInputErrors : normalizedInputErrors.slice(1);
-  const feedbackTone = primaryFeedback
-    ? normalizedBlockedReason || normalizedInputErrors.length > 0
-      ? "blocked"
-      : null
-    : null;
-
-  return {
-    isRunning,
-    isBlankDraft,
-    blockedReason: normalizedBlockedReason,
-    inputErrors: normalizedInputErrors,
-    primaryFeedback,
-    secondaryFeedback,
-    feedbackTone,
-    shouldShowFeedback: !!primaryFeedback || secondaryFeedback.length > 0,
-    isSendDisabled: !!normalizedBlockedReason || normalizedInputErrors.length > 0 || isBlankDraft,
   };
 }
 
@@ -653,6 +594,7 @@ export default function App() {
   const withmateApi = getWithMateApi();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [draft, setDraft] = useState("");
+  const [forceComposerBlockedFeedback, setForceComposerBlockedFeedback] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -1862,7 +1804,7 @@ export default function App() {
   const hasDraftText = draft.trim().length > 0;
   const shouldProtectDraftOnRetryEdit = !!retryBanner && hasDraftText && draft !== retryBanner.lastRequestText;
   const isComposerDisabled = selectedSession?.runState === "running" || !!composerBlockedReason;
-  const composerSendability = useMemo(
+  const composerSendabilityBase = useMemo(
     () =>
       buildComposerSendabilityState({
         runState: selectedSession?.runState,
@@ -1872,7 +1814,12 @@ export default function App() {
       }),
     [composerBlockedReason, composerPreview.errors, draft, selectedSession?.runState],
   );
+  const composerSendability = useMemo(
+    () => withForcedComposerBlockedFeedback(composerSendabilityBase, forceComposerBlockedFeedback),
+    [composerSendabilityBase, forceComposerBlockedFeedback],
+  );
   const isSendDisabled = composerSendability.isSendDisabled;
+  const composerSendButtonTitle = getComposerSendButtonTitle(composerSendability);
   const isRetryActionDisabled =
     !retryBanner || !lastUserMessage || !!composerBlockedReason || selectedSession?.runState === "running";
   const isRetryEditDisabled = isRetryActionDisabled || isComposerDisabled;
@@ -2058,6 +2005,18 @@ export default function App() {
     setActiveWorkspacePathMatchIndex(workspacePathMatches.length > 0 ? 0 : -1);
   }, [workspacePathMatches]);
 
+  useEffect(() => {
+    setForceComposerBlockedFeedback(false);
+  }, [selectedSession?.id]);
+
+  const triggerComposerBlockedFeedback = () => {
+    if (!selectedSession || selectedSession.runState === "running") {
+      return;
+    }
+
+    setForceComposerBlockedFeedback(true);
+  };
+
   const sendMessage = async (messageText: string, options?: { clearDraft?: boolean; collapseActionDock?: boolean }) => {
     if (!withmateApi || !selectedSession) {
       return;
@@ -2110,10 +2069,12 @@ export default function App() {
 
   const handleSend = async () => {
     if (isSendDisabled) {
+      triggerComposerBlockedFeedback();
       return;
     }
 
     try {
+      setForceComposerBlockedFeedback(false);
       await sendMessage(draft, {
         clearDraft: true,
         collapseActionDock: appSettings.autoCollapseActionDockOnSend,
@@ -2219,6 +2180,7 @@ export default function App() {
 
     event.preventDefault();
     if (isSendDisabled) {
+      triggerComposerBlockedFeedback();
       return;
     }
     void handleSend();
@@ -2982,6 +2944,8 @@ export default function App() {
                         isComposerDisabled={isComposerDisabled}
                         isSendDisabled={isSendDisabled}
                         composerSendability={composerSendability}
+                        sendButtonTitle={composerSendButtonTitle}
+                        isComposerBlockedFeedbackActive={forceComposerBlockedFeedback && composerSendability.shouldShowFeedback}
                         approvalOptions={approvalChoiceOptions}
                         selectedApprovalMode={selectedSession.approvalMode}
                         modelOptions={modelSelectOptions}
@@ -3015,6 +2979,7 @@ export default function App() {
                         onRemoveAttachment={handleRemoveAttachmentReference}
                         onRemoveAdditionalDirectory={(path) => void handleRemoveAdditionalDirectory(path)}
                         onDraftChange={(value, selectionStart) => {
+                          setForceComposerBlockedFeedback(false);
                           setDraft(value);
                           setComposerCaret(selectionStart);
                         }}
@@ -3038,6 +3003,7 @@ export default function App() {
                       attachmentCount={composerPreview.attachments.length}
                       isRunning={selectedSession.runState === "running"}
                       isSendDisabled={isSendDisabled}
+                      sendButtonTitle={composerSendButtonTitle}
                       onExpand={() => handleExpandActionDock({ focusComposer: true })}
                       onSendOrCancel={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
                     />
