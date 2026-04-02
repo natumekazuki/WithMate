@@ -1286,6 +1286,18 @@ button:disabled {
   box-shadow: 0 0 0 1px rgba(62, 106, 225, 0.18);
 }
 
+.choice-chip:focus-visible,
+.choice-card:focus-visible,
+.audit-log-segmented-button:focus-visible,
+.composer-path-match:focus-visible,
+.diff-close:focus-visible,
+.start-session-button:focus-visible,
+.launch-toggle:focus-visible,
+.browse-button:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 0.88);
+  outline-offset: 2px;
+}
+
 .choice-card {
   position: relative;
   display: grid;
@@ -4473,6 +4485,11 @@ button:disabled {
   background: rgba(255, 255, 255, 0.08);
 }
 
+.composer-path-match:focus-visible {
+  border-color: rgba(125, 211, 252, 0.72);
+  background: rgba(96, 165, 250, 0.18);
+}
+
 .session-page .composer-sendability-feedback.blocked {
   border-color: rgba(248, 113, 113, 0.24);
   background: rgba(248, 113, 113, 0.12);
@@ -4490,6 +4507,11 @@ button:disabled {
 .session-page .composer-path-match[aria-selected="true"] {
   border-color: rgba(111, 140, 255, 0.28);
   background: rgba(255, 255, 255, 0.08);
+}
+
+.session-page .composer-path-match:focus-visible {
+  border-color: rgba(125, 211, 252, 0.72);
+  background: rgba(111, 140, 255, 0.18);
 }
 
 .session-page .composer-attachment-chip.file {
@@ -5574,6 +5596,12 @@ button:disabled {
   min-height: 0;
   overflow: auto;
   background: var(--editor);
+}
+
+.diff-pane-head:focus-visible,
+.diff-pane-body:focus-visible {
+  outline: 2px solid rgba(125, 211, 252, 0.84);
+  outline-offset: -2px;
 }
 
 .diff-head-spacer {

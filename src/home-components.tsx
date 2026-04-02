@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 
 import type {
   AppSettings,
@@ -34,6 +34,7 @@ import {
   SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL,
   SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL,
 } from "./settings-ui.js";
+import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import { buildCardThemeStyle, CharacterAvatar, modelOptionLabel, reasoningDepthLabel } from "./ui-utils.js";
 import type { ResetAppDatabaseTarget } from "./withmate-window-types.js";
 
@@ -453,13 +454,25 @@ export function HomeLaunchDialog({
   onOpenCharacterEditor,
   onStartSession,
 }: HomeLaunchDialogProps) {
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
+  const { dialogRef, handleDialogKeyDown } = useDialogA11y<HTMLElement>({
+    open,
+    onClose,
+    initialFocusRef: titleInputRef,
+  });
+
   if (!open) {
     return null;
   }
 
   return (
     <div className="launch-modal" role="dialog" aria-modal="true" onClick={onClose}>
-      <section className="launch-dialog panel" onClick={(event) => event.stopPropagation()}>
+      <section
+        ref={dialogRef}
+        className="launch-dialog panel"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={handleDialogKeyDown}
+      >
         <div className="launch-dialog-head minimal">
           <button className="diff-close" type="button" onClick={onClose}>
             Close
@@ -474,6 +487,7 @@ export function HomeLaunchDialog({
               </label>
               <input
                 id="launch-session-title"
+                ref={titleInputRef}
                 className="launch-field-input"
                 type="text"
                 value={title}
@@ -497,13 +511,24 @@ export function HomeLaunchDialog({
                 Coding Provider
               </label>
               {enabledLaunchProviders.length > 0 ? (
-                <div id="launch-provider-picker" className="choice-list launch-provider-list" role="listbox" aria-label="Coding Provider">
+                <div
+                  id="launch-provider-picker"
+                  className="choice-list launch-provider-list"
+                  role="listbox"
+                  aria-label="Coding Provider"
+                  aria-orientation="horizontal"
+                  onKeyDown={(event) => {
+                    focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
+                  }}
+                >
                   {enabledLaunchProviders.map((provider) => (
                     <button
                       key={provider.id}
                       className={`choice-chip${provider.id === selectedLaunchProviderId ? " active" : ""}`}
                       type="button"
+                      role="option"
                       aria-selected={provider.id === selectedLaunchProviderId}
+                      tabIndex={provider.id === selectedLaunchProviderId ? 0 : -1}
                       onClick={() => onSelectProvider(provider.id)}
                     >
                       {provider.label}

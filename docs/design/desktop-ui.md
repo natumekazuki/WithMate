@@ -93,6 +93,9 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - enabled provider の選択
   - character 選択
   - approval mode は provider-neutral 3 mode を前提にし、default は `safety`
+  - open 時は dialog 内の最初の主要入力へ focus し、`Escape` で閉じる
+  - `Tab` / `Shift+Tab` で dialog 外へ focus を逃がさない
+  - provider の single-select chip は矢印キーで選択を移動できる
 - `Settings` button
   - 独立した `Settings Window` を開く
 - `Settings Window`
@@ -212,12 +215,14 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `@path` 入力中の workspace file path 候補表示
   - 候補表示条件は `@` 後 query 非空のまま維持する
   - row は basename 優先 + 親 path 補足で表示する
-  - 候補 open 中だけ `ArrowUp` / `ArrowDown` / `Enter` / `Tab` / `Escape` の keyboard navigation を有効にする
+  - 候補 open 中だけ `ArrowUp` / `ArrowDown` / `Enter` / `Escape` の keyboard navigation を有効にする
+  - `Tab` は候補採用に使わず、通常の focus 移動を優先する
 - picker で選んだ file / folder / image も textarea に `@path` を挿入する
 - 添付 picker は初回だけ workspace を開き、以後は最後に選んだディレクトリを開く
 - composer toolbar に `Add Directory` を置き、その横の toggle から `Additional Directories` 一覧を既定 closed で開閉できるようにする
 - composer 下の `Approval / Model / Depth`
   - approval chip は `自動実行 / 安全寄り / プロバイダー判断`
+  - approval chip は single-select control として矢印キーで切り替えられる
 - session title は character `main`
 - assistant / pending bubble は `sub` ベースの薄い accent を持つ
 - `composer settings` の背景は `sub` ベースの薄い accent を持つ
@@ -247,6 +252,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - draft が非空のまま `編集して再送` を押したときは silent overwrite をせず、composer 内で `今の下書きは残しています。` と短く示したうえで明示的な置換導線を出す
 - inline `Diff Viewer` overlay
 - `Open In Window` による `Diff Window` popout
+- `Audit Log` overlay と inline `Diff Viewer` overlay は open 時に dialog 内へ focus を移し、`Escape` で閉じ、`Tab` / `Shift+Tab` を dialog 内で循環させる
 
 ## Character Editor Window
 
@@ -265,6 +271,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - create / update / delete
 - 小さい window では縦積みと外側スクロールを優先し、内部スクロールの多重化を避ける
 - 既存 character では header action の `Open Update Workspace` から Character Editor 内で provider picker modal を開ける
+- provider picker modal は `Escape` / focus trap / provider chip の矢印キー選択に対応する
 
 ## Diff Window
 
@@ -272,6 +279,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - 縦スクロール同期
 - 横スクロール同期
 - 長い行は横スクロールで読む
+- `Before / After` の各 pane head / body は keyboard focus を受けられ、矢印キー、`PageUp` / `PageDown`、`Home` / `End` で scroll できる
 - Session から開いた Diff は character theme snapshot を引き継ぎ、`titlebar / subbar / pane header` にだけ薄い accent を持つ
 - `Before / After` 見出しは差分面から独立した label chip として表示し、背景色に埋もれないコントラストを維持する
 

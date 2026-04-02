@@ -20,6 +20,7 @@ import type { CharacterUpdateWorkspace } from "./character-update-state.js";
 import { createDefaultAppSettings, getProviderAppSettings, type AppSettings } from "./provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.js";
 import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-withmate-api.js";
+import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import { CharacterAvatar } from "./ui-utils.js";
 
 const emptyDraft: CreateCharacterInput = {
@@ -205,6 +206,10 @@ export default function CharacterEditorApp() {
     () => (characterId ? getCharacterProfile(characters, characterId) : null),
     [characterId, characters],
   );
+  const { dialogRef: updateLaunchDialogRef, handleDialogKeyDown: handleUpdateLaunchDialogKeyDown } = useDialogA11y<HTMLElement>({
+    open: updateLaunchOpen && !!selectedCharacter,
+    onClose: () => setUpdateLaunchOpen(false),
+  });
 
   const previewCharacter = useMemo(
     () => ({
@@ -745,7 +750,12 @@ export default function CharacterEditorApp() {
 
       {updateLaunchOpen && selectedCharacter ? (
         <div className="launch-modal" role="dialog" aria-modal="true" onClick={() => setUpdateLaunchOpen(false)}>
-          <section className="launch-dialog panel" onClick={(event) => event.stopPropagation()}>
+          <section
+            ref={updateLaunchDialogRef}
+            className="launch-dialog panel"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={handleUpdateLaunchDialogKeyDown}
+          >
             <div className="launch-dialog-head minimal">
               <button className="diff-close" type="button" onClick={() => setUpdateLaunchOpen(false)}>
                 Close
@@ -786,13 +796,19 @@ export default function CharacterEditorApp() {
                       className="choice-list launch-provider-list"
                       role="listbox"
                       aria-label="Character Update Provider"
+                      aria-orientation="horizontal"
+                      onKeyDown={(event) => {
+                        focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
+                      }}
                     >
                       {enabledUpdateProviders.map((provider) => (
                         <button
                           key={provider.id}
                           className={`choice-chip${provider.id === selectedUpdateProviderId ? " active" : ""}`}
                           type="button"
+                          role="option"
                           aria-selected={provider.id === selectedUpdateProviderId}
+                          tabIndex={provider.id === selectedUpdateProviderId ? 0 : -1}
                           onClick={() => setSelectedUpdateProviderId(provider.id)}
                         >
                           {provider.label}

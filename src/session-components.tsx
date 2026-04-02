@@ -24,6 +24,7 @@ import {
   liveRunStepStatusLabel,
   operationTypeLabel,
 } from "./ui-utils.js";
+import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import {
   contextPaneTabLabel,
   liveRunStepToneClassName,
@@ -537,6 +538,11 @@ export function SessionDiffModal({
   onClose,
   onOpenDiffWindow,
 }: SessionDiffModalProps) {
+  const { dialogRef, handleDialogKeyDown } = useDialogA11y<HTMLElement>({
+    open: !!selectedDiff,
+    onClose,
+  });
+
   if (!selectedDiff) {
     return null;
   }
@@ -544,9 +550,11 @@ export function SessionDiffModal({
   return (
     <div className="diff-modal" role="dialog" aria-modal="true" onClick={onClose}>
       <section
+        ref={dialogRef}
         className="diff-editor panel theme-accent"
         style={themeStyle}
         onClick={(event) => event.stopPropagation()}
+        onKeyDown={handleDialogKeyDown}
       >
         <div className="diff-titlebar">
           <h2>{selectedDiff.file.path}</h2>
@@ -579,6 +587,7 @@ export function SessionAuditLogModal({
   onClose,
 }: SessionAuditLogModalProps) {
   const [activeSection, setActiveSection] = useState<"main" | "background">("main");
+  const { dialogRef, handleDialogKeyDown } = useDialogA11y<HTMLElement>({ open, onClose });
   const mainEntries = useMemo(
     () => entries.filter((entry) => !isBackgroundAuditPhase(entry.phase)),
     [entries],
@@ -595,7 +604,12 @@ export function SessionAuditLogModal({
 
   return (
     <div className="diff-modal" role="dialog" aria-modal="true" onClick={onClose}>
-      <section className="audit-log-panel panel" onClick={(event) => event.stopPropagation()}>
+      <section
+        ref={dialogRef}
+        className="audit-log-panel panel"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={handleDialogKeyDown}
+      >
         <div className="diff-titlebar">
           <h2>Audit Log</h2>
           <div className="diff-titlebar-actions">
@@ -1925,6 +1939,33 @@ export function SessionComposerExpanded({
   onChangeModel,
   onChangeReasoningEffort,
 }: SessionComposerExpandedProps) {
+  const customAgentListRef = useRef<HTMLDivElement | null>(null);
+  const skillListRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isAgentPickerOpen) {
+      return;
+    }
+
+    const nextFocusTarget =
+      customAgentListRef.current?.querySelector<HTMLElement>("[aria-selected=\"true\"]") ??
+      customAgentListRef.current?.querySelector<HTMLElement>("[role=\"option\"]");
+    nextFocusTarget?.focus();
+  }, [customAgentItems, isAgentPickerOpen]);
+
+  useEffect(() => {
+    if (!isSkillPickerOpen) {
+      return;
+    }
+
+    const nextFocusTarget = skillListRef.current?.querySelector<HTMLElement>("[role=\"option\"]");
+    nextFocusTarget?.focus();
+  }, [isSkillPickerOpen, skillItems]);
+
+  const activeWorkspacePathMatchIndex = workspacePathMatchItems.findIndex((item) => item.isActive);
+  const activeWorkspacePathMatchId =
+    activeWorkspacePathMatchIndex >= 0 ? `composer-workspace-path-match-${activeWorkspacePathMatchIndex}` : undefined;
+
   return (
     <div className="composer">
       {retryBanner}
@@ -1949,6 +1990,7 @@ export function SessionComposerExpanded({
               disabled={!canSelectCustomAgent || isRunning || composerBlocked}
               aria-expanded={isAgentPickerOpen}
               aria-haspopup="listbox"
+              aria-controls={isAgentPickerOpen ? "composer-agent-picker-list" : undefined}
               aria-label="Copilot custom agent を選択"
               title={selectedCustomAgentTitle}
             >
@@ -1964,6 +2006,7 @@ export function SessionComposerExpanded({
             disabled={isRunning || composerBlocked}
             aria-expanded={isSkillPickerOpen}
             aria-haspopup="listbox"
+            aria-controls={isSkillPickerOpen ? "composer-skill-picker-list" : undefined}
           >
             Skill
           </button>
@@ -1996,9 +2039,15 @@ export function SessionComposerExpanded({
 
       {showCustomAgentPicker && isAgentPickerOpen ? (
         <div
+          id="composer-agent-picker-list"
+          ref={customAgentListRef}
           className="composer-path-match-list composer-skill-picker-list"
           role="listbox"
           aria-label="Custom Agent 候補"
+          aria-orientation="vertical"
+          onKeyDown={(event) => {
+            focusRovingItemByKey(event, { orientation: "vertical" });
+          }}
         >
           {isCustomAgentListLoading ? (
             <p className="composer-skill-empty">Custom Agent を読み込み中だよ。</p>
@@ -2009,6 +2058,7 @@ export function SessionComposerExpanded({
                 type="button"
                 role="option"
                 aria-selected={item.isSelected}
+                tabIndex={item.isSelected ? 0 : -1}
                 className={`composer-path-match${item.isSelected ? " active" : ""}`}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => onSelectCustomAgent(item.value)}
@@ -2028,9 +2078,17 @@ export function SessionComposerExpanded({
 
       {showSkillPicker && isSkillPickerOpen ? (
         <div
+          id="composer-skill-picker-list"
+          ref={skillListRef}
           className="composer-path-match-list composer-skill-picker-list"
           role={skillItems.length > 0 ? "listbox" : "status"}
           aria-label="Skill 候補"
+          aria-orientation={skillItems.length > 0 ? "vertical" : undefined}
+          onKeyDown={(event) => {
+            if (skillItems.length > 0) {
+              focusRovingItemByKey(event, { orientation: "vertical" });
+            }
+          }}
         >
           {isSkillListLoading ? (
             <p className="composer-skill-empty">Skill を読み込み中だよ。</p>
@@ -2040,6 +2098,7 @@ export function SessionComposerExpanded({
                 key={item.key}
                 type="button"
                 role="option"
+                tabIndex={item === skillItems[0] ? 0 : -1}
                 className="composer-path-match"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => onSelectSkill(item.skillId)}
@@ -2121,6 +2180,10 @@ export function SessionComposerExpanded({
           onCompositionStart={onDraftCompositionStart}
           onCompositionEnd={onDraftCompositionEnd}
           disabled={isComposerDisabled}
+          aria-autocomplete="list"
+          aria-expanded={workspacePathMatchItems.length > 0}
+          aria-controls={workspacePathMatchItems.length > 0 ? "composer-workspace-path-match-list" : undefined}
+          aria-activedescendant={activeWorkspacePathMatchId}
           aria-describedby={composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined}
         />
         <button
@@ -2151,13 +2214,21 @@ export function SessionComposerExpanded({
       </div>
 
       {workspacePathMatchItems.length > 0 ? (
-        <div className="composer-path-match-list" role="listbox" aria-label="@path 候補">
+        <div
+          id="composer-workspace-path-match-list"
+          className="composer-path-match-list"
+          role="listbox"
+          aria-label="@path 候補"
+          aria-orientation="vertical"
+        >
           {workspacePathMatchItems.map((item, index) => (
             <button
               key={item.key}
+              id={`composer-workspace-path-match-${index}`}
               type="button"
               role="option"
               aria-selected={item.isActive}
+              tabIndex={-1}
               className={`composer-path-match${item.isActive ? " active" : ""}`}
               onMouseDown={(event) => event.preventDefault()}
               onMouseEnter={() => onActivateWorkspacePathMatch(index)}
@@ -2175,12 +2246,22 @@ export function SessionComposerExpanded({
       <div className="composer-settings">
         <div className="composer-setting-field composer-setting-approval">
           <span>Approval</span>
-          <div className="choice-list session-approval-list" role="group" aria-label="承認モード">
+          <div
+            className="choice-list session-approval-list"
+            role="radiogroup"
+            aria-label="承認モード"
+            onKeyDown={(event) => {
+              focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
+            }}
+          >
             {approvalOptions.map((option) => (
               <button
                 key={option.value}
                 className={`choice-chip${option.value === selectedApprovalMode ? " active" : ""}`}
                 type="button"
+                role="radio"
+                aria-checked={option.value === selectedApprovalMode}
+                tabIndex={option.value === selectedApprovalMode ? 0 : -1}
                 onClick={() => onChangeApprovalMode(option.value)}
                 disabled={isRunning}
               >

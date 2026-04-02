@@ -2192,7 +2192,13 @@ export default function App() {
         return;
       }
 
-      if ((event.key === "Enter" && !event.ctrlKey && !event.metaKey) || (event.key === "Tab" && !event.shiftKey)) {
+      if (event.key === "Tab") {
+        setWorkspacePathMatches([]);
+        setActiveWorkspacePathMatchIndex(-1);
+        return;
+      }
+
+      if (event.key === "Enter" && !event.ctrlKey && !event.metaKey) {
         const activeMatch =
           workspacePathMatches[activeWorkspacePathMatchIndex] ?? workspacePathMatches[0] ?? null;
         if (activeMatch) {

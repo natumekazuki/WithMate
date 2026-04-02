@@ -43,6 +43,7 @@ npm run electron:start
 | MT-011A | DB reset full rebuild | `sessions / audit logs / app settings / model catalog / project memory / character memory` を全選択して `DB を初期化` を実行する | DB が再生成され、schema を含めて初期状態へ戻る |
 | MT-012 | DB reset reject | 実行中 session がある状態で `DB を初期化` を実行する | reset が拒否され、実行中 session の完了またはキャンセルを促す |
 | MT-013 | New Session 起動 | Home の `New Session` を押す | launch dialog が開く |
+| MT-013A | New Session dialog keyboard | `New Session` dialog を開き、初期 focus、`Tab` / `Shift+Tab`、`Escape`、provider chip の矢印キーを試す | open 時に title input へ focus が入り、focus は dialog 内で循環する。`Escape` で閉じ、provider chip は矢印キーで切り替えられる |
 | MT-014 | New Session 作成 | title と workspace と provider と character を選び `Start New Session` を押す | Session Window が開き、Home の session 一覧に追加され、選んだ provider で session が作られ、approval 初期値は `安全寄り` になる |
 | MT-014A | New Session provider availability | `Coding Agent Providers` で一部 provider を無効化した後に `New Session` を開く | launch dialog の provider 候補には enabled provider だけが出る。0 件なら empty state が出て `Start New Session` は disabled のままになる |
 | MT-015 | Session 実行 | Session Window の textarea に入力して送信する | user message が追加され、pending と live activity が表示される |
@@ -62,9 +63,11 @@ npm run electron:start
 | MT-017C | Stale thread internal retry | provider 側で thread / session not found または expired 相当を再現できる session を用意して 1 turn 送る | renderer からの再送なしで同一 turn 内の internal retry だけが走り、user / assistant message と audit log record は 1 件ずつに留まる。meaningful partial が無い時だけ回復し、回復後は新 thread で継続できる |
 | MT-017D | Copilot elicitation prompt | provider を `GitHub Copilot` にした session で `elicitation.requested` を返す turn を実行する | pending bubble 内に form または URL card が出て、`送信 / 拒否 / 閉じる` が使える。form では required field 未入力時に alert が出て、`accept / decline / cancel` に応じて run が再開または終了する |
 | MT-018 | Audit Log | Session Window の `Audit Log` を押す | 1 turn 1 record の監査ログが閲覧でき、approval 表示は provider-neutral wording になる。prompt 表示は `Logical Prompt` と `Transport Payload` に分かれる |
+| MT-018C | Audit Log modal keyboard | `Audit Log` を開き、`Tab` / `Shift+Tab` と `Escape` を試す | focus は overlay 内で循環し、`Escape` で閉じる |
 | MT-018A | Copilot audit log minimum | Copilot session で 1 turn 実行後に `Audit Log` を開く | `Logical Prompt` と `Transport Payload`、assistant text、provider metadata、raw session events が保存される。operations は command が無い turn では空でもよい |
 | MT-018B | Copilot Details / Diff | Copilot session で file 変更を伴う turn を 1 回実行し、assistant bubble の `Details` を開く | `Changed Files`、`Run Checks`、`operationTimeline` が表示され、差分がある file では `Open Diff` から split diff を開ける |
 | MT-019 | Diff | artifact の `Open Diff` を押し、必要なら `Open In Window` も押す | inline diff と Diff Window の両方で split diff が開く |
+| MT-019A | Diff keyboard scroll | inline diff または `Diff Window` を開き、`Before / After` pane head / body へ focus して矢印キー、`PageUp` / `PageDown`、`Home` / `End` を試す | focus ring が見え、keyboard だけで縦横 scroll できる。左右 pane の同期も崩れない |
 | MT-020 | Character persistence | character を作成 / 編集 / 削除する | `characters/` 相当の保存内容が Home と Session に反映される |
 | MT-020A | Character session copy persistence | Character Editor の `Session Copy` を編集して保存し、editor を開き直す | 各 slot の文言が保持され、再読込後も同じ値が表示される |
 | MT-020B | Character session copy list edit | Character Editor の `Session Copy` で `+` と `×` を使って候補を追加・削除する | session-copy tab 自体が card 内でスクロールし、各 slot は複数候補を行単位で保持したまま保存できる |
@@ -115,7 +118,7 @@ npm run electron:start
 | MT-048 | Composer send guard 一致 | blank / whitespace draft のまま Send、`Ctrl+Enter`、`Cmd+Enter` をそれぞれ試し、続けて有効な draft で再試行する | blank / whitespace draft は button と shortcut の両方で送信されず、textarea 内で no-op turn も作られない。有効な draft では button と shortcut の両方で同じ条件で送信できる |
 | MT-049 | Running composer priority | `runState === "running"` の間に composer を確認する | composer では `Cancel` が主表示のまま残り、sendability feedback が主表示に割り込まない。retry banner も出ない |
 | MT-050 | Attachment chip readability | workspace 内 file / folder / image と workspace 外 path をそれぞれ `@path` で添付し、長い path も含めて composer を確認する | attachment chip が kind、basename、`ワークスペース内` / `ワークスペース外` を見分けやすく表示し、長い path でも basename が先に読める |
-| MT-051 | `@path` keyboard navigation | query 非空で `@path` 候補を開き、`ArrowUp` / `ArrowDown` / `Enter` / `Tab` / `Escape` と mouse を試す | 候補 open 中だけ keyboard navigation が働き、basename 優先 row で active 候補が視認できる。`Enter` / `Tab` で候補採用、`Escape` で close、候補を閉じた通常時の textarea 操作と `Ctrl+Enter` / `Cmd+Enter` 送信は退行しない |
+| MT-051 | `@path` keyboard navigation | query 非空で `@path` 候補を開き、`ArrowUp` / `ArrowDown` / `Enter` / `Tab` / `Escape` と mouse を試す | 候補 open 中だけ keyboard navigation が働き、basename 優先 row で active 候補が視認できる。`Enter` で候補採用、`Escape` で close、`Tab` は通常の focus 移動を優先し、候補採用には使われない。候補を閉じた通常時の textarea 操作と `Ctrl+Enter` / `Cmd+Enter` 送信は退行しない |
 | MT-052 | Home session badge precedence / sort | Home に `status === "running"`、`runState === "running"`、`runState === "interrupted"`、`runState === "error"`、non-active session が混在する状態を作る | `running` が最優先、次に `interrupted`、次に `error`、それ以外は neutral badge で card に残る。card 並びは active state 優先へ再ソートされず、storage 既定の `last_active_at DESC` を保つ |
 | MT-053 | Home monitor open session truth source / search sync | 複数 session を用意し、そのうち一部だけ `SessionWindow` を開く。Home 右ペインを `Session Monitor` にして、続けて session search で一部 session だけに絞り込む | monitor panel は open な `SessionWindow` を持つ session だけを出し、`実行中` と `停止・完了` に分かれる。`interrupted` / `error` / neutral は `停止・完了` 側へ badge 付きで残る。検索結果から外れた session は `Recent Sessions` card と monitor row の両方から消える |
 | MT-054 | Home monitor open / close follow | Home を開いたまま session card から `SessionWindow` を開き、続けて対象 window を閉じる。可能なら複数 session で繰り返す | `SessionWindow` を開いた session は monitor に追加され、閉じた session は monitor から消える。Home 再読み込みなしで右ペイン表示が追従する |
