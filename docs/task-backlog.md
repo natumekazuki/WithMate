@@ -23,6 +23,8 @@
 
 | Priority | 実装状況 | Source | ID | テーマ | 概要 | 依存 / メモ |
 | --- | --- | --- | --- | --- | --- | --- |
+| P1 | 未着手 | GitHub | [#36](https://github.com/natumekazuki/WithMate/issues/36) | メモリー生成の監査ログ保存不具合 | memory generation が完了扱いなのに response が監査ログへ残らない症状を調査したい | background task の completed 更新と audit log finalization のどちらで欠落しているか切り分けが必要 |
+| P1 | 未着手 | GitHub | [#35](https://github.com/natumekazuki/WithMate/issues/35) | メモリー生成のタイムアウト短い | model / reasoning によって memory generation が timeout しやすいので上限時間を見直したい | `Session Memory extraction` と `Character Reflection` の timeout policy を provider 実装ごとに確認する |
 | P1 | 完了 | GitHub | [#24](https://github.com/natumekazuki/WithMate/issues/24) | モデル切り替えバグ | model / reasoning 変更後に stale thread を引きずって失敗する症状を解消した | `threadId reset + provider cache invalidate` を正本にし、次 turn は新規 thread で開始する |
 | P1 | 完了 | GitHub | [#32](https://github.com/natumekazuki/WithMate/issues/32) | 長時間放置後の Session not found | 長時間放置や stale thread / session に起因する NotFound を同一 turn 内の internal retry で吸収した | meaningful partial が無い時だけ `threadId clear + internal retry` を 1 回だけ行う |
 | P1 | 完了 | GitHub | [#34](https://github.com/natumekazuki/WithMate/issues/34) | SessionNotFound retry | provider session が消えた時に recovery できるようにした | Copilot adapter 側の missing session recovery と session runtime の stale retry で補完する |
@@ -47,6 +49,7 @@
 | P2 | 未着手 | GitHub | [#28](https://github.com/natumekazuki/WithMate/issues/28) | データ export / import | 少なくともキャラ定義を持ち運べる export / import 手段を検討する | Memory 同期まで含めると広いため slice 分割前提。`docs/design/character-storage.md` `docs/design/project-memory-storage.md` の確認が必要 |
 | P2 | 未着手 | GitHub | [#26](https://github.com/natumekazuki/WithMate/issues/26) | ウインドウ生成場所 | 新規 window をカーソル位置起点で生成したい | `docs/design/window-architecture.md` と Electron window 起動 policy の調整が必要 |
 | P2 | 未着手 | GitHub | [#23](https://github.com/natumekazuki/WithMate/issues/23) | `**message**` markdown 未反映 | Session Window で `**message**` が markdown として render されない | `docs/design/message-rich-text.md` の current renderer と差分確認が必要 |
+| P2 | 未着手 | GitHub | [#37](https://github.com/natumekazuki/WithMate/issues/37) | セッションウインドウのヘッダー調整 | 右ペインへ逃がせる header 操作を寄せ、左ペインは chat と操作欄へ寄せたい | `More` 展開時だけ広げる案。`docs/design/desktop-ui.md` の top bar / right pane 責務整理と接続する |
 | P2 | 完了 | Local | `session-feedback-recovery` | 通知整理と復帰導線 | live region の集約、送信不可時の理由提示、Error Boundary からの回復導線をまとめて整理した | explicit live region を pending indicator 中心へ寄せ、blocked shortcut 時の inline feedback / button title、window-level / pane-level の retry 導線を追加済み |
 | P2 | 完了 | Local | `theme-wcag-contrast` | テーマ色の WCAG コントラスト準拠 | character theme の文字色決定を WCAG 比率ベースへ置き換え、Home / Session / Character Editor / Diff の共通判定へ寄せた | `src/theme-utils.ts` を正本にして contrast ratio helper を共通化し、輝度閾値判定を撤去した |
 | P2 | 未着手 | Local | `memory-management-manual-update` | Memory 手動更新 UI | Settings の Memory 管理は delete までなので、必要なら manual edit / add / merge を別 task で扱う | `#31` の follow-up。schema 編集・validation・監査導線の整理が前提 |
@@ -133,12 +136,12 @@
 
 ## 推奨順
 
-1. `#3 Memory 永続化と共有`
-2. `#16 セッション close 時の Memory 生成`
-3. `#1 独り言の API 運用`
-4. `memory-management-manual-update`
-5. `#28 データ export / import`
-6. `#10 Copilot custom slash command`
+1. `#36 メモリー生成の監査ログ保存不具合`
+2. `#35 メモリー生成のタイムアウト短い`
+3. `#3 Memory 永続化と共有`
+4. `#1 独り言の API 運用`
+5. `memory-management-manual-update`
+6. `#37 セッションウインドウのヘッダー調整`
 
 ## 参照元
 
@@ -162,4 +165,4 @@
 - `docs/design/session-run-lifecycle.md`
 - `docs/design/window-architecture.md`
 - `docs/design/character-chat-ui.md`
-- GitHub Issues `#1 #3 #4 #5 #7 #10 #11 #12 #13 #14 #15 #16 #17 #18 #19 #20 #21 #22 #23 #24 #25 #26 #27 #28 #29 #30 #31 #32 #33 #34`
+- GitHub Issues `#1 #3 #4 #5 #7 #10 #11 #12 #13 #14 #15 #16 #17 #18 #19 #20 #21 #22 #23 #24 #25 #26 #27 #28 #29 #30 #31 #32 #33 #34 #35 #36 #37`
