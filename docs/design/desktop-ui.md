@@ -93,6 +93,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - enabled provider の選択
   - character 選択
   - approval mode は provider-neutral 3 mode を前提にし、default は `safety`
+  - model / depth / custom agent は dialog には出さず、選択中 provider の直近 session があればその selection を継承する
   - open 時は dialog 内の最初の主要入力へ focus し、`Escape` で閉じる
   - `Tab` / `Shift+Tab` で dialog 外へ focus を逃がさない
   - provider の single-select chip は矢印キーで選択を移動できる

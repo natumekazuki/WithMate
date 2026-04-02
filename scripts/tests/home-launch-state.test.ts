@@ -8,6 +8,7 @@ import {
   closeLaunchDraft,
   createClosedLaunchDraft,
   openLaunchDraft,
+  resolveLastUsedSessionSelection,
   setLaunchWorkspaceFromPath,
   syncLaunchDraftCharacter,
 } from "../../src/home-launch-state.js";
@@ -105,6 +106,11 @@ describe("home-launch-state", () => {
       selectedCharacter: createCharacter({ id: "a", name: "Mia" }),
       selectedProviderId: "codex",
       approvalMode: DEFAULT_APPROVAL_MODE,
+      lastUsedSelection: {
+        model: "gpt-5.4-mini",
+        reasoningEffort: "medium",
+        customAgentName: "reviewer",
+      },
     });
 
     assert.deepEqual(input, {
@@ -121,7 +127,52 @@ describe("home-launch-state", () => {
         sub: "#ffffff",
       },
       approvalMode: DEFAULT_APPROVAL_MODE,
+      model: "gpt-5.4-mini",
+      reasoningEffort: "medium",
+      customAgentName: "reviewer",
     });
+  });
+
+  it("selected provider の直近 session から last-used selection を引く", () => {
+    const selection = resolveLastUsedSessionSelection(
+      [
+        {
+          provider: "copilot",
+          model: "gpt-4.1",
+          reasoningEffort: "high",
+          customAgentName: "planner",
+        },
+        {
+          provider: "codex",
+          model: "gpt-5.4-mini",
+          reasoningEffort: "medium",
+          customAgentName: "",
+        },
+      ] as never,
+      "codex",
+    );
+
+    assert.deepEqual(selection, {
+      model: "gpt-5.4-mini",
+      reasoningEffort: "medium",
+      customAgentName: "",
+    });
+  });
+
+  it("selected provider の既存 session が無ければ last-used selection を返さない", () => {
+    const selection = resolveLastUsedSessionSelection(
+      [
+        {
+          provider: "copilot",
+          model: "gpt-4.1",
+          reasoningEffort: "high",
+          customAgentName: "planner",
+        },
+      ] as never,
+      "codex",
+    );
+
+    assert.equal(selection, null);
   });
 
   it("launch 条件が欠けている時は session input を返さない", () => {

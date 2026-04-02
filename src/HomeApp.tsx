@@ -22,6 +22,7 @@ import {
   closeLaunchDraft,
   createClosedLaunchDraft,
   openLaunchDraft,
+  resolveLastUsedSessionSelection,
   setLaunchWorkspaceFromPath,
   syncLaunchDraftCharacter,
   type HomeLaunchDraft,
@@ -333,11 +334,13 @@ export default function HomeApp() {
   };
 
   const handleStartSession = async () => {
+    const lastUsedSelection = resolveLastUsedSessionSelection(sessions, selectedLaunchProvider?.id ?? null);
     const sessionInput = buildCreateSessionInputFromLaunchDraft({
       draft: launchDraft,
       selectedCharacter,
       selectedProviderId: selectedLaunchProvider?.id ?? null,
       approvalMode: DEFAULT_APPROVAL_MODE,
+      lastUsedSelection,
     });
     if (!sessionInput) {
       return;

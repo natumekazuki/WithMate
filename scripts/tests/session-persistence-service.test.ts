@@ -130,10 +130,82 @@ describe("SessionPersistenceService", () => {
 
     assert.equal(created.provider, "codex");
     assert.equal(created.model, "codex-default");
+    assert.equal(created.reasoningEffort, "medium");
+    assert.equal(created.customAgentName, "");
     assert.equal(created.catalogRevision, 2);
     assert.equal(created.allowedAdditionalDirectories.length, 1);
     assert.deepEqual(syncedSessionIds, [created.id]);
     assert.equal(broadcastCount, 1);
+  });
+
+  it("createSession は last-used model / reasoning / customAgentName を正規化して保存する", () => {
+    const storedSessions: Session[] = [];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession() {
+        return null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      upsertStoredSession(session) {
+        storedSessions.splice(0, storedSessions.length, session);
+        return session;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      deleteStoredSession() {},
+      getAppSettings() {
+        return normalizeAppSettings({
+          codingProviderSettings: {
+            codex: { enabled: true },
+            copilot: { enabled: true },
+          },
+        });
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      clearCharacterReflectionCheckpoint() {},
+      clearInFlightCharacterReflection() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    const created = service.createSession({
+      taskTitle: "New Session",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "char-a",
+      character: "A",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      approvalMode: DEFAULT_APPROVAL_MODE,
+      provider: "copilot",
+      model: "copilot-default",
+      reasoningEffort: "high",
+      customAgentName: "planner",
+    } satisfies CreateSessionInput);
+
+    assert.equal(created.provider, "copilot");
+    assert.equal(created.model, "copilot-default");
+    assert.equal(created.reasoningEffort, "high");
+    assert.equal(created.customAgentName, "planner");
   });
 
   it("updateSession は provider 変更時に telemetry をクリアし、thread reset 時は provider cache を invalidate する", () => {
