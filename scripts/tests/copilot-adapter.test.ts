@@ -8,6 +8,7 @@ import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import {
   applyCopilotAssistantEvent,
+  CopilotAdapter,
   buildLiveElicitationFieldFromCopilotSchema,
   buildLiveElicitationRequestFromCopilotEvent,
   buildCopilotSessionSettings,
@@ -559,12 +560,71 @@ describe("CopilotAdapter env", () => {
     assert.deepEqual(next.messages, ["本文"]);
   });
 
-  it("進行途中の partial result が無い stale connection だけ retry する", () => {
+  it("進行途中の user-visible partial が無い stale connection / missing session だけ retry する", () => {
     const emptyPartial = new ProviderTurnError("Connection is closed.", createPartialResult(), false);
     const withAssistantText = new ProviderTurnError("Connection is closed.", createPartialResult({ assistantText: "4" }), false);
+    const missingSession = new ProviderTurnError("SessionNotFound: session not found", createPartialResult(), false);
+    const missingSessionWithRawItems = new ProviderTurnError(
+      "SessionNotFound: session not found",
+      createPartialResult({
+        rawItemsJson: JSON.stringify([{ type: "session.error", data: { message: "SessionNotFound" } }]),
+      }),
+      false,
+    );
+    const missingSessionWithOperation = new ProviderTurnError(
+      "SessionNotFound: session not found",
+      createPartialResult({
+        operations: [{ type: "command_execution", summary: "dir", status: "in_progress" } as never],
+      }),
+      false,
+    );
 
     assert.equal(shouldRetryCopilotTurn(emptyPartial), true);
     assert.equal(shouldRetryCopilotTurn(withAssistantText), false);
+    assert.equal(shouldRetryCopilotTurn(missingSession), true);
+    assert.equal(shouldRetryCopilotTurn(missingSessionWithRawItems), true);
+    assert.equal(shouldRetryCopilotTurn(missingSessionWithOperation), false);
+  });
+
+  it("CopilotAdapter は cached session の SessionNotFound を 1 回だけ internal retry する", async () => {
+    const adapter = {
+      composePrompt() {
+        return EMPTY_PROMPT;
+      },
+      runSessionTurn: CopilotAdapter.prototype.runSessionTurn,
+      runSessionTurnOnce: async () => {
+        throw new Error("not replaced");
+      },
+      resetRecoverableConnection: async () => undefined,
+    } as unknown as {
+      composePrompt(input: RunSessionTurnInput): ProviderPromptComposition;
+      runSessionTurn(input: RunSessionTurnInput): Promise<RunSessionTurnResult>;
+      runSessionTurnOnce(input: RunSessionTurnInput, prompt: ProviderPromptComposition): Promise<RunSessionTurnResult>;
+      resetRecoverableConnection(input: RunSessionTurnInput): Promise<void>;
+    };
+
+    const input = createRunSessionInput({ threadId: "thread-stale" });
+    const attempts: string[] = [];
+    const resetCalls: string[] = [];
+    const expected = createPartialResult({ threadId: "thread-fresh", assistantText: "回復したよ。" });
+
+    adapter.runSessionTurnOnce = async (_input, _prompt) => {
+      attempts.push("attempt");
+      if (attempts.length === 1) {
+        throw new ProviderTurnError("SessionNotFound: session not found", createPartialResult(), false);
+      }
+
+      return expected;
+    };
+    adapter.resetRecoverableConnection = async (nextInput) => {
+      resetCalls.push(nextInput.session.id);
+    };
+
+    const result = await adapter.runSessionTurn(input);
+
+    assert.equal(result, expected);
+    assert.equal(attempts.length, 2);
+    assert.deepEqual(resetCalls, [input.session.id]);
   });
 
   it("Copilot elicitation schema の enum / anyOf / number を live field へ正規化する", () => {

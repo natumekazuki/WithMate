@@ -22,6 +22,7 @@ import type {
   LiveElicitationRequest,
   LiveElicitationResponse,
   LiveRunStep,
+  MessageArtifact,
   ProviderQuotaSnapshot,
   ProviderQuotaTelemetry,
   Session,
@@ -207,16 +208,29 @@ function isRecoverableCopilotMissingSessionErrorMessage(message: string): boolea
     || normalized.includes("thread not found");
 }
 
-function hasMeaningfulPartialResult(partialResult: RunSessionTurnResult): boolean {
+function hasMeaningfulArtifact(artifact: MessageArtifact | undefined): boolean {
+  if (!artifact) {
+    return false;
+  }
+
+  return artifact.changedFiles.length > 0
+    || artifact.activitySummary.some((summary) => summary.trim().length > 0)
+    || (artifact.operationTimeline?.length ?? 0) > 0
+    || artifact.runChecks.length > 0;
+}
+
+function hasMeaningfulRetryBlockingPartialResult(partialResult: RunSessionTurnResult): boolean {
   return partialResult.assistantText.trim().length > 0
     || partialResult.operations.length > 0
-    || partialResult.usage !== null
-    || (partialResult.rawItemsJson.trim().length > 0 && partialResult.rawItemsJson.trim() !== "[]");
+    || hasMeaningfulArtifact(partialResult.artifact);
 }
 
 export function shouldRetryCopilotTurn(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  if (!isRecoverableCopilotConnectionErrorMessage(message)) {
+  if (
+    !isRecoverableCopilotConnectionErrorMessage(message)
+    && !isRecoverableCopilotMissingSessionErrorMessage(message)
+  ) {
     return false;
   }
 
@@ -224,7 +238,7 @@ export function shouldRetryCopilotTurn(error: unknown): boolean {
     return true;
   }
 
-  return !error.canceled && !hasMeaningfulPartialResult(error.partialResult);
+  return !error.canceled && !hasMeaningfulRetryBlockingPartialResult(error.partialResult);
 }
 
 function stringifyUnknown(value: unknown): string | undefined {
