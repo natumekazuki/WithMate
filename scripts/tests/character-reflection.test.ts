@@ -66,13 +66,25 @@ describe("character-reflection", () => {
     assert.equal(resolved.reasoningEffort, "medium");
   });
 
-  it("SessionStart は常に trigger し、context-growth は増分と cooldown で判定する", () => {
+  it("SessionStart は新しい会話がある時だけ trigger し、context-growth は増分と cooldown で判定する", () => {
     const snapshot = {
       messageCount: 8,
       charCount: 1600,
     };
 
     assert.equal(shouldTriggerCharacterReflection(snapshot, null, "session-start"), true);
+    assert.equal(
+      shouldTriggerCharacterReflection(
+        snapshot,
+        {
+          reflectedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+          messageCount: 8,
+          charCount: 1600,
+        },
+        "session-start",
+      ),
+      false,
+    );
     assert.equal(
       shouldTriggerCharacterReflection(
         snapshot,

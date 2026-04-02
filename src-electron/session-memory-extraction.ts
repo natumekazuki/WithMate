@@ -66,7 +66,7 @@ export type SessionMemoryExtractionResolvedSettings = {
 
 export type SessionMemoryExtractionTriggerReason =
   | "outputTokensThreshold"
-  | "session-window-close"
+  | "manual"
   | "compact-before";
 
 function renderMessages(messages: Session["messages"]): string {

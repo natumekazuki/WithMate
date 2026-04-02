@@ -1,10 +1,5 @@
 import type { Session } from "../src/app-state.js";
 
-type SessionMemoryExtractionTriggerOptions = {
-  triggerReason: "outputTokensThreshold" | "session-window-close";
-  force?: boolean;
-};
-
 type CharacterReflectionTriggerOptions = {
   triggerReason: "session-start" | "context-growth";
 };
@@ -33,11 +28,6 @@ export type SessionWindowBridgeDeps<TWindow extends SessionWindowLike> = {
   getAllowQuitWithInFlightRuns(): boolean;
   confirmCloseWhileRunning(window: TWindow, sessionId: string): boolean;
   broadcastOpenSessionWindowIds(openSessionIds: string[]): void;
-  runSessionMemoryExtraction(
-    session: Session,
-    usage: null,
-    options: SessionMemoryExtractionTriggerOptions,
-  ): void;
   runCharacterReflection(session: Session, options: CharacterReflectionTriggerOptions): void;
 };
 
@@ -146,14 +136,6 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     this.allowCloseSessionWindows.delete(sessionId);
     this.sessionWindows.delete(sessionId);
     this.broadcast();
-
-    const closedSession = this.deps.getSession(sessionId);
-    if (closedSession && !this.deps.isRunInFlight(sessionId)) {
-      this.deps.runSessionMemoryExtraction(closedSession, null, {
-        force: true,
-        triggerReason: "session-window-close",
-      });
-    }
   }
 
   private broadcast(): void {

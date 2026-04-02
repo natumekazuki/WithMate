@@ -84,6 +84,7 @@ current v1 では、trigger を次の 2 系統に分ける。
 - `独り言` だけ生成する
 - `Character Memory` は更新しない
 - 目的は、その session を開いた時点での現在感を出すこと
+- 前回 reflection checkpoint 以降に user / assistant 会話が増えていない場合は skip する
 
 ### Context 増加ベース
 
@@ -105,6 +106,7 @@ current v1 の通常 trigger は、前回 reflection 以降の増分で判定す
 
 - reflection 実行中は再実行しない
 - `SessionStart` は cooldown を無視して実行してよい
+- ただし `SessionStart` でも、最新 monologue が main chat より新しい状態では再生成しない
 - `session close` は trigger に使わない
 - Settings の `Memory Generation` global toggle が OFF の時は、`character reflection cycle` 自体を実行しない
 

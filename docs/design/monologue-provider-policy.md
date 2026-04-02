@@ -112,6 +112,7 @@ current v1 では次の方針を採用する。
 1. `SessionStart`
 - monologue only
 - `Character Memory` は更新しない
+- 前回 reflection 以降に user / assistant 会話が増えていない場合は skip する
 
 2. `Context 増加ベース`
 - `Character Memory` 更新と monologue 更新を同時に行う
@@ -123,6 +124,7 @@ current v1 では次の方針を採用する。
 ### Non Trigger
 
 - `session close` は monologue trigger に使わない
+- `SessionStart` でも、最新 monologue が main chat より新しい状態では重複生成しない
 
 ### Reflection Cycle
 

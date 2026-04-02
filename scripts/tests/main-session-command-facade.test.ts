@@ -26,6 +26,15 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
         cancelRun(sessionId) {
           calls.push(`cancel:${sessionId}`);
         },
+        isRunInFlight() {
+          return false;
+        },
+      }) as never,
+    getMemoryOrchestrationService: () =>
+      ({
+        async runSessionMemoryExtraction() {
+          calls.push("memory");
+        },
       }) as never,
     getProviderQuotaTelemetry: () => null,
     isProviderQuotaTelemetryStale: () => false,
@@ -52,7 +61,11 @@ test("MainSessionCommandFacade は stale な Copilot quota を非同期更新し
           calls.push(`run:${sessionId}`);
           return { id: sessionId } as never;
         },
+        isRunInFlight() {
+          return false;
+        },
       }) as never,
+    getMemoryOrchestrationService: () => ({}) as never,
     getProviderQuotaTelemetry: () => ({ providerId: "copilot", updatedAt: "old" } as never),
     isProviderQuotaTelemetryStale: () => true,
     refreshProviderQuotaTelemetry: async (providerId) => {
@@ -78,7 +91,11 @@ test("MainSessionCommandFacade は non-Copilot session では quota refresh を�
         async runSessionTurn(sessionId) {
           return { id: sessionId } as never;
         },
+        isRunInFlight() {
+          return false;
+        },
       }) as never,
+    getMemoryOrchestrationService: () => ({}) as never,
     getProviderQuotaTelemetry: () => null,
     isProviderQuotaTelemetryStale: () => true,
     refreshProviderQuotaTelemetry: async () => {
@@ -90,4 +107,32 @@ test("MainSessionCommandFacade は non-Copilot session では quota refresh を�
   await facade.runSessionTurn("s-1", { userMessage: "hello" } as never);
 
   assert.equal(refreshed, false);
+});
+
+test("MainSessionCommandFacade は idle session の手動 Memory 生成を委譲する", async () => {
+  const calls: string[] = [];
+  const facade = new MainSessionCommandFacade({
+    getSession: () => ({ id: "s-1", provider: "codex", status: "idle", runState: "idle" }) as never,
+    getSessionPersistenceService: () => ({} as never),
+    getSessionRuntimeService: () =>
+      ({
+        isRunInFlight() {
+          return false;
+        },
+      }) as never,
+    getMemoryOrchestrationService: () =>
+      ({
+        async runSessionMemoryExtraction(session, usage, options) {
+          calls.push(`${session.id}:${String(usage)}:${options?.triggerReason}:${String(options?.force)}`);
+        },
+      }) as never,
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+  });
+
+  facade.runSessionMemoryExtraction("s-1");
+  await Promise.resolve();
+
+  assert.deepEqual(calls, ["s-1:null:manual:true"]);
 });

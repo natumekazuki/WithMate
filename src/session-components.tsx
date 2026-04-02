@@ -795,7 +795,10 @@ export type SessionContextPaneProps = {
   selectedSessionContextTelemetry: SessionContextTelemetry | null;
   selectedSessionContextTelemetryProjection: SessionContextTelemetryProjection;
   contextEmptyText: string;
+  canRunSessionMemoryGeneration: boolean;
+  isSessionMemoryGenerationRunning: boolean;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
+  onRunSessionMemoryGeneration: () => void;
 };
 
 type SessionPaneErrorBoundaryProps = {
@@ -900,7 +903,10 @@ export function SessionContextPane({
   selectedSessionContextTelemetry,
   selectedSessionContextTelemetryProjection,
   contextEmptyText,
+  canRunSessionMemoryGeneration,
+  isSessionMemoryGenerationRunning,
   onCycleContextPaneTab,
+  onRunSessionMemoryGeneration,
 }: SessionContextPaneProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const memoryGenerationActivities = useMemo(
@@ -976,6 +982,16 @@ export function SessionContextPane({
               aria-label="次の表示へ切り替え"
             >
               ›
+            </button>
+          </div>
+          <div className="command-monitor-head-actions">
+            <button
+              className="launch-toggle compact"
+              type="button"
+              onClick={onRunSessionMemoryGeneration}
+              disabled={!canRunSessionMemoryGeneration || isSessionMemoryGenerationRunning}
+            >
+              {isSessionMemoryGenerationRunning ? "Generating..." : "Generate Memory"}
             </button>
           </div>
         </div>

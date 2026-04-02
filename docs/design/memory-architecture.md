@@ -396,6 +396,7 @@ type SessionMemoryV1 = {
 - 1 回の reflection で `CharacterMemoryDelta` と `monologueText` を分けて生成する
 - coding plane の run とは別 request として扱う
 - `SessionStart` では `monologueText` だけを生成する
+- `SessionStart` でも、前回 reflection 以降に user / assistant 会話が増えていない時は skip する
 - 通常更新は `charDelta >= 1200` または `messageDelta >= 6`、かつ `cooldown >= 5分` を満たした時だけ走らせる
 - `session close` は trigger に使わない
 
@@ -465,7 +466,8 @@ current 実装では、`Session Memory` の永続化と extraction trigger、`Pr
 - `workspacePath` と `threadId` は session metadata と同期する
 - provider ごとの `Memory Extraction` 設定から `model / reasoning depth / outputTokens threshold` を読む
 - turn 完了時に `outputTokensThreshold` を超えた場合だけ extraction plane を走らせる
-- `Session Window` を閉じた時は threshold に関係なく extraction を 1 回走らせる
+- `Session Window` close は extraction trigger に使わない
+- 必要なら `Session Window` の `Generate Memory` から manual extraction を走らせる
 - extraction 結果は `SessionMemoryDelta` を validate / normalize した時だけ merge する
 - `Session Memory` の `decisions` と tag 付き `notes` を `Project Memory` へ昇格する
 - coding plane prompt では `Session Memory` を常設し、`Project Memory` は lexical retrieval hit を最大 3 件だけ注入する
@@ -488,7 +490,8 @@ current 実装では、`Session Memory` の永続化と extraction trigger、`Pr
   - `DB を初期化` の個別 target あり
   - provider ごとの `Character Reflection model / reasoning depth` 設定あり
   - `独り言` と共通 trigger の `character reflection cycle` を実装済み
-  - `SessionStart` は monologue only、通常更新は文脈増加ベースで実行する
+  - `SessionStart` は monologue only だが、前回 reflection 以降に会話増分が無い時は skip する
+  - 通常更新は文脈増加ベースで実行する
   - `CharacterMemoryDelta` 保存と monologue の session `stream` 追記まで実装済み
   - monologue / reflection 向け query-based retrieval と時間減衰あり
 - `Memory 管理 UI`
@@ -663,7 +666,7 @@ background memory extraction では次を監査対象にする。
 - extraction model / reasoning depth
 - trigger reason
   - `outputTokensThreshold`
-  - `session-window-close`
+  - `manual`
   - 将来は `compact-before` も追加
 - provider raw response text
 - extraction usage

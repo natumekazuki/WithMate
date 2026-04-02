@@ -79,7 +79,6 @@ flowchart LR
 - `Session Window` の生成後 wiring
 - running close policy
 - `session-start`
-- `session-window-close`
 
 ### AuxWindowService
 

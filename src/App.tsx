@@ -2778,6 +2778,16 @@ export default function App() {
   const handleCycleContextPaneTab = (direction: -1 | 1) => {
     setActiveContextPaneTab((current) => cycleContextPaneTab(current, direction));
   };
+
+  const handleRunSessionMemoryExtraction = async () => {
+    if (!withmateApi || !selectedSession || isSelectedSessionRunning || selectedMemoryGenerationActivity?.status === "running") {
+      return;
+    }
+
+    setActiveContextPaneTab("memory-generation");
+    await withmateApi.runSessionMemoryExtraction(selectedSession.id);
+  };
+
   const handleRefreshCharacterUpdateMemoryExtract = async () => {
     if (!withmateApi || !selectedSession?.characterId || !isCharacterUpdateSession || isCharacterUpdateMemoryExtractLoading) {
       return;
@@ -3052,7 +3062,10 @@ export default function App() {
                     selectedSessionContextTelemetry={selectedSessionContextTelemetry}
                     selectedSessionContextTelemetryProjection={selectedSessionContextTelemetryProjection}
                     contextEmptyText={selectedContextEmptyText}
+                    canRunSessionMemoryGeneration={!!withmateApi && !isSelectedSessionRunning}
+                    isSessionMemoryGenerationRunning={selectedMemoryGenerationActivity?.status === "running"}
                     onCycleContextPaneTab={handleCycleContextPaneTab}
+                    onRunSessionMemoryGeneration={() => void handleRunSessionMemoryExtraction()}
                   />
                 )}
               </SessionPaneErrorBoundary>

@@ -60,6 +60,8 @@ npm run electron:start
 | MT-015F | Copilot context usage details | Copilot session で 1 turn 実行し、右 pane の `Context` を開く | `current / limit / messages / system / conversation / reset` が開いた時だけ表示される。閉じた状態では右 pane の面積をほぼ消費しない |
 | MT-015G | Memory生成 tab auto switch | memory extraction が走る session を作り、右 pane を観察する | background memory extraction が `running` になった時だけ `Memory生成` 面へ自動切り替わる。command 実行中は `Latest Command` が優先される |
 | MT-015H | Memory生成 details content | Session Memory または Character Memory が更新される session を実行し、right pane の `Memory生成` で `Details` を開く | `trigger / model / reasoning` に加えて、更新された field や entry 内容が確認できる |
+| MT-015I | Manual Session Memory generation | idle の Session Window で right pane 上部の `Generate Memory` を押す | `Memory生成` 面へ切り替わり、`Session Memory extraction` が `trigger: manual` で走る。完了後は summary / details が更新される |
+| MT-015J | Session close no auto extraction | Session Memory を持つ idle session を開いて閉じ、会話更新なしで再度開く | close 直後に `Memory生成` が自動実行されない。会話増分が無ければ `SessionStart` 独り言も重複生成されない |
 | MT-016 | Session 実行キャンセル | 実行中に `Cancel` を押す | 実行が止まり、session は `idle` に戻り、Audit Log に `CANCELED` が残る |
 | MT-017 | Approval / Model / Depth | idle 状態の Session Window で approval / model / depth を変更する | approval は `自動実行 / 安全寄り / プロバイダー判断` で表示され、選択値が保存され、再度開いても保持される |
 | MT-017A | Copilot approval prompt | provider を `GitHub Copilot`、approval を `プロバイダー判断` にした session で shell または write 承認が必要な turn を実行する | pending bubble 内に approval card が出て、`今回だけ許可 / 拒否` を押すと run が再開される。read-only request では card は出ない |
@@ -100,7 +102,7 @@ npm run electron:start
 | MT-026 | Latest command visibility with assistantText | assistantText streaming と `command_execution` が同時にある run を実行する | pending bubble は本文だけを表示し、right pane は command 1 件だけを表示する。command 一覧が会話本文を押し流さない |
 | MT-027 | Latest command pre-command empty state | run 開始直後でまだ `command_execution` が来ていない状態を観察する | pending bubble に実行中 indicator が出て、right pane は `最初の command を待っています。` の empty state を表示する |
 | MT-027A | Characterized session copy | `Session Copy` を設定した character で session を開き、pending indicator、retry banner、`Latest Command` empty、`Changed Files` empty、`Context` empty を確認する | 設定した slot だけが差し替わり、`{name}` は character 名へ置換される。未設定 slot は bland default copy のまま残る |
-| MT-027C | Monologue recent stream | `独り言` tab を開いて、`SessionStart` または文脈増加後の monologue を確認する | background state が表示され、完了後は recent monologue が session `stream` から新しい順で見える |
+| MT-027C | Monologue recent stream | `独り言` tab を開いて、`SessionStart` または文脈増加後の monologue を確認する | background state が表示され、完了後は recent monologue が session `stream` から新しい順で見える。会話更新なしの reopen では同じ monologue を重複生成しない |
 | MT-027B | Characterized session copy variation | 同じ slot に 2 つ以上の候補を入れた character で SessionWindow を開き直す、または状態を作り直す | 候補から 1 つが選ばれる。表示中に再描画だけで文言が頻繁に入れ替わらない |
 | MT-028 | Live progress pending indicator persistence | run 開始直後から assistantText streaming 開始後まで pending bubble を観察する。可能なら本文と right pane が同時に見える run も確認する | 本文が出始めても `runState === "running"` の間は先頭の実行中 indicator が残り、character 名が取れる時は `<キャラ名>が…` の形、取れない時は主語なしの一般化表現で表示される。`runState !== "running"` になった時点で indicator が消える |
 | MT-029 | Latest command details collapse | command output を伴う run を実行する | right pane では raw command が常時表示され、stdout / stderr 相当は `Details` を開いた時だけ見える |

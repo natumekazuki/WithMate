@@ -25,7 +25,7 @@ import { appendTransportPayloadFields, calculateAuditDurationMs } from "./audit-
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
 type SessionMemoryExtractionTriggerOptions = {
-  triggerReason: "outputTokensThreshold" | "session-window-close";
+  triggerReason: "outputTokensThreshold" | "manual" | "compact-before";
   force?: boolean;
 };
 

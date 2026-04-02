@@ -142,7 +142,6 @@ describe("SessionWindowBridge", () => {
       broadcastOpenSessionWindowIds(openIds) {
         broadcasts.push([...openIds]);
       },
-      runSessionMemoryExtraction() {},
       runCharacterReflection(nextSession, options) {
         reflections.push({ sessionId: nextSession.id, triggerReason: options.triggerReason });
       },
@@ -182,7 +181,6 @@ describe("SessionWindowBridge", () => {
         return false;
       },
       broadcastOpenSessionWindowIds() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
     });
 
@@ -219,7 +217,6 @@ describe("SessionWindowBridge", () => {
         return true;
       },
       broadcastOpenSessionWindowIds() {},
-      runSessionMemoryExtraction() {},
       runCharacterReflection() {},
     });
 
@@ -231,9 +228,8 @@ describe("SessionWindowBridge", () => {
     assert.equal(window.closeCount, 2);
   });
 
-  it("idle の window close では session-window-close の Memory hook を起動する", async () => {
+  it("idle の window close では Memory hook を起動せず window registry だけ更新する", async () => {
     const session = createSession();
-    const memoryTriggers: Array<{ sessionId: string; triggerReason: string; force: boolean | undefined }> = [];
     const broadcasts: string[][] = [];
 
     const bridge = new SessionWindowBridge({
@@ -256,22 +252,12 @@ describe("SessionWindowBridge", () => {
       broadcastOpenSessionWindowIds(openIds) {
         broadcasts.push([...openIds]);
       },
-      runSessionMemoryExtraction(nextSession, _usage, options) {
-        memoryTriggers.push({
-          sessionId: nextSession.id,
-          triggerReason: options.triggerReason,
-          force: options.force,
-        });
-      },
       runCharacterReflection() {},
     });
 
     const window = await bridge.openSessionWindow(session.id);
     window.close();
 
-    assert.deepEqual(memoryTriggers, [
-      { sessionId: session.id, triggerReason: "session-window-close", force: true },
-    ]);
     assert.deepEqual(broadcasts.at(-1), []);
   });
 });

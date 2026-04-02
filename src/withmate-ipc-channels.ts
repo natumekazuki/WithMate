@@ -33,6 +33,7 @@ export const WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL = "withmate:search-workspac
 export const WITHMATE_LIST_SESSION_SKILLS_CHANNEL = "withmate:list-session-skills";
 export const WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL = "withmate:list-session-custom-agents";
 export const WITHMATE_RUN_SESSION_TURN_CHANNEL = "withmate:run-session-turn";
+export const WITHMATE_RUN_SESSION_MEMORY_EXTRACTION_CHANNEL = "withmate:run-session-memory-extraction";
 export const WITHMATE_CANCEL_SESSION_RUN_CHANNEL = "withmate:cancel-session-run";
 export const WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL = "withmate:list-session-audit-logs";
 export const WITHMATE_GET_APP_SETTINGS_CHANNEL = "withmate:get-app-settings";

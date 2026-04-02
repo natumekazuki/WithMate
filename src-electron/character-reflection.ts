@@ -164,7 +164,11 @@ export function shouldTriggerCharacterReflection(
   now = Date.now(),
 ): boolean {
   if (triggerReason === "session-start") {
-    return true;
+    if (!checkpoint) {
+      return true;
+    }
+
+    return current.messageCount > checkpoint.messageCount || current.charCount > checkpoint.charCount;
   }
 
   if (!checkpoint) {

@@ -461,7 +461,7 @@ export class MemoryOrchestrationService {
     const currentMemory = this.deps.ensureSessionMemory(latestSession);
     const prompt = buildSessionMemoryExtractionPrompt(latestSession, currentMemory);
     const logicalPrompt = buildSessionMemoryExtractionLogicalPrompt(prompt);
-    const triggerReason = options?.triggerReason ?? (options?.force ? "session-window-close" : "outputTokensThreshold");
+    const triggerReason = options?.triggerReason ?? (options?.force ? "manual" : "outputTokensThreshold");
     const transportPayload = buildSessionMemoryExtractionTransportPayload(
       latestSession.provider,
       extractionSettings,

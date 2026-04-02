@@ -2584,6 +2584,17 @@ button:disabled {
   min-width: 0;
 }
 
+.command-monitor-head {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.command-monitor-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .command-monitor-switcher-button {
   display: inline-flex;
   align-items: center;

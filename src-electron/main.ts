@@ -373,6 +373,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 updateSession: (session) => requireMainSessionCommandFacade().updateSession(session),
                 deleteSession: (sessionId) => requireMainSessionCommandFacade().deleteSession(sessionId),
                 runSessionTurn: (sessionId, request) => requireMainSessionCommandFacade().runSessionTurn(sessionId, request),
+                runSessionMemoryExtraction: (sessionId) =>
+                  requireMainSessionCommandFacade().runSessionMemoryExtraction(sessionId),
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
               },
               character: {
@@ -495,6 +497,7 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       getSession,
       getSessionPersistenceService: () => requireSessionPersistenceService(),
       getSessionRuntimeService: () => requireSessionRuntimeService(),
+      getMemoryOrchestrationService: () => requireMemoryOrchestrationService(),
       getProviderQuotaTelemetry: (providerId) => getProviderQuotaTelemetry(providerId),
       isProviderQuotaTelemetryStale: (telemetry) => isProviderQuotaTelemetryStale(telemetry),
       refreshProviderQuotaTelemetry: (providerId) => refreshProviderQuotaTelemetry(providerId),
@@ -778,9 +781,6 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
         return choice === 1;
       },
       broadcastOpenSessionWindowIds,
-      runSessionMemoryExtraction: (session, usage, options) => {
-        void requireMemoryOrchestrationService().runSessionMemoryExtraction(session, usage, options);
-      },
       runCharacterReflection: (session, options) => {
         void requireMemoryOrchestrationService().runCharacterReflection(session, options);
       },

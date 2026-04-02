@@ -66,6 +66,7 @@ import {
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
+  WITHMATE_RUN_SESSION_MEMORY_EXTRACTION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
@@ -124,6 +125,7 @@ export type MainIpcRegistrationDeps = {
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
   searchWorkspaceFiles(sessionId: string, query: string): Promise<string[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
+  runSessionMemoryExtraction(sessionId: string): void;
   cancelSessionRun(sessionId: string): void;
   createCharacter(input: CreateCharacterInput): Promise<CharacterProfile>;
   updateCharacter(character: CharacterProfile): Promise<CharacterProfile>;
@@ -199,6 +201,7 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "updateSession"
   | "deleteSession"
   | "runSessionTurn"
+  | "runSessionMemoryExtraction"
   | "cancelSessionRun"
 >;
 
@@ -366,6 +369,9 @@ function registerSessionRuntimeHandlers(ipcMain: IpcMain, deps: MainIpcSessionRu
   ipcMain.handle(WITHMATE_RUN_SESSION_TURN_CHANNEL, async (_event, sessionId: string, request: RunSessionTurnRequest) =>
     deps.runSessionTurn(sessionId, request),
   );
+  ipcMain.handle(WITHMATE_RUN_SESSION_MEMORY_EXTRACTION_CHANNEL, (_event, sessionId: string) => {
+    deps.runSessionMemoryExtraction(sessionId);
+  });
   ipcMain.handle(WITHMATE_CANCEL_SESSION_RUN_CHANNEL, (_event, sessionId: string) => {
     deps.cancelSessionRun(sessionId);
   });

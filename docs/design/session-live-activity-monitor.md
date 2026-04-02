@@ -75,6 +75,7 @@ flowchart TB
 #### MemoryGeneration
 
 - `Session Memory extraction` と `Character Memory` 更新の background activity を表示する
+- head の `Generate Memory` から Session Memory extraction を手動実行できる
 - 内容は次に絞る
   - status badge
   - summary

@@ -45,6 +45,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-session-background-activity",
     args: ["session-1", "memoryGeneration"],
   });
+  assert.deepEqual(await api.runSessionMemoryExtraction("session-1"), {
+    channel: "withmate:run-session-memory-extraction",
+    args: ["session-1"],
+  });
 });
 
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
@@ -99,6 +103,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "resetAppDatabase",
     "resolveLiveApproval",
     "resolveLiveElicitation",
+    "runSessionMemoryExtraction",
     "runSessionTurn",
     "searchWorkspaceFiles",
     "subscribeAppSettings",

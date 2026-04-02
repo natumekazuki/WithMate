@@ -54,6 +54,7 @@ export type WithMateWindowSessionApi = {
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
+  runSessionMemoryExtraction(sessionId: string): Promise<void>;
   cancelSessionRun(sessionId: string): Promise<void>;
   listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
   getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;

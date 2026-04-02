@@ -23,7 +23,8 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - `Session Window` から実行中 session を明示キャンセルできる
 - turn 完了後の Session Memory extraction と Character Reflection は background task として分離する
 - `SessionStart` では monologue only の character reflection path を起動する
-- `Session Window` close では Session Memory extraction を強制実行し、character reflection は trigger に使わない
+- `Session Window` close では Session Memory extraction を自動実行しない
+- 必要なら `Session Window` から Session Memory extraction を手動実行できる
 - アプリ終了は実行中 session がある場合に確認ダイアログを出す
 - 全 window が閉じても実行中 session がある場合は `Home Window` を再生成して、アプリ全体の終了を避ける
 - 実行中 session の metadata 更新は制限し、少なくとも approval / model / depth / title / delete は UI と Main Process の両方でブロックする
@@ -68,7 +69,6 @@ window は上の状態機械とは分離する。
 - 既存 window の再利用
 - running 中 close の確認ダイアログ制御
 - `session-start` の character reflection 起動
-- `session-window-close` の Session Memory extraction 起動
 
 ### SessionApprovalService
 
@@ -108,7 +108,13 @@ window は上の状態機械とは分離する。
   - 確認ダイアログを出す
   - `閉じない`: close をキャンセル
   - `閉じて続行`: window は閉じるが session 実行は継続する
-- close 時には Session Memory extraction を強制実行する
+- close 時に Session Memory extraction は自動実行しない
+
+### Manual Session Memory Extraction
+
+- `Session Window` の `Generate Memory` から明示実行できる
+- 実行中 session では受け付けない
+- 実行結果は `Memory生成` pane と background audit に残す
 
 ### Session Run Cancel
 
