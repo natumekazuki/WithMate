@@ -16,3 +16,4 @@
   - 更新不要: `README.md`、`.ai_context/` はこの repo には対象ファイル / ディレクトリが存在しないため対象外
 - 実装コミット:
   - `83f819c` `feat(memory): revise session trigger policy`
+  - `0971dba` `docs(plan): archive memory trigger policy and manual generation`

@@ -8,6 +8,7 @@
 - main / preload / renderer に手動 `Generate Memory` 導線を追加
 - docs/design と checklist / backlog を同期
 - コミット: `83f819c` `feat(memory): revise session trigger policy`
+- コミット: `0971dba` `docs(plan): archive memory trigger policy and manual generation`
 - 検証:
   - `node --import tsx scripts/tests/character-reflection.test.ts`
   - `node --import tsx scripts/tests/session-window-bridge.test.ts`
