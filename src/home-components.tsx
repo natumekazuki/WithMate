@@ -33,6 +33,9 @@ import {
   SETTINGS_SKILL_ROOT_LABEL,
   SETTINGS_SKILL_ROOT_PLACEHOLDER,
   SETTINGS_CHARACTER_REFLECTION_HELP,
+  SETTINGS_CHARACTER_REFLECTION_CHAR_DELTA_LABEL,
+  SETTINGS_CHARACTER_REFLECTION_COOLDOWN_LABEL,
+  SETTINGS_CHARACTER_REFLECTION_MESSAGE_DELTA_LABEL,
   SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL,
   SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL,
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_HELP,
@@ -86,6 +89,9 @@ export type HomeSettingsContentProps = {
     providerId: string,
     reasoningEffort: CharacterReflectionProviderSettings["reasoningEffort"],
   ) => void;
+  onChangeCharacterReflectionCooldownSeconds: (value: string) => void;
+  onChangeCharacterReflectionCharDeltaThreshold: (value: string) => void;
+  onChangeCharacterReflectionMessageDeltaThreshold: (value: string) => void;
   onImportModelCatalog: () => void;
   onExportModelCatalog: () => void;
   onReloadMemoryManagement: () => void;
@@ -125,6 +131,9 @@ export function HomeSettingsContent({
   onChangeMemoryExtractionThreshold,
   onChangeCharacterReflectionModel,
   onChangeCharacterReflectionReasoningEffort,
+  onChangeCharacterReflectionCooldownSeconds,
+  onChangeCharacterReflectionCharDeltaThreshold,
+  onChangeCharacterReflectionMessageDeltaThreshold,
   onImportModelCatalog,
   onExportModelCatalog,
   onReloadMemoryManagement,
@@ -330,6 +339,43 @@ export function HomeSettingsContent({
                 <div className="settings-field">
                   <strong>Character Reflection</strong>
                   <p className="settings-help">{SETTINGS_CHARACTER_REFLECTION_HELP}</p>
+                  <div className="settings-provider-list">
+                    <section className="settings-provider-card">
+                      <label className="settings-provider-input composer-setting-field">
+                        <span>{SETTINGS_CHARACTER_REFLECTION_COOLDOWN_LABEL}</span>
+                        <input
+                          type="number"
+                          min={30}
+                          max={3600}
+                          step={30}
+                          value={settingsDraft.characterReflectionTriggerSettings.cooldownSeconds}
+                          onChange={(event) => onChangeCharacterReflectionCooldownSeconds(event.target.value)}
+                        />
+                      </label>
+                      <label className="settings-provider-input composer-setting-field">
+                        <span>{SETTINGS_CHARACTER_REFLECTION_CHAR_DELTA_LABEL}</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={20000}
+                          step={50}
+                          value={settingsDraft.characterReflectionTriggerSettings.charDeltaThreshold}
+                          onChange={(event) => onChangeCharacterReflectionCharDeltaThreshold(event.target.value)}
+                        />
+                      </label>
+                      <label className="settings-provider-input composer-setting-field">
+                        <span>{SETTINGS_CHARACTER_REFLECTION_MESSAGE_DELTA_LABEL}</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={100}
+                          step={1}
+                          value={settingsDraft.characterReflectionTriggerSettings.messageDeltaThreshold}
+                          onChange={(event) => onChangeCharacterReflectionMessageDeltaThreshold(event.target.value)}
+                        />
+                      </label>
+                    </section>
+                  </div>
                   <div className="settings-provider-list">
                     {providerSettingRows.map((row) => (
                       <section key={row.provider.id} className="settings-provider-card">

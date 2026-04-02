@@ -5,8 +5,11 @@ import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
   updateAutoCollapseActionDockOnSend,
+  updateCharacterReflectionCharDeltaThreshold,
+  updateCharacterReflectionCooldownSeconds,
   updateCharacterReflectionModel,
   updateCharacterReflectionModelDraft,
+  updateCharacterReflectionMessageDeltaThreshold,
   updateCharacterReflectionReasoningEffort,
   updateCharacterReflectionReasoningEffortDraft,
   updateCodingProviderApiKey,
@@ -120,6 +123,20 @@ describe("home-settings-draft", () => {
     assert.equal(nextReasoning.codex.reasoningEffort, "medium");
   });
 
+  it("character reflection trigger settings を更新できる", () => {
+    const draft = createDefaultAppSettings();
+
+    const nextCooldown = updateCharacterReflectionCooldownSeconds(draft, "180");
+    const nextCharDelta = updateCharacterReflectionCharDeltaThreshold(nextCooldown, "600");
+    const nextMessageDelta = updateCharacterReflectionMessageDeltaThreshold(nextCharDelta, "3");
+
+    assert.deepEqual(nextMessageDelta.characterReflectionTriggerSettings, {
+      cooldownSeconds: 180,
+      charDeltaThreshold: 600,
+      messageDeltaThreshold: 3,
+    });
+  });
+
   it("draft wrapper は AppSettings 全体を更新する", () => {
     const draft = createDefaultAppSettings();
 
@@ -161,15 +178,25 @@ describe("home-settings-draft", () => {
       "codex",
       "medium",
     );
+    const nextWithTriggers = updateCharacterReflectionMessageDeltaThreshold(
+      updateCharacterReflectionCharDeltaThreshold(
+        updateCharacterReflectionCooldownSeconds(next, "180"),
+        "600",
+      ),
+      "3",
+    );
 
-    assert.equal(next.systemPromptPrefix, "prefix");
-    assert.equal(next.memoryGenerationEnabled, false);
-    assert.equal(next.autoCollapseActionDockOnSend, false);
-    assert.equal(next.codingProviderSettings.codex.enabled, false);
-    assert.equal(next.codingProviderSettings.codex.apiKey, "key");
-    assert.equal(next.codingProviderSettings.codex.skillRootPath, "C:/skills");
-    assert.equal(next.memoryExtractionProviderSettings.codex.outputTokensThreshold, 321);
-    assert.equal(next.characterReflectionProviderSettings.codex.reasoningEffort, "medium");
+    assert.equal(nextWithTriggers.systemPromptPrefix, "prefix");
+    assert.equal(nextWithTriggers.memoryGenerationEnabled, false);
+    assert.equal(nextWithTriggers.autoCollapseActionDockOnSend, false);
+    assert.equal(nextWithTriggers.codingProviderSettings.codex.enabled, false);
+    assert.equal(nextWithTriggers.codingProviderSettings.codex.apiKey, "key");
+    assert.equal(nextWithTriggers.codingProviderSettings.codex.skillRootPath, "C:/skills");
+    assert.equal(nextWithTriggers.memoryExtractionProviderSettings.codex.outputTokensThreshold, 321);
+    assert.equal(nextWithTriggers.characterReflectionProviderSettings.codex.reasoningEffort, "medium");
+    assert.equal(nextWithTriggers.characterReflectionTriggerSettings.cooldownSeconds, 180);
+    assert.equal(nextWithTriggers.characterReflectionTriggerSettings.charDeltaThreshold, 600);
+    assert.equal(nextWithTriggers.characterReflectionTriggerSettings.messageDeltaThreshold, 3);
   });
 
   it("action dock auto close を toggle できる", () => {

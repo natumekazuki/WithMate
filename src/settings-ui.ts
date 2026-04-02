@@ -28,8 +28,11 @@ export const SETTINGS_MEMORY_EXTRACTION_HELP =
   "Memory extraction は provider ごとに専用 model / reasoning depth / outputTokens threshold を持つ。通常は turn 完了後に threshold 到達時だけ走り、必要なら Session Window の `Generate Memory` から手動実行できる。";
 export const SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL = "Model";
 export const SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL = "Reasoning Depth";
+export const SETTINGS_CHARACTER_REFLECTION_COOLDOWN_LABEL = "Cooldown Seconds";
+export const SETTINGS_CHARACTER_REFLECTION_CHAR_DELTA_LABEL = "Min Char Delta";
+export const SETTINGS_CHARACTER_REFLECTION_MESSAGE_DELTA_LABEL = "Min Message Delta";
 export const SETTINGS_CHARACTER_REFLECTION_HELP =
-  "Character reflection は provider ごとに専用 model / reasoning depth を持つ。trigger 条件は app 側の仕様で固定する。";
+  "Character reflection は provider ごとの model / reasoning depth と、app-wide の context-growth trigger 閾値を持つ。SessionStart の重複抑止は固定で、ここでは cooldown / char delta / message delta だけ調整できる。";
 export const SETTINGS_RELEASE_COMPATIBILITY_NOTE =
   "初回リリース前のため後方互換性は考慮しない。互換性のない変更が入った場合は Settings の DB 初期化で復旧する。";
 export const SETTINGS_RESET_DATABASE_LABEL = "DB を初期化";

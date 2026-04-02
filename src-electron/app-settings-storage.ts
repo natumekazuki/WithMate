@@ -8,6 +8,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
 const SYSTEM_PROMPT_PREFIX_KEY = "system_prompt_prefix";
 const MEMORY_GENERATION_ENABLED_KEY = "memory_generation_enabled";
 const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
+const CHARACTER_REFLECTION_TRIGGER_SETTINGS_KEY = "character_reflection_trigger_settings_json";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
 const CHARACTER_REFLECTION_PROVIDER_SETTINGS_KEY = "character_reflection_provider_settings_json";
@@ -68,6 +69,17 @@ export class AppSettingsStorage {
         VALUES (?, ?, ?)
         ON CONFLICT(setting_key) DO NOTHING
       `)
+      .run(
+        CHARACTER_REFLECTION_TRIGGER_SETTINGS_KEY,
+        JSON.stringify(DEFAULT_APP_SETTINGS.characterReflectionTriggerSettings),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
       .run(CODING_PROVIDER_SETTINGS_KEY, JSON.stringify(DEFAULT_APP_SETTINGS.codingProviderSettings), updatedAt);
     this.db
       .prepare(`
@@ -114,6 +126,20 @@ export class AppSettingsStorage {
       if (row.setting_key === AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY) {
         settings.autoCollapseActionDockOnSend = row.setting_value === "true";
         continue;
+      }
+    }
+
+    const characterReflectionTriggerSettingsJson = rows.find(
+      (row) => row.setting_key === CHARACTER_REFLECTION_TRIGGER_SETTINGS_KEY,
+    )?.setting_value;
+    if (characterReflectionTriggerSettingsJson) {
+      try {
+        settings.characterReflectionTriggerSettings = normalizeAppSettings({
+          ...settings,
+          characterReflectionTriggerSettings: JSON.parse(characterReflectionTriggerSettingsJson),
+        }).characterReflectionTriggerSettings;
+      } catch {
+        settings.characterReflectionTriggerSettings = createDefaultAppSettings().characterReflectionTriggerSettings;
       }
     }
 
@@ -195,6 +221,19 @@ export class AppSettingsStorage {
         .run(
           AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY,
           String(normalized.autoCollapseActionDockOnSend),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          CHARACTER_REFLECTION_TRIGGER_SETTINGS_KEY,
+          JSON.stringify(normalized.characterReflectionTriggerSettings),
           updatedAt,
         );
       this.db

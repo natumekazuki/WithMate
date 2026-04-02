@@ -14,6 +14,11 @@ describe("provider-settings-state", () => {
     assert.equal(DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD, 300000);
     assert.equal(settings.memoryExtractionProviderSettings.codex.outputTokensThreshold, 300000);
     assert.equal(settings.autoCollapseActionDockOnSend, true);
+    assert.deepEqual(settings.characterReflectionTriggerSettings, {
+      cooldownSeconds: 120,
+      charDeltaThreshold: 400,
+      messageDeltaThreshold: 2,
+    });
   });
 
   it("memory extraction threshold は normalize で 1000000 に clamp する", () => {
@@ -33,5 +38,21 @@ describe("provider-settings-state", () => {
   it("action dock auto close は normalize で boolean を保持し、未設定時は true に寄せる", () => {
     assert.equal(normalizeAppSettings({ autoCollapseActionDockOnSend: false }).autoCollapseActionDockOnSend, false);
     assert.equal(normalizeAppSettings({}).autoCollapseActionDockOnSend, true);
+  });
+
+  it("character reflection trigger settings は normalize で clamp する", () => {
+    const settings = normalizeAppSettings({
+      characterReflectionTriggerSettings: {
+        cooldownSeconds: 5,
+        charDeltaThreshold: 0,
+        messageDeltaThreshold: 999,
+      },
+    });
+
+    assert.deepEqual(settings.characterReflectionTriggerSettings, {
+      cooldownSeconds: 30,
+      charDeltaThreshold: 1,
+      messageDeltaThreshold: 100,
+    });
   });
 });

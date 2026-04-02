@@ -71,6 +71,7 @@ describe("home-settings-view-model", () => {
     const draft = createDefaultAppSettings();
     draft.systemPromptPrefix = "prefix";
     draft.autoCollapseActionDockOnSend = false;
+    draft.characterReflectionTriggerSettings.cooldownSeconds = 180;
     draft.memoryExtractionProviderSettings.codex = {
       model: "missing-model",
       reasoningEffort: "high",
@@ -82,6 +83,7 @@ describe("home-settings-view-model", () => {
 
     assert.equal(persisted.systemPromptPrefix, "prefix");
     assert.equal(persisted.autoCollapseActionDockOnSend, false);
+    assert.equal(persisted.characterReflectionTriggerSettings.cooldownSeconds, 180);
     assert.deepEqual(persisted.memoryExtractionProviderSettings.codex, {
       model: "gpt-5.4",
       reasoningEffort: "high",

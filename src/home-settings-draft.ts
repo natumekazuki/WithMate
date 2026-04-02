@@ -1,5 +1,6 @@
 import {
   getCharacterReflectionProviderSettings,
+  getCharacterReflectionTriggerSettings,
   getMemoryExtractionProviderSettings,
   getProviderAppSettings,
   type AppSettings,
@@ -36,6 +37,48 @@ export function updateAutoCollapseActionDockOnSend(
   return {
     ...draft,
     autoCollapseActionDockOnSend: enabled,
+  };
+}
+
+export function updateCharacterReflectionCooldownSeconds(
+  draft: AppSettings,
+  rawValue: string,
+): AppSettings {
+  const normalized = Number.parseInt(rawValue, 10);
+  return {
+    ...draft,
+    characterReflectionTriggerSettings: {
+      ...getCharacterReflectionTriggerSettings(draft),
+      cooldownSeconds: Number.isFinite(normalized) && normalized > 0 ? normalized : 30,
+    },
+  };
+}
+
+export function updateCharacterReflectionCharDeltaThreshold(
+  draft: AppSettings,
+  rawValue: string,
+): AppSettings {
+  const normalized = Number.parseInt(rawValue, 10);
+  return {
+    ...draft,
+    characterReflectionTriggerSettings: {
+      ...getCharacterReflectionTriggerSettings(draft),
+      charDeltaThreshold: Number.isFinite(normalized) && normalized > 0 ? normalized : 1,
+    },
+  };
+}
+
+export function updateCharacterReflectionMessageDeltaThreshold(
+  draft: AppSettings,
+  rawValue: string,
+): AppSettings {
+  const normalized = Number.parseInt(rawValue, 10);
+  return {
+    ...draft,
+    characterReflectionTriggerSettings: {
+      ...getCharacterReflectionTriggerSettings(draft),
+      messageDeltaThreshold: Number.isFinite(normalized) && normalized > 0 ? normalized : 1,
+    },
   };
 }
 

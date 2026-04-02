@@ -11,6 +11,7 @@ import {
   buildCharacterReflectionContextSnapshot,
   buildCharacterReflectionPrompt,
   getCharacterReflectionSettings,
+  getResolvedCharacterReflectionTriggerSettings,
   parseCharacterReflectionOutputText,
   shouldTriggerCharacterReflection,
 } from "../../src-electron/character-reflection.js";
@@ -66,13 +67,34 @@ describe("character-reflection", () => {
     assert.equal(resolved.reasoningEffort, "medium");
   });
 
+  it("app-wide の trigger settings を返す", () => {
+    const settings = createDefaultAppSettings();
+    settings.characterReflectionTriggerSettings = {
+      cooldownSeconds: 180,
+      charDeltaThreshold: 550,
+      messageDeltaThreshold: 3,
+    };
+
+    const resolved = getResolvedCharacterReflectionTriggerSettings(settings);
+    assert.deepEqual(resolved, {
+      cooldownSeconds: 180,
+      charDeltaThreshold: 550,
+      messageDeltaThreshold: 3,
+    });
+  });
+
   it("SessionStart は新しい会話がある時だけ trigger し、context-growth は増分と cooldown で判定する", () => {
     const snapshot = {
       messageCount: 8,
       charCount: 1600,
     };
+    const triggerSettings = {
+      cooldownSeconds: 120,
+      charDeltaThreshold: 400,
+      messageDeltaThreshold: 2,
+    };
 
-    assert.equal(shouldTriggerCharacterReflection(snapshot, null, "session-start"), true);
+    assert.equal(shouldTriggerCharacterReflection(snapshot, null, "session-start", triggerSettings), true);
     assert.equal(
       shouldTriggerCharacterReflection(
         snapshot,
@@ -82,6 +104,7 @@ describe("character-reflection", () => {
           charCount: 1600,
         },
         "session-start",
+        triggerSettings,
       ),
       false,
     );
@@ -94,6 +117,7 @@ describe("character-reflection", () => {
           charCount: 100,
         },
         "context-growth",
+        triggerSettings,
       ),
       true,
     );
@@ -106,6 +130,7 @@ describe("character-reflection", () => {
           charCount: 0,
         },
         "context-growth",
+        triggerSettings,
       ),
       false,
     );

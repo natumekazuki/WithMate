@@ -10,6 +10,7 @@ export type AppSettings = {
   systemPromptPrefix: string;
   memoryGenerationEnabled: boolean;
   autoCollapseActionDockOnSend: boolean;
+  characterReflectionTriggerSettings: CharacterReflectionTriggerSettings;
   codingProviderSettings: Record<string, ProviderAppSettings>;
   memoryExtractionProviderSettings: Record<string, MemoryExtractionProviderSettings>;
   characterReflectionProviderSettings: Record<string, CharacterReflectionProviderSettings>;
@@ -30,6 +31,12 @@ export type MemoryExtractionProviderSettings = {
 export type CharacterReflectionProviderSettings = {
   model: string;
   reasoningEffort: ModelReasoningEffort;
+};
+
+export type CharacterReflectionTriggerSettings = {
+  cooldownSeconds: number;
+  charDeltaThreshold: number;
+  messageDeltaThreshold: number;
 };
 
 export type ResolvedProviderSettingsBundle = {
@@ -57,11 +64,18 @@ export const DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS: CharacterReflection
   reasoningEffort: DEFAULT_REASONING_EFFORT,
 };
 
+export const DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS: CharacterReflectionTriggerSettings = {
+  cooldownSeconds: 120,
+  charDeltaThreshold: 400,
+  messageDeltaThreshold: 2,
+};
+
 export function createDefaultAppSettings(): AppSettings {
   return {
     systemPromptPrefix: "",
     memoryGenerationEnabled: true,
     autoCollapseActionDockOnSend: true,
+    characterReflectionTriggerSettings: { ...DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS },
     codingProviderSettings: {
       [DEFAULT_PROVIDER_ID]: {
         enabled: true,
@@ -76,6 +90,57 @@ export function createDefaultAppSettings(): AppSettings {
       [DEFAULT_PROVIDER_ID]: { ...DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS },
     },
   };
+}
+
+function normalizeCharacterReflectionCooldownSeconds(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS.cooldownSeconds;
+  }
+
+  const normalized = Math.trunc(value);
+  if (normalized < 30) {
+    return 30;
+  }
+
+  if (normalized > 3_600) {
+    return 3_600;
+  }
+
+  return normalized;
+}
+
+function normalizeCharacterReflectionCharDeltaThreshold(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS.charDeltaThreshold;
+  }
+
+  const normalized = Math.trunc(value);
+  if (normalized < 1) {
+    return 1;
+  }
+
+  if (normalized > 20_000) {
+    return 20_000;
+  }
+
+  return normalized;
+}
+
+function normalizeCharacterReflectionMessageDeltaThreshold(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS.messageDeltaThreshold;
+  }
+
+  const normalized = Math.trunc(value);
+  if (normalized < 1) {
+    return 1;
+  }
+
+  if (normalized > 100) {
+    return 100;
+  }
+
+  return normalized;
 }
 
 function normalizeProviderAppSettings(value: unknown, defaultEnabled: boolean): ProviderAppSettings {
@@ -151,6 +216,19 @@ function normalizeCharacterReflectionProviderSettings(value: unknown): Character
   };
 }
 
+function normalizeCharacterReflectionTriggerSettings(value: unknown): CharacterReflectionTriggerSettings {
+  if (!value || typeof value !== "object") {
+    return { ...DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS };
+  }
+
+  const candidate = value as Partial<CharacterReflectionTriggerSettings>;
+  return {
+    cooldownSeconds: normalizeCharacterReflectionCooldownSeconds(candidate.cooldownSeconds),
+    charDeltaThreshold: normalizeCharacterReflectionCharDeltaThreshold(candidate.charDeltaThreshold),
+    messageDeltaThreshold: normalizeCharacterReflectionMessageDeltaThreshold(candidate.messageDeltaThreshold),
+  };
+}
+
 export function normalizeAppSettings(value: unknown): AppSettings {
   const defaults = createDefaultAppSettings();
   if (!value || typeof value !== "object") {
@@ -211,6 +289,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       typeof candidate.memoryGenerationEnabled === "boolean" ? candidate.memoryGenerationEnabled : true,
     autoCollapseActionDockOnSend:
       typeof candidate.autoCollapseActionDockOnSend === "boolean" ? candidate.autoCollapseActionDockOnSend : true,
+    characterReflectionTriggerSettings: normalizeCharacterReflectionTriggerSettings(candidate.characterReflectionTriggerSettings),
     codingProviderSettings,
     memoryExtractionProviderSettings,
     characterReflectionProviderSettings,
@@ -246,6 +325,11 @@ export function getCharacterReflectionProviderSettings(
   return normalizeCharacterReflectionProviderSettings(
     resolvedSettings.characterReflectionProviderSettings[normalizedProviderId],
   );
+}
+
+export function getCharacterReflectionTriggerSettings(settings: AppSettings): CharacterReflectionTriggerSettings {
+  const resolvedSettings = normalizeAppSettings(settings);
+  return normalizeCharacterReflectionTriggerSettings(resolvedSettings.characterReflectionTriggerSettings);
 }
 
 export function getResolvedProviderSettingsBundle(

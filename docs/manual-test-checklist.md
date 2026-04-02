@@ -33,7 +33,8 @@ npm run electron:start
 | MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `System Prompt Prefix` / `Coding Agent Providers` / `Coding Agent Credentials` / `Memory Extraction` / `Memory 管理` / `Model Catalog` / `Danger Zone` が既存値で表示される |
 | MT-004A | Settings provider row layout | `Settings Window` を開いて `Coding Agent Providers` を確認する | provider 名が左、checkbox が右の row で揃って見え、どの provider を on/off しているか即判別できる |
 | MT-004B | Memory extraction settings | `Settings Window` の `Memory Extraction` を確認する | provider ごとに `Model` / `Reasoning Depth` / `Output Tokens Threshold` が表示され、現在の model catalog に沿った選択肢だけが出る |
-| MT-004C | Character reflection settings | `Settings Window` の `Character Reflection` を確認する | provider ごとに `Model` / `Reasoning Depth` が表示され、現在の model catalog に沿った選択肢だけが出る |
+| MT-004C | Character reflection settings | `Settings Window` の `Character Reflection` を確認する | app-wide の `Cooldown Seconds` / `Min Char Delta` / `Min Message Delta` と、provider ごとの `Model` / `Reasoning Depth` が表示される。provider 選択肢は現在の model catalog に沿ったものだけが出る |
+| MT-004C1 | Character reflection trigger settings save | `Character Reflection` の `Cooldown Seconds` / `Min Char Delta` / `Min Message Delta` を変更して `Save Settings` し、Settings を開き直す | 変更した trigger 値が保持される。`0` や極端な値を入れて保存した場合も clamp 後の値で再表示される |
 | MT-004D | Memory 管理一覧 | `Settings Window` の `Memory 管理` を確認する | `Session / Project / Character Memory` の件数、一覧、`Reload Memory` が表示される。空の domain は empty state で見分けられる |
 | MT-004E | Memory 管理 delete | Session / Project / Character Memory が少なくとも 1 件ずつある状態で `Delete` を実行する | 対象 domain の item が消え、最後の `Project / Character Memory` entry を削除した時は空 scope も残らない。reload 後も再出現しない |
 | MT-004F | Memory 管理 search / filter | `Settings Window` の `Memory 管理` で search text、domain、status / category、sort を切り替える | search は title / detail / keyword / workspace を横断して絞り込める。domain に応じて不要な filter は disabled になり、sort は更新日時順の切替が効く |
@@ -103,6 +104,7 @@ npm run electron:start
 | MT-027 | Latest command pre-command empty state | run 開始直後でまだ `command_execution` が来ていない状態を観察する | pending bubble に実行中 indicator が出て、right pane は `最初の command を待っています。` の empty state を表示する |
 | MT-027A | Characterized session copy | `Session Copy` を設定した character で session を開き、pending indicator、retry banner、`Latest Command` empty、`Changed Files` empty、`Context` empty を確認する | 設定した slot だけが差し替わり、`{name}` は character 名へ置換される。未設定 slot は bland default copy のまま残る |
 | MT-027C | Monologue recent stream | `独り言` tab を開いて、`SessionStart` または文脈増加後の monologue を確認する | background state が表示され、完了後は recent monologue が session `stream` から新しい順で見える。会話更新なしの reopen では同じ monologue を重複生成しない |
+| MT-027D | Monologue trigger settings effect | `Character Reflection` の trigger 値を軽めに設定した session で短い会話を 2〜3 往復行う | `context-growth` の独り言と Character Memory 更新が、保存した `cooldown / char delta / message delta` に従って以前より早く発火する |
 | MT-027B | Characterized session copy variation | 同じ slot に 2 つ以上の候補を入れた character で SessionWindow を開き直す、または状態を作り直す | 候補から 1 つが選ばれる。表示中に再描画だけで文言が頻繁に入れ替わらない |
 | MT-028 | Live progress pending indicator persistence | run 開始直後から assistantText streaming 開始後まで pending bubble を観察する。可能なら本文と right pane が同時に見える run も確認する | 本文が出始めても `runState === "running"` の間は先頭の実行中 indicator が残り、character 名が取れる時は `<キャラ名>が…` の形、取れない時は主語なしの一般化表現で表示される。`runState !== "running"` になった時点で indicator が消える |
 | MT-029 | Latest command details collapse | command output を伴う run を実行する | right pane では raw command が常時表示され、stdout / stderr 相当は `Details` を開いた時だけ見える |

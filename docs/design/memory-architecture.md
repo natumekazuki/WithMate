@@ -55,6 +55,7 @@ WithMate の Memory は 3 層に分ける。
 - main の coding session prompt には注入せず、monologue や将来の character update で使う
 - `独り言` と共通の `character reflection cycle` で更新する
 - `SessionStart` では monologue only、通常更新は文脈増加ベースで走らせる
+- 通常更新の `cooldown / char delta / message delta` は app-wide settings で調整できる
 - Settings の `Memory Generation` global toggle が OFF の時は、Session Memory extraction / Character Reflection / Monologue の background 実行をまとめて止める
 
 ## Core Distinction

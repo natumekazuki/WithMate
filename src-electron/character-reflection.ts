@@ -4,7 +4,12 @@ import type {
   CharacterProfile,
   Session,
 } from "../src/app-state.js";
-import { getCharacterReflectionProviderSettings, type AppSettings } from "../src/provider-settings-state.js";
+import {
+  getCharacterReflectionProviderSettings,
+  getCharacterReflectionTriggerSettings,
+  type AppSettings,
+  type CharacterReflectionTriggerSettings,
+} from "../src/provider-settings-state.js";
 import {
   normalizeCharacterReflectionOutput,
   type CharacterMemoryDelta,
@@ -13,10 +18,6 @@ import {
   type SessionMemory,
 } from "../src/memory-state.js";
 import type { ModelReasoningEffort } from "../src/model-catalog.js";
-
-export const CHARACTER_REFLECTION_CHAR_DELTA_THRESHOLD = 1200;
-export const CHARACTER_REFLECTION_MESSAGE_DELTA_THRESHOLD = 6;
-export const CHARACTER_REFLECTION_COOLDOWN_MS = 5 * 60 * 1000;
 
 export type CharacterReflectionTriggerReason = "session-start" | "context-growth";
 
@@ -149,6 +150,12 @@ export function getCharacterReflectionSettings(
   };
 }
 
+export function getResolvedCharacterReflectionTriggerSettings(
+  appSettings: AppSettings,
+): CharacterReflectionTriggerSettings {
+  return getCharacterReflectionTriggerSettings(appSettings);
+}
+
 export function buildCharacterReflectionContextSnapshot(session: Session): CharacterReflectionContextSnapshot {
   const relevantMessages = session.messages.filter((message) => message.role === "user" || message.role === "assistant");
   return {
@@ -161,6 +168,7 @@ export function shouldTriggerCharacterReflection(
   current: CharacterReflectionContextSnapshot,
   checkpoint: CharacterReflectionCheckpoint | null,
   triggerReason: CharacterReflectionTriggerReason,
+  triggerSettings: CharacterReflectionTriggerSettings,
   now = Date.now(),
 ): boolean {
   if (triggerReason === "session-start") {
@@ -176,14 +184,14 @@ export function shouldTriggerCharacterReflection(
   }
 
   const reflectedAtMs = Date.parse(checkpoint.reflectedAt);
-  if (!Number.isNaN(reflectedAtMs) && now - reflectedAtMs < CHARACTER_REFLECTION_COOLDOWN_MS) {
+  if (!Number.isNaN(reflectedAtMs) && now - reflectedAtMs < triggerSettings.cooldownSeconds * 1000) {
     return false;
   }
 
   const charDelta = current.charCount - checkpoint.charCount;
   const messageDelta = current.messageCount - checkpoint.messageCount;
-  return charDelta >= CHARACTER_REFLECTION_CHAR_DELTA_THRESHOLD
-    || messageDelta >= CHARACTER_REFLECTION_MESSAGE_DELTA_THRESHOLD;
+  return charDelta >= triggerSettings.charDeltaThreshold
+    || messageDelta >= triggerSettings.messageDeltaThreshold;
 }
 
 export function buildCharacterReflectionPrompt(input: {

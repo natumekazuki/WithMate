@@ -51,7 +51,10 @@ import {
 } from "./home-settings-actions.js";
 import { buildHomeSettingsProjection } from "./home-settings-projection.js";
 import {
+  updateCharacterReflectionCharDeltaThreshold,
+  updateCharacterReflectionCooldownSeconds,
   updateCharacterReflectionModelDraft,
+  updateCharacterReflectionMessageDeltaThreshold,
   updateCharacterReflectionReasoningEffortDraft,
   updateAutoCollapseActionDockOnSend,
   updateCodingProviderApiKeyDraft,
@@ -511,6 +514,18 @@ export default function HomeApp() {
     setSettingsDraft((current) => updateCharacterReflectionReasoningEffortDraft(current, providerId, reasoningEffort));
   };
 
+  const handleChangeCharacterReflectionCooldownSeconds = (value: string) => {
+    setSettingsDraft((current) => updateCharacterReflectionCooldownSeconds(current, value));
+  };
+
+  const handleChangeCharacterReflectionCharDeltaThreshold = (value: string) => {
+    setSettingsDraft((current) => updateCharacterReflectionCharDeltaThreshold(current, value));
+  };
+
+  const handleChangeCharacterReflectionMessageDeltaThreshold = (value: string) => {
+    setSettingsDraft((current) => updateCharacterReflectionMessageDeltaThreshold(current, value));
+  };
+
   const handleReloadMemoryManagement = async () => {
     const withmateApi = getWithMateApi();
     if (!withmateApi || !isSettingsWindowMode) {
@@ -671,6 +686,9 @@ export default function HomeApp() {
       onChangeMemoryExtractionThreshold={handleChangeMemoryExtractionThreshold}
       onChangeCharacterReflectionModel={handleChangeCharacterReflectionModel}
       onChangeCharacterReflectionReasoningEffort={handleChangeCharacterReflectionReasoningEffort}
+      onChangeCharacterReflectionCooldownSeconds={handleChangeCharacterReflectionCooldownSeconds}
+      onChangeCharacterReflectionCharDeltaThreshold={handleChangeCharacterReflectionCharDeltaThreshold}
+      onChangeCharacterReflectionMessageDeltaThreshold={handleChangeCharacterReflectionMessageDeltaThreshold}
       onImportModelCatalog={() => void handleImportModelCatalog()}
       onExportModelCatalog={() => void handleExportModelCatalog()}
       onReloadMemoryManagement={() => void handleReloadMemoryManagement()}

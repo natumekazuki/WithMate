@@ -85,13 +85,14 @@
   - character relationship reflection
 - Settings:
   - current v1 では coding plane credential を流用する
-  - current v1 では `Character Reflection model / reasoning depth` だけを provider ごとに持つ
+  - current v1 では `Character Reflection model / reasoning depth` を provider ごとに持つ
+  - current v1 では `context-growth` の `cooldown / char delta / message delta` を app-wide settings として持つ
   - 将来 monologue plane を分離する場合だけ専用 credential / model 設定欄を追加する
 
 ## Current Implementation Note
 
 current v1 では `character reflection cycle` を current coding provider の background plane で動かす。  
-Settings に provider ごとの `Character Reflection model / reasoning depth` を保持し、`SessionStart` と文脈増加時の reflection で利用する。  
+Settings に provider ごとの `Character Reflection model / reasoning depth` と、app-wide の `context-growth trigger settings` を保持し、`SessionStart` と文脈増加時の reflection で利用する。  
 `Session Window` 右ペインの `独り言` host には background state と recent monologue を表示する。  
 これは monologue plane の恒久仕様ではなく、将来 API 分離へ差し替え可能な暫定 backend として扱う。
 
@@ -117,9 +118,13 @@ current v1 では次の方針を採用する。
 2. `Context 増加ベース`
 - `Character Memory` 更新と monologue 更新を同時に行う
 - 条件:
-  - `charDelta >= 1200`
-  - または `messageDelta >= 6`
-  - かつ `cooldown >= 5分`
+  - `charDelta >= Settings.characterReflectionTriggerSettings.charDeltaThreshold`
+  - または `messageDelta >= Settings.characterReflectionTriggerSettings.messageDeltaThreshold`
+  - かつ `cooldown >= Settings.characterReflectionTriggerSettings.cooldownSeconds`
+- default:
+  - `charDelta >= 400`
+  - または `messageDelta >= 2`
+  - かつ `cooldown >= 120秒`
 
 ### Non Trigger
 

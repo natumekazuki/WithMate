@@ -82,10 +82,12 @@ export type {
 export {
   createDefaultAppSettings,
   DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS,
+  DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS,
   DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD,
   DEFAULT_MEMORY_EXTRACTION_PROVIDER_SETTINGS,
   DEFAULT_PROVIDER_APP_SETTINGS,
   getCharacterReflectionProviderSettings,
+  getCharacterReflectionTriggerSettings,
   getMemoryExtractionProviderSettings,
   getProviderAppSettings,
   getResolvedProviderSettingsBundle,
@@ -94,6 +96,7 @@ export {
 export type {
   AppSettings,
   CharacterReflectionProviderSettings,
+  CharacterReflectionTriggerSettings,
   MemoryExtractionProviderSettings,
   ProviderAppSettings,
   ResolvedProviderSettingsBundle,

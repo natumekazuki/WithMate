@@ -4,7 +4,10 @@ import { describe, it } from "node:test";
 import {
   SETTINGS_API_KEY_LABEL,
   SETTINGS_API_KEY_PLACEHOLDER,
+  SETTINGS_CHARACTER_REFLECTION_CHAR_DELTA_LABEL,
+  SETTINGS_CHARACTER_REFLECTION_COOLDOWN_LABEL,
   SETTINGS_CHARACTER_REFLECTION_HELP,
+  SETTINGS_CHARACTER_REFLECTION_MESSAGE_DELTA_LABEL,
   SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL,
   SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL,
   SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE,
@@ -49,14 +52,18 @@ describe("Settings UI constants", () => {
     assert.equal(SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL, "Model");
     assert.equal(SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL, "Reasoning Depth");
     assert.equal(SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL, "Output Tokens Threshold");
-    assert.match(SETTINGS_MEMORY_EXTRACTION_HELP, /compact 前/);
-    assert.match(SETTINGS_MEMORY_EXTRACTION_HELP, /session close 前/);
+    assert.match(SETTINGS_MEMORY_EXTRACTION_HELP, /turn 完了後/);
+    assert.match(SETTINGS_MEMORY_EXTRACTION_HELP, /Generate Memory/);
   });
 
-  it("character reflection の設定項目は model と reasoning に限定する", () => {
+  it("character reflection は provider 設定に加えて app-wide trigger 条件を持つ", () => {
     assert.equal(SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL, "Model");
     assert.equal(SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL, "Reasoning Depth");
-    assert.match(SETTINGS_CHARACTER_REFLECTION_HELP, /provider ごと/);
+    assert.equal(SETTINGS_CHARACTER_REFLECTION_COOLDOWN_LABEL, "Cooldown Seconds");
+    assert.equal(SETTINGS_CHARACTER_REFLECTION_CHAR_DELTA_LABEL, "Min Char Delta");
+    assert.equal(SETTINGS_CHARACTER_REFLECTION_MESSAGE_DELTA_LABEL, "Min Message Delta");
+    assert.match(SETTINGS_CHARACTER_REFLECTION_HELP, /app-wide/);
+    assert.match(SETTINGS_CHARACTER_REFLECTION_HELP, /SessionStart/);
   });
 
   it("Home Window は Settings overlay の余裕を確保する既定サイズを使う", () => {

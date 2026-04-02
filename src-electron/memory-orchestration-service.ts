@@ -11,6 +11,7 @@ import {
 } from "../src/app-state.js";
 import { type CharacterProfile } from "../src/character-state.js";
 import {
+  getCharacterReflectionTriggerSettings,
   getProviderAppSettings,
   type AppSettings,
 } from "../src/provider-settings-state.js";
@@ -184,9 +185,11 @@ export class MemoryOrchestrationService {
       return;
     }
 
+    const appSettings = this.deps.getAppSettings();
     const checkpoint = this.characterReflectionCheckpoints.get(latestSession.id) ?? null;
     const currentSnapshot = buildCharacterReflectionContextSnapshot(latestSession);
-    if (!shouldTriggerCharacterReflection(currentSnapshot, checkpoint, options.triggerReason)) {
+    const triggerSettings = getCharacterReflectionTriggerSettings(appSettings);
+    if (!shouldTriggerCharacterReflection(currentSnapshot, checkpoint, options.triggerReason, triggerSettings)) {
       return;
     }
 
@@ -195,7 +198,6 @@ export class MemoryOrchestrationService {
       return;
     }
 
-    const appSettings = this.deps.getAppSettings();
     if (!appSettings.memoryGenerationEnabled) {
       return;
     }
