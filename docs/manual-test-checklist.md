@@ -77,9 +77,10 @@ npm run electron:start
 | MT-021 | Character editor title theme | Home から Character Editor を開く | header title の文字色が現在のキャラ `main` 色で表示される |
 | MT-022 | Session theme accent | Session Window を開く | header title、assistant / pending bubble、composer settings、`Send / Cancel`、Details 展開後の artifact block に character theme の accent が反映され、`user-bubble` は neutral tone を維持する |
 | MT-023 | Diff theme accent | Session から Diff を開く | `titlebar / subbar / pane header` に character theme の薄い accent が反映され、`Before / After` の文字が背景色に埋もれず読める |
-| MT-023A | Session wide layout baseline | `1920x1080` 前後の幅で Session Window を開く | 上段に compact な `Top Bar`、中央に左右 2 分割、下段に `Action Dock` が表示される |
+| MT-023A | Session wide layout baseline | `1920x1080` 前後の幅で Session Window を開く | 上段に compact な `Top Bar`、中央に左右 2 分割が表示される。左は `message list + Action Dock`、右は `Latest Command` で、right pane は下端まで伸びる |
 | MT-023B | Session splitter resize | wide desktop 状態で左右境界をドラッグする | message list 面と `Latest Command` pane の幅が追従し、極端に寄せても chat の最小可読幅と右 pane の最小幅を下回らない |
-| MT-023C | Session action dock baseline | Session Window を開き、textarea / attachment / skill / approval / model / depth / `Send` の位置関係を見る | これらが左ペイン内ではなく下段 `Action Dock` にまとまり、expanded 時だけ full editor と設定群が表示される。`File / Folder / Image` は attachment group、`Skill` は別ボタンとして区別される |
+| MT-023C | Session action dock baseline | Session Window を開き、textarea / attachment / skill / approval / model / depth / `Send` の位置関係を見る | これらは message list と同じ左列幅の `Action Dock` にまとまり、expanded 時だけ full editor と設定群が表示される。`File / Folder / Image` は attachment group、`Skill` は別ボタンとして区別される |
+| MT-023C1 | Session narrow layout reachability | 幅 `1400px` 前後まで狭めた Session Window を開く | `message list + Action Dock` の塊の下に right pane が縦 stack で残り、`Latest Command / Memory生成 / 独り言` へ到達できる。狭幅でも right pane が失われない |
 | MT-023D | Session top bar compact | Session Window を開き、必要なら `More` を開閉する | `Top Bar` は 1 行の strip として表示され、常時は `title / Audit Log / Terminal / More / Close` が見え、`Rename / Delete` は `More` 展開時だけ表示される |
 | MT-023D1 | Session terminal launch | Session Window で `Terminal` を押す | session の `workspacePath` を作業ディレクトリにした外部 terminal が開く |
 | MT-023D2 | Additional directory manage UI | Session Window の composer toolbar を確認し、`Add Directory` と `Dirs` を操作する | `Add Directory` が `Skill` と同じ列に並ぶ。`Dirs` は既定では閉じており、開いた後に現在の許可リストが表示され、provider が `Codex` の時だけ `×` で削除できる |

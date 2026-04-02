@@ -2180,8 +2180,7 @@ button:disabled {
 
 .session-workbench {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: 12px;
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
 }
@@ -2190,6 +2189,15 @@ button:disabled {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 12px minmax(360px, var(--session-context-rail-width, 420px));
   gap: 14px;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.session-message-stack {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 12px;
   min-height: 0;
   min-width: 0;
 }
@@ -5727,8 +5735,20 @@ button:disabled {
 }
 
 @media (max-width: 1400px) {
+  .session-workbench {
+    height: auto;
+    overflow-y: auto;
+    padding-right: 2px;
+    scrollbar-gutter: stable;
+  }
+
   .session-main-grid {
     grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+
+  .session-message-stack {
+    min-height: min(62vh, 760px);
   }
 
   .session-workbench-splitter {
@@ -5737,6 +5757,7 @@ button:disabled {
 
   .session-context-pane {
     grid-template-rows: auto;
+    min-height: min(38vh, 420px);
   }
 }
 

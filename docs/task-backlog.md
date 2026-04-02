@@ -32,7 +32,7 @@
 | P1 | 未着手 | GitHub | [#16](https://github.com/natumekazuki/WithMate/issues/16) | セッション close 時の Memory 生成 | window close やアプリ終了時に Memory 生成を走らせる設計の妥当性を見直す | 保存安定性と request 数の読みにくさが論点。`#3` `#27` の trigger policy とセットで扱う |
 | P1 | 未着手 | GitHub | [#25](https://github.com/natumekazuki/WithMate/issues/25) | 独り言生成タイミング | session を開くたびに独り言を生成せず、main chat と monologue の新しさで trigger したい | `#1` の monologue policy と `#5` の pending 方針が前提。`#16` `#27` と同じ trigger 設計の論点 |
 | P1 | 完了 | Local | `session-keyboard-a11y` | セッション周辺のキーボード操作基盤 | モーダル、選択系 UI、Diff 閲覧、`@path` 候補のキーボード操作を WAI-ARIA / desktop UX に沿って揃えた | `New Session` / character update / `Audit Log` / inline diff の `Escape + focus trap + 初期 focus`、provider / approval chip の矢印キー、Diff keyboard scroll、`@path` の `Enter` 採用へ更新済み |
-| P1 | 未着手 | GitHub | [#20](https://github.com/natumekazuki/WithMate/issues/20) | Session 入力エリア幅調整 | 右 pane を下まで伸ばし、入力エリア幅を chat UI と揃えたい | `docs/design/desktop-ui.md` の pane balance 見直しに近い。`docs/reviews/review-20260329-1438.md #7` を統合し、1400px 付近での right pane 到達性もここで扱う |
+| P1 | 完了 | GitHub | [#20](https://github.com/natumekazuki/WithMate/issues/20) | Session 入力エリア幅調整 | right pane を下まで伸ばし、Action Dock の幅を chat UI と揃えた | wide では `左列 = message list + Action Dock`、`右列 = context pane` に再配置し、1400px 付近では `message list + Action Dock -> right pane` の縦 stack で到達性を維持した |
 | P1 | 未着手 | Local | `session-responsive-guardrails` | Session / Diff のレスポンシブ・画面制約 | Session と Diff の最小サイズ、狭幅時の到達性、composer 添付 UI のオーバーフロー制御をまとめて扱う | `docs/reviews/review-20260329-1438.md #8 #9`。`#20` と並ぶ UI responsive guardrails として切り出す |
 | P1 | 完了 | GitHub | [#13](https://github.com/natumekazuki/WithMate/issues/13) | `add-dir` 対応 | 追加 directory の許可リスト、外部添付制御、変更追跡まで実装済み | `docs/plans/archive/2026/03/20260325-additional-directory-allowlist/result.md` |
 | P1 | 完了 | GitHub | [#12](https://github.com/natumekazuki/WithMate/issues/12) | 実行中セッション監視 window | Home から切り出した常時前面 monitor window を実装済み | `docs/plans/archive/2026/03/20260325-session-monitor-window/result.md` |
@@ -123,29 +123,27 @@
 1. キーボード操作 / アクセシビリティ
    - `session-keyboard-a11y` ← 完了
 2. レスポンシブ / 画面制約
-   - `#20 Session 入力エリア幅調整` ← review `#7` を統合
+   - `#20 Session 入力エリア幅調整` ← 完了
    - `session-responsive-guardrails` ← review `#8 #9`
 3. フィードバック / 復帰
    - `session-feedback-recovery` ← review `#3 #4 #10`
 4. テーマ / 視認性
    - `theme-wcag-contrast` ← review `#6`
 5. UI review 起点の着手順
-   1. `#20` の review `#7` 統合確認
-   2. `session-responsive-guardrails`
-   3. `session-feedback-recovery`
-   4. `theme-wcag-contrast`
+   1. `session-responsive-guardrails`
+   2. `session-feedback-recovery`
+   3. `theme-wcag-contrast`
 
 ## 推奨順
 
 1. `#3 Memory 永続化と共有`
 2. `#16 セッション close 時の Memory 生成`
 3. `#31 Memory 管理 UI`
-4. `#20 Session 入力エリア幅調整`
-5. `session-responsive-guardrails`
-6. `#1 独り言の API 運用`
-7. `#25 独り言生成タイミング`
-8. `#28 データ export / import`
-9. `#15` と各種 polish
+4. `session-responsive-guardrails`
+5. `#1 独り言の API 運用`
+6. `#25 独り言生成タイミング`
+7. `#28 データ export / import`
+8. `#15` と各種 polish
 
 ## 参照元
 

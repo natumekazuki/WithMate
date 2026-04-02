@@ -144,11 +144,11 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - assistant / user message の markdown-like rich text 表示
 - wide desktop (`1920x1080` baseline) では Session 本体を「`Top Bar + 中央 2 分割 + 下段 Action Dock`」にする
   - 上段: compact な `Top Bar`
-  - 中央左: message list
+  - 中央左: `message list + Action Dock`
   - 中央右: `Latest Command`
-  - 下段: full-width の `Action Dock`
   - 左右の境界は draggable splitter で調整できる
-  - narrow width では `message list -> Latest Command -> Action Dock` の縦 stack へ戻す
+  - right pane は Action Dock の手前で切らず、下端まで縦に伸ばす
+  - narrow width では `message list + Action Dock -> Latest Command` の縦 stack へ戻す
 - `Top Bar`
   - default は compact
   - 常時表示するのは `title / Audit Log / Terminal / More / Close`
@@ -156,6 +156,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - `Terminal` は session の `workspacePath` を作業ディレクトリにした外部 terminal を開く
 - `Action Dock`
   - compact / expanded の 2 状態を持つ
+  - wide では message list と同じ左列幅に揃える
   - compact では draft preview 全体を reopen hit area にし、`Send / Cancel` だけを残す
   - default では通常送信の直後に compact へ戻す
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする

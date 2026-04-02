@@ -2898,45 +2898,152 @@ export default function App() {
         <section className="chat-panel session-work-surface rise-3">
           <div className="session-workbench" ref={sessionWorkbenchRef} style={sessionWorkbenchStyle}>
             <div className="session-main-grid">
-              <SessionMessageColumn
-                sessionId={selectedSession.id}
-                character={selectedSessionCharacter}
-                messages={displayedMessages}
-                expandedArtifacts={expandedArtifacts}
-                messageListRef={messageListRef}
-                isRunning={selectedSession.runState === "running"}
-                pendingRunIndicatorAnnouncement={pendingRunIndicatorAnnouncement}
-                pendingRunIndicatorText={pendingRunIndicatorText}
-                liveApprovalRequest={liveApprovalRequest}
-                approvalActionRequestId={approvalActionRequestId}
-                liveElicitationRequest={liveElicitationRequest}
-                elicitationActionRequestId={elicitationActionRequestId}
-                liveRunAssistantText={liveRunAssistantText}
-                hasLiveRunAssistantText={hasLiveRunAssistantText}
-                liveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
-                isMessageListFollowing={isMessageListFollowing}
-                hasMessageListUnread={hasMessageListUnread}
-                onMessageListScroll={handleMessageListScroll}
-                onToggleArtifact={toggleArtifact}
-                onOpenDiff={(title, file) =>
-                  setSelectedDiff({
-                    title,
-                    file,
-                    themeColors: selectedSession.characterThemeColors,
-                  })}
-                onResolveLiveApproval={(request, decision) => void handleResolveLiveApproval(request, decision)}
-                onResolveLiveElicitation={(request, response) => void handleResolveLiveElicitation(request, response)}
-                onJumpToBottom={handleJumpToMessageListBottom}
-                onOpenPath={handleOpenInlinePath}
-                getChangedFilesEmptyText={(artifactKey, artifactHasSnapshotRisk) =>
-                  artifactHasSnapshotRisk
-                    ? "差分は見つからなかったけど、snapshot の上限や省略で取りこぼしがあるかもしれないよ。"
-                    : renderCharacterSessionCopy(
-                      selectedSessionCopy.changedFilesEmpty,
-                      pendingIndicatorCharacterName,
-                      `changed-files-empty:${artifactKey}`,
-                    )}
-              />
+              <div className="session-message-stack">
+                <SessionMessageColumn
+                  sessionId={selectedSession.id}
+                  character={selectedSessionCharacter}
+                  messages={displayedMessages}
+                  expandedArtifacts={expandedArtifacts}
+                  messageListRef={messageListRef}
+                  isRunning={selectedSession.runState === "running"}
+                  pendingRunIndicatorAnnouncement={pendingRunIndicatorAnnouncement}
+                  pendingRunIndicatorText={pendingRunIndicatorText}
+                  liveApprovalRequest={liveApprovalRequest}
+                  approvalActionRequestId={approvalActionRequestId}
+                  liveElicitationRequest={liveElicitationRequest}
+                  elicitationActionRequestId={elicitationActionRequestId}
+                  liveRunAssistantText={liveRunAssistantText}
+                  hasLiveRunAssistantText={hasLiveRunAssistantText}
+                  liveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
+                  isMessageListFollowing={isMessageListFollowing}
+                  hasMessageListUnread={hasMessageListUnread}
+                  onMessageListScroll={handleMessageListScroll}
+                  onToggleArtifact={toggleArtifact}
+                  onOpenDiff={(title, file) =>
+                    setSelectedDiff({
+                      title,
+                      file,
+                      themeColors: selectedSession.characterThemeColors,
+                    })}
+                  onResolveLiveApproval={(request, decision) => void handleResolveLiveApproval(request, decision)}
+                  onResolveLiveElicitation={(request, response) => void handleResolveLiveElicitation(request, response)}
+                  onJumpToBottom={handleJumpToMessageListBottom}
+                  onOpenPath={handleOpenInlinePath}
+                  getChangedFilesEmptyText={(artifactKey, artifactHasSnapshotRisk) =>
+                    artifactHasSnapshotRisk
+                      ? "差分は見つからなかったけど、snapshot の上限や省略で取りこぼしがあるかもしれないよ。"
+                      : renderCharacterSessionCopy(
+                        selectedSessionCopy.changedFilesEmpty,
+                        pendingIndicatorCharacterName,
+                        `changed-files-empty:${artifactKey}`,
+                      )}
+                />
+
+                <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
+                  {isActionDockExpanded ? (
+                    <>
+                      <SessionComposerExpanded
+                        retryBanner={(
+                          <SessionRetryBanner
+                            retryBanner={retryBanner}
+                            isRetryDetailsOpen={isRetryDetailsOpen}
+                            isRetryActionDisabled={isRetryActionDisabled}
+                            isRetryEditDisabled={isRetryEditDisabled}
+                            isRetryDraftReplacePending={isRetryDraftReplacePending}
+                            onToggleDetails={() => setIsRetryDetailsOpen((current) => !current)}
+                            onResendLastMessage={() => void handleResendLastMessage()}
+                            onEditLastMessage={handleEditLastMessage}
+                            onConfirmRetryDraftReplace={handleConfirmRetryDraftReplace}
+                            onCancelRetryDraftReplace={handleCancelRetryDraftReplace}
+                            onOpenPath={handleOpenInlinePath}
+                          />
+                        )}
+                        isRunning={selectedSession.runState === "running"}
+                        composerBlocked={!!composerBlockedReason}
+                        canSelectCustomAgent={!isCharacterUpdateSession && selectedSession.provider === "copilot"}
+                        showCustomAgentPicker={!isCharacterUpdateSession}
+                        showSkillPicker={!isCharacterUpdateSession}
+                        isAgentPickerOpen={isAgentPickerOpen}
+                        isSkillPickerOpen={isSkillPickerOpen}
+                        isAdditionalDirectoryListOpen={isAdditionalDirectoryListOpen}
+                        selectedCustomAgentLabel={selectedSession.provider === "copilot" ? selectedCustomAgentDisplay.label : "Agent"}
+                        selectedCustomAgentTitle={selectedCustomAgentDisplay.title ?? "Copilot custom agent を選択"}
+                        additionalDirectoryCount={selectedSession.allowedAdditionalDirectories.length}
+                        canCollapseActionDock={canCollapseActionDock}
+                        isCustomAgentListLoading={isCustomAgentListLoading}
+                        isSkillListLoading={isSkillListLoading}
+                        customAgentItems={customAgentItems}
+                        skillItems={skillItems}
+                        attachmentItems={composerAttachmentItems}
+                        additionalDirectoryItems={additionalDirectoryItems}
+                        workspacePathMatchItems={workspacePathMatchItems}
+                        draft={draft}
+                        composerTextareaRef={composerTextareaRef}
+                        isComposerDisabled={isComposerDisabled}
+                        isSendDisabled={isSendDisabled}
+                        composerSendability={composerSendability}
+                        approvalOptions={approvalChoiceOptions}
+                        selectedApprovalMode={selectedSession.approvalMode}
+                        modelOptions={modelSelectOptions}
+                        selectedModel={selectedSession.model}
+                        selectedModelFallbackLabel={selectedModelFallbackLabel}
+                        reasoningOptions={reasoningSelectOptions}
+                        selectedReasoningEffort={selectedSession.reasoningEffort}
+                        onPickFile={() => void handlePickFile()}
+                        onPickFolder={() => void handlePickFolder()}
+                        onPickImage={() => void handlePickImage()}
+                        onToggleAgentPicker={() => {
+                          setIsSkillPickerOpen(false);
+                          setIsAgentPickerOpen((current) => !current);
+                        }}
+                        onToggleSkillPicker={() => {
+                          setIsAgentPickerOpen(false);
+                          setIsSkillPickerOpen((current) => !current);
+                        }}
+                        onAddAdditionalDirectory={() => void handleAddAdditionalDirectory()}
+                        onToggleAdditionalDirectoryList={() => setIsAdditionalDirectoryListOpen((current) => !current)}
+                        onCollapse={handleCollapseActionDock}
+                        onSelectCustomAgent={(value) => void handleSelectCustomAgent(
+                          value ? availableCustomAgents.find((agent) => agent.name === value) ?? null : null,
+                        )}
+                        onSelectSkill={(skillId) => {
+                          const skill = availableSkills.find((entry) => entry.id === skillId);
+                          if (skill) {
+                            handleSelectSkill(skill);
+                          }
+                        }}
+                        onRemoveAttachment={handleRemoveAttachmentReference}
+                        onRemoveAdditionalDirectory={(path) => void handleRemoveAdditionalDirectory(path)}
+                        onDraftChange={(value, selectionStart) => {
+                          setDraft(value);
+                          setComposerCaret(selectionStart);
+                        }}
+                        onDraftFocus={() => setIsActionDockPinnedExpanded(true)}
+                        onDraftKeyDown={handleComposerKeyDown}
+                        onDraftSelect={setComposerCaret}
+                        onDraftCompositionStart={() => setIsComposerImeComposing(true)}
+                        onDraftCompositionEnd={() => setIsComposerImeComposing(false)}
+                        onSendOrCancel={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
+                        onSelectWorkspacePathMatch={handleSelectWorkspacePathMatch}
+                        onActivateWorkspacePathMatch={setActiveWorkspacePathMatchIndex}
+                        onChangeApprovalMode={(value) => void handleChangeApproval(value)}
+                        onChangeModel={(value) => void handleChangeModel(value)}
+                        onChangeReasoningEffort={(value) => void handleChangeReasoningEffort(value as Session["reasoningEffort"])}
+                      />
+                    </>
+                  ) : (
+                    <SessionActionDockCompactRow
+                      draft={draft}
+                      actionDockCompactPreview={actionDockCompactPreview}
+                      attachmentCount={composerPreview.attachments.length}
+                      isRunning={selectedSession.runState === "running"}
+                      isSendDisabled={isSendDisabled}
+                      onExpand={() => handleExpandActionDock({ focusComposer: true })}
+                      onSendOrCancel={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
+                    />
+                  )}
+                </div>
+              </div>
 
               <button
                 className={`session-workbench-splitter${isContextRailResizing ? " is-active" : ""}`}
@@ -2983,111 +3090,6 @@ export default function App() {
                   />
                 )}
               </SessionPaneErrorBoundary>
-            </div>
-
-            <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
-              {isActionDockExpanded ? (
-                <>
-                  <SessionComposerExpanded
-                    retryBanner={(
-                      <SessionRetryBanner
-                        retryBanner={retryBanner}
-                        isRetryDetailsOpen={isRetryDetailsOpen}
-                        isRetryActionDisabled={isRetryActionDisabled}
-                        isRetryEditDisabled={isRetryEditDisabled}
-                        isRetryDraftReplacePending={isRetryDraftReplacePending}
-                        onToggleDetails={() => setIsRetryDetailsOpen((current) => !current)}
-                        onResendLastMessage={() => void handleResendLastMessage()}
-                        onEditLastMessage={handleEditLastMessage}
-                        onConfirmRetryDraftReplace={handleConfirmRetryDraftReplace}
-                        onCancelRetryDraftReplace={handleCancelRetryDraftReplace}
-                        onOpenPath={handleOpenInlinePath}
-                      />
-                    )}
-                    isRunning={selectedSession.runState === "running"}
-                    composerBlocked={!!composerBlockedReason}
-                    canSelectCustomAgent={!isCharacterUpdateSession && selectedSession.provider === "copilot"}
-                    showCustomAgentPicker={!isCharacterUpdateSession}
-                    showSkillPicker={!isCharacterUpdateSession}
-                    isAgentPickerOpen={isAgentPickerOpen}
-                    isSkillPickerOpen={isSkillPickerOpen}
-                    isAdditionalDirectoryListOpen={isAdditionalDirectoryListOpen}
-                    selectedCustomAgentLabel={selectedSession.provider === "copilot" ? selectedCustomAgentDisplay.label : "Agent"}
-                    selectedCustomAgentTitle={selectedCustomAgentDisplay.title ?? "Copilot custom agent を選択"}
-                    additionalDirectoryCount={selectedSession.allowedAdditionalDirectories.length}
-                    canCollapseActionDock={canCollapseActionDock}
-                    isCustomAgentListLoading={isCustomAgentListLoading}
-                    isSkillListLoading={isSkillListLoading}
-                    customAgentItems={customAgentItems}
-                    skillItems={skillItems}
-                    attachmentItems={composerAttachmentItems}
-                    additionalDirectoryItems={additionalDirectoryItems}
-                    workspacePathMatchItems={workspacePathMatchItems}
-                    draft={draft}
-                    composerTextareaRef={composerTextareaRef}
-                    isComposerDisabled={isComposerDisabled}
-                    isSendDisabled={isSendDisabled}
-                    composerSendability={composerSendability}
-                    approvalOptions={approvalChoiceOptions}
-                    selectedApprovalMode={selectedSession.approvalMode}
-                    modelOptions={modelSelectOptions}
-                    selectedModel={selectedSession.model}
-                    selectedModelFallbackLabel={selectedModelFallbackLabel}
-                    reasoningOptions={reasoningSelectOptions}
-                    selectedReasoningEffort={selectedSession.reasoningEffort}
-                    onPickFile={() => void handlePickFile()}
-                    onPickFolder={() => void handlePickFolder()}
-                    onPickImage={() => void handlePickImage()}
-                    onToggleAgentPicker={() => {
-                      setIsSkillPickerOpen(false);
-                      setIsAgentPickerOpen((current) => !current);
-                    }}
-                    onToggleSkillPicker={() => {
-                      setIsAgentPickerOpen(false);
-                      setIsSkillPickerOpen((current) => !current);
-                    }}
-                    onAddAdditionalDirectory={() => void handleAddAdditionalDirectory()}
-                    onToggleAdditionalDirectoryList={() => setIsAdditionalDirectoryListOpen((current) => !current)}
-                    onCollapse={handleCollapseActionDock}
-                    onSelectCustomAgent={(value) => void handleSelectCustomAgent(
-                      value ? availableCustomAgents.find((agent) => agent.name === value) ?? null : null,
-                    )}
-                    onSelectSkill={(skillId) => {
-                      const skill = availableSkills.find((entry) => entry.id === skillId);
-                      if (skill) {
-                        handleSelectSkill(skill);
-                      }
-                    }}
-                    onRemoveAttachment={handleRemoveAttachmentReference}
-                    onRemoveAdditionalDirectory={(path) => void handleRemoveAdditionalDirectory(path)}
-                    onDraftChange={(value, selectionStart) => {
-                      setDraft(value);
-                      setComposerCaret(selectionStart);
-                    }}
-                    onDraftFocus={() => setIsActionDockPinnedExpanded(true)}
-                    onDraftKeyDown={handleComposerKeyDown}
-                    onDraftSelect={setComposerCaret}
-                    onDraftCompositionStart={() => setIsComposerImeComposing(true)}
-                    onDraftCompositionEnd={() => setIsComposerImeComposing(false)}
-                    onSendOrCancel={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
-                    onSelectWorkspacePathMatch={handleSelectWorkspacePathMatch}
-                    onActivateWorkspacePathMatch={setActiveWorkspacePathMatchIndex}
-                    onChangeApprovalMode={(value) => void handleChangeApproval(value)}
-                    onChangeModel={(value) => void handleChangeModel(value)}
-                    onChangeReasoningEffort={(value) => void handleChangeReasoningEffort(value as Session["reasoningEffort"])}
-                  />
-                </>
-              ) : (
-                <SessionActionDockCompactRow
-                  draft={draft}
-                  actionDockCompactPreview={actionDockCompactPreview}
-                  attachmentCount={composerPreview.attachments.length}
-                  isRunning={selectedSession.runState === "running"}
-                  isSendDisabled={isSendDisabled}
-                  onExpand={() => handleExpandActionDock({ focusComposer: true })}
-                  onSendOrCancel={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
-                />
-              )}
             </div>
           </div>
         </section>
