@@ -11,6 +11,10 @@
 - explicit live region は pending indicator 中心へ寄せ、retry conflict / follow banner / composer feedback は visible text 優先に更新した
 - `SessionPaneErrorBoundary` に pane 再描画導線を追加し、各 renderer entry point には window-level の `再試行 / 再読み込み` fallback を追加した
 
+## コミット
+
+- `5f122fe` `feat(session): improve feedback recovery`
+
 ## 検証
 
 - `npm run build`
