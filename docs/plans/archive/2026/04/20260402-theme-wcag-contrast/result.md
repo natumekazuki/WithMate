@@ -14,3 +14,7 @@
 
 - `npm run build`
 - `node --import tsx scripts/tests/theme-utils.test.ts`
+
+## コミット
+
+- `140a4a2` `fix(theme): align character contrast with wcag`
