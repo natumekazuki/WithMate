@@ -216,6 +216,35 @@ export class CharacterMemoryStorage {
     );
   }
 
+  deleteCharacterMemoryEntry(entryId: string): void {
+    const existing = this.db.prepare(`
+      SELECT character_scope_id
+      FROM character_memory_entries
+      WHERE id = ?
+    `).get(entryId) as { character_scope_id: string } | undefined;
+    if (!existing) {
+      return;
+    }
+
+    this.db.prepare(`
+      DELETE FROM character_memory_entries
+      WHERE id = ?
+    `).run(entryId);
+
+    const remaining = this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM character_memory_entries
+      WHERE character_scope_id = ?
+    `).get(existing.character_scope_id) as { count: number };
+
+    if (remaining.count === 0) {
+      this.db.prepare(`
+        DELETE FROM character_scopes
+        WHERE id = ?
+      `).run(existing.character_scope_id);
+    }
+  }
+
   markCharacterMemoryEntriesUsed(entryIds: string[]): void {
     const uniqueIds = [...new Set(entryIds.map((id) => id.trim()).filter((id) => id.length > 0))];
     if (uniqueIds.length === 0) {

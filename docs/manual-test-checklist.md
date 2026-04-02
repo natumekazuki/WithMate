@@ -30,10 +30,12 @@ npm run electron:start
 | MT-001A | Home narrow width guardrail | Home Window を最小幅近くまで縮める | single-column layout へ倒れても `Recent Sessions` と right pane toggle / `Settings` 導線が残り、操作不能にならない |
 | MT-002 | Home 一覧 | session が 0 件の状態で起動する | 空状態メッセージが表示される |
 | MT-003 | Characters 一覧 | character が 0 件の状態で起動する | 空状態メッセージと `Add Character` が表示される |
-| MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `System Prompt Prefix` / `Coding Agent Providers` / `Coding Agent Credentials` / `Memory Extraction` / `Model Catalog` / `Danger Zone` が既存値で表示される |
+| MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `System Prompt Prefix` / `Coding Agent Providers` / `Coding Agent Credentials` / `Memory Extraction` / `Memory 管理` / `Model Catalog` / `Danger Zone` が既存値で表示される |
 | MT-004A | Settings provider row layout | `Settings Window` を開いて `Coding Agent Providers` を確認する | provider 名が左、checkbox が右の row で揃って見え、どの provider を on/off しているか即判別できる |
 | MT-004B | Memory extraction settings | `Settings Window` の `Memory Extraction` を確認する | provider ごとに `Model` / `Reasoning Depth` / `Output Tokens Threshold` が表示され、現在の model catalog に沿った選択肢だけが出る |
 | MT-004C | Character reflection settings | `Settings Window` の `Character Reflection` を確認する | provider ごとに `Model` / `Reasoning Depth` が表示され、現在の model catalog に沿った選択肢だけが出る |
+| MT-004D | Memory 管理一覧 | `Settings Window` の `Memory 管理` を確認する | `Session / Project / Character Memory` の件数、一覧、`Reload Memory` が表示される。空の domain は empty state で見分けられる |
+| MT-004E | Memory 管理 delete | Session / Project / Character Memory が少なくとも 1 件ずつある状態で `Delete` を実行する | 対象 domain の item が消え、最後の `Project / Character Memory` entry を削除した時は空 scope も残らない。reload 後も再出現しない |
 | MT-005 | Settings copy | `Settings Window` を確認する | `OpenAI API Key (Coding Agent)` が coding plane 用と読め、`Character Stream 用ではない` 補助文と future note が表示される |
 | MT-006 | Compatibility note | `Settings Window` を確認する | `初回リリース前のため後方互換性は考慮しない` と `DB 初期化で復旧する` 旨の note が表示される |
 | MT-007 | Settings save | `System Prompt Prefix` または coding provider 設定を変更して `Save Settings` を押す | 保存成功メッセージが表示され、再度開いても保持される |

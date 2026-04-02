@@ -1,7 +1,7 @@
 # Memory Architecture
 
 - 作成日: 2026-03-12
-- 更新日: 2026-03-27
+- 更新日: 2026-04-02
 - 対象: Project Memory / Session Memory / Character Memory の責務設計
 - 関連 Issue:
   - `#3 LangGraphを使ってMemoryの永続化と共有`
@@ -491,6 +491,11 @@ current 実装では、`Session Memory` の永続化と extraction trigger、`Pr
   - `SessionStart` は monologue only、通常更新は文脈増加ベースで実行する
   - `CharacterMemoryDelta` 保存と monologue の session `stream` 追記まで実装済み
   - monologue / reflection 向け query-based retrieval と時間減衰あり
+- `Memory 管理 UI`
+  - Settings Window から `Session / Project / Character Memory` の snapshot を一覧できる
+  - current scope は閲覧と delete に限定する
+  - `Project / Character Memory` は最後の entry を delete した時に空 scope も掃除する
+  - manual update は follow-up task として切り出す
 
 という進み方を取る。
 

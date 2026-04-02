@@ -14,6 +14,7 @@ import type {
 } from "../src/app-state.js";
 import type { CreateCharacterInput } from "../src/character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
+import type { MemoryManagementSnapshot } from "../src/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
@@ -24,6 +25,9 @@ import {
   WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
+  WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
+  WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
+  WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
@@ -33,6 +37,7 @@ import {
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
+  WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
@@ -88,6 +93,10 @@ export type MainIpcRegistrationDeps = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): AppSettings;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
+  getMemoryManagementSnapshot(): MemoryManagementSnapshot;
+  deleteSessionMemory(sessionId: string): void;
+  deleteProjectMemoryEntry(entryId: string): void;
+  deleteCharacterMemoryEntry(entryId: string): void;
   listCharacters(): Promise<CharacterProfile[]>;
   getModelCatalog(revision: number | null): ModelCatalogSnapshot | null;
   importModelCatalogDocument(document: ModelCatalogDocument): ModelCatalogSnapshot;
@@ -156,7 +165,13 @@ type MainIpcCatalogDeps = Pick<
 
 type MainIpcSettingsDeps = Pick<
   MainIpcRegistrationDeps,
-  "getAppSettings" | "updateAppSettings" | "resetAppDatabase"
+  | "getAppSettings"
+  | "updateAppSettings"
+  | "resetAppDatabase"
+  | "getMemoryManagementSnapshot"
+  | "deleteSessionMemory"
+  | "deleteProjectMemoryEntry"
+  | "deleteCharacterMemoryEntry"
 >;
 
 type MainIpcSessionQueryDeps = Pick<
@@ -266,6 +281,14 @@ function registerSettingsHandlers(ipcMain: IpcMain, deps: MainIpcSettingsDeps): 
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => deps.updateAppSettings(settings));
   ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, (_event, request: ResetAppDatabaseRequest | null | undefined) =>
     deps.resetAppDatabase(request),
+  );
+  ipcMain.handle(WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL, () => deps.getMemoryManagementSnapshot());
+  ipcMain.handle(WITHMATE_DELETE_SESSION_MEMORY_CHANNEL, (_event, sessionId: string) => deps.deleteSessionMemory(sessionId));
+  ipcMain.handle(WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL, (_event, entryId: string) =>
+    deps.deleteProjectMemoryEntry(entryId),
+  );
+  ipcMain.handle(WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL, (_event, entryId: string) =>
+    deps.deleteCharacterMemoryEntry(entryId),
   );
 }
 

@@ -37,6 +37,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:reset-app-database",
     args: [{ targets: ["appSettings"] }],
   });
+  assert.deepEqual(await api.getMemoryManagementSnapshot(), {
+    channel: "withmate:get-memory-management-snapshot",
+    args: [],
+  });
   assert.deepEqual(await api.getSessionBackgroundActivity("session-1", "memoryGeneration"), {
     channel: "withmate:get-session-background-activity",
     args: ["session-1", "memoryGeneration"],
@@ -54,7 +58,10 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "createCharacterUpdateSession",
     "createSession",
     "deleteCharacter",
+    "deleteCharacterMemoryEntry",
+    "deleteProjectMemoryEntry",
     "deleteSession",
+    "deleteSessionMemory",
     "exportModelCatalog",
     "exportModelCatalogFile",
     "extractCharacterUpdateMemory",
@@ -63,6 +70,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getCharacterUpdateWorkspace",
     "getDiffPreview",
     "getLiveSessionRun",
+    "getMemoryManagementSnapshot",
     "getModelCatalog",
     "getProviderQuotaTelemetry",
     "getSession",

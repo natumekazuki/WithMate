@@ -10,6 +10,9 @@ import {
   WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
+  WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
+  WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
+  WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
@@ -19,6 +22,7 @@ import {
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
+  WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
@@ -101,6 +105,16 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     updateAppSettings: (settings) => settings,
     async resetAppDatabase() {
       return null;
+    },
+    getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], characterMemories: [] }),
+    deleteSessionMemory: () => {
+      calls.push("deleteSessionMemory");
+    },
+    deleteProjectMemoryEntry: () => {
+      calls.push("deleteProjectMemoryEntry");
+    },
+    deleteCharacterMemoryEntry: () => {
+      calls.push("deleteCharacterMemoryEntry");
     },
     async listCharacters() {
       return [];
@@ -218,6 +232,10 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
     async resetAppDatabase() { return null; },
+    getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], characterMemories: [] }),
+    deleteSessionMemory() {},
+    deleteProjectMemoryEntry() {},
+    deleteCharacterMemoryEntry() {},
     async listCharacters() { return []; },
     getModelCatalog: () => null,
     importModelCatalogDocument: () => ({ revision: 1, providers: [] }),
@@ -273,6 +291,10 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_GET_APP_SETTINGS_CHANNEL,
     WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
     WITHMATE_RESET_APP_DATABASE_CHANNEL,
+    WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
+    WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
+    WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
+    WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
     WITHMATE_LIST_SESSIONS_CHANNEL,
     WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
     WITHMATE_LIST_SESSION_SKILLS_CHANNEL,

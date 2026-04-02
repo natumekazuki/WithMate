@@ -42,6 +42,13 @@ const GET_SESSION_MEMORY_SQL = `
   WHERE session_id = ?
 `;
 
+const LIST_SESSION_MEMORIES_SQL = `
+  SELECT
+    ${SESSION_MEMORY_SELECT_COLUMNS}
+  FROM session_memories
+  ORDER BY updated_at DESC, session_id DESC
+`;
+
 const UPSERT_SESSION_MEMORY_SQL = `
   INSERT INTO session_memories (
     session_id,
@@ -115,6 +122,11 @@ export class SessionMemoryStorage {
     return rowToSessionMemory(row);
   }
 
+  listSessionMemories(): SessionMemory[] {
+    const rows = this.db.prepare(LIST_SESSION_MEMORIES_SQL).all() as SessionMemoryRow[];
+    return rows.map(rowToSessionMemory).filter((memory): memory is SessionMemory => memory !== null);
+  }
+
   upsertSessionMemory(memory: SessionMemory): SessionMemory {
     const normalized = normalizeSessionMemory(memory);
     if (!normalized) {
@@ -144,6 +156,13 @@ export class SessionMemoryStorage {
     }
 
     return this.upsertSessionMemory(createDefaultSessionMemory(session));
+  }
+
+  deleteSessionMemory(sessionId: string): void {
+    this.db.prepare(`
+      DELETE FROM session_memories
+      WHERE session_id = ?
+    `).run(sessionId);
   }
 
   clearSessionMemories(): void {

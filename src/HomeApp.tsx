@@ -11,6 +11,7 @@ import { DEFAULT_APPROVAL_MODE } from "./approval-mode.js";
 import {
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
+import type { MemoryManagementSnapshot } from "./memory-management-state.js";
 import {
   buildHomeLaunchProjection,
 } from "./home-launch-projection.js";
@@ -118,6 +119,10 @@ export default function HomeApp() {
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [settingsDraftLoaded, setSettingsDraftLoaded] = useState(!isSettingsWindowMode);
   const [modelCatalogLoaded, setModelCatalogLoaded] = useState(!isSettingsWindowMode);
+  const [memoryManagementSnapshot, setMemoryManagementSnapshot] = useState<MemoryManagementSnapshot | null>(null);
+  const [memoryManagementLoaded, setMemoryManagementLoaded] = useState(!isSettingsWindowMode);
+  const [memoryManagementBusyTarget, setMemoryManagementBusyTarget] = useState<string | null>(null);
+  const [memoryManagementFeedback, setMemoryManagementFeedback] = useState("");
   const [resettingDatabase, setResettingDatabase] = useState(false);
   const [resetDatabaseTargets, setResetDatabaseTargets] = useState<ResetAppDatabaseTarget[]>([...ALL_RESET_APP_DATABASE_TARGETS]);
   const [launchDraft, setLaunchDraft] = useState<HomeLaunchDraft>(() => createClosedLaunchDraft());
@@ -161,6 +166,25 @@ export default function HomeApp() {
       setModelCatalog(snapshot);
       setModelCatalogLoaded(true);
     });
+    if (isSettingsWindowMode) {
+      void withmateApi.getMemoryManagementSnapshot()
+        .then((snapshot) => {
+          if (!active) {
+            return;
+          }
+
+          setMemoryManagementSnapshot(snapshot);
+          setMemoryManagementLoaded(true);
+        })
+        .catch((error) => {
+          if (!active) {
+            return;
+          }
+
+          setMemoryManagementFeedback(error instanceof Error ? error.message : "Memory 一覧の読み込みに失敗したよ。");
+          setMemoryManagementLoaded(true);
+        });
+    }
 
     void withmateApi.listCharacters().then((nextCharacters) => {
       if (!active) {
@@ -386,6 +410,11 @@ export default function HomeApp() {
         applyIncomingAppSettings(result.result.appSettings, { force: true });
         setResetDatabaseTargets(result.result.resetTargets);
         setSettingsFeedback(result.feedback);
+        if (isSettingsWindowMode) {
+          const snapshot = await withmateApi.getMemoryManagementSnapshot();
+          setMemoryManagementSnapshot(snapshot);
+          setMemoryManagementLoaded(true);
+        }
       } else if (result.kind === "noop") {
         setSettingsFeedback(result.feedback);
       }
@@ -482,6 +511,84 @@ export default function HomeApp() {
     setSettingsDraft((current) => updateCharacterReflectionReasoningEffortDraft(current, providerId, reasoningEffort));
   };
 
+  const handleReloadMemoryManagement = async () => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !isSettingsWindowMode) {
+      return;
+    }
+
+    try {
+      setMemoryManagementLoaded(false);
+      const snapshot = await withmateApi.getMemoryManagementSnapshot();
+      setMemoryManagementSnapshot(snapshot);
+      setMemoryManagementFeedback("Memory 管理ビューを更新したよ。");
+    } catch (error) {
+      setMemoryManagementFeedback(error instanceof Error ? error.message : "Memory 一覧の読み込みに失敗したよ。");
+    } finally {
+      setMemoryManagementLoaded(true);
+    }
+  };
+
+  const handleDeleteSessionMemory = async (sessionId: string) => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !isSettingsWindowMode) {
+      return;
+    }
+
+    try {
+      setMemoryManagementBusyTarget(`session:${sessionId}`);
+      await withmateApi.deleteSessionMemory(sessionId);
+      const snapshot = await withmateApi.getMemoryManagementSnapshot();
+      setMemoryManagementSnapshot(snapshot);
+      setMemoryManagementFeedback("Session Memory を削除したよ。");
+    } catch (error) {
+      setMemoryManagementFeedback(error instanceof Error ? error.message : "Session Memory の削除に失敗したよ。");
+    } finally {
+      setMemoryManagementBusyTarget(null);
+      setMemoryManagementLoaded(true);
+    }
+  };
+
+  const handleDeleteProjectMemoryEntry = async (entryId: string) => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !isSettingsWindowMode) {
+      return;
+    }
+
+    try {
+      setMemoryManagementBusyTarget(`project:${entryId}`);
+      await withmateApi.deleteProjectMemoryEntry(entryId);
+      const snapshot = await withmateApi.getMemoryManagementSnapshot();
+      setMemoryManagementSnapshot(snapshot);
+      setMemoryManagementFeedback("Project Memory を削除したよ。");
+    } catch (error) {
+      setMemoryManagementFeedback(error instanceof Error ? error.message : "Project Memory の削除に失敗したよ。");
+    } finally {
+      setMemoryManagementBusyTarget(null);
+      setMemoryManagementLoaded(true);
+    }
+  };
+
+  const handleDeleteCharacterMemoryEntry = async (entryId: string) => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !isSettingsWindowMode) {
+      return;
+    }
+
+    try {
+      setMemoryManagementBusyTarget(`character:${entryId}`);
+      await withmateApi.deleteCharacterMemoryEntry(entryId);
+      const snapshot = await withmateApi.getMemoryManagementSnapshot();
+      setMemoryManagementSnapshot(snapshot);
+      setMemoryManagementFeedback("Character Memory を削除したよ。");
+    } catch (error) {
+      setMemoryManagementFeedback(error instanceof Error ? error.message : "Character Memory の削除に失敗したよ。");
+    } finally {
+      setMemoryManagementBusyTarget(null);
+      setMemoryManagementLoaded(true);
+    }
+  };
+
   const providerSettingRows = useMemo<HomeProviderSettingRow[]>(
     () => buildHomeProviderSettingRows(modelCatalog, settingsDraft),
     [
@@ -498,10 +605,11 @@ export default function HomeApp() {
       buildHomeSettingsProjection({
         settingsDraftLoaded,
         modelCatalogLoaded,
+        memoryManagementLoaded,
         resetDatabaseTargets,
         resettingDatabase,
       }),
-    [modelCatalogLoaded, resetDatabaseTargets, resettingDatabase, settingsDraftLoaded],
+    [memoryManagementLoaded, modelCatalogLoaded, resetDatabaseTargets, resettingDatabase, settingsDraftLoaded],
   );
   const {
     settingsWindowReady,
@@ -541,6 +649,10 @@ export default function HomeApp() {
       canResetDatabase={canResetDatabase}
       settingsDirty={settingsDirty}
       settingsFeedback={settingsFeedback}
+      memoryManagementSnapshot={memoryManagementSnapshot}
+      memoryManagementLoading={!memoryManagementLoaded}
+      memoryManagementBusyTarget={memoryManagementBusyTarget}
+      memoryManagementFeedback={memoryManagementFeedback}
       onOpenHome={() => void openHomeWindow()}
       onCloseWindow={() => window.close()}
       onChangeSystemPromptPrefix={(value) => setSettingsDraft((current) => updateSystemPromptPrefix(current, value))}
@@ -561,6 +673,10 @@ export default function HomeApp() {
       onChangeCharacterReflectionReasoningEffort={handleChangeCharacterReflectionReasoningEffort}
       onImportModelCatalog={() => void handleImportModelCatalog()}
       onExportModelCatalog={() => void handleExportModelCatalog()}
+      onReloadMemoryManagement={() => void handleReloadMemoryManagement()}
+      onDeleteSessionMemory={(sessionId) => void handleDeleteSessionMemory(sessionId)}
+      onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}
+      onDeleteCharacterMemoryEntry={(entryId) => void handleDeleteCharacterMemoryEntry(entryId)}
       onToggleResetDatabaseTarget={handleToggleResetDatabaseTarget}
       onResetAppDatabase={() => void handleResetAppDatabase()}
       onSaveSettings={() => void handleSaveSettings()}

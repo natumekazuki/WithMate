@@ -1598,6 +1598,142 @@ button:disabled {
   gap: 12px;
 }
 
+.settings-memory-actions {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-memory-summary {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.settings-memory-feedback {
+  margin-top: 4px;
+}
+
+.settings-memory-section-list {
+  display: grid;
+  gap: 18px;
+}
+
+.settings-memory-domain {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-memory-domain-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-memory-domain-head h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.settings-memory-domain-head span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.settings-memory-group-list,
+.settings-memory-card-list {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-memory-group-card,
+.settings-memory-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.settings-memory-card.compact {
+  gap: 10px;
+}
+
+.settings-memory-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-memory-card-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-memory-card-copy strong {
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+
+.settings-memory-card-copy span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.settings-memory-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin: 0;
+}
+
+.settings-memory-meta div {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-memory-meta dt,
+.settings-memory-block span,
+.settings-memory-tags span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-memory-meta dd,
+.settings-memory-block p,
+.settings-memory-tags p,
+.settings-memory-detail {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.settings-memory-block {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-memory-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink);
+}
+
+.settings-memory-tags {
+  display: grid;
+  gap: 6px;
+}
+
 .settings-provider-card {
   display: grid;
   gap: 12px;

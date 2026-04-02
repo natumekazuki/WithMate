@@ -251,6 +251,35 @@ export class ProjectMemoryStorage {
     return cloneProjectMemoryEntries(rows.map(rowToProjectMemoryEntry).filter((row): row is ProjectMemoryEntry => row !== null));
   }
 
+  deleteProjectMemoryEntry(entryId: string): void {
+    const existing = this.db.prepare(`
+      SELECT project_scope_id
+      FROM project_memory_entries
+      WHERE id = ?
+    `).get(entryId) as { project_scope_id: string } | undefined;
+    if (!existing) {
+      return;
+    }
+
+    this.db.prepare(`
+      DELETE FROM project_memory_entries
+      WHERE id = ?
+    `).run(entryId);
+
+    const remaining = this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM project_memory_entries
+      WHERE project_scope_id = ?
+    `).get(existing.project_scope_id) as { count: number };
+
+    if (remaining.count === 0) {
+      this.db.prepare(`
+        DELETE FROM project_scopes
+        WHERE id = ?
+      `).run(existing.project_scope_id);
+    }
+  }
+
   markProjectMemoryEntriesUsed(entryIds: string[]): void {
     const uniqueIds = [...new Set(entryIds.map((id) => id.trim()).filter((id) => id.length > 0))];
     if (uniqueIds.length === 0) {

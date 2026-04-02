@@ -94,4 +94,33 @@ describe("SessionMemoryStorage", () => {
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
+
+  it("list / delete で session memory を管理できる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-memory-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const sessionStorage = new SessionStorage(dbPath);
+      const firstSession = sessionStorage.upsertSession(createSession());
+      const secondSession = sessionStorage.upsertSession({
+        ...createSession(),
+        taskTitle: "Memory follow-up",
+      });
+      const memoryStorage = new SessionMemoryStorage(dbPath);
+      memoryStorage.ensureSessionMemory(firstSession);
+      memoryStorage.ensureSessionMemory(secondSession);
+
+      assert.equal(memoryStorage.listSessionMemories().length, 2);
+
+      memoryStorage.deleteSessionMemory(firstSession.id);
+
+      assert.equal(memoryStorage.getSessionMemory(firstSession.id), null);
+      assert.equal(memoryStorage.listSessionMemories().length, 1);
+
+      memoryStorage.close();
+      sessionStorage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
 });

@@ -41,7 +41,7 @@
 | P2 | 完了 | GitHub | [#33](https://github.com/natumekazuki/WithMate/issues/33) | handlePendingElicitation | Copilot SDK の対話型 elicitation callback を Session pending bubble の form / url UI へ取り込み、`accept / decline / cancel` を返せるようにした | `approvalRequest` とは別に `elicitationRequest` を live state へ追加し、main / preload / renderer / docs を同期した。SDK pending の current 状態は `docs/design/provider-sdk-pending-items.md` を正本にする |
 | P2 | 完了 | GitHub | [#22](https://github.com/natumekazuki/WithMate/issues/22) | MemoryGeneration 詳細表示 | 右 pane の `MemoryGeneration` details から、更新された Session / Character Memory 内容を確認できるようにした | background activity details に updated field / entry 内容を含めるようにし、Memory tuning 時の観測性を上げた |
 | P2 | 完了 | GitHub | [#30](https://github.com/natumekazuki/WithMate/issues/30) | 送信後フッター自動 close | Session Window の通常送信後に `Action Dock` を自動で compact へ戻す設定を追加した | `AppSettings` に checkbox を追加し、default は ON とした。force-expanded 条件がある時は既存どおり expanded を維持する |
-| P2 | 未着手 | GitHub | [#31](https://github.com/natumekazuki/WithMate/issues/31) | Memory 管理 UI | Session / Project / Character Memory を一覧・閲覧し、不要な項目を削除できる管理機能を追加する | `#3` 前提。current scope は一覧・閲覧・削除中心で切り、手動 update は follow-up 候補 |
+| P2 | 完了 | GitHub | [#31](https://github.com/natumekazuki/WithMate/issues/31) | Memory 管理 UI | Settings Window から Session / Project / Character Memory を一覧・閲覧し、不要な項目を削除できるようにした | current scope は一覧・閲覧・削除まで完了。manual update は follow-up task として分離する |
 | P2 | 未着手 | GitHub | [#10](https://github.com/natumekazuki/WithMate/issues/10) | Copilot custom slash command | GitHub Copilot SDK v1.0.10 の独自 slash command をどう使うか | まず `slash command 吸収` 方針を決めてから着手したい |
 | P2 | 未着手 | GitHub | [#17](https://github.com/natumekazuki/WithMate/issues/17) | `tasks` コマンドの SDK 調査と実装 | Copilot `/tasks` 相当の background task 取得が SDK から扱えるか、Codex parity も含めて調べる | `docs/design/coding-agent-capability-matrix.md` の provider capability 整理と接続する調査寄り task |
 | P2 | 未着手 | GitHub | [#28](https://github.com/natumekazuki/WithMate/issues/28) | データ export / import | 少なくともキャラ定義を持ち運べる export / import 手段を検討する | Memory 同期まで含めると広いため slice 分割前提。`docs/design/character-storage.md` `docs/design/project-memory-storage.md` の確認が必要 |
@@ -49,6 +49,7 @@
 | P2 | 未着手 | GitHub | [#23](https://github.com/natumekazuki/WithMate/issues/23) | `**message**` markdown 未反映 | Session Window で `**message**` が markdown として render されない | `docs/design/message-rich-text.md` の current renderer と差分確認が必要 |
 | P2 | 完了 | Local | `session-feedback-recovery` | 通知整理と復帰導線 | live region の集約、送信不可時の理由提示、Error Boundary からの回復導線をまとめて整理した | explicit live region を pending indicator 中心へ寄せ、blocked shortcut 時の inline feedback / button title、window-level / pane-level の retry 導線を追加済み |
 | P2 | 完了 | Local | `theme-wcag-contrast` | テーマ色の WCAG コントラスト準拠 | character theme の文字色決定を WCAG 比率ベースへ置き換え、Home / Session / Character Editor / Diff の共通判定へ寄せた | `src/theme-utils.ts` を正本にして contrast ratio helper を共通化し、輝度閾値判定を撤去した |
+| P2 | 未着手 | Local | `memory-management-manual-update` | Memory 手動更新 UI | Settings の Memory 管理は delete までなので、必要なら manual edit / add / merge を別 task で扱う | `#31` の follow-up。schema 編集・validation・監査導線の整理が前提 |
 | P2 | 見送り | Local | `sdk-pending` | provider SDK 対応待ち | approval parity、plan / compact parity、quota parity など、SDK surface 待ちの項目を整理する | `docs/design/provider-sdk-pending-items.md` |
 | P2 | 完了 | GitHub | [#14](https://github.com/natumekazuki/WithMate/issues/14) | memory の時間経過評価 | 古い記憶の価値を下げる評価値を導入する | `Project / Character Memory` の retrieval score 補正として `lastUsedAt ?? updatedAt` ベースの時間減衰を実装済み |
 | P2 | 完了 | GitHub | [#7](https://github.com/natumekazuki/WithMate/issues/7) | キャラ別メッセージ上書き | SessionWindow の固定文言を character ごとに差し替え、複数候補から stable に切り替えられるようにした | plan: `docs/plans/archive/2026/03/20260325-character-session-copy/`、design: `docs/design/session-character-copy.md` |
@@ -106,8 +107,8 @@
   - 更新された Memory 内容を right pane から見たい
   - tuning 中の挙動確認とデバッグをしやすくする
 - `#31 Memory 管理 UI`
-  - Session / Project / Character Memory を一覧・閲覧し、運用中の状態を確認できるようにする
-  - current scope は一覧・閲覧・Delete を優先し、手動 Update は follow-up として切り分けうる
+  - Settings Window から Session / Project / Character Memory を一覧・閲覧し、Delete できるようにした
+  - 手動 Update は `memory-management-manual-update` の follow-up に切り分ける
   - `#3` の保存基盤が前提で、観測・運用面では `#22` `#27` とつながる
 
 ### 6. 応用 / 統合
@@ -134,9 +135,9 @@
 
 1. `#3 Memory 永続化と共有`
 2. `#16 セッション close 時の Memory 生成`
-3. `#31 Memory 管理 UI`
-4. `#1 独り言の API 運用`
-5. `#25 独り言生成タイミング`
+3. `#1 独り言の API 運用`
+4. `#25 独り言生成タイミング`
+5. `memory-management-manual-update`
 6. `#28 データ export / import`
 
 ## 参照元

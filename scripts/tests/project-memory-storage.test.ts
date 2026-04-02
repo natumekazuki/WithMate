@@ -183,4 +183,37 @@ describe("ProjectMemoryStorage", () => {
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
+
+  it("entry 削除時に最後の scope も自動で掃除する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-memory-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    const workspacePath = path.join(tempDirectory, "workspace");
+    let storage: ProjectMemoryStorage | null = null;
+    let sessionStorage: SessionStorage | null = null;
+
+    try {
+      await mkdir(workspacePath, { recursive: true });
+
+      sessionStorage = new SessionStorage(dbPath);
+      storage = new ProjectMemoryStorage(dbPath);
+      const scope = storage.ensureProjectScope(resolveProjectScope(workspacePath));
+      const entry = storage.upsertProjectMemoryEntry({
+        projectScopeId: scope.id,
+        sourceSessionId: null,
+        category: "context",
+        title: "scope cleanup",
+        detail: "最後の entry を消したら scope も掃除する",
+        keywords: [],
+        evidence: [],
+      });
+
+      storage.deleteProjectMemoryEntry(entry.id);
+
+      assert.equal(storage.listProjectScopes().length, 0);
+    } finally {
+      storage?.close();
+      sessionStorage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
 });

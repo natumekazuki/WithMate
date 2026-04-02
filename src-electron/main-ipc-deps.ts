@@ -14,6 +14,7 @@ import type {
 } from "../src/app-state.js";
 import type { CreateCharacterInput } from "../src/character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
+import type { MemoryManagementSnapshot } from "../src/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
@@ -51,6 +52,10 @@ export type MainIpcSettingsDepsArgs = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): AppSettings;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
+  getMemoryManagementSnapshot(): MemoryManagementSnapshot;
+  deleteSessionMemory(sessionId: string): void;
+  deleteProjectMemoryEntry(entryId: string): void;
+  deleteCharacterMemoryEntry(entryId: string): void;
 };
 
 export type MainIpcSessionQueryDepsArgs = {
@@ -139,6 +144,10 @@ export function createMainIpcRegistrationDeps(
     getAppSettings: args.settings.getAppSettings,
     updateAppSettings: args.settings.updateAppSettings,
     resetAppDatabase: args.settings.resetAppDatabase,
+    getMemoryManagementSnapshot: args.settings.getMemoryManagementSnapshot,
+    deleteSessionMemory: args.settings.deleteSessionMemory,
+    deleteProjectMemoryEntry: args.settings.deleteProjectMemoryEntry,
+    deleteCharacterMemoryEntry: args.settings.deleteCharacterMemoryEntry,
     listSessions: args.sessionQuery.listSessions,
     listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,
     listSessionSkills: args.sessionQuery.listSessionSkills,

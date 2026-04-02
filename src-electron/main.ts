@@ -66,6 +66,7 @@ import { SessionElicitationService } from "./session-elicitation-service.js";
 import { WindowBroadcastService } from "./window-broadcast-service.js";
 import { WindowDialogService } from "./window-dialog-service.js";
 import { SessionMemorySupportService } from "./session-memory-support-service.js";
+import { MemoryManagementService } from "./memory-management-service.js";
 import { CharacterRuntimeService } from "./character-runtime-service.js";
 import { CharacterUpdateWorkspaceService } from "./character-update-workspace-service.js";
 import { WindowEntryLoader } from "./window-entry-loader.js";
@@ -134,6 +135,7 @@ let sessionApprovalService: SessionApprovalService | null = null;
 let sessionElicitationService: SessionElicitationService | null = null;
 let auditLogService: AuditLogService | null = null;
 let sessionMemorySupportService: SessionMemorySupportService | null = null;
+let memoryManagementService: MemoryManagementService | null = null;
 let characterRuntimeService: CharacterRuntimeService | null = null;
 let characterUpdateWorkspaceService: CharacterUpdateWorkspaceService | null = null;
 let mainBroadcastFacade: MainBroadcastFacade<BrowserWindow> | null = null;
@@ -343,6 +345,11 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
                 resetAppDatabase: async (request) => requireSettingsCatalogService().resetAppDatabase(request),
+                getMemoryManagementSnapshot: () => requireMemoryManagementService().getSnapshot(),
+                deleteSessionMemory: (sessionId) => requireMemoryManagementService().deleteSessionMemory(sessionId),
+                deleteProjectMemoryEntry: (entryId) => requireMemoryManagementService().deleteProjectMemoryEntry(entryId),
+                deleteCharacterMemoryEntry: (entryId) =>
+                  requireMemoryManagementService().deleteCharacterMemoryEntry(entryId),
               },
               sessionQuery: {
                 listSessions: () => listSessions(),
@@ -573,6 +580,25 @@ function requireSessionMemorySupportService(): SessionMemorySupportService {
   }
 
   return sessionMemorySupportService;
+}
+
+function requireMemoryManagementService(): MemoryManagementService {
+  if (!memoryManagementService) {
+    memoryManagementService = new MemoryManagementService({
+      listSessions: () => listSessions(),
+      listSessionMemories: () => requireSessionMemoryStorage().listSessionMemories(),
+      deleteSessionMemory: (sessionId) => requireSessionMemoryStorage().deleteSessionMemory(sessionId),
+      listProjectScopes: () => requireProjectMemoryStorage().listProjectScopes(),
+      listProjectMemoryEntries: (projectScopeId) => requireProjectMemoryStorage().listProjectMemoryEntries(projectScopeId),
+      deleteProjectMemoryEntry: (entryId) => requireProjectMemoryStorage().deleteProjectMemoryEntry(entryId),
+      listCharacterScopes: () => requireCharacterMemoryStorage().listCharacterScopes(),
+      listCharacterMemoryEntries: (characterScopeId) =>
+        requireCharacterMemoryStorage().listCharacterMemoryEntries(characterScopeId),
+      deleteCharacterMemoryEntry: (entryId) => requireCharacterMemoryStorage().deleteCharacterMemoryEntry(entryId),
+    });
+  }
+
+  return memoryManagementService;
 }
 
 function requireCharacterRuntimeService(): CharacterRuntimeService {

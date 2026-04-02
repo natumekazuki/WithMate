@@ -7,6 +7,7 @@ import type {
   MemoryExtractionProviderSettings,
   Session,
 } from "./app-state.js";
+import type { MemoryManagementSnapshot } from "./memory-management-state.js";
 import type { HomeProviderSettingRow } from "./home-settings-view-model.js";
 import type { LaunchWorkspace } from "./home-launch-projection.js";
 import type { HomeMonitorEntry, HomeSessionState } from "./home-session-projection.js";
@@ -52,6 +53,10 @@ export type HomeSettingsContentProps = {
   canResetDatabase: boolean;
   settingsDirty: boolean;
   settingsFeedback: string;
+  memoryManagementSnapshot: MemoryManagementSnapshot | null;
+  memoryManagementLoading: boolean;
+  memoryManagementBusyTarget: string | null;
+  memoryManagementFeedback: string;
   onOpenHome: () => void;
   onCloseWindow: () => void;
   onChangeSystemPromptPrefix: (value: string) => void;
@@ -74,6 +79,10 @@ export type HomeSettingsContentProps = {
   ) => void;
   onImportModelCatalog: () => void;
   onExportModelCatalog: () => void;
+  onReloadMemoryManagement: () => void;
+  onDeleteSessionMemory: (sessionId: string) => void;
+  onDeleteProjectMemoryEntry: (entryId: string) => void;
+  onDeleteCharacterMemoryEntry: (entryId: string) => void;
   onToggleResetDatabaseTarget: (target: ResetAppDatabaseTarget) => void;
   onResetAppDatabase: () => void;
   onSaveSettings: () => void;
@@ -89,6 +98,10 @@ export function HomeSettingsContent({
   canResetDatabase,
   settingsDirty,
   settingsFeedback,
+  memoryManagementSnapshot,
+  memoryManagementLoading,
+  memoryManagementBusyTarget,
+  memoryManagementFeedback,
   onOpenHome,
   onCloseWindow,
   onChangeSystemPromptPrefix,
@@ -105,6 +118,10 @@ export function HomeSettingsContent({
   onChangeCharacterReflectionReasoningEffort,
   onImportModelCatalog,
   onExportModelCatalog,
+  onReloadMemoryManagement,
+  onDeleteSessionMemory,
+  onDeleteProjectMemoryEntry,
+  onDeleteCharacterMemoryEntry,
   onToggleResetDatabaseTarget,
   onResetAppDatabase,
   onSaveSettings,
@@ -349,6 +366,17 @@ export function HomeSettingsContent({
             </>
           ) : null}
 
+          <SettingsMemoryManagementSection
+            snapshot={memoryManagementSnapshot}
+            loading={memoryManagementLoading}
+            busyTarget={memoryManagementBusyTarget}
+            feedback={memoryManagementFeedback}
+            onReload={onReloadMemoryManagement}
+            onDeleteSessionMemory={onDeleteSessionMemory}
+            onDeleteProjectMemoryEntry={onDeleteProjectMemoryEntry}
+            onDeleteCharacterMemoryEntry={onDeleteCharacterMemoryEntry}
+          />
+
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>Model Catalog</strong>
@@ -406,6 +434,239 @@ export function HomeSettingsContent({
         </button>
       </div>
     </>
+  );
+}
+
+type SettingsMemoryManagementSectionProps = {
+  snapshot: MemoryManagementSnapshot | null;
+  loading: boolean;
+  busyTarget: string | null;
+  feedback: string;
+  onReload: () => void;
+  onDeleteSessionMemory: (sessionId: string) => void;
+  onDeleteProjectMemoryEntry: (entryId: string) => void;
+  onDeleteCharacterMemoryEntry: (entryId: string) => void;
+};
+
+function SettingsMemoryManagementSection({
+  snapshot,
+  loading,
+  busyTarget,
+  feedback,
+  onReload,
+  onDeleteSessionMemory,
+  onDeleteProjectMemoryEntry,
+  onDeleteCharacterMemoryEntry,
+}: SettingsMemoryManagementSectionProps) {
+  const sessionCount = snapshot?.sessionMemories.length ?? 0;
+  const projectEntryCount = snapshot?.projectMemories.reduce((count, group) => count + group.entries.length, 0) ?? 0;
+  const characterEntryCount = snapshot?.characterMemories.reduce((count, group) => count + group.entries.length, 0) ?? 0;
+
+  return (
+    <section className="settings-section-card">
+      <div className="settings-field">
+        <strong>Memory 管理</strong>
+        <p className="settings-help">
+          Session / Project / Character Memory を Settings から確認して削除できる。manual update は follow-up task で扱う。
+        </p>
+        <div className="settings-actions settings-memory-actions">
+          <span className="settings-memory-summary">
+            {`Session ${sessionCount} / Project ${projectEntryCount} / Character ${characterEntryCount}`}
+          </span>
+          <button className="launch-toggle" type="button" onClick={onReload} disabled={loading}>
+            {loading ? "Memory 読み込み中..." : "Reload Memory"}
+          </button>
+        </div>
+        {feedback ? <p className="settings-feedback settings-memory-feedback">{feedback}</p> : null}
+
+        <div className="settings-memory-section-list">
+          <section className="settings-memory-domain">
+            <div className="settings-memory-domain-head">
+              <h3>Session Memory</h3>
+              <span>{sessionCount}</span>
+            </div>
+            {snapshot && snapshot.sessionMemories.length > 0 ? (
+              <div className="settings-memory-card-list">
+                {snapshot.sessionMemories.map((item) => {
+                  const targetKey = `session:${item.sessionId}`;
+                  const deleting = busyTarget === targetKey;
+                  return (
+                    <article key={item.sessionId} className="settings-memory-card">
+                      <div className="settings-memory-card-head">
+                        <div className="settings-memory-card-copy">
+                          <strong>{item.taskTitle}</strong>
+                          <span>{`${item.character} / ${item.provider || "provider 未設定"}`}</span>
+                        </div>
+                        <button
+                          className="danger-button"
+                          type="button"
+                          disabled={loading || deleting}
+                          onClick={() => onDeleteSessionMemory(item.sessionId)}
+                        >
+                          {deleting ? "削除中..." : "Delete"}
+                        </button>
+                      </div>
+                      <dl className="settings-memory-meta">
+                        <div>
+                          <dt>Workspace</dt>
+                          <dd>{item.workspacePath || item.workspaceLabel || "-"}</dd>
+                        </div>
+                        <div>
+                          <dt>状態</dt>
+                          <dd>{`${item.status} / ${item.runState}`}</dd>
+                        </div>
+                        <div>
+                          <dt>updatedAt</dt>
+                          <dd>{item.updatedAt}</dd>
+                        </div>
+                      </dl>
+                      <div className="settings-memory-block">
+                        <span>Goal</span>
+                        <p>{item.memory.goal || "未設定"}</p>
+                      </div>
+                      <SettingsMemoryListBlock title="Decisions" items={item.memory.decisions} />
+                      <SettingsMemoryListBlock title="Open Questions" items={item.memory.openQuestions} />
+                      <SettingsMemoryListBlock title="Next Actions" items={item.memory.nextActions} />
+                      <SettingsMemoryListBlock title="Notes" items={item.memory.notes} />
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <article className="empty-list-card compact">
+                <p>{loading ? "Session Memory を読み込み中..." : "Session Memory はまだないよ。"}</p>
+              </article>
+            )}
+          </section>
+
+          <section className="settings-memory-domain">
+            <div className="settings-memory-domain-head">
+              <h3>Project Memory</h3>
+              <span>{projectEntryCount}</span>
+            </div>
+            {snapshot && snapshot.projectMemories.length > 0 ? (
+              <div className="settings-memory-group-list">
+                {snapshot.projectMemories.map((group) => (
+                  <article key={group.scope.id} className="settings-memory-group-card">
+                    <div className="settings-memory-card-copy">
+                      <strong>{group.scope.displayName || group.scope.projectKey}</strong>
+                      <span>{`${group.scope.projectType} / ${group.scope.workspacePath}`}</span>
+                    </div>
+                    <div className="settings-memory-card-list">
+                      {group.entries.map((entry) => {
+                        const targetKey = `project:${entry.id}`;
+                        const deleting = busyTarget === targetKey;
+                        return (
+                          <article key={entry.id} className="settings-memory-card compact">
+                            <div className="settings-memory-card-head">
+                              <div className="settings-memory-card-copy">
+                                <strong>{entry.title}</strong>
+                                <span>{entry.category}</span>
+                              </div>
+                              <button
+                                className="danger-button"
+                                type="button"
+                                disabled={loading || deleting}
+                                onClick={() => onDeleteProjectMemoryEntry(entry.id)}
+                              >
+                                {deleting ? "削除中..." : "Delete"}
+                              </button>
+                            </div>
+                            <p className="settings-memory-detail">{entry.detail || "detail なし"}</p>
+                            <SettingsMemoryTagLine label="Keywords" items={entry.keywords} />
+                            <SettingsMemoryTagLine label="Evidence" items={entry.evidence} />
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <article className="empty-list-card compact">
+                <p>{loading ? "Project Memory を読み込み中..." : "Project Memory はまだないよ。"}</p>
+              </article>
+            )}
+          </section>
+
+          <section className="settings-memory-domain">
+            <div className="settings-memory-domain-head">
+              <h3>Character Memory</h3>
+              <span>{characterEntryCount}</span>
+            </div>
+            {snapshot && snapshot.characterMemories.length > 0 ? (
+              <div className="settings-memory-group-list">
+                {snapshot.characterMemories.map((group) => (
+                  <article key={group.scope.id} className="settings-memory-group-card">
+                    <div className="settings-memory-card-copy">
+                      <strong>{group.scope.displayName || group.scope.characterId}</strong>
+                      <span>{group.scope.characterId}</span>
+                    </div>
+                    <div className="settings-memory-card-list">
+                      {group.entries.map((entry) => {
+                        const targetKey = `character:${entry.id}`;
+                        const deleting = busyTarget === targetKey;
+                        return (
+                          <article key={entry.id} className="settings-memory-card compact">
+                            <div className="settings-memory-card-head">
+                              <div className="settings-memory-card-copy">
+                                <strong>{entry.title}</strong>
+                                <span>{entry.category}</span>
+                              </div>
+                              <button
+                                className="danger-button"
+                                type="button"
+                                disabled={loading || deleting}
+                                onClick={() => onDeleteCharacterMemoryEntry(entry.id)}
+                              >
+                                {deleting ? "削除中..." : "Delete"}
+                              </button>
+                            </div>
+                            <p className="settings-memory-detail">{entry.detail || "detail なし"}</p>
+                            <SettingsMemoryTagLine label="Keywords" items={entry.keywords} />
+                            <SettingsMemoryTagLine label="Evidence" items={entry.evidence} />
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <article className="empty-list-card compact">
+                <p>{loading ? "Character Memory を読み込み中..." : "Character Memory はまだないよ。"}</p>
+              </article>
+            )}
+          </section>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SettingsMemoryListBlock({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="settings-memory-block">
+      <span>{title}</span>
+      {items.length > 0 ? (
+        <ul className="settings-memory-list">
+          {items.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : (
+        <p>なし</p>
+      )}
+    </div>
+  );
+}
+
+function SettingsMemoryTagLine({ label, items }: { label: string; items: string[] }) {
+  return (
+    <div className="settings-memory-tags">
+      <span>{label}</span>
+      <p>{items.length > 0 ? items.join(", ") : "-"}</p>
+    </div>
   );
 }
 

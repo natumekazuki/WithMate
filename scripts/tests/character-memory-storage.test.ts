@@ -166,4 +166,37 @@ describe("CharacterMemoryStorage", () => {
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
+
+  it("entry 削除時に最後の scope も自動で掃除する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-character-memory-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: CharacterMemoryStorage | null = null;
+    let sessionStorage: SessionStorage | null = null;
+
+    try {
+      sessionStorage = new SessionStorage(dbPath);
+      storage = new CharacterMemoryStorage(dbPath);
+      const scope = storage.ensureCharacterScope({
+        characterId: "char-a",
+        displayName: "A",
+      });
+      const entry = storage.upsertCharacterMemoryEntry({
+        characterScopeId: scope.id,
+        sourceSessionId: null,
+        category: "boundary",
+        title: "scope cleanup",
+        detail: "最後の entry を消したら scope も掃除する",
+        keywords: [],
+        evidence: [],
+      });
+
+      storage.deleteCharacterMemoryEntry(entry.id);
+
+      assert.equal(storage.listCharacterScopes().length, 0);
+    } finally {
+      storage?.close();
+      sessionStorage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
 });

@@ -110,6 +110,11 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
     - provider ごとの `Reasoning Depth`
     - provider ごとの `Output Tokens Threshold`
     - current 実装では turn 完了時の threshold 判定と `Session Window` close 時の強制実行に使う
+  - `Memory 管理`
+    - `Session / Project / Character Memory` を 1 画面で一覧できる
+    - current scope は閲覧と delete に限定し、manual update は follow-up とする
+    - reload で最新 snapshot を再取得できる
+    - `Project / Character Memory` は scope ごとに grouped 表示する
   - `Model Catalog` import / export
   - `Danger Zone` の `DB を初期化`
     - reset 対象を `sessions / audit logs / app settings / model catalog / project memory / character memory` から選べる
@@ -305,6 +310,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - Session 実行の監査ログは SQLite に保存し、Session Window から閲覧する
 - chat message は限定的な rich text renderer で整形表示する
 - `Settings Window` の `System Prompt Prefix` は SQLite に保存し、次回 turn から prompt composition へ反映する
+- `Settings Window` の `Memory 管理` は Main Process から `Session / Project / Character Memory` の snapshot を取得し、delete 後は再取得して整合を保つ
 - `Settings Window` の `DB を初期化` 成功時は各 window が reset 後 `appSettings` / `modelCatalog` / `sessions` へ同期し、settings draft の dirty を解消する
 - character は `userData/characters/` を正本とする
 - `userData` は `<appData>/WithMate/` に固定する
