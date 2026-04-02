@@ -36,6 +36,7 @@ npm run electron:start
 | MT-004C | Character reflection settings | `Settings Window` の `Character Reflection` を確認する | provider ごとに `Model` / `Reasoning Depth` が表示され、現在の model catalog に沿った選択肢だけが出る |
 | MT-004D | Memory 管理一覧 | `Settings Window` の `Memory 管理` を確認する | `Session / Project / Character Memory` の件数、一覧、`Reload Memory` が表示される。空の domain は empty state で見分けられる |
 | MT-004E | Memory 管理 delete | Session / Project / Character Memory が少なくとも 1 件ずつある状態で `Delete` を実行する | 対象 domain の item が消え、最後の `Project / Character Memory` entry を削除した時は空 scope も残らない。reload 後も再出現しない |
+| MT-004F | Memory 管理 search / filter | `Settings Window` の `Memory 管理` で search text、domain、status / category、sort を切り替える | search は title / detail / keyword / workspace を横断して絞り込める。domain に応じて不要な filter は disabled になり、sort は更新日時順の切替が効く |
 | MT-005 | Settings copy | `Settings Window` を確認する | `OpenAI API Key (Coding Agent)` が coding plane 用と読め、`Character Stream 用ではない` 補助文と future note が表示される |
 | MT-006 | Compatibility note | `Settings Window` を確認する | `初回リリース前のため後方互換性は考慮しない` と `DB 初期化で復旧する` 旨の note が表示される |
 | MT-007 | Settings save | `System Prompt Prefix` または coding provider 設定を変更して `Save Settings` を押す | 保存成功メッセージが表示され、再度開いても保持される |

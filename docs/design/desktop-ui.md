@@ -114,6 +114,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
     - `Session / Project / Character Memory` を 1 画面で一覧できる
     - current scope は閲覧と delete に限定し、manual update は follow-up とする
     - reload で最新 snapshot を再取得できる
+    - global search、domain filter、status / category filter、updatedAt sort を持つ
     - `Project / Character Memory` は scope ごとに grouped 表示する
   - `Model Catalog` import / export
   - `Danger Zone` の `DB を初期化`

@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 
 import type {
   AppSettings,
@@ -8,6 +8,15 @@ import type {
   Session,
 } from "./app-state.js";
 import type { MemoryManagementSnapshot } from "./memory-management-state.js";
+import {
+  buildFilteredMemoryManagementSnapshot,
+  DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
+  type CharacterMemoryCategoryFilter,
+  type MemoryManagementDomainFilter,
+  type MemoryManagementSort,
+  type ProjectMemoryCategoryFilter,
+  type SessionMemoryStatusFilter,
+} from "./memory-management-view.js";
 import type { HomeProviderSettingRow } from "./home-settings-view-model.js";
 import type { LaunchWorkspace } from "./home-launch-projection.js";
 import type { HomeMonitorEntry, HomeSessionState } from "./home-session-projection.js";
@@ -448,6 +457,43 @@ type SettingsMemoryManagementSectionProps = {
   onDeleteCharacterMemoryEntry: (entryId: string) => void;
 };
 
+const MEMORY_DOMAIN_OPTIONS: Array<{ value: MemoryManagementDomainFilter; label: string }> = [
+  { value: "all", label: "All Domains" },
+  { value: "session", label: "Session" },
+  { value: "project", label: "Project" },
+  { value: "character", label: "Character" },
+];
+
+const MEMORY_SORT_OPTIONS: Array<{ value: MemoryManagementSort; label: string }> = [
+  { value: "updated-desc", label: "更新が新しい順" },
+  { value: "updated-asc", label: "更新が古い順" },
+];
+
+const SESSION_STATUS_OPTIONS: Array<{ value: SessionMemoryStatusFilter; label: string }> = [
+  { value: "all", label: "すべての状態" },
+  { value: "running", label: "Running" },
+  { value: "idle", label: "Idle" },
+  { value: "saved", label: "Saved" },
+];
+
+const PROJECT_CATEGORY_OPTIONS: Array<{ value: ProjectMemoryCategoryFilter; label: string }> = [
+  { value: "all", label: "全カテゴリ" },
+  { value: "decision", label: "decision" },
+  { value: "constraint", label: "constraint" },
+  { value: "convention", label: "convention" },
+  { value: "context", label: "context" },
+  { value: "deferred", label: "deferred" },
+];
+
+const CHARACTER_CATEGORY_OPTIONS: Array<{ value: CharacterMemoryCategoryFilter; label: string }> = [
+  { value: "all", label: "全カテゴリ" },
+  { value: "preference", label: "preference" },
+  { value: "relationship", label: "relationship" },
+  { value: "shared_moment", label: "shared_moment" },
+  { value: "tone", label: "tone" },
+  { value: "boundary", label: "boundary" },
+];
+
 function SettingsMemoryManagementSection({
   snapshot,
   loading,
@@ -458,9 +504,49 @@ function SettingsMemoryManagementSection({
   onDeleteProjectMemoryEntry,
   onDeleteCharacterMemoryEntry,
 }: SettingsMemoryManagementSectionProps) {
-  const sessionCount = snapshot?.sessionMemories.length ?? 0;
-  const projectEntryCount = snapshot?.projectMemories.reduce((count, group) => count + group.entries.length, 0) ?? 0;
-  const characterEntryCount = snapshot?.characterMemories.reduce((count, group) => count + group.entries.length, 0) ?? 0;
+  const [searchText, setSearchText] = useState(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.searchText);
+  const [domain, setDomain] = useState<MemoryManagementDomainFilter>(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.domain);
+  const [sort, setSort] = useState<MemoryManagementSort>(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.sort);
+  const [sessionStatus, setSessionStatus] = useState<SessionMemoryStatusFilter>(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.sessionStatus);
+  const [projectCategory, setProjectCategory] = useState<ProjectMemoryCategoryFilter>(
+    DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.projectCategory,
+  );
+  const [characterCategory, setCharacterCategory] = useState<CharacterMemoryCategoryFilter>(
+    DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.characterCategory,
+  );
+
+  const filteredSnapshot = useMemo(
+    () =>
+      buildFilteredMemoryManagementSnapshot(snapshot, {
+        searchText,
+        domain,
+        sort,
+        sessionStatus,
+        projectCategory,
+        characterCategory,
+      }),
+    [characterCategory, domain, projectCategory, searchText, sessionStatus, snapshot, sort],
+  );
+  const sessionCount = filteredSnapshot?.sessionMemories.length ?? 0;
+  const projectEntryCount = filteredSnapshot?.projectMemories.reduce((count, group) => count + group.entries.length, 0) ?? 0;
+  const characterEntryCount =
+    filteredSnapshot?.characterMemories.reduce((count, group) => count + group.entries.length, 0) ?? 0;
+  const hasActiveFilters =
+    searchText.trim().length > 0 ||
+    domain !== DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.domain ||
+    sort !== DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.sort ||
+    sessionStatus !== DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.sessionStatus ||
+    projectCategory !== DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.projectCategory ||
+    characterCategory !== DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.characterCategory;
+
+  const clearFilters = () => {
+    setSearchText(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.searchText);
+    setDomain(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.domain);
+    setSort(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.sort);
+    setSessionStatus(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.sessionStatus);
+    setProjectCategory(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.projectCategory);
+    setCharacterCategory(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.characterCategory);
+  };
 
   return (
     <section className="settings-section-card">
@@ -473,11 +559,95 @@ function SettingsMemoryManagementSection({
           <span className="settings-memory-summary">
             {`Session ${sessionCount} / Project ${projectEntryCount} / Character ${characterEntryCount}`}
           </span>
-          <button className="launch-toggle" type="button" onClick={onReload} disabled={loading}>
-            {loading ? "Memory 読み込み中..." : "Reload Memory"}
-          </button>
+          <div className="settings-actions">
+            {hasActiveFilters ? (
+              <button className="launch-toggle compact" type="button" onClick={clearFilters} disabled={loading}>
+                Clear Filters
+              </button>
+            ) : null}
+            <button className="launch-toggle" type="button" onClick={onReload} disabled={loading}>
+              {loading ? "Memory 読み込み中..." : "Reload Memory"}
+            </button>
+          </div>
         </div>
         {feedback ? <p className="settings-feedback settings-memory-feedback">{feedback}</p> : null}
+        <div className="settings-memory-toolbar">
+          <label className="settings-provider-input">
+            <span>Search</span>
+            <input
+              type="text"
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+              placeholder="title / detail / keyword / workspace"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </label>
+          <div className="settings-memory-filter-grid">
+            <label className="settings-provider-input">
+              <span>Domain</span>
+              <select value={domain} onChange={(event) => setDomain(event.target.value as MemoryManagementDomainFilter)}>
+                {MEMORY_DOMAIN_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-provider-input">
+              <span>Sort</span>
+              <select value={sort} onChange={(event) => setSort(event.target.value as MemoryManagementSort)}>
+                {MEMORY_SORT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-provider-input">
+              <span>Session Status</span>
+              <select
+                value={sessionStatus}
+                disabled={domain === "project" || domain === "character"}
+                onChange={(event) => setSessionStatus(event.target.value as SessionMemoryStatusFilter)}
+              >
+                {SESSION_STATUS_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-provider-input">
+              <span>Project Category</span>
+              <select
+                value={projectCategory}
+                disabled={domain === "session" || domain === "character"}
+                onChange={(event) => setProjectCategory(event.target.value as ProjectMemoryCategoryFilter)}
+              >
+                {PROJECT_CATEGORY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-provider-input">
+              <span>Character Category</span>
+              <select
+                value={characterCategory}
+                disabled={domain === "session" || domain === "project"}
+                onChange={(event) => setCharacterCategory(event.target.value as CharacterMemoryCategoryFilter)}
+              >
+                {CHARACTER_CATEGORY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
 
         <div className="settings-memory-section-list">
           <section className="settings-memory-domain">
@@ -485,9 +655,9 @@ function SettingsMemoryManagementSection({
               <h3>Session Memory</h3>
               <span>{sessionCount}</span>
             </div>
-            {snapshot && snapshot.sessionMemories.length > 0 ? (
+            {filteredSnapshot && filteredSnapshot.sessionMemories.length > 0 ? (
               <div className="settings-memory-card-list">
-                {snapshot.sessionMemories.map((item) => {
+                {filteredSnapshot.sessionMemories.map((item) => {
                   const targetKey = `session:${item.sessionId}`;
                   const deleting = busyTarget === targetKey;
                   return (
@@ -534,7 +704,7 @@ function SettingsMemoryManagementSection({
               </div>
             ) : (
               <article className="empty-list-card compact">
-                <p>{loading ? "Session Memory を読み込み中..." : "Session Memory はまだないよ。"}</p>
+                <p>{loading ? "Session Memory を読み込み中..." : "一致する Session Memory はないよ。"}</p>
               </article>
             )}
           </section>
@@ -544,9 +714,9 @@ function SettingsMemoryManagementSection({
               <h3>Project Memory</h3>
               <span>{projectEntryCount}</span>
             </div>
-            {snapshot && snapshot.projectMemories.length > 0 ? (
+            {filteredSnapshot && filteredSnapshot.projectMemories.length > 0 ? (
               <div className="settings-memory-group-list">
-                {snapshot.projectMemories.map((group) => (
+                {filteredSnapshot.projectMemories.map((group) => (
                   <article key={group.scope.id} className="settings-memory-group-card">
                     <div className="settings-memory-card-copy">
                       <strong>{group.scope.displayName || group.scope.projectKey}</strong>
@@ -584,7 +754,7 @@ function SettingsMemoryManagementSection({
               </div>
             ) : (
               <article className="empty-list-card compact">
-                <p>{loading ? "Project Memory を読み込み中..." : "Project Memory はまだないよ。"}</p>
+                <p>{loading ? "Project Memory を読み込み中..." : "一致する Project Memory はないよ。"}</p>
               </article>
             )}
           </section>
@@ -594,9 +764,9 @@ function SettingsMemoryManagementSection({
               <h3>Character Memory</h3>
               <span>{characterEntryCount}</span>
             </div>
-            {snapshot && snapshot.characterMemories.length > 0 ? (
+            {filteredSnapshot && filteredSnapshot.characterMemories.length > 0 ? (
               <div className="settings-memory-group-list">
-                {snapshot.characterMemories.map((group) => (
+                {filteredSnapshot.characterMemories.map((group) => (
                   <article key={group.scope.id} className="settings-memory-group-card">
                     <div className="settings-memory-card-copy">
                       <strong>{group.scope.displayName || group.scope.characterId}</strong>
@@ -634,7 +804,7 @@ function SettingsMemoryManagementSection({
               </div>
             ) : (
               <article className="empty-list-card compact">
-                <p>{loading ? "Character Memory を読み込み中..." : "Character Memory はまだないよ。"}</p>
+                <p>{loading ? "Character Memory を読み込み中..." : "一致する Character Memory はないよ。"}</p>
               </article>
             )}
           </section>
