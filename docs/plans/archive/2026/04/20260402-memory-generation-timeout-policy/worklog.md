@@ -12,3 +12,4 @@
 - `docs/design/settings-ui.md` `docs/design/memory-architecture.md` `docs/design/monologue-provider-policy.md` `docs/design/audit-log.md` `docs/design/database-schema.md` `docs/manual-test-checklist.md` `docs/task-backlog.md` を同期
 - `.ai_context/` と `README.md` は今回の設定追加では更新不要と判断
 - コミット `c6d327a` `fix(settings): memory generation timeout を設定可能にする`
+- コミット `aa05aec` `docs(plan): archive memory generation timeout policy`

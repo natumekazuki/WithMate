@@ -14,3 +14,4 @@
 ## commits
 
 - `c6d327a` `fix(settings): memory generation timeout を設定可能にする`
+- `aa05aec` `docs(plan): archive memory generation timeout policy`
