@@ -204,6 +204,21 @@ export function updateMemoryExtractionThreshold(
   };
 }
 
+export function updateMemoryExtractionTimeoutSeconds(
+  draft: AppSettings,
+  providerId: string,
+  rawValue: string,
+): Record<string, MemoryExtractionProviderSettings> {
+  const normalized = Number.parseInt(rawValue, 10);
+  return {
+    ...draft.memoryExtractionProviderSettings,
+    [providerId]: {
+      ...getMemoryExtractionProviderSettings(draft, providerId),
+      timeoutSeconds: Number.isFinite(normalized) && normalized > 0 ? normalized : 30,
+    },
+  };
+}
+
 export function updateMemoryExtractionModelDraft(
   draft: AppSettings,
   providerCatalog: ModelCatalogProvider,
@@ -238,6 +253,17 @@ export function updateMemoryExtractionThresholdDraft(
   };
 }
 
+export function updateMemoryExtractionTimeoutSecondsDraft(
+  draft: AppSettings,
+  providerId: string,
+  rawValue: string,
+): AppSettings {
+  return {
+    ...draft,
+    memoryExtractionProviderSettings: updateMemoryExtractionTimeoutSeconds(draft, providerId, rawValue),
+  };
+}
+
 export function updateCharacterReflectionModel(
   draft: AppSettings,
   providerCatalog: ModelCatalogProvider,
@@ -269,6 +295,21 @@ export function updateCharacterReflectionReasoningEffort(
   };
 }
 
+export function updateCharacterReflectionTimeoutSeconds(
+  draft: AppSettings,
+  providerId: string,
+  rawValue: string,
+): Record<string, CharacterReflectionProviderSettings> {
+  const normalized = Number.parseInt(rawValue, 10);
+  return {
+    ...draft.characterReflectionProviderSettings,
+    [providerId]: {
+      ...getCharacterReflectionProviderSettings(draft, providerId),
+      timeoutSeconds: Number.isFinite(normalized) && normalized > 0 ? normalized : 30,
+    },
+  };
+}
+
 export function updateCharacterReflectionModelDraft(
   draft: AppSettings,
   providerCatalog: ModelCatalogProvider,
@@ -289,5 +330,16 @@ export function updateCharacterReflectionReasoningEffortDraft(
   return {
     ...draft,
     characterReflectionProviderSettings: updateCharacterReflectionReasoningEffort(draft, providerId, reasoningEffort),
+  };
+}
+
+export function updateCharacterReflectionTimeoutSecondsDraft(
+  draft: AppSettings,
+  providerId: string,
+  rawValue: string,
+): AppSettings {
+  return {
+    ...draft,
+    characterReflectionProviderSettings: updateCharacterReflectionTimeoutSeconds(draft, providerId, rawValue),
   };
 }

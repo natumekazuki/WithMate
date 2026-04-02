@@ -38,6 +38,7 @@ import {
   SETTINGS_CHARACTER_REFLECTION_MESSAGE_DELTA_LABEL,
   SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL,
   SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL,
+  SETTINGS_CHARACTER_REFLECTION_TIMEOUT_LABEL,
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_HELP,
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
   SETTINGS_MEMORY_EXTRACTION_HELP,
@@ -45,6 +46,7 @@ import {
   SETTINGS_MEMORY_GENERATION_LABEL,
   SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL,
   SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL,
+  SETTINGS_MEMORY_EXTRACTION_TIMEOUT_LABEL,
   SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL,
 } from "./settings-ui.js";
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
@@ -84,11 +86,13 @@ export type HomeSettingsContentProps = {
     reasoningEffort: MemoryExtractionProviderSettings["reasoningEffort"],
   ) => void;
   onChangeMemoryExtractionThreshold: (providerId: string, value: string) => void;
+  onChangeMemoryExtractionTimeoutSeconds: (providerId: string, value: string) => void;
   onChangeCharacterReflectionModel: (providerId: string, model: string) => void;
   onChangeCharacterReflectionReasoningEffort: (
     providerId: string,
     reasoningEffort: CharacterReflectionProviderSettings["reasoningEffort"],
   ) => void;
+  onChangeCharacterReflectionTimeoutSeconds: (providerId: string, value: string) => void;
   onChangeCharacterReflectionCooldownSeconds: (value: string) => void;
   onChangeCharacterReflectionCharDeltaThreshold: (value: string) => void;
   onChangeCharacterReflectionMessageDeltaThreshold: (value: string) => void;
@@ -129,8 +133,10 @@ export function HomeSettingsContent({
   onChangeMemoryExtractionModel,
   onChangeMemoryExtractionReasoningEffort,
   onChangeMemoryExtractionThreshold,
+  onChangeMemoryExtractionTimeoutSeconds,
   onChangeCharacterReflectionModel,
   onChangeCharacterReflectionReasoningEffort,
+  onChangeCharacterReflectionTimeoutSeconds,
   onChangeCharacterReflectionCooldownSeconds,
   onChangeCharacterReflectionCharDeltaThreshold,
   onChangeCharacterReflectionMessageDeltaThreshold,
@@ -329,6 +335,17 @@ export function HomeSettingsContent({
                             onChange={(event) => onChangeMemoryExtractionThreshold(row.provider.id, event.target.value)}
                           />
                         </label>
+                        <label className="settings-provider-input">
+                          <span>{SETTINGS_MEMORY_EXTRACTION_TIMEOUT_LABEL}</span>
+                          <input
+                            type="number"
+                            min={30}
+                            max={1800}
+                            step={30}
+                            value={row.memoryExtractionSettings.timeoutSeconds}
+                            onChange={(event) => onChangeMemoryExtractionTimeoutSeconds(row.provider.id, event.target.value)}
+                          />
+                        </label>
                       </section>
                     ))}
                   </div>
@@ -412,6 +429,17 @@ export function HomeSettingsContent({
                               </option>
                             ))}
                           </select>
+                        </label>
+                        <label className="settings-provider-input">
+                          <span>{SETTINGS_CHARACTER_REFLECTION_TIMEOUT_LABEL}</span>
+                          <input
+                            type="number"
+                            min={30}
+                            max={1800}
+                            step={30}
+                            value={row.characterReflectionSettings.timeoutSeconds}
+                            onChange={(event) => onChangeCharacterReflectionTimeoutSeconds(row.provider.id, event.target.value)}
+                          />
                         </label>
                       </section>
                     ))}

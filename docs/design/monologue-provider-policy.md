@@ -23,7 +23,7 @@
 ## Decision Summary
 
 1. coding plane と独り言 / reflection backend は責務を分ける
-2. current v1 では reflection backend を current provider で流用し、model / reasoning depth は Settings から provider ごとに切り替える
+2. current v1 では reflection backend を current provider で流用し、model / reasoning depth / timeout は Settings から provider ごとに切り替える
 3. long-term では独り言 backend を OpenAI API などの独立 plane へ分離できる構造を保つ
 4. 独り言機能は consumer / subscription 側の定期自動多重実行では実装しない
 5. 独り言の実行契機は `SessionStart` と文脈増加に限定し、定期実行は行わない
@@ -85,14 +85,14 @@
   - character relationship reflection
 - Settings:
   - current v1 では coding plane credential を流用する
-  - current v1 では `Character Reflection model / reasoning depth` を provider ごとに持つ
+  - current v1 では `Character Reflection model / reasoning depth / timeout` を provider ごとに持つ
   - current v1 では `context-growth` の `cooldown / char delta / message delta` を app-wide settings として持つ
   - 将来 monologue plane を分離する場合だけ専用 credential / model 設定欄を追加する
 
 ## Current Implementation Note
 
 current v1 では `character reflection cycle` を current coding provider の background plane で動かす。  
-Settings に provider ごとの `Character Reflection model / reasoning depth` と、app-wide の `context-growth trigger settings` を保持し、`SessionStart` と文脈増加時の reflection で利用する。  
+Settings に provider ごとの `Character Reflection model / reasoning depth / timeout` と、app-wide の `context-growth trigger settings` を保持し、`SessionStart` と文脈増加時の reflection で利用する。  
 `Session Window` 右ペインの `独り言` host には background state と recent monologue を表示する。  
 これは monologue plane の恒久仕様ではなく、将来 API 分離へ差し替え可能な暫定 backend として扱う。
 

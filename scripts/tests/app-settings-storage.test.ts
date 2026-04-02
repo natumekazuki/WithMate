@@ -35,21 +35,25 @@ describe("AppSettingsStorage", () => {
             model: "gpt-5.4-mini",
             reasoningEffort: "medium",
             outputTokensThreshold: 240,
+            timeoutSeconds: 240,
           },
           copilot: {
             model: "gpt-5",
             reasoningEffort: "low",
             outputTokensThreshold: 180,
+            timeoutSeconds: 360,
           },
         },
         characterReflectionProviderSettings: {
           codex: {
             model: "gpt-5.4-mini",
             reasoningEffort: "medium",
+            timeoutSeconds: 210,
           },
           copilot: {
             model: "gpt-5",
             reasoningEffort: "low",
+            timeoutSeconds: 420,
           },
         },
       });
@@ -92,21 +96,25 @@ describe("AppSettingsStorage", () => {
             model: "gpt-5.4-mini",
             reasoningEffort: "medium",
             outputTokensThreshold: 240,
+            timeoutSeconds: 240,
           },
           copilot: {
             model: "gpt-5",
             reasoningEffort: "low",
             outputTokensThreshold: 180,
+            timeoutSeconds: 360,
           },
         },
         characterReflectionProviderSettings: {
           codex: {
             model: "gpt-5.4-mini",
             reasoningEffort: "medium",
+            timeoutSeconds: 210,
           },
           copilot: {
             model: "gpt-5",
             reasoningEffort: "low",
+            timeoutSeconds: 420,
           },
         },
       });

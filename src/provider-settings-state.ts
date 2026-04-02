@@ -26,11 +26,13 @@ export type MemoryExtractionProviderSettings = {
   model: string;
   reasoningEffort: ModelReasoningEffort;
   outputTokensThreshold: number;
+  timeoutSeconds: number;
 };
 
 export type CharacterReflectionProviderSettings = {
   model: string;
   reasoningEffort: ModelReasoningEffort;
+  timeoutSeconds: number;
 };
 
 export type CharacterReflectionTriggerSettings = {
@@ -52,16 +54,19 @@ export const DEFAULT_PROVIDER_APP_SETTINGS: ProviderAppSettings = {
 };
 
 export const DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD = 300_000;
+export const DEFAULT_BACKGROUND_TIMEOUT_SECONDS = 180;
 
 export const DEFAULT_MEMORY_EXTRACTION_PROVIDER_SETTINGS: MemoryExtractionProviderSettings = {
   model: DEFAULT_MODEL_ID,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   outputTokensThreshold: DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD,
+  timeoutSeconds: DEFAULT_BACKGROUND_TIMEOUT_SECONDS,
 };
 
 export const DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS: CharacterReflectionProviderSettings = {
   model: DEFAULT_MODEL_ID,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
+  timeoutSeconds: DEFAULT_BACKGROUND_TIMEOUT_SECONDS,
 };
 
 export const DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS: CharacterReflectionTriggerSettings = {
@@ -177,6 +182,23 @@ function normalizeOutputTokensThreshold(value: unknown): number {
   return normalized;
 }
 
+function normalizeBackgroundTimeoutSeconds(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_BACKGROUND_TIMEOUT_SECONDS;
+  }
+
+  const normalized = Math.trunc(value);
+  if (normalized < 30) {
+    return 30;
+  }
+
+  if (normalized > 1_800) {
+    return 1_800;
+  }
+
+  return normalized;
+}
+
 function normalizeMemoryExtractionProviderSettings(value: unknown): MemoryExtractionProviderSettings {
   if (!value || typeof value !== "object") {
     return { ...DEFAULT_MEMORY_EXTRACTION_PROVIDER_SETTINGS };
@@ -194,6 +216,7 @@ function normalizeMemoryExtractionProviderSettings(value: unknown): MemoryExtrac
         ? candidate.reasoningEffort
         : DEFAULT_REASONING_EFFORT,
     outputTokensThreshold: normalizeOutputTokensThreshold(candidate.outputTokensThreshold),
+    timeoutSeconds: normalizeBackgroundTimeoutSeconds(candidate.timeoutSeconds),
   };
 }
 
@@ -213,6 +236,7 @@ function normalizeCharacterReflectionProviderSettings(value: unknown): Character
       candidate.reasoningEffort === "xhigh"
         ? candidate.reasoningEffort
         : DEFAULT_REASONING_EFFORT,
+    timeoutSeconds: normalizeBackgroundTimeoutSeconds(candidate.timeoutSeconds),
   };
 }
 

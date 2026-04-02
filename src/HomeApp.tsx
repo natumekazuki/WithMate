@@ -56,6 +56,7 @@ import {
   updateCharacterReflectionModelDraft,
   updateCharacterReflectionMessageDeltaThreshold,
   updateCharacterReflectionReasoningEffortDraft,
+  updateCharacterReflectionTimeoutSecondsDraft,
   updateAutoCollapseActionDockOnSend,
   updateCodingProviderApiKeyDraft,
   updateCodingProviderEnabledDraft,
@@ -63,6 +64,7 @@ import {
   updateMemoryExtractionModelDraft,
   updateMemoryExtractionReasoningEffortDraft,
   updateMemoryExtractionThresholdDraft,
+  updateMemoryExtractionTimeoutSecondsDraft,
   updateMemoryGenerationEnabled,
   updateSystemPromptPrefix,
 } from "./home-settings-draft.js";
@@ -498,6 +500,10 @@ export default function HomeApp() {
     setSettingsDraft((current) => updateMemoryExtractionThresholdDraft(current, providerId, value));
   };
 
+  const handleChangeMemoryExtractionTimeoutSeconds = (providerId: string, value: string) => {
+    setSettingsDraft((current) => updateMemoryExtractionTimeoutSecondsDraft(current, providerId, value));
+  };
+
   const handleChangeCharacterReflectionModel = (providerId: string, model: string) => {
     const providerCatalog = modelCatalog?.providers.find((provider) => provider.id === providerId);
     if (!providerCatalog) {
@@ -512,6 +518,10 @@ export default function HomeApp() {
     reasoningEffort: AppSettings["characterReflectionProviderSettings"][string]["reasoningEffort"],
   ) => {
     setSettingsDraft((current) => updateCharacterReflectionReasoningEffortDraft(current, providerId, reasoningEffort));
+  };
+
+  const handleChangeCharacterReflectionTimeoutSeconds = (providerId: string, value: string) => {
+    setSettingsDraft((current) => updateCharacterReflectionTimeoutSecondsDraft(current, providerId, value));
   };
 
   const handleChangeCharacterReflectionCooldownSeconds = (value: string) => {
@@ -684,8 +694,10 @@ export default function HomeApp() {
       onChangeMemoryExtractionModel={handleChangeMemoryExtractionModel}
       onChangeMemoryExtractionReasoningEffort={handleChangeMemoryExtractionReasoningEffort}
       onChangeMemoryExtractionThreshold={handleChangeMemoryExtractionThreshold}
+      onChangeMemoryExtractionTimeoutSeconds={handleChangeMemoryExtractionTimeoutSeconds}
       onChangeCharacterReflectionModel={handleChangeCharacterReflectionModel}
       onChangeCharacterReflectionReasoningEffort={handleChangeCharacterReflectionReasoningEffort}
+      onChangeCharacterReflectionTimeoutSeconds={handleChangeCharacterReflectionTimeoutSeconds}
       onChangeCharacterReflectionCooldownSeconds={handleChangeCharacterReflectionCooldownSeconds}
       onChangeCharacterReflectionCharDeltaThreshold={handleChangeCharacterReflectionCharDeltaThreshold}
       onChangeCharacterReflectionMessageDeltaThreshold={handleChangeCharacterReflectionMessageDeltaThreshold}

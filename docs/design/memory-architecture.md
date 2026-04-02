@@ -465,7 +465,7 @@ current 実装では、`Session Memory` の永続化と extraction trigger、`Pr
 - key は `session_id`
 - `Session` 作成時に default memory を作る
 - `workspacePath` と `threadId` は session metadata と同期する
-- provider ごとの `Memory Extraction` 設定から `model / reasoning depth / outputTokens threshold` を読む
+- provider ごとの `Memory Extraction` 設定から `model / reasoning depth / outputTokens threshold / timeout` を読む
 - turn 完了時に `outputTokensThreshold` を超えた場合だけ extraction plane を走らせる
 - `Session Window` close は extraction trigger に使わない
 - 必要なら `Session Window` の `Generate Memory` から manual extraction を走らせる
@@ -489,7 +489,7 @@ current 実装では、`Session Memory` の永続化と extraction trigger、`Pr
   - `character_scopes` / `character_memory_entries` の保存基盤あり
   - session 保存時と app 起動時に scope 同期あり
   - `DB を初期化` の個別 target あり
-  - provider ごとの `Character Reflection model / reasoning depth` 設定あり
+  - provider ごとの `Character Reflection model / reasoning depth / timeout` 設定あり
   - `独り言` と共通 trigger の `character reflection cycle` を実装済み
   - `SessionStart` は monologue only だが、前回 reflection 以降に会話増分が無い時は skip する
   - 通常更新は文脈増加ベースで実行する
@@ -664,7 +664,7 @@ memory extraction plane の実行も、最終的には `audit_logs` に残す。
 background memory extraction では次を監査対象にする。
 
 - extraction prompt の logical prompt
-- extraction model / reasoning depth
+- extraction model / reasoning depth / timeout
 - trigger reason
   - `outputTokensThreshold`
   - `manual`

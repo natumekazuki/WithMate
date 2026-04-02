@@ -1603,7 +1603,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     });
 
     try {
-      const response = await extractionSession.sendAndWait({ prompt: input.prompt.userText }, 60_000);
+      const response = await extractionSession.sendAndWait({ prompt: input.prompt.userText }, input.timeoutMs);
       const rawText = response?.data.content ?? "";
       const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.session.provider, input.appSettings)
         .catch(() => null);

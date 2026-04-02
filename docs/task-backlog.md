@@ -24,7 +24,7 @@
 | Priority | 実装状況 | Source | ID | テーマ | 概要 | 依存 / メモ |
 | --- | --- | --- | --- | --- | --- | --- |
 | P1 | 完了 | GitHub | [#36](https://github.com/natumekazuki/WithMate/issues/36) | メモリー生成の監査ログ保存不具合 | memory generation 自体は completed update 済みで、renderer の `Audit Log` 再読込条件が stale だった問題を修正した | background activity の `status / updatedAt` 変化も再読込条件へ含め、modal を開いたままでも response / error / raw items の確定値が反映される |
-| P1 | 未着手 | GitHub | [#35](https://github.com/natumekazuki/WithMate/issues/35) | メモリー生成のタイムアウト短い | model / reasoning によって memory generation が timeout しやすいので上限時間を見直したい | `Session Memory extraction` と `Character Reflection` の timeout policy を provider 実装ごとに確認する |
+| P1 | 完了 | GitHub | [#35](https://github.com/natumekazuki/WithMate/issues/35) | メモリー生成のタイムアウト短い | `Memory Extraction` と `Character Reflection` に provider ごとの `Timeout Seconds` を追加し、background plane の timeout を settings から調整できるようにした | default は `180s`、normalize は `30..1800s`。Codex は `AbortSignal.timeout`、Copilot は `sendAndWait(timeout)` へ反映する |
 | P1 | 完了 | GitHub | [#24](https://github.com/natumekazuki/WithMate/issues/24) | モデル切り替えバグ | model / reasoning 変更後に stale thread を引きずって失敗する症状を解消した | `threadId reset + provider cache invalidate` を正本にし、次 turn は新規 thread で開始する |
 | P1 | 完了 | GitHub | [#32](https://github.com/natumekazuki/WithMate/issues/32) | 長時間放置後の Session not found | 長時間放置や stale thread / session に起因する NotFound を同一 turn 内の internal retry で吸収した | meaningful partial が無い時だけ `threadId clear + internal retry` を 1 回だけ行う |
 | P1 | 完了 | GitHub | [#34](https://github.com/natumekazuki/WithMate/issues/34) | SessionNotFound retry | provider session が消えた時に recovery できるようにした | Copilot adapter 側の missing session recovery と session runtime の stale retry で補完する |
@@ -136,12 +136,12 @@
 
 ## 推奨順
 
-1. `#35 メモリー生成のタイムアウト短い`
-2. `#3 Memory 永続化と共有`
-3. `#1 独り言の API 運用`
-4. `memory-management-manual-update`
-5. `#37 セッションウインドウのヘッダー調整`
-6. `#10 Copilot custom slash command`
+1. `#3 Memory 永続化と共有`
+2. `#1 独り言の API 運用`
+3. `memory-management-manual-update`
+4. `#37 セッションウインドウのヘッダー調整`
+5. `#10 Copilot custom slash command`
+6. `#23 **message** markdown 未反映`
 
 ## 参照元
 

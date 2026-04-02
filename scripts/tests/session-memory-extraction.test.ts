@@ -41,12 +41,14 @@ describe("session-memory-extraction", () => {
       model: "gpt-5.4-mini",
       reasoningEffort: "low",
       outputTokensThreshold: 280,
+      timeoutSeconds: 240,
     };
 
     const resolved = getSessionMemoryExtractionSettings(settings, "codex");
     assert.equal(resolved.model, "gpt-5.4-mini");
     assert.equal(resolved.reasoningEffort, "low");
     assert.equal(resolved.outputTokensThreshold, 280);
+    assert.equal(resolved.timeoutSeconds, 240);
   });
 
   it("outputTokens threshold または force で発火判定する", () => {

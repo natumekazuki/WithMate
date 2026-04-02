@@ -77,6 +77,7 @@ export type ExtractSessionMemoryInput = {
   appSettings: AppSettings;
   model: string;
   reasoningEffort: ModelReasoningEffort;
+  timeoutMs: number;
   prompt: SessionMemoryExtractionPrompt;
 };
 
@@ -97,6 +98,7 @@ export type RunCharacterReflectionInput = {
   appSettings: AppSettings;
   model: string;
   reasoningEffort: ModelReasoningEffort;
+  timeoutMs: number;
   triggerReason: CharacterReflectionTriggerReason;
   prompt: CharacterReflectionPrompt;
 };

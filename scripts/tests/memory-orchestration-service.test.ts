@@ -163,9 +163,11 @@ describe("MemoryOrchestrationService", () => {
     const activities: SessionBackgroundActivityState[] = [];
     const savedMemories: SessionMemory[] = [];
     const promoted: Array<{ sessionId: string; goal: string | undefined }> = [];
+    let observedTimeoutMs = 0;
 
     const providerAdapter: ProviderBackgroundAdapter = {
-      async extractSessionMemoryDelta() {
+      async extractSessionMemoryDelta(input) {
+        observedTimeoutMs = input.timeoutMs;
         return {
           threadId: "thread-memory",
           rawText: "{\"goal\":\"整理する\",\"nextActions\":[\"次をやる\"]}",
@@ -253,6 +255,7 @@ describe("MemoryOrchestrationService", () => {
     );
 
     assert.equal(auditUpdates.at(-1)?.phase, "background-completed");
+    assert.equal(observedTimeoutMs, 180_000);
     assert.equal(auditUpdates.at(-1)?.rawItemsJson, "{\"type\":\"background-response\"}");
     assert.equal(
       auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "remainingPercentage")?.value,
@@ -280,12 +283,14 @@ describe("MemoryOrchestrationService", () => {
     const activities: SessionBackgroundActivityState[] = [];
     const appendedMonologues: string[] = [];
     let savedCharacterCount = 0;
+    let observedTimeoutMs = 0;
 
     const providerAdapter: ProviderBackgroundAdapter = {
       async extractSessionMemoryDelta() {
         throw new Error("not used");
       },
-      async runCharacterReflection() {
+      async runCharacterReflection(input) {
+        observedTimeoutMs = input.timeoutMs;
         return {
           threadId: "thread-char",
           rawText: "{\"memoryDelta\":null,\"monologue\":{\"text\":\"今日はよろしく。\",\"mood\":\"warm\"}}",
@@ -354,6 +359,7 @@ describe("MemoryOrchestrationService", () => {
     await service.runCharacterReflection(session, { triggerReason: "session-start" });
 
     assert.equal(auditUpdates.at(-1)?.phase, "background-completed");
+    assert.equal(observedTimeoutMs, 180_000);
     assert.deepEqual(appendedMonologues, ["今日はよろしく。"]);
     assert.equal(savedCharacterCount, 0);
     assert.equal(activities.at(-1)?.status, "completed");
@@ -364,12 +370,14 @@ describe("MemoryOrchestrationService", () => {
     const usedEntryIds: string[][] = [];
     const savedCharacterMemory: Array<{ sessionId: string; count: number }> = [];
     const activities: SessionBackgroundActivityState[] = [];
+    let observedTimeoutMs = 0;
 
     const providerAdapter: ProviderBackgroundAdapter = {
       async extractSessionMemoryDelta() {
         throw new Error("not used");
       },
-      async runCharacterReflection() {
+      async runCharacterReflection(input) {
+        observedTimeoutMs = input.timeoutMs;
         return {
           threadId: "thread-char-growth",
           rawText: "{\"memoryDelta\":{\"entries\":[{\"category\":\"relationship\",\"title\":\"距離感\",\"detail\":\"少し砕けた会話を好む\",\"keywords\":[\"距離感\"],\"evidence\":[\"会話\"]}]},\"monologue\":null}",
@@ -460,6 +468,7 @@ describe("MemoryOrchestrationService", () => {
 
     await service.runCharacterReflection(session, { triggerReason: "context-growth" });
 
+    assert.equal(observedTimeoutMs, 180_000);
     assert.deepEqual(usedEntryIds, [["entry-1"]]);
     assert.deepEqual(savedCharacterMemory, [{ sessionId: session.id, count: 1 }]);
     assert.equal(activities.at(-2)?.kind, "character-memory-generation");

@@ -76,6 +76,7 @@ export function buildNormalizedMemoryExtractionProviderSettings(
         model: row.resolvedMemoryExtractionModel,
         reasoningEffort: row.resolvedMemoryExtractionReasoningEffort,
         outputTokensThreshold: row.memoryExtractionSettings.outputTokensThreshold,
+        timeoutSeconds: row.memoryExtractionSettings.timeoutSeconds,
       } satisfies MemoryExtractionProviderSettings,
     ]),
   );
@@ -90,6 +91,7 @@ export function buildNormalizedCharacterReflectionProviderSettings(
       {
         model: row.resolvedCharacterReflectionModel,
         reasoningEffort: row.resolvedCharacterReflectionReasoningEffort,
+        timeoutSeconds: row.characterReflectionSettings.timeoutSeconds,
       } satisfies CharacterReflectionProviderSettings,
     ]),
   );

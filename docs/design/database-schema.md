@@ -339,12 +339,14 @@ current 実装の key:
   "codex": {
     "model": "gpt-5.4-mini",
     "reasoningEffort": "medium",
-    "outputTokensThreshold": 300000
+    "outputTokensThreshold": 300000,
+    "timeoutSeconds": 180
   },
   "copilot": {
     "model": "gpt-5.4-mini",
     "reasoningEffort": "medium",
-    "outputTokensThreshold": 300000
+    "outputTokensThreshold": 300000,
+    "timeoutSeconds": 180
   }
 }
 ```
@@ -355,11 +357,13 @@ current 実装の key:
 {
   "codex": {
     "model": "gpt-5.4-mini",
-    "reasoningEffort": "medium"
+    "reasoningEffort": "medium",
+    "timeoutSeconds": 180
   },
   "copilot": {
     "model": "gpt-5.4-mini",
-    "reasoningEffort": "medium"
+    "reasoningEffort": "medium",
+    "timeoutSeconds": 180
   }
 }
 ```

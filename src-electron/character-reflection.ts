@@ -30,6 +30,7 @@ export type CharacterReflectionPrompt = {
 export type CharacterReflectionResolvedSettings = {
   model: string;
   reasoningEffort: ModelReasoningEffort;
+  timeoutSeconds: number;
 };
 
 export type CharacterReflectionContextSnapshot = {
@@ -147,6 +148,7 @@ export function getCharacterReflectionSettings(
   return {
     model: settings.model,
     reasoningEffort: settings.reasoningEffort,
+    timeoutSeconds: settings.timeoutSeconds,
   };
 }
 
@@ -279,6 +281,7 @@ export function buildCharacterReflectionTransportPayload(
       { label: "provider", value: provider },
       { label: "model", value: settings.model },
       { label: "reasoningEffort", value: settings.reasoningEffort },
+      { label: "timeoutSeconds", value: String(settings.timeoutSeconds) },
       { label: "trigger", value: triggerReason },
     ],
   };

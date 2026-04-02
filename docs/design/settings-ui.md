@@ -76,8 +76,8 @@
 - `System Prompt Prefix` の編集と保存
 - coding provider ごとの enable / disable
 - coding provider ごとの `OpenAI API Key (Coding Agent)` 入力保存
-- provider ごとの `Memory Extraction model / reasoning depth / outputTokens threshold` 入力保存
-- provider ごとの `Character Reflection model / reasoning depth` 入力保存
+- provider ごとの `Memory Extraction model / reasoning depth / outputTokens threshold / timeout` 入力保存
+- provider ごとの `Character Reflection model / reasoning depth / timeout` 入力保存
 - `Memory Generation` global toggle の入力保存
 - `model catalog` の import
 - `model catalog` の export
@@ -92,9 +92,9 @@
 - coding credential は Settings 保存後すぐ Main Process から各 window へ broadcast し、Session Window の実行可否表示も即時更新する
 - provider 実装は保存済み coding credential を runtime の SDK client へ渡し、空文字のときだけ従来どおり環境依存 fallback を許可する
 - `Memory Generation` が OFF の時は、Session Memory extraction / Character Reflection / Monologue の background 実行をまとめて止める
-- Memory extraction 設定は provider ごとに保持し、trigger engine は現在 provider の `model / reasoning depth / outputTokens threshold` を参照する
+- Memory extraction 設定は provider ごとに保持し、trigger engine は現在 provider の `model / reasoning depth / outputTokens threshold / timeout` を参照する
 - current 実装では、memory extraction の通常発火は `outputTokens threshold` だけで判定する
-- Character reflection 設定は provider ごとに保持し、current v1 の `character reflection cycle` 実行時に `model / reasoning depth` を参照する
+- Character reflection 設定は provider ごとに保持し、current v1 の `character reflection cycle` 実行時に `model / reasoning depth / timeout` を参照する
 - Main Process 側の `app settings` 更新、`model catalog` import、rollback、関連 session / telemetry invalidation は `SettingsCatalogService` が担当する
 - `DB を初期化` の partial reset / full reset orchestration と `model catalog export` の document 取得も `SettingsCatalogService` が担当する
 - renderer 側では `HomeApp.tsx` が storage 正規化を直接持たず、`home-settings-view-model` の derived data を使って provider row を描画する

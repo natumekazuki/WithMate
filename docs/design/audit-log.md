@@ -97,12 +97,13 @@ background memory extraction でも `audit_logs` table 自体は共用する。
   - extraction prompt の論理構成
   - 既存 Session Memory と recent messages を含む
 - `transport_payload_json`
-  - extraction model / reasoning depth / trigger reason
+  - extraction model / reasoning depth / timeout / trigger reason
   - Copilot の場合は取得できた premium request quota も付与する
   - 実行時間や memory 件数も補助 field として付与してよい
   - 例:
     - `trigger: outputTokensThreshold`
     - `trigger: manual`
+    - `timeoutSeconds: 180`
     - `remainingPercentage: 76%`
     - `remainingRequests: 380 / 500`
     - `durationMs: 1840`

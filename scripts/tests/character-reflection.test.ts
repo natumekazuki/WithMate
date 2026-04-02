@@ -60,11 +60,13 @@ describe("character-reflection", () => {
     settings.characterReflectionProviderSettings.codex = {
       model: "gpt-5.4-mini",
       reasoningEffort: "medium",
+      timeoutSeconds: 240,
     };
 
     const resolved = getCharacterReflectionSettings(settings, "codex");
     assert.equal(resolved.model, "gpt-5.4-mini");
     assert.equal(resolved.reasoningEffort, "medium");
+    assert.equal(resolved.timeoutSeconds, 240);
   });
 
   it("app-wide の trigger settings を返す", () => {

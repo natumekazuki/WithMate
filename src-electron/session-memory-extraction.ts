@@ -62,6 +62,7 @@ export type SessionMemoryExtractionResolvedSettings = {
   model: string;
   reasoningEffort: ModelReasoningEffort;
   outputTokensThreshold: number;
+  timeoutSeconds: number;
 };
 
 export type SessionMemoryExtractionTriggerReason =
@@ -107,6 +108,7 @@ export function getSessionMemoryExtractionSettings(
     model: settings.model,
     reasoningEffort: settings.reasoningEffort,
     outputTokensThreshold: settings.outputTokensThreshold,
+    timeoutSeconds: settings.timeoutSeconds,
   };
 }
 
@@ -207,6 +209,7 @@ export function buildSessionMemoryExtractionTransportPayload(
       { label: "reasoningEffort", value: settings.reasoningEffort },
       { label: "trigger", value: triggerReason },
       { label: "outputTokensThreshold", value: String(settings.outputTokensThreshold) },
+      { label: "timeoutSeconds", value: String(settings.timeoutSeconds) },
     ],
   };
 }

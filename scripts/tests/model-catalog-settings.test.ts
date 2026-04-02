@@ -123,6 +123,7 @@ describe("app settings provider helpers", () => {
           model: "gpt-5.1-mini",
           reasoningEffort: "medium",
           outputTokensThreshold: 280,
+          timeoutSeconds: 240,
         },
       },
     });
@@ -131,6 +132,7 @@ describe("app settings provider helpers", () => {
       model: "gpt-5.1-mini",
       reasoningEffort: "medium",
       outputTokensThreshold: 280,
+      timeoutSeconds: 240,
     });
   });
 
@@ -141,6 +143,7 @@ describe("app settings provider helpers", () => {
         codex: {
           model: "gpt-5.1-mini",
           reasoningEffort: "medium",
+          timeoutSeconds: 210,
         },
       },
     });
@@ -148,6 +151,7 @@ describe("app settings provider helpers", () => {
     assert.deepEqual(getCharacterReflectionProviderSettings(settings, "codex"), {
       model: "gpt-5.1-mini",
       reasoningEffort: "medium",
+      timeoutSeconds: 210,
     });
   });
 
@@ -167,12 +171,14 @@ describe("app settings provider helpers", () => {
           model: "gpt-5.1-mini",
           reasoningEffort: "medium",
           outputTokensThreshold: 280,
+          timeoutSeconds: 240,
         },
       },
       characterReflectionProviderSettings: {
         codex: {
           model: "gpt-5.1-mini",
           reasoningEffort: "medium",
+          timeoutSeconds: 210,
         },
       },
     });
@@ -187,10 +193,12 @@ describe("app settings provider helpers", () => {
         model: "gpt-5.1-mini",
         reasoningEffort: "medium",
         outputTokensThreshold: 280,
+        timeoutSeconds: 240,
       },
       characterReflection: {
         model: "gpt-5.1-mini",
         reasoningEffort: "medium",
+        timeoutSeconds: 210,
       },
     });
     assert.equal(settings.memoryGenerationEnabled, false);

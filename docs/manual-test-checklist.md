@@ -71,6 +71,7 @@ npm run electron:start
 | MT-017D | Copilot elicitation prompt | provider を `GitHub Copilot` にした session で `elicitation.requested` を返す turn を実行する | pending bubble 内に form または URL card が出て、`送信 / 拒否 / 閉じる` が使える。form では required field 未入力時に alert が出て、`accept / decline / cancel` に応じて run が再開または終了する |
 | MT-018 | Audit Log | Session Window の `Audit Log` を押す | 1 turn 1 record の監査ログが閲覧でき、approval 表示は provider-neutral wording になる。prompt 表示は `Logical Prompt` と `Transport Payload` に分かれる |
 | MT-018D | Background Audit Log refresh | Session Memory extraction または Character Reflection を走らせた状態で `Audit Log` を開いたまま background task 完了まで待つ | `Background` タブの該当 entry が再描画され、reload や session 切替をしなくても response / error / raw items の completed 値が見える |
+| MT-018E | Background timeout settings persistence | Home の `Settings` で provider ごとの `Memory Extraction` / `Character Reflection` の `Timeout Seconds` を変更して保存し、開き直す | timeout 設定が provider ごとに保持され、再読込後も同じ値が表示される |
 | MT-018C | Audit Log modal keyboard | `Audit Log` を開き、`Tab` / `Shift+Tab` と `Escape` を試す | focus は overlay 内で循環し、`Escape` で閉じる |
 | MT-018A | Copilot audit log minimum | Copilot session で 1 turn 実行後に `Audit Log` を開く | `Logical Prompt` と `Transport Payload`、assistant text、provider metadata、raw session events が保存される。operations は command が無い turn では空でもよい |
 | MT-018B | Copilot Details / Diff | Copilot session で file 変更を伴う turn を 1 回実行し、assistant bubble の `Details` を開く | `Changed Files`、`Run Checks`、`operationTimeline` が表示され、差分がある file では `Open Diff` から split diff を開ける |

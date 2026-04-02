@@ -12,6 +12,8 @@ import {
   updateCharacterReflectionMessageDeltaThreshold,
   updateCharacterReflectionReasoningEffort,
   updateCharacterReflectionReasoningEffortDraft,
+  updateCharacterReflectionTimeoutSeconds,
+  updateCharacterReflectionTimeoutSecondsDraft,
   updateCodingProviderApiKey,
   updateCodingProviderApiKeyDraft,
   updateCodingProviderEnabled,
@@ -24,6 +26,8 @@ import {
   updateMemoryExtractionReasoningEffortDraft,
   updateMemoryExtractionThreshold,
   updateMemoryExtractionThresholdDraft,
+  updateMemoryExtractionTimeoutSeconds,
+  updateMemoryExtractionTimeoutSecondsDraft,
   updateMemoryGenerationEnabled,
   updateSystemPromptPrefix,
 } from "../../src/home-settings-draft.js";
@@ -74,6 +78,7 @@ describe("home-settings-draft", () => {
       model: "gpt-5.4",
       reasoningEffort: "high",
       outputTokensThreshold: 300000,
+      timeoutSeconds: 180,
     };
 
     const next = updateMemoryExtractionModel(draft, providerCatalog, "codex", "gpt-5.4-mini");
@@ -96,6 +101,14 @@ describe("home-settings-draft", () => {
     assert.equal(nextThreshold.codex.outputTokensThreshold, 1);
   });
 
+  it("memory extraction timeout は 1 未満を 30 に丸める", () => {
+    const draft = createDefaultAppSettings();
+
+    const nextTimeout = updateMemoryExtractionTimeoutSeconds(draft, "codex", "0");
+
+    assert.equal(nextTimeout.codex.timeoutSeconds, 30);
+  });
+
   it("memory extraction threshold の draft は大きい値もそのまま保持する", () => {
     const draft = createDefaultAppSettings();
 
@@ -109,6 +122,7 @@ describe("home-settings-draft", () => {
     draft.characterReflectionProviderSettings.codex = {
       model: "gpt-5.4",
       reasoningEffort: "high",
+      timeoutSeconds: 180,
     };
 
     const nextModel = updateCharacterReflectionModel(draft, providerCatalog, "codex", "gpt-5.4-mini");
@@ -121,6 +135,14 @@ describe("home-settings-draft", () => {
     assert.equal(nextModel.codex.model, "gpt-5.4-mini");
     assert.equal(nextModel.codex.reasoningEffort, "low");
     assert.equal(nextReasoning.codex.reasoningEffort, "medium");
+  });
+
+  it("character reflection timeout を更新できる", () => {
+    const draft = createDefaultAppSettings();
+
+    const nextTimeout = updateCharacterReflectionTimeoutSeconds(draft, "codex", "240");
+
+    assert.equal(nextTimeout.codex.timeoutSeconds, 240);
   });
 
   it("character reflection trigger settings を更新できる", () => {
@@ -143,6 +165,7 @@ describe("home-settings-draft", () => {
     const next = updateCharacterReflectionReasoningEffortDraft(
       updateCharacterReflectionModelDraft(
         updateMemoryExtractionThresholdDraft(
+          updateMemoryExtractionTimeoutSecondsDraft(
           updateMemoryExtractionReasoningEffortDraft(
             updateMemoryExtractionModelDraft(
               updateCodingProviderSkillRootPathDraft(
@@ -169,6 +192,9 @@ describe("home-settings-draft", () => {
             "medium",
           ),
           "codex",
+          "240",
+        ),
+          "codex",
           "321",
         ),
         providerCatalog,
@@ -180,7 +206,10 @@ describe("home-settings-draft", () => {
     );
     const nextWithTriggers = updateCharacterReflectionMessageDeltaThreshold(
       updateCharacterReflectionCharDeltaThreshold(
-        updateCharacterReflectionCooldownSeconds(next, "180"),
+        updateCharacterReflectionCooldownSeconds(
+          updateCharacterReflectionTimeoutSecondsDraft(next, "codex", "210"),
+          "180",
+        ),
         "600",
       ),
       "3",
@@ -193,7 +222,9 @@ describe("home-settings-draft", () => {
     assert.equal(nextWithTriggers.codingProviderSettings.codex.apiKey, "key");
     assert.equal(nextWithTriggers.codingProviderSettings.codex.skillRootPath, "C:/skills");
     assert.equal(nextWithTriggers.memoryExtractionProviderSettings.codex.outputTokensThreshold, 321);
+    assert.equal(nextWithTriggers.memoryExtractionProviderSettings.codex.timeoutSeconds, 240);
     assert.equal(nextWithTriggers.characterReflectionProviderSettings.codex.reasoningEffort, "medium");
+    assert.equal(nextWithTriggers.characterReflectionProviderSettings.codex.timeoutSeconds, 210);
     assert.equal(nextWithTriggers.characterReflectionTriggerSettings.cooldownSeconds, 180);
     assert.equal(nextWithTriggers.characterReflectionTriggerSettings.charDeltaThreshold, 600);
     assert.equal(nextWithTriggers.characterReflectionTriggerSettings.messageDeltaThreshold, 3);

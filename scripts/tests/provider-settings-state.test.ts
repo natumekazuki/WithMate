@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   createDefaultAppSettings,
+  DEFAULT_BACKGROUND_TIMEOUT_SECONDS,
   DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD,
   normalizeAppSettings,
 } from "../../src/provider-settings-state.js";
@@ -13,6 +14,9 @@ describe("provider-settings-state", () => {
 
     assert.equal(DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD, 300000);
     assert.equal(settings.memoryExtractionProviderSettings.codex.outputTokensThreshold, 300000);
+    assert.equal(DEFAULT_BACKGROUND_TIMEOUT_SECONDS, 180);
+    assert.equal(settings.memoryExtractionProviderSettings.codex.timeoutSeconds, 180);
+    assert.equal(settings.characterReflectionProviderSettings.codex.timeoutSeconds, 180);
     assert.equal(settings.autoCollapseActionDockOnSend, true);
     assert.deepEqual(settings.characterReflectionTriggerSettings, {
       cooldownSeconds: 120,
@@ -28,11 +32,13 @@ describe("provider-settings-state", () => {
           model: "gpt-5.4-mini",
           reasoningEffort: "low",
           outputTokensThreshold: 9000000,
+          timeoutSeconds: 5000,
         },
       },
     });
 
     assert.equal(settings.memoryExtractionProviderSettings.codex.outputTokensThreshold, 1000000);
+    assert.equal(settings.memoryExtractionProviderSettings.codex.timeoutSeconds, 1800);
   });
 
   it("action dock auto close は normalize で boolean を保持し、未設定時は true に寄せる", () => {
@@ -54,5 +60,19 @@ describe("provider-settings-state", () => {
       charDeltaThreshold: 1,
       messageDeltaThreshold: 100,
     });
+  });
+
+  it("character reflection provider timeout は normalize で clamp する", () => {
+    const settings = normalizeAppSettings({
+      characterReflectionProviderSettings: {
+        codex: {
+          model: "gpt-5.4-mini",
+          reasoningEffort: "medium",
+          timeoutSeconds: 5,
+        },
+      },
+    });
+
+    assert.equal(settings.characterReflectionProviderSettings.codex.timeoutSeconds, 30);
   });
 });

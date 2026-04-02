@@ -873,6 +873,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     const backgroundInput = `${input.prompt.systemText}\n\n${input.prompt.userText}`.trim();
     const result = await thread.run(backgroundInput, {
       outputSchema: input.prompt.outputSchema,
+      signal: AbortSignal.timeout(input.timeoutMs),
     });
 
     return {

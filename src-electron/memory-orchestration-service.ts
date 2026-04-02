@@ -77,12 +77,17 @@ function buildBackgroundActivityMetadataLines(input: {
   triggerReason: string;
   model: string;
   reasoningEffort: string;
+  timeoutSeconds?: number;
 }): string[] {
-  return [
+  const lines = [
     `trigger: ${input.triggerReason}`,
     `model: ${input.model}`,
     `reasoning: ${input.reasoningEffort}`,
   ];
+  if (typeof input.timeoutSeconds === "number") {
+    lines.push(`timeoutSeconds: ${input.timeoutSeconds}`);
+  }
+  return lines;
 }
 
 function appendDetailBlock(lines: string[], label: string, values: string[]): void {
@@ -101,6 +106,7 @@ function buildSessionMemoryActivityDetails(input: {
   triggerReason: SessionMemoryExtractionTriggerReason;
   model: string;
   reasoningEffort: string;
+  timeoutSeconds?: number;
   delta: SessionMemoryDelta | null;
   projectMemoryPromotions?: number;
 }): string {
@@ -132,6 +138,7 @@ function buildCharacterMemoryActivityDetails(input: {
   triggerReason: string;
   model: string;
   reasoningEffort: string;
+  timeoutSeconds?: number;
   entries: CharacterMemoryDelta["entries"];
   monologueUpdated?: boolean;
 }): string {
@@ -252,6 +259,7 @@ export class MemoryOrchestrationService {
           triggerReason: options.triggerReason,
           model: reflectionSettings.model,
           reasoningEffort: reflectionSettings.reasoningEffort,
+          timeoutSeconds: reflectionSettings.timeoutSeconds,
           entries: [],
         }),
         errorMessage: "",
@@ -270,6 +278,7 @@ export class MemoryOrchestrationService {
         triggerReason: options.triggerReason,
         model: reflectionSettings.model,
         reasoningEffort: reflectionSettings.reasoningEffort,
+        timeoutSeconds: reflectionSettings.timeoutSeconds,
       }).join("\n"),
       errorMessage: "",
       updatedAt: new Date().toISOString(),
@@ -284,6 +293,7 @@ export class MemoryOrchestrationService {
         appSettings,
         model: reflectionSettings.model,
         reasoningEffort: reflectionSettings.reasoningEffort,
+        timeoutMs: reflectionSettings.timeoutSeconds * 1000,
         triggerReason: options.triggerReason,
         prompt,
       });
@@ -348,6 +358,7 @@ export class MemoryOrchestrationService {
             triggerReason: options.triggerReason,
             model: reflectionSettings.model,
             reasoningEffort: reflectionSettings.reasoningEffort,
+            timeoutSeconds: reflectionSettings.timeoutSeconds,
             entries: savedCount > 0 ? memoryEntries : [],
             monologueUpdated: !!monologue,
           }),
@@ -366,6 +377,7 @@ export class MemoryOrchestrationService {
             triggerReason: options.triggerReason,
             model: reflectionSettings.model,
             reasoningEffort: reflectionSettings.reasoningEffort,
+            timeoutSeconds: reflectionSettings.timeoutSeconds,
           }),
           ...(savedCount > 0 ? ["", `characterMemory: ${savedCount}件更新`] : []),
         ].join("\n"),
@@ -386,6 +398,7 @@ export class MemoryOrchestrationService {
             triggerReason: options.triggerReason,
             model: reflectionSettings.model,
             reasoningEffort: reflectionSettings.reasoningEffort,
+            timeoutSeconds: reflectionSettings.timeoutSeconds,
             entries: [],
           }),
           errorMessage: error instanceof Error ? error.message : String(error),
@@ -422,6 +435,7 @@ export class MemoryOrchestrationService {
           triggerReason: options.triggerReason,
           model: reflectionSettings.model,
           reasoningEffort: reflectionSettings.reasoningEffort,
+          timeoutSeconds: reflectionSettings.timeoutSeconds,
         }).join("\n"),
         errorMessage: error instanceof Error ? error.message : String(error),
         updatedAt: new Date().toISOString(),
@@ -499,6 +513,7 @@ export class MemoryOrchestrationService {
         triggerReason,
         model: extractionSettings.model,
         reasoningEffort: extractionSettings.reasoningEffort,
+        timeoutSeconds: extractionSettings.timeoutSeconds,
         delta: null,
       }),
       errorMessage: "",
@@ -510,6 +525,7 @@ export class MemoryOrchestrationService {
         appSettings,
         model: extractionSettings.model,
         reasoningEffort: extractionSettings.reasoningEffort,
+        timeoutMs: extractionSettings.timeoutSeconds * 1000,
         prompt,
       });
       const delta = extractionResult.delta;
@@ -563,6 +579,7 @@ export class MemoryOrchestrationService {
           triggerReason,
           model: extractionSettings.model,
           reasoningEffort: extractionSettings.reasoningEffort,
+          timeoutSeconds: extractionSettings.timeoutSeconds,
           delta,
           projectMemoryPromotions: promotedCount,
         }),
@@ -619,6 +636,7 @@ export class MemoryOrchestrationService {
           triggerReason,
           model: extractionSettings.model,
           reasoningEffort: extractionSettings.reasoningEffort,
+          timeoutSeconds: extractionSettings.timeoutSeconds,
           delta: null,
         }),
         errorMessage: error instanceof Error ? error.message : String(error),
