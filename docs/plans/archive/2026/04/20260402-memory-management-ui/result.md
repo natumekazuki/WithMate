@@ -2,7 +2,7 @@
 
 ## status
 
-- 完了待ち
+- 完了
 
 ## summary
 
@@ -11,7 +11,7 @@
 
 ## commits
 
-- なし
+- `2e2fa86` `feat(settings): add memory management ui`
 
 ## verification
 

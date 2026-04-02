@@ -10,3 +10,4 @@
 - `Settings Window` に `Memory 管理` セクションを追加し、一覧・reload・delete を実装
 - `docs/design/desktop-ui.md` `docs/design/memory-architecture.md` `docs/manual-test-checklist.md` `docs/task-backlog.md` を同期
 - `.ai_context/` と `README.md` は今回の変更では更新不要と判断
+- commit: `2e2fa86` `feat(settings): add memory management ui`
