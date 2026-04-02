@@ -38,6 +38,7 @@ import {
   resolveModelSelection,
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
+import { buildAuditLogRefreshSignature } from "./audit-log-refresh.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import {
   approvalModeOptions,
@@ -769,6 +770,23 @@ export default function App() {
     ),
     [monologueActivityState.ownerSessionId, monologueActivityState.state, selectedSessionId],
   );
+  const auditLogRefreshSignature = useMemo(
+    () =>
+      buildAuditLogRefreshSignature({
+        selectedSession,
+        displayedMessagesLength: displayedMessages.length,
+        selectedMemoryGenerationActivity,
+        selectedCharacterMemoryGenerationActivity,
+        selectedMonologueActivity,
+      }),
+    [
+      displayedMessages.length,
+      selectedCharacterMemoryGenerationActivity,
+      selectedMemoryGenerationActivity,
+      selectedMonologueActivity,
+      selectedSession,
+    ],
+  );
   const selectedMonologueEntries = useMemo(
     () => (selectedSession ? selectedSession.stream.slice(-6) : []),
     [selectedSession],
@@ -1308,7 +1326,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [displayedMessages.length, selectedSession?.runState, selectedSession?.updatedAt, selectedSessionId]);
+  }, [auditLogRefreshSignature, selectedSessionId]);
 
   useEffect(() => {
     let active = true;

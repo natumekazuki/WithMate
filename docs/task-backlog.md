@@ -23,7 +23,7 @@
 
 | Priority | 実装状況 | Source | ID | テーマ | 概要 | 依存 / メモ |
 | --- | --- | --- | --- | --- | --- | --- |
-| P1 | 未着手 | GitHub | [#36](https://github.com/natumekazuki/WithMate/issues/36) | メモリー生成の監査ログ保存不具合 | memory generation が完了扱いなのに response が監査ログへ残らない症状を調査したい | background task の completed 更新と audit log finalization のどちらで欠落しているか切り分けが必要 |
+| P1 | 完了 | GitHub | [#36](https://github.com/natumekazuki/WithMate/issues/36) | メモリー生成の監査ログ保存不具合 | memory generation 自体は completed update 済みで、renderer の `Audit Log` 再読込条件が stale だった問題を修正した | background activity の `status / updatedAt` 変化も再読込条件へ含め、modal を開いたままでも response / error / raw items の確定値が反映される |
 | P1 | 未着手 | GitHub | [#35](https://github.com/natumekazuki/WithMate/issues/35) | メモリー生成のタイムアウト短い | model / reasoning によって memory generation が timeout しやすいので上限時間を見直したい | `Session Memory extraction` と `Character Reflection` の timeout policy を provider 実装ごとに確認する |
 | P1 | 完了 | GitHub | [#24](https://github.com/natumekazuki/WithMate/issues/24) | モデル切り替えバグ | model / reasoning 変更後に stale thread を引きずって失敗する症状を解消した | `threadId reset + provider cache invalidate` を正本にし、次 turn は新規 thread で開始する |
 | P1 | 完了 | GitHub | [#32](https://github.com/natumekazuki/WithMate/issues/32) | 長時間放置後の Session not found | 長時間放置や stale thread / session に起因する NotFound を同一 turn 内の internal retry で吸収した | meaningful partial が無い時だけ `threadId clear + internal retry` を 1 回だけ行う |
@@ -136,12 +136,12 @@
 
 ## 推奨順
 
-1. `#36 メモリー生成の監査ログ保存不具合`
-2. `#35 メモリー生成のタイムアウト短い`
-3. `#3 Memory 永続化と共有`
-4. `#1 独り言の API 運用`
-5. `memory-management-manual-update`
-6. `#37 セッションウインドウのヘッダー調整`
+1. `#35 メモリー生成のタイムアウト短い`
+2. `#3 Memory 永続化と共有`
+3. `#1 独り言の API 運用`
+4. `memory-management-manual-update`
+5. `#37 セッションウインドウのヘッダー調整`
+6. `#10 Copilot custom slash command`
 
 ## 参照元
 

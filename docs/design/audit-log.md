@@ -215,6 +215,7 @@ overlay では 1 entry ごとに次を表示する。
 実 transport は `transport payload` 側を正本として扱う。
 approval は UI 上では `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording で表示する。
 そのため、保存値が legacy/native でも overlay 表示時には canonical mode へ normalize したうえで同じ wording に揃える。
+background task の completed / failed / canceled 更新で `updatedAt` または status が変わった場合、renderer は Audit Log 一覧を再取得して response / error / raw items の確定値を stale にしない。
 
 ## Non Goals
 
