@@ -27,6 +27,7 @@ npm run electron:start
 | ID | 領域 | 手順 | 期待結果 |
 | --- | --- | --- | --- |
 | MT-001 | Home 起動 | `npm run electron:start` でアプリを起動する | Home Window が表示される |
+| MT-001A | Home narrow width guardrail | Home Window を最小幅近くまで縮める | single-column layout へ倒れても `Recent Sessions` と right pane toggle / `Settings` 導線が残り、操作不能にならない |
 | MT-002 | Home 一覧 | session が 0 件の状態で起動する | 空状態メッセージが表示される |
 | MT-003 | Characters 一覧 | character が 0 件の状態で起動する | 空状態メッセージと `Add Character` が表示される |
 | MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `System Prompt Prefix` / `Coding Agent Providers` / `Coding Agent Credentials` / `Memory Extraction` / `Model Catalog` / `Danger Zone` が既存値で表示される |
@@ -68,6 +69,7 @@ npm run electron:start
 | MT-018B | Copilot Details / Diff | Copilot session で file 変更を伴う turn を 1 回実行し、assistant bubble の `Details` を開く | `Changed Files`、`Run Checks`、`operationTimeline` が表示され、差分がある file では `Open Diff` から split diff を開ける |
 | MT-019 | Diff | artifact の `Open Diff` を押し、必要なら `Open In Window` も押す | inline diff と Diff Window の両方で split diff が開く |
 | MT-019A | Diff keyboard scroll | inline diff または `Diff Window` を開き、`Before / After` pane head / body へ focus して矢印キー、`PageUp` / `PageDown`、`Home` / `End` を試す | focus ring が見え、keyboard だけで縦横 scroll できる。左右 pane の同期も崩れない |
+| MT-019B | Diff narrow width guardrail | `Diff Window` を最小幅近くまで縮める | `Before / After` が縦 stack に切り替わり、各 pane の横 scroll は維持される。狭幅でも内容を読める |
 | MT-020 | Character persistence | character を作成 / 編集 / 削除する | `characters/` 相当の保存内容が Home と Session に反映される |
 | MT-020A | Character session copy persistence | Character Editor の `Session Copy` を編集して保存し、editor を開き直す | 各 slot の文言が保持され、再読込後も同じ値が表示される |
 | MT-020B | Character session copy list edit | Character Editor の `Session Copy` で `+` と `×` を使って候補を追加・削除する | session-copy tab 自体が card 内でスクロールし、各 slot は複数候補を行単位で保持したまま保存できる |
@@ -81,6 +83,7 @@ npm run electron:start
 | MT-023B | Session splitter resize | wide desktop 状態で左右境界をドラッグする | message list 面と `Latest Command` pane の幅が追従し、極端に寄せても chat の最小可読幅と右 pane の最小幅を下回らない |
 | MT-023C | Session action dock baseline | Session Window を開き、textarea / attachment / skill / approval / model / depth / `Send` の位置関係を見る | これらは message list と同じ左列幅の `Action Dock` にまとまり、expanded 時だけ full editor と設定群が表示される。`File / Folder / Image` は attachment group、`Skill` は別ボタンとして区別される |
 | MT-023C1 | Session narrow layout reachability | 幅 `1400px` 前後まで狭めた Session Window を開く | `message list + Action Dock` の塊の下に right pane が縦 stack で残り、`Latest Command / Memory生成 / 独り言` へ到達できる。狭幅でも right pane が失われない |
+| MT-023C2 | Session minimum width guardrail | Session Window を最小幅近くまで縮める | `message list + Action Dock` と right pane の縦 stack が維持され、scroll すれば両方へ到達できる。最小幅でも window が不自然に固定されない |
 | MT-023D | Session top bar compact | Session Window を開き、必要なら `More` を開閉する | `Top Bar` は 1 行の strip として表示され、常時は `title / Audit Log / Terminal / More / Close` が見え、`Rename / Delete` は `More` 展開時だけ表示される |
 | MT-023D1 | Session terminal launch | Session Window で `Terminal` を押す | session の `workspacePath` を作業ディレクトリにした外部 terminal が開く |
 | MT-023D2 | Additional directory manage UI | Session Window の composer toolbar を確認し、`Add Directory` と `Dirs` を操作する | `Add Directory` が `Skill` と同じ列に並ぶ。`Dirs` は既定では閉じており、開いた後に現在の許可リストが表示され、provider が `Codex` の時だけ `×` で削除できる |
@@ -119,6 +122,7 @@ npm run electron:start
 | MT-048 | Composer send guard 一致 | blank / whitespace draft のまま Send、`Ctrl+Enter`、`Cmd+Enter` をそれぞれ試し、続けて有効な draft で再試行する | blank / whitespace draft は button と shortcut の両方で送信されず、textarea 内で no-op turn も作られない。有効な draft では button と shortcut の両方で同じ条件で送信できる |
 | MT-049 | Running composer priority | `runState === "running"` の間に composer を確認する | composer では `Cancel` が主表示のまま残り、sendability feedback が主表示に割り込まない。retry banner も出ない |
 | MT-050 | Attachment chip readability | workspace 内 file / folder / image と workspace 外 path をそれぞれ `@path` で添付し、長い path も含めて composer を確認する | attachment chip が kind、basename、`ワークスペース内` / `ワークスペース外` を見分けやすく表示し、長い path でも basename が先に読める |
+| MT-050A | Attachment overflow guardrail | file / folder / image を多数添付した状態で composer を確認する | attachment list は高さ上限つき scroll へ切り替わり、textarea と `Send` が画面外へ押し出されない |
 | MT-051 | `@path` keyboard navigation | query 非空で `@path` 候補を開き、`ArrowUp` / `ArrowDown` / `Enter` / `Tab` / `Escape` と mouse を試す | 候補 open 中だけ keyboard navigation が働き、basename 優先 row で active 候補が視認できる。`Enter` で候補採用、`Escape` で close、`Tab` は通常の focus 移動を優先し、候補採用には使われない。候補を閉じた通常時の textarea 操作と `Ctrl+Enter` / `Cmd+Enter` 送信は退行しない |
 | MT-052 | Home session badge precedence / sort | Home に `status === "running"`、`runState === "running"`、`runState === "interrupted"`、`runState === "error"`、non-active session が混在する状態を作る | `running` が最優先、次に `interrupted`、次に `error`、それ以外は neutral badge で card に残る。card 並びは active state 優先へ再ソートされず、storage 既定の `last_active_at DESC` を保つ |
 | MT-053 | Home monitor open session truth source / search sync | 複数 session を用意し、そのうち一部だけ `SessionWindow` を開く。Home 右ペインを `Session Monitor` にして、続けて session search で一部 session だけに絞り込む | monitor panel は open な `SessionWindow` を持つ session だけを出し、`実行中` と `停止・完了` に分かれる。`interrupted` / `error` / neutral は `停止・完了` 側へ badge 付きで残る。検索結果から外れた session は `Recent Sessions` card と monitor row の両方から消える |

@@ -1,5 +1,6 @@
 import type { DiffPreviewPayload } from "../src/session-state.js";
 import type { HomeEntryMode, WindowLike } from "./window-entry-loader.js";
+import { DIFF_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
 
 type BaseWindowLike = WindowLike & {
   isDestroyed(): boolean;
@@ -143,10 +144,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   async openDiffWindow(diffPreview: DiffPreviewPayload): Promise<TWindow> {
     const token = this.deps.generateDiffToken();
     const window = this.deps.createWindow({
-      width: 1680,
-      height: 980,
-      minWidth: 1180,
-      minHeight: 760,
+      ...DIFF_WINDOW_DEFAULT_BOUNDS,
       title: `Diff - ${diffPreview.file.path}`,
     });
 

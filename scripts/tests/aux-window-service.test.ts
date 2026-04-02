@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { DiffPreviewPayload } from "../../src/session-state.js";
 import { AuxWindowService } from "../../src-electron/aux-window-service.js";
+import { DIFF_WINDOW_DEFAULT_BOUNDS } from "../../src-electron/window-defaults.js";
 
 function createWindowStub() {
   let destroyed = false;
@@ -93,8 +94,10 @@ test("AuxWindowService は singleton window を再利用する", async () => {
 test("AuxWindowService は diff preview を保持し reset 時に close する", async () => {
   const diffLoads: string[] = [];
   const diffStub = createWindowStub();
+  const createdOptions: Array<Record<string, unknown>> = [];
   const service = new AuxWindowService({
-    createWindow() {
+    createWindow(options) {
+      createdOptions.push(options);
       return diffStub.window;
     },
     async loadHomeEntry() {},
@@ -110,6 +113,12 @@ test("AuxWindowService は diff preview を保持し reset 時に close する",
   await service.openDiffWindow(createDiffPreview());
   assert.ok(service.getDiffPreview("diff-token"));
   assert.deepEqual(diffLoads, ["diff-token"]);
+  assert.deepEqual(createdOptions, [
+    {
+      ...DIFF_WINDOW_DEFAULT_BOUNDS,
+      title: "Diff - src/file.ts",
+    },
+  ]);
 
   service.closeResetTargetWindows();
   assert.equal(service.getDiffPreview("diff-token"), null);

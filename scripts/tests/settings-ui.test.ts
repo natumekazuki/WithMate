@@ -63,8 +63,8 @@ describe("Settings UI constants", () => {
     assert.deepEqual(HOME_WINDOW_DEFAULT_BOUNDS, {
       width: 1440,
       height: 960,
-      minWidth: 1040,
-      minHeight: 760,
+      minWidth: 900,
+      minHeight: 680,
     });
   });
 });

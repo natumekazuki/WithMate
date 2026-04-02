@@ -96,7 +96,7 @@ import {
 } from "./session-memory-extraction.js";
 import { discoverSessionSkills } from "./skill-discovery.js";
 import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
-import { HOME_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
+import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
 import { clearWorkspaceFileIndex, searchWorkspaceFilePaths } from "./workspace-file-search.js";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
@@ -731,10 +731,7 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
     sessionWindowBridge = new SessionWindowBridge({
       createWindow: (sessionId) =>
         createBaseWindow({
-          width: 1520,
-          height: 940,
-          minWidth: 1120,
-          minHeight: 760,
+          ...SESSION_WINDOW_DEFAULT_BOUNDS,
           title: `WithMate Session - ${sessionId}`,
         }),
       loadSessionEntry: (window, sessionId) => requireWindowEntryLoader().loadSessionEntry(window, sessionId),

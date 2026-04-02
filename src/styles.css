@@ -4236,6 +4236,11 @@ button:disabled {
   gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 10px;
+  max-height: min(24vh, 176px);
+  overflow: auto;
+  align-content: flex-start;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
 }
 
 .composer-additional-directory-list {
@@ -5761,6 +5766,34 @@ button:disabled {
   }
 }
 
+@media (max-width: 1080px) {
+  .session-message-stack {
+    min-height: min(58vh, 640px);
+  }
+
+  .session-context-pane {
+    min-height: min(34vh, 300px);
+  }
+
+  .diff-split-view {
+    grid-template-columns: 1fr;
+  }
+
+  .diff-pane {
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .diff-pane:last-child {
+    border-bottom: 0;
+  }
+
+  .diff-pane-head-inner,
+  .diff-pane-row {
+    grid-template-columns: 56px minmax(320px, max-content);
+  }
+}
+
 @media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -5975,6 +6008,10 @@ button:disabled {
 
   .diff-split-view {
     grid-template-columns: 1fr;
+  }
+
+  .composer-attachment-list {
+    max-height: min(20vh, 144px);
   }
 }
 

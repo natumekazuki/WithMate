@@ -149,6 +149,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - 左右の境界は draggable splitter で調整できる
   - right pane は Action Dock の手前で切らず、下端まで縦に伸ばす
   - narrow width では `message list + Action Dock -> Latest Command` の縦 stack へ戻す
+  - current minimum は split-screen を考慮し、`900px` 台の window 幅でも縦 stack のまま到達性を維持する
 - `Top Bar`
   - default は compact
   - 常時表示するのは `title / Audit Log / Terminal / More / Close`
@@ -212,6 +213,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - composer の attachment chip
   - basename を主表示にし、file / folder / image の kind と `ワークスペース内` / `ワークスペース外` を即判別できる
   - 補足 path は副次表示へ回し、long path でも basename を先に読める
+  - attachment list は高さ上限つき scroll にし、多数添付時も textarea と `Send` を押し流さない
 - textarea 内の `@path` 参照
 - `@path` 入力中の workspace file path 候補表示
   - 候補表示条件は `@` 後 query 非空のまま維持する
@@ -280,6 +282,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - 縦スクロール同期
 - 横スクロール同期
 - 長い行は横スクロールで読む
+- 狭幅では `Before / After` を縦 stack に倒し、必要な横 scroll は各 pane 内で扱う
+- current minimum は `900px` 台の split-screen を想定し、stack 後も読める下限に寄せる
 - `Before / After` の各 pane head / body は keyboard focus を受けられ、矢印キー、`PageUp` / `PageDown`、`Home` / `End` で scroll できる
 - Session から開いた Diff は character theme snapshot を引き継ぎ、`titlebar / subbar / pane header` にだけ薄い accent を持つ
 - `Before / After` 見出しは差分面から独立した label chip として表示し、背景色に埋もれないコントラストを維持する
