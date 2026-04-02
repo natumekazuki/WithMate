@@ -11,3 +11,8 @@
 - `Session Window` 右ペイン上部に手動 `Generate Memory` ボタンを追加し、`trigger: manual` で extraction を走らせるようにした
 - `独り言の API 運用` は今回の対象外として据え置いた
 - 通常 turn 後の独り言 trigger 閾値は `monologue-context-threshold-tuning` として follow-up 化した
+- docs-sync 判定:
+  - 更新: `docs/design/`、`docs/manual-test-checklist.md`、`docs/task-backlog.md`
+  - 更新不要: `README.md`、`.ai_context/` はこの repo には対象ファイル / ディレクトリが存在しないため対象外
+- 実装コミット:
+  - `83f819c` `feat(memory): revise session trigger policy`
