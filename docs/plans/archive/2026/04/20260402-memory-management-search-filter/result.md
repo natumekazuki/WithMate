@@ -2,7 +2,7 @@
 
 ## status
 
-- 完了待ち
+- 完了
 
 ## summary
 
@@ -11,7 +11,7 @@
 
 ## commits
 
-- なし
+- `399b432` `feat(settings): add memory management search filters`
 
 ## verification
 
