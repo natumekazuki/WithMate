@@ -22,6 +22,7 @@ import type { ModelCatalogSnapshot } from "./model-catalog.js";
 import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-withmate-api.js";
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import { CharacterAvatar } from "./ui-utils.js";
+import { buildCharacterThemeStyle } from "./theme-utils.js";
 
 const emptyDraft: CreateCharacterInput = {
   name: "",
@@ -77,32 +78,6 @@ function rgbToHex(rgb: { r: number; g: number; b: number }): string {
 function normalizeHexInput(value: string): string | null {
   const normalized = value.trim();
   return /^#[0-9a-fA-F]{6}$/.test(normalized) ? normalized.toLowerCase() : null;
-}
-
-function toRgba(color: string, alpha: number): string {
-  const rgb = hexToRgb(color);
-  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
-}
-
-function relativeLuminance(color: string): number {
-  const rgb = hexToRgb(color);
-  const channels = [rgb.r, rgb.g, rgb.b].map((value) => {
-    const normalized = value / 255;
-    return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
-  });
-
-  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
-}
-
-function buildEditorThemeStyle(theme: CharacterThemeColors): CSSProperties {
-  const mainInk = relativeLuminance(theme.main) > 0.36 ? "#0f172a" : "#f8fafc";
-  return {
-    "--character-main": theme.main,
-    "--character-main-soft": toRgba(theme.main, 0.14),
-    "--character-sub": theme.sub,
-    "--character-sub-soft": toRgba(theme.sub, 0.14),
-    "--character-main-ink": mainInk,
-  } as CSSProperties;
 }
 
 function toDraft(character: CharacterProfile | null): CreateCharacterInput {
@@ -219,7 +194,7 @@ export default function CharacterEditorApp() {
     [draft.iconPath, draft.name, selectedCharacter],
   );
 
-  const editorThemeStyle = useMemo(() => buildEditorThemeStyle(draft.themeColors), [draft.themeColors]);
+  const editorThemeStyle = useMemo(() => buildCharacterThemeStyle(draft.themeColors), [draft.themeColors]);
   const isDirty = useMemo(
     () => areDraftsEqual(draft, toDraft(selectedCharacter)) === false,
     [draft, selectedCharacter],

@@ -2,6 +2,7 @@ import { useState, type CSSProperties } from "react";
 
 import type { CharacterVisual, ChangedFile, Session } from "./app-state.js";
 import { reasoningEffortLabel, type ModelCatalogItem, type ModelCatalogProvider, type ModelReasoningEffort } from "./model-catalog.js";
+import { buildThemeInkPalette, toRgba } from "./theme-utils.js";
 export { approvalModeLabel, approvalModeOptions } from "./approval-mode.js";
 
 function toFileUrl(filePath: string): string {
@@ -140,39 +141,14 @@ export function fileKindLabel(kind: ChangedFile["kind"]): string {
   }
 }
 
-function hexToRgb(color: string): { r: number; g: number; b: number } {
-  const normalized = /^#[0-9a-fA-F]{6}$/.test(color) ? color : "#6f8cff";
-  return {
-    r: Number.parseInt(normalized.slice(1, 3), 16),
-    g: Number.parseInt(normalized.slice(3, 5), 16),
-    b: Number.parseInt(normalized.slice(5, 7), 16),
-  };
-}
-
-function toRgba(color: string, alpha: number): string {
-  const rgb = hexToRgb(color);
-  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
-}
-
-function relativeLuminance(color: string): number {
-  const rgb = hexToRgb(color);
-  const channels = [rgb.r, rgb.g, rgb.b].map((value) => {
-    const normalized = value / 255;
-    return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
-  });
-
-  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
-}
-
 export function buildCardThemeStyle(theme: { main: string; sub: string }): CSSProperties {
-  const ink = relativeLuminance(theme.main) > 0.36 ? "#0f172a" : "#f8fafc";
-  const muted = ink === "#0f172a" ? "rgba(15, 23, 42, 0.72)" : "rgba(248, 250, 252, 0.82)";
+  const inkPalette = buildThemeInkPalette(theme.main);
 
   return {
     "--card-main": theme.main,
     "--card-sub": theme.sub,
-    "--card-ink": ink,
-    "--card-muted": muted,
+    "--card-ink": inkPalette.ink,
+    "--card-muted": inkPalette.muted,
     "--card-border": toRgba(theme.sub, 0.38),
     "--card-shadow": toRgba(theme.main, 0.24),
   } as CSSProperties;

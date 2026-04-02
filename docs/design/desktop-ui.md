@@ -77,7 +77,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - card theme
     - background = character `main`
     - left accent bar = character `sub`
-    - text color = background とのコントラストから自動決定
+    - text color = WCAG AA の contrast ratio を満たす dark / light 候補から自動決定
 - `Characters`
   - right pane 上部の segmented toggle で `Session Monitor` と排他的に切り替える
   - expanded 時だけ header action として `Add Character`
@@ -87,7 +87,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - card theme
     - background = character `main`
     - left accent bar = character `sub`
-    - text color = background とのコントラストから自動決定
+    - text color = WCAG AA の contrast ratio を満たす dark / light 候補から自動決定
 - `New Session` dialog
   - session title 入力
   - workspace picker
@@ -310,6 +310,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `userData` は `<appData>/WithMate/` に固定する
 - `character-update` session も同じ character directory を workspace として再利用する
 - Session は character の `main / sub` theme color snapshot を保持し、現在は header title、assistant / pending bubble、composer settings、`Send / Cancel`、artifact block、Session から開く Diff の `titlebar / subbar / pane header` の限定的な accent に使う
+- theme 由来の前景色決定は輝度閾値ではなく共通 contrast helper を正本にし、Home / Session / Character Editor / Diff で同じ WCAG AA 基準を使う
 - session は SQLite を正本とする
 - model catalog は DB の active revision を読む
 - message list follow mode は assistantText streaming / pending bubble 更新に反応し、command 監視は right pane の `Latest Command` へ分離する
