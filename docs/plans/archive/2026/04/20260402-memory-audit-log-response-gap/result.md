@@ -13,3 +13,4 @@
 ## commits
 
 - `2654177` `fix(session): refresh audit logs on background updates`
+- `9fe63fb` `docs(plan): archive memory audit log response gap`

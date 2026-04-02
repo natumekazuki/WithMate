@@ -10,3 +10,4 @@
 - `scripts/tests/audit-log-refresh.test.ts` を追加し、background activity 更新で refresh signature が変わる回帰 test を追加
 - `docs/design/audit-log.md` `docs/manual-test-checklist.md` `docs/task-backlog.md` を同期
 - コミット `2654177` `fix(session): refresh audit logs on background updates`
+- コミット `9fe63fb` `docs(plan): archive memory audit log response gap`
