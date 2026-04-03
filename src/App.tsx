@@ -2861,7 +2861,10 @@ export default function App() {
   }
 
   return (
-    <div className="page-shell session-page" style={sessionThemeStyle}>
+    <div
+      className={`page-shell session-page${isSessionHeaderExpanded ? "" : " session-page-header-collapsed"}`}
+      style={sessionThemeStyle}
+    >
       {isSessionHeaderExpanded ? (
         <SessionHeader
           taskTitle={selectedSession.taskTitle}

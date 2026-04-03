@@ -137,6 +137,10 @@ button:disabled {
     linear-gradient(180deg, #0f131a 0%, #151a22 100%);
 }
 
+.session-page.session-page-header-collapsed {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .session-page .panel {
   background: var(--surface);
 }
