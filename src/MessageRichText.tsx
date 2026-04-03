@@ -7,8 +7,6 @@ type Block =
   | { type: "ordered-list"; items: string[] }
   | { type: "code"; language: string; code: string };
 
-const INLINE_TOKEN_PATTERN = /(`[^`\n]+`)|(\[[^\]]+\]\([^)]+\))/g;
-
 function isUnorderedListLine(line: string): boolean {
   return /^[-*]\s+/.test(line);
 }
@@ -97,52 +95,115 @@ function parseBlocks(text: string): Block[] {
   return blocks;
 }
 
-function renderInline(text: string, onOpenPath?: (target: string) => void) {
-  const parts: ReactNode[] = [];
-  let lastIndex = 0;
+type InlineTokenMatch = {
+  nextIndex: number;
+  node: ReactNode;
+};
 
-  for (const match of text.matchAll(INLINE_TOKEN_PATTERN)) {
-    const matched = match[0];
-    if (!matched) {
-      continue;
-    }
-    const start = match.index ?? 0;
-    if (start > lastIndex) {
-      parts.push(text.slice(lastIndex, start));
-    }
-
-    if (matched.startsWith("`") && matched.endsWith("`")) {
-      parts.push(
-        <code key={`code-${start}`} className="message-inline-code">
-          {matched.slice(1, -1)}
-        </code>,
-      );
-    } else {
-      const linkMatch = matched.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-      if (linkMatch) {
-        const label = linkMatch[1] ?? matched;
-        const target = linkMatch[2] ?? "";
-        parts.push(
-          <button
-            key={`link-${start}`}
-            className="message-inline-link"
-            type="button"
-            title={target}
-            onClick={() => onOpenPath?.(target)}
-          >
-            {label}
-          </button>,
-        );
-      } else {
-        parts.push(matched);
-      }
-    }
-
-    lastIndex = start + matched.length;
+function matchInlineCode(text: string, index: number): InlineTokenMatch | null {
+  if (text[index] !== "`") {
+    return null;
   }
 
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
+  const end = text.indexOf("`", index + 1);
+  if (end <= index + 1) {
+    return null;
+  }
+
+  const content = text.slice(index + 1, end);
+  if (content.includes("\n")) {
+    return null;
+  }
+
+  return {
+    nextIndex: end + 1,
+    node: (
+      <code key={`code-${index}`} className="message-inline-code">
+        {content}
+      </code>
+    ),
+  };
+}
+
+function matchInlineLink(text: string, index: number, onOpenPath?: (target: string) => void): InlineTokenMatch | null {
+  if (text[index] !== "[") {
+    return null;
+  }
+
+  const linkMatch = text.slice(index).match(/^\[([^\]]+)\]\(([^)]+)\)/);
+  if (!linkMatch) {
+    return null;
+  }
+
+  const label = linkMatch[1] ?? linkMatch[0];
+  const target = linkMatch[2] ?? "";
+  return {
+    nextIndex: index + linkMatch[0].length,
+    node: (
+      <button
+        key={`link-${index}`}
+        className="message-inline-link"
+        type="button"
+        title={target}
+        onClick={() => onOpenPath?.(target)}
+      >
+        {label}
+      </button>
+    ),
+  };
+}
+
+function matchInlineStrong(text: string, index: number, onOpenPath?: (target: string) => void): InlineTokenMatch | null {
+  if (!text.startsWith("**", index)) {
+    return null;
+  }
+
+  const end = text.indexOf("**", index + 2);
+  if (end <= index + 2) {
+    return null;
+  }
+
+  const content = text.slice(index + 2, end);
+  if (!content.trim()) {
+    return null;
+  }
+
+  return {
+    nextIndex: end + 2,
+    node: (
+      <strong key={`strong-${index}`} className="message-inline-strong">
+        {renderInline(content, onOpenPath)}
+      </strong>
+    ),
+  };
+}
+
+function renderInline(text: string, onOpenPath?: (target: string) => void) {
+  const parts: ReactNode[] = [];
+  let index = 0;
+  let plainStart = 0;
+
+  while (index < text.length) {
+    const token =
+      matchInlineCode(text, index) ??
+      matchInlineLink(text, index, onOpenPath) ??
+      matchInlineStrong(text, index, onOpenPath);
+
+    if (token) {
+      if (index > plainStart) {
+        parts.push(text.slice(plainStart, index));
+      }
+      parts.push(token.node);
+      index = token.nextIndex;
+      plainStart = index;
+      continue;
+    }
+
+    index += 1;
+  }
+
+  if (plainStart < text.length) {
+    parts.push(text.slice(plainStart));
   }
 
   return parts.length > 0 ? parts : text;

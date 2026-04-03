@@ -1579,9 +1579,26 @@ export function SessionMessageColumn({
                 key={`${message.role}-${index}`}
                 className={`message-row ${message.role}${message.accent ? " accent" : ""}`}
               >
-                {isAssistant ? <CharacterAvatar character={character} size="small" className="message-avatar" /> : null}
+                {isAssistant ? (
+                  <div className="message-avatar-stack">
+                    <CharacterAvatar character={character} size="small" className="message-avatar" />
+                    {message.artifact ? (
+                      <button
+                        className="artifact-toggle artifact-toggle-icon"
+                        type="button"
+                        onClick={() => onToggleArtifact(artifactKey)}
+                        aria-expanded={artifactExpanded}
+                        aria-controls={`artifact-panel-${artifactKey}`}
+                        aria-label={artifactExpanded ? "Details を閉じる" : "Details を開く"}
+                        title={artifactExpanded ? "Hide Details" : "Details"}
+                      >
+                        {artifactExpanded ? "−" : "i"}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${message.artifact ? " has-artifact" : ""}`}>
-                  {message.artifact ? (
+                  {message.artifact && !isAssistant ? (
                     <button
                       className="artifact-toggle artifact-toggle-icon"
                       type="button"

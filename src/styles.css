@@ -119,8 +119,8 @@ button:disabled {
 
 .session-page {
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px;
-  padding: 14px 16px 16px;
+  gap: 10px;
+  padding: 10px 12px 12px;
   --surface: rgba(25, 29, 38, 0.94);
   --surface-strong: rgba(28, 33, 43, 0.98);
   --surface-deep: rgba(18, 22, 30, 0.98);
@@ -155,16 +155,27 @@ button:disabled {
   box-shadow: none;
 }
 
+.session-page .session-top-bar {
+  border-radius: 16px;
+}
+
 .session-page .drawer-toggle,
 .session-page .browse-button {
   background: rgba(255, 255, 255, 0.06);
   color: var(--ink);
   border-color: rgba(203, 213, 225, 0.12);
+  padding: 9px 12px;
 }
 
 .session-page .drawer-toggle.secondary {
   background: rgba(255, 255, 255, 0.08);
   color: var(--ink);
+}
+
+.session-page .drawer-toggle.compact,
+.session-page .browse-button.compact,
+.session-page .launch-toggle.compact {
+  padding: 7px 10px;
 }
 
 .session-page .drawer-toggle.danger {
@@ -2405,7 +2416,7 @@ button:disabled {
 .session-main-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 12px minmax(360px, var(--session-context-rail-width, 420px));
-  gap: 14px;
+  gap: 12px;
   min-height: 0;
   min-width: 0;
   height: 100%;
@@ -2414,7 +2425,7 @@ button:disabled {
 .session-message-stack {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
-  gap: 12px;
+  gap: 10px;
   min-height: 0;
   min-width: 0;
 }
@@ -2440,8 +2451,8 @@ button:disabled {
 
 .session-action-dock {
   display: grid;
-  gap: 12px;
-  padding: 12px 14px 14px;
+  gap: 10px;
+  padding: 10px 12px 12px;
   border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: 18px;
   background: rgba(10, 14, 22, 0.94);
@@ -2454,7 +2465,7 @@ button:disabled {
 
 .session-action-dock.compact {
   gap: 0;
-  padding: 8px 10px;
+  padding: 6px 8px;
 }
 
 .session-action-dock-compact-row {
@@ -2536,6 +2547,7 @@ button:disabled {
   background: var(--character-main);
   color: var(--character-main-ink);
   box-shadow: 0 10px 22px color-mix(in srgb, var(--character-main) 28%, transparent);
+  padding: 9px 12px;
 }
 
 .session-page .session-action-dock-compact-actions .session-send-button.danger {
@@ -2571,10 +2583,10 @@ button:disabled {
 .command-monitor-shell {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px;
+  gap: 10px;
   min-height: 0;
   min-width: 0;
-  padding: 14px 16px;
+  padding: 12px 14px;
   border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: 18px;
   background: rgba(15, 19, 26, 0.9);
@@ -2593,7 +2605,7 @@ button:disabled {
 
 .command-monitor-stack {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
   margin-top: auto;
 }
@@ -2640,7 +2652,7 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
@@ -2949,7 +2961,7 @@ button:disabled {
 
 .message-row {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   align-items: start;
 }
 
@@ -2957,12 +2969,20 @@ button:disabled {
   grid-template-columns: 54px minmax(0, 1fr);
 }
 
+.message-avatar-stack {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 8px;
+}
+
 .message-row.user {
-  justify-items: end;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: stretch;
 }
 
 .message-row.user .message-card {
-  width: min(82%, 640px);
+  width: 100%;
 }
 
 .message-row.accent .message-avatar {
@@ -2983,8 +3003,8 @@ button:disabled {
 .message-card {
   position: relative;
   display: grid;
-  gap: 12px;
-  padding: 18px;
+  gap: 10px;
+  padding: 14px 16px;
   border: 1px solid rgba(32, 36, 55, 0.08);
   background: rgba(255, 255, 255, 0.82);
 }
@@ -3024,7 +3044,7 @@ button:disabled {
 }
 
 .message-card.has-artifact {
-  padding-top: 46px;
+  padding-top: 14px;
 }
 
 .message-speaker {
@@ -3050,12 +3070,12 @@ button:disabled {
 
 .message-body.rich-text {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .message-paragraph {
   margin: 0;
-  line-height: 1.7;
+  line-height: 1.6;
 }
 
 .message-heading {
@@ -3091,6 +3111,11 @@ button:disabled {
   background: rgba(18, 24, 39, 0.08);
   color: #122445;
   font: 0.84em/1.5 "IBM Plex Mono", monospace;
+}
+
+.message-inline-strong {
+  color: inherit;
+  font-weight: 700;
 }
 
 .session-page .message-inline-code {
@@ -4095,17 +4120,14 @@ button:disabled {
 }
 
 .artifact-toggle-icon {
-  position: absolute;
-  top: 14px;
-  right: 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border-radius: 999px;
-  font-size: 0.95rem;
+  font-size: 0.88rem;
   font-weight: 800;
   line-height: 1;
 }
@@ -4909,6 +4931,7 @@ button:disabled {
   border-color: rgba(203, 213, 225, 0.12);
   background: rgba(255, 255, 255, 0.06);
   color: var(--muted);
+  padding: 8px 12px;
 }
 
 .session-page .choice-chip.active {
@@ -4923,6 +4946,10 @@ button:disabled {
   padding: 12px 22px;
   background: rgba(255, 255, 255, 0.16);
   color: var(--ink);
+}
+
+.session-page .composer-box button {
+  padding: 10px 18px;
 }
 
 .session-page .composer-box .session-send-button {
@@ -4951,9 +4978,9 @@ button:disabled {
 }
 
 .session-page .composer-settings {
-  padding: 12px 14px;
+  padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--character-sub) 20%, rgba(203, 213, 225, 0.12));
-  border-radius: 18px;
+  border-radius: 16px;
   background: color-mix(in srgb, var(--character-sub-soft) 28%, rgba(15, 19, 26, 0.9));
 }
 

@@ -169,6 +169,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - right pane は Action Dock の手前で切らず、下端まで縦に伸ばす
   - narrow width では `message list + Action Dock -> Latest Command` の縦 stack へ戻す
   - current minimum は split-screen を考慮し、`900px` 台の window 幅でも縦 stack のまま到達性を維持する
+  - Full HD では文字サイズそのものより density を先に調整し、Session 専用の gap / padding / chip / button 高さをやや詰める
+  - user bubble は assistant avatar 分の左 gutter を持たず、row 幅いっぱいを使えるようにする
 - `Top Bar`
   - default は right pane 上部の `title handle` だけを見せる
   - title handle を押すと full-width header に切り替わり、`Rename / Audit Log / Terminal / Delete` を常時表示する
