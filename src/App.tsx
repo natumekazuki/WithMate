@@ -2873,7 +2873,6 @@ export default function App() {
           isRunning={selectedSession.runState === "running"}
           showTerminalButton={!isCharacterUpdateSession}
           onToggleExpanded={handleToggleHeaderExpanded}
-          onClose={handleCloseWindow}
           onOpenAuditLog={() => setAuditLogsOpen(true)}
           onOpenTerminal={() => void handleOpenSessionTerminal()}
           onTitleDraftChange={setTitleDraft}

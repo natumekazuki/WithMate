@@ -314,6 +314,12 @@ button:disabled {
   min-width: 0;
 }
 
+.session-window-danger-action {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+
 .app-icon {
   display: grid;
   place-items: center;
@@ -2631,6 +2637,20 @@ button:disabled {
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.session-memory-trigger-button {
+  background: color-mix(in srgb, var(--character-main) 88%, #ffffff 12%);
+  color: var(--character-main-ink, #ffffff);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--character-main) 26%, transparent);
+}
+
+.session-memory-trigger-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--character-main) 82%, #ffffff 18%);
+}
+
+.session-memory-trigger-button:disabled {
+  color: var(--character-main-ink, #ffffff);
 }
 
 .command-monitor-switcher-button {

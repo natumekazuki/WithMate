@@ -432,7 +432,6 @@ export type SessionHeaderProps = {
   isRunning: boolean;
   showTerminalButton?: boolean;
   onToggleExpanded: () => void;
-  onClose: () => void;
   onOpenAuditLog: () => void;
   onOpenTerminal: () => void;
   onTitleDraftChange: (value: string) => void;
@@ -450,7 +449,6 @@ export function SessionHeader({
   isRunning,
   showTerminalButton = true,
   onToggleExpanded,
-  onClose,
   onOpenAuditLog,
   onOpenTerminal,
   onTitleDraftChange,
@@ -494,12 +492,11 @@ export function SessionHeader({
               Terminal
             </button>
           ) : null}
-          <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
-            Delete
-          </button>
-          <button className="drawer-toggle compact" type="button" onClick={onClose}>
-            Close
-          </button>
+          <div className="session-window-danger-action">
+            <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
+              Delete
+            </button>
+          </div>
         </div>
       </div>
     </header>
@@ -985,7 +982,7 @@ export function SessionContextPane({
           {isMemoryGenerationTab ? (
             <div className="command-monitor-head-actions">
               <button
-                className="launch-toggle compact"
+                className="launch-toggle compact session-memory-trigger-button"
                 type="button"
                 onClick={onRunSessionMemoryGeneration}
                 disabled={!canRunSessionMemoryGeneration || isSessionMemoryGenerationRunning}
