@@ -774,13 +774,12 @@ export default function App() {
     () =>
       buildAuditLogRefreshSignature({
         selectedSession,
-        displayedMessagesLength: displayedMessages.length,
+        displayedMessagesLength: selectedSession?.messages.length ?? 0,
         selectedMemoryGenerationActivity,
         selectedCharacterMemoryGenerationActivity,
         selectedMonologueActivity,
       }),
     [
-      displayedMessages.length,
       selectedCharacterMemoryGenerationActivity,
       selectedMemoryGenerationActivity,
       selectedMonologueActivity,

@@ -1,6 +1,6 @@
 # Task Backlog
 
-- 更新日: 2026-04-02
+- 更新日: 2026-04-03
 - 対象: GitHub issue と repo 内の残タスクの統合管理
 
 ## 方針
@@ -25,6 +25,8 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | P1 | 完了 | GitHub | [#36](https://github.com/natumekazuki/WithMate/issues/36) | メモリー生成の監査ログ保存不具合 | memory generation 自体は completed update 済みで、renderer の `Audit Log` 再読込条件が stale だった問題を修正した | background activity の `status / updatedAt` 変化も再読込条件へ含め、modal を開いたままでも response / error / raw items の確定値が反映される |
 | P1 | 完了 | GitHub | [#35](https://github.com/natumekazuki/WithMate/issues/35) | メモリー生成のタイムアウト短い | `Memory Extraction` と `Character Reflection` に provider ごとの `Timeout Seconds` を追加し、background plane の timeout を settings から調整できるようにした | default は `180s`、normalize は `30..1800s`。Codex は `AbortSignal.timeout`、Copilot は `sendAndWait(timeout)` へ反映する |
+| P1 | 未着手 | GitHub | [#40](https://github.com/natumekazuki/WithMate/issues/40) | まだ SessionNotFound が発生する | `threadId` は変わらないまま失敗し、agent 切り替えで通るケースが残っている | `resume` 未実行、または cached session 再利用経路で internal retry が漏れている可能性があるため、Copilot adapter / runtime retry の再調査が必要 |
+| P1 | 完了 | GitHub | [#39](https://github.com/natumekazuki/WithMate/issues/39) | セッション画面が表示できない | `#36` で入った `auditLogRefreshSignature` が初回 render 中に `displayedMessages` を後方参照し、TDZ 例外で WindowErrorBoundary へ落ちていた問題を修正した | refresh signature は `selectedSession?.messages.length ?? 0` を使うようにし、Session Window の server render 回帰 test を追加した |
 | P1 | 完了 | GitHub | [#24](https://github.com/natumekazuki/WithMate/issues/24) | モデル切り替えバグ | model / reasoning 変更後に stale thread を引きずって失敗する症状を解消した | `threadId reset + provider cache invalidate` を正本にし、次 turn は新規 thread で開始する |
 | P1 | 完了 | GitHub | [#32](https://github.com/natumekazuki/WithMate/issues/32) | 長時間放置後の Session not found | 長時間放置や stale thread / session に起因する NotFound を同一 turn 内の internal retry で吸収した | meaningful partial が無い時だけ `threadId clear + internal retry` を 1 回だけ行う |
 | P1 | 完了 | GitHub | [#34](https://github.com/natumekazuki/WithMate/issues/34) | SessionNotFound retry | provider session が消えた時に recovery できるようにした | Copilot adapter 側の missing session recovery と session runtime の stale retry で補完する |
@@ -44,12 +46,14 @@
 | P2 | 完了 | GitHub | [#22](https://github.com/natumekazuki/WithMate/issues/22) | MemoryGeneration 詳細表示 | 右 pane の `MemoryGeneration` details から、更新された Session / Character Memory 内容を確認できるようにした | background activity details に updated field / entry 内容を含めるようにし、Memory tuning 時の観測性を上げた |
 | P2 | 完了 | GitHub | [#30](https://github.com/natumekazuki/WithMate/issues/30) | 送信後フッター自動 close | Session Window の通常送信後に `Action Dock` を自動で compact へ戻す設定を追加した | `AppSettings` に checkbox を追加し、default は ON とした。force-expanded 条件がある時は既存どおり expanded を維持する |
 | P2 | 完了 | GitHub | [#31](https://github.com/natumekazuki/WithMate/issues/31) | Memory 管理 UI | Settings Window から Session / Project / Character Memory を一覧・閲覧し、検索・絞り込み・削除できるようにした | current scope は一覧・閲覧・search / filter・削除まで完了。manual update は follow-up task として分離する |
+| P2 | 未着手 | GitHub | [#38](https://github.com/natumekazuki/WithMate/issues/38) | Memory 管理の専用画面 | `Settings` 内ではなく、Memory を専用画面で扱いたい | `#31` の follow-up。情報量と操作量が増えたため、独立 window / tab 化と操作責務の再整理が必要 |
 | P2 | 未着手 | GitHub | [#10](https://github.com/natumekazuki/WithMate/issues/10) | Copilot custom slash command | GitHub Copilot SDK v1.0.10 の独自 slash command をどう使うか | まず `slash command 吸収` 方針を決めてから着手したい |
 | P2 | 未着手 | GitHub | [#17](https://github.com/natumekazuki/WithMate/issues/17) | `tasks` コマンドの SDK 調査と実装 | Copilot `/tasks` 相当の background task 取得が SDK から扱えるか、Codex parity も含めて調べる | `docs/design/coding-agent-capability-matrix.md` の provider capability 整理と接続する調査寄り task |
 | P2 | 未着手 | GitHub | [#28](https://github.com/natumekazuki/WithMate/issues/28) | データ export / import | 少なくともキャラ定義を持ち運べる export / import 手段を検討する | Memory 同期まで含めると広いため slice 分割前提。`docs/design/character-storage.md` `docs/design/project-memory-storage.md` の確認が必要 |
 | P2 | 未着手 | GitHub | [#26](https://github.com/natumekazuki/WithMate/issues/26) | ウインドウ生成場所 | 新規 window をカーソル位置起点で生成したい | `docs/design/window-architecture.md` と Electron window 起動 policy の調整が必要 |
 | P2 | 未着手 | GitHub | [#23](https://github.com/natumekazuki/WithMate/issues/23) | `**message**` markdown 未反映 | Session Window で `**message**` が markdown として render されない | `docs/design/message-rich-text.md` の current renderer と差分確認が必要 |
 | P2 | 未着手 | GitHub | [#37](https://github.com/natumekazuki/WithMate/issues/37) | セッションウインドウのヘッダー調整 | 右ペインへ逃がせる header 操作を寄せ、左ペインは chat と操作欄へ寄せたい | `More` 展開時だけ広げる案。`docs/design/desktop-ui.md` の top bar / right pane 責務整理と接続する |
+| P2 | 未着手 | GitHub | [#41](https://github.com/natumekazuki/WithMate/issues/41) | チャットの Details ボタンが邪魔 | chat row ごとに `Details` が 1 行を占有して視線と操作の邪魔になっている | キャラアイコン押下や hover menu へ逃がす案があり、`#19` `#37` と合わせて chat row の action density を見直したい |
 | P2 | 完了 | Local | `session-feedback-recovery` | 通知整理と復帰導線 | live region の集約、送信不可時の理由提示、Error Boundary からの回復導線をまとめて整理した | explicit live region を pending indicator 中心へ寄せ、blocked shortcut 時の inline feedback / button title、window-level / pane-level の retry 導線を追加済み |
 | P2 | 完了 | Local | `theme-wcag-contrast` | テーマ色の WCAG コントラスト準拠 | character theme の文字色決定を WCAG 比率ベースへ置き換え、Home / Session / Character Editor / Diff の共通判定へ寄せた | `src/theme-utils.ts` を正本にして contrast ratio helper を共通化し、輝度閾値判定を撤去した |
 | P2 | 未着手 | Local | `memory-management-manual-update` | Memory 手動更新 UI | Settings の Memory 管理は delete までなので、必要なら manual edit / add / merge を別 task で扱う | `#31` の follow-up。schema 編集・validation・監査導線の整理が前提 |
@@ -113,6 +117,9 @@
   - Settings Window から Session / Project / Character Memory を一覧・閲覧し、Delete できるようにした
   - 手動 Update は `memory-management-manual-update` の follow-up に切り分ける
   - `#3` の保存基盤が前提で、観測・運用面では `#22` `#27` とつながる
+- `#38 Memory 管理の専用画面`
+  - Memory 管理の情報量と操作量が増えたため、Settings から切り出した専用画面を検討する
+  - `#31` の follow-up として、navigation / 操作責務 / window policy を整理する
 
 ### 6. 応用 / 統合
 
@@ -136,12 +143,12 @@
 
 ## 推奨順
 
-1. `#3 Memory 永続化と共有`
-2. `#1 独り言の API 運用`
-3. `memory-management-manual-update`
-4. `#37 セッションウインドウのヘッダー調整`
-5. `#10 Copilot custom slash command`
-6. `#23 **message** markdown 未反映`
+1. `#40 まだ SessionNotFound が発生する`
+2. `#3 Memory 永続化と共有`
+3. `#1 独り言の API 運用`
+4. `#38 Memory 管理の専用画面`
+5. `#37 セッションウインドウのヘッダー調整`
+6. `#41 チャットの Details ボタンが邪魔`
 
 ## 参照元
 
@@ -165,4 +172,4 @@
 - `docs/design/session-run-lifecycle.md`
 - `docs/design/window-architecture.md`
 - `docs/design/character-chat-ui.md`
-- GitHub Issues `#1 #3 #4 #5 #7 #10 #11 #12 #13 #14 #15 #16 #17 #18 #19 #20 #21 #22 #23 #24 #25 #26 #27 #28 #29 #30 #31 #32 #33 #34 #35 #36 #37`
+- GitHub Issues `#1 #3 #4 #5 #7 #10 #11 #12 #13 #14 #15 #16 #17 #18 #19 #20 #21 #22 #23 #24 #25 #26 #27 #28 #29 #30 #31 #32 #33 #34 #35 #36 #37 #38 #39 #40 #41`
