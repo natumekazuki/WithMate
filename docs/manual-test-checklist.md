@@ -94,7 +94,8 @@ npm run electron:start
 | MT-023C1 | Session narrow layout reachability | 幅 `1400px` 前後まで狭めた Session Window を開く | `message list + Action Dock` の塊の下に right pane が縦 stack で残り、`Latest Command / Memory生成 / 独り言` へ到達できる。狭幅でも right pane が失われない |
 | MT-023C2 | Session minimum width guardrail | Session Window を最小幅近くまで縮める | `message list + Action Dock` と right pane の縦 stack が維持され、scroll すれば両方へ到達できる。最小幅でも window が不自然に固定されない |
 | MT-023D | Session header collapsed state | Session Window を開いて right pane 上端を見る | 通常 state では right pane 上部に title だけの handle が表示され、左列の `message list + Action Dock` は window 最上端から始まる |
-| MT-023D1 | Session header expanded state | collapsed handle を押して header を展開する | header が左端まで伸びた full-width strip として表示され、`Rename / Audit Log / Terminal` と右端へ分離された `Delete` が見える。`Close` と `More` は出ない |
+| MT-023D1 | Session header expanded state | collapsed handle を押して header を展開する | header が左端まで伸びた full-width strip として表示され、`Rename / Audit Log / Terminal` と右端へ孤立した `Delete` が見える。`Close` と `More` は出ない |
+| MT-023D5 | Session right pane height priority | Copilot session で header を展開し、right pane の `Latest Command / Memory生成 / 独り言` と `Premium Requests / Context` を同時に見る | main panel 側が高さを優先し、`Premium Requests / Context` は下段の最小限領域に留まる。header 展開で monitor 面が不自然に縮まない |
 | MT-023D2 | Session terminal launch | expanded header の `Terminal` を押す | session の `workspacePath` を作業ディレクトリにした外部 terminal が開く |
 | MT-023D3 | Session header recollapse | expanded header の title を押す | header が閉じて right pane 上部の title handle に戻る |
 | MT-023D4 | Additional directory manage UI | Session Window の composer toolbar を確認し、`Add Directory` と `Dirs` を操作する | `Add Directory` が `Skill` と同じ列に並ぶ。`Dirs` は既定では閉じており、開いた後に現在の許可リストが表示され、provider が `Codex` の時だけ `×` で削除できる |

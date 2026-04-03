@@ -479,19 +479,21 @@ export function SessionHeader({
           </label>
         )}
         <div className="session-window-controls">
-          {!isEditingTitle ? (
-            <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning}>
-              Rename
+          <div className="session-window-primary-actions">
+            {!isEditingTitle ? (
+              <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning}>
+                Rename
+              </button>
+            ) : null}
+            <button className="drawer-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
+              Audit Log
             </button>
-          ) : null}
-          <button className="drawer-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
-            Audit Log
-          </button>
-          {showTerminalButton ? (
-            <button className="drawer-toggle compact secondary" type="button" onClick={onOpenTerminal}>
-              Terminal
-            </button>
-          ) : null}
+            {showTerminalButton ? (
+              <button className="drawer-toggle compact secondary" type="button" onClick={onOpenTerminal}>
+                Terminal
+              </button>
+            ) : null}
+          </div>
           <div className="session-window-danger-action">
             <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
               Delete
@@ -952,7 +954,7 @@ export function SessionContextPane({
   }, [contentScrollKey]);
 
   return (
-    <aside className="session-context-pane">
+    <aside className={`session-context-pane${isHeaderExpanded ? " session-context-pane-header-expanded" : ""}`}>
       {!isHeaderExpanded ? <SessionHeaderHandle taskTitle={taskTitle} onClick={onToggleHeaderExpanded} /> : null}
       <section className="command-monitor-shell" aria-label="最新 command">
         <div className={`command-monitor-head${isMemoryGenerationTab ? " memory-generation-layout" : ""}`}>
@@ -1269,7 +1271,7 @@ export function CharacterUpdateContextPane({
   }, [contentScrollKey]);
 
   return (
-    <aside className="session-context-pane">
+    <aside className={`session-context-pane${isHeaderExpanded ? " session-context-pane-header-expanded" : ""}`}>
       {!isHeaderExpanded ? <SessionHeaderHandle taskTitle={taskTitle} onClick={onToggleHeaderExpanded} /> : null}
       <section className="command-monitor-shell" aria-label="character update monitor">
         <div className="command-monitor-head">

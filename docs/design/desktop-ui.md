@@ -174,6 +174,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - title handle を押すと full-width header に切り替わり、`Rename / Audit Log / Terminal` と、右端へ分離した危険操作 `Delete` を表示する
   - `More` は使わない
   - title をもう一度押すと collapsed state へ戻れる
+  - expanded state でも right pane 本体の `Latest Command / Memory生成 / 独り言` が高さを優先し、`Premium Requests / Context` は下段の最小限領域に留める
 - `Action Dock`
   - compact / expanded の 2 状態を持つ
   - wide では message list と同じ左列幅に揃える
