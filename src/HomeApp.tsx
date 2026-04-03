@@ -806,7 +806,7 @@ export default function HomeApp() {
     return (
       <div className={`${homePageClassName} home-page-settings-window`.trim()}>
         <main className="home-layout home-layout-settings-window">
-          <section className="launch-dialog settings-dialog panel settings-window-shell">
+          <section className="launch-dialog settings-dialog panel settings-window-shell memory-window-shell">
             {memoryManagementLoaded ? (
               memoryManagementContent
             ) : (
@@ -825,15 +825,6 @@ export default function HomeApp() {
       <div className={homePageClassName}>
         <main className="home-layout home-layout-monitor-window">
           <section className="panel home-monitor-window-panel rise-3">
-            <div className="home-monitor-window-head">
-              <div className="home-monitor-window-copy">
-                <strong>Session Monitor</strong>
-                <span>開いている Session Window を常時表示</span>
-              </div>
-              <button className="launch-toggle compact" type="button" onClick={() => void openHomeWindow()}>
-                Home
-              </button>
-            </div>
             <section className="home-monitor-panel compact" aria-label="Session Monitor">
               <HomeMonitorContent
                 runningEntries={runningMonitorEntries}

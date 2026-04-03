@@ -457,10 +457,9 @@ button:disabled {
 }
 
 .home-settings-rail {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
   padding: 4px 6px 0;
 }
 
@@ -469,6 +468,10 @@ button:disabled {
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.home-settings-rail .home-pane-toggle {
+  justify-self: end;
 }
 
 .home-monitor-window-button {
@@ -576,30 +579,6 @@ button:disabled {
   min-height: 0;
   padding: 16px;
   background: rgba(21, 26, 35, 0.96);
-}
-
-.home-page .home-monitor-window-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.home-page .home-monitor-window-copy {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.home-page .home-monitor-window-copy strong {
-  color: #f4f7fb;
-  font-size: 0.96rem;
-}
-
-.home-page .home-monitor-window-copy span {
-  color: #99a6bb;
-  font-size: 0.76rem;
-  line-height: 1.45;
 }
 
 .home-page .home-monitor-panel,
@@ -1484,6 +1463,11 @@ button:disabled {
   height: 100%;
 }
 
+.memory-window-shell {
+  width: 100%;
+  max-width: none;
+}
+
 .settings-loading-state {
   display: grid;
   place-items: center;
@@ -1534,6 +1518,19 @@ button:disabled {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+}
+
+.settings-panel-memory-only {
+  padding: 18px;
+  overflow: hidden;
+}
+
+.settings-panel-memory-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-right: 6px;
 }
 
 .settings-field {
@@ -1595,6 +1592,11 @@ button:disabled {
   font: inherit;
 }
 
+.settings-field select option {
+  background: #10161f;
+  color: #f3f6fb;
+}
+
 .settings-field textarea:focus {
   outline: none;
   border-color: rgba(15, 139, 141, 0.5);
@@ -1617,6 +1619,17 @@ button:disabled {
   border-color: rgba(203, 213, 225, 0.12);
   background: rgba(15, 19, 26, 0.9);
   color: var(--ink);
+}
+
+.home-page.home-page-settings-window .settings-field select {
+  border-color: rgba(203, 213, 225, 0.14);
+  background: rgba(15, 19, 26, 0.92);
+  color: var(--ink);
+}
+
+.home-page.home-page-settings-window .settings-field select option {
+  background: #0f131a;
+  color: #f3f6fb;
 }
 
 .settings-actions {
@@ -1658,6 +1671,41 @@ button:disabled {
 .settings-memory-toolbar {
   display: grid;
   gap: 12px;
+}
+
+.settings-memory-domain-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-memory-domain-tab {
+  border: 1px solid rgba(203, 213, 225, 0.14);
+  border-radius: 999px;
+  background: rgba(15, 19, 26, 0.76);
+  color: var(--ink);
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 0.84rem;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.settings-memory-domain-tab:hover:not(.active) {
+  border-color: rgba(96, 165, 250, 0.28);
+  background: rgba(96, 165, 250, 0.1);
+}
+
+.settings-memory-domain-tab.active {
+  border-color: rgba(249, 115, 22, 0.34);
+  background: rgba(249, 115, 22, 0.16);
+  color: #ffe7d1;
+}
+
+.settings-memory-domain-tab:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 0.88);
+  outline-offset: 2px;
 }
 
 .settings-memory-filter-grid {
@@ -6275,7 +6323,6 @@ button:disabled {
 
   .home-settings-rail {
     align-items: stretch;
-    flex-direction: column;
   }
 
   .home-page .home-pane-toggle {

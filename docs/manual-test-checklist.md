@@ -38,7 +38,7 @@ npm run electron:start
 | MT-004D | Memory 管理専用画面起動 | Home 右ペインの `Memory` または `Settings Window` の `Open Memory Manager` を押す | 独立した `Memory Management Window` が開き、保存済み Memory snapshot の読込完了までは loading が出る |
 | MT-004G | Cursor-based window placement | cursor を画面端寄りへ移動してから `Settings Window`、`Memory Management Window`、`Character Editor Window`、`Session Window`、`Diff Window` を新規に開く | `Home Window` 以外の新規 window は cursor がある display 付近に開き、workArea 外へはみ出さない。既に開いている window を再度開いた時は位置を変えず focus だけが前面へ来る |
 | MT-004E | Memory 管理一覧 / delete | `Memory Management Window` を開き、Session / Project / Character Memory が少なくとも 1 件ずつある状態で `Delete` を実行する | `Session / Project / Character Memory` の件数、一覧、`Reload Memory` が表示される。対象 domain の item が消え、最後の `Project / Character Memory` entry を削除した時は空 scope も残らない。reload 後も再出現しない |
-| MT-004F | Memory 管理 search / filter | `Memory Management Window` で search text、domain、status / category、sort を切り替える | search は title / detail / keyword / workspace を横断して絞り込める。domain に応じて不要な filter は disabled になり、sort は更新日時順の切替が効く |
+| MT-004F | Memory 管理 search / filter | `Memory Management Window` で search text、domain tab、status / category、sort を切り替える | search は title / detail / keyword / workspace を横断して絞り込める。domain は `All / Session / Project / Character` tab で切り替えられ、選択中 section だけが出る。domain に応じて不要な filter は disabled になり、sort は更新日時順の切替が効く |
 | MT-005 | Settings copy | `Settings Window` を確認する | `OpenAI API Key (Coding Agent)` が coding plane 用と読め、`Character Stream 用ではない` 補助文と future note が表示される |
 | MT-006 | Compatibility note | `Settings Window` を確認する | `初回リリース前のため後方互換性は考慮しない` と `DB 初期化で復旧する` 旨の note が表示される |
 | MT-007 | Settings save | `System Prompt Prefix` または coding provider 設定を変更して `Save Settings` を押す | 保存成功メッセージが表示され、再度開いても保持される |

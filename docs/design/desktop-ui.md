@@ -130,7 +130,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 
 - `Home` または `Settings` から開く独立 window
 - renderer は `HomeApp` の `mode=memory` を再利用する
-- `Session / Project / Character Memory` の一覧、global search、domain filter、status / category filter、updatedAt sort
+- `Session / Project / Character Memory` の一覧、global search、domain tab、status / category filter、updatedAt sort
+- domain は `All / Session / Project / Character` の tab で切り替え、選択中 domain の section だけを表示する
 - `Reload Memory`
 - `Delete`
 - `Home` / `Close`

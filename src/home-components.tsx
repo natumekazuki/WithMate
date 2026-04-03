@@ -163,32 +163,21 @@ export function HomeSettingsContent({
 
   if (memoryManagementOnly) {
     return (
-      <>
-        <div className="launch-dialog-head minimal settings-window-head">
-          <button className="launch-toggle compact" type="button" onClick={onOpenHome}>
-            Home
-          </button>
-          <button className="diff-close" type="button" onClick={onCloseWindow}>
-            Close
-          </button>
+      <div className="settings-panel settings-panel-memory-only">
+        <div className="settings-panel-memory-scroll">
+          <SettingsMemoryManagementSection
+            snapshot={memoryManagementSnapshot}
+            loading={memoryManagementLoading}
+            busyTarget={memoryManagementBusyTarget}
+            feedback={memoryManagementFeedback}
+            onReload={onReloadMemoryManagement}
+            onDeleteSessionMemory={onDeleteSessionMemory}
+            onDeleteProjectMemoryEntry={onDeleteProjectMemoryEntry}
+            onDeleteCharacterMemoryEntry={onDeleteCharacterMemoryEntry}
+            standalone
+          />
         </div>
-
-        <div className="settings-panel">
-          <section className="settings-section">
-            <SettingsMemoryManagementSection
-              snapshot={memoryManagementSnapshot}
-              loading={memoryManagementLoading}
-              busyTarget={memoryManagementBusyTarget}
-              feedback={memoryManagementFeedback}
-              onReload={onReloadMemoryManagement}
-              onDeleteSessionMemory={onDeleteSessionMemory}
-              onDeleteProjectMemoryEntry={onDeleteProjectMemoryEntry}
-              onDeleteCharacterMemoryEntry={onDeleteCharacterMemoryEntry}
-              standalone
-            />
-          </section>
-        </div>
-      </>
+      </div>
     );
   }
 
@@ -663,6 +652,9 @@ function SettingsMemoryManagementSection({
     sessionStatus !== DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.sessionStatus ||
     projectCategory !== DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.projectCategory ||
     characterCategory !== DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.characterCategory;
+  const showSessionDomain = domain === "all" || domain === "session";
+  const showProjectDomain = domain === "all" || domain === "project";
+  const showCharacterDomain = domain === "all" || domain === "character";
 
   const clearFilters = () => {
     setSearchText(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.searchText);
@@ -710,17 +702,27 @@ function SettingsMemoryManagementSection({
               spellCheck={false}
             />
           </label>
-          <div className="settings-memory-filter-grid">
-            <label className="settings-provider-input">
-              <span>Domain</span>
-              <select value={domain} onChange={(event) => setDomain(event.target.value as MemoryManagementDomainFilter)}>
-                {MEMORY_DOMAIN_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
+          <div className="settings-provider-input">
+            <span>Domain</span>
+            <div className="settings-memory-domain-tabs" role="tablist" aria-label="memory domain">
+              {MEMORY_DOMAIN_OPTIONS.map((option) => {
+                const isActive = domain === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    className={`settings-memory-domain-tab${isActive ? " active" : ""}`}
+                    onClick={() => setDomain(option.value)}
+                  >
                     {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="settings-memory-filter-grid">
             <label className="settings-provider-input">
               <span>Sort</span>
               <select value={sort} onChange={(event) => setSort(event.target.value as MemoryManagementSort)}>
@@ -777,7 +779,8 @@ function SettingsMemoryManagementSection({
         </div>
 
         <div className="settings-memory-section-list">
-          <section className="settings-memory-domain">
+          {showSessionDomain ? (
+            <section className="settings-memory-domain">
             <div className="settings-memory-domain-head">
               <h3>Session Memory</h3>
               <span>{sessionCount}</span>
@@ -834,9 +837,11 @@ function SettingsMemoryManagementSection({
                 <p>{loading ? "Session Memory を読み込み中..." : "一致する Session Memory はないよ。"}</p>
               </article>
             )}
-          </section>
+            </section>
+          ) : null}
 
-          <section className="settings-memory-domain">
+          {showProjectDomain ? (
+            <section className="settings-memory-domain">
             <div className="settings-memory-domain-head">
               <h3>Project Memory</h3>
               <span>{projectEntryCount}</span>
@@ -884,9 +889,11 @@ function SettingsMemoryManagementSection({
                 <p>{loading ? "Project Memory を読み込み中..." : "一致する Project Memory はないよ。"}</p>
               </article>
             )}
-          </section>
+            </section>
+          ) : null}
 
-          <section className="settings-memory-domain">
+          {showCharacterDomain ? (
+            <section className="settings-memory-domain">
             <div className="settings-memory-domain-head">
               <h3>Character Memory</h3>
               <span>{characterEntryCount}</span>
@@ -934,7 +941,8 @@ function SettingsMemoryManagementSection({
                 <p>{loading ? "Character Memory を読み込み中..." : "一致する Character Memory はないよ。"}</p>
               </article>
             )}
-          </section>
+            </section>
+          ) : null}
         </div>
       </div>
     </section>
@@ -1365,6 +1373,23 @@ export function HomeRightPane({
   return (
     <section className="panel home-right-pane rise-3">
       <div className="home-settings-rail">
+        <div className="home-settings-actions">
+          <button
+            className="launch-toggle home-monitor-window-button"
+            type="button"
+            aria-label="Session Monitor Window を開く"
+            title="Session Monitor Window"
+            onClick={onOpenSessionMonitorWindow}
+          >
+            {monitorWindowIcon}
+          </button>
+          <button className="launch-toggle home-settings-button" type="button" onClick={onOpenMemoryManagementWindow}>
+            Memory
+          </button>
+          <button className="launch-toggle home-settings-button" type="button" onClick={onOpenSettingsWindow}>
+            Settings
+          </button>
+        </div>
         <div className="home-pane-toggle" role="tablist" aria-label="Home right pane">
           <button
             className={`home-pane-toggle-button ${rightPaneView === "monitor" ? "active" : ""}`.trim()}
@@ -1383,23 +1408,6 @@ export function HomeRightPane({
             onClick={() => onChangeRightPaneView("characters")}
           >
             Characters
-          </button>
-        </div>
-        <div className="home-settings-actions">
-          <button
-            className="launch-toggle home-monitor-window-button"
-            type="button"
-            aria-label="Session Monitor Window を開く"
-            title="Session Monitor Window"
-            onClick={onOpenSessionMonitorWindow}
-          >
-            {monitorWindowIcon}
-          </button>
-          <button className="launch-toggle home-settings-button" type="button" onClick={onOpenMemoryManagementWindow}>
-            Memory
-          </button>
-          <button className="launch-toggle home-settings-button" type="button" onClick={onOpenSettingsWindow}>
-            Settings
           </button>
         </div>
       </div>
