@@ -45,6 +45,10 @@ function displayRunCheckValue(check: { label: string; value: string }): string {
   return check.label.trim().toLowerCase() === "approval" ? displayApprovalValue(check.value) : check.value;
 }
 
+function collapseSummaryText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
 function liveApprovalKindLabel(kind: string): string {
   switch (kind) {
     case "shell":
@@ -1598,35 +1602,56 @@ export function SessionMessageColumn({
                         <div id={`artifact-panel-${artifactKey}`} className="artifact-block">
                           <div className="artifact-grid">
                             <section className="artifact-section">
-                              <div className="artifact-file-list">
-                                {message.artifact.changedFiles.length > 0 ? (
-                                  message.artifact.changedFiles.map((file) => (
-                                    <article key={`${file.kind}-${file.path}`} className="artifact-file-item">
-                                      <div className="artifact-file-meta">
-                                        <span className={`file-kind ${file.kind}`}>{fileKindLabel(file.kind)}</span>
-                                        <code>{file.path}</code>
-                                      </div>
-                                      <p>{file.summary}</p>
-                                      {file.diffRows.length > 0 ? (
-                                        <button
-                                          className="diff-button"
-                                          type="button"
-                                          onClick={() => onOpenDiff(message.artifact!.title, file)}
-                                        >
-                                          Open Diff
-                                        </button>
-                                      ) : null}
-                                    </article>
-                                  ))
+                              {message.artifact.changedFiles.length > 0 ? (
+                                  <details className="artifact-fold artifact-files-fold">
+                                    <summary className="artifact-fold-summary">
+                                      <span className="artifact-fold-summary-copy">
+                                        <strong>Changed Files</strong>
+                                        <span>{message.artifact.changedFiles.length} files</span>
+                                      </span>
+                                    </summary>
+                                    <div className="artifact-fold-body artifact-file-list">
+                                      {message.artifact.changedFiles.map((file) => (
+                                        <article key={`${file.kind}-${file.path}`} className="artifact-file-item">
+                                          <div className="artifact-file-meta">
+                                            <span className={`file-kind ${file.kind}`}>{fileKindLabel(file.kind)}</span>
+                                            <code>{file.path}</code>
+                                          </div>
+                                          <p>{file.summary}</p>
+                                          {file.diffRows.length > 0 ? (
+                                            <button
+                                              className="diff-button"
+                                              type="button"
+                                              onClick={() => onOpenDiff(message.artifact!.title, file)}
+                                            >
+                                              Open Diff
+                                            </button>
+                                          ) : null}
+                                        </article>
+                                      ))}
+                                    </div>
+                                  </details>
                                 ) : (
-                                  <article className="artifact-file-item empty-state-card">
-                                    <p>{getChangedFilesEmptyText(artifactKey, artifactHasSnapshotRisk)}</p>
-                                  </article>
+                                  <details className="artifact-fold artifact-files-fold">
+                                    <summary className="artifact-fold-summary">
+                                      <span className="artifact-fold-summary-copy">
+                                        <strong>Changed Files</strong>
+                                        <span>0 files</span>
+                                      </span>
+                                    </summary>
+                                    <div className="artifact-fold-body artifact-file-list">
+                                      <article className="artifact-file-item empty-state-card">
+                                        <p>{getChangedFilesEmptyText(artifactKey, artifactHasSnapshotRisk)}</p>
+                                      </article>
+                                    </div>
+                                  </details>
                                 )}
-                              </div>
                             </section>
 
                             <section className="artifact-section compact">
+                              <div className="artifact-section-header">
+                                <strong>Run Checks</strong>
+                              </div>
                               <div className="check-list">
                                 {message.artifact.runChecks.map((check) => (
                                   <div key={check.label} className="check-item">
@@ -1638,25 +1663,40 @@ export function SessionMessageColumn({
                             </section>
                           </div>
 
-                          <section className="artifact-section compact">
-                            <ul className="artifact-operation-list">
-                              {artifactOperations.map((operation, operationIndex) => (
-                                <li key={`${operation.type}-${operationIndex}`} className={`artifact-operation-item ${operation.type}`}>
-                                  <div className="artifact-operation-head">
-                                    <span className={`artifact-operation-type ${operation.type}`}>{operationTypeLabel(operation.type)}</span>
-                                  </div>
-                                  {operation.type === "agent_message" ? (
-                                    <div className="artifact-operation-message">
-                                      <MessageRichText text={operation.summary} onOpenPath={onOpenPath} />
-                                    </div>
-                                  ) : (
-                                    <p>{operation.summary}</p>
-                                  )}
-                                  {operation.details ? <pre>{operation.details}</pre> : null}
-                                </li>
-                              ))}
-                            </ul>
-                          </section>
+                          {artifactOperations.length > 0 ? (
+                            <section className="artifact-section compact">
+                              <div className="artifact-section-header">
+                                <strong>Operations</strong>
+                              </div>
+                              <ul className="artifact-operation-list">
+                                {artifactOperations.map((operation, operationIndex) => {
+                                  const operationSummary = collapseSummaryText(operation.summary) || operationTypeLabel(operation.type);
+                                  return (
+                                    <li key={`${operation.type}-${operationIndex}`} className={`artifact-operation-item ${operation.type}`}>
+                                      <details className="artifact-operation-fold">
+                                        <summary className="artifact-operation-summary" title={operationSummary}>
+                                          <div className="artifact-operation-head">
+                                            <span className={`artifact-operation-type ${operation.type}`}>{operationTypeLabel(operation.type)}</span>
+                                            <span className="artifact-operation-summary-text">{operationSummary}</span>
+                                          </div>
+                                        </summary>
+                                        <div className="artifact-operation-body">
+                                          {operation.type === "agent_message" ? (
+                                            <div className="artifact-operation-message">
+                                              <MessageRichText text={operation.summary} onOpenPath={onOpenPath} />
+                                            </div>
+                                          ) : (
+                                            <p>{operation.summary}</p>
+                                          )}
+                                          {operation.details ? <pre>{operation.details}</pre> : null}
+                                        </div>
+                                      </details>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </section>
+                          ) : null}
                         </div>
                       ) : null}
                     </section>
@@ -1736,19 +1776,18 @@ export function SessionMessageColumn({
             </div>
           </article>
         ) : null}
+        {!isMessageListFollowing ? (
+          <aside className={`message-follow-banner sticky ${hasMessageListUnread ? "has-unread" : "idle"}`}>
+            <div className="message-follow-banner-copy">
+              <span className="message-follow-banner-badge">{hasMessageListUnread ? "新着あり" : "読み返し中"}</span>
+              <p>{hasMessageListUnread ? "追従を止めている間に新しい表示が来たよ。" : "今は読み返し位置を維持しているよ。"}</p>
+            </div>
+            <button type="button" className="message-follow-banner-button" onClick={onJumpToBottom}>
+              末尾へ移動
+            </button>
+          </aside>
+        ) : null}
       </div>
-
-      {!isMessageListFollowing ? (
-        <aside className={`message-follow-banner ${hasMessageListUnread ? "has-unread" : "idle"}`}>
-          <div className="message-follow-banner-copy">
-            <span className="message-follow-banner-badge">{hasMessageListUnread ? "新着あり" : "読み返し中"}</span>
-            <p>{hasMessageListUnread ? "追従を止めている間に新しい表示が来たよ。" : "今は読み返し位置を維持しているよ。"}</p>
-          </div>
-          <button type="button" className="message-follow-banner-button" onClick={onJumpToBottom}>
-            末尾へ移動
-          </button>
-        </aside>
-      ) : null}
     </div>
   );
 }

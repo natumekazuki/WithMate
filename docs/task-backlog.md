@@ -62,7 +62,7 @@
 | P2 | 完了 | GitHub | [#14](https://github.com/natumekazuki/WithMate/issues/14) | memory の時間経過評価 | 古い記憶の価値を下げる評価値を導入する | `Project / Character Memory` の retrieval score 補正として `lastUsedAt ?? updatedAt` ベースの時間減衰を実装済み |
 | P2 | 完了 | GitHub | [#7](https://github.com/natumekazuki/WithMate/issues/7) | キャラ別メッセージ上書き | SessionWindow の固定文言を character ごとに差し替え、複数候補から stable に切り替えられるようにした | plan: `docs/plans/archive/2026/03/20260325-character-session-copy/`、design: `docs/design/session-character-copy.md` |
 | P2 | 保留 | GitHub | [#1](https://github.com/natumekazuki/WithMate/issues/1) | 独り言の API 運用 | subscription ではなく API key 前提で monologue を扱う | `docs/design/monologue-provider-policy.md` が正本。user が issue を reopen するまで pending 固定とし、その間は着手しない |
-| P2 | 未着手 | GitHub | [#19](https://github.com/natumekazuki/WithMate/issues/19) | Details 長文化対策 | Details が長くなるため、command 単位で折りたたみたい | `#21` と合わせて Details UI の情報密度を整理したい |
+| P2 | 完了 | GitHub | [#19](https://github.com/natumekazuki/WithMate/issues/19) | Details 長文化対策 | assistant bubble の Details で `Changed Files` を 1 ブロック化し、operation timeline を item 単位で default closed に整理した | `Run Checks` は常時表示のまま残し、artifact block 全体は `#41` の icon 導線を継続利用する。`末尾へ移動` は message list 内の sticky button に寄せた |
 | P2 | 未着手 | GitHub | [#18](https://github.com/natumekazuki/WithMate/issues/18) | フル HD 時の文字サイズ | Full HD では全体的に圧迫感があり文字が大きい | `docs/design/desktop-ui.md` の density 調整として扱う |
 | P2 | 見送り | Local | `copilot-rollout` | apps / mcp / plugins | provider extension surface の read-only 表示や制御を検討する | 「今は使っていない」整理なので優先度は落とす |
 | P3 | 未着手 | GitHub | [#15](https://github.com/natumekazuki/WithMate/issues/15) | キャラストリームをメモリー生成の一部にする | memory extraction のレスポンスに独り言を載せる構成を検討する | `#3` `#1` `#5` の後で判断。Memory と Character Stream を橋渡しする応用 task |

@@ -228,10 +228,10 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - 実行中は `Send` の代わりに `Cancel` を表示
 - assistant message ごとの `Turn Summary`
   - 展開導線は chat row の独立 1 行 button ではなく、assistant bubble 右上の小さい icon button とする
-  - `Changed Files`
+  - `Changed Files` は 1 ブロックでまとめて default closed とし、file list は開いた時だけ見せる
   - `Run Checks`
     - approval は `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording で表示する
-  - turn 内の `agent_message / command_execution / file_change / reasoning` を arrival 順に並べる operation timeline
+  - turn 内の `agent_message / command_execution / file_change / reasoning` を arrival 順に並べる operation timeline は item ごとに default closed とし、summary 1 行だけを先に見せる
 - composer 上の添付 toolbar (`File / Folder / Image`)
 - `File / Folder / Image` は attachment group として並べ、`Skill` は別カテゴリの単独 button として区別する
 - composer の attachment chip
