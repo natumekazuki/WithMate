@@ -307,27 +307,17 @@ button:disabled {
 }
 
 .session-window-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.session-window-primary-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
   min-width: 0;
-  flex-wrap: wrap;
 }
 
 .session-window-danger-action {
   display: flex;
   align-items: center;
-  justify-self: end;
+  margin-left: auto;
 }
 
 .app-icon {
@@ -2441,10 +2431,6 @@ button:disabled {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-}
-
-.session-context-pane.session-context-pane-header-expanded {
-  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 .session-action-dock {
