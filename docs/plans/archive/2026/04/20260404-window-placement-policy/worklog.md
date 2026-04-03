@@ -13,3 +13,4 @@
 - `node --import tsx scripts/tests/window-placement.test.ts`
 - `node --import tsx scripts/tests/aux-window-service.test.ts`
 - `npm run build`
+- commit: `9e1c743` `feat(window): place new windows near cursor`
