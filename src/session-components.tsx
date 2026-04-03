@@ -479,26 +479,24 @@ export function SessionHeader({
           </label>
         )}
         <div className="session-window-controls">
-          <div className="session-window-primary-actions">
-            {!isEditingTitle ? (
-              <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning}>
-                Rename
-              </button>
-            ) : null}
-            <button className="drawer-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
-              Audit Log
+          {!isEditingTitle ? (
+            <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning}>
+              Rename
             </button>
-            {showTerminalButton ? (
-              <button className="drawer-toggle compact secondary" type="button" onClick={onOpenTerminal}>
-                Terminal
-              </button>
-            ) : null}
-          </div>
-          <div className="session-window-danger-action">
-            <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
-              Delete
+          ) : null}
+          <button className="drawer-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
+            Audit Log
+          </button>
+          {showTerminalButton ? (
+            <button className="drawer-toggle compact secondary" type="button" onClick={onOpenTerminal}>
+              Terminal
             </button>
-          </div>
+          ) : null}
+        </div>
+        <div className="session-window-danger-action">
+          <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
+            Delete
+          </button>
         </div>
       </div>
     </header>

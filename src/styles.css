@@ -307,20 +307,10 @@ button:disabled {
 }
 
 .session-window-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
   gap: 12px;
   justify-self: end;
-  min-width: max-content;
-}
-
-.session-window-primary-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  min-width: 0;
   flex-wrap: wrap;
 }
 
@@ -1964,7 +1954,7 @@ button:disabled {
 
 .session-top-bar-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 14px;
   min-width: 0;
@@ -6169,9 +6159,10 @@ button:disabled {
   }
 
   .session-window-controls {
+    justify-self: stretch;
     width: 100%;
-    grid-template-columns: 1fr;
     align-items: stretch;
+    flex-direction: column;
   }
 
   .session-top-bar-row,
@@ -6182,10 +6173,6 @@ button:disabled {
     grid-template-columns: 1fr;
     flex-direction: column;
     align-items: stretch;
-  }
-
-  .session-window-primary-actions {
-    justify-content: flex-start;
   }
 
   .session-window-danger-action {
