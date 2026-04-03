@@ -16,3 +16,4 @@
 - `message-follow-banner` を scroll 領域内へ移し、`sticky bottom` で常時見える配置へ変更
 - 追加の `node --import tsx scripts/tests/session-app-render.test.ts`
 - 追加の `npm run build`
+- commit: `bbe651d` `fix(session): fold artifact details blocks`
