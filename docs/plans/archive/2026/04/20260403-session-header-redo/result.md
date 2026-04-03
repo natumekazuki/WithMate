@@ -17,3 +17,4 @@
 - `1de09ce` Revert "docs(plan): finalize session header right pane"
 - `1039d80` Revert "docs(plan): archive session header right pane"
 - `983a164` Revert "feat(session): right pane 専用 header に再配置"
+- `e8c5659` fix(session): ヘッダーを右ペイン起点で再構成

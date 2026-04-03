@@ -12,3 +12,4 @@
 - 2026-04-03: 検証を実施した。
   - `npm run build`
   - `node --import tsx scripts/tests/session-app-render.test.ts`
+- 2026-04-03: 実装・docs・plan を `e8c5659 fix(session): ヘッダーを右ペイン起点で再構成` として記録した。
