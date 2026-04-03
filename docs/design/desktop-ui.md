@@ -227,6 +227,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - right pane は run 中の command 安全確認面として扱い、full timeline や `Turn Inspector` は常設しない
 - 実行中は `Send` の代わりに `Cancel` を表示
 - assistant message ごとの `Turn Summary`
+  - 展開導線は chat row の独立 1 行 button ではなく、assistant bubble 右上の小さい icon button とする
   - `Changed Files`
   - `Run Checks`
     - approval は `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording で表示する

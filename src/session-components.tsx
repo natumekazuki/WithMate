@@ -1576,19 +1576,26 @@ export function SessionMessageColumn({
                 className={`message-row ${message.role}${message.accent ? " accent" : ""}`}
               >
                 {isAssistant ? <CharacterAvatar character={character} size="small" className="message-avatar" /> : null}
-                <div className={`message-card ${message.role}${message.accent ? " accent" : ""}`}>
+                <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${message.artifact ? " has-artifact" : ""}`}>
+                  {message.artifact ? (
+                    <button
+                      className="artifact-toggle artifact-toggle-icon"
+                      type="button"
+                      onClick={() => onToggleArtifact(artifactKey)}
+                      aria-expanded={artifactExpanded}
+                      aria-controls={`artifact-panel-${artifactKey}`}
+                      aria-label={artifactExpanded ? "Details を閉じる" : "Details を開く"}
+                      title={artifactExpanded ? "Hide Details" : "Details"}
+                    >
+                      {artifactExpanded ? "−" : "i"}
+                    </button>
+                  ) : null}
                   <MessageRichText text={message.text} onOpenPath={onOpenPath} />
 
                   {message.artifact ? (
                     <section className="artifact-shell">
-                      <div className="artifact-toolbar">
-                        <button className="artifact-toggle" type="button" onClick={() => onToggleArtifact(artifactKey)}>
-                          {artifactExpanded ? "Hide" : "Details"}
-                        </button>
-                      </div>
-
                       {artifactExpanded ? (
-                        <div className="artifact-block">
+                        <div id={`artifact-panel-${artifactKey}`} className="artifact-block">
                           <div className="artifact-grid">
                             <section className="artifact-section">
                               <div className="artifact-file-list">

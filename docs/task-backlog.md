@@ -1,6 +1,6 @@
 # Task Backlog
 
-- 更新日: 2026-04-03
+- 更新日: 2026-04-04
 - 対象: GitHub issue と repo 内の残タスクの統合管理
 
 ## 方針
@@ -54,7 +54,7 @@
 | P2 | 未着手 | GitHub | [#26](https://github.com/natumekazuki/WithMate/issues/26) | ウインドウ生成場所 | 新規 window をカーソル位置起点で生成したい | `docs/design/window-architecture.md` と Electron window 起動 policy の調整が必要 |
 | P2 | 未着手 | GitHub | [#23](https://github.com/natumekazuki/WithMate/issues/23) | `**message**` markdown 未反映 | Session Window で `**message**` が markdown として render されない | `docs/design/message-rich-text.md` の current renderer と差分確認が必要 |
 | P2 | 完了 | GitHub | [#37](https://github.com/natumekazuki/WithMate/issues/37) | セッションウインドウのヘッダー調整 | 左列を `message list + Action Dock` に使い切りつつ、右列には collapsed title handle と context pane を置く構成へ整理した | 通常時は right pane 上部に title handle だけを出し、押した時だけ full-width header を展開して `Rename / Audit Log / Terminal / Delete` を常設表示する |
-| P2 | 未着手 | GitHub | [#41](https://github.com/natumekazuki/WithMate/issues/41) | チャットの Details ボタンが邪魔 | chat row ごとに `Details` が 1 行を占有して視線と操作の邪魔になっている | キャラアイコン押下や hover menu へ逃がす案があり、`#19` `#37` と合わせて chat row の action density を見直したい |
+| P2 | 完了 | GitHub | [#41](https://github.com/natumekazuki/WithMate/issues/41) | チャットの Details ボタンが邪魔 | assistant bubble 内の `Details` 1 行ボタンをやめ、右上の小さい icon button へ移した | message 所属の操作だと分かる位置を保ちつつ、行占有をなくして視線ノイズを下げた。Details 長文化そのものは `#19` で継続検討する |
 | P2 | 完了 | Local | `session-feedback-recovery` | 通知整理と復帰導線 | live region の集約、送信不可時の理由提示、Error Boundary からの回復導線をまとめて整理した | explicit live region を pending indicator 中心へ寄せ、blocked shortcut 時の inline feedback / button title、window-level / pane-level の retry 導線を追加済み |
 | P2 | 完了 | Local | `theme-wcag-contrast` | テーマ色の WCAG コントラスト準拠 | character theme の文字色決定を WCAG 比率ベースへ置き換え、Home / Session / Character Editor / Diff の共通判定へ寄せた | `src/theme-utils.ts` を正本にして contrast ratio helper を共通化し、輝度閾値判定を撤去した |
 | P2 | 未着手 | Local | `memory-management-manual-update` | Memory 手動更新 UI | Settings の Memory 管理は delete までなので、必要なら manual edit / add / merge を別 task で扱う | `#31` の follow-up。schema 編集・validation・監査導線の整理が前提 |

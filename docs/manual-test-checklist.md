@@ -74,7 +74,7 @@ npm run electron:start
 | MT-018E | Background timeout settings persistence | Home の `Settings` で provider ごとの `Memory Extraction` / `Character Reflection` の `Timeout Seconds` を変更して保存し、開き直す | timeout 設定が provider ごとに保持され、再読込後も同じ値が表示される |
 | MT-018C | Audit Log modal keyboard | `Audit Log` を開き、`Tab` / `Shift+Tab` と `Escape` を試す | focus は overlay 内で循環し、`Escape` で閉じる |
 | MT-018A | Copilot audit log minimum | Copilot session で 1 turn 実行後に `Audit Log` を開く | `Logical Prompt` と `Transport Payload`、assistant text、provider metadata、raw session events が保存される。operations は command が無い turn では空でもよい |
-| MT-018B | Copilot Details / Diff | Copilot session で file 変更を伴う turn を 1 回実行し、assistant bubble の `Details` を開く | `Changed Files`、`Run Checks`、`operationTimeline` が表示され、差分がある file では `Open Diff` から split diff を開ける |
+| MT-018B | Copilot Details / Diff | Copilot session で file 変更を伴う turn を 1 回実行し、assistant bubble 右上の details icon を押す | `Changed Files`、`Run Checks`、`operationTimeline` が表示され、差分がある file では `Open Diff` から split diff を開ける |
 | MT-019 | Diff | artifact の `Open Diff` を押し、必要なら `Open In Window` も押す | inline diff と Diff Window の両方で split diff が開く |
 | MT-019A | Diff keyboard scroll | inline diff または `Diff Window` を開き、`Before / After` pane head / body へ focus して矢印キー、`PageUp` / `PageDown`、`Home` / `End` を試す | focus ring が見え、keyboard だけで縦横 scroll できる。左右 pane の同期も崩れない |
 | MT-019B | Diff narrow width guardrail | `Diff Window` を最小幅近くまで縮める | `Before / After` が縦 stack に切り替わり、各 pane の横 scroll は維持される。狭幅でも内容を読める |
