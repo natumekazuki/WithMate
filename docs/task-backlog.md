@@ -66,7 +66,7 @@
 | P2 | 完了 | GitHub | [#18](https://github.com/natumekazuki/WithMate/issues/18) | フル HD 時の文字サイズ | Session 専用の gap / padding / chip / button 高さを詰め、文字サイズではなく density で圧迫感を下げる方向へ調整した | user bubble は左 gutter を撤去し、`Details` icon は avatar 下へ移して本文領域を削らない構成にした |
 | P2 | 見送り | Local | `copilot-rollout` | apps / mcp / plugins | provider extension surface の read-only 表示や制御を検討する | 「今は使っていない」整理なので優先度は落とす |
 | P3 | 未着手 | GitHub | [#15](https://github.com/natumekazuki/WithMate/issues/15) | キャラストリームをメモリー生成の一部にする | memory extraction のレスポンスに独り言を載せる構成を検討する | `#3` `#1` `#5` の後で判断。Memory と Character Stream を橋渡しする応用 task |
-| P3 | 見送り | GitHub | [#5](https://github.com/natumekazuki/WithMate/issues/5) | 独り言システム pending | Character Stream / monologue UI 適用を保留にする | issue は open のまま、parity 完了後に着手判断 |
+| P3 | 完了 | GitHub | [#5](https://github.com/natumekazuki/WithMate/issues/5) | 独り言システム pending | current 実装では `Session Window` 右ペインの `独り言` host と `character reflection cycle` まで適用済み | issue 作成時点の「UI 適用は pending」は解消済み。API 分離は `#1` の保留論点として残す |
 | P3 | 完了 | GitHub | [#4](https://github.com/natumekazuki/WithMate/issues/4) | キャラ定義の自己改善 | `character-update session` で `character.md` / `character-notes.md` を更新できる導線を実装済み | current scope は「Update Session で改善できること」までとし、自動改善 loop は対象外とする |
 | P3 | 見送り | GitHub | [#29](https://github.com/natumekazuki/WithMate/issues/29) | マルチエージェント化 | WithMate 内部のエージェント呼び出しを MCP ベースで多段化できるか検討する | current は `single-agent runtime` を正本とし、multi-agent は optional な delegation architecture として保留する |
 | P3 | 未着手 | Local | `character-chat-ui` | キャラ画像まわりの polish | 画像 path 正規化、assistant bubble 表現、avatar 表現差など | `docs/design/character-chat-ui.md` の open points |
