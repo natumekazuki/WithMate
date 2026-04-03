@@ -311,7 +311,7 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  flex: 1 1 auto;
+  width: 100%;
   min-width: 0;
 }
 
@@ -1963,9 +1963,9 @@ button:disabled {
 }
 
 .session-top-bar-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 14px;
   min-width: 0;
 }
@@ -6170,7 +6170,7 @@ button:disabled {
 
   .session-window-controls {
     width: 100%;
-    flex-direction: column;
+    grid-template-columns: 1fr;
     align-items: stretch;
   }
 
@@ -6182,6 +6182,18 @@ button:disabled {
     grid-template-columns: 1fr;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .session-window-primary-actions {
+    justify-content: flex-start;
+  }
+
+  .session-window-danger-action {
+    justify-self: stretch;
+  }
+
+  .session-window-danger-action .drawer-toggle {
+    width: 100%;
   }
 
   .session-action-dock-compact-meta {
