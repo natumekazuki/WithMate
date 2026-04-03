@@ -427,14 +427,13 @@ export type SessionDiffModalProps = {
 
 export type SessionHeaderProps = {
   taskTitle: string;
+  isExpanded: boolean;
   isEditingTitle: boolean;
   titleDraft: string;
   isRunning: boolean;
-  showTerminalButton?: boolean;
+  showMoreButton?: boolean;
   onToggleExpanded: () => void;
   onClose: () => void;
-  onOpenAuditLog: () => void;
-  onOpenTerminal: () => void;
   onTitleDraftChange: (value: string) => void;
   onTitleInputKeyDown: KeyboardEventHandler<HTMLInputElement>;
   onSaveTitle: () => void;
@@ -445,14 +444,13 @@ export type SessionHeaderProps = {
 
 export function SessionHeader({
   taskTitle,
+  isExpanded,
   isEditingTitle,
   titleDraft,
   isRunning,
-  showTerminalButton = true,
+  showMoreButton = true,
   onToggleExpanded,
   onClose,
-  onOpenAuditLog,
-  onOpenTerminal,
   onTitleDraftChange,
   onTitleInputKeyDown,
   onSaveTitle,
@@ -461,61 +459,55 @@ export function SessionHeader({
   onDeleteSession,
 }: SessionHeaderProps) {
   return (
-    <header className="session-window-bar session-top-bar rise-1">
+    <header className={`session-window-bar session-top-bar rise-1${isExpanded ? " is-expanded" : ""}`}>
       <div className="session-top-bar-row">
-        {!isEditingTitle ? (
-          <button className="session-title-shell session-title-shell-toggle" type="button" onClick={onToggleExpanded}>
-            <span className="session-window-title session-title-accent">{taskTitle}</span>
-          </button>
-        ) : (
-          <label className="session-title-editor">
-            <input value={titleDraft} onChange={(event) => onTitleDraftChange(event.target.value)} onKeyDown={onTitleInputKeyDown} />
-            <div className="session-title-actions">
-              <button className="drawer-toggle compact" type="button" onClick={onSaveTitle}>
-                Save
-              </button>
-              <button className="drawer-toggle compact secondary" type="button" onClick={onCancelTitleEdit}>
-                Cancel
-              </button>
-            </div>
-          </label>
-        )}
+        <div className="session-title-shell">
+          <span className="session-window-title session-title-accent">{taskTitle}</span>
+        </div>
         <div className="session-window-controls">
-          {!isEditingTitle ? (
-            <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning}>
-              Rename
+          {showMoreButton && !isEditingTitle ? (
+            <button
+              className="drawer-toggle compact secondary"
+              type="button"
+              onClick={onToggleExpanded}
+              aria-expanded={isExpanded}
+            >
+              {isExpanded ? "Hide" : "More"}
             </button>
           ) : null}
-          <button className="drawer-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
-            Audit Log
-          </button>
-          {showTerminalButton ? (
-            <button className="drawer-toggle compact secondary" type="button" onClick={onOpenTerminal}>
-              Terminal
-            </button>
-          ) : null}
-          <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
-            Delete
-          </button>
           <button className="drawer-toggle compact" type="button" onClick={onClose}>
             Close
           </button>
         </div>
       </div>
+
+      {isExpanded ? (
+        <div className="session-top-bar-drawer">
+          {isEditingTitle ? (
+            <label className="session-title-editor">
+              <input value={titleDraft} onChange={(event) => onTitleDraftChange(event.target.value)} onKeyDown={onTitleInputKeyDown} />
+              <div className="session-title-actions">
+                <button className="drawer-toggle compact" type="button" onClick={onSaveTitle}>
+                  Save
+                </button>
+                <button className="drawer-toggle compact secondary" type="button" onClick={onCancelTitleEdit}>
+                  Cancel
+                </button>
+              </div>
+            </label>
+          ) : (
+            <div className="session-top-bar-manage">
+              <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning}>
+                Rename
+              </button>
+              <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
+                Delete
+              </button>
+            </div>
+          )}
+        </div>
+      ) : null}
     </header>
-  );
-}
-
-type SessionHeaderHandleProps = {
-  taskTitle: string;
-  onClick: () => void;
-};
-
-export function SessionHeaderHandle({ taskTitle, onClick }: SessionHeaderHandleProps) {
-  return (
-    <button className="session-header-handle" type="button" onClick={onClick}>
-      <span className="session-window-title session-title-accent">{taskTitle}</span>
-    </button>
   );
 }
 
@@ -764,8 +756,6 @@ export function SessionAuditLogModal({
 }
 
 export type SessionContextPaneProps = {
-  taskTitle: string;
-  isHeaderExpanded: boolean;
   activeContextPaneTab: ContextPaneTabKey;
   contextPaneProjection: ContextPaneProjection;
   latestCommandView: LatestCommandView | null;
@@ -784,8 +774,11 @@ export type SessionContextPaneProps = {
   selectedSessionContextTelemetry: SessionContextTelemetry | null;
   selectedSessionContextTelemetryProjection: SessionContextTelemetryProjection;
   contextEmptyText: string;
+  canOpenSessionTerminal: boolean;
+  sessionTerminalTitle: string;
   canRunSessionMemoryGeneration: boolean;
-  onToggleHeaderExpanded: () => void;
+  onOpenAuditLog: () => void;
+  onOpenTerminal: () => void;
   isSessionMemoryGenerationRunning: boolean;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onRunSessionMemoryGeneration: () => void;
@@ -863,23 +856,18 @@ export class SessionPaneErrorBoundary extends Component<
 }
 
 export type CharacterUpdateContextPaneProps = {
-  taskTitle: string;
-  isHeaderExpanded: boolean;
   activePaneTab: "latest-command" | "memory-extract";
   latestCommandView: LatestCommandView | null;
   runningDetailsEntries: RunningDetailsEntry[];
   selectedSessionLiveRunErrorMessage: string;
   memoryExtract: CharacterUpdateMemoryExtract | null;
   isLoadingMemoryExtract: boolean;
-  onToggleHeaderExpanded: () => void;
   onSelectPaneTab: (tab: "latest-command" | "memory-extract") => void;
   onRefreshMemoryExtract: () => void;
   onCopyMemoryExtract: () => void;
 };
 
 export function SessionContextPane({
-  taskTitle,
-  isHeaderExpanded,
   activeContextPaneTab,
   contextPaneProjection,
   latestCommandView,
@@ -898,8 +886,11 @@ export function SessionContextPane({
   selectedSessionContextTelemetry,
   selectedSessionContextTelemetryProjection,
   contextEmptyText,
+  canOpenSessionTerminal,
+  sessionTerminalTitle,
   canRunSessionMemoryGeneration,
-  onToggleHeaderExpanded,
+  onOpenAuditLog,
+  onOpenTerminal,
   isSessionMemoryGenerationRunning,
   onCycleContextPaneTab,
   onRunSessionMemoryGeneration,
@@ -956,7 +947,6 @@ export function SessionContextPane({
 
   return (
     <aside className="session-context-pane">
-      {!isHeaderExpanded ? <SessionHeaderHandle taskTitle={taskTitle} onClick={onToggleHeaderExpanded} /> : null}
       <section className="command-monitor-shell" aria-label="最新 command">
         <div className={`command-monitor-head${isMemoryGenerationTab ? " memory-generation-layout" : ""}`}>
           <div className="command-monitor-switcher" aria-label="右ペイン表示切り替え">
@@ -982,8 +972,21 @@ export function SessionContextPane({
               ›
             </button>
           </div>
-          {isMemoryGenerationTab ? (
-            <div className="command-monitor-head-actions">
+          <div className="command-monitor-head-actions">
+            <button className="launch-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
+              Audit Log
+            </button>
+            {canOpenSessionTerminal ? (
+              <button
+                className="launch-toggle compact secondary"
+                type="button"
+                onClick={onOpenTerminal}
+                title={sessionTerminalTitle}
+              >
+                Terminal
+              </button>
+            ) : null}
+            {isMemoryGenerationTab ? (
               <button
                 className="launch-toggle compact"
                 type="button"
@@ -992,8 +995,8 @@ export function SessionContextPane({
               >
                 {isSessionMemoryGenerationRunning ? "Generating..." : "Generate Memory"}
               </button>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </div>
 
         <div ref={contentRef} className="command-monitor-content">
@@ -1227,15 +1230,12 @@ export function SessionContextPane({
 }
 
 export function CharacterUpdateContextPane({
-  taskTitle,
-  isHeaderExpanded,
   activePaneTab,
   latestCommandView,
   runningDetailsEntries,
   selectedSessionLiveRunErrorMessage,
   memoryExtract,
   isLoadingMemoryExtract,
-  onToggleHeaderExpanded,
   onSelectPaneTab,
   onRefreshMemoryExtract,
   onCopyMemoryExtract,
@@ -1273,7 +1273,6 @@ export function CharacterUpdateContextPane({
 
   return (
     <aside className="session-context-pane">
-      {!isHeaderExpanded ? <SessionHeaderHandle taskTitle={taskTitle} onClick={onToggleHeaderExpanded} /> : null}
       <section className="command-monitor-shell" aria-label="character update monitor">
         <div className="command-monitor-head">
           <div className="audit-log-segmented session-context-segmented" aria-label="右ペイン表示切り替え">
