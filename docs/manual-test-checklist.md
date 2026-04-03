@@ -61,7 +61,7 @@ npm run electron:start
 | MT-015F | Copilot context usage details | Copilot session で 1 turn 実行し、右 pane の `Context` を開く | `current / limit / messages / system / conversation / reset` が開いた時だけ表示される。閉じた状態では右 pane の面積をほぼ消費しない |
 | MT-015G | Memory生成 tab auto switch | memory extraction が走る session を作り、右 pane を観察する | background memory extraction が `running` になった時だけ `Memory生成` 面へ自動切り替わる。command 実行中は `Latest Command` が優先される |
 | MT-015H | Memory生成 details content | Session Memory または Character Memory が更新される session を実行し、right pane の `Memory生成` で `Details` を開く | `trigger / model / reasoning` に加えて、更新された field や entry 内容が確認できる |
-| MT-015I | Manual Session Memory generation | idle の Session Window で right pane の `Generate Memory` を押す | `Memory生成` 面へ切り替わり、`Session Memory extraction` が `trigger: manual` で走る。完了後は summary / details が更新される。`Memory生成` 表示中は button が switcher の下段へ回り、見出し幅を圧迫しない |
+| MT-015I | Manual Session Memory generation | idle の Session Window で right pane を `Memory生成` へ切り替え、`Generate Memory` を押す | `Session Memory extraction` が `trigger: manual` で走る。完了後は summary / details が更新される。button は `Memory生成` 表示中だけ出て、switcher の下段へ回る |
 | MT-015J | Session close no auto extraction | Session Memory を持つ idle session を開いて閉じ、会話更新なしで再度開く | close 直後に `Memory生成` が自動実行されない。会話増分が無ければ `SessionStart` 独り言も重複生成されない |
 | MT-016 | Session 実行キャンセル | 実行中に `Cancel` を押す | 実行が止まり、session は `idle` に戻り、Audit Log に `CANCELED` が残る |
 | MT-017 | Approval / Model / Depth | idle 状態の Session Window で approval / model / depth を変更する | approval は `自動実行 / 安全寄り / プロバイダー判断` で表示され、選択値が保存され、再度開いても保持される |

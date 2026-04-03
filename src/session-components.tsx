@@ -982,16 +982,18 @@ export function SessionContextPane({
               ›
             </button>
           </div>
-          <div className="command-monitor-head-actions">
-            <button
-              className="launch-toggle compact"
-              type="button"
-              onClick={onRunSessionMemoryGeneration}
-              disabled={!canRunSessionMemoryGeneration || isSessionMemoryGenerationRunning}
-            >
-              {isSessionMemoryGenerationRunning ? "Generating..." : "Generate Memory"}
-            </button>
-          </div>
+          {isMemoryGenerationTab ? (
+            <div className="command-monitor-head-actions">
+              <button
+                className="launch-toggle compact"
+                type="button"
+                onClick={onRunSessionMemoryGeneration}
+                disabled={!canRunSessionMemoryGeneration || isSessionMemoryGenerationRunning}
+              >
+                {isSessionMemoryGenerationRunning ? "Generating..." : "Generate Memory"}
+              </button>
+            </div>
+          ) : null}
         </div>
 
         <div ref={contentRef} className="command-monitor-content">

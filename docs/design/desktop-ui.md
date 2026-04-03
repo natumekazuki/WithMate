@@ -194,8 +194,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - `elicitationRequest`: form または URL completion の `送信 / 拒否 / 閉じる`
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
 - right pane は `Latest Command / Memory生成 / 独り言` の tab host とする
-- right pane 上部には collapsed state の `title handle` と `Generate Memory` を置く
-  - `Memory生成` tab を表示している間だけ、`Generate Memory` は switcher の下段へ回して横幅を空ける
+- right pane 上部には collapsed state の `title handle` を置く
+  - `Generate Memory` は `Memory生成` tab を表示している間だけ出し、switcher の下段へ回して横幅を空ける
 - `character-update` variant では right pane を `LatestCommand / MemoryExtract` の 2 面に切り替える
 - `character-update` variant では expanded header の `Terminal` を出さない
 - `character-update` variant では composer の `Skill / Agent` picker を出さない
