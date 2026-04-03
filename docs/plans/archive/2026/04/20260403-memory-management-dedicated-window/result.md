@@ -27,3 +27,5 @@
 
 - `228fb18 feat(memory): Memory管理専用画面を追加`
   - dedicated `Memory Management Window`、Home / Settings 導線、関連 doc / test 同期
+- `3768865 docs(plan): archive memory management dedicated window`
+  - repo plan の archive と完了記録

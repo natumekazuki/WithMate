@@ -6,3 +6,5 @@
 - 2026-04-03: `npm run build`、`scripts/tests/aux-window-service.test.ts`、`scripts/tests/preload-api.test.ts`、`scripts/tests/main-window-facade.test.ts`、`scripts/tests/main-ipc-registration.test.ts`、`scripts/tests/main-ipc-deps.test.ts` を実行して通過を確認した。
 - 2026-04-03: `228fb18 feat(memory): Memory管理専用画面を追加`
   - dedicated `Memory Management Window`、Home / Settings 導線、関連 design / backlog / manual test / window test をまとめて反映した。
+- 2026-04-03: `3768865 docs(plan): archive memory management dedicated window`
+  - repo plan を `docs/plans/archive/2026/04/20260403-memory-management-dedicated-window/` へ移し、完了記録を保存した。
