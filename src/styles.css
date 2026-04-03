@@ -146,7 +146,7 @@ button:disabled {
   background: rgba(21, 26, 35, 0.92);
 }
 
-.session-page .session-pane-header,
+.session-page .session-top-bar,
 .session-page .session-work-surface {
   box-shadow: none;
 }
@@ -283,7 +283,7 @@ button:disabled {
   overflow: hidden;
 }
 
-.session-page .session-pane-header {
+.session-page .session-top-bar {
   padding: 10px 14px;
   overflow: visible;
 }
@@ -1933,7 +1933,7 @@ button:disabled {
   background: var(--surface-strong);
 }
 
-.session-pane-header {
+.session-top-bar {
   display: grid;
   gap: 10px;
   border: 1px solid rgba(203, 213, 225, 0.12);
@@ -1942,15 +1942,26 @@ button:disabled {
   backdrop-filter: blur(14px);
 }
 
-.session-pane-header-actions {
+.session-top-bar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+}
+
+.session-top-bar-drawer {
+  display: grid;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(203, 213, 225, 0.12);
+}
+
+.session-top-bar-manage {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.session-pane-title-editor {
-  width: 100%;
 }
 
 .session-title-shell {
@@ -6052,7 +6063,7 @@ button:disabled {
     padding: 12px;
   }
 
-  .session-page .session-pane-header {
+  .session-page .session-top-bar {
     padding: 10px 12px;
   }
 
@@ -6087,7 +6098,14 @@ button:disabled {
     align-items: stretch;
   }
 
-  .session-pane-header-actions,
+  .session-window-controls {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .session-top-bar-row,
+  .session-top-bar-manage,
   .session-action-dock-compact-row,
   .session-action-dock-compact-actions {
     width: 100%;

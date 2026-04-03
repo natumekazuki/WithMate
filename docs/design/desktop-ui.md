@@ -167,11 +167,11 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - right pane は Action Dock の手前で切らず、下端まで縦に伸ばす
   - narrow width では `message list + Action Dock -> Latest Command` の縦 stack へ戻す
   - current minimum は split-screen を考慮し、`900px` 台の window 幅でも縦 stack のまま到達性を維持する
-- `Header`
-  - session 全幅ではなく right pane 上部だけに置く
-  - 左ペインの chat 面は最上端から始める
-  - `Rename / Audit Log / Terminal / Delete / Close` を常時表示する
-  - `More` は使わない
+- `Top Bar`
+  - default は compact
+  - 常時表示するのは `title / More / Close`
+  - `Rename / Delete` は `More` で展開した時だけ表示する
+  - `Audit Log / Terminal` は right pane 上部の utility action へ寄せる
 - `Action Dock`
   - compact / expanded の 2 状態を持つ
   - wide では message list と同じ左列幅に揃える
@@ -191,12 +191,10 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - `approvalRequest`: `今回だけ許可 / 拒否`
   - `elicitationRequest`: form または URL completion の `送信 / 拒否 / 閉じる`
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
-- right pane は「header + tab host + provider usage」の縦構成にする
-- right pane header は session title と session 操作を持つ
-- `Latest Command / Memory生成 / 独り言` の tab host は header の下に置く
-- `Generate Memory` は tab host 側の action として残す
+- right pane は `Latest Command / Memory生成 / 独り言` の tab host とする
+- right pane 上部には `Audit Log / Terminal / Generate Memory` の utility action を置き、header から逃がせる session 操作をここへ寄せる
 - `character-update` variant では right pane を `LatestCommand / MemoryExtract` の 2 面に切り替える
-- `character-update` variant では header の `Terminal` を出さない
+- `character-update` variant では header の `Terminal / More` を出さない
 - `character-update` variant では composer の `Skill / Agent` picker を出さない
 - command 実行中は `Latest Command` を最優先で自動表示する
 - background memory extraction 実行中は `Memory生成` へ自動切り替える

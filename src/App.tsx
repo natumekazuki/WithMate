@@ -65,6 +65,7 @@ import {
   SessionPaneErrorBoundary,
   SessionContextPane,
   SessionDiffModal,
+  SessionHeader,
   SessionMessageColumn,
   SessionRetryBanner,
 } from "./session-components.js";
@@ -658,6 +659,7 @@ export default function App() {
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
   const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
   const [elicitationActionRequestId, setElicitationActionRequestId] = useState<string | null>(null);
+  const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
   const [isActionDockPinnedExpanded, setIsActionDockPinnedExpanded] = useState(false);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const activityMonitorRef = useRef<HTMLDivElement | null>(null);
@@ -1200,6 +1202,7 @@ export default function App() {
     setIsRetryDraftReplacePending(false);
     setApprovalActionRequestId(null);
     setElicitationActionRequestId(null);
+    setIsHeaderExpanded(false);
     setIsActionDockPinnedExpanded(false);
   }, [selectedSession?.provider, selectedSessionId]);
 
@@ -1971,6 +1974,7 @@ export default function App() {
   );
   const isActionDockExpanded = isActionDockPinnedExpanded || shouldForceActionDockExpanded;
   const canCollapseActionDock = !shouldForceActionDockExpanded;
+  const isSessionHeaderExpanded = isHeaderExpanded || isEditingTitle;
   const actionDockCompactPreview = useMemo(() => {
     const normalizedDraft = draft.replace(/\s+/g, " ").trim();
     if (normalizedDraft) {
@@ -2297,6 +2301,7 @@ export default function App() {
     }
 
     setTitleDraft(selectedSession.taskTitle);
+    setIsHeaderExpanded(true);
     setIsEditingTitle(true);
   };
 
@@ -2442,6 +2447,14 @@ export default function App() {
 
   const handleCloseWindow = () => {
     window.close();
+  };
+
+  const handleToggleHeaderExpanded = () => {
+    if (isEditingTitle) {
+      return;
+    }
+
+    setIsHeaderExpanded((current) => !current);
   };
 
   const handleExpandActionDock = (options?: { focusComposer?: boolean }) => {
@@ -2849,6 +2862,23 @@ export default function App() {
 
   return (
     <div className="page-shell session-page" style={sessionThemeStyle}>
+      <SessionHeader
+        taskTitle={selectedSession.taskTitle}
+        isExpanded={isSessionHeaderExpanded}
+        isEditingTitle={isEditingTitle}
+        titleDraft={titleDraft}
+        isRunning={selectedSession.runState === "running"}
+        showMoreButton={!isCharacterUpdateSession}
+        onToggleExpanded={handleToggleHeaderExpanded}
+        onClose={handleCloseWindow}
+        onTitleDraftChange={setTitleDraft}
+        onTitleInputKeyDown={handleTitleInputKeyDown}
+        onSaveTitle={() => void handleSaveTitle()}
+        onCancelTitleEdit={handleCancelTitleEdit}
+        onStartTitleEdit={handleStartTitleEdit}
+        onDeleteSession={() => void handleDeleteSession()}
+      />
+
       <section className="content-grid session-content-grid">
         <section className="chat-panel session-work-surface rise-3">
           <div className="session-workbench" ref={sessionWorkbenchRef} style={sessionWorkbenchStyle}>
@@ -3015,34 +3045,18 @@ export default function App() {
               <SessionPaneErrorBoundary>
                 {isCharacterUpdateSession ? (
                   <CharacterUpdateContextPane
-                    taskTitle={selectedSession.taskTitle}
-                    isEditingTitle={isEditingTitle}
-                    titleDraft={titleDraft}
-                    isRunning={selectedSession.runState === "running"}
                     activePaneTab={activeCharacterUpdatePaneTab}
                     latestCommandView={latestCommandView}
                     runningDetailsEntries={runningDetailsEntries}
                     selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
                     memoryExtract={selectedCharacterUpdateMemoryExtract}
                     isLoadingMemoryExtract={isCharacterUpdateMemoryExtractLoading}
-                    onCloseWindow={handleCloseWindow}
-                    onOpenAuditLog={() => setAuditLogsOpen(true)}
-                    onTitleDraftChange={setTitleDraft}
-                    onTitleInputKeyDown={handleTitleInputKeyDown}
-                    onSaveTitle={() => void handleSaveTitle()}
-                    onCancelTitleEdit={handleCancelTitleEdit}
-                    onStartTitleEdit={handleStartTitleEdit}
-                    onDeleteSession={() => void handleDeleteSession()}
                     onSelectPaneTab={setActiveCharacterUpdatePaneTab}
                     onRefreshMemoryExtract={() => void handleRefreshCharacterUpdateMemoryExtract()}
                     onCopyMemoryExtract={() => void handleCopyCharacterUpdateMemoryExtract()}
                   />
                 ) : (
                   <SessionContextPane
-                    taskTitle={selectedSession.taskTitle}
-                    isEditingTitle={isEditingTitle}
-                    titleDraft={titleDraft}
-                    isRunning={selectedSession.runState === "running"}
                     activeContextPaneTab={activeContextPaneTab}
                     contextPaneProjection={contextPaneProjection}
                     latestCommandView={latestCommandView}
@@ -3064,15 +3078,8 @@ export default function App() {
                     canOpenSessionTerminal={!isCharacterUpdateSession}
                     sessionTerminalTitle={selectedSession.workspacePath}
                     canRunSessionMemoryGeneration={!!withmateApi && !isSelectedSessionRunning}
-                    onCloseWindow={handleCloseWindow}
                     onOpenAuditLog={() => setAuditLogsOpen(true)}
                     onOpenTerminal={() => void handleOpenSessionTerminal()}
-                    onTitleDraftChange={setTitleDraft}
-                    onTitleInputKeyDown={handleTitleInputKeyDown}
-                    onSaveTitle={() => void handleSaveTitle()}
-                    onCancelTitleEdit={handleCancelTitleEdit}
-                    onStartTitleEdit={handleStartTitleEdit}
-                    onDeleteSession={() => void handleDeleteSession()}
                     isSessionMemoryGenerationRunning={selectedMemoryGenerationActivity?.status === "running"}
                     onCycleContextPaneTab={handleCycleContextPaneTab}
                     onRunSessionMemoryGeneration={() => void handleRunSessionMemoryExtraction()}
