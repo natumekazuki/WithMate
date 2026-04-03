@@ -68,9 +68,11 @@ current milestone では、署名や notarization まで確定せず、まず未
 
 ## Asset Policy
 
-- installer icon は current task では未導入
-- `build/icon.ico` と `build/icon.icns` は follow-up で追加する
-- icon 未設定時は Electron 既定アイコンのまま packaging を通す
+- packaging icon は `build/` 配下で管理する
+- source asset は `build/icon.svg`
+- Windows packaging は `build/icon.ico` を使う
+- macOS packaging は `build/icon.png` を source asset として使う
+- icon asset の再生成は `npm run icon:generate` を正本にする
 
 ## Manual Verification
 

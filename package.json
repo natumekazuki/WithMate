@@ -6,15 +6,16 @@
   "main": "dist-electron/src-electron/main.js",
   "scripts": {
     "dev": "vite",
+    "icon:generate": "node --import tsx scripts/generate-app-icon.ts",
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "build": "npm run build:renderer && npm run build:electron",
     "electron:dev": "npm run build:electron && tsx scripts/run-electron-dev.ts",
     "electron:start": "npm run build && electron dist-electron/src-electron/main.js",
-    "dist": "npm run build && electron-builder",
-    "dist:win": "npm run build && electron-builder --win nsis",
-    "dist:mac": "npm run build && electron-builder --mac dmg",
-    "dist:dir": "npm run build && electron-builder --dir",
+    "dist": "npm run icon:generate && npm run build && electron-builder",
+    "dist:win": "npm run icon:generate && npm run build && electron-builder --win nsis",
+    "dist:mac": "npm run icon:generate && npm run build && electron-builder --mac dmg",
+    "dist:dir": "npm run icon:generate && npm run build && electron-builder --dir",
     "preview": "vite preview",
     "test": "tsx --test scripts/tests/*.test.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
@@ -38,6 +39,8 @@
     "@vitejs/plugin-react": "^5.1.4",
     "electron": "^41.0.0",
     "electron-builder": "^26.8.1",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.5",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
@@ -45,6 +48,7 @@
   "build": {
     "appId": "com.natumekazuki.withmate",
     "productName": "WithMate",
+    "icon": "build/icon.png",
     "directories": {
       "output": "release"
     },
@@ -55,12 +59,14 @@
     ],
     "asar": true,
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis"
       ]
     },
     "mac": {
       "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png",
       "target": [
         "dmg"
       ],

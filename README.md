@@ -111,7 +111,7 @@ npm run dist
 
 - macOS の実ビルドは macOS マシンまたは macOS CI runner を前提にします
 - current task では signing / notarization は入れていません
-- installer icon も未設定のため、正式配布前に別 task で整備が必要です
+- installer icon は `build/icon.png` と `build/icon.ico` を packaging 入力として使います
 
 ### 型チェック
 
