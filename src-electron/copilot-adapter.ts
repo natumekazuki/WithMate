@@ -1012,7 +1012,9 @@ function extractToolExecutionDetails(event: Extract<SessionEvent, { type: "tool.
 
 function toCommandOperations(steps: Map<string, LiveRunStep>): AuditLogOperation[] {
   return Array.from(steps.values())
-    .filter((step) => step.type === "command_execution")
+    .filter((step) =>
+      step.type === "command_execution"
+      && (step.status === "completed" || step.status === "failed" || step.status === "canceled"))
     .map((step) => ({
       type: "command_execution",
       summary: step.summary,

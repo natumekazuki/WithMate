@@ -25,7 +25,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | P1 | 完了 | GitHub | [#36](https://github.com/natumekazuki/WithMate/issues/36) | メモリー生成の監査ログ保存不具合 | memory generation 自体は completed update 済みで、renderer の `Audit Log` 再読込条件が stale だった問題を修正した | background activity の `status / updatedAt` 変化も再読込条件へ含め、modal を開いたままでも response / error / raw items の確定値が反映される |
 | P1 | 完了 | GitHub | [#35](https://github.com/natumekazuki/WithMate/issues/35) | メモリー生成のタイムアウト短い | `Memory Extraction` と `Character Reflection` に provider ごとの `Timeout Seconds` を追加し、background plane の timeout を settings から調整できるようにした | default は `180s`、normalize は `30..1800s`。Codex は `AbortSignal.timeout`、Copilot は `sendAndWait(timeout)` へ反映する |
-| P1 | 未着手 | GitHub | [#40](https://github.com/natumekazuki/WithMate/issues/40) | まだ SessionNotFound が発生する | `threadId` は変わらないまま失敗し、agent 切り替えで通るケースが残っている | `resume` 未実行、または cached session 再利用経路で internal retry が漏れている可能性があるため、Copilot adapter / runtime retry の再調査が必要 |
+| P1 | 完了 | GitHub | [#40](https://github.com/natumekazuki/WithMate/issues/40) | まだ SessionNotFound が発生する | cached `CopilotSession` の stale recovery で、未確定 step まで partial 扱いになり internal retry が止まっていた問題を修正した | `tool.execution_start` や pending permission は retry blocker から外し、completed / failed / canceled の command だけを `operations` へ残すようにした |
 | P1 | 完了 | GitHub | [#39](https://github.com/natumekazuki/WithMate/issues/39) | セッション画面が表示できない | `#36` で入った `auditLogRefreshSignature` が初回 render 中に `displayedMessages` を後方参照し、TDZ 例外で WindowErrorBoundary へ落ちていた問題を修正した | refresh signature は `selectedSession?.messages.length ?? 0` を使うようにし、Session Window の server render 回帰 test を追加した |
 | P1 | 完了 | GitHub | [#24](https://github.com/natumekazuki/WithMate/issues/24) | モデル切り替えバグ | model / reasoning 変更後に stale thread を引きずって失敗する症状を解消した | `threadId reset + provider cache invalidate` を正本にし、次 turn は新規 thread で開始する |
 | P1 | 完了 | GitHub | [#32](https://github.com/natumekazuki/WithMate/issues/32) | 長時間放置後の Session not found | 長時間放置や stale thread / session に起因する NotFound を同一 turn 内の internal retry で吸収した | meaningful partial が無い時だけ `threadId clear + internal retry` を 1 回だけ行う |
@@ -143,12 +143,12 @@
 
 ## 推奨順
 
-1. `#40 まだ SessionNotFound が発生する`
-2. `#3 Memory 永続化と共有`
-3. `#1 独り言の API 運用`
-4. `#38 Memory 管理の専用画面`
-5. `#37 セッションウインドウのヘッダー調整`
-6. `#41 チャットの Details ボタンが邪魔`
+1. `#3 Memory 永続化と共有`
+2. `#1 独り言の API 運用`
+3. `#38 Memory 管理の専用画面`
+4. `#37 セッションウインドウのヘッダー調整`
+5. `#41 チャットの Details ボタンが邪魔`
+6. `#10 Copilot custom slash command`
 
 ## 参照元
 

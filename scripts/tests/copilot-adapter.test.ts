@@ -578,11 +578,22 @@ describe("CopilotAdapter env", () => {
       }),
       false,
     );
+    const missingSessionWithToolStartRawItems = new ProviderTurnError(
+      "SessionNotFound: session not found",
+      createPartialResult({
+        rawItemsJson: JSON.stringify([
+          { type: "tool.execution_start", data: { toolCallId: "call-1", toolName: "shell", summary: "dir" } },
+          { type: "session.error", data: { message: "SessionNotFound" } },
+        ]),
+      }),
+      false,
+    );
 
     assert.equal(shouldRetryCopilotTurn(emptyPartial), true);
     assert.equal(shouldRetryCopilotTurn(withAssistantText), false);
     assert.equal(shouldRetryCopilotTurn(missingSession), true);
     assert.equal(shouldRetryCopilotTurn(missingSessionWithRawItems), true);
+    assert.equal(shouldRetryCopilotTurn(missingSessionWithToolStartRawItems), true);
     assert.equal(shouldRetryCopilotTurn(missingSessionWithOperation), false);
   });
 
