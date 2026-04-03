@@ -8,5 +8,3 @@
 - 2026-04-03: `npm run build` と `scripts/tests/session-app-render.test.ts` を実行して通過を確認した。
 - 2026-04-03: `432423f feat(session): right pane 専用 header に再配置`
   - global header の撤去、right pane header 化、`More` 廃止、関連 doc / plan 同期を反映した。
-- 2026-04-03: `8bb7402 docs(plan): archive session header right pane`
-  - repo plan を `docs/plans/archive/2026/04/20260403-session-header-right-pane/` へ移し、完了記録を保存した。
