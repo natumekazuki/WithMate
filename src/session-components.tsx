@@ -905,6 +905,7 @@ export function SessionContextPane({
   onRunSessionMemoryGeneration,
 }: SessionContextPaneProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const isMemoryGenerationTab = activeContextPaneTab === "memory-generation";
   const memoryGenerationActivities = useMemo(
     () =>
       [selectedMemoryGenerationActivity, selectedCharacterMemoryGenerationActivity]
@@ -957,7 +958,7 @@ export function SessionContextPane({
     <aside className="session-context-pane">
       {!isHeaderExpanded ? <SessionHeaderHandle taskTitle={taskTitle} onClick={onToggleHeaderExpanded} /> : null}
       <section className="command-monitor-shell" aria-label="最新 command">
-        <div className="command-monitor-head">
+        <div className={`command-monitor-head${isMemoryGenerationTab ? " memory-generation-layout" : ""}`}>
           <div className="command-monitor-switcher" aria-label="右ペイン表示切り替え">
             <button
               type="button"
@@ -980,18 +981,18 @@ export function SessionContextPane({
             >
               ›
             </button>
+          </div>
+          <div className="command-monitor-head-actions">
+            <button
+              className="launch-toggle compact"
+              type="button"
+              onClick={onRunSessionMemoryGeneration}
+              disabled={!canRunSessionMemoryGeneration || isSessionMemoryGenerationRunning}
+            >
+              {isSessionMemoryGenerationRunning ? "Generating..." : "Generate Memory"}
+            </button>
+          </div>
         </div>
-        <div className="command-monitor-head-actions">
-          <button
-            className="launch-toggle compact"
-            type="button"
-            onClick={onRunSessionMemoryGeneration}
-            disabled={!canRunSessionMemoryGeneration || isSessionMemoryGenerationRunning}
-          >
-            {isSessionMemoryGenerationRunning ? "Generating..." : "Generate Memory"}
-          </button>
-        </div>
-      </div>
 
         <div ref={contentRef} className="command-monitor-content">
           <div className="command-monitor-stack">

@@ -61,7 +61,7 @@ npm run electron:start
 | MT-015F | Copilot context usage details | Copilot session で 1 turn 実行し、右 pane の `Context` を開く | `current / limit / messages / system / conversation / reset` が開いた時だけ表示される。閉じた状態では右 pane の面積をほぼ消費しない |
 | MT-015G | Memory生成 tab auto switch | memory extraction が走る session を作り、右 pane を観察する | background memory extraction が `running` になった時だけ `Memory生成` 面へ自動切り替わる。command 実行中は `Latest Command` が優先される |
 | MT-015H | Memory生成 details content | Session Memory または Character Memory が更新される session を実行し、right pane の `Memory生成` で `Details` を開く | `trigger / model / reasoning` に加えて、更新された field や entry 内容が確認できる |
-| MT-015I | Manual Session Memory generation | idle の Session Window で right pane 上部の `Generate Memory` を押す | `Memory生成` 面へ切り替わり、`Session Memory extraction` が `trigger: manual` で走る。完了後は summary / details が更新される |
+| MT-015I | Manual Session Memory generation | idle の Session Window で right pane の `Generate Memory` を押す | `Memory生成` 面へ切り替わり、`Session Memory extraction` が `trigger: manual` で走る。完了後は summary / details が更新される。`Memory生成` 表示中は button が switcher の下段へ回り、見出し幅を圧迫しない |
 | MT-015J | Session close no auto extraction | Session Memory を持つ idle session を開いて閉じ、会話更新なしで再度開く | close 直後に `Memory生成` が自動実行されない。会話増分が無ければ `SessionStart` 独り言も重複生成されない |
 | MT-016 | Session 実行キャンセル | 実行中に `Cancel` を押す | 実行が止まり、session は `idle` に戻り、Audit Log に `CANCELED` が残る |
 | MT-017 | Approval / Model / Depth | idle 状態の Session Window で approval / model / depth を変更する | approval は `自動実行 / 安全寄り / プロバイダー判断` で表示され、選択値が保存され、再度開いても保持される |
@@ -69,7 +69,7 @@ npm run electron:start
 | MT-017B | Model / Depth change thread reset | thread を持っている session で 1 turn 実行後、idle 状態で model または depth を変更してから次の turn を送る | 次 turn は旧 thread を再利用せず新規 thread として実行される。失敗せず完了し、以後は新 thread が継続利用される |
 | MT-017C | Stale thread internal retry | provider 側で thread / session not found または expired 相当を再現できる session を用意して 1 turn 送る | renderer からの再送なしで同一 turn 内の internal retry だけが走り、user / assistant message と audit log record は 1 件ずつに留まる。meaningful partial が無い時だけ回復し、回復後は新 thread で継続できる |
 | MT-017D | Copilot elicitation prompt | provider を `GitHub Copilot` にした session で `elicitation.requested` を返す turn を実行する | pending bubble 内に form または URL card が出て、`送信 / 拒否 / 閉じる` が使える。form では required field 未入力時に alert が出て、`accept / decline / cancel` に応じて run が再開または終了する |
-| MT-018 | Audit Log | Session Window の right pane 上部にある `Audit Log` を押す | 1 turn 1 record の監査ログが閲覧でき、approval 表示は provider-neutral wording になる。prompt 表示は `Logical Prompt` と `Transport Payload` に分かれる |
+| MT-018 | Audit Log | expanded header の `Audit Log` を押す | 1 turn 1 record の監査ログが閲覧でき、approval 表示は provider-neutral wording になる。prompt 表示は `Logical Prompt` と `Transport Payload` に分かれる |
 | MT-018D | Background Audit Log refresh | Session Memory extraction または Character Reflection を走らせた状態で `Audit Log` を開いたまま background task 完了まで待つ | `Background` タブの該当 entry が再描画され、reload や session 切替をしなくても response / error / raw items の completed 値が見える |
 | MT-018E | Background timeout settings persistence | Home の `Settings` で provider ごとの `Memory Extraction` / `Character Reflection` の `Timeout Seconds` を変更して保存し、開き直す | timeout 設定が provider ごとに保持され、再読込後も同じ値が表示される |
 | MT-018C | Audit Log modal keyboard | `Audit Log` を開き、`Tab` / `Shift+Tab` と `Escape` を試す | focus は overlay 内で循環し、`Escape` で閉じる |

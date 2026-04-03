@@ -2621,6 +2621,10 @@ button:disabled {
   align-items: center;
 }
 
+.command-monitor-head.memory-generation-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .command-monitor-head-actions {
   display: flex;
   align-items: center;
