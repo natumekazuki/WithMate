@@ -90,6 +90,29 @@ npm test
 npm run electron:start
 ```
 
+### 配布ビルド
+
+Windows installer と macOS 向け配布物の準備には `electron-builder` を使います。
+
+```bash
+npm run dist
+```
+
+- `npm run dist`
+  - current platform 向けの既定 target をビルドします
+- `npm run dist:win`
+  - Windows 向け NSIS installer をビルドします
+- `npm run dist:mac`
+  - macOS 向け DMG をビルドします
+- `npm run dist:dir`
+  - unpacked directory を出力して packaging 接続確認に使います
+
+注意:
+
+- macOS の実ビルドは macOS マシンまたは macOS CI runner を前提にします
+- current task では signing / notarization は入れていません
+- installer icon も未設定のため、正式配布前に別 task で整備が必要です
+
 ### 型チェック
 
 ```bash
@@ -117,6 +140,8 @@ npm run typecheck
   - coding agent wrapper 観点の対応機能一覧と current status
 - `docs/design/window-architecture.md`
   - Window ごとの責務分離
+- `docs/design/distribution-packaging.md`
+  - installer / app bundle の build 方針
 - `docs/design/desktop-ui.md`
   - 現行 UI の構成
 - `docs/design/prompt-composition.md`

@@ -52,6 +52,7 @@ current 実装の正本として維持する文書。
 | `electron-window-runtime.md` | BrowserWindow / preload / runtime 詳細 |
 | `manual-test-checklist.md` | 実機テスト項目の current 一覧 |
 | `provider-usage-telemetry.md` | Copilot quota / context telemetry の詳細 |
+| `distribution-packaging.md` | installer / app bundle の packaging 方針 |
 | `refactor-roadmap.md` | current リファクタの進行管理 |
 
 ### C. Archived Design Notes
