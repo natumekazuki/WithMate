@@ -24,6 +24,10 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
       async openSettingsWindow() {
         return {} as never;
       },
+      async openMemoryManagementWindow() {
+        calls.push("openMemory");
+        return {} as never;
+      },
       async openCharacterEditorWindow() {
         return {} as never;
       },
@@ -125,6 +129,7 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
   });
 
   assert.equal(await deps.openHomeWindow(), undefined);
+  assert.equal(await deps.openMemoryManagementWindow(), undefined);
   assert.equal(await deps.openSessionWindow("session-1"), undefined);
-  assert.deepEqual(calls, ["openHome", "openSession:session-1"]);
+  assert.deepEqual(calls, ["openHome", "openMemory", "openSession:session-1"]);
 });

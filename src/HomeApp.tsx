@@ -91,12 +91,16 @@ async function openSettingsWindow() {
   await withWithMateApi((api) => api.openSettingsWindow());
 }
 
+async function openMemoryManagementWindow() {
+  await withWithMateApi((api) => api.openMemoryManagementWindow());
+}
+
 async function openCharacterEditor(characterId?: string | null) {
   await withWithMateApi((api) => api.openCharacterEditor(characterId));
 }
 
 type HomeRightPaneView = "monitor" | "characters";
-type HomeWindowMode = "home" | "monitor" | "settings";
+type HomeWindowMode = "home" | "monitor" | "settings" | "memory";
 
 function getHomeWindowMode(): HomeWindowMode {
   if (typeof window === "undefined") {
@@ -104,7 +108,7 @@ function getHomeWindowMode(): HomeWindowMode {
   }
 
   const mode = new URLSearchParams(window.location.search).get("mode");
-  return mode === "monitor" || mode === "settings" ? mode : "home";
+  return mode === "monitor" || mode === "settings" || mode === "memory" ? mode : "home";
 }
 
 export default function HomeApp() {
@@ -112,6 +116,8 @@ export default function HomeApp() {
   const homeWindowMode = useMemo(() => getHomeWindowMode(), []);
   const isMonitorWindowMode = homeWindowMode === "monitor";
   const isSettingsWindowMode = homeWindowMode === "settings";
+  const isMemoryWindowMode = homeWindowMode === "memory";
+  const usesMemoryManagementWindow = isSettingsWindowMode || isMemoryWindowMode;
   const [sessions, setSessions] = useState<Session[]>([]);
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [openSessionWindowIds, setOpenSessionWindowIds] = useState<string[]>([]);
@@ -125,7 +131,7 @@ export default function HomeApp() {
   const [settingsDraftLoaded, setSettingsDraftLoaded] = useState(!isSettingsWindowMode);
   const [modelCatalogLoaded, setModelCatalogLoaded] = useState(!isSettingsWindowMode);
   const [memoryManagementSnapshot, setMemoryManagementSnapshot] = useState<MemoryManagementSnapshot | null>(null);
-  const [memoryManagementLoaded, setMemoryManagementLoaded] = useState(!isSettingsWindowMode);
+  const [memoryManagementLoaded, setMemoryManagementLoaded] = useState(!usesMemoryManagementWindow);
   const [memoryManagementBusyTarget, setMemoryManagementBusyTarget] = useState<string | null>(null);
   const [memoryManagementFeedback, setMemoryManagementFeedback] = useState("");
   const [resettingDatabase, setResettingDatabase] = useState(false);
@@ -171,7 +177,7 @@ export default function HomeApp() {
       setModelCatalog(snapshot);
       setModelCatalogLoaded(true);
     });
-    if (isSettingsWindowMode) {
+    if (usesMemoryManagementWindow) {
       void withmateApi.getMemoryManagementSnapshot()
         .then((snapshot) => {
           if (!active) {
@@ -415,7 +421,7 @@ export default function HomeApp() {
         applyIncomingAppSettings(result.result.appSettings, { force: true });
         setResetDatabaseTargets(result.result.resetTargets);
         setSettingsFeedback(result.feedback);
-        if (isSettingsWindowMode) {
+        if (usesMemoryManagementWindow) {
           const snapshot = await withmateApi.getMemoryManagementSnapshot();
           setMemoryManagementSnapshot(snapshot);
           setMemoryManagementLoaded(true);
@@ -538,7 +544,7 @@ export default function HomeApp() {
 
   const handleReloadMemoryManagement = async () => {
     const withmateApi = getWithMateApi();
-    if (!withmateApi || !isSettingsWindowMode) {
+    if (!withmateApi || !usesMemoryManagementWindow) {
       return;
     }
 
@@ -556,7 +562,7 @@ export default function HomeApp() {
 
   const handleDeleteSessionMemory = async (sessionId: string) => {
     const withmateApi = getWithMateApi();
-    if (!withmateApi || !isSettingsWindowMode) {
+    if (!withmateApi || !usesMemoryManagementWindow) {
       return;
     }
 
@@ -576,7 +582,7 @@ export default function HomeApp() {
 
   const handleDeleteProjectMemoryEntry = async (entryId: string) => {
     const withmateApi = getWithMateApi();
-    if (!withmateApi || !isSettingsWindowMode) {
+    if (!withmateApi || !usesMemoryManagementWindow) {
       return;
     }
 
@@ -596,7 +602,7 @@ export default function HomeApp() {
 
   const handleDeleteCharacterMemoryEntry = async (entryId: string) => {
     const withmateApi = getWithMateApi();
-    if (!withmateApi || !isSettingsWindowMode) {
+    if (!withmateApi || !usesMemoryManagementWindow) {
       return;
     }
 
@@ -678,6 +684,59 @@ export default function HomeApp() {
       memoryManagementLoading={!memoryManagementLoaded}
       memoryManagementBusyTarget={memoryManagementBusyTarget}
       memoryManagementFeedback={memoryManagementFeedback}
+      onOpenMemoryManagementWindow={() => void openMemoryManagementWindow()}
+      onOpenHome={() => void openHomeWindow()}
+      onCloseWindow={() => window.close()}
+      onChangeSystemPromptPrefix={(value) => setSettingsDraft((current) => updateSystemPromptPrefix(current, value))}
+      onChangeMemoryGenerationEnabled={(enabled) =>
+        setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled))
+      }
+      onChangeAutoCollapseActionDockOnSend={(enabled) =>
+        setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, enabled))
+      }
+      onChangeProviderEnabled={handleChangeProviderEnabled}
+      onChangeProviderApiKey={handleChangeProviderApiKey}
+      onChangeProviderSkillRootPath={handleChangeProviderSkillRootPath}
+      onBrowseProviderSkillRootPath={(providerId) => void handleBrowseProviderSkillRootPath(providerId)}
+      onChangeMemoryExtractionModel={handleChangeMemoryExtractionModel}
+      onChangeMemoryExtractionReasoningEffort={handleChangeMemoryExtractionReasoningEffort}
+      onChangeMemoryExtractionThreshold={handleChangeMemoryExtractionThreshold}
+      onChangeMemoryExtractionTimeoutSeconds={handleChangeMemoryExtractionTimeoutSeconds}
+      onChangeCharacterReflectionModel={handleChangeCharacterReflectionModel}
+      onChangeCharacterReflectionReasoningEffort={handleChangeCharacterReflectionReasoningEffort}
+      onChangeCharacterReflectionTimeoutSeconds={handleChangeCharacterReflectionTimeoutSeconds}
+      onChangeCharacterReflectionCooldownSeconds={handleChangeCharacterReflectionCooldownSeconds}
+      onChangeCharacterReflectionCharDeltaThreshold={handleChangeCharacterReflectionCharDeltaThreshold}
+      onChangeCharacterReflectionMessageDeltaThreshold={handleChangeCharacterReflectionMessageDeltaThreshold}
+      onImportModelCatalog={() => void handleImportModelCatalog()}
+      onExportModelCatalog={() => void handleExportModelCatalog()}
+      onReloadMemoryManagement={() => void handleReloadMemoryManagement()}
+      onDeleteSessionMemory={(sessionId) => void handleDeleteSessionMemory(sessionId)}
+      onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}
+      onDeleteCharacterMemoryEntry={(entryId) => void handleDeleteCharacterMemoryEntry(entryId)}
+      onToggleResetDatabaseTarget={handleToggleResetDatabaseTarget}
+      onResetAppDatabase={() => void handleResetAppDatabase()}
+      onSaveSettings={() => void handleSaveSettings()}
+    />
+  );
+
+  const memoryManagementContent = (
+    <HomeSettingsContent
+      settingsDraft={settingsDraft}
+      providerSettingRows={providerSettingRows}
+      modelCatalogRevisionLabel={String(modelCatalog?.revision ?? "-")}
+      selectedResetTargetsDescription={selectedResetTargetsDescription}
+      resetTargetItems={resetTargetItems}
+      resettingDatabase={resettingDatabase}
+      canResetDatabase={canResetDatabase}
+      settingsDirty={settingsDirty}
+      settingsFeedback={settingsFeedback}
+      memoryManagementSnapshot={memoryManagementSnapshot}
+      memoryManagementLoading={!memoryManagementLoaded}
+      memoryManagementBusyTarget={memoryManagementBusyTarget}
+      memoryManagementFeedback={memoryManagementFeedback}
+      memoryManagementOnly
+      onOpenMemoryManagementWindow={() => void openMemoryManagementWindow()}
       onOpenHome={() => void openHomeWindow()}
       onCloseWindow={() => window.close()}
       onChangeSystemPromptPrefix={(value) => setSettingsDraft((current) => updateSystemPromptPrefix(current, value))}
@@ -743,6 +802,24 @@ export default function HomeApp() {
     );
   }
 
+  if (isMemoryWindowMode) {
+    return (
+      <div className={`${homePageClassName} home-page-settings-window`.trim()}>
+        <main className="home-layout home-layout-settings-window">
+          <section className="launch-dialog settings-dialog panel settings-window-shell">
+            {memoryManagementLoaded ? (
+              memoryManagementContent
+            ) : (
+              <div className="settings-loading-state">
+                <p>Memory 管理を読み込み中...</p>
+              </div>
+            )}
+          </section>
+        </main>
+      </div>
+    );
+  }
+
   if (isMonitorWindowMode) {
     return (
       <div className={homePageClassName}>
@@ -798,6 +875,7 @@ export default function HomeApp() {
           monitorWindowIcon={renderMonitorWindowIcon()}
           onChangeRightPaneView={setRightPaneView}
           onOpenSessionMonitorWindow={() => void openSessionMonitorWindow()}
+          onOpenMemoryManagementWindow={() => void openMemoryManagementWindow()}
           onOpenSettingsWindow={() => void openSettingsWindow()}
           onChangeCharacterSearchText={setCharacterSearchText}
           onOpenCharacterEditor={(characterId) => void openCharacterEditor(characterId)}

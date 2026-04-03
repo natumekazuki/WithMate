@@ -33,6 +33,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:open-session",
     args: ["session-1"],
   });
+  assert.deepEqual(await api.openMemoryManagementWindow(), {
+    channel: "withmate:open-memory-management-window",
+    args: [],
+  });
   assert.deepEqual(await api.resetAppDatabase({ targets: ["appSettings"] }), {
     channel: "withmate:reset-app-database",
     args: [{ targets: ["appSettings"] }],
@@ -91,6 +95,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "openCharacterEditor",
     "openDiffWindow",
     "openHomeWindow",
+    "openMemoryManagementWindow",
     "openPath",
     "openSession",
     "openSessionMonitorWindow",

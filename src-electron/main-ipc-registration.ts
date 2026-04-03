@@ -54,6 +54,7 @@ import {
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
+  WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
@@ -84,6 +85,7 @@ export type MainIpcRegistrationDeps = {
   openHomeWindow(): Promise<void>;
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
+  openMemoryManagementWindow(): Promise<void>;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   listSessions(): Session[];
@@ -145,6 +147,7 @@ type MainIpcWindowDeps = Pick<
   | "openHomeWindow"
   | "openSessionMonitorWindow"
   | "openSettingsWindow"
+  | "openMemoryManagementWindow"
   | "openCharacterEditorWindow"
   | "openDiffWindow"
   | "openPathTarget"
@@ -239,6 +242,9 @@ function registerWindowHandlers(ipcMain: IpcMain, deps: MainIpcWindowDeps): void
   });
   ipcMain.handle(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL, async () => {
     await deps.openSettingsWindow();
+  });
+  ipcMain.handle(WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL, async () => {
+    await deps.openMemoryManagementWindow();
   });
   ipcMain.handle(WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL, async (_event, characterId: string | null) => {
     await deps.openCharacterEditorWindow(characterId);

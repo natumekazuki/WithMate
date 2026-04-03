@@ -71,6 +71,8 @@ export type HomeSettingsContentProps = {
   memoryManagementLoading: boolean;
   memoryManagementBusyTarget: string | null;
   memoryManagementFeedback: string;
+  memoryManagementOnly?: boolean;
+  onOpenMemoryManagementWindow: () => void;
   onOpenHome: () => void;
   onCloseWindow: () => void;
   onChangeSystemPromptPrefix: (value: string) => void;
@@ -121,6 +123,8 @@ export function HomeSettingsContent({
   memoryManagementLoading,
   memoryManagementBusyTarget,
   memoryManagementFeedback,
+  memoryManagementOnly = false,
+  onOpenMemoryManagementWindow,
   onOpenHome,
   onCloseWindow,
   onChangeSystemPromptPrefix,
@@ -150,6 +154,44 @@ export function HomeSettingsContent({
   onResetAppDatabase,
   onSaveSettings,
 }: HomeSettingsContentProps) {
+  const memorySummary = memoryManagementSnapshot
+    ? `Session ${memoryManagementSnapshot.sessionMemories.length} / Project ${memoryManagementSnapshot.projectMemories.reduce(
+        (count, group) => count + group.entries.length,
+        0,
+      )} / Character ${memoryManagementSnapshot.characterMemories.reduce((count, group) => count + group.entries.length, 0)}`
+    : "Memory を読み込み中...";
+
+  if (memoryManagementOnly) {
+    return (
+      <>
+        <div className="launch-dialog-head minimal settings-window-head">
+          <button className="launch-toggle compact" type="button" onClick={onOpenHome}>
+            Home
+          </button>
+          <button className="diff-close" type="button" onClick={onCloseWindow}>
+            Close
+          </button>
+        </div>
+
+        <div className="settings-panel">
+          <section className="settings-section">
+            <SettingsMemoryManagementSection
+              snapshot={memoryManagementSnapshot}
+              loading={memoryManagementLoading}
+              busyTarget={memoryManagementBusyTarget}
+              feedback={memoryManagementFeedback}
+              onReload={onReloadMemoryManagement}
+              onDeleteSessionMemory={onDeleteSessionMemory}
+              onDeleteProjectMemoryEntry={onDeleteProjectMemoryEntry}
+              onDeleteCharacterMemoryEntry={onDeleteCharacterMemoryEntry}
+              standalone
+            />
+          </section>
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <div className="launch-dialog-head minimal settings-window-head">
@@ -449,16 +491,23 @@ export function HomeSettingsContent({
             </>
           ) : null}
 
-          <SettingsMemoryManagementSection
-            snapshot={memoryManagementSnapshot}
-            loading={memoryManagementLoading}
-            busyTarget={memoryManagementBusyTarget}
-            feedback={memoryManagementFeedback}
-            onReload={onReloadMemoryManagement}
-            onDeleteSessionMemory={onDeleteSessionMemory}
-            onDeleteProjectMemoryEntry={onDeleteProjectMemoryEntry}
-            onDeleteCharacterMemoryEntry={onDeleteCharacterMemoryEntry}
-          />
+          <section className="settings-section-card">
+            <div className="settings-field">
+              <strong>Memory 管理</strong>
+              <p className="settings-help">
+                Memory の一覧 / filter / delete は専用 window へ分離した。Settings では件数確認と起動導線だけを持つ。
+              </p>
+              <div className="settings-actions settings-memory-actions">
+                <span className="settings-memory-summary">{memorySummary}</span>
+                <button className="launch-toggle" type="button" onClick={onOpenMemoryManagementWindow}>
+                  Open Memory Manager
+                </button>
+              </div>
+              {memoryManagementFeedback ? (
+                <p className="settings-feedback settings-memory-feedback">{memoryManagementFeedback}</p>
+              ) : null}
+            </div>
+          </section>
 
           <section className="settings-section-card">
             <div className="settings-field">
@@ -525,6 +574,7 @@ type SettingsMemoryManagementSectionProps = {
   loading: boolean;
   busyTarget: string | null;
   feedback: string;
+  standalone?: boolean;
   onReload: () => void;
   onDeleteSessionMemory: (sessionId: string) => void;
   onDeleteProjectMemoryEntry: (entryId: string) => void;
@@ -573,6 +623,7 @@ function SettingsMemoryManagementSection({
   loading,
   busyTarget,
   feedback,
+  standalone = false,
   onReload,
   onDeleteSessionMemory,
   onDeleteProjectMemoryEntry,
@@ -627,7 +678,9 @@ function SettingsMemoryManagementSection({
       <div className="settings-field">
         <strong>Memory 管理</strong>
         <p className="settings-help">
-          Session / Project / Character Memory を Settings から確認して削除できる。manual update は follow-up task で扱う。
+          {standalone
+            ? "Session / Project / Character Memory を専用 window で確認して削除できる。manual update は follow-up task で扱う。"
+            : "Session / Project / Character Memory を確認して削除できる。manual update は follow-up task で扱う。"}
         </p>
         <div className="settings-actions settings-memory-actions">
           <span className="settings-memory-summary">
@@ -1283,6 +1336,7 @@ export type HomeRightPaneProps = {
   monitorWindowIcon: ReactNode;
   onChangeRightPaneView: (view: "monitor" | "characters") => void;
   onOpenSessionMonitorWindow: () => void;
+  onOpenMemoryManagementWindow: () => void;
   onOpenSettingsWindow: () => void;
   onChangeCharacterSearchText: (value: string) => void;
   onOpenCharacterEditor: (characterId?: string | null) => void;
@@ -1302,6 +1356,7 @@ export function HomeRightPane({
   monitorWindowIcon,
   onChangeRightPaneView,
   onOpenSessionMonitorWindow,
+  onOpenMemoryManagementWindow,
   onOpenSettingsWindow,
   onChangeCharacterSearchText,
   onOpenCharacterEditor,
@@ -1339,6 +1394,9 @@ export function HomeRightPane({
             onClick={onOpenSessionMonitorWindow}
           >
             {monitorWindowIcon}
+          </button>
+          <button className="launch-toggle home-settings-button" type="button" onClick={onOpenMemoryManagementWindow}>
+            Memory
           </button>
           <button className="launch-toggle home-settings-button" type="button" onClick={onOpenSettingsWindow}>
             Settings

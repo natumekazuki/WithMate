@@ -323,6 +323,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openHomeWindow: createHomeWindow,
                 openSessionMonitorWindow,
                 openSettingsWindow,
+                openMemoryManagementWindow,
                 openCharacterEditorWindow,
                 openDiffWindow,
                 pickDirectory: (targetWindow, initialPath) =>
@@ -1324,6 +1325,10 @@ async function openSessionMonitorWindow(): Promise<BrowserWindow> {
 
 async function openSettingsWindow(): Promise<BrowserWindow> {
   return requireMainWindowFacade().openSettingsWindow();
+}
+
+async function openMemoryManagementWindow(): Promise<BrowserWindow> {
+  return requireMainWindowFacade().openMemoryManagementWindow();
 }
 
 async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {

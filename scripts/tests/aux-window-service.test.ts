@@ -80,14 +80,18 @@ test("AuxWindowService は singleton window を再利用する", async () => {
   const first = await service.openHomeWindow();
   const second = await service.openHomeWindow();
   const settings = await service.openSettingsWindow();
+  const memory = await service.openMemoryManagementWindow();
+  const memoryReopened = await service.openMemoryManagementWindow();
 
   assert.equal(first, second);
   assert.notEqual(first, settings);
-  assert.deepEqual(homeLoads, ["home", "settings"]);
-  assert.equal(created.length, 2);
+  assert.notEqual(settings, memory);
+  assert.equal(memory, memoryReopened);
+  assert.deepEqual(homeLoads, ["home", "settings", "memory"]);
+  assert.equal(created.length, 3);
   await service.openCharacterEditorWindow("char-1");
   const reopened = await service.openCharacterEditorWindow("char-1");
-  assert.equal(created[2], reopened);
+  assert.equal(created[3], reopened);
   assert.deepEqual(characterLoads, ["char-1"]);
 });
 

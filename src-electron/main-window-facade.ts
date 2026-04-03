@@ -24,6 +24,10 @@ export class MainWindowFacade {
     return this.deps.getAuxWindowService().openSettingsWindow();
   }
 
+  async openMemoryManagementWindow(): Promise<BrowserWindow> {
+    return this.deps.getAuxWindowService().openMemoryManagementWindow();
+  }
+
   async openSessionWindow(sessionId: string): Promise<BrowserWindow> {
     return this.deps.getSessionWindowBridge().openSessionWindow(sessionId);
   }

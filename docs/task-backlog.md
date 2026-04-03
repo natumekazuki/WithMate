@@ -17,6 +17,7 @@
 - `完了`: 現在の想定 scope まで実装済み
 - `進行中`: 着手済みだが残作業あり
 - `未着手`: まだ実装していない
+- `保留`: user の reopen / 再指示待ちで積極着手しない
 - `見送り`: 調査または判断の結果、当面は着手しない
 
 ## 管理表
@@ -46,7 +47,7 @@
 | P2 | 完了 | GitHub | [#22](https://github.com/natumekazuki/WithMate/issues/22) | MemoryGeneration 詳細表示 | 右 pane の `MemoryGeneration` details から、更新された Session / Character Memory 内容を確認できるようにした | background activity details に updated field / entry 内容を含めるようにし、Memory tuning 時の観測性を上げた |
 | P2 | 完了 | GitHub | [#30](https://github.com/natumekazuki/WithMate/issues/30) | 送信後フッター自動 close | Session Window の通常送信後に `Action Dock` を自動で compact へ戻す設定を追加した | `AppSettings` に checkbox を追加し、default は ON とした。force-expanded 条件がある時は既存どおり expanded を維持する |
 | P2 | 完了 | GitHub | [#31](https://github.com/natumekazuki/WithMate/issues/31) | Memory 管理 UI | Settings Window から Session / Project / Character Memory を一覧・閲覧し、検索・絞り込み・削除できるようにした | current scope は一覧・閲覧・search / filter・削除まで完了。manual update は follow-up task として分離する |
-| P2 | 未着手 | GitHub | [#38](https://github.com/natumekazuki/WithMate/issues/38) | Memory 管理の専用画面 | `Settings` 内ではなく、Memory を専用画面で扱いたい | `#31` の follow-up。情報量と操作量が増えたため、独立 window / tab 化と操作責務の再整理が必要 |
+| P2 | 完了 | GitHub | [#38](https://github.com/natumekazuki/WithMate/issues/38) | Memory 管理の専用画面 | `Settings` から一覧を切り出し、専用 `Memory Window` で Session / Project / Character Memory を扱えるようにした | `Home` 右ペインと `Settings` に起点を追加し、一覧・filter・delete は dedicated window へ寄せた。`Settings` は概要と起動導線だけを持つ |
 | P2 | 未着手 | GitHub | [#10](https://github.com/natumekazuki/WithMate/issues/10) | Copilot custom slash command | GitHub Copilot SDK v1.0.10 の独自 slash command をどう使うか | まず `slash command 吸収` 方針を決めてから着手したい |
 | P2 | 未着手 | GitHub | [#17](https://github.com/natumekazuki/WithMate/issues/17) | `tasks` コマンドの SDK 調査と実装 | Copilot `/tasks` 相当の background task 取得が SDK から扱えるか、Codex parity も含めて調べる | `docs/design/coding-agent-capability-matrix.md` の provider capability 整理と接続する調査寄り task |
 | P2 | 未着手 | GitHub | [#28](https://github.com/natumekazuki/WithMate/issues/28) | データ export / import | 少なくともキャラ定義を持ち運べる export / import 手段を検討する | Memory 同期まで含めると広いため slice 分割前提。`docs/design/character-storage.md` `docs/design/project-memory-storage.md` の確認が必要 |
@@ -60,7 +61,7 @@
 | P2 | 見送り | Local | `sdk-pending` | provider SDK 対応待ち | approval parity、plan / compact parity、quota parity など、SDK surface 待ちの項目を整理する | `docs/design/provider-sdk-pending-items.md` |
 | P2 | 完了 | GitHub | [#14](https://github.com/natumekazuki/WithMate/issues/14) | memory の時間経過評価 | 古い記憶の価値を下げる評価値を導入する | `Project / Character Memory` の retrieval score 補正として `lastUsedAt ?? updatedAt` ベースの時間減衰を実装済み |
 | P2 | 完了 | GitHub | [#7](https://github.com/natumekazuki/WithMate/issues/7) | キャラ別メッセージ上書き | SessionWindow の固定文言を character ごとに差し替え、複数候補から stable に切り替えられるようにした | plan: `docs/plans/archive/2026/03/20260325-character-session-copy/`、design: `docs/design/session-character-copy.md` |
-| P2 | 未着手 | GitHub | [#1](https://github.com/natumekazuki/WithMate/issues/1) | 独り言の API 運用 | subscription ではなく API key 前提で monologue を扱う | `docs/design/monologue-provider-policy.md` が正本。`#25` の trigger policy と接続する前提 task |
+| P2 | 保留 | GitHub | [#1](https://github.com/natumekazuki/WithMate/issues/1) | 独り言の API 運用 | subscription ではなく API key 前提で monologue を扱う | `docs/design/monologue-provider-policy.md` が正本。user が issue を reopen するまで pending 固定とし、その間は着手しない |
 | P2 | 未着手 | GitHub | [#19](https://github.com/natumekazuki/WithMate/issues/19) | Details 長文化対策 | Details が長くなるため、command 単位で折りたたみたい | `#21` と合わせて Details UI の情報密度を整理したい |
 | P2 | 未着手 | GitHub | [#18](https://github.com/natumekazuki/WithMate/issues/18) | フル HD 時の文字サイズ | Full HD では全体的に圧迫感があり文字が大きい | `docs/design/desktop-ui.md` の density 調整として扱う |
 | P2 | 見送り | Local | `copilot-rollout` | apps / mcp / plugins | provider extension surface の read-only 表示や制御を検討する | 「今は使っていない」整理なので優先度は落とす |
@@ -118,8 +119,8 @@
   - 手動 Update は `memory-management-manual-update` の follow-up に切り分ける
   - `#3` の保存基盤が前提で、観測・運用面では `#22` `#27` とつながる
 - `#38 Memory 管理の専用画面`
-  - Memory 管理の情報量と操作量が増えたため、Settings から切り出した専用画面を検討する
-  - `#31` の follow-up として、navigation / 操作責務 / window policy を整理する
+  - Memory 管理の情報量と操作量が増えたため、Settings から切り出した専用画面を実装した
+  - `#31` の follow-up として、navigation / 操作責務 / window policy を dedicated window へ整理した
 
 ### 6. 応用 / 統合
 
@@ -144,11 +145,11 @@
 ## 推奨順
 
 1. `#3 Memory 永続化と共有`
-2. `#1 独り言の API 運用`
-3. `#38 Memory 管理の専用画面`
-4. `#37 セッションウインドウのヘッダー調整`
-5. `#41 チャットの Details ボタンが邪魔`
-6. `#10 Copilot custom slash command`
+2. `#37 セッションウインドウのヘッダー調整`
+3. `#41 チャットの Details ボタンが邪魔`
+4. `#10 Copilot custom slash command`
+5. `#17 tasks コマンドの SDK 調査と実装`
+6. `#23 **message** markdown 未反映`
 
 ## 参照元
 

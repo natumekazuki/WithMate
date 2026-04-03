@@ -20,6 +20,10 @@ test("MainWindowFacade は aux/session window service を束ねる", async () =>
           calls.push("settings");
           return { id: "settings" };
         },
+        async openMemoryManagementWindow() {
+          calls.push("memory");
+          return { id: "memory" };
+        },
         async openCharacterEditorWindow(characterId?: string | null) {
           calls.push(`character:${characterId ?? "new"}`);
           return { id: "character" };
@@ -51,6 +55,7 @@ test("MainWindowFacade は aux/session window service を束ねる", async () =>
   await facade.openHomeWindow();
   await facade.openSessionMonitorWindow();
   await facade.openSettingsWindow();
+  await facade.openMemoryManagementWindow();
   await facade.openSessionWindow("s-1");
   await facade.openCharacterEditorWindow("c-1");
   await facade.openDiffWindow({ token: "d-1" } as never);
@@ -61,6 +66,7 @@ test("MainWindowFacade は aux/session window service を束ねる", async () =>
     "home",
     "monitor",
     "settings",
+    "memory",
     "session:s-1",
     "character:c-1",
     "diff",

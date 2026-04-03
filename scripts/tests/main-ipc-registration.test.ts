@@ -39,6 +39,7 @@ import {
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
+  WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
@@ -90,6 +91,9 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     },
     async openSettingsWindow() {
       calls.push("openSettings");
+    },
+    async openMemoryManagementWindow() {
+      calls.push("openMemory");
     },
     async openCharacterEditorWindow(characterId) {
       calls.push(`openCharacter:${characterId ?? ""}`);
@@ -206,12 +210,14 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   assert.ok(handlers.has("withmate:run-session-turn"));
 
   await handlers.get("withmate:open-session")?.({}, "session-1");
+  await handlers.get("withmate:open-memory-management-window")?.({});
   handlers.get("withmate:run-session-memory-extraction")?.({}, "session-1");
   handlers.get("withmate:cancel-session-run")?.({}, "session-1");
   await handlers.get("withmate:open-path")?.({}, "target", null);
 
   assert.deepEqual(calls, [
     "openSession:session-1",
+    "openMemory",
     "runSessionMemoryExtraction",
     "cancelRun",
     "openPath",
@@ -228,6 +234,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async openHomeWindow() {},
     async openSessionMonitorWindow() {},
     async openSettingsWindow() {},
+    async openMemoryManagementWindow() {},
     async openCharacterEditorWindow() {},
     async openDiffWindow() {},
     listSessions: () => [],
@@ -283,6 +290,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
     WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
     WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
+    WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
     WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
     WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
     WITHMATE_PICK_DIRECTORY_CHANNEL,

@@ -2,6 +2,7 @@ export const WITHMATE_OPEN_SESSION_CHANNEL = "withmate:open-session";
 export const WITHMATE_OPEN_HOME_WINDOW_CHANNEL = "withmate:open-home-window";
 export const WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL = "withmate:open-session-monitor-window";
 export const WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL = "withmate:open-settings-window";
+export const WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL = "withmate:open-memory-management-window";
 export const WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL = "withmate:open-character-editor";
 export const WITHMATE_OPEN_DIFF_WINDOW_CHANNEL = "withmate:open-diff-window";
 export const WITHMATE_LIST_SESSIONS_CHANNEL = "withmate:list-sessions";

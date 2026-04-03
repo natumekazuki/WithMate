@@ -28,6 +28,7 @@ export type WithMateWindowNavigationApi = {
   openHomeWindow(): Promise<void>;
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
+  openMemoryManagementWindow(): Promise<void>;
   openCharacterEditor(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openPath(target: string, options?: OpenPathOptions): Promise<void>;

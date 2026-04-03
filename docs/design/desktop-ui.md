@@ -17,6 +17,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 
 - Home の session / character 管理 UI
 - Session Monitor Window
+- Memory Management Window
 - Session の coding agent 作業 UI
 - Character Editor の編集 UI
 - Diff Window の閲覧 UI
@@ -41,7 +42,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `Settings` は別 window で開く前提のため、Home は session / character 管理ハブを優先する
 - 2 カラム構成
   - 左: `Recent Sessions`
-  - 右: `Settings` rail + `Session Monitor` または `Characters`
+  - 右: `Memory / Settings` rail + `Session Monitor` または `Characters`
 - `Recent Sessions` / `Characters` 見出しは dark background 上で十分読める色を明示する
 - `Monitor & Resume` / `Manage Cast` の補助ラベルは置かない
 - `Session Monitor`
@@ -100,6 +101,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - provider の single-select chip は矢印キーで選択を移動できる
 - `Settings` button
   - 独立した `Settings Window` を開く
+- `Memory` button
+  - 独立した `Memory Management Window` を開く
 - `Settings Window`
   - system prompt prefix 編集
   - `Coding Agent Providers` で provider 名と checkbox を 1 行 row で見せ、provider ごとの enable / disable を切り替える
@@ -111,11 +114,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
     - provider ごとの `Output Tokens Threshold`
     - current 実装では turn 完了時の threshold 判定と `Session Window` close 時の強制実行に使う
   - `Memory 管理`
-    - `Session / Project / Character Memory` を 1 画面で一覧できる
-    - current scope は閲覧と delete に限定し、manual update は follow-up とする
-    - reload で最新 snapshot を再取得できる
-    - global search、domain filter、status / category filter、updatedAt sort を持つ
-    - `Project / Character Memory` は scope ごとに grouped 表示する
+    - `Session / Project / Character Memory` の件数サマリと `Open Memory Manager` を表示する
+    - 一覧 / filter / delete 本体は dedicated window へ分離する
   - `Model Catalog` import / export
   - `Danger Zone` の `DB を初期化`
     - reset 対象を `sessions / audit logs / app settings / model catalog / project memory / character memory` から選べる
@@ -125,6 +125,15 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
     - confirm 後に実行する
   - 初回リリース前は後方互換性を考慮せず、非互換変更時はここから回復する
   - 縦が小さいときも overlay 内スクロールで末尾まで操作できる
+
+## Memory Management Window
+
+- `Home` または `Settings` から開く独立 window
+- renderer は `HomeApp` の `mode=memory` を再利用する
+- `Session / Project / Character Memory` の一覧、global search、domain filter、status / category filter、updatedAt sort
+- `Reload Memory`
+- `Delete`
+- `Home` / `Close`
 
 ## Session Monitor Window
 
@@ -311,7 +320,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - Session 実行の監査ログは SQLite に保存し、Session Window から閲覧する
 - chat message は限定的な rich text renderer で整形表示する
 - `Settings Window` の `System Prompt Prefix` は SQLite に保存し、次回 turn から prompt composition へ反映する
-- `Settings Window` の `Memory 管理` は Main Process から `Session / Project / Character Memory` の snapshot を取得し、delete 後は再取得して整合を保つ
+- `Settings Window` の `Memory 管理` は Main Process から `Session / Project / Character Memory` の snapshot 件数を表示し、`Memory Management Window` 起動導線を持つ
+- `Memory Management Window` は Main Process から `Session / Project / Character Memory` の snapshot を取得し、delete 後は再取得して整合を保つ
 - `Settings Window` の `DB を初期化` 成功時は各 window が reset 後 `appSettings` / `modelCatalog` / `sessions` へ同期し、settings draft の dirty を解消する
 - character は `userData/characters/` を正本とする
 - `userData` は `<appData>/WithMate/` に固定する

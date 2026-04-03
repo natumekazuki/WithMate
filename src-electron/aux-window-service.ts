@@ -35,6 +35,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   private homeWindow: TWindow | null = null;
   private sessionMonitorWindow: TWindow | null = null;
   private settingsWindow: TWindow | null = null;
+  private memoryManagementWindow: TWindow | null = null;
   private readonly characterEditorWindows = new Map<string, TWindow>();
   private readonly diffWindows = new Map<string, TWindow>();
   private readonly diffPreviewStore = new Map<string, DiffPreviewPayload>();
@@ -115,6 +116,28 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       this.settingsWindow = null;
     });
     await this.deps.loadHomeEntry(window, "settings");
+    return window;
+  }
+
+  async openMemoryManagementWindow(): Promise<TWindow> {
+    const existing = this.reuseWindow(this.memoryManagementWindow);
+    if (existing) {
+      return existing;
+    }
+
+    const window = this.deps.createWindow({
+      width: 1180,
+      height: 960,
+      minWidth: 900,
+      minHeight: 720,
+      title: "WithMate Memory",
+    });
+    this.memoryManagementWindow = window;
+    window.once("ready-to-show", () => window.show());
+    window.on("closed", () => {
+      this.memoryManagementWindow = null;
+    });
+    await this.deps.loadHomeEntry(window, "memory");
     return window;
   }
 
