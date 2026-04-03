@@ -7,3 +7,5 @@
 - 2026-04-03: `npm run build` と `scripts/tests/session-app-render.test.ts` を実行して通過を確認した。
 - 2026-04-03: `547a05f feat(session): right pane へ header action を寄せる`
   - `Audit Log / Terminal` の移設、Top Bar 簡素化、関連 doc / plan 同期を反映した。
+- 2026-04-03: `d3a5efb docs(plan): archive session header balance`
+  - repo plan を `docs/plans/archive/2026/04/20260403-session-header-balance/` へ移し、完了記録を保存した。

@@ -23,3 +23,5 @@
 
 - `547a05f feat(session): right pane へ header action を寄せる`
   - `Audit Log / Terminal` の移設、Top Bar 簡素化、関連 doc / plan 同期
+- `d3a5efb docs(plan): archive session header balance`
+  - repo plan の archive と完了記録
