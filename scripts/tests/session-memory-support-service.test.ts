@@ -92,8 +92,11 @@ function createCharacterMemoryEntry(overrides?: Partial<CharacterMemoryEntry>): 
 test("SessionMemorySupportService は session 依存の memory/scope を同期する", () => {
   const calls: string[] = [];
   const service = new SessionMemorySupportService({
+    getSessionMemory(sessionId) {
+      calls.push(`getSessionMemory:${sessionId}`);
+      return createSessionMemory();
+    },
     ensureSessionMemory() {
-      calls.push("ensureSessionMemory");
       return createSessionMemory();
     },
     upsertSessionMemory(memory) {
@@ -129,8 +132,58 @@ test("SessionMemorySupportService は session 依存の memory/scope を同期�
   service.syncSessionDependencies(createSession());
 
   assert.deepEqual(calls, [
-    "ensureSessionMemory",
+    "getSessionMemory:session-1",
     "upsertSessionMemory:Memory 設計を進める",
+    "ensureProjectScope:directory:C:/workspace",
+    "ensureCharacterScope:char-1",
+  ]);
+});
+
+test("SessionMemorySupportService は削除済み session memory を起動同期で再作成しない", () => {
+  const calls: string[] = [];
+  const service = new SessionMemorySupportService({
+    getSessionMemory(sessionId) {
+      calls.push(`getSessionMemory:${sessionId}`);
+      return null;
+    },
+    ensureSessionMemory() {
+      calls.push("ensureSessionMemory");
+      return createSessionMemory();
+    },
+    upsertSessionMemory() {
+      calls.push("upsertSessionMemory");
+    },
+    ensureProjectScope(scope) {
+      calls.push(`ensureProjectScope:${scope.projectKey}`);
+      return { id: "project-scope-1" };
+    },
+    listProjectMemoryEntries() {
+      return [];
+    },
+    upsertProjectMemoryEntry(entry) {
+      return createProjectMemoryEntry(entry);
+    },
+    markProjectMemoryEntriesUsed() {},
+    ensureCharacterScope(input) {
+      calls.push(`ensureCharacterScope:${input.characterId}`);
+      return { id: "character-scope-1" };
+    },
+    listCharacterMemoryEntries() {
+      return [];
+    },
+    upsertCharacterMemoryEntry(entry) {
+      return createCharacterMemoryEntry(entry);
+    },
+    markCharacterMemoryEntriesUsed() {},
+    upsertSession(session) {
+      return session;
+    },
+  });
+
+  service.syncSessionDependencies(createSession());
+
+  assert.deepEqual(calls, [
+    "getSessionMemory:session-1",
     "ensureProjectScope:directory:C:/workspace",
     "ensureCharacterScope:char-1",
   ]);
@@ -141,6 +194,9 @@ test("SessionMemorySupportService は project promotion と monologue append を
   const marked: string[][] = [];
   let updatedSession: Session | null = null;
   const service = new SessionMemorySupportService({
+    getSessionMemory() {
+      return createSessionMemory();
+    },
     ensureSessionMemory() {
       return createSessionMemory();
     },

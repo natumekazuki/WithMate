@@ -1465,6 +1465,14 @@ button:disabled {
   height: 100%;
 }
 
+.settings-window-shell {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.settings-window-shell.memory-window-shell {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .settings-loading-state {
   display: grid;
   place-items: center;
@@ -1518,6 +1526,7 @@ button:disabled {
 }
 
 .settings-panel-window {
+  min-height: 0;
   padding: 18px;
   overflow: hidden;
 }

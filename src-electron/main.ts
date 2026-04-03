@@ -597,6 +597,7 @@ function requireAppSettingsStorage(): AppSettingsStorage {
 function requireSessionMemorySupportService(): SessionMemorySupportService {
   if (!sessionMemorySupportService) {
     sessionMemorySupportService = new SessionMemorySupportService({
+      getSessionMemory: (sessionId) => requireSessionMemoryStorage().getSessionMemory(sessionId),
       ensureSessionMemory: (session) => requireSessionMemoryStorage().ensureSessionMemory(session),
       upsertSessionMemory: (memory) => requireSessionMemoryStorage().upsertSessionMemory(memory),
       ensureProjectScope: (scope) => requireProjectMemoryStorage().ensureProjectScope(scope),

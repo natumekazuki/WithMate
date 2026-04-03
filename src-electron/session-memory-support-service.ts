@@ -15,6 +15,7 @@ import { retrieveCharacterMemoryEntries } from "./character-memory-retrieval.js"
 import { resolveProjectScope, type ResolvedProjectScopeInput } from "./project-scope.js";
 
 export type SessionMemorySupportServiceDeps = {
+  getSessionMemory(sessionId: string): SessionMemory | null;
   ensureSessionMemory(session: Session): SessionMemory;
   upsertSessionMemory(memory: SessionMemory): void;
   ensureProjectScope(scope: ResolvedProjectScopeInput): { id: string };
@@ -36,13 +37,15 @@ export class SessionMemorySupportService {
   constructor(private readonly deps: SessionMemorySupportServiceDeps) {}
 
   syncSessionDependencies(session: Session): void {
-    const existingMemory = this.deps.ensureSessionMemory(session);
-    this.deps.upsertSessionMemory({
-      ...existingMemory,
-      workspacePath: session.workspacePath,
-      threadId: session.threadId,
-      goal: existingMemory.goal.trim() ? existingMemory.goal : createDefaultSessionMemory(session).goal,
-    });
+    const existingMemory = this.deps.getSessionMemory(session.id);
+    if (existingMemory) {
+      this.deps.upsertSessionMemory({
+        ...existingMemory,
+        workspacePath: session.workspacePath,
+        threadId: session.threadId,
+        goal: existingMemory.goal.trim() ? existingMemory.goal : createDefaultSessionMemory(session).goal,
+      });
+    }
     this.ensureProjectScope(session);
     this.ensureCharacterScope(session);
   }
