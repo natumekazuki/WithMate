@@ -6,3 +6,4 @@
 - 2026-04-03: `toCommandOperations()` が step の `status` を捨てて `summary/details` だけへ潰しているため、pending / in_progress の途中 step でも completed 済みの user-visible partial と同じ扱いになり、internal retry を過剰に止める可能性があると判断した。
 - 2026-04-03: user と方針合意後、`src-electron/copilot-adapter.ts` の `toCommandOperations()` を terminal status 限定へ修正し、`scripts/tests/copilot-adapter.test.ts` に `tool.execution_start` だけでは retry を止めない回帰を追加した。
 - 2026-04-03: `node --import tsx scripts/tests/copilot-adapter.test.ts` と `npm run build` で修正を確認した。
+- 2026-04-03: コミット `090a1c8` `fix(copilot): stale session retry の partial 判定を絞る` を作成した。

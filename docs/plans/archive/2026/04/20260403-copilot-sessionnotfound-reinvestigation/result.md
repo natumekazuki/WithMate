@@ -15,4 +15,4 @@
 
 ## Commits
 
-- なし
+- `090a1c8` `fix(copilot): stale session retry の partial 判定を絞る`
