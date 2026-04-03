@@ -1457,15 +1457,12 @@ button:disabled {
   max-height: min(760px, calc(100vh - 52px));
 }
 
-.settings-window-shell {
-  width: min(860px, 100%);
-  max-height: none;
-  height: 100%;
-}
-
+.settings-window-shell,
 .memory-window-shell {
   width: 100%;
   max-width: none;
+  max-height: none;
+  height: 100%;
 }
 
 .settings-loading-state {
@@ -1518,6 +1515,19 @@ button:disabled {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+}
+
+.settings-panel-window {
+  padding: 18px;
+  overflow: hidden;
+}
+
+.settings-panel-window-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-right: 6px;
 }
 
 .settings-panel-memory-only {

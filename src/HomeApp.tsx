@@ -685,8 +685,6 @@ export default function HomeApp() {
       memoryManagementBusyTarget={memoryManagementBusyTarget}
       memoryManagementFeedback={memoryManagementFeedback}
       onOpenMemoryManagementWindow={() => void openMemoryManagementWindow()}
-      onOpenHome={() => void openHomeWindow()}
-      onCloseWindow={() => window.close()}
       onChangeSystemPromptPrefix={(value) => setSettingsDraft((current) => updateSystemPromptPrefix(current, value))}
       onChangeMemoryGenerationEnabled={(enabled) =>
         setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled))
@@ -737,8 +735,6 @@ export default function HomeApp() {
       memoryManagementFeedback={memoryManagementFeedback}
       memoryManagementOnly
       onOpenMemoryManagementWindow={() => void openMemoryManagementWindow()}
-      onOpenHome={() => void openHomeWindow()}
-      onCloseWindow={() => window.close()}
       onChangeSystemPromptPrefix={(value) => setSettingsDraft((current) => updateSystemPromptPrefix(current, value))}
       onChangeMemoryGenerationEnabled={(enabled) =>
         setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled))

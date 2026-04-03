@@ -104,6 +104,9 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `Memory` button
   - 独立した `Memory Management Window` を開く
 - `Settings Window`
+  - `Memory Management Window` と同じ dedicated window shell を使い、window 幅いっぱいまで panel が追従する
+  - header copy や `Home / Close` は置かず、内容本体と保存 footer に分ける
+  - 本文は inner scroll で流し、shell の角丸と scrollbar が干渉しないようにする
   - system prompt prefix 編集
   - `Coding Agent Providers` で provider 名と checkbox を 1 行 row で見せ、provider ごとの enable / disable を切り替える
   - `Coding Agent Credentials` で provider label を維持した `OpenAI API Key (Coding Agent)` 入力を表示

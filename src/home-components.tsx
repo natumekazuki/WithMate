@@ -73,8 +73,6 @@ export type HomeSettingsContentProps = {
   memoryManagementFeedback: string;
   memoryManagementOnly?: boolean;
   onOpenMemoryManagementWindow: () => void;
-  onOpenHome: () => void;
-  onCloseWindow: () => void;
   onChangeSystemPromptPrefix: (value: string) => void;
   onChangeMemoryGenerationEnabled: (enabled: boolean) => void;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
@@ -125,8 +123,6 @@ export function HomeSettingsContent({
   memoryManagementFeedback,
   memoryManagementOnly = false,
   onOpenMemoryManagementWindow,
-  onOpenHome,
-  onCloseWindow,
   onChangeSystemPromptPrefix,
   onChangeMemoryGenerationEnabled,
   onChangeAutoCollapseActionDockOnSend,
@@ -183,17 +179,9 @@ export function HomeSettingsContent({
 
   return (
     <>
-      <div className="launch-dialog-head minimal settings-window-head">
-        <button className="launch-toggle compact" type="button" onClick={onOpenHome}>
-          Home
-        </button>
-        <button className="diff-close" type="button" onClick={onCloseWindow}>
-          Close
-        </button>
-      </div>
-
-      <div className="settings-panel">
-        <section className="settings-section">
+      <div className="settings-panel settings-panel-window">
+        <div className="settings-panel-window-scroll">
+          <section className="settings-section">
           <p className="settings-note">{SETTINGS_RELEASE_COMPATIBILITY_NOTE}</p>
 
           <section className="settings-section-card">
@@ -546,7 +534,8 @@ export function HomeSettingsContent({
               </div>
             </div>
           </section>
-        </section>
+          </section>
+        </div>
       </div>
       <div className="launch-dialog-foot settings-dialog-foot">
         {settingsFeedback ? <p className="settings-feedback settings-feedback-inline">{settingsFeedback}</p> : <span aria-hidden="true" />}
