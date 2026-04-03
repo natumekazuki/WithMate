@@ -427,13 +427,14 @@ export type SessionDiffModalProps = {
 
 export type SessionHeaderProps = {
   taskTitle: string;
-  isExpanded: boolean;
   isEditingTitle: boolean;
   titleDraft: string;
   isRunning: boolean;
-  showMoreButton?: boolean;
-  onToggleExpanded: () => void;
+  showTerminalButton?: boolean;
+  terminalTitle?: string;
   onClose: () => void;
+  onOpenAuditLog: () => void;
+  onOpenTerminal: () => void;
   onTitleDraftChange: (value: string) => void;
   onTitleInputKeyDown: KeyboardEventHandler<HTMLInputElement>;
   onSaveTitle: () => void;
@@ -444,13 +445,14 @@ export type SessionHeaderProps = {
 
 export function SessionHeader({
   taskTitle,
-  isExpanded,
   isEditingTitle,
   titleDraft,
   isRunning,
-  showMoreButton = true,
-  onToggleExpanded,
+  showTerminalButton = true,
+  terminalTitle,
   onClose,
+  onOpenAuditLog,
+  onOpenTerminal,
   onTitleDraftChange,
   onTitleInputKeyDown,
   onSaveTitle,
@@ -459,54 +461,48 @@ export function SessionHeader({
   onDeleteSession,
 }: SessionHeaderProps) {
   return (
-    <header className={`session-window-bar session-top-bar rise-1${isExpanded ? " is-expanded" : ""}`}>
-      <div className="session-top-bar-row">
+    <header className="session-window-bar session-pane-header rise-1">
+      {!isEditingTitle ? (
         <div className="session-title-shell">
           <span className="session-window-title session-title-accent">{taskTitle}</span>
         </div>
-        <div className="session-window-controls">
-          {showMoreButton && !isEditingTitle ? (
-            <button
-              className="drawer-toggle compact secondary"
-              type="button"
-              onClick={onToggleExpanded}
-              aria-expanded={isExpanded}
-            >
-              {isExpanded ? "Hide" : "More"}
-            </button>
-          ) : null}
-          <button className="drawer-toggle compact" type="button" onClick={onClose}>
-            Close
-          </button>
-        </div>
-      </div>
-
-      {isExpanded ? (
-        <div className="session-top-bar-drawer">
-          {isEditingTitle ? (
-            <label className="session-title-editor">
-              <input value={titleDraft} onChange={(event) => onTitleDraftChange(event.target.value)} onKeyDown={onTitleInputKeyDown} />
-              <div className="session-title-actions">
-                <button className="drawer-toggle compact" type="button" onClick={onSaveTitle}>
-                  Save
-                </button>
-                <button className="drawer-toggle compact secondary" type="button" onClick={onCancelTitleEdit}>
-                  Cancel
-                </button>
-              </div>
-            </label>
-          ) : (
-            <div className="session-top-bar-manage">
-              <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning}>
-                Rename
+      ) : (
+        <div className="session-pane-title-editor">
+          <label className="session-title-editor">
+            <input value={titleDraft} onChange={(event) => onTitleDraftChange(event.target.value)} onKeyDown={onTitleInputKeyDown} />
+            <div className="session-title-actions">
+              <button className="drawer-toggle compact" type="button" onClick={onSaveTitle}>
+                Save
               </button>
-              <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
-                Delete
+              <button className="drawer-toggle compact secondary" type="button" onClick={onCancelTitleEdit}>
+                Cancel
               </button>
             </div>
-          )}
+          </label>
         </div>
-      ) : null}
+      )}
+
+      <div className="session-pane-header-actions">
+        {!isEditingTitle ? (
+          <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning}>
+            Rename
+          </button>
+        ) : null}
+        <button className="drawer-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
+          Audit Log
+        </button>
+        {showTerminalButton ? (
+          <button className="drawer-toggle compact secondary" type="button" onClick={onOpenTerminal} title={terminalTitle}>
+            Terminal
+          </button>
+        ) : null}
+        <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
+          Delete
+        </button>
+        <button className="drawer-toggle compact" type="button" onClick={onClose}>
+          Close
+        </button>
+      </div>
     </header>
   );
 }
@@ -756,6 +752,10 @@ export function SessionAuditLogModal({
 }
 
 export type SessionContextPaneProps = {
+  taskTitle: string;
+  isEditingTitle: boolean;
+  titleDraft: string;
+  isRunning: boolean;
   activeContextPaneTab: ContextPaneTabKey;
   contextPaneProjection: ContextPaneProjection;
   latestCommandView: LatestCommandView | null;
@@ -777,8 +777,15 @@ export type SessionContextPaneProps = {
   canOpenSessionTerminal: boolean;
   sessionTerminalTitle: string;
   canRunSessionMemoryGeneration: boolean;
+  onCloseWindow: () => void;
   onOpenAuditLog: () => void;
   onOpenTerminal: () => void;
+  onTitleDraftChange: (value: string) => void;
+  onTitleInputKeyDown: KeyboardEventHandler<HTMLInputElement>;
+  onSaveTitle: () => void;
+  onCancelTitleEdit: () => void;
+  onStartTitleEdit: () => void;
+  onDeleteSession: () => void;
   isSessionMemoryGenerationRunning: boolean;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onRunSessionMemoryGeneration: () => void;
@@ -856,18 +863,34 @@ export class SessionPaneErrorBoundary extends Component<
 }
 
 export type CharacterUpdateContextPaneProps = {
+  taskTitle: string;
+  isEditingTitle: boolean;
+  titleDraft: string;
+  isRunning: boolean;
   activePaneTab: "latest-command" | "memory-extract";
   latestCommandView: LatestCommandView | null;
   runningDetailsEntries: RunningDetailsEntry[];
   selectedSessionLiveRunErrorMessage: string;
   memoryExtract: CharacterUpdateMemoryExtract | null;
   isLoadingMemoryExtract: boolean;
+  onCloseWindow: () => void;
+  onOpenAuditLog: () => void;
+  onTitleDraftChange: (value: string) => void;
+  onTitleInputKeyDown: KeyboardEventHandler<HTMLInputElement>;
+  onSaveTitle: () => void;
+  onCancelTitleEdit: () => void;
+  onStartTitleEdit: () => void;
+  onDeleteSession: () => void;
   onSelectPaneTab: (tab: "latest-command" | "memory-extract") => void;
   onRefreshMemoryExtract: () => void;
   onCopyMemoryExtract: () => void;
 };
 
 export function SessionContextPane({
+  taskTitle,
+  isEditingTitle,
+  titleDraft,
+  isRunning,
   activeContextPaneTab,
   contextPaneProjection,
   latestCommandView,
@@ -889,8 +912,15 @@ export function SessionContextPane({
   canOpenSessionTerminal,
   sessionTerminalTitle,
   canRunSessionMemoryGeneration,
+  onCloseWindow,
   onOpenAuditLog,
   onOpenTerminal,
+  onTitleDraftChange,
+  onTitleInputKeyDown,
+  onSaveTitle,
+  onCancelTitleEdit,
+  onStartTitleEdit,
+  onDeleteSession,
   isSessionMemoryGenerationRunning,
   onCycleContextPaneTab,
   onRunSessionMemoryGeneration,
@@ -946,6 +976,23 @@ export function SessionContextPane({
 
   return (
     <aside className="session-context-pane">
+      <SessionHeader
+        taskTitle={taskTitle}
+        isEditingTitle={isEditingTitle}
+        titleDraft={titleDraft}
+        isRunning={isRunning}
+        showTerminalButton={canOpenSessionTerminal}
+        terminalTitle={sessionTerminalTitle}
+        onClose={onCloseWindow}
+        onOpenAuditLog={onOpenAuditLog}
+        onOpenTerminal={onOpenTerminal}
+        onTitleDraftChange={onTitleDraftChange}
+        onTitleInputKeyDown={onTitleInputKeyDown}
+        onSaveTitle={onSaveTitle}
+        onCancelTitleEdit={onCancelTitleEdit}
+        onStartTitleEdit={onStartTitleEdit}
+        onDeleteSession={onDeleteSession}
+      />
       <section className="command-monitor-shell" aria-label="最新 command">
         <div className="command-monitor-head">
           <div className="command-monitor-switcher" aria-label="右ペイン表示切り替え">
@@ -972,19 +1019,6 @@ export function SessionContextPane({
             </button>
           </div>
           <div className="command-monitor-head-actions">
-            <button className="launch-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
-              Audit Log
-            </button>
-            {canOpenSessionTerminal ? (
-              <button
-                className="launch-toggle compact secondary"
-                type="button"
-                onClick={onOpenTerminal}
-                title={sessionTerminalTitle}
-              >
-                Terminal
-              </button>
-            ) : null}
             <button
               className="launch-toggle compact"
               type="button"
@@ -1227,12 +1261,24 @@ export function SessionContextPane({
 }
 
 export function CharacterUpdateContextPane({
+  taskTitle,
+  isEditingTitle,
+  titleDraft,
+  isRunning,
   activePaneTab,
   latestCommandView,
   runningDetailsEntries,
   selectedSessionLiveRunErrorMessage,
   memoryExtract,
   isLoadingMemoryExtract,
+  onCloseWindow,
+  onOpenAuditLog,
+  onTitleDraftChange,
+  onTitleInputKeyDown,
+  onSaveTitle,
+  onCancelTitleEdit,
+  onStartTitleEdit,
+  onDeleteSession,
   onSelectPaneTab,
   onRefreshMemoryExtract,
   onCopyMemoryExtract,
@@ -1270,6 +1316,22 @@ export function CharacterUpdateContextPane({
 
   return (
     <aside className="session-context-pane">
+      <SessionHeader
+        taskTitle={taskTitle}
+        isEditingTitle={isEditingTitle}
+        titleDraft={titleDraft}
+        isRunning={isRunning}
+        showTerminalButton={false}
+        onClose={onCloseWindow}
+        onOpenAuditLog={onOpenAuditLog}
+        onOpenTerminal={() => {}}
+        onTitleDraftChange={onTitleDraftChange}
+        onTitleInputKeyDown={onTitleInputKeyDown}
+        onSaveTitle={onSaveTitle}
+        onCancelTitleEdit={onCancelTitleEdit}
+        onStartTitleEdit={onStartTitleEdit}
+        onDeleteSession={onDeleteSession}
+      />
       <section className="command-monitor-shell" aria-label="character update monitor">
         <div className="command-monitor-head">
           <div className="audit-log-segmented session-context-segmented" aria-label="右ペイン表示切り替え">
