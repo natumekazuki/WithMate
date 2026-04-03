@@ -427,17 +427,13 @@ export type SessionDiffModalProps = {
 
 export type SessionHeaderProps = {
   taskTitle: string;
-  workspacePath: string;
   isExpanded: boolean;
   isEditingTitle: boolean;
   titleDraft: string;
   isRunning: boolean;
-  showTerminalButton?: boolean;
   showMoreButton?: boolean;
   onToggleExpanded: () => void;
   onClose: () => void;
-  onOpenAuditLog: () => void;
-  onOpenTerminal: () => void;
   onTitleDraftChange: (value: string) => void;
   onTitleInputKeyDown: KeyboardEventHandler<HTMLInputElement>;
   onSaveTitle: () => void;
@@ -448,17 +444,13 @@ export type SessionHeaderProps = {
 
 export function SessionHeader({
   taskTitle,
-  workspacePath,
   isExpanded,
   isEditingTitle,
   titleDraft,
   isRunning,
-  showTerminalButton = true,
   showMoreButton = true,
   onToggleExpanded,
   onClose,
-  onOpenAuditLog,
-  onOpenTerminal,
   onTitleDraftChange,
   onTitleInputKeyDown,
   onSaveTitle,
@@ -473,19 +465,6 @@ export function SessionHeader({
           <span className="session-window-title session-title-accent">{taskTitle}</span>
         </div>
         <div className="session-window-controls">
-          <button className="drawer-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
-            Audit Log
-          </button>
-          {showTerminalButton ? (
-            <button
-              className="drawer-toggle compact secondary"
-              type="button"
-              onClick={onOpenTerminal}
-              title={workspacePath}
-            >
-              Terminal
-            </button>
-          ) : null}
           {showMoreButton && !isEditingTitle ? (
             <button
               className="drawer-toggle compact secondary"
@@ -795,7 +774,11 @@ export type SessionContextPaneProps = {
   selectedSessionContextTelemetry: SessionContextTelemetry | null;
   selectedSessionContextTelemetryProjection: SessionContextTelemetryProjection;
   contextEmptyText: string;
+  canOpenSessionTerminal: boolean;
+  sessionTerminalTitle: string;
   canRunSessionMemoryGeneration: boolean;
+  onOpenAuditLog: () => void;
+  onOpenTerminal: () => void;
   isSessionMemoryGenerationRunning: boolean;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onRunSessionMemoryGeneration: () => void;
@@ -903,7 +886,11 @@ export function SessionContextPane({
   selectedSessionContextTelemetry,
   selectedSessionContextTelemetryProjection,
   contextEmptyText,
+  canOpenSessionTerminal,
+  sessionTerminalTitle,
   canRunSessionMemoryGeneration,
+  onOpenAuditLog,
+  onOpenTerminal,
   isSessionMemoryGenerationRunning,
   onCycleContextPaneTab,
   onRunSessionMemoryGeneration,
@@ -985,6 +972,19 @@ export function SessionContextPane({
             </button>
           </div>
           <div className="command-monitor-head-actions">
+            <button className="launch-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
+              Audit Log
+            </button>
+            {canOpenSessionTerminal ? (
+              <button
+                className="launch-toggle compact secondary"
+                type="button"
+                onClick={onOpenTerminal}
+                title={sessionTerminalTitle}
+              >
+                Terminal
+              </button>
+            ) : null}
             <button
               className="launch-toggle compact"
               type="button"

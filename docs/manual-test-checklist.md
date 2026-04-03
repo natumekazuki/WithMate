@@ -69,7 +69,7 @@ npm run electron:start
 | MT-017B | Model / Depth change thread reset | thread を持っている session で 1 turn 実行後、idle 状態で model または depth を変更してから次の turn を送る | 次 turn は旧 thread を再利用せず新規 thread として実行される。失敗せず完了し、以後は新 thread が継続利用される |
 | MT-017C | Stale thread internal retry | provider 側で thread / session not found または expired 相当を再現できる session を用意して 1 turn 送る | renderer からの再送なしで同一 turn 内の internal retry だけが走り、user / assistant message と audit log record は 1 件ずつに留まる。meaningful partial が無い時だけ回復し、回復後は新 thread で継続できる |
 | MT-017D | Copilot elicitation prompt | provider を `GitHub Copilot` にした session で `elicitation.requested` を返す turn を実行する | pending bubble 内に form または URL card が出て、`送信 / 拒否 / 閉じる` が使える。form では required field 未入力時に alert が出て、`accept / decline / cancel` に応じて run が再開または終了する |
-| MT-018 | Audit Log | Session Window の `Audit Log` を押す | 1 turn 1 record の監査ログが閲覧でき、approval 表示は provider-neutral wording になる。prompt 表示は `Logical Prompt` と `Transport Payload` に分かれる |
+| MT-018 | Audit Log | Session Window の right pane 上部にある `Audit Log` を押す | 1 turn 1 record の監査ログが閲覧でき、approval 表示は provider-neutral wording になる。prompt 表示は `Logical Prompt` と `Transport Payload` に分かれる |
 | MT-018D | Background Audit Log refresh | Session Memory extraction または Character Reflection を走らせた状態で `Audit Log` を開いたまま background task 完了まで待つ | `Background` タブの該当 entry が再描画され、reload や session 切替をしなくても response / error / raw items の completed 値が見える |
 | MT-018E | Background timeout settings persistence | Home の `Settings` で provider ごとの `Memory Extraction` / `Character Reflection` の `Timeout Seconds` を変更して保存し、開き直す | timeout 設定が provider ごとに保持され、再読込後も同じ値が表示される |
 | MT-018C | Audit Log modal keyboard | `Audit Log` を開き、`Tab` / `Shift+Tab` と `Escape` を試す | focus は overlay 内で循環し、`Escape` で閉じる |
@@ -93,9 +93,10 @@ npm run electron:start
 | MT-023C | Session action dock baseline | Session Window を開き、textarea / attachment / skill / approval / model / depth / `Send` の位置関係を見る | これらは message list と同じ左列幅の `Action Dock` にまとまり、expanded 時だけ full editor と設定群が表示される。`File / Folder / Image` は attachment group、`Skill` は別ボタンとして区別される |
 | MT-023C1 | Session narrow layout reachability | 幅 `1400px` 前後まで狭めた Session Window を開く | `message list + Action Dock` の塊の下に right pane が縦 stack で残り、`Latest Command / Memory生成 / 独り言` へ到達できる。狭幅でも right pane が失われない |
 | MT-023C2 | Session minimum width guardrail | Session Window を最小幅近くまで縮める | `message list + Action Dock` と right pane の縦 stack が維持され、scroll すれば両方へ到達できる。最小幅でも window が不自然に固定されない |
-| MT-023D | Session top bar compact | Session Window を開き、必要なら `More` を開閉する | `Top Bar` は 1 行の strip として表示され、常時は `title / Audit Log / Terminal / More / Close` が見え、`Rename / Delete` は `More` 展開時だけ表示される |
-| MT-023D1 | Session terminal launch | Session Window で `Terminal` を押す | session の `workspacePath` を作業ディレクトリにした外部 terminal が開く |
-| MT-023D2 | Additional directory manage UI | Session Window の composer toolbar を確認し、`Add Directory` と `Dirs` を操作する | `Add Directory` が `Skill` と同じ列に並ぶ。`Dirs` は既定では閉じており、開いた後に現在の許可リストが表示され、provider が `Codex` の時だけ `×` で削除できる |
+| MT-023D | Session top bar compact | Session Window を開き、必要なら `More` を開閉する | `Top Bar` は 1 行の strip として表示され、常時は `title / More / Close` が見える。`Rename / Delete` は `More` 展開時だけ表示される |
+| MT-023D1 | Session utility actions | Session Window の right pane 上部を確認し、`Audit Log / Terminal / Generate Memory` を見る | utility action が tab switcher の横にまとまり、header へ戻らず右ペイン側の操作として読める |
+| MT-023D2 | Session terminal launch | Session Window の right pane 上部で `Terminal` を押す | session の `workspacePath` を作業ディレクトリにした外部 terminal が開く |
+| MT-023D3 | Additional directory manage UI | Session Window の composer toolbar を確認し、`Add Directory` と `Dirs` を操作する | `Add Directory` が `Skill` と同じ列に並ぶ。`Dirs` は既定では閉じており、開いた後に現在の許可リストが表示され、provider が `Codex` の時だけ `×` で削除できる |
 | MT-023E | Session action dock compact/expand | idle で draft 空の Session Window を開き、draft preview 押下 / `Hide` / textarea focus を試す | 初期状態は compact で、draft preview または textarea focus で expanded に戻り、`Hide` で再度 compact にできる |
 | MT-023E1 | Session action dock auto close | Settings で `送信後に Action Dock を自動で閉じる` を ON にした状態で Session Window から通常送信する。続けて OFF にして同じ操作を行う | ON の時は送信直後に `Action Dock` が compact へ戻る。OFF の時は expanded のまま残る。retry banner や picker など force-expanded 条件がある時は ON でも閉じない |
 | MT-023F | Session action dock forced expand | retry banner、skill picker、`@path` 候補、blocked feedback のいずれかが出る状態を作る | その間は `Action Dock` が compact に落ちず、必要な操作要素が隠れない |

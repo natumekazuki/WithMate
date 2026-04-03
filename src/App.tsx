@@ -2864,17 +2864,13 @@ export default function App() {
     <div className="page-shell session-page" style={sessionThemeStyle}>
       <SessionHeader
         taskTitle={selectedSession.taskTitle}
-        workspacePath={selectedSession.workspacePath}
         isExpanded={isSessionHeaderExpanded}
         isEditingTitle={isEditingTitle}
         titleDraft={titleDraft}
         isRunning={selectedSession.runState === "running"}
-        showTerminalButton={!isCharacterUpdateSession}
         showMoreButton={!isCharacterUpdateSession}
         onToggleExpanded={handleToggleHeaderExpanded}
         onClose={handleCloseWindow}
-        onOpenAuditLog={() => setAuditLogsOpen(true)}
-        onOpenTerminal={() => void handleOpenSessionTerminal()}
         onTitleDraftChange={setTitleDraft}
         onTitleInputKeyDown={handleTitleInputKeyDown}
         onSaveTitle={() => void handleSaveTitle()}
@@ -3079,7 +3075,11 @@ export default function App() {
                     selectedSessionContextTelemetry={selectedSessionContextTelemetry}
                     selectedSessionContextTelemetryProjection={selectedSessionContextTelemetryProjection}
                     contextEmptyText={selectedContextEmptyText}
+                    canOpenSessionTerminal={!isCharacterUpdateSession}
+                    sessionTerminalTitle={selectedSession.workspacePath}
                     canRunSessionMemoryGeneration={!!withmateApi && !isSelectedSessionRunning}
+                    onOpenAuditLog={() => setAuditLogsOpen(true)}
+                    onOpenTerminal={() => void handleOpenSessionTerminal()}
                     isSessionMemoryGenerationRunning={selectedMemoryGenerationActivity?.status === "running"}
                     onCycleContextPaneTab={handleCycleContextPaneTab}
                     onRunSessionMemoryGeneration={() => void handleRunSessionMemoryExtraction()}
