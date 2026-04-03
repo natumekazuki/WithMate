@@ -2,7 +2,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, screen, shell } from "electron";
 
 import {
   type AuditLogEntry,
@@ -98,6 +98,7 @@ import {
 import { discoverSessionSkills } from "./skill-discovery.js";
 import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
+import { resolveCursorAnchoredPosition } from "./window-placement.js";
 import { clearWorkspaceFileIndex, searchWorkspaceFilePaths } from "./workspace-file-search.js";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
@@ -173,6 +174,25 @@ function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0
   });
 }
 
+function createCursorPlacedWindow(
+  options: ConstructorParameters<typeof BrowserWindow>[0] & { width: number; height: number },
+): BrowserWindow {
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const { x, y } = resolveCursorAnchoredPosition({
+    cursor,
+    workArea: display.workArea,
+    width: options.width,
+    height: options.height,
+  });
+
+  return createBaseWindow({
+    ...options,
+    x,
+    y,
+  });
+}
+
 function listSessions(): Session[] {
   return requireMainQueryService().listSessions();
 }
@@ -236,17 +256,28 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
         }),
       createAuxWindowService: () =>
         new AuxWindowService({
-          createWindow: (options) =>
-            createBaseWindow({
-              ...(options.homeBounds ? HOME_WINDOW_DEFAULT_BOUNDS : {}),
-              width: options.homeBounds ? undefined : options.width,
-              height: options.homeBounds ? undefined : options.height,
+          createWindow: (options) => {
+            if (options.homeBounds) {
+              return createBaseWindow({
+                ...HOME_WINDOW_DEFAULT_BOUNDS,
+                minWidth: options.minWidth,
+                minHeight: options.minHeight,
+                maxWidth: options.maxWidth,
+                title: options.title,
+                alwaysOnTop: options.alwaysOnTop,
+              });
+            }
+
+            return createCursorPlacedWindow({
+              width: options.width,
+              height: options.height,
               minWidth: options.minWidth,
               minHeight: options.minHeight,
               maxWidth: options.maxWidth,
               title: options.title,
               alwaysOnTop: options.alwaysOnTop,
-            }),
+            });
+          },
           loadHomeEntry: (window, mode) => requireWindowEntryLoader().loadHomeEntry(window, mode),
           loadCharacterEntry: (window, characterId) =>
             requireWindowEntryLoader().loadCharacterEntry(window, characterId),
@@ -760,7 +791,7 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
   if (!sessionWindowBridge) {
     sessionWindowBridge = new SessionWindowBridge({
       createWindow: (sessionId) =>
-        createBaseWindow({
+        createCursorPlacedWindow({
           ...SESSION_WINDOW_DEFAULT_BOUNDS,
           title: `WithMate Session - ${sessionId}`,
         }),
