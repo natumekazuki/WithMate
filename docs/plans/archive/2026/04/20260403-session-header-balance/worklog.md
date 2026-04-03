@@ -9,3 +9,5 @@
   - `Audit Log / Terminal` の移設、Top Bar 簡素化、関連 doc / plan 同期を反映した。
 - 2026-04-03: `d3a5efb docs(plan): archive session header balance`
   - repo plan を `docs/plans/archive/2026/04/20260403-session-header-balance/` へ移し、完了記録を保存した。
+- 2026-04-03: `92e149d docs(plan): remove active session header balance plan`
+  - active plan 側の directory を削除し、archive だけを正本として残した。
