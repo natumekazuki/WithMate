@@ -10,4 +10,4 @@
 
 ## Commits
 
-- なし
+- `9506609` `fix(session): Session Window 初期表示の TDZ 例外を防ぐ`
