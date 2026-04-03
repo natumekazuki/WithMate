@@ -1179,12 +1179,6 @@ export function HomeRecentSessionsPanel({
 }: HomeRecentSessionsPanelProps) {
   return (
     <section className="panel session-list-panel home-session-list-panel rise-3">
-      <div className="home-panel-head">
-        <div className="home-panel-copy">
-          <h2>Recent Sessions</h2>
-        </div>
-      </div>
-
       <div className="toolbar-search-row">
         <label className="toolbar-search-field" aria-label="セッション検索">
           <span className="toolbar-search-icon" aria-hidden="true">
