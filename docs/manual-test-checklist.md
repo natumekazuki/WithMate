@@ -56,7 +56,7 @@ npm run electron:start
 | MT-015A1 | Copilot character prompt separation | provider を `GitHub Copilot` にした session で character を有効にした 1 turn を実行し、その後 `Audit Log` を開く | `Logical Prompt` には character 指示を含む論理合成が残り、`Transport Payload` では `session.systemMessage` と `session.send.prompt` が分離して見える |
 | MT-015B | Copilot file / folder context | provider を `GitHub Copilot` にした session で workspace 内 file と folder を `@path` で参照して 1 turn 実行する | assistant response が返り、Copilot 側へ file / folder attachment が渡る。workspace 外 path でも session が失敗せず、少なくとも turn 自体は継続できる |
 | MT-015C | Copilot image via Image button | provider を `GitHub Copilot` にした session で `Image` ボタンから画像を選んで 1 turn 実行する | `Image` ボタンが利用でき、選んだ画像は Copilot 側へ file attachment として渡される |
-| MT-015D | Additional directory allowlist | Session Window の `More` から `Add Directory` で workspace 外ディレクトリを追加し、その配下の file または folder を `@path` で添付して 1 turn 実行する | 追加前は composer preview で workspace 外 path が拒否される。追加後は添付でき、`changed files / diff` の監視対象にも入る |
+| MT-015D | Additional directory allowlist | Session Window の composer toolbar から `Add Directory` で workspace 外ディレクトリを追加し、その配下の file または folder を `@path` で添付して 1 turn 実行する | 追加前は composer preview で workspace 外 path が拒否される。追加後は添付でき、`changed files / diff` の監視対象にも入る |
 | MT-015E | Copilot premium requests strip | provider を `GitHub Copilot` にした session を開く | 右 pane の `Latest Command` 下に `Premium Requests` strip が出て、残量が表示される。未取得時は `unavailable` 表示でもよい |
 | MT-015F | Copilot context usage details | Copilot session で 1 turn 実行し、右 pane の `Context` を開く | `current / limit / messages / system / conversation / reset` が開いた時だけ表示される。閉じた状態では右 pane の面積をほぼ消費しない |
 | MT-015G | Memory生成 tab auto switch | memory extraction が走る session を作り、右 pane を観察する | background memory extraction が `running` になった時だけ `Memory生成` 面へ自動切り替わる。command 実行中は `Latest Command` が優先される |
@@ -88,15 +88,16 @@ npm run electron:start
 | MT-022 | Session theme accent | Session Window を開く | header title、assistant / pending bubble、composer settings、`Send / Cancel`、Details 展開後の artifact block に character theme の accent が反映され、`user-bubble` は neutral tone を維持する |
 | MT-023 | Diff theme accent | Session から Diff を開く | `titlebar / subbar / pane header` に character theme の薄い accent が反映され、`Before / After` の文字が背景色に埋もれず読める |
 | MT-023AA | Theme contrast guard | 極端に明るい / 暗い character `main` 色をそれぞれ設定し、Home card、Character Editor title、Session title、Diff titlebar を確認する | 前景色は WCAG AA 基準の contrast ratio を満たす dark / light 側へ自動で切り替わり、背景に埋もれない |
-| MT-023A | Session wide layout baseline | `1920x1080` 前後の幅で Session Window を開く | 上段に compact な `Top Bar`、中央に左右 2 分割が表示される。左は `message list + Action Dock`、右は `Latest Command` で、right pane は下端まで伸びる |
+| MT-023A | Session wide layout baseline | `1920x1080` 前後の幅で Session Window を開く | 通常 state では左が最上端から `message list + Action Dock`、右が `title handle + Latest Command` の 2 分割で表示され、right pane は下端まで伸びる |
 | MT-023B | Session splitter resize | wide desktop 状態で左右境界をドラッグする | message list 面と `Latest Command` pane の幅が追従し、極端に寄せても chat の最小可読幅と右 pane の最小幅を下回らない |
 | MT-023C | Session action dock baseline | Session Window を開き、textarea / attachment / skill / approval / model / depth / `Send` の位置関係を見る | これらは message list と同じ左列幅の `Action Dock` にまとまり、expanded 時だけ full editor と設定群が表示される。`File / Folder / Image` は attachment group、`Skill` は別ボタンとして区別される |
 | MT-023C1 | Session narrow layout reachability | 幅 `1400px` 前後まで狭めた Session Window を開く | `message list + Action Dock` の塊の下に right pane が縦 stack で残り、`Latest Command / Memory生成 / 独り言` へ到達できる。狭幅でも right pane が失われない |
 | MT-023C2 | Session minimum width guardrail | Session Window を最小幅近くまで縮める | `message list + Action Dock` と right pane の縦 stack が維持され、scroll すれば両方へ到達できる。最小幅でも window が不自然に固定されない |
-| MT-023D | Session top bar compact | Session Window を開き、必要なら `More` を開閉する | `Top Bar` は 1 行の strip として表示され、常時は `title / More / Close` が見える。`Rename / Delete` は `More` 展開時だけ表示される |
-| MT-023D1 | Session utility actions | Session Window の right pane 上部を確認し、`Audit Log / Terminal / Generate Memory` を見る | utility action が tab switcher の横にまとまり、header へ戻らず右ペイン側の操作として読める |
-| MT-023D2 | Session terminal launch | Session Window の right pane 上部で `Terminal` を押す | session の `workspacePath` を作業ディレクトリにした外部 terminal が開く |
-| MT-023D3 | Additional directory manage UI | Session Window の composer toolbar を確認し、`Add Directory` と `Dirs` を操作する | `Add Directory` が `Skill` と同じ列に並ぶ。`Dirs` は既定では閉じており、開いた後に現在の許可リストが表示され、provider が `Codex` の時だけ `×` で削除できる |
+| MT-023D | Session header collapsed state | Session Window を開いて right pane 上端を見る | 通常 state では right pane 上部に title だけの handle が表示され、左列の `message list + Action Dock` は window 最上端から始まる |
+| MT-023D1 | Session header expanded state | collapsed handle を押して header を展開する | header が左端まで伸びた full-width strip として表示され、`Rename / Audit Log / Terminal / Delete / Close` が常時見える。`More` は出ない |
+| MT-023D2 | Session terminal launch | expanded header の `Terminal` を押す | session の `workspacePath` を作業ディレクトリにした外部 terminal が開く |
+| MT-023D3 | Session header recollapse | expanded header の title を押す | header が閉じて right pane 上部の title handle に戻る |
+| MT-023D4 | Additional directory manage UI | Session Window の composer toolbar を確認し、`Add Directory` と `Dirs` を操作する | `Add Directory` が `Skill` と同じ列に並ぶ。`Dirs` は既定では閉じており、開いた後に現在の許可リストが表示され、provider が `Codex` の時だけ `×` で削除できる |
 | MT-023E | Session action dock compact/expand | idle で draft 空の Session Window を開き、draft preview 押下 / `Hide` / textarea focus を試す | 初期状態は compact で、draft preview または textarea focus で expanded に戻り、`Hide` で再度 compact にできる |
 | MT-023E1 | Session action dock auto close | Settings で `送信後に Action Dock を自動で閉じる` を ON にした状態で Session Window から通常送信する。続けて OFF にして同じ操作を行う | ON の時は送信直後に `Action Dock` が compact へ戻る。OFF の時は expanded のまま残る。retry banner や picker など force-expanded 条件がある時は ON でも閉じない |
 | MT-023F | Session action dock forced expand | retry banner、skill picker、`@path` 候補、blocked feedback のいずれかが出る状態を作る | その間は `Action Dock` が compact に落ちず、必要な操作要素が隠れない |
