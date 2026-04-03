@@ -210,6 +210,7 @@ recent な記憶ほど少し有利にしつつ、十分 relevant な古い記憶
 つまり `Project Memory` は、
 
 - Git 管理された repository
+  - `git worktree` では worktree ルートではなく repository identity を共有単位として扱う
 - Git ではない単なる作業ディレクトリ
 
 のどちらにも対応する。

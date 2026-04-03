@@ -79,7 +79,7 @@ type ProjectScopeRow = {
   - `git` か `directory` か
 - `projectKey`
   - uniqueness を取るための canonical key
-  - `git` なら `gitRoot`
+  - `git` なら `gitRemoteUrl` を優先し、取れない時は repository identity、最後に `gitRoot`
   - `directory` なら正規化した `workspacePath`
 - `workspacePath`
   - session 起点で使っている workspace path
@@ -88,8 +88,10 @@ type ProjectScopeRow = {
 - `gitRemoteUrl`
   - project 同定の補助情報
   - v1 では必須にしない
+  - `git worktree` をまたぐ `Project Memory` 共有では最優先の識別子として使う
 - `displayName`
   - UI や debug で読むための label
+  - `git` では repo 名寄せを優先し、worktree 名をそのまま見せない
 - `createdAt`
   - 初回作成時刻
 - `updatedAt`
@@ -296,6 +298,7 @@ current 実装では、persistence foundation まで入っている。
 - SQLite に `project_scopes` を作る
 - SQLite に `project_memory_entries` を作る
 - `workspacePath` から `git | directory` の scope を解決する
+- `git worktree` では worktree ルート名ではなく repository 単位の key へ寄せる
 - session の保存時と app 起動時に scope を同期する
 - `Project Memory` entry の upsert は exact match 再利用だけを入れる
 - `Session Memory` extraction 完了後、`decisions` と tag 付き `notes` を `Project Memory` へ昇格する

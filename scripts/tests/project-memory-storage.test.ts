@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -44,6 +44,94 @@ describe("ProjectMemoryStorage", () => {
       assert.equal(scope.projectKey, `git:${repoRoot.replace(/\\/g, "/")}`);
     } finally {
       storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("git remote url がある時は repository 単位の key を優先する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-memory-"));
+    const repoRoot = path.join(tempDirectory, "repo");
+    const nestedWorkspace = path.join(repoRoot, "packages", "app");
+
+    try {
+      await mkdir(path.join(repoRoot, ".git"), { recursive: true });
+      await mkdir(nestedWorkspace, { recursive: true });
+      await writeFile(
+        path.join(repoRoot, ".git", "config"),
+        [
+          "[core]",
+          "\trepositoryformatversion = 0",
+          "[remote \"origin\"]",
+          "\turl = git@github.com:natumekazuki/WithMate.git",
+        ].join("\n"),
+      );
+
+      const scope = resolveProjectScope(nestedWorkspace);
+
+      assert.equal(scope.projectType, "git");
+      assert.equal(scope.gitRoot?.replace(/\\/g, "/"), repoRoot.replace(/\\/g, "/"));
+      assert.equal(scope.gitRemoteUrl, "git@github.com:natumekazuki/WithMate.git");
+      assert.equal(scope.projectKey, "git:git@github.com:natumekazuki/WithMate.git");
+      assert.equal(scope.displayName, "WithMate");
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("worktree の legacy scope は repository key へ移行する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-memory-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    const repoRoot = path.join(tempDirectory, "repo");
+    const worktreeRoot = path.join(tempDirectory, "repo-feature");
+    const worktreeGitDir = path.join(repoRoot, ".git", "worktrees", "repo-feature");
+    let storage: ProjectMemoryStorage | null = null;
+    let sessionStorage: SessionStorage | null = null;
+
+    try {
+      await mkdir(path.join(repoRoot, ".git"), { recursive: true });
+      await mkdir(worktreeGitDir, { recursive: true });
+      await mkdir(worktreeRoot, { recursive: true });
+      await writeFile(
+        path.join(repoRoot, ".git", "config"),
+        [
+          "[core]",
+          "\trepositoryformatversion = 0",
+          "[remote \"origin\"]",
+          "\turl = git@github.com:natumekazuki/WithMate.git",
+        ].join("\n"),
+      );
+      await writeFile(path.join(worktreeRoot, ".git"), `gitdir: ${worktreeGitDir.replace(/\\/g, "/")}\n`);
+
+      sessionStorage = new SessionStorage(dbPath);
+      storage = new ProjectMemoryStorage(dbPath);
+      const legacyScope = storage.ensureProjectScope({
+        projectType: "git",
+        projectKey: `git:${worktreeRoot.replace(/\\/g, "/")}`,
+        workspacePath: worktreeRoot.replace(/\\/g, "/"),
+        gitRoot: worktreeRoot.replace(/\\/g, "/"),
+        gitRemoteUrl: null,
+        displayName: "repo-feature",
+      });
+      storage.upsertProjectMemoryEntry({
+        projectScopeId: legacyScope.id,
+        sourceSessionId: null,
+        category: "context",
+        title: "worktree migration",
+        detail: "legacy key から移行する",
+        keywords: [],
+        evidence: [],
+      });
+
+      const migratedScope = storage.ensureProjectScope(resolveProjectScope(worktreeRoot));
+
+      assert.equal(migratedScope.id, legacyScope.id);
+      assert.equal(migratedScope.projectKey, "git:git@github.com:natumekazuki/WithMate.git");
+      assert.equal(migratedScope.gitRemoteUrl, "git@github.com:natumekazuki/WithMate.git");
+      assert.equal(migratedScope.displayName, "WithMate");
+      assert.equal(storage.listProjectMemoryEntries(migratedScope.id).length, 1);
+    } finally {
+      storage?.close();
+      sessionStorage?.close();
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });

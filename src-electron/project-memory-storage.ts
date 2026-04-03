@@ -176,6 +176,11 @@ export class ProjectMemoryStorage {
     return rowToProjectScope(row);
   }
 
+  private getLegacyGitScopeByRoot(gitRoot: string): ProjectScope | null {
+    const legacyProjectKey = `git:${gitRoot}`;
+    return this.getProjectScopeByKey(legacyProjectKey);
+  }
+
   ensureProjectScope(input: ResolvedProjectScopeInput): ProjectScope {
     const now = new Date().toISOString();
     const existing = this.getProjectScopeByKey(input.projectKey);
@@ -206,6 +211,38 @@ export class ProjectMemoryStorage {
       }
 
       return updated;
+    }
+
+    if (input.projectType === "git" && input.gitRoot && input.projectKey !== `git:${input.gitRoot}`) {
+      const legacyScope = this.getLegacyGitScopeByRoot(input.gitRoot);
+      if (legacyScope) {
+        this.db.prepare(`
+          UPDATE project_scopes
+          SET
+            project_key = ?,
+            workspace_path = ?,
+            git_root = ?,
+            git_remote_url = ?,
+            display_name = ?,
+            updated_at = ?
+          WHERE id = ?
+        `).run(
+          input.projectKey,
+          input.workspacePath,
+          input.gitRoot,
+          input.gitRemoteUrl,
+          input.displayName,
+          now,
+          legacyScope.id,
+        );
+
+        const migrated = this.getProjectScopeById(legacyScope.id);
+        if (!migrated) {
+          throw new Error("legacy project scope の移行後に再読込できないよ。");
+        }
+
+        return migrated;
+      }
     }
 
     const projectScopeId = randomUUID();
