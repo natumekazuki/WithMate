@@ -1,6 +1,7 @@
 import type {
   AuditLogOperation,
   AuditLogPhase,
+  LiveBackgroundTask,
   LiveRunStep,
   ProviderQuotaSnapshot,
   ProviderQuotaTelemetry,
@@ -9,9 +10,9 @@ import type {
 } from "./app-state.js";
 import { liveRunStepStatusLabel } from "./ui-utils.js";
 
-export type ContextPaneTabKey = "latest-command" | "memory-generation" | "monologue";
+export type ContextPaneTabKey = "latest-command" | "tasks" | "memory-generation" | "monologue";
 
-export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = ["latest-command", "memory-generation", "monologue"];
+export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = ["latest-command", "tasks", "memory-generation", "monologue"];
 
 export type LatestCommandView = {
   status: string;
@@ -43,6 +44,7 @@ export type ContextPaneProjection = {
   latestCommandToneClassName: string;
   latestCommandStatusLabel: string;
   latestCommandSourceCopy: string;
+  tasksToneClassName: string;
   memoryGenerationToneClassName: string;
   characterMemoryGenerationToneClassName: string;
   monologueToneClassName: string;
@@ -252,10 +254,28 @@ export function sessionBackgroundActivityStatusLabel(status: string): string {
   }
 }
 
+export function summarizeBackgroundTasksStatus(backgroundTasks: LiveBackgroundTask[]): string {
+  if (backgroundTasks.some((task) => task.status === "running")) {
+    return "running";
+  }
+
+  if (backgroundTasks.some((task) => task.status === "failed")) {
+    return "failed";
+  }
+
+  if (backgroundTasks.some((task) => task.status === "completed")) {
+    return "completed";
+  }
+
+  return "unknown";
+}
+
 export function contextPaneTabLabel(tab: ContextPaneTabKey): string {
   switch (tab) {
     case "latest-command":
       return "LatestCommand";
+    case "tasks":
+      return "Tasks";
     case "memory-generation":
       return "MemoryGeneration";
     case "monologue":
@@ -267,17 +287,25 @@ export function contextPaneTabLabel(tab: ContextPaneTabKey): string {
 
 export function resolveAutoContextPaneTab({
   isSelectedSessionRunning,
+  isCopilotSession,
+  backgroundTasks,
   selectedMemoryGenerationActivity,
   selectedCharacterMemoryGenerationActivity,
   selectedMonologueActivity,
 }: {
   isSelectedSessionRunning: boolean;
+  isCopilotSession: boolean;
+  backgroundTasks: LiveBackgroundTask[];
   selectedMemoryGenerationActivity: SessionBackgroundActivityState | null;
   selectedCharacterMemoryGenerationActivity: SessionBackgroundActivityState | null;
   selectedMonologueActivity: SessionBackgroundActivityState | null;
 }): ContextPaneTabKey | null {
   if (isSelectedSessionRunning) {
     return "latest-command";
+  }
+
+  if (isCopilotSession && backgroundTasks.some((task) => task.status === "running")) {
+    return "tasks";
   }
 
   if (
@@ -294,22 +322,37 @@ export function resolveAutoContextPaneTab({
   return null;
 }
 
-export function cycleContextPaneTab(currentTab: ContextPaneTabKey, direction: -1 | 1): ContextPaneTabKey {
-  const currentIndex = CONTEXT_PANE_TAB_ORDER.indexOf(currentTab);
+export function resolveAvailableContextPaneTabs({
+  isCopilotSession,
+}: {
+  isCopilotSession: boolean;
+}): ContextPaneTabKey[] {
+  return CONTEXT_PANE_TAB_ORDER.filter((tab) => tab !== "tasks" || isCopilotSession);
+}
+
+export function cycleContextPaneTab(
+  currentTab: ContextPaneTabKey,
+  direction: -1 | 1,
+  availableTabs: ContextPaneTabKey[] = CONTEXT_PANE_TAB_ORDER,
+): ContextPaneTabKey {
+  const order = availableTabs.length > 0 ? availableTabs : ["latest-command"];
+  const currentIndex = order.indexOf(currentTab);
   const safeIndex = currentIndex >= 0 ? currentIndex : 0;
-  const nextIndex = (safeIndex + direction + CONTEXT_PANE_TAB_ORDER.length) % CONTEXT_PANE_TAB_ORDER.length;
-  return CONTEXT_PANE_TAB_ORDER[nextIndex] ?? "latest-command";
+  const nextIndex = (safeIndex + direction + order.length) % order.length;
+  return order[nextIndex] ?? "latest-command";
 }
 
 export function buildContextPaneProjection({
   activeContextPaneTab,
   latestCommandView,
+  backgroundTasks,
   selectedMemoryGenerationActivity,
   selectedCharacterMemoryGenerationActivity,
   selectedMonologueActivity,
 }: {
   activeContextPaneTab: ContextPaneTabKey;
   latestCommandView: LatestCommandView | null;
+  backgroundTasks: LiveBackgroundTask[];
   selectedMemoryGenerationActivity: SessionBackgroundActivityState | null;
   selectedCharacterMemoryGenerationActivity: SessionBackgroundActivityState | null;
   selectedMonologueActivity: SessionBackgroundActivityState | null;
@@ -317,6 +360,7 @@ export function buildContextPaneProjection({
   const latestCommandToneClassName = latestCommandView ? liveRunStepToneClassName(latestCommandView.status) : "unknown";
   const latestCommandStatusLabel = latestCommandView ? liveRunStepStatusLabel(latestCommandView.status) : "待機";
   const latestCommandSourceCopy = latestCommandView?.sourceLabel === "live" ? "RUN LIVE" : "LAST RUN";
+  const tasksToneClassName = summarizeBackgroundTasksStatus(backgroundTasks);
   const memoryGenerationToneClassName = selectedMemoryGenerationActivity?.status
     ?? selectedCharacterMemoryGenerationActivity?.status
     ?? "unknown";
@@ -325,6 +369,11 @@ export function buildContextPaneProjection({
 
   let badgeLabel = "";
   switch (activeContextPaneTab) {
+    case "tasks":
+      badgeLabel = backgroundTasks.length > 0
+        ? sessionBackgroundActivityStatusLabel(tasksToneClassName)
+        : "";
+      break;
     case "memory-generation":
       badgeLabel = selectedMemoryGenerationActivity
         ? sessionBackgroundActivityStatusLabel(selectedMemoryGenerationActivity.status)
@@ -347,6 +396,9 @@ export function buildContextPaneProjection({
     case "latest-command":
       toneClassName = latestCommandToneClassName;
       break;
+    case "tasks":
+      toneClassName = tasksToneClassName;
+      break;
     case "memory-generation":
       toneClassName = memoryGenerationToneClassName;
       break;
@@ -365,6 +417,7 @@ export function buildContextPaneProjection({
     latestCommandToneClassName,
     latestCommandStatusLabel,
     latestCommandSourceCopy,
+    tasksToneClassName,
     memoryGenerationToneClassName,
     characterMemoryGenerationToneClassName,
     monologueToneClassName,

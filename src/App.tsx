@@ -55,6 +55,7 @@ import {
   buildSessionContextTelemetryProjection,
   cycleContextPaneTab,
   type ContextPaneTabKey,
+  resolveAvailableContextPaneTabs,
   resolveAutoContextPaneTab,
 } from "./session-ui-projection.js";
 import {
@@ -546,6 +547,9 @@ function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): strin
       : "",
     liveRun.steps
       .map((step) => [step.id, step.type, step.status, step.summary, step.details ?? ""].join("\u001d"))
+      .join("\u001c"),
+    liveRun.backgroundTasks
+      .map((task) => [task.id, task.kind, task.status, task.title, task.details ?? "", task.updatedAt].join("\u001d"))
       .join("\u001c"),
   ].join("\u001b");
 }
@@ -1715,6 +1719,14 @@ export default function App() {
     }),
     [latestLiveCommandStep?.id, orderedLiveRunSteps],
   );
+  const selectedBackgroundTasks = useMemo(
+    () => selectedSessionLiveRun?.backgroundTasks ?? [],
+    [selectedSessionLiveRun?.backgroundTasks],
+  );
+  const availableContextPaneTabs = useMemo(
+    () => resolveAvailableContextPaneTabs({ isCopilotSession }),
+    [isCopilotSession],
+  );
 
   const hasInProgressLiveRunStep = useMemo(
     () => orderedLiveRunSteps.some((step) => step.status === "in_progress"),
@@ -2774,16 +2786,19 @@ export default function App() {
     () => buildContextPaneProjection({
       activeContextPaneTab,
       latestCommandView,
+      backgroundTasks: selectedBackgroundTasks,
       selectedMemoryGenerationActivity,
       selectedCharacterMemoryGenerationActivity,
       selectedMonologueActivity,
     }),
-    [activeContextPaneTab, latestCommandView, selectedMemoryGenerationActivity, selectedCharacterMemoryGenerationActivity, selectedMonologueActivity],
+    [activeContextPaneTab, latestCommandView, selectedBackgroundTasks, selectedMemoryGenerationActivity, selectedCharacterMemoryGenerationActivity, selectedMonologueActivity],
   );
 
   useEffect(() => {
     const nextTab = resolveAutoContextPaneTab({
       isSelectedSessionRunning,
+      isCopilotSession,
+      backgroundTasks: selectedBackgroundTasks,
       selectedMemoryGenerationActivity,
       selectedCharacterMemoryGenerationActivity,
       selectedMonologueActivity,
@@ -2791,9 +2806,16 @@ export default function App() {
     if (nextTab) {
       setActiveContextPaneTab(nextTab);
     }
-  }, [isSelectedSessionRunning, selectedMemoryGenerationActivity?.status, selectedCharacterMemoryGenerationActivity?.status, selectedMonologueActivity?.status]);
+  }, [isSelectedSessionRunning, isCopilotSession, selectedBackgroundTasks, selectedMemoryGenerationActivity?.status, selectedCharacterMemoryGenerationActivity?.status, selectedMonologueActivity?.status]);
+
+  useEffect(() => {
+    if (!availableContextPaneTabs.includes(activeContextPaneTab)) {
+      setActiveContextPaneTab(availableContextPaneTabs[0] ?? "latest-command");
+    }
+  }, [activeContextPaneTab, availableContextPaneTabs]);
+
   const handleCycleContextPaneTab = (direction: -1 | 1) => {
-    setActiveContextPaneTab((current) => cycleContextPaneTab(current, direction));
+    setActiveContextPaneTab((current) => cycleContextPaneTab(current, direction, availableContextPaneTabs));
   };
 
   const handleRunSessionMemoryExtraction = async () => {
@@ -3071,6 +3093,7 @@ export default function App() {
                     contextPaneProjection={contextPaneProjection}
                     latestCommandView={latestCommandView}
                     runningDetailsEntries={runningDetailsEntries}
+                    backgroundTasks={selectedBackgroundTasks}
                     selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
                     isSelectedSessionRunning={isSelectedSessionRunning}
                     selectedSessionCharacter={selectedSessionCharacter}

@@ -89,6 +89,19 @@ export type LiveRunStep = {
   status: LiveRunStepStatus;
 };
 
+export type LiveBackgroundTaskKind = "agent" | "shell";
+
+export type LiveBackgroundTaskStatus = "running" | "completed" | "failed";
+
+export type LiveBackgroundTask = {
+  id: string;
+  kind: LiveBackgroundTaskKind;
+  status: LiveBackgroundTaskStatus;
+  title: string;
+  details?: string;
+  updatedAt: string;
+};
+
 export type LiveApprovalDecision = "approve" | "deny";
 
 export type LiveApprovalDecisionMode = "direct-decision" | "retry-with-policy-change";
@@ -182,6 +195,7 @@ export type LiveSessionRunState = {
   threadId: string;
   assistantText: string;
   steps: LiveRunStep[];
+  backgroundTasks: LiveBackgroundTask[];
   usage: AuditLogUsage | null;
   errorMessage: string;
   approvalRequest: LiveApprovalRequest | null;

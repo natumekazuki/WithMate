@@ -8,6 +8,7 @@ import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import {
   applyCopilotAssistantEvent,
+  applyCopilotBackgroundTaskEvent,
   CopilotAdapter,
   buildLiveElicitationFieldFromCopilotSchema,
   buildLiveElicitationRequestFromCopilotEvent,
@@ -25,6 +26,7 @@ import {
   resolveCopilotSessionForSettings,
   resolveNativeCopilotPackageName,
   shouldRetryCopilotTurn,
+  sortLiveBackgroundTasks,
   toProviderQuotaSnapshots,
 } from "../../src-electron/copilot-adapter.js";
 import {
@@ -558,6 +560,73 @@ describe("CopilotAdapter env", () => {
 
     assert.equal(next.assistantText, "本文");
     assert.deepEqual(next.messages, ["本文"]);
+  });
+
+  it("session.idle の backgroundTasks を live tasks へ取り込む", () => {
+    const tasks = new Map();
+    const changed = applyCopilotBackgroundTaskEvent(tasks, {
+      type: "session.idle",
+      timestamp: "2026-04-04T12:00:00.000Z",
+      data: {
+        backgroundTasks: {
+          agents: [{ agentId: "agent-1", agentType: "task", description: "設計を調べる" }],
+          shells: [{ shellId: "shell-1", description: "npm test --watch" }],
+        },
+      },
+    } as never);
+
+    assert.equal(changed, true);
+    assert.deepEqual(
+      sortLiveBackgroundTasks(tasks.values()).map((task) => ({
+        kind: task.kind,
+        status: task.status,
+        title: task.title,
+      })),
+      [
+        { kind: "agent", status: "running", title: "設計を調べる" },
+        { kind: "shell", status: "running", title: "npm test --watch" },
+      ],
+    );
+  });
+
+  it("system.notification で background agent の完了状態を更新する", () => {
+    const tasks = new Map();
+    applyCopilotBackgroundTaskEvent(tasks, {
+      type: "session.idle",
+      timestamp: "2026-04-04T12:00:00.000Z",
+      data: {
+        backgroundTasks: {
+          agents: [{ agentId: "agent-1", agentType: "task", description: "設計を調べる" }],
+          shells: [],
+        },
+      },
+    } as never);
+
+    const changed = applyCopilotBackgroundTaskEvent(tasks, {
+      type: "system.notification",
+      timestamp: "2026-04-04T12:05:00.000Z",
+      data: {
+        content: "<system_notification>completed</system_notification>",
+        kind: {
+          type: "agent_completed",
+          agentId: "agent-1",
+          agentType: "task",
+          status: "completed",
+          description: "設計を調べる",
+          prompt: "repo を調べて要点をまとめる",
+        },
+      },
+    } as never);
+
+    assert.equal(changed, true);
+    assert.deepEqual(tasks.get("agent:agent-1"), {
+      id: "agent:agent-1",
+      kind: "agent",
+      status: "completed",
+      title: "設計を調べる",
+      details: "repo を調べて要点をまとめる",
+      updatedAt: "2026-04-04T12:05:00.000Z",
+    });
   });
 
   it("進行途中の user-visible partial が無い stale connection / missing session だけ retry する", () => {

@@ -5,6 +5,7 @@ import type {
   ChangedFile,
   CharacterProfile,
   LiveApprovalRequest,
+  LiveBackgroundTask,
   LiveElicitationField,
   LiveElicitationRequest,
   LiveElicitationResponse,
@@ -505,6 +506,18 @@ export function SessionHeader({
   );
 }
 
+function liveBackgroundTaskToneClassName(status: LiveBackgroundTask["status"]): string {
+  switch (status) {
+    case "running":
+      return "in_progress";
+    case "failed":
+      return "failed";
+    case "completed":
+    default:
+      return "completed";
+  }
+}
+
 type SessionHeaderHandleProps = {
   taskTitle: string;
   onClick: () => void;
@@ -769,6 +782,7 @@ export type SessionContextPaneProps = {
   contextPaneProjection: ContextPaneProjection;
   latestCommandView: LatestCommandView | null;
   runningDetailsEntries: RunningDetailsEntry[];
+  backgroundTasks: LiveBackgroundTask[];
   selectedSessionLiveRunErrorMessage: string;
   isSelectedSessionRunning: boolean;
   selectedSessionCharacter: { name: string; iconPath: string } | null;
@@ -883,6 +897,7 @@ export function SessionContextPane({
   contextPaneProjection,
   latestCommandView,
   runningDetailsEntries,
+  backgroundTasks,
   selectedSessionLiveRunErrorMessage,
   isSelectedSessionRunning,
   selectedSessionCharacter,
@@ -905,6 +920,7 @@ export function SessionContextPane({
 }: SessionContextPaneProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const isMemoryGenerationTab = activeContextPaneTab === "memory-generation";
+  const taskEntries = backgroundTasks ?? [];
   const memoryGenerationActivities = useMemo(
     () =>
       [selectedMemoryGenerationActivity, selectedCharacterMemoryGenerationActivity]
@@ -924,6 +940,10 @@ export function SessionContextPane({
             .join("\u001f"),
           selectedSessionLiveRunErrorMessage,
         ].join("|");
+      case "tasks":
+        return taskEntries
+          .map((task) => `${task.id}:${task.kind}:${task.status}:${task.title}:${task.details ?? ""}:${task.updatedAt}`)
+          .join("|");
       case "memory-generation":
         return memoryGenerationActivities
           .map((activity) => `${activity.kind}:${activity.status}:${activity.updatedAt}:${activity.summary}`)
@@ -939,6 +959,7 @@ export function SessionContextPane({
     activeContextPaneTab,
     latestCommandView,
     runningDetailsEntries,
+    taskEntries,
     memoryGenerationActivities,
     selectedMonologueEntries,
     selectedSessionLiveRunErrorMessage,
@@ -956,7 +977,7 @@ export function SessionContextPane({
   return (
     <aside className={`session-context-pane${isHeaderExpanded ? " session-context-pane-header-expanded" : ""}`}>
       {!isHeaderExpanded ? <SessionHeaderHandle taskTitle={taskTitle} onClick={onToggleHeaderExpanded} /> : null}
-      <section className="command-monitor-shell" aria-label="最新 command">
+      <section className="command-monitor-shell" aria-label="右ペイン">
         <div className={`command-monitor-head${isMemoryGenerationTab ? " memory-generation-layout" : ""}`}>
           <div className="command-monitor-switcher" aria-label="右ペイン表示切り替え">
             <button
@@ -1090,6 +1111,46 @@ export function SessionContextPane({
                   ))}
                 </div>
               </div>
+            ) : null}
+
+            {activeContextPaneTab === "tasks" ? (
+              taskEntries.length > 0 ? (
+                <div className="command-monitor-card">
+                  <div className="command-monitor-card-head">
+                    <div className="command-monitor-meta">
+                      <span className="live-run-step-type">Tasks</span>
+                      <span className="command-monitor-source">COPILOT</span>
+                    </div>
+                  </div>
+
+                  <div className="command-monitor-confirmed-list">
+                    {taskEntries.map((task) => (
+                      <article key={task.id} className="command-monitor-confirmed-item">
+                        <div className="command-monitor-card-head compact">
+                          <div className="command-monitor-meta">
+                            <span className={`live-run-step-status ${liveBackgroundTaskToneClassName(task.status)}`}>
+                              {sessionBackgroundActivityStatusLabel(task.status)}
+                            </span>
+                            <span className="live-run-step-type">{task.kind === "agent" ? "Agent" : "Shell"}</span>
+                          </div>
+                        </div>
+                        <p className="command-monitor-confirmed-summary">{task.title}</p>
+                        {task.details ? (
+                          <details className="command-monitor-details live-run-step-details">
+                            <summary>task details</summary>
+                            <pre>{task.details}</pre>
+                          </details>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="command-monitor-empty-shell">
+                  <p className="command-monitor-empty">まだ background task はないよ。</p>
+                  <p className="command-monitor-empty-subtle">Copilot の sub-agent や background shell がある時だけここへ出るよ。</p>
+                </div>
+              )
             ) : null}
 
             {activeContextPaneTab === "memory-generation" ? (

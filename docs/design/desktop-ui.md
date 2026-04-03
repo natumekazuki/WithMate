@@ -195,7 +195,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - `approvalRequest`: `今回だけ許可 / 拒否`
   - `elicitationRequest`: form または URL completion の `送信 / 拒否 / 閉じる`
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
-- right pane は `Latest Command / Memory生成 / 独り言` の tab host とする
+- right pane は `Latest Command / Memory生成 / 独り言` を基本 tab とし、provider が `Copilot` の時だけ `Tasks` tab を追加する
 - right pane 上部には collapsed state の `title handle` を置く
   - `Generate Memory` は `Memory生成` tab を表示している間だけ出し、switcher の下段へ回して横幅を空ける
 - `character-update` variant では right pane を `LatestCommand / MemoryExtract` の 2 面に切り替える
@@ -209,6 +209,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - 実行中に確定した live step があれば、`Latest Command` の下に `CONFIRMED Details` として直近数件だけ補助表示してよい
   - 直近の in-progress command とは分ける
   - full timeline には戻さず、summary + optional `details` に留める
+- provider が `Copilot` で background task snapshot が来た時は、right pane の `Tasks` tab で `agent / shell` の running / completed / failed を確認できるようにする
+- `Tasks` tab は `/tasks` 全機能の再現ではなく、current session に紐づく background task の coarse な観測面に留める
 - `Memory生成` には background activity の status、summary、必要時だけ開く `details` を出す
   - `details` には trigger / model / reasoning に加えて、更新された Session / Character Memory の内容を含めてよい
 - provider が `Copilot` の時だけ、`Latest Command` の下に `Premium Requests` の薄い strip を常設し、残量だけを即読できるようにする

@@ -38,6 +38,7 @@ test("SessionObservabilityService „ÅØ live run / telemetry / background state „Ç
     threadId: "thread-1",
     assistantText: "running",
     steps: [],
+    backgroundTasks: [],
     usage: null,
     errorMessage: "",
     approvalRequest: null,

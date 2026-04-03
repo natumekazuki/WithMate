@@ -180,6 +180,7 @@ describe("SessionRuntimeService", () => {
           threadId: "",
           assistantText: "",
           steps: [],
+          backgroundTasks: [],
           usage: null,
           errorMessage: "",
           approvalRequest: null,

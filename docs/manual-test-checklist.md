@@ -60,6 +60,7 @@ npm run electron:start
 | MT-015D | Additional directory allowlist | Session Window の composer toolbar から `Add Directory` で workspace 外ディレクトリを追加し、その配下の file または folder を `@path` で添付して 1 turn 実行する | 追加前は composer preview で workspace 外 path が拒否される。追加後は添付でき、`changed files / diff` の監視対象にも入る |
 | MT-015E | Copilot premium requests strip | provider を `GitHub Copilot` にした session を開く | 右 pane の `Latest Command` 下に `Premium Requests` strip が出て、残量が表示される。未取得時は `unavailable` 表示でもよい |
 | MT-015F | Copilot context usage details | Copilot session で 1 turn 実行し、右 pane の `Context` を開く | `current / limit / messages / system / conversation / reset` が開いた時だけ表示される。閉じた状態では右 pane の面積をほぼ消費しない |
+| MT-015H | Copilot background tasks snapshot | Copilot session で background agent または detached shell を起動する turn を実行する | turn 完了後も right pane に `Tasks` tab が現れ、`agent / shell` の running / completed / failed が見える。Codex session ではこの tab は出ない |
 | MT-015G | Memory生成 tab auto switch | memory extraction が走る session を作り、右 pane を観察する | background memory extraction が `running` になった時だけ `Memory生成` 面へ自動切り替わる。command 実行中は `Latest Command` が優先される |
 | MT-015H | Memory生成 details content | Session Memory または Character Memory が更新される session を実行し、right pane の `Memory生成` で `Details` を開く | `trigger / model / reasoning` に加えて、更新された field や entry 内容が確認できる |
 | MT-015I | Manual Session Memory generation | idle の Session Window で right pane を `Memory生成` へ切り替え、`Generate Memory` を押す | `Session Memory extraction` が `trigger: manual` で走る。完了後は summary / details が更新される。button は `Memory生成` 表示中だけ出て、switcher の下段へ回る |

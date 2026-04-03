@@ -628,6 +628,7 @@ async function emitLiveState(
     threadId: threadId ?? "",
     assistantText,
     steps: Array.from(steps.values()),
+    backgroundTasks: [],
     usage,
     errorMessage,
     approvalRequest: null,

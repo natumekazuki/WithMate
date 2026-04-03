@@ -10,6 +10,7 @@ function createLiveRunState(): LiveSessionRunState {
     threadId: "thread-1",
     assistantText: "",
     steps: [],
+    backgroundTasks: [],
     usage: null,
     errorMessage: "",
     approvalRequest: null,

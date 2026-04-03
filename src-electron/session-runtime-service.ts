@@ -159,6 +159,7 @@ function buildEmptyLiveSessionRunState(sessionId: string, threadId: string): Liv
     threadId,
     assistantText: "",
     steps: [],
+    backgroundTasks: [],
     usage: null,
     errorMessage: "",
     approvalRequest: null,
@@ -259,7 +260,10 @@ export class SessionRuntimeService {
     this.inFlightSessionRuns.add(sessionId);
     const runAbortController = new AbortController();
     this.sessionRunControllers.set(sessionId, runAbortController);
-    this.deps.setLiveSessionRun(sessionId, buildEmptyLiveSessionRunState(sessionId, runningSession.threadId));
+    this.deps.setLiveSessionRun(sessionId, {
+      ...buildEmptyLiveSessionRunState(sessionId, runningSession.threadId),
+      backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
+    });
 
     const runningAuditLog = this.deps.createAuditLog({
       sessionId,
@@ -337,7 +341,10 @@ export class SessionRuntimeService {
               updatedAt: currentTimestampLabel(),
             });
           }
-          this.deps.setLiveSessionRun(sessionId, buildEmptyLiveSessionRunState(sessionId, ""));
+          this.deps.setLiveSessionRun(sessionId, {
+            ...buildEmptyLiveSessionRunState(sessionId, ""),
+            backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
+          });
         }
       }
       if (!result) {
@@ -468,7 +475,15 @@ export class SessionRuntimeService {
       this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
       this.inFlightSessionRuns.delete(sessionId);
       this.sessionRunControllers.delete(sessionId);
-      this.deps.setLiveSessionRun(sessionId, null);
+      const preservedBackgroundTasks = this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [];
+      if (preservedBackgroundTasks.length > 0) {
+        this.deps.setLiveSessionRun(sessionId, {
+          ...buildEmptyLiveSessionRunState(sessionId, activeRunningSession.threadId),
+          backgroundTasks: preservedBackgroundTasks,
+        });
+      } else {
+        this.deps.setLiveSessionRun(sessionId, null);
+      }
       this.deps.clearWorkspaceFileIndex(session.workspacePath);
       this.deps.broadcastLiveSessionRun(sessionId);
     }

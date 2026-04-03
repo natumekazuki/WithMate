@@ -18,6 +18,7 @@ import type {
   AuditLogUsage,
   AuditTransportPayload,
   LiveApprovalRequest,
+  LiveBackgroundTask,
   LiveElicitationField,
   LiveElicitationRequest,
   LiveElicitationResponse,
@@ -59,6 +60,8 @@ import { resolveSessionCustomAgentConfigs } from "./custom-agent-discovery.js";
 type CachedCopilotSession = {
   session: CopilotSession;
   settingsKey: string;
+  backgroundTasks: Map<string, LiveBackgroundTask>;
+  unsubscribeBackgroundObserver?: () => void;
 };
 
 type CopilotCommandStepState = {
@@ -76,6 +79,7 @@ type CopilotStableRawItem = {
 
 type CopilotTurnStreamState = {
   liveSteps: Map<string, LiveRunStep>;
+  backgroundTasks: Map<string, LiveBackgroundTask>;
   permissionToStepId: Map<string, string>;
   toolNamesByCallId: Map<string, string>;
   events: SessionEvent[];
@@ -276,6 +280,7 @@ function toAuditUsageFromCopilot(data: { inputTokens?: number; cacheReadTokens?:
 function createCopilotTurnStreamState(): CopilotTurnStreamState {
   return {
     liveSteps: new Map<string, LiveRunStep>(),
+    backgroundTasks: new Map<string, LiveBackgroundTask>(),
     permissionToStepId: new Map<string, string>(),
     toolNamesByCallId: new Map<string, string>(),
     events: [],
@@ -424,6 +429,10 @@ function applyCopilotTurnEvent(args: {
           status: event.data.success ? "completed" : "failed",
         });
       }
+      break;
+    case "session.idle":
+    case "system.notification":
+      applyCopilotBackgroundTaskEvent(state.backgroundTasks, event);
       break;
     default:
       break;
@@ -1106,6 +1115,7 @@ async function emitLiveState(
   sessionId: string,
   threadId: string | null,
   steps: Map<string, LiveRunStep>,
+  backgroundTasks: Map<string, LiveBackgroundTask>,
   assistantText: string,
   usage: AuditLogUsage | null,
   errorMessage: string,
@@ -1119,6 +1129,7 @@ async function emitLiveState(
     threadId: threadId ?? "",
     assistantText,
     steps: Array.from(steps.values()),
+    backgroundTasks: sortLiveBackgroundTasks(backgroundTasks.values()),
     usage,
     errorMessage,
     approvalRequest: null,
@@ -1416,6 +1427,148 @@ export function buildLiveElicitationRequestFromCopilotEvent(
   };
 }
 
+function buildCopilotBackgroundTaskKey(kind: "agent" | "shell", id: string): string {
+  return `${kind}:${id}`;
+}
+
+function buildCopilotBackgroundTaskTitle(description: string | undefined, fallback: string): string {
+  const trimmed = description?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : fallback;
+}
+
+export function sortLiveBackgroundTasks(tasks: Iterable<LiveBackgroundTask>): LiveBackgroundTask[] {
+  return Array.from(tasks).sort((left, right) => {
+    const statusOrder = (status: LiveBackgroundTask["status"]): number => {
+      switch (status) {
+        case "running":
+          return 0;
+        case "failed":
+          return 1;
+        case "completed":
+        default:
+          return 2;
+      }
+    };
+
+    const byStatus = statusOrder(left.status) - statusOrder(right.status);
+    if (byStatus !== 0) {
+      return byStatus;
+    }
+
+    return right.updatedAt.localeCompare(left.updatedAt);
+  });
+}
+
+function trimTerminalBackgroundTasks(tasks: Map<string, LiveBackgroundTask>, maxTerminal = 6): void {
+  const terminalTasks = sortLiveBackgroundTasks(tasks.values()).filter((task) => task.status !== "running");
+  if (terminalTasks.length <= maxTerminal) {
+    return;
+  }
+
+  for (const task of terminalTasks.slice(maxTerminal)) {
+    tasks.delete(task.id);
+  }
+}
+
+export function applyCopilotBackgroundTaskEvent(
+  tasks: Map<string, LiveBackgroundTask>,
+  event: SessionEvent,
+): boolean {
+  switch (event.type) {
+    case "session.idle": {
+      const snapshot = event.data.backgroundTasks;
+      const nextRunningKeys = new Set<string>();
+      for (const agent of snapshot?.agents ?? []) {
+        const key = buildCopilotBackgroundTaskKey("agent", agent.agentId);
+        nextRunningKeys.add(key);
+        tasks.set(key, {
+          id: key,
+          kind: "agent",
+          status: "running",
+          title: buildCopilotBackgroundTaskTitle(agent.description, `${agent.agentType} agent`),
+          details: agent.agentType,
+          updatedAt: event.timestamp,
+        });
+      }
+
+      for (const shell of snapshot?.shells ?? []) {
+        const key = buildCopilotBackgroundTaskKey("shell", shell.shellId);
+        nextRunningKeys.add(key);
+        tasks.set(key, {
+          id: key,
+          kind: "shell",
+          status: "running",
+          title: buildCopilotBackgroundTaskTitle(shell.description, "background shell"),
+          updatedAt: event.timestamp,
+        });
+      }
+
+      let changed = false;
+      for (const [key, task] of tasks.entries()) {
+        if (task.status === "running" && !nextRunningKeys.has(key)) {
+          tasks.delete(key);
+          changed = true;
+        }
+      }
+
+      return changed || nextRunningKeys.size > 0;
+    }
+    case "system.notification": {
+      const kind = event.data.kind;
+      switch (kind.type) {
+        case "agent_idle": {
+          const key = buildCopilotBackgroundTaskKey("agent", kind.agentId);
+          tasks.set(key, {
+            id: key,
+            kind: "agent",
+            status: "running",
+            title: buildCopilotBackgroundTaskTitle(kind.description, `${kind.agentType} agent`),
+            details: kind.agentType,
+            updatedAt: event.timestamp,
+          });
+          return true;
+        }
+        case "agent_completed": {
+          const key = buildCopilotBackgroundTaskKey("agent", kind.agentId);
+          tasks.set(key, {
+            id: key,
+            kind: "agent",
+            status: kind.status === "failed" ? "failed" : "completed",
+            title: buildCopilotBackgroundTaskTitle(kind.description, `${kind.agentType} agent`),
+            details: kind.prompt?.trim() ? kind.prompt : kind.agentType,
+            updatedAt: event.timestamp,
+          });
+          trimTerminalBackgroundTasks(tasks);
+          return true;
+        }
+        case "shell_completed":
+        case "shell_detached_completed": {
+          const key = buildCopilotBackgroundTaskKey("shell", kind.shellId);
+          const detailParts: string[] = [];
+          const exitCode = "exitCode" in kind && typeof kind.exitCode === "number" ? kind.exitCode : null;
+          if (exitCode !== null) {
+            detailParts.push(`exitCode: ${exitCode}`);
+          }
+          tasks.set(key, {
+            id: key,
+            kind: "shell",
+            status: exitCode !== null && exitCode !== 0 ? "failed" : "completed",
+            title: buildCopilotBackgroundTaskTitle(kind.description, "background shell"),
+            details: detailParts.length > 0 ? detailParts.join("\n") : undefined,
+            updatedAt: event.timestamp,
+          });
+          trimTerminalBackgroundTasks(tasks);
+          return true;
+        }
+        default:
+          return false;
+      }
+    }
+    default:
+      return false;
+  }
+}
+
 async function respondToCopilotElicitation(
   session: CopilotSession,
   requestId: string,
@@ -1482,9 +1635,15 @@ export async function resolveCopilotSessionForSettings(args: {
   };
 }
 
+type CopilotAdapterOptions = {
+  onBackgroundTasksChanged?: (sessionId: string, tasks: LiveBackgroundTask[]) => void;
+};
+
 export class CopilotAdapter implements ProviderTurnAdapter {
   private readonly clients = new Map<string, CopilotClient>();
   private readonly sessions = new Map<string, CachedCopilotSession>();
+
+  constructor(private options: CopilotAdapterOptions = {}) {}
 
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
     return composeProviderPrompt(input);
@@ -1632,8 +1791,28 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     const cached = this.sessions.get(sessionId);
     this.sessions.delete(sessionId);
     if (cached) {
+      cached.unsubscribeBackgroundObserver?.();
+      this.options.onBackgroundTasksChanged?.(sessionId, []);
       await cached.session.disconnect().catch(() => undefined);
     }
+  }
+
+  setBackgroundTasksObserver(observer: CopilotAdapterOptions["onBackgroundTasksChanged"]): void {
+    this.options.onBackgroundTasksChanged = observer;
+    for (const [sessionId, cached] of this.sessions.entries()) {
+      this.options.onBackgroundTasksChanged?.(sessionId, sortLiveBackgroundTasks(cached.backgroundTasks.values()));
+    }
+  }
+
+  private attachBackgroundTaskObserver(sessionId: string, cached: CachedCopilotSession): void {
+    cached.unsubscribeBackgroundObserver?.();
+    cached.unsubscribeBackgroundObserver = cached.session.on((event) => {
+      if (!applyCopilotBackgroundTaskEvent(cached.backgroundTasks, event)) {
+        return;
+      }
+
+      this.options.onBackgroundTasksChanged?.(sessionId, sortLiveBackgroundTasks(cached.backgroundTasks.values()));
+    });
   }
 
   private async resetRecoverableConnection(input: RunSessionTurnInput): Promise<void> {
@@ -1665,7 +1844,12 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     this.sessions.set(input.session.id, {
       session: resolved.session,
       settingsKey: nextSettings.settingsKey,
+      backgroundTasks: new Map<string, LiveBackgroundTask>(),
     });
+    const nextCached = this.sessions.get(input.session.id);
+    if (nextCached) {
+      this.attachBackgroundTaskObserver(input.session.id, nextCached);
+    }
 
     return {
       session: resolved.session,
@@ -1770,6 +1954,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           input.session.id,
           session.sessionId,
           streamState.liveSteps,
+          streamState.backgroundTasks,
           streamState.assistantText,
           streamState.usage,
           streamState.streamErrorMessage,
@@ -1783,6 +1968,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       input.session.id,
       session.sessionId,
       streamState.liveSteps,
+      streamState.backgroundTasks,
       streamState.assistantText,
       streamState.usage,
       streamState.streamErrorMessage,

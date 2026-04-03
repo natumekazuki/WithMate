@@ -18,7 +18,7 @@
 | context telemetry | 実装済み | `session.usage_info` を session local telemetry として保持する |
 | rich command timeline | 未対応 | current UI は `Latest Command` + `CONFIRMED Details` までに留める |
 | slash command 吸収 | 未対応 | `#10` と `copilot-rollout` で継続検討する |
-| background task parity | 未対応 | `#17` の `/tasks` 調査待ち |
+| background task parity | 一部実装 | Copilot は `session.idle.backgroundTasks` と `system.notification` を `LiveSessionRunState.backgroundTasks` へ取り込み、Session 右ペインの Copilot 専用 `Tasks` tab で snapshot を見せる。Codex は current SDK に同等 surface が無いため未対応 |
 
 ## Codex SDK
 

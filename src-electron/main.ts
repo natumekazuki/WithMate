@@ -908,6 +908,33 @@ function requireSessionObservabilityService(): SessionObservabilityService {
         requireWindowBroadcastService().broadcastLiveSessionRun(sessionId, state);
       },
     });
+    copilotAdapter.setBackgroundTasksObserver((sessionId, tasks) => {
+      const current = sessionObservabilityService?.getLiveSessionRun(sessionId) ?? null;
+      if (current) {
+        sessionObservabilityService?.setLiveSessionRun(sessionId, {
+          ...current,
+          backgroundTasks: tasks,
+        });
+        return;
+      }
+
+      if (tasks.length === 0) {
+        return;
+      }
+
+      const threadId = sessions.find((session) => session.id === sessionId)?.threadId ?? "";
+      sessionObservabilityService?.setLiveSessionRun(sessionId, {
+        sessionId,
+        threadId,
+        assistantText: "",
+        steps: [],
+        backgroundTasks: tasks,
+        usage: null,
+        errorMessage: "",
+        approvalRequest: null,
+        elicitationRequest: null,
+      });
+    });
   }
 
   return sessionObservabilityService;

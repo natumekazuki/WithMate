@@ -109,6 +109,8 @@ current milestone の provider ごとの差は次。
   - `artifact` は snapshot diff fallback を使って `changedFiles / runChecks / operationTimeline` を最小構成で返す
   - `Premium Requests` は `client.rpc.account.getQuota()` と `assistant.usage.quotaSnapshots` から app-wide telemetry として更新する
   - `Context Usage` は `session.usage_info` を session local telemetry として Main Process memory に保持する
+  - background task は `session.idle.backgroundTasks` と `system.notification` を `LiveSessionRunState.backgroundTasks` へ正規化し、Session 右ペインの Copilot 専用 `Tasks` tab へ流す
+  - current slice は Copilot-only で、task の create/list/control RPC までは吸収しない。Codex current SDK に同等 surface は無い
 
 ## Plane Separation
 
