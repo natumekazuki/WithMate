@@ -173,15 +173,39 @@ describe("CopilotAdapter env", () => {
   it("Electron では native Copilot CLI binary を優先して使う", () => {
     const resolved = resolveCopilotCliPath(
       (specifier) => {
-        assert.equal(specifier, "@github/copilot-win32-x64");
-        return path.join("C:\\sdk", "copilot.exe");
+        assert.equal(specifier, "@github/copilot-win32-x64/package.json");
+        return path.join("C:\\sdk", "package.json");
       },
       (candidate) => candidate === path.join("C:\\sdk", "copilot.exe"),
       "win32",
       "x64",
+      undefined,
     );
 
     assert.equal(resolved, path.join("C:\\sdk", "copilot.exe"));
+  });
+
+  it("packaged runtime では staged Copilot CLI binary を最優先する", () => {
+    const resourcesPath = "C:\\Program Files\\WithMate\\resources";
+    const expected = path.join(
+      resourcesPath,
+      "provider-binaries",
+      "@github",
+      "copilot-win32-x64",
+      "copilot.exe",
+    );
+
+    const resolved = resolveCopilotCliPath(
+      () => {
+        throw new Error("development binary は見ない");
+      },
+      (candidate) => candidate === expected,
+      "win32",
+      "x64",
+      resourcesPath,
+    );
+
+    assert.equal(resolved, expected);
   });
 
   it("native binary が見つからない時は local node_modules command を返す", () => {
@@ -192,6 +216,7 @@ describe("CopilotAdapter env", () => {
       (candidate) => candidate === path.resolve(process.cwd(), "node_modules", ".bin", "copilot.cmd"),
       "win32",
       "x64",
+      undefined,
     );
 
     assert.equal(resolved, path.resolve(process.cwd(), "node_modules", ".bin", "copilot.cmd"));
@@ -205,6 +230,7 @@ describe("CopilotAdapter env", () => {
       () => false,
       "win32",
       "x64",
+      undefined,
     );
 
     assert.equal(resolved, "copilot.cmd");

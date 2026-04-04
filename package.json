@@ -1,21 +1,22 @@
 {
   "name": "withmate",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "キャラクターロールプレイ対応 coding agent デスクトップアプリ",
   "private": true,
   "main": "dist-electron/src-electron/main.js",
   "scripts": {
     "dev": "vite",
     "icon:generate": "node --import tsx scripts/generate-app-icon.ts",
+    "stage:provider-binaries": "node --import tsx scripts/stage-provider-binaries.ts",
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "build": "npm run build:renderer && npm run build:electron",
     "electron:dev": "npm run build:electron && tsx scripts/run-electron-dev.ts",
     "electron:start": "npm run build && electron dist-electron/src-electron/main.js",
-    "dist": "npm run icon:generate && npm run build && electron-builder",
-    "dist:win": "npm run icon:generate && npm run build && electron-builder --win nsis",
-    "dist:mac": "npm run icon:generate && npm run build && electron-builder --mac dmg",
-    "dist:dir": "npm run icon:generate && npm run build && electron-builder --dir",
+    "dist": "npm run icon:generate && npm run stage:provider-binaries && npm run build && electron-builder",
+    "dist:win": "npm run icon:generate && npm run stage:provider-binaries && npm run build && electron-builder --win nsis",
+    "dist:mac": "npm run icon:generate && npm run stage:provider-binaries && npm run build && electron-builder --mac dmg",
+    "dist:dir": "npm run icon:generate && npm run stage:provider-binaries && npm run build && electron-builder --dir",
     "preview": "vite preview",
     "test": "tsx --test scripts/tests/*.test.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
@@ -55,12 +56,20 @@
     "files": [
       "dist/**",
       "dist-electron/**",
-      "package.json"
+      "package.json",
+      "!node_modules/@openai/codex-win32-*/**",
+      "!node_modules/@openai/codex-darwin-*/**",
+      "!node_modules/@openai/codex-linux-*/**",
+      "!node_modules/@github/copilot-win32-*/**",
+      "!node_modules/@github/copilot-darwin-*/**",
+      "!node_modules/@github/copilot-linux-*/**"
     ],
     "asar": true,
-    "asarUnpack": [
-      "node_modules/@openai/codex*/**",
-      "node_modules/@github/copilot*/**"
+    "extraResources": [
+      {
+        "from": "build/provider-binaries",
+        "to": "provider-binaries"
+      }
     ],
     "win": {
       "icon": "build/icon.ico",

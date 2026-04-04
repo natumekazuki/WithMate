@@ -48,6 +48,7 @@ import {
 } from "./provider-runtime.js";
 import { parseCharacterReflectionOutputText } from "./character-reflection.js";
 import { parseSessionMemoryDeltaText } from "./session-memory-extraction.js";
+import { resolvePackagedProviderBinaryPath } from "./provider-binary-paths.js";
 const MAX_DIFF_MATRIX_CELLS = 2_000_000;
 
 function summarizeChangedFile(kind: ChangedFile["kind"], filePath: string): string {
@@ -892,13 +893,18 @@ export class CodexAdapter implements ProviderTurnAdapter {
 
   private getClient(providerId: string, appSettings: AppSettings): { client: Codex; clientKey: string } {
     const codingApiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
-    const clientKey = JSON.stringify([providerId, codingApiKey || null]);
+    const codexPathOverride = resolvePackagedProviderBinaryPath("codex");
+    const clientKey = JSON.stringify([providerId, codingApiKey || null, codexPathOverride]);
     const cached = this.clients.get(clientKey);
     if (cached) {
       return { client: cached, clientKey };
     }
 
-    const client = codingApiKey ? new Codex({ apiKey: codingApiKey }) : new Codex();
+    const clientOptions = {
+      ...(codingApiKey ? { apiKey: codingApiKey } : {}),
+      ...(codexPathOverride ? { codexPathOverride } : {}),
+    };
+    const client = new Codex(clientOptions);
     this.clients.set(clientKey, client);
     return { client, clientKey };
   }

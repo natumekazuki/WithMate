@@ -51,8 +51,11 @@ current milestone では、署名や notarization まで確定せず、まず未
   - `dist/**`
   - `dist-electron/**`
   - `package.json`
+- provider native package 本体は `files` の除外規則で app bundle 側から外し、`resources/provider-binaries/` 側だけを runtime の正本にする
 - `asar` は有効化する
-- `@openai/codex*` と `@github/copilot*` の package は `asarUnpack` で `app.asar.unpacked` へ出し、installer 環境でも provider binary を spawn できるようにする
+- provider native package は `scripts/stage-provider-binaries.ts` で `build/provider-binaries/` へ stage し、`extraResources` で `resources/provider-binaries/` 配下へ配布する
+- packaged runtime の binary path 解決は `src-electron/provider-binary-paths.ts` を正本にする
+- `Codex` は `codexPathOverride` で staged binary を明示し、`Copilot` は `cliPath` に staged binary を渡す
 
 ## Platform Constraint
 
@@ -86,7 +89,7 @@ minimum の確認は次とする。
 2. `npm run dist:dir`
 3. Windows 環境では必要に応じて `npm run dist:win`
 4. Windows installer 導入後、Start Menu 検索で `WithMate` を入力して起動できることを確認する
-5. Windows unpacked 出力では `resources/app.asar.unpacked/node_modules/@openai/codex-win32-x64/vendor/.../codex.exe` と `resources/app.asar.unpacked/node_modules/@github/copilot-win32-x64/copilot.exe` が存在することを確認する
+5. Windows unpacked 出力では `resources/provider-binaries/@openai/codex-win32-x64/vendor/.../codex.exe` と `resources/provider-binaries/@github/copilot-win32-x64/copilot.exe` が存在することを確認する
 
 macOS artifact の実確認は macOS 環境で次を行う。
 

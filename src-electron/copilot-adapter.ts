@@ -56,6 +56,11 @@ import {
 } from "./snapshot-ignore.js";
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 import { resolveSessionCustomAgentConfigs } from "./custom-agent-discovery.js";
+import {
+  resolveDevelopmentProviderBinaryPath,
+  resolvePackagedProviderBinaryPath,
+  resolveProviderBinarySpec,
+} from "./provider-binary-paths.js";
 
 type CachedCopilotSession = {
   session: CopilotSession;
@@ -129,37 +134,7 @@ export function resolveNativeCopilotPackageName(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
 ): string | null {
-  if (platform === "win32") {
-    if (arch === "x64") {
-      return "@github/copilot-win32-x64";
-    }
-
-    if (arch === "arm64") {
-      return "@github/copilot-win32-arm64";
-    }
-  }
-
-  if (platform === "darwin") {
-    if (arch === "x64") {
-      return "@github/copilot-darwin-x64";
-    }
-
-    if (arch === "arm64") {
-      return "@github/copilot-darwin-arm64";
-    }
-  }
-
-  if (platform === "linux") {
-    if (arch === "x64") {
-      return "@github/copilot-linux-x64";
-    }
-
-    if (arch === "arm64") {
-      return "@github/copilot-linux-arm64";
-    }
-  }
-
-  return null;
+  return resolveProviderBinarySpec("copilot", platform, arch)?.packageSpecifier ?? null;
 }
 
 export function resolveCopilotCliPath(
@@ -167,17 +142,16 @@ export function resolveCopilotCliPath(
   fileExists: (candidate: string) => boolean = existsSync,
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
+  resourcesPath: string | undefined = process.resourcesPath,
 ): string {
-  const nativePackageName = resolveNativeCopilotPackageName(platform, arch);
-  if (nativePackageName) {
-    try {
-      const candidate = resolvePackagePath(nativePackageName);
-      if (fileExists(candidate)) {
-        return candidate;
-      }
-    } catch {
-      // fallback below
-    }
+  const packagedBinary = resolvePackagedProviderBinaryPath("copilot", resourcesPath, fileExists, platform, arch);
+  if (packagedBinary) {
+    return packagedBinary;
+  }
+
+  const nativeBinary = resolveDevelopmentProviderBinaryPath("copilot", resolvePackagePath, fileExists, platform, arch);
+  if (nativeBinary) {
+    return nativeBinary;
   }
 
   const commandFileName = platform === "win32" ? "copilot.cmd" : "copilot";

@@ -93,6 +93,7 @@ current milestone の provider ごとの差は次。
   - `thread.runStreamed()` を使い、workspace snapshot を含む artifact まで組み立てる
   - `file / folder / image` 添付を shipped
   - workspace 外 access は session metadata `allowedAdditionalDirectories` を正本にして制御する
+  - packaged runtime では `src-electron/provider-binary-paths.ts` を通して `resources/provider-binaries/` 配下の staged binary を `codexPathOverride` で明示する
 - `CopilotAdapter`
   - `session.send()` と session event stream を使い、最小 turn 実行、assistant text streaming、minimal audit log を返す
   - top-level `assistant.message` が複数回来た場合は、arrival 順に空行区切りで連結した本文を `assistantText` として返す
@@ -103,7 +104,7 @@ current milestone の provider ごとの差は次。
   - rich command timeline は未対応
   - `provider-controlled` で non-read-only permission request が来た場合は、Main Process の `onApprovalRequest` bridge を通して Session UI の approval card へ中継し、user の `approve / deny` を SDK `PermissionHandler` へ返す
   - `elicitation.requested` が来た場合は、Main Process の `onElicitationRequest` bridge を通して Session UI の form / url card へ中継し、user の `accept / decline / cancel` を RPC で返す
-  - Electron main process では SDK default の JS entry bootstrap を避け、native Copilot CLI binary を明示して起動する
+  - Electron main process では `src-electron/provider-binary-paths.ts` を正本にして staged native Copilot CLI binary を明示して起動する
   - `Latest Command` と audit `operations` には、`shell / powershell / bash` に加えて `create / edit / replace / move / delete` のような mutating tool も `command_execution` として正規化して返す
   - `rawItemsJson` は full session dump ではなく、`tool.execution_*`、`assistant.message`、`assistant.usage` など監査で読む stable event trace に絞って返す
   - `artifact` は snapshot diff fallback を使って `changedFiles / runChecks / operationTimeline` を最小構成で返す
