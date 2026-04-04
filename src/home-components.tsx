@@ -532,11 +532,6 @@ function SettingsMemoryManagementSection({
     <section className="settings-section-card">
       <div className="settings-field">
         <strong>Memory 管理</strong>
-        <p className="settings-help">
-          {standalone
-            ? "Session / Project / Character Memory を専用 window で確認して削除できる。"
-            : "Session / Project / Character Memory を確認して削除できる。"}
-        </p>
         <div className="settings-actions settings-memory-actions">
           <span className="settings-memory-summary">
             {`Session ${sessionCount} / Project ${projectEntryCount} / Character ${characterEntryCount}`}
