@@ -52,6 +52,7 @@ current milestone では、署名や notarization まで確定せず、まず未
   - `dist-electron/**`
   - `package.json`
 - `asar` は有効化する
+- `@openai/codex*` と `@github/copilot*` の package は `asarUnpack` で `app.asar.unpacked` へ出し、installer 環境でも provider binary を spawn できるようにする
 
 ## Platform Constraint
 
@@ -85,6 +86,7 @@ minimum の確認は次とする。
 2. `npm run dist:dir`
 3. Windows 環境では必要に応じて `npm run dist:win`
 4. Windows installer 導入後、Start Menu 検索で `WithMate` を入力して起動できることを確認する
+5. Windows unpacked 出力では `resources/app.asar.unpacked/node_modules/@openai/codex-win32-x64/vendor/.../codex.exe` と `resources/app.asar.unpacked/node_modules/@github/copilot-win32-x64/copilot.exe` が存在することを確認する
 
 macOS artifact の実確認は macOS 環境で次を行う。
 

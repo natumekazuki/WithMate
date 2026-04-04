@@ -1,6 +1,6 @@
 {
   "name": "withmate",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "キャラクターロールプレイ対応 coding agent デスクトップアプリ",
   "private": true,
   "main": "dist-electron/src-electron/main.js",
@@ -58,6 +58,10 @@
       "package.json"
     ],
     "asar": true,
+    "asarUnpack": [
+      "node_modules/@openai/codex*/**",
+      "node_modules/@github/copilot*/**"
+    ],
     "win": {
       "icon": "build/icon.ico",
       "artifactName": "${productName} Setup ${version}.${ext}",
