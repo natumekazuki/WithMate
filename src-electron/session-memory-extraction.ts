@@ -26,22 +26,43 @@ export const SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA = {
       ],
     },
     decisions: {
-      type: "array",
-      items: { type: "string" },
+      anyOf: [
+        {
+          type: "array",
+          items: { type: "string" },
+        },
+        { type: "null" },
+      ],
     },
     openQuestions: {
-      type: "array",
-      items: { type: "string" },
+      anyOf: [
+        {
+          type: "array",
+          items: { type: "string" },
+        },
+        { type: "null" },
+      ],
     },
     nextActions: {
-      type: "array",
-      items: { type: "string" },
+      anyOf: [
+        {
+          type: "array",
+          items: { type: "string" },
+        },
+        { type: "null" },
+      ],
     },
     notes: {
-      type: "array",
-      items: { type: "string" },
+      anyOf: [
+        {
+          type: "array",
+          items: { type: "string" },
+        },
+        { type: "null" },
+      ],
     },
   },
+  required: ["goal", "decisions", "openQuestions", "nextActions", "notes"],
 } as const;
 
 export type SessionMemoryExtractionPrompt = {
@@ -138,7 +159,7 @@ export function buildSessionMemoryExtractionPrompt(
     "Markdown や説明文、コードフェンスは出さないでください。",
     "今回の会話から Session Memory を更新する差分だけを返してください。",
     "既存の Session Memory にすでにある内容をそのまま繰り返さないでください。",
-    "更新不要な field は省略してください。",
+    "更新不要な field は null を返してください。",
     "goal は session 全体の目的が変わった時だけ更新してください。",
     "確定していない内容を decisions に入れないでください。",
     "decisions には、後続の作業を拘束する確定判断だけを入れてください。",
@@ -171,12 +192,13 @@ export function buildSessionMemoryExtractionPrompt(
     "",
     "# Output Rules",
     "- 差分更新だけを返す",
+    "- 更新不要な field は null にする",
     "- field を空配列で消しにいかない",
     "- 既存 memory と意味が同じ内容は返さない",
     "- 1 つの文が複数 field に入る場合は、より具体的な field を優先する",
     "",
     "# Output JSON shape",
-    '{"goal?: string | null, "decisions"?: string[], "openQuestions"?: string[], "nextActions"?: string[], "notes"?: string[]}',
+    '{"goal": string | null, "decisions": string[] | null, "openQuestions": string[] | null, "nextActions": string[] | null, "notes": string[] | null}',
   ].join("\n");
 
   return {

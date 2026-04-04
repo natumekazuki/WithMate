@@ -8,6 +8,7 @@ import { createDefaultSessionMemory, type CharacterMemoryEntry } from "../../src
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import {
+  CHARACTER_REFLECTION_OUTPUT_SCHEMA,
   buildCharacterReflectionContextSnapshot,
   buildCharacterReflectionPrompt,
   getCharacterReflectionSettings,
@@ -225,5 +226,10 @@ describe("character-reflection", () => {
       },
     );
     assert.equal(parseCharacterReflectionOutputText("not json"), null);
+  });
+
+  it("Codex strict schema 向けに memory entry の全 property を required に含める", () => {
+    const entrySchema = CHARACTER_REFLECTION_OUTPUT_SCHEMA.properties.memoryDelta.anyOf[1].properties.entries.items;
+    assert.deepEqual(entrySchema.required, ["category", "title", "detail", "keywords", "evidence"]);
   });
 });

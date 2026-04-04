@@ -8,6 +8,7 @@ import {
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import {
+  SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA,
   buildSessionMemoryExtractionPrompt,
   getSessionMemoryExtractionSettings,
   parseSessionMemoryDeltaText,
@@ -92,5 +93,15 @@ describe("session-memory-extraction", () => {
       { notes: ["compact 前に強制実行する"] },
     );
     assert.equal(parseSessionMemoryDeltaText("not json"), null);
+  });
+
+  it("Codex strict schema 向けに top-level の全 field を required に含める", () => {
+    assert.deepEqual(SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA.required, [
+      "goal",
+      "decisions",
+      "openQuestions",
+      "nextActions",
+      "notes",
+    ]);
   });
 });
