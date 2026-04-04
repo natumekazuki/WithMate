@@ -23,6 +23,8 @@ current milestone では、署名や notarization まで確定せず、まず未
 - target: `nsis`
 - command: `npm run dist:win`
 - output: `release/` 配下の installer
+- Start Menu shortcut: `WithMate`
+- installer から導入した app は Start Menu 検索から `WithMate` で起動できる想定にする
 
 ### macOS
 
@@ -44,6 +46,7 @@ current milestone では、署名や notarization まで確定せず、まず未
 ## Build Boundary
 
 - `main` は `dist-electron/src-electron/main.js`
+- Main Process 起動時に `app.setAppUserModelId("com.natumekazuki.withmate")` を設定する
 - package 対象ファイルは current では次に限定する
   - `dist/**`
   - `dist-electron/**`
@@ -81,12 +84,14 @@ minimum の確認は次とする。
 1. `npm run build`
 2. `npm run dist:dir`
 3. Windows 環境では必要に応じて `npm run dist:win`
+4. Windows installer 導入後、Start Menu 検索で `WithMate` を入力して起動できることを確認する
 
 macOS artifact の実確認は macOS 環境で次を行う。
 
 1. `npm run dist:mac`
 2. `.dmg` から app を展開
-3. 起動して main window が開くことを確認
+3. `/Applications` へ配置する
+4. Spotlight で `WithMate` を検索して起動できることを確認する
 
 ## References
 

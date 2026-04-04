@@ -60,9 +60,14 @@
     "asar": true,
     "win": {
       "icon": "build/icon.ico",
+      "artifactName": "${productName} Setup ${version}.${ext}",
       "target": [
         "nsis"
       ]
+    },
+    "nsis": {
+      "createStartMenuShortcut": true,
+      "shortcutName": "WithMate"
     },
     "mac": {
       "category": "public.app-category.developer-tools",
