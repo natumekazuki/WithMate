@@ -13,7 +13,9 @@
 - Settings では説明文だけを整理し、設定項目そのものは維持した
 - 例外として `Coding Agent Credentials` と `Danger Zone` は section ごと削除し、`Memory 管理` は Home 右ペイン専用導線へ寄せた
 - `npm run build` は成功しており、renderer / electron とも current UI に揃っている
+- version は `1.0.0` に戻し、Memory 管理 UI の補助文も削除した
 
 ## Commits
 
-- なし
+- `7b32fec` `fix(settings): 正式リリース向けに設定UIを整理する`
+- `ccae920` `fix(release): v1.0.0 へ整える`
