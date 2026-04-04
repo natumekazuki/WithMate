@@ -127,11 +127,10 @@ Diff Window に置かないもの:
 
 - app settings 編集
 - coding provider enable / disable
-- coding credential 編集
+- session 表示設定
+- skill root 編集
 - Memory Extraction / Character Reflection 設定
-- Memory 管理 window の起動
 - model catalog import / export
-- `DB を初期化`
 
 Settings Window に置かないもの:
 

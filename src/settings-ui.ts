@@ -5,41 +5,20 @@ import {
   type ResetAppDatabaseTarget,
 } from "./withmate-window-types.js";
 
-export const SETTINGS_API_KEY_LABEL = "OpenAI API Key (Coding Agent)";
-export const SETTINGS_API_KEY_PLACEHOLDER = "Coding Agent 用 OpenAI API Key を入力";
-export const SETTINGS_CODING_CREDENTIALS_HELP =
-  "ここで保存する credential は Coding Agent Providers 専用。Character Stream 用 API ではない。";
-export const SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE =
-  "Character Stream 用 API 設定は future scope。current milestone ではまだ追加しない。";
 export const SETTINGS_SKILL_ROOT_LABEL = "Skill Root";
 export const SETTINGS_SKILL_ROOT_PLACEHOLDER = "skill folder の親ディレクトリを入力";
-export const SETTINGS_SKILL_ROOT_HELP =
-  "provider ごとの共有 skill root を指定できる。workspace 配下の標準 skill roots と合わせて Session の Skill picker 候補に出す。";
 export const SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL = "Model";
 export const SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL = "Reasoning Depth";
 export const SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL = "Output Tokens Threshold";
 export const SETTINGS_MEMORY_EXTRACTION_TIMEOUT_LABEL = "Timeout Seconds";
 export const SETTINGS_MEMORY_GENERATION_LABEL = "Memory Generation";
-export const SETTINGS_MEMORY_GENERATION_HELP =
-  "OFF にすると Session Memory extraction / Character Reflection / Monologue の background 実行をまとめて止める。model / reasoning / threshold の設定値は保持される。";
 export const SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL = "送信後に Action Dock を自動で閉じる";
-export const SETTINGS_ACTION_DOCK_AUTO_CLOSE_HELP =
-  "ON なら通常送信の直後に Action Dock を compact へ戻す。retry banner や picker など force-expanded 条件がある時は閉じない。";
-export const SETTINGS_MEMORY_EXTRACTION_HELP =
-  "Memory extraction は provider ごとに専用 model / reasoning depth / outputTokens threshold / timeout を持つ。通常は turn 完了後に threshold 到達時だけ走り、必要なら Session Window の `Generate Memory` から手動実行できる。";
 export const SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL = "Model";
 export const SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL = "Reasoning Depth";
 export const SETTINGS_CHARACTER_REFLECTION_TIMEOUT_LABEL = "Timeout Seconds";
 export const SETTINGS_CHARACTER_REFLECTION_COOLDOWN_LABEL = "Cooldown Seconds";
 export const SETTINGS_CHARACTER_REFLECTION_CHAR_DELTA_LABEL = "Min Char Delta";
 export const SETTINGS_CHARACTER_REFLECTION_MESSAGE_DELTA_LABEL = "Min Message Delta";
-export const SETTINGS_CHARACTER_REFLECTION_HELP =
-  "Character reflection は provider ごとの model / reasoning depth / timeout と、app-wide の context-growth trigger 閾値を持つ。SessionStart の重複抑止は固定で、ここでは cooldown / char delta / message delta だけ調整できる。";
-export const SETTINGS_RELEASE_COMPATIBILITY_NOTE =
-  "初回リリース前のため後方互換性は考慮しない。互換性のない変更が入った場合は Settings の DB 初期化で復旧する。";
-export const SETTINGS_RESET_DATABASE_LABEL = "DB を初期化";
-export const SETTINGS_RESET_DATABASE_HELP =
-  "互換性のない変更に追従できなくなったら、Settings の Danger Zone から reset 対象を選んで DB を初期化できる。characters は DB 外ファイルなので保持される。sessions を選ぶと audit logs も一緒に初期化される。";
 
 export const SETTINGS_RESET_DATABASE_TARGET_LABELS: Record<ResetAppDatabaseTarget, string> = {
   sessions: "sessions",

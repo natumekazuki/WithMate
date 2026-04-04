@@ -108,25 +108,22 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - header copy や `Home / Close` は置かず、内容本体と保存 footer に分ける
   - 本文は inner scroll で流し、shell の角丸と scrollbar が干渉しないようにする
   - system prompt prefix 編集
+  - `Session Window`
+    - `送信後に Action Dock を自動で閉じる`
   - `Coding Agent Providers` で provider 名と checkbox を 1 行 row で見せ、provider ごとの enable / disable を切り替える
-  - `Coding Agent Credentials` で provider label を維持した `OpenAI API Key (Coding Agent)` 入力を表示
-  - credential 補助文で `Character Stream 用ではない` ことを明示し、future note だけ最小限で置く
+  - `Skill Roots`
+    - provider ごとの path 入力
+    - `Browse`
   - `Memory Extraction`
+    - `Memory Generation` global toggle
     - provider ごとの `Model`
     - provider ごとの `Reasoning Depth`
     - provider ごとの `Output Tokens Threshold`
-    - current 実装では turn 完了時の threshold 判定と `Session Window` close 時の強制実行に使う
-  - `Memory 管理`
-    - `Session / Project / Character Memory` の件数サマリと `Open Memory Manager` を表示する
-    - 一覧 / filter / delete 本体は dedicated window へ分離する
+    - provider ごとの `Timeout Seconds`
+  - `Character Reflection`
+    - app-wide の `Cooldown Seconds` / `Min Char Delta` / `Min Message Delta`
+    - provider ごとの `Model / Reasoning Depth / Timeout Seconds`
   - `Model Catalog` import / export
-  - `Danger Zone` の `DB を初期化`
-    - reset 対象を `sessions / audit logs / app settings / model catalog / project memory / character memory` から選べる
-    - `sessions` を選ぶと `audit logs` も一緒に初期化される
-    - 全対象選択時は DB ファイル再生成で schema も初期化する
-    - reset 非対象: `characters`
-    - confirm 後に実行する
-  - 初回リリース前は後方互換性を考慮せず、非互換変更時はここから回復する
   - 縦が小さいときも overlay 内スクロールで末尾まで操作できる
 
 ## Memory Management Window
@@ -333,9 +330,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - Session 実行の監査ログは SQLite に保存し、Session Window から閲覧する
 - chat message は限定的な rich text renderer で整形表示する
 - `Settings Window` の `System Prompt Prefix` は SQLite に保存し、次回 turn から prompt composition へ反映する
-- `Settings Window` の `Memory 管理` は Main Process から `Session / Project / Character Memory` の snapshot 件数を表示し、`Memory Management Window` 起動導線を持つ
 - `Memory Management Window` は Main Process から `Session / Project / Character Memory` の snapshot を取得し、delete 後は再取得して整合を保つ
-- `Settings Window` の `DB を初期化` 成功時は各 window が reset 後 `appSettings` / `modelCatalog` / `sessions` へ同期し、settings draft の dirty を解消する
 - character は `userData/characters/` を正本とする
 - `userData` は `<appData>/WithMate/` に固定する
 - `character-update` session も同じ character directory を workspace として再利用する

@@ -21,28 +21,15 @@ import type { HomeProviderSettingRow } from "./home-settings-view-model.js";
 import type { LaunchWorkspace } from "./home-launch-projection.js";
 import type { HomeMonitorEntry, HomeSessionState } from "./home-session-projection.js";
 import {
-  SETTINGS_API_KEY_LABEL,
-  SETTINGS_API_KEY_PLACEHOLDER,
-  SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE,
-  SETTINGS_CODING_CREDENTIALS_HELP,
-  SETTINGS_RESET_DATABASE_HELP,
-  SETTINGS_RESET_DATABASE_LABEL,
-  SETTINGS_RESET_DATABASE_TARGET_LABELS,
-  SETTINGS_RELEASE_COMPATIBILITY_NOTE,
-  SETTINGS_SKILL_ROOT_HELP,
   SETTINGS_SKILL_ROOT_LABEL,
   SETTINGS_SKILL_ROOT_PLACEHOLDER,
-  SETTINGS_CHARACTER_REFLECTION_HELP,
   SETTINGS_CHARACTER_REFLECTION_CHAR_DELTA_LABEL,
   SETTINGS_CHARACTER_REFLECTION_COOLDOWN_LABEL,
   SETTINGS_CHARACTER_REFLECTION_MESSAGE_DELTA_LABEL,
   SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL,
   SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL,
   SETTINGS_CHARACTER_REFLECTION_TIMEOUT_LABEL,
-  SETTINGS_ACTION_DOCK_AUTO_CLOSE_HELP,
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
-  SETTINGS_MEMORY_EXTRACTION_HELP,
-  SETTINGS_MEMORY_GENERATION_HELP,
   SETTINGS_MEMORY_GENERATION_LABEL,
   SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL,
   SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL,
@@ -51,20 +38,11 @@ import {
 } from "./settings-ui.js";
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import { buildCardThemeStyle, CharacterAvatar, modelOptionLabel, reasoningDepthLabel } from "./ui-utils.js";
-import type { ResetAppDatabaseTarget } from "./withmate-window-types.js";
 
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
   providerSettingRows: HomeProviderSettingRow[];
   modelCatalogRevisionLabel: string;
-  selectedResetTargetsDescription: string;
-  resetTargetItems: Array<{
-    target: ResetAppDatabaseTarget;
-    checked: boolean;
-    disabled: boolean;
-  }>;
-  resettingDatabase: boolean;
-  canResetDatabase: boolean;
   settingsDirty: boolean;
   settingsFeedback: string;
   memoryManagementSnapshot: MemoryManagementSnapshot | null;
@@ -72,12 +50,10 @@ export type HomeSettingsContentProps = {
   memoryManagementBusyTarget: string | null;
   memoryManagementFeedback: string;
   memoryManagementOnly?: boolean;
-  onOpenMemoryManagementWindow: () => void;
   onChangeSystemPromptPrefix: (value: string) => void;
   onChangeMemoryGenerationEnabled: (enabled: boolean) => void;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
-  onChangeProviderApiKey: (providerId: string, apiKey: string) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
   onBrowseProviderSkillRootPath: (providerId: string) => void;
   onChangeMemoryExtractionModel: (providerId: string, model: string) => void;
@@ -102,8 +78,6 @@ export type HomeSettingsContentProps = {
   onDeleteSessionMemory: (sessionId: string) => void;
   onDeleteProjectMemoryEntry: (entryId: string) => void;
   onDeleteCharacterMemoryEntry: (entryId: string) => void;
-  onToggleResetDatabaseTarget: (target: ResetAppDatabaseTarget) => void;
-  onResetAppDatabase: () => void;
   onSaveSettings: () => void;
 };
 
@@ -111,10 +85,6 @@ export function HomeSettingsContent({
   settingsDraft,
   providerSettingRows,
   modelCatalogRevisionLabel,
-  selectedResetTargetsDescription,
-  resetTargetItems,
-  resettingDatabase,
-  canResetDatabase,
   settingsDirty,
   settingsFeedback,
   memoryManagementSnapshot,
@@ -122,12 +92,10 @@ export function HomeSettingsContent({
   memoryManagementBusyTarget,
   memoryManagementFeedback,
   memoryManagementOnly = false,
-  onOpenMemoryManagementWindow,
   onChangeSystemPromptPrefix,
   onChangeMemoryGenerationEnabled,
   onChangeAutoCollapseActionDockOnSend,
   onChangeProviderEnabled,
-  onChangeProviderApiKey,
   onChangeProviderSkillRootPath,
   onBrowseProviderSkillRootPath,
   onChangeMemoryExtractionModel,
@@ -146,17 +114,8 @@ export function HomeSettingsContent({
   onDeleteSessionMemory,
   onDeleteProjectMemoryEntry,
   onDeleteCharacterMemoryEntry,
-  onToggleResetDatabaseTarget,
-  onResetAppDatabase,
   onSaveSettings,
 }: HomeSettingsContentProps) {
-  const memorySummary = memoryManagementSnapshot
-    ? `Session ${memoryManagementSnapshot.sessionMemories.length} / Project ${memoryManagementSnapshot.projectMemories.reduce(
-        (count, group) => count + group.entries.length,
-        0,
-      )} / Character ${memoryManagementSnapshot.characterMemories.reduce((count, group) => count + group.entries.length, 0)}`
-    : "Memory を読み込み中...";
-
   if (memoryManagementOnly) {
     return (
       <div className="settings-panel settings-panel-memory-only">
@@ -182,8 +141,6 @@ export function HomeSettingsContent({
       <div className="settings-panel settings-panel-window">
         <div className="settings-panel-window-scroll">
           <section className="settings-section">
-          <p className="settings-note">{SETTINGS_RELEASE_COMPATIBILITY_NOTE}</p>
-
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>System Prompt Prefix</strong>
@@ -207,7 +164,6 @@ export function HomeSettingsContent({
                   onChange={(event) => onChangeAutoCollapseActionDockOnSend(event.target.checked)}
                 />
               </label>
-              <p className="settings-help">{SETTINGS_ACTION_DOCK_AUTO_CLOSE_HELP}</p>
             </div>
           </section>
 
@@ -216,7 +172,6 @@ export function HomeSettingsContent({
               <section className="settings-section-card">
                 <div className="settings-field">
                   <strong>Coding Agent Providers</strong>
-                  <p className="settings-help">有効な coding provider は使える前提で扱う。失敗時は実行時エラーとして返る。</p>
                   <div className="settings-provider-list">
                     {providerSettingRows.map(({ provider, settings }) => (
                       <section key={provider.id} className="settings-provider-card settings-provider-toggle-card">
@@ -236,34 +191,7 @@ export function HomeSettingsContent({
 
               <section className="settings-section-card">
                 <div className="settings-field">
-                  <strong>Coding Agent Credentials</strong>
-                  <p className="settings-help">{SETTINGS_CODING_CREDENTIALS_HELP}</p>
-                  <div className="settings-provider-list">
-                    {providerSettingRows.map(({ provider, settings }) => (
-                      <section key={provider.id} className="settings-provider-card">
-                        <p className="settings-provider-name">{provider.label}</p>
-                        <label className="settings-provider-input">
-                          <span>{SETTINGS_API_KEY_LABEL}</span>
-                          <input
-                            type="password"
-                            value={settings.apiKey}
-                            onChange={(event) => onChangeProviderApiKey(provider.id, event.target.value)}
-                            placeholder={SETTINGS_API_KEY_PLACEHOLDER}
-                            autoComplete="off"
-                            spellCheck={false}
-                          />
-                        </label>
-                      </section>
-                    ))}
-                  </div>
-                  <p className="settings-note">{SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE}</p>
-                </div>
-              </section>
-
-              <section className="settings-section-card">
-                <div className="settings-field">
                   <strong>Skill Roots</strong>
-                  <p className="settings-help">{SETTINGS_SKILL_ROOT_HELP}</p>
                   <div className="settings-provider-list">
                     {providerSettingRows.map(({ provider, settings }) => (
                       <section key={provider.id} className="settings-provider-card">
@@ -297,7 +225,6 @@ export function HomeSettingsContent({
               <section className="settings-section-card">
               <div className="settings-field">
                 <strong>Memory Extraction</strong>
-                <p className="settings-help">{SETTINGS_MEMORY_EXTRACTION_HELP}</p>
                 <label className="settings-provider-toggle-row settings-section-toggle">
                   <span className="settings-provider-name">{SETTINGS_MEMORY_GENERATION_LABEL}</span>
                   <input
@@ -306,7 +233,6 @@ export function HomeSettingsContent({
                     onChange={(event) => onChangeMemoryGenerationEnabled(event.target.checked)}
                   />
                 </label>
-                <p className="settings-help">{SETTINGS_MEMORY_GENERATION_HELP}</p>
                 <div className="settings-provider-list">
                     {providerSettingRows.map((row) => (
                       <section key={row.provider.id} className="settings-provider-card">
@@ -374,7 +300,6 @@ export function HomeSettingsContent({
               <section className="settings-section-card">
                 <div className="settings-field">
                   <strong>Character Reflection</strong>
-                  <p className="settings-help">{SETTINGS_CHARACTER_REFLECTION_HELP}</p>
                   <div className="settings-provider-list">
                     <section className="settings-provider-card">
                       <label className="settings-provider-input composer-setting-field">
@@ -470,26 +395,8 @@ export function HomeSettingsContent({
 
           <section className="settings-section-card">
             <div className="settings-field">
-              <strong>Memory 管理</strong>
-              <p className="settings-help">
-                Memory の一覧 / filter / delete は専用 window へ分離した。Settings では件数確認と起動導線だけを持つ。
-              </p>
-              <div className="settings-actions settings-memory-actions">
-                <span className="settings-memory-summary">{memorySummary}</span>
-                <button className="launch-toggle" type="button" onClick={onOpenMemoryManagementWindow}>
-                  Open Memory Manager
-                </button>
-              </div>
-              {memoryManagementFeedback ? (
-                <p className="settings-feedback settings-memory-feedback">{memoryManagementFeedback}</p>
-              ) : null}
-            </div>
-          </section>
-
-          <section className="settings-section-card">
-            <div className="settings-field">
               <strong>Model Catalog</strong>
-              <p className="settings-help">active revision: {modelCatalogRevisionLabel}。DB 初期化を行うと bundled catalog の初期状態へ戻る。</p>
+              <p className="settings-help">active revision: {modelCatalogRevisionLabel}</p>
               <div className="settings-actions">
                 <button className="launch-toggle" type="button" onClick={onImportModelCatalog}>
                   Import Models
@@ -501,39 +408,6 @@ export function HomeSettingsContent({
             </div>
           </section>
 
-          <section className="settings-section-card danger-zone">
-            <div className="settings-field">
-              <strong>Danger Zone</strong>
-              <p className="settings-help">{SETTINGS_RESET_DATABASE_HELP}</p>
-              <ul className="settings-danger-list">
-                <li>選択中の reset 対象: {selectedResetTargetsDescription}</li>
-                <li>reset 非対象: characters（DB 外ファイルなので保持）</li>
-              </ul>
-              <div className="settings-reset-targets" role="group" aria-label="reset targets">
-                {resetTargetItems.map(({ target, checked, disabled }) => (
-                  <label key={target} className="settings-reset-target">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      disabled={disabled}
-                      onChange={() => onToggleResetDatabaseTarget(target)}
-                    />
-                    <span>{SETTINGS_RESET_DATABASE_TARGET_LABELS[target]}</span>
-                  </label>
-                ))}
-              </div>
-              <div className="settings-actions">
-                <button
-                  className="drawer-toggle danger"
-                  type="button"
-                  onClick={onResetAppDatabase}
-                  disabled={!canResetDatabase}
-                >
-                  {resettingDatabase ? "DB 初期化中..." : SETTINGS_RESET_DATABASE_LABEL}
-                </button>
-              </div>
-            </div>
-          </section>
           </section>
         </div>
       </div>
@@ -660,8 +534,8 @@ function SettingsMemoryManagementSection({
         <strong>Memory 管理</strong>
         <p className="settings-help">
           {standalone
-            ? "Session / Project / Character Memory を専用 window で確認して削除できる。manual update は follow-up task で扱う。"
-            : "Session / Project / Character Memory を確認して削除できる。manual update は follow-up task で扱う。"}
+            ? "Session / Project / Character Memory を専用 window で確認して削除できる。"
+            : "Session / Project / Character Memory を確認して削除できる。"}
         </p>
         <div className="settings-actions settings-memory-actions">
           <span className="settings-memory-summary">

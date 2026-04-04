@@ -48,12 +48,6 @@ WithMate で実現したい体験は次の三層で構成される。
 つまり current milestone では、Character や Memory を「キャラアプリのため」だけに先行させない。
 まず coding plane を成立させ、その上で Character と Memory を「継続性」と「体験の濃さ」を上げるために使う。
 
-## Release Policy
-
-- 初回リリース前のため後方互換性は考慮しない
-- Settings / storage / catalog に非互換変更が入った場合は、Settings の `DB を初期化` を回復手段の正本とする
-- `DB を初期化` は `sessions / audit logs / app settings / model catalog / project memory / character memory` を初期化し、`characters` は保持する
-
 ## Priority Order
 
 主従関係は次の順序で固定する。
@@ -130,7 +124,7 @@ WithMate は provider を 1 つに統一しない。
   - **current 実装**: `Codex` 中心
   - **target scope**: `Codex` と `CopilotCLI`
   - CLI / SDK で使える共通機能の網羅を先に進める
-  - current Settings は coding plane 専用で、provider enable / disable と coding credential をここで扱う
+  - current Settings は coding plane 専用で、provider enable / disable と実行挙動をここで扱う
 - 将来的な独立 `Character Stream`
   - OpenAI API
   - API キー前提

@@ -497,10 +497,9 @@ current 実装では、`Session Memory` の永続化と extraction trigger、`Pr
   - `CharacterMemoryDelta` 保存と monologue の session `stream` 追記まで実装済み
   - monologue / reflection 向け query-based retrieval と時間減衰あり
 - `Memory 管理 UI`
-  - Settings Window から `Session / Project / Character Memory` の snapshot を一覧できる
+  - Home から開く `Memory Management Window` で `Session / Project / Character Memory` の snapshot を一覧できる
   - current scope は閲覧と delete に限定する
   - `Project / Character Memory` は最後の entry を delete した時に空 scope も掃除する
-  - manual update は follow-up task として切り出す
 
 という進み方を取る。
 

@@ -165,11 +165,7 @@ npm run typecheck
 
 - Electron 実行を正本とする desktop アプリ構成です
 - セッション情報は Electron 側で保持され、キャラクター情報はアプリ管理領域のストレージから読み込みます
-- Settings Window では `System Prompt Prefix`、`Coding Agent Providers`、`Coding Agent Credentials`、`Memory Extraction`、`Character Reflection`、model catalog、`Danger Zone` の DB 初期化を管理します
-- current の provider credential は coding plane を正本にし、Character Reflection も同じ provider client を流用します。独立した monologue / Character Stream 用 API 入力欄は current milestone では追加していません
-- 初回リリース前のため後方互換性は考慮しません。互換性のない変更が入った場合は Settings の `DB を初期化` で回復する前提です
-- `DB を初期化` は `sessions / audit logs / app settings / model catalog / project memory / character memory` を初期状態へ戻し、アプリ管理領域の character データは削除しません
-- `Character Stream` は価値仮説として保持しているものの、current milestone では未着手です
+- Settings Window では `System Prompt Prefix`、`Session Window`、`Coding Agent Providers`、`Skill Roots`、`Memory Extraction`、`Character Reflection`、`Model Catalog` を管理します
 
 ## 補足
 

@@ -46,10 +46,8 @@ import {
 import {
   exportHomeModelCatalog,
   importHomeModelCatalog,
-  resetHomeDatabase,
   saveHomeSettings,
 } from "./home-settings-actions.js";
-import { buildHomeSettingsProjection } from "./home-settings-projection.js";
 import {
   updateCharacterReflectionCharDeltaThreshold,
   updateCharacterReflectionCooldownSeconds,
@@ -58,7 +56,6 @@ import {
   updateCharacterReflectionReasoningEffortDraft,
   updateCharacterReflectionTimeoutSecondsDraft,
   updateAutoCollapseActionDockOnSend,
-  updateCodingProviderApiKeyDraft,
   updateCodingProviderEnabledDraft,
   updateCodingProviderSkillRootPathDraft,
   updateMemoryExtractionModelDraft,
@@ -68,11 +65,6 @@ import {
   updateMemoryGenerationEnabled,
   updateSystemPromptPrefix,
 } from "./home-settings-draft.js";
-import {
-  ALL_RESET_APP_DATABASE_TARGETS,
-  normalizeResetAppDatabaseTargets,
-  type ResetAppDatabaseTarget,
-} from "./withmate-window-types.js";
 import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-withmate-api.js";
 
 async function openSessionWindow(sessionId: string) {
@@ -134,8 +126,6 @@ export default function HomeApp() {
   const [memoryManagementLoaded, setMemoryManagementLoaded] = useState(!usesMemoryManagementWindow);
   const [memoryManagementBusyTarget, setMemoryManagementBusyTarget] = useState<string | null>(null);
   const [memoryManagementFeedback, setMemoryManagementFeedback] = useState("");
-  const [resettingDatabase, setResettingDatabase] = useState(false);
-  const [resetDatabaseTargets, setResetDatabaseTargets] = useState<ResetAppDatabaseTarget[]>([...ALL_RESET_APP_DATABASE_TARGETS]);
   const [launchDraft, setLaunchDraft] = useState<HomeLaunchDraft>(() => createClosedLaunchDraft());
   const settingsDirtyRef = useRef(false);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
@@ -402,47 +392,6 @@ export default function HomeApp() {
     }
   };
 
-  const handleResetAppDatabase = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || resettingDatabase) {
-      return;
-    }
-
-    setResettingDatabase(true);
-    try {
-      const result = await resetHomeDatabase({
-        api: withmateApi,
-        resetTargets: resetDatabaseTargets,
-        confirm: (message) => window.confirm(message),
-      });
-      if (result.kind === "success") {
-        setSessions(result.result.sessions);
-        setModelCatalog(result.result.modelCatalog);
-        applyIncomingAppSettings(result.result.appSettings, { force: true });
-        setResetDatabaseTargets(result.result.resetTargets);
-        setSettingsFeedback(result.feedback);
-        if (usesMemoryManagementWindow) {
-          const snapshot = await withmateApi.getMemoryManagementSnapshot();
-          setMemoryManagementSnapshot(snapshot);
-          setMemoryManagementLoaded(true);
-        }
-      } else if (result.kind === "noop") {
-        setSettingsFeedback(result.feedback);
-      }
-    } catch (error) {
-      setSettingsFeedback(error instanceof Error ? error.message : "DB の初期化に失敗したよ。");
-    } finally {
-      setResettingDatabase(false);
-    }
-  };
-
-  const handleToggleResetDatabaseTarget = (target: ResetAppDatabaseTarget) => {
-    setResetDatabaseTargets((current) => {
-      const next = current.includes(target) ? current.filter((item) => item !== target) : [...current, target];
-      return normalizeResetAppDatabaseTargets(next);
-    });
-  };
-
   const handleSaveSettings = async () => {
     const withmateApi = getWithMateApi();
     if (!withmateApi) {
@@ -461,10 +410,6 @@ export default function HomeApp() {
 
   const handleChangeProviderEnabled = (providerId: string, enabled: boolean) => {
     setSettingsDraft((current) => updateCodingProviderEnabledDraft(current, providerId, enabled));
-  };
-
-  const handleChangeProviderApiKey = (providerId: string, apiKey: string) => {
-    setSettingsDraft((current) => updateCodingProviderApiKeyDraft(current, providerId, apiKey));
   };
 
   const handleChangeProviderSkillRootPath = (providerId: string, skillRootPath: string) => {
@@ -631,23 +576,7 @@ export default function HomeApp() {
     () => buildPersistedAppSettingsFromRows(settingsDraft, providerSettingRows),
     [providerSettingRows, settingsDraft],
   );
-  const settingsProjection = useMemo(
-    () =>
-      buildHomeSettingsProjection({
-        settingsDraftLoaded,
-        modelCatalogLoaded,
-        memoryManagementLoaded,
-        resetDatabaseTargets,
-        resettingDatabase,
-      }),
-    [memoryManagementLoaded, modelCatalogLoaded, resetDatabaseTargets, resettingDatabase, settingsDraftLoaded],
-  );
-  const {
-    settingsWindowReady,
-    selectedResetTargetsDescription,
-    resetTargetItems,
-    canResetDatabase,
-  } = settingsProjection;
+  const settingsWindowReady = settingsDraftLoaded && modelCatalogLoaded && memoryManagementLoaded;
   const settingsDirty = useMemo(() => {
     return JSON.stringify(persistedSettingsDraft) !== JSON.stringify(appSettings);
   }, [appSettings, persistedSettingsDraft]);
@@ -674,17 +603,12 @@ export default function HomeApp() {
       settingsDraft={settingsDraft}
       providerSettingRows={providerSettingRows}
       modelCatalogRevisionLabel={String(modelCatalog?.revision ?? "-")}
-      selectedResetTargetsDescription={selectedResetTargetsDescription}
-      resetTargetItems={resetTargetItems}
-      resettingDatabase={resettingDatabase}
-      canResetDatabase={canResetDatabase}
       settingsDirty={settingsDirty}
       settingsFeedback={settingsFeedback}
       memoryManagementSnapshot={memoryManagementSnapshot}
       memoryManagementLoading={!memoryManagementLoaded}
       memoryManagementBusyTarget={memoryManagementBusyTarget}
       memoryManagementFeedback={memoryManagementFeedback}
-      onOpenMemoryManagementWindow={() => void openMemoryManagementWindow()}
       onChangeSystemPromptPrefix={(value) => setSettingsDraft((current) => updateSystemPromptPrefix(current, value))}
       onChangeMemoryGenerationEnabled={(enabled) =>
         setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled))
@@ -693,7 +617,6 @@ export default function HomeApp() {
         setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, enabled))
       }
       onChangeProviderEnabled={handleChangeProviderEnabled}
-      onChangeProviderApiKey={handleChangeProviderApiKey}
       onChangeProviderSkillRootPath={handleChangeProviderSkillRootPath}
       onBrowseProviderSkillRootPath={(providerId) => void handleBrowseProviderSkillRootPath(providerId)}
       onChangeMemoryExtractionModel={handleChangeMemoryExtractionModel}
@@ -712,8 +635,6 @@ export default function HomeApp() {
       onDeleteSessionMemory={(sessionId) => void handleDeleteSessionMemory(sessionId)}
       onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}
       onDeleteCharacterMemoryEntry={(entryId) => void handleDeleteCharacterMemoryEntry(entryId)}
-      onToggleResetDatabaseTarget={handleToggleResetDatabaseTarget}
-      onResetAppDatabase={() => void handleResetAppDatabase()}
       onSaveSettings={() => void handleSaveSettings()}
     />
   );
@@ -723,10 +644,6 @@ export default function HomeApp() {
       settingsDraft={settingsDraft}
       providerSettingRows={providerSettingRows}
       modelCatalogRevisionLabel={String(modelCatalog?.revision ?? "-")}
-      selectedResetTargetsDescription={selectedResetTargetsDescription}
-      resetTargetItems={resetTargetItems}
-      resettingDatabase={resettingDatabase}
-      canResetDatabase={canResetDatabase}
       settingsDirty={settingsDirty}
       settingsFeedback={settingsFeedback}
       memoryManagementSnapshot={memoryManagementSnapshot}
@@ -734,7 +651,6 @@ export default function HomeApp() {
       memoryManagementBusyTarget={memoryManagementBusyTarget}
       memoryManagementFeedback={memoryManagementFeedback}
       memoryManagementOnly
-      onOpenMemoryManagementWindow={() => void openMemoryManagementWindow()}
       onChangeSystemPromptPrefix={(value) => setSettingsDraft((current) => updateSystemPromptPrefix(current, value))}
       onChangeMemoryGenerationEnabled={(enabled) =>
         setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled))
@@ -743,7 +659,6 @@ export default function HomeApp() {
         setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, enabled))
       }
       onChangeProviderEnabled={handleChangeProviderEnabled}
-      onChangeProviderApiKey={handleChangeProviderApiKey}
       onChangeProviderSkillRootPath={handleChangeProviderSkillRootPath}
       onBrowseProviderSkillRootPath={(providerId) => void handleBrowseProviderSkillRootPath(providerId)}
       onChangeMemoryExtractionModel={handleChangeMemoryExtractionModel}
@@ -762,8 +677,6 @@ export default function HomeApp() {
       onDeleteSessionMemory={(sessionId) => void handleDeleteSessionMemory(sessionId)}
       onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}
       onDeleteCharacterMemoryEntry={(entryId) => void handleDeleteCharacterMemoryEntry(entryId)}
-      onToggleResetDatabaseTarget={handleToggleResetDatabaseTarget}
-      onResetAppDatabase={() => void handleResetAppDatabase()}
       onSaveSettings={() => void handleSaveSettings()}
     />
   );

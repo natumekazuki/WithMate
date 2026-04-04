@@ -4,12 +4,10 @@
 
 - Electron 実行時の現行機能を人手で確認するためのチェックリスト
 - 現時点で実装済みの UI / 永続化 / ランタイム挙動のみを対象にする
-- `Character Stream` / monologue plane の未着手機能は含めない
 
 ## 更新方針
 
 - ユーザーが触れる挙動を変更した場合は、この項目表を同じ論理変更単位で更新する
-- 初回リリース前のため後方互換性は前提にせず、非互換変更後の復旧導線も確認対象に含める
 - 追加した項目は、実装済み機能の再現手順と期待結果が読める粒度で書く
 
 ## 前提
@@ -30,25 +28,19 @@ npm run electron:start
 | MT-001A | Home narrow width guardrail | Home Window を最小幅近くまで縮める | single-column layout へ倒れても `Recent Sessions` と right pane toggle / `Settings` 導線が残り、操作不能にならない |
 | MT-002 | Home 一覧 | session が 0 件の状態で起動する | 空状態メッセージが表示される |
 | MT-003 | Characters 一覧 | character が 0 件の状態で起動する | 空状態メッセージと `Add Character` が表示される |
-| MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `System Prompt Prefix` / `Coding Agent Providers` / `Coding Agent Credentials` / `Memory Extraction` / `Memory 管理` 起動導線 / `Model Catalog` / `Danger Zone` が既存値で表示される |
+| MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `System Prompt Prefix` / `Session Window` / `Coding Agent Providers` / `Skill Roots` / `Memory Extraction` / `Character Reflection` / `Model Catalog` が既存値で表示される |
 | MT-004H | Settings window shell layout | `Settings Window` を wide 幅で開き、縦に長い内容まで scroll する | panel は window 幅に追従し、`Home / Close` の header は出ない。本文は inner scroll で最後まで到達でき、scrollbar が shell の角丸に隠れない |
 | MT-004A | Settings provider row layout | `Settings Window` を開いて `Coding Agent Providers` を確認する | provider 名が左、checkbox が右の row で揃って見え、どの provider を on/off しているか即判別できる |
 | MT-004B | Memory extraction settings | `Settings Window` の `Memory Extraction` を確認する | provider ごとに `Model` / `Reasoning Depth` / `Output Tokens Threshold` が表示され、現在の model catalog に沿った選択肢だけが出る |
 | MT-004C | Character reflection settings | `Settings Window` の `Character Reflection` を確認する | app-wide の `Cooldown Seconds` / `Min Char Delta` / `Min Message Delta` と、provider ごとの `Model` / `Reasoning Depth` が表示される。provider 選択肢は現在の model catalog に沿ったものだけが出る |
 | MT-004C1 | Character reflection trigger settings save | `Character Reflection` の `Cooldown Seconds` / `Min Char Delta` / `Min Message Delta` を変更して `Save Settings` し、Settings を開き直す | 変更した trigger 値が保持される。`0` や極端な値を入れて保存した場合も clamp 後の値で再表示される |
-| MT-004D | Memory 管理専用画面起動 | Home 右ペインの `Memory` または `Settings Window` の `Open Memory Manager` を押す | 独立した `Memory Management Window` が開き、保存済み Memory snapshot の読込完了までは loading が出る |
+| MT-004D | Memory 管理専用画面起動 | Home 右ペインの `Memory` を押す | 独立した `Memory Management Window` が開き、保存済み Memory snapshot の読込完了までは loading が出る |
 | MT-004G | Cursor-based window placement | cursor を画面端寄りへ移動してから `Settings Window`、`Memory Management Window`、`Character Editor Window`、`Session Window`、`Diff Window` を新規に開く | `Home Window` 以外の新規 window は cursor がある display 付近に開き、workArea 外へはみ出さない。既に開いている window を再度開いた時は位置を変えず focus だけが前面へ来る |
 | MT-004E | Memory 管理一覧 / delete | `Memory Management Window` を開き、Session / Project / Character Memory が少なくとも 1 件ずつある状態で `Delete` を実行する | `Session / Project / Character Memory` の件数、一覧、`Reload Memory` が表示される。対象 domain の item が消え、最後の `Project / Character Memory` entry を削除した時は空 scope も残らない。reload 後も再出現しない |
 | MT-004F | Memory 管理 search / filter | `Memory Management Window` で search text、domain tab、status / category、sort を切り替える | search は title / detail / keyword / workspace を横断して絞り込める。domain は `All / Session / Project / Character` tab で切り替えられ、選択中 section だけが出る。domain に応じて不要な filter は disabled になり、sort は更新日時順の切替が効く |
-| MT-005 | Settings copy | `Settings Window` を確認する | `OpenAI API Key (Coding Agent)` が coding plane 用と読め、`Character Stream 用ではない` 補助文と future note が表示される |
-| MT-006 | Compatibility note | `Settings Window` を確認する | `初回リリース前のため後方互換性は考慮しない` と `DB 初期化で復旧する` 旨の note が表示される |
 | MT-007 | Settings save | `System Prompt Prefix` または coding provider 設定を変更して `Save Settings` を押す | 保存成功メッセージが表示され、再度開いても保持される |
 | MT-008 | Model catalog export | Settings の `Model Catalog` から `Export Models` を押す | catalog JSON が保存される |
 | MT-009 | Model catalog import | Settings の `Model Catalog` から `Import Models` を実行する | import 成功メッセージが表示され、active revision が更新される |
-| MT-010 | DB reset confirm | Settings の `Danger Zone` で reset 対象を 1 つ以上選び、`DB を初期化` を押す | 選択中 target を反映した confirm が出る |
-| MT-011 | DB reset success | idle session のみ存在する状態で reset 対象を選んで `DB を初期化` を実行する | 選択した target だけ初期状態へ戻る。`sessions` を含む場合は `audit logs` も一緒に消え、characters は保持される |
-| MT-011A | DB reset full rebuild | `sessions / audit logs / app settings / model catalog / project memory / character memory` を全選択して `DB を初期化` を実行する | DB が再生成され、schema を含めて初期状態へ戻る |
-| MT-012 | DB reset reject | 実行中 session がある状態で `DB を初期化` を実行する | reset が拒否され、実行中 session の完了またはキャンセルを促す |
 | MT-013 | New Session 起動 | Home の `New Session` を押す | launch dialog が開く |
 | MT-013A | New Session dialog keyboard | `New Session` dialog を開き、初期 focus、`Tab` / `Shift+Tab`、`Escape`、provider chip の矢印キーを試す | open 時に title input へ focus が入り、focus は dialog 内で循環する。`Escape` で閉じ、provider chip は矢印キーで切り替えられる |
 | MT-014 | New Session 作成 | title と workspace と provider と character を選び `Start New Session` を押す | Session Window が開き、Home の session 一覧に追加され、選んだ provider で session が作られ、approval 初期値は `安全寄り` になる |
@@ -161,7 +153,3 @@ npm run electron:start
 | MT-067 | Window error recovery | Home / Session / Character Editor / Diff のいずれかで renderer render error を再現する | window-level fallback が出て、`再試行` で再描画を試せる。復帰しない場合も `再読み込み` が使える |
 | MT-067A | Right pane error recovery | `Session Window` の right pane だけで render error を再現する | pane 専用 fallback が出て、`右ペインを再描画` と `Window を再読み込み` の両方が表示される |
 
-## 補足
-
-- `DB を初期化` は通常は Main Process の論理 reset を使い、全対象選択時だけ DB ファイル再生成を行う
-- `Character Stream` は現行 UI に含まれないため、項目表にも含めない
