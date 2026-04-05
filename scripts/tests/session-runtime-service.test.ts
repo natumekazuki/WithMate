@@ -740,6 +740,229 @@ describe("SessionRuntimeService", () => {
     assert.equal(auditUpdates[0]?.phase, "completed");
   });
 
+  it("Codex stdin bootstrap error でも thread reset 後に 1 回 retry する", async () => {
+    const session = createSession({ provider: "codex", threadId: "" });
+    const storedSessions: Session[] = [];
+    const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
+    const auditUpdates: UpdateAuditLogInput[] = [];
+    const seenThreadIds: string[] = [];
+    let attempt = 0;
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn(input) {
+        attempt += 1;
+        seenThreadIds.push(input.session.threadId);
+        if (attempt === 1) {
+          throw new ProviderTurnError(
+            "Codex Exec exited with code 1: Reading prompt from stdin...",
+            createPartialResult({ threadId: "thread-broken" }),
+            false,
+          );
+        }
+
+        return createPartialResult({
+          threadId: "thread-fresh",
+          assistantText: "立て直して続行できたよ。",
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        storedSessions.push(next);
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog(_id, entry) {
+        auditUpdates.push(entry);
+      },
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread(providerId, retrySessionId) {
+        invalidated.push({ providerId, sessionId: retrySessionId });
+      },
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    assert.equal(attempt, 2);
+    assert.equal(result.runState, "idle");
+    assert.equal(result.threadId, "thread-fresh");
+    assert.deepEqual(seenThreadIds, ["", ""]);
+    assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
+    assert.equal(storedSessions.length, 2);
+    assert.equal(storedSessions[1]?.threadId, "thread-fresh");
+    assert.equal(auditUpdates.length, 1);
+    assert.equal(auditUpdates[0]?.phase, "completed");
+  });
+
+  it("Codex stdin bootstrap error が続く時は failed session に壊れた threadId を残さない", async () => {
+    const session = createSession({ provider: "codex", threadId: "" });
+    const storedSessions: Session[] = [];
+    const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
+    const auditUpdates: UpdateAuditLogInput[] = [];
+    let attempt = 0;
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        attempt += 1;
+        throw new ProviderTurnError(
+          "Codex Exec exited with code 1: Reading prompt from stdin...",
+          createPartialResult({ threadId: "thread-broken" }),
+          false,
+        );
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession() {
+        return session;
+      },
+      upsertSession(next) {
+        storedSessions.push(next);
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog(_id, entry) {
+        auditUpdates.push(entry);
+      },
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread(providerId, retrySessionId) {
+        invalidated.push({ providerId, sessionId: retrySessionId });
+      },
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    assert.equal(attempt, 2);
+    assert.equal(result.runState, "error");
+    assert.equal(result.threadId, "");
+    assert.match(result.messages.at(-1)?.text ?? "", /Reading prompt from stdin/i);
+    assert.deepEqual(invalidated, [
+      { providerId: "codex", sessionId: session.id },
+      { providerId: "codex", sessionId: session.id },
+    ]);
+    assert.equal(storedSessions.length, 2);
+    assert.equal(storedSessions[1]?.threadId, "");
+    assert.equal(auditUpdates.length, 1);
+    assert.equal(auditUpdates[0]?.phase, "failed");
+    assert.equal(auditUpdates[0]?.threadId, "thread-broken");
+  });
+
   it("meaningful partial が出た stale error は internal retry しない", async () => {
     const session = createSession({ provider: "codex", threadId: "thread-stale" });
     const storedSessions: Session[] = [];
