@@ -153,6 +153,41 @@ export function isRetryableStaleThreadSessionError(error: unknown): boolean {
   );
 }
 
+function isRetryableCodexThreadBootstrapError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalizedMessage = message.trim().toLowerCase();
+  if (!normalizedMessage) {
+    return false;
+  }
+
+  return /codex exec exited with code 1:\s*reading prompt from stdin\.\.\./.test(normalizedMessage);
+}
+
+function shouldRetryUnusableThreadRun(
+  error: unknown,
+  partialResult: RunSessionTurnResult | null | undefined,
+): boolean {
+  if (hasMeaningfulPartialRunResult(partialResult)) {
+    return false;
+  }
+
+  return isRetryableStaleThreadSessionError(error) || isRetryableCodexThreadBootstrapError(error);
+}
+
+function shouldResetFailedSessionThread(
+  error: unknown,
+  currentThreadId: string,
+  partialResult: RunSessionTurnResult | null | undefined,
+  canceled: boolean,
+): boolean {
+  if (canceled || !shouldRetryUnusableThreadRun(error, partialResult)) {
+    return false;
+  }
+
+  const candidateThreadId = (partialResult?.threadId ?? currentThreadId).trim();
+  return candidateThreadId.length > 0;
+}
+
 function buildEmptyLiveSessionRunState(sessionId: string, threadId: string): LiveSessionRunState {
   return {
     sessionId,
@@ -325,8 +360,7 @@ export class SessionRuntimeService {
           const shouldRetry =
             !didInternalRetry &&
             !isCanceledRunError(error) &&
-            isRetryableStaleThreadSessionError(error) &&
-            !hasMeaningfulPartialRunResult(providerTurnError?.partialResult);
+            shouldRetryUnusableThreadRun(error, providerTurnError?.partialResult);
 
           if (!shouldRetry) {
             throw error;
@@ -407,9 +441,17 @@ export class SessionRuntimeService {
       const canceled = providerTurnError ? providerTurnError.canceled : isCanceledRunError(error);
       const message = error instanceof Error ? error.message : String(error);
       const partialResult = providerTurnError?.partialResult;
+      const failedAuditThreadId = partialResult?.threadId ?? activeRunningSession.threadId;
+      const shouldResetFailedThread = shouldResetFailedSessionThread(
+        error,
+        activeRunningSession.threadId,
+        partialResult,
+        canceled,
+      );
+      const nextSessionThreadId = shouldResetFailedThread ? "" : failedAuditThreadId;
       const completedAt = new Date().toISOString();
       const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
-      if (canceled) {
+      if (canceled || shouldResetFailedThread) {
         this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId);
       }
 
@@ -421,7 +463,7 @@ export class SessionRuntimeService {
         model: activeRunningSession.model,
         reasoningEffort: activeRunningSession.reasoningEffort,
         approvalMode: activeRunningSession.approvalMode,
-        threadId: partialResult?.threadId ?? activeRunningSession.threadId,
+        threadId: failedAuditThreadId,
         logicalPrompt: partialResult?.logicalPrompt ?? promptForAudit.logicalPrompt,
         transportPayload: appendTransportPayloadFields(
           appendQuotaTelemetryToTransportPayload(
@@ -450,7 +492,7 @@ export class SessionRuntimeService {
         updatedAt: currentTimestampLabel(),
         status: "idle",
         runState: canceled ? "idle" : "error",
-        threadId: partialResult?.threadId ?? activeRunningSession.threadId,
+        threadId: nextSessionThreadId,
         messages: [
           ...activeRunningSession.messages,
           {
@@ -463,6 +505,7 @@ export class SessionRuntimeService {
       };
 
       const storedFailedSession = this.deps.upsertSession(failedSession);
+      activeRunningSession = storedFailedSession;
       this.deps.runSessionMemoryExtraction(storedFailedSession, partialResult?.usage ?? null, {
         triggerReason: "outputTokensThreshold",
       });

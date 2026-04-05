@@ -296,12 +296,12 @@ diff 本文は turn items からは直接取れないため、MVP では Main Pr
 
 - provider 実行失敗時は Main Process が session を `runState=error` へ更新する
 - Renderer に raw stack trace は出さず、UI 向けの失敗メッセージへ整形する
-- thread id が取得済みなら失敗時も保持する
+- 失敗時の `threadId` は既定では保持するが、`stale thread / session` または Codex の `Reading prompt from stdin...` のように「meaningful partial なしで再利用不能」と判定できる失敗では空へ戻す
 - ユーザーキャンセル時は監査ログに `phase=canceled` を記録する
 - 失敗時は監査ログにも `phase=failed` を記録し、`system / input / composed prompt` と error を残す
 - canceled / failed のどちらでも、取得済みの `assistant text` / operations / raw items / artifact があれば捨てずに残す
-- stale thread / session 起因エラーに限り、`SessionRuntimeService` は同一 user turn 内で 1 回だけ internal retry できる
-  - 対象は `NotFound / expired / invalid-thread / model-incompatible` の narrow classifier に限る
+- stale thread / session 起因エラー、または Codex の thread bootstrap 直後に `Reading prompt from stdin...` で落ちる再利用不能エラーに限り、`SessionRuntimeService` は同一 user turn 内で 1 回だけ internal retry できる
+  - 対象は `NotFound / expired / invalid-thread / model-incompatible` に加え、meaningful partial を持たない Codex startup failure の narrow classifier に限る
   - retry 前には `threadId` を空へ戻し、provider cache invalidate を必ず同時に行う
   - `assistantText` / operations / artifact.changedFiles などの meaningful partial が既に出ている場合は retry しない
   - public API / renderer からの再送には広げない

@@ -58,7 +58,7 @@ window は上の状態機械とは分離する。
 - `runSessionTurn()` の事前検証
 - in-flight 管理
 - provider coding adapter 実行
-- stale thread / session 起因エラーに対する 1 回だけの internal reset + retry
+- stale thread / session、または meaningful partial を持たない Codex bootstrap failure に対する 1 回だけの internal reset + retry
 - audit log の running / completed / failed / canceled 更新
 - live run state の更新
 - turn 完了後の background task 起動
@@ -123,7 +123,7 @@ window は上の状態機械とは分離する。
 - chat にはキャンセル結果を 1 件追加する
 - 監査ログは同じ turn record を `phase = canceled` へ更新し、`errorMessage` にユーザーキャンセルを残す
 - 実行中は approval を含む session 設定変更を受け付けない
-- stale thread / session 起因エラーを Main Process が検知した場合だけ、同一 turn の内部で `threadId clear + provider cache invalidate` を行って 1 回だけ再試行する
+- stale thread / session 起因エラー、または meaningful partial を持たない Codex bootstrap failure を Main Process が検知した場合だけ、同一 turn の内部で `threadId clear + provider cache invalidate` を行って 1 回だけ再試行する
 - internal retry は same turn の処理として扱い、user message / assistant message / audit log record を二重化しない
 
 ### Session Delete
