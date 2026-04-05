@@ -505,6 +505,7 @@ export class SessionRuntimeService {
       };
 
       const storedFailedSession = this.deps.upsertSession(failedSession);
+      activeRunningSession = storedFailedSession;
       this.deps.runSessionMemoryExtraction(storedFailedSession, partialResult?.usage ?? null, {
         triggerReason: "outputTokensThreshold",
       });
