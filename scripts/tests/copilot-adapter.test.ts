@@ -589,7 +589,10 @@ describe("CopilotAdapter env", () => {
   });
 
   it("session.idle で実行中の background task を掃除する", () => {
-    const tasks = new Map([
+    type BackgroundTasksMap = Parameters<typeof applyCopilotBackgroundTaskEvent>[0];
+    type LiveBackgroundTask = BackgroundTasksMap extends Map<string, infer Task> ? Task : never;
+
+    const tasks = new Map<string, LiveBackgroundTask>([
       [
         "agent:agent-1",
         {
