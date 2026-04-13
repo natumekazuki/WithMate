@@ -9,6 +9,7 @@ import {
   type AuditLogEntry,
 } from "../src/app-state.js";
 import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
+import { extractTextReferenceCandidates } from "./composer-attachments.js";
 
 type MainQueryServiceDeps = {
   getSessions(): Session[];
@@ -26,6 +27,10 @@ type MainQueryServiceDeps = {
 
 export class MainQueryService {
   constructor(private readonly deps: MainQueryServiceDeps) {}
+
+  private cloneSession(session: Session): Session {
+    return JSON.parse(JSON.stringify(session)) as Session;
+  }
 
   listSessions(): Session[] {
     return cloneSessions(this.deps.getSessions());
@@ -64,7 +69,8 @@ export class MainQueryService {
   }
 
   getSession(sessionId: string): Session | null {
-    return cloneSessions(this.deps.getSessions()).find((session) => session.id === sessionId) ?? null;
+    const session = this.deps.getSessions().find((entry) => entry.id === sessionId);
+    return session ? this.cloneSession(session) : null;
   }
 
   async getCharacter(characterId: string): Promise<CharacterProfile | null> {
@@ -76,6 +82,10 @@ export class MainQueryService {
   }
 
   async previewComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview> {
+    if (extractTextReferenceCandidates(userMessage).length === 0) {
+      return { attachments: [], errors: [] };
+    }
+
     const session = this.getSession(sessionId);
     if (!session) {
       throw new Error("対象セッションが見つからないよ。");

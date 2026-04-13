@@ -162,6 +162,12 @@ type SelectedCustomAgentDisplay = {
   title?: string;
 };
 
+const EMPTY_COMPOSER_PREVIEW: ComposerPreview = { attachments: [], errors: [] };
+const COMPOSER_PREVIEW_DEBOUNCE_MS = 120;
+const COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS = 280;
+const WORKSPACE_PATH_QUERY_MIN_LENGTH = 2;
+const TEXT_PATH_REFERENCE_CANDIDATE_PATTERN = /(^|[\s(])@(?:"([^"\r\n]+)"|([^\s@]+))/gm;
+
 function defaultRetryBannerDetailsOpen(kind: RetryBannerKind): boolean {
   return kind !== "canceled";
 }
@@ -181,6 +187,30 @@ function getActivePathReference(value: string, caret: number): ActivePathReferen
     start,
     end: caret,
   };
+}
+
+function extractTextPathReferenceCandidates(value: string): string[] {
+  const candidates: string[] = [];
+  const expression = new RegExp(TEXT_PATH_REFERENCE_CANDIDATE_PATTERN);
+
+  for (const match of value.matchAll(expression)) {
+    const quotedPath = match[2];
+    const plainPath = match[3];
+    const candidatePath = quotedPath ?? plainPath ?? "";
+    if (candidatePath.trim()) {
+      candidates.push(candidatePath.trim());
+    }
+  }
+
+  return candidates;
+}
+
+function removeActivePathReference(value: string, activeReference: ActivePathReference | null): string {
+  if (!activeReference) {
+    return value;
+  }
+
+  return `${value.slice(0, activeReference.start)}${value.slice(activeReference.end)}`;
 }
 
 function buildSkillPromptSnippet(providerId: string, skillName: string): string {
@@ -795,16 +825,42 @@ export default function App() {
     [selectedSession],
   );
   const activePathReference = useMemo(
-    () => (selectedSession ? getActivePathReference(draft, composerCaret) : null),
-    [composerCaret, draft, selectedSession],
+    () => (selectedSessionId ? getActivePathReference(draft, composerCaret) : null),
+    [composerCaret, draft, selectedSessionId],
   );
+  const isEditingPathReference = activePathReference !== null;
+  const normalizedActivePathQuery = activePathReference?.query.trim() ?? "";
+  const previewDraft = useMemo(
+    () => removeActivePathReference(draft, activePathReference),
+    [activePathReference, draft],
+  );
+  const previewPathReferenceCandidates = useMemo(
+    () => extractTextPathReferenceCandidates(previewDraft),
+    [previewDraft],
+  );
+  const hasPreviewPathReferenceCandidates = previewPathReferenceCandidates.length > 0;
+  const previewPathReferenceSignature = useMemo(
+    () => previewPathReferenceCandidates.join("\u001f"),
+    [previewPathReferenceCandidates],
+  );
+  const selectedSessionRunState = selectedSession?.runState ?? null;
 
   const selectedSessionCharacter = useMemo(
     () =>
       selectedSession
-        ? { name: selectedSession.character, iconPath: selectedSession.characterIconPath }
+        ? {
+            id: resolvedCharacter?.id ?? selectedSession.characterId,
+            name: resolvedCharacter?.name ?? selectedSession.character,
+            iconPath: resolvedCharacter?.iconPath ?? selectedSession.characterIconPath,
+            description: resolvedCharacter?.description ?? "",
+            roleMarkdown: resolvedCharacter?.roleMarkdown ?? "",
+            notesMarkdown: resolvedCharacter?.notesMarkdown ?? "",
+            updatedAt: resolvedCharacter?.updatedAt ?? selectedSession.updatedAt,
+            themeColors: resolvedCharacter?.themeColors ?? selectedSession.characterThemeColors,
+            sessionCopy: resolvedCharacter?.sessionCopy ?? DEFAULT_CHARACTER_SESSION_COPY,
+          }
         : null,
-    [selectedSession],
+    [resolvedCharacter, selectedSession],
   );
   const isCharacterUpdateSession = selectedSession?.sessionKind === "character-update";
   const sessionThemeStyle = useMemo(
@@ -812,7 +868,7 @@ export default function App() {
     [selectedSession],
   );
   const selectedDiffThemeStyle = useMemo(
-    () => (selectedDiff ? buildCharacterThemeStyle(selectedDiff.themeColors) : undefined),
+    () => (selectedDiff ? buildCharacterThemeStyle(selectedDiff.themeColors) : {}),
     [selectedDiff],
   );
   const isSelectedCharacterMissing = useMemo(
@@ -1184,7 +1240,7 @@ export default function App() {
 
   useEffect(() => {
     setDraft("");
-    setComposerPreview({ attachments: [], errors: [] });
+    setComposerPreview(EMPTY_COMPOSER_PREVIEW);
     setPickerBaseDirectory(selectedSession?.workspacePath ?? "");
     setComposerCaret(0);
     setWorkspacePathMatches([]);
@@ -1549,15 +1605,29 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    if (!withmateApi || !selectedSession) {
-      setComposerPreview({ attachments: [], errors: [] });
+    if (!withmateApi || !selectedSessionId) {
+      setComposerPreview(EMPTY_COMPOSER_PREVIEW);
       return () => {
         active = false;
       };
     }
 
+    if (!hasPreviewPathReferenceCandidates) {
+      setComposerPreview(EMPTY_COMPOSER_PREVIEW);
+      return () => {
+        active = false;
+      };
+    }
+
+    if (isComposerImeComposing) {
+      return () => {
+        active = false;
+      };
+    }
+
+    const previewUserMessage = isEditingPathReference ? previewDraft : draft;
     const timeoutId = window.setTimeout(() => {
-      void withmateApi.previewComposerInput(selectedSession.id, draft).then((preview) => {
+      void withmateApi.previewComposerInput(selectedSessionId, previewUserMessage).then((preview) => {
         if (active) {
           setComposerPreview(preview);
         }
@@ -1569,23 +1639,30 @@ export default function App() {
           });
         }
       });
-    }, 120);
+    }, isEditingPathReference ? COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS : COMPOSER_PREVIEW_DEBOUNCE_MS);
 
     return () => {
       active = false;
       window.clearTimeout(timeoutId);
     };
-  }, [draft, selectedSession]);
+  }, [
+    hasPreviewPathReferenceCandidates,
+    isComposerImeComposing,
+    isEditingPathReference,
+    previewPathReferenceSignature,
+    selectedSessionId,
+  ]);
   useEffect(() => {
     let active = true;
 
     if (
       !withmateApi
-      || !selectedSession
-      || selectedSession.runState === "running"
+      || !selectedSessionId
+      || selectedSessionRunState === "running"
       || !!composerBlockedReason
-      || !activePathReference
-      || !activePathReference.query.trim()
+      || isComposerImeComposing
+      || !isEditingPathReference
+      || normalizedActivePathQuery.length < WORKSPACE_PATH_QUERY_MIN_LENGTH
     ) {
       setWorkspacePathMatches([]);
       return () => {
@@ -1594,7 +1671,7 @@ export default function App() {
     }
 
     const timeoutId = window.setTimeout(() => {
-      void withmateApi.searchWorkspaceFiles(selectedSession.id, activePathReference.query).then((matches) => {
+      void withmateApi.searchWorkspaceFiles(selectedSessionId, normalizedActivePathQuery).then((matches) => {
         if (active) {
           setWorkspacePathMatches(matches);
         }
@@ -1609,7 +1686,14 @@ export default function App() {
       active = false;
       window.clearTimeout(timeoutId);
     };
-  }, [activePathReference, composerBlockedReason, selectedSession]);
+  }, [
+    composerBlockedReason,
+    isComposerImeComposing,
+    isEditingPathReference,
+    normalizedActivePathQuery,
+    selectedSessionId,
+    selectedSessionRunState,
+  ]);
   const selectedProviderCatalog = useMemo(
     () => (modelCatalog && selectedSession ? getProviderCatalog(modelCatalog.providers, selectedSession.provider) : null),
     [modelCatalog, selectedSession],
@@ -1889,7 +1973,14 @@ export default function App() {
   );
   const customAgentItems = useMemo(
     () => {
-      const items = [
+      const items: {
+        key: string;
+        value: string | null;
+        primaryLabel: string;
+        secondaryLabel: string;
+        title: string;
+        isSelected: boolean;
+      }[] = [
         {
           key: "default",
           value: null,
@@ -3037,11 +3128,14 @@ export default function App() {
                         onDraftKeyDown={handleComposerKeyDown}
                         onDraftSelect={setComposerCaret}
                         onDraftCompositionStart={() => setIsComposerImeComposing(true)}
-                        onDraftCompositionEnd={() => setIsComposerImeComposing(false)}
+                        onDraftCompositionEnd={() => {
+                          setIsComposerImeComposing(false);
+                          setComposerCaret(composerTextareaRef.current?.selectionStart ?? draft.length);
+                        }}
                         onSendOrCancel={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
                         onSelectWorkspacePathMatch={handleSelectWorkspacePathMatch}
                         onActivateWorkspacePathMatch={setActiveWorkspacePathMatchIndex}
-                        onChangeApprovalMode={(value) => void handleChangeApproval(value)}
+                        onChangeApprovalMode={(value) => void handleChangeApproval(value as Session["approvalMode"])}
                         onChangeModel={(value) => void handleChangeModel(value)}
                         onChangeReasoningEffort={(value) => void handleChangeReasoningEffort(value as Session["reasoningEffort"])}
                       />
