@@ -7,9 +7,9 @@
 
 ## Round 2
 
-- 依存ライブラリは 
-pm install <package>@latest で package.json / lockfile を最新版へ更新する。
-- 完了条件は 
-pm run build の成功とし、
-pm run typecheck の既存テスト不整合は follow-up として分離する。
+- 依存ライブラリは、以下で package.json / lockfile を最新版へ更新する。
+  - `npm install <package>@latest`
+- 完了条件は以下とする。
+  - `npm run build` の成功
+  - `npm run typecheck` の既存テスト不整合は follow-up として分離する
 - docs/design/、.ai_context/、README.md の更新は不要とする。
