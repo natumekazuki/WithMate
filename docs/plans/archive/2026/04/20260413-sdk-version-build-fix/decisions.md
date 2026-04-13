@@ -2,8 +2,8 @@
 
 ## Round 1
 
-- @github/copilot-sdk 更新に合わせて session.idle は ackgroundTasks 前提をやめ、実行中タスクの掃除のみに変更する。
-- テストは旧 ackgroundTasks スナップショットではなく system.notification の gent_idle / gent_completed 前提へ更新する。
+- @github/copilot-sdk 更新に合わせて session.idle は backgroundTasks 前提をやめ、実行中タスクの掃除のみに変更する。
+- テストは旧 backgroundTasks スナップショットではなく system.notification の agent_idle / agent_completed 前提へ更新する。
 
 ## Round 2
 
