@@ -29,7 +29,7 @@ export class MainQueryService {
   constructor(private readonly deps: MainQueryServiceDeps) {}
 
   private cloneSession(session: Session): Session {
-    return JSON.parse(JSON.stringify(session)) as Session;
+    return cloneSessions([session])[0] as Session;
   }
 
   listSessions(): Session[] {
