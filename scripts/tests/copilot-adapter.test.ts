@@ -588,17 +588,47 @@ describe("CopilotAdapter env", () => {
     assert.deepEqual(next.messages, ["本文"]);
   });
 
-  it("session.idle の backgroundTasks を live tasks へ取り込む", () => {
-    const tasks = new Map();
+  it("session.idle で実行中の background task を掃除する", () => {
+    type BackgroundTasksMap = Parameters<typeof applyCopilotBackgroundTaskEvent>[0];
+    type LiveBackgroundTask = BackgroundTasksMap extends Map<string, infer Task> ? Task : never;
+
+    const tasks = new Map<string, LiveBackgroundTask>([
+      [
+        "agent:agent-1",
+        {
+          id: "agent:agent-1",
+          kind: "agent",
+          status: "running",
+          title: "設計を調べる",
+          updatedAt: "2026-04-04T11:59:00.000Z",
+        },
+      ],
+      [
+        "shell:shell-1",
+        {
+          id: "shell:shell-1",
+          kind: "shell",
+          status: "running",
+          title: "npm test --watch",
+          updatedAt: "2026-04-04T11:59:30.000Z",
+        },
+      ],
+      [
+        "agent:agent-completed",
+        {
+          id: "agent:agent-completed",
+          kind: "agent",
+          status: "completed",
+          title: "完了済み agent",
+          updatedAt: "2026-04-04T11:58:00.000Z",
+        },
+      ],
+    ]);
+
     const changed = applyCopilotBackgroundTaskEvent(tasks, {
       type: "session.idle",
       timestamp: "2026-04-04T12:00:00.000Z",
-      data: {
-        backgroundTasks: {
-          agents: [{ agentId: "agent-1", agentType: "task", description: "設計を調べる" }],
-          shells: [{ shellId: "shell-1", description: "npm test --watch" }],
-        },
-      },
+      data: {},
     } as never);
 
     assert.equal(changed, true);
@@ -608,22 +638,22 @@ describe("CopilotAdapter env", () => {
         status: task.status,
         title: task.title,
       })),
-      [
-        { kind: "agent", status: "running", title: "設計を調べる" },
-        { kind: "shell", status: "running", title: "npm test --watch" },
-      ],
+      [{ kind: "agent", status: "completed", title: "完了済み agent" }],
     );
   });
 
   it("system.notification で background agent の完了状態を更新する", () => {
     const tasks = new Map();
     applyCopilotBackgroundTaskEvent(tasks, {
-      type: "session.idle",
+      type: "system.notification",
       timestamp: "2026-04-04T12:00:00.000Z",
       data: {
-        backgroundTasks: {
-          agents: [{ agentId: "agent-1", agentType: "task", description: "設計を調べる" }],
-          shells: [],
+        content: "<system_notification>idle</system_notification>",
+        kind: {
+          type: "agent_idle",
+          agentId: "agent-1",
+          agentType: "task",
+          description: "設計を調べる",
         },
       },
     } as never);
