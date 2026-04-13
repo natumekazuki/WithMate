@@ -12,6 +12,7 @@
 - `Renderer state decomposition` は broad すぎるため独立候補から外し、局所 task へ吸収した
 - repo plan 一式を新規作成し、今回の docs 更新内容と publish 前提の注意点を記録した
 - repo plan 完了に伴い、`docs/plans/archive/2026/04/20260413-optimization-roadmap-refinement/` へ archive する状態まで整理した
+- commit `4098b1c` (`docs(optimization): 最適化ロードマップを再精査`) により、roadmap 更新と archive 済み plan 一式を履歴へ確定した
 
 ## Publish 前の注意
 
