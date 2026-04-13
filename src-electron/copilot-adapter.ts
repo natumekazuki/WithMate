@@ -1450,42 +1450,17 @@ export function applyCopilotBackgroundTaskEvent(
 ): boolean {
   switch (event.type) {
     case "session.idle": {
-      const snapshot = event.data.backgroundTasks;
-      const nextRunningKeys = new Set<string>();
-      for (const agent of snapshot?.agents ?? []) {
-        const key = buildCopilotBackgroundTaskKey("agent", agent.agentId);
-        nextRunningKeys.add(key);
-        tasks.set(key, {
-          id: key,
-          kind: "agent",
-          status: "running",
-          title: buildCopilotBackgroundTaskTitle(agent.description, `${agent.agentType} agent`),
-          details: agent.agentType,
-          updatedAt: event.timestamp,
-        });
-      }
-
-      for (const shell of snapshot?.shells ?? []) {
-        const key = buildCopilotBackgroundTaskKey("shell", shell.shellId);
-        nextRunningKeys.add(key);
-        tasks.set(key, {
-          id: key,
-          kind: "shell",
-          status: "running",
-          title: buildCopilotBackgroundTaskTitle(shell.description, "background shell"),
-          updatedAt: event.timestamp,
-        });
-      }
-
       let changed = false;
       for (const [key, task] of tasks.entries()) {
-        if (task.status === "running" && !nextRunningKeys.has(key)) {
-          tasks.delete(key);
-          changed = true;
+        if (task.status !== "running") {
+          continue;
         }
+
+        tasks.delete(key);
+        changed = true;
       }
 
-      return changed || nextRunningKeys.size > 0;
+      return changed;
     }
     case "system.notification": {
       const kind = event.data.kind;
