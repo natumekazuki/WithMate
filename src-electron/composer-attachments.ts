@@ -2,9 +2,9 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 
 import type { ComposerAttachment, ComposerAttachmentInput, ComposerAttachmentKind, ComposerPreview, Session } from "../src/app-state.js";
+import { extractTextReferenceCandidates } from "../src/path-reference.js";
 import { isPathWithinAnyDirectory, normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 
-const TEXT_PATH_REFERENCE_PATTERN = /(^|[\s(])@(?:"([^"\r\n]+)"|([^\s@]+))/gm;
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"]);
 const TRAILING_PATH_PUNCTUATION = /[),.;:!?]+$/;
 
@@ -40,22 +40,6 @@ function inferFileKindFromPath(filePath: string): ComposerAttachmentKind {
 
 function toDisplayPath(workspacePath: string, absolutePath: string): string {
   return toWorkspaceRelativePath(workspacePath, absolutePath) ?? normalizeSlash(absolutePath);
-}
-
-export function extractTextReferenceCandidates(userMessage: string): string[] {
-  const candidates: string[] = [];
-  const expression = new RegExp(TEXT_PATH_REFERENCE_PATTERN);
-
-  for (const match of userMessage.matchAll(expression)) {
-    const quotedPath = match[2];
-    const plainPath = match[3];
-    const candidatePath = quotedPath ?? plainPath ?? "";
-    if (candidatePath.trim()) {
-      candidates.push(candidatePath.trim());
-    }
-  }
-
-  return candidates;
 }
 
 async function resolveAttachmentCandidate(

@@ -9,7 +9,7 @@ import {
   type AuditLogEntry,
 } from "../src/app-state.js";
 import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
-import { extractTextReferenceCandidates } from "./composer-attachments.js";
+import { extractTextReferenceCandidates } from "../src/path-reference.js";
 
 type MainQueryServiceDeps = {
   getSessions(): Session[];

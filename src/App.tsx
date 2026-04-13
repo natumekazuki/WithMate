@@ -77,6 +77,7 @@ import {
   type ComposerSendabilityState,
 } from "./session-composer-feedback.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
+import { extractTextReferenceCandidates } from "./path-reference.js";
 
 type ActivePathReference = {
   query: string;
@@ -166,7 +167,6 @@ const EMPTY_COMPOSER_PREVIEW: ComposerPreview = { attachments: [], errors: [] };
 const COMPOSER_PREVIEW_DEBOUNCE_MS = 120;
 const COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS = 280;
 const WORKSPACE_PATH_QUERY_MIN_LENGTH = 2;
-const TEXT_PATH_REFERENCE_CANDIDATE_PATTERN = /(^|[\s(])@(?:"([^"\r\n]+)"|([^\s@]+))/gm;
 
 function defaultRetryBannerDetailsOpen(kind: RetryBannerKind): boolean {
   return kind !== "canceled";
@@ -187,22 +187,6 @@ function getActivePathReference(value: string, caret: number): ActivePathReferen
     start,
     end: caret,
   };
-}
-
-function extractTextPathReferenceCandidates(value: string): string[] {
-  const candidates: string[] = [];
-  const expression = new RegExp(TEXT_PATH_REFERENCE_CANDIDATE_PATTERN);
-
-  for (const match of value.matchAll(expression)) {
-    const quotedPath = match[2];
-    const plainPath = match[3];
-    const candidatePath = quotedPath ?? plainPath ?? "";
-    if (candidatePath.trim()) {
-      candidates.push(candidatePath.trim());
-    }
-  }
-
-  return candidates;
 }
 
 function removeActivePathReference(value: string, activeReference: ActivePathReference | null): string {
@@ -835,7 +819,7 @@ export default function App() {
     [activePathReference, draft],
   );
   const previewPathReferenceCandidates = useMemo(
-    () => extractTextPathReferenceCandidates(previewDraft),
+    () => extractTextReferenceCandidates(previewDraft),
     [previewDraft],
   );
   const hasPreviewPathReferenceCandidates = previewPathReferenceCandidates.length > 0;
