@@ -138,6 +138,8 @@ npm run typecheck
   - `docs/design/` の current 正本 / supporting / 統合候補の棚卸し
 - `docs/design/coding-agent-capability-matrix.md`
   - coding agent wrapper 観点の対応機能一覧と current status
+- `docs/optimization-roadmap.md`
+  - 最適化候補、推奨 branch 名、着手順の参照先
 - `docs/design/window-architecture.md`
   - Window ごとの責務分離
 - `docs/design/distribution-packaging.md`
