@@ -18,7 +18,17 @@ function isOrderedListLine(line: string): boolean {
 function normalizeBlockMarkerLine(line: string): string {
   const trimmedEnd = line.trimEnd();
   const leadingWhitespace = trimmedEnd.match(/^[\t ]*/)?.[0] ?? "";
-  if (leadingWhitespace.length >= 4) {
+  let indentationColumns = 0;
+
+  for (const char of leadingWhitespace) {
+    if (char === "\t") {
+      indentationColumns += 4 - (indentationColumns % 4);
+    } else {
+      indentationColumns += 1;
+    }
+  }
+
+  if (indentationColumns >= 4) {
     return trimmedEnd;
   }
   return trimmedEnd.slice(leadingWhitespace.length);
