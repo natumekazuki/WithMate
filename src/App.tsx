@@ -3119,7 +3119,7 @@ export default function App() {
                         onSendOrCancel={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
                         onSelectWorkspacePathMatch={handleSelectWorkspacePathMatch}
                         onActivateWorkspacePathMatch={setActiveWorkspacePathMatchIndex}
-                        onChangeApprovalMode={(value) => void handleChangeApproval(value as Session["approvalMode"])}
+                        onChangeApprovalMode={(value) => void handleChangeApproval(value)}
                         onChangeModel={(value) => void handleChangeModel(value)}
                         onChangeReasoningEffort={(value) => void handleChangeReasoningEffort(value as Session["reasoningEffort"])}
                       />
