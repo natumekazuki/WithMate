@@ -15,6 +15,10 @@ function isOrderedListLine(line: string): boolean {
   return /^\d+\.\s+/.test(line);
 }
 
+function normalizeBlockMarkerLine(line: string): string {
+  return line.trimStart().trimEnd();
+}
+
 function parseBlocks(text: string): Block[] {
   const lines = text.replace(/\r\n/g, "\n").split("\n");
   const blocks: Block[] = [];
@@ -23,13 +27,14 @@ function parseBlocks(text: string): Block[] {
   while (index < lines.length) {
     const rawLine = lines[index] ?? "";
     const line = rawLine.trimEnd();
+    const markerLine = normalizeBlockMarkerLine(rawLine);
 
     if (!line.trim()) {
       index += 1;
       continue;
     }
 
-    const codeFence = line.match(/^```(.*)$/);
+    const codeFence = markerLine.match(/^```(.*)$/);
     if (codeFence) {
       const codeLines: string[] = [];
       const language = codeFence[1]?.trim() ?? "";
@@ -45,7 +50,7 @@ function parseBlocks(text: string): Block[] {
       continue;
     }
 
-    const heading = line.match(/^(#{1,3})\s+(.*)$/);
+    const heading = markerLine.match(/^(#{1,3})\s+(.*)$/);
     if (heading) {
       blocks.push({
         type: "heading",
@@ -56,20 +61,20 @@ function parseBlocks(text: string): Block[] {
       continue;
     }
 
-    if (isUnorderedListLine(line)) {
+    if (isUnorderedListLine(markerLine)) {
       const items: string[] = [];
-      while (index < lines.length && isUnorderedListLine((lines[index] ?? "").trim())) {
-        items.push((lines[index] ?? "").trim().replace(/^[-*]\s+/, ""));
+      while (index < lines.length && isUnorderedListLine(normalizeBlockMarkerLine(lines[index] ?? ""))) {
+        items.push(normalizeBlockMarkerLine(lines[index] ?? "").replace(/^[-*]\s+/, ""));
         index += 1;
       }
       blocks.push({ type: "unordered-list", items });
       continue;
     }
 
-    if (isOrderedListLine(line)) {
+    if (isOrderedListLine(markerLine)) {
       const items: string[] = [];
-      while (index < lines.length && isOrderedListLine((lines[index] ?? "").trim())) {
-        items.push((lines[index] ?? "").trim().replace(/^\d+\.\s+/, ""));
+      while (index < lines.length && isOrderedListLine(normalizeBlockMarkerLine(lines[index] ?? ""))) {
+        items.push(normalizeBlockMarkerLine(lines[index] ?? "").replace(/^\d+\.\s+/, ""));
         index += 1;
       }
       blocks.push({ type: "ordered-list", items });
@@ -78,17 +83,29 @@ function parseBlocks(text: string): Block[] {
 
     const paragraphLines: string[] = [];
     while (index < lines.length) {
-      const next = (lines[index] ?? "").trimEnd();
+      const next = lines[index] ?? "";
       const trimmed = next.trim();
+      const nextMarkerLine = normalizeBlockMarkerLine(next);
       if (!trimmed) {
         break;
       }
-      if (trimmed.startsWith("```") || /^(#{1,3})\s+/.test(trimmed) || isUnorderedListLine(trimmed) || isOrderedListLine(trimmed)) {
+      if (
+        nextMarkerLine.startsWith("```") ||
+        /^(#{1,3})\s+/.test(nextMarkerLine) ||
+        isUnorderedListLine(nextMarkerLine) ||
+        isOrderedListLine(nextMarkerLine)
+      ) {
         break;
       }
-      paragraphLines.push(lines[index] ?? "");
+      paragraphLines.push(next);
       index += 1;
     }
+
+    if (paragraphLines.length === 0) {
+      paragraphLines.push(rawLine);
+      index += 1;
+    }
+
     blocks.push({ type: "paragraph", lines: paragraphLines });
   }
 
