@@ -7,11 +7,23 @@ import {
 
 export const SETTINGS_SKILL_ROOT_LABEL = "Skill Root";
 export const SETTINGS_SKILL_ROOT_PLACEHOLDER = "skill folder の親ディレクトリを入力";
+export const SETTINGS_API_KEY_LABEL = "OpenAI API Key (Coding Agent)";
+export const SETTINGS_API_KEY_PLACEHOLDER = "Coding Agent 用 OpenAI API Key を入力";
+export const SETTINGS_CODING_CREDENTIALS_HELP =
+  "Coding Agent が Character Stream を使うための OpenAI API Key を設定する。";
+export const SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE =
+  "他 provider 対応は future scope として、いまは OpenAI 前提で扱う。";
+export const SETTINGS_RELEASE_COMPATIBILITY_NOTE =
+  "初回リリース前のため、設定 schema の後方互換性は考慮しない。";
 export const SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL = "Model";
 export const SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL = "Reasoning Depth";
 export const SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL = "Output Tokens Threshold";
 export const SETTINGS_MEMORY_EXTRACTION_TIMEOUT_LABEL = "Timeout Seconds";
 export const SETTINGS_MEMORY_GENERATION_LABEL = "Memory Generation";
+export const SETTINGS_MEMORY_GENERATION_HELP =
+  "OFF にすると、turn 完了後の Generate Memory を実行しない。";
+export const SETTINGS_MEMORY_EXTRACTION_HELP =
+  "Generate Memory で使う memory extraction の設定。timeout に達したらその回の抽出は中断する。";
 export const SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL = "送信後に Action Dock を自動で閉じる";
 export const SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL = "Model";
 export const SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL = "Reasoning Depth";
@@ -19,6 +31,11 @@ export const SETTINGS_CHARACTER_REFLECTION_TIMEOUT_LABEL = "Timeout Seconds";
 export const SETTINGS_CHARACTER_REFLECTION_COOLDOWN_LABEL = "Cooldown Seconds";
 export const SETTINGS_CHARACTER_REFLECTION_CHAR_DELTA_LABEL = "Min Char Delta";
 export const SETTINGS_CHARACTER_REFLECTION_MESSAGE_DELTA_LABEL = "Min Message Delta";
+export const SETTINGS_CHARACTER_REFLECTION_HELP =
+  "app-wide な character reflection を SessionStart などで評価する設定。timeout に達したらその回は中断する。";
+export const SETTINGS_RESET_DATABASE_LABEL = "DB を初期化";
+export const SETTINGS_RESET_DATABASE_HELP =
+  "Danger Zone: app settings などの DB 内容を初期化する。characters は DB 外ファイルなので保持される。";
 
 export const SETTINGS_RESET_DATABASE_TARGET_LABELS: Record<ResetAppDatabaseTarget, string> = {
   sessions: "sessions",

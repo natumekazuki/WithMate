@@ -10,6 +10,28 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { SessionMemoryStorage } from "../../src-electron/session-memory-storage.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";
 
+const REMOVABLE_DIRECTORY_RETRY_ERROR_CODES = new Set(["EBUSY", "EPERM", "ENOTEMPTY"]);
+
+async function removeDirectoryWithRetry(targetPath: string, attempts = 15): Promise<void> {
+  for (let index = 0; index < attempts; index += 1) {
+    try {
+      await rm(targetPath, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const errorCode =
+        typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+          ? error.code
+          : null;
+      const shouldRetry = errorCode !== null && REMOVABLE_DIRECTORY_RETRY_ERROR_CODES.has(errorCode);
+      if (!shouldRetry || index === attempts - 1) {
+        throw error;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, Math.min(2_000, 100 * (index + 1))));
+    }
+  }
+}
+
 function createSession() {
   return buildNewSession({
     taskTitle: "Memory foundation",
@@ -43,7 +65,7 @@ describe("SessionMemoryStorage", () => {
       memoryStorage.close();
       sessionStorage.close();
     } finally {
-      await rm(tempDirectory, { recursive: true, force: true });
+      await removeDirectoryWithRetry(tempDirectory);
     }
   });
 
@@ -70,7 +92,7 @@ describe("SessionMemoryStorage", () => {
       memoryStorage.close();
       sessionStorage.close();
     } finally {
-      await rm(tempDirectory, { recursive: true, force: true });
+      await removeDirectoryWithRetry(tempDirectory);
     }
   });
 
@@ -91,7 +113,7 @@ describe("SessionMemoryStorage", () => {
       memoryStorage.close();
       sessionStorage.close();
     } finally {
-      await rm(tempDirectory, { recursive: true, force: true });
+      await removeDirectoryWithRetry(tempDirectory);
     }
   });
 
@@ -120,7 +142,7 @@ describe("SessionMemoryStorage", () => {
       memoryStorage.close();
       sessionStorage.close();
     } finally {
-      await rm(tempDirectory, { recursive: true, force: true });
+      await removeDirectoryWithRetry(tempDirectory);
     }
   });
 });

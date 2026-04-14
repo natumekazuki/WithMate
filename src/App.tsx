@@ -818,6 +818,10 @@ export default function App() {
     () => removeActivePathReference(draft, activePathReference),
     [activePathReference, draft],
   );
+  const previewUserMessage = useMemo(
+    () => (isEditingPathReference ? previewDraft : draft),
+    [draft, isEditingPathReference, previewDraft],
+  );
   const previewPathReferenceCandidates = useMemo(
     () => extractTextReferenceCandidates(previewDraft),
     [previewDraft],
@@ -1609,7 +1613,6 @@ export default function App() {
       };
     }
 
-    const previewUserMessage = isEditingPathReference ? previewDraft : draft;
     const timeoutId = window.setTimeout(() => {
       void withmateApi.previewComposerInput(selectedSessionId, previewUserMessage).then((preview) => {
         if (active) {
@@ -1634,6 +1637,7 @@ export default function App() {
     isComposerImeComposing,
     isEditingPathReference,
     previewPathReferenceSignature,
+    previewUserMessage,
     selectedSessionId,
   ]);
   useEffect(() => {
