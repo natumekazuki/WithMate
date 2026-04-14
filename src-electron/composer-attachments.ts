@@ -2,9 +2,9 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 
 import type { ComposerAttachment, ComposerAttachmentInput, ComposerAttachmentKind, ComposerPreview, Session } from "../src/app-state.js";
+import { extractTextReferenceCandidates } from "../src/path-reference.js";
 import { isPathWithinAnyDirectory, normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 
-const TEXT_PATH_REFERENCE_PATTERN = /(^|[\s(])@(?:"([^"\r\n]+)"|([^\s@]+))/gm;
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"]);
 const TRAILING_PATH_PUNCTUATION = /[),.;:!?]+$/;
 
@@ -40,22 +40,6 @@ function inferFileKindFromPath(filePath: string): ComposerAttachmentKind {
 
 function toDisplayPath(workspacePath: string, absolutePath: string): string {
   return toWorkspaceRelativePath(workspacePath, absolutePath) ?? normalizeSlash(absolutePath);
-}
-
-function extractTextReferenceCandidates(userMessage: string): string[] {
-  const candidates: string[] = [];
-  const expression = new RegExp(TEXT_PATH_REFERENCE_PATTERN);
-
-  for (const match of userMessage.matchAll(expression)) {
-    const quotedPath = match[2];
-    const plainPath = match[3];
-    const candidatePath = quotedPath ?? plainPath ?? "";
-    if (candidatePath.trim()) {
-      candidates.push(candidatePath.trim());
-    }
-  }
-
-  return candidates;
 }
 
 async function resolveAttachmentCandidate(
@@ -120,18 +104,31 @@ export async function resolveComposerPreview(
   const errors: string[] = [];
   const seenIds = new Set<string>();
 
-  for (const candidate of candidates) {
+  const resolvedCandidates = await Promise.all(candidates.map(async (candidate) => {
     try {
-      const resolved = await resolveAttachmentCandidate(session, candidate);
-      if (seenIds.has(resolved.id)) {
-        continue;
-      }
-
-      seenIds.add(resolved.id);
-      attachments.push(resolved);
+      return { attachment: await resolveAttachmentCandidate(session, candidate) } as const;
     } catch (error) {
-      errors.push(error instanceof Error ? error.message : "添付の解決に失敗したよ。");
+      return {
+        error: error instanceof Error ? error.message : "添付の解決に失敗したよ。",
+      } as const;
     }
+  }));
+
+  for (const resolved of resolvedCandidates) {
+    if ("error" in resolved) {
+      const errorMessage = typeof resolved.error === "string"
+        ? resolved.error
+        : "添付の解決に失敗したよ。";
+      errors.push(errorMessage);
+      continue;
+    }
+
+    if (seenIds.has(resolved.attachment.id)) {
+      continue;
+    }
+
+    seenIds.add(resolved.attachment.id);
+    attachments.push(resolved.attachment);
   }
 
   return {

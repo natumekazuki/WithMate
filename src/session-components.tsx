@@ -26,6 +26,7 @@ import {
   operationTypeLabel,
 } from "./ui-utils.js";
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
+import type { ApprovalMode } from "./approval-mode.js";
 import {
   contextPaneTabLabel,
   liveRunStepToneClassName,
@@ -2013,8 +2014,8 @@ export type SessionComposerExpandedProps = {
   composerSendability: SessionComposerSendabilityView;
   sendButtonTitle?: string;
   isComposerBlockedFeedbackActive: boolean;
-  approvalOptions: SessionSelectOption[];
-  selectedApprovalMode: string;
+  approvalOptions: Array<{ value: ApprovalMode; label: string }>;
+  selectedApprovalMode: ApprovalMode;
   modelOptions: SessionSelectOption[];
   selectedModel: string;
   selectedModelFallbackLabel: string;
@@ -2041,7 +2042,7 @@ export type SessionComposerExpandedProps = {
   onSendOrCancel: () => void;
   onSelectWorkspacePathMatch: (path: string) => void;
   onActivateWorkspacePathMatch: (index: number) => void;
-  onChangeApprovalMode: (value: string) => void;
+  onChangeApprovalMode: (value: ApprovalMode) => void;
   onChangeModel: (value: string) => void;
   onChangeReasoningEffort: (value: string) => void;
 };
