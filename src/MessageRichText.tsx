@@ -16,7 +16,12 @@ function isOrderedListLine(line: string): boolean {
 }
 
 function normalizeBlockMarkerLine(line: string): string {
-  return line.trimStart().trimEnd();
+  const trimmedEnd = line.trimEnd();
+  const leadingWhitespace = trimmedEnd.match(/^[\t ]*/)?.[0] ?? "";
+  if (leadingWhitespace.length >= 4) {
+    return trimmedEnd;
+  }
+  return trimmedEnd.slice(leadingWhitespace.length);
 }
 
 function parseBlocks(text: string): Block[] {
@@ -39,7 +44,7 @@ function parseBlocks(text: string): Block[] {
       const codeLines: string[] = [];
       const language = codeFence[1]?.trim() ?? "";
       index += 1;
-      while (index < lines.length && !lines[index]?.trimStart().startsWith("```")) {
+      while (index < lines.length && !normalizeBlockMarkerLine(lines[index] ?? "").startsWith("```")) {
         codeLines.push(lines[index] ?? "");
         index += 1;
       }
