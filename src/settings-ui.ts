@@ -23,7 +23,7 @@ export const SETTINGS_MEMORY_GENERATION_LABEL = "Memory Generation";
 export const SETTINGS_MEMORY_GENERATION_HELP =
   "OFF にすると、turn 完了後の Generate Memory を実行しない。";
 export const SETTINGS_MEMORY_EXTRACTION_HELP =
-  "Generate Memory で使う memory extraction の設定。timeout に達したらその回の抽出は中断する。";
+  "turn 完了後に Generate Memory を実行する際に使う memory extraction の設定。timeout に達したらその回の抽出は中断する。";
 export const SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL = "送信後に Action Dock を自動で閉じる";
 export const SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL = "Model";
 export const SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL = "Reasoning Depth";
