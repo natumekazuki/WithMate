@@ -457,6 +457,8 @@ export function buildSessionSummarySignature(summary: SessionSummary): string {
     summary.characterId,
     summary.character,
     summary.characterIconPath,
+    summary.characterThemeColors.main,
+    summary.characterThemeColors.sub,
     summary.workspaceLabel,
     summary.customAgentName,
     summary.allowedAdditionalDirectories.join("\u001f"),

@@ -215,6 +215,12 @@ describe("buildSessionSummarySignature", () => {
     const b = makeSummary({ id: "session-2" });
     assert.notEqual(buildSessionSummarySignature(a), buildSessionSummarySignature(b));
   });
+
+  it("characterThemeColors が異なれば signature も異なる", () => {
+    const a = makeSummary({ characterThemeColors: { main: "#000", sub: "#fff" } });
+    const b = makeSummary({ characterThemeColors: { main: "#111", sub: "#fff" } });
+    assert.notEqual(buildSessionSummarySignature(a), buildSessionSummarySignature(b));
+  });
 });
 
 describe("selectHydrationTarget — hydration 判定", () => {
