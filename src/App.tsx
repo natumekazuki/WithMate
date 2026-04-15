@@ -719,13 +719,12 @@ export default function App() {
         return;
       }
 
-      lastHydratedSummarySignatureRef.current = target.summarySignature;
-
       void withmateApi.getSession(target.sessionId).then((session) => {
         if (!active) {
           return;
         }
 
+        lastHydratedSummarySignatureRef.current = session ? target.summarySignature : null;
         setSessions(session ? [session] : []);
       });
     };
