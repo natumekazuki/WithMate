@@ -15,9 +15,10 @@ import type {
   SessionBackgroundActivityKind,
   SessionBackgroundActivityState,
   SessionContextTelemetry,
-  RunSessionTurnRequest,
-  Session,
-} from "./app-state.js";
+    RunSessionTurnRequest,
+    Session,
+    SessionSummary,
+  } from "./app-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "./character-update-state.js";
 import type { MemoryManagementSnapshot } from "./memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
@@ -45,7 +46,7 @@ export type WithMateWindowCatalogApi = {
 };
 
 export type WithMateWindowSessionApi = {
-  listSessions(): Promise<Session[]>;
+  listSessionSummaries(): Promise<SessionSummary[]>;
   getSession(sessionId: string): Promise<Session | null>;
   createSession(input: CreateSessionInput): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
@@ -101,7 +102,7 @@ export type WithMateWindowPickerApi = {
 };
 
 export type WithMateWindowSubscriptionApi = {
-  subscribeSessions(listener: (sessions: Session[]) => void): () => void;
+  subscribeSessionSummaries(listener: (sessions: SessionSummary[]) => void): () => void;
   subscribeCharacters(listener: (characters: CharacterProfile[]) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
   subscribeAppSettings(listener: (settings: AppSettings) => void): () => void;

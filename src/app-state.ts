@@ -1,9 +1,12 @@
 export {
   buildNewSession,
+  cloneSessionSummaries,
   cloneSessions,
   getDiffTokenFromLocation,
   getSessionIdFromLocation,
   normalizeSession,
+  normalizeSessionSummary,
+  projectSessionSummary,
 } from "./session-state.js";
 export type {
   CreateSessionInput,
@@ -11,7 +14,9 @@ export type {
   Message,
   MessageArtifact,
   Session,
+  SessionDetail,
   SessionKind,
+  SessionSummary,
   StreamEntry,
 } from "./session-state.js";
 export {

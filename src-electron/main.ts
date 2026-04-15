@@ -26,6 +26,7 @@ import {
 import {
   type DiffPreviewPayload,
   type Session,
+  type SessionSummary,
 } from "../src/session-state.js";
 import {
   type ModelCatalogDocument,
@@ -195,7 +196,11 @@ function createCursorPlacedWindow(
 }
 
 function listSessions(): Session[] {
-  return requireMainQueryService().listSessions();
+  return sessions;
+}
+
+function listSessionSummaries(): SessionSummary[] {
+  return requireMainQueryService().listSessionSummaries();
 }
 
 function isRunningSession(session: Session): boolean {
@@ -385,7 +390,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireMemoryManagementService().deleteCharacterMemoryEntry(entryId),
               },
               sessionQuery: {
-                listSessions: () => listSessions(),
+                listSessionSummaries: () => listSessionSummaries(),
                 listSessionAuditLogs: (sessionId) => listSessionAuditLogs(sessionId),
                 listSessionSkills: (sessionId) => listSessionSkills(sessionId),
                 listSessionCustomAgents: (sessionId) => listSessionCustomAgents(sessionId),
@@ -443,7 +448,8 @@ function requireSessionStorage(): SessionStorage {
 function requireMainQueryService(): MainQueryService {
   if (!mainQueryService) {
     mainQueryService = new MainQueryService({
-      getSessions: () => sessions,
+      getSessionSummaries: () => requireSessionStorage().listSessionSummaries(),
+      getSession: (sessionId) => requireSessionStorage().getSession(sessionId),
       getCharacters: () => characters,
       getAuditLogs: (sessionId) => requireAuditLogService().listSessionAuditLogs(sessionId),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
@@ -464,7 +470,7 @@ function requireMainBroadcastFacade(): MainBroadcastFacade<BrowserWindow> {
   if (!mainBroadcastFacade) {
     mainBroadcastFacade = new MainBroadcastFacade({
       getWindowBroadcastService: () => requireWindowBroadcastService(),
-      listSessions: () => listSessions(),
+      listSessionSummaries: () => listSessionSummaries(),
       listCharacters: () => listCharacters(),
       getModelCatalog: () => getModelCatalog(),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),

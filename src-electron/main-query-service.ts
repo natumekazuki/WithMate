@@ -5,14 +5,17 @@ import {
   type DiscoveredCustomAgent,
   type DiscoveredSkill,
   type Session,
-  cloneSessions,
   type AuditLogEntry,
+  type SessionSummary,
+  cloneSessionSummaries,
+  cloneSessions,
 } from "../src/app-state.js";
 import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
 import { extractTextReferenceCandidates } from "../src/path-reference.js";
 
 type MainQueryServiceDeps = {
-  getSessions(): Session[];
+  getSessionSummaries(): SessionSummary[];
+  getSession(sessionId: string): Session | null;
   getCharacters(): CharacterProfile[];
   getAuditLogs(sessionId: string): AuditLogEntry[];
   getAppSettings(): AppSettings;
@@ -32,8 +35,17 @@ export class MainQueryService {
     return cloneSessions([session])[0] as Session;
   }
 
-  listSessions(): Session[] {
-    return cloneSessions(this.deps.getSessions());
+  private cloneSessionSummary(session: SessionSummary): SessionSummary {
+    return cloneSessionSummaries([session])[0] as SessionSummary;
+  }
+
+  private getSessionSummary(sessionId: string): SessionSummary | null {
+    const session = this.deps.getSessionSummaries().find((entry) => entry.id === sessionId);
+    return session ? this.cloneSessionSummary(session) : null;
+  }
+
+  listSessionSummaries(): SessionSummary[] {
+    return cloneSessionSummaries(this.deps.getSessionSummaries());
   }
 
   listCharacters(): CharacterProfile[] {
@@ -69,7 +81,7 @@ export class MainQueryService {
   }
 
   getSession(sessionId: string): Session | null {
-    const session = this.deps.getSessions().find((entry) => entry.id === sessionId);
+    const session = this.deps.getSession(sessionId);
     return session ? this.cloneSession(session) : null;
   }
 
@@ -95,7 +107,7 @@ export class MainQueryService {
   }
 
   async searchWorkspaceFiles(sessionId: string, query: string): Promise<string[]> {
-    const session = this.getSession(sessionId);
+    const session = this.getSessionSummary(sessionId);
     if (!session) {
       throw new Error("対象セッションが見つからないよ。");
     }
@@ -104,7 +116,7 @@ export class MainQueryService {
   }
 
   async openSessionTerminal(sessionId: string): Promise<void> {
-    const session = this.getSession(sessionId);
+    const session = this.getSessionSummary(sessionId);
     if (!session) {
       throw new Error("対象セッションが見つからないよ。");
     }

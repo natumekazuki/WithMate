@@ -34,6 +34,8 @@ function fallbackLabel(name: string): string {
   return name.slice(0, 1);
 }
 
+type SessionStateSnapshot = Pick<Session, "status" | "runState">;
+
 function statusLabel(status: Session["status"]): string {
   switch (status) {
     case "running":
@@ -47,7 +49,7 @@ function statusLabel(status: Session["status"]): string {
   }
 }
 
-export function sessionStateLabel(session: Session): string {
+export function sessionStateLabel(session: SessionStateSnapshot): string {
   if (session.runState === "interrupted") {
     return "中断";
   }

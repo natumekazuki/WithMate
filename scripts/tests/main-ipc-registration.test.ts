@@ -35,7 +35,7 @@ import {
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
-  WITHMATE_LIST_SESSIONS_CHANNEL,
+  WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
@@ -101,7 +101,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     async openDiffWindow() {
       calls.push("openDiff");
     },
-    listSessions: () => [],
+    listSessionSummaries: () => [],
     listSessionAuditLogs: () => [],
     listSessionSkills: () => [],
     listSessionCustomAgents: () => [],
@@ -205,8 +205,9 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     },
   });
 
-  assert.ok(handlers.has("withmate:open-session"));
-  assert.ok(handlers.has("withmate:get-app-settings"));
+    assert.ok(handlers.has("withmate:open-session"));
+    assert.ok(handlers.has("withmate:list-session-summaries"));
+    assert.ok(handlers.has("withmate:get-app-settings"));
   assert.ok(handlers.has("withmate:run-session-turn"));
 
   await handlers.get("withmate:open-session")?.({}, "session-1");
@@ -237,7 +238,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async openMemoryManagementWindow() {},
     async openCharacterEditorWindow() {},
     async openDiffWindow() {},
-    listSessions: () => [],
+     listSessionSummaries: () => [],
     listSessionAuditLogs: () => [],
     listSessionSkills: () => [],
     listSessionCustomAgents: () => [],
@@ -309,8 +310,8 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
     WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
     WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
-    WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
-    WITHMATE_LIST_SESSIONS_CHANNEL,
+     WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
+     WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
     WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
     WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
     WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,

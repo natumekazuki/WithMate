@@ -11,6 +11,7 @@ import type {
   SessionBackgroundActivityKind,
   SessionBackgroundActivityState,
   SessionContextTelemetry,
+  SessionSummary,
 } from "../src/app-state.js";
 import type { CreateCharacterInput } from "../src/character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
@@ -46,12 +47,12 @@ import {
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
-  WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
-  WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
-  WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
-  WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
-  WITHMATE_LIST_SESSIONS_CHANNEL,
-  WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
+    WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
+    WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
+    WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
+    WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
+    WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+    WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
@@ -88,7 +89,7 @@ export type MainIpcRegistrationDeps = {
   openMemoryManagementWindow(): Promise<void>;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
-  listSessions(): Session[];
+  listSessionSummaries(): SessionSummary[];
   listSessionAuditLogs(sessionId: string): AuditLogEntry[];
   listSessionSkills(sessionId: string): DiscoveredSkill[];
   listSessionCustomAgents(sessionId: string): DiscoveredCustomAgent[];
@@ -181,7 +182,7 @@ type MainIpcSettingsDeps = Pick<
 
 type MainIpcSessionQueryDeps = Pick<
   MainIpcRegistrationDeps,
-  | "listSessions"
+  | "listSessionSummaries"
   | "listSessionAuditLogs"
   | "listSessionSkills"
   | "listSessionCustomAgents"
@@ -302,7 +303,7 @@ function registerSettingsHandlers(ipcMain: IpcMain, deps: MainIpcSettingsDeps): 
 }
 
 function registerSessionQueryHandlers(ipcMain: IpcMain, deps: MainIpcSessionQueryDeps): void {
-  ipcMain.handle(WITHMATE_LIST_SESSIONS_CHANNEL, () => deps.listSessions());
+  ipcMain.handle(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL, () => deps.listSessionSummaries());
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => deps.listSessionAuditLogs(sessionId));
   ipcMain.handle(WITHMATE_LIST_SESSION_SKILLS_CHANNEL, (_event, sessionId: string) => deps.listSessionSkills(sessionId));
   ipcMain.handle(WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL, (_event, sessionId: string) =>

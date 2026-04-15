@@ -30,7 +30,9 @@ import {
   type Message,
   applyCopilotCustomAgentSelection,
   applySessionModelMetadataUpdate,
+  selectHydrationTarget,
   type Session,
+  type SessionSummary,
 } from "./session-state.js";
 import {
   getProviderCatalog,
@@ -688,6 +690,7 @@ export default function App() {
   const activityMonitorSignatureRef = useRef("");
   const activityMonitorSessionIdRef = useRef<string | null>(null);
   const contextRailWidthRef = useRef(SESSION_CONTEXT_RAIL_DEFAULT_WIDTH);
+  const lastHydratedSummarySignatureRef = useRef<string | null>(null);
 
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
 
@@ -700,32 +703,46 @@ export default function App() {
       };
     }
 
-    if (selectedId) {
-      void withmateApi.getSession(selectedId).then((session) => {
-        if (active && session) {
-          setSessions([session]);
-        }
-      });
-    } else {
-      void withmateApi.listSessions().then((nextSessions) => {
-        if (active) {
-          setSessions(nextSessions);
-        }
-      });
-    }
-
-    const unsubscribe = withmateApi.subscribeSessions((nextSessions) => {
+    const hydrateSession = (nextSummaries: SessionSummary[], preferredSessionId?: string | null) => {
       if (!active) {
         return;
       }
 
-      if (selectedId) {
-        const matched = nextSessions.find((session) => session.id === selectedId);
-        setSessions(matched ? [matched] : []);
+      const targetSessionId = preferredSessionId ?? selectedId ?? nextSummaries[0]?.id ?? null;
+
+      const target = selectHydrationTarget(nextSummaries, targetSessionId, lastHydratedSummarySignatureRef.current);
+      if (!target) {
+        if (!targetSessionId || !nextSummaries.find((s) => s.id === targetSessionId)) {
+          setSessions([]);
+          lastHydratedSummarySignatureRef.current = null;
+        }
         return;
       }
 
-      setSessions(nextSessions);
+      void withmateApi.getSession(target.sessionId).then((session) => {
+        if (!active) {
+          return;
+        }
+
+        lastHydratedSummarySignatureRef.current = session ? target.summarySignature : null;
+        setSessions(session ? [session] : []);
+      });
+    };
+
+    void withmateApi.listSessionSummaries().then((nextSummaries) => {
+      if (!active) {
+        return;
+      }
+
+      hydrateSession(nextSummaries);
+    });
+
+    const unsubscribe = withmateApi.subscribeSessionSummaries((nextSummaries) => {
+      if (!active) {
+        return;
+      }
+
+      hydrateSession(nextSummaries, selectedId);
     });
 
     return () => {

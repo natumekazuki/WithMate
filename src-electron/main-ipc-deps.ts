@@ -11,6 +11,7 @@ import type {
   SessionBackgroundActivityKind,
   SessionBackgroundActivityState,
   SessionContextTelemetry,
+  SessionSummary,
 } from "../src/app-state.js";
 import type { CreateCharacterInput } from "../src/character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
@@ -60,7 +61,7 @@ export type MainIpcSettingsDepsArgs = {
 };
 
 export type MainIpcSessionQueryDepsArgs = {
-  listSessions(): Session[];
+  listSessionSummaries(): SessionSummary[];
   listSessionAuditLogs(sessionId: string): AuditLogEntry[];
   listSessionSkills(sessionId: string): DiscoveredSkill[];
   listSessionCustomAgents(sessionId: string): DiscoveredCustomAgent[];
@@ -153,7 +154,7 @@ export function createMainIpcRegistrationDeps(
     deleteSessionMemory: args.settings.deleteSessionMemory,
     deleteProjectMemoryEntry: args.settings.deleteProjectMemoryEntry,
     deleteCharacterMemoryEntry: args.settings.deleteCharacterMemoryEntry,
-    listSessions: args.sessionQuery.listSessions,
+    listSessionSummaries: args.sessionQuery.listSessionSummaries,
     listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,
     listSessionSkills: args.sessionQuery.listSessionSkills,
     listSessionCustomAgents: args.sessionQuery.listSessionCustomAgents,

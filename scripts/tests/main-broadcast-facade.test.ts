@@ -24,7 +24,7 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
           calls.push(`windows:${payload.length}`);
         },
       }) as never,
-    listSessions: () => [{ id: "s-1" }] as never,
+    listSessionSummaries: () => [{ id: "s-1" }] as never,
     listCharacters: () => [{ id: "c-1" }] as never,
     getModelCatalog: () => ({ revision: 3, providers: [] }),
     getAppSettings: () =>

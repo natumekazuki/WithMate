@@ -26,7 +26,7 @@ async function removeDirectoryWithRetry(targetPath: string, attempts = 5): Promi
 }
 
 function createSession(taskTitle: string, workspaceLabel: string, characterId: string, character: string) {
-  return buildNewSession({
+  const session = buildNewSession({
     taskTitle,
     workspaceLabel,
     workspacePath: `C:/${workspaceLabel}`,
@@ -37,6 +37,10 @@ function createSession(taskTitle: string, workspaceLabel: string, characterId: s
     characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
     approvalMode: DEFAULT_APPROVAL_MODE,
   });
+  return {
+    ...session,
+    id: `${session.id}-${workspaceLabel}`,
+  };
 }
 
 describe("SessionStorage", () => {
@@ -153,6 +157,64 @@ describe("SessionStorage", () => {
       assert.ok(loaded);
       assert.equal(loaded.sessionKind, "character-update");
     } finally {
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("listSessionSummaries は detail JSON が壊れていても summary だけ返せる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    const originalConsoleError = console.error;
+    const errors: unknown[][] = [];
+    console.error = (...args: unknown[]) => {
+      errors.push(args);
+    };
+
+    try {
+      const storage = new SessionStorage(dbPath);
+      const session = storage.upsertSession({
+        ...createSession("summary", "workspace-summary", "char-a", "A"),
+        allowedAdditionalDirectories: ["C:/shared/reference"],
+      });
+      storage.close();
+
+      const db = new DatabaseSync(dbPath);
+      db.prepare("UPDATE sessions SET messages_json = ?, stream_json = ? WHERE id = ?").run("{", "{", session.id);
+      db.close();
+
+      const reopened = new SessionStorage(dbPath);
+      const summaries = reopened.listSessionSummaries();
+      reopened.close();
+
+      assert.deepEqual(summaries, [
+        {
+          id: session.id,
+          taskTitle: session.taskTitle,
+          taskSummary: session.taskSummary,
+          status: session.status,
+          updatedAt: session.updatedAt,
+          provider: session.provider,
+          catalogRevision: session.catalogRevision,
+          workspaceLabel: session.workspaceLabel,
+          workspacePath: session.workspacePath,
+          branch: session.branch,
+          sessionKind: session.sessionKind,
+          characterId: session.characterId,
+          character: session.character,
+          characterIconPath: session.characterIconPath,
+          characterThemeColors: session.characterThemeColors,
+          runState: session.runState,
+          approvalMode: session.approvalMode,
+          model: session.model,
+          reasoningEffort: session.reasoningEffort,
+          customAgentName: session.customAgentName,
+          allowedAdditionalDirectories: ["C:/shared/reference"],
+          threadId: session.threadId,
+        },
+      ]);
+      assert.equal(errors.length, 0);
+    } finally {
+      console.error = originalConsoleError;
       await removeDirectoryWithRetry(tempDirectory);
     }
   });

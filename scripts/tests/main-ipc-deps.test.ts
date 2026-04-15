@@ -70,7 +70,7 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
       deleteCharacterMemoryEntry: () => {},
     },
     sessionQuery: {
-      listSessions: () => [],
+      listSessionSummaries: () => [],
       listSessionAuditLogs: () => [],
       listSessionSkills: () => [],
       listSessionCustomAgents: () => [],

@@ -6,7 +6,7 @@ import {
   getProviderAppSettings,
   type AppSettings,
 } from "./provider-settings-state.js";
-import { type Session } from "./session-state.js";
+import { type SessionSummary } from "./session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "./approval-mode.js";
 import {
   type ModelCatalogSnapshot,
@@ -110,7 +110,7 @@ export default function HomeApp() {
   const isSettingsWindowMode = homeWindowMode === "settings";
   const isMemoryWindowMode = homeWindowMode === "memory";
   const usesMemoryManagementWindow = isSettingsWindowMode || isMemoryWindowMode;
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [openSessionWindowIds, setOpenSessionWindowIds] = useState<string[]>([]);
   const [sessionSearchText, setSessionSearchText] = useState("");
@@ -153,7 +153,7 @@ export default function HomeApp() {
       };
     }
 
-    void withmateApi.listSessions().then((nextSessions) => {
+    void withmateApi.listSessionSummaries().then((nextSessions) => {
       if (active) {
         setSessions(nextSessions);
       }
@@ -196,7 +196,7 @@ export default function HomeApp() {
       setLaunchDraft((current) => syncLaunchDraftCharacter(current, nextCharacters));
     });
 
-    const unsubscribeSessions = withmateApi.subscribeSessions((nextSessions) => {
+    const unsubscribeSessions = withmateApi.subscribeSessionSummaries((nextSessions) => {
       if (active) {
         setSessions(nextSessions);
       }

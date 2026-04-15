@@ -67,6 +67,9 @@ export type Session = {
   stream: StreamEntry[];
 };
 
+export type SessionSummary = Omit<Session, "messages" | "stream">;
+export type SessionDetail = Session;
+
 export type DiffPreviewPayload = {
   title: string;
   file: ChangedFile;
@@ -231,7 +234,7 @@ function normalizeMessage(value: unknown): Message | null {
   };
 }
 
-export function normalizeSession(value: unknown): Session | null {
+function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -306,6 +309,31 @@ export function normalizeSession(value: unknown): Session | null {
         : typeof (candidate as { threadLabel?: string }).threadLabel === "string"
           ? (candidate as { threadLabel?: string }).threadLabel ?? ""
           : "",
+  };
+}
+
+export function normalizeSessionSummary(value: unknown): SessionSummary | null {
+  return normalizeSessionSummaryShape(value);
+}
+
+export function projectSessionSummary(session: Session | SessionSummary): SessionSummary {
+  const summary = normalizeSessionSummaryShape(session);
+  if (!summary) {
+    throw new Error("session summary へ変換できない session 形式だよ。");
+  }
+
+  return summary;
+}
+
+export function normalizeSession(value: unknown): Session | null {
+  const summary = normalizeSessionSummaryShape(value);
+  if (!summary || !value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<Session>;
+  return {
+    ...summary,
     messages: Array.isArray(candidate.messages)
       ? candidate.messages
           .map((message) => normalizeMessage(message))
@@ -317,6 +345,10 @@ export function normalizeSession(value: unknown): Session | null {
 
 export function cloneSessions(sessions: Session[]): Session[] {
   return JSON.parse(JSON.stringify(sessions)) as Session[];
+}
+
+export function cloneSessionSummaries(sessions: SessionSummary[]): SessionSummary[] {
+  return JSON.parse(JSON.stringify(sessions)) as SessionSummary[];
 }
 
 export function buildNewSession(input: CreateSessionInput): Session {
@@ -398,4 +430,73 @@ export function getSessionIdFromLocation(): string | null {
 
 export function getDiffTokenFromLocation(): string | null {
   return new URLSearchParams(getLocationSearch()).get("token");
+}
+
+/**
+ * Summary フィールドすべてを連結した文字列を返す。
+ * 同一 session でも何らかのフィールドが変われば異なる値になる。
+ * `Session` の detail フィールド（messages / stream）は含まない。
+ */
+export function buildSessionSummarySignature(summary: SessionSummary): string {
+  return [
+    summary.id,
+    summary.updatedAt,
+    summary.status,
+    summary.runState,
+    summary.taskTitle,
+    summary.taskSummary,
+    summary.threadId,
+    summary.provider,
+    String(summary.catalogRevision),
+    summary.model,
+    summary.reasoningEffort,
+    summary.approvalMode,
+    summary.workspacePath,
+    summary.branch,
+    summary.sessionKind,
+    summary.characterId,
+    summary.character,
+    summary.characterIconPath,
+    summary.characterThemeColors.main,
+    summary.characterThemeColors.sub,
+    summary.workspaceLabel,
+    summary.customAgentName,
+    summary.allowedAdditionalDirectories.join("\u001f"),
+  ].join("\u001e");
+}
+
+/**
+ * 次の summary 一覧・対象 ID・直前の signature を受け取り、
+ * detail hydrate が必要かどうかを判定する純粋ヘルパー。
+ *
+ * - `targetSessionId` が null または一覧に存在しない → null（hydrate 不要）
+ * - `lastSummarySignature` が null（初回）→ hydrate 対象を返す
+ * - summary が変わっていない → null（hydrate 不要）
+ * - summary が変わった → hydrate 対象を返す
+ */
+export type HydrationTarget = {
+  sessionId: string;
+  summarySignature: string;
+};
+
+export function selectHydrationTarget(
+  nextSummaries: SessionSummary[],
+  targetSessionId: string | null,
+  lastSummarySignature: string | null,
+): HydrationTarget | null {
+  if (!targetSessionId) {
+    return null;
+  }
+
+  const matchedSummary = nextSummaries.find((s) => s.id === targetSessionId);
+  if (!matchedSummary) {
+    return null;
+  }
+
+  const nextSignature = buildSessionSummarySignature(matchedSummary);
+  if (lastSummarySignature !== null && nextSignature === lastSummarySignature) {
+    return null;
+  }
+
+  return { sessionId: targetSessionId, summarySignature: nextSignature };
 }
