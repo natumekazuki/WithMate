@@ -60,7 +60,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         resetAppDatabase: async () => null,
       },
       sessionQuery: {
-        listSessions: () => [],
+        listSessionSummaries: () => [],
         listSessionAuditLogs: () => [],
         listSessionSkills: () => [],
         listSessionCustomAgents: () => [],

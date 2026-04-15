@@ -3,7 +3,7 @@ import type {
   CharacterProfile,
   LiveSessionRunState,
   ProviderQuotaTelemetry,
-  Session,
+  SessionSummary,
   SessionBackgroundActivityKind,
   SessionBackgroundActivityState,
   SessionContextTelemetry,
@@ -35,7 +35,7 @@ type WindowBroadcastServiceOptions<TWindow extends WindowLike> = {
 export class WindowBroadcastService<TWindow extends WindowLike> {
   public constructor(private readonly options: WindowBroadcastServiceOptions<TWindow>) {}
 
-  public broadcastSessions(sessions: Session[]): void {
+  public broadcastSessions(sessions: SessionSummary[]): void {
     this.broadcast(WITHMATE_SESSIONS_CHANGED_EVENT, sessions);
   }
 

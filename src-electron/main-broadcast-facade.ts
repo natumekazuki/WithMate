@@ -1,5 +1,5 @@
 import type { AppSettings } from "../src/provider-settings-state.js";
-import type { CharacterProfile, Session } from "../src/app-state.js";
+import type { CharacterProfile, SessionSummary } from "../src/app-state.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { WindowBroadcastService } from "./window-broadcast-service.js";
 
@@ -12,7 +12,7 @@ type BroadcastWindowLike = {
 
 type MainBroadcastFacadeDeps<TWindow extends BroadcastWindowLike> = {
   getWindowBroadcastService(): WindowBroadcastService<TWindow>;
-  listSessions(): Session[];
+  listSessionSummaries(): SessionSummary[];
   listCharacters(): CharacterProfile[];
   getModelCatalog(): ModelCatalogSnapshot | null;
   getAppSettings(): AppSettings;
@@ -23,7 +23,7 @@ export class MainBroadcastFacade<TWindow extends BroadcastWindowLike> {
   constructor(private readonly deps: MainBroadcastFacadeDeps<TWindow>) {}
 
   broadcastSessions(): void {
-    this.deps.getWindowBroadcastService().broadcastSessions(this.deps.listSessions());
+    this.deps.getWindowBroadcastService().broadcastSessions(this.deps.listSessionSummaries());
   }
 
   broadcastCharacters(): void {

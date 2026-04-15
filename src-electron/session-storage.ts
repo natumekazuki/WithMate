@@ -2,7 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { cloneSessions, normalizeSession, type Session } from "../src/session-state.js";
+import {
+  cloneSessionSummaries,
+  cloneSessions,
+  normalizeSession,
+  normalizeSessionSummary,
+  type Session,
+  type SessionSummary,
+} from "../src/session-state.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
 
 type SessionRow = {
@@ -32,6 +39,8 @@ type SessionRow = {
   messages_json: string;
   stream_json: string;
 };
+
+type SessionSummaryRow = Omit<SessionRow, "messages_json" | "stream_json">;
 
 type TableColumnRow = {
   name: string;
@@ -68,6 +77,39 @@ const SESSION_SELECT_COLUMNS = `
 const LIST_SESSIONS_SQL = `
   SELECT
     ${SESSION_SELECT_COLUMNS}
+  FROM sessions
+  ORDER BY last_active_at DESC, id DESC
+`;
+
+const SESSION_SUMMARY_SELECT_COLUMNS = `
+  id,
+  task_title,
+  task_summary,
+  status,
+  updated_at,
+  provider,
+  catalog_revision,
+  workspace_label,
+  workspace_path,
+  branch,
+  session_kind,
+  character_id,
+  character_name,
+  character_icon_path,
+  character_theme_main,
+  character_theme_sub,
+  run_state,
+  approval_mode,
+  model,
+  reasoning_effort,
+  custom_agent_name,
+  allowed_additional_directories_json,
+  thread_id
+`;
+
+const LIST_SESSION_SUMMARIES_SQL = `
+  SELECT
+    ${SESSION_SUMMARY_SELECT_COLUMNS}
   FROM sessions
   ORDER BY last_active_at DESC, id DESC
 `;
@@ -209,6 +251,53 @@ function rowToSession(row: SessionRow, mode: SessionRowParseMode = "skip"): Sess
   return session;
 }
 
+function rowToSessionSummary(row: SessionSummaryRow, mode: SessionRowParseMode = "skip"): SessionSummary | null {
+  const allowedAdditionalDirectories = parseSessionJson<string[]>(
+    row as SessionRow,
+    "allowed_additional_directories_json",
+    mode,
+  );
+  if (!allowedAdditionalDirectories) {
+    return null;
+  }
+
+  const summary = normalizeSessionSummary({
+    id: row.id,
+    taskTitle: row.task_title,
+    taskSummary: row.task_summary,
+    status: row.status,
+    updatedAt: row.updated_at,
+    provider: row.provider,
+    catalogRevision: row.catalog_revision,
+    workspaceLabel: row.workspace_label,
+    workspacePath: row.workspace_path,
+    branch: row.branch,
+    sessionKind: row.session_kind,
+    characterId: row.character_id,
+    character: row.character_name,
+    characterIconPath: row.character_icon_path,
+    characterThemeColors: {
+      main: row.character_theme_main,
+      sub: row.character_theme_sub,
+    },
+    runState: row.run_state,
+    approvalMode: row.approval_mode,
+    model: row.model,
+    reasoningEffort: row.reasoning_effort,
+    customAgentName: row.custom_agent_name,
+    allowedAdditionalDirectories,
+    threadId: row.thread_id,
+  });
+  if (!summary) {
+    console.error("stored session summary normalization failed", { sessionId: row.id });
+    if (mode === "throw") {
+      throw new Error(`保存済み session ${row.id} の summary が壊れているよ。`);
+    }
+  }
+
+  return summary;
+}
+
 function sqlStringLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
@@ -328,6 +417,13 @@ export class SessionStorage {
   listSessions(): Session[] {
     const rows = this.db.prepare(LIST_SESSIONS_SQL).all() as SessionRow[];
     return cloneSessions(rows.map((row) => rowToSession(row)).filter((session): session is Session => session !== null));
+  }
+
+  listSessionSummaries(): SessionSummary[] {
+    const rows = this.db.prepare(LIST_SESSION_SUMMARIES_SQL).all() as SessionSummaryRow[];
+    return cloneSessionSummaries(
+      rows.map((row) => rowToSessionSummary(row)).filter((session): session is SessionSummary => session !== null),
+    );
   }
 
   getSession(sessionId: string): Session | null {

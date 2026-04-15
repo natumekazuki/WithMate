@@ -45,9 +45,13 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-memory-management-snapshot",
     args: [],
   });
-  assert.deepEqual(await api.getSessionBackgroundActivity("session-1", "memoryGeneration"), {
+  assert.deepEqual(await api.getSessionBackgroundActivity("session-1", "memory-generation"), {
     channel: "withmate:get-session-background-activity",
-    args: ["session-1", "memoryGeneration"],
+    args: ["session-1", "memory-generation"],
+  });
+  assert.deepEqual(await api.listSessionSummaries(), {
+    channel: "withmate:list-session-summaries",
+    args: [],
   });
   assert.deepEqual(await api.runSessionMemoryExtraction("session-1"), {
     channel: "withmate:run-session-memory-extraction",
@@ -91,7 +95,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionAuditLogs",
     "listSessionCustomAgents",
     "listSessionSkills",
-    "listSessions",
+    "listSessionSummaries",
     "openCharacterEditor",
     "openDiffWindow",
     "openHomeWindow",
@@ -117,15 +121,15 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeModelCatalog",
     "subscribeOpenSessionWindowIds",
     "subscribeProviderQuotaTelemetry",
+    "subscribeSessionSummaries",
     "subscribeSessionBackgroundActivity",
     "subscribeSessionContextTelemetry",
-    "subscribeSessions",
     "updateAppSettings",
     "updateCharacter",
     "updateSession",
   ] satisfies Array<keyof WithMateWindowApi>;
 
-  assert.deepEqual(keys, expectedKeys);
+  assert.deepEqual(keys, [...expectedKeys].sort());
 });
 
 test("createWithMateWindowApi は subscribe 系 API で payload を unwrap する", async () => {
@@ -133,15 +137,24 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   const api = createWithMateWindowApi(ipcRenderer as never);
   const received: unknown[] = [];
 
-  const dispose = api.subscribeLiveSessionRun((sessionId, state) => {
-    received.push({ sessionId, state });
+  const disposeSummaries = api.subscribeSessionSummaries((summaries) => {
+    received.push({ kind: "summaries", summaries });
+  });
+  const disposeLiveRun = api.subscribeLiveSessionRun((sessionId, state) => {
+    received.push({ kind: "liveRun", sessionId, state });
   });
 
+  listeners.get("withmate:sessions-changed")?.({}, [{ id: "session-1", taskTitle: "task" }]);
   listeners.get("withmate:live-session-run")?.({}, { sessionId: "session-1", state: { phase: "running" } });
-  dispose();
+  disposeSummaries();
+  disposeLiveRun();
 
-  assert.deepEqual(received, [{ sessionId: "session-1", state: { phase: "running" } }]);
+  assert.deepEqual(received, [
+    { kind: "summaries", summaries: [{ id: "session-1", taskTitle: "task" }] },
+    { kind: "liveRun", sessionId: "session-1", state: { phase: "running" } },
+  ]);
   assert.equal(listeners.has("withmate:live-session-run"), false);
+  assert.equal(listeners.has("withmate:sessions-changed"), false);
 });
 
 test("createWithMateWindowApi は telemetry / background activity の payload も unwrap する", () => {

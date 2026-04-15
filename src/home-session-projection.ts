@@ -1,4 +1,4 @@
-import type { Session } from "./app-state.js";
+import type { SessionSummary } from "./app-state.js";
 import { sessionStateLabel } from "./ui-utils.js";
 
 export type HomeSessionState = {
@@ -7,7 +7,7 @@ export type HomeSessionState = {
 };
 
 export type HomeMonitorEntry = {
-  session: Session;
+  session: SessionSummary;
   state: HomeSessionState;
 };
 
@@ -21,11 +21,11 @@ export type HomeSessionProjection = {
   monitorCompletedEmptyMessage: string;
 };
 
-export function shouldDisplayHomeSession(session: Session): boolean {
+export function shouldDisplayHomeSession(session: SessionSummary): boolean {
   return session.sessionKind !== "character-update";
 }
 
-export function getHomeSessionState(session: Session): HomeSessionState {
+export function getHomeSessionState(session: SessionSummary): HomeSessionState {
   if (session.status === "running" || session.runState === "running") {
     return {
       kind: "running",
@@ -61,7 +61,7 @@ export function getHomeSessionState(session: Session): HomeSessionState {
 }
 
 export function buildHomeSessionProjection(
-  sessions: readonly Session[],
+  sessions: readonly SessionSummary[],
   openSessionWindowIds: readonly string[],
   sessionSearchText: string,
 ): HomeSessionProjection {

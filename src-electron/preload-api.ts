@@ -40,11 +40,11 @@ import {
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
-  WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
-  WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
-  WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
-  WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
-  WITHMATE_LIST_SESSIONS_CHANNEL,
+    WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
+    WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
+    WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
+    WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
+    WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
@@ -169,8 +169,8 @@ function createCatalogApi(ipcRenderer: IpcRendererLike): WithMateWindowCatalogAp
 
 function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionApi {
   return {
-    listSessions() {
-      return ipcRenderer.invoke(WITHMATE_LIST_SESSIONS_CHANNEL);
+    listSessionSummaries() {
+      return ipcRenderer.invoke(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL);
     },
     getSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_CHANNEL, sessionId);
@@ -314,7 +314,7 @@ function createPickerApi(ipcRenderer: IpcRendererLike): WithMateWindowPickerApi 
 
 function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubscriptionApi {
   return {
-    subscribeSessions(listener) {
+    subscribeSessionSummaries(listener) {
       return subscribe(ipcRenderer, WITHMATE_SESSIONS_CHANGED_EVENT, listener);
     },
     subscribeCharacters(listener) {

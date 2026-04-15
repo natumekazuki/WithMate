@@ -5,7 +5,7 @@ import type {
   CharacterReflectionProviderSettings,
   CharacterProfile,
   MemoryExtractionProviderSettings,
-  Session,
+  SessionSummary,
 } from "./app-state.js";
 import type { MemoryManagementSnapshot } from "./memory-management-state.js";
 import {
@@ -1028,7 +1028,7 @@ export function HomeLaunchDialog({
 }
 
 export type HomeRecentSessionsPanelProps = {
-  filteredSessionEntries: Array<{ session: Session; state: HomeSessionState }>;
+  filteredSessionEntries: Array<{ session: SessionSummary; state: HomeSessionState }>;
   normalizedSessionSearch: string;
   searchText: string;
   searchIcon: ReactNode;
