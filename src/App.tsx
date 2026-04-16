@@ -37,6 +37,7 @@ import {
 import {
   getProviderCatalog,
   getReasoningEffortOptionsForModel,
+  resolveModelChangeSelection,
   resolveModelSelection,
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
@@ -2472,7 +2473,7 @@ export default function App() {
       return;
     }
 
-    const selection = resolveModelSelection(selectedProviderCatalog, model, selectedSession.reasoningEffort);
+    const selection = resolveModelChangeSelection(selectedProviderCatalog, model, selectedSession.reasoningEffort);
     const nextSession: Session = applySessionModelMetadataUpdate(
       selectedSession,
       selection,

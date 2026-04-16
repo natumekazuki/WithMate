@@ -9,7 +9,7 @@ import {
   getResolvedProviderSettingsBundle,
   normalizeAppSettings,
 } from "../../src/provider-settings-state.js";
-import { coerceModelSelection, type ModelCatalogProvider } from "../../src/model-catalog.js";
+import { coerceModelSelection, resolveModelChangeSelection, type ModelCatalogProvider } from "../../src/model-catalog.js";
 
 const providerCatalog: ModelCatalogProvider = {
   id: "codex",
@@ -44,6 +44,19 @@ describe("coerceModelSelection", () => {
 
     assert.equal(selection.resolvedModel, "gpt-5.1-mini");
     assert.equal(selection.resolvedReasoningEffort, "medium");
+  });
+});
+
+describe("resolveModelChangeSelection", () => {
+  it("model 切り替え時は非対応 depth を許容される値へ fallback する", () => {
+    const selection = resolveModelChangeSelection(providerCatalog, "gpt-5.1-mini", "high");
+
+    assert.equal(selection.resolvedModel, "gpt-5.1-mini");
+    assert.equal(selection.resolvedReasoningEffort, "medium");
+  });
+
+  it("model 自体が catalog に無い場合はエラーにする", () => {
+    assert.throws(() => resolveModelChangeSelection(providerCatalog, "missing-model", "high"));
   });
 });
 

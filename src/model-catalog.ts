@@ -245,6 +245,29 @@ export function coerceModelSelection(
   };
 }
 
+export function resolveModelChangeSelection(
+  providerCatalog: ModelCatalogProvider,
+  requestedModel: string,
+  requestedReasoningEffort: ModelReasoningEffort,
+): ResolvedModelSelection {
+  const normalizedModel = typeof requestedModel === "string" && requestedModel.trim()
+    ? requestedModel.trim()
+    : providerCatalog.defaultModelId;
+  const exactEntry = providerCatalog.models.find((entry) => entry.id === normalizedModel);
+  if (!exactEntry) {
+    throw new Error("selected model が model catalog に存在しないよ。");
+  }
+
+  return {
+    requestedModel: normalizedModel,
+    resolvedModel: exactEntry.id,
+    requestedReasoningEffort,
+    resolvedReasoningEffort: exactEntry.reasoningEfforts.includes(requestedReasoningEffort)
+      ? requestedReasoningEffort
+      : fallbackReasoningEffort(providerCatalog, exactEntry.reasoningEfforts),
+  };
+}
+
 export function resolveModelSelection(
   providerCatalog: ModelCatalogProvider,
   requestedModel: string,
