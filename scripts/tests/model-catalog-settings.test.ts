@@ -48,7 +48,7 @@ describe("coerceModelSelection", () => {
 });
 
 describe("resolveModelChangeSelection", () => {
-  it("model 切り替え時は非対応 depth を許容される値へ fallback する", () => {
+  it("model 切り替え時は非対応 depth は許容される値へ fallback する", () => {
     const selection = resolveModelChangeSelection(providerCatalog, "gpt-5.1-mini", "high");
 
     assert.equal(selection.resolvedModel, "gpt-5.1-mini");
