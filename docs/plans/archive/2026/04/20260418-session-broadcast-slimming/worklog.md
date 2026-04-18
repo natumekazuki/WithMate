@@ -8,6 +8,7 @@
 - 2026-04-18: preload API・関連テスト・design doc を新しいイベント契約へ追従。
 - 2026-04-18: 検証結果を反映。`npm test` は 339 テスト全件パスで成功、`npm run typecheck` は 90 件の TypeScript エラーで失敗し、主因は `AppSettings.characterReflectionTriggerSettings` 欠落、`CharacterThemeColors.accent` 不整合、フィールド型不一致。
 - 2026-04-18: task-local な型エラー切り分けを完了し、targeted typecheck では `scripts/tests/main-broadcast-facade.test.ts`、`scripts/tests/session-persistence-service.test.ts`、`src/HomeApp.tsx` の 3 ファイルが clean であることを確認。
+- 2026-04-18: commit `f73e8af`（`refactor(session-broadcast): slim window fan-out`）として、broadcast 契約分離・関連テスト・design doc 更新・archive 済み plan を記録。
 
 ## Next
 

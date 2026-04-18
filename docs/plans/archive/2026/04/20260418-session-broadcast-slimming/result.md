@@ -14,6 +14,7 @@
 - 自己レビューの結果、blocking issue は確認されなかった（`npx tsx --test scripts/tests/window-broadcast-service.test.ts scripts/tests/main-broadcast-facade.test.ts scripts/tests/preload-api.test.ts scripts/tests/session-persistence-service.test.ts scripts/tests/character-runtime-service.test.ts scripts/tests/settings-catalog-service.test.ts` で関連テスト通過）
 - 検証では `npm test` が 339 テスト全件パスで成功し、task-local な型エラーも targeted typecheck で解消済みとなった
 - repo-wide `npm run typecheck` failure は既存/別件由来の scope 外事項として切り分け済みであり、本 task は完了とする
+- 実装と plan archive は commit `f73e8af`（`refactor(session-broadcast): slim window fan-out`）として記録済み
 
 ## Open Items
 
