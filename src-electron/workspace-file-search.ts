@@ -65,6 +65,12 @@ type WorkspaceFileIndex = {
    * .gitignore / .git/info/exclude の内容変更検知に使う。
    */
   ignoreFiles: Map<string, number>;
+  /**
+   * scan 時に存在しなかった外部 ignore 候補の絶対パス一覧。
+   * .git/info/exclude および workspace 外の親 .gitignore が対象。
+   * TTL 超過後の checkStructureUnchanged() でこれらの新規出現を検知するために使う。
+   */
+  absentIgnoreCandidates: string[];
   scannedAt: number;
   /** TTL の基点。構造変化なしで延命された場合も更新される。 */
   validatedAt: number;
@@ -103,8 +109,9 @@ export function isWorkspaceFileIndexFresh(index: WorkspaceFileIndex, now = getNo
 }
 
 /**
- * visitedDirectories の mtime および ignoreFiles の mtime を現在のファイルシステムと照合する。
- * すべて一致すれば true（変化なし）、1 つでも異なれば false（変化あり）を返す。
+ * visitedDirectories の mtime、ignoreFiles の mtime、absentIgnoreCandidates の新規出現を
+ * 現在のファイルシステムと照合する。
+ * すべて一致・不変であれば true（変化なし）、1 つでも異なれば false（変化あり）を返す。
  */
 async function checkStructureUnchanged(index: WorkspaceFileIndex): Promise<boolean> {
   for (const [relativeDir, cachedMtime] of index.visitedDirectories) {
@@ -127,6 +134,16 @@ async function checkStructureUnchanged(index: WorkspaceFileIndex): Promise<boole
       }
     } catch {
       return false;
+    }
+  }
+  // 前回 scan 時に存在しなかった外部 ignore 候補が新規出現していないか確認する（P2 対策）
+  for (const candidatePath of index.absentIgnoreCandidates) {
+    try {
+      await stat(candidatePath);
+      // stat 成功 = ファイルが新規出現した → 構造変化あり
+      return false;
+    } catch {
+      // 依然として存在しない → 変化なし、次の候補へ
     }
   }
   return true;
@@ -172,6 +189,7 @@ async function getWorkspaceFileIndex(workspacePath: string): Promise<WorkspaceFi
     entries,
     visitedDirectories: scanned.visitedDirectories,
     ignoreFiles: scanned.ignoreFiles,
+    absentIgnoreCandidates: scanned.absentIgnoreCandidates,
     scannedAt,
     validatedAt: scannedAt,
     contentVersion: ++_contentVersionCounter,

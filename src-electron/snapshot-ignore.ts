@@ -3,6 +3,22 @@ import path from "node:path";
 
 import ignore, { type Ignore } from "ignore";
 
+// ---------------------------------------------------------------------------
+// テスト専用 hook
+// ---------------------------------------------------------------------------
+
+let _afterIgnoreFileReadHook: ((ignoreFilePath: string) => Promise<void> | void) | null = null;
+
+/**
+ * テスト専用: createIgnoreMatcher 内の readFile 直後に割り込む hook を設定する。
+ * null を渡すと無効化される。
+ */
+export function _setAfterIgnoreFileReadHookForTesting(
+  hook: ((ignoreFilePath: string) => Promise<void> | void) | null,
+): void {
+  _afterIgnoreFileReadHook = hook;
+}
+
 export const DEFAULT_SNAPSHOT_MAX_FILE_BYTES = 1024 * 1024;
 export const DEFAULT_SNAPSHOT_MAX_FILE_COUNT = 4000;
 export const DEFAULT_SNAPSHOT_MAX_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -44,6 +60,12 @@ export type SnapshotScanResult = {
    * .gitignore / .git/info/exclude 等の編集検知に使用。
    */
   ignoreFiles: Map<string, number>;
+  /**
+   * 走査時に存在しなかった外部 ignore 候補の絶対パス一覧。
+   * .git/info/exclude および workspace 外の親 .gitignore が対象。
+   * checkStructureUnchanged() でこれらの新規出現を検知するために使用。
+   */
+  absentIgnoreCandidates: string[];
 };
 
 function normalizeSnapshotKey(rootDirectory: string, relativePath: string, useWorkspaceRelativeKey: boolean): string {
@@ -118,19 +140,59 @@ async function collectIgnoreSourceDirectories(rootDirectory: string): Promise<st
   return directories.reverse();
 }
 
-async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string): Promise<{ matcher: IgnoreMatcher; mtimeMs: number } | null> {
+/** createIgnoreMatcher の戻り値。 */
+type CreateIgnoreMatcherResult =
+  | { kind: "loaded"; matcher: IgnoreMatcher; mtimeMs: number }
+  | { kind: "absent" } // ファイルが存在しない（最初の stat が失敗）
+  | { kind: "race" }; // 全試行で読み取り中に変更が続いた
+
+/**
+ * ignore ファイルを読み込み、内容と stat の整合を保証して返す。
+ *
+ * `stat → readFile → hook → stat` を最大 3 回試行する（= 2 回再試行）。
+ * 前後の `mtimeMs` と `size` が両方一致した試行の結果だけを "loaded" として返す。
+ * 1 回目に競合しても 2〜3 回目で安定すれば "loaded" を返す。
+ * 全試行で競合した場合のみ "race" を返す。
+ */
+async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string): Promise<CreateIgnoreMatcherResult> {
+  // ファイルの存在確認: ENOENT 等で失敗したら "absent" を返す。
+  let firstStat: Awaited<ReturnType<typeof stat>>;
   try {
-    const [rules, fileStat] = await Promise.all([readFile(ignoreFilePath, "utf8"), stat(ignoreFilePath)]);
-    return {
-      matcher: { baseDirectory, matcher: ignore().add(rules) },
-      mtimeMs: fileStat.mtimeMs,
-    };
+    firstStat = await stat(ignoreFilePath);
   } catch {
-    return null;
+    return { kind: "absent" };
   }
+
+  // 最大 3 回の試行（= 2 回再試行）。attempt 0 は firstStat を before-stat として再利用する。
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const statBefore = attempt === 0 ? firstStat : await stat(ignoreFilePath);
+      const rules = await readFile(ignoreFilePath, "utf8");
+      // テスト用フック: readFile と確認 stat の間でファイル変更を挿入できる
+      if (_afterIgnoreFileReadHook !== null) {
+        await _afterIgnoreFileReadHook(ignoreFilePath);
+      }
+      const statAfter = await stat(ignoreFilePath);
+      if (statBefore.mtimeMs === statAfter.mtimeMs && statBefore.size === statAfter.size) {
+        // 前後の mtime と size が一致 → 読み取り内容が整合していると判断
+        return {
+          kind: "loaded",
+          matcher: { baseDirectory, matcher: ignore().add(rules) },
+          mtimeMs: statAfter.mtimeMs,
+        };
+      }
+      // race 検出: 次の試行へ（attempt 2 の場合はループ終了後に "race" を返す）
+    } catch {
+      // readFile または後続 stat が失敗（読み取り中に削除等）
+      return { kind: "race" };
+    }
+  }
+
+  // 全試行で競合したため諦める
+  return { kind: "race" };
 }
 
-async function loadInitialIgnoreMatchers(rootDirectory: string): Promise<{ matchers: IgnoreMatcher[]; loadedDirectories: Set<string>; ignoreFiles: Map<string, number> }> {
+async function loadInitialIgnoreMatchers(rootDirectory: string): Promise<{ matchers: IgnoreMatcher[]; loadedDirectories: Set<string>; ignoreFiles: Map<string, number>; absentIgnoreCandidates: string[] }> {
   const workspaceDirectory = path.resolve(rootDirectory);
   const gitRoot = await findGitRoot(workspaceDirectory);
   const ignoreSourceDirectories = await collectIgnoreSourceDirectories(workspaceDirectory);
@@ -142,26 +204,60 @@ async function loadInitialIgnoreMatchers(rootDirectory: string): Promise<{ match
   ];
   const loadedDirectories = new Set<string>();
   const ignoreFiles = new Map<string, number>();
+  const absentIgnoreCandidates: string[] = [];
 
   for (const directory of ignoreSourceDirectories) {
-    const result = await createIgnoreMatcher(directory, path.join(directory, ".gitignore"));
-    if (result) {
+    const gitignorePath = path.join(directory, ".gitignore");
+    const result = await createIgnoreMatcher(directory, gitignorePath);
+    if (result.kind === "loaded") {
       matchers.push(result.matcher);
       loadedDirectories.add(directory);
-      ignoreFiles.set(path.join(directory, ".gitignore"), result.mtimeMs);
+      ignoreFiles.set(gitignorePath, result.mtimeMs);
+    } else if (result.kind === "absent" && !isInsideDirectory(directory, workspaceDirectory)) {
+      // workspace 外部のディレクトリ: visitedDirectories に含まれないため、
+      // .gitignore の不在状態を明示的に記録して新規出現を検知できるようにする（P2 対策）
+      absentIgnoreCandidates.push(gitignorePath);
     }
   }
 
   if (gitRoot) {
     const excludePath = path.join(gitRoot, ".git", "info", "exclude");
     const excludeResult = await createIgnoreMatcher(gitRoot, excludePath);
-    if (excludeResult) {
+    if (excludeResult.kind === "loaded") {
       matchers.push(excludeResult.matcher);
       ignoreFiles.set(excludePath, excludeResult.mtimeMs);
+    } else if (excludeResult.kind === "absent") {
+      // exclude ファイルが存在しない: 後から作成された場合を検知するために不在状態を記録する
+      absentIgnoreCandidates.push(excludePath);
     }
   }
 
-  return { matchers, loadedDirectories, ignoreFiles };
+  // no-gitRoot: workspace 外の全祖先ディレクトリの .gitignore を不在候補として追跡する（P2 対策）。
+  // collectIgnoreSourceDirectories が最初の外部親 .gitignore で停止するのと同様に、
+  // すでに loaded な .gitignore または存在する .gitignore に到達した時点で停止する。
+  // これにより、任意の祖先レベルに .gitignore が後から作成された場合も TTL 超過時に検知できる。
+  if (!gitRoot) {
+    let current = path.dirname(workspaceDirectory);
+    while (true) {
+      const parentGitignorePath = path.join(current, ".gitignore");
+      if (ignoreFiles.has(parentGitignorePath)) {
+        // この祖先の .gitignore はすでに loaded → collectIgnoreSourceDirectories はここで停止する → 停止
+        break;
+      }
+      if (!absentIgnoreCandidates.includes(parentGitignorePath)) {
+        if (await pathExists(parentGitignorePath)) {
+          // この祖先に .gitignore が存在する → collectIgnoreSourceDirectories はここで停止する → 停止
+          break;
+        }
+        absentIgnoreCandidates.push(parentGitignorePath);
+      }
+      const parent = path.dirname(current);
+      if (parent === current) break; // ファイルシステムのルートに到達
+      current = parent;
+    }
+  }
+
+  return { matchers, loadedDirectories, ignoreFiles, absentIgnoreCandidates };
 }
 
 function isInsideDirectory(targetPath: string, baseDirectory: string): boolean {
@@ -214,7 +310,7 @@ async function walkWorkspace(
   onFile: (filePath: string, relativePath: string) => Promise<void>,
 ): Promise<SnapshotScanResult> {
   const workspaceDirectory = path.resolve(rootDirectory);
-  const { matchers: initialMatchers, loadedDirectories, ignoreFiles } = await loadInitialIgnoreMatchers(workspaceDirectory);
+  const { matchers: initialMatchers, loadedDirectories, ignoreFiles, absentIgnoreCandidates } = await loadInitialIgnoreMatchers(workspaceDirectory);
   const includedFiles: string[] = [];
   const ignoredFiles: string[] = [];
   const visitedDirectories = new Map<string, number>();
@@ -237,11 +333,12 @@ async function walkWorkspace(
 
     let nextMatchers = activeMatchers;
     if (!loadedDirectories.has(directory)) {
-      const result = await createIgnoreMatcher(directory, path.join(directory, ".gitignore"));
-      if (result) {
+      const gitignorePath = path.join(directory, ".gitignore");
+      const result = await createIgnoreMatcher(directory, gitignorePath);
+      if (result.kind === "loaded") {
         nextMatchers = [...activeMatchers, result.matcher];
         loadedDirectories.add(directory);
-        ignoreFiles.set(path.join(directory, ".gitignore"), result.mtimeMs);
+        ignoreFiles.set(gitignorePath, result.mtimeMs);
       }
     }
 
@@ -273,7 +370,7 @@ async function walkWorkspace(
   }
 
   await walk(workspaceDirectory, initialMatchers);
-  return { includedFiles, ignoredFiles, visitedDirectories, ignoreFiles };
+  return { includedFiles, ignoredFiles, visitedDirectories, ignoreFiles, absentIgnoreCandidates };
 }
 
 export async function scanWorkspacePaths(rootDirectory: string): Promise<SnapshotScanResult> {

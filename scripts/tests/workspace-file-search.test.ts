@@ -12,6 +12,7 @@ import {
   DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS,
   searchWorkspaceFilePaths,
 } from "../../src-electron/workspace-file-search.js";
+import { _setAfterIgnoreFileReadHookForTesting } from "../../src-electron/snapshot-ignore.js";
 
 describe("workspace-file-search", () => {
   it("cache clear 後は新規 file が再検索結果へ反映される", async () => {
@@ -361,4 +362,122 @@ describe("workspace-file-search", () => {
       await rm(workspacePath, { recursive: true, force: true });
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // P2 回帰: 外部 ignore ファイルの新規作成によるキャッシュ失効
+  // ---------------------------------------------------------------------------
+
+  it(".git/info/exclude が後から作成されたら TTL 超過時にキャッシュが失効する（P2 回帰: exclude 新規作成）", async () => {
+    // .git/ ディレクトリを手動作成して gitRoot = workspacePath にする。
+    // .git/info/exclude は最初存在せず absentIgnoreCandidates に記録される。
+    // ファイル作成後に TTL 超過すると checkStructureUnchanged が出現を検知して再走査が起きる。
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-p2-exclude-"));
+    let fakeNow = Date.now();
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      // .git/info/ ディレクトリだけ作成（exclude ファイルはまだ作らない）
+      await mkdir(path.join(workspacePath, ".git", "info"), { recursive: true });
+      await writeFile(path.join(workspacePath, "secret.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "public.ts"), "", "utf8");
+
+      // 初回走査: exclude なし → secret.ts も含まれる
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), ["secret.ts"]);
+
+      // .git/info/exclude を作成して secret.ts を除外するルールを追加
+      await writeFile(path.join(workspacePath, ".git", "info", "exclude"), "secret.ts\n", "utf8");
+
+      // TTL 超過前はキャッシュが生きている
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), ["secret.ts"]);
+
+      // TTL 超過 → checkStructureUnchanged が absentIgnoreCandidates に exclude の出現を検知 → 再走査
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+
+      // 再走査: exclude のルールが適用される → secret.ts が除外される
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), []);
+    } finally {
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("workspace 外の親 .gitignore が後から作成されたら TTL 超過時にキャッシュが失効する（P2 回帰: 親 .gitignore 新規作成）", async () => {
+    // outerDir 配下に workspace を作成する。gitRoot がない状態で initial scan を行うと
+    // outerDir/.gitignore が absentIgnoreCandidates に記録される。
+    // ファイル作成後に TTL 超過すると checkStructureUnchanged が出現を検知して再走査が起きる。
+    // 前提: os.tmpdir() の祖先に .git が存在しないこと（通常のシステムでは成立する）。
+    const outerDir = await mkdtemp(path.join(os.tmpdir(), "withmate-p2-outer-"));
+    const workspacePath = path.join(outerDir, "workspace");
+    await mkdir(workspacePath, { recursive: true });
+
+    let fakeNow = Date.now();
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await writeFile(path.join(workspacePath, "secret.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "public.ts"), "", "utf8");
+
+      // 初回走査: 親 .gitignore なし → secret.ts も含まれる
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), ["secret.ts"]);
+
+      // outerDir に .gitignore を作成して secret.ts を除外するルールを追加
+      await writeFile(path.join(outerDir, ".gitignore"), "secret.ts\n", "utf8");
+
+      // TTL 超過前はキャッシュが生きている
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), ["secret.ts"]);
+
+      // TTL 超過 → checkStructureUnchanged が absentIgnoreCandidates に outerDir/.gitignore の出現を検知 → 再走査
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+
+      // 再走査: outerDir/.gitignore のルールが適用される → secret.ts が除外される
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), []);
+    } finally {
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(outerDir, { recursive: true, force: true });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // P3 回帰: createIgnoreMatcher の retry による整合版採用
+  // ---------------------------------------------------------------------------
+
+  it("ignore ファイルが read と stat の間で更新されても retry 後の整合した最新版が採用される（P3 回帰: retry）", async () => {
+    // シナリオ:
+    //   1. .gitignore は "# no rules" の状態で走査開始
+    //   2. readFile 完了直後のフックが 1 回だけ .gitignore を "secret.ts\n" に書き換える
+    //   3. 確認 stat で mtime/size が変化していることを検出 → race と判定し retry
+    //   4. retry 時はフック不発 → 新しい内容 "secret.ts\n" で整合確認できる → loaded
+    //   5. 最終的に secret.ts が ignore されるため searchWorkspaceFilePaths が [] を返す
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-p3-retry-"));
+
+    try {
+      await writeFile(path.join(workspacePath, "secret.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "public.ts"), "", "utf8");
+      // 初期状態: ルールなし（secret.ts は除外されない）
+      await writeFile(path.join(workspacePath, ".gitignore"), "# no rules\n", "utf8");
+
+      const gitignorePath = path.join(workspacePath, ".gitignore");
+
+      // フック: 最初の readFile 直後に 1 回だけ .gitignore を secret.ts ルールへ書き換える
+      let hookFired = false;
+      _setAfterIgnoreFileReadHookForTesting(async (filePath) => {
+        if (!hookFired && filePath === path.resolve(gitignorePath)) {
+          hookFired = true;
+          await writeFile(gitignorePath, "secret.ts\n", "utf8");
+        }
+      });
+
+      clearWorkspaceFileIndex(workspacePath);
+      // retry 後に "secret.ts\n" ルールが採用されるため secret.ts は除外される
+      const results = await searchWorkspaceFilePaths(workspacePath, "secret");
+      assert.deepEqual(results, [], "retry 後の整合した最新版（secret.ts ルール）が採用され secret.ts が除外されること");
+    } finally {
+      _setAfterIgnoreFileReadHookForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
 });
