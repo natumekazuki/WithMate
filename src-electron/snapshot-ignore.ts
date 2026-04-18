@@ -39,6 +39,11 @@ export type SnapshotScanResult = {
   ignoredFiles: string[];
   /** workspace root 相対ディレクトリパス（root = ""）→ mtimeMs。構造変更検知に使用 */
   visitedDirectories: Map<string, number>;
+  /**
+   * 走査時に読み込んだ ignore ファイルの絶対パス → mtimeMs。
+   * .gitignore / .git/info/exclude 等の編集検知に使用。
+   */
+  ignoreFiles: Map<string, number>;
 };
 
 function normalizeSnapshotKey(rootDirectory: string, relativePath: string, useWorkspaceRelativeKey: boolean): string {
@@ -113,19 +118,19 @@ async function collectIgnoreSourceDirectories(rootDirectory: string): Promise<st
   return directories.reverse();
 }
 
-async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string): Promise<IgnoreMatcher | null> {
+async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string): Promise<{ matcher: IgnoreMatcher; mtimeMs: number } | null> {
   try {
-    const rules = await readFile(ignoreFilePath, "utf8");
+    const [rules, fileStat] = await Promise.all([readFile(ignoreFilePath, "utf8"), stat(ignoreFilePath)]);
     return {
-      baseDirectory,
-      matcher: ignore().add(rules),
+      matcher: { baseDirectory, matcher: ignore().add(rules) },
+      mtimeMs: fileStat.mtimeMs,
     };
   } catch {
     return null;
   }
 }
 
-async function loadInitialIgnoreMatchers(rootDirectory: string): Promise<{ matchers: IgnoreMatcher[]; loadedDirectories: Set<string> }> {
+async function loadInitialIgnoreMatchers(rootDirectory: string): Promise<{ matchers: IgnoreMatcher[]; loadedDirectories: Set<string>; ignoreFiles: Map<string, number> }> {
   const workspaceDirectory = path.resolve(rootDirectory);
   const gitRoot = await findGitRoot(workspaceDirectory);
   const ignoreSourceDirectories = await collectIgnoreSourceDirectories(workspaceDirectory);
@@ -136,23 +141,27 @@ async function loadInitialIgnoreMatchers(rootDirectory: string): Promise<{ match
     },
   ];
   const loadedDirectories = new Set<string>();
+  const ignoreFiles = new Map<string, number>();
 
   for (const directory of ignoreSourceDirectories) {
-    const entry = await createIgnoreMatcher(directory, path.join(directory, ".gitignore"));
-    if (entry) {
-      matchers.push(entry);
+    const result = await createIgnoreMatcher(directory, path.join(directory, ".gitignore"));
+    if (result) {
+      matchers.push(result.matcher);
       loadedDirectories.add(directory);
+      ignoreFiles.set(path.join(directory, ".gitignore"), result.mtimeMs);
     }
   }
 
   if (gitRoot) {
-    const excludeEntry = await createIgnoreMatcher(gitRoot, path.join(gitRoot, ".git", "info", "exclude"));
-    if (excludeEntry) {
-      matchers.push(excludeEntry);
+    const excludePath = path.join(gitRoot, ".git", "info", "exclude");
+    const excludeResult = await createIgnoreMatcher(gitRoot, excludePath);
+    if (excludeResult) {
+      matchers.push(excludeResult.matcher);
+      ignoreFiles.set(excludePath, excludeResult.mtimeMs);
     }
   }
 
-  return { matchers, loadedDirectories };
+  return { matchers, loadedDirectories, ignoreFiles };
 }
 
 function isInsideDirectory(targetPath: string, baseDirectory: string): boolean {
@@ -205,7 +214,7 @@ async function walkWorkspace(
   onFile: (filePath: string, relativePath: string) => Promise<void>,
 ): Promise<SnapshotScanResult> {
   const workspaceDirectory = path.resolve(rootDirectory);
-  const { matchers: initialMatchers, loadedDirectories } = await loadInitialIgnoreMatchers(workspaceDirectory);
+  const { matchers: initialMatchers, loadedDirectories, ignoreFiles } = await loadInitialIgnoreMatchers(workspaceDirectory);
   const includedFiles: string[] = [];
   const ignoredFiles: string[] = [];
   const visitedDirectories = new Map<string, number>();
@@ -228,10 +237,11 @@ async function walkWorkspace(
 
     let nextMatchers = activeMatchers;
     if (!loadedDirectories.has(directory)) {
-      const localMatcher = await createIgnoreMatcher(directory, path.join(directory, ".gitignore"));
-      if (localMatcher) {
-        nextMatchers = [...activeMatchers, localMatcher];
+      const result = await createIgnoreMatcher(directory, path.join(directory, ".gitignore"));
+      if (result) {
+        nextMatchers = [...activeMatchers, result.matcher];
         loadedDirectories.add(directory);
+        ignoreFiles.set(path.join(directory, ".gitignore"), result.mtimeMs);
       }
     }
 
@@ -263,7 +273,7 @@ async function walkWorkspace(
   }
 
   await walk(workspaceDirectory, initialMatchers);
-  return { includedFiles, ignoredFiles, visitedDirectories };
+  return { includedFiles, ignoredFiles, visitedDirectories, ignoreFiles };
 }
 
 export async function scanWorkspacePaths(rootDirectory: string): Promise<SnapshotScanResult> {

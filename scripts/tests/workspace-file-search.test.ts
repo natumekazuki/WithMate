@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import {
   _setNowOverrideForTesting,
   _getContentVersionForTesting,
+  _getValidatedAtForTesting,
   clearWorkspaceFileIndex,
   DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS,
   searchWorkspaceFilePaths,
@@ -246,6 +247,113 @@ describe("workspace-file-search", () => {
         versionAfterRescan,
         versionAfterFirstScan,
         "再走査後は contentVersion が更新されること",
+      );
+    } finally {
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // P1 回帰: .gitignore 変更によるキャッシュ失効
+  // ---------------------------------------------------------------------------
+
+  it(".gitignore の内容変更後は TTL 超過時に再走査される（P1 回帰）", async () => {
+    // ファイルの内容変更は親ディレクトリの mtime を更新しない（NTFS / ext4 共通）。
+    // visitedDirectories の mtime だけ見ていると .gitignore 編集を見逃す。
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-gitignore-"));
+    let fakeNow = Date.now();
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await writeFile(path.join(workspacePath, "public.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "secret.ts"), "", "utf8");
+      // secret.ts を無視するルールを .gitignore に書く
+      await writeFile(path.join(workspacePath, ".gitignore"), "secret.ts\n", "utf8");
+
+      // 初回走査: secret.ts は ignore される
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), []);
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "public"), ["public.ts"]);
+
+      // .gitignore を書き換えて無視ルールを削除
+      // → ファイル自身の mtime は変わるが、ディレクトリの mtime は変わらない
+      await writeFile(path.join(workspacePath, ".gitignore"), "# no rules\n", "utf8");
+
+      // TTL 超過前はキャッシュが生きている
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), []);
+
+      // TTL 超過 → checkStructureUnchanged が .gitignore の mtime 変化を検出 → 再走査
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), ["secret.ts"]);
+    } finally {
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // P2 回帰: validatedAt を走査/検証完了後の時刻で記録する
+  // ---------------------------------------------------------------------------
+
+  it("再走査後の validatedAt は scanWorkspacePaths 完了後の時刻で記録される（P2 回帰: rescan path）", async () => {
+    // getNow() を連番で返すシーケンスモックにより、
+    // scan 前後で異なる時刻が返ることを利用して validatedAt の記録タイミングを検証する。
+    // 期待: validatedAt === 2 回目の getNow() 戻り値（scan 完了後）
+    // バグ: validatedAt === 1 回目の getNow() 戻り値（scan 開始前）
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-p2-rescan-"));
+
+    const T1 = 1_000_000;
+    const T2 = T1 + 42;
+    let callIdx = 0;
+    _setNowOverrideForTesting(() => (callIdx++ === 0 ? T1 : T2));
+
+    try {
+      await writeFile(path.join(workspacePath, "a.ts"), "", "utf8");
+      // 初回検索（キャッシュなし）: getNow() call-0 → T1、scan 後 call-1 → T2
+      await searchWorkspaceFilePaths(workspacePath, "a");
+
+      const validatedAt = _getValidatedAtForTesting(workspacePath);
+      assert.equal(
+        validatedAt,
+        T2,
+        "scan 完了後に getNow() が呼ばれ、その時刻が validatedAt に記録されること",
+      );
+    } finally {
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("TTL 延命時の validatedAt は checkStructureUnchanged 完了後の時刻で記録される（P2 回帰: TTL renewal path）", async () => {
+    // 期待: validatedAt === checkStructureUnchanged 完了後の getNow() 戻り値
+    // バグ: validatedAt === checkStructureUnchanged 開始前に取得した now の値
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-p2-renewal-"));
+
+    const T0 = 1_000_000;
+    _setNowOverrideForTesting(() => T0);
+
+    try {
+      await writeFile(path.join(workspacePath, "b.ts"), "", "utf8");
+      // 初回走査
+      await searchWorkspaceFilePaths(workspacePath, "b");
+
+      // TTL 延命用シーケンス: call-0 → T_stale（stale 判定用）、call-1 以降 → T_after_check
+      const T_stale = T0 + DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      const T_after_check = T_stale + 7;
+      let renewalCallIdx = 0;
+      _setNowOverrideForTesting(() => (renewalCallIdx++ === 0 ? T_stale : T_after_check));
+
+      // 構造変化なし → TTL 延命パス
+      await searchWorkspaceFilePaths(workspacePath, "b");
+
+      const validatedAt = _getValidatedAtForTesting(workspacePath);
+      assert.equal(
+        validatedAt,
+        T_after_check,
+        "TTL 延命時は checkStructureUnchanged 完了後の時刻で validatedAt が更新されること",
       );
     } finally {
       _setNowOverrideForTesting(null);

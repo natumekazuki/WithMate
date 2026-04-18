@@ -23,6 +23,12 @@ export function _getContentVersionForTesting(workspacePath: string): number | un
   return workspaceFileIndexCache.get(normalizedPath)?.contentVersion;
 }
 
+/** テスト専用: 指定 workspace の現在の validatedAt を返す。index が存在しない場合は undefined。 */
+export function _getValidatedAtForTesting(workspacePath: string): number | undefined {
+  const normalizedPath = path.resolve(workspacePath);
+  return workspaceFileIndexCache.get(normalizedPath)?.validatedAt;
+}
+
 function getNow(): number {
   return _nowFn !== null ? _nowFn() : Date.now();
 }
@@ -54,6 +60,11 @@ type WorkspaceFileIndex = {
    * TTL 超過後の構造変更検知に使う。
    */
   visitedDirectories: Map<string, number>;
+  /**
+   * scan 時に読み込んだ ignore ファイルの絶対パス → mtimeMs。
+   * .gitignore / .git/info/exclude の内容変更検知に使う。
+   */
+  ignoreFiles: Map<string, number>;
   scannedAt: number;
   /** TTL の基点。構造変化なしで延命された場合も更新される。 */
   validatedAt: number;
@@ -92,7 +103,7 @@ export function isWorkspaceFileIndexFresh(index: WorkspaceFileIndex, now = getNo
 }
 
 /**
- * visitedDirectories の mtime を現在のファイルシステムと照合する。
+ * visitedDirectories の mtime および ignoreFiles の mtime を現在のファイルシステムと照合する。
  * すべて一致すれば true（変化なし）、1 つでも異なれば false（変化あり）を返す。
  */
 async function checkStructureUnchanged(index: WorkspaceFileIndex): Promise<boolean> {
@@ -101,6 +112,16 @@ async function checkStructureUnchanged(index: WorkspaceFileIndex): Promise<boole
       relativeDir === "" ? index.workspacePath : path.join(index.workspacePath, relativeDir);
     try {
       const s = await stat(absoluteDir);
+      if (s.mtimeMs !== cachedMtime) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+  }
+  for (const [ignoreFilePath, cachedMtime] of index.ignoreFiles) {
+    try {
+      const s = await stat(ignoreFilePath);
       if (s.mtimeMs !== cachedMtime) {
         return false;
       }
@@ -125,12 +146,12 @@ async function getWorkspaceFileIndex(workspacePath: string): Promise<WorkspaceFi
       return cached;
     }
 
-    // TTL 超過: 訪問済みディレクトリの mtime で構造変化を確認
+    // TTL 超過: 訪問済みディレクトリと ignore ファイルの mtime で変化を確認
     const unchanged = await checkStructureUnchanged(cached);
     if (unchanged) {
-      // 構造変化なし: validatedAt を更新してキャッシュを延命（再走査スキップ）
+      // 構造変化なし: check 完了後の時刻で validatedAt を更新してキャッシュを延命（再走査スキップ）
       // contentVersion は変えないため、既存の query cache エントリーは引き続き有効
-      cached.validatedAt = now;
+      cached.validatedAt = getNow();
       return cached;
     }
 
@@ -144,12 +165,15 @@ async function getWorkspaceFileIndex(workspacePath: string): Promise<WorkspaceFi
     normalizedPath: relativePath.toLocaleLowerCase(),
   }));
 
+  // 走査完了後の時刻で scannedAt / validatedAt を記録する
+  const scannedAt = getNow();
   const nextIndex: WorkspaceFileIndex = {
     workspacePath: normalizedWorkspacePath,
     entries,
     visitedDirectories: scanned.visitedDirectories,
-    scannedAt: now,
-    validatedAt: now,
+    ignoreFiles: scanned.ignoreFiles,
+    scannedAt,
+    validatedAt: scannedAt,
     contentVersion: ++_contentVersionCounter,
   };
 
