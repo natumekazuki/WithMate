@@ -46,6 +46,15 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return this.homeWindow && !this.homeWindow.isDestroyed() ? this.homeWindow : null;
   }
 
+  listHomeWindows(): TWindow[] {
+    return [
+      this.homeWindow,
+      this.sessionMonitorWindow,
+      this.settingsWindow,
+      this.memoryManagementWindow,
+    ].filter((window): window is TWindow => !!window && !window.isDestroyed());
+  }
+
   getDiffPreview(token: string): DiffPreviewPayload | null {
     return this.diffPreviewStore.get(token) ?? null;
   }

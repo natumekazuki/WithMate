@@ -32,7 +32,7 @@ export type SessionPersistenceServiceDeps = {
   clearInFlightCharacterReflection(sessionId: string): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
   closeSessionWindow(sessionId: string): void;
-  broadcastSessions(): void;
+  broadcastSessions(sessionIds?: Iterable<string>): void;
 };
 
 function isRunningSession(session: Session): boolean {
@@ -124,7 +124,7 @@ export class SessionPersistenceService {
     this.deps.clearCharacterReflectionCheckpoint(sessionId);
     this.deps.clearInFlightCharacterReflection(sessionId);
     this.deps.closeSessionWindow(sessionId);
-    this.deps.broadcastSessions();
+    this.deps.broadcastSessions([sessionId]);
   }
 
   upsertSession(nextSession: Session): Session {
@@ -137,7 +137,7 @@ export class SessionPersistenceService {
     });
     this.syncStoredSession(stored);
     this.deps.setSessions(this.deps.listStoredSessions());
-    this.deps.broadcastSessions();
+    this.deps.broadcastSessions([stored.id]);
     return cloneSessions([stored])[0];
   }
 
@@ -187,7 +187,10 @@ export class SessionPersistenceService {
     }
 
     if (options?.broadcast ?? true) {
-      this.deps.broadcastSessions();
+      this.deps.broadcastSessions(new Set([
+        ...previousSessions.map((session) => session.id),
+        ...storedSessions.map((session) => session.id),
+      ]));
     }
 
     return cloneSessions(storedSessions);

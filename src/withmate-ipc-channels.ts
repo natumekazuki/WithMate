@@ -52,6 +52,7 @@ export const WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL = "withmate:resolve-live-app
 export const WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL = "withmate:resolve-live-elicitation";
 export const WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL = "withmate:list-open-session-window-ids";
 export const WITHMATE_SESSIONS_CHANGED_EVENT = "withmate:sessions-changed";
+export const WITHMATE_SESSIONS_INVALIDATED_EVENT = "withmate:sessions-invalidated";
 export const WITHMATE_CHARACTERS_CHANGED_EVENT = "withmate:characters-changed";
 export const WITHMATE_MODEL_CATALOG_CHANGED_EVENT = "withmate:model-catalog-changed";
 export const WITHMATE_APP_SETTINGS_CHANGED_EVENT = "withmate:app-settings-changed";

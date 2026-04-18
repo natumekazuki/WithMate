@@ -15,7 +15,7 @@ export type CharacterRuntimeServiceDeps = {
   setSessions(nextSessions: Session[]): void;
   closeCharacterEditor(characterId: string): void;
   broadcastCharacters(): void;
-  broadcastSessions(): void;
+  broadcastSessions(sessionIds?: Iterable<string>): void;
 };
 
 export class CharacterRuntimeService {
@@ -87,6 +87,6 @@ export class CharacterRuntimeService {
     }
 
     this.deps.setSessions(this.deps.reloadStoredSessions());
-    this.deps.broadcastSessions();
+    this.deps.broadcastSessions(touched.map((session) => session.id));
   }
 }

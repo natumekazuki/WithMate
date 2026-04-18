@@ -103,6 +103,7 @@ export type WithMateWindowPickerApi = {
 
 export type WithMateWindowSubscriptionApi = {
   subscribeSessionSummaries(listener: (sessions: SessionSummary[]) => void): () => void;
+  subscribeSessionInvalidation(listener: (sessionIds: string[]) => void): () => void;
   subscribeCharacters(listener: (characters: CharacterProfile[]) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
   subscribeAppSettings(listener: (settings: AppSettings) => void): () => void;

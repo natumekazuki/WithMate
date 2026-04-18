@@ -59,6 +59,10 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     return window;
   }
 
+  listWindows(): TWindow[] {
+    return Array.from(this.sessionWindows.values()).filter((window) => !window.isDestroyed());
+  }
+
   async openSessionWindow(sessionId: string): Promise<TWindow> {
     const existingWindow = this.getWindow(sessionId);
     if (existingWindow) {

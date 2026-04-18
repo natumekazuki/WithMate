@@ -58,6 +58,7 @@ describe("home-session-projection", () => {
       "a",
     );
 
+    assert.equal(projection.normalizedSessionSearch, "a");
     assert.deepEqual(projection.filteredSessionEntries.map(({ session }) => session.id), ["a", "b", "c"]);
     assert.deepEqual(projection.monitorEntries.map(({ session }) => session.id), ["a", "c"]);
     assert.deepEqual(projection.runningMonitorEntries.map(({ session }) => session.id), ["a"]);

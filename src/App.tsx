@@ -30,9 +30,7 @@ import {
   type Message,
   applyCopilotCustomAgentSelection,
   applySessionModelMetadataUpdate,
-  selectHydrationTarget,
   type Session,
-  type SessionSummary,
 } from "./session-state.js";
 import {
   getProviderCatalog,
@@ -691,8 +689,6 @@ export default function App() {
   const activityMonitorSignatureRef = useRef("");
   const activityMonitorSessionIdRef = useRef<string | null>(null);
   const contextRailWidthRef = useRef(SESSION_CONTEXT_RAIL_DEFAULT_WIDTH);
-  const lastHydratedSummarySignatureRef = useRef<string | null>(null);
-
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
 
   useEffect(() => {
@@ -704,53 +700,38 @@ export default function App() {
       };
     }
 
-    const hydrateSession = (nextSummaries: SessionSummary[], preferredSessionId?: string | null) => {
-      if (!active) {
-        return;
-      }
+    if (!selectedId) {
+      setSessions([]);
+      return () => {
+        active = false;
+      };
+    }
 
-      const targetSessionId = preferredSessionId ?? selectedId ?? nextSummaries[0]?.id ?? null;
-
-      const target = selectHydrationTarget(nextSummaries, targetSessionId, lastHydratedSummarySignatureRef.current);
-      if (!target) {
-        if (!targetSessionId || !nextSummaries.find((s) => s.id === targetSessionId)) {
-          setSessions([]);
-          lastHydratedSummarySignatureRef.current = null;
-        }
-        return;
-      }
-
-      void withmateApi.getSession(target.sessionId).then((session) => {
+    const hydrateSelectedSession = () => {
+      void withmateApi.getSession(selectedId).then((session) => {
         if (!active) {
           return;
         }
 
-        lastHydratedSummarySignatureRef.current = session ? target.summarySignature : null;
         setSessions(session ? [session] : []);
       });
     };
 
-    void withmateApi.listSessionSummaries().then((nextSummaries) => {
-      if (!active) {
+    hydrateSelectedSession();
+
+    const unsubscribe = withmateApi.subscribeSessionInvalidation((sessionIds) => {
+      if (!active || !sessionIds.includes(selectedId)) {
         return;
       }
 
-      hydrateSession(nextSummaries);
-    });
-
-    const unsubscribe = withmateApi.subscribeSessionSummaries((nextSummaries) => {
-      if (!active) {
-        return;
-      }
-
-      hydrateSession(nextSummaries, selectedId);
+      hydrateSelectedSession();
     });
 
     return () => {
       active = false;
       unsubscribe();
     };
-  }, [selectedId]);
+  }, [selectedId, withmateApi]);
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedId) ?? sessions[0] ?? null,

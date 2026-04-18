@@ -61,7 +61,7 @@ export type SettingsCatalogServiceDeps = {
   invalidateAllProviderSessionThreads(): void;
   closeResetTargetWindows(): void;
   recreateDatabaseFile(): Promise<ModelCatalogSnapshot>;
-  broadcastSessions(): void;
+  broadcastSessions(sessionIds?: Iterable<string>): void;
   broadcastAppSettings(settings?: AppSettings): void;
   broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): void;
 };
@@ -146,10 +146,13 @@ export class SettingsCatalogService {
         updatedAt: currentTimestampLabel(),
       };
     });
-    const invalidatedSessionIds = previousSessions
+    const providerInvalidatedSessionIds = previousSessions
       .filter((session) => providersWithApiKeyChangeSet.has(session.provider))
       .map((session) => session.id);
-    const hasSessionThreadReset = nextSessions.some((session, index) => session.threadId !== previousSessions[index]?.threadId);
+    const threadResetSessionIds = nextSessions
+      .filter((session, index) => session.threadId !== previousSessions[index]?.threadId)
+      .map((session) => session.id);
+    const hasSessionThreadReset = threadResetSessionIds.length > 0;
 
     let savedSettings: AppSettings | null = null;
     try {
@@ -165,11 +168,11 @@ export class SettingsCatalogService {
       if (hasSessionThreadReset) {
         this.deps.replaceAllSessions(nextSessions, {
           broadcast: false,
-          invalidateSessionIds: invalidatedSessionIds,
+          invalidateSessionIds: providerInvalidatedSessionIds,
         });
-        this.deps.broadcastSessions();
+        this.deps.broadcastSessions(threadResetSessionIds);
       } else {
-        for (const sessionId of invalidatedSessionIds) {
+        for (const sessionId of providerInvalidatedSessionIds) {
           const sessionProvider = previousSessions.find((session) => session.id === sessionId)?.provider ?? null;
           this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
         }
@@ -224,7 +227,7 @@ export class SettingsCatalogService {
         broadcast: false,
         invalidateSessionIds: invalidatedSessionIds,
       });
-      this.deps.broadcastSessions();
+      this.deps.broadcastSessions(migratedSessions.map((session) => session.id));
       this.deps.broadcastModelCatalog(nextSnapshot);
       return nextSnapshot;
     } catch (error) {
@@ -251,6 +254,7 @@ export class SettingsCatalogService {
       throw new Error("実行中の session があるため、DB を初期化できないよ。完了またはキャンセル後に試してね。");
     }
 
+    const previousSessionIds = this.deps.listSessions().map((session) => session.id);
     const resetTargets = normalizeResetAppDatabaseTargets(request?.targets);
     if (resetTargets.length === 0) {
       throw new Error("初期化対象が選ばれていないよ。");
@@ -299,7 +303,7 @@ export class SettingsCatalogService {
       appSettings = this.deps.getAppSettings();
     }
 
-    this.deps.broadcastSessions();
+    this.deps.broadcastSessions(previousSessionIds);
     this.deps.broadcastAppSettings(appSettings);
     this.deps.broadcastModelCatalog(modelCatalog);
 

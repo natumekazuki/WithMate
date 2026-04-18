@@ -228,7 +228,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
     mainInfrastructureRegistry = new MainInfrastructureRegistry({
       createWindowBroadcastService: () =>
         new WindowBroadcastService({
-          getWindows: () => BrowserWindow.getAllWindows(),
+          getAllWindows: () => BrowserWindow.getAllWindows(),
+          getHomeWindows: () => requireAuxWindowService().listHomeWindows(),
+          getSessionWindows: () => requireSessionWindowBridge().listWindows(),
         }),
       createWindowDialogService: () =>
         new WindowDialogService({
@@ -1165,8 +1167,8 @@ async function getCharacter(characterId: string): Promise<CharacterProfile | nul
   return requireMainCharacterFacade().getCharacter(characterId);
 }
 
-function broadcastSessions(): void {
-  requireMainBroadcastFacade().broadcastSessions();
+function broadcastSessions(sessionIds?: Iterable<string>): void {
+  requireMainBroadcastFacade().broadcastSessions(sessionIds);
 }
 
 function broadcastCharacters(): void {

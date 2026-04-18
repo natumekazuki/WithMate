@@ -58,7 +58,7 @@ describe("SessionPersistenceService", () => {
   it("createSession は有効な provider と model を解決して保存する", () => {
     const storedSessions: Session[] = [];
     const syncedSessionIds: string[] = [];
-    let broadcastCount = 0;
+    const broadcastedSessionIds: string[][] = [];
     const snapshot = createSnapshot();
 
     const service = new SessionPersistenceService({
@@ -105,14 +105,13 @@ describe("SessionPersistenceService", () => {
       clearInFlightCharacterReflection() {},
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
-      broadcastSessions() {
-        broadcastCount += 1;
+      broadcastSessions(sessionIds) {
+        broadcastedSessionIds.push(Array.from(sessionIds ?? []));
       },
     });
 
     const created = service.createSession({
       taskTitle: "New Session",
-      taskSummary: "",
       workspaceLabel: "workspace",
       workspacePath: "C:/workspace",
       branch: "main",
@@ -135,7 +134,7 @@ describe("SessionPersistenceService", () => {
     assert.equal(created.catalogRevision, 2);
     assert.equal(created.allowedAdditionalDirectories.length, 1);
     assert.deepEqual(syncedSessionIds, [created.id]);
-    assert.equal(broadcastCount, 1);
+    assert.deepEqual(broadcastedSessionIds, [[created.id]]);
   });
 
   it("createSession は last-used model / reasoning / customAgentName を正規化して保存する", () => {
@@ -339,6 +338,7 @@ describe("SessionPersistenceService", () => {
     const deleted: string[] = [];
     const clearedBackground: string[] = [];
     const closedWindows: string[] = [];
+    const broadcastedSessionIds: string[][] = [];
 
     const service = new SessionPersistenceService({
       getSessions() {
@@ -385,7 +385,9 @@ describe("SessionPersistenceService", () => {
       closeSessionWindow(sessionId) {
         closedWindows.push(sessionId);
       },
-      broadcastSessions() {},
+      broadcastSessions(sessionIds) {
+        broadcastedSessionIds.push(Array.from(sessionIds ?? []));
+      },
     });
 
     service.deleteSession(session.id);
@@ -393,6 +395,7 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(deleted, [session.id]);
     assert.deepEqual(clearedBackground, [session.id]);
     assert.deepEqual(closedWindows, [session.id]);
+    assert.deepEqual(broadcastedSessionIds, [[session.id]]);
     assert.equal(storedSessions.length, 0);
   });
 
@@ -406,7 +409,7 @@ describe("SessionPersistenceService", () => {
     const clearedCheckpoints: string[] = [];
     const clearedInflight: string[] = [];
     const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
-    let broadcastCount = 0;
+    const broadcastedSessionIds: string[][] = [];
 
     const service = new SessionPersistenceService({
       getSessions() {
@@ -455,8 +458,8 @@ describe("SessionPersistenceService", () => {
         invalidated.push({ providerId, sessionId });
       },
       closeSessionWindow() {},
-      broadcastSessions() {
-        broadcastCount += 1;
+      broadcastSessions(sessionIds) {
+        broadcastedSessionIds.push(Array.from(sessionIds ?? []));
       },
     });
 
@@ -470,6 +473,6 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(clearedCheckpoints, ["session-b"]);
     assert.deepEqual(clearedInflight, ["session-b"]);
     assert.deepEqual(invalidated, [{ providerId: "copilot", sessionId: "session-a" }]);
-    assert.equal(broadcastCount, 1);
+    assert.deepEqual(broadcastedSessionIds, [["session-a", "session-b"]]);
   });
 });

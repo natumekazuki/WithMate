@@ -18,20 +18,27 @@ function createWindow(destroyed = false) {
   };
 }
 
-test("WindowBroadcastService は非破棄 window にだけ event を送る", () => {
-  const active = createWindow(false);
+test("WindowBroadcastService は用途別 window に event を振り分ける", () => {
+  const home = createWindow(false);
+  const session = createWindow(false);
   const closed = createWindow(true);
   const service = new WindowBroadcastService({
-    getWindows: () => [active.window, closed.window],
+    getAllWindows: () => [home.window, session.window, closed.window],
+    getHomeWindows: () => [home.window, closed.window],
+    getSessionWindows: () => [session.window, closed.window],
   });
 
-  service.broadcastSessions([]);
+  service.broadcastSessionSummaries([]);
+  service.broadcastSessionInvalidation(["session-1"]);
   service.broadcastOpenSessionWindowIds(["session-1"]);
 
-  assert.equal(active.sent.length, 2);
-  assert.equal(closed.sent.length, 0);
-  assert.deepEqual(active.sent.map((entry) => entry.channel), [
+  assert.deepEqual(home.sent.map((entry) => entry.channel), [
     "withmate:sessions-changed",
     "withmate:open-session-windows-changed",
   ]);
+  assert.deepEqual(session.sent.map((entry) => entry.channel), [
+    "withmate:sessions-invalidated",
+    "withmate:open-session-windows-changed",
+  ]);
+  assert.equal(closed.sent.length, 0);
 });
