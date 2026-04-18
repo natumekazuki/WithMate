@@ -37,6 +37,8 @@ export type SnapshotCaptureResult = {
 export type SnapshotScanResult = {
   includedFiles: string[];
   ignoredFiles: string[];
+  /** workspace root 相対ディレクトリパス（root = ""）→ mtimeMs。構造変更検知に使用 */
+  visitedDirectories: Map<string, number>;
 };
 
 function normalizeSnapshotKey(rootDirectory: string, relativePath: string, useWorkspaceRelativeKey: boolean): string {
@@ -206,8 +208,17 @@ async function walkWorkspace(
   const { matchers: initialMatchers, loadedDirectories } = await loadInitialIgnoreMatchers(workspaceDirectory);
   const includedFiles: string[] = [];
   const ignoredFiles: string[] = [];
+  const visitedDirectories = new Map<string, number>();
 
   async function walk(directory: string, activeMatchers: IgnoreMatcher[]): Promise<void> {
+    try {
+      const dirStat = await stat(directory);
+      const relDir = path.relative(workspaceDirectory, directory).replace(/\\/g, "/");
+      visitedDirectories.set(relDir, dirStat.mtimeMs);
+    } catch {
+      // mtime 取得失敗時は記録をスキップ
+    }
+
     let entries;
     try {
       entries = await readdir(directory, { withFileTypes: true });
@@ -252,7 +263,7 @@ async function walkWorkspace(
   }
 
   await walk(workspaceDirectory, initialMatchers);
-  return { includedFiles, ignoredFiles };
+  return { includedFiles, ignoredFiles, visitedDirectories };
 }
 
 export async function scanWorkspacePaths(rootDirectory: string): Promise<SnapshotScanResult> {
