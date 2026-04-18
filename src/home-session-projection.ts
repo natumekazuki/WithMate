@@ -13,6 +13,7 @@ export type HomeMonitorEntry = {
 
 export type HomeSessionProjection = {
   filteredSessionEntries: HomeMonitorEntry[];
+  normalizedSessionSearch: string;
   monitorEntries: HomeMonitorEntry[];
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
@@ -99,6 +100,7 @@ export function buildHomeSessionProjection(
 
   return {
     filteredSessionEntries,
+    normalizedSessionSearch,
     monitorEntries,
     runningMonitorEntries,
     nonRunningMonitorEntries,

@@ -51,7 +51,7 @@ function createSession(characterId = "char-1", character = "Muse"): Session {
 test("CharacterRuntimeService は character 更新時に session 表示を同期する", async () => {
   const storedSessions = [createSession()];
   const upsertedCharacters: CharacterProfile[] = [];
-  let broadcastSessionsCount = 0;
+  const broadcastedSessionIds: string[][] = [];
   const service = new CharacterRuntimeService({
     getCharacters: () => [createCharacter()],
     setCharacters() {},
@@ -87,8 +87,8 @@ test("CharacterRuntimeService は character 更新時に session 表示を同期
     },
     closeCharacterEditor() {},
     broadcastCharacters() {},
-    broadcastSessions() {
-      broadcastSessionsCount += 1;
+    broadcastSessions(sessionIds) {
+      broadcastedSessionIds.push(Array.from(sessionIds ?? []));
     },
   });
 
@@ -97,7 +97,7 @@ test("CharacterRuntimeService は character 更新時に session 表示を同期
   assert.equal(updated.name, "Muse+");
   assert.equal(upsertedCharacters[0]?.name, "Muse+");
   assert.equal(storedSessions[0]?.character, "Muse+");
-  assert.equal(broadcastSessionsCount, 1);
+  assert.deepEqual(broadcastedSessionIds, [[storedSessions[0]?.id ?? ""]]);
 });
 
 test("CharacterRuntimeService は delete 時に一覧更新と editor close を行う", async () => {

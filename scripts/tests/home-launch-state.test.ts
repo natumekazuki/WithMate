@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import type { CharacterProfile } from "../../src/app-state.js";
+import type { CharacterProfile, SessionSummary } from "../../src/app-state.js";
 import {
   buildCreateSessionInputFromLaunchDraft,
   closeLaunchDraft,
@@ -134,21 +134,22 @@ describe("home-launch-state", () => {
   });
 
   it("selected provider の直近 session から last-used selection を引く", () => {
+    const sessions: Pick<SessionSummary, "provider" | "model" | "reasoningEffort" | "customAgentName">[] = [
+      {
+        provider: "copilot",
+        model: "gpt-4.1",
+        reasoningEffort: "high",
+        customAgentName: "planner",
+      },
+      {
+        provider: "codex",
+        model: "gpt-5.4-mini",
+        reasoningEffort: "medium",
+        customAgentName: "",
+      },
+    ];
     const selection = resolveLastUsedSessionSelection(
-      [
-        {
-          provider: "copilot",
-          model: "gpt-4.1",
-          reasoningEffort: "high",
-          customAgentName: "planner",
-        },
-        {
-          provider: "codex",
-          model: "gpt-5.4-mini",
-          reasoningEffort: "medium",
-          customAgentName: "",
-        },
-      ] as never,
+      sessions,
       "codex",
     );
 
@@ -160,15 +161,16 @@ describe("home-launch-state", () => {
   });
 
   it("selected provider の既存 session が無ければ last-used selection を返さない", () => {
+    const sessions: Pick<SessionSummary, "provider" | "model" | "reasoningEffort" | "customAgentName">[] = [
+      {
+        provider: "copilot",
+        model: "gpt-4.1",
+        reasoningEffort: "high",
+        customAgentName: "planner",
+      },
+    ];
     const selection = resolveLastUsedSessionSelection(
-      [
-        {
-          provider: "copilot",
-          model: "gpt-4.1",
-          reasoningEffort: "high",
-          customAgentName: "planner",
-        },
-      ] as never,
+      sessions,
       "codex",
     );
 

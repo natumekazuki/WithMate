@@ -121,6 +121,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeModelCatalog",
     "subscribeOpenSessionWindowIds",
     "subscribeProviderQuotaTelemetry",
+    "subscribeSessionInvalidation",
     "subscribeSessionSummaries",
     "subscribeSessionBackgroundActivity",
     "subscribeSessionContextTelemetry",
@@ -140,20 +141,27 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   const disposeSummaries = api.subscribeSessionSummaries((summaries) => {
     received.push({ kind: "summaries", summaries });
   });
+  const disposeInvalidation = api.subscribeSessionInvalidation((sessionIds) => {
+    received.push({ kind: "invalidation", sessionIds });
+  });
   const disposeLiveRun = api.subscribeLiveSessionRun((sessionId, state) => {
     received.push({ kind: "liveRun", sessionId, state });
   });
 
   listeners.get("withmate:sessions-changed")?.({}, [{ id: "session-1", taskTitle: "task" }]);
+  listeners.get("withmate:sessions-invalidated")?.({}, ["session-1"]);
   listeners.get("withmate:live-session-run")?.({}, { sessionId: "session-1", state: { phase: "running" } });
   disposeSummaries();
+  disposeInvalidation();
   disposeLiveRun();
 
   assert.deepEqual(received, [
     { kind: "summaries", summaries: [{ id: "session-1", taskTitle: "task" }] },
+    { kind: "invalidation", sessionIds: ["session-1"] },
     { kind: "liveRun", sessionId: "session-1", state: { phase: "running" } },
   ]);
   assert.equal(listeners.has("withmate:live-session-run"), false);
+  assert.equal(listeners.has("withmate:sessions-invalidated"), false);
   assert.equal(listeners.has("withmate:sessions-changed"), false);
 });
 

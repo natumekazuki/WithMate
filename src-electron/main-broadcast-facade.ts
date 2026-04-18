@@ -22,8 +22,12 @@ type MainBroadcastFacadeDeps<TWindow extends BroadcastWindowLike> = {
 export class MainBroadcastFacade<TWindow extends BroadcastWindowLike> {
   constructor(private readonly deps: MainBroadcastFacadeDeps<TWindow>) {}
 
-  broadcastSessions(): void {
-    this.deps.getWindowBroadcastService().broadcastSessions(this.deps.listSessionSummaries());
+  broadcastSessions(sessionIds?: Iterable<string>): void {
+    const summaries = this.deps.listSessionSummaries();
+    const invalidatedSessionIds = Array.from(new Set(sessionIds ?? summaries.map((session) => session.id)));
+    const windowBroadcastService = this.deps.getWindowBroadcastService();
+    windowBroadcastService.broadcastSessionSummaries(summaries);
+    windowBroadcastService.broadcastSessionInvalidation(invalidatedSessionIds);
   }
 
   broadcastCharacters(): void {

@@ -17,6 +17,7 @@ import {
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
   WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT,
   WITHMATE_SESSIONS_CHANGED_EVENT,
+  WITHMATE_SESSIONS_INVALIDATED_EVENT,
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
 } from "../src/withmate-ipc-channels.js";
@@ -29,14 +30,20 @@ type WindowLike = {
 };
 
 type WindowBroadcastServiceOptions<TWindow extends WindowLike> = {
-  getWindows(): TWindow[];
+  getAllWindows(): TWindow[];
+  getHomeWindows(): TWindow[];
+  getSessionWindows(): TWindow[];
 };
 
 export class WindowBroadcastService<TWindow extends WindowLike> {
   public constructor(private readonly options: WindowBroadcastServiceOptions<TWindow>) {}
 
-  public broadcastSessions(sessions: SessionSummary[]): void {
-    this.broadcast(WITHMATE_SESSIONS_CHANGED_EVENT, sessions);
+  public broadcastSessionSummaries(sessions: SessionSummary[]): void {
+    this.broadcastTo(this.options.getHomeWindows(), WITHMATE_SESSIONS_CHANGED_EVENT, sessions);
+  }
+
+  public broadcastSessionInvalidation(sessionIds: string[]): void {
+    this.broadcastTo(this.options.getSessionWindows(), WITHMATE_SESSIONS_INVALIDATED_EVENT, sessionIds);
   }
 
   public broadcastCharacters(characters: CharacterProfile[]): void {
@@ -76,7 +83,11 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
   }
 
   private broadcast(channel: string, payload: unknown): void {
-    for (const window of this.options.getWindows()) {
+    this.broadcastTo(this.options.getAllWindows(), channel, payload);
+  }
+
+  private broadcastTo(windows: TWindow[], channel: string, payload: unknown): void {
+    for (const window of windows) {
       if (!window.isDestroyed()) {
         window.webContents.send(channel, payload);
       }

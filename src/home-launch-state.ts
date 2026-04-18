@@ -1,6 +1,11 @@
 import type { ApprovalMode } from "./approval-mode.js";
-import type { CharacterProfile, CreateSessionInput, Session } from "./app-state.js";
+import type { CharacterProfile, CreateSessionInput, SessionSummary } from "./app-state.js";
 import { inferWorkspaceFromPath, type LaunchWorkspace } from "./home-launch-projection.js";
+
+type LastUsedSessionSelectionSource = Pick<
+  SessionSummary,
+  "provider" | "model" | "reasoningEffort" | "customAgentName"
+>;
 
 export type HomeLaunchDraft = {
   open: boolean;
@@ -66,7 +71,7 @@ export function setLaunchWorkspaceFromPath(draft: HomeLaunchDraft, selectedPath:
 }
 
 export function resolveLastUsedSessionSelection(
-  sessions: readonly Session[],
+  sessions: readonly LastUsedSessionSelectionSource[],
   providerId: string | null,
 ): Pick<CreateSessionInput, "model" | "reasoningEffort" | "customAgentName"> | null {
   const normalizedProviderId = providerId?.trim();
