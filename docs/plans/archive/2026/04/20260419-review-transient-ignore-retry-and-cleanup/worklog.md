@@ -6,3 +6,10 @@
 - 2026-04-19: `scripts/tests/workspace-file-search.test.ts` に回帰テストを追加した。transient エラーが retry で吸収されること、retry 上限到達で `unreadable` になること、race 優先ロジックの各ケースを網羅した。
 - 2026-04-19: `docs/reviews/` 配下の全 review ファイル削除を実施（予定 → 完了）。対象: `review-20260329-1438.md`, `review-20260419-0237.md`, `review-20260419-0314.md`, `review-20260419-0444.md`, `review-20260419-0553.md`, `review-20260419-0650.md` の計 6 ファイル。
 - 2026-04-19: 検証実施。`node --import tsx scripts/tests/workspace-file-search.test.ts` → 21/21 PASS。`npm run build` → success。`npm run typecheck` → repo-wide 既知問題の継続で fail。今回変更ファイル起因の新規 failure は未観測。
+
+## 実装完了コミット
+
+- **30aba35**: `fix(workspace-file-search): ignore retry と query cache のレビュー指摘を解消`
+  - `snapshot-ignore.ts` の transient エラー retry 修正と stable/race 優先度ロジック
+  - テストケース追加（retry 吸収、上限到達による unreadable 確定、race 優先）
+  - review ファイル同一 plan cleanup
