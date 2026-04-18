@@ -8,6 +8,7 @@ import ignore, { type Ignore } from "ignore";
 // ---------------------------------------------------------------------------
 
 let _afterIgnoreFileReadHook: ((ignoreFilePath: string) => Promise<void> | void) | null = null;
+let _ignoreFileReadOverrideForTesting: ((ignoreFilePath: string) => Promise<string> | string) | null = null;
 
 /**
  * テスト専用: createIgnoreMatcher 内の readFile 直後に割り込む hook を設定する。
@@ -17,6 +18,16 @@ export function _setAfterIgnoreFileReadHookForTesting(
   hook: ((ignoreFilePath: string) => Promise<void> | void) | null,
 ): void {
   _afterIgnoreFileReadHook = hook;
+}
+
+/**
+ * テスト専用: createIgnoreMatcher 内の readFile を差し替える。
+ * 例外を投げると readFile 失敗のシナリオを再現できる。
+ */
+export function _setIgnoreFileReadOverrideForTesting(
+  override: ((ignoreFilePath: string) => Promise<string> | string) | null,
+): void {
+  _ignoreFileReadOverrideForTesting = override;
 }
 
 export const DEFAULT_SNAPSHOT_MAX_FILE_BYTES = 1024 * 1024;
@@ -56,10 +67,10 @@ export type SnapshotScanResult = {
   /** workspace root 相対ディレクトリパス（root = ""）→ mtimeMs。構造変更検知に使用 */
   visitedDirectories: Map<string, number>;
   /**
-   * 走査時に読み込んだ ignore ファイルの絶対パス → mtimeMs。
-   * .gitignore / .git/info/exclude 等の編集検知に使用。
+   * 走査時に確認した ignore ファイルの絶対パス → 状態。
+   * .gitignore / .git/info/exclude 等の再検証に使用。
    */
-  ignoreFiles: Map<string, number>;
+  ignoreFiles: Map<string, IgnoreFileState>;
   /**
    * 走査時に存在しなかった外部 ignore 候補の絶対パス一覧。
    * .git/info/exclude および workspace 外の親 .gitignore が対象。
@@ -67,6 +78,11 @@ export type SnapshotScanResult = {
    */
   absentIgnoreCandidates: string[];
 };
+
+export type IgnoreFileState =
+  | { kind: "loaded"; mtimeMs: number }
+  | { kind: "unreadable"; mtimeMs: number }
+  | { kind: "race" };
 
 function normalizeSnapshotKey(rootDirectory: string, relativePath: string, useWorkspaceRelativeKey: boolean): string {
   if (useWorkspaceRelativeKey) {
@@ -144,15 +160,47 @@ async function collectIgnoreSourceDirectories(rootDirectory: string): Promise<st
 type CreateIgnoreMatcherResult =
   | { kind: "loaded"; matcher: IgnoreMatcher; mtimeMs: number }
   | { kind: "absent" } // ファイルが存在しない（最初の stat が失敗）
+  | { kind: "unreadable"; mtimeMs: number } // 安定したアクセス拒否・共有違反などで読めない
   | { kind: "race" }; // 全試行で読み取り中に変更が続いた
+
+function getNodeErrorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return undefined;
+  }
+
+  const { code } = error as { code?: unknown };
+  return typeof code === "string" ? code : undefined;
+}
+
+function isStableIgnoreReadError(error: unknown): boolean {
+  const code = getNodeErrorCode(error);
+  return code === "EACCES" || code === "EPERM" || code === "EBUSY" || code === "ETXTBSY";
+}
+
+async function readIgnoreFileText(ignoreFilePath: string): Promise<string> {
+  if (_ignoreFileReadOverrideForTesting !== null) {
+    return await _ignoreFileReadOverrideForTesting(ignoreFilePath);
+  }
+
+  return readFile(ignoreFilePath, "utf8");
+}
 
 /**
  * ignore ファイルを読み込み、内容と stat の整合を保証して返す。
  *
  * `stat → readFile → hook → stat` を最大 3 回試行する（= 2 回再試行）。
- * 前後の `mtimeMs` と `size` が両方一致した試行の結果だけを "loaded" として返す。
- * 1 回目に競合しても 2〜3 回目で安定すれば "loaded" を返す。
- * 全試行で競合した場合のみ "race" を返す。
+ * 前後の `mtimeMs` と `size` が両方一致した試行があれば即座に "loaded" を返す。
+ *
+ * 各試行の失敗は次の 2 種類に分類する:
+ * - **stable unreadable**: `EACCES`/`EPERM`/`EBUSY`/`ETXTBSY` による読み取りエラー。
+ *   即 return せず試行を継続し、`sawStableUnreadable` を立てる。
+ * - **race-like failure**: before-stat 失敗 / 非 stable な read エラー /
+ *   after-stat 失敗 / mtime・size 不一致。`sawRaceLikeFailure` を立てる。
+ *
+ * ループ終了後の判定:
+ * - `sawStableUnreadable && !sawRaceLikeFailure` → "unreadable"（mtimeMs は最後の
+ *   stable unreadable 試行の `statBefore.mtimeMs`）
+ * - それ以外（race-like あり、または両フラグ未設定）→ "race"
  */
 async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string): Promise<CreateIgnoreMatcherResult> {
   // ファイルの存在確認: ENOENT 等で失敗したら "absent" を返す。
@@ -163,11 +211,40 @@ async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string
     return { kind: "absent" };
   }
 
+  // 全試行を通じた状態追跡。
+  let sawStableUnreadable = false;
+  let sawRaceLikeFailure = false;
+  let lastStableUnreadableMtimeMs: number | null = null;
+
   // 最大 3 回の試行（= 2 回再試行）。attempt 0 は firstStat を before-stat として再利用する。
   for (let attempt = 0; attempt < 3; attempt++) {
+    let statBefore: Awaited<ReturnType<typeof stat>>;
     try {
-      const statBefore = attempt === 0 ? firstStat : await stat(ignoreFilePath);
-      const rules = await readFile(ignoreFilePath, "utf8");
+      statBefore = attempt === 0 ? firstStat : await stat(ignoreFilePath);
+    } catch {
+      // before-stat 失敗は race-like として扱い、次の試行へ
+      sawRaceLikeFailure = true;
+      continue;
+    }
+
+    let rules: string;
+    try {
+      rules = await readIgnoreFileText(ignoreFilePath);
+    } catch (error) {
+      if (isStableIgnoreReadError(error)) {
+        // ACL / 共有違反などの安定した unreadable: 即座に確定せず retry を消費する。
+        // 全試行が stable unreadable のみで終わった場合だけ "unreadable" として返す（ループ後で判定）。
+        // mtimeMs は確定した最後の stable unreadable 試行の値を使う。
+        sawStableUnreadable = true;
+        lastStableUnreadableMtimeMs = statBefore.mtimeMs;
+      } else {
+        // ENOENT 等の非 stable エラーは race-like として扱い次の試行へ
+        sawRaceLikeFailure = true;
+      }
+      continue;
+    }
+
+    try {
       // テスト用フック: readFile と確認 stat の間でファイル変更を挿入できる
       if (_afterIgnoreFileReadHook !== null) {
         await _afterIgnoreFileReadHook(ignoreFilePath);
@@ -181,18 +258,26 @@ async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string
           mtimeMs: statAfter.mtimeMs,
         };
       }
-      // race 検出: 次の試行へ（attempt 2 の場合はループ終了後に "race" を返す）
+      // mtime・size 不一致は race-like として扱い、次の試行へ
+      sawRaceLikeFailure = true;
     } catch {
-      // readFile または後続 stat が失敗（読み取り中に削除等）
-      return { kind: "race" };
+      // after-stat 失敗は race-like として扱い、次の試行へ
+      sawRaceLikeFailure = true;
+      continue;
     }
+  }
+
+  // 全試行が stable unreadable のみで終わった場合だけ "unreadable" に確定する。
+  // stable unreadable と race-like が混在した場合は "race" を優先する。
+  if (sawStableUnreadable && !sawRaceLikeFailure && lastStableUnreadableMtimeMs !== null) {
+    return { kind: "unreadable", mtimeMs: lastStableUnreadableMtimeMs };
   }
 
   // 全試行で競合したため諦める
   return { kind: "race" };
 }
 
-async function loadInitialIgnoreMatchers(rootDirectory: string): Promise<{ matchers: IgnoreMatcher[]; loadedDirectories: Set<string>; ignoreFiles: Map<string, number>; absentIgnoreCandidates: string[] }> {
+async function loadInitialIgnoreMatchers(rootDirectory: string): Promise<{ matchers: IgnoreMatcher[]; loadedDirectories: Set<string>; ignoreFiles: Map<string, IgnoreFileState>; absentIgnoreCandidates: string[] }> {
   const workspaceDirectory = path.resolve(rootDirectory);
   const gitRoot = await findGitRoot(workspaceDirectory);
   const ignoreSourceDirectories = await collectIgnoreSourceDirectories(workspaceDirectory);
@@ -203,16 +288,15 @@ async function loadInitialIgnoreMatchers(rootDirectory: string): Promise<{ match
     },
   ];
   const loadedDirectories = new Set<string>();
-  const ignoreFiles = new Map<string, number>();
+  const ignoreFiles = new Map<string, IgnoreFileState>();
   const absentIgnoreCandidates: string[] = [];
 
   for (const directory of ignoreSourceDirectories) {
     const gitignorePath = path.join(directory, ".gitignore");
     const result = await createIgnoreMatcher(directory, gitignorePath);
-    if (result.kind === "loaded") {
-      matchers.push(result.matcher);
-      loadedDirectories.add(directory);
-      ignoreFiles.set(gitignorePath, result.mtimeMs);
+    const matcher = applyIgnoreFileResult(result, directory, gitignorePath, loadedDirectories, ignoreFiles);
+    if (matcher !== null) {
+      matchers.push(matcher);
     } else if (result.kind === "absent" && !isInsideDirectory(directory, workspaceDirectory)) {
       // workspace 外部のディレクトリ: visitedDirectories に含まれないため、
       // .gitignore の不在状態を明示的に記録して新規出現を検知できるようにする（P2 対策）
@@ -223,9 +307,10 @@ async function loadInitialIgnoreMatchers(rootDirectory: string): Promise<{ match
   if (gitRoot) {
     const excludePath = path.join(gitRoot, ".git", "info", "exclude");
     const excludeResult = await createIgnoreMatcher(gitRoot, excludePath);
-    if (excludeResult.kind === "loaded") {
-      matchers.push(excludeResult.matcher);
-      ignoreFiles.set(excludePath, excludeResult.mtimeMs);
+    // directory: null — exclude は per-directory の .gitignore ではないため loadedDirectories は更新しない
+    const excludeMatcher = applyIgnoreFileResult(excludeResult, null, excludePath, loadedDirectories, ignoreFiles);
+    if (excludeMatcher !== null) {
+      matchers.push(excludeMatcher);
     } else if (excludeResult.kind === "absent") {
       // exclude ファイルが存在しない: 後から作成された場合を検知するために不在状態を記録する
       absentIgnoreCandidates.push(excludePath);
@@ -241,7 +326,7 @@ async function loadInitialIgnoreMatchers(rootDirectory: string): Promise<{ match
     while (true) {
       const parentGitignorePath = path.join(current, ".gitignore");
       if (ignoreFiles.has(parentGitignorePath)) {
-        // この祖先の .gitignore はすでに loaded → collectIgnoreSourceDirectories はここで停止する → 停止
+        // この祖先の .gitignore はすでに状態追跡対象 → collectIgnoreSourceDirectories はここで停止する → 停止
         break;
       }
       if (!absentIgnoreCandidates.includes(parentGitignorePath)) {
@@ -258,6 +343,41 @@ async function loadInitialIgnoreMatchers(rootDirectory: string): Promise<{ match
   }
 
   return { matchers, loadedDirectories, ignoreFiles, absentIgnoreCandidates };
+}
+
+/**
+ * createIgnoreMatcher() の結果を ignoreFiles / loadedDirectories に反映する共通ヘルパー。
+ *
+ * - "loaded": ignoreFilePath → loaded 状態を記録し、directory が非 null であれば
+ *             loadedDirectories にも追加する。result.matcher を返す。
+ * - "unreadable": ignoreFilePath → unreadable 状態を記録する。null を返す。
+ * - "race":   ignoreFilePath → race 状態を記録する。null を返す。
+ * - "absent": 何もしない。null を返す。absentIgnoreCandidates への追加は呼び出し側で行う。
+ *
+ * 戻り値が非 null の場合、呼び出し側でそのマッチャーを active matchers に追加する。
+ */
+function applyIgnoreFileResult(
+  result: CreateIgnoreMatcherResult,
+  directory: string | null,
+  ignoreFilePath: string,
+  loadedDirectories: Set<string>,
+  ignoreFiles: Map<string, IgnoreFileState>,
+): IgnoreMatcher | null {
+  if (result.kind === "loaded") {
+    if (directory !== null) {
+      loadedDirectories.add(directory);
+    }
+    ignoreFiles.set(ignoreFilePath, { kind: "loaded", mtimeMs: result.mtimeMs });
+    return result.matcher;
+  }
+  if (result.kind === "unreadable") {
+    ignoreFiles.set(ignoreFilePath, { kind: "unreadable", mtimeMs: result.mtimeMs });
+    return null;
+  }
+  if (result.kind === "race") {
+    ignoreFiles.set(ignoreFilePath, { kind: "race" });
+  }
+  return null;
 }
 
 function isInsideDirectory(targetPath: string, baseDirectory: string): boolean {
@@ -335,10 +455,9 @@ async function walkWorkspace(
     if (!loadedDirectories.has(directory)) {
       const gitignorePath = path.join(directory, ".gitignore");
       const result = await createIgnoreMatcher(directory, gitignorePath);
-      if (result.kind === "loaded") {
-        nextMatchers = [...activeMatchers, result.matcher];
-        loadedDirectories.add(directory);
-        ignoreFiles.set(gitignorePath, result.mtimeMs);
+      const matcher = applyIgnoreFileResult(result, directory, gitignorePath, loadedDirectories, ignoreFiles);
+      if (matcher !== null) {
+        nextMatchers = [...activeMatchers, matcher];
       }
     }
 

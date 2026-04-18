@@ -5,14 +5,27 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import {
+  _getQueryCacheKeysForTesting,
+  _getQueryCacheSizeForTesting,
   _setNowOverrideForTesting,
+  _setQueryCacheMaxEntriesForTesting,
   _getContentVersionForTesting,
   _getValidatedAtForTesting,
   clearWorkspaceFileIndex,
+  DEFAULT_UNREADABLE_IGNORE_RETRY_INTERVAL_MS,
   DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS,
   searchWorkspaceFilePaths,
 } from "../../src-electron/workspace-file-search.js";
-import { _setAfterIgnoreFileReadHookForTesting } from "../../src-electron/snapshot-ignore.js";
+import {
+  _setAfterIgnoreFileReadHookForTesting,
+  _setIgnoreFileReadOverrideForTesting,
+} from "../../src-electron/snapshot-ignore.js";
+
+function createErrnoError(code: string): NodeJS.ErrnoException {
+  const error = new Error(code) as NodeJS.ErrnoException;
+  error.code = code;
+  return error;
+}
 
 describe("workspace-file-search", () => {
   it("cache clear 後は新規 file が再検索結果へ反映される", async () => {
@@ -142,6 +155,36 @@ describe("workspace-file-search", () => {
       const fifth = await searchWorkspaceFilePaths(workspacePath, "button");
       assert.deepEqual(fifth, first);
     } finally {
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("query cache は上限を超えると recent 順に古い entry を排出する（review-20260419-0553 regression: query cache cap）", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-querycache-cap-"));
+    _setQueryCacheMaxEntriesForTesting(3);
+
+    try {
+      await writeFile(path.join(workspacePath, "alpha.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "alphabet.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "beta.ts"), "", "utf8");
+
+      await searchWorkspaceFilePaths(workspacePath, "a");
+      await searchWorkspaceFilePaths(workspacePath, "al");
+      await searchWorkspaceFilePaths(workspacePath, "alp");
+      assert.equal(_getQueryCacheSizeForTesting(workspacePath), 3);
+      assert.deepEqual(_getQueryCacheKeysForTesting(workspacePath), ["a", "al", "alp"]);
+
+      // exact hit は recent 扱いになり末尾へ移動する
+      await searchWorkspaceFilePaths(workspacePath, "a");
+      assert.deepEqual(_getQueryCacheKeysForTesting(workspacePath), ["al", "alp", "a"]);
+
+      // 新しい query を追加すると最も古い "al" が排出される
+      await searchWorkspaceFilePaths(workspacePath, "z");
+      assert.equal(_getQueryCacheSizeForTesting(workspacePath), 3);
+      assert.deepEqual(_getQueryCacheKeysForTesting(workspacePath), ["alp", "a", "z"]);
+    } finally {
+      _setQueryCacheMaxEntriesForTesting(null);
       clearWorkspaceFileIndex(workspacePath);
       await rm(workspacePath, { recursive: true, force: true });
     }
@@ -475,6 +518,283 @@ describe("workspace-file-search", () => {
       assert.deepEqual(results, [], "retry 後の整合した最新版（secret.ts ルール）が採用され secret.ts が除外されること");
     } finally {
       _setAfterIgnoreFileReadHookForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // review-20260419-0444 回帰: race した ignore ファイルが TTL 後の失効を引き起こす
+  // ---------------------------------------------------------------------------
+
+  it("初期 scan で .gitignore が全 retry 競合 (race) した場合、TTL 超過後に再走査される（review-20260419-0444 regression: initial load）", async () => {
+    // シナリオ:
+    //   1. .gitignore は "secret.ts\n" の状態で初期 scan 開始
+    //   2. hook が全 retry にわたって .gitignore を書き換え続ける → kind: "race"
+    //   3. race → ignoreFiles に race 状態が記録される → .gitignore ルール未適用 → secret.ts が含まれる
+    //   4. hook を解除（ファイルは安定状態になる）
+    //   5. TTL 超過 → checkStructureUnchanged が race 状態を検出 → re-scan
+    //   6. 再走査で "secret.ts\n" ルールが適用され secret.ts が除外される
+    //
+    // 注: NTFS / ext4 ではファイル書き込みが親ディレクトリの mtime を変えないため、
+    //     visitedDirectories チェックは pass し、sentinel だけが re-scan を引き起こす。
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-race-initial-"));
+    let fakeNow = Date.now();
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await writeFile(path.join(workspacePath, "secret.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "public.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, ".gitignore"), "secret.ts\n", "utf8");
+
+      const gitignorePath = path.join(workspacePath, ".gitignore");
+
+      // hook: 呼ばれるたびに '#' を 1 文字ずつ増やしてファイルサイズを単調増加させる。
+      // これにより、前後 stat の size が必ず異なるため、Windows NTFS の mtime 精度に
+      // 依存せず全 retry で race を確実に検出できる。
+      let hookCallCount = 0;
+      _setAfterIgnoreFileReadHookForTesting(async (filePath) => {
+        if (filePath === path.resolve(gitignorePath)) {
+          hookCallCount++;
+          // サイズを hookCallCount に比例して増加させることで size 不一致を保証する
+          await writeFile(gitignorePath, "secret.ts\n" + "#".repeat(hookCallCount) + "\n", "utf8");
+        }
+      });
+
+      clearWorkspaceFileIndex(workspacePath);
+      // 初期 scan: .gitignore が全 retry で race → rules 未適用 → secret.ts が含まれる
+      const resultsWithRace = await searchWorkspaceFilePaths(workspacePath, "secret");
+      assert.deepEqual(resultsWithRace, ["secret.ts"], "race 中は .gitignore ルールが適用されず secret.ts が含まれること");
+
+      // hook 解除: 以降は .gitignore が安定している
+      _setAfterIgnoreFileReadHookForTesting(null);
+
+      // TTL 超過 → race 状態検出 → re-scan
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+
+      const resultsAfterRescan = await searchWorkspaceFilePaths(workspacePath, "secret");
+      assert.deepEqual(resultsAfterRescan, [], "再走査後は .gitignore ルールが適用され secret.ts が除外されること");
+    } finally {
+      _setAfterIgnoreFileReadHookForTesting(null);
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("walkWorkspace 中のサブディレクトリ .gitignore が全 retry 競合 (race) した場合、TTL 超過後に再走査される（review-20260419-0444 regression: walk）", async () => {
+    // シナリオ:
+    //   1. sub/.gitignore は "secret.ts\n" の状態で scan 開始
+    //   2. hook が全 retry にわたって sub/.gitignore を書き換え続ける → kind: "race"
+    //   3. race → ignoreFiles に race 状態が記録される → sub/.gitignore ルール未適用 → sub/secret.ts が含まれる
+    //   4. hook を解除
+    //   5. TTL 超過 → race 状態検出 → re-scan
+    //   6. 再走査で "secret.ts\n" ルールが適用され sub/secret.ts が除外される
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-race-walk-"));
+    let fakeNow = Date.now();
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await mkdir(path.join(workspacePath, "sub"), { recursive: true });
+      await writeFile(path.join(workspacePath, "sub", "secret.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "sub", "public.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "sub", ".gitignore"), "secret.ts\n", "utf8");
+
+      const subGitignorePath = path.join(workspacePath, "sub", ".gitignore");
+
+      // hook: 呼ばれるたびに '#' を 1 文字ずつ増やしてファイルサイズを単調増加させる。
+      // これにより、前後 stat の size が必ず異なるため、Windows NTFS の mtime 精度に
+      // 依存せず全 retry で race を確実に検出できる。
+      let hookCallCount = 0;
+      _setAfterIgnoreFileReadHookForTesting(async (filePath) => {
+        if (filePath === path.resolve(subGitignorePath)) {
+          hookCallCount++;
+          // サイズを hookCallCount に比例して増加させることで size 不一致を保証する
+          await writeFile(subGitignorePath, "secret.ts\n" + "#".repeat(hookCallCount) + "\n", "utf8");
+        }
+      });
+
+      clearWorkspaceFileIndex(workspacePath);
+      // 初期 scan: sub/.gitignore が全 retry で race → rules 未適用 → sub/secret.ts が含まれる
+      const resultsWithRace = await searchWorkspaceFilePaths(workspacePath, "secret");
+      assert.deepEqual(resultsWithRace, ["sub/secret.ts"], "race 中は sub/.gitignore ルールが適用されず sub/secret.ts が含まれること");
+
+      // hook 解除
+      _setAfterIgnoreFileReadHookForTesting(null);
+
+      // TTL 超過 → race 状態検出 → re-scan
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+
+      const resultsAfterRescan = await searchWorkspaceFilePaths(workspacePath, "secret");
+      assert.deepEqual(resultsAfterRescan, [], "再走査後は sub/.gitignore ルールが適用され sub/secret.ts が除外されること");
+    } finally {
+      _setAfterIgnoreFileReadHookForTesting(null);
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("安定して unreadable な .gitignore は毎 TTL では再走査されず、retry interval 後に再評価される（review-20260419-0553 regression: unreadable root — 全 retry が stable unreadable の場合のみ unreadable に確定する）", async () => {
+    // 注: このテストは「全 3 試行がすべて stable unreadable（EACCES）で終わる」シナリオを検証する。
+    // 全 retry を消費して初めて unreadable に確定する。
+    // 1 試行でも成功すれば "loaded" に、race/transient と混在すれば "race" になる（review-0650 修正済み）。
+    //
+    // root .gitignore の読み取りは 2 箇所で発生する:
+    //   1. loadInitialIgnoreMatchers() — ワークスペース初期化時
+    //   2. walkWorkspace() の root directory 処理 — ファイル走査時
+    // persistent unreadable の場合、両箇所でそれぞれ全 retry（3 回）を消費するため
+    // 合計 readCallCount は 3 × 2 = 6 になる。
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-unreadable-root-"));
+    let fakeNow = Date.now();
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await writeFile(path.join(workspacePath, "secret.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "public.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, ".gitignore"), "secret.ts\n", "utf8");
+
+      const gitignorePath = path.join(workspacePath, ".gitignore");
+      let readCallCount = 0;
+      _setIgnoreFileReadOverrideForTesting((filePath) => {
+        if (filePath === path.resolve(gitignorePath)) {
+          readCallCount++;
+          throw createErrnoError("EACCES");
+        }
+        throw new Error(`unexpected ignore read path: ${filePath}`);
+      });
+
+      clearWorkspaceFileIndex(workspacePath);
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), ["secret.ts"]);
+      assert.equal(readCallCount, 6, "root .gitignore は loadInitialIgnoreMatchers() と walkWorkspace() の両箇所で全 retry（3 回）を消費するため、persistent unreadable では計 6 回読み取り試行されること");
+      const versionAfterUnreadableScan = _getContentVersionForTesting(workspacePath);
+      assert.ok(versionAfterUnreadableScan !== undefined, "初回 scan 後に contentVersion が取得できること");
+
+      // 1 回 TTL を超えても、stable unreadable は再走査されない
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), ["secret.ts"]);
+      assert.equal(
+        _getContentVersionForTesting(workspacePath),
+        versionAfterUnreadableScan,
+        "stable unreadable は毎 TTL で再走査されないこと",
+      );
+
+      // 読み取り不能を解消し、retry interval 超過後に再評価させる
+      _setIgnoreFileReadOverrideForTesting(null);
+      fakeNow += DEFAULT_UNREADABLE_IGNORE_RETRY_INTERVAL_MS;
+
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), []);
+      assert.notEqual(
+        _getContentVersionForTesting(workspacePath),
+        versionAfterUnreadableScan,
+        "retry interval 超過後は再走査され stable unreadable から回復できること",
+      );
+    } finally {
+      _setIgnoreFileReadOverrideForTesting(null);
+      _setAfterIgnoreFileReadHookForTesting(null);
+      _setNowOverrideForTesting(null);
+      _setQueryCacheMaxEntriesForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // review-0650 回帰: 最初の数試行のみ unreadable で後続試行が成功するケース
+  // ---------------------------------------------------------------------------
+
+  it("root .gitignore が最初の 2 試行のみ unreadable（EACCES/EBUSY）で 3 回目に成功した場合はルールが適用される（review-0650 回帰: transient unreadable → loaded）", async () => {
+    // シナリオ:
+    //   1. .gitignore は "secret.ts\n" の内容
+    //   2. 1 回目の readFile: EACCES を投げる（一時的に読めない）
+    //   3. 2 回目の readFile: EBUSY を投げる（一時的に読めない）
+    //   4. 3 回目の readFile: 実際の内容 "secret.ts\n" を返す → loaded に確定
+    //   5. ルールが適用され secret.ts が除外される → searchWorkspaceFilePaths が [] を返す
+    //   6. 読み取り試行回数が 3 回であることを確認
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-transient-unreadable-"));
+
+    try {
+      await writeFile(path.join(workspacePath, "secret.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "public.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, ".gitignore"), "secret.ts\n", "utf8");
+
+      const gitignorePath = path.join(workspacePath, ".gitignore");
+      let readCallCount = 0;
+      _setIgnoreFileReadOverrideForTesting((filePath) => {
+        if (filePath === path.resolve(gitignorePath)) {
+          readCallCount++;
+          if (readCallCount === 1) throw createErrnoError("EACCES");
+          if (readCallCount === 2) throw createErrnoError("EBUSY");
+          // 3 回目: 実際のファイル内容（"secret.ts\n"）を返す → loaded に確定
+          return "secret.ts\n";
+        }
+        throw new Error(`unexpected ignore read path: ${filePath}`);
+      });
+
+      clearWorkspaceFileIndex(workspacePath);
+      const results = await searchWorkspaceFilePaths(workspacePath, "secret");
+      assert.deepEqual(results, [], "3 回目の試行で成功し secret.ts ルールが適用されること");
+      assert.equal(readCallCount, 3, "読み取り試行回数が 3 回であること");
+    } finally {
+      _setIgnoreFileReadOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  // review-0650 回帰: stable unreadable と race-like が混在した場合は race を優先する
+  it("review-0650: subdir .gitignore で stable unreadable と race-like が混在した場合、race が優先され TTL 超過後に再走査される", async () => {
+    // シナリオ:
+    //   1. sub/.gitignore は "secret.ts\n" の内容
+    //   2. 全 3 試行ともに読み取りは失敗するが、エラー種別を混在させる:
+    //      1 回目: EACCES（stable unreadable）
+    //      2 回目: ENOENT（race-like: 非 stable エラー）
+    //      3 回目: EACCES（stable unreadable）
+    //   3. sawStableUnreadable && sawRaceLikeFailure → race 優先 → kind: "race"
+    //   4. race → sub/.gitignore ルール未適用 → sub/secret.ts が含まれる
+    //   5. override 解除後、TTL 超過 → race 状態検出 → re-scan → ルール適用 → []
+    //
+    // subdir .gitignore は loadInitialIgnoreMatchers() では読まれず walkWorkspace() のみで
+    // 読まれるため、readCallCount は全 3 試行分の 3 になる。
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mixed-unreadable-"));
+    let fakeNow = Date.now();
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await mkdir(path.join(workspacePath, "sub"), { recursive: true });
+      await writeFile(path.join(workspacePath, "sub", "secret.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "sub", "public.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "sub", ".gitignore"), "secret.ts\n", "utf8");
+
+      const subGitignorePath = path.join(workspacePath, "sub", ".gitignore");
+      let readCallCount = 0;
+      _setIgnoreFileReadOverrideForTesting((filePath) => {
+        if (filePath === path.resolve(subGitignorePath)) {
+          readCallCount++;
+          if (readCallCount === 1) throw createErrnoError("EACCES"); // stable unreadable
+          if (readCallCount === 2) throw createErrnoError("ENOENT"); // race-like (非 stable)
+          throw createErrnoError("EACCES"); // stable unreadable
+        }
+        throw new Error(`unexpected ignore read path: ${filePath}`);
+      });
+
+      clearWorkspaceFileIndex(workspacePath);
+      // 初期 scan: stable/race-like 混在 → race 優先 → ルール未適用 → sub/secret.ts が含まれる
+      const resultsWithMixed = await searchWorkspaceFilePaths(workspacePath, "secret");
+      assert.deepEqual(resultsWithMixed, ["sub/secret.ts"], "混在時は race 優先でルールが適用されず sub/secret.ts が含まれること");
+      assert.equal(readCallCount, 3, "全 3 試行が消費されること");
+
+      // override 解除
+      _setIgnoreFileReadOverrideForTesting(null);
+
+      // TTL 超過 → race 状態検出 → re-scan → ルール適用 → []
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+
+      const resultsAfterRescan = await searchWorkspaceFilePaths(workspacePath, "secret");
+      assert.deepEqual(resultsAfterRescan, [], "再走査後は sub/.gitignore ルールが適用され sub/secret.ts が除外されること");
+    } finally {
+      _setIgnoreFileReadOverrideForTesting(null);
+      _setNowOverrideForTesting(null);
       clearWorkspaceFileIndex(workspacePath);
       await rm(workspacePath, { recursive: true, force: true });
     }
