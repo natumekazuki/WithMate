@@ -42,13 +42,14 @@ function removeGroupedEntry<
   const nextGroups: TGroup[] = [];
 
   for (const group of groups) {
-    const nextEntries = group.entries.filter((entry) => entry.id !== entryId);
-    if (nextEntries.length === group.entries.length) {
+    const idx = group.entries.findIndex((entry) => entry.id === entryId);
+    if (idx === -1) {
       nextGroups.push(group);
       continue;
     }
 
     changed = true;
+    const nextEntries = group.entries.slice(0, idx).concat(group.entries.slice(idx + 1));
     if (nextEntries.length > 0) {
       nextGroups.push({
         ...group,

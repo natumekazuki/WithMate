@@ -2,7 +2,7 @@
 
 - **Tier**: session plan
 - **作成日**: 2026-04-19
-- **ディレクトリ**: `docs/plans/20260419-memory-management-query-optimization/`
+- **ディレクトリ**: `docs/plans/archive/2026/04/20260419-memory-management-query-optimization/`
 
 ---
 
