@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -9,6 +10,7 @@ import ignore, { type Ignore } from "ignore";
 
 let _afterIgnoreFileReadHook: ((ignoreFilePath: string) => Promise<void> | void) | null = null;
 let _ignoreFileReadOverrideForTesting: ((ignoreFilePath: string) => Promise<string> | string) | null = null;
+let _ignoreFileStatOverrideForTesting: ((ignoreFilePath: string) => Promise<Stats> | Stats) | null = null;
 
 /**
  * テスト専用: createIgnoreMatcher 内の readFile 直後に割り込む hook を設定する。
@@ -28,6 +30,16 @@ export function _setIgnoreFileReadOverrideForTesting(
   override: ((ignoreFilePath: string) => Promise<string> | string) | null,
 ): void {
   _ignoreFileReadOverrideForTesting = override;
+}
+
+/**
+ * テスト専用: createIgnoreMatcher 内の stat を差し替える。
+ * 例外を投げると stat 失敗のシナリオを再現できる。
+ */
+export function _setIgnoreFileStatOverrideForTesting(
+  override: ((ignoreFilePath: string) => Promise<Stats> | Stats) | null,
+): void {
+  _ignoreFileStatOverrideForTesting = override;
 }
 
 export const DEFAULT_SNAPSHOT_MAX_FILE_BYTES = 1024 * 1024;
@@ -172,9 +184,26 @@ function getNodeErrorCode(error: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
-function isStableIgnoreReadError(error: unknown): boolean {
+function isAbsentIgnoreStatError(error: unknown): boolean {
   const code = getNodeErrorCode(error);
-  return code === "EACCES" || code === "EPERM" || code === "EBUSY" || code === "ETXTBSY";
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
+function isStableIgnoreAccessError(error: unknown): boolean {
+  const code = getNodeErrorCode(error);
+  return code === "EACCES" || code === "EPERM";
+}
+
+function isStableIgnoreReadError(error: unknown): boolean {
+  return isStableIgnoreAccessError(error);
+}
+
+async function statIgnoreFile(ignoreFilePath: string): Promise<Stats> {
+  if (_ignoreFileStatOverrideForTesting !== null) {
+    return await _ignoreFileStatOverrideForTesting(ignoreFilePath);
+  }
+
+  return stat(ignoreFilePath);
 }
 
 async function readIgnoreFileText(ignoreFilePath: string): Promise<string> {
@@ -191,8 +220,12 @@ async function readIgnoreFileText(ignoreFilePath: string): Promise<string> {
  * `stat → readFile → hook → stat` を最大 3 回試行する（= 2 回再試行）。
  * 前後の `mtimeMs` と `size` が両方一致した試行があれば即座に "loaded" を返す。
  *
- * 各試行の失敗は次の 2 種類に分類する:
- * - **stable unreadable**: `EACCES`/`EPERM`/`EBUSY`/`ETXTBSY` による読み取りエラー。
+ * 最初の stat 失敗は次のように扱う:
+ * - `ENOENT`/`ENOTDIR` などの不存在系エラー: "absent"
+ * - それ以外: "race"（アクセス拒否・共有違反を含む。監視対象からは外さない）
+ *
+ * 各試行の read 失敗は次の 2 種類に分類する:
+ * - **stable unreadable**: `EACCES`/`EPERM` による読み取りエラー。
  *   即 return せず試行を継続し、`sawStableUnreadable` を立てる。
  * - **race-like failure**: before-stat 失敗 / 非 stable な read エラー /
  *   after-stat 失敗 / mtime・size 不一致。`sawRaceLikeFailure` を立てる。
@@ -203,12 +236,15 @@ async function readIgnoreFileText(ignoreFilePath: string): Promise<string> {
  * - それ以外（race-like あり、または両フラグ未設定）→ "race"
  */
 async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string): Promise<CreateIgnoreMatcherResult> {
-  // ファイルの存在確認: ENOENT 等で失敗したら "absent" を返す。
-  let firstStat: Awaited<ReturnType<typeof stat>>;
+  // ファイルの存在確認: 不存在系だけ "absent"、それ以外は再検証可能な race として扱う。
+  let firstStat: Stats;
   try {
-    firstStat = await stat(ignoreFilePath);
-  } catch {
-    return { kind: "absent" };
+    firstStat = await statIgnoreFile(ignoreFilePath);
+  } catch (error) {
+    if (isAbsentIgnoreStatError(error)) {
+      return { kind: "absent" };
+    }
+    return { kind: "race" };
   }
 
   // 全試行を通じた状態追跡。
@@ -218,9 +254,9 @@ async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string
 
   // 最大 3 回の試行（= 2 回再試行）。attempt 0 は firstStat を before-stat として再利用する。
   for (let attempt = 0; attempt < 3; attempt++) {
-    let statBefore: Awaited<ReturnType<typeof stat>>;
+    let statBefore: Stats;
     try {
-      statBefore = attempt === 0 ? firstStat : await stat(ignoreFilePath);
+      statBefore = attempt === 0 ? firstStat : await statIgnoreFile(ignoreFilePath);
     } catch {
       // before-stat 失敗は race-like として扱い、次の試行へ
       sawRaceLikeFailure = true;
@@ -249,7 +285,7 @@ async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string
       if (_afterIgnoreFileReadHook !== null) {
         await _afterIgnoreFileReadHook(ignoreFilePath);
       }
-      const statAfter = await stat(ignoreFilePath);
+      const statAfter = await statIgnoreFile(ignoreFilePath);
       if (statBefore.mtimeMs === statAfter.mtimeMs && statBefore.size === statAfter.size) {
         // 前後の mtime と size が一致 → 読み取り内容が整合していると判断
         return {

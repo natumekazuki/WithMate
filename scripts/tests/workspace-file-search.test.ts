@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -19,6 +19,7 @@ import {
 import {
   _setAfterIgnoreFileReadHookForTesting,
   _setIgnoreFileReadOverrideForTesting,
+  _setIgnoreFileStatOverrideForTesting,
 } from "../../src-electron/snapshot-ignore.js";
 
 function createErrnoError(code: string): NodeJS.ErrnoException {
@@ -576,6 +577,102 @@ describe("workspace-file-search", () => {
       assert.deepEqual(resultsAfterRescan, [], "再走査後は .gitignore ルールが適用され secret.ts が除外されること");
     } finally {
       _setAfterIgnoreFileReadHookForTesting(null);
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("root .gitignore の read が EBUSY 連発でも unreadable に固定されず TTL 超過後に再走査される", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-busy-root-"));
+    let fakeNow = Date.now();
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await writeFile(path.join(workspacePath, "secret.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "public.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, ".gitignore"), "secret.ts\n", "utf8");
+
+      const gitignorePath = path.resolve(path.join(workspacePath, ".gitignore"));
+      _setIgnoreFileReadOverrideForTesting((ignoreFilePath) => {
+        if (path.resolve(ignoreFilePath) === gitignorePath) {
+          throw createErrnoError("EBUSY");
+        }
+        throw new Error(`unexpected ignore file read override hit: ${ignoreFilePath}`);
+      });
+
+      clearWorkspaceFileIndex(workspacePath);
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "secret"),
+        ["secret.ts"],
+        "EBUSY 中は .gitignore を読めず secret.ts が含まれること",
+      );
+
+      _setIgnoreFileReadOverrideForTesting(null);
+
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "secret"),
+        ["secret.ts"],
+        "TTL 超過前は既存キャッシュが返ること",
+      );
+
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "secret"),
+        [],
+        "EBUSY は race-like 扱いとなり TTL 超過後の再走査で ignore ルールが反映されること",
+      );
+    } finally {
+      _setIgnoreFileReadOverrideForTesting(null);
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("root .gitignore の初回 stat が access error でも監視が外れず TTL 超過後に再評価される", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-stat-access-root-"));
+    let fakeNow = Date.now();
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await writeFile(path.join(workspacePath, "secret.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "public.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, ".gitignore"), "secret.ts\n", "utf8");
+
+      const gitignorePath = path.resolve(path.join(workspacePath, ".gitignore"));
+      let remainingFailures = 2;
+      _setIgnoreFileStatOverrideForTesting(async (ignoreFilePath) => {
+        if (path.resolve(ignoreFilePath) === gitignorePath && remainingFailures > 0) {
+          remainingFailures--;
+          throw createErrnoError("EACCES");
+        }
+        return stat(ignoreFilePath);
+      });
+
+      clearWorkspaceFileIndex(workspacePath);
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "secret"),
+        ["secret.ts"],
+        "初回 stat 失敗中は .gitignore が未適用で secret.ts が含まれること",
+      );
+
+      _setIgnoreFileStatOverrideForTesting(null);
+
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "secret"),
+        ["secret.ts"],
+        "TTL 超過前は既存キャッシュが返ること",
+      );
+
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "secret"),
+        [],
+        "初回 stat の access error でも race-like に追跡され TTL 超過後に ignore ルールが反映されること",
+      );
+    } finally {
+      _setIgnoreFileStatOverrideForTesting(null);
       _setNowOverrideForTesting(null);
       clearWorkspaceFileIndex(workspacePath);
       await rm(workspacePath, { recursive: true, force: true });
