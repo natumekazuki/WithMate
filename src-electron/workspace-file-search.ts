@@ -1,12 +1,17 @@
 ﻿import { stat } from "node:fs/promises";
 import path from "node:path";
 
-import { scanWorkspacePaths, type IgnoreFileState } from "./snapshot-ignore.js";
+import {
+  scanWorkspacePaths,
+  type DirectoryRescanState,
+  type IgnoreFileState,
+} from "./snapshot-ignore.js";
 
 const DEFAULT_SEARCH_LIMIT = 20;
 export const DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS = 30_000;
 export const DEFAULT_WORKSPACE_QUERY_CACHE_MAX_ENTRIES = 200;
 export const DEFAULT_UNREADABLE_IGNORE_RETRY_INTERVAL_MS = DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS * 10;
+export const DEFAULT_PERSISTENT_DIRECTORY_RETRY_INTERVAL_MS = DEFAULT_UNREADABLE_IGNORE_RETRY_INTERVAL_MS;
 
 // ---------------------------------------------------------------------------
 // テスト用時刻注入
@@ -84,8 +89,11 @@ type WorkspaceFileIndex = {
    * TTL 超過後の構造変更検知に使う。
    */
   visitedDirectories: Map<string, number>;
-  /** scan 中の directory stat / readdir 一時失敗。TTL 超過後は再走査を強制する。 */
-  directoriesNeedingRescan: Set<string>;
+  /**
+   * scan 中の directory stat / readdir 失敗一覧。
+   * transient は次回 TTL 超過時、persistent は backoff 超過時に再走査する。
+   */
+  directoriesNeedingRescan: Map<string, DirectoryRescanState>;
   /**
    * scan 時に確認した ignore ファイルの絶対パス → 状態。
    * .gitignore / .git/info/exclude の再検証に使う。
@@ -182,8 +190,14 @@ function getCachedQueryEntry(
  * すべて一致・不変であれば true（変化なし）、1 つでも異なれば false（変化あり）を返す。
  */
 async function checkStructureUnchanged(index: WorkspaceFileIndex, now = getNow()): Promise<boolean> {
-  if (index.directoriesNeedingRescan.size > 0) {
-    return false;
+  for (const directoryState of index.directoriesNeedingRescan.values()) {
+    if (directoryState.kind === "transient") {
+      return false;
+    }
+    if (now - index.scannedAt >= DEFAULT_PERSISTENT_DIRECTORY_RETRY_INTERVAL_MS) {
+      // 恒常 failure は毎 TTL では再走査せず、一定間隔ごとにのみ再試行する。
+      return false;
+    }
   }
   for (const [relativeDir, cachedMtime] of index.visitedDirectories) {
     const absoluteDir =
@@ -199,20 +213,20 @@ async function checkStructureUnchanged(index: WorkspaceFileIndex, now = getNow()
   }
   for (const [ignoreFilePath, ignoreFileState] of index.ignoreFiles) {
     if (ignoreFileState.kind === "race") {
-      // race は「前回 scan で整合した版を取得できなかった」状態。
+      // race は「前回 scan で整合した版を取得できなかった」一時 failure。
       // 次の TTL 検証では必ず再走査して、競合解消後の安定版を取り直す。
       return false;
+    }
+    if (ignoreFileState.kind === "unreadable") {
+      if (now - index.scannedAt >= DEFAULT_UNREADABLE_IGNORE_RETRY_INTERVAL_MS) {
+        // stable unreadable は毎 TTL では再走査しないが、一定間隔ごとには再試行する。
+        return false;
+      }
+      continue;
     }
     try {
       const s = await stat(ignoreFilePath);
       if (s.mtimeMs !== ignoreFileState.mtimeMs) {
-        return false;
-      }
-      if (
-        ignoreFileState.kind === "unreadable" &&
-        now - index.scannedAt >= DEFAULT_UNREADABLE_IGNORE_RETRY_INTERVAL_MS
-      ) {
-        // stable unreadable は毎 TTL では再走査しないが、一定間隔ごとには再試行する。
         return false;
       }
     } catch {

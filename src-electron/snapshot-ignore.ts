@@ -97,8 +97,11 @@ export type SnapshotScanResult = {
   ignoredFiles: string[];
   /** workspace root 相対ディレクトリパス（root = ""）→ mtimeMs。構造変更検知に使用 */
   visitedDirectories: Map<string, number>;
-  /** stat / readdir の一時失敗があり、TTL 超過後に再走査が必要な directory 一覧 */
-  directoriesNeedingRescan: Set<string>;
+  /**
+   * stat / readdir 失敗があった directory 一覧。
+   * transient failure は次回 TTL 超過時、persistent failure は backoff 超過後に再走査する。
+   */
+  directoriesNeedingRescan: Map<string, DirectoryRescanState>;
   /**
    * 走査時に確認した ignore ファイルの絶対パス → 状態。
    * .gitignore / .git/info/exclude 等の再検証に使用。
@@ -114,8 +117,12 @@ export type SnapshotScanResult = {
 
 export type IgnoreFileState =
   | { kind: "loaded"; mtimeMs: number }
-  | { kind: "unreadable"; mtimeMs: number }
+  | { kind: "unreadable"; mtimeMs: number | null }
   | { kind: "race" };
+
+export type DirectoryRescanState = {
+  kind: "transient" | "persistent";
+};
 
 function normalizeSnapshotKey(rootDirectory: string, relativePath: string, useWorkspaceRelativeKey: boolean): string {
   if (useWorkspaceRelativeKey) {
@@ -193,7 +200,7 @@ async function collectIgnoreSourceDirectories(rootDirectory: string): Promise<st
 type CreateIgnoreMatcherResult =
   | { kind: "loaded"; matcher: IgnoreMatcher; mtimeMs: number }
   | { kind: "absent" } // ファイルが存在しない（最初の stat が失敗）
-  | { kind: "unreadable"; mtimeMs: number } // 安定したアクセス拒否・共有違反などで読めない
+  | { kind: "unreadable"; mtimeMs: number | null } // 安定したアクセス拒否・型不整合などで読めない
   | { kind: "race" }; // 全試行で読み取り中に変更が続いた
 
 function getNodeErrorCode(error: unknown): string | undefined {
@@ -215,8 +222,25 @@ function isStableIgnoreAccessError(error: unknown): boolean {
   return code === "EACCES" || code === "EPERM";
 }
 
+function isStableIgnoreStatError(error: unknown): boolean {
+  const code = getNodeErrorCode(error);
+  return isStableIgnoreAccessError(error) || code === "ENOTDIR" || code === "ELOOP";
+}
+
 function isStableIgnoreReadError(error: unknown): boolean {
-  return isStableIgnoreAccessError(error);
+  const code = getNodeErrorCode(error);
+  return isStableIgnoreAccessError(error) || code === "EISDIR" || code === "ENOTDIR";
+}
+
+function isPersistentDirectoryReadError(error: unknown): boolean {
+  const code = getNodeErrorCode(error);
+  return code === "EACCES" || code === "EPERM" || code === "ENOTDIR" || code === "ELOOP" || code === "ENOENT";
+}
+
+function classifyDirectoryRescanState(error: unknown): DirectoryRescanState {
+  return {
+    kind: isPersistentDirectoryReadError(error) ? "persistent" : "transient",
+  };
 }
 
 async function statIgnoreFile(ignoreFilePath: string): Promise<Stats> {
@@ -259,10 +283,11 @@ async function readIgnoreFileText(ignoreFilePath: string): Promise<string> {
  *
  * 最初の stat 失敗は次のように扱う:
  * - `ENOENT`/`ENOTDIR` などの不存在系エラー: "absent"
- * - それ以外: "race"（アクセス拒否・共有違反を含む。監視対象からは外さない）
+ * - `EACCES`/`EPERM`/`ELOOP` などの安定失敗: "unreadable"
+ * - それ以外: "race"（一時競合・不確定な失敗）
  *
  * 各試行の read 失敗は次の 2 種類に分類する:
- * - **stable unreadable**: `EACCES`/`EPERM` による読み取りエラー。
+ * - **stable unreadable**: `EACCES`/`EPERM`/`EISDIR` などの安定した読み取りエラー。
  *   即 return せず試行を継続し、`sawStableUnreadable` を立てる。
  * - **race-like failure**: before-stat 失敗 / 非 stable な read エラー /
  *   after-stat 失敗 / mtime・size 不一致。`sawRaceLikeFailure` を立てる。
@@ -273,13 +298,17 @@ async function readIgnoreFileText(ignoreFilePath: string): Promise<string> {
  * - それ以外（race-like あり、または両フラグ未設定）→ "race"
  */
 async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string): Promise<CreateIgnoreMatcherResult> {
-  // ファイルの存在確認: 不存在系だけ "absent"、それ以外は再検証可能な race として扱う。
+  // ファイルの存在確認: 不存在系だけ "absent"、安定失敗は "unreadable"、
+  // それ以外は再検証可能な race として扱う。
   let firstStat: Stats;
   try {
     firstStat = await statIgnoreFile(ignoreFilePath);
   } catch (error) {
     if (isAbsentIgnoreStatError(error)) {
       return { kind: "absent" };
+    }
+    if (isStableIgnoreStatError(error)) {
+      return { kind: "unreadable", mtimeMs: null };
     }
     return { kind: "race" };
   }
@@ -507,23 +536,30 @@ async function walkWorkspace(
   const includedFiles: string[] = [];
   const ignoredFiles: string[] = [];
   const visitedDirectories = new Map<string, number>();
-  const directoriesNeedingRescan = new Set<string>();
+  const directoriesNeedingRescan = new Map<string, DirectoryRescanState>();
 
   async function walk(directory: string, activeMatchers: IgnoreMatcher[]): Promise<void> {
     const relDir = path.relative(workspaceDirectory, directory).replace(/\\/g, "/");
+    let needsStatRetry = false;
     try {
       const dirStat = await statWalkDirectory(directory);
       visitedDirectories.set(relDir, dirStat.mtimeMs);
     } catch {
-      directoriesNeedingRescan.add(relDir);
+      // stat だけ失敗しても readdir が成功すれば subtree 自体は index できている。
+      // このケースは次回 TTL で mtime 監視を復旧したいため transient 扱いにする。
+      needsStatRetry = true;
     }
 
     let entries;
     try {
       entries = await readWalkDirectoryEntries(directory);
-    } catch {
-      directoriesNeedingRescan.add(relDir);
+    } catch (error) {
+      directoriesNeedingRescan.set(relDir, classifyDirectoryRescanState(error));
       return;
+    }
+
+    if (needsStatRetry) {
+      directoriesNeedingRescan.set(relDir, { kind: "transient" });
     }
 
     let nextMatchers = activeMatchers;

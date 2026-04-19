@@ -12,6 +12,7 @@ import {
   _getContentVersionForTesting,
   _getValidatedAtForTesting,
   clearWorkspaceFileIndex,
+  DEFAULT_PERSISTENT_DIRECTORY_RETRY_INTERVAL_MS,
   DEFAULT_UNREADABLE_IGNORE_RETRY_INTERVAL_MS,
   DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS,
   searchWorkspaceFilePaths,
@@ -232,6 +233,56 @@ describe("workspace-file-search", () => {
       );
     } finally {
       _setWalkDirectoryStatOverrideForTesting(null);
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("恒常的なサブディレクトリ readdir failure は毎 TTL で再走査されず、retry interval 超過後にのみ再試行される", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-persistent-readdir-"));
+    let fakeNow = Date.now();
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await mkdir(path.join(workspacePath, "generated"), { recursive: true });
+      await writeFile(path.join(workspacePath, "generated", "hidden.ts"), "", "utf8");
+
+      const generatedDirectoryPath = path.resolve(path.join(workspacePath, "generated"));
+      let readCallCount = 0;
+      _setWalkDirectoryReadOverrideForTesting(async (directoryPath) => {
+        if (path.resolve(directoryPath) === generatedDirectoryPath) {
+          readCallCount++;
+          throw createErrnoError("EACCES");
+        }
+        return readdir(directoryPath, { withFileTypes: true });
+      });
+
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "hidden"), []);
+      assert.equal(readCallCount, 1, "初回 scan では generated の readdir が 1 回だけ失敗すること");
+      const versionAfterPartialScan = _getContentVersionForTesting(workspacePath);
+      assert.ok(versionAfterPartialScan !== undefined);
+
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "hidden"),
+        [],
+        "persistent readdir failure では毎 TTL のフル再走査に戻らないこと",
+      );
+      assert.equal(readCallCount, 1, "retry interval 前は readdir failure を再試行しないこと");
+      assert.equal(_getContentVersionForTesting(workspacePath), versionAfterPartialScan);
+
+      _setWalkDirectoryReadOverrideForTesting(null);
+      fakeNow += DEFAULT_PERSISTENT_DIRECTORY_RETRY_INTERVAL_MS;
+
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "hidden"), ["generated/hidden.ts"]);
+      assert.notEqual(
+        _getContentVersionForTesting(workspacePath),
+        versionAfterPartialScan,
+        "retry interval 超過後の再試行で欠落 subtree から回復できること",
+      );
+    } finally {
+      _setWalkDirectoryReadOverrideForTesting(null);
       _setNowOverrideForTesting(null);
       clearWorkspaceFileIndex(workspacePath);
       await rm(workspacePath, { recursive: true, force: true });
@@ -747,7 +798,7 @@ describe("workspace-file-search", () => {
     }
   });
 
-  it("root .gitignore の初回 stat が access error でも監視が外れず TTL 超過後に再評価される", async () => {
+  it("root .gitignore の初回 stat が access error でも監視が外れず、retry interval 超過後に再評価される", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-stat-access-root-"));
     let fakeNow = Date.now();
     _setNowOverrideForTesting(() => fakeNow);
@@ -782,11 +833,17 @@ describe("workspace-file-search", () => {
         "TTL 超過前は既存キャッシュが返ること",
       );
 
-      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "secret"),
+        ["secret.ts"],
+        "初回 stat の access error は unreadable 扱いとなり、毎 TTL では再走査しないこと",
+      );
+
+      fakeNow += DEFAULT_UNREADABLE_IGNORE_RETRY_INTERVAL_MS;
       assert.deepEqual(
         await searchWorkspaceFilePaths(workspacePath, "secret"),
         [],
-        "初回 stat の access error でも race-like に追跡され TTL 超過後に ignore ルールが反映されること",
+        "retry interval 超過後に .gitignore が再評価され ignore ルールが反映されること",
       );
     } finally {
       _setIgnoreFileStatOverrideForTesting(null);
@@ -908,6 +965,61 @@ describe("workspace-file-search", () => {
       _setAfterIgnoreFileReadHookForTesting(null);
       _setNowOverrideForTesting(null);
       _setQueryCacheMaxEntriesForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("root .gitignore の stat が恒常的に EACCES の場合、毎 TTL では再走査されず retry interval 超過後にのみ再試行される", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-ignore-stat-eacces-"));
+    let fakeNow = Date.now();
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await writeFile(path.join(workspacePath, "secret.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "public.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, ".gitignore"), "secret.ts\n", "utf8");
+
+      const gitignorePath = path.resolve(path.join(workspacePath, ".gitignore"));
+      let statCallCount = 0;
+      _setIgnoreFileStatOverrideForTesting(async (filePath) => {
+        if (path.resolve(filePath) === gitignorePath) {
+          statCallCount++;
+          throw createErrnoError("EACCES");
+        }
+        return stat(filePath);
+      });
+
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), ["secret.ts"]);
+      assert.equal(
+        statCallCount,
+        2,
+        "root .gitignore は initial load と root walk の 2 箇所で stat が試されること",
+      );
+      const versionAfterUnreadableScan = _getContentVersionForTesting(workspacePath);
+      assert.ok(versionAfterUnreadableScan !== undefined);
+
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "secret"),
+        ["secret.ts"],
+        "persistent ignore stat failure では毎 TTL の再走査に戻らないこと",
+      );
+      assert.equal(statCallCount, 2, "retry interval 前は ignore stat を再試行しないこと");
+      assert.equal(_getContentVersionForTesting(workspacePath), versionAfterUnreadableScan);
+
+      _setIgnoreFileStatOverrideForTesting(null);
+      fakeNow += DEFAULT_UNREADABLE_IGNORE_RETRY_INTERVAL_MS;
+
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), []);
+      assert.notEqual(
+        _getContentVersionForTesting(workspacePath),
+        versionAfterUnreadableScan,
+        "retry interval 超過後は .gitignore を再評価して回復できること",
+      );
+    } finally {
+      _setIgnoreFileStatOverrideForTesting(null);
+      _setNowOverrideForTesting(null);
       clearWorkspaceFileIndex(workspacePath);
       await rm(workspacePath, { recursive: true, force: true });
     }
