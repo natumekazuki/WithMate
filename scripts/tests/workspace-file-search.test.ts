@@ -24,6 +24,7 @@ import {
   _setAfterIgnoreFileReadHookForTesting,
   _setIgnoreFileReadOverrideForTesting,
   _setIgnoreFileStatOverrideForTesting,
+  _setNowOverrideForTesting as _setSnapshotNowOverrideForTesting,
   _setWalkDirectoryReadOverrideForTesting,
   _setWalkDirectoryStatOverrideForTesting,
 } from "../../src-electron/snapshot-ignore.js";
@@ -698,6 +699,85 @@ describe("workspace-file-search", () => {
     }
   });
 
+  it("long scan で後半に観測した深いディレクトリの coarse mtime 更新を見逃さない", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-coarse-dir-late-observed-"));
+    const scanStartedAt = Math.floor(Date.now() / 1_000) * 1_000 + 500;
+    const lateDirectoryObservedAt = scanStartedAt + 2_500;
+    const scanFinishedAt = lateDirectoryObservedAt + 500;
+    let fakeNow = scanFinishedAt;
+    let nowCallCount = 0;
+    let snapshotNow = scanStartedAt;
+    _setNowOverrideForTesting(() => {
+      if (nowCallCount++ === 0) {
+        return scanStartedAt;
+      }
+      if (nowCallCount === 2) {
+        return scanFinishedAt;
+      }
+      return fakeNow;
+    });
+    _setSnapshotNowOverrideForTesting(() => snapshotNow);
+
+    try {
+      await mkdir(path.join(workspacePath, "deep"), { recursive: true });
+      await writeFile(path.join(workspacePath, "existing.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "deep", "existing.ts"), "", "utf8");
+
+      const rootDirectoryPath = path.resolve(workspacePath);
+      const deepDirectoryPath = path.resolve(path.join(workspacePath, "deep"));
+      const realRootStat = await stat(rootDirectoryPath);
+      const realDeepStat = await stat(deepDirectoryPath);
+      const nonCoarseRootStat = {
+        ...realRootStat,
+        mtimeMs: scanStartedAt + 123,
+      } as Stats;
+      const coarseDeepStat = {
+        ...realDeepStat,
+        mtimeMs: Math.floor(lateDirectoryObservedAt / 1_000) * 1_000,
+      } as Stats;
+
+      _setWalkDirectoryStatOverrideForTesting(async (directoryPath) => {
+        if (path.resolve(directoryPath) === rootDirectoryPath) {
+          snapshotNow = scanStartedAt;
+          return nonCoarseRootStat;
+        }
+        if (path.resolve(directoryPath) === deepDirectoryPath) {
+          snapshotNow = lateDirectoryObservedAt;
+          return coarseDeepStat;
+        }
+        return stat(directoryPath);
+      });
+
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "later"), []);
+
+      _setWalkDirectoryStatOverrideForTesting(null);
+      _setStatOverrideForTesting(async (targetPath) => {
+        if (path.resolve(targetPath) === rootDirectoryPath) {
+          return { mtimeMs: nonCoarseRootStat.mtimeMs };
+        }
+        if (path.resolve(targetPath) === deepDirectoryPath) {
+          return { mtimeMs: coarseDeepStat.mtimeMs };
+        }
+        return stat(targetPath);
+      });
+
+      await writeFile(path.join(workspacePath, "deep", "later.ts"), "", "utf8");
+      fakeNow = scanFinishedAt + DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "later"),
+        ["deep/later.ts"],
+        "各ディレクトリの観測時刻基準で coarse mtime guard が働き、後半に見た deep/ の更新も再走査されること",
+      );
+    } finally {
+      _setWalkDirectoryStatOverrideForTesting(null);
+      _setSnapshotNowOverrideForTesting(null);
+      _setStatOverrideForTesting(null);
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("coarse mtime の同一タイムスライスに入った .gitignore 更新でも TTL 超過時に再走査される", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-coarse-ignore-"));
     let fakeNow = Math.floor(Date.now() / 1_000) * 1_000 + 500;
@@ -802,6 +882,103 @@ describe("workspace-file-search", () => {
       );
     } finally {
       _setIgnoreFileStatOverrideForTesting(null);
+      _setStatOverrideForTesting(null);
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("long scan で後半に観測した sub/.gitignore の coarse mtime 更新を見逃さない", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-coarse-ignore-late-observed-"));
+    const scanStartedAt = Math.floor(Date.now() / 1_000) * 1_000 + 500;
+    const lateIgnoreObservedAt = scanStartedAt + 2_500;
+    const scanFinishedAt = lateIgnoreObservedAt + 500;
+    let fakeNow = scanFinishedAt;
+    let nowCallCount = 0;
+    let snapshotNow = scanStartedAt;
+    _setNowOverrideForTesting(() => {
+      if (nowCallCount++ === 0) {
+        return scanStartedAt;
+      }
+      if (nowCallCount === 2) {
+        return scanFinishedAt;
+      }
+      return fakeNow;
+    });
+    _setSnapshotNowOverrideForTesting(() => snapshotNow);
+
+    try {
+      await mkdir(path.join(workspacePath, "sub"), { recursive: true });
+      await writeFile(path.join(workspacePath, "sub", "secret.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "sub", ".gitignore"), "secret.ts\n", "utf8");
+
+      const rootDirectoryPath = path.resolve(workspacePath);
+      const subDirectoryPath = path.resolve(path.join(workspacePath, "sub"));
+      const subGitignorePath = path.resolve(path.join(workspacePath, "sub", ".gitignore"));
+      const realRootStat = await stat(rootDirectoryPath);
+      const realSubStat = await stat(subDirectoryPath);
+      const realSubGitignoreStat = await stat(subGitignorePath);
+      const nonCoarseRootStat = {
+        ...realRootStat,
+        mtimeMs: scanStartedAt + 123,
+      } as Stats;
+      const nonCoarseSubStat = {
+        ...realSubStat,
+        mtimeMs: lateIgnoreObservedAt + 123,
+      } as Stats;
+      const coarseSubGitignoreStat = {
+        ...realSubGitignoreStat,
+        mtimeMs: Math.floor(lateIgnoreObservedAt / 1_000) * 1_000,
+      } as Stats;
+
+      _setWalkDirectoryStatOverrideForTesting(async (directoryPath) => {
+        if (path.resolve(directoryPath) === rootDirectoryPath) {
+          snapshotNow = scanStartedAt;
+          return nonCoarseRootStat;
+        }
+        if (path.resolve(directoryPath) === subDirectoryPath) {
+          snapshotNow = lateIgnoreObservedAt;
+          return nonCoarseSubStat;
+        }
+        return stat(directoryPath);
+      });
+      _setIgnoreFileStatOverrideForTesting(async (filePath) => {
+        if (path.resolve(filePath) === subGitignorePath) {
+          snapshotNow = lateIgnoreObservedAt;
+          return coarseSubGitignoreStat;
+        }
+        return stat(filePath);
+      });
+
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), []);
+
+      _setWalkDirectoryStatOverrideForTesting(null);
+      _setIgnoreFileStatOverrideForTesting(null);
+      _setStatOverrideForTesting(async (targetPath) => {
+        if (path.resolve(targetPath) === rootDirectoryPath) {
+          return { mtimeMs: nonCoarseRootStat.mtimeMs };
+        }
+        if (path.resolve(targetPath) === subDirectoryPath) {
+          return { mtimeMs: nonCoarseSubStat.mtimeMs };
+        }
+        if (path.resolve(targetPath) === subGitignorePath) {
+          return { mtimeMs: coarseSubGitignoreStat.mtimeMs };
+        }
+        return stat(targetPath);
+      });
+
+      await writeFile(path.join(workspacePath, "sub", ".gitignore"), "# no rules\n", "utf8");
+      fakeNow = scanFinishedAt + DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "secret"),
+        ["sub/secret.ts"],
+        "各 ignore file の観測時刻基準で coarse mtime guard が働き、後半に読んだ sub/.gitignore の更新も再走査されること",
+      );
+    } finally {
+      _setWalkDirectoryStatOverrideForTesting(null);
+      _setIgnoreFileStatOverrideForTesting(null);
+      _setSnapshotNowOverrideForTesting(null);
       _setStatOverrideForTesting(null);
       _setNowOverrideForTesting(null);
       clearWorkspaceFileIndex(workspacePath);

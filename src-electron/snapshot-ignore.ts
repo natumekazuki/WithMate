@@ -16,6 +16,7 @@ let _walkDirectoryStatOverrideForTesting: ((directoryPath: string) => Promise<St
 let _walkDirectoryReadOverrideForTesting:
   | ((directoryPath: string) => Promise<Dirent[]> | Dirent[])
   | null = null;
+let _nowOverrideForTesting: (() => number) | null = null;
 
 /**
  * テスト専用: createIgnoreMatcher 内の readFile 直後に割り込む hook を設定する。
@@ -61,6 +62,11 @@ export function _setWalkDirectoryReadOverrideForTesting(
   _walkDirectoryReadOverrideForTesting = override;
 }
 
+/** テスト専用: snapshot-ignore 内の現在時刻取得を差し替える。 */
+export function _setNowOverrideForTesting(override: (() => number) | null): void {
+  _nowOverrideForTesting = override;
+}
+
 export const DEFAULT_SNAPSHOT_MAX_FILE_BYTES = 1024 * 1024;
 export const DEFAULT_SNAPSHOT_MAX_FILE_COUNT = 4000;
 export const DEFAULT_SNAPSHOT_MAX_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -70,6 +76,11 @@ export type WorkspaceSnapshot = Map<string, string>;
 type IgnoreMatcher = {
   baseDirectory: string;
   matcher: Ignore;
+};
+
+export type ObservedMtime = {
+  mtimeMs: number;
+  observedAt: number;
 };
 
 export type SnapshotLimits = {
@@ -95,8 +106,8 @@ export type SnapshotCaptureResult = {
 export type SnapshotScanResult = {
   includedFiles: string[];
   ignoredFiles: string[];
-  /** workspace root 相対ディレクトリパス（root = ""）→ mtimeMs。構造変更検知に使用 */
-  visitedDirectories: Map<string, number>;
+  /** workspace root 相対ディレクトリパス（root = ""）→ mtime と観測時刻。構造変更検知に使用 */
+  visitedDirectories: Map<string, ObservedMtime>;
   /**
    * stat / readdir 失敗があった directory 一覧。
    * transient failure は次回 TTL 超過時、persistent failure は backoff 超過後に再走査する。
@@ -116,8 +127,8 @@ export type SnapshotScanResult = {
 };
 
 export type IgnoreFileState =
-  | { kind: "loaded"; mtimeMs: number }
-  | { kind: "unreadable"; mtimeMs: number | null }
+  | { kind: "loaded"; mtimeMs: number; observedAt: number }
+  | { kind: "unreadable"; mtimeMs: number | null; observedAt: number | null }
   | { kind: "race" };
 
 export type DirectoryRescanState = {
@@ -199,9 +210,9 @@ async function collectIgnoreSourceDirectories(rootDirectory: string): Promise<st
 
 /** createIgnoreMatcher の戻り値。 */
 type CreateIgnoreMatcherResult =
-  | { kind: "loaded"; matcher: IgnoreMatcher; mtimeMs: number }
+  | { kind: "loaded"; matcher: IgnoreMatcher; mtimeMs: number; observedAt: number }
   | { kind: "absent" } // ファイルが存在しない（最初の stat が失敗）
-  | { kind: "unreadable"; mtimeMs: number | null } // 安定したアクセス拒否・型不整合などで読めない
+  | { kind: "unreadable"; mtimeMs: number | null; observedAt: number | null } // 安定したアクセス拒否・型不整合などで読めない
   | { kind: "race" }; // 全試行で読み取り中に変更が続いた
 
 function getNodeErrorCode(error: unknown): string | undefined {
@@ -221,6 +232,10 @@ function isAbsentIgnoreStatError(error: unknown): boolean {
 function isStableIgnoreAccessError(error: unknown): boolean {
   const code = getNodeErrorCode(error);
   return code === "EACCES" || code === "EPERM";
+}
+
+function getNow(): number {
+  return _nowOverrideForTesting !== null ? _nowOverrideForTesting() : Date.now();
 }
 
 function isStableIgnoreStatError(error: unknown): boolean {
@@ -252,12 +267,22 @@ async function statIgnoreFile(ignoreFilePath: string): Promise<Stats> {
   return stat(ignoreFilePath);
 }
 
+async function statIgnoreFileWithObservedAt(ignoreFilePath: string): Promise<{ stats: Stats; observedAt: number }> {
+  const stats = await statIgnoreFile(ignoreFilePath);
+  return { stats, observedAt: getNow() };
+}
+
 async function statWalkDirectory(directoryPath: string): Promise<Stats> {
   if (_walkDirectoryStatOverrideForTesting !== null) {
     return await _walkDirectoryStatOverrideForTesting(directoryPath);
   }
 
   return stat(directoryPath);
+}
+
+async function statWalkDirectoryWithObservedAt(directoryPath: string): Promise<{ stats: Stats; observedAt: number }> {
+  const stats = await statWalkDirectory(directoryPath);
+  return { stats, observedAt: getNow() };
 }
 
 type IgnoreFilePresence = "present" | "absent" | "unknown";
@@ -316,14 +341,17 @@ async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string
   // ファイルの存在確認: 不存在系だけ "absent"、安定失敗は "unreadable"、
   // それ以外は再検証可能な race として扱う。
   let firstStat: Stats;
+  let firstObservedAt: number;
   try {
-    firstStat = await statIgnoreFile(ignoreFilePath);
+    const observed = await statIgnoreFileWithObservedAt(ignoreFilePath);
+    firstStat = observed.stats;
+    firstObservedAt = observed.observedAt;
   } catch (error) {
     if (isAbsentIgnoreStatError(error)) {
       return { kind: "absent" };
     }
     if (isStableIgnoreStatError(error)) {
-      return { kind: "unreadable", mtimeMs: null };
+      return { kind: "unreadable", mtimeMs: null, observedAt: null };
     }
     return { kind: "race" };
   }
@@ -332,12 +360,21 @@ async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string
   let sawStableUnreadable = false;
   let sawRaceLikeFailure = false;
   let lastStableUnreadableMtimeMs: number | null = null;
+  let lastStableUnreadableObservedAt: number | null = null;
 
   // 最大 3 回の試行（= 2 回再試行）。attempt 0 は firstStat を before-stat として再利用する。
   for (let attempt = 0; attempt < 3; attempt++) {
     let statBefore: Stats;
+    let statBeforeObservedAt: number;
     try {
-      statBefore = attempt === 0 ? firstStat : await statIgnoreFile(ignoreFilePath);
+      if (attempt === 0) {
+        statBefore = firstStat;
+        statBeforeObservedAt = firstObservedAt;
+      } else {
+        const observed = await statIgnoreFileWithObservedAt(ignoreFilePath);
+        statBefore = observed.stats;
+        statBeforeObservedAt = observed.observedAt;
+      }
     } catch {
       // before-stat 失敗は race-like として扱い、次の試行へ
       sawRaceLikeFailure = true;
@@ -354,6 +391,7 @@ async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string
         // mtimeMs は確定した最後の stable unreadable 試行の値を使う。
         sawStableUnreadable = true;
         lastStableUnreadableMtimeMs = statBefore.mtimeMs;
+        lastStableUnreadableObservedAt = statBeforeObservedAt;
       } else {
         // ENOENT 等の非 stable エラーは race-like として扱い次の試行へ
         sawRaceLikeFailure = true;
@@ -366,13 +404,15 @@ async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string
       if (_afterIgnoreFileReadHook !== null) {
         await _afterIgnoreFileReadHook(ignoreFilePath);
       }
-      const statAfter = await statIgnoreFile(ignoreFilePath);
+      const statAfterObserved = await statIgnoreFileWithObservedAt(ignoreFilePath);
+      const statAfter = statAfterObserved.stats;
       if (statBefore.mtimeMs === statAfter.mtimeMs && statBefore.size === statAfter.size) {
         // 前後の mtime と size が一致 → 読み取り内容が整合していると判断
         return {
           kind: "loaded",
           matcher: { baseDirectory, matcher: ignore().add(rules) },
           mtimeMs: statAfter.mtimeMs,
+          observedAt: statAfterObserved.observedAt,
         };
       }
       // mtime・size 不一致は race-like として扱い、次の試行へ
@@ -386,8 +426,17 @@ async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string
 
   // 全試行が stable unreadable のみで終わった場合だけ "unreadable" に確定する。
   // stable unreadable と race-like が混在した場合は "race" を優先する。
-  if (sawStableUnreadable && !sawRaceLikeFailure && lastStableUnreadableMtimeMs !== null) {
-    return { kind: "unreadable", mtimeMs: lastStableUnreadableMtimeMs };
+  if (
+    sawStableUnreadable &&
+    !sawRaceLikeFailure &&
+    lastStableUnreadableMtimeMs !== null &&
+    lastStableUnreadableObservedAt !== null
+  ) {
+    return {
+      kind: "unreadable",
+      mtimeMs: lastStableUnreadableMtimeMs,
+      observedAt: lastStableUnreadableObservedAt,
+    };
   }
 
   // 全試行で競合したため諦める
@@ -489,11 +538,15 @@ function applyIgnoreFileResult(
     if (directory !== null) {
       loadedDirectories.add(directory);
     }
-    ignoreFiles.set(ignoreFilePath, { kind: "loaded", mtimeMs: result.mtimeMs });
+    ignoreFiles.set(ignoreFilePath, { kind: "loaded", mtimeMs: result.mtimeMs, observedAt: result.observedAt });
     return result.matcher;
   }
   if (result.kind === "unreadable") {
-    ignoreFiles.set(ignoreFilePath, { kind: "unreadable", mtimeMs: result.mtimeMs });
+    ignoreFiles.set(ignoreFilePath, {
+      kind: "unreadable",
+      mtimeMs: result.mtimeMs,
+      observedAt: result.observedAt,
+    });
     return null;
   }
   if (result.kind === "race") {
@@ -555,15 +608,18 @@ async function walkWorkspace(
   const { matchers: initialMatchers, loadedDirectories, ignoreFiles, absentIgnoreCandidates } = await loadInitialIgnoreMatchers(workspaceDirectory);
   const includedFiles: string[] = [];
   const ignoredFiles: string[] = [];
-  const visitedDirectories = new Map<string, number>();
+  const visitedDirectories = new Map<string, ObservedMtime>();
   const directoriesNeedingRescan = new Map<string, DirectoryRescanState>();
 
   async function walk(directory: string, activeMatchers: IgnoreMatcher[]): Promise<void> {
     const relDir = path.relative(workspaceDirectory, directory).replace(/\\/g, "/");
     let needsStatRetry = false;
     try {
-      const dirStat = await statWalkDirectory(directory);
-      visitedDirectories.set(relDir, dirStat.mtimeMs);
+      const dirObserved = await statWalkDirectoryWithObservedAt(directory);
+      visitedDirectories.set(relDir, {
+        mtimeMs: dirObserved.stats.mtimeMs,
+        observedAt: dirObserved.observedAt,
+      });
     } catch {
       // stat だけ失敗しても readdir が成功すれば subtree 自体は index できている。
       // このケースは次回 TTL で mtime 監視を復旧したいため transient 扱いにする。
