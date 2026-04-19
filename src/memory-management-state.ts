@@ -49,7 +49,7 @@ function removeGroupedEntry<
     }
 
     changed = true;
-    const nextEntries = [...group.entries.slice(0, idx), ...group.entries.slice(idx + 1)];
+    const nextEntries = group.entries.slice(0, idx).concat(group.entries.slice(idx + 1));
     if (nextEntries.length > 0) {
       nextGroups.push({
         ...group,
