@@ -179,7 +179,8 @@ async function collectIgnoreSourceDirectories(rootDirectory: string): Promise<st
 
     if (!gitRoot) {
       const parentGitignorePath = path.join(parentDirectory, ".gitignore");
-      if (await pathExists(parentGitignorePath)) {
+      const parentGitignorePresence = await probeIgnoreFilePresence(parentGitignorePath);
+      if (parentGitignorePresence !== "absent") {
         directories.push(parentDirectory);
         foundParentGitignore = true;
         break;
@@ -234,7 +235,7 @@ function isStableIgnoreReadError(error: unknown): boolean {
 
 function isPersistentDirectoryReadError(error: unknown): boolean {
   const code = getNodeErrorCode(error);
-  return code === "EACCES" || code === "EPERM" || code === "ENOTDIR" || code === "ELOOP" || code === "ENOENT";
+  return code === "EACCES" || code === "EPERM" || code === "ENOTDIR" || code === "ELOOP";
 }
 
 function classifyDirectoryRescanState(error: unknown): DirectoryRescanState {
@@ -257,6 +258,20 @@ async function statWalkDirectory(directoryPath: string): Promise<Stats> {
   }
 
   return stat(directoryPath);
+}
+
+type IgnoreFilePresence = "present" | "absent" | "unknown";
+
+async function probeIgnoreFilePresence(ignoreFilePath: string): Promise<IgnoreFilePresence> {
+  try {
+    await statIgnoreFile(ignoreFilePath);
+    return "present";
+  } catch (error) {
+    if (isAbsentIgnoreStatError(error)) {
+      return "absent";
+    }
+    return "unknown";
+  }
 }
 
 async function readWalkDirectoryEntries(directoryPath: string): Promise<Dirent[]> {
@@ -432,8 +447,13 @@ async function loadInitialIgnoreMatchers(rootDirectory: string): Promise<{ match
         break;
       }
       if (!absentIgnoreCandidates.includes(parentGitignorePath)) {
-        if (await pathExists(parentGitignorePath)) {
+        const parentGitignorePresence = await probeIgnoreFilePresence(parentGitignorePath);
+        if (parentGitignorePresence === "present") {
           // この祖先に .gitignore が存在する → collectIgnoreSourceDirectories はここで停止する → 停止
+          break;
+        }
+        if (parentGitignorePresence === "unknown") {
+          // 権限エラーや race で存在確認が不確定な場合は absent 扱いしない。
           break;
         }
         absentIgnoreCandidates.push(parentGitignorePath);

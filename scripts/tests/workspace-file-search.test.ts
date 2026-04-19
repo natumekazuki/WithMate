@@ -289,6 +289,50 @@ describe("workspace-file-search", () => {
     }
   });
 
+  it("サブディレクトリ readdir の ENOENT race は transient 扱いとなり、TTL 超過後に再走査される", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-readdir-enoent-"));
+    let fakeNow = Date.now();
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await mkdir(path.join(workspacePath, "generated"), { recursive: true });
+      await writeFile(path.join(workspacePath, "generated", "fresh.ts"), "", "utf8");
+
+      const generatedDirectoryPath = path.resolve(path.join(workspacePath, "generated"));
+      let shouldFailReaddir = true;
+      _setWalkDirectoryReadOverrideForTesting(async (directoryPath) => {
+        if (path.resolve(directoryPath) === generatedDirectoryPath && shouldFailReaddir) {
+          shouldFailReaddir = false;
+          throw createErrnoError("ENOENT");
+        }
+        return readdir(directoryPath, { withFileTypes: true });
+      });
+
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "fresh"),
+        [],
+        "ENOENT race 中は generated subtree が欠落したまま index されること",
+      );
+      const versionAfterPartialScan = _getContentVersionForTesting(workspacePath);
+      assert.ok(versionAfterPartialScan !== undefined);
+
+      _setWalkDirectoryReadOverrideForTesting(null);
+
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "fresh"), ["generated/fresh.ts"]);
+      assert.notEqual(
+        _getContentVersionForTesting(workspacePath),
+        versionAfterPartialScan,
+        "ENOENT は persistent backoff ではなく次回 TTL 超過で再走査されること",
+      );
+    } finally {
+      _setWalkDirectoryReadOverrideForTesting(null);
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("連続 query / クエリキャッシュを使っても substring 検索結果が壊れない", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-querycache-"));
 
@@ -645,6 +689,64 @@ describe("workspace-file-search", () => {
       // 再走査: outerDir/.gitignore のルールが適用される → secret.ts が除外される
       assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), []);
     } finally {
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(outerDir, { recursive: true, force: true });
+    }
+  });
+
+  it("workspace 外の既存の親 .gitignore が初回 stat で unreadable の場合、absent ではなく unreadable として retry interval で再評価される", async () => {
+    const outerDir = await mkdtemp(path.join(os.tmpdir(), "withmate-parent-gitignore-unreadable-"));
+    const workspacePath = path.join(outerDir, "workspace");
+    await mkdir(workspacePath, { recursive: true });
+
+    let fakeNow = Date.now();
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await writeFile(path.join(workspacePath, "secret.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "public.ts"), "", "utf8");
+      await writeFile(path.join(outerDir, ".gitignore"), "secret.ts\n", "utf8");
+
+      const outerGitignorePath = path.resolve(path.join(outerDir, ".gitignore"));
+      let shouldDenyParentGitignoreStat = true;
+      _setIgnoreFileStatOverrideForTesting(async (filePath) => {
+        if (path.resolve(filePath) === outerGitignorePath && shouldDenyParentGitignoreStat) {
+          throw createErrnoError("EACCES");
+        }
+        return stat(filePath);
+      });
+
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "secret"),
+        ["secret.ts"],
+        "初回 scan では unreadable な親 .gitignore のルールを適用できないこと",
+      );
+      const versionAfterUnreadableScan = _getContentVersionForTesting(workspacePath);
+      assert.ok(versionAfterUnreadableScan !== undefined);
+
+      shouldDenyParentGitignoreStat = false;
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "secret"),
+        ["secret.ts"],
+        "absent と誤分類せず、通常 TTL では親 .gitignore を再評価しないこと",
+      );
+      assert.equal(
+        _getContentVersionForTesting(workspacePath),
+        versionAfterUnreadableScan,
+        "retry interval 前は unreadable 状態の contentVersion を維持すること",
+      );
+
+      fakeNow += DEFAULT_UNREADABLE_IGNORE_RETRY_INTERVAL_MS;
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), []);
+      assert.notEqual(
+        _getContentVersionForTesting(workspacePath),
+        versionAfterUnreadableScan,
+        "retry interval 超過後は親 .gitignore を再評価して回復できること",
+      );
+    } finally {
+      _setIgnoreFileStatOverrideForTesting(null);
       _setNowOverrideForTesting(null);
       clearWorkspaceFileIndex(workspacePath);
       await rm(outerDir, { recursive: true, force: true });
