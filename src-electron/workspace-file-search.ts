@@ -91,6 +91,20 @@ async function statPath(targetPath: string): Promise<{ mtimeMs: number }> {
   return stat(targetPath);
 }
 
+function getNodeErrorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return undefined;
+  }
+
+  const { code } = error as { code?: unknown };
+  return typeof code === "string" ? code : undefined;
+}
+
+function isAbsentStatError(error: unknown): boolean {
+  const code = getNodeErrorCode(error);
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
 // ---------------------------------------------------------------------------
 // 内部カウンター
 // ---------------------------------------------------------------------------
@@ -134,6 +148,9 @@ type WorkspaceFileIndex = {
    * TTL 超過後の checkStructureUnchanged() でこれらの新規出現を検知するために使う。
    */
   absentIgnoreCandidates: string[];
+  /** coarse mtime guard 用の基点。scan 開始時刻を保持する。 */
+  scanStartedAt: number;
+  /** scan 完了時刻。retry/backoff 判定の基点として使う。 */
   scannedAt: number;
   /** TTL の基点。構造変化なしで延命された場合も更新される。 */
   validatedAt: number;
@@ -213,14 +230,14 @@ function getCachedQueryEntry(
   return undefined;
 }
 
-function isWithinCoarseMtimeGuardWindow(recordedMtimeMs: number, scannedAt: number): boolean {
+function isWithinCoarseMtimeGuardWindow(recordedMtimeMs: number, observedAt: number): boolean {
   if (!Number.isInteger(recordedMtimeMs)) {
     return false;
   }
   if (recordedMtimeMs % 1_000 !== 0) {
     return false;
   }
-  return Math.abs(scannedAt - recordedMtimeMs) < DEFAULT_COARSE_MTIME_GUARD_MS;
+  return Math.abs(observedAt - recordedMtimeMs) < DEFAULT_COARSE_MTIME_GUARD_MS;
 }
 
 /**
@@ -239,7 +256,7 @@ async function checkStructureUnchanged(index: WorkspaceFileIndex, now = getNow()
     }
   }
   for (const [relativeDir, cachedMtime] of index.visitedDirectories) {
-    if (isWithinCoarseMtimeGuardWindow(cachedMtime, index.scannedAt)) {
+    if (isWithinCoarseMtimeGuardWindow(cachedMtime, index.scanStartedAt)) {
       // coarse mtime な FS では、scan と同一タイムスライス内の追加・削除を見逃し得る。
       // 直近 bucket の mtime は 1 回だけ保守的に再走査して stale index を解消する。
       return false;
@@ -268,7 +285,7 @@ async function checkStructureUnchanged(index: WorkspaceFileIndex, now = getNow()
       }
       continue;
     }
-    if (isWithinCoarseMtimeGuardWindow(ignoreFileState.mtimeMs, index.scannedAt)) {
+    if (isWithinCoarseMtimeGuardWindow(ignoreFileState.mtimeMs, index.scanStartedAt)) {
       // .gitignore 内容更新が coarse mtime の同一タイムスライスに入ると mtime 比較だけでは見逃す。
       return false;
     }
@@ -284,11 +301,16 @@ async function checkStructureUnchanged(index: WorkspaceFileIndex, now = getNow()
   // 前回 scan 時に存在しなかった外部 ignore 候補が新規出現していないか確認する（P2 対策）
   for (const candidatePath of index.absentIgnoreCandidates) {
     try {
-      await stat(candidatePath);
+      await statPath(candidatePath);
       // stat 成功 = ファイルが新規出現した → 構造変化あり
       return false;
-    } catch {
-      // 依然として存在しない → 変化なし、次の候補へ
+    } catch (error) {
+      if (isAbsentStatError(error)) {
+        // 依然として存在しない → 変化なし、次の候補へ
+        continue;
+      }
+      // 権限エラーやループなど、不存在以外は安全側に倒して再走査する
+      return false;
     }
   }
   return true;
@@ -321,6 +343,7 @@ async function getWorkspaceFileIndex(workspacePath: string): Promise<WorkspaceFi
     workspaceQueryCache.delete(normalizedWorkspacePath);
   }
 
+  const scanStartedAt = now;
   const scanned = await scanWorkspacePaths(normalizedWorkspacePath);
   const entries: FileEntry[] = scanned.includedFiles.map((relativePath) => ({
     relativePath,
@@ -336,6 +359,7 @@ async function getWorkspaceFileIndex(workspacePath: string): Promise<WorkspaceFi
     directoriesNeedingRescan: scanned.directoriesNeedingRescan,
     ignoreFiles: scanned.ignoreFiles,
     absentIgnoreCandidates: scanned.absentIgnoreCandidates,
+    scanStartedAt,
     scannedAt,
     validatedAt: scannedAt,
     contentVersion: ++_contentVersionCounter,

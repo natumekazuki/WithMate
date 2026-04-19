@@ -639,6 +639,65 @@ describe("workspace-file-search", () => {
     }
   });
 
+  it("long scan で scan 完了が guard 窓外でも coarse mtime のディレクトリ更新を見逃さない", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-coarse-dir-long-scan-"));
+    const scanStartedAt = Math.floor(Date.now() / 1_000) * 1_000 + 500;
+    const scanFinishedAt = scanStartedAt + 2_500;
+    let fakeNow = scanFinishedAt;
+    let nowCallCount = 0;
+    _setNowOverrideForTesting(() => {
+      if (nowCallCount++ === 0) {
+        return scanStartedAt;
+      }
+      if (nowCallCount === 2) {
+        return scanFinishedAt;
+      }
+      return fakeNow;
+    });
+
+    try {
+      await writeFile(path.join(workspacePath, "existing.ts"), "", "utf8");
+
+      const rootDirectoryPath = path.resolve(workspacePath);
+      const realRootStat = await stat(rootDirectoryPath);
+      const coarseRootStat = {
+        ...realRootStat,
+        mtimeMs: Math.floor(scanStartedAt / 1_000) * 1_000,
+      } as Stats;
+
+      _setWalkDirectoryStatOverrideForTesting(async (directoryPath) => {
+        if (path.resolve(directoryPath) === rootDirectoryPath) {
+          return coarseRootStat;
+        }
+        return stat(directoryPath);
+      });
+
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "later"), []);
+
+      _setWalkDirectoryStatOverrideForTesting(null);
+      _setStatOverrideForTesting(async (targetPath) => {
+        if (path.resolve(targetPath) === rootDirectoryPath) {
+          return { mtimeMs: coarseRootStat.mtimeMs };
+        }
+        return stat(targetPath);
+      });
+
+      await writeFile(path.join(workspacePath, "later.ts"), "", "utf8");
+      fakeNow = scanFinishedAt + DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "later"),
+        ["later.ts"],
+        "scan 完了時刻では guard 窓外でも scan 開始時刻基準なら再走査されること",
+      );
+    } finally {
+      _setWalkDirectoryStatOverrideForTesting(null);
+      _setStatOverrideForTesting(null);
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("coarse mtime の同一タイムスライスに入った .gitignore 更新でも TTL 超過時に再走査される", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-coarse-ignore-"));
     let fakeNow = Math.floor(Date.now() / 1_000) * 1_000 + 500;
@@ -680,6 +739,66 @@ describe("workspace-file-search", () => {
         await searchWorkspaceFilePaths(workspacePath, "secret"),
         ["secret.ts"],
         "ignore file stat が同じ mtime を返しても coarse mtime guard により再走査されること",
+      );
+    } finally {
+      _setIgnoreFileStatOverrideForTesting(null);
+      _setStatOverrideForTesting(null);
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("long scan で scan 完了が guard 窓外でも coarse mtime の .gitignore 更新を見逃さない", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-coarse-ignore-long-scan-"));
+    const scanStartedAt = Math.floor(Date.now() / 1_000) * 1_000 + 500;
+    const scanFinishedAt = scanStartedAt + 2_500;
+    let fakeNow = scanFinishedAt;
+    let nowCallCount = 0;
+    _setNowOverrideForTesting(() => {
+      if (nowCallCount++ === 0) {
+        return scanStartedAt;
+      }
+      if (nowCallCount === 2) {
+        return scanFinishedAt;
+      }
+      return fakeNow;
+    });
+
+    try {
+      await writeFile(path.join(workspacePath, "secret.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, ".gitignore"), "secret.ts\n", "utf8");
+
+      const gitignorePath = path.resolve(path.join(workspacePath, ".gitignore"));
+      const realGitignoreStat = await stat(gitignorePath);
+      const coarseGitignoreStat = {
+        ...realGitignoreStat,
+        mtimeMs: Math.floor(scanStartedAt / 1_000) * 1_000,
+      } as Stats;
+
+      _setIgnoreFileStatOverrideForTesting(async (filePath) => {
+        if (path.resolve(filePath) === gitignorePath) {
+          return coarseGitignoreStat;
+        }
+        return stat(filePath);
+      });
+
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), []);
+
+      _setIgnoreFileStatOverrideForTesting(null);
+      _setStatOverrideForTesting(async (targetPath) => {
+        if (path.resolve(targetPath) === gitignorePath) {
+          return { mtimeMs: coarseGitignoreStat.mtimeMs };
+        }
+        return stat(targetPath);
+      });
+
+      await writeFile(path.join(workspacePath, ".gitignore"), "# no rules\n", "utf8");
+      fakeNow = scanFinishedAt + DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "secret"),
+        ["secret.ts"],
+        "scan 完了時刻では guard 窓外でも scan 開始時刻基準なら再走査されること",
       );
     } finally {
       _setIgnoreFileStatOverrideForTesting(null);
@@ -792,6 +911,42 @@ describe("workspace-file-search", () => {
       // 再走査: exclude のルールが適用される → secret.ts が除外される
       assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), []);
     } finally {
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("absentIgnoreCandidates の stat が EACCES なら absent 扱いせず TTL 超過時に再走査する（P2 回帰: exclude stat access error）", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-p2-exclude-eacces-"));
+    let fakeNow = Date.now();
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await mkdir(path.join(workspacePath, ".git", "info"), { recursive: true });
+      await writeFile(path.join(workspacePath, "secret.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "public.ts"), "", "utf8");
+
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), ["secret.ts"]);
+
+      const excludePath = path.resolve(path.join(workspacePath, ".git", "info", "exclude"));
+      await writeFile(excludePath, "secret.ts\n", "utf8");
+
+      _setStatOverrideForTesting(async (targetPath) => {
+        if (path.resolve(targetPath) === excludePath) {
+          throw createErrnoError("EACCES");
+        }
+        return stat(targetPath);
+      });
+
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "secret"),
+        [],
+        "不存在以外の stat 失敗では安全側に倒して再走査し、exclude を反映すること",
+      );
+    } finally {
+      _setStatOverrideForTesting(null);
       _setNowOverrideForTesting(null);
       clearWorkspaceFileIndex(workspacePath);
       await rm(workspacePath, { recursive: true, force: true });
