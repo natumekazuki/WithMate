@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -9,6 +10,8 @@ import {
   _getQueryCacheSizeForTesting,
   _setNowOverrideForTesting,
   _setQueryCacheMaxEntriesForTesting,
+  _setQueryCacheMaxMatchedIndicesForTesting,
+  _setStatOverrideForTesting,
   _getContentVersionForTesting,
   _getValidatedAtForTesting,
   clearWorkspaceFileIndex,
@@ -403,6 +406,42 @@ describe("workspace-file-search", () => {
     }
   });
 
+  it("一致件数が大きい broad query は query cache に保持しない（review: broad query memory guard）", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-querycache-broad-"));
+    _setQueryCacheMaxMatchedIndicesForTesting(2);
+
+    try {
+      await writeFile(path.join(workspacePath, "alpha.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "alpine.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "beta.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, "gamma.ts"), "", "utf8");
+
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "a"), [
+        "alpha.ts",
+        "alpine.ts",
+        "gamma.ts",
+        "beta.ts",
+      ]);
+      assert.equal(
+        _getQueryCacheSizeForTesting(workspacePath),
+        0,
+        "一致件数が上限を超える broad query はキャッシュされないこと",
+      );
+
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "alp"), ["alpha.ts", "alpine.ts"]);
+      assert.equal(
+        _getQueryCacheSizeForTesting(workspacePath),
+        1,
+        "上限以下の narrow query は従来どおりキャッシュされること",
+      );
+      assert.deepEqual(_getQueryCacheKeysForTesting(workspacePath), ["alp"]);
+    } finally {
+      _setQueryCacheMaxMatchedIndicesForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("clearWorkspaceFileIndex でクエリキャッシュも破棄される", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-cache-clear-"));
 
@@ -544,6 +583,107 @@ describe("workspace-file-search", () => {
       fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
       assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), ["secret.ts"]);
     } finally {
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("coarse mtime の同一タイムスライスに入ったディレクトリ更新でも TTL 超過時に再走査される", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-coarse-dir-"));
+    let fakeNow = Math.floor(Date.now() / 1_000) * 1_000 + 500;
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await writeFile(path.join(workspacePath, "existing.ts"), "", "utf8");
+
+      const rootDirectoryPath = path.resolve(workspacePath);
+      const realRootStat = await stat(rootDirectoryPath);
+      const coarseRootStat = {
+        ...realRootStat,
+        mtimeMs: Math.floor(fakeNow / 1_000) * 1_000,
+      } as Stats;
+
+      _setWalkDirectoryStatOverrideForTesting(async (directoryPath) => {
+        if (path.resolve(directoryPath) === rootDirectoryPath) {
+          return coarseRootStat;
+        }
+        return stat(directoryPath);
+      });
+
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "later"), []);
+
+      _setWalkDirectoryStatOverrideForTesting(null);
+      _setStatOverrideForTesting(async (targetPath) => {
+        if (path.resolve(targetPath) === rootDirectoryPath) {
+          return { mtimeMs: coarseRootStat.mtimeMs };
+        }
+        return stat(targetPath);
+      });
+
+      await writeFile(path.join(workspacePath, "later.ts"), "", "utf8");
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "later"), [], "TTL 超過前は既存キャッシュが返ること");
+
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "later"),
+        ["later.ts"],
+        "検証 stat が同じ mtime を返しても coarse mtime guard により再走査されること",
+      );
+    } finally {
+      _setWalkDirectoryStatOverrideForTesting(null);
+      _setStatOverrideForTesting(null);
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("coarse mtime の同一タイムスライスに入った .gitignore 更新でも TTL 超過時に再走査される", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-coarse-ignore-"));
+    let fakeNow = Math.floor(Date.now() / 1_000) * 1_000 + 500;
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await writeFile(path.join(workspacePath, "secret.ts"), "", "utf8");
+      await writeFile(path.join(workspacePath, ".gitignore"), "secret.ts\n", "utf8");
+
+      const gitignorePath = path.resolve(path.join(workspacePath, ".gitignore"));
+      const realGitignoreStat = await stat(gitignorePath);
+      const coarseGitignoreStat = {
+        ...realGitignoreStat,
+        mtimeMs: Math.floor(fakeNow / 1_000) * 1_000,
+      } as Stats;
+
+      _setIgnoreFileStatOverrideForTesting(async (filePath) => {
+        if (path.resolve(filePath) === gitignorePath) {
+          return coarseGitignoreStat;
+        }
+        return stat(filePath);
+      });
+
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), []);
+
+      _setIgnoreFileStatOverrideForTesting(null);
+      _setStatOverrideForTesting(async (targetPath) => {
+        if (path.resolve(targetPath) === gitignorePath) {
+          return { mtimeMs: coarseGitignoreStat.mtimeMs };
+        }
+        return stat(targetPath);
+      });
+
+      await writeFile(path.join(workspacePath, ".gitignore"), "# no rules\n", "utf8");
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "secret"), [], "TTL 超過前は既存キャッシュが返ること");
+
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "secret"),
+        ["secret.ts"],
+        "ignore file stat が同じ mtime を返しても coarse mtime guard により再走査されること",
+      );
+    } finally {
+      _setIgnoreFileStatOverrideForTesting(null);
+      _setStatOverrideForTesting(null);
       _setNowOverrideForTesting(null);
       clearWorkspaceFileIndex(workspacePath);
       await rm(workspacePath, { recursive: true, force: true });

@@ -10,8 +10,10 @@ import {
 const DEFAULT_SEARCH_LIMIT = 20;
 export const DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS = 30_000;
 export const DEFAULT_WORKSPACE_QUERY_CACHE_MAX_ENTRIES = 200;
+export const DEFAULT_WORKSPACE_QUERY_CACHE_MAX_MATCHED_INDICES = 512;
 export const DEFAULT_UNREADABLE_IGNORE_RETRY_INTERVAL_MS = DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS * 10;
 export const DEFAULT_PERSISTENT_DIRECTORY_RETRY_INTERVAL_MS = DEFAULT_UNREADABLE_IGNORE_RETRY_INTERVAL_MS;
+export const DEFAULT_COARSE_MTIME_GUARD_MS = 2_000;
 
 // ---------------------------------------------------------------------------
 // テスト用時刻注入
@@ -19,6 +21,10 @@ export const DEFAULT_PERSISTENT_DIRECTORY_RETRY_INTERVAL_MS = DEFAULT_UNREADABLE
 
 let _nowFn: (() => number) | null = null;
 let _queryCacheMaxEntriesOverride: number | null = null;
+let _queryCacheMaxMatchedIndicesOverride: number | null = null;
+let _statOverrideForTesting:
+  | ((targetPath: string) => Promise<{ mtimeMs: number }> | { mtimeMs: number })
+  | null = null;
 
 /** テスト専用: Date.now() の差し替えを設定する。null で元に戻す。 */
 export function _setNowOverrideForTesting(fn: (() => number) | null): void {
@@ -54,12 +60,35 @@ export function _setQueryCacheMaxEntriesForTesting(value: number | null): void {
   _queryCacheMaxEntriesOverride = value;
 }
 
+/** テスト専用: cache 対象とする matchedIndices 件数上限の差し替え。null で既定値へ戻す。 */
+export function _setQueryCacheMaxMatchedIndicesForTesting(value: number | null): void {
+  _queryCacheMaxMatchedIndicesOverride = value;
+}
+
+/** テスト専用: TTL 検証で使う stat を差し替える。 */
+export function _setStatOverrideForTesting(
+  fn: ((targetPath: string) => Promise<{ mtimeMs: number }> | { mtimeMs: number }) | null,
+): void {
+  _statOverrideForTesting = fn;
+}
+
 function getNow(): number {
   return _nowFn !== null ? _nowFn() : Date.now();
 }
 
 function getWorkspaceQueryCacheMaxEntries(): number {
   return Math.max(_queryCacheMaxEntriesOverride ?? DEFAULT_WORKSPACE_QUERY_CACHE_MAX_ENTRIES, 1);
+}
+
+function getWorkspaceQueryCacheMaxMatchedIndices(): number {
+  return Math.max(_queryCacheMaxMatchedIndicesOverride ?? DEFAULT_WORKSPACE_QUERY_CACHE_MAX_MATCHED_INDICES, 1);
+}
+
+async function statPath(targetPath: string): Promise<{ mtimeMs: number }> {
+  if (_statOverrideForTesting !== null) {
+    return await _statOverrideForTesting(targetPath);
+  }
+  return stat(targetPath);
 }
 
 // ---------------------------------------------------------------------------
@@ -184,6 +213,16 @@ function getCachedQueryEntry(
   return undefined;
 }
 
+function isWithinCoarseMtimeGuardWindow(recordedMtimeMs: number, scannedAt: number): boolean {
+  if (!Number.isInteger(recordedMtimeMs)) {
+    return false;
+  }
+  if (recordedMtimeMs % 1_000 !== 0) {
+    return false;
+  }
+  return Math.abs(scannedAt - recordedMtimeMs) < DEFAULT_COARSE_MTIME_GUARD_MS;
+}
+
 /**
  * visitedDirectories の mtime、ignoreFiles の mtime、absentIgnoreCandidates の新規出現を
  * 現在のファイルシステムと照合する。
@@ -200,10 +239,15 @@ async function checkStructureUnchanged(index: WorkspaceFileIndex, now = getNow()
     }
   }
   for (const [relativeDir, cachedMtime] of index.visitedDirectories) {
+    if (isWithinCoarseMtimeGuardWindow(cachedMtime, index.scannedAt)) {
+      // coarse mtime な FS では、scan と同一タイムスライス内の追加・削除を見逃し得る。
+      // 直近 bucket の mtime は 1 回だけ保守的に再走査して stale index を解消する。
+      return false;
+    }
     const absoluteDir =
       relativeDir === "" ? index.workspacePath : path.join(index.workspacePath, relativeDir);
     try {
-      const s = await stat(absoluteDir);
+      const s = await statPath(absoluteDir);
       if (s.mtimeMs !== cachedMtime) {
         return false;
       }
@@ -224,8 +268,12 @@ async function checkStructureUnchanged(index: WorkspaceFileIndex, now = getNow()
       }
       continue;
     }
+    if (isWithinCoarseMtimeGuardWindow(ignoreFileState.mtimeMs, index.scannedAt)) {
+      // .gitignore 内容更新が coarse mtime の同一タイムスライスに入ると mtime 比較だけでは見逃す。
+      return false;
+    }
     try {
-      const s = await stat(ignoreFilePath);
+      const s = await statPath(ignoreFilePath);
       if (s.mtimeMs !== ignoreFileState.mtimeMs) {
         return false;
       }
@@ -334,6 +382,10 @@ function findBestCachedBase(wqCache: Map<string, QueryCacheEntry>, query: string
   return undefined;
 }
 
+function shouldCacheMatchedIndices(matchedIndices: number[]): boolean {
+  return matchedIndices.length <= getWorkspaceQueryCacheMaxMatchedIndices();
+}
+
 function sortAndSliceResults(
   entries: FileEntry[],
   matchedIndices: number[],
@@ -386,7 +438,9 @@ export async function searchWorkspaceFilePaths(workspacePath: string, query: str
   // prefix narrowing: 最長キャッシュ済みプレフィックスを起点に絞り込む
   const baseIndices = findBestCachedBase(wqCache, normalizedQuery, index.contentVersion);
   const matchedIndices = searchEntries(index.entries, normalizedQuery, baseIndices);
-  cacheQueryResult(wqCache, normalizedQuery, { matchedIndices, contentVersion: index.contentVersion });
+  if (shouldCacheMatchedIndices(matchedIndices)) {
+    cacheQueryResult(wqCache, normalizedQuery, { matchedIndices, contentVersion: index.contentVersion });
+  }
 
   return sortAndSliceResults(index.entries, matchedIndices, normalizedQuery, limit);
 }
