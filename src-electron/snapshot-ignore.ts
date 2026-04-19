@@ -1,4 +1,4 @@
-import type { Stats } from "node:fs";
+import type { Dirent, Stats } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -11,6 +11,11 @@ import ignore, { type Ignore } from "ignore";
 let _afterIgnoreFileReadHook: ((ignoreFilePath: string) => Promise<void> | void) | null = null;
 let _ignoreFileReadOverrideForTesting: ((ignoreFilePath: string) => Promise<string> | string) | null = null;
 let _ignoreFileStatOverrideForTesting: ((ignoreFilePath: string) => Promise<Stats> | Stats) | null = null;
+let _walkDirectoryStatOverrideForTesting: ((directoryPath: string) => Promise<Stats> | Stats) | null =
+  null;
+let _walkDirectoryReadOverrideForTesting:
+  | ((directoryPath: string) => Promise<Dirent[]> | Dirent[])
+  | null = null;
 
 /**
  * テスト専用: createIgnoreMatcher 内の readFile 直後に割り込む hook を設定する。
@@ -40,6 +45,20 @@ export function _setIgnoreFileStatOverrideForTesting(
   override: ((ignoreFilePath: string) => Promise<Stats> | Stats) | null,
 ): void {
   _ignoreFileStatOverrideForTesting = override;
+}
+
+/** テスト専用: walkWorkspace 内の directory stat を差し替える。 */
+export function _setWalkDirectoryStatOverrideForTesting(
+  override: ((directoryPath: string) => Promise<Stats> | Stats) | null,
+): void {
+  _walkDirectoryStatOverrideForTesting = override;
+}
+
+/** テスト専用: walkWorkspace 内の readdir を差し替える。 */
+export function _setWalkDirectoryReadOverrideForTesting(
+  override: ((directoryPath: string) => Promise<Dirent[]> | Dirent[]) | null,
+): void {
+  _walkDirectoryReadOverrideForTesting = override;
 }
 
 export const DEFAULT_SNAPSHOT_MAX_FILE_BYTES = 1024 * 1024;
@@ -78,6 +97,8 @@ export type SnapshotScanResult = {
   ignoredFiles: string[];
   /** workspace root 相対ディレクトリパス（root = ""）→ mtimeMs。構造変更検知に使用 */
   visitedDirectories: Map<string, number>;
+  /** stat / readdir の一時失敗があり、TTL 超過後に再走査が必要な directory 一覧 */
+  directoriesNeedingRescan: Set<string>;
   /**
    * 走査時に確認した ignore ファイルの絶対パス → 状態。
    * .gitignore / .git/info/exclude 等の再検証に使用。
@@ -204,6 +225,22 @@ async function statIgnoreFile(ignoreFilePath: string): Promise<Stats> {
   }
 
   return stat(ignoreFilePath);
+}
+
+async function statWalkDirectory(directoryPath: string): Promise<Stats> {
+  if (_walkDirectoryStatOverrideForTesting !== null) {
+    return await _walkDirectoryStatOverrideForTesting(directoryPath);
+  }
+
+  return stat(directoryPath);
+}
+
+async function readWalkDirectoryEntries(directoryPath: string): Promise<Dirent[]> {
+  if (_walkDirectoryReadOverrideForTesting !== null) {
+    return await _walkDirectoryReadOverrideForTesting(directoryPath);
+  }
+
+  return readdir(directoryPath, { withFileTypes: true });
 }
 
 async function readIgnoreFileText(ignoreFilePath: string): Promise<string> {
@@ -470,20 +507,22 @@ async function walkWorkspace(
   const includedFiles: string[] = [];
   const ignoredFiles: string[] = [];
   const visitedDirectories = new Map<string, number>();
+  const directoriesNeedingRescan = new Set<string>();
 
   async function walk(directory: string, activeMatchers: IgnoreMatcher[]): Promise<void> {
+    const relDir = path.relative(workspaceDirectory, directory).replace(/\\/g, "/");
     try {
-      const dirStat = await stat(directory);
-      const relDir = path.relative(workspaceDirectory, directory).replace(/\\/g, "/");
+      const dirStat = await statWalkDirectory(directory);
       visitedDirectories.set(relDir, dirStat.mtimeMs);
     } catch {
-      // mtime 取得失敗時は記録をスキップ
+      directoriesNeedingRescan.add(relDir);
     }
 
     let entries;
     try {
-      entries = await readdir(directory, { withFileTypes: true });
+      entries = await readWalkDirectoryEntries(directory);
     } catch {
+      directoriesNeedingRescan.add(relDir);
       return;
     }
 
@@ -525,7 +564,14 @@ async function walkWorkspace(
   }
 
   await walk(workspaceDirectory, initialMatchers);
-  return { includedFiles, ignoredFiles, visitedDirectories, ignoreFiles, absentIgnoreCandidates };
+  return {
+    includedFiles,
+    ignoredFiles,
+    visitedDirectories,
+    directoriesNeedingRescan,
+    ignoreFiles,
+    absentIgnoreCandidates,
+  };
 }
 
 export async function scanWorkspacePaths(rootDirectory: string): Promise<SnapshotScanResult> {

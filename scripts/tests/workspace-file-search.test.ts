@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -20,6 +20,8 @@ import {
   _setAfterIgnoreFileReadHookForTesting,
   _setIgnoreFileReadOverrideForTesting,
   _setIgnoreFileStatOverrideForTesting,
+  _setWalkDirectoryReadOverrideForTesting,
+  _setWalkDirectoryStatOverrideForTesting,
 } from "../../src-electron/snapshot-ignore.js";
 
 function createErrnoError(code: string): NodeJS.ErrnoException {
@@ -115,6 +117,121 @@ describe("workspace-file-search", () => {
       fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
       assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "added"), ["src/added.ts"]);
     } finally {
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("サブディレクトリ readdir の一時失敗で欠落した subtree は TTL 超過後に再走査され、復旧後は通常 TTL 延命へ戻る", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-readdir-failure-"));
+    let fakeNow = Date.now();
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await mkdir(path.join(workspacePath, "generated"), { recursive: true });
+      await writeFile(path.join(workspacePath, "generated", "fresh.ts"), "", "utf8");
+
+      const generatedDirectoryPath = path.resolve(path.join(workspacePath, "generated"));
+      let shouldFailReaddir = true;
+      _setWalkDirectoryReadOverrideForTesting(async (directoryPath) => {
+        if (path.resolve(directoryPath) === generatedDirectoryPath && shouldFailReaddir) {
+          shouldFailReaddir = false;
+          throw createErrnoError("EBUSY");
+        }
+        return readdir(directoryPath, { withFileTypes: true });
+      });
+
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "fresh"),
+        [],
+        "readdir 失敗中は subtree が欠落したまま index されること",
+      );
+      const versionAfterPartialScan = _getContentVersionForTesting(workspacePath);
+      assert.ok(versionAfterPartialScan !== undefined);
+
+      _setWalkDirectoryReadOverrideForTesting(null);
+
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "fresh"),
+        [],
+        "TTL 超過前は不完全 index がそのまま返ること",
+      );
+
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "fresh"), ["generated/fresh.ts"]);
+      const versionAfterRecovery = _getContentVersionForTesting(workspacePath);
+      assert.notEqual(
+        versionAfterRecovery,
+        versionAfterPartialScan,
+        "readdir 失敗を記録した scan は TTL 超過後に必ず再走査されること",
+      );
+
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "fresh"), ["generated/fresh.ts"]);
+      assert.equal(
+        _getContentVersionForTesting(workspacePath),
+        versionAfterRecovery,
+        "clean scan 後は通常の TTL 延命に戻ること",
+      );
+    } finally {
+      _setWalkDirectoryReadOverrideForTesting(null);
+      _setNowOverrideForTesting(null);
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("サブディレクトリ stat の一時失敗でも監視が外れず、TTL 超過後に配下追加を検出できる", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-stat-failure-"));
+    let fakeNow = Date.now();
+    _setNowOverrideForTesting(() => fakeNow);
+
+    try {
+      await mkdir(path.join(workspacePath, "src"), { recursive: true });
+      await writeFile(path.join(workspacePath, "src", "original.ts"), "", "utf8");
+
+      const srcDirectoryPath = path.resolve(path.join(workspacePath, "src"));
+      let shouldFailStat = true;
+      _setWalkDirectoryStatOverrideForTesting(async (directoryPath) => {
+        if (path.resolve(directoryPath) === srcDirectoryPath && shouldFailStat) {
+          shouldFailStat = false;
+          throw createErrnoError("EACCES");
+        }
+        return stat(directoryPath);
+      });
+
+      assert.deepEqual(
+        await searchWorkspaceFilePaths(workspacePath, "original"),
+        ["src/original.ts"],
+        "stat 失敗時でも readdir が成功すれば既存ファイルは index されること",
+      );
+
+      _setWalkDirectoryStatOverrideForTesting(null);
+      const versionAfterStatFailureScan = _getContentVersionForTesting(workspacePath);
+      assert.ok(versionAfterStatFailureScan !== undefined);
+
+      await writeFile(path.join(workspacePath, "src", "added.ts"), "", "utf8");
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "added"), [], "TTL 超過前は既存キャッシュが返ること");
+
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "added"), ["src/added.ts"]);
+      const versionAfterRecovery = _getContentVersionForTesting(workspacePath);
+      assert.notEqual(
+        versionAfterRecovery,
+        versionAfterStatFailureScan,
+        "stat 一時失敗を記録した directory は TTL 超過後に再走査されること",
+      );
+
+      fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "added"), ["src/added.ts"]);
+      assert.equal(
+        _getContentVersionForTesting(workspacePath),
+        versionAfterRecovery,
+        "clean scan 後は通常の TTL 延命に戻ること",
+      );
+    } finally {
+      _setWalkDirectoryStatOverrideForTesting(null);
       _setNowOverrideForTesting(null);
       clearWorkspaceFileIndex(workspacePath);
       await rm(workspacePath, { recursive: true, force: true });

@@ -84,6 +84,8 @@ type WorkspaceFileIndex = {
    * TTL 超過後の構造変更検知に使う。
    */
   visitedDirectories: Map<string, number>;
+  /** scan 中の directory stat / readdir 一時失敗。TTL 超過後は再走査を強制する。 */
+  directoriesNeedingRescan: Set<string>;
   /**
    * scan 時に確認した ignore ファイルの絶対パス → 状態。
    * .gitignore / .git/info/exclude の再検証に使う。
@@ -180,6 +182,9 @@ function getCachedQueryEntry(
  * すべて一致・不変であれば true（変化なし）、1 つでも異なれば false（変化あり）を返す。
  */
 async function checkStructureUnchanged(index: WorkspaceFileIndex, now = getNow()): Promise<boolean> {
+  if (index.directoriesNeedingRescan.size > 0) {
+    return false;
+  }
   for (const [relativeDir, cachedMtime] of index.visitedDirectories) {
     const absoluteDir =
       relativeDir === "" ? index.workspacePath : path.join(index.workspacePath, relativeDir);
@@ -266,6 +271,7 @@ async function getWorkspaceFileIndex(workspacePath: string): Promise<WorkspaceFi
     workspacePath: normalizedWorkspacePath,
     entries,
     visitedDirectories: scanned.visitedDirectories,
+    directoriesNeedingRescan: scanned.directoriesNeedingRescan,
     ignoreFiles: scanned.ignoreFiles,
     absentIgnoreCandidates: scanned.absentIgnoreCandidates,
     scannedAt,
