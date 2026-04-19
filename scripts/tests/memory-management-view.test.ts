@@ -175,4 +175,92 @@ describe("memory-management-view", () => {
     assert.equal(filtered?.sessionMemories[0]?.sessionId, "session-2");
     assert.equal(filtered?.projectMemories[0]?.entries[0]?.id, "project-entry-2");
   });
+
+  it("project category selector でも group 順序を visible entry 基準で保つ", () => {
+    const filtered = buildFilteredMemoryManagementSnapshot({
+      sessionMemories: [],
+      projectMemories: [
+        {
+          scope: {
+            id: "project-scope-a",
+            projectType: "directory",
+            projectKey: "directory:C:/repo-a",
+            workspacePath: "C:/repo-a",
+            gitRoot: null,
+            gitRemoteUrl: null,
+            displayName: "repo-a",
+            createdAt: "2026-04-01T09:00:00.000Z",
+            updatedAt: "2026-04-05T10:00:00.000Z",
+          },
+          entries: [
+            {
+              id: "project-entry-a-1",
+              projectScopeId: "project-scope-a",
+              sourceSessionId: "session-1",
+              category: "decision",
+              title: "decision",
+              detail: "detail",
+              keywords: [],
+              evidence: [],
+              createdAt: "2026-04-01T09:00:00.000Z",
+              updatedAt: "2026-04-05T10:00:00.000Z",
+              lastUsedAt: null,
+            },
+            {
+              id: "project-entry-a-2",
+              projectScopeId: "project-scope-a",
+              sourceSessionId: "session-1",
+              category: "context",
+              title: "context-old",
+              detail: "detail",
+              keywords: [],
+              evidence: [],
+              createdAt: "2026-04-01T09:00:00.000Z",
+              updatedAt: "2026-04-01T10:00:00.000Z",
+              lastUsedAt: null,
+            },
+          ],
+        },
+        {
+          scope: {
+            id: "project-scope-b",
+            projectType: "directory",
+            projectKey: "directory:C:/repo-b",
+            workspacePath: "C:/repo-b",
+            gitRoot: null,
+            gitRemoteUrl: null,
+            displayName: "repo-b",
+            createdAt: "2026-04-01T09:00:00.000Z",
+            updatedAt: "2026-04-03T10:00:00.000Z",
+          },
+          entries: [
+            {
+              id: "project-entry-b-1",
+              projectScopeId: "project-scope-b",
+              sourceSessionId: "session-2",
+              category: "context",
+              title: "context-new",
+              detail: "detail",
+              keywords: [],
+              evidence: [],
+              createdAt: "2026-04-01T09:00:00.000Z",
+              updatedAt: "2026-04-03T10:00:00.000Z",
+              lastUsedAt: null,
+            },
+          ],
+        },
+      ],
+      characterMemories: [],
+    }, {
+      ...DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
+      domain: "project",
+      projectCategory: "context",
+      sort: "updated-desc",
+    });
+
+    assert.deepEqual(
+      filtered?.projectMemories.map((group) => group.scope.id),
+      ["project-scope-b", "project-scope-a"],
+    );
+  });
 });

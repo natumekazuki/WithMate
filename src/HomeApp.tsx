@@ -11,7 +11,12 @@ import { DEFAULT_APPROVAL_MODE } from "./approval-mode.js";
 import {
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
-import type { MemoryManagementSnapshot } from "./memory-management-state.js";
+import {
+  removeCharacterMemoryEntryFromSnapshot,
+  removeProjectMemoryEntryFromSnapshot,
+  removeSessionMemoryFromSnapshot,
+  type MemoryManagementSnapshot,
+} from "./memory-management-state.js";
 import {
   buildHomeLaunchProjection,
 } from "./home-launch-projection.js";
@@ -514,8 +519,9 @@ export default function HomeApp() {
     try {
       setMemoryManagementBusyTarget(`session:${sessionId}`);
       await withmateApi.deleteSessionMemory(sessionId);
-      const snapshot = await withmateApi.getMemoryManagementSnapshot();
-      setMemoryManagementSnapshot(snapshot);
+      setMemoryManagementSnapshot((current) => current
+        ? removeSessionMemoryFromSnapshot(current, sessionId)
+        : current);
       setMemoryManagementFeedback("Session Memory を削除したよ。");
     } catch (error) {
       setMemoryManagementFeedback(error instanceof Error ? error.message : "Session Memory の削除に失敗したよ。");
@@ -534,8 +540,9 @@ export default function HomeApp() {
     try {
       setMemoryManagementBusyTarget(`project:${entryId}`);
       await withmateApi.deleteProjectMemoryEntry(entryId);
-      const snapshot = await withmateApi.getMemoryManagementSnapshot();
-      setMemoryManagementSnapshot(snapshot);
+      setMemoryManagementSnapshot((current) => current
+        ? removeProjectMemoryEntryFromSnapshot(current, entryId)
+        : current);
       setMemoryManagementFeedback("Project Memory を削除したよ。");
     } catch (error) {
       setMemoryManagementFeedback(error instanceof Error ? error.message : "Project Memory の削除に失敗したよ。");
@@ -554,8 +561,9 @@ export default function HomeApp() {
     try {
       setMemoryManagementBusyTarget(`character:${entryId}`);
       await withmateApi.deleteCharacterMemoryEntry(entryId);
-      const snapshot = await withmateApi.getMemoryManagementSnapshot();
-      setMemoryManagementSnapshot(snapshot);
+      setMemoryManagementSnapshot((current) => current
+        ? removeCharacterMemoryEntryFromSnapshot(current, entryId)
+        : current);
       setMemoryManagementFeedback("Character Memory を削除したよ。");
     } catch (error) {
       setMemoryManagementFeedback(error instanceof Error ? error.message : "Character Memory の削除に失敗したよ。");
