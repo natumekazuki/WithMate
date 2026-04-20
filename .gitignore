@@ -6,4 +6,3 @@ dist-electron/
 release/
 tmp/
 build/provider-binaries/
-build/icon.svg
