@@ -79,18 +79,20 @@
 ### アーカイブ状態（Archive-Ready State）
 - **Commit 2**: プラン移動コミット
   - 実行: `git mv docs/plans/20260421-audit-log-live-persistence docs/plans/archive/2026/04/`
-  - ハッシュ: `[実行後に記録]`
+  - ハッシュ: `1dc29abc4e22d993d2a1f7ceed28fa5e19f78777`
   - メッセージ: `chore(plan): 監査ログライブ永続化計画をアーカイブ`
 
 ### ロールバック情報（Rollback Target）
-- **Commit 2ハッシュ**: `[実行後に記録]`
-- **ロールバックコマンド**: `git reset --hard [Commit 2 hash]~1`
+- **Commit 2ハッシュ**: `1dc29abc4e22d993d2a1f7ceed28fa5e19f78777`
+- **ロールバック目標**: `c48db533e47d6c9ee38b7f19eac5b3c7ee10c9a0`（Commit 2の1つ前）
+- **ロールバックコマンド**: `git reset --hard c48db533e47d6c9ee38b7f19eac5b3c7ee10c9a0`
 - **説明**: このコミットのひとつ前の状態に戻すことで、アーカイブ前の状態に復帰可能
 
 ### Commit 3: ロールバック記録更新
 - **実行内容**: アーカイブ済みプラン内にロールバックターゲット情報を記録
 - **ハッシュ**: `[実行後に記録]`
 - **メッセージ**: `chore(plan): ロールバック記録を更新`
+- **ロールバック目標コミット**: `c48db533e47d6c9ee38b7f19eac5b3c7ee10c9a0`
 
 ---
 
