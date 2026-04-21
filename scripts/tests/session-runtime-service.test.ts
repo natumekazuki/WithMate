@@ -122,6 +122,20 @@ function createPartialResult(overrides?: Partial<RunSessionTurnResult>): RunSess
   };
 }
 
+function createLiveRunState(overrides?: Partial<LiveSessionRunState>): LiveSessionRunState {
+  return {
+    sessionId: overrides?.sessionId ?? "session-1",
+    threadId: overrides?.threadId ?? "",
+    assistantText: overrides?.assistantText ?? "",
+    steps: overrides?.steps ?? [],
+    backgroundTasks: overrides?.backgroundTasks ?? [],
+    usage: overrides?.usage ?? null,
+    errorMessage: overrides?.errorMessage ?? "",
+    approvalRequest: overrides?.approvalRequest ?? null,
+    elicitationRequest: overrides?.elicitationRequest ?? null,
+  };
+}
+
 describe("SessionRuntimeService stale retry helpers", () => {
   it("stale classifier は narrow な thread / session 系だけを対象にする", () => {
     assert.equal(isRetryableStaleThreadSessionError(new Error("thread not found")), true);
@@ -175,17 +189,39 @@ describe("SessionRuntimeService", () => {
       invalidateSessionThread() {},
       invalidateAllSessionThreads() {},
       async runSessionTurn(input, onProgress) {
-        await onProgress?.({
+        await onProgress?.(createLiveRunState({
           sessionId: input.session.id,
-          threadId: "",
-          assistantText: "",
-          steps: [],
-          backgroundTasks: [],
-          usage: null,
-          errorMessage: "",
-          approvalRequest: null,
-          elicitationRequest: null,
-        });
+        }));
+        await onProgress?.(createLiveRunState({
+          sessionId: input.session.id,
+          threadId: "thread-progress",
+          assistantText: "途中経過だよ。",
+          steps: [
+            {
+              id: "step-1",
+              type: "command_execution",
+              summary: "npm test",
+              details: "実行中",
+              status: "in_progress",
+            },
+          ],
+          usage: { inputTokens: 4, cachedInputTokens: 0, outputTokens: 1 },
+        }));
+        setTimeout(() => {
+          void onProgress?.(createLiveRunState({
+            sessionId: input.session.id,
+            threadId: "thread-late",
+            assistantText: "late progress",
+            steps: [
+              {
+                id: "step-late",
+                type: "command_execution",
+                summary: "late step",
+                status: "in_progress",
+              },
+            ],
+          }));
+        }, 0);
         return {
           threadId: "thread-1",
           assistantText: "完了したよ。",
@@ -278,13 +314,20 @@ describe("SessionRuntimeService", () => {
     });
 
     const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(result.runState, "idle");
     assert.equal(storedSessions.length, 2);
     assert.equal(storedSessions[0]?.runState, "running");
     assert.equal(storedSessions[1]?.runState, "idle");
     assert.equal(storedSessions[1]?.messages.at(-1)?.text, "完了したよ。");
+    assert.equal(auditUpdates.length, 2);
+    assert.equal(auditUpdates[0]?.phase, "running");
+    assert.equal(auditUpdates[0]?.assistantText, "途中経過だよ。");
+    assert.equal(auditUpdates[0]?.threadId, "thread-progress");
+    assert.equal(auditUpdates[0]?.operations[0]?.summary, "npm test");
     assert.equal(auditUpdates.at(-1)?.phase, "completed");
+    assert.equal(auditUpdates.at(-1)?.assistantText, "完了したよ。");
     assert.equal(
       auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "remainingPercentage")?.value,
       "76%",
@@ -334,7 +377,35 @@ describe("SessionRuntimeService", () => {
         canceledSessionId = sessionId;
       },
       invalidateAllSessionThreads() {},
-      async runSessionTurn() {
+      async runSessionTurn(input, onProgress) {
+        await onProgress?.(createLiveRunState({
+          sessionId: input.session.id,
+          threadId: "thread-before-cancel",
+          assistantText: "途中まで進んだよ。",
+          steps: [
+            {
+              id: "step-1",
+              type: "command_execution",
+              summary: "npm run build",
+              status: "in_progress",
+            },
+          ],
+        }));
+        setTimeout(() => {
+          void onProgress?.(createLiveRunState({
+            sessionId: input.session.id,
+            threadId: "thread-late",
+            assistantText: "late cancel progress",
+            steps: [
+              {
+                id: "step-late",
+                type: "command_execution",
+                summary: "late cancel step",
+                status: "in_progress",
+              },
+            ],
+          }));
+        }, 0);
         throw new ProviderTurnError("cancelled", partialResult, true);
       },
     };
@@ -400,10 +471,15 @@ describe("SessionRuntimeService", () => {
     });
 
     const result = await service.runSessionTurn(baseSession.id, { userMessage: "お願いします" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(result.runState, "idle");
     assert.match(result.messages.at(-1)?.text ?? "", /キャンセル/);
+    assert.equal(auditUpdates.length, 2);
+    assert.equal(auditUpdates[0]?.phase, "running");
+    assert.equal(auditUpdates[0]?.assistantText, "途中まで進んだよ。");
     assert.equal(auditUpdates.at(-1)?.phase, "canceled");
+    assert.equal(auditUpdates.at(-1)?.assistantText, "");
     assert.equal(canceledSessionId, baseSession.id);
   });
 
@@ -1151,5 +1227,173 @@ describe("SessionRuntimeService", () => {
     assert.match(result.messages.at(-1)?.text ?? "", /resource not found/);
     assert.deepEqual(invalidated, []);
     assert.equal(storedSessions.length, 2);
+  });
+
+  it("live run の progress を running audit log へ段階的に update する", async () => {
+    const session = createSession();
+    const auditUpdates: UpdateAuditLogInput[] = [];
+    const liveStates: Array<LiveSessionRunState | null> = [];
+    let progressUpdateCount = 0;
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn(_input, onProgress) {
+        // 複数回の progress update をシミュレート
+        await onProgress?.({
+          sessionId: session.id,
+          threadId: "",
+          assistantText: "",
+          steps: [],
+          backgroundTasks: [],
+          usage: null,
+          errorMessage: "",
+          approvalRequest: null,
+          elicitationRequest: null,
+        });
+
+        await onProgress?.({
+          sessionId: session.id,
+          threadId: "thread-1",
+          assistantText: "処理中...",
+          steps: [
+            { id: "step-1", type: "command_execution", summary: "npm test", status: "in_progress" },
+          ],
+          backgroundTasks: [],
+          usage: { inputTokens: 50, cachedInputTokens: 0, outputTokens: 0 },
+          errorMessage: "",
+          approvalRequest: null,
+          elicitationRequest: null,
+        });
+
+        await onProgress?.({
+          sessionId: session.id,
+          threadId: "thread-1",
+          assistantText: "処理中... テスト完了",
+          steps: [
+            { id: "step-1", type: "command_execution", summary: "npm test", details: "OK", status: "completed" },
+          ],
+          backgroundTasks: [],
+          usage: { inputTokens: 50, cachedInputTokens: 0, outputTokens: 80 },
+          errorMessage: "",
+          approvalRequest: null,
+          elicitationRequest: null,
+        });
+
+        return {
+          threadId: "thread-1",
+          assistantText: "完了したよ。",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          transportPayload: null,
+          operations: [{ type: "command_execution", summary: "npm test", details: "OK" }],
+          rawItemsJson: "[]",
+          usage: { inputTokens: 50, cachedInputTokens: 0, outputTokens: 100 },
+        };
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog(_id, entry) {
+        auditUpdates.push(entry);
+        if (entry.phase === "running") {
+          progressUpdateCount += 1;
+        }
+      },
+      setLiveSessionRun(_sessionId, state) {
+        liveStates.push(state);
+      },
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    // progress update が複数回発生したことを確認
+    assert.ok(progressUpdateCount >= 2, `progress update は 2 回以上発生すべきだが ${progressUpdateCount} 回だったよ`);
+
+    // running phase の update で assistantText / operations / usage が段階的に更新されていることを確認
+    const runningUpdates = auditUpdates.filter((entry) => entry.phase === "running");
+    assert.ok(runningUpdates.length >= 2, "running phase の update が複数回あるべきだよ");
+
+    const firstRunningUpdate = runningUpdates[0];
+    assert.ok(firstRunningUpdate, "最初の running update があるべきだよ");
+    assert.equal(firstRunningUpdate.assistantText, "処理中...");
+    assert.equal(firstRunningUpdate.operations.length, 1);
+    assert.equal(firstRunningUpdate.operations[0]?.summary, "npm test");
+    assert.deepEqual(firstRunningUpdate.usage, { inputTokens: 50, cachedInputTokens: 0, outputTokens: 0 });
+
+    const secondRunningUpdate = runningUpdates[1];
+    assert.ok(secondRunningUpdate, "2 回目の running update があるべきだよ");
+    assert.equal(secondRunningUpdate.assistantText, "処理中... テスト完了");
+    assert.equal(secondRunningUpdate.operations.length, 1);
+    assert.equal(secondRunningUpdate.operations[0]?.summary, "npm test");
+    assert.deepEqual(secondRunningUpdate.usage, { inputTokens: 50, cachedInputTokens: 0, outputTokens: 80 });
+
+    // 最終的に completed phase で update されていることを確認
+    const completedUpdate = auditUpdates.find((entry) => entry.phase === "completed");
+    assert.ok(completedUpdate, "completed phase の update があるべきだよ");
+    assert.equal(completedUpdate.assistantText, "完了したよ。");
+    assert.equal(completedUpdate.operations.length, 1);
+    assert.deepEqual(completedUpdate.usage, { inputTokens: 50, cachedInputTokens: 0, outputTokens: 100 });
   });
 });

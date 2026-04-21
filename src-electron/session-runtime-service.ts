@@ -202,6 +202,40 @@ function buildEmptyLiveSessionRunState(sessionId: string, threadId: string): Liv
   };
 }
 
+function buildLiveRunAuditOperations(state: LiveSessionRunState): AuditLogEntry["operations"] {
+  return [
+    ...state.steps.map((step) => ({
+      type: step.type,
+      summary: step.summary,
+      details: [step.status, step.details].filter((value) => typeof value === "string" && value.trim().length > 0).join("\n") || undefined,
+    })),
+    ...state.backgroundTasks.map((task) => ({
+      type: `background-${task.kind}`,
+      summary: task.title,
+      details: [task.status, task.details].filter((value) => typeof value === "string" && value.trim().length > 0).join("\n") || undefined,
+    })),
+  ];
+}
+
+function hasMeaningfulLiveRunAuditState(state: LiveSessionRunState): boolean {
+  return state.threadId.trim().length > 0
+    || state.assistantText.trim().length > 0
+    || state.steps.length > 0
+    || state.backgroundTasks.length > 0
+    || state.usage !== null
+    || state.errorMessage.trim().length > 0;
+}
+
+function buildRunningAuditProgressSignature(entry: CreateAuditLogInput): string {
+  return JSON.stringify({
+    threadId: entry.threadId,
+    assistantText: entry.assistantText,
+    operations: entry.operations,
+    usage: entry.usage,
+    errorMessage: entry.errorMessage,
+  });
+}
+
 export class SessionRuntimeService {
   private readonly inFlightSessionRuns = new Set<string>();
   private readonly sessionRunControllers = new Map<string, AbortController>();
@@ -300,7 +334,7 @@ export class SessionRuntimeService {
       backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
     });
 
-    const runningAuditLog = this.deps.createAuditLog({
+    let runningAuditEntry: CreateAuditLogInput = {
       sessionId,
       createdAt: new Date().toISOString(),
       phase: "running",
@@ -316,7 +350,10 @@ export class SessionRuntimeService {
       rawItemsJson: "[]",
       usage: null,
       errorMessage: "",
-    });
+    };
+    const runningAuditLog = this.deps.createAuditLog(runningAuditEntry);
+    let runningAuditProgressSignature = buildRunningAuditProgressSignature(runningAuditEntry);
+    let terminalAuditSettled = false;
 
     let activeRunningSession = runningSession;
     const runProviderTurn = (turnSession: Session) =>
@@ -341,11 +378,43 @@ export class SessionRuntimeService {
           this.deps.setSessionContextTelemetry(telemetry);
         },
       }, (state) => {
+        if (terminalAuditSettled) {
+          return;
+        }
+
         this.deps.setLiveSessionRun(sessionId, {
           ...state,
           approvalRequest: this.deps.getLiveSessionRun(sessionId)?.approvalRequest ?? null,
           elicitationRequest: this.deps.getLiveSessionRun(sessionId)?.elicitationRequest ?? null,
         });
+        if (!hasMeaningfulLiveRunAuditState(state)) {
+          return;
+        }
+
+        const nextRunningAuditEntry: CreateAuditLogInput = {
+          ...runningAuditEntry,
+          phase: "running",
+          provider: activeRunningSession.provider,
+          model: activeRunningSession.model,
+          reasoningEffort: activeRunningSession.reasoningEffort,
+          approvalMode: activeRunningSession.approvalMode,
+          threadId: state.threadId.trim() || runningAuditEntry.threadId || activeRunningSession.threadId,
+          assistantText: state.assistantText.trim() ? state.assistantText : runningAuditEntry.assistantText,
+          operations: (() => {
+            const operations = buildLiveRunAuditOperations(state);
+            return operations.length > 0 ? operations : runningAuditEntry.operations;
+          })(),
+          usage: state.usage ?? runningAuditEntry.usage,
+          errorMessage: state.errorMessage.trim() ? state.errorMessage : runningAuditEntry.errorMessage,
+        };
+        const nextSignature = buildRunningAuditProgressSignature(nextRunningAuditEntry);
+        if (nextSignature === runningAuditProgressSignature) {
+          return;
+        }
+
+        this.deps.updateAuditLog(runningAuditLog.id, nextRunningAuditEntry);
+        runningAuditEntry = nextRunningAuditEntry;
+        runningAuditProgressSignature = nextSignature;
       });
 
     try {
@@ -388,7 +457,8 @@ export class SessionRuntimeService {
       const completedAt = new Date().toISOString();
       const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
 
-      this.deps.updateAuditLog(runningAuditLog.id, {
+      terminalAuditSettled = true;
+      const completedAuditEntry: CreateAuditLogInput = {
         sessionId,
         createdAt: runningAuditLog.createdAt,
         phase: "completed",
@@ -414,7 +484,9 @@ export class SessionRuntimeService {
         rawItemsJson: result.rawItemsJson,
         usage: result.usage,
         errorMessage: "",
-      });
+      };
+      this.deps.updateAuditLog(runningAuditLog.id, completedAuditEntry);
+      runningAuditEntry = completedAuditEntry;
 
       const completedSession: Session = {
         ...activeRunningSession,
@@ -455,7 +527,8 @@ export class SessionRuntimeService {
         this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId);
       }
 
-      this.deps.updateAuditLog(runningAuditLog.id, {
+      terminalAuditSettled = true;
+      const failedAuditEntry: CreateAuditLogInput = {
         sessionId,
         createdAt: runningAuditLog.createdAt,
         phase: canceled ? "canceled" : "failed",
@@ -481,7 +554,9 @@ export class SessionRuntimeService {
         rawItemsJson: partialResult?.rawItemsJson ?? "[]",
         usage: partialResult?.usage ?? null,
         errorMessage: canceled ? "ユーザーがキャンセルしたよ。" : message,
-      });
+      };
+      this.deps.updateAuditLog(runningAuditLog.id, failedAuditEntry);
+      runningAuditEntry = failedAuditEntry;
 
       const fallbackNotice = canceled ? "実行をキャンセルしたよ。" : `実行に失敗したよ。\n${message}`;
       const assistantText = partialResult?.assistantText.trim()
