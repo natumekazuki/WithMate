@@ -1,4 +1,11 @@
-import type { AuditLogEntry, LiveBackgroundTask, LiveRunStep, LiveSessionRunState } from "./app-state.js";
+import type {
+  AuditLogEntry,
+  LiveApprovalRequest,
+  LiveBackgroundTask,
+  LiveElicitationRequest,
+  LiveRunStep,
+  LiveSessionRunState,
+} from "./app-state.js";
 import type { SessionBackgroundActivityState } from "./memory-state.js";
 import type { Session } from "./session-state.js";
 
@@ -47,8 +54,38 @@ function buildBackgroundTaskOperation(task: LiveBackgroundTask): AuditLogEntry["
   };
 }
 
+function buildApprovalRequestOperation(request: LiveApprovalRequest): AuditLogEntry["operations"][number] {
+  return {
+    type: "approval_request",
+    summary: request.title,
+    details: [
+      "status:pending",
+      `kind:${request.kind}`,
+      request.summary,
+      request.details,
+      request.warning ? `warning:${request.warning}` : "",
+    ].filter((value) => typeof value === "string" && value.trim().length > 0).join("\n") || undefined,
+  };
+}
+
+function buildElicitationRequestOperation(request: LiveElicitationRequest): AuditLogEntry["operations"][number] {
+  return {
+    type: "elicitation_request",
+    summary: request.message,
+    details: [
+      "status:pending",
+      `mode:${request.mode}`,
+      request.source ? `source:${request.source}` : "",
+      request.url ? `url:${request.url}` : "",
+      ...request.fields.map((field) => `${field.required ? "required" : "optional"}:${field.title}`),
+    ].filter((value) => typeof value === "string" && value.trim().length > 0).join("\n") || undefined,
+  };
+}
+
 function buildLiveRunOperations(liveRun: LiveSessionRunState): AuditLogEntry["operations"] {
   return [
+    ...(liveRun.approvalRequest ? [buildApprovalRequestOperation(liveRun.approvalRequest)] : []),
+    ...(liveRun.elicitationRequest ? [buildElicitationRequestOperation(liveRun.elicitationRequest)] : []),
     ...liveRun.steps.map(buildStepOperation),
     ...liveRun.backgroundTasks.map(buildBackgroundTaskOperation),
   ];
@@ -87,27 +124,29 @@ function buildSyntheticRunningAuditLog(
   }
 
   const latestEntry = persistedEntries[0] ?? null;
-  const minId = persistedEntries.reduce((currentMin, entry) => Math.min(currentMin, entry.id), 0);
+  const syntheticId = latestEntry
+    ? persistedEntries.slice(1).reduce((currentMin, entry) => Math.min(currentMin, entry.id), latestEntry.id) - 1
+    : -1;
 
   return {
-    id: minId - 1,
+    id: syntheticId,
     sessionId: selectedSession.id,
     createdAt: selectedSession.updatedAt,
     phase: "running",
-    provider: selectedSession.provider ?? latestEntry?.provider ?? "",
-    model: selectedSession.model ?? latestEntry?.model ?? "",
-    reasoningEffort: selectedSession.reasoningEffort ?? latestEntry?.reasoningEffort ?? "medium",
-    approvalMode: selectedSession.approvalMode ?? latestEntry?.approvalMode ?? "safety",
+    provider: selectedSession.provider,
+    model: selectedSession.model,
+    reasoningEffort: selectedSession.reasoningEffort,
+    approvalMode: selectedSession.approvalMode,
     threadId: liveRun.threadId.trim() || selectedSession.threadId || latestEntry?.threadId || "",
-    logicalPrompt: latestEntry?.logicalPrompt ?? {
+    logicalPrompt: {
       systemText: "",
       inputText: "",
       composedText: "",
     },
-    transportPayload: latestEntry?.transportPayload ?? null,
+    transportPayload: null,
     assistantText: liveRun.assistantText,
     operations: buildLiveRunOperations(liveRun),
-    rawItemsJson: latestEntry?.rawItemsJson ?? "[]",
+    rawItemsJson: "[]",
     usage: liveRun.usage,
     errorMessage: liveRun.errorMessage,
   };

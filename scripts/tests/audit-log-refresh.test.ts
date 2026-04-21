@@ -4,6 +4,8 @@ import { describe, it } from "node:test";
 import {
   buildNewSession,
   type AuditLogEntry,
+  type LiveApprovalRequest,
+  type LiveElicitationRequest,
   type LiveSessionRunState,
   type SessionBackgroundActivityState,
 } from "../../src/app-state.js";
@@ -227,6 +229,45 @@ describe("buildDisplayedAuditLogs", () => {
     assert.deepEqual(result[0]?.usage, { inputTokens: 20, cachedInputTokens: 0, outputTokens: 8 });
   });
 
+  it("running persisted row の operations に pending approval request を含める", () => {
+    const runningSession = {
+      ...selectedSession,
+      runState: "running" as const,
+    };
+    const approvalRequest: LiveApprovalRequest = {
+      requestId: "approval-1",
+      provider: "codex",
+      kind: "shell_command",
+      title: "コマンド実行の承認",
+      summary: "npm test を実行します。",
+      details: "scripts/tests を対象に検証します。",
+      warning: "書き込みはありません。",
+    };
+    const persistedLogs = [
+      makeAuditLog({
+        id: 10,
+        sessionId: selectedSession.id,
+        phase: "running",
+        assistantText: "承認待ち",
+      }),
+    ];
+
+    const result = buildDisplayedAuditLogs({
+      selectedSession: runningSession,
+      persistedEntries: persistedLogs,
+      liveRun: makeLiveRun({
+        sessionId: selectedSession.id,
+        approvalRequest,
+      }),
+    });
+
+    assert.equal(result[0]?.operations.length, 1);
+    assert.equal(result[0]?.operations[0]?.type, "approval_request");
+    assert.equal(result[0]?.operations[0]?.summary, "コマンド実行の承認");
+    assert.match(result[0]?.operations[0]?.details ?? "", /status:pending/);
+    assert.match(result[0]?.operations[0]?.details ?? "", /kind:shell_command/);
+  });
+
   it("session.runState が running でない時は live run があっても persisted をそのまま返す (stale live state 抑止)", () => {
     const idleSession = {
       ...selectedSession,
@@ -295,6 +336,7 @@ describe("buildDisplayedAuditLogs", () => {
     });
 
     assert.equal(result.length, 2);
+    assert.equal(result[0]?.id, 9);
     assert.equal(result[0]?.phase, "running");
     assert.equal(result[0]?.sessionId, selectedSession.id);
     assert.equal(result[0]?.assistantText, "処理中...");
@@ -302,5 +344,88 @@ describe("buildDisplayedAuditLogs", () => {
     assert.equal(result[0]?.model, selectedSession.model);
     assert.equal(result[0]?.threadId, "thread-synthetic");
     assert.equal(result[0]?.operations[0]?.summary, "src/App.tsx を更新");
+  });
+
+  it("synthetic running row の operations に pending elicitation request を含める", () => {
+    const runningSession = {
+      ...selectedSession,
+      runState: "running" as const,
+    };
+    const elicitationRequest: LiveElicitationRequest = {
+      requestId: "elicitation-1",
+      provider: "codex",
+      mode: "form",
+      message: "対象ブランチを選んでね。",
+      source: "copilot",
+      fields: [
+        {
+          name: "branch",
+          title: "対象ブランチ",
+          required: true,
+          type: "select",
+          options: [
+            { value: "main", label: "main" },
+            { value: "feature", label: "feature" },
+          ],
+        },
+      ],
+    };
+    const persistedLogs = [makeAuditLog({ id: 10, sessionId: selectedSession.id, phase: "completed" })];
+
+    const result = buildDisplayedAuditLogs({
+      selectedSession: runningSession,
+      persistedEntries: persistedLogs,
+      liveRun: makeLiveRun({
+        sessionId: selectedSession.id,
+        elicitationRequest,
+      }),
+    });
+
+    assert.equal(result[0]?.phase, "running");
+    assert.equal(result[0]?.operations.length, 1);
+    assert.equal(result[0]?.operations[0]?.type, "elicitation_request");
+    assert.equal(result[0]?.operations[0]?.summary, "対象ブランチを選んでね。");
+    assert.match(result[0]?.operations[0]?.details ?? "", /required:対象ブランチ/);
+  });
+
+  it("synthetic running row は前回 run の prompt / payload / raw items を引き継がない", () => {
+    const runningSession = {
+      ...selectedSession,
+      runState: "running" as const,
+    };
+    const persistedLogs = [
+      makeAuditLog({
+        id: 10,
+        sessionId: selectedSession.id,
+        phase: "completed",
+        logicalPrompt: {
+          systemText: "前回 system",
+          inputText: "前回 input",
+          composedText: "前回 composed",
+        },
+        transportPayload: {
+          summary: "前回 payload",
+          fields: [{ label: "path", value: "src/old.ts" }],
+        },
+        rawItemsJson: "[{\"kind\":\"previous\"}]",
+      }),
+    ];
+
+    const result = buildDisplayedAuditLogs({
+      selectedSession: runningSession,
+      persistedEntries: persistedLogs,
+      liveRun: makeLiveRun({
+        sessionId: selectedSession.id,
+        assistantText: "新しい run の progress",
+      }),
+    });
+
+    assert.deepEqual(result[0]?.logicalPrompt, {
+      systemText: "",
+      inputText: "",
+      composedText: "",
+    });
+    assert.equal(result[0]?.transportPayload, null);
+    assert.equal(result[0]?.rawItemsJson, "[]");
   });
 });

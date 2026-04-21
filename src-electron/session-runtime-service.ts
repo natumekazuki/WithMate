@@ -184,8 +184,19 @@ function shouldResetFailedSessionThread(
     return false;
   }
 
-  const candidateThreadId = (partialResult?.threadId ?? currentThreadId).trim();
+  const candidateThreadId = pickPreferredThreadId(partialResult?.threadId, currentThreadId);
   return candidateThreadId.length > 0;
+}
+
+function pickPreferredThreadId(...candidates: Array<string | null | undefined>): string {
+  for (const candidate of candidates) {
+    const normalized = candidate?.trim() ?? "";
+    if (normalized.length > 0) {
+      return normalized;
+    }
+  }
+
+  return "";
 }
 
 function buildEmptyLiveSessionRunState(sessionId: string, threadId: string): LiveSessionRunState {
@@ -204,6 +215,8 @@ function buildEmptyLiveSessionRunState(sessionId: string, threadId: string): Liv
 
 function buildLiveRunAuditOperations(state: LiveSessionRunState): AuditLogEntry["operations"] {
   return [
+    ...(state.approvalRequest ? [buildApprovalRequestAuditOperation(state.approvalRequest)] : []),
+    ...(state.elicitationRequest ? [buildElicitationRequestAuditOperation(state.elicitationRequest)] : []),
     ...state.steps.map((step) => ({
       type: step.type,
       summary: step.summary,
@@ -217,13 +230,43 @@ function buildLiveRunAuditOperations(state: LiveSessionRunState): AuditLogEntry[
   ];
 }
 
+function buildApprovalRequestAuditOperation(request: LiveApprovalRequest): AuditLogEntry["operations"][number] {
+  return {
+    type: "approval_request",
+    summary: request.title,
+    details: [
+      `status:pending`,
+      `kind:${request.kind}`,
+      request.summary,
+      request.details,
+      request.warning ? `warning:${request.warning}` : "",
+    ].filter((value) => typeof value === "string" && value.trim().length > 0).join("\n") || undefined,
+  };
+}
+
+function buildElicitationRequestAuditOperation(request: LiveElicitationRequest): AuditLogEntry["operations"][number] {
+  return {
+    type: "elicitation_request",
+    summary: request.message,
+    details: [
+      `status:pending`,
+      `mode:${request.mode}`,
+      request.source ? `source:${request.source}` : "",
+      request.url ? `url:${request.url}` : "",
+      ...request.fields.map((field) => `${field.required ? "required" : "optional"}:${field.title}`),
+    ].filter((value) => typeof value === "string" && value.trim().length > 0).join("\n") || undefined,
+  };
+}
+
 function hasMeaningfulLiveRunAuditState(state: LiveSessionRunState): boolean {
   return state.threadId.trim().length > 0
     || state.assistantText.trim().length > 0
     || state.steps.length > 0
     || state.backgroundTasks.length > 0
     || state.usage !== null
-    || state.errorMessage.trim().length > 0;
+    || state.errorMessage.trim().length > 0
+    || state.approvalRequest !== null
+    || state.elicitationRequest !== null;
 }
 
 function buildRunningAuditProgressSignature(entry: CreateAuditLogInput): string {
@@ -234,6 +277,32 @@ function buildRunningAuditProgressSignature(entry: CreateAuditLogInput): string 
     usage: entry.usage,
     errorMessage: entry.errorMessage,
   });
+}
+
+function buildRunningAuditEntry(params: {
+  sessionId: string;
+  createdAt: string;
+  session: Pick<Session, "provider" | "model" | "reasoningEffort" | "approvalMode" | "threadId">;
+  logicalPrompt: CreateAuditLogInput["logicalPrompt"];
+  threadId?: string;
+}): CreateAuditLogInput {
+  return {
+    sessionId: params.sessionId,
+    createdAt: params.createdAt,
+    phase: "running",
+    provider: params.session.provider,
+    model: params.session.model,
+    reasoningEffort: params.session.reasoningEffort,
+    approvalMode: params.session.approvalMode,
+    threadId: params.threadId ?? params.session.threadId,
+    logicalPrompt: params.logicalPrompt,
+    transportPayload: null,
+    assistantText: "",
+    operations: [],
+    rawItemsJson: "[]",
+    usage: null,
+    errorMessage: "",
+  };
 }
 
 export class SessionRuntimeService {
@@ -334,30 +403,52 @@ export class SessionRuntimeService {
       backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
     });
 
-    let runningAuditEntry: CreateAuditLogInput = {
+    let runningAuditEntry: CreateAuditLogInput = buildRunningAuditEntry({
       sessionId,
       createdAt: new Date().toISOString(),
-      phase: "running",
-      provider: runningSession.provider,
-      model: runningSession.model,
-      reasoningEffort: runningSession.reasoningEffort,
-      approvalMode: runningSession.approvalMode,
-      threadId: runningSession.threadId,
+      session: runningSession,
       logicalPrompt: promptForAudit.logicalPrompt,
-      transportPayload: null,
-      assistantText: "",
-      operations: [],
-      rawItemsJson: "[]",
-      usage: null,
-      errorMessage: "",
-    };
+    });
     const runningAuditLog = this.deps.createAuditLog(runningAuditEntry);
     let runningAuditProgressSignature = buildRunningAuditProgressSignature(runningAuditEntry);
     let terminalAuditSettled = false;
+    let liveProgressGeneration = 0;
 
     let activeRunningSession = runningSession;
-    const runProviderTurn = (turnSession: Session) =>
-      providerAdapter.runSessionTurn({
+    const syncRunningAuditFromLiveState = (nextLiveState: LiveSessionRunState) => {
+      this.deps.setLiveSessionRun(sessionId, nextLiveState);
+      if (!hasMeaningfulLiveRunAuditState(nextLiveState)) {
+        return;
+      }
+
+      const nextRunningAuditEntry: CreateAuditLogInput = {
+        ...runningAuditEntry,
+        phase: "running",
+        provider: activeRunningSession.provider,
+        model: activeRunningSession.model,
+        reasoningEffort: activeRunningSession.reasoningEffort,
+        approvalMode: activeRunningSession.approvalMode,
+        threadId: pickPreferredThreadId(nextLiveState.threadId, runningAuditEntry.threadId, activeRunningSession.threadId),
+        assistantText: nextLiveState.assistantText.trim() ? nextLiveState.assistantText : runningAuditEntry.assistantText,
+        operations: (() => {
+          const operations = buildLiveRunAuditOperations(nextLiveState);
+          return operations.length > 0 ? operations : runningAuditEntry.operations;
+        })(),
+        usage: nextLiveState.usage ?? runningAuditEntry.usage,
+        errorMessage: nextLiveState.errorMessage.trim() ? nextLiveState.errorMessage : runningAuditEntry.errorMessage,
+      };
+      const nextSignature = buildRunningAuditProgressSignature(nextRunningAuditEntry);
+      if (nextSignature === runningAuditProgressSignature) {
+        return;
+      }
+
+      this.deps.updateAuditLog(runningAuditLog.id, nextRunningAuditEntry);
+      runningAuditEntry = nextRunningAuditEntry;
+      runningAuditProgressSignature = nextSignature;
+    };
+    const runProviderTurn = (turnSession: Session) => {
+      const progressGeneration = ++liveProgressGeneration;
+      return providerAdapter.runSessionTurn({
         session: turnSession,
         sessionMemory,
         projectMemoryEntries,
@@ -367,10 +458,26 @@ export class SessionRuntimeService {
         appSettings,
         attachments: composerPreview.attachments,
         signal: runAbortController.signal,
-        onApprovalRequest: (approvalRequest) =>
-          this.deps.waitForApprovalDecision(sessionId, approvalRequest, runAbortController.signal),
-        onElicitationRequest: (elicitationRequest) =>
-          this.deps.waitForElicitationResponse(sessionId, elicitationRequest, runAbortController.signal),
+        onApprovalRequest: (approvalRequest) => {
+          const decision = this.deps.waitForApprovalDecision(sessionId, approvalRequest, runAbortController.signal);
+          const currentLiveState = this.deps.getLiveSessionRun(sessionId);
+          syncRunningAuditFromLiveState({
+            ...(currentLiveState ?? buildEmptyLiveSessionRunState(sessionId, activeRunningSession.threadId)),
+            approvalRequest,
+            elicitationRequest: currentLiveState?.elicitationRequest ?? null,
+          });
+          return decision;
+        },
+        onElicitationRequest: (elicitationRequest) => {
+          const response = this.deps.waitForElicitationResponse(sessionId, elicitationRequest, runAbortController.signal);
+          const currentLiveState = this.deps.getLiveSessionRun(sessionId);
+          syncRunningAuditFromLiveState({
+            ...(currentLiveState ?? buildEmptyLiveSessionRunState(sessionId, activeRunningSession.threadId)),
+            approvalRequest: currentLiveState?.approvalRequest ?? null,
+            elicitationRequest,
+          });
+          return response;
+        },
         onProviderQuotaTelemetry: (telemetry) => {
           this.deps.setProviderQuotaTelemetry(telemetry);
         },
@@ -378,44 +485,18 @@ export class SessionRuntimeService {
           this.deps.setSessionContextTelemetry(telemetry);
         },
       }, (state) => {
-        if (terminalAuditSettled) {
+        if (terminalAuditSettled || progressGeneration !== liveProgressGeneration) {
           return;
         }
 
-        this.deps.setLiveSessionRun(sessionId, {
+        const nextLiveState: LiveSessionRunState = {
           ...state,
           approvalRequest: this.deps.getLiveSessionRun(sessionId)?.approvalRequest ?? null,
           elicitationRequest: this.deps.getLiveSessionRun(sessionId)?.elicitationRequest ?? null,
-        });
-        if (!hasMeaningfulLiveRunAuditState(state)) {
-          return;
-        }
-
-        const nextRunningAuditEntry: CreateAuditLogInput = {
-          ...runningAuditEntry,
-          phase: "running",
-          provider: activeRunningSession.provider,
-          model: activeRunningSession.model,
-          reasoningEffort: activeRunningSession.reasoningEffort,
-          approvalMode: activeRunningSession.approvalMode,
-          threadId: state.threadId.trim() || runningAuditEntry.threadId || activeRunningSession.threadId,
-          assistantText: state.assistantText.trim() ? state.assistantText : runningAuditEntry.assistantText,
-          operations: (() => {
-            const operations = buildLiveRunAuditOperations(state);
-            return operations.length > 0 ? operations : runningAuditEntry.operations;
-          })(),
-          usage: state.usage ?? runningAuditEntry.usage,
-          errorMessage: state.errorMessage.trim() ? state.errorMessage : runningAuditEntry.errorMessage,
         };
-        const nextSignature = buildRunningAuditProgressSignature(nextRunningAuditEntry);
-        if (nextSignature === runningAuditProgressSignature) {
-          return;
-        }
-
-        this.deps.updateAuditLog(runningAuditLog.id, nextRunningAuditEntry);
-        runningAuditEntry = nextRunningAuditEntry;
-        runningAuditProgressSignature = nextSignature;
+        syncRunningAuditFromLiveState(nextLiveState);
       });
+    };
 
     try {
       let result: RunSessionTurnResult | null = null;
@@ -436,6 +517,7 @@ export class SessionRuntimeService {
           }
 
           didInternalRetry = true;
+          liveProgressGeneration += 1;
           this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId);
           if (activeRunningSession.threadId) {
             activeRunningSession = this.deps.upsertSession({
@@ -448,6 +530,15 @@ export class SessionRuntimeService {
             ...buildEmptyLiveSessionRunState(sessionId, ""),
             backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
           });
+          runningAuditEntry = buildRunningAuditEntry({
+            sessionId,
+            createdAt: runningAuditLog.createdAt,
+            session: activeRunningSession,
+            logicalPrompt: promptForAudit.logicalPrompt,
+            threadId: "",
+          });
+          runningAuditProgressSignature = buildRunningAuditProgressSignature(runningAuditEntry);
+          this.deps.updateAuditLog(runningAuditLog.id, runningAuditEntry);
         }
       }
       if (!result) {
@@ -513,7 +604,12 @@ export class SessionRuntimeService {
       const canceled = providerTurnError ? providerTurnError.canceled : isCanceledRunError(error);
       const message = error instanceof Error ? error.message : String(error);
       const partialResult = providerTurnError?.partialResult;
-      const failedAuditThreadId = partialResult?.threadId ?? activeRunningSession.threadId;
+      const failedAuditThreadId = pickPreferredThreadId(
+        partialResult?.threadId,
+        runningAuditEntry.threadId,
+        this.deps.getLiveSessionRun(sessionId)?.threadId,
+        activeRunningSession.threadId,
+      );
       const shouldResetFailedThread = shouldResetFailedSessionThread(
         error,
         activeRunningSession.threadId,
