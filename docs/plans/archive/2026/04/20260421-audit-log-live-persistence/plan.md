@@ -38,14 +38,15 @@
 
 - 状態: 完了
 - Remaining: なし
-- 実装コミット: `d5e0ef4` `feat: audit log の live 永続化を追加`
-- Archive: `docs/plans/archive/2026/04/20260421-audit-log-live-persistence/` へ移動予定
+- 実装コミット: `d5e0ef447f010f5a881cbaa070947faf98d9777b` `feat: audit log の live 永続化を追加`
+- Archive: `docs/plans/archive/2026/04/20260421-audit-log-live-persistence/` へ移動済み
+- Archive commit: `f7f9612abe28feba647606db2e8feaf3cc1ae24f` `docs(plan): audit-log-live-persistenceをarchive`
 
 ## Archive Check
 
 - tier: session
-- 対象: `docs/plans/20260421-audit-log-live-persistence/`
+- 対象: `docs/plans/archive/2026/04/20260421-audit-log-live-persistence/`
 - archive 先: `docs/plans/archive/2026/04/20260421-audit-log-live-persistence/`
-- archive-ready: 準備完了
-- 実装コミット記録: `d5e0ef4` `feat: audit log の live 永続化を追加`
-- rollback target: archive commit 作成後に反映する
+- archive-ready: 完了
+- 実装コミット記録: `d5e0ef447f010f5a881cbaa070947faf98d9777b` `feat: audit log の live 永続化を追加`
+- rollback target: コードを task 完了時点へ戻す基点は `d5e0ef447f010f5a881cbaa070947faf98d9777b`。archive 移動だけを取り消す場合は `f7f9612abe28feba647606db2e8feaf3cc1ae24f^` を参照する
