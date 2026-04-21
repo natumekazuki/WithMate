@@ -59,8 +59,8 @@
 ## 実装コミット追跡セクション（Implementation Commit Tracking）
 
 ### Commit 1: 実装完了コミット
-- ハッシュ: `[実行後に記録]`
-- メッセージ: `feat(audit-log): ライブ永続化機能を実装（セッション実行時サービス、リフレッシュUI、テスト）`
+- ハッシュ: `af84e653843bb539cbab0cff9f9f22c6c5b4cc25`
+- メッセージ: `feat(audit-log): ライブ永続化機能を実装`
 - 対象ファイル:
   - src-electron/session-runtime-service.ts
   - src/audit-log-refresh.ts
