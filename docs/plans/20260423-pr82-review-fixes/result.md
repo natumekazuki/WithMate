@@ -1,0 +1,31 @@
+# Result
+
+- status: completed
+
+## Summary
+
+- `src/audit-log-refresh.ts` で running row merge 時の operations を live state 正本に切り替え、解消済み approval / elicitation pending を stale 表示しないようにした。
+- `src/live-run-audit-operations.ts` を追加し、`src/audit-log-refresh.ts` と `src-electron/session-runtime-service.ts` の live-run → audit operations 変換ロジックを共通化した。
+- `src-electron/session-runtime-service.ts` の success path で `activeRunningSession = storedCompletedSession` を反映し、backgroundTasks 保持 cleanup で completed threadId を使うようにした。
+- `scripts/tests/audit-log-refresh.test.ts` と `scripts/tests/session-runtime-service.test.ts` に回帰テストを追加し、`npm test` と `npm run build` の成功を確認した。
+- owner コメント『送信プロンプトも確定時点で記録したい』は、running audit row 作成時に logical prompt を保持している現状確認として扱い、今回も追加 slice は切らなかった。
+- docs-sync 判定として `docs/design/`、`.ai_context/`、`README.md` は更新不要と判断した。理由は internal runtime / renderer fix と test / refactor に留まり、公開仕様やユーザー導線を変更しないため。
+- main agent 観点の自己レビューでは重大な指摘は見当たらなかった。
+
+## Completion Criteria
+
+- [x] stale pending 表示の解消が `src/audit-log-refresh.ts` と `scripts/tests/audit-log-refresh.test.ts` に反映されている
+- [x] live-run → audit operations 変換ロジックの共通化が `src/audit-log-refresh.ts`、`src-electron/session-runtime-service.ts`、`src/live-run-audit-operations.ts`、関連 tests に反映されている
+- [x] success 後の `activeRunningSession` 整合修正が `src-electron/session-runtime-service.ts` と `scripts/tests/session-runtime-service.test.ts` に反映されている
+- [x] 対象 tests と自己レビューで回帰がないことを確認している
+- [x] docs-sync 判定どおり公開仕様更新不要であることを記録している
+
+## Validation
+
+- [x] `npm test`: 成功
+- [x] `npm run build`: 成功
+
+## Commits
+
+- 実装コミット: 未記録
+- rollback point: 未記録

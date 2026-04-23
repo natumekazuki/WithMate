@@ -15,6 +15,7 @@ import {
   type SessionMemory,
 } from "../src/app-state.js";
 import { type CharacterProfile } from "../src/character-state.js";
+import { buildLiveRunAuditOperations } from "../src/live-run-audit-operations.js";
 import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
 import { type Session } from "../src/session-state.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src/model-catalog.js";
@@ -210,51 +211,6 @@ function buildEmptyLiveSessionRunState(sessionId: string, threadId: string): Liv
     errorMessage: "",
     approvalRequest: null,
     elicitationRequest: null,
-  };
-}
-
-function buildLiveRunAuditOperations(state: LiveSessionRunState): AuditLogEntry["operations"] {
-  return [
-    ...(state.approvalRequest ? [buildApprovalRequestAuditOperation(state.approvalRequest)] : []),
-    ...(state.elicitationRequest ? [buildElicitationRequestAuditOperation(state.elicitationRequest)] : []),
-    ...state.steps.map((step) => ({
-      type: step.type,
-      summary: step.summary,
-      details: [step.status, step.details].filter((value) => typeof value === "string" && value.trim().length > 0).join("\n") || undefined,
-    })),
-    ...state.backgroundTasks.map((task) => ({
-      type: `background-${task.kind}`,
-      summary: task.title,
-      details: [task.status, task.details].filter((value) => typeof value === "string" && value.trim().length > 0).join("\n") || undefined,
-    })),
-  ];
-}
-
-function buildApprovalRequestAuditOperation(request: LiveApprovalRequest): AuditLogEntry["operations"][number] {
-  return {
-    type: "approval_request",
-    summary: request.title,
-    details: [
-      `status:pending`,
-      `kind:${request.kind}`,
-      request.summary,
-      request.details,
-      request.warning ? `warning:${request.warning}` : "",
-    ].filter((value) => typeof value === "string" && value.trim().length > 0).join("\n") || undefined,
-  };
-}
-
-function buildElicitationRequestAuditOperation(request: LiveElicitationRequest): AuditLogEntry["operations"][number] {
-  return {
-    type: "elicitation_request",
-    summary: request.message,
-    details: [
-      `status:pending`,
-      `mode:${request.mode}`,
-      request.source ? `source:${request.source}` : "",
-      request.url ? `url:${request.url}` : "",
-      ...request.fields.map((field) => `${field.required ? "required" : "optional"}:${field.title}`),
-    ].filter((value) => typeof value === "string" && value.trim().length > 0).join("\n") || undefined,
   };
 }
 
@@ -596,6 +552,7 @@ export class SessionRuntimeService {
       };
 
       const storedCompletedSession = this.deps.upsertSession(completedSession);
+      activeRunningSession = storedCompletedSession;
       this.deps.runSessionMemoryExtraction(storedCompletedSession, result.usage, { triggerReason: "outputTokensThreshold" });
       this.deps.runCharacterReflection(storedCompletedSession, { triggerReason: "context-growth" });
       return storedCompletedSession;

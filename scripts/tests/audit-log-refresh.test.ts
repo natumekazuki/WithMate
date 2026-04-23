@@ -268,6 +268,68 @@ describe("buildDisplayedAuditLogs", () => {
     assert.match(result[0]?.operations[0]?.details ?? "", /kind:shell_command/);
   });
 
+  it("live run で approval request が解消済みなら persisted running row の stale pending を引き継がない", () => {
+    const runningSession = {
+      ...selectedSession,
+      runState: "running" as const,
+    };
+    const persistedLogs = [
+      makeAuditLog({
+        id: 10,
+        sessionId: selectedSession.id,
+        phase: "running",
+        operations: [
+          {
+            type: "approval_request",
+            summary: "古い承認待ち",
+            details: "status:pending\nkind:shell_command",
+          },
+        ],
+      }),
+    ];
+
+    const result = buildDisplayedAuditLogs({
+      selectedSession: runningSession,
+      persistedEntries: persistedLogs,
+      liveRun: makeLiveRun({
+        sessionId: selectedSession.id,
+      }),
+    });
+
+    assert.deepEqual(result[0]?.operations, []);
+  });
+
+  it("live run で elicitation request が解消済みなら persisted running row の stale pending を引き継がない", () => {
+    const runningSession = {
+      ...selectedSession,
+      runState: "running" as const,
+    };
+    const persistedLogs = [
+      makeAuditLog({
+        id: 10,
+        sessionId: selectedSession.id,
+        phase: "running",
+        operations: [
+          {
+            type: "elicitation_request",
+            summary: "古い入力待ち",
+            details: "status:pending\nrequired:対象ブランチ",
+          },
+        ],
+      }),
+    ];
+
+    const result = buildDisplayedAuditLogs({
+      selectedSession: runningSession,
+      persistedEntries: persistedLogs,
+      liveRun: makeLiveRun({
+        sessionId: selectedSession.id,
+      }),
+    });
+
+    assert.deepEqual(result[0]?.operations, []);
+  });
+
   it("session.runState が running でない時は live run があっても persisted をそのまま返す (stale live state 抑止)", () => {
     const idleSession = {
       ...selectedSession,

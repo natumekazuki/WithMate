@@ -347,6 +347,116 @@ describe("SessionRuntimeService", () => {
     assert.equal(service.isRunInFlight(session.id), false);
   });
 
+  it("成功時に backgroundTasks を保持する finally でも completed session の threadId を使う", async () => {
+    const session = createSession({ provider: "codex", threadId: "thread-old" });
+    const storedSessions: Session[] = [];
+    const backgroundTasks = [
+      {
+        id: "bg-1",
+        kind: "shell" as const,
+        status: "running" as const,
+        title: "npm run watch",
+        details: "watch mode",
+        updatedAt: "2026-04-01T00:00:00.000Z",
+      },
+    ];
+    const liveStates: Array<LiveSessionRunState | null> = [];
+    let liveState: LiveSessionRunState | null = createLiveRunState({
+      sessionId: session.id,
+      threadId: session.threadId,
+      backgroundTasks,
+    });
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        return createPartialResult({
+          threadId: "thread-new",
+          assistantText: "完了したよ。",
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        storedSessions.push(next);
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun(_sessionId, next) {
+        liveState = next;
+        liveStates.push(next);
+      },
+      getLiveSessionRun() {
+        return liveState;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    assert.equal(result.threadId, "thread-new");
+    assert.equal(storedSessions[1]?.threadId, "thread-new");
+    assert.equal(liveStates.at(-1)?.threadId, "thread-new");
+    assert.deepEqual(liveStates.at(-1)?.backgroundTasks, backgroundTasks);
+  });
+
   it("provider failure 時は error session を保存し、cancel 時は idle へ戻す", async () => {
     const baseSession = createSession();
     const storedSessions: Session[] = [];
@@ -1998,5 +2108,113 @@ describe("SessionRuntimeService", () => {
     assert.equal(completedUpdate.assistantText, "完了したよ。");
     assert.equal(completedUpdate.operations.length, 1);
     assert.deepEqual(completedUpdate.usage, { inputTokens: 50, cachedInputTokens: 0, outputTokens: 100 });
+  });
+
+  it("success 後に backgroundTasks を保持しても completed threadId を live run へ残す", async () => {
+    const session = createSession({ provider: "codex", threadId: "thread-stale" });
+    const liveStates: Array<LiveSessionRunState | null> = [];
+    let liveState: LiveSessionRunState | null = createLiveRunState({
+      sessionId: session.id,
+      threadId: session.threadId,
+      backgroundTasks: [
+        {
+          id: "task-1",
+          kind: "shell",
+          status: "running",
+          title: "バックグラウンド処理",
+          details: "継続中",
+          updatedAt: "2026-04-21T10:00:00.000Z",
+        },
+      ],
+    });
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        return createPartialResult({
+          threadId: "thread-completed",
+          assistantText: "完了したよ。",
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun(_sessionId, state) {
+        liveState = state;
+        liveStates.push(state);
+      },
+      getLiveSessionRun() {
+        return liveState;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    assert.equal(result.threadId, "thread-completed");
+    assert.ok(liveStates.at(-1));
+    assert.equal(liveStates.at(-1)?.threadId, "thread-completed");
+    assert.equal(liveStates.at(-1)?.backgroundTasks.length, 1);
+    assert.equal(liveStates.at(-1)?.backgroundTasks[0]?.id, "task-1");
   });
 });

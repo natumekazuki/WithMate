@@ -1,11 +1,8 @@
 import type {
   AuditLogEntry,
-  LiveApprovalRequest,
-  LiveBackgroundTask,
-  LiveElicitationRequest,
-  LiveRunStep,
   LiveSessionRunState,
 } from "./app-state.js";
+import { buildLiveRunAuditOperations } from "./live-run-audit-operations.js";
 import type { SessionBackgroundActivityState } from "./memory-state.js";
 import type { Session } from "./session-state.js";
 
@@ -36,66 +33,11 @@ function serializeBackgroundActivity(activity: AuditLogRefreshActivity): string 
   return `${activity.kind}:${activity.status}:${activity.updatedAt}`;
 }
 
-function buildStepOperation(step: LiveRunStep): AuditLogEntry["operations"][number] {
-  const details = [step.status, step.details].filter((value) => typeof value === "string" && value.trim().length > 0).join("\n");
-  return {
-    type: step.type,
-    summary: step.summary,
-    details: details || undefined,
-  };
-}
-
-function buildBackgroundTaskOperation(task: LiveBackgroundTask): AuditLogEntry["operations"][number] {
-  const details = [task.status, task.details].filter((value) => typeof value === "string" && value.trim().length > 0).join("\n");
-  return {
-    type: `background-${task.kind}`,
-    summary: task.title,
-    details: details || undefined,
-  };
-}
-
-function buildApprovalRequestOperation(request: LiveApprovalRequest): AuditLogEntry["operations"][number] {
-  return {
-    type: "approval_request",
-    summary: request.title,
-    details: [
-      "status:pending",
-      `kind:${request.kind}`,
-      request.summary,
-      request.details,
-      request.warning ? `warning:${request.warning}` : "",
-    ].filter((value) => typeof value === "string" && value.trim().length > 0).join("\n") || undefined,
-  };
-}
-
-function buildElicitationRequestOperation(request: LiveElicitationRequest): AuditLogEntry["operations"][number] {
-  return {
-    type: "elicitation_request",
-    summary: request.message,
-    details: [
-      "status:pending",
-      `mode:${request.mode}`,
-      request.source ? `source:${request.source}` : "",
-      request.url ? `url:${request.url}` : "",
-      ...request.fields.map((field) => `${field.required ? "required" : "optional"}:${field.title}`),
-    ].filter((value) => typeof value === "string" && value.trim().length > 0).join("\n") || undefined,
-  };
-}
-
-function buildLiveRunOperations(liveRun: LiveSessionRunState): AuditLogEntry["operations"] {
-  return [
-    ...(liveRun.approvalRequest ? [buildApprovalRequestOperation(liveRun.approvalRequest)] : []),
-    ...(liveRun.elicitationRequest ? [buildElicitationRequestOperation(liveRun.elicitationRequest)] : []),
-    ...liveRun.steps.map(buildStepOperation),
-    ...liveRun.backgroundTasks.map(buildBackgroundTaskOperation),
-  ];
-}
-
 // persisted audit log の running row があれば、live run state を merge して最新化する。
 // late running update (persisted が既に terminal に更新済みなのに live state が残っている) から
 // 最終 state を守るため、このマージは persisted が running の時だけ行う。
 function mergeRunningAuditLogEntry(entry: AuditLogEntry, liveRun: LiveSessionRunState): AuditLogEntry {
-  const operations = buildLiveRunOperations(liveRun);
+  const operations = buildLiveRunAuditOperations(liveRun);
   const assistantText = liveRun.assistantText.trim();
   const errorMessage = liveRun.errorMessage.trim();
   const threadId = liveRun.threadId.trim();
@@ -105,7 +47,7 @@ function mergeRunningAuditLogEntry(entry: AuditLogEntry, liveRun: LiveSessionRun
     phase: "running",
     threadId: threadId || entry.threadId,
     assistantText: assistantText || entry.assistantText,
-    operations: operations.length > 0 ? operations : entry.operations,
+    operations,
     usage: liveRun.usage ?? entry.usage,
     errorMessage: errorMessage || entry.errorMessage,
   };
@@ -145,7 +87,7 @@ function buildSyntheticRunningAuditLog(
     },
     transportPayload: null,
     assistantText: liveRun.assistantText,
-    operations: buildLiveRunOperations(liveRun),
+    operations: buildLiveRunAuditOperations(liveRun),
     rawItemsJson: "[]",
     usage: liveRun.usage,
     errorMessage: liveRun.errorMessage,
