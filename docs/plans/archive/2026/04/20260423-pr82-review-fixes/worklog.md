@@ -7,3 +7,4 @@
 - 2026-04-23: `npm test` と `npm run build` を実行し、変更後の test / build が成功することを確認した。
 - 2026-04-23: docs-sync を確認し、`docs/design/`、`.ai_context/`、`README.md` は更新不要と判断した。理由は internal runtime / renderer fix と test / refactor に留まり、公開仕様やユーザー導線を変更しないため。
 - 2026-04-23: main agent 観点の自己レビューでは重大な指摘は見当たらなかった。
+- 2026-04-23: 実装コミット `1d67ba0`（`1d67ba02835bd4607dba0f12782c33a3b9127e9e` / `fix(audit-log): PR #82 review 指摘を反映する`）を作成した。

@@ -27,5 +27,13 @@
 
 ## Commits
 
-- 実装コミット: 未記録
+- 実装コミット: `1d67ba02835bd4607dba0f12782c33a3b9127e9e` `fix(audit-log): PR #82 review 指摘を反映する`
 - rollback point: 未記録
+
+## Archive Status
+
+- archive-ready: 完了
+- archive 状態: archived
+- worklog 最終確認: 完了
+- questions 最終確認: 質問なし
+- archive 先: docs/plans/archive/2026/04/20260423-pr82-review-fixes/

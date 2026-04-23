@@ -79,3 +79,10 @@
 - 理由:
   - 変更対象は internal runtime / renderer fix と test / refactor に留まるため
   - 公開仕様やユーザー導線を変更しないため
+
+## Archive Check
+
+- tier: repo
+- 対象: docs/plans/archive/2026/04/20260423-pr82-review-fixes/
+- archive 先: docs/plans/archive/2026/04/20260423-pr82-review-fixes/
+- archive-ready: 完了
