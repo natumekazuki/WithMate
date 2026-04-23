@@ -1,6 +1,6 @@
 # Result
 
-- status: in_progress
+- status: completed
 
 ## Summary
 
@@ -9,7 +9,9 @@
 - run 開始時の carry-over `backgroundTasks` を running audit にも同期し、progress なし completed でも `background-*` を terminal row に残すよう補強した。`approval_request` / `elicitation_request` も completed row の historical trace として保持する。
 - `scripts/tests/session-runtime-service.test.ts` に、同一 summary の `command_execution` 重複保持、progress なし completed の `elicitation_request` 保持、既存 `backgroundTasks` の completed audit log 残存を確認する回帰テストを追加した。
 - 追加 review fix 反映後の final full validation として `npm test` と `npm run build` を再実行し、重複 operation 保持 / carry-over `backgroundTasks` / `elicitation_request` trace を含む修正後も test / build とも成功した。
-- docs-sync 最終判定は `docs/design/` / `README.md` 更新不要、`.ai_context/` は repo 内に存在しないため追加更新不要のままとした。commit / archive は未実施のため、本 task は `in_progress` を維持する。
+- docs-sync 最終判定は `docs/design/` / `README.md` 更新不要、`.ai_context/` は repo 内に存在しないため追加更新不要のままとした。
+- 実装コミット `01e7205e6cc17f1d9b71e62dcfeea66d6bebaa3f`（`fix(audit-log): terminal audit completeness を回復する`）を作成し、archive コミット `a74772e68495f6cbfed7407c15ac5a573253b69f`（`docs(plan): terminal audit completeness を archive する`）を記録した。
+- rollback point は archive コミット `a74772e68495f6cbfed7407c15ac5a573253b69f` に設定し、plan archive と復帰地点の追跡を完了した。
 
 ## Completion Criteria
 
@@ -19,8 +21,8 @@
 - [x] 回帰テストが追加または更新されている
 - [x] 検証と docs-sync 最終判定が完了している
 - [x] 自己レビューが完了している
-- [ ] commit 記録が完了している
-- [ ] archive 記録が完了している
+- [x] commit 記録が完了している
+- [x] archive 記録が完了している
 
 ## Validation
 
@@ -33,12 +35,14 @@
 
 ## Commits
 
-- 未作成
+- 実装コミット: `01e7205e6cc17f1d9b71e62dcfeea66d6bebaa3f` `fix(audit-log): terminal audit completeness を回復する`
+- archive コミット: `a74772e68495f6cbfed7407c15ac5a573253b69f` `docs(plan): terminal audit completeness を archive する`
+- rollback point: `a74772e68495f6cbfed7407c15ac5a573253b69f` `docs(plan): terminal audit completeness を archive する`
 
 ## Archive Status
 
-- archive-ready: 未完了
-- archive 状態: working
-- worklog 最終確認: 未完了
+- archive-ready: 完了
+- archive 状態: archived
+- worklog 最終確認: 完了
 - questions 最終確認: 質問なし
 - archive 先: docs/plans/archive/2026/04/20260423-terminal-audit-completeness/

@@ -72,6 +72,6 @@
 ## Archive Check
 
 - tier: repo
-- 対象: docs/plans/20260423-terminal-audit-completeness/
+- 対象: docs/plans/archive/2026/04/20260423-terminal-audit-completeness/
 - archive 先: docs/plans/archive/2026/04/20260423-terminal-audit-completeness/
-- archive-ready: 未完了
+- archive-ready: 完了

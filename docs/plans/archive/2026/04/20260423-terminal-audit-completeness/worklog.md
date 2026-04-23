@@ -11,3 +11,5 @@
 - 2026-04-23: `scripts/tests/session-runtime-service.test.ts` に、completed row で同じ summary の `command_execution` を重複保持する test、`elicitation_request` が progress なし completed でも残る test、既存 `backgroundTasks` が progress 無し完了でも completed audit log に履歴を残す test を追加した。
 - 2026-04-23: review fix 後の focused revalidation として `npx tsx --test scripts/tests/session-runtime-service.test.ts` を再実行し、22/22 pass を確認した。続けて `npm run build` を再実行し、成功した。
 - 2026-04-23: 追加 review fix 反映後の final full validation として `npm test` と `npm run build` を再実行し、重複 operation 保持 / carry-over `backgroundTasks` / `elicitation_request` trace を含む修正後も双方成功した。
+- 2026-04-23: 実装コミット `01e7205`（`01e7205e6cc17f1d9b71e62dcfeea66d6bebaa3f` / `fix(audit-log): terminal audit completeness を回復する`）を作成した。
+- 2026-04-23: archive コミット `a74772e`（`a74772e68495f6cbfed7407c15ac5a573253b69f` / `docs(plan): terminal audit completeness を archive する`）を作成し、rollback point は同コミット `a74772e` とした。
