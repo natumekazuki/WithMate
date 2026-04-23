@@ -28,7 +28,8 @@
 ## Commits
 
 - 実装コミット: `1d67ba02835bd4607dba0f12782c33a3b9127e9e` `fix(audit-log): PR #82 review 指摘を反映する`
-- rollback point: 未記録
+- archive コミット: `d5b15d6329cb5267f152602c4ce7e5a4eb712594` `docs(plan): PR #82 review fixes を archive する`
+- rollback point: `d5b15d6329cb5267f152602c4ce7e5a4eb712594` `docs(plan): PR #82 review fixes を archive する`
 
 ## Archive Status
 
