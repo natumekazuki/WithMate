@@ -261,6 +261,80 @@ function buildRunningAuditEntry(params: {
   };
 }
 
+function hasNonEmptyAssistantText(value: string | null | undefined): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function hasNonEmptyRawItemsJson(value: string | null | undefined): value is string {
+  const normalized = value?.trim() ?? "";
+  return normalized.length > 0 && normalized !== "[]";
+}
+
+function buildAuditOperationMergeKey(operation: CreateAuditLogInput["operations"][number]): string {
+  return `${operation.type}\u0000${operation.summary}`;
+}
+
+function mergeTerminalAuditOperations(
+  baseOperations: CreateAuditLogInput["operations"],
+  terminalOperations: CreateAuditLogInput["operations"] | null | undefined,
+): CreateAuditLogInput["operations"] {
+  if (!terminalOperations || terminalOperations.length === 0) {
+    return baseOperations;
+  }
+
+  const absorbedOperationCounts = new Map<string, number>();
+  for (const operation of terminalOperations) {
+    const key = buildAuditOperationMergeKey(operation);
+    absorbedOperationCounts.set(key, (absorbedOperationCounts.get(key) ?? 0) + 1);
+  }
+
+  return [
+    ...terminalOperations,
+    ...baseOperations.filter((operation) => {
+      const key = buildAuditOperationMergeKey(operation);
+      const absorbedCount = absorbedOperationCounts.get(key) ?? 0;
+      if (absorbedCount <= 0) {
+        return true;
+      }
+
+      absorbedOperationCounts.set(key, absorbedCount - 1);
+      return false;
+    }),
+  ];
+}
+
+function buildTerminalAuditEntry(params: {
+  baseEntry: CreateAuditLogInput;
+  phase: CreateAuditLogInput["phase"];
+  session: Pick<Session, "provider" | "model" | "reasoningEffort" | "approvalMode">;
+  threadId?: string | null;
+  logicalPrompt?: CreateAuditLogInput["logicalPrompt"];
+  transportPayload?: CreateAuditLogInput["transportPayload"];
+  assistantText?: string | null;
+  operations?: CreateAuditLogInput["operations"] | null;
+  rawItemsJson?: string | null;
+  usage?: CreateAuditLogInput["usage"];
+  errorMessage: string;
+}): CreateAuditLogInput {
+  const { baseEntry } = params;
+  return {
+    ...baseEntry,
+    phase: params.phase,
+    provider: params.session.provider,
+    model: params.session.model,
+    reasoningEffort: params.session.reasoningEffort,
+    approvalMode: params.session.approvalMode,
+    threadId: pickPreferredThreadId(params.threadId, baseEntry.threadId),
+    logicalPrompt: params.logicalPrompt ?? baseEntry.logicalPrompt,
+    transportPayload: params.transportPayload ?? baseEntry.transportPayload,
+    assistantText: hasNonEmptyAssistantText(params.assistantText) ? params.assistantText : baseEntry.assistantText,
+    operations: mergeTerminalAuditOperations(baseEntry.operations, params.operations),
+    rawItemsJson: hasNonEmptyRawItemsJson(params.rawItemsJson) ? params.rawItemsJson : baseEntry.rawItemsJson,
+    usage: params.usage ?? baseEntry.usage,
+    errorMessage: params.errorMessage,
+  };
+}
+
 export class SessionRuntimeService {
   private readonly inFlightSessionRuns = new Set<string>();
   private readonly sessionRunControllers = new Map<string, AbortController>();
@@ -354,10 +428,11 @@ export class SessionRuntimeService {
     this.inFlightSessionRuns.add(sessionId);
     const runAbortController = new AbortController();
     this.sessionRunControllers.set(sessionId, runAbortController);
-    this.deps.setLiveSessionRun(sessionId, {
+    const initialLiveState: LiveSessionRunState = {
       ...buildEmptyLiveSessionRunState(sessionId, runningSession.threadId),
       backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
-    });
+    };
+    this.deps.setLiveSessionRun(sessionId, initialLiveState);
 
     let runningAuditEntry: CreateAuditLogInput = buildRunningAuditEntry({
       sessionId,
@@ -402,6 +477,7 @@ export class SessionRuntimeService {
       runningAuditEntry = nextRunningAuditEntry;
       runningAuditProgressSignature = nextSignature;
     };
+    syncRunningAuditFromLiveState(initialLiveState);
     const runProviderTurn = (turnSession: Session) => {
       const progressGeneration = ++liveProgressGeneration;
       return providerAdapter.runSessionTurn({
@@ -505,15 +581,11 @@ export class SessionRuntimeService {
       const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
 
       terminalAuditSettled = true;
-      const completedAuditEntry: CreateAuditLogInput = {
-        sessionId,
-        createdAt: runningAuditLog.createdAt,
+      const completedAuditEntry = buildTerminalAuditEntry({
+        baseEntry: runningAuditEntry,
         phase: "completed",
-        provider: activeRunningSession.provider,
-        model: activeRunningSession.model,
-        reasoningEffort: activeRunningSession.reasoningEffort,
-        approvalMode: activeRunningSession.approvalMode,
-        threadId: result.threadId ?? activeRunningSession.threadId,
+        session: activeRunningSession,
+        threadId: pickPreferredThreadId(result.threadId, activeRunningSession.threadId),
         logicalPrompt: result.logicalPrompt,
         transportPayload: appendTransportPayloadFields(
           appendQuotaTelemetryToTransportPayload(
@@ -531,7 +603,7 @@ export class SessionRuntimeService {
         rawItemsJson: result.rawItemsJson,
         usage: result.usage,
         errorMessage: "",
-      };
+      });
       this.deps.updateAuditLog(runningAuditLog.id, completedAuditEntry);
       runningAuditEntry = completedAuditEntry;
 
@@ -553,7 +625,9 @@ export class SessionRuntimeService {
 
       const storedCompletedSession = this.deps.upsertSession(completedSession);
       activeRunningSession = storedCompletedSession;
-      this.deps.runSessionMemoryExtraction(storedCompletedSession, result.usage, { triggerReason: "outputTokensThreshold" });
+      this.deps.runSessionMemoryExtraction(storedCompletedSession, completedAuditEntry.usage, {
+        triggerReason: "outputTokensThreshold",
+      });
       this.deps.runCharacterReflection(storedCompletedSession, { triggerReason: "context-growth" });
       return storedCompletedSession;
     } catch (error: unknown) {
@@ -581,14 +655,10 @@ export class SessionRuntimeService {
       }
 
       terminalAuditSettled = true;
-      const failedAuditEntry: CreateAuditLogInput = {
-        sessionId,
-        createdAt: runningAuditLog.createdAt,
+      const failedAuditEntry = buildTerminalAuditEntry({
+        baseEntry: runningAuditEntry,
         phase: canceled ? "canceled" : "failed",
-        provider: activeRunningSession.provider,
-        model: activeRunningSession.model,
-        reasoningEffort: activeRunningSession.reasoningEffort,
-        approvalMode: activeRunningSession.approvalMode,
+        session: activeRunningSession,
         threadId: failedAuditThreadId,
         logicalPrompt: partialResult?.logicalPrompt ?? promptForAudit.logicalPrompt,
         transportPayload: appendTransportPayloadFields(
@@ -607,7 +677,7 @@ export class SessionRuntimeService {
         rawItemsJson: partialResult?.rawItemsJson ?? "[]",
         usage: partialResult?.usage ?? null,
         errorMessage: canceled ? "ユーザーがキャンセルしたよ。" : message,
-      };
+      });
       this.deps.updateAuditLog(runningAuditLog.id, failedAuditEntry);
       runningAuditEntry = failedAuditEntry;
 
@@ -634,7 +704,7 @@ export class SessionRuntimeService {
 
       const storedFailedSession = this.deps.upsertSession(failedSession);
       activeRunningSession = storedFailedSession;
-      this.deps.runSessionMemoryExtraction(storedFailedSession, partialResult?.usage ?? null, {
+      this.deps.runSessionMemoryExtraction(storedFailedSession, failedAuditEntry.usage, {
         triggerReason: "outputTokensThreshold",
       });
       return storedFailedSession;
