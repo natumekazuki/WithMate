@@ -1,7 +1,7 @@
 # Memory Architecture
 
 - 作成日: 2026-03-12
-- 更新日: 2026-04-02
+- 更新日: 2026-04-24
 - 対象: Project Memory / Session Memory / Character Memory の責務設計
 - 関連 Issue:
   - `#3 LangGraphを使ってMemoryの永続化と共有`
@@ -168,6 +168,17 @@ current design では、次の 3 要素を retrieval score の候補として扱
 current 実装の `Project Memory` retrieval は semantic ではなく lexical までで止めるが、日本語 query を拾いやすくするために word token と 2-gram / 3-gram を併用する。
 また、`Project Memory` と `Character Memory` の retrieval では `lastUsedAt ?? updatedAt` を参照する時間減衰を score 補正として入れる。
 recent な記憶ほど少し有利にしつつ、十分 relevant な古い記憶は残せる段階的補正とする。
+
+retrieval runtime では、保存済み entry をそのまま全件 scoring せず、呼び出し内で軽量な index を作る。
+
+- entry ごとに `title` / `keywords` / `detail` の正規化済み haystack と duplicate suppression 用 fingerprint を前処理する
+- entry の前処理結果は `id` / `category` / `updatedAt` / 本文 / keywords から作る cache key で module cache に保持し、entry 内容が変わらない限り token 化を再利用する
+- word token と 2-gram / 3-gram から feature key を作り、feature key から entry candidate を引ける inverted index を構築する
+- query feature に一致した candidate だけを既存の score / coverage / threshold / time decay / duplicate suppression に通す
+- `Project Memory` は user message に直接一致する candidate を対象にし、session memory context は ranking 補助に留める
+- `Character Memory` は直近会話に一致する candidate を対象にし、user 発話 coverage の gate と recent fallback を維持する
+
+この index は永続 schema ではなく retrieval 呼び出し内の runtime index である。DB migration、FTS5、embedding store はこの段階では導入しない。
 
 このため `#14` は新しい memory type の追加ではなく、検索・再注入ロジックの改善タスクとして位置づける。  
 `Project Memory` では coding session への再注入の ranking、`Character Memory` では monologue / character update 用 retrieval ranking に効く。
@@ -484,6 +495,7 @@ current 実装では、`Session Memory` の永続化と extraction trigger、`Pr
   - scope 解決あり
   - rule-based 昇格あり
   - lexical retrieval あり
+  - retrieval runtime で feature key の inverted index を作り、candidate に絞って scoring する
   - `minimum score threshold` / `minimum user coverage` / duplicate suppression / 時間減衰あり
   - retrieval 時に `lastUsedAt` 更新あり
 - `Character Memory`
@@ -496,6 +508,7 @@ current 実装では、`Session Memory` の永続化と extraction trigger、`Pr
   - 通常更新は文脈増加ベースで実行する
   - `CharacterMemoryDelta` 保存と monologue の session `stream` 追記まで実装済み
   - monologue / reflection 向け query-based retrieval と時間減衰あり
+  - retrieval runtime で feature key の inverted index を作り、candidate に絞って scoring する
 - `Memory 管理 UI`
   - Home から開く `Memory Management Window` で `Session / Project / Character Memory` の snapshot を一覧できる
   - current scope は閲覧と delete に限定する
