@@ -135,6 +135,7 @@ describe("SessionMemoryStorage", () => {
       const firstSession = sessionStorage.upsertSession(createSession());
       const secondSession = sessionStorage.upsertSession({
         ...createSession(),
+        id: `${firstSession.id}-follow-up`,
         taskTitle: "Memory follow-up",
       });
       memoryStorage = new SessionMemoryStorage(dbPath);

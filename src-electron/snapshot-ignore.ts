@@ -103,6 +103,45 @@ export type SnapshotCaptureResult = {
   stats: SnapshotCaptureStats;
 };
 
+type SnapshotFileReadResult =
+  | { kind: "captured"; text: string }
+  | { kind: "missing" }
+  | { kind: "skipped" };
+
+type SnapshotIndexedFile = {
+  key: string;
+  absolutePath: string;
+  relativePath: string;
+  rootIndex: number;
+  mtimeMs: number;
+  size: number;
+  state: "captured" | "skipped";
+  capturedBytes: number;
+};
+
+type SnapshotRootIndex = {
+  directory: string;
+  scan: SnapshotScanResult;
+};
+
+export type WorkspaceSnapshotIndex = {
+  rootDirectories: string[];
+  limits: Required<SnapshotLimits>;
+  snapshot: WorkspaceSnapshot;
+  stats: SnapshotCaptureStats;
+  files: Map<string, SnapshotIndexedFile>;
+  roots: SnapshotRootIndex[];
+  version: number;
+};
+
+export type WorkspaceSnapshotIndexRefreshResult = {
+  index: WorkspaceSnapshotIndex;
+  snapshot: WorkspaceSnapshot;
+  stats: SnapshotCaptureStats;
+  usedFullRebuild: boolean;
+  reason: "unchanged" | "file-refresh" | "candidate-refresh" | "structure-change" | "ignore-change" | "limit";
+};
+
 export type SnapshotScanResult = {
   includedFiles: string[];
   ignoredFiles: string[];
@@ -283,6 +322,14 @@ async function statWalkDirectory(directoryPath: string): Promise<Stats> {
 async function statWalkDirectoryWithObservedAt(directoryPath: string): Promise<{ stats: Stats; observedAt: number }> {
   const stats = await statWalkDirectory(directoryPath);
   return { stats, observedAt: getNow() };
+}
+
+async function statSnapshotFile(filePath: string): Promise<Stats | null> {
+  try {
+    return await stat(filePath);
+  } catch {
+    return null;
+  }
 }
 
 type IgnoreFilePresence = "present" | "absent" | "unknown";
@@ -588,16 +635,142 @@ function isIgnoredByMatchers(targetPath: string, isDirectory: boolean, matchers:
 }
 
 async function readSnapshotTextFile(filePath: string, maxFileBytes: number): Promise<string | null> {
+  const result = await readSnapshotTextFileResult(filePath, maxFileBytes);
+  return result.kind === "captured" ? result.text : null;
+}
+
+async function readSnapshotTextFileResult(filePath: string, maxFileBytes: number): Promise<SnapshotFileReadResult> {
   try {
     const content = await readFile(filePath);
     if (content.byteLength > maxFileBytes || content.includes(0)) {
+      return { kind: "skipped" };
+    }
+
+    return { kind: "captured", text: content.toString("utf8") };
+  } catch (error) {
+    const code = getNodeErrorCode(error);
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return { kind: "missing" };
+    }
+    return { kind: "skipped" };
+  }
+}
+
+function normalizeSnapshotRootDirectories(rootDirectory: string | readonly string[]): string[] {
+  return Array.from(
+    new Map(
+      (Array.isArray(rootDirectory) ? rootDirectory : [rootDirectory])
+        .map((entry) => path.resolve(entry))
+        .map((entry) => [process.platform === "win32" ? entry.toLowerCase() : entry, entry] as const),
+    ).values(),
+  );
+}
+
+function resolveSnapshotFileTarget(rootDirectories: readonly string[], filePath: string): {
+  absolutePath: string;
+  relativePath: string;
+  rootIndex: number;
+} | null {
+  if (!path.isAbsolute(filePath)) {
+    const absolutePath = path.resolve(rootDirectories[0], filePath);
+    if (!isInsideDirectory(absolutePath, rootDirectories[0])) {
       return null;
     }
 
-    return content.toString("utf8");
-  } catch {
+    return {
+      absolutePath,
+      relativePath: path.relative(rootDirectories[0], absolutePath).replace(/\\/g, "/"),
+      rootIndex: 0,
+    };
+  }
+
+  const absolutePath = path.resolve(filePath);
+  const rootIndex = rootDirectories.findIndex((rootDirectory) => isInsideDirectory(absolutePath, rootDirectory));
+  if (rootIndex < 0) {
     return null;
   }
+
+  return {
+    absolutePath,
+    relativePath: path.relative(rootDirectories[rootIndex], absolutePath).replace(/\\/g, "/"),
+    rootIndex,
+  };
+}
+
+function createEmptySnapshotCaptureStats(): SnapshotCaptureStats {
+  return {
+    capturedFiles: 0,
+    capturedBytes: 0,
+    skippedBinaryOrOversizeFiles: 0,
+    skippedByLimitFiles: 0,
+    hitFileCountLimit: false,
+    hitTotalBytesLimit: false,
+  };
+}
+
+function normalizeSnapshotLimits(limits: SnapshotLimits = {}): Required<SnapshotLimits> {
+  return {
+    maxFileBytes: limits.maxFileBytes ?? DEFAULT_SNAPSHOT_MAX_FILE_BYTES,
+    maxFileCount: limits.maxFileCount ?? DEFAULT_SNAPSHOT_MAX_FILE_COUNT,
+    maxTotalBytes: limits.maxTotalBytes ?? DEFAULT_SNAPSHOT_MAX_TOTAL_BYTES,
+  };
+}
+
+function cloneWorkspaceSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
+  return new Map(snapshot);
+}
+
+function cloneSnapshotCaptureStats(stats: SnapshotCaptureStats): SnapshotCaptureStats {
+  return { ...stats };
+}
+
+function buildSnapshotStatsFromFiles(files: Iterable<SnapshotIndexedFile>): SnapshotCaptureStats {
+  const stats = createEmptySnapshotCaptureStats();
+
+  for (const file of files) {
+    if (file.state === "captured") {
+      stats.capturedFiles += 1;
+      stats.capturedBytes += file.capturedBytes;
+    } else {
+      stats.skippedBinaryOrOversizeFiles += 1;
+    }
+  }
+
+  return stats;
+}
+
+async function loadIgnoreMatchersForTarget(rootDirectory: string, absolutePath: string): Promise<IgnoreMatcher[]> {
+  const workspaceDirectory = path.resolve(rootDirectory);
+  const { matchers, loadedDirectories, ignoreFiles } = await loadInitialIgnoreMatchers(workspaceDirectory);
+  const targetDirectory = path.dirname(absolutePath);
+  const relativeTargetDirectory = path.relative(workspaceDirectory, targetDirectory);
+  const nestedDirectories: string[] = [];
+
+  if (relativeTargetDirectory && !relativeTargetDirectory.startsWith("..") && !path.isAbsolute(relativeTargetDirectory)) {
+    const segments = relativeTargetDirectory.split(path.sep).filter(Boolean);
+    let currentDirectory = workspaceDirectory;
+
+    for (const segment of segments) {
+      currentDirectory = path.join(currentDirectory, segment);
+      nestedDirectories.push(currentDirectory);
+    }
+  }
+
+  let activeMatchers = matchers;
+  for (const directory of nestedDirectories) {
+    if (loadedDirectories.has(directory)) {
+      continue;
+    }
+
+    const gitignorePath = path.join(directory, ".gitignore");
+    const result = await createIgnoreMatcher(directory, gitignorePath);
+    const matcher = applyIgnoreFileResult(result, directory, gitignorePath, loadedDirectories, ignoreFiles);
+    if (matcher !== null) {
+      activeMatchers = [...activeMatchers, matcher];
+    }
+  }
+
+  return activeMatchers;
 }
 
 async function walkWorkspace(
@@ -696,25 +869,11 @@ export async function captureWorkspaceSnapshot(
   rootDirectory: string | readonly string[],
   limits: SnapshotLimits = {},
 ): Promise<SnapshotCaptureResult> {
-  const maxFileBytes = limits.maxFileBytes ?? DEFAULT_SNAPSHOT_MAX_FILE_BYTES;
-  const maxFileCount = limits.maxFileCount ?? DEFAULT_SNAPSHOT_MAX_FILE_COUNT;
-  const maxTotalBytes = limits.maxTotalBytes ?? DEFAULT_SNAPSHOT_MAX_TOTAL_BYTES;
-  const rootDirectories = Array.from(
-    new Map(
-      (Array.isArray(rootDirectory) ? rootDirectory : [rootDirectory])
-        .map((entry) => path.resolve(entry))
-        .map((entry) => [process.platform === "win32" ? entry.toLowerCase() : entry, entry] as const),
-    ).values(),
-  );
+  const normalizedLimits = normalizeSnapshotLimits(limits);
+  const { maxFileBytes, maxFileCount, maxTotalBytes } = normalizedLimits;
+  const rootDirectories = normalizeSnapshotRootDirectories(rootDirectory);
   const snapshot: WorkspaceSnapshot = new Map();
-  const stats: SnapshotCaptureStats = {
-    capturedFiles: 0,
-    capturedBytes: 0,
-    skippedBinaryOrOversizeFiles: 0,
-    skippedByLimitFiles: 0,
-    hitFileCountLimit: false,
-    hitTotalBytesLimit: false,
-  };
+  const stats = createEmptySnapshotCaptureStats();
 
   for (const [index, directory] of rootDirectories.entries()) {
     await walkWorkspace(directory, async (absolutePath, relativePath) => {
@@ -746,6 +905,401 @@ export async function captureWorkspaceSnapshot(
       stats.capturedFiles += 1;
       stats.capturedBytes += nextBytes;
     });
+  }
+
+  return { snapshot, stats };
+}
+
+export async function createWorkspaceSnapshotIndex(
+  rootDirectory: string | readonly string[],
+  limits: SnapshotLimits = {},
+): Promise<WorkspaceSnapshotIndex> {
+  const normalizedLimits = normalizeSnapshotLimits(limits);
+  const rootDirectories = normalizeSnapshotRootDirectories(rootDirectory);
+  const snapshot: WorkspaceSnapshot = new Map();
+  const stats = createEmptySnapshotCaptureStats();
+  const files = new Map<string, SnapshotIndexedFile>();
+  const roots: SnapshotRootIndex[] = [];
+
+  for (const [index, directory] of rootDirectories.entries()) {
+    const scan = await walkWorkspace(directory, async (absolutePath, relativePath) => {
+      const key = normalizeSnapshotKey(directory, relativePath, index === 0);
+      const fileStats = await statSnapshotFile(absolutePath);
+      if (fileStats === null || !fileStats.isFile()) {
+        return;
+      }
+
+      if (stats.hitFileCountLimit || stats.hitTotalBytesLimit) {
+        stats.skippedByLimitFiles += 1;
+        return;
+      }
+
+      const result = await readSnapshotTextFileResult(absolutePath, normalizedLimits.maxFileBytes);
+      if (result.kind === "missing") {
+        return;
+      }
+      if (result.kind === "skipped") {
+        stats.skippedBinaryOrOversizeFiles += 1;
+        files.set(key, {
+          key,
+          absolutePath,
+          relativePath,
+          rootIndex: index,
+          mtimeMs: fileStats.mtimeMs,
+          size: fileStats.size,
+          state: "skipped",
+          capturedBytes: 0,
+        });
+        return;
+      }
+
+      const nextBytes = Buffer.byteLength(result.text, "utf8");
+      if (stats.capturedFiles >= normalizedLimits.maxFileCount) {
+        stats.hitFileCountLimit = true;
+        stats.skippedByLimitFiles += 1;
+        return;
+      }
+
+      if (stats.capturedBytes + nextBytes > normalizedLimits.maxTotalBytes) {
+        stats.hitTotalBytesLimit = true;
+        stats.skippedByLimitFiles += 1;
+        return;
+      }
+
+      snapshot.set(key, result.text);
+      stats.capturedFiles += 1;
+      stats.capturedBytes += nextBytes;
+      files.set(key, {
+        key,
+        absolutePath,
+        relativePath,
+        rootIndex: index,
+        mtimeMs: fileStats.mtimeMs,
+        size: fileStats.size,
+        state: "captured",
+        capturedBytes: nextBytes,
+      });
+    });
+    roots.push({ directory, scan });
+  }
+
+  return {
+    rootDirectories,
+    limits: normalizedLimits,
+    snapshot,
+    stats,
+    files,
+    roots,
+    version: 1,
+  };
+}
+
+async function hasIgnoreStateChanged(root: SnapshotRootIndex): Promise<boolean> {
+  for (const [ignoreFilePath, state] of root.scan.ignoreFiles) {
+    if (state.kind !== "loaded") {
+      return true;
+    }
+
+    try {
+      const current = await statIgnoreFile(ignoreFilePath);
+      if (current.mtimeMs !== state.mtimeMs) {
+        return true;
+      }
+    } catch {
+      return true;
+    }
+  }
+
+  for (const candidatePath of root.scan.absentIgnoreCandidates) {
+    const presence = await probeIgnoreFilePresence(candidatePath);
+    if (presence !== "absent") {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function hasDirectoryStructureChanged(root: SnapshotRootIndex): Promise<boolean> {
+  if (root.scan.directoriesNeedingRescan.size > 0) {
+    return true;
+  }
+
+  for (const [relativePath, observed] of root.scan.visitedDirectories) {
+    const directoryPath = relativePath ? path.join(root.directory, relativePath) : root.directory;
+    try {
+      const current = await statWalkDirectory(directoryPath);
+      if (current.mtimeMs !== observed.mtimeMs) {
+        return true;
+      }
+    } catch {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function refreshIndexedFile(
+  file: SnapshotIndexedFile,
+  snapshot: WorkspaceSnapshot,
+  files: Map<string, SnapshotIndexedFile>,
+  limits: Required<SnapshotLimits>,
+): Promise<void> {
+  const fileStats = await statSnapshotFile(file.absolutePath);
+  if (fileStats === null || !fileStats.isFile()) {
+    snapshot.delete(file.key);
+    files.delete(file.key);
+    return;
+  }
+
+  const result = await readSnapshotTextFileResult(file.absolutePath, limits.maxFileBytes);
+  if (result.kind === "missing") {
+    snapshot.delete(file.key);
+    files.delete(file.key);
+    return;
+  }
+  if (result.kind === "skipped") {
+    snapshot.delete(file.key);
+    files.set(file.key, {
+      ...file,
+      mtimeMs: fileStats.mtimeMs,
+      size: fileStats.size,
+      state: "skipped",
+      capturedBytes: 0,
+    });
+    return;
+  }
+
+  const capturedBytes = Buffer.byteLength(result.text, "utf8");
+  snapshot.set(file.key, result.text);
+  files.set(file.key, {
+    ...file,
+    mtimeMs: fileStats.mtimeMs,
+    size: fileStats.size,
+    state: "captured",
+    capturedBytes,
+  });
+}
+
+async function resolveIndexTargets(
+  index: WorkspaceSnapshotIndex,
+  filePaths: readonly string[],
+): Promise<SnapshotIndexedFile[]> {
+  const targets: SnapshotIndexedFile[] = [];
+  const seen = new Set<string>();
+
+  for (const filePath of filePaths) {
+    const target = resolveSnapshotFileTarget(index.rootDirectories, filePath);
+    if (target === null) {
+      continue;
+    }
+
+    const key = normalizeSnapshotKey(
+      index.rootDirectories[target.rootIndex],
+      target.relativePath,
+      target.rootIndex === 0,
+    );
+    const dedupeKey = process.platform === "win32" ? target.absolutePath.toLowerCase() : target.absolutePath;
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+    seen.add(dedupeKey);
+
+    const ignoreMatchers = await loadIgnoreMatchersForTarget(
+      index.rootDirectories[target.rootIndex],
+      target.absolutePath,
+    );
+    if (isIgnoredByMatchers(target.absolutePath, false, ignoreMatchers)) {
+      continue;
+    }
+
+    targets.push({
+      key,
+      absolutePath: target.absolutePath,
+      relativePath: target.relativePath,
+      rootIndex: target.rootIndex,
+      mtimeMs: -1,
+      size: -1,
+      state: "captured",
+      capturedBytes: 0,
+    });
+  }
+
+  return targets;
+}
+
+export async function refreshWorkspaceSnapshotIndex(
+  index: WorkspaceSnapshotIndex,
+  options: {
+    candidatePaths?: readonly string[];
+    trustCandidatePaths?: boolean;
+  } = {},
+): Promise<WorkspaceSnapshotIndexRefreshResult> {
+  if (index.stats.hitFileCountLimit || index.stats.hitTotalBytesLimit) {
+    const rebuilt = await createWorkspaceSnapshotIndex(index.rootDirectories, index.limits);
+    return {
+      index: rebuilt,
+      snapshot: cloneWorkspaceSnapshot(rebuilt.snapshot),
+      stats: cloneSnapshotCaptureStats(rebuilt.stats),
+      usedFullRebuild: true,
+      reason: "limit",
+    };
+  }
+
+  for (const root of index.roots) {
+    if (await hasIgnoreStateChanged(root)) {
+      const rebuilt = await createWorkspaceSnapshotIndex(index.rootDirectories, index.limits);
+      return {
+        index: rebuilt,
+        snapshot: cloneWorkspaceSnapshot(rebuilt.snapshot),
+        stats: cloneSnapshotCaptureStats(rebuilt.stats),
+        usedFullRebuild: true,
+        reason: "ignore-change",
+      };
+    }
+  }
+
+  if (!options.trustCandidatePaths) {
+    for (const root of index.roots) {
+      if (await hasDirectoryStructureChanged(root)) {
+        const rebuilt = await createWorkspaceSnapshotIndex(index.rootDirectories, index.limits);
+        return {
+          index: rebuilt,
+          snapshot: cloneWorkspaceSnapshot(rebuilt.snapshot),
+          stats: cloneSnapshotCaptureStats(rebuilt.stats),
+          usedFullRebuild: true,
+          reason: "structure-change",
+        };
+      }
+    }
+  }
+
+  const snapshot = cloneWorkspaceSnapshot(index.snapshot);
+  const files = new Map(index.files);
+  const changedFiles: SnapshotIndexedFile[] = [];
+
+  if (options.candidatePaths && options.candidatePaths.length > 0) {
+    changedFiles.push(...await resolveIndexTargets(index, options.candidatePaths));
+  } else {
+    for (const file of index.files.values()) {
+      const fileStats = await statSnapshotFile(file.absolutePath);
+      if (fileStats === null || !fileStats.isFile()) {
+        changedFiles.push(file);
+        continue;
+      }
+      if (fileStats.mtimeMs !== file.mtimeMs || fileStats.size !== file.size) {
+        changedFiles.push(file);
+      }
+    }
+  }
+
+  for (const file of changedFiles) {
+    await refreshIndexedFile(file, snapshot, files, index.limits);
+  }
+
+  const stats = buildSnapshotStatsFromFiles(files.values());
+  if (stats.capturedFiles > index.limits.maxFileCount || stats.capturedBytes > index.limits.maxTotalBytes) {
+    const rebuilt = await createWorkspaceSnapshotIndex(index.rootDirectories, index.limits);
+    return {
+      index: rebuilt,
+      snapshot: cloneWorkspaceSnapshot(rebuilt.snapshot),
+      stats: cloneSnapshotCaptureStats(rebuilt.stats),
+      usedFullRebuild: true,
+      reason: "limit",
+    };
+  }
+
+  const nextIndex: WorkspaceSnapshotIndex = {
+    ...index,
+    snapshot,
+    stats,
+    files,
+    version: index.version + 1,
+  };
+
+  return {
+    index: nextIndex,
+    snapshot: cloneWorkspaceSnapshot(snapshot),
+    stats: cloneSnapshotCaptureStats(stats),
+    usedFullRebuild: false,
+    reason: changedFiles.length === 0
+      ? "unchanged"
+      : options.candidatePaths && options.candidatePaths.length > 0
+        ? "candidate-refresh"
+        : "file-refresh",
+  };
+}
+
+export async function captureWorkspaceSnapshotPaths(
+  rootDirectory: string | readonly string[],
+  filePaths: readonly string[],
+  limits: SnapshotLimits = {},
+): Promise<SnapshotCaptureResult> {
+  const maxFileBytes = limits.maxFileBytes ?? DEFAULT_SNAPSHOT_MAX_FILE_BYTES;
+  const maxFileCount = limits.maxFileCount ?? DEFAULT_SNAPSHOT_MAX_FILE_COUNT;
+  const maxTotalBytes = limits.maxTotalBytes ?? DEFAULT_SNAPSHOT_MAX_TOTAL_BYTES;
+  const rootDirectories = normalizeSnapshotRootDirectories(rootDirectory);
+  const snapshot: WorkspaceSnapshot = new Map();
+  const stats = createEmptySnapshotCaptureStats();
+  const targets = new Map<string, NonNullable<ReturnType<typeof resolveSnapshotFileTarget>>>();
+  const ignoreMatcherCache = new Map<string, IgnoreMatcher[]>();
+
+  for (const filePath of filePaths) {
+    const target = resolveSnapshotFileTarget(rootDirectories, filePath);
+    if (target === null) {
+      continue;
+    }
+
+    const dedupeKey = process.platform === "win32" ? target.absolutePath.toLowerCase() : target.absolutePath;
+    targets.set(dedupeKey, target);
+  }
+
+  for (const target of targets.values()) {
+    if (stats.hitFileCountLimit || stats.hitTotalBytesLimit) {
+      stats.skippedByLimitFiles += 1;
+      continue;
+    }
+
+    const ignoreCacheKey = `${target.rootIndex}:${path.dirname(target.absolutePath)}`;
+    let matchers = ignoreMatcherCache.get(ignoreCacheKey);
+    if (!matchers) {
+      matchers = await loadIgnoreMatchersForTarget(rootDirectories[target.rootIndex], target.absolutePath);
+      ignoreMatcherCache.set(ignoreCacheKey, matchers);
+    }
+
+    if (isIgnoredByMatchers(target.absolutePath, false, matchers)) {
+      continue;
+    }
+
+    const result = await readSnapshotTextFileResult(target.absolutePath, maxFileBytes);
+    if (result.kind === "missing") {
+      continue;
+    }
+    if (result.kind === "skipped") {
+      stats.skippedBinaryOrOversizeFiles += 1;
+      continue;
+    }
+
+    const nextBytes = Buffer.byteLength(result.text, "utf8");
+    if (stats.capturedFiles >= maxFileCount) {
+      stats.hitFileCountLimit = true;
+      stats.skippedByLimitFiles += 1;
+      continue;
+    }
+
+    if (stats.capturedBytes + nextBytes > maxTotalBytes) {
+      stats.hitTotalBytesLimit = true;
+      stats.skippedByLimitFiles += 1;
+      continue;
+    }
+
+    snapshot.set(
+      normalizeSnapshotKey(rootDirectories[target.rootIndex], target.relativePath, target.rootIndex === 0),
+      result.text,
+    );
+    stats.capturedFiles += 1;
+    stats.capturedBytes += nextBytes;
   }
 
   return { snapshot, stats };
