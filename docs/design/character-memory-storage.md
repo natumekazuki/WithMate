@@ -1,6 +1,7 @@
 # Character Memory Storage
 
 - 作成日: 2026-03-28
+- 更新日: 2026-04-24
 - 対象: `Character Memory` の保存設計と reflection cycle
 
 ## Goal
@@ -208,6 +209,8 @@ current milestone では coding plane には使わないため、retrieval は m
 - main prompt 用 retrieval はしない
 - `独り言` 生成時だけ上位数件を引く
 - ranking では `user` 発話を主 query にし、`lastUsedAt ?? updatedAt` を参照する時間減衰を score 補正として入れる
+- retrieval runtime では entry ごとの正規化済み haystack / fingerprint / feature key を module cache で再利用し、feature key の inverted index で直近会話に一致する candidate だけを scoring する
+- user 発話と一致しない candidate は既存 gate で落とし、hit が無い時は recent fallback を返す
 
 ## Current Implementation Slice
 
@@ -229,11 +232,13 @@ current 実装で入ったもの:
 - right pane `独り言` tab での表示
 - background activity / audit 記録
 - query-based retrieval / ranking
+- runtime inverted index による candidate 絞り込み
 - `lastUsedAt ?? updatedAt` を使う時間減衰
 
 まだ未実装のもの:
 
 - character definition update への反映
+- 永続 retrieval index / DB migration
 
 ## Non Goals
 

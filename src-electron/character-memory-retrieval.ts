@@ -17,6 +17,17 @@ type QueryFeature = {
   kind: "word" | "ngram";
 };
 
+type IndexedCharacterMemoryEntry = {
+  entry: CharacterMemoryEntry;
+  titleHaystack: string;
+  detailHaystack: string;
+  keywordsHaystack: string;
+  fingerprint: string;
+  featureKeys: Set<string>;
+};
+
+type CharacterMemoryEntryIndexData = Omit<IndexedCharacterMemoryEntry, "entry">;
+
 const CATEGORY_WEIGHTS: Record<CharacterMemoryEntry["category"], number> = {
   relationship: 6,
   preference: 5,
@@ -24,6 +35,9 @@ const CATEGORY_WEIGHTS: Record<CharacterMemoryEntry["category"], number> = {
   shared_moment: 4,
   tone: 3,
 };
+
+const MAX_ENTRY_INDEX_CACHE_SIZE = 2_000;
+const entryIndexCache = new Map<string, CharacterMemoryEntryIndexData>();
 
 function normalizeText(text: string): string {
   return text.trim().toLowerCase();
@@ -73,6 +87,10 @@ function collectQueryFeatures(text: string): QueryFeature[] {
   return [...features.values()];
 }
 
+function toFeatureKey(feature: QueryFeature): string {
+  return `${feature.kind}:${feature.value}`;
+}
+
 function buildReflectionQueryText(session: Session): string {
   return session.messages
     .filter((message) => message.role === "user" || message.role === "assistant")
@@ -100,14 +118,14 @@ function scoreMatches(haystack: string, queryFeatures: QueryFeature[], weight: n
     }
 
     score += feature.kind === "word" ? weight : Math.max(1, weight - 2);
-    matchedFeatureKeys.add(`${feature.kind}:${feature.value}`);
+    matchedFeatureKeys.add(toFeatureKey(feature));
   }
 
   return { score, matchedFeatureKeys };
 }
 
 function scoreEntryPart(
-  entry: CharacterMemoryEntry,
+  indexed: IndexedCharacterMemoryEntry,
   queryText: string,
   queryFeatures: QueryFeature[],
 ): {
@@ -118,13 +136,10 @@ function scoreEntryPart(
   detailMatchCount: number;
 } {
   const normalizedQuery = normalizeText(queryText);
-  const titleHaystack = normalizeText(entry.title);
-  const detailHaystack = normalizeText(entry.detail);
-  const keywordsHaystack = normalizeText(entry.keywords.join(" "));
 
-  const titleMatches = scoreMatches(titleHaystack, queryFeatures, 6);
-  const keywordsMatches = scoreMatches(keywordsHaystack, queryFeatures, 5);
-  const detailMatches = scoreMatches(detailHaystack, queryFeatures, 2);
+  const titleMatches = scoreMatches(indexed.titleHaystack, queryFeatures, 6);
+  const keywordsMatches = scoreMatches(indexed.keywordsHaystack, queryFeatures, 5);
+  const detailMatches = scoreMatches(indexed.detailHaystack, queryFeatures, 2);
   const matchedFeatureKeys = new Set<string>([
     ...titleMatches.matchedFeatureKeys,
     ...keywordsMatches.matchedFeatureKeys,
@@ -132,10 +147,10 @@ function scoreEntryPart(
   ]);
 
   let score = titleMatches.score + keywordsMatches.score + detailMatches.score;
-  if (normalizedQuery && titleHaystack.includes(normalizedQuery)) {
+  if (normalizedQuery && indexed.titleHaystack.includes(normalizedQuery)) {
     score += 14;
   }
-  if (normalizedQuery && detailHaystack.includes(normalizedQuery)) {
+  if (normalizedQuery && indexed.detailHaystack.includes(normalizedQuery)) {
     score += 6;
   }
 
@@ -187,6 +202,102 @@ function buildEntryFingerprint(entry: CharacterMemoryEntry): string {
   return `${entry.category}\u001f${normalizedTitle}\u001f${normalizedDetail}`;
 }
 
+function collectEntryFeatureKeys(entry: CharacterMemoryEntry): Set<string> {
+  const keys = new Set<string>();
+  const searchText = `${entry.title}\n${entry.keywords.join(" ")}\n${entry.detail}`;
+  for (const token of tokenizeWords(searchText)) {
+    keys.add(`word:${token}`);
+  }
+  for (const token of tokenizeNgrams(searchText)) {
+    keys.add(`ngram:${token}`);
+  }
+
+  return keys;
+}
+
+function buildEntryIndexCacheKey(entry: CharacterMemoryEntry): string {
+  return [
+    entry.id,
+    entry.category,
+    entry.updatedAt,
+    entry.title,
+    entry.detail,
+    entry.keywords.join("\u001e"),
+  ].join("\u001f");
+}
+
+function pruneEntryIndexCache(): void {
+  if (entryIndexCache.size <= MAX_ENTRY_INDEX_CACHE_SIZE) {
+    return;
+  }
+
+  const overflow = entryIndexCache.size - MAX_ENTRY_INDEX_CACHE_SIZE;
+  for (const key of [...entryIndexCache.keys()].slice(0, overflow)) {
+    entryIndexCache.delete(key);
+  }
+}
+
+function getEntryIndexData(entry: CharacterMemoryEntry): CharacterMemoryEntryIndexData {
+  const cacheKey = buildEntryIndexCacheKey(entry);
+  const cached = entryIndexCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const data = {
+    titleHaystack: normalizeText(entry.title),
+    detailHaystack: normalizeText(entry.detail),
+    keywordsHaystack: normalizeText(entry.keywords.join(" ")),
+    fingerprint: buildEntryFingerprint(entry),
+    featureKeys: collectEntryFeatureKeys(entry),
+  };
+  entryIndexCache.set(cacheKey, data);
+  pruneEntryIndexCache();
+  return data;
+}
+
+function buildIndexedEntries(entries: CharacterMemoryEntry[]): IndexedCharacterMemoryEntry[] {
+  return entries.map((entry) => ({
+    entry,
+    ...getEntryIndexData(entry),
+  }));
+}
+
+function buildInvertedIndex(indexedEntries: IndexedCharacterMemoryEntry[]): Map<string, IndexedCharacterMemoryEntry[]> {
+  const invertedIndex = new Map<string, IndexedCharacterMemoryEntry[]>();
+  for (const indexed of indexedEntries) {
+    for (const key of indexed.featureKeys) {
+      const entries = invertedIndex.get(key);
+      if (entries) {
+        entries.push(indexed);
+      } else {
+        invertedIndex.set(key, [indexed]);
+      }
+    }
+  }
+
+  return invertedIndex;
+}
+
+function selectCandidateEntries(
+  indexedEntries: IndexedCharacterMemoryEntry[],
+  invertedIndex: Map<string, IndexedCharacterMemoryEntry[]>,
+  queryFeatures: QueryFeature[],
+): IndexedCharacterMemoryEntry[] {
+  if (queryFeatures.length === 0 || indexedEntries.length === 0) {
+    return [];
+  }
+
+  const candidates = new Map<string, IndexedCharacterMemoryEntry>();
+  for (const feature of queryFeatures) {
+    for (const indexed of invertedIndex.get(toFeatureKey(feature)) ?? []) {
+      candidates.set(indexed.entry.id, indexed);
+    }
+  }
+
+  return [...candidates.values()];
+}
+
 function dedupeRankedEntries(ranked: RetrievedCharacterMemory[]): RetrievedCharacterMemory[] {
   const seen = new Set<string>();
   const result: RetrievedCharacterMemory[] = [];
@@ -203,14 +314,14 @@ function dedupeRankedEntries(ranked: RetrievedCharacterMemory[]): RetrievedChara
 }
 
 function scoreEntry(
-  entry: CharacterMemoryEntry,
+  indexed: IndexedCharacterMemoryEntry,
   queryText: string,
   queryFeatures: QueryFeature[],
   userQueryText: string,
   userQueryFeatures: QueryFeature[],
   nowMs: number,
 ): RetrievedCharacterMemory | null {
-  const part = scoreEntryPart(entry, queryText, queryFeatures);
+  const part = scoreEntryPart(indexed, queryText, queryFeatures);
   if (part.score <= 0) {
     return null;
   }
@@ -220,7 +331,7 @@ function scoreEntry(
     return null;
   }
 
-  const userPart = scoreEntryPart(entry, userQueryText, userQueryFeatures);
+  const userPart = scoreEntryPart(indexed, userQueryText, userQueryFeatures);
   const userCoverage = userPart.matchedFeatureKeys.size;
   if (userQueryFeatures.length > 0 && userCoverage <= 0) {
     return null;
@@ -228,15 +339,15 @@ function scoreEntry(
 
   const coverage = computeCoverageBonus(part.matchedFeatureKeys);
   const score =
-    CATEGORY_WEIGHTS[entry.category]
+    CATEGORY_WEIGHTS[indexed.entry.category]
     + part.score
     + coverage.bonus
-    + computeMemoryTimeDecayScore(entry.lastUsedAt, entry.updatedAt, nowMs);
+    + computeMemoryTimeDecayScore(indexed.entry.lastUsedAt, indexed.entry.updatedAt, nowMs);
   return {
-    entry,
+    entry: indexed.entry,
     score,
     coverage: coverage.coverage,
-    fingerprint: buildEntryFingerprint(entry),
+    fingerprint: indexed.fingerprint,
     primaryMatchCount,
     detailMatchCount: part.detailMatchCount,
     userCoverage,
@@ -269,9 +380,12 @@ export function retrieveCharacterMemoryEntries(
   const minimumCoverage = computeMinimumCoverage(queryFeatures);
   const nowMs = Date.now();
   const ranked: RetrievedCharacterMemory[] = [];
+  const indexedEntries = buildIndexedEntries(entries);
+  const invertedIndex = buildInvertedIndex(indexedEntries);
+  const candidates = selectCandidateEntries(indexedEntries, invertedIndex, queryFeatures);
 
-  for (const entry of entries) {
-    const scored = scoreEntry(entry, queryText, queryFeatures, userQueryText, userQueryFeatures, nowMs);
+  for (const indexed of candidates) {
+    const scored = scoreEntry(indexed, queryText, queryFeatures, userQueryText, userQueryFeatures, nowMs);
     if (!scored || scored.score < minimumScore || scored.coverage < minimumCoverage) {
       continue;
     }
