@@ -139,7 +139,7 @@ export type WorkspaceSnapshotIndexRefreshResult = {
   snapshot: WorkspaceSnapshot;
   stats: SnapshotCaptureStats;
   usedFullRebuild: boolean;
-  reason: "initial" | "unchanged" | "file-refresh" | "candidate-refresh" | "structure-change" | "ignore-change" | "limit";
+  reason: "unchanged" | "file-refresh" | "candidate-refresh" | "structure-change" | "ignore-change" | "limit";
 };
 
 export type SnapshotScanResult = {
@@ -1199,7 +1199,7 @@ export async function refreshWorkspaceSnapshotIndex(
   }
 
   const stats = buildSnapshotStatsFromFiles(files.values());
-  if (stats.capturedFiles >= index.limits.maxFileCount || stats.capturedBytes >= index.limits.maxTotalBytes) {
+  if (stats.capturedFiles > index.limits.maxFileCount || stats.capturedBytes > index.limits.maxTotalBytes) {
     const rebuilt = await createWorkspaceSnapshotIndex(index.rootDirectories, index.limits);
     return {
       index: rebuilt,

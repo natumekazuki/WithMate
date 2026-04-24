@@ -887,6 +887,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
 
   invalidateAllSessionThreads(): void {
     this.threads.clear();
+    this.workspaceSnapshotIndexes.clear();
   }
 
   private buildBackgroundThreadOptions(input: ExtractSessionMemoryInput | RunCharacterReflectionInput) {

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it } from "node:test";
 
 import { buildNewSession } from "../../src/app-state.js";
@@ -14,6 +14,7 @@ import {
   type CodexThreadOptions,
 } from "../../src-electron/codex-adapter.js";
 import {
+  _setWalkDirectoryStatOverrideForTesting,
   captureWorkspaceSnapshotPaths,
   createWorkspaceSnapshotIndex,
   refreshWorkspaceSnapshotIndex,
@@ -171,7 +172,6 @@ describe("workspace snapshot targeted capture", () => {
       await writeFile(filePath, "before\n", "utf8");
 
       const index = await createWorkspaceSnapshotIndex(workspacePath);
-      await sleep(10);
       await writeFile(filePath, "after\n", "utf8");
 
       const refreshed = await refreshWorkspaceSnapshotIndex(index);
@@ -192,8 +192,19 @@ describe("workspace snapshot targeted capture", () => {
       await writeFile(path.join(workspacePath, "src", "existing.ts"), "existing\n", "utf8");
 
       const index = await createWorkspaceSnapshotIndex(workspacePath);
-      await sleep(10);
       await writeFile(path.join(workspacePath, "src", "added.ts"), "added\n", "utf8");
+      const srcDirectoryPath = path.resolve(path.join(workspacePath, "src"));
+      const realSrcStat = await stat(srcDirectoryPath);
+
+      _setWalkDirectoryStatOverrideForTesting(async (directoryPath) => {
+        if (path.resolve(directoryPath) === srcDirectoryPath) {
+          return {
+            ...realSrcStat,
+            mtimeMs: realSrcStat.mtimeMs + 1_000,
+          } as Stats;
+        }
+        return stat(directoryPath);
+      });
 
       const refreshed = await refreshWorkspaceSnapshotIndex(index);
 
@@ -201,11 +212,12 @@ describe("workspace snapshot targeted capture", () => {
       assert.equal(refreshed.reason, "structure-change");
       assert.equal(refreshed.snapshot.get("src/added.ts"), "added\n");
     } finally {
+      _setWalkDirectoryStatOverrideForTesting(null);
       await rm(workspacePath, { recursive: true, force: true });
     }
   });
 
-  it("refresh 後に file count limit へ達した場合は full rebuild に戻す", async () => {
+  it("refresh 後の file count が limit と一致する場合は incremental refresh を維持する", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-snapshot-index-limit-"));
 
     try {
@@ -213,6 +225,29 @@ describe("workspace snapshot targeted capture", () => {
 
       const index = await createWorkspaceSnapshotIndex(workspacePath, { maxFileCount: 1 });
       const refreshed = await refreshWorkspaceSnapshotIndex(index);
+
+      assert.equal(refreshed.usedFullRebuild, false);
+      assert.equal(refreshed.reason, "unchanged");
+      assert.equal(refreshed.stats.capturedFiles, 1);
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("refresh 後に file count limit を超過した場合は full rebuild に戻す", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-snapshot-index-limit-exceeded-"));
+
+    try {
+      await writeFile(path.join(workspacePath, "one.txt"), "one\n", "utf8");
+      await writeFile(path.join(workspacePath, "two.txt"), "two\n", "utf8");
+
+      const index = await createWorkspaceSnapshotIndex(workspacePath, { maxFileCount: 2 });
+      await writeFile(path.join(workspacePath, "three.txt"), "three\n", "utf8");
+
+      const refreshed = await refreshWorkspaceSnapshotIndex(index, {
+        candidatePaths: [path.join(workspacePath, "three.txt")],
+        trustCandidatePaths: true,
+      });
 
       assert.equal(refreshed.usedFullRebuild, true);
       assert.equal(refreshed.reason, "limit");
