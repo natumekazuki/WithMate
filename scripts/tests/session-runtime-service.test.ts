@@ -9,6 +9,7 @@ import {
   type ComposerPreview,
   type LiveApprovalDecision,
   type LiveApprovalRequest,
+  type LiveElicitationRequest,
   type LiveSessionRunState,
   type ProviderQuotaTelemetry,
   type ProjectMemoryEntry,
@@ -122,6 +123,20 @@ function createPartialResult(overrides?: Partial<RunSessionTurnResult>): RunSess
   };
 }
 
+function createLiveRunState(overrides?: Partial<LiveSessionRunState>): LiveSessionRunState {
+  return {
+    sessionId: overrides?.sessionId ?? "session-1",
+    threadId: overrides?.threadId ?? "",
+    assistantText: overrides?.assistantText ?? "",
+    steps: overrides?.steps ?? [],
+    backgroundTasks: overrides?.backgroundTasks ?? [],
+    usage: overrides?.usage ?? null,
+    errorMessage: overrides?.errorMessage ?? "",
+    approvalRequest: overrides?.approvalRequest ?? null,
+    elicitationRequest: overrides?.elicitationRequest ?? null,
+  };
+}
+
 describe("SessionRuntimeService stale retry helpers", () => {
   it("stale classifier は narrow な thread / session 系だけを対象にする", () => {
     assert.equal(isRetryableStaleThreadSessionError(new Error("thread not found")), true);
@@ -175,17 +190,39 @@ describe("SessionRuntimeService", () => {
       invalidateSessionThread() {},
       invalidateAllSessionThreads() {},
       async runSessionTurn(input, onProgress) {
-        await onProgress?.({
+        await onProgress?.(createLiveRunState({
           sessionId: input.session.id,
-          threadId: "",
-          assistantText: "",
-          steps: [],
-          backgroundTasks: [],
-          usage: null,
-          errorMessage: "",
-          approvalRequest: null,
-          elicitationRequest: null,
-        });
+        }));
+        await onProgress?.(createLiveRunState({
+          sessionId: input.session.id,
+          threadId: "thread-progress",
+          assistantText: "途中経過だよ。",
+          steps: [
+            {
+              id: "step-1",
+              type: "command_execution",
+              summary: "npm test",
+              details: "実行中",
+              status: "in_progress",
+            },
+          ],
+          usage: { inputTokens: 4, cachedInputTokens: 0, outputTokens: 1 },
+        }));
+        setTimeout(() => {
+          void onProgress?.(createLiveRunState({
+            sessionId: input.session.id,
+            threadId: "thread-late",
+            assistantText: "late progress",
+            steps: [
+              {
+                id: "step-late",
+                type: "command_execution",
+                summary: "late step",
+                status: "in_progress",
+              },
+            ],
+          }));
+        }, 0);
         return {
           threadId: "thread-1",
           assistantText: "完了したよ。",
@@ -278,13 +315,20 @@ describe("SessionRuntimeService", () => {
     });
 
     const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(result.runState, "idle");
     assert.equal(storedSessions.length, 2);
     assert.equal(storedSessions[0]?.runState, "running");
     assert.equal(storedSessions[1]?.runState, "idle");
     assert.equal(storedSessions[1]?.messages.at(-1)?.text, "完了したよ。");
+    assert.equal(auditUpdates.length, 2);
+    assert.equal(auditUpdates[0]?.phase, "running");
+    assert.equal(auditUpdates[0]?.assistantText, "途中経過だよ。");
+    assert.equal(auditUpdates[0]?.threadId, "thread-progress");
+    assert.equal(auditUpdates[0]?.operations[0]?.summary, "npm test");
     assert.equal(auditUpdates.at(-1)?.phase, "completed");
+    assert.equal(auditUpdates.at(-1)?.assistantText, "完了したよ。");
     assert.equal(
       auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "remainingPercentage")?.value,
       "76%",
@@ -303,13 +347,123 @@ describe("SessionRuntimeService", () => {
     assert.equal(service.isRunInFlight(session.id), false);
   });
 
+  it("成功時に backgroundTasks を保持する finally でも completed session の threadId を使う", async () => {
+    const session = createSession({ provider: "codex", threadId: "thread-old" });
+    const storedSessions: Session[] = [];
+    const backgroundTasks = [
+      {
+        id: "bg-1",
+        kind: "shell" as const,
+        status: "running" as const,
+        title: "npm run watch",
+        details: "watch mode",
+        updatedAt: "2026-04-01T00:00:00.000Z",
+      },
+    ];
+    const liveStates: Array<LiveSessionRunState | null> = [];
+    let liveState: LiveSessionRunState | null = createLiveRunState({
+      sessionId: session.id,
+      threadId: session.threadId,
+      backgroundTasks,
+    });
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        return createPartialResult({
+          threadId: "thread-new",
+          assistantText: "完了したよ。",
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        storedSessions.push(next);
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun(_sessionId, next) {
+        liveState = next;
+        liveStates.push(next);
+      },
+      getLiveSessionRun() {
+        return liveState;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    assert.equal(result.threadId, "thread-new");
+    assert.equal(storedSessions[1]?.threadId, "thread-new");
+    assert.equal(liveStates.at(-1)?.threadId, "thread-new");
+    assert.deepEqual(liveStates.at(-1)?.backgroundTasks, backgroundTasks);
+  });
+
   it("provider failure 時は error session を保存し、cancel 時は idle へ戻す", async () => {
     const baseSession = createSession();
     const storedSessions: Session[] = [];
     const auditUpdates: UpdateAuditLogInput[] = [];
     let canceledSessionId: string | null = null;
     const partialResult: RunSessionTurnResult = {
-      threadId: "thread-2",
+      threadId: null,
       assistantText: "",
       logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
       transportPayload: null,
@@ -334,7 +488,36 @@ describe("SessionRuntimeService", () => {
         canceledSessionId = sessionId;
       },
       invalidateAllSessionThreads() {},
-      async runSessionTurn() {
+      async runSessionTurn(input, onProgress) {
+        await onProgress?.(createLiveRunState({
+          sessionId: input.session.id,
+          threadId: "thread-before-cancel",
+          assistantText: "途中まで進んだよ。",
+          steps: [
+            {
+              id: "step-1",
+              type: "command_execution",
+              summary: "npm run build",
+              status: "in_progress",
+            },
+          ],
+          usage: { inputTokens: 5, cachedInputTokens: 0, outputTokens: 2 },
+        }));
+        setTimeout(() => {
+          void onProgress?.(createLiveRunState({
+            sessionId: input.session.id,
+            threadId: "thread-late",
+            assistantText: "late cancel progress",
+            steps: [
+              {
+                id: "step-late",
+                type: "command_execution",
+                summary: "late cancel step",
+                status: "in_progress",
+              },
+            ],
+          }));
+        }, 0);
         throw new ProviderTurnError("cancelled", partialResult, true);
       },
     };
@@ -400,10 +583,18 @@ describe("SessionRuntimeService", () => {
     });
 
     const result = await service.runSessionTurn(baseSession.id, { userMessage: "お願いします" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(result.runState, "idle");
     assert.match(result.messages.at(-1)?.text ?? "", /キャンセル/);
+    assert.equal(auditUpdates.length, 2);
+    assert.equal(auditUpdates[0]?.phase, "running");
+    assert.equal(auditUpdates[0]?.assistantText, "途中まで進んだよ。");
     assert.equal(auditUpdates.at(-1)?.phase, "canceled");
+    assert.equal(auditUpdates.at(-1)?.threadId, "thread-before-cancel");
+    assert.equal(auditUpdates.at(-1)?.assistantText, "途中まで進んだよ。");
+    assert.deepEqual(auditUpdates.at(-1)?.operations, [{ type: "command_execution", summary: "npm run build", details: "in_progress" }]);
+    assert.deepEqual(auditUpdates.at(-1)?.usage, { inputTokens: 5, cachedInputTokens: 0, outputTokens: 2 });
     assert.equal(canceledSessionId, baseSession.id);
   });
 
@@ -736,8 +927,274 @@ describe("SessionRuntimeService", () => {
     assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
     assert.equal(storedSessions.length, 3);
     assert.equal(storedSessions[1]?.threadId, "");
-    assert.equal(auditUpdates.length, 1);
-    assert.equal(auditUpdates[0]?.phase, "completed");
+    assert.equal(auditUpdates.length, 2);
+    assert.equal(auditUpdates[0]?.phase, "running");
+    assert.equal(auditUpdates.at(-1)?.phase, "completed");
+  });
+
+  it("stale retry 後の running audit log は前回 progress の断片を引き継がない", async () => {
+    const session = createSession({ provider: "codex", threadId: "thread-stale" });
+    const auditUpdates: UpdateAuditLogInput[] = [];
+    let attempt = 0;
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn(input, onProgress) {
+        attempt += 1;
+        if (attempt === 1) {
+          await onProgress?.(createLiveRunState({
+            sessionId: input.session.id,
+            threadId: "thread-before-retry",
+            assistantText: "1 回目の progress",
+            steps: [{ id: "step-1", type: "command_execution", summary: "npm test", status: "in_progress" }],
+            usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 1 },
+          }));
+          throw new ProviderTurnError("thread not found", createPartialResult({ threadId: "thread-stale" }), false);
+        }
+
+        await onProgress?.(createLiveRunState({
+          sessionId: input.session.id,
+          threadId: "",
+          assistantText: "",
+          steps: [],
+          usage: { inputTokens: 20, cachedInputTokens: 0, outputTokens: 2 },
+        }));
+        return createPartialResult({
+          threadId: "thread-fresh",
+          assistantText: "再試行で成功したよ。",
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog(_id, entry) {
+        auditUpdates.push(entry);
+      },
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    const runningUpdates = auditUpdates.filter((entry) => entry.phase === "running");
+    assert.equal(runningUpdates.length, 3);
+    assert.equal(runningUpdates[0]?.threadId, "thread-before-retry");
+    assert.equal(runningUpdates[0]?.assistantText, "1 回目の progress");
+    assert.equal(runningUpdates[0]?.operations[0]?.summary, "npm test");
+    assert.deepEqual(runningUpdates[0]?.usage, { inputTokens: 10, cachedInputTokens: 0, outputTokens: 1 });
+    assert.equal(runningUpdates[1]?.threadId, "");
+    assert.equal(runningUpdates[1]?.assistantText, "");
+    assert.deepEqual(runningUpdates[1]?.operations, []);
+    assert.equal(runningUpdates[1]?.usage, null);
+    assert.equal(runningUpdates[2]?.threadId, "");
+    assert.equal(runningUpdates[2]?.assistantText, "");
+    assert.deepEqual(runningUpdates[2]?.operations, []);
+    assert.deepEqual(runningUpdates[2]?.usage, { inputTokens: 20, cachedInputTokens: 0, outputTokens: 2 });
+  });
+
+  it("stale retry 中は旧 attempt の late progress を live state と running audit log へ反映しない", async () => {
+    const session = createSession({ provider: "codex", threadId: "thread-stale" });
+    const auditUpdates: UpdateAuditLogInput[] = [];
+    const liveStates: Array<LiveSessionRunState | null> = [];
+    let attempt = 0;
+    let notifySecondAttemptStarted: (() => void) | null = null;
+    let releaseSecondAttempt: (() => void) | null = null;
+    const secondAttemptStarted = new Promise<void>((resolve) => {
+      notifySecondAttemptStarted = resolve;
+    });
+    const secondAttemptGate = new Promise<void>((resolve) => {
+      releaseSecondAttempt = resolve;
+    });
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn(input, onProgress) {
+        attempt += 1;
+        if (attempt === 1) {
+          await onProgress?.(createLiveRunState({
+            sessionId: input.session.id,
+            threadId: "thread-before-retry",
+            assistantText: "1 回目の progress",
+            steps: [{ id: "step-1", type: "command_execution", summary: "npm test", status: "in_progress" }],
+            usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 1 },
+          }));
+          setTimeout(() => {
+            void onProgress?.(createLiveRunState({
+              sessionId: input.session.id,
+              threadId: "thread-stale-late",
+              assistantText: "旧 attempt の late progress",
+              steps: [{ id: "step-stale-late", type: "command_execution", summary: "stale step", status: "in_progress" }],
+              usage: { inputTokens: 99, cachedInputTokens: 0, outputTokens: 9 },
+            }));
+          }, 0);
+          throw new ProviderTurnError("thread not found", createPartialResult({ threadId: "thread-stale" }), false);
+        }
+
+        notifySecondAttemptStarted?.();
+        await onProgress?.(createLiveRunState({
+          sessionId: input.session.id,
+          threadId: "thread-fresh-progress",
+          assistantText: "2 回目の progress",
+          steps: [{ id: "step-2", type: "command_execution", summary: "npm run build", status: "in_progress" }],
+          usage: { inputTokens: 20, cachedInputTokens: 0, outputTokens: 2 },
+        }));
+        await secondAttemptGate;
+        return createPartialResult({
+          threadId: "thread-fresh",
+          assistantText: "再試行で成功したよ。",
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog(_id, entry) {
+        auditUpdates.push(entry);
+      },
+      setLiveSessionRun(_sessionId, state) {
+        liveStates.push(state);
+      },
+      getLiveSessionRun() {
+        return liveStates.at(-1) ?? null;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    const runPromise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await secondAttemptStarted;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseSecondAttempt?.();
+    await runPromise;
+
+    const runningUpdates = auditUpdates.filter((entry) => entry.phase === "running");
+    assert.equal(runningUpdates.length, 3);
+    assert.equal(runningUpdates[0]?.threadId, "thread-before-retry");
+    assert.equal(runningUpdates[1]?.threadId, "");
+    assert.equal(runningUpdates[2]?.threadId, "thread-fresh-progress");
+    assert.equal(runningUpdates.some((entry) => entry.threadId === "thread-stale-late"), false);
+    assert.equal(runningUpdates.some((entry) => entry.assistantText === "旧 attempt の late progress"), false);
+    assert.equal(liveStates.some((state) => state?.threadId === "thread-stale-late"), false);
+    assert.equal(liveStates.some((state) => state?.assistantText === "旧 attempt の late progress"), false);
   });
 
   it("Codex stdin bootstrap error でも thread reset 後に 1 回 retry する", async () => {
@@ -850,8 +1307,9 @@ describe("SessionRuntimeService", () => {
     assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
     assert.equal(storedSessions.length, 2);
     assert.equal(storedSessions[1]?.threadId, "thread-fresh");
-    assert.equal(auditUpdates.length, 1);
-    assert.equal(auditUpdates[0]?.phase, "completed");
+    assert.equal(auditUpdates.length, 2);
+    assert.equal(auditUpdates[0]?.phase, "running");
+    assert.equal(auditUpdates.at(-1)?.phase, "completed");
   });
 
   it("Codex stdin bootstrap error が続く時は failed session に壊れた threadId を残さない", async () => {
@@ -958,9 +1416,591 @@ describe("SessionRuntimeService", () => {
     ]);
     assert.equal(storedSessions.length, 2);
     assert.equal(storedSessions[1]?.threadId, "");
-    assert.equal(auditUpdates.length, 1);
-    assert.equal(auditUpdates[0]?.phase, "failed");
-    assert.equal(auditUpdates[0]?.threadId, "thread-broken");
+    assert.equal(auditUpdates.length, 2);
+    assert.equal(auditUpdates[0]?.phase, "running");
+    assert.equal(auditUpdates.at(-1)?.phase, "failed");
+    assert.equal(auditUpdates.at(-1)?.threadId, "thread-broken");
+  });
+
+  it("approval request の直後に progress が無くても running audit log を更新する", async () => {
+    const session = createSession();
+    const auditUpdates: UpdateAuditLogInput[] = [];
+    let liveState = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
+    const approvalRequest: LiveApprovalRequest = {
+      requestId: "approval-1",
+      provider: session.provider,
+      kind: "command",
+      title: "コマンド実行の承認",
+      summary: "npm test を実行する前に承認が必要だよ。",
+      details: "workspace へ書き込みはしないよ。",
+      warning: "外部コマンドを実行するよ。",
+      decisionMode: "direct-decision",
+    };
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn(input, onProgress) {
+        await input.onApprovalRequest?.(approvalRequest);
+        return createPartialResult({
+          threadId: "thread-approval",
+          assistantText: "承認後に完了したよ。",
+          operations: [{ type: "command_execution", summary: "npm test", details: "OK" }],
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(currentSession) {
+        return createSessionMemory(currentSession.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog(_id, entry) {
+        auditUpdates.push(entry);
+      },
+      setLiveSessionRun(_sessionId, next) {
+        liveState = next;
+      },
+      getLiveSessionRun() {
+        return liveState;
+      },
+      async waitForApprovalDecision(_sessionId, request) {
+        liveState = {
+          ...liveState,
+          approvalRequest: request,
+          elicitationRequest: null,
+        };
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "accept" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    const runningUpdate = auditUpdates.find((entry) =>
+      entry.phase === "running" && entry.operations.some((operation) => operation.type === "approval_request"),
+    );
+    assert.ok(runningUpdate);
+    const approvalOperation = runningUpdate?.operations[0];
+    assert.ok(approvalOperation);
+    assert.equal(approvalOperation.type, "approval_request");
+    assert.equal(approvalOperation.summary, "コマンド実行の承認");
+    assert.match(approvalOperation.details ?? "", /status:pending/);
+    const completedUpdate = auditUpdates.find((entry) => entry.phase === "completed");
+    assert.ok(completedUpdate);
+    assert.deepEqual(completedUpdate?.operations, [
+      { type: "command_execution", summary: "npm test", details: "OK" },
+      approvalOperation,
+    ]);
+  });
+
+  it("elicitation request の直後に progress が無くても running audit log を更新する", async () => {
+    const session = createSession();
+    const auditUpdates: UpdateAuditLogInput[] = [];
+    let liveState = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
+    const elicitationRequest: LiveElicitationRequest = {
+      requestId: "elicitation-1",
+      provider: session.provider,
+      mode: "form",
+      message: "実行対象のブランチを選んでね。",
+      source: "copilot",
+      fields: [
+        {
+          name: "branch",
+          title: "対象ブランチ",
+          required: true,
+          type: "select",
+          options: [
+            { value: "main", label: "main" },
+            { value: "feature", label: "feature" },
+          ],
+        },
+      ],
+    };
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn(input, onProgress) {
+        await input.onElicitationRequest?.(elicitationRequest);
+        return createPartialResult({
+          threadId: "thread-elicitation",
+          assistantText: "入力を受け取って完了したよ。",
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(currentSession) {
+        return createSessionMemory(currentSession.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog(_id, entry) {
+        auditUpdates.push(entry);
+      },
+      setLiveSessionRun(_sessionId, next) {
+        liveState = next;
+      },
+      getLiveSessionRun() {
+        return liveState;
+      },
+      async waitForApprovalDecision() {
+        return "approve";
+      },
+      async waitForElicitationResponse(_sessionId, request) {
+        liveState = {
+          ...liveState,
+          approvalRequest: null,
+          elicitationRequest: request,
+        };
+        return { action: "accept", content: { branch: "main" } };
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    const runningUpdate = auditUpdates.find((entry) =>
+      entry.phase === "running" && entry.operations.some((operation) => operation.type === "elicitation_request"),
+    );
+    assert.ok(runningUpdate);
+    assert.equal(runningUpdate?.operations[0]?.type, "elicitation_request");
+    assert.equal(runningUpdate?.operations[0]?.summary, "実行対象のブランチを選んでね。");
+    assert.match(runningUpdate?.operations[0]?.details ?? "", /required:対象ブランチ/);
+  });
+
+  it("completed audit log では同じ summary の command_execution を重複保持する", async () => {
+    const session = createSession();
+    const auditUpdates: UpdateAuditLogInput[] = [];
+    let liveState = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        return createPartialResult({
+          threadId: "thread-duplicate-commands",
+          assistantText: "完了したよ。",
+          operations: [
+            { type: "command_execution", summary: "npm test", details: "exit:0 (1回目)" },
+            { type: "command_execution", summary: "npm test", details: "exit:0 (2回目)" },
+          ],
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(currentSession) {
+        return createSessionMemory(currentSession.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog(_id, entry) {
+        auditUpdates.push(entry);
+      },
+      setLiveSessionRun(_sessionId, next) {
+        liveState = next;
+      },
+      getLiveSessionRun() {
+        return liveState;
+      },
+      async waitForApprovalDecision() {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "accept" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    const completedUpdate = auditUpdates.find((entry) => entry.phase === "completed");
+    assert.ok(completedUpdate);
+    assert.deepEqual(completedUpdate?.operations, [
+      { type: "command_execution", summary: "npm test", details: "exit:0 (1回目)" },
+      { type: "command_execution", summary: "npm test", details: "exit:0 (2回目)" },
+    ]);
+  });
+
+  it("elicitation request の直後に progress が無くても completed audit log に履歴を残す", async () => {
+    const session = createSession();
+    const auditUpdates: UpdateAuditLogInput[] = [];
+    let liveState = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
+    const elicitationRequest: LiveElicitationRequest = {
+      requestId: "elicitation-1",
+      provider: session.provider,
+      mode: "form",
+      message: "実行対象のブランチを選んでね。",
+      source: "copilot",
+      fields: [
+        {
+          name: "branch",
+          title: "対象ブランチ",
+          required: true,
+          type: "select",
+          options: [
+            { value: "main", label: "main" },
+            { value: "feature", label: "feature" },
+          ],
+        },
+      ],
+    };
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn(input) {
+        await input.onElicitationRequest?.(elicitationRequest);
+        return createPartialResult({
+          threadId: "thread-elicitation",
+          assistantText: "入力を受け取って完了したよ。",
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(currentSession) {
+        return createSessionMemory(currentSession.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog(_id, entry) {
+        auditUpdates.push(entry);
+      },
+      setLiveSessionRun(_sessionId, next) {
+        liveState = next;
+      },
+      getLiveSessionRun() {
+        return liveState;
+      },
+      async waitForApprovalDecision() {
+        return "approve";
+      },
+      async waitForElicitationResponse(_sessionId, request) {
+        liveState = {
+          ...liveState,
+          approvalRequest: null,
+          elicitationRequest: request,
+        };
+        return { action: "accept", content: { branch: "main" } };
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    const runningUpdate = auditUpdates.find((entry) =>
+      entry.phase === "running" && entry.operations.some((operation) => operation.type === "elicitation_request"),
+    );
+    assert.ok(runningUpdate);
+    const elicitationOperation = runningUpdate?.operations[0];
+    assert.ok(elicitationOperation);
+    const completedUpdate = auditUpdates.find((entry) => entry.phase === "completed");
+    assert.ok(completedUpdate);
+    assert.deepEqual(completedUpdate?.operations, [elicitationOperation]);
+  });
+
+  it("failed audit log は partial threadId が無くても live progress の threadId を維持する", async () => {
+    const session = createSession({ provider: "codex", threadId: "thread-stale" });
+    const storedSessions: Session[] = [];
+    const auditUpdates: UpdateAuditLogInput[] = [];
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn(input, onProgress) {
+        await onProgress?.(createLiveRunState({
+          sessionId: input.session.id,
+          threadId: "thread-live",
+          assistantText: "途中まで進んだよ。",
+          steps: [
+            {
+              id: "step-live",
+              type: "command_execution",
+              summary: "npm test",
+              status: "in_progress",
+            },
+          ],
+          usage: { inputTokens: 9, cachedInputTokens: 1, outputTokens: 3 },
+        }));
+        throw new ProviderTurnError("network timeout", createPartialResult({ threadId: null }), false);
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        storedSessions.push(next);
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(currentSession) {
+        return createSessionMemory(currentSession.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog(_id, entry) {
+        auditUpdates.push(entry);
+      },
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision() {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    assert.equal(result.runState, "error");
+    assert.equal(result.threadId, "thread-live");
+    assert.equal(storedSessions.at(-1)?.threadId, "thread-live");
+    assert.equal(auditUpdates.at(-1)?.phase, "failed");
+    assert.equal(auditUpdates.at(-1)?.threadId, "thread-live");
+    assert.equal(auditUpdates.at(-1)?.assistantText, "途中まで進んだよ。");
+    assert.deepEqual(auditUpdates.at(-1)?.operations, [{ type: "command_execution", summary: "npm test", details: "in_progress" }]);
+    assert.deepEqual(auditUpdates.at(-1)?.usage, { inputTokens: 9, cachedInputTokens: 1, outputTokens: 3 });
   });
 
   it("meaningful partial が出た stale error は internal retry しない", async () => {
@@ -1151,5 +2191,390 @@ describe("SessionRuntimeService", () => {
     assert.match(result.messages.at(-1)?.text ?? "", /resource not found/);
     assert.deepEqual(invalidated, []);
     assert.equal(storedSessions.length, 2);
+  });
+
+  it("live run の progress を running audit log へ段階的に update する", async () => {
+    const session = createSession();
+    const auditUpdates: UpdateAuditLogInput[] = [];
+    const liveStates: Array<LiveSessionRunState | null> = [];
+    let progressUpdateCount = 0;
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn(_input, onProgress) {
+        // 複数回の progress update をシミュレート
+        await onProgress?.({
+          sessionId: session.id,
+          threadId: "",
+          assistantText: "",
+          steps: [],
+          backgroundTasks: [],
+          usage: null,
+          errorMessage: "",
+          approvalRequest: null,
+          elicitationRequest: null,
+        });
+
+        await onProgress?.({
+          sessionId: session.id,
+          threadId: "thread-1",
+          assistantText: "処理中...",
+          steps: [
+            { id: "step-1", type: "command_execution", summary: "npm test", status: "in_progress" },
+          ],
+          backgroundTasks: [],
+          usage: { inputTokens: 50, cachedInputTokens: 0, outputTokens: 0 },
+          errorMessage: "",
+          approvalRequest: null,
+          elicitationRequest: null,
+        });
+
+        await onProgress?.({
+          sessionId: session.id,
+          threadId: "thread-1",
+          assistantText: "処理中... テスト完了",
+          steps: [
+            { id: "step-1", type: "command_execution", summary: "npm test", details: "OK", status: "completed" },
+          ],
+          backgroundTasks: [],
+          usage: { inputTokens: 50, cachedInputTokens: 0, outputTokens: 80 },
+          errorMessage: "",
+          approvalRequest: null,
+          elicitationRequest: null,
+        });
+
+        return {
+          threadId: "thread-1",
+          assistantText: "完了したよ。",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          transportPayload: null,
+          operations: [{ type: "command_execution", summary: "npm test", details: "OK" }],
+          rawItemsJson: "[]",
+          usage: { inputTokens: 50, cachedInputTokens: 0, outputTokens: 100 },
+        };
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog(_id, entry) {
+        auditUpdates.push(entry);
+        if (entry.phase === "running") {
+          progressUpdateCount += 1;
+        }
+      },
+      setLiveSessionRun(_sessionId, state) {
+        liveStates.push(state);
+      },
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    // progress update が複数回発生したことを確認
+    assert.ok(progressUpdateCount >= 2, `progress update は 2 回以上発生すべきだが ${progressUpdateCount} 回だったよ`);
+
+    // running phase の update で assistantText / operations / usage が段階的に更新されていることを確認
+    const runningUpdates = auditUpdates.filter((entry) => entry.phase === "running");
+    assert.ok(runningUpdates.length >= 2, "running phase の update が複数回あるべきだよ");
+
+    const firstRunningUpdate = runningUpdates[0];
+    assert.ok(firstRunningUpdate, "最初の running update があるべきだよ");
+    assert.equal(firstRunningUpdate.assistantText, "処理中...");
+    assert.equal(firstRunningUpdate.operations.length, 1);
+    assert.equal(firstRunningUpdate.operations[0]?.summary, "npm test");
+    assert.deepEqual(firstRunningUpdate.usage, { inputTokens: 50, cachedInputTokens: 0, outputTokens: 0 });
+
+    const secondRunningUpdate = runningUpdates[1];
+    assert.ok(secondRunningUpdate, "2 回目の running update があるべきだよ");
+    assert.equal(secondRunningUpdate.assistantText, "処理中... テスト完了");
+    assert.equal(secondRunningUpdate.operations.length, 1);
+    assert.equal(secondRunningUpdate.operations[0]?.summary, "npm test");
+    assert.deepEqual(secondRunningUpdate.usage, { inputTokens: 50, cachedInputTokens: 0, outputTokens: 80 });
+
+    // 最終的に completed phase で update されていることを確認
+    const completedUpdate = auditUpdates.find((entry) => entry.phase === "completed");
+    assert.ok(completedUpdate, "completed phase の update があるべきだよ");
+    assert.equal(completedUpdate.assistantText, "完了したよ。");
+    assert.equal(completedUpdate.operations.length, 1);
+    assert.deepEqual(completedUpdate.usage, { inputTokens: 50, cachedInputTokens: 0, outputTokens: 100 });
+  });
+
+  it("success 後に backgroundTasks を保持しても completed threadId を live run へ残す", async () => {
+    const session = createSession({ provider: "codex", threadId: "thread-stale" });
+    const liveStates: Array<LiveSessionRunState | null> = [];
+    let liveState: LiveSessionRunState | null = createLiveRunState({
+      sessionId: session.id,
+      threadId: session.threadId,
+      backgroundTasks: [
+        {
+          id: "task-1",
+          kind: "shell",
+          status: "running",
+          title: "バックグラウンド処理",
+          details: "継続中",
+          updatedAt: "2026-04-21T10:00:00.000Z",
+        },
+      ],
+    });
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        return createPartialResult({
+          threadId: "thread-completed",
+          assistantText: "完了したよ。",
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun(_sessionId, state) {
+        liveState = state;
+        liveStates.push(state);
+      },
+      getLiveSessionRun() {
+        return liveState;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    assert.equal(result.threadId, "thread-completed");
+    assert.ok(liveStates.at(-1));
+    assert.equal(liveStates.at(-1)?.threadId, "thread-completed");
+    assert.equal(liveStates.at(-1)?.backgroundTasks.length, 1);
+    assert.equal(liveStates.at(-1)?.backgroundTasks[0]?.id, "task-1");
+  });
+
+  it("既存 backgroundTasks が progress 無しで完了しても completed audit log に履歴を残す", async () => {
+    const session = createSession({ provider: "codex", threadId: "thread-stale" });
+    const auditUpdates: UpdateAuditLogInput[] = [];
+    let liveState: LiveSessionRunState | null = createLiveRunState({
+      sessionId: session.id,
+      threadId: session.threadId,
+      backgroundTasks: [
+        {
+          id: "task-1",
+          kind: "shell",
+          status: "running",
+          title: "バックグラウンド処理",
+          details: "継続中",
+          updatedAt: "2026-04-21T10:00:00.000Z",
+        },
+      ],
+    });
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        return createPartialResult({
+          threadId: "thread-completed",
+          assistantText: "完了したよ。",
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog(_id, entry) {
+        auditUpdates.push(entry);
+      },
+      setLiveSessionRun(_sessionId, state) {
+        liveState = state;
+      },
+      getLiveSessionRun() {
+        return liveState;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    const completedUpdate = auditUpdates.find((entry) => entry.phase === "completed");
+    assert.ok(completedUpdate);
+    assert.deepEqual(completedUpdate?.operations, [
+      { type: "background-shell", summary: "バックグラウンド処理", details: "running\n継続中" },
+    ]);
   });
 });

@@ -99,8 +99,12 @@ export function operationTypeLabel(type: string): string {
   switch (type) {
     case "agent_message":
       return "Message";
+    case "approval_request":
+      return "Approval";
     case "command_execution":
       return "Command";
+    case "elicitation_request":
+      return "Input";
     case "file_change":
       return "File";
     case "mcp_tool_call":

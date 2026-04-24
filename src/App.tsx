@@ -39,7 +39,7 @@ import {
   resolveModelSelection,
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
-import { buildAuditLogRefreshSignature } from "./audit-log-refresh.js";
+import { buildAuditLogRefreshSignature, buildDisplayedAuditLogs } from "./audit-log-refresh.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import {
   approvalModeOptions,
@@ -745,6 +745,15 @@ export default function App() {
   const selectedSessionLiveRun = useMemo(
     () => (selectedSessionId !== null && liveRunState.ownerSessionId === selectedSessionId ? liveRunState.state : null),
     [liveRunState.ownerSessionId, liveRunState.state, selectedSessionId],
+  );
+  const displayedSessionAuditLogs = useMemo(
+    () =>
+      buildDisplayedAuditLogs({
+        selectedSession,
+        persistedEntries: selectedSessionAuditLogs,
+        liveRun: selectedSessionLiveRun,
+      }),
+    [selectedSession, selectedSessionAuditLogs, selectedSessionLiveRun],
   );
   const selectedProviderQuotaTelemetry = useMemo(
     () => (
@@ -3211,7 +3220,7 @@ export default function App() {
 
       <SessionAuditLogModal
         open={auditLogsOpen}
-        entries={selectedSessionAuditLogs}
+        entries={displayedSessionAuditLogs}
         onClose={() => setAuditLogsOpen(false)}
       />
     </div>
