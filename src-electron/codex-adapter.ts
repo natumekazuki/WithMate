@@ -28,8 +28,10 @@ import {
   type ResolvedModelSelection,
 } from "../src/model-catalog.js";
 import {
-  captureWorkspaceSnapshot,
+  createWorkspaceSnapshotIndex,
+  refreshWorkspaceSnapshotIndex,
   type SnapshotCaptureStats,
+  type WorkspaceSnapshotIndex,
   type WorkspaceSnapshot,
 } from "./snapshot-ignore.js";
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
@@ -341,14 +343,43 @@ function compareSnapshotChanges(beforeSnapshot: WorkspaceSnapshot, afterSnapshot
   return changes.sort((left, right) => left.path.localeCompare(right.path));
 }
 
+function collectCompletedFileChangeItems(items: ThreadItem[]): Array<Extract<ThreadItem, { type: "file_change" }>> {
+  return items.filter(
+    (item): item is Extract<ThreadItem, { type: "file_change" }> =>
+      item.type === "file_change" && item.status === "completed",
+  );
+}
+
+function collectCompletedFileChangePaths(session: Session, items: ThreadItem[]): string[] {
+  const paths = new Set<string>();
+
+  for (const item of collectCompletedFileChangeItems(items)) {
+    for (const change of item.changes) {
+      paths.add(normalizeWorkspaceRelativePath(session, change.path));
+    }
+  }
+
+  return Array.from(paths).sort((left, right) => left.localeCompare(right));
+}
+
+function hasBroadFilesystemChangeSource(items: ThreadItem[]): boolean {
+  return items.some((item) => {
+    if ("status" in item && item.status !== "completed") {
+      return false;
+    }
+
+    return item.type === "command_execution" || item.type === "mcp_tool_call";
+  });
+}
+
 function buildChangedFilesFromSources(
   session: Session,
   items: ThreadItem[],
   beforeSnapshot: WorkspaceSnapshot,
   afterSnapshot: WorkspaceSnapshot,
+  useSnapshotFallback: boolean,
 ): ChangedFile[] {
-  const explicitChanges = items
-    .filter((item): item is Extract<ThreadItem, { type: "file_change" }> => item.type === "file_change" && item.status === "completed")
+  const explicitChanges = collectCompletedFileChangeItems(items)
     .flatMap((item) => item.changes)
     .map((change) => {
       const kind: ChangedFile["kind"] = change.kind === "update" ? "edit" : change.kind;
@@ -365,9 +396,11 @@ function buildChangedFilesFromSources(
     mergedChanges.set(change.path, change.kind);
   }
 
-  for (const change of compareSnapshotChanges(beforeSnapshot, afterSnapshot)) {
-    if (!mergedChanges.has(change.path)) {
-      mergedChanges.set(change.path, change.kind);
+  if (useSnapshotFallback) {
+    for (const change of compareSnapshotChanges(beforeSnapshot, afterSnapshot)) {
+      if (!mergedChanges.has(change.path)) {
+        mergedChanges.set(change.path, change.kind);
+      }
     }
   }
 
@@ -775,10 +808,17 @@ async function buildArtifact(
   afterSnapshot: WorkspaceSnapshot,
   beforeSnapshotStats: SnapshotCaptureStats,
   afterSnapshotStats: SnapshotCaptureStats,
+  useSnapshotFallback: boolean,
   providerCatalog: ModelCatalogProvider,
   selection: ResolvedModelSelection,
 ): Promise<MessageArtifact | undefined> {
-  const changedFiles = buildChangedFilesFromSources(session, items, beforeSnapshot, afterSnapshot);
+  const changedFiles = buildChangedFilesFromSources(
+    session,
+    items,
+    beforeSnapshot,
+    afterSnapshot,
+    useSnapshotFallback,
+  );
   const activitySummary = toActivitySummary(items);
   const operationTimeline = toAuditOperations(items);
   const runChecks = toRunChecks(
@@ -807,6 +847,7 @@ async function buildArtifact(
 export class CodexAdapter implements ProviderTurnAdapter {
   private readonly clients = new Map<string, Codex>();
   private readonly threads = new Map<string, CachedCodexThread>();
+  private readonly workspaceSnapshotIndexes = new Map<string, WorkspaceSnapshotIndex>();
 
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
     return composeProviderPrompt(input);
@@ -930,6 +971,74 @@ export class CodexAdapter implements ProviderTurnAdapter {
     };
   }
 
+  private buildSnapshotRoots(input: RunSessionTurnInput): string[] {
+    return [
+      input.session.workspacePath,
+      ...normalizeAllowedAdditionalDirectories(input.session.workspacePath, input.session.allowedAdditionalDirectories),
+    ];
+  }
+
+  private buildSnapshotIndexKey(roots: readonly string[]): string {
+    return JSON.stringify(
+      roots.map((root) => {
+        const resolved = path.resolve(root);
+        return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+      }),
+    );
+  }
+
+  private async prepareBeforeWorkspaceSnapshot(input: RunSessionTurnInput): Promise<{
+    beforeSnapshot: WorkspaceSnapshot;
+    beforeSnapshotStats: SnapshotCaptureStats;
+  }> {
+    const snapshotRoots = this.buildSnapshotRoots(input);
+    const indexKey = this.buildSnapshotIndexKey(snapshotRoots);
+    const cachedIndex = this.workspaceSnapshotIndexes.get(indexKey);
+
+    if (!cachedIndex) {
+      const index = await createWorkspaceSnapshotIndex(snapshotRoots);
+      this.workspaceSnapshotIndexes.set(indexKey, index);
+      return {
+        beforeSnapshot: new Map(index.snapshot),
+        beforeSnapshotStats: { ...index.stats },
+      };
+    }
+
+    const refreshed = await refreshWorkspaceSnapshotIndex(cachedIndex);
+    this.workspaceSnapshotIndexes.set(indexKey, refreshed.index);
+    return {
+      beforeSnapshot: refreshed.snapshot,
+      beforeSnapshotStats: refreshed.stats,
+    };
+  }
+
+  private async captureAfterWorkspaceSnapshot(
+    input: RunSessionTurnInput,
+    finalItems: ThreadItem[],
+  ): Promise<{
+    afterSnapshot: WorkspaceSnapshot;
+    afterSnapshotStats: SnapshotCaptureStats;
+    useSnapshotFallback: boolean;
+  }> {
+    const snapshotRoots = this.buildSnapshotRoots(input);
+    const indexKey = this.buildSnapshotIndexKey(snapshotRoots);
+    const cachedIndex = this.workspaceSnapshotIndexes.get(indexKey)
+      ?? await createWorkspaceSnapshotIndex(snapshotRoots);
+    const candidatePaths = collectCompletedFileChangePaths(input.session, finalItems);
+    const canUseTargetedSnapshot = candidatePaths.length > 0 && !hasBroadFilesystemChangeSource(finalItems);
+    const refreshed = await refreshWorkspaceSnapshotIndex(cachedIndex, {
+      candidatePaths: canUseTargetedSnapshot ? candidatePaths : undefined,
+      trustCandidatePaths: canUseTargetedSnapshot,
+    });
+    this.workspaceSnapshotIndexes.set(indexKey, refreshed.index);
+
+    return {
+      afterSnapshot: refreshed.snapshot,
+      afterSnapshotStats: refreshed.stats,
+      useSnapshotFallback: !canUseTargetedSnapshot,
+    };
+  }
+
   private async buildTurnResult(
     input: RunSessionTurnInput,
     prompt: ProviderPromptComposition,
@@ -942,10 +1051,8 @@ export class CodexAdapter implements ProviderTurnAdapter {
   ): Promise<RunSessionTurnResult> {
     const finalItems = Array.from(items.values());
     const finalAssistantText = collectAssistantText(finalItems);
-    const { snapshot: afterSnapshot, stats: afterSnapshotStats } = await captureWorkspaceSnapshot([
-      input.session.workspacePath,
-      ...normalizeAllowedAdditionalDirectories(input.session.workspacePath, input.session.allowedAdditionalDirectories),
-    ]);
+    const { afterSnapshot, afterSnapshotStats, useSnapshotFallback } =
+      await this.captureAfterWorkspaceSnapshot(input, finalItems);
     const artifact = await buildArtifact(
       input.session,
       finalItems,
@@ -955,6 +1062,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       afterSnapshot,
       beforeSnapshotStats,
       afterSnapshotStats,
+      useSnapshotFallback,
       input.providerCatalog,
       selection,
     );
@@ -975,10 +1083,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
   async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
     const { thread, selection } = this.getThread(input);
     const prompt = this.composePrompt(input);
-    const { snapshot: beforeSnapshot, stats: beforeSnapshotStats } = await captureWorkspaceSnapshot([
-      input.session.workspacePath,
-      ...normalizeAllowedAdditionalDirectories(input.session.workspacePath, input.session.allowedAdditionalDirectories),
-    ]);
+    const { beforeSnapshot, beforeSnapshotStats } = await this.prepareBeforeWorkspaceSnapshot(input);
     const turnInput =
       prompt.imagePaths.length > 0
         ? [
