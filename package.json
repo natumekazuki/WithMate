@@ -1,6 +1,6 @@
 {
   "name": "withmate",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "キャラクターロールプレイ対応 coding agent デスクトップアプリ",
   "private": true,
   "main": "dist-electron/src-electron/main.js",
@@ -28,7 +28,7 @@
   "type": "module",
   "dependencies": {
     "@github/copilot-sdk": "^0.2.2",
-    "@openai/codex-sdk": "^0.120.0",
+    "@openai/codex-sdk": "^0.124.0",
     "ignore": "^7.0.5",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
@@ -38,13 +38,13 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
-    "electron": "^41.2.0",
+    "electron": "^41.3.0",
     "electron-builder": "^26.8.1",
     "png-to-ico": "^3.0.1",
     "sharp": "^0.34.5",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2",
-    "vite": "^8.0.8"
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10"
   },
   "build": {
     "appId": "com.natumekazuki.withmate",
