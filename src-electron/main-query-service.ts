@@ -19,8 +19,8 @@ type MainQueryServiceDeps = {
   getCharacters(): CharacterProfile[];
   getAuditLogs(sessionId: string): AuditLogEntry[];
   getAppSettings(): AppSettings;
-  discoverSessionSkills(workspacePath: string, skillRootPath: string | null): DiscoveredSkill[];
-  discoverSessionCustomAgents(workspacePath: string): DiscoveredCustomAgent[];
+  discoverSessionSkills(workspacePath: string, skillRootPath: string | null): Promise<DiscoveredSkill[]>;
+  discoverSessionCustomAgents(workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   getStoredCharacter(characterId: string): Promise<CharacterProfile | null>;
   refreshCharactersFromStorage(): Promise<CharacterProfile[]>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
@@ -56,7 +56,7 @@ export class MainQueryService {
     return this.deps.getAuditLogs(sessionId);
   }
 
-  listSessionSkills(sessionId: string): DiscoveredSkill[] {
+  async listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]> {
     const session = this.getSession(sessionId);
     if (!session) {
       throw new Error("対象セッションが見つからないよ。");
@@ -67,7 +67,7 @@ export class MainQueryService {
     return this.deps.discoverSessionSkills(session.workspacePath, providerSettings.skillRootPath);
   }
 
-  listSessionCustomAgents(sessionId: string): DiscoveredCustomAgent[] {
+  async listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]> {
     const session = this.getSession(sessionId);
     if (!session) {
       throw new Error("対象セッションが見つからないよ。");

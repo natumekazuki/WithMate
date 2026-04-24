@@ -394,8 +394,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               sessionQuery: {
                 listSessionSummaries: () => listSessionSummaries(),
                 listSessionAuditLogs: (sessionId) => listSessionAuditLogs(sessionId),
-                listSessionSkills: (sessionId) => listSessionSkills(sessionId),
-                listSessionCustomAgents: (sessionId) => listSessionCustomAgents(sessionId),
+                listSessionSkills: async (sessionId) => listSessionSkills(sessionId),
+                listSessionCustomAgents: async (sessionId) => listSessionCustomAgents(sessionId),
                 listOpenSessionWindowIds: () => listOpenSessionWindowIds(),
                 getSession: (sessionId) => getSession(sessionId),
                 getDiffPreview: (token) => requireAuxWindowService().getDiffPreview(token),
@@ -1143,11 +1143,11 @@ function listSessionAuditLogs(sessionId: string): AuditLogEntry[] {
   return requireMainQueryService().listSessionAuditLogs(sessionId);
 }
 
-function listSessionSkills(sessionId: string): DiscoveredSkill[] {
+async function listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]> {
   return requireMainQueryService().listSessionSkills(sessionId);
 }
 
-function listSessionCustomAgents(sessionId: string): DiscoveredCustomAgent[] {
+async function listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]> {
   return requireMainQueryService().listSessionCustomAgents(sessionId);
 }
 

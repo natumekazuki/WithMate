@@ -62,8 +62,8 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
       sessionQuery: {
         listSessionSummaries: () => [],
         listSessionAuditLogs: () => [],
-        listSessionSkills: () => [],
-        listSessionCustomAgents: () => [],
+        async listSessionSkills() { return []; },
+        async listSessionCustomAgents() { return []; },
         listOpenSessionWindowIds: () => [],
         getSession: () => null,
         getDiffPreview: () => null,

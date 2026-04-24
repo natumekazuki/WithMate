@@ -91,8 +91,8 @@ export type MainIpcRegistrationDeps = {
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   listSessionSummaries(): SessionSummary[];
   listSessionAuditLogs(sessionId: string): AuditLogEntry[];
-  listSessionSkills(sessionId: string): DiscoveredSkill[];
-  listSessionCustomAgents(sessionId: string): DiscoveredCustomAgent[];
+  listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
+  listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listOpenSessionWindowIds(): string[];
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): AppSettings;
@@ -305,8 +305,8 @@ function registerSettingsHandlers(ipcMain: IpcMain, deps: MainIpcSettingsDeps): 
 function registerSessionQueryHandlers(ipcMain: IpcMain, deps: MainIpcSessionQueryDeps): void {
   ipcMain.handle(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL, () => deps.listSessionSummaries());
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => deps.listSessionAuditLogs(sessionId));
-  ipcMain.handle(WITHMATE_LIST_SESSION_SKILLS_CHANNEL, (_event, sessionId: string) => deps.listSessionSkills(sessionId));
-  ipcMain.handle(WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL, (_event, sessionId: string) =>
+  ipcMain.handle(WITHMATE_LIST_SESSION_SKILLS_CHANNEL, async (_event, sessionId: string) => deps.listSessionSkills(sessionId));
+  ipcMain.handle(WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL, async (_event, sessionId: string) =>
     deps.listSessionCustomAgents(sessionId),
   );
   ipcMain.handle(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL, () => deps.listOpenSessionWindowIds());
