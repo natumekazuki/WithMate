@@ -63,8 +63,8 @@ export type MainIpcSettingsDepsArgs = {
 export type MainIpcSessionQueryDepsArgs = {
   listSessionSummaries(): SessionSummary[];
   listSessionAuditLogs(sessionId: string): AuditLogEntry[];
-  listSessionSkills(sessionId: string): DiscoveredSkill[];
-  listSessionCustomAgents(sessionId: string): DiscoveredCustomAgent[];
+  listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
+  listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listOpenSessionWindowIds(): string[];
   getSession(sessionId: string): Session | null;
   getDiffPreview(token: string): DiffPreviewPayload | null;

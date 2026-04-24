@@ -42,6 +42,11 @@ function writeCustomAgent(
   );
 }
 
+function touchFile(filePath: string): void {
+  const future = new Date(Date.now() + 5000);
+  fs.utimesSync(filePath, future, future);
+}
+
 afterEach(() => {
   while (createdDirectories.length > 0) {
     const directoryPath = createdDirectories.pop();
@@ -52,7 +57,7 @@ afterEach(() => {
 });
 
 describe("discoverSessionCustomAgents", () => {
-  it("workspace root と global root をまとめて列挙できる", () => {
+  it("workspace root と global root をまとめて列挙できる", async () => {
     const workspacePath = createTempDir();
     const homeDirectory = createTempDir();
     writeCustomAgent(path.join(workspacePath, ".github", "agents"), "reviewer", {
@@ -68,7 +73,7 @@ describe("discoverSessionCustomAgents", () => {
       prompt: "Refactor the code safely.",
     });
 
-    const agents = discoverSessionCustomAgents(workspacePath, homeDirectory);
+    const agents = await discoverSessionCustomAgents(workspacePath, homeDirectory);
 
     assert.equal(agents.length, 2);
     assert.equal(agents[0]?.source, "workspace");
@@ -77,7 +82,7 @@ describe("discoverSessionCustomAgents", () => {
     assert.equal(agents[1]?.displayName, "Refactorer");
   });
 
-  it("同名 agent は workspace を優先する", () => {
+  it("同名 agent は workspace を優先する", async () => {
     const workspacePath = createTempDir();
     const homeDirectory = createTempDir();
     writeCustomAgent(path.join(workspacePath, ".github", "agents"), "reviewer", {
@@ -93,7 +98,7 @@ describe("discoverSessionCustomAgents", () => {
       prompt: "global prompt",
     });
 
-    const agents = discoverSessionCustomAgents(workspacePath, homeDirectory);
+    const agents = await discoverSessionCustomAgents(workspacePath, homeDirectory);
     const resolved = resolveSessionCustomAgentConfigs(workspacePath, "reviewer", homeDirectory);
 
     assert.equal(agents.length, 1);
@@ -103,7 +108,7 @@ describe("discoverSessionCustomAgents", () => {
     assert.equal(resolved.customAgents[0]?.prompt, "workspace prompt");
   });
 
-  it("picker には user-invocable: true の agent だけを出す", () => {
+  it("picker には user-invocable: true の agent だけを出す", async () => {
     const workspacePath = createTempDir();
     const homeDirectory = createTempDir();
     writeCustomAgent(path.join(workspacePath, ".github", "agents"), "reviewer", {
@@ -121,11 +126,70 @@ describe("discoverSessionCustomAgents", () => {
       prompt: "implicit hidden prompt",
     });
 
-    const agents = discoverSessionCustomAgents(workspacePath, homeDirectory);
+    const agents = await discoverSessionCustomAgents(workspacePath, homeDirectory);
     const resolved = resolveSessionCustomAgentConfigs(workspacePath, "hidden", homeDirectory);
 
     assert.deepEqual(agents.map((agent) => agent.displayName), ["Reviewer"]);
     assert.equal(resolved.customAgents.length, 3);
     assert.equal(resolved.selectedAgentName, "hidden");
+  });
+
+  it("変更がない discovery は Markdown 再読込を避ける", async () => {
+    const workspacePath = createTempDir();
+    const homeDirectory = createTempDir();
+    writeCustomAgent(path.join(workspacePath, ".github", "agents"), "reviewer", {
+      displayName: "Reviewer",
+      userInvocable: true,
+      prompt: "workspace prompt",
+    });
+
+    const mutableFs = fs as unknown as { readFileSync: (...args: any[]) => any };
+    const mutableFsPromises = fs.promises as unknown as { readFile: (...args: any[]) => Promise<any> };
+    const originalReadFileSync = mutableFs.readFileSync;
+    const originalReadFile = mutableFsPromises.readFile;
+    let readCount = 0;
+    mutableFs.readFileSync = (...args: any[]) => {
+      readCount += 1;
+      return originalReadFileSync(...args);
+    };
+    mutableFsPromises.readFile = async (...args: any[]) => {
+      readCount += 1;
+      return originalReadFile(...args);
+    };
+
+    try {
+      await discoverSessionCustomAgents(workspacePath, homeDirectory);
+      resolveSessionCustomAgentConfigs(workspacePath, "reviewer", homeDirectory);
+    } finally {
+      mutableFs.readFileSync = originalReadFileSync;
+      mutableFsPromises.readFile = originalReadFile;
+    }
+
+    assert.equal(readCount, 1);
+  });
+
+  it(".agent.md の mtime 変更で cache を更新する", async () => {
+    const workspacePath = createTempDir();
+    const homeDirectory = createTempDir();
+    const agentRootPath = path.join(workspacePath, ".github", "agents");
+    writeCustomAgent(agentRootPath, "reviewer", {
+      displayName: "Reviewer",
+      description: "before",
+      userInvocable: true,
+      prompt: "workspace prompt",
+    });
+    const agentFilePath = path.join(agentRootPath, "reviewer.agent.md");
+
+    assert.equal((await discoverSessionCustomAgents(workspacePath, homeDirectory))[0]?.description, "before");
+
+    writeCustomAgent(agentRootPath, "reviewer", {
+      displayName: "Reviewer",
+      description: "after",
+      userInvocable: true,
+      prompt: "workspace prompt",
+    });
+    touchFile(agentFilePath);
+
+    assert.equal((await discoverSessionCustomAgents(workspacePath, homeDirectory))[0]?.description, "after");
   });
 });

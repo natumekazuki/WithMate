@@ -72,11 +72,11 @@ test("MainQueryService は session skills/custom agents と preview/search/termi
         memoryExtractionProviderSettings: {},
         characterReflectionProviderSettings: {},
       }) as never,
-    discoverSessionSkills(workspacePath) {
+    async discoverSessionSkills(workspacePath) {
       calls.push(`skills:${workspacePath}`);
       return [];
     },
-    discoverSessionCustomAgents(workspacePath) {
+    async discoverSessionCustomAgents(workspacePath) {
       calls.push(`agents:${workspacePath}`);
       return [];
     },
@@ -105,8 +105,8 @@ test("MainQueryService は session skills/custom agents と preview/search/termi
   const session = service.getSession("session-1");
   assert.notEqual(session, sourceSessions[0]);
   assert.equal(session?.workspacePath, "C:/workspace");
-  service.listSessionSkills("session-1");
-  service.listSessionCustomAgents("session-2");
+  await service.listSessionSkills("session-1");
+  await service.listSessionCustomAgents("session-2");
   await service.refreshCharactersFromStorage();
   await service.previewComposerInput("session-1", "@src/main.ts");
   await service.searchWorkspaceFiles("session-1", "main");
@@ -139,8 +139,8 @@ test("MainQueryService は path 参照なし draft の preview を早期 return 
         memoryExtractionProviderSettings: {},
         characterReflectionProviderSettings: {},
       }) as never,
-    discoverSessionSkills: () => [],
-    discoverSessionCustomAgents: () => [],
+    discoverSessionSkills: async () => [],
+    discoverSessionCustomAgents: async () => [],
     async getStoredCharacter() {
       return createCharacter();
     },
@@ -174,8 +174,8 @@ test("MainQueryService は一覧を summary に射影して detail payload を�
         memoryExtractionProviderSettings: {},
         characterReflectionProviderSettings: {},
       }) as never,
-    discoverSessionSkills: () => [],
-    discoverSessionCustomAgents: () => [],
+    discoverSessionSkills: async () => [],
+    discoverSessionCustomAgents: async () => [],
     async getStoredCharacter() {
       return createCharacter();
     },
@@ -214,8 +214,8 @@ test("MainQueryService は対象 session detail だけを clone して返す", (
         memoryExtractionProviderSettings: {},
         characterReflectionProviderSettings: {},
       }) as never,
-    discoverSessionSkills: () => [],
-    discoverSessionCustomAgents: () => [],
+    discoverSessionSkills: async () => [],
+    discoverSessionCustomAgents: async () => [],
     async getStoredCharacter() {
       return createCharacter();
     },

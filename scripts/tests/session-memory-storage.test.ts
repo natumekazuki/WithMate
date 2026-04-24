@@ -46,25 +46,30 @@ function createSession() {
   });
 }
 
+function closeStorage(storage: { close(): void } | null): void {
+  storage?.close();
+}
+
 describe("SessionMemoryStorage", () => {
   it("session から default memory を生成して保存できる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-memory-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
+    let sessionStorage: SessionStorage | null = null;
+    let memoryStorage: SessionMemoryStorage | null = null;
 
     try {
-      const sessionStorage = new SessionStorage(dbPath);
+      sessionStorage = new SessionStorage(dbPath);
       const session = sessionStorage.upsertSession(createSession());
-      const memoryStorage = new SessionMemoryStorage(dbPath);
+      memoryStorage = new SessionMemoryStorage(dbPath);
 
       const stored = memoryStorage.ensureSessionMemory(session);
 
       assert.equal(stored.sessionId, session.id);
       assert.equal(stored.goal, session.taskTitle);
       assert.deepEqual(stored.decisions, []);
-
-      memoryStorage.close();
-      sessionStorage.close();
     } finally {
+      closeStorage(memoryStorage);
+      closeStorage(sessionStorage);
       await removeDirectoryWithRetry(tempDirectory);
     }
   });
@@ -72,11 +77,13 @@ describe("SessionMemoryStorage", () => {
   it("delta merge 後の memory を保存して読み戻せる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-memory-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
+    let sessionStorage: SessionStorage | null = null;
+    let memoryStorage: SessionMemoryStorage | null = null;
 
     try {
-      const sessionStorage = new SessionStorage(dbPath);
+      sessionStorage = new SessionStorage(dbPath);
       const session = sessionStorage.upsertSession(createSession());
-      const memoryStorage = new SessionMemoryStorage(dbPath);
+      memoryStorage = new SessionMemoryStorage(dbPath);
 
       const merged = mergeSessionMemory(createDefaultSessionMemory(session), {
         decisions: ["Project Memory を後続 slice に分離する"],
@@ -88,10 +95,9 @@ describe("SessionMemoryStorage", () => {
       assert.ok(loaded);
       assert.deepEqual(loaded.decisions, ["Project Memory を後続 slice に分離する"]);
       assert.deepEqual(loaded.nextActions, ["extraction plane の trigger を実装する"]);
-
-      memoryStorage.close();
-      sessionStorage.close();
     } finally {
+      closeStorage(memoryStorage);
+      closeStorage(sessionStorage);
       await removeDirectoryWithRetry(tempDirectory);
     }
   });
@@ -99,20 +105,21 @@ describe("SessionMemoryStorage", () => {
   it("session 削除時に foreign key cascade で memory も消える", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-memory-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
+    let sessionStorage: SessionStorage | null = null;
+    let memoryStorage: SessionMemoryStorage | null = null;
 
     try {
-      const sessionStorage = new SessionStorage(dbPath);
+      sessionStorage = new SessionStorage(dbPath);
       const session = sessionStorage.upsertSession(createSession());
-      const memoryStorage = new SessionMemoryStorage(dbPath);
+      memoryStorage = new SessionMemoryStorage(dbPath);
       memoryStorage.ensureSessionMemory(session);
 
       sessionStorage.deleteSession(session.id);
 
       assert.equal(memoryStorage.getSessionMemory(session.id), null);
-
-      memoryStorage.close();
-      sessionStorage.close();
     } finally {
+      closeStorage(memoryStorage);
+      closeStorage(sessionStorage);
       await removeDirectoryWithRetry(tempDirectory);
     }
   });
@@ -120,15 +127,17 @@ describe("SessionMemoryStorage", () => {
   it("list / delete で session memory を管理できる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-memory-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
+    let sessionStorage: SessionStorage | null = null;
+    let memoryStorage: SessionMemoryStorage | null = null;
 
     try {
-      const sessionStorage = new SessionStorage(dbPath);
+      sessionStorage = new SessionStorage(dbPath);
       const firstSession = sessionStorage.upsertSession(createSession());
       const secondSession = sessionStorage.upsertSession({
         ...createSession(),
         taskTitle: "Memory follow-up",
       });
-      const memoryStorage = new SessionMemoryStorage(dbPath);
+      memoryStorage = new SessionMemoryStorage(dbPath);
       memoryStorage.ensureSessionMemory(firstSession);
       memoryStorage.ensureSessionMemory(secondSession);
 
@@ -138,10 +147,9 @@ describe("SessionMemoryStorage", () => {
 
       assert.equal(memoryStorage.getSessionMemory(firstSession.id), null);
       assert.equal(memoryStorage.listSessionMemories().length, 1);
-
-      memoryStorage.close();
-      sessionStorage.close();
     } finally {
+      closeStorage(memoryStorage);
+      closeStorage(sessionStorage);
       await removeDirectoryWithRetry(tempDirectory);
     }
   });
