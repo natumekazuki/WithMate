@@ -68,6 +68,9 @@ function createIpcMainStub() {
     handle(channel: string, handler: Handler) {
       handlers.set(channel, handler);
     },
+    on() {
+      return ipcMain;
+    },
   } as unknown as IpcMain;
 
   return { ipcMain, handlers };
@@ -200,6 +203,12 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     async openPathTarget() {
       calls.push("openPath");
     },
+    async openAppLogFolder() {
+      calls.push("openLogs");
+    },
+    async openCrashDumpFolder() {
+      calls.push("openCrashDumps");
+    },
     async openSessionTerminal() {
       calls.push("openTerminal");
     },
@@ -215,6 +224,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   handlers.get("withmate:run-session-memory-extraction")?.({}, "session-1");
   handlers.get("withmate:cancel-session-run")?.({}, "session-1");
   await handlers.get("withmate:open-path")?.({}, "target", null);
+  await handlers.get("withmate:open-app-log-folder")?.({});
 
   assert.deepEqual(calls, [
     "openSession:session-1",
@@ -222,6 +232,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     "runSessionMemoryExtraction",
     "cancelRun",
     "openPath",
+    "openLogs",
   ]);
 });
 
@@ -283,6 +294,8 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async pickFile() { return null; },
     async pickImageFile() { return null; },
     async openPathTarget() {},
+    async openAppLogFolder() {},
+    async openCrashDumpFolder() {},
     async openSessionTerminal() {},
   });
 
@@ -298,6 +311,8 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_PICK_FILE_CHANNEL,
     WITHMATE_PICK_IMAGE_FILE_CHANNEL,
     WITHMATE_OPEN_PATH_CHANNEL,
+    "withmate:open-app-log-folder",
+    "withmate:open-crash-dump-folder",
     WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
     WITHMATE_GET_MODEL_CATALOG_CHANNEL,
     WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,

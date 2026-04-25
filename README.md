@@ -150,6 +150,8 @@ npm run typecheck
   - settings prefix / character role / input prompt の合成方針
 - `docs/design/audit-log.md`
   - Session 実行の監査ログ設計
+- `docs/design/app-log-base.md`
+  - Electron クラッシュ調査用の JSONL ログ基盤
 - `docs/design/database-schema.md`
   - current の保存構造と DB / file storage の一覧
 - `docs/manual-test-checklist.md`
@@ -167,7 +169,7 @@ npm run typecheck
 
 - Electron 実行を正本とする desktop アプリ構成です
 - セッション情報は Electron 側で保持され、キャラクター情報はアプリ管理領域のストレージから読み込みます
-- Settings Window では `System Prompt Prefix`、`Session Window`、`Coding Agent Providers`、`Skill Roots`、`Memory Extraction`、`Character Reflection`、`Model Catalog` を管理します
+- Settings Window では `System Prompt Prefix`、`Session Window`、`Coding Agent Providers`、`Skill Roots`、`Memory Extraction`、`Character Reflection`、`Diagnostics`、`Model Catalog` を管理します
 
 ## 補足
 

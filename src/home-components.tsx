@@ -35,6 +35,9 @@ import {
   SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL,
   SETTINGS_MEMORY_EXTRACTION_TIMEOUT_LABEL,
   SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL,
+  SETTINGS_DIAGNOSTICS_LABEL,
+  SETTINGS_OPEN_LOG_FOLDER_LABEL,
+  SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
 } from "./settings-ui.js";
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import { buildCardThemeStyle, CharacterAvatar, modelOptionLabel, reasoningDepthLabel } from "./ui-utils.js";
@@ -74,6 +77,8 @@ export type HomeSettingsContentProps = {
   onChangeCharacterReflectionMessageDeltaThreshold: (value: string) => void;
   onImportModelCatalog: () => void;
   onExportModelCatalog: () => void;
+  onOpenAppLogFolder: () => void;
+  onOpenCrashDumpFolder: () => void;
   onReloadMemoryManagement: () => void;
   onDeleteSessionMemory: (sessionId: string) => void;
   onDeleteProjectMemoryEntry: (entryId: string) => void;
@@ -110,6 +115,8 @@ export function HomeSettingsContent({
   onChangeCharacterReflectionMessageDeltaThreshold,
   onImportModelCatalog,
   onExportModelCatalog,
+  onOpenAppLogFolder,
+  onOpenCrashDumpFolder,
   onReloadMemoryManagement,
   onDeleteSessionMemory,
   onDeleteProjectMemoryEntry,
@@ -392,6 +399,20 @@ export function HomeSettingsContent({
               </section>
             </>
           ) : null}
+
+          <section className="settings-section-card">
+            <div className="settings-field">
+              <strong>{SETTINGS_DIAGNOSTICS_LABEL}</strong>
+              <div className="settings-actions">
+                <button className="launch-toggle" type="button" onClick={onOpenAppLogFolder}>
+                  {SETTINGS_OPEN_LOG_FOLDER_LABEL}
+                </button>
+                <button className="launch-toggle" type="button" onClick={onOpenCrashDumpFolder}>
+                  {SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
+                </button>
+              </div>
+            </div>
+          </section>
 
           <section className="settings-section-card">
             <div className="settings-field">

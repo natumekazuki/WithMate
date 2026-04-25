@@ -1,9 +1,11 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, dialog, ipcMain, screen, shell } from "electron";
+import { app, BrowserWindow, crashReporter, dialog, ipcMain, screen, shell } from "electron";
 
+import type { RendererLogInput } from "../src/app-log-types.js";
 import {
   type AuditLogEntry,
   currentTimestampLabel,
@@ -101,6 +103,7 @@ import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
 import { resolveCursorAnchoredPosition } from "./window-placement.js";
 import { clearWorkspaceFileIndex, searchWorkspaceFilePaths } from "./workspace-file-search.js";
+import { AppLogService } from "./app-log-service.js";
 import {
   SQLITE_MAINTENANCE_BUSY_TIMEOUT_MS,
   truncateAppDatabaseWal,
@@ -114,6 +117,20 @@ const appDataPath = app.getPath("appData");
 const fixedUserDataPath = path.join(appDataPath, "WithMate");
 app.setAppUserModelId("com.natumekazuki.withmate");
 app.setPath("userData", fixedUserDataPath);
+const appLogsPath = path.join(fixedUserDataPath, "logs");
+const appLogService = new AppLogService({
+  logsPath: appLogsPath,
+  runtimeInfo: {
+    appVersion: app.getVersion(),
+    electronVersion: process.versions.electron ?? "",
+    chromeVersion: process.versions.chrome ?? "",
+    nodeVersion: process.versions.node,
+    platform: process.platform,
+    arch: process.arch,
+    isPackaged: app.isPackaged,
+  },
+});
+const crashDumpsPath = resolveCrashDumpsPath();
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const bundledModelCatalogPath = devServerUrl
   ? path.resolve(currentDir, "../../public/model-catalog.json")
@@ -168,8 +185,245 @@ let mainInfrastructureRegistry:
     >
   | null = null;
 
+startCrashReporter();
+registerProcessLogHandlers();
+writeAppLog({
+  level: "info",
+  kind: "app.started",
+  process: "main",
+  message: "App process started",
+  data: {
+    userDataPath: app.getPath("userData"),
+    logsPath: appLogsPath,
+    crashDumpsPath,
+  },
+});
+
+function writeAppLog(input: Parameters<AppLogService["write"]>[0]): void {
+  try {
+    appLogService.write(input);
+  } catch (error) {
+    console.warn("App log write failed", error);
+  }
+}
+
+function resolveCrashDumpsPath(): string {
+  try {
+    return app.getPath("crashDumps");
+  } catch {
+    return path.join(app.getPath("userData"), "Crashpad");
+  }
+}
+
+function startCrashReporter(): void {
+  try {
+    crashReporter.start({ uploadToServer: false });
+    writeAppLog({
+      level: "info",
+      kind: "crash-reporter.started",
+      process: "main",
+      message: "Crash reporter started",
+      data: {
+        uploadToServer: false,
+        crashDumpsPath,
+      },
+    });
+  } catch (error) {
+    writeAppLog({
+      level: "error",
+      kind: "crash-reporter.start-failed",
+      process: "main",
+      message: "Crash reporter failed to start",
+      error: appLogService.errorToLogError(error),
+      data: {
+        crashDumpsPath,
+      },
+    });
+  }
+}
+
+function registerProcessLogHandlers(): void {
+  process.on("uncaughtExceptionMonitor", (error) => {
+    writeAppLog({
+      level: "fatal",
+      kind: "main.uncaught-exception",
+      process: "main",
+      message: error.message,
+      error: appLogService.errorToLogError(error),
+    });
+  });
+  process.on("unhandledRejection", (reason) => {
+    writeAppLog({
+      level: "fatal",
+      kind: "main.unhandled-rejection",
+      process: "main",
+      message: reason instanceof Error ? reason.message : "Unhandled rejection",
+      error: appLogService.errorToLogError(reason),
+      data: reason instanceof Error ? undefined : { reason },
+    });
+  });
+  app.on("child-process-gone", (_event, details) => {
+    writeAppLog({
+      level: details.reason === "clean-exit" ? "info" : "error",
+      kind: "child-process.gone",
+      process: "main",
+      message: `Child process gone: ${details.type}`,
+      data: {
+        type: details.type,
+        reason: details.reason,
+        exitCode: details.exitCode,
+        serviceName: "serviceName" in details ? details.serviceName : undefined,
+        name: "name" in details ? details.name : undefined,
+      },
+    });
+  });
+}
+
+function attachWindowLogHandlers(window: BrowserWindow): void {
+  writeAppLog({
+    level: "info",
+    kind: "app.window.created",
+    process: "main",
+    message: "Window created",
+    windowId: window.id,
+    data: {
+      title: readWindowTitle(window),
+    },
+  });
+
+  window.on("closed", () => {
+    writeAppLog({
+      level: "info",
+      kind: "app.window.closed",
+      process: "main",
+      message: "Window closed",
+      windowId: window.id,
+      data: {
+        title: readWindowTitle(window),
+      },
+    });
+  });
+
+  window.webContents.on("render-process-gone", (_event, details) => {
+    writeAppLog({
+      level: details.reason === "clean-exit" ? "info" : "error",
+      kind: "renderer.process-gone",
+      process: "main",
+      message: `Renderer process gone: ${details.reason}`,
+      windowId: window.id,
+      data: {
+        reason: details.reason,
+        exitCode: details.exitCode,
+        url: readWindowUrl(window),
+        windowTitle: readWindowTitle(window),
+        isDestroyed: window.isDestroyed(),
+      },
+    });
+  });
+  window.webContents.on("unresponsive", () => {
+    writeAppLog({
+      level: "warn",
+      kind: "webcontents.unresponsive",
+      process: "main",
+      message: "Window webContents became unresponsive",
+      windowId: window.id,
+      data: {
+        url: readWindowUrl(window),
+        windowTitle: readWindowTitle(window),
+      },
+    });
+  });
+  window.webContents.on("responsive", () => {
+    writeAppLog({
+      level: "info",
+      kind: "webcontents.responsive",
+      process: "main",
+      message: "Window webContents became responsive",
+      windowId: window.id,
+      data: {
+        url: readWindowUrl(window),
+        windowTitle: readWindowTitle(window),
+      },
+    });
+  });
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    writeAppLog({
+      level: "error",
+      kind: "renderer.did-fail-load",
+      process: "main",
+      message: errorDescription,
+      windowId: window.id,
+      data: {
+        errorCode,
+        errorDescription,
+        validatedURL,
+        isMainFrame,
+        url: readWindowUrl(window),
+      },
+    });
+  });
+}
+
+function readWindowTitle(window: BrowserWindow): string {
+  try {
+    return window.isDestroyed() ? "" : window.getTitle();
+  } catch {
+    return "";
+  }
+}
+
+function readWindowUrl(window: BrowserWindow): string {
+  try {
+    return window.webContents.isDestroyed() ? "" : window.webContents.getURL();
+  } catch {
+    return "";
+  }
+}
+
+function writeIpcErrorLog(input: { channel: string; durationMs: number; error: unknown }): void {
+  writeAppLog({
+    level: "error",
+    kind: "ipc.error",
+    process: "main",
+    message: `IPC failed: ${input.channel}`,
+    data: {
+      channel: input.channel,
+      durationMs: input.durationMs,
+      success: false,
+    },
+    error: appLogService.errorToLogError(input.error),
+  });
+}
+
+function writeRendererLog(input: RendererLogInput, windowId?: number): void {
+  if (!input || typeof input !== "object") {
+    return;
+  }
+
+  writeAppLog({
+    level: input.level,
+    kind: input.kind,
+    process: "renderer",
+    message: input.message,
+    windowId,
+    data: {
+      url: input.url,
+      detail: input.data,
+    },
+    error: input.error,
+  });
+}
+
+async function openDirectory(directoryPath: string): Promise<void> {
+  mkdirSync(directoryPath, { recursive: true });
+  const errorMessage = await shell.openPath(directoryPath);
+  if (errorMessage) {
+    throw new Error(errorMessage);
+  }
+}
+
 function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0]): BrowserWindow {
-  return new BrowserWindow({
+  const window = new BrowserWindow({
     backgroundColor: "#0e131b",
     autoHideMenuBar: true,
     show: false,
@@ -181,6 +435,8 @@ function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0
     },
     ...options,
   });
+  attachWindowLogHandlers(window);
+  return window;
 }
 
 function createCursorPlacedWindow(
@@ -380,7 +636,11 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 pickImageFile: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickImageFile(targetWindow, initialPath),
                 openPathTarget,
+                openAppLogFolder: () => openDirectory(appLogsPath),
+                openCrashDumpFolder: () => openDirectory(crashDumpsPath),
                 openSessionTerminal,
+                logIpcError: writeIpcErrorLog,
+                reportRendererLog: writeRendererLog,
               },
               catalog: {
                 getModelCatalog: (revision) => requireSettingsCatalogService().getModelCatalog(revision),
@@ -1454,6 +1714,17 @@ async function openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserW
 
 app.whenReady().then(async () => {
   dbPath = path.join(app.getPath("userData"), "withmate.db");
+  writeAppLog({
+    level: "info",
+    kind: "app.ready",
+    process: "main",
+    message: "App ready",
+    data: {
+      userDataPath: app.getPath("userData"),
+      logsPath: appLogsPath,
+      crashDumpsPath,
+    },
+  });
   await requireMainBootstrapService().handleReady();
 
   if (process.env.WITHMATE_DEBUG_OPEN_SESSION_ID) {
@@ -1470,7 +1741,22 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", (event) => {
+  writeAppLog({
+    level: "info",
+    kind: "app.before-quit",
+    process: "main",
+    message: "App before quit",
+  });
   requireAppLifecycleService().handleBeforeQuit(event);
+});
+
+app.on("will-quit", () => {
+  writeAppLog({
+    level: "info",
+    kind: "app.will-quit",
+    process: "main",
+    message: "App will quit",
+  });
 });
 
 

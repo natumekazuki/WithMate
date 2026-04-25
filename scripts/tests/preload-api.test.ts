@@ -21,6 +21,7 @@ function createIpcRendererStub() {
       removeListener(channel: string) {
         listeners.delete(channel);
       },
+      send() {},
     },
   };
 }
@@ -99,6 +100,8 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "openCharacterEditor",
     "openDiffWindow",
     "openHomeWindow",
+    "openAppLogFolder",
+    "openCrashDumpFolder",
     "openMemoryManagementWindow",
     "openPath",
     "openSession",
