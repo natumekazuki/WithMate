@@ -101,8 +101,10 @@ session 以外の app-wide persistence をまとめて扱う。
 ### PersistentStoreLifecycleService
 
 - store 初期化
+- 5 分間隔の WAL size-based maintenance
 - close
-- DB 再生成
+- close 時の WAL truncate checkpoint
+- DB 再生成前の WAL truncate checkpoint
 
 Main Process の bootstrap / reset から persistent store を束ねる。
 

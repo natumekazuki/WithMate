@@ -45,6 +45,7 @@ test("PersistentStoreLifecycleService は store を初期化して session depen
     onBeforeClose: () => {
       closeCalls.push("before-close");
     },
+    truncateWal() {},
     async removeFile() {},
   });
 
@@ -67,6 +68,9 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     onBeforeClose: () => {
       closeCalls.push("before-close");
     },
+    truncateWal: () => {
+      closeCalls.push("truncate-wal");
+    },
     async removeFile() {},
   });
 
@@ -80,7 +84,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     appSettingsStorage: createClosableStore("settings", closeCalls) as never,
   };
 
-  service.close(bundle);
+  service.close(bundle, "withmate.db");
 
   assert.deepEqual(closeCalls, [
     "before-close",
@@ -91,11 +95,13 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     "character-memory",
     "audit",
     "settings",
+    "truncate-wal",
   ]);
 });
 
 test("PersistentStoreLifecycleService は DB を再生成して再初期化する", async () => {
   const removedPaths: string[] = [];
+  const truncateWalCalls: string[] = [];
   const service = new PersistentStoreLifecycleService({
     createModelCatalogStorage: () =>
       ({
@@ -113,6 +119,9 @@ test("PersistentStoreLifecycleService は DB を再生成して再初期化す�
     createAuditLogStorage: () => ({ close() {} }) as never,
     createAppSettingsStorage: () => ({ close() {} }) as never,
     onBeforeClose: () => {},
+    truncateWal(dbPath) {
+      truncateWalCalls.push(dbPath);
+    },
     async removeFile(filePath) {
       removedPaths.push(filePath);
     },
@@ -125,5 +134,6 @@ test("PersistentStoreLifecycleService は DB を再生成して再初期化す�
     "withmate.db-shm",
     "withmate.db",
   ]);
+  assert.deepEqual(truncateWalCalls, ["withmate.db"]);
   assert.equal(bundle.activeModelCatalog.revision, 2);
 });

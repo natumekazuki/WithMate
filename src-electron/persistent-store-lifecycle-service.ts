@@ -9,6 +9,7 @@ import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { ProjectMemoryStorage } from "./project-memory-storage.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
 import { SessionStorage } from "./session-storage.js";
+import { truncateAppDatabaseWal } from "./sqlite-connection.js";
 
 type ClosableStore = {
   close(): void;
@@ -42,6 +43,7 @@ type PersistentStoreLifecycleDeps = {
   createAuditLogStorage(dbPath: string): AuditLogStorage;
   createAppSettingsStorage(dbPath: string): AppSettingsStorage;
   onBeforeClose(): void;
+  truncateWal(dbPath: string): void;
   removeFile(filePath: string): Promise<void>;
 };
 
@@ -72,7 +74,7 @@ export class PersistentStoreLifecycleService {
     };
   }
 
-  close(bundle: PersistentStoreBundleLike): void {
+  close(bundle: PersistentStoreBundleLike, dbPath?: string | null): void {
     this.deps.onBeforeClose();
 
     const stores: Array<ClosableStore | null | undefined> = [
@@ -88,6 +90,10 @@ export class PersistentStoreLifecycleService {
     for (const store of stores) {
       store?.close();
     }
+
+    if (dbPath) {
+      this.deps.truncateWal(dbPath);
+    }
   }
 
   async recreate(
@@ -95,7 +101,7 @@ export class PersistentStoreLifecycleService {
     bundledModelCatalogPath: string,
     bundle: PersistentStoreBundleLike,
   ): Promise<PersistentStoreBundle> {
-    this.close(bundle);
+    this.close(bundle, dbPath);
 
     await Promise.all([
       this.deps.removeFile(`${dbPath}-wal`),
@@ -118,6 +124,7 @@ export function createPersistentStoreLifecycleService(): PersistentStoreLifecycl
     createAuditLogStorage: (dbPath) => new AuditLogStorage(dbPath),
     createAppSettingsStorage: (dbPath) => new AppSettingsStorage(dbPath),
     onBeforeClose: () => {},
+    truncateWal: truncateAppDatabaseWal,
     removeFile: async (filePath) => {
       await rm(filePath, { force: true });
     },

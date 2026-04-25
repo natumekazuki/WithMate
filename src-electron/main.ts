@@ -101,6 +101,7 @@ import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
 import { resolveCursorAnchoredPosition } from "./window-placement.js";
 import { clearWorkspaceFileIndex, searchWorkspaceFilePaths } from "./workspace-file-search.js";
+import { truncateAppDatabaseWal, truncateAppDatabaseWalIfLargerThan } from "./sqlite-connection.js";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const preloadPath = path.resolve(currentDir, "preload.js");
@@ -115,6 +116,7 @@ const bundledModelCatalogPath = devServerUrl
   : path.resolve(rendererDistPath, "model-catalog.json");
 const codexAdapter = new CodexAdapter();
 const copilotAdapter = new CopilotAdapter();
+const WAL_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 
 let sessions: Session[] = [];
 let characters: CharacterProfile[] = [];
@@ -149,6 +151,7 @@ let mainSessionCommandFacade: MainSessionCommandFacade | null = null;
 let mainSessionPersistenceFacade: MainSessionPersistenceFacade | null = null;
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
+let walMaintenanceTimer: ReturnType<typeof setInterval> | null = null;
 let mainInfrastructureRegistry:
   | MainInfrastructureRegistry<
       WindowBroadcastService<BrowserWindow>,
@@ -307,6 +310,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             sessionElicitationService?.reset();
             sessionObservabilityService?.dispose();
           },
+          truncateWal: truncateAppDatabaseWal,
           async removeFile(filePath) {
             await rm(filePath, { force: true });
           },
@@ -1023,6 +1027,31 @@ function applyPersistentStoreBundle(bundle: PersistentStoreBundle): ModelCatalog
   return bundle.activeModelCatalog;
 }
 
+function startWalMaintenance(): void {
+  stopWalMaintenance();
+  walMaintenanceTimer = setInterval(() => {
+    if (!dbPath) {
+      return;
+    }
+
+    try {
+      truncateAppDatabaseWalIfLargerThan(dbPath);
+    } catch (error) {
+      console.warn("SQLite WAL maintenance failed", error);
+    }
+  }, WAL_MAINTENANCE_INTERVAL_MS);
+  walMaintenanceTimer.unref?.();
+}
+
+function stopWalMaintenance(): void {
+  if (!walMaintenanceTimer) {
+    return;
+  }
+
+  clearInterval(walMaintenanceTimer);
+  walMaintenanceTimer = null;
+}
+
 async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
   if (!dbPath) {
     throw new Error("DB path が初期化されていないよ。");
@@ -1030,10 +1059,13 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
 
   closePersistentStores();
   const bundle = await requirePersistentStoreLifecycleService().initialize(dbPath, bundledModelCatalogPath);
-  return applyPersistentStoreBundle(bundle);
+  const activeModelCatalog = applyPersistentStoreBundle(bundle);
+  startWalMaintenance();
+  return activeModelCatalog;
 }
 
 function closePersistentStores(): void {
+  stopWalMaintenance();
   requirePersistentStoreLifecycleService().close({
     modelCatalogStorage,
     sessionStorage,
@@ -1042,7 +1074,7 @@ function closePersistentStores(): void {
     characterMemoryStorage,
     auditLogStorage,
     appSettingsStorage,
-  });
+  }, dbPath);
   modelCatalogStorage = null;
   sessionStorage = null;
   sessionMemoryStorage = null;
@@ -1075,6 +1107,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
     throw new Error("DB path が初期化されていないよ。");
   }
 
+  stopWalMaintenance();
   const bundle = await requirePersistentStoreLifecycleService().recreate(dbPath, bundledModelCatalogPath, {
     modelCatalogStorage,
     sessionStorage,
@@ -1105,7 +1138,9 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   mainInfrastructureRegistry = null;
   sessions = [];
 
-  return applyPersistentStoreBundle(bundle);
+  const activeModelCatalog = applyPersistentStoreBundle(bundle);
+  startWalMaintenance();
+  return activeModelCatalog;
 }
 
 function getModelCatalog(revision?: number | null): ModelCatalogSnapshot | null {

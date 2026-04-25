@@ -1,6 +1,4 @@
-import fs from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
 import {
   cloneSessionSummaries,
@@ -11,6 +9,7 @@ import {
   type SessionSummary,
 } from "../src/session-state.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
+import { openAppDatabase } from "./sqlite-connection.js";
 
 type SessionRow = {
   id: string;
@@ -306,10 +305,7 @@ export class SessionStorage {
   private readonly db: DatabaseSync;
 
   constructor(dbPath: string) {
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL;");
-    this.db.exec("PRAGMA foreign_keys = ON;");
+    this.db = openAppDatabase(dbPath);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (

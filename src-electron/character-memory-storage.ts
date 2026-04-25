@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
 import {
   cloneCharacterMemoryEntries,
@@ -10,6 +8,7 @@ import {
   normalizeCharacterScope,
 } from "../src/memory-state.js";
 import type { CharacterMemoryEntry, CharacterScope } from "../src/memory-state.js";
+import { openAppDatabase } from "./sqlite-connection.js";
 
 type CharacterScopeRow = {
   id: string;
@@ -85,10 +84,7 @@ export class CharacterMemoryStorage {
   private readonly db: DatabaseSync;
 
   constructor(dbPath: string) {
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL;");
-    this.db.exec("PRAGMA foreign_keys = ON;");
+    this.db = openAppDatabase(dbPath);
     this.ensureSchema();
   }
 
