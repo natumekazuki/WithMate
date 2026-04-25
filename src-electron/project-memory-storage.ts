@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
 import {
   cloneProjectMemoryEntries,
@@ -11,6 +9,7 @@ import {
 } from "../src/memory-state.js";
 import type { ProjectMemoryEntry, ProjectScope } from "../src/memory-state.js";
 import type { ResolvedProjectScopeInput } from "./project-scope.js";
+import { openAppDatabase } from "./sqlite-connection.js";
 
 type ProjectScopeRow = {
   id: string;
@@ -98,10 +97,7 @@ export class ProjectMemoryStorage {
   private readonly db: DatabaseSync;
 
   constructor(dbPath: string) {
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL;");
-    this.db.exec("PRAGMA foreign_keys = ON;");
+    this.db = openAppDatabase(dbPath);
     this.ensureSchema();
   }
 

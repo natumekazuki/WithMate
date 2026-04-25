@@ -1,6 +1,4 @@
-import fs from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
 import {
   createDefaultSessionMemory,
@@ -8,6 +6,7 @@ import {
   type Session,
   type SessionMemory,
 } from "../src/app-state.js";
+import { openAppDatabase } from "./sqlite-connection.js";
 
 type SessionMemoryRow = {
   session_id: string;
@@ -93,10 +92,7 @@ export class SessionMemoryStorage {
   private readonly db: DatabaseSync;
 
   constructor(dbPath: string) {
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL;");
-    this.db.exec("PRAGMA foreign_keys = ON;");
+    this.db = openAppDatabase(dbPath);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS session_memories (
         session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,

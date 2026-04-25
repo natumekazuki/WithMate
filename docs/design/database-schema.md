@@ -1,7 +1,7 @@
 # Database Schema
 
 - 作成日: 2026-03-27
-- 更新日: 2026-03-28
+- 更新日: 2026-04-25
 - 対象: WithMate の current 保存構造
 
 ## Goal
@@ -36,7 +36,15 @@ future design だけで未実装のものは、最後に別枠で注記する。
   - Node 標準の `node:sqlite`
 - 共通設定:
   - `PRAGMA journal_mode = WAL`
+  - `PRAGMA wal_autocheckpoint = 256`
+  - `PRAGMA journal_size_limit = 67108864`
+  - `PRAGMA busy_timeout = 5000`
   - `PRAGMA foreign_keys = ON`
+- WAL maintenance:
+  - 全 SQLite connection は `src-electron/sqlite-connection.ts` の共通 helper で初期化する
+  - app 起動中は Main Process が 5 分ごとに `withmate.db-wal` の size を確認し、64 MiB を超えていれば短い `busy_timeout = 250` で `PRAGMA wal_checkpoint(TRUNCATE)` を実行する
+  - app 終了時と DB 再生成前にも `PRAGMA wal_checkpoint(TRUNCATE)` を実行し、`withmate.db-wal` の肥大化を抑制する
+  - WAL truncate は実行前に共通接続設定を適用し、DB が WAL mode でない状態からでも `journal_mode = WAL` へ戻してから checkpoint する
 
 ### DB 外保存
 

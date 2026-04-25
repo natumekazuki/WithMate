@@ -1,6 +1,5 @@
 import fs from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
 import {
   cloneModelCatalogDocument,
@@ -12,6 +11,7 @@ import {
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
+import { openAppDatabase } from "./sqlite-connection.js";
 
 type RevisionRow = {
   revision: number;
@@ -40,10 +40,7 @@ export class ModelCatalogStorage {
   private readonly bundledCatalogPath: string;
 
   constructor(dbPath: string, bundledCatalogPath: string) {
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL;");
-    this.db.exec("PRAGMA foreign_keys = ON;");
+    this.db = openAppDatabase(dbPath);
     this.bundledCatalogPath = bundledCatalogPath;
     this.ensureSchema();
   }

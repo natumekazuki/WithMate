@@ -102,9 +102,17 @@ session 以外の app-wide persistence をまとめて扱う。
 
 - store 初期化
 - close
-- DB 再生成
+- close 時の WAL truncate checkpoint
+- DB 再生成前の WAL truncate checkpoint
 
 Main Process の bootstrap / reset から persistent store を束ねる。
+WAL truncate checkpoint は best-effort とし、失敗しても close / recreate を中断しない。
+
+### WAL Maintenance Timer
+
+- Main Process が `startWalMaintenance()` / `stopWalMaintenance()` で interval を管理する
+- interval は 5 分ごとに WAL size を確認し、64 MiB を超えている場合だけ truncate checkpoint を実行する
+- interval 側の checkpoint は短い busy timeout を使い、Main Process の event loop block を抑える
 
 ## Query / Command Boundary
 
