@@ -42,8 +42,9 @@ future design だけで未実装のものは、最後に別枠で注記する。
   - `PRAGMA foreign_keys = ON`
 - WAL maintenance:
   - 全 SQLite connection は `src-electron/sqlite-connection.ts` の共通 helper で初期化する
-  - app 起動中は 5 分ごとに `withmate.db-wal` の size を確認し、64 MiB を超えていれば `PRAGMA wal_checkpoint(TRUNCATE)` を実行する
+  - app 起動中は Main Process が 5 分ごとに `withmate.db-wal` の size を確認し、64 MiB を超えていれば短い `busy_timeout = 250` で `PRAGMA wal_checkpoint(TRUNCATE)` を実行する
   - app 終了時と DB 再生成前にも `PRAGMA wal_checkpoint(TRUNCATE)` を実行し、`withmate.db-wal` の肥大化を抑制する
+  - WAL truncate は実行前に共通接続設定を適用し、DB が WAL mode でない状態からでも `journal_mode = WAL` へ戻してから checkpoint する
 
 ### DB 外保存
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 
 import {
   openAppDatabase,
+  SQLITE_MAINTENANCE_BUSY_TIMEOUT_MS,
   SQLITE_JOURNAL_SIZE_LIMIT_BYTES,
   SQLITE_WAL_AUTOCHECKPOINT_PAGES,
   truncateAppDatabaseWal,
@@ -55,6 +56,32 @@ describe("sqlite-connection", () => {
     }
   });
 
+  it("WAL truncate 前に共通接続設定を適用し、WAL mode へ戻す", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-sqlite-connection-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const initialDb = openAppDatabase(dbPath);
+      try {
+        initialDb.exec("PRAGMA journal_mode = DELETE;");
+      } finally {
+        initialDb.close();
+      }
+
+      truncateAppDatabaseWal(dbPath);
+
+      const reopened = openAppDatabase(dbPath);
+      try {
+        const journalMode = firstPragmaValue(reopened.prepare("PRAGMA journal_mode").get());
+        assert.equal(journalMode, "wal");
+      } finally {
+        reopened.close();
+      }
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("WAL が上限以下の場合は truncate checkpoint を実行しない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-sqlite-connection-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -71,6 +98,38 @@ describe("sqlite-connection", () => {
       await writeFile(walPath, "small");
       assert.equal(truncateAppDatabaseWalIfLargerThan(dbPath, 1024), false);
       assert.equal(existsSync(walPath), true);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("WAL が上限を超える場合は truncate checkpoint を実行する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-sqlite-connection-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    const walPath = `${dbPath}-wal`;
+
+    try {
+      const db = openAppDatabase(dbPath);
+      try {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS test_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            value TEXT NOT NULL
+          );
+          INSERT INTO test_items (value) VALUES ('before truncate');
+        `);
+        assert.equal(existsSync(walPath), true);
+        const walSizeBefore = statSync(walPath).size;
+
+        const truncated = truncateAppDatabaseWalIfLargerThan(dbPath, 0, {
+          busyTimeoutMs: SQLITE_MAINTENANCE_BUSY_TIMEOUT_MS,
+        });
+
+        assert.equal(truncated, true);
+        assert.ok(statSync(walPath).size < walSizeBefore);
+      } finally {
+        db.close();
+      }
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
