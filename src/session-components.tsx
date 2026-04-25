@@ -1973,6 +1973,8 @@ type SessionAdditionalDirectoryItem = {
 type SessionWorkspacePathMatchItem = {
   key: string;
   path: string;
+  kind: "file" | "folder";
+  kindLabel: string;
   primaryLabel: string;
   secondaryLabel: string;
   title: string;
@@ -2397,14 +2399,17 @@ export function SessionComposerExpanded({
               role="option"
               aria-selected={item.isActive}
               tabIndex={-1}
-              className={`composer-path-match${item.isActive ? " active" : ""}`}
+              className={`composer-path-match ${item.kind}${item.isActive ? " active" : ""}`}
               onMouseDown={(event) => event.preventDefault()}
               onMouseEnter={() => onActivateWorkspacePathMatch(index)}
               onFocus={() => onActivateWorkspacePathMatch(index)}
               onClick={() => onSelectWorkspacePathMatch(item.path)}
               title={item.title}
             >
-              <span className="composer-path-match-primary">{item.primaryLabel}</span>
+              <span className="composer-path-match-heading">
+                <span className="composer-path-match-kind">{item.kindLabel}</span>
+                <span className="composer-path-match-primary">{item.primaryLabel}</span>
+              </span>
               <span className="composer-path-match-secondary">{item.secondaryLabel}</span>
             </button>
           ))}

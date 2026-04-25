@@ -21,6 +21,7 @@ import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionInput, DiffPreviewPayload, Session } from "../src/session-state.js";
 import type { OpenPathOptions, ResetAppDatabaseRequest } from "../src/withmate-window-types.js";
+import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 import type { MainIpcRegistrationDeps } from "./main-ipc-registration.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
@@ -73,7 +74,7 @@ export type MainIpcSessionQueryDepsArgs = {
   getSession(sessionId: string): Session | null;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
-  searchWorkspaceFiles(sessionId: string, query: string): Promise<string[]>;
+  searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
 };
 
 export type MainIpcSessionRuntimeDepsArgs = {

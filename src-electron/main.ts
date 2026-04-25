@@ -36,6 +36,7 @@ import {
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
 import type { OpenPathOptions } from "../src/withmate-window-types.js";
+import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 import {
   createStoredCharacter,
   deleteStoredCharacter,
@@ -102,7 +103,7 @@ import { discoverSessionSkills } from "./skill-discovery.js";
 import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
 import { resolveCursorAnchoredPosition } from "./window-placement.js";
-import { clearWorkspaceFileIndex, searchWorkspaceFilePaths } from "./workspace-file-search.js";
+import { clearWorkspaceFileIndex, searchWorkspacePathCandidates } from "./workspace-file-search.js";
 import { AppLogService } from "./app-log-service.js";
 import {
   SQLITE_MAINTENANCE_BUSY_TIMEOUT_MS,
@@ -842,7 +843,7 @@ function requireMainQueryService(): MainQueryService {
       getStoredCharacter: (characterId) => requireCharacterRuntimeService().getCharacter(characterId),
       refreshCharactersFromStorage: () => requireCharacterRuntimeService().refreshCharactersFromStorage(),
       resolveComposerPreview,
-      searchWorkspaceFiles: (workspacePath, query) => searchWorkspaceFilePaths(workspacePath, query),
+      searchWorkspaceFiles: (workspacePath, query) => searchWorkspacePathCandidates(workspacePath, query),
       launchTerminalAtPath,
     });
   }
@@ -1781,7 +1782,7 @@ async function previewComposerInput(
   return requireMainQueryService().previewComposerInput(sessionId, userMessage);
 }
 
-async function searchWorkspaceFiles(sessionId: string, query: string): Promise<string[]> {
+async function searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]> {
   return requireMainQueryService().searchWorkspaceFiles(sessionId, query);
 }
 

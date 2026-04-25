@@ -22,6 +22,7 @@ import type {
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "./character-update-state.js";
 import type { MemoryManagementSnapshot } from "./memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
+import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import type { OpenPathOptions, ResetAppDatabaseRequest, ResetAppDatabaseResult } from "./withmate-window-types.js";
 
 export type WithMateWindowNavigationApi = {
@@ -54,7 +55,7 @@ export type WithMateWindowSessionApi = {
   updateSession(session: Session): Promise<Session>;
   deleteSession(sessionId: string): Promise<void>;
   previewComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview>;
-  searchWorkspaceFiles(sessionId: string, query: string): Promise<string[]>;
+  searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
