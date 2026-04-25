@@ -15,9 +15,17 @@
 - [x] 検証結果を記録する
 
 ## Notes
-- アクティブな repo plan: `docs/plans/20260425-copilot-command-approval-error/plan.md`
+- 対象 plan: `docs/plans/20260425-copilot-command-approval-error/plan.md`
 - 対象範囲は `src-electron/copilot-adapter.ts` と `scripts/tests/copilot-adapter.test.ts`
 - validation: `npm test` PASS / `npm run build` PASS
 - quality review: no material findings
 - docs sync: unnecessary
-- archive: ready -> `docs/plans/archive/2026/04/20260425-copilot-command-approval-error/`
+- implementation commit: 5e74333d8ff407b09fae5ff03b1661931af961ca fix(copilot-adapter): legacy approval 契約へ橋渡しして回帰を防ぐ
+- archive: archived -> `docs/plans/archive/2026/04/20260425-copilot-command-approval-error/`
+
+## Archive Check
+- tier: session
+- 対象: `docs/plans/archive/2026/04/20260425-copilot-command-approval-error/`
+- archive 先: `docs/plans/archive/2026/04/20260425-copilot-command-approval-error/`
+- archive-ready: 完了
+- archive 状態: archived
