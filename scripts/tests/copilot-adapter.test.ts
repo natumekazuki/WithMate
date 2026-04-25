@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { describe, it } from "node:test";
 
+import type { PermissionRequest } from "@github/copilot-sdk";
+
 import { buildNewSession, createDefaultSessionMemory } from "../../src/app-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
@@ -15,7 +17,7 @@ import {
   buildCopilotSessionSettings,
   buildCopilotMessageAttachments,
   buildCopilotProviderQuotaTelemetry,
-  getCopilotPermissionCompletedStepStatus,
+  getCopilotPermissionCompletedLiveStatus,
   buildCopilotSessionContextTelemetry,
   buildCopilotSystemMessage,
   buildCopilotStableRawItems,
@@ -152,21 +154,21 @@ function createRunSessionInput(options?: {
   };
 }
 
-function createWritePermissionRequest() {
+function createWritePermissionRequest(): PermissionRequest {
   return {
     kind: "write",
     toolCallId: "tool-call-1",
     intention: "Create file",
     fileName: "F:/repo/tmp/output.txt",
-  } as never;
+  } as unknown as PermissionRequest;
 }
 
-function createReadPermissionRequest() {
+function createReadPermissionRequest(): PermissionRequest {
   return {
     kind: "read",
     toolCallId: "tool-call-2",
     path: "F:/repo/src/index.ts",
-  } as never;
+  } as unknown as PermissionRequest;
 }
 
 describe("CopilotAdapter env", () => {
@@ -957,7 +959,7 @@ describe("CopilotAdapter session settings", () => {
     });
   });
 
-  it("safety permission handler は read を legacy approve-once / write を user-not-available で返す", async () => {
+  it("safety permission handler は read を legacy approve-once / write を reject で返す", async () => {
     const input = createRunSessionInput();
     input.session.approvalMode = "safety";
     const settings = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents);
@@ -967,7 +969,7 @@ describe("CopilotAdapter session settings", () => {
     const writeResult = await settings.config.onPermissionRequest?.(createWritePermissionRequest(), { sessionId: "session-1" });
 
     assert.deepEqual(readResult, { kind: "approve-once" });
-    assert.deepEqual(writeResult, { kind: "user-not-available" });
+    assert.deepEqual(writeResult, { kind: "reject" });
   });
 
   it("provider-controlled permission handler は approval callback 経由の approve / deny と handler 不在を legacy kind へ橋渡しする", async () => {
@@ -1272,7 +1274,7 @@ describe("CopilotAdapter permission.completed live status", () => {
       "approved-for-session",
       "approved-for-location",
     ]) {
-      assert.equal(getCopilotPermissionCompletedStepStatus(kind), "in_progress");
+      assert.equal(getCopilotPermissionCompletedLiveStatus(kind), "in_progress");
     }
   });
 
@@ -1285,7 +1287,7 @@ describe("CopilotAdapter permission.completed live status", () => {
       "denied-by-rules",
       "denied-by-content-exclusion-policy",
     ]) {
-      assert.equal(getCopilotPermissionCompletedStepStatus(kind), "failed");
+      assert.equal(getCopilotPermissionCompletedLiveStatus(kind), "failed");
     }
   });
 });

@@ -284,7 +284,7 @@ const COPILOT_APPROVED_PERMISSION_COMPLETED_KINDS = new Set([
   "approved-for-location",
 ]);
 
-export function getCopilotPermissionCompletedStepStatus(resultKind: string): LiveRunStep["status"] {
+export function getCopilotPermissionCompletedLiveStatus(resultKind: string): LiveRunStep["status"] {
   return COPILOT_APPROVED_PERMISSION_COMPLETED_KINDS.has(resultKind)
     ? "in_progress"
     : "failed";
@@ -372,7 +372,7 @@ function applyCopilotTurnEvent(args: {
         stepId,
         summary: current.summary,
         details: appendDetail(current.details, `permission: ${event.data.result.kind}`),
-        status: getCopilotPermissionCompletedStepStatus(event.data.result.kind),
+        status: getCopilotPermissionCompletedLiveStatus(event.data.result.kind),
       });
       break;
     }
@@ -1038,11 +1038,11 @@ function toPermissionDecision(kind: PermissionDecisionKind): PermissionRequestRe
       result = { kind: "approve-once" };
       break;
     case "denied-interactively-by-user":
+    case "denied-by-rules":
+    case "denied-by-content-exclusion-policy":
       result = { kind: "reject" };
       break;
-    case "denied-by-rules":
     case "denied-no-approval-rule-and-could-not-request-from-user":
-    case "denied-by-content-exclusion-policy":
     default:
       result = { kind: "user-not-available" };
       break;
