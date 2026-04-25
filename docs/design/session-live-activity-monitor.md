@@ -26,9 +26,9 @@
 - `Latest Command` は次の優先順で決める
   - 実行中なら `liveRun.steps` の最後の `command_execution`
   - 待機中なら直近 terminal Audit Log に含まれる最後の `command_execution`
-- run 中は `Latest Command` の下に、確定済み live step のうち直近数件だけを `Details` 面として補助表示してよい
+- run 中は `Latest Command` の上に、確定済み live step のうち直近数件だけを `Details` 面として補助表示してよい
   - 対象は `completed / failed / canceled` の step
-  - 直近の in-progress command と full timeline は常設しない
+  - 直近の in-progress command は面の最下段で常に追えるようにし、full timeline は常設しない
 - `Memory生成` は専用 background activity state を main process から受ける
 - `独り言` は background activity と recent monologue stream を表示する
 - それ以外の step list や詳細な実況履歴は right pane 常設から外し、確定後は artifact timeline / Audit Log を見る
@@ -67,7 +67,7 @@ flowchart TB
   - source label (`live` / `last run`)
   - 危険度の rough badge (`DELETE / WRITE / NETWORK`)
   - 必要時だけ開く `details`
-- run 中に確定した step があれば、同じ面の下段に `CONFIRMED Details` として数件だけ補助表示してよい
+- run 中に確定した step があれば、同じ面の上段に `CONFIRMED Details` として数件だけ補助表示してよい
   - `command_execution` は command block を維持する
   - `mcp_tool_call` / `todo_list` / `file_change` / `reasoning` などは summary + optional `details` を出す
 - `liveRun.errorMessage` がある時は card 内の alert として併記する

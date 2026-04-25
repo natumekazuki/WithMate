@@ -1019,6 +1019,48 @@ export function SessionContextPane({
 
         <div ref={contentRef} className="command-monitor-content">
           <div className="command-monitor-stack">
+            {activeContextPaneTab === "latest-command" && runningDetailsEntries.length > 0 ? (
+              <div className="command-monitor-card">
+                <div className="command-monitor-card-head">
+                  <div className="command-monitor-meta">
+                    <span className="live-run-step-type">Details</span>
+                    <span className="command-monitor-source">CONFIRMED</span>
+                  </div>
+                </div>
+
+                <div className="command-monitor-confirmed-list">
+                  {runningDetailsEntries.map((entry) => (
+                    <article key={entry.id} className="command-monitor-confirmed-item">
+                      <div className="command-monitor-card-head compact">
+                        <div className="command-monitor-meta">
+                          <span className={`live-run-step-status ${liveRunStepToneClassName(entry.status)}`}>
+                            {liveRunStepStatusLabel(entry.status)}
+                          </span>
+                          <span className="live-run-step-type">{operationTypeLabel(entry.type)}</span>
+                        </div>
+                      </div>
+
+                      {entry.type === "command_execution" ? (
+                        <div className="live-run-command-summary compact" aria-label="確定した command">
+                          <span className="live-run-command-prefix" aria-hidden="true">$</span>
+                          <code className="live-run-command-text">{entry.summary}</code>
+                        </div>
+                      ) : (
+                        <p className="command-monitor-confirmed-summary">{entry.summary}</p>
+                      )}
+
+                      {entry.details ? (
+                        <details className="command-monitor-details live-run-step-details">
+                          <summary>{liveRunStepDetailsLabel(entry.type)}</summary>
+                          <pre>{entry.details}</pre>
+                        </details>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             {activeContextPaneTab === "latest-command" ? (
               latestCommandView ? (
                 <div className="command-monitor-card">
@@ -1070,48 +1112,6 @@ export function SessionContextPane({
                   ) : null}
                 </div>
               )
-            ) : null}
-
-            {activeContextPaneTab === "latest-command" && runningDetailsEntries.length > 0 ? (
-              <div className="command-monitor-card">
-                <div className="command-monitor-card-head">
-                  <div className="command-monitor-meta">
-                    <span className="live-run-step-type">Details</span>
-                    <span className="command-monitor-source">CONFIRMED</span>
-                  </div>
-                </div>
-
-                <div className="command-monitor-confirmed-list">
-                  {runningDetailsEntries.map((entry) => (
-                    <article key={entry.id} className="command-monitor-confirmed-item">
-                      <div className="command-monitor-card-head compact">
-                        <div className="command-monitor-meta">
-                          <span className={`live-run-step-status ${liveRunStepToneClassName(entry.status)}`}>
-                            {liveRunStepStatusLabel(entry.status)}
-                          </span>
-                          <span className="live-run-step-type">{operationTypeLabel(entry.type)}</span>
-                        </div>
-                      </div>
-
-                      {entry.type === "command_execution" ? (
-                        <div className="live-run-command-summary compact" aria-label="確定した command">
-                          <span className="live-run-command-prefix" aria-hidden="true">$</span>
-                          <code className="live-run-command-text">{entry.summary}</code>
-                        </div>
-                      ) : (
-                        <p className="command-monitor-confirmed-summary">{entry.summary}</p>
-                      )}
-
-                      {entry.details ? (
-                        <details className="command-monitor-details live-run-step-details">
-                          <summary>{liveRunStepDetailsLabel(entry.type)}</summary>
-                          <pre>{entry.details}</pre>
-                        </details>
-                      ) : null}
-                    </article>
-                  ))}
-                </div>
-              </div>
             ) : null}
 
             {activeContextPaneTab === "tasks" ? (
@@ -1357,6 +1357,48 @@ export function CharacterUpdateContextPane({
 
         <div ref={contentRef} className="command-monitor-content">
           <div className="command-monitor-stack">
+            {activePaneTab === "latest-command" && runningDetailsEntries.length > 0 ? (
+              <div className="command-monitor-card">
+                <div className="command-monitor-card-head">
+                  <div className="command-monitor-meta">
+                    <span className="live-run-step-type">Details</span>
+                    <span className="command-monitor-source">CONFIRMED</span>
+                  </div>
+                </div>
+
+                <div className="command-monitor-confirmed-list">
+                  {runningDetailsEntries.map((entry) => (
+                    <article key={entry.id} className="command-monitor-confirmed-item">
+                      <div className="command-monitor-card-head compact">
+                        <div className="command-monitor-meta">
+                          <span className={`live-run-step-status ${liveRunStepToneClassName(entry.status)}`}>
+                            {liveRunStepStatusLabel(entry.status)}
+                          </span>
+                          <span className="live-run-step-type">{operationTypeLabel(entry.type)}</span>
+                        </div>
+                      </div>
+
+                      {entry.type === "command_execution" ? (
+                        <div className="live-run-command-summary compact" aria-label="確定した command">
+                          <span className="live-run-command-prefix" aria-hidden="true">$</span>
+                          <code className="live-run-command-text">{entry.summary}</code>
+                        </div>
+                      ) : (
+                        <p className="command-monitor-confirmed-summary">{entry.summary}</p>
+                      )}
+
+                      {entry.details ? (
+                        <details className="command-monitor-details live-run-step-details">
+                          <summary>{liveRunStepDetailsLabel(entry.type)}</summary>
+                          <pre>{entry.details}</pre>
+                        </details>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             {activePaneTab === "latest-command" ? (
               latestCommandView ? (
                 <div className="command-monitor-card">
@@ -1418,48 +1460,6 @@ export function CharacterUpdateContextPane({
                 />
               </div>
             )}
-
-            {activePaneTab === "latest-command" && runningDetailsEntries.length > 0 ? (
-              <div className="command-monitor-card">
-                <div className="command-monitor-card-head">
-                  <div className="command-monitor-meta">
-                    <span className="live-run-step-type">Details</span>
-                    <span className="command-monitor-source">CONFIRMED</span>
-                  </div>
-                </div>
-
-                <div className="command-monitor-confirmed-list">
-                  {runningDetailsEntries.map((entry) => (
-                    <article key={entry.id} className="command-monitor-confirmed-item">
-                      <div className="command-monitor-card-head compact">
-                        <div className="command-monitor-meta">
-                          <span className={`live-run-step-status ${liveRunStepToneClassName(entry.status)}`}>
-                            {liveRunStepStatusLabel(entry.status)}
-                          </span>
-                          <span className="live-run-step-type">{operationTypeLabel(entry.type)}</span>
-                        </div>
-                      </div>
-
-                      {entry.type === "command_execution" ? (
-                        <div className="live-run-command-summary compact" aria-label="確定した command">
-                          <span className="live-run-command-prefix" aria-hidden="true">$</span>
-                          <code className="live-run-command-text">{entry.summary}</code>
-                        </div>
-                      ) : (
-                        <p className="command-monitor-confirmed-summary">{entry.summary}</p>
-                      )}
-
-                      {entry.details ? (
-                        <details className="command-monitor-details live-run-step-details">
-                          <summary>{liveRunStepDetailsLabel(entry.type)}</summary>
-                          <pre>{entry.details}</pre>
-                        </details>
-                      ) : null}
-                    </article>
-                  ))}
-                </div>
-              </div>
-            ) : null}
           </div>
         </div>
       </section>
