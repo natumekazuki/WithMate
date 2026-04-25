@@ -28,8 +28,7 @@ export function truncateAppDatabaseWal(dbPath: string): void {
 
   const db = new DatabaseSync(dbPath);
   try {
-    db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};`);
-    db.exec(`PRAGMA journal_size_limit = ${SQLITE_JOURNAL_SIZE_LIMIT_BYTES};`);
+    configureAppDatabaseConnection(db);
     db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
   } finally {
     db.close();
