@@ -89,7 +89,7 @@ describe("AuditLogStorage", () => {
       storage.close();
 
       assert.equal(entries.length, 1);
-      assert.equal(entries[0]?.approvalMode, "allow-all");
+      assert.equal(entries[0]?.approvalMode, "never");
       assert.equal(entries[0]?.logicalPrompt.systemText, "# System Prompt");
       assert.equal(entries[0]?.transportPayload?.summary, "Codex thread.runStreamed payload");
     } finally {
@@ -200,3 +200,4 @@ describe("AuditLogStorage", () => {
     }
   });
 });
+

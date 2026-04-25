@@ -5083,8 +5083,8 @@ button:disabled {
 }
 
 .composer-settings {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, max-content));
+  display: flex;
+  flex-wrap: wrap;
   gap: 12px 14px;
   align-items: end;
   margin-top: 12px;
@@ -5101,6 +5101,7 @@ button:disabled {
 .composer-setting-field {
   display: grid;
   gap: 8px;
+  flex: 0 1 180px;
   min-width: 0;
 }
 
@@ -5116,7 +5117,19 @@ button:disabled {
 }
 
 .composer-setting-approval {
-  min-width: 0;
+  flex-basis: 160px;
+}
+
+.composer-setting-sandbox {
+  flex-basis: 210px;
+}
+
+.composer-setting-model {
+  flex-basis: 220px;
+}
+
+.composer-setting-depth {
+  flex-basis: 110px;
 }
 
 .session-approval-list {
@@ -5139,9 +5152,9 @@ button:disabled {
 }
 
 .composer-setting-field select {
-  width: auto;
-  min-width: 180px;
-  max-width: 320px;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
   border: 1px solid rgba(32, 36, 55, 0.08);
   border-radius: 14px;
   padding: 10px 12px;

@@ -39,11 +39,11 @@ export const DEFAULT_REASONING_EFFORT: ModelReasoningEffort = "high";
 export const DEFAULT_CATALOG_REVISION = 1;
 
 export const reasoningEffortOptions = [
-  { id: "minimal", label: "最小" },
-  { id: "low", label: "低" },
-  { id: "medium", label: "中" },
-  { id: "high", label: "高" },
-  { id: "xhigh", label: "最高" },
+  { id: "minimal", label: "minimal" },
+  { id: "low", label: "low" },
+  { id: "medium", label: "medium" },
+  { id: "high", label: "high" },
+  { id: "xhigh", label: "xhigh" },
 ] as const satisfies ReadonlyArray<{ id: ModelReasoningEffort; label: string }>;
 
 function normalizeNonEmptyString(value: unknown, fieldName: string): string {

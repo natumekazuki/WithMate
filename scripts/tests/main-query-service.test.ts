@@ -21,7 +21,7 @@ function createSession(overrides?: Partial<Session>): Session {
     character: "A",
     characterIconPath: "",
     characterThemeColors: { main: "#111", sub: "#222" },
-    approvalMode: "provider-controlled",
+    approvalMode: "on-request",
     customAgentName: "",
     status: "idle",
     runState: "idle",
@@ -236,3 +236,4 @@ test("MainQueryService は対象 session detail だけを clone して返す", (
   assert.equal(session?.id, "session-1");
   assert.equal(requestedSessionId, "session-1");
 });
+

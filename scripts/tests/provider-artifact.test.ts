@@ -32,7 +32,7 @@ function createSession(): Session {
     characterIconPath: "",
     characterThemeColors: { main: "#fff", sub: "#000" },
     runState: "idle",
-    approvalMode: "provider-controlled",
+    approvalMode: "on-request",
     model: "gpt-5-mini",
     reasoningEffort: "medium",
     threadId: "thread-1",
@@ -98,3 +98,4 @@ describe("provider artifact", () => {
     assert.equal(artifact.runChecks.some((check) => check.label === "provider" && check.value === "GitHub Copilot"), true);
   });
 });
+

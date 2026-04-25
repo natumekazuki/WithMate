@@ -105,30 +105,31 @@
 - `/skill` を textarea で解釈する slash command は current 実装で無効
 - skill 実行可否の provider-native 検証までは持っていない
 
-### 6. Approval / model / reasoning depth
+### 6. Approval / sandbox / model / reasoning depth
 
 - `一部対応`
-- UI / session persistence の正本は provider-neutral な 3 mode
-  - `allow-all`
-  - `safety`
-  - `provider-controlled`
-- Codex 実行時には次へ map する
-  - `allow-all -> never`
-  - `safety -> untrusted`
-  - `provider-controlled -> on-request`
-- model / depth は catalog から選択し、実行前に provider catalog で検証する
+- UI / session persistence の approval 正本は Codex SDK policy 値
+  - `never`
+  - `on-request`
+  - `on-failure`
+  - `untrusted`
+- Codex session は Sandbox dropdown で `read-only` / `workspace-write` / `workspace-write + network` / `danger-full-access` を選べる
+- `workspace-write + network` は SDK へ `sandboxMode: "workspace-write"` と `networkAccessEnabled: true` の組み合わせで渡す
+- Copilot session は provider-specific approval choices だけを出し、Codex sandbox choices は出さない
+- model / depth は catalog から選択し、実行前に provider catalog で検証する。Depth の表示文言は SDK 値をそのまま使う
 
 主な実装:
 
 - `src/approval-mode.ts`
+- `src/codex-sandbox-mode.ts`
+- `src/provider-runtime-options.ts`
 - `src-electron/codex-adapter.ts`
 - `src-electron/main.ts`
 
 未対応:
 
 - app 側の approve / deny callback UI
-- Codex granular approval policy の実装
-- `provider-controlled` の実測 matrix 整備
+- provider 別 approval / sandbox choices の実測 matrix 整備
 
 ### 7. Streaming / live run 可視化
 
@@ -211,7 +212,7 @@
 - prompt を送る
 - file / folder / image を添付する
 - skill を選ぶ
-- model / depth / approval mode を切り替える
+- model / depth / approval mode / Codex sandbox mode を切り替える
 - 実行中 command を監視する
 - cancel / retry する
 - audit log と diff を見る
@@ -221,7 +222,7 @@
 ### High Priority
 
 - `GitHub Copilot CLI` を同じ Session UI で最低限動かす
-- approval mode の実測 matrix を取り、`provider-controlled` の説明精度を上げる
+- approval / sandbox mode の実測 matrix を取る
 
 ### Medium Priority
 
@@ -240,7 +241,7 @@ Codex capability 棚卸し後の次 task は、次の順で切るのが自然。
 1. `GitHub Copilot minimal integration`
    - 同じ Session UI で `run / cancel / audit log` が通るところまで
 2. `Approval behavior validation`
-   - `allow-all / safety / provider-controlled` の Codex 実測
+   - `never / on-request / on-failure / untrusted` と Codex sandbox mode の実測
 3. `Minimal slash command absorption`
    - 必要になった command だけ canonical UI alias として入れる
 

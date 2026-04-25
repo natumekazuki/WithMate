@@ -27,6 +27,7 @@ import {
 } from "./ui-utils.js";
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import type { ApprovalMode } from "./approval-mode.js";
+import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import {
   contextPaneTabLabel,
   liveRunStepToneClassName,
@@ -2018,6 +2019,8 @@ export type SessionComposerExpandedProps = {
   isComposerBlockedFeedbackActive: boolean;
   approvalOptions: Array<{ value: ApprovalMode; label: string }>;
   selectedApprovalMode: ApprovalMode;
+  sandboxOptions: Array<{ value: CodexSandboxMode; label: string }>;
+  selectedCodexSandboxMode: CodexSandboxMode;
   modelOptions: SessionSelectOption[];
   selectedModel: string;
   selectedModelFallbackLabel: string;
@@ -2045,6 +2048,7 @@ export type SessionComposerExpandedProps = {
   onSelectWorkspacePathMatch: (path: string) => void;
   onActivateWorkspacePathMatch: (index: number) => void;
   onChangeApprovalMode: (value: ApprovalMode) => void;
+  onChangeCodexSandboxMode: (value: CodexSandboxMode) => void;
   onChangeModel: (value: string) => void;
   onChangeReasoningEffort: (value: string) => void;
 };
@@ -2079,6 +2083,8 @@ export function SessionComposerExpanded({
   isComposerBlockedFeedbackActive,
   approvalOptions,
   selectedApprovalMode,
+  sandboxOptions,
+  selectedCodexSandboxMode,
   modelOptions,
   selectedModel,
   selectedModelFallbackLabel,
@@ -2106,6 +2112,7 @@ export function SessionComposerExpanded({
   onSelectWorkspacePathMatch,
   onActivateWorkspacePathMatch,
   onChangeApprovalMode,
+  onChangeCodexSandboxMode,
   onChangeModel,
   onChangeReasoningEffort,
 }: SessionComposerExpandedProps) {
@@ -2419,32 +2426,39 @@ export function SessionComposerExpanded({
       <div className="composer-settings">
         <div className="composer-setting-field composer-setting-approval">
           <span>Approval</span>
-          <div
-            className="choice-list session-approval-list"
-            role="radiogroup"
-            aria-label="承認モード"
-            onKeyDown={(event) => {
-              focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
-            }}
+          <select
+            value={selectedApprovalMode}
+            onChange={(event) => onChangeApprovalMode(event.target.value as ApprovalMode)}
+            disabled={isRunning}
+            aria-label="Approval"
           >
             {approvalOptions.map((option) => (
-              <button
-                key={option.value}
-                className={`choice-chip${option.value === selectedApprovalMode ? " active" : ""}`}
-                type="button"
-                role="radio"
-                aria-checked={option.value === selectedApprovalMode}
-                tabIndex={option.value === selectedApprovalMode ? 0 : -1}
-                onClick={() => onChangeApprovalMode(option.value)}
-                disabled={isRunning}
-              >
+              <option key={option.value} value={option.value}>
                 {option.label}
-              </button>
+              </option>
             ))}
-          </div>
+          </select>
         </div>
 
-        <div className="composer-setting-field">
+        {sandboxOptions.length > 0 ? (
+          <div className="composer-setting-field composer-setting-sandbox">
+            <span>Sandbox</span>
+            <select
+              value={selectedCodexSandboxMode}
+              onChange={(event) => onChangeCodexSandboxMode(event.target.value as CodexSandboxMode)}
+              disabled={isRunning}
+              aria-label="Sandbox"
+            >
+              {sandboxOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+
+        <div className="composer-setting-field composer-setting-model">
           <span>Model</span>
           <select
             value={selectedModel}
@@ -2463,7 +2477,7 @@ export function SessionComposerExpanded({
           </select>
         </div>
 
-        <div className="composer-setting-field">
+        <div className="composer-setting-field composer-setting-depth">
           <span>Depth</span>
           <select
             value={selectedReasoningEffort}

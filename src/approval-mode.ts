@@ -1,23 +1,21 @@
-export const APPROVAL_MODE_VALUES = ["allow-all", "safety", "provider-controlled"] as const;
+export const APPROVAL_MODE_VALUES = ["never", "on-request", "on-failure", "untrusted"] as const;
 
 export type ApprovalMode = (typeof APPROVAL_MODE_VALUES)[number];
 
-export const DEFAULT_APPROVAL_MODE: ApprovalMode = "safety";
+export const DEFAULT_APPROVAL_MODE: ApprovalMode = "untrusted";
 
 export const approvalModeOptions = [
-  { id: "allow-all", label: "自動実行" },
-  { id: "safety", label: "安全寄り" },
-  { id: "provider-controlled", label: "プロバイダー判断" },
+  { id: "never", label: "never" },
+  { id: "on-request", label: "on-request" },
+  { id: "on-failure", label: "on-failure" },
+  { id: "untrusted", label: "untrusted" },
 ] as const satisfies Array<{ id: ApprovalMode; label: string }>;
 
 const LEGACY_APPROVAL_MODE_MAP = {
-  never: "allow-all",
-  untrusted: "safety",
-  "on-request": "provider-controlled",
-  "on-failure": "provider-controlled",
+  "allow-all": "never",
+  safety: "untrusted",
+  "provider-controlled": "on-request",
 } as const satisfies Record<string, ApprovalMode>;
-
-type CodexApprovalPolicy = "never" | "on-request" | "untrusted";
 
 function resolveApprovalMode(value: unknown): ApprovalMode | null {
   if (typeof value !== "string") {
@@ -54,14 +52,6 @@ export function approvalModeLabel(value: string): string {
   return value;
 }
 
-export function mapApprovalModeToCodexPolicy(approvalMode: string): CodexApprovalPolicy {
-  switch (normalizeApprovalMode(approvalMode, DEFAULT_APPROVAL_MODE)) {
-    case "allow-all":
-      return "never";
-    case "safety":
-      return "untrusted";
-    case "provider-controlled":
-    default:
-      return "on-request";
-  }
+export function mapApprovalModeToCodexPolicy(approvalMode: string): ApprovalMode {
+  return normalizeApprovalMode(approvalMode, DEFAULT_APPROVAL_MODE);
 }

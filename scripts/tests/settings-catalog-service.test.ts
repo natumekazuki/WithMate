@@ -21,7 +21,7 @@ function createSession(overrides?: Partial<Session>): Session {
     character: "A",
     characterIconPath: "",
     characterThemeColors: { main: "#000", sub: "#111" },
-    approvalMode: "provider-controlled",
+    approvalMode: "on-request",
     status: "idle",
     runState: "idle",
     threadId: "thread-1",
@@ -461,3 +461,4 @@ describe("SettingsCatalogService", () => {
     ]);
   });
 });
+

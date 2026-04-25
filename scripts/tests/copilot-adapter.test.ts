@@ -953,7 +953,7 @@ describe("CopilotAdapter session settings", () => {
 
   it("allow-all permission handler は legacy approve-once を返す", async () => {
     const input = createRunSessionInput();
-    input.session.approvalMode = "allow-all";
+    input.session.approvalMode = "never";
     const settings = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents);
 
     assert.ok(settings.config.onPermissionRequest);
@@ -965,7 +965,7 @@ describe("CopilotAdapter session settings", () => {
 
   it("safety permission handler は read を legacy approve-once / write を reject で返す", async () => {
     const input = createRunSessionInput();
-    input.session.approvalMode = "safety";
+    input.session.approvalMode = "untrusted";
     const settings = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents);
 
     assert.ok(settings.config.onPermissionRequest);
@@ -978,7 +978,7 @@ describe("CopilotAdapter session settings", () => {
 
   it("provider-controlled permission handler は approval callback 経由の approve / deny と handler 不在を legacy kind へ橋渡しする", async () => {
     const approvedInput = createRunSessionInput();
-    approvedInput.session.approvalMode = "provider-controlled";
+    approvedInput.session.approvalMode = "on-request";
     const approvalRequests: unknown[] = [];
     approvedInput.onApprovalRequest = async (request) => {
       approvalRequests.push(request);
@@ -994,14 +994,14 @@ describe("CopilotAdapter session settings", () => {
     assert.equal(approvalRequests.length, 1);
 
     const deniedInput = createRunSessionInput();
-    deniedInput.session.approvalMode = "provider-controlled";
+    deniedInput.session.approvalMode = "on-request";
     deniedInput.onApprovalRequest = async () => "deny";
     const deniedSettings = buildCopilotSessionSettings(deniedInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
     const deniedWriteResult = await deniedSettings.config.onPermissionRequest?.(createWritePermissionRequest(), { sessionId: "session-1" });
     assert.deepEqual(deniedWriteResult, { kind: "reject" });
 
     const missingHandlerInput = createRunSessionInput();
-    missingHandlerInput.session.approvalMode = "provider-controlled";
+    missingHandlerInput.session.approvalMode = "on-request";
     const missingHandlerSettings = buildCopilotSessionSettings(missingHandlerInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
     const missingHandlerResult = await missingHandlerSettings.config.onPermissionRequest?.(createWritePermissionRequest(), { sessionId: "session-1" });
     assert.deepEqual(missingHandlerResult, { kind: "user-not-available" });
@@ -1295,3 +1295,4 @@ describe("CopilotAdapter permission.completed live status", () => {
     }
   });
 });
+

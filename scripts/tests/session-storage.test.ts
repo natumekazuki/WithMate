@@ -110,7 +110,7 @@ describe("SessionStorage", () => {
       reopened.close();
 
       assert.ok(loaded);
-      assert.equal(loaded.approvalMode, "provider-controlled");
+      assert.equal(loaded.approvalMode, "on-failure");
     } finally {
       await removeDirectoryWithRetry(tempDirectory);
     }
@@ -205,6 +205,7 @@ describe("SessionStorage", () => {
           characterThemeColors: session.characterThemeColors,
           runState: session.runState,
           approvalMode: session.approvalMode,
+          codexSandboxMode: session.codexSandboxMode,
           model: session.model,
           reasoningEffort: session.reasoningEffort,
           customAgentName: session.customAgentName,
@@ -281,3 +282,4 @@ describe("SessionStorage", () => {
     }
   });
 });
+

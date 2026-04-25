@@ -86,7 +86,7 @@ describe("audit-log-refresh", () => {
         main: "#000000",
         sub: "#ffffff",
       },
-      approvalMode: "safety",
+      approvalMode: "untrusted",
     });
 
     const runningSignature = buildAuditLogRefreshSignature({
@@ -123,7 +123,7 @@ describe("audit-log-refresh", () => {
         main: "#000000",
         sub: "#ffffff",
       },
-      approvalMode: "safety",
+      approvalMode: "untrusted",
     });
 
     const before = buildAuditLogRefreshSignature({
@@ -162,7 +162,7 @@ describe("buildDisplayedAuditLogs", () => {
         main: "#000000",
         sub: "#ffffff",
       },
-      approvalMode: "safety",
+      approvalMode: "untrusted",
     }),
     runState: "idle" as const, // デフォルトは idle
   };
@@ -491,3 +491,4 @@ describe("buildDisplayedAuditLogs", () => {
     assert.equal(result[0]?.rawItemsJson, "[]");
   });
 });
+

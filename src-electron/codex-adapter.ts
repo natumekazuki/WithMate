@@ -21,6 +21,10 @@ import type {
 import { getProviderAppSettings } from "../src/provider-settings-state.js";
 import { mapApprovalModeToCodexPolicy } from "../src/approval-mode.js";
 import {
+  resolveCodexSandboxThreadOptions,
+  type CodexSdkSandboxMode,
+} from "../src/codex-sandbox-mode.js";
+import {
   reasoningEffortLabel,
   resolveModelSelection,
   type ModelCatalogProvider,
@@ -101,10 +105,11 @@ type CodexTurnStreamState = {
 export type CodexThreadOptions = {
   workingDirectory: string;
   skipGitRepoCheck: true;
-  sandboxMode: "workspace-write";
-  approvalPolicy: "never" | "on-request" | "untrusted";
+  sandboxMode: CodexSdkSandboxMode;
+  approvalPolicy: "never" | "on-request" | "on-failure" | "untrusted";
   model: string;
   modelReasoningEffort: ModelReasoningEffort;
+  networkAccessEnabled?: boolean;
   additionalDirectories?: string[];
 };
 
@@ -1185,13 +1190,15 @@ export function buildCodexThreadSettings(
     session.workspacePath,
     session.allowedAdditionalDirectories,
   );
+  const sandboxOptions = resolveCodexSandboxThreadOptions(session.codexSandboxMode);
   const options: CodexThreadOptions = {
     workingDirectory: session.workspacePath,
     skipGitRepoCheck: true,
-    sandboxMode: "workspace-write",
+    sandboxMode: sandboxOptions.sandboxMode,
     approvalPolicy: mapApprovalModeToCodexPolicy(session.approvalMode),
     model: selection.resolvedModel,
     modelReasoningEffort: selection.resolvedReasoningEffort,
+    ...(sandboxOptions.networkAccessEnabled ? { networkAccessEnabled: true } : {}),
     ...(additionalDirectories.length > 0 ? { additionalDirectories } : {}),
   };
 
@@ -1200,6 +1207,8 @@ export function buildCodexThreadSettings(
     selection,
     settingsKey: JSON.stringify([
       options.workingDirectory,
+      options.sandboxMode,
+      options.networkAccessEnabled ?? false,
       options.approvalPolicy,
       options.model,
       options.modelReasoningEffort,
