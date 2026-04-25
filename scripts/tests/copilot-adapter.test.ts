@@ -15,6 +15,7 @@ import {
   buildCopilotSessionSettings,
   buildCopilotMessageAttachments,
   buildCopilotProviderQuotaTelemetry,
+  getCopilotPermissionCompletedStepStatus,
   buildCopilotSessionContextTelemetry,
   buildCopilotSystemMessage,
   buildCopilotStableRawItems,
@@ -149,6 +150,23 @@ function createRunSessionInput(options?: {
     appSettings: createDefaultAppSettings(),
     attachments: [],
   };
+}
+
+function createWritePermissionRequest() {
+  return {
+    kind: "write",
+    toolCallId: "tool-call-1",
+    intention: "Create file",
+    fileName: "F:/repo/tmp/output.txt",
+  } as never;
+}
+
+function createReadPermissionRequest() {
+  return {
+    kind: "read",
+    toolCallId: "tool-call-2",
+    path: "F:/repo/src/index.ts",
+  } as never;
 }
 
 describe("CopilotAdapter env", () => {
@@ -927,6 +945,62 @@ describe("CopilotAdapter session settings", () => {
     assert.equal(nextSettings.config.reasoningEffort, "low");
   });
 
+  it("allow-all permission handler は legacy approve-once を返す", async () => {
+    const input = createRunSessionInput();
+    input.session.approvalMode = "allow-all";
+    const settings = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+
+    assert.ok(settings.config.onPermissionRequest);
+    await assert.doesNotReject(async () => {
+      const result = await settings.config.onPermissionRequest?.(createWritePermissionRequest(), { sessionId: "session-1" });
+      assert.deepEqual(result, { kind: "approve-once" });
+    });
+  });
+
+  it("safety permission handler は read を legacy approve-once / write を user-not-available で返す", async () => {
+    const input = createRunSessionInput();
+    input.session.approvalMode = "safety";
+    const settings = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+
+    assert.ok(settings.config.onPermissionRequest);
+    const readResult = await settings.config.onPermissionRequest?.(createReadPermissionRequest(), { sessionId: "session-1" });
+    const writeResult = await settings.config.onPermissionRequest?.(createWritePermissionRequest(), { sessionId: "session-1" });
+
+    assert.deepEqual(readResult, { kind: "approve-once" });
+    assert.deepEqual(writeResult, { kind: "user-not-available" });
+  });
+
+  it("provider-controlled permission handler は approval callback 経由の approve / deny と handler 不在を legacy kind へ橋渡しする", async () => {
+    const approvedInput = createRunSessionInput();
+    approvedInput.session.approvalMode = "provider-controlled";
+    const approvalRequests: unknown[] = [];
+    approvedInput.onApprovalRequest = async (request) => {
+      approvalRequests.push(request);
+      return "approve";
+    };
+    const approvedSettings = buildCopilotSessionSettings(approvedInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+
+    assert.ok(approvedSettings.config.onPermissionRequest);
+    const readResult = await approvedSettings.config.onPermissionRequest?.(createReadPermissionRequest(), { sessionId: "session-1" });
+    const approvedWriteResult = await approvedSettings.config.onPermissionRequest?.(createWritePermissionRequest(), { sessionId: "session-1" });
+    assert.deepEqual(readResult, { kind: "approve-once" });
+    assert.deepEqual(approvedWriteResult, { kind: "approve-once" });
+    assert.equal(approvalRequests.length, 1);
+
+    const deniedInput = createRunSessionInput();
+    deniedInput.session.approvalMode = "provider-controlled";
+    deniedInput.onApprovalRequest = async () => "deny";
+    const deniedSettings = buildCopilotSessionSettings(deniedInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    const deniedWriteResult = await deniedSettings.config.onPermissionRequest?.(createWritePermissionRequest(), { sessionId: "session-1" });
+    assert.deepEqual(deniedWriteResult, { kind: "reject" });
+
+    const missingHandlerInput = createRunSessionInput();
+    missingHandlerInput.session.approvalMode = "provider-controlled";
+    const missingHandlerSettings = buildCopilotSessionSettings(missingHandlerInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    const missingHandlerResult = await missingHandlerSettings.config.onPermissionRequest?.(createWritePermissionRequest(), { sessionId: "session-1" });
+    assert.deepEqual(missingHandlerResult, { kind: "user-not-available" });
+  });
+
   it("threadId がある custom agent 切り替え後は createSession ではなく resumeSession を使う", async () => {
     const previousInput = createRunSessionInput({ customAgentName: "reviewer", threadId: "thread-1" });
     const nextInput = createRunSessionInput({ customAgentName: "planner", threadId: "thread-1" });
@@ -1185,5 +1259,33 @@ describe("CopilotAdapter session settings", () => {
     );
 
     assert.equal(createCalls.length, 0);
+  });
+});
+
+describe("CopilotAdapter permission.completed live status", () => {
+  it("approval を表す result kind は live step を in_progress 扱いにする", () => {
+    for (const kind of [
+      "approved",
+      "approve-once",
+      "approve-for-session",
+      "approve-for-location",
+      "approved-for-session",
+      "approved-for-location",
+    ]) {
+      assert.equal(getCopilotPermissionCompletedStepStatus(kind), "in_progress");
+    }
+  });
+
+  it("非 approval の result kind は live step を failed 扱いにする", () => {
+    for (const kind of [
+      "reject",
+      "user-not-available",
+      "denied-interactively-by-user",
+      "denied-no-approval-rule-and-could-not-request-from-user",
+      "denied-by-rules",
+      "denied-by-content-exclusion-policy",
+    ]) {
+      assert.equal(getCopilotPermissionCompletedStepStatus(kind), "failed");
+    }
   });
 });
