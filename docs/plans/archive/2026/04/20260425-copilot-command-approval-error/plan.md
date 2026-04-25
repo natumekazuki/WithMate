@@ -21,6 +21,8 @@
 - quality review: no material findings
 - docs sync: unnecessary
 - implementation commit: 5e74333d8ff407b09fae5ff03b1661931af961ca fix(copilot-adapter): legacy approval 契約へ橋渡しして回帰を防ぐ
+- archive commit: 02b44f29ed331924bb8a69ef1e32e85e314f9515 docs(plan): セッション計画をアーカイブへ移動
+- rollback target: 本タスクの巻き戻し先は archive commit `02b44f29ed331924bb8a69ef1e32e85e314f9515`
 - archive: archived -> `docs/plans/archive/2026/04/20260425-copilot-command-approval-error/`
 
 ## Archive Check
