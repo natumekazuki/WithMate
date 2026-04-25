@@ -12,6 +12,7 @@ import {
 } from "../src/app-state.js";
 import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
 import { extractTextReferenceCandidates } from "../src/path-reference.js";
+import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 
 type MainQueryServiceDeps = {
   getSessionSummaries(): SessionSummary[];
@@ -24,7 +25,7 @@ type MainQueryServiceDeps = {
   getStoredCharacter(characterId: string): Promise<CharacterProfile | null>;
   refreshCharactersFromStorage(): Promise<CharacterProfile[]>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
-  searchWorkspaceFiles(workspacePath: string, query: string): Promise<string[]>;
+  searchWorkspaceFiles(workspacePath: string, query: string): Promise<WorkspacePathCandidate[]>;
   launchTerminalAtPath(workspacePath: string): Promise<void>;
 };
 
@@ -106,7 +107,7 @@ export class MainQueryService {
     return this.deps.resolveComposerPreview(session, userMessage);
   }
 
-  async searchWorkspaceFiles(sessionId: string, query: string): Promise<string[]> {
+  async searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]> {
     const session = this.getSessionSummary(sessionId);
     if (!session) {
       throw new Error("対象セッションが見つからないよ。");

@@ -80,6 +80,7 @@ import {
   WITHMATE_UPDATE_SESSION_CHANNEL,
 } from "../src/withmate-ipc-channels.js";
 import type { OpenPathOptions, ResetAppDatabaseRequest } from "../src/withmate-window-types.js";
+import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
 type IpcSenderEvent = Pick<IpcMainInvokeEvent, "sender">;
@@ -139,7 +140,7 @@ export type MainIpcRegistrationDeps = {
   updateSession(session: Session): Session;
   deleteSession(sessionId: string): void;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
-  searchWorkspaceFiles(sessionId: string, query: string): Promise<string[]>;
+  searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   runSessionMemoryExtraction(sessionId: string): void;
   cancelSessionRun(sessionId: string): void;

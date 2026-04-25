@@ -19,6 +19,7 @@ import {
   DEFAULT_UNREADABLE_IGNORE_RETRY_INTERVAL_MS,
   DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS,
   searchWorkspaceFilePaths,
+  searchWorkspacePathCandidates,
 } from "../../src-electron/workspace-file-search.js";
 import {
   _setAfterIgnoreFileReadHookForTesting,
@@ -49,6 +50,34 @@ describe("workspace-file-search", () => {
       clearWorkspaceFileIndex(workspacePath);
 
       assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "fresh-file"), ["generated/fresh-file.ts"]);
+    } finally {
+      clearWorkspaceFileIndex(workspacePath);
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("@path 候補には file と folder の種別が含まれる", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-search-candidates-"));
+
+    try {
+      await mkdir(path.join(workspacePath, "src", "nested"), { recursive: true });
+      await mkdir(path.join(workspacePath, "dist"), { recursive: true });
+      await writeFile(path.join(workspacePath, ".gitignore"), "dist/\n", "utf8");
+      await writeFile(path.join(workspacePath, "src", "index.ts"), "export {};\n", "utf8");
+      await writeFile(path.join(workspacePath, "src", "nested", "note.md"), "# note\n", "utf8");
+      await writeFile(path.join(workspacePath, "dist", "bundle.js"), "ignored\n", "utf8");
+
+      assert.deepEqual(await searchWorkspacePathCandidates(workspacePath, "src"), [
+        { path: "src", kind: "folder" },
+        { path: "src/nested", kind: "folder" },
+        { path: "src/index.ts", kind: "file" },
+        { path: "src/nested/note.md", kind: "file" },
+      ]);
+      assert.deepEqual(await searchWorkspacePathCandidates(workspacePath, "dist"), []);
+      assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "src"), [
+        "src/index.ts",
+        "src/nested/note.md",
+      ]);
     } finally {
       clearWorkspaceFileIndex(workspacePath);
       await rm(workspacePath, { recursive: true, force: true });

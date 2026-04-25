@@ -93,7 +93,7 @@ test("MainQueryService は session skills/custom agents と preview/search/termi
     },
     async searchWorkspaceFiles(workspacePath, query) {
       calls.push(`search:${workspacePath}:${query}`);
-      return ["a.ts"];
+      return [{ path: "a.ts", kind: "file" }];
     },
     async launchTerminalAtPath(workspacePath) {
       calls.push(`terminal:${workspacePath}`);

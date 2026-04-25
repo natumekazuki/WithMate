@@ -246,7 +246,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - textarea 内の `@path` 参照
 - `@path` 入力中の workspace file path 候補表示
   - 候補表示条件は `@` 後 query 非空のまま維持する
-  - row は basename 優先 + 親 path 補足で表示する
+  - 候補には file と folder を含める
+  - row は basename 優先 + 親 path 補足で表示し、file / folder の kind label と背景色で種別を区別する
   - 候補 open 中だけ `ArrowUp` / `ArrowDown` / `Enter` / `Escape` の keyboard navigation を有効にする
   - `Tab` は候補採用に使わず、通常の focus 移動を優先する
 - picker で選んだ file / folder / image も textarea に `@path` を挿入する

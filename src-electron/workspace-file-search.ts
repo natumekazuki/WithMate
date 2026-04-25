@@ -7,6 +7,7 @@ import {
   type IgnoreFileState,
   type ObservedMtime,
 } from "./snapshot-ignore.js";
+import type { WorkspacePathCandidate, WorkspacePathCandidateKind } from "../src/workspace-path-candidate.js";
 
 const DEFAULT_SEARCH_LIMIT = 20;
 export const DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS = 30_000;
@@ -119,6 +120,7 @@ let _contentVersionCounter = 0;
 
 type FileEntry = {
   relativePath: string;
+  kind: WorkspacePathCandidateKind;
   /** relativePath を toLocaleLowerCase() した正規化済みパス */
   normalizedPath: string;
 };
@@ -343,10 +345,20 @@ async function getWorkspaceFileIndex(workspacePath: string): Promise<WorkspaceFi
   }
 
   const scanned = await scanWorkspacePaths(normalizedWorkspacePath);
-  const entries: FileEntry[] = scanned.includedFiles.map((relativePath) => ({
-    relativePath,
-    normalizedPath: relativePath.toLocaleLowerCase(),
-  }));
+  const entries: FileEntry[] = [
+    ...Array.from(scanned.visitedDirectories.keys())
+      .filter((relativePath) => relativePath.length > 0)
+      .map((relativePath) => ({
+        relativePath,
+        kind: "folder" as const,
+        normalizedPath: relativePath.toLocaleLowerCase(),
+      })),
+    ...scanned.includedFiles.map((relativePath) => ({
+      relativePath,
+      kind: "file" as const,
+      normalizedPath: relativePath.toLocaleLowerCase(),
+    })),
+  ];
 
   // 走査完了後の時刻で scannedAt / validatedAt を記録する
   const scannedAt = getNow();
@@ -412,12 +424,14 @@ function sortAndSliceResults(
   matchedIndices: number[],
   normalizedQuery: string,
   limit: number,
-): string[] {
+  kindFilter?: WorkspacePathCandidateKind,
+): WorkspacePathCandidate[] {
   return matchedIndices
     .map((i) => ({
       entry: entries[i],
       matchIndex: entries[i].normalizedPath.indexOf(normalizedQuery),
     }))
+    .filter(({ entry }) => kindFilter === undefined || entry.kind === kindFilter)
     .sort((left, right) => {
       if (left.matchIndex !== right.matchIndex) {
         return left.matchIndex - right.matchIndex;
@@ -428,14 +442,22 @@ function sortAndSliceResults(
       return left.entry.relativePath.localeCompare(right.entry.relativePath);
     })
     .slice(0, limit)
-    .map(({ entry }) => entry.relativePath);
+    .map(({ entry }) => ({
+      path: entry.relativePath,
+      kind: entry.kind,
+    }));
 }
 
 // ---------------------------------------------------------------------------
 // 公開 API
 // ---------------------------------------------------------------------------
 
-export async function searchWorkspaceFilePaths(workspacePath: string, query: string, limit = DEFAULT_SEARCH_LIMIT): Promise<string[]> {
+async function searchWorkspacePathCandidatesInternal(
+  workspacePath: string,
+  query: string,
+  limit = DEFAULT_SEARCH_LIMIT,
+  kindFilter?: WorkspacePathCandidateKind,
+): Promise<WorkspacePathCandidate[]> {
   const normalizedQuery = query.trim().replace(/\\/g, "/").toLocaleLowerCase();
   if (!normalizedQuery) {
     return [];
@@ -453,7 +475,7 @@ export async function searchWorkspaceFilePaths(workspacePath: string, query: str
   // キャッシュヒット: 同一クエリかつ contentVersion が一致すれば再計算をスキップ
   const exactCached = getCachedQueryEntry(wqCache, normalizedQuery, index.contentVersion);
   if (exactCached !== undefined) {
-    return sortAndSliceResults(index.entries, exactCached.matchedIndices, normalizedQuery, limit);
+    return sortAndSliceResults(index.entries, exactCached.matchedIndices, normalizedQuery, limit, kindFilter);
   }
 
   // prefix narrowing: 最長キャッシュ済みプレフィックスを起点に絞り込む
@@ -463,7 +485,24 @@ export async function searchWorkspaceFilePaths(workspacePath: string, query: str
     cacheQueryResult(wqCache, normalizedQuery, { matchedIndices, contentVersion: index.contentVersion });
   }
 
-  return sortAndSliceResults(index.entries, matchedIndices, normalizedQuery, limit);
+  return sortAndSliceResults(index.entries, matchedIndices, normalizedQuery, limit, kindFilter);
+}
+
+export async function searchWorkspacePathCandidates(
+  workspacePath: string,
+  query: string,
+  limit = DEFAULT_SEARCH_LIMIT,
+): Promise<WorkspacePathCandidate[]> {
+  return searchWorkspacePathCandidatesInternal(workspacePath, query, limit);
+}
+
+export async function searchWorkspaceFilePaths(
+  workspacePath: string,
+  query: string,
+  limit = DEFAULT_SEARCH_LIMIT,
+): Promise<string[]> {
+  const candidates = await searchWorkspacePathCandidatesInternal(workspacePath, query, limit, "file");
+  return candidates.map((candidate) => candidate.path);
 }
 
 export function clearWorkspaceFileIndex(workspacePath?: string): void {

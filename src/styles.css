@@ -4937,7 +4937,54 @@ button:disabled {
   cursor: pointer;
 }
 
+.composer-path-match.file {
+  border-color: rgba(111, 184, 199, 0.18);
+  background: rgba(111, 184, 199, 0.08);
+}
+
+.composer-path-match.folder {
+  border-color: rgba(255, 196, 107, 0.22);
+  background: rgba(255, 196, 107, 0.1);
+}
+
+.composer-path-match-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.composer-path-match-kind {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.composer-path-match.file .composer-path-match-kind {
+  border-color: rgba(111, 184, 199, 0.24);
+  background: rgba(111, 184, 199, 0.14);
+  color: #bae6fd;
+}
+
+.composer-path-match.folder .composer-path-match-kind {
+  border-color: rgba(255, 196, 107, 0.28);
+  background: rgba(255, 196, 107, 0.16);
+  color: #fde68a;
+}
+
 .composer-path-match-primary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 700;
 }
 

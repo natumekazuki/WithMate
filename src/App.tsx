@@ -79,6 +79,7 @@ import {
 } from "./session-composer-feedback.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { extractTextReferenceCandidates } from "./path-reference.js";
+import type { WorkspacePathCandidate, WorkspacePathCandidateKind } from "./workspace-path-candidate.js";
 
 type ActivePathReference = {
   query: string;
@@ -136,6 +137,7 @@ type ComposerAttachmentDisplay = {
 };
 
 type WorkspacePathMatchDisplay = {
+  kindLabel: string;
   primaryLabel: string;
   secondaryLabel: string;
   title: string;
@@ -277,10 +279,15 @@ function buildComposerAttachmentDisplay(attachment: ComposerAttachment): Compose
   };
 }
 
-function buildWorkspacePathMatchDisplay(pathMatch: string): WorkspacePathMatchDisplay {
-  const normalizedPath = normalizePathForReference(pathMatch);
+function workspacePathCandidateKindLabel(kind: WorkspacePathCandidateKind): string {
+  return kind === "folder" ? "Dir" : "File";
+}
+
+function buildWorkspacePathMatchDisplay(pathMatch: WorkspacePathCandidate): WorkspacePathMatchDisplay {
+  const normalizedPath = normalizePathForReference(pathMatch.path);
   const { basename, parentPath } = splitPathForDisplay(normalizedPath);
   return {
+    kindLabel: workspacePathCandidateKindLabel(pathMatch.kind),
     primaryLabel: basename || normalizedPath,
     secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 42) : "ワークスペース直下",
     title: normalizedPath,
@@ -658,7 +665,7 @@ export default function App() {
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>({ attachments: [], errors: [] });
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [composerCaret, setComposerCaret] = useState(0);
-  const [workspacePathMatches, setWorkspacePathMatches] = useState<string[]>([]);
+  const [workspacePathMatches, setWorkspacePathMatches] = useState<WorkspacePathCandidate[]>([]);
   const [activeWorkspacePathMatchIndex, setActiveWorkspacePathMatchIndex] = useState(-1);
   const [availableSkills, setAvailableSkills] = useState<DiscoveredSkill[]>([]);
   const [availableCustomAgents, setAvailableCustomAgents] = useState<DiscoveredCustomAgent[]>([]);
@@ -2061,8 +2068,10 @@ export default function App() {
       workspacePathMatches.map((match, index) => {
         const matchDisplay = buildWorkspacePathMatchDisplay(match);
         return {
-          key: match,
-          path: match,
+          key: `${match.kind}:${match.path}`,
+          path: match.path,
+          kind: match.kind,
+          kindLabel: matchDisplay.kindLabel,
           primaryLabel: matchDisplay.primaryLabel,
           secondaryLabel: matchDisplay.secondaryLabel,
           title: matchDisplay.title,
@@ -2280,7 +2289,7 @@ export default function App() {
           workspacePathMatches[activeWorkspacePathMatchIndex] ?? workspacePathMatches[0] ?? null;
         if (activeMatch) {
           event.preventDefault();
-          handleSelectWorkspacePathMatch(activeMatch);
+          handleSelectWorkspacePathMatch(activeMatch.path);
           return;
         }
       }
