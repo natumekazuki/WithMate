@@ -143,6 +143,8 @@ describe("SessionRuntimeService stale retry helpers", () => {
     assert.equal(isRetryableStaleThreadSessionError(new Error("session expired on provider side")), true);
     assert.equal(isRetryableStaleThreadSessionError(new Error("invalid-thread identifier")), true);
     assert.equal(isRetryableStaleThreadSessionError(new Error("thread model incompatible with selected model")), true);
+    assert.equal(isRetryableStaleThreadSessionError(new Error("SessionNotFound")), true);
+    assert.equal(isRetryableStaleThreadSessionError(new Error("session_not_found")), true);
     assert.equal(isRetryableStaleThreadSessionError({ code: "thread_not_found" }), true);
     assert.equal(isRetryableStaleThreadSessionError({ code: "not_found" }), false);
     assert.equal(isRetryableStaleThreadSessionError({ code: "model_incompatible" }), false);

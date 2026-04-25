@@ -182,6 +182,8 @@ export function isRecoverableCopilotConnectionErrorMessage(message: string): boo
 function isRecoverableCopilotMissingSessionErrorMessage(message: string): boolean {
   const normalized = message.toLowerCase();
   return normalized.includes("sessionnotfound")
+    || normalized.includes("session_not_found")
+    || normalized.includes("thread_not_found")
     || normalized.includes("session not found")
     || normalized.includes("thread not found");
 }
