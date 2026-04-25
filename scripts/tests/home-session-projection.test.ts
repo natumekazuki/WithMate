@@ -23,7 +23,7 @@ function createSession(partial: Partial<Session> & Pick<Session, "id" | "taskTit
       sub: "#ffffff",
     },
     runState: "idle",
-    approvalMode: "safety",
+    approvalMode: "untrusted",
     model: "gpt-5.4",
     reasoningEffort: "high",
     customAgentName: "",
@@ -103,3 +103,4 @@ describe("home-session-projection", () => {
     assert.deepEqual(projection.monitorEntries.map(({ session }) => session.id), ["main"]);
   });
 });
+

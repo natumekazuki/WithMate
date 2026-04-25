@@ -1,4 +1,9 @@
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from "./approval-mode.js";
+import {
+  DEFAULT_CODEX_SANDBOX_MODE,
+  normalizeCodexSandboxMode,
+  type CodexSandboxMode,
+} from "./codex-sandbox-mode.js";
 import { normalizeCharacterThemeColors, type CharacterThemeColors } from "./character-state.js";
 import {
   DEFAULT_CATALOG_REVISION,
@@ -58,6 +63,7 @@ export type Session = {
   characterThemeColors: CharacterThemeColors;
   runState: string;
   approvalMode: ApprovalMode;
+  codexSandboxMode: CodexSandboxMode;
   model: string;
   reasoningEffort: ModelReasoningEffort;
   customAgentName: string;
@@ -89,6 +95,7 @@ export type CreateSessionInput = {
   characterIconPath: string;
   characterThemeColors: CharacterThemeColors;
   approvalMode: ApprovalMode;
+  codexSandboxMode?: CodexSandboxMode;
   model?: string;
   reasoningEffort?: ModelReasoningEffort;
   customAgentName?: string;
@@ -287,6 +294,10 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
     characterThemeColors: normalizeCharacterThemeColors(candidate.characterThemeColors),
     runState: typeof candidate.runState === "string" && candidate.runState.trim() ? candidate.runState : "idle",
     approvalMode: normalizeApprovalMode(candidate.approvalMode, DEFAULT_APPROVAL_MODE),
+    codexSandboxMode: normalizeCodexSandboxMode(
+      (candidate as { codexSandboxMode?: unknown }).codexSandboxMode,
+      DEFAULT_CODEX_SANDBOX_MODE,
+    ),
     model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
     reasoningEffort:
       candidate.reasoningEffort === "minimal" ||
@@ -374,6 +385,7 @@ export function buildNewSession(input: CreateSessionInput): Session {
     characterThemeColors: normalizeCharacterThemeColors(input.characterThemeColors),
     runState: "idle",
     approvalMode: normalizeApprovalMode(input.approvalMode, DEFAULT_APPROVAL_MODE),
+    codexSandboxMode: normalizeCodexSandboxMode(input.codexSandboxMode, DEFAULT_CODEX_SANDBOX_MODE),
     model: input.model?.trim() || DEFAULT_MODEL_ID,
     reasoningEffort: input.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
     customAgentName: input.customAgentName?.trim() || "",
@@ -451,6 +463,7 @@ export function buildSessionSummarySignature(summary: SessionSummary): string {
     summary.model,
     summary.reasoningEffort,
     summary.approvalMode,
+    summary.codexSandboxMode,
     summary.workspacePath,
     summary.branch,
     summary.sessionKind,

@@ -46,7 +46,7 @@
 | retry | canceled/error 後に同じ request を再送する | 対応 | 未確認 | 実装済み | provider native 機能というより wrapper UX |
 | model selection | session ごとに model を選ぶ | 対応 | 対応 | 実装済み | catalog と session metadata に保存 |
 | reasoning depth | session ごとに reasoning depth を選ぶ | 対応 | 未確認 | 実装済み | Copilot 側の depth 同等概念は未整理 |
-| approval mode | provider-native approval 設定へ map する | 対応 | 一部対応 | 一部実装 | WithMate は `allow-all / safety / provider-controlled` を正本にしている。Copilot `provider-controlled` は direct approval UI と接続したが、Codex は policy mapping のまま |
+| approval mode | provider-native approval 設定へ map する | 対応 | 一部対応 | 一部実装 | WithMate は Codex SDK policy 値の `never / on-request / on-failure / untrusted` を正本にする。Copilot は provider-specific choices だけを UI に出す |
 | file / folder context | workspace file/folder を turn input に含める | 一部対応 | 一部対応 | 実装済み | workspace 外 path は session metadata `allowedAdditionalDirectories` 配下だけを許可する。Codex はその許可リストを `additionalDirectories`、Copilot は `attachments` の `file` / `directory` へ変換して送る |
 | image attachment | image を turn input に含める | 対応 | 一部対応 | 実装済み | Codex は `local_image`、Copilot は `attachments` の `file` として送る |
 | skill selection | skill を選び、provider native invocation へ変換する | 対応 | 対応 | 実装済み | Codex は `$skill-name`、Copilot は directive 設計まで |
@@ -61,7 +61,7 @@
 | slash command absorption | provider slash command を canonical UI/metadata に吸収する | 一部対応 | 一部対応 | 設計済み | docs はあるが parser 実装は未着手 |
 | native slash passthrough | provider slash command を SDK 経由でそのまま実行する | 非対応 | 非対応 | 未着手 | SDK surface 上は想定しない方針 |
 | apps / mcp / plugins | provider 拡張機能を session から扱う | 一部対応 | 一部対応 | 未着手 | Codex は `/apps` `/mcp`、Copilot は plugin 系がある |
-| sandbox / allowlist 拡張 | read dir 追加や tool allowlist を wrapper から制御する | 一部対応 | 一部対応 | 未着手 | approval mode より細かい native control は未吸収 |
+| sandbox / allowlist 拡張 | read dir 追加や tool allowlist を wrapper から制御する | 一部対応 | 一部対応 | 一部実装 | Codex は `read-only / workspace-write / workspace-write + network / danger-full-access` を session metadata から SDK runtime option へ渡す。Copilot は現時点で sandbox dropdown を出さない |
 | app-level approval callback | app 側で approve / deny を返す | 非対応 | 一部対応 | 一部実装 | Copilot provider-controlled では Session UI の approval card から `approve / deny` を返せる。Codex は current SDK surface では未対応 |
 
 ## Current Read

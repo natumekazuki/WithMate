@@ -12,17 +12,17 @@ import { createDefaultAppSettings, getProviderAppSettings, normalizeAppSettings 
 
 describe("approval mode helpers", () => {
   it("legacy/native approval 値を provider-neutral mode へ normalize できる", () => {
-    assert.equal(normalizeApprovalMode("never"), "allow-all");
-    assert.equal(normalizeApprovalMode("untrusted"), "safety");
-    assert.equal(normalizeApprovalMode("on-request"), "provider-controlled");
-    assert.equal(normalizeApprovalMode("on-failure"), "provider-controlled");
-    assert.equal(normalizeApprovalMode("provider-controlled"), "provider-controlled");
+    assert.equal(normalizeApprovalMode("never"), "never");
+    assert.equal(normalizeApprovalMode("untrusted"), "untrusted");
+    assert.equal(normalizeApprovalMode("on-request"), "on-request");
+    assert.equal(normalizeApprovalMode("on-failure"), "on-failure");
+    assert.equal(normalizeApprovalMode("on-request"), "on-request");
   });
 
   it("provider-neutral approval mode を Codex native policy へ変換できる", () => {
-    assert.equal(mapApprovalModeToCodexPolicy("allow-all"), "never");
-    assert.equal(mapApprovalModeToCodexPolicy("safety"), "untrusted");
-    assert.equal(mapApprovalModeToCodexPolicy("provider-controlled"), "on-request");
+    assert.equal(mapApprovalModeToCodexPolicy("never"), "never");
+    assert.equal(mapApprovalModeToCodexPolicy("untrusted"), "untrusted");
+    assert.equal(mapApprovalModeToCodexPolicy("on-request"), "on-request");
   });
 
   it("session normalize で approval と artifact run checks を provider-neutral に戻す", () => {
@@ -57,16 +57,16 @@ describe("approval mode helpers", () => {
     });
 
     assert.ok(normalized);
-    assert.equal(normalized.approvalMode, "provider-controlled");
+    assert.equal(normalized.approvalMode, "on-failure");
     assert.deepEqual(normalized.messages[0]?.artifact?.runChecks, [
-      { label: "approval", value: "allow-all" },
+      { label: "approval", value: "never" },
       { label: "model", value: "gpt-5" },
     ]);
   });
 
-  it("default approval label は 安全寄り を返す", () => {
-    assert.equal(DEFAULT_APPROVAL_MODE, "safety");
-    assert.equal(approvalModeLabel(DEFAULT_APPROVAL_MODE), "安全寄り");
+  it("default approval label は SDK literal を返す", () => {
+    assert.equal(DEFAULT_APPROVAL_MODE, "untrusted");
+    assert.equal(approvalModeLabel(DEFAULT_APPROVAL_MODE), "untrusted");
   });
 
   it("provider settings は skill root path を保持できる", () => {
@@ -87,3 +87,4 @@ describe("approval mode helpers", () => {
     assert.equal(getProviderAppSettings(normalized, "codex").skillRootPath, "C:/skills/codex");
   });
 });
+

@@ -88,6 +88,15 @@ export type {
   CreateCharacterInput,
 } from "./character-state.js";
 export {
+  codexSandboxModeLabel,
+  codexSandboxModeOptions,
+  DEFAULT_CODEX_SANDBOX_MODE,
+  normalizeCodexSandboxMode,
+} from "./codex-sandbox-mode.js";
+export type {
+  CodexSandboxMode,
+} from "./codex-sandbox-mode.js";
+export {
   createDefaultAppSettings,
   DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS,
   DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS,

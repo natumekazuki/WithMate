@@ -9,6 +9,7 @@ import {
   type SessionSummary,
 } from "../src/session-state.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
+import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 type SessionRow = {
@@ -30,6 +31,7 @@ type SessionRow = {
   character_theme_sub: string;
   run_state: string;
   approval_mode: string;
+  codex_sandbox_mode: string;
   model: string;
   reasoning_effort: string;
   custom_agent_name: string;
@@ -64,6 +66,7 @@ const SESSION_SELECT_COLUMNS = `
   character_theme_sub,
   run_state,
   approval_mode,
+  codex_sandbox_mode,
   model,
   reasoning_effort,
   custom_agent_name,
@@ -99,6 +102,7 @@ const SESSION_SUMMARY_SELECT_COLUMNS = `
   character_theme_sub,
   run_state,
   approval_mode,
+  codex_sandbox_mode,
   model,
   reasoning_effort,
   custom_agent_name,
@@ -140,6 +144,7 @@ const UPSERT_SESSION_SQL = `
     character_theme_sub,
     run_state,
     approval_mode,
+    codex_sandbox_mode,
     model,
     reasoning_effort,
     custom_agent_name,
@@ -148,7 +153,7 @@ const UPSERT_SESSION_SQL = `
     messages_json,
     stream_json,
     last_active_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     task_title = excluded.task_title,
     task_summary = excluded.task_summary,
@@ -167,6 +172,7 @@ const UPSERT_SESSION_SQL = `
     character_theme_sub = excluded.character_theme_sub,
     run_state = excluded.run_state,
     approval_mode = excluded.approval_mode,
+    codex_sandbox_mode = excluded.codex_sandbox_mode,
     model = excluded.model,
     reasoning_effort = excluded.reasoning_effort,
     custom_agent_name = excluded.custom_agent_name,
@@ -232,6 +238,7 @@ function rowToSession(row: SessionRow, mode: SessionRowParseMode = "skip"): Sess
     },
     runState: row.run_state,
     approvalMode: row.approval_mode,
+    codexSandboxMode: row.codex_sandbox_mode,
     model: row.model,
     reasoningEffort: row.reasoning_effort,
     customAgentName: row.custom_agent_name,
@@ -281,6 +288,7 @@ function rowToSessionSummary(row: SessionSummaryRow, mode: SessionRowParseMode =
     },
     runState: row.run_state,
     approvalMode: row.approval_mode,
+    codexSandboxMode: row.codex_sandbox_mode,
     model: row.model,
     reasoningEffort: row.reasoning_effort,
     customAgentName: row.custom_agent_name,
@@ -327,6 +335,7 @@ export class SessionStorage {
         character_theme_sub TEXT NOT NULL DEFAULT '#6fb8c7',
         run_state TEXT NOT NULL,
         approval_mode TEXT NOT NULL,
+        codex_sandbox_mode TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_CODEX_SANDBOX_MODE)},
         model TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_MODEL_ID)},
         reasoning_effort TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_REASONING_EFFORT)},
         custom_agent_name TEXT NOT NULL DEFAULT '',
@@ -360,6 +369,7 @@ export class SessionStorage {
       normalized.characterThemeColors.sub,
       normalized.runState,
       normalized.approvalMode,
+      normalized.codexSandboxMode,
       normalized.model,
       normalized.reasoningEffort,
       normalized.customAgentName,
@@ -385,6 +395,12 @@ export class SessionStorage {
     if (!columns.has("reasoning_effort")) {
       this.db.exec(
         `ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_REASONING_EFFORT)};`,
+      );
+    }
+
+    if (!columns.has("codex_sandbox_mode")) {
+      this.db.exec(
+        `ALTER TABLE sessions ADD COLUMN codex_sandbox_mode TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_CODEX_SANDBOX_MODE)};`,
       );
     }
 

@@ -76,7 +76,7 @@ describe("composeProviderPrompt", () => {
       character: character.name,
       characterIconPath: "",
       characterThemeColors: character.themeColors,
-      approvalMode: "safety",
+      approvalMode: "untrusted",
     });
     const sessionMemory = {
       ...createDefaultSessionMemory(session),
@@ -139,7 +139,7 @@ describe("composeProviderPrompt", () => {
       character: character.name,
       characterIconPath: "",
       characterThemeColors: character.themeColors,
-      approvalMode: "safety",
+      approvalMode: "untrusted",
     });
 
     const prompt = composeProviderPrompt({
@@ -169,3 +169,4 @@ describe("composeProviderPrompt", () => {
     assertSectionOrder(prompt.logicalPrompt.composedText, ["# Character", "# User Input"]);
   });
 });
+

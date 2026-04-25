@@ -23,7 +23,8 @@ WithMate は、`Codex CLI / GitHub Copilot CLI` 相当の coding agent 体験を
   - Settings Window の起点
 - `Session Window`
   - coding agent との作業チャット
-  - approval mode の反映
+  - provider-specific approval mode の反映
+  - Codex sandbox mode の反映
   - model / depth の反映
   - turn ごとの結果確認
   - 監査ログ確認

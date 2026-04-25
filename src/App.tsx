@@ -42,12 +42,14 @@ import {
 import { buildAuditLogRefreshSignature, buildDisplayedAuditLogs } from "./audit-log-refresh.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import {
-  approvalModeOptions,
   approvalModeLabel,
   modelDisplayLabel,
   modelOptionLabel,
-  reasoningDepthLabel,
 } from "./ui-utils.js";
+import {
+  getApprovalOptionsForProvider,
+  getSandboxOptionsForProvider,
+} from "./provider-runtime-options.js";
 import {
   buildContextPaneProjection,
   buildCopilotQuotaProjection,
@@ -1959,8 +1961,26 @@ export default function App() {
     [selectedCustomAgent, selectedSession],
   );
   const approvalChoiceOptions = useMemo(
-    () => approvalModeOptions.map((approval) => ({ value: approval.id, label: approval.label })),
-    [],
+    () => {
+      const options = getApprovalOptionsForProvider(selectedSession?.provider);
+      if (!selectedSession || options.some((option) => option.value === selectedSession.approvalMode)) {
+        return options;
+      }
+
+      return [{ value: selectedSession.approvalMode, label: selectedSession.approvalMode }, ...options];
+    },
+    [selectedSession?.approvalMode, selectedSession?.provider],
+  );
+  const sandboxChoiceOptions = useMemo(
+    () => {
+      const options = getSandboxOptionsForProvider(selectedSession?.provider);
+      if (!selectedSession || options.some((option) => option.value === selectedSession.codexSandboxMode)) {
+        return options;
+      }
+
+      return [{ value: selectedSession.codexSandboxMode, label: selectedSession.codexSandboxMode }, ...options];
+    },
+    [selectedSession?.codexSandboxMode, selectedSession?.provider],
   );
   const modelSelectOptions = useMemo(
     () => modelOptions.map((model) => ({ value: model.id, label: modelOptionLabel(model) })),
@@ -1971,7 +1991,7 @@ export default function App() {
     [selectedProviderCatalog, selectedSession?.model],
   );
   const reasoningSelectOptions = useMemo(
-    () => availableReasoningEfforts.map((reasoningEffort) => ({ value: reasoningEffort, label: reasoningDepthLabel(reasoningEffort) })),
+    () => availableReasoningEfforts.map((reasoningEffort) => ({ value: reasoningEffort, label: reasoningEffort })),
     [availableReasoningEfforts],
   );
   const customAgentItems = useMemo(
@@ -2397,6 +2417,25 @@ export default function App() {
     const nextSession: Session = {
       ...selectedSession,
       approvalMode,
+      updatedAt: currentTimestampLabel(),
+    };
+
+    await persistSession(nextSession);
+  };
+
+  const handleChangeCodexSandboxMode = async (codexSandboxMode: Session["codexSandboxMode"]) => {
+    if (
+      !selectedSession ||
+      selectedSession.provider !== "codex" ||
+      selectedSession.runState === "running" ||
+      codexSandboxMode === selectedSession.codexSandboxMode
+    ) {
+      return;
+    }
+
+    const nextSession: Session = {
+      ...selectedSession,
+      codexSandboxMode,
       updatedAt: currentTimestampLabel(),
     };
 
@@ -3094,6 +3133,8 @@ export default function App() {
                         isComposerBlockedFeedbackActive={forceComposerBlockedFeedback && composerSendability.shouldShowFeedback}
                         approvalOptions={approvalChoiceOptions}
                         selectedApprovalMode={selectedSession.approvalMode}
+                        sandboxOptions={sandboxChoiceOptions}
+                        selectedCodexSandboxMode={selectedSession.codexSandboxMode}
                         modelOptions={modelSelectOptions}
                         selectedModel={selectedSession.model}
                         selectedModelFallbackLabel={selectedModelFallbackLabel}
@@ -3141,6 +3182,7 @@ export default function App() {
                         onSelectWorkspacePathMatch={handleSelectWorkspacePathMatch}
                         onActivateWorkspacePathMatch={setActiveWorkspacePathMatchIndex}
                         onChangeApprovalMode={(value) => void handleChangeApproval(value)}
+                        onChangeCodexSandboxMode={(value) => void handleChangeCodexSandboxMode(value)}
                         onChangeModel={(value) => void handleChangeModel(value)}
                         onChangeReasoningEffort={(value) => void handleChangeReasoningEffort(value as Session["reasoningEffort"])}
                       />

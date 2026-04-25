@@ -44,7 +44,7 @@ function createSession(characterId = "char-1", character = "Muse"): Session {
     character,
     characterIconPath: "",
     characterThemeColors: { main: "#111111", sub: "#222222" },
-    approvalMode: "provider-controlled",
+    approvalMode: "on-request",
   });
 }
 
@@ -148,3 +148,4 @@ test("CharacterRuntimeService は delete 時に一覧更新と editor close を�
     "close:char-1",
   ]);
 });
+

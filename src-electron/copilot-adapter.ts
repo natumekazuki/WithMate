@@ -1072,15 +1072,16 @@ function isReadOnlyPermissionRequest(request: PermissionRequest): boolean {
 
 function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
   switch (normalizeApprovalMode(input.session.approvalMode)) {
-    case "allow-all":
+    case "never":
       return () => toPermissionDecision("approved");
-    case "safety":
+    case "untrusted":
       return (request) => (
         isReadOnlyPermissionRequest(request)
           ? toPermissionDecision("approved")
           : toPermissionDecision("denied-by-rules")
       );
-    case "provider-controlled":
+    case "on-request":
+    case "on-failure":
     default:
       return async (request) => {
         if (isReadOnlyPermissionRequest(request)) {

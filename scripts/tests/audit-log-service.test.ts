@@ -14,7 +14,7 @@ function createInput(overrides: Partial<CreateAuditLogInput> = {}): CreateAuditL
     provider: "codex",
     model: "gpt-5.4-mini",
     reasoningEffort: "medium",
-    approvalMode: "safe",
+    approvalMode: "untrusted",
     threadId: "thread-1",
     logicalPrompt: {
       systemText: "system",
@@ -61,3 +61,4 @@ test("AuditLogService は storage の CRUD を委譲する", () => {
 
   assert.deepEqual(calls.map((call) => call.type), ["list", "create", "update", "clear"]);
 });
+

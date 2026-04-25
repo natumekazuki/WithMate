@@ -25,7 +25,7 @@ function createSession(overrides?: Partial<Session>): Session {
     character: "Muse",
     characterIconPath: "",
     characterThemeColors: { main: "#111111", sub: "#222222" },
-    approvalMode: "provider-controlled",
+    approvalMode: "on-request",
     status: "idle",
     runState: "idle",
     threadId: "thread-1",
@@ -256,3 +256,4 @@ test("SessionMemorySupportService は project promotion と monologue append を
   assert.equal(updatedSession?.stream.length, 1);
   assert.equal(appended.stream[0]?.text, "今日は少し整理が進んだ。");
 });
+
