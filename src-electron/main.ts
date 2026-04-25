@@ -101,7 +101,11 @@ import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
 import { resolveCursorAnchoredPosition } from "./window-placement.js";
 import { clearWorkspaceFileIndex, searchWorkspaceFilePaths } from "./workspace-file-search.js";
-import { truncateAppDatabaseWal, truncateAppDatabaseWalIfLargerThan } from "./sqlite-connection.js";
+import {
+  SQLITE_MAINTENANCE_BUSY_TIMEOUT_MS,
+  truncateAppDatabaseWal,
+  truncateAppDatabaseWalIfLargerThan,
+} from "./sqlite-connection.js";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const preloadPath = path.resolve(currentDir, "preload.js");
@@ -1035,7 +1039,9 @@ function startWalMaintenance(): void {
     }
 
     try {
-      truncateAppDatabaseWalIfLargerThan(dbPath);
+      truncateAppDatabaseWalIfLargerThan(dbPath, undefined, {
+        busyTimeoutMs: SQLITE_MAINTENANCE_BUSY_TIMEOUT_MS,
+      });
     } catch (error) {
       console.warn("SQLite WAL maintenance failed", error);
     }
