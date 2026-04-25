@@ -39,7 +39,11 @@ export type MainIpcWindowDepsArgs = {
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickImageFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   openPathTarget(target: string, options?: OpenPathOptions): Promise<void>;
+  openAppLogFolder(): Promise<void>;
+  openCrashDumpFolder(): Promise<void>;
   openSessionTerminal(sessionId: string): Promise<void>;
+  logIpcError?: MainIpcRegistrationDeps["logIpcError"];
+  reportRendererLog?: MainIpcRegistrationDeps["reportRendererLog"];
 };
 
 export type MainIpcCatalogDepsArgs = {
@@ -141,7 +145,11 @@ export function createMainIpcRegistrationDeps(
     pickFile: args.window.pickFile,
     pickImageFile: args.window.pickImageFile,
     openPathTarget: args.window.openPathTarget,
+    openAppLogFolder: args.window.openAppLogFolder,
+    openCrashDumpFolder: args.window.openCrashDumpFolder,
     openSessionTerminal: args.window.openSessionTerminal,
+    logIpcError: args.window.logIpcError,
+    reportRendererLog: args.window.reportRendererLog,
     getModelCatalog: args.catalog.getModelCatalog,
     importModelCatalogDocument: args.catalog.importModelCatalogDocument,
     importModelCatalogFromFile: args.catalog.importModelCatalogFromFile,

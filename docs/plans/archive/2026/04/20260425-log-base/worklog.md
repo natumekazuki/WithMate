@@ -13,3 +13,7 @@
 - `npm run typecheck` と対象テストを実行したが、`node_modules` が無く `tsc` / `tsx` が見つからないため検証は未完了。
 - review 指摘を受け、`src-electron/main-ipc-registration.ts` の IPC error logging wrapper が `IpcMain` 全体を偽装しないように修正した。登録関数は `handle` だけを持つ `IpcHandleRegistrar` を受け取り、`ipcMain.on` は実 `ipcMain` に直接登録する。
 - ユーザー指示により、検証未完了の状態で plan を archive する。
+- PR #91 の review 指摘を受け、`AppLogService` の同期 FS 呼び出しを初回 write / rotation 時に寄せ、Renderer log IPC payload の検証と長さ制限を追加し、テスト内の新規 IPC channel 参照を定数 import に変更した。
+- `npx tsc -p tsconfig.electron.json --noEmit` を実行し、Electron 側の型検査は通過した。
+- `npm run typecheck` は実行したが、既存テスト/renderer 側の型エラーが多数あり失敗した。
+- 対象テストは `tsx` が内部で `esbuild` を spawn する段階で `EPERM` になり、この環境では実行できなかった。

@@ -89,7 +89,7 @@ type LogIpcErrorInput = {
   error: unknown;
 };
 type IpcHandleRegistrar = {
-  handle(channel: string, handler: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown): void;
+  handle: IpcMain["handle"];
 };
 
 export type MainIpcRegistrationDeps = {

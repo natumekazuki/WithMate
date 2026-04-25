@@ -101,6 +101,26 @@ type SessionBackgroundActivityPayload = {
   kind: Parameters<WithMateWindowApi["getSessionBackgroundActivity"]>[1];
   state: Awaited<ReturnType<WithMateWindowApi["getSessionBackgroundActivity"]>>;
 };
+type PreloadErrorEvent = {
+  message?: string;
+  filename?: string;
+  lineno?: number;
+  colno?: number;
+  error?: unknown;
+};
+type PreloadUnhandledRejectionEvent = {
+  reason?: unknown;
+};
+type PreloadWindow = {
+  location: {
+    href: string;
+  };
+  addEventListener(type: "error", listener: (event: PreloadErrorEvent) => void): void;
+  addEventListener(type: "unhandledrejection", listener: (event: PreloadUnhandledRejectionEvent) => void): void;
+};
+
+declare const window: PreloadWindow | undefined;
+
 let rendererErrorLoggingInstalled = false;
 
 function subscribe<EventArgs extends unknown[]>(

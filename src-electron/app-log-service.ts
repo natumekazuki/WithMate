@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 
 import type { AppLogEntry, AppLogError, AppLogInput } from "../src/app-log-types.js";
@@ -31,6 +31,9 @@ export class AppLogService {
   private readonly fileName: string;
   private readonly maxBytes: number;
   private readonly maxFiles: number;
+  private currentLogBytes = 0;
+  private directoryReady = false;
+  private currentLogBytesLoaded = false;
 
   constructor(private readonly options: AppLogServiceOptions) {
     this.fileName = options.fileName ?? DEFAULT_LOG_FILE_NAME;
@@ -48,9 +51,13 @@ export class AppLogService {
 
   write(input: AppLogInput): AppLogEntry {
     const entry = this.buildEntry(input);
+    const line = `${JSON.stringify(entry)}\n`;
+    const lineBytes = Buffer.byteLength(line, "utf8");
     this.ensureLogDirectory();
-    this.rotateIfNeeded();
-    appendFileSync(this.logFilePath, `${JSON.stringify(entry)}\n`, "utf8");
+    this.ensureCurrentLogBytesLoaded();
+    this.rotateIfNeeded(lineBytes);
+    appendFileSync(this.logFilePath, line, "utf8");
+    this.currentLogBytes += lineBytes;
     return entry;
   }
 
@@ -80,23 +87,45 @@ export class AppLogService {
     };
   }
 
-  private ensureLogDirectory(): void {
-    mkdirSync(this.logsPath, { recursive: true });
+  private readCurrentLogBytes(): number {
+    try {
+      return statSync(this.logFilePath).size;
+    } catch {
+      return 0;
+    }
   }
 
-  private rotateIfNeeded(): void {
-    if (!existsSync(this.logFilePath)) {
+  private ensureLogDirectory(): void {
+    if (this.directoryReady) {
       return;
     }
 
-    const size = statSync(this.logFilePath).size;
-    if (size < this.maxBytes) {
+    mkdirSync(this.logsPath, { recursive: true });
+    this.directoryReady = true;
+  }
+
+  private ensureCurrentLogBytesLoaded(): void {
+    if (this.currentLogBytesLoaded) {
+      return;
+    }
+
+    this.currentLogBytes = this.readCurrentLogBytes();
+    this.currentLogBytesLoaded = true;
+  }
+
+  private rotateIfNeeded(incomingBytes: number): void {
+    if (this.currentLogBytes <= 0 || this.currentLogBytes + incomingBytes <= this.maxBytes) {
       return;
     }
 
     const rotatedFilePath = path.join(this.logsPath, `${this.fileName}.${Date.now()}`);
-    renameSync(this.logFilePath, rotatedFilePath);
-    this.pruneOldLogs();
+    try {
+      renameSync(this.logFilePath, rotatedFilePath);
+      this.currentLogBytes = 0;
+      this.pruneOldLogs();
+    } catch {
+      this.currentLogBytes = this.readCurrentLogBytes();
+    }
   }
 
   private pruneOldLogs(): void {

@@ -395,22 +395,136 @@ function writeIpcErrorLog(input: { channel: string; durationMs: number; error: u
   });
 }
 
-function writeRendererLog(input: RendererLogInput, windowId?: number): void {
+const VALID_RENDERER_LOG_LEVELS = new Set(["debug", "info", "warn", "error", "fatal"]);
+const MAX_RENDERER_LOG_KIND_LENGTH = 128;
+const MAX_RENDERER_LOG_MESSAGE_LENGTH = 4096;
+const MAX_RENDERER_LOG_URL_LENGTH = 2048;
+const MAX_RENDERER_LOG_STRING_LENGTH = 2048;
+const MAX_RENDERER_LOG_OBJECT_KEYS = 50;
+const MAX_RENDERER_LOG_ARRAY_ITEMS = 50;
+const MAX_RENDERER_LOG_DEPTH = 4;
+
+type SanitizedRendererLogInput = {
+  level: RendererLogInput["level"];
+  kind: string;
+  message: string;
+  url?: string;
+  data?: unknown;
+  error?: RendererLogInput["error"];
+};
+
+function truncateRendererLogString(value: string, maxLength: number): string {
+  return value.length > maxLength ? value.slice(0, maxLength) : value;
+}
+
+function sanitizeRendererLogPayload(value: unknown, depth = 0): unknown {
+  if (value == null || typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : String(value);
+  }
+
+  if (typeof value === "string") {
+    return truncateRendererLogString(value, MAX_RENDERER_LOG_STRING_LENGTH);
+  }
+
+  if (typeof value === "bigint" || typeof value === "symbol" || typeof value === "function") {
+    return truncateRendererLogString(String(value), MAX_RENDERER_LOG_STRING_LENGTH);
+  }
+
+  if (depth >= MAX_RENDERER_LOG_DEPTH) {
+    return "[truncated]";
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, MAX_RENDERER_LOG_ARRAY_ITEMS)
+      .map((item) => sanitizeRendererLogPayload(item, depth + 1));
+  }
+
+  const sanitizedEntries = Object.entries(value as Record<string, unknown>)
+    .slice(0, MAX_RENDERER_LOG_OBJECT_KEYS)
+    .map(([key, entryValue]) => [
+      truncateRendererLogString(key, MAX_RENDERER_LOG_KIND_LENGTH),
+      sanitizeRendererLogPayload(entryValue, depth + 1),
+    ]);
+  return Object.fromEntries(sanitizedEntries);
+}
+
+function sanitizeRendererLogError(value: unknown): RendererLogInput["error"] | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const message = candidate.message;
+  if (typeof message !== "string") {
+    return undefined;
+  }
+
+  return {
+    name: typeof candidate.name === "string"
+      ? truncateRendererLogString(candidate.name, MAX_RENDERER_LOG_STRING_LENGTH)
+      : undefined,
+    message: truncateRendererLogString(message, MAX_RENDERER_LOG_MESSAGE_LENGTH),
+    stack: typeof candidate.stack === "string"
+      ? truncateRendererLogString(candidate.stack, MAX_RENDERER_LOG_MESSAGE_LENGTH)
+      : undefined,
+  };
+}
+
+function sanitizeRendererLogInput(input: RendererLogInput): SanitizedRendererLogInput | null {
   if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const rawInput = input as Record<string, unknown>;
+  const level = rawInput.level;
+  if (typeof level !== "string" || !VALID_RENDERER_LOG_LEVELS.has(level)) {
+    return null;
+  }
+
+  const kind = rawInput.kind;
+  if (typeof kind !== "string" || kind.trim().length === 0) {
+    return null;
+  }
+
+  const message = rawInput.message;
+  if (typeof message !== "string") {
+    return null;
+  }
+
+  return {
+    level: level as RendererLogInput["level"],
+    kind: truncateRendererLogString(kind, MAX_RENDERER_LOG_KIND_LENGTH),
+    message: truncateRendererLogString(message, MAX_RENDERER_LOG_MESSAGE_LENGTH),
+    url: typeof rawInput.url === "string"
+      ? truncateRendererLogString(rawInput.url, MAX_RENDERER_LOG_URL_LENGTH)
+      : undefined,
+    data: rawInput.data === undefined ? undefined : sanitizeRendererLogPayload(rawInput.data),
+    error: sanitizeRendererLogError(rawInput.error),
+  };
+}
+
+function writeRendererLog(input: RendererLogInput, windowId?: number): void {
+  const sanitizedInput = sanitizeRendererLogInput(input);
+  if (!sanitizedInput) {
     return;
   }
 
   writeAppLog({
-    level: input.level,
-    kind: input.kind,
+    level: sanitizedInput.level,
+    kind: sanitizedInput.kind,
     process: "renderer",
-    message: input.message,
+    message: sanitizedInput.message,
     windowId,
     data: {
-      url: input.url,
-      detail: input.data,
+      url: sanitizedInput.url,
+      detail: sanitizedInput.data,
     },
-    error: input.error,
+    error: sanitizedInput.error,
   });
 }
 

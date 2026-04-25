@@ -37,6 +37,8 @@ import {
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
+  WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
+  WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
@@ -224,7 +226,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   handlers.get("withmate:run-session-memory-extraction")?.({}, "session-1");
   handlers.get("withmate:cancel-session-run")?.({}, "session-1");
   await handlers.get("withmate:open-path")?.({}, "target", null);
-  await handlers.get("withmate:open-app-log-folder")?.({});
+  await handlers.get(WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL)?.({});
 
   assert.deepEqual(calls, [
     "openSession:session-1",
@@ -311,8 +313,8 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_PICK_FILE_CHANNEL,
     WITHMATE_PICK_IMAGE_FILE_CHANNEL,
     WITHMATE_OPEN_PATH_CHANNEL,
-    "withmate:open-app-log-folder",
-    "withmate:open-crash-dump-folder",
+    WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
+    WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
     WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
     WITHMATE_GET_MODEL_CATALOG_CHANNEL,
     WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
