@@ -142,8 +142,10 @@ export function isRetryableStaleThreadSessionError(error: unknown): boolean {
   }
 
   return (
+    /\bsessionnotfound\b/.test(normalizedMessage) ||
     /\b(thread|session)\b.*\bnot found\b/.test(normalizedMessage) ||
     /\bnot found\b.*\b(thread|session)\b/.test(normalizedMessage) ||
+    /\b(thread|session)[-_]not[-_]found\b/.test(normalizedMessage) ||
     /\b(thread|session)\b.*\bexpired\b/.test(normalizedMessage) ||
     /\bexpired\b.*\b(thread|session)\b/.test(normalizedMessage) ||
     /\binvalid[-\s]+(thread|session)\b/.test(normalizedMessage) ||

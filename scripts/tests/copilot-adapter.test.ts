@@ -709,6 +709,8 @@ describe("CopilotAdapter env", () => {
     const emptyPartial = new ProviderTurnError("Connection is closed.", createPartialResult(), false);
     const withAssistantText = new ProviderTurnError("Connection is closed.", createPartialResult({ assistantText: "4" }), false);
     const missingSession = new ProviderTurnError("SessionNotFound: session not found", createPartialResult(), false);
+    const missingSessionCodeOnly = new ProviderTurnError("SessionNotFound", createPartialResult(), false);
+    const missingSessionSnakeCase = new ProviderTurnError("session_not_found", createPartialResult(), false);
     const missingSessionWithRawItems = new ProviderTurnError(
       "SessionNotFound: session not found",
       createPartialResult({
@@ -737,6 +739,8 @@ describe("CopilotAdapter env", () => {
     assert.equal(shouldRetryCopilotTurn(emptyPartial), true);
     assert.equal(shouldRetryCopilotTurn(withAssistantText), false);
     assert.equal(shouldRetryCopilotTurn(missingSession), true);
+    assert.equal(shouldRetryCopilotTurn(missingSessionCodeOnly), true);
+    assert.equal(shouldRetryCopilotTurn(missingSessionSnakeCase), true);
     assert.equal(shouldRetryCopilotTurn(missingSessionWithRawItems), true);
     assert.equal(shouldRetryCopilotTurn(missingSessionWithToolStartRawItems), true);
     assert.equal(shouldRetryCopilotTurn(missingSessionWithOperation), false);
