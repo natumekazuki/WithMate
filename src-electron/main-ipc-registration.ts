@@ -1,5 +1,6 @@
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 
+import type { RendererLogInput } from "../src/app-log-types.js";
 import type {
   AuditLogEntry,
   CharacterProfile,
@@ -55,6 +56,8 @@ import {
     WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
+  WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
+  WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
@@ -71,6 +74,7 @@ import {
   WITHMATE_RUN_SESSION_MEMORY_EXTRACTION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
+  WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
@@ -78,9 +82,18 @@ import {
 import type { OpenPathOptions, ResetAppDatabaseRequest } from "../src/withmate-window-types.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
+type IpcSenderEvent = Pick<IpcMainInvokeEvent, "sender">;
+type LogIpcErrorInput = {
+  channel: string;
+  durationMs: number;
+  error: unknown;
+};
+type IpcHandleRegistrar = {
+  handle: IpcMain["handle"];
+};
 
 export type MainIpcRegistrationDeps = {
-  resolveEventWindow(event: IpcMainInvokeEvent): MaybeWindow;
+  resolveEventWindow(event: IpcSenderEvent): MaybeWindow;
   resolveHomeWindow(): MaybeWindow;
   openSessionWindow(sessionId: string): Promise<void>;
   openHomeWindow(): Promise<void>;
@@ -137,7 +150,11 @@ export type MainIpcRegistrationDeps = {
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickImageFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   openPathTarget(target: string, options?: OpenPathOptions): Promise<void>;
+  openAppLogFolder(): Promise<void>;
+  openCrashDumpFolder(): Promise<void>;
   openSessionTerminal(sessionId: string): Promise<void>;
+  logIpcError?(input: LogIpcErrorInput): void;
+  reportRendererLog?(input: RendererLogInput, windowId?: number): void;
 };
 
 type MainIpcWindowDeps = Pick<
@@ -152,6 +169,8 @@ type MainIpcWindowDeps = Pick<
   | "openCharacterEditorWindow"
   | "openDiffWindow"
   | "openPathTarget"
+  | "openAppLogFolder"
+  | "openCrashDumpFolder"
   | "openSessionTerminal"
   | "pickDirectory"
   | "pickFile"
@@ -228,7 +247,7 @@ function resolveTargetWindow(
   return deps.resolveEventWindow(event) ?? deps.resolveHomeWindow() ?? undefined;
 }
 
-function registerWindowHandlers(ipcMain: IpcMain, deps: MainIpcWindowDeps): void {
+function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindowDeps): void {
   ipcMain.handle(WITHMATE_OPEN_SESSION_CHANNEL, async (_event, sessionId: string) => {
     if (!sessionId) {
       return;
@@ -265,12 +284,14 @@ function registerWindowHandlers(ipcMain: IpcMain, deps: MainIpcWindowDeps): void
   ipcMain.handle(WITHMATE_OPEN_PATH_CHANNEL, async (_event, target: string, options: OpenPathOptions | null) =>
     deps.openPathTarget(target, options ?? undefined),
   );
+  ipcMain.handle(WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL, async () => deps.openAppLogFolder());
+  ipcMain.handle(WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL, async () => deps.openCrashDumpFolder());
   ipcMain.handle(WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL, async (_event, sessionId: string) =>
     deps.openSessionTerminal(sessionId),
   );
 }
 
-function registerCatalogHandlers(ipcMain: IpcMain, deps: MainIpcCatalogDeps): void {
+function registerCatalogHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCatalogDeps): void {
   ipcMain.handle(WITHMATE_GET_MODEL_CATALOG_CHANNEL, (_event, revision: number | null) => deps.getModelCatalog(revision));
   ipcMain.handle(WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL, (_event, document: ModelCatalogDocument) =>
     deps.importModelCatalogDocument(document),
@@ -286,7 +307,7 @@ function registerCatalogHandlers(ipcMain: IpcMain, deps: MainIpcCatalogDeps): vo
   );
 }
 
-function registerSettingsHandlers(ipcMain: IpcMain, deps: MainIpcSettingsDeps): void {
+function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSettingsDeps): void {
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => deps.getAppSettings());
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => deps.updateAppSettings(settings));
   ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, (_event, request: ResetAppDatabaseRequest | null | undefined) =>
@@ -302,7 +323,7 @@ function registerSettingsHandlers(ipcMain: IpcMain, deps: MainIpcSettingsDeps): 
   );
 }
 
-function registerSessionQueryHandlers(ipcMain: IpcMain, deps: MainIpcSessionQueryDeps): void {
+function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSessionQueryDeps): void {
   ipcMain.handle(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL, () => deps.listSessionSummaries());
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => deps.listSessionAuditLogs(sessionId));
   ipcMain.handle(WITHMATE_LIST_SESSION_SKILLS_CHANNEL, async (_event, sessionId: string) => deps.listSessionSkills(sessionId));
@@ -330,7 +351,7 @@ function registerSessionQueryHandlers(ipcMain: IpcMain, deps: MainIpcSessionQuer
   );
 }
 
-function registerSessionRuntimeHandlers(ipcMain: IpcMain, deps: MainIpcSessionRuntimeDeps): void {
+function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSessionRuntimeDeps): void {
   ipcMain.handle(WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL, (_event, sessionId: string) => {
     if (!sessionId) {
       return null;
@@ -384,7 +405,7 @@ function registerSessionRuntimeHandlers(ipcMain: IpcMain, deps: MainIpcSessionRu
   });
 }
 
-function registerCharacterHandlers(ipcMain: IpcMain, deps: MainIpcCharacterDeps): void {
+function registerCharacterHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCharacterDeps): void {
   ipcMain.handle(WITHMATE_LIST_CHARACTERS_CHANNEL, async () => deps.listCharacters());
   ipcMain.handle(WITHMATE_GET_CHARACTER_CHANNEL, async (_event, characterId: string) => {
     if (!characterId) {
@@ -411,10 +432,35 @@ function registerCharacterHandlers(ipcMain: IpcMain, deps: MainIpcCharacterDeps)
 }
 
 export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrationDeps): void {
-  registerWindowHandlers(ipcMain, deps);
-  registerCatalogHandlers(ipcMain, deps);
-  registerSettingsHandlers(ipcMain, deps);
-  registerSessionQueryHandlers(ipcMain, deps);
-  registerSessionRuntimeHandlers(ipcMain, deps);
-  registerCharacterHandlers(ipcMain, deps);
+  const wrappedIpcMain = createErrorLoggingIpcMain(ipcMain, deps);
+  registerWindowHandlers(wrappedIpcMain, deps);
+  registerCatalogHandlers(wrappedIpcMain, deps);
+  registerSettingsHandlers(wrappedIpcMain, deps);
+  registerSessionQueryHandlers(wrappedIpcMain, deps);
+  registerSessionRuntimeHandlers(wrappedIpcMain, deps);
+  registerCharacterHandlers(wrappedIpcMain, deps);
+  ipcMain.on(WITHMATE_RENDERER_LOG_CHANNEL, (event, input: RendererLogInput) => {
+    const windowId = deps.resolveEventWindow(event)?.id;
+    deps.reportRendererLog?.(input, windowId);
+  });
+}
+
+function createErrorLoggingIpcMain(ipcMain: IpcMain, deps: MainIpcRegistrationDeps): IpcHandleRegistrar {
+  return {
+    handle(channel, handler) {
+      ipcMain.handle(channel, async (event, ...args) => {
+        const startedAt = Date.now();
+        try {
+          return await handler(event, ...args);
+        } catch (error) {
+          deps.logIpcError?.({
+            channel,
+            durationMs: Date.now() - startedAt,
+            error,
+          });
+          throw error;
+        }
+      });
+    },
+  };
 }

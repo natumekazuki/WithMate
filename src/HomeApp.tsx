@@ -606,6 +606,34 @@ export default function HomeApp() {
     }
   };
 
+  const handleOpenAppLogFolder = async () => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
+      return;
+    }
+
+    try {
+      await withmateApi.openAppLogFolder();
+      setSettingsFeedback("ログフォルダを開いたよ。");
+    } catch (error) {
+      setSettingsFeedback(error instanceof Error ? error.message : "ログフォルダを開けなかったよ。");
+    }
+  };
+
+  const handleOpenCrashDumpFolder = async () => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
+      return;
+    }
+
+    try {
+      await withmateApi.openCrashDumpFolder();
+      setSettingsFeedback("クラッシュダンプフォルダを開いたよ。");
+    } catch (error) {
+      setSettingsFeedback(error instanceof Error ? error.message : "クラッシュダンプフォルダを開けなかったよ。");
+    }
+  };
+
   const settingsContent = (
     <HomeSettingsContent
       settingsDraft={settingsDraft}
@@ -639,6 +667,8 @@ export default function HomeApp() {
       onChangeCharacterReflectionMessageDeltaThreshold={handleChangeCharacterReflectionMessageDeltaThreshold}
       onImportModelCatalog={() => void handleImportModelCatalog()}
       onExportModelCatalog={() => void handleExportModelCatalog()}
+      onOpenAppLogFolder={() => void handleOpenAppLogFolder()}
+      onOpenCrashDumpFolder={() => void handleOpenCrashDumpFolder()}
       onReloadMemoryManagement={() => void handleReloadMemoryManagement()}
       onDeleteSessionMemory={(sessionId) => void handleDeleteSessionMemory(sessionId)}
       onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}
@@ -681,6 +711,8 @@ export default function HomeApp() {
       onChangeCharacterReflectionMessageDeltaThreshold={handleChangeCharacterReflectionMessageDeltaThreshold}
       onImportModelCatalog={() => void handleImportModelCatalog()}
       onExportModelCatalog={() => void handleExportModelCatalog()}
+      onOpenAppLogFolder={() => void handleOpenAppLogFolder()}
+      onOpenCrashDumpFolder={() => void handleOpenCrashDumpFolder()}
       onReloadMemoryManagement={() => void handleReloadMemoryManagement()}
       onDeleteSessionMemory={(sessionId) => void handleDeleteSessionMemory(sessionId)}
       onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}

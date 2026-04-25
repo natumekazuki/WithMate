@@ -1,5 +1,6 @@
 import type { IpcRenderer } from "electron";
 
+import type { RendererLogInput } from "../src/app-log-types.js";
 import type {
   WithMateWindowApi,
   WithMateWindowCatalogApi,
@@ -50,6 +51,8 @@ import {
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
+  WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
+  WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
@@ -70,6 +73,7 @@ import {
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SESSIONS_CHANGED_EVENT,
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
+  WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
@@ -77,7 +81,7 @@ import {
   WITHMATE_UPDATE_SESSION_CHANNEL,
 } from "../src/withmate-ipc-channels.js";
 
-type IpcRendererLike = Pick<IpcRenderer, "invoke" | "on" | "removeListener">;
+type IpcRendererLike = Pick<IpcRenderer, "invoke" | "on" | "removeListener" | "send">;
 type ListenerDisposer = () => void;
 type ModelCatalogChangedPayload = Awaited<ReturnType<WithMateWindowApi["getModelCatalog"]>>;
 type LiveSessionRunPayload = {
@@ -97,6 +101,27 @@ type SessionBackgroundActivityPayload = {
   kind: Parameters<WithMateWindowApi["getSessionBackgroundActivity"]>[1];
   state: Awaited<ReturnType<WithMateWindowApi["getSessionBackgroundActivity"]>>;
 };
+type PreloadErrorEvent = {
+  message?: string;
+  filename?: string;
+  lineno?: number;
+  colno?: number;
+  error?: unknown;
+};
+type PreloadUnhandledRejectionEvent = {
+  reason?: unknown;
+};
+type PreloadWindow = {
+  location: {
+    href: string;
+  };
+  addEventListener(type: "error", listener: (event: PreloadErrorEvent) => void): void;
+  addEventListener(type: "unhandledrejection", listener: (event: PreloadUnhandledRejectionEvent) => void): void;
+};
+
+declare const window: PreloadWindow | undefined;
+
+let rendererErrorLoggingInstalled = false;
 
 function subscribe<EventArgs extends unknown[]>(
   ipcRenderer: IpcRendererLike,
@@ -138,6 +163,12 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     },
     openPath(target, options) {
       return ipcRenderer.invoke(WITHMATE_OPEN_PATH_CHANNEL, target, options ?? null);
+    },
+    openAppLogFolder() {
+      return ipcRenderer.invoke(WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL);
+    },
+    openCrashDumpFolder() {
+      return ipcRenderer.invoke(WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL);
     },
     openSessionTerminal(sessionId) {
       return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL, sessionId);
@@ -364,7 +395,62 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
   };
 }
 
+function reportRendererLog(ipcRenderer: IpcRendererLike, input: RendererLogInput): void {
+  ipcRenderer.send(WITHMATE_RENDERER_LOG_CHANNEL, input);
+}
+
+function installRendererErrorLogging(ipcRenderer: IpcRendererLike): void {
+  if (rendererErrorLoggingInstalled || typeof window === "undefined") {
+    return;
+  }
+
+  rendererErrorLoggingInstalled = true;
+  window.addEventListener("error", (event) => {
+    reportRendererLog(ipcRenderer, {
+      level: "error",
+      kind: "renderer.error",
+      message: event.message || "Renderer error",
+      url: window.location.href,
+      data: {
+        filename: event.filename,
+        line: event.lineno,
+        column: event.colno,
+      },
+      error: event.error instanceof Error
+        ? {
+          name: event.error.name,
+          message: event.error.message,
+          stack: event.error.stack,
+        }
+        : {
+          message: event.message || "Renderer error",
+        },
+    });
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason;
+    reportRendererLog(ipcRenderer, {
+      level: "error",
+      kind: "renderer.unhandled-rejection",
+      message: reason instanceof Error ? reason.message : "Renderer unhandled rejection",
+      url: window.location.href,
+      error: reason instanceof Error
+        ? {
+          name: reason.name,
+          message: reason.message,
+          stack: reason.stack,
+        }
+        : {
+          message: typeof reason === "string" ? reason : "Renderer unhandled rejection",
+        },
+      data: reason instanceof Error ? undefined : { reason },
+    });
+  });
+}
+
 export function createWithMateWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowApi {
+  installRendererErrorLogging(ipcRenderer);
   return {
     ...createWindowApi(ipcRenderer),
     ...createCatalogApi(ipcRenderer),

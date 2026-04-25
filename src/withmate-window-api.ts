@@ -33,6 +33,8 @@ export type WithMateWindowNavigationApi = {
   openCharacterEditor(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openPath(target: string, options?: OpenPathOptions): Promise<void>;
+  openAppLogFolder(): Promise<void>;
+  openCrashDumpFolder(): Promise<void>;
   openSessionTerminal(sessionId: string): Promise<void>;
 };
 

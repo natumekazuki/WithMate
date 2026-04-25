@@ -36,6 +36,9 @@ export const SETTINGS_CHARACTER_REFLECTION_HELP =
 export const SETTINGS_RESET_DATABASE_LABEL = "DB を初期化";
 export const SETTINGS_RESET_DATABASE_HELP =
   "Danger Zone: app settings などの DB 内容を初期化する。characters は DB 外ファイルなので保持される。";
+export const SETTINGS_DIAGNOSTICS_LABEL = "Diagnostics";
+export const SETTINGS_OPEN_LOG_FOLDER_LABEL = "Open Logs";
+export const SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL = "Open Crash Dumps";
 
 export const SETTINGS_RESET_DATABASE_TARGET_LABELS: Record<ResetAppDatabaseTarget, string> = {
   sessions: "sessions",
