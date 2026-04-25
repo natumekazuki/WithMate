@@ -3,7 +3,6 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import {
   CopilotClient,
-  approveAll,
   type CopilotSession,
   type PermissionHandler,
   type MessageOptions,
@@ -276,6 +275,21 @@ function updateCopilotCommandStep(state: CopilotTurnStreamState, nextState: Copi
   });
 }
 
+const COPILOT_APPROVED_PERMISSION_COMPLETED_KINDS = new Set([
+  "approved",
+  "approve-once",
+  "approve-for-session",
+  "approve-for-location",
+  "approved-for-session",
+  "approved-for-location",
+]);
+
+export function getCopilotPermissionCompletedLiveStatus(resultKind: string): LiveRunStep["status"] {
+  return COPILOT_APPROVED_PERMISSION_COMPLETED_KINDS.has(resultKind)
+    ? "in_progress"
+    : "failed";
+}
+
 function applyCopilotTurnEvent(args: {
   event: SessionEvent;
   state: CopilotTurnStreamState;
@@ -358,7 +372,7 @@ function applyCopilotTurnEvent(args: {
         stepId,
         summary: current.summary,
         details: appendDetail(current.details, `permission: ${event.data.result.kind}`),
-        status: event.data.result.kind === "approved" ? "in_progress" : "failed",
+        status: getCopilotPermissionCompletedLiveStatus(event.data.result.kind),
       });
       break;
     }
@@ -1012,8 +1026,35 @@ type PermissionDecisionKind =
   | "denied-interactively-by-user"
   | "denied-by-content-exclusion-policy";
 
+type CopilotRuntimePermissionResult =
+  | { kind: "approve-once" }
+  | { kind: "reject"; feedback?: string }
+  | { kind: "user-not-available" };
+
 function toPermissionDecision(kind: PermissionDecisionKind): PermissionRequestResult {
-  return { kind } as PermissionRequestResult;
+  let result: CopilotRuntimePermissionResult;
+  switch (kind) {
+    case "approved":
+      result = { kind: "approve-once" };
+      break;
+    case "denied-interactively-by-user":
+    case "denied-by-rules":
+    case "denied-by-content-exclusion-policy":
+      result = { kind: "reject" };
+      break;
+    case "denied-no-approval-rule-and-could-not-request-from-user":
+    default:
+      result = { kind: "user-not-available" };
+      break;
+  }
+
+  // `@github/copilot-sdk` public types advertise v2 `PermissionRequestResult`,
+  // but the bundled `@github/copilot` runtime still validates legacy user
+  // permission response kinds (`approve-once`, `reject`, `user-not-available`).
+  // Returning v2 kinds like `approved` trips the runtime validator with
+  // `unexpected user permission response`, so we intentionally bridge to the
+  // legacy wire contract here.
+  return result as unknown as PermissionRequestResult;
 }
 
 function isReadOnlyPermissionRequest(request: PermissionRequest): boolean {
@@ -1030,7 +1071,7 @@ function isReadOnlyPermissionRequest(request: PermissionRequest): boolean {
 function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
   switch (normalizeApprovalMode(input.session.approvalMode)) {
     case "allow-all":
-      return approveAll;
+      return () => toPermissionDecision("approved");
     case "safety":
       return (request) => (
         isReadOnlyPermissionRequest(request)
