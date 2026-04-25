@@ -92,7 +92,11 @@ export class PersistentStoreLifecycleService {
     }
 
     if (dbPath) {
-      this.deps.truncateWal(dbPath);
+      try {
+        this.deps.truncateWal(dbPath);
+      } catch (error) {
+        console.warn(`Failed to truncate WAL for database at ${dbPath}`, error);
+      }
     }
   }
 
