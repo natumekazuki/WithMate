@@ -92,11 +92,7 @@ export class PersistentStoreLifecycleService {
     }
 
     if (dbPath) {
-      try {
-        this.deps.truncateWal(dbPath);
-      } catch (error) {
-        console.warn("SQLite WAL truncate failed", error);
-      }
+      this.deps.truncateWal(dbPath);
     }
   }
 
