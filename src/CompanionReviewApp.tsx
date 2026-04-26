@@ -16,7 +16,10 @@ export default function CompanionReviewApp() {
   const desktopRuntime = isDesktopRuntime();
   const [snapshot, setSnapshot] = useState<CompanionReviewSnapshot | null>(null);
   const [selectedPath, setSelectedPath] = useState<string>("");
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState("");
+  const [operationMessage, setOperationMessage] = useState("");
+  const [operationRunning, setOperationRunning] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -38,6 +41,7 @@ export default function CompanionReviewApp() {
         }
         setSnapshot(payload);
         setSelectedPath(pickInitialFile(payload?.changedFiles ?? [])?.path ?? "");
+        setSelectedPaths(payload?.changedFiles.map((file) => file.path) ?? []);
         setErrorMessage(payload ? "" : "対象 CompanionSession が見つからないよ。");
       })
       .catch((error) => {
@@ -60,6 +64,59 @@ export default function CompanionReviewApp() {
     () => snapshot?.changedFiles.find((file) => file.path === selectedPath) ?? pickInitialFile(snapshot?.changedFiles ?? []),
     [selectedPath, snapshot],
   );
+  const selectedPathSet = useMemo(() => new Set(selectedPaths), [selectedPaths]);
+  const operationDisabled = operationRunning || !snapshot || snapshot.session.status !== "active";
+
+  function toggleSelectedPath(filePath: string): void {
+    setSelectedPaths((current) =>
+      current.includes(filePath)
+        ? current.filter((candidate) => candidate !== filePath)
+        : [...current, filePath],
+    );
+  }
+
+  async function mergeSelectedFiles(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!snapshot || !withmateApi || selectedPaths.length === 0 || operationDisabled) {
+      return;
+    }
+
+    setOperationRunning(true);
+    setErrorMessage("");
+    setOperationMessage("");
+    try {
+      const session = await withmateApi.mergeCompanionSelectedFiles({
+        sessionId: snapshot.session.id,
+        selectedPaths,
+      });
+      setSnapshot((current) => current ? { ...current, session } : current);
+      setOperationMessage("selected files を merge したよ。");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "selected files の merge に失敗したよ。");
+    } finally {
+      setOperationRunning(false);
+    }
+  }
+
+  async function discardCompanion(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!snapshot || !withmateApi || operationDisabled || !window.confirm("Companion を discard する？")) {
+      return;
+    }
+
+    setOperationRunning(true);
+    setErrorMessage("");
+    setOperationMessage("");
+    try {
+      const session = await withmateApi.discardCompanionSession(snapshot.session.id);
+      setSnapshot((current) => current ? { ...current, session } : current);
+      setOperationMessage("Companion を discard したよ。");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Companion の discard に失敗したよ。");
+    } finally {
+      setOperationRunning(false);
+    }
+  }
 
   if (!desktopRuntime) {
     return (
@@ -92,27 +149,63 @@ export default function CompanionReviewApp() {
             <div className="companion-review-meta">
               <span>{`target: ${snapshot.session.targetBranch}`}</span>
               <span>{`changed: ${snapshot.changedFiles.length}`}</span>
+              <span>{`selected: ${selectedPaths.length}`}</span>
+              <span>{`status: ${snapshot.session.status}`}</span>
               <span>{snapshot.generatedAt}</span>
             </div>
           </div>
-          <button className="diff-close" type="button" onClick={() => window.close()}>
-            Close
-          </button>
+          <div className="companion-review-actions">
+            <button
+              className="primary-button"
+              type="button"
+              disabled={operationDisabled || selectedPaths.length === 0}
+              onClick={() => void mergeSelectedFiles()}
+            >
+              Merge Selected Files
+            </button>
+            <button
+              className="danger-button"
+              type="button"
+              disabled={operationDisabled}
+              onClick={() => void discardCompanion()}
+            >
+              Discard Companion
+            </button>
+            <button className="diff-close" type="button" onClick={() => window.close()}>
+              Close
+            </button>
+          </div>
         </header>
+        {(errorMessage || operationMessage) && (
+          <div className={`companion-review-operation ${errorMessage ? "error" : "success"}`}>
+            {errorMessage || operationMessage}
+          </div>
+        )}
 
         <div className="companion-review-layout">
           <aside className="companion-review-file-list" aria-label="Changed files">
             {snapshot.changedFiles.length > 0 ? (
               snapshot.changedFiles.map((file) => (
-                <button
+                <div
                   key={file.path}
                   className={`companion-review-file${selectedFile?.path === file.path ? " active" : ""}`}
-                  type="button"
-                  onClick={() => setSelectedPath(file.path)}
                 >
+                  <input
+                    aria-label={`merge ${file.path}`}
+                    checked={selectedPathSet.has(file.path)}
+                    disabled={snapshot.session.status !== "active"}
+                    type="checkbox"
+                    onChange={() => toggleSelectedPath(file.path)}
+                  />
                   <span className={`file-kind ${file.kind}`}>{fileKindLabel(file.kind)}</span>
-                  <span className="companion-review-file-path">{file.path}</span>
-                </button>
+                  <button
+                    className="companion-review-file-path"
+                    type="button"
+                    onClick={() => setSelectedPath(file.path)}
+                  >
+                    {file.path}
+                  </button>
+                </div>
               ))
             ) : (
               <p className="companion-review-empty">変更ファイルはないよ。</p>

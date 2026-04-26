@@ -14,6 +14,7 @@ import {
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
+  WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
@@ -43,6 +44,7 @@ import {
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
+  WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
@@ -229,6 +231,12 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     async getCompanionReviewSnapshot() {
       return null;
     },
+    async mergeCompanionSelectedFiles() {
+      return {} as never;
+    },
+    async discardCompanionSession() {
+      return {} as never;
+    },
     async createCompanionSession() {
       calls.push("createCompanion");
       return {} as never;
@@ -327,6 +335,8 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     listCompanionSessionSummaries: () => [],
     getCompanionSession: () => null,
     async getCompanionReviewSnapshot() { return null; },
+    async mergeCompanionSelectedFiles() { return {} as never; },
+    async discardCompanionSession() { return {} as never; },
     async createCompanionSession() { return {} as never; },
     async runCompanionSessionTurn() { return {} as never; },
     cancelCompanionSessionRun() {},
@@ -380,6 +390,8 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
     WITHMATE_GET_COMPANION_SESSION_CHANNEL,
     WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
+    WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
+    WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
     WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
     WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
     WITHMATE_UPDATE_SESSION_CHANNEL,

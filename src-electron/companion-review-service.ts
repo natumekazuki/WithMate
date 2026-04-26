@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -7,6 +7,7 @@ import type { ChangedFile } from "../src/runtime-state.js";
 import type { CompanionReviewSnapshot } from "../src/companion-review-state.js";
 import type { CompanionSession } from "../src/companion-state.js";
 import { currentTimestampLabel } from "../src/time-state.js";
+import { cleanupCompanionWorkspaceArtifacts } from "./companion-git.js";
 import { buildDiffRows, summarizeChangedFile } from "./provider-artifact.js";
 
 const execFileAsync = promisify(execFile);
@@ -23,6 +24,7 @@ type ChangedPath = {
 
 export type CompanionReviewServiceDeps = {
   getCompanionSession(sessionId: string): CompanionSession | null;
+  updateCompanionSession(session: CompanionSession): CompanionSession;
 };
 
 async function runGit(cwd: string, args: string[]): Promise<GitCommandResult> {
@@ -44,8 +46,38 @@ async function runGit(cwd: string, args: string[]): Promise<GitCommandResult> {
   }
 }
 
+async function runGitBuffer(cwd: string, args: string[]): Promise<Buffer> {
+  try {
+    const result = await execFileAsync("git", ["-C", cwd, ...args], {
+      encoding: "buffer",
+      windowsHide: true,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return result.stdout;
+  } catch (error) {
+    const candidate = error as { stdout?: Buffer | string; stderr?: Buffer | string; message?: string };
+    const stderr = Buffer.isBuffer(candidate.stderr) ? candidate.stderr.toString("utf8") : candidate.stderr;
+    const stdout = Buffer.isBuffer(candidate.stdout) ? candidate.stdout.toString("utf8") : candidate.stdout;
+    throw new Error(stderr?.trim() || stdout?.trim() || candidate.message || "git command failed");
+  }
+}
+
 function normalizeRelativePath(filePath: string): string {
   return filePath.replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+function normalizeSelectedPath(filePath: string): string {
+  const normalized = normalizeRelativePath(filePath.trim());
+  const segments = normalized.split("/");
+  if (
+    !normalized ||
+    path.isAbsolute(filePath) ||
+    /^[A-Za-z]:/.test(normalized) ||
+    segments.some((segment) => !segment || segment === "." || segment === "..")
+  ) {
+    throw new Error("merge 対象の file path が不正だよ。");
+  }
+  return normalized;
 }
 
 function parseNameStatusZ(output: string): ChangedPath[] {
@@ -87,12 +119,35 @@ async function readGitFile(repoRoot: string, ref: string, filePath: string): Pro
   }
 }
 
+async function readGitFileBuffer(repoRoot: string, ref: string, filePath: string): Promise<Buffer | null> {
+  try {
+    return await runGitBuffer(repoRoot, ["show", `${ref}:${filePath}`]);
+  } catch {
+    return null;
+  }
+}
+
 async function readWorktreeFile(worktreePath: string, filePath: string): Promise<string | null> {
   try {
     return await readFile(path.join(worktreePath, filePath), "utf8");
   } catch {
     return null;
   }
+}
+
+async function readWorktreeFileBuffer(worktreePath: string, filePath: string): Promise<Buffer | null> {
+  try {
+    return await readFile(path.join(worktreePath, filePath));
+  } catch {
+    return null;
+  }
+}
+
+function buffersEqual(left: Buffer | null, right: Buffer | null): boolean {
+  if (left === null || right === null) {
+    return left === right;
+  }
+  return left.equals(right);
 }
 
 export class CompanionReviewService {
@@ -113,6 +168,81 @@ export class CompanionReviewService {
       generatedAt: currentTimestampLabel(),
       warnings: [],
     };
+  }
+
+  async mergeSelectedFiles(sessionId: string, selectedPaths: string[]): Promise<CompanionSession> {
+    const session = this.requireActiveSession(sessionId);
+    if (session.runState === "running") {
+      throw new Error("Companion が実行中なので merge できないよ。");
+    }
+
+    const normalizedSelectedPaths = [...new Set(selectedPaths.map(normalizeSelectedPath))];
+    if (normalizedSelectedPaths.length === 0) {
+      throw new Error("merge する file を選んでね。");
+    }
+
+    const changedPaths = await this.resolveChangedPaths(session);
+    const changedPathByPath = new Map(changedPaths.map((change) => [change.path, change]));
+    const selectedChanges = normalizedSelectedPaths.map((filePath) => {
+      const change = changedPathByPath.get(filePath);
+      if (!change) {
+        throw new Error(`changed files にない file は merge できないよ: ${filePath}`);
+      }
+      return change;
+    });
+
+    await Promise.all(selectedChanges.map((change) => this.assertTargetPathMatchesBase(session, change.path)));
+    for (const change of selectedChanges) {
+      await this.applySelectedChange(session, change);
+    }
+
+    await cleanupCompanionWorkspaceArtifacts({
+      repoRoot: session.repoRoot,
+      baseSnapshotRef: session.baseSnapshotRef,
+      baseSnapshotCommit: session.baseSnapshotCommit,
+      companionBranch: session.companionBranch,
+      worktreePath: session.worktreePath,
+    });
+
+    return this.deps.updateCompanionSession({
+      ...session,
+      status: "merged",
+      runState: "idle",
+      updatedAt: currentTimestampLabel(),
+    });
+  }
+
+  async discardSession(sessionId: string): Promise<CompanionSession> {
+    const session = this.requireActiveSession(sessionId);
+    if (session.runState === "running") {
+      throw new Error("Companion が実行中なので discard できないよ。");
+    }
+
+    await cleanupCompanionWorkspaceArtifacts({
+      repoRoot: session.repoRoot,
+      baseSnapshotRef: session.baseSnapshotRef,
+      baseSnapshotCommit: session.baseSnapshotCommit,
+      companionBranch: session.companionBranch,
+      worktreePath: session.worktreePath,
+    });
+
+    return this.deps.updateCompanionSession({
+      ...session,
+      status: "discarded",
+      runState: "idle",
+      updatedAt: currentTimestampLabel(),
+    });
+  }
+
+  private requireActiveSession(sessionId: string): CompanionSession {
+    const session = this.deps.getCompanionSession(sessionId);
+    if (!session) {
+      throw new Error("対象 CompanionSession が見つからないよ。");
+    }
+    if (session.status !== "active") {
+      throw new Error("active ではない CompanionSession は操作できないよ。");
+    }
+    return session;
   }
 
   private async resolveChangedPaths(session: CompanionSession): Promise<ChangedPath[]> {
@@ -145,5 +275,24 @@ export class CompanionReviewService {
       summary: summarizeChangedFile(change.kind, change.path),
       diffRows: buildDiffRows(beforeContent, afterContent),
     };
+  }
+
+  private async assertTargetPathMatchesBase(session: CompanionSession, filePath: string): Promise<void> {
+    const baseContent = await readGitFileBuffer(session.repoRoot, session.baseSnapshotCommit, filePath);
+    const targetContent = await readWorktreeFileBuffer(session.repoRoot, filePath);
+    if (!buffersEqual(baseContent, targetContent)) {
+      throw new Error(`target workspace 側で base から変更されているため merge できないよ: ${filePath}`);
+    }
+  }
+
+  private async applySelectedChange(session: CompanionSession, change: ChangedPath): Promise<void> {
+    const targetPath = path.join(session.repoRoot, change.path);
+    if (change.kind === "delete") {
+      await rm(targetPath, { force: true });
+      return;
+    }
+
+    await mkdir(path.dirname(targetPath), { recursive: true });
+    await copyFile(path.join(session.worktreePath, change.path), targetPath);
   }
 }

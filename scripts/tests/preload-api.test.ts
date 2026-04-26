@@ -74,6 +74,14 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-companion-review-snapshot",
     args: ["companion-1"],
   });
+  assert.deepEqual(await api.mergeCompanionSelectedFiles({ sessionId: "companion-1", selectedPaths: ["README.md"] }), {
+    channel: "withmate:merge-companion-selected-files",
+    args: [{ sessionId: "companion-1", selectedPaths: ["README.md"] }],
+  });
+  assert.deepEqual(await api.discardCompanionSession("companion-1"), {
+    channel: "withmate:discard-companion-session",
+    args: ["companion-1"],
+  });
   assert.deepEqual(await api.runCompanionSessionTurn("companion-1", { userMessage: "go" }), {
     channel: "withmate:run-companion-session-turn",
     args: ["companion-1", { userMessage: "go" }],
@@ -103,6 +111,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "deleteCharacter",
     "deleteCharacterMemoryEntry",
     "deleteProjectMemoryEntry",
+    "discardCompanionSession",
     "deleteSession",
     "deleteSessionMemory",
     "exportModelCatalog",
@@ -130,6 +139,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionCustomAgents",
     "listSessionSkills",
     "listSessionSummaries",
+    "mergeCompanionSelectedFiles",
     "openCharacterEditor",
     "openCompanionReviewWindow",
     "openDiffWindow",

@@ -8,6 +8,11 @@ export type CompanionReviewSnapshot = {
   warnings: string[];
 };
 
+export type CompanionMergeSelectedFilesRequest = {
+  sessionId: string;
+  selectedPaths: string[];
+};
+
 function getLocationSearch(): string {
   const browserWindow = (globalThis as typeof globalThis & { window?: { location?: { search?: string } } }).window;
   return browserWindow?.location?.search ?? "";

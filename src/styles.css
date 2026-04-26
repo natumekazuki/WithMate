@@ -6569,6 +6569,51 @@ button:disabled {
   font-size: 0.86rem;
 }
 
+.companion-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 260px;
+}
+
+.companion-review-actions button {
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.companion-review-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.companion-review-actions .primary-button {
+  background: var(--theme-main);
+  color: var(--theme-ink);
+}
+
+.companion-review-actions .danger-button {
+  background: rgba(255, 124, 124, 0.16);
+  color: #fda4af;
+}
+
+.companion-review-operation {
+  padding: 10px 22px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.9rem;
+}
+
+.companion-review-operation.success {
+  color: #86efac;
+}
+
+.companion-review-operation.error {
+  color: #fda4af;
+}
+
 .companion-review-layout {
   display: grid;
   grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
@@ -6589,7 +6634,7 @@ button:disabled {
 
 .companion-review-file {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto auto minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -6600,7 +6645,6 @@ button:disabled {
   color: var(--text-main);
   background: var(--panel);
   text-align: left;
-  cursor: pointer;
 }
 
 .companion-review-file:hover,
@@ -6611,11 +6655,17 @@ button:disabled {
 
 .companion-review-file-path {
   min-width: 0;
+  border: 0;
+  padding: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
   font-size: 0.83rem;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
 }
 
 .companion-review-diff {

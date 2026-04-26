@@ -17,7 +17,7 @@ import type {
 import type { CreateCharacterInput } from "../src/character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
-import type { CompanionReviewSnapshot } from "../src/companion-review-state.js";
+import type { CompanionMergeSelectedFilesRequest, CompanionReviewSnapshot } from "../src/companion-review-state.js";
 import type { MemoryManagementSnapshot } from "../src/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
@@ -33,6 +33,7 @@ import {
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
+  WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
@@ -60,9 +61,10 @@ import {
     WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
     WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
     WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
-    WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
+  WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
+  WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
@@ -151,6 +153,8 @@ export type MainIpcRegistrationDeps = {
   createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
   getCompanionSession(sessionId: string): CompanionSession | null;
   getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
+  mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionSession>;
+  discardCompanionSession(sessionId: string): Promise<CompanionSession>;
   runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
   cancelCompanionSessionRun(sessionId: string): void;
   updateSession(session: Session): Session;
@@ -236,6 +240,8 @@ type MainIpcCompanionDeps = Pick<
   | "createCompanionSession"
   | "getCompanionSession"
   | "getCompanionReviewSnapshot"
+  | "mergeCompanionSelectedFiles"
+  | "discardCompanionSession"
   | "listCompanionSessionSummaries"
   | "runCompanionSessionTurn"
   | "cancelCompanionSessionRun"
@@ -397,6 +403,12 @@ function registerCompanionHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCom
     }
     return deps.getCompanionReviewSnapshot(sessionId);
   });
+  ipcMain.handle(WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL, async (_event, request: CompanionMergeSelectedFilesRequest) =>
+    deps.mergeCompanionSelectedFiles(request),
+  );
+  ipcMain.handle(WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL, async (_event, sessionId: string) =>
+    deps.discardCompanionSession(sessionId),
+  );
   ipcMain.handle(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL, async (_event, input: CreateCompanionSessionInput) =>
     deps.createCompanionSession(input),
   );

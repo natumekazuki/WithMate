@@ -602,6 +602,14 @@ async function getCompanionReviewSnapshot(sessionId: string) {
   return requireCompanionReviewService().getReviewSnapshot(sessionId);
 }
 
+async function mergeCompanionSelectedFiles(request: { sessionId: string; selectedPaths: string[] }): Promise<CompanionSession> {
+  return requireCompanionReviewService().mergeSelectedFiles(request.sessionId, request.selectedPaths);
+}
+
+async function discardCompanionSession(sessionId: string): Promise<CompanionSession> {
+  return requireCompanionReviewService().discardSession(sessionId);
+}
+
 async function createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession> {
   const session = await requireCompanionSessionService().createSession(input);
   requireWindowBroadcastService().broadcastCompanionSessionSummaries(listCompanionSessionSummaries());
@@ -850,6 +858,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 createCompanionSession: (input) => createCompanionSession(input),
                 getCompanionSession: (sessionId) => getCompanionSession(sessionId),
                 getCompanionReviewSnapshot: (sessionId) => getCompanionReviewSnapshot(sessionId),
+                mergeCompanionSelectedFiles: (request) => mergeCompanionSelectedFiles(request),
+                discardCompanionSession: (sessionId) => discardCompanionSession(sessionId),
                 listCompanionSessionSummaries: () => listCompanionSessionSummaries(),
                 runCompanionSessionTurn: (sessionId, request) => runCompanionSessionTurn(sessionId, request),
                 cancelCompanionSessionRun: (sessionId) => cancelCompanionSessionRun(sessionId),
@@ -1503,6 +1513,7 @@ function requireCompanionReviewService(): CompanionReviewService {
   if (!companionReviewService) {
     companionReviewService = new CompanionReviewService({
       getCompanionSession,
+      updateCompanionSession,
     });
   }
 
