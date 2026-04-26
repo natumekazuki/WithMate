@@ -17,6 +17,19 @@ export type CompanionSiblingWarningSummary = {
   message: string;
 };
 
+export type CompanionMergeRunOperation = "merge" | "discard";
+
+export type CompanionMergeRun = {
+  id: string;
+  sessionId: string;
+  groupId: string;
+  operation: CompanionMergeRunOperation;
+  selectedPaths: string[];
+  changedFiles: CompanionChangedFileSummary[];
+  siblingWarnings: CompanionSiblingWarningSummary[];
+  createdAt: string;
+};
+
 export type CreateCompanionSessionInput = {
   taskTitle: string;
   workspacePath: string;
@@ -138,6 +151,22 @@ export function cloneCompanionSession(session: CompanionSession): CompanionSessi
         : undefined,
     })),
   };
+}
+
+export function cloneCompanionMergeRun(run: CompanionMergeRun): CompanionMergeRun {
+  return {
+    ...run,
+    selectedPaths: [...run.selectedPaths],
+    changedFiles: run.changedFiles.map((file) => ({ ...file })),
+    siblingWarnings: run.siblingWarnings.map((warning) => ({
+      ...warning,
+      paths: [...warning.paths],
+    })),
+  };
+}
+
+export function cloneCompanionMergeRuns(runs: readonly CompanionMergeRun[]): CompanionMergeRun[] {
+  return runs.map(cloneCompanionMergeRun);
 }
 
 export function cloneCompanionSessions(sessions: readonly CompanionSession[]): CompanionSession[] {

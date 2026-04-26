@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -13,6 +14,7 @@ import type {
   CompanionSiblingCheckWarning,
 } from "../src/companion-review-state.js";
 import type { CompanionSession, CompanionSessionSummary } from "../src/companion-state.js";
+import type { CompanionMergeRun } from "../src/companion-state.js";
 import { currentTimestampLabel } from "../src/time-state.js";
 import { cleanupCompanionWorkspaceArtifacts } from "./companion-git.js";
 import { buildDiffRows, summarizeChangedFile } from "./provider-artifact.js";
@@ -37,6 +39,7 @@ export type CompanionReviewServiceDeps = {
   getCompanionSession(sessionId: string): CompanionSession | null;
   listCompanionSessionSummaries(): CompanionSessionSummary[];
   updateCompanionSession(session: CompanionSession): CompanionSession;
+  createCompanionMergeRun?(run: CompanionMergeRun): CompanionMergeRun;
 };
 
 async function runGit(cwd: string, args: string[], options: GitCommandOptions = {}): Promise<GitCommandResult> {
@@ -196,6 +199,7 @@ export class CompanionReviewService {
       worktreePath: session.worktreePath,
     });
 
+    const completedAt = currentTimestampLabel();
     const storedSession = this.deps.updateCompanionSession({
       ...session,
       status: "merged",
@@ -203,7 +207,17 @@ export class CompanionReviewService {
       changedFiles: changedPaths,
       siblingWarnings,
       runState: "idle",
-      updatedAt: currentTimestampLabel(),
+      updatedAt: completedAt,
+    });
+    this.deps.createCompanionMergeRun?.({
+      id: randomUUID(),
+      sessionId: storedSession.id,
+      groupId: storedSession.groupId,
+      operation: "merge",
+      selectedPaths: normalizedSelectedPaths,
+      changedFiles: changedPaths,
+      siblingWarnings,
+      createdAt: completedAt,
     });
     return {
       session: storedSession,
@@ -227,15 +241,27 @@ export class CompanionReviewService {
       worktreePath: session.worktreePath,
     });
 
-    return this.deps.updateCompanionSession({
+    const completedAt = currentTimestampLabel();
+    const storedSession = this.deps.updateCompanionSession({
       ...session,
       status: "discarded",
       selectedPaths: [],
       changedFiles: changedPaths,
       siblingWarnings: [],
       runState: "idle",
-      updatedAt: currentTimestampLabel(),
+      updatedAt: completedAt,
     });
+    this.deps.createCompanionMergeRun?.({
+      id: randomUUID(),
+      sessionId: storedSession.id,
+      groupId: storedSession.groupId,
+      operation: "discard",
+      selectedPaths: [],
+      changedFiles: changedPaths,
+      siblingWarnings: [],
+      createdAt: completedAt,
+    });
+    return storedSession;
   }
 
   private requireActiveSession(sessionId: string): CompanionSession {

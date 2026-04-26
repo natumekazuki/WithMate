@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
-import type { CompanionSession, CompanionSessionSummary } from "../../src/companion-state.js";
+import type { CompanionMergeRun, CompanionSession, CompanionSessionSummary } from "../../src/companion-state.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../../src/model-catalog.js";
 import { CompanionReviewService } from "../../src-electron/companion-review-service.js";
 
@@ -169,6 +169,7 @@ describe("CompanionReviewService", () => {
       await writeFile(path.join(worktreePath, "new-file.txt"), "not selected\n", "utf8");
 
       let session = createCompanionSession({ repoRoot, worktreePath, baseSnapshotCommit });
+      const mergeRuns: CompanionMergeRun[] = [];
       const service = new CompanionReviewService({
         getCompanionSession(sessionId) {
           return sessionId === session.id ? session : null;
@@ -179,6 +180,10 @@ describe("CompanionReviewService", () => {
         updateCompanionSession(updatedSession) {
           session = updatedSession;
           return session;
+        },
+        createCompanionMergeRun(run) {
+          mergeRuns.push(run);
+          return run;
         },
       });
 
@@ -191,6 +196,14 @@ describe("CompanionReviewService", () => {
         { path: "README.md", kind: "edit" },
       ]);
       assert.deepEqual(merged.siblingWarnings, []);
+      assert.equal(mergeRuns.length, 1);
+      assert.equal(mergeRuns[0]?.operation, "merge");
+      assert.deepEqual(mergeRuns[0]?.selectedPaths, ["README.md"]);
+      assert.deepEqual(mergeRuns[0]?.changedFiles, [
+        { path: "new-file.txt", kind: "add" },
+        { path: "README.md", kind: "edit" },
+      ]);
+      assert.deepEqual(mergeRuns[0]?.siblingWarnings, []);
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\nmerged\n");
       await assert.rejects(() => stat(path.join(repoRoot, "new-file.txt")));
       await assert.rejects(() => stat(worktreePath));
@@ -271,6 +284,7 @@ describe("CompanionReviewService", () => {
       await writeFile(path.join(worktreePath, "README.md"), "discarded\n", "utf8");
 
       let session = createCompanionSession({ repoRoot, worktreePath, baseSnapshotCommit });
+      const mergeRuns: CompanionMergeRun[] = [];
       const service = new CompanionReviewService({
         getCompanionSession(sessionId) {
           return sessionId === session.id ? session : null;
@@ -282,6 +296,10 @@ describe("CompanionReviewService", () => {
           session = updatedSession;
           return session;
         },
+        createCompanionMergeRun(run) {
+          mergeRuns.push(run);
+          return run;
+        },
       });
 
       const discarded = await service.discardSession(session.id);
@@ -289,6 +307,11 @@ describe("CompanionReviewService", () => {
       assert.equal(discarded.status, "discarded");
       assert.deepEqual(discarded.selectedPaths, []);
       assert.deepEqual(discarded.changedFiles, [{ path: "README.md", kind: "edit" }]);
+      assert.equal(mergeRuns.length, 1);
+      assert.equal(mergeRuns[0]?.operation, "discard");
+      assert.deepEqual(mergeRuns[0]?.selectedPaths, []);
+      assert.deepEqual(mergeRuns[0]?.changedFiles, [{ path: "README.md", kind: "edit" }]);
+      assert.deepEqual(mergeRuns[0]?.siblingWarnings, []);
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\n");
       await assert.rejects(() => stat(worktreePath));
     } finally {
@@ -441,6 +464,7 @@ describe("CompanionReviewService", () => {
         [session.id, session],
         [siblingSession.id, siblingSession],
       ]);
+      const mergeRuns: CompanionMergeRun[] = [];
       const service = new CompanionReviewService({
         getCompanionSession(sessionId) {
           return sessions.get(sessionId) ?? null;
@@ -451,6 +475,10 @@ describe("CompanionReviewService", () => {
         updateCompanionSession(updatedSession) {
           sessions.set(updatedSession.id, updatedSession);
           return updatedSession;
+        },
+        createCompanionMergeRun(run) {
+          mergeRuns.push(run);
+          return run;
         },
       });
 
@@ -475,6 +503,7 @@ describe("CompanionReviewService", () => {
           message: "Sibling task と 1 file が重なっているよ。",
         },
       ]);
+      assert.deepEqual(mergeRuns[0]?.siblingWarnings, result.siblingWarnings);
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\nselected\n");
       await stat(siblingWorktreePath);
     } finally {

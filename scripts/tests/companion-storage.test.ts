@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import type { CompanionGroup, CompanionSession } from "../../src/companion-state.js";
+import type { CompanionGroup, CompanionMergeRun, CompanionSession } from "../../src/companion-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../../src/model-catalog.js";
@@ -72,6 +72,20 @@ function createSession(groupId: string, overrides: Partial<CompanionSession> = {
     createdAt: "2026-04-26 10:01",
     updatedAt: "2026-04-26 10:01",
     messages: [],
+    ...overrides,
+  };
+}
+
+function createMergeRun(groupId: string, overrides: Partial<CompanionMergeRun> = {}): CompanionMergeRun {
+  return {
+    id: "merge-run-1",
+    sessionId: "session-merged",
+    groupId,
+    operation: "merge",
+    selectedPaths: ["README.md"],
+    changedFiles: [{ path: "README.md", kind: "edit" }],
+    siblingWarnings: [],
+    createdAt: "2026-04-26 10:04",
     ...overrides,
   };
 }
@@ -189,6 +203,20 @@ describe("CompanionStorage", () => {
           taskTitle: "Sibling task",
           paths: ["README.md"],
           message: "Sibling task と 1 file が重なっているよ。",
+        },
+      ]);
+      const mergeRun = storage.createMergeRun(createMergeRun(group.id));
+      assert.equal(mergeRun.operation, "merge");
+      assert.deepEqual(storage.listMergeRunsForSession("session-merged"), [
+        {
+          id: "merge-run-1",
+          sessionId: "session-merged",
+          groupId: group.id,
+          operation: "merge",
+          selectedPaths: ["README.md"],
+          changedFiles: [{ path: "README.md", kind: "edit" }],
+          siblingWarnings: [],
+          createdAt: "2026-04-26 10:04",
         },
       ]);
     } finally {

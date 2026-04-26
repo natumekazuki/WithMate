@@ -1,10 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import {
+  cloneCompanionMergeRuns,
   cloneCompanionSessions,
   cloneCompanionSessionSummaries,
   type CompanionChangedFileSummary,
   type CompanionGroup,
+  type CompanionMergeRun,
   type CompanionSession,
   type CompanionSessionSummary,
   type CompanionSiblingWarningSummary,
@@ -68,6 +70,17 @@ type CompanionMessageRow = {
   created_at: string;
 };
 
+type CompanionMergeRunRow = {
+  id: string;
+  session_id: string;
+  group_id: string;
+  operation: string;
+  selected_paths_json: string;
+  changed_files_json: string;
+  sibling_warnings_json: string;
+  created_at: string;
+};
+
 const COMPANION_SESSION_COLUMNS = `
   id,
   group_id,
@@ -100,6 +113,17 @@ const COMPANION_SESSION_COLUMNS = `
   character_theme_sub,
   created_at,
   updated_at
+`;
+
+const COMPANION_MERGE_RUN_COLUMNS = `
+  id,
+  session_id,
+  group_id,
+  operation,
+  selected_paths_json,
+  changed_files_json,
+  sibling_warnings_json,
+  created_at
 `;
 
 function rowToGroup(row: CompanionGroupRow): CompanionGroup {
@@ -185,6 +209,19 @@ function rowToMessage(row: CompanionMessageRow): Message {
     text: row.text,
     accent: row.accent === 1 ? true : undefined,
     artifact,
+  };
+}
+
+function rowToMergeRun(row: CompanionMergeRunRow): CompanionMergeRun {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    groupId: row.group_id,
+    operation: row.operation === "discard" ? "discard" : "merge",
+    selectedPaths: parseSelectedPaths(row.selected_paths_json),
+    changedFiles: parseChangedFiles(row.changed_files_json),
+    siblingWarnings: parseSiblingWarnings(row.sibling_warnings_json),
+    createdAt: row.created_at,
   };
 }
 
@@ -367,6 +404,23 @@ export class CompanionStorage {
 
       CREATE INDEX IF NOT EXISTS idx_companion_messages_session_position
         ON companion_messages(session_id, position);
+
+      CREATE TABLE IF NOT EXISTS companion_merge_runs (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES companion_sessions(id) ON DELETE CASCADE,
+        group_id TEXT NOT NULL REFERENCES companion_groups(id) ON DELETE CASCADE,
+        operation TEXT NOT NULL,
+        selected_paths_json TEXT NOT NULL DEFAULT '[]',
+        changed_files_json TEXT NOT NULL DEFAULT '[]',
+        sibling_warnings_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_companion_merge_runs_session_created
+        ON companion_merge_runs(session_id, created_at);
+
+      CREATE INDEX IF NOT EXISTS idx_companion_merge_runs_group_created
+        ON companion_merge_runs(group_id, created_at);
     `);
     this.ensureSchema();
   }
@@ -551,6 +605,35 @@ export class CompanionStorage {
     );
     this.replaceMessages(session.id, sessionToStoredMessages(session), session.updatedAt);
     return this.getSession(session.id) ?? cloneCompanionSessions([session])[0] as CompanionSession;
+  }
+
+  createMergeRun(run: CompanionMergeRun): CompanionMergeRun {
+    this.db.prepare(`
+      INSERT INTO companion_merge_runs (
+        ${COMPANION_MERGE_RUN_COLUMNS}
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      run.id,
+      run.sessionId,
+      run.groupId,
+      run.operation,
+      JSON.stringify(run.selectedPaths),
+      JSON.stringify(run.changedFiles),
+      JSON.stringify(run.siblingWarnings),
+      run.createdAt,
+    );
+
+    return cloneCompanionMergeRuns([run])[0] as CompanionMergeRun;
+  }
+
+  listMergeRunsForSession(sessionId: string): CompanionMergeRun[] {
+    const rows = this.db.prepare(`
+      SELECT ${COMPANION_MERGE_RUN_COLUMNS}
+      FROM companion_merge_runs
+      WHERE session_id = ?
+      ORDER BY created_at DESC, id DESC
+    `).all(sessionId) as CompanionMergeRunRow[];
+    return cloneCompanionMergeRuns(rows.map(rowToMergeRun));
   }
 
   private listMessages(sessionId: string): Message[] {

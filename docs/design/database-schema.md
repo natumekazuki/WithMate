@@ -62,7 +62,7 @@ future design だけで未実装のものは、最後に別枠で注記する。
 | Model Catalog | `model_catalog_*` | revision 管理あり |
 | Character Memory | `character_scopes` / `character_memory_entries` | character 単位の関係性記憶 |
 | Characters | `<userData>/characters/` | DB ではなく file system |
-| Companion Mode | `companion_groups` / `companion_sessions` | Git repo root 単位の Companion 作業単位 |
+| Companion Mode | `companion_groups` / `companion_sessions` / `companion_merge_runs` | Git repo root 単位の Companion 作業単位 |
 
 ## Table Summary
 
@@ -81,6 +81,7 @@ future design だけで未実装のものは、最後に別枠で注記する。
 | `character_memory_entries` | `id` | character 単位の関係性記憶 |
 | `companion_groups` | `id` | Companion Mode の repo root 単位の親 |
 | `companion_sessions` | `id` | Companion Mode の 1 chat / 1 branch / 1 worktree 作業単位 |
+| `companion_merge_runs` | `id` | Companion Mode の merge / discard terminal 操作履歴 |
 
 ## Table Details
 
@@ -596,6 +597,29 @@ Companion Mode の作業単位。
 - `base_snapshot_ref`、`companion_branch`、`worktree_path` は DB id 由来の safe id で生成する
 - `companion_sessions.group_id` は `companion_groups(id) ON DELETE CASCADE`
 
+### `companion_merge_runs`
+
+Companion Mode の merge / discard terminal 操作履歴。
+
+| column | type | description |
+| --- | --- | --- |
+| `id` | `TEXT PRIMARY KEY` | merge run id |
+| `session_id` | `TEXT` | `companion_sessions.id` |
+| `group_id` | `TEXT` | `companion_groups.id` |
+| `operation` | `TEXT` | `merge` / `discard` |
+| `selected_paths_json` | `TEXT` | merge 時に選択された file path の JSON 配列 |
+| `changed_files_json` | `TEXT` | terminal 操作時点の changed file summary JSON 配列 |
+| `sibling_warnings_json` | `TEXT` | merge 完了時の sibling warning summary JSON 配列 |
+| `created_at` | `TEXT` | terminal 操作日時 |
+
+補足:
+
+- current 実装では completed の merge / discard 操作だけを保存する
+- blocked / failed merge attempt の履歴化は future slice
+- Home 履歴カードの表示元は current 実装では `companion_sessions` summary を維持する
+- `companion_merge_runs.session_id` は `companion_sessions(id) ON DELETE CASCADE`
+- `companion_merge_runs.group_id` は `companion_groups(id) ON DELETE CASCADE`
+
 ## DB Outside: Characters
 
 character は SQLite ではなく file system に保存する。
@@ -677,6 +701,7 @@ Settings の `DB を初期化` で対象にできるのは次の 6 系統。
 - `character_memory_entries`
 - `companion_groups`
 - `companion_sessions`
+- `companion_merge_runs`
 - `<userData>/characters/`
 
 ### Future design only

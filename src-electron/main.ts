@@ -37,7 +37,12 @@ import {
 } from "../src/model-catalog.js";
 import type { OpenPathOptions } from "../src/withmate-window-types.js";
 import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
-import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
+import type {
+  CompanionMergeRun,
+  CompanionSession,
+  CompanionSessionSummary,
+  CreateCompanionSessionInput,
+} from "../src/companion-state.js";
 import {
   createStoredCharacter,
   deleteStoredCharacter,
@@ -620,6 +625,10 @@ function updateCompanionSession(session: CompanionSession): CompanionSession {
   const stored = requireCompanionStorage().updateSession(session);
   requireWindowBroadcastService().broadcastCompanionSessionSummaries(listCompanionSessionSummaries());
   return stored;
+}
+
+function createCompanionMergeRun(run: CompanionMergeRun): CompanionMergeRun {
+  return requireCompanionStorage().createMergeRun(run);
 }
 
 async function runCompanionSessionTurn(sessionId: string, request: Parameters<CompanionRuntimeService["runSessionTurn"]>[1]): Promise<CompanionSession> {
@@ -1515,6 +1524,7 @@ function requireCompanionReviewService(): CompanionReviewService {
       getCompanionSession,
       listCompanionSessionSummaries,
       updateCompanionSession,
+      createCompanionMergeRun,
     });
   }
 
