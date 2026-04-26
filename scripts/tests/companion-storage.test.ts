@@ -51,6 +51,7 @@ function createSession(groupId: string, overrides: Partial<CompanionSession> = {
     worktreePath: "F:/app/companion-worktrees/group-1/session-1",
     selectedPaths: [],
     changedFiles: [],
+    siblingWarnings: [],
     runState: "idle",
     threadId: "",
     provider: "codex",
@@ -100,6 +101,7 @@ describe("CompanionStorage", () => {
           baseSnapshotCommit: "abc123",
           selectedPaths: [],
           changedFiles: [],
+          siblingWarnings: [],
           runState: "idle",
           threadId: "",
           provider: "codex",
@@ -141,6 +143,14 @@ describe("CompanionStorage", () => {
           { path: "README.md", kind: "edit" },
           { path: "src/app.ts", kind: "add" },
         ],
+        siblingWarnings: [
+          {
+            sessionId: "session-sibling",
+            taskTitle: "Sibling task",
+            paths: ["README.md"],
+            message: "Sibling task と 1 file が重なっているよ。",
+          },
+        ],
         updatedAt: "2026-04-26 10:03",
       }));
       storage.createSession(createSession(group.id, {
@@ -164,6 +174,22 @@ describe("CompanionStorage", () => {
       assert.deepEqual(storage.listSessionSummaries()[0]?.changedFiles, [
         { path: "README.md", kind: "edit" },
         { path: "src/app.ts", kind: "add" },
+      ]);
+      assert.deepEqual(storage.getSession("session-merged")?.siblingWarnings, [
+        {
+          sessionId: "session-sibling",
+          taskTitle: "Sibling task",
+          paths: ["README.md"],
+          message: "Sibling task と 1 file が重なっているよ。",
+        },
+      ]);
+      assert.deepEqual(storage.listSessionSummaries()[0]?.siblingWarnings, [
+        {
+          sessionId: "session-sibling",
+          taskTitle: "Sibling task",
+          paths: ["README.md"],
+          message: "Sibling task と 1 file が重なっているよ。",
+        },
       ]);
     } finally {
       storage?.close();

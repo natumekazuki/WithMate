@@ -42,6 +42,7 @@ function createCompanionSession(input: {
     worktreePath: input.worktreePath,
     selectedPaths: [],
     changedFiles: [],
+    siblingWarnings: [],
     runState: "idle",
     threadId: "",
     provider: "codex",
@@ -75,6 +76,7 @@ function toCompanionSessionSummary(session: CompanionSession): CompanionSessionS
     baseSnapshotCommit: session.baseSnapshotCommit,
     selectedPaths: session.selectedPaths,
     changedFiles: session.changedFiles,
+    siblingWarnings: session.siblingWarnings,
     runState: session.runState,
     threadId: session.threadId,
     provider: session.provider,
@@ -457,6 +459,14 @@ describe("CompanionReviewService", () => {
       assert.equal(result.session.status, "merged");
       assert.deepEqual(result.session.selectedPaths, ["README.md"]);
       assert.deepEqual(result.session.changedFiles, [{ path: "README.md", kind: "edit" }]);
+      assert.deepEqual(result.session.siblingWarnings, [
+        {
+          sessionId: siblingSession.id,
+          taskTitle: "Sibling task",
+          paths: ["README.md"],
+          message: "Sibling task と 1 file が重なっているよ。",
+        },
+      ]);
       assert.deepEqual(result.siblingWarnings, [
         {
           sessionId: siblingSession.id,

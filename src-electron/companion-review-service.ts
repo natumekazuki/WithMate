@@ -201,6 +201,7 @@ export class CompanionReviewService {
       status: "merged",
       selectedPaths: normalizedSelectedPaths,
       changedFiles: changedPaths,
+      siblingWarnings,
       runState: "idle",
       updatedAt: currentTimestampLabel(),
     });
@@ -231,6 +232,7 @@ export class CompanionReviewService {
       status: "discarded",
       selectedPaths: [],
       changedFiles: changedPaths,
+      siblingWarnings: [],
       runState: "idle",
       updatedAt: currentTimestampLabel(),
     });

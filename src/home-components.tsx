@@ -1130,6 +1130,11 @@ function matchesCompanionSessionSearch(session: CompanionSessionSummary, normali
     session.model,
     ...session.selectedPaths,
     ...session.changedFiles.map((file) => file.path),
+    ...session.siblingWarnings.flatMap((warning) => [
+      warning.taskTitle,
+      warning.message,
+      ...warning.paths,
+    ]),
   ].some((value) => value.toLocaleLowerCase().includes(normalizedSearch));
 }
 
@@ -1149,6 +1154,25 @@ function buildCompanionChangedFilesSummary(files: CompanionSessionSummary["chang
   const visibleFiles = files.slice(0, 3).map((file) => `${file.kind}: ${file.path}`);
   const suffix = files.length > visibleFiles.length ? ` / +${files.length - visibleFiles.length}` : "";
   return `changed files: ${visibleFiles.join(", ")}${suffix}`;
+}
+
+function buildCompanionSiblingWarningSummary(warnings: CompanionSessionSummary["siblingWarnings"]): string {
+  if (warnings.length === 0) {
+    return "sibling warnings: none";
+  }
+  const firstWarning = warnings[0];
+  if (!firstWarning) {
+    return "sibling warnings: none";
+  }
+  const visiblePaths = firstWarning.paths.slice(0, 2);
+  const pathSummary = visiblePaths.length > 0
+    ? visiblePaths.join(", ")
+    : "path unknown";
+  const pathSuffix = firstWarning.paths.length > visiblePaths.length
+    ? ` / +${firstWarning.paths.length - visiblePaths.length}`
+    : "";
+  const warningSuffix = warnings.length > 1 ? ` / +${warnings.length - 1} warning` : "";
+  return `sibling warnings: ${firstWarning.taskTitle} (${pathSummary}${pathSuffix})${warningSuffix}`;
 }
 
 export function HomeRecentSessionsPanel({
@@ -1248,6 +1272,7 @@ export function HomeRecentSessionsPanel({
                         <span>{`Repo : ${session.repoRoot}`}</span>
                         <span>{`target: ${session.targetBranch}`}</span>
                         <span>{buildCompanionChangedFilesSummary(session.changedFiles)}</span>
+                        <span>{buildCompanionSiblingWarningSummary(session.siblingWarnings)}</span>
                         <span>{buildCompanionSelectedFilesSummary(session.selectedPaths)}</span>
                         <span>{`updatedAt: ${session.updatedAt}`}</span>
                       </div>

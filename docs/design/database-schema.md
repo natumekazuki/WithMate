@@ -572,6 +572,7 @@ Companion Mode の作業単位。
 | `worktree_path` | `TEXT` | shadow worktree path |
 | `selected_paths_json` | `TEXT` | merge 時に選択された file path の JSON 配列 |
 | `changed_files_json` | `TEXT` | terminal 操作時点の changed file summary JSON 配列 |
+| `sibling_warnings_json` | `TEXT` | merge 完了時の sibling warning summary JSON 配列 |
 | `provider` | `TEXT` | coding provider |
 | `catalog_revision` | `INTEGER` | model catalog revision |
 | `model` | `TEXT` | model |
@@ -590,8 +591,8 @@ Companion Mode の作業単位。
 補足:
 
 - current 実装では CompanionSession 作成時に base snapshot ref と shadow worktree を実体化する
-- selected files merge / discard は `status`、`updated_at`、`selected_paths_json`、`changed_files_json` を更新し、terminal session は Home の history card として表示する
-- sibling warning の永続化は future slice
+- selected files merge / discard は `status`、`updated_at`、`selected_paths_json`、`changed_files_json`、`sibling_warnings_json` を更新し、terminal session は Home の history card として表示する
+- sibling warning は merge 完了時のみ保存し、discard では空配列にする
 - `base_snapshot_ref`、`companion_branch`、`worktree_path` は DB id 由来の safe id で生成する
 - `companion_sessions.group_id` は `companion_groups(id) ON DELETE CASCADE`
 

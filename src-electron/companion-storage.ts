@@ -7,6 +7,7 @@ import {
   type CompanionGroup,
   type CompanionSession,
   type CompanionSessionSummary,
+  type CompanionSiblingWarningSummary,
 } from "../src/companion-state.js";
 import type { Message } from "../src/session-state.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
@@ -36,6 +37,7 @@ type CompanionSessionRow = {
   worktree_path: string;
   selected_paths_json: string;
   changed_files_json: string;
+  sibling_warnings_json: string;
   run_state: string;
   thread_id: string;
   provider: string;
@@ -80,6 +82,7 @@ const COMPANION_SESSION_COLUMNS = `
   worktree_path,
   selected_paths_json,
   changed_files_json,
+  sibling_warnings_json,
   run_state,
   thread_id,
   provider,
@@ -126,6 +129,7 @@ function rowToSession(row: CompanionSessionRow): CompanionSession {
     worktreePath: row.worktree_path,
     selectedPaths: parseSelectedPaths(row.selected_paths_json),
     changedFiles: parseChangedFiles(row.changed_files_json),
+    siblingWarnings: parseSiblingWarnings(row.sibling_warnings_json),
     runState: row.run_state === "running" || row.run_state === "error" ? row.run_state : "idle",
     threadId: row.thread_id,
     provider: row.provider,
@@ -226,6 +230,42 @@ function parseChangedFiles(value: string): CompanionChangedFileSummary[] {
   }
 }
 
+function parseSiblingWarnings(value: string): CompanionSiblingWarningSummary[] {
+  if (!value.trim()) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.flatMap((item): CompanionSiblingWarningSummary[] => {
+      if (
+        typeof item === "object" &&
+        item !== null &&
+        "sessionId" in item &&
+        "taskTitle" in item &&
+        "paths" in item &&
+        "message" in item &&
+        typeof item.sessionId === "string" &&
+        typeof item.taskTitle === "string" &&
+        Array.isArray(item.paths) &&
+        typeof item.message === "string"
+      ) {
+        return [{
+          sessionId: item.sessionId,
+          taskTitle: item.taskTitle,
+          paths: (item.paths as unknown[]).filter((filePath): filePath is string => typeof filePath === "string"),
+          message: item.message,
+        }];
+      }
+      return [];
+    });
+  } catch {
+    return [];
+  }
+}
+
 function sessionToSummary(session: CompanionSession): CompanionSessionSummary {
   return {
     id: session.id,
@@ -239,6 +279,7 @@ function sessionToSummary(session: CompanionSession): CompanionSessionSummary {
     baseSnapshotCommit: session.baseSnapshotCommit,
     selectedPaths: session.selectedPaths,
     changedFiles: session.changedFiles,
+    siblingWarnings: session.siblingWarnings,
     runState: session.runState,
     threadId: session.threadId,
     provider: session.provider,
@@ -289,6 +330,7 @@ export class CompanionStorage {
         worktree_path TEXT NOT NULL,
         selected_paths_json TEXT NOT NULL DEFAULT '[]',
         changed_files_json TEXT NOT NULL DEFAULT '[]',
+        sibling_warnings_json TEXT NOT NULL DEFAULT '[]',
         run_state TEXT NOT NULL DEFAULT 'idle',
         thread_id TEXT NOT NULL DEFAULT '',
         provider TEXT NOT NULL,
@@ -351,6 +393,9 @@ export class CompanionStorage {
     if (!columns.has("changed_files_json")) {
       this.db.exec("ALTER TABLE companion_sessions ADD COLUMN changed_files_json TEXT NOT NULL DEFAULT '[]';");
     }
+    if (!columns.has("sibling_warnings_json")) {
+      this.db.exec("ALTER TABLE companion_sessions ADD COLUMN sibling_warnings_json TEXT NOT NULL DEFAULT '[]';");
+    }
     if (!columns.has("thread_id")) {
       this.db.exec("ALTER TABLE companion_sessions ADD COLUMN thread_id TEXT NOT NULL DEFAULT '';");
     }
@@ -381,7 +426,7 @@ export class CompanionStorage {
     this.db.prepare(`
       INSERT INTO companion_sessions (
         ${COMPANION_SESSION_COLUMNS}
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.id,
       session.groupId,
@@ -396,6 +441,7 @@ export class CompanionStorage {
       session.worktreePath,
       JSON.stringify(session.selectedPaths),
       JSON.stringify(session.changedFiles),
+      JSON.stringify(session.siblingWarnings),
       session.runState,
       session.threadId,
       session.provider,
@@ -461,6 +507,7 @@ export class CompanionStorage {
         status = ?,
         selected_paths_json = ?,
         changed_files_json = ?,
+        sibling_warnings_json = ?,
         run_state = ?,
         thread_id = ?,
         provider = ?,
@@ -483,6 +530,7 @@ export class CompanionStorage {
       session.status,
       JSON.stringify(session.selectedPaths),
       JSON.stringify(session.changedFiles),
+      JSON.stringify(session.siblingWarnings),
       session.runState,
       session.threadId,
       session.provider,

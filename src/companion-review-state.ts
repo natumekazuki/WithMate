@@ -1,5 +1,5 @@
 import type { ChangedFile } from "./runtime-state.js";
-import type { CompanionSession } from "./companion-state.js";
+import type { CompanionSession, CompanionSiblingWarningSummary } from "./companion-state.js";
 
 export type CompanionMergeReadinessStatus = "ready" | "blocked" | "warning";
 
@@ -18,12 +18,7 @@ export type CompanionMergeReadiness = {
   simulatedAt: string;
 };
 
-export type CompanionSiblingCheckWarning = {
-  sessionId: string;
-  taskTitle: string;
-  paths: string[];
-  message: string;
-};
+export type CompanionSiblingCheckWarning = CompanionSiblingWarningSummary;
 
 export type CompanionMergeSelectedFilesResult = {
   session: CompanionSession;

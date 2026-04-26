@@ -10,6 +10,13 @@ export type CompanionChangedFileSummary = {
   path: string;
 };
 
+export type CompanionSiblingWarningSummary = {
+  sessionId: string;
+  taskTitle: string;
+  paths: string[];
+  message: string;
+};
+
 export type CreateCompanionSessionInput = {
   taskTitle: string;
   workspacePath: string;
@@ -52,6 +59,7 @@ export type CompanionSession = {
   worktreePath: string;
   selectedPaths: string[];
   changedFiles: CompanionChangedFileSummary[];
+  siblingWarnings: CompanionSiblingWarningSummary[];
   runState: "idle" | "running" | "error";
   threadId: string;
   provider: string;
@@ -87,6 +95,7 @@ export type CompanionSessionSummary = Pick<
   | "baseSnapshotCommit"
   | "selectedPaths"
   | "changedFiles"
+  | "siblingWarnings"
   | "runState"
   | "threadId"
   | "provider"
@@ -106,6 +115,10 @@ export function cloneCompanionSession(session: CompanionSession): CompanionSessi
     ...session,
     selectedPaths: [...session.selectedPaths],
     changedFiles: session.changedFiles.map((file) => ({ ...file })),
+    siblingWarnings: session.siblingWarnings.map((warning) => ({
+      ...warning,
+      paths: [...warning.paths],
+    })),
     characterThemeColors: { ...session.characterThemeColors },
     messages: session.messages.map((message) => ({
       ...message,
@@ -136,6 +149,10 @@ export function cloneCompanionSessionSummary(summary: CompanionSessionSummary): 
     ...summary,
     selectedPaths: [...summary.selectedPaths],
     changedFiles: summary.changedFiles.map((file) => ({ ...file })),
+    siblingWarnings: summary.siblingWarnings.map((warning) => ({
+      ...warning,
+      paths: [...warning.paths],
+    })),
     characterThemeColors: { ...summary.characterThemeColors },
   };
 }
