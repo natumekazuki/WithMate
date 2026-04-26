@@ -566,8 +566,10 @@ Companion Mode の作業単位。
 | `repo_root` | `TEXT` | 作業対象 Git repo root |
 | `focus_path` | `TEXT` | 起動元 workspace が repo root 配下の sub directory だった場合の相対 path |
 | `target_branch` | `TEXT` | merge 対象 branch |
+| `base_snapshot_ref` | `TEXT` | CompanionSession の base snapshot ref |
+| `base_snapshot_commit` | `TEXT` | base snapshot commit hash |
 | `companion_branch` | `TEXT` | Companion 用 branch 名 |
-| `worktree_path` | `TEXT` | shadow worktree 予定 path |
+| `worktree_path` | `TEXT` | shadow worktree path |
 | `provider` | `TEXT` | coding provider |
 | `catalog_revision` | `INTEGER` | model catalog revision |
 | `model` | `TEXT` | model |
@@ -585,9 +587,9 @@ Companion Mode の作業単位。
 
 補足:
 
-- current 実装では CompanionSession の作成と Home での active 一覧表示までを扱う
-- snapshot ref、shadow worktree 実体作成、selected files merge / discard は future slice
-- `companion_branch` と `worktree_path` は DB id 由来の safe id で生成する
+- current 実装では CompanionSession 作成時に base snapshot ref と shadow worktree を実体化する
+- selected files merge / discard は future slice
+- `base_snapshot_ref`、`companion_branch`、`worktree_path` は DB id 由来の safe id で生成する
 - `companion_sessions.group_id` は `companion_groups(id) ON DELETE CASCADE`
 
 ## DB Outside: Characters

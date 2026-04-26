@@ -39,6 +39,8 @@ export type CompanionSession = {
   repoRoot: string;
   focusPath: string;
   targetBranch: string;
+  baseSnapshotRef: string;
+  baseSnapshotCommit: string;
   companionBranch: string;
   worktreePath: string;
   provider: string;
@@ -68,6 +70,8 @@ export type CompanionSessionSummary = Pick<
   | "repoRoot"
   | "focusPath"
   | "targetBranch"
+  | "baseSnapshotRef"
+  | "baseSnapshotCommit"
   | "provider"
   | "model"
   | "reasoningEffort"

@@ -28,6 +28,8 @@ type CompanionSessionRow = {
   repo_root: string;
   focus_path: string;
   target_branch: string;
+  base_snapshot_ref: string;
+  base_snapshot_commit: string;
   companion_branch: string;
   worktree_path: string;
   provider: string;
@@ -54,6 +56,8 @@ const COMPANION_SESSION_COLUMNS = `
   repo_root,
   focus_path,
   target_branch,
+  base_snapshot_ref,
+  base_snapshot_commit,
   companion_branch,
   worktree_path,
   provider,
@@ -93,6 +97,8 @@ function rowToSession(row: CompanionSessionRow): CompanionSession {
     repoRoot: row.repo_root,
     focusPath: row.focus_path,
     targetBranch: row.target_branch,
+    baseSnapshotRef: row.base_snapshot_ref,
+    baseSnapshotCommit: row.base_snapshot_commit,
     companionBranch: row.companion_branch,
     worktreePath: row.worktree_path,
     provider: row.provider,
@@ -139,6 +145,8 @@ function sessionToSummary(session: CompanionSession): CompanionSessionSummary {
     repoRoot: session.repoRoot,
     focusPath: session.focusPath,
     targetBranch: session.targetBranch,
+    baseSnapshotRef: session.baseSnapshotRef,
+    baseSnapshotCommit: session.baseSnapshotCommit,
     provider: session.provider,
     model: session.model,
     reasoningEffort: session.reasoningEffort,
@@ -173,6 +181,8 @@ export class CompanionStorage {
         repo_root TEXT NOT NULL,
         focus_path TEXT NOT NULL,
         target_branch TEXT NOT NULL,
+        base_snapshot_ref TEXT NOT NULL DEFAULT '',
+        base_snapshot_commit TEXT NOT NULL DEFAULT '',
         companion_branch TEXT NOT NULL,
         worktree_path TEXT NOT NULL,
         provider TEXT NOT NULL,
@@ -194,6 +204,22 @@ export class CompanionStorage {
       CREATE INDEX IF NOT EXISTS idx_companion_sessions_group_status
         ON companion_sessions(group_id, status, updated_at);
     `);
+    this.ensureSchema();
+  }
+
+  private ensureSchema(): void {
+    const columns = new Set(
+      (this.db.prepare("PRAGMA table_info(companion_sessions)").all() as { name: string }[]).map(
+        (column) => column.name,
+      ),
+    );
+
+    if (!columns.has("base_snapshot_ref")) {
+      this.db.exec("ALTER TABLE companion_sessions ADD COLUMN base_snapshot_ref TEXT NOT NULL DEFAULT '';");
+    }
+    if (!columns.has("base_snapshot_commit")) {
+      this.db.exec("ALTER TABLE companion_sessions ADD COLUMN base_snapshot_commit TEXT NOT NULL DEFAULT '';");
+    }
   }
 
   ensureGroup(group: CompanionGroup): CompanionGroup {
@@ -218,7 +244,7 @@ export class CompanionStorage {
     this.db.prepare(`
       INSERT INTO companion_sessions (
         ${COMPANION_SESSION_COLUMNS}
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.id,
       session.groupId,
@@ -227,6 +253,8 @@ export class CompanionStorage {
       session.repoRoot,
       session.focusPath,
       session.targetBranch,
+      session.baseSnapshotRef,
+      session.baseSnapshotCommit,
       session.companionBranch,
       session.worktreePath,
       session.provider,

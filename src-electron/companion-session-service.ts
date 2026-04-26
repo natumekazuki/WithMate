@@ -10,7 +10,13 @@ import {
 } from "../src/companion-state.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
 import type { CompanionStorage } from "./companion-storage.js";
-import { buildCompanionGroupDisplayName, resolveCompanionGitEligibility } from "./companion-git.js";
+import {
+  buildCompanionGroupDisplayName,
+  cleanupCompanionWorkspaceArtifacts,
+  createCompanionWorkspace,
+  type CompanionWorkspaceArtifacts,
+  resolveCompanionGitEligibility,
+} from "./companion-git.js";
 
 export type CompanionSessionServiceDeps = {
   appDataPath: string;
@@ -57,6 +63,19 @@ export class CompanionSessionService {
     };
     const storedGroup = this.deps.storage.ensureGroup(group);
     const worktreePath = path.join(this.deps.appDataPath, "companion-worktrees", safeGroupId, safeSessionId);
+    let artifacts: CompanionWorkspaceArtifacts | null = null;
+    try {
+      artifacts = await createCompanionWorkspace({
+        repoRoot: eligibility.repoRoot,
+        sessionId,
+        safeSessionId,
+        companionBranch: `withmate/companion/${safeSessionId}`,
+        worktreePath,
+      });
+    } catch (error) {
+      throw error instanceof Error ? error : new Error("Companion worktree の作成に失敗したよ。");
+    }
+
     const session: CompanionSession = {
       id: sessionId,
       groupId: storedGroup.id,
@@ -65,8 +84,10 @@ export class CompanionSessionService {
       repoRoot: eligibility.repoRoot,
       focusPath: eligibility.focusPath,
       targetBranch: eligibility.targetBranch,
-      companionBranch: `withmate/companion/${safeSessionId}`,
-      worktreePath,
+      baseSnapshotRef: artifacts.baseSnapshotRef,
+      baseSnapshotCommit: artifacts.baseSnapshotCommit,
+      companionBranch: artifacts.companionBranch,
+      worktreePath: artifacts.worktreePath,
       provider: input.provider,
       catalogRevision: input.catalogRevision ?? DEFAULT_CATALOG_REVISION,
       model: input.model ?? DEFAULT_MODEL_ID,
@@ -82,7 +103,11 @@ export class CompanionSessionService {
       updatedAt: now,
     };
 
-    return this.deps.storage.createSession(session);
+    try {
+      return this.deps.storage.createSession(session);
+    } catch (error) {
+      await cleanupCompanionWorkspaceArtifacts(artifacts);
+      throw error;
+    }
   }
 }
-

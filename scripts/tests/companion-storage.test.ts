@@ -45,6 +45,8 @@ function createSession(groupId: string): CompanionSession {
     repoRoot: "F:/work/demo",
     focusPath: "src",
     targetBranch: "main",
+    baseSnapshotRef: "refs/withmate/companion/session-1/base",
+    baseSnapshotCommit: "abc123",
     companionBranch: "withmate/companion/session-1",
     worktreePath: "F:/app/companion-worktrees/group-1/session-1",
     provider: "codex",
@@ -70,9 +72,10 @@ describe("CompanionStorage", () => {
   it("group と active session を保存して summary と detail を読み戻せる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: CompanionStorage | null = null;
 
     try {
-      const storage = new CompanionStorage(dbPath);
+      storage = new CompanionStorage(dbPath);
       const group = storage.ensureGroup(createGroup());
       const session = storage.createSession(createSession(group.id));
 
@@ -86,6 +89,8 @@ describe("CompanionStorage", () => {
           repoRoot: "F:/work/demo",
           focusPath: "src",
           targetBranch: "main",
+          baseSnapshotRef: "refs/withmate/companion/session-1/base",
+          baseSnapshotCommit: "abc123",
           provider: "codex",
           model: DEFAULT_MODEL_ID,
           reasoningEffort: DEFAULT_REASONING_EFFORT,
@@ -101,10 +106,9 @@ describe("CompanionStorage", () => {
         },
       ]);
       assert.equal(storage.getSession("session-1")?.companionBranch, "withmate/companion/session-1");
-      storage.close();
     } finally {
+      storage?.close();
       await removeDirectoryWithRetry(tempDirectory);
     }
   });
 });
-
