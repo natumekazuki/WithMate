@@ -40,6 +40,7 @@ test("PersistentStoreLifecycleService は store を初期化して session depen
     createSessionMemoryStorage: () => createClosableStore("session-memory", closeCalls) as never,
     createProjectMemoryStorage: () => createClosableStore("project-memory", closeCalls) as never,
     createCharacterMemoryStorage: () => createClosableStore("character-memory", closeCalls) as never,
+    createCompanionStorage: () => createClosableStore("companion", closeCalls) as never,
     createAuditLogStorage: () => createClosableStore("audit", closeCalls) as never,
     createAppSettingsStorage: () => createClosableStore("settings", closeCalls) as never,
     onBeforeClose: () => {
@@ -63,6 +64,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     createSessionMemoryStorage: () => null as never,
     createProjectMemoryStorage: () => null as never,
     createCharacterMemoryStorage: () => null as never,
+    createCompanionStorage: () => null as never,
     createAuditLogStorage: () => null as never,
     createAppSettingsStorage: () => null as never,
     onBeforeClose: () => {
@@ -80,6 +82,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     sessionMemoryStorage: createClosableStore("session-memory", closeCalls) as never,
     projectMemoryStorage: createClosableStore("project-memory", closeCalls) as never,
     characterMemoryStorage: createClosableStore("character-memory", closeCalls) as never,
+    companionStorage: createClosableStore("companion", closeCalls) as never,
     auditLogStorage: createClosableStore("audit", closeCalls) as never,
     appSettingsStorage: createClosableStore("settings", closeCalls) as never,
   };
@@ -93,6 +96,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     "session-memory",
     "project-memory",
     "character-memory",
+    "companion",
     "audit",
     "settings",
     "truncate-wal",
@@ -114,6 +118,7 @@ test("PersistentStoreLifecycleService は WAL truncate 失敗を close 呼び出
       createSessionMemoryStorage: () => null as never,
       createProjectMemoryStorage: () => null as never,
       createCharacterMemoryStorage: () => null as never,
+      createCompanionStorage: () => null as never,
       createAuditLogStorage: () => null as never,
       createAppSettingsStorage: () => null as never,
       onBeforeClose: () => {
@@ -150,6 +155,7 @@ test("PersistentStoreLifecycleService は WAL truncate 失敗後も DB 再生成
     createSessionMemoryStorage: () => ({ close() {} }) as never,
     createProjectMemoryStorage: () => ({ close() {} }) as never,
     createCharacterMemoryStorage: () => ({ close() {} }) as never,
+    createCompanionStorage: () => ({ close() {} }) as never,
     createAuditLogStorage: () => ({ close() {} }) as never,
     createAppSettingsStorage: () => ({ close() {} }) as never,
     onBeforeClose: () => {},
@@ -193,6 +199,7 @@ test("PersistentStoreLifecycleService は DB を再生成して再初期化す�
     createSessionMemoryStorage: () => ({ close() {} }) as never,
     createProjectMemoryStorage: () => ({ close() {} }) as never,
     createCharacterMemoryStorage: () => ({ close() {} }) as never,
+    createCompanionStorage: () => ({ close() {} }) as never,
     createAuditLogStorage: () => ({ close() {} }) as never,
     createAppSettingsStorage: () => ({ close() {} }) as never,
     onBeforeClose: () => {},

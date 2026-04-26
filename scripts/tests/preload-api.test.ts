@@ -54,6 +54,14 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:list-session-summaries",
     args: [],
   });
+  assert.deepEqual(await api.listCompanionSessionSummaries(), {
+    channel: "withmate:list-companion-session-summaries",
+    args: [],
+  });
+  assert.deepEqual(await api.createCompanionSession({ taskTitle: "task" } as never), {
+    channel: "withmate:create-companion-session",
+    args: [{ taskTitle: "task" }],
+  });
   assert.deepEqual(await api.runSessionMemoryExtraction("session-1"), {
     channel: "withmate:run-session-memory-extraction",
     args: ["session-1"],
@@ -69,6 +77,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "cancelSessionRun",
     "createCharacter",
     "createCharacterUpdateSession",
+    "createCompanionSession",
     "createSession",
     "deleteCharacter",
     "deleteCharacterMemoryEntry",
@@ -92,6 +101,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "importModelCatalog",
     "importModelCatalogFile",
     "listCharacters",
+    "listCompanionSessionSummaries",
     "listOpenSessionWindowIds",
     "listSessionAuditLogs",
     "listSessionCustomAgents",
@@ -120,6 +130,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "searchWorkspaceFiles",
     "subscribeAppSettings",
     "subscribeCharacters",
+    "subscribeCompanionSessionSummaries",
     "subscribeLiveSessionRun",
     "subscribeModelCatalog",
     "subscribeOpenSessionWindowIds",
@@ -150,20 +161,27 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   const disposeLiveRun = api.subscribeLiveSessionRun((sessionId, state) => {
     received.push({ kind: "liveRun", sessionId, state });
   });
+  const disposeCompanions = api.subscribeCompanionSessionSummaries((summaries) => {
+    received.push({ kind: "companions", summaries });
+  });
 
   listeners.get("withmate:sessions-changed")?.({}, [{ id: "session-1", taskTitle: "task" }]);
+  listeners.get("withmate:companion-sessions-changed")?.({}, [{ id: "companion-1", taskTitle: "task" }]);
   listeners.get("withmate:sessions-invalidated")?.({}, ["session-1"]);
   listeners.get("withmate:live-session-run")?.({}, { sessionId: "session-1", state: { phase: "running" } });
   disposeSummaries();
   disposeInvalidation();
   disposeLiveRun();
+  disposeCompanions();
 
   assert.deepEqual(received, [
     { kind: "summaries", summaries: [{ id: "session-1", taskTitle: "task" }] },
+    { kind: "companions", summaries: [{ id: "companion-1", taskTitle: "task" }] },
     { kind: "invalidation", sessionIds: ["session-1"] },
     { kind: "liveRun", sessionId: "session-1", state: { phase: "running" } },
   ]);
   assert.equal(listeners.has("withmate:live-session-run"), false);
+  assert.equal(listeners.has("withmate:companion-sessions-changed"), false);
   assert.equal(listeners.has("withmate:sessions-invalidated"), false);
   assert.equal(listeners.has("withmate:sessions-changed"), false);
 });

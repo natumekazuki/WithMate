@@ -8,6 +8,7 @@ import type {
   SessionSummary,
 } from "./app-state.js";
 import type { MemoryManagementSnapshot } from "./memory-management-state.js";
+import type { CompanionSessionSummary } from "./companion-state.js";
 import {
   buildFilteredMemoryManagementSnapshot,
   DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
@@ -856,6 +857,7 @@ function SettingsMemoryTagLine({ label, items }: { label: string; items: string[
 
 export type HomeLaunchDialogProps = {
   open: boolean;
+  mode: "agent" | "companion";
   title: string;
   workspace: LaunchWorkspace | null;
   launchWorkspacePathLabel: string;
@@ -868,6 +870,7 @@ export type HomeLaunchDialogProps = {
   canStartSession: boolean;
   searchIcon: ReactNode;
   onClose: () => void;
+  onChangeMode: (mode: "agent" | "companion") => void;
   onChangeTitle: (value: string) => void;
   onBrowseWorkspace: () => void;
   onSelectProvider: (providerId: string) => void;
@@ -879,6 +882,7 @@ export type HomeLaunchDialogProps = {
 
 export function HomeLaunchDialog({
   open,
+  mode,
   title,
   workspace,
   launchWorkspacePathLabel,
@@ -891,6 +895,7 @@ export function HomeLaunchDialog({
   canStartSession,
   searchIcon,
   onClose,
+  onChangeMode,
   onChangeTitle,
   onBrowseWorkspace,
   onSelectProvider,
@@ -925,6 +930,29 @@ export function HomeLaunchDialog({
         </div>
 
         <div className="launch-panel minimal">
+          <section className="launch-section minimal">
+            <div className="choice-list launch-provider-list" role="tablist" aria-label="Launch mode">
+              <button
+                className={`choice-chip${mode === "agent" ? " active" : ""}`}
+                type="button"
+                role="tab"
+                aria-selected={mode === "agent"}
+                onClick={() => onChangeMode("agent")}
+              >
+                Agent
+              </button>
+              <button
+                className={`choice-chip${mode === "companion" ? " active" : ""}`}
+                type="button"
+                role="tab"
+                aria-selected={mode === "companion"}
+                onClick={() => onChangeMode("companion")}
+              >
+                Companion
+              </button>
+            </div>
+          </section>
+
           <section className="launch-section minimal">
             <div className="launch-field">
               <label className="launch-field-label" htmlFor="launch-session-title">
@@ -1040,7 +1068,7 @@ export function HomeLaunchDialog({
 
         <div className="launch-dialog-foot minimal">
           <button className="start-session-button" type="button" disabled={!canStartSession} onClick={onStartSession}>
-            Start New Session
+            {mode === "companion" ? "Start Companion" : "Start New Session"}
           </button>
         </div>
       </section>
@@ -1050,6 +1078,7 @@ export function HomeLaunchDialog({
 
 export type HomeRecentSessionsPanelProps = {
   filteredSessionEntries: Array<{ session: SessionSummary; state: HomeSessionState }>;
+  companionSessions: CompanionSessionSummary[];
   normalizedSessionSearch: string;
   searchText: string;
   searchIcon: ReactNode;
@@ -1060,6 +1089,7 @@ export type HomeRecentSessionsPanelProps = {
 
 export function HomeRecentSessionsPanel({
   filteredSessionEntries,
+  companionSessions,
   normalizedSessionSearch,
   searchText,
   searchIcon,
@@ -1088,6 +1118,29 @@ export function HomeRecentSessionsPanel({
       </div>
 
       <div className="session-card-list home-session-card-list">
+        {companionSessions.length > 0 ? (
+          <section className="home-companion-list" aria-label="Companion Sessions">
+            <div className="home-monitor-section-head">
+              <h3>Companion</h3>
+              <span className="home-monitor-count">{companionSessions.length}</span>
+            </div>
+            {companionSessions.map((session) => (
+              <article key={session.id} className="session-card home-session-card companion-session-card">
+                <div className="session-card-copy">
+                  <div className="session-card-topline home-session-card-topline">
+                    <strong>{session.taskTitle}</strong>
+                    <span className="session-status home-session-status idle">{session.status}</span>
+                  </div>
+                  <div className="session-card-subline home-session-card-meta">
+                    <span>{`Repo : ${session.repoRoot}`}</span>
+                    <span>{`target: ${session.targetBranch}`}</span>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </section>
+        ) : null}
+
         {filteredSessionEntries.length > 0 ? (
           filteredSessionEntries.map(({ session, state }) => (
             <button

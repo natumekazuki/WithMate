@@ -37,6 +37,7 @@ import {
 } from "../src/model-catalog.js";
 import type { OpenPathOptions } from "../src/withmate-window-types.js";
 import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
+import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
 import {
   createStoredCharacter,
   deleteStoredCharacter,
@@ -59,6 +60,8 @@ import { SessionStorage } from "./session-storage.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
 import { ProjectMemoryStorage } from "./project-memory-storage.js";
 import { CharacterMemoryStorage } from "./character-memory-storage.js";
+import { CompanionStorage } from "./companion-storage.js";
+import { CompanionSessionService } from "./companion-session-service.js";
 import { SessionRuntimeService } from "./session-runtime-service.js";
 import { SessionPersistenceService } from "./session-persistence-service.js";
 import { SessionWindowBridge } from "./session-window-bridge.js";
@@ -146,6 +149,7 @@ let sessionStorage: SessionStorage | null = null;
 let sessionMemoryStorage: SessionMemoryStorage | null = null;
 let projectMemoryStorage: ProjectMemoryStorage | null = null;
 let characterMemoryStorage: CharacterMemoryStorage | null = null;
+let companionStorage: CompanionStorage | null = null;
 let modelCatalogStorage: ModelCatalogStorage | null = null;
 let auditLogStorage: AuditLogStorage | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
@@ -165,6 +169,7 @@ let sessionMemorySupportService: SessionMemorySupportService | null = null;
 let memoryManagementService: MemoryManagementService | null = null;
 let characterRuntimeService: CharacterRuntimeService | null = null;
 let characterUpdateWorkspaceService: CharacterUpdateWorkspaceService | null = null;
+let companionSessionService: CompanionSessionService | null = null;
 let mainBroadcastFacade: MainBroadcastFacade<BrowserWindow> | null = null;
 let mainCharacterFacade: MainCharacterFacade | null = null;
 let mainObservabilityFacade: MainObservabilityFacade | null = null;
@@ -581,6 +586,16 @@ function listSessionSummaries(): SessionSummary[] {
   return requireMainQueryService().listSessionSummaries();
 }
 
+function listCompanionSessionSummaries(): CompanionSessionSummary[] {
+  return requireCompanionSessionService().listSessionSummaries();
+}
+
+async function createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession> {
+  const session = await requireCompanionSessionService().createSession(input);
+  requireWindowBroadcastService().broadcastCompanionSessionSummaries(listCompanionSessionSummaries());
+  return session;
+}
+
 function isRunningSession(session: Session): boolean {
   return session.status === "running" || session.runState === "running";
 }
@@ -678,6 +693,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           createSessionMemoryStorage: (nextDbPath) => new SessionMemoryStorage(nextDbPath),
           createProjectMemoryStorage: (nextDbPath) => new ProjectMemoryStorage(nextDbPath),
           createCharacterMemoryStorage: (nextDbPath) => new CharacterMemoryStorage(nextDbPath),
+          createCompanionStorage: (nextDbPath) => new CompanionStorage(nextDbPath),
           createAuditLogStorage: (nextDbPath) => new AuditLogStorage(nextDbPath),
           createAppSettingsStorage: (nextDbPath) => new AppSettingsStorage(nextDbPath),
           onBeforeClose: () => {
@@ -776,6 +792,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               },
               sessionQuery: {
                 listSessionSummaries: () => listSessionSummaries(),
+                listCompanionSessionSummaries: () => listCompanionSessionSummaries(),
                 listSessionAuditLogs: (sessionId) => listSessionAuditLogs(sessionId),
                 listSessionSkills: async (sessionId) => listSessionSkills(sessionId),
                 listSessionCustomAgents: async (sessionId) => listSessionCustomAgents(sessionId),
@@ -799,6 +816,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 runSessionMemoryExtraction: (sessionId) =>
                   requireMainSessionCommandFacade().runSessionMemoryExtraction(sessionId),
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
+              },
+              companion: {
+                createCompanionSession: (input) => createCompanionSession(input),
+                listCompanionSessionSummaries: () => listCompanionSessionSummaries(),
               },
               character: {
                 listCharacters: async () => refreshCharactersFromStorage(),
@@ -1379,6 +1400,25 @@ function requireCharacterMemoryStorage(): CharacterMemoryStorage {
   return characterMemoryStorage;
 }
 
+function requireCompanionStorage(): CompanionStorage {
+  if (!companionStorage) {
+    throw new Error("companion storage が初期化されていないよ。");
+  }
+
+  return companionStorage;
+}
+
+function requireCompanionSessionService(): CompanionSessionService {
+  if (!companionSessionService) {
+    companionSessionService = new CompanionSessionService({
+      appDataPath: app.getPath("userData"),
+      storage: requireCompanionStorage(),
+    });
+  }
+
+  return companionSessionService;
+}
+
 function requirePersistentStoreLifecycleService(): PersistentStoreLifecycleService {
   return requireMainInfrastructureRegistry().getPersistentStoreLifecycleService();
 }
@@ -1397,6 +1437,7 @@ function applyPersistentStoreBundle(bundle: PersistentStoreBundle): ModelCatalog
   sessionMemoryStorage = bundle.sessionMemoryStorage;
   projectMemoryStorage = bundle.projectMemoryStorage;
   characterMemoryStorage = bundle.characterMemoryStorage;
+  companionStorage = bundle.companionStorage;
   auditLogStorage = bundle.auditLogStorage;
   appSettingsStorage = bundle.appSettingsStorage;
   sessions = bundle.sessions;
@@ -1453,6 +1494,7 @@ function closePersistentStores(): void {
     sessionMemoryStorage,
     projectMemoryStorage,
     characterMemoryStorage,
+    companionStorage,
     auditLogStorage,
     appSettingsStorage,
   }, dbPath);
@@ -1461,6 +1503,7 @@ function closePersistentStores(): void {
   sessionMemoryStorage = null;
   projectMemoryStorage = null;
   characterMemoryStorage = null;
+  companionStorage = null;
   auditLogStorage = null;
   auditLogService = null;
   appSettingsStorage = null;
@@ -1471,6 +1514,7 @@ function closePersistentStores(): void {
   sessionMemorySupportService = null;
   characterRuntimeService = null;
   characterUpdateWorkspaceService = null;
+  companionSessionService = null;
   mainBroadcastFacade = null;
   mainCharacterFacade = null;
   mainObservabilityFacade = null;
@@ -1495,6 +1539,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
     sessionMemoryStorage,
     projectMemoryStorage,
     characterMemoryStorage,
+    companionStorage,
     auditLogStorage,
     appSettingsStorage,
   });
@@ -1507,6 +1552,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   sessionMemorySupportService = null;
   characterRuntimeService = null;
   characterUpdateWorkspaceService = null;
+  companionSessionService = null;
   mainBroadcastFacade = null;
   mainCharacterFacade = null;
   mainObservabilityFacade = null;

@@ -5,6 +5,7 @@ import type {
   WithMateWindowApi,
   WithMateWindowCatalogApi,
   WithMateWindowCharacterApi,
+  WithMateWindowCompanionApi,
   WithMateWindowNavigationApi,
   WithMateWindowObservabilityApi,
   WithMateWindowPickerApi,
@@ -16,8 +17,10 @@ import {
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CHARACTERS_CHANGED_EVENT,
+  WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
+  WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
@@ -46,6 +49,7 @@ import {
     WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
     WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
     WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
@@ -252,6 +256,17 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
   };
 }
 
+function createCompanionApi(ipcRenderer: IpcRendererLike): WithMateWindowCompanionApi {
+  return {
+    listCompanionSessionSummaries() {
+      return ipcRenderer.invoke(WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL);
+    },
+    createCompanionSession(input) {
+      return ipcRenderer.invoke(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL, input);
+    },
+  };
+}
+
 function createObservabilityApi(ipcRenderer: IpcRendererLike): Pick<
   WithMateWindowObservabilityApi,
   | "getProviderQuotaTelemetry"
@@ -392,6 +407,9 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
     subscribeOpenSessionWindowIds(listener) {
       return subscribe(ipcRenderer, WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, listener);
     },
+    subscribeCompanionSessionSummaries(listener) {
+      return subscribe(ipcRenderer, WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT, listener);
+    },
   };
 }
 
@@ -455,6 +473,7 @@ export function createWithMateWindowApi(ipcRenderer: IpcRendererLike): WithMateW
     ...createWindowApi(ipcRenderer),
     ...createCatalogApi(ipcRenderer),
     ...createSessionApi(ipcRenderer),
+    ...createCompanionApi(ipcRenderer),
     ...createObservabilityApi(ipcRenderer),
     ...createSettingsApi(ipcRenderer),
     ...createCharacterApi(ipcRenderer),

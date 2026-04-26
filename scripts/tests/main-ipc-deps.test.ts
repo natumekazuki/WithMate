@@ -44,6 +44,8 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
         return null;
       },
       async openPathTarget() {},
+      async openAppLogFolder() {},
+      async openCrashDumpFolder() {},
       async openSessionTerminal() {},
     },
     catalog: {
@@ -71,6 +73,7 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
     },
     sessionQuery: {
       listSessionSummaries: () => [],
+      listCompanionSessionSummaries: () => [],
       listSessionAuditLogs: () => [],
       async listSessionSkills() { return []; },
       async listSessionCustomAgents() { return []; },
@@ -83,6 +86,12 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
       async searchWorkspaceFiles() {
         return [];
       },
+    },
+    companion: {
+      async createCompanionSession() {
+        return {} as never;
+      },
+      listCompanionSessionSummaries: () => [],
     },
     sessionRuntime: {
       getLiveSessionRun: () => null,

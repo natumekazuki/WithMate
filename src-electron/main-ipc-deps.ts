@@ -15,6 +15,7 @@ import type {
 } from "../src/app-state.js";
 import type { CreateCharacterInput } from "../src/character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
+import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
 import type { MemoryManagementSnapshot } from "../src/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
@@ -67,6 +68,7 @@ export type MainIpcSettingsDepsArgs = {
 
 export type MainIpcSessionQueryDepsArgs = {
   listSessionSummaries(): SessionSummary[];
+  listCompanionSessionSummaries(): CompanionSessionSummary[];
   listSessionAuditLogs(sessionId: string): AuditLogEntry[];
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
@@ -75,6 +77,11 @@ export type MainIpcSessionQueryDepsArgs = {
   getDiffPreview(token: string): DiffPreviewPayload | null;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
   searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
+};
+
+export type MainIpcCompanionDepsArgs = {
+  createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
+  listCompanionSessionSummaries(): CompanionSessionSummary[];
 };
 
 export type MainIpcSessionRuntimeDepsArgs = {
@@ -111,6 +118,7 @@ export type CreateMainIpcRegistrationDepsArgs = {
   catalog: MainIpcCatalogDepsArgs;
   settings: MainIpcSettingsDepsArgs;
   sessionQuery: MainIpcSessionQueryDepsArgs;
+  companion: MainIpcCompanionDepsArgs;
   sessionRuntime: MainIpcSessionRuntimeDepsArgs;
   character: MainIpcCharacterDepsArgs;
 };
@@ -164,6 +172,7 @@ export function createMainIpcRegistrationDeps(
     deleteProjectMemoryEntry: args.settings.deleteProjectMemoryEntry,
     deleteCharacterMemoryEntry: args.settings.deleteCharacterMemoryEntry,
     listSessionSummaries: args.sessionQuery.listSessionSummaries,
+    listCompanionSessionSummaries: args.sessionQuery.listCompanionSessionSummaries,
     listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,
     listSessionSkills: args.sessionQuery.listSessionSkills,
     listSessionCustomAgents: args.sessionQuery.listSessionCustomAgents,
@@ -172,6 +181,7 @@ export function createMainIpcRegistrationDeps(
     getDiffPreview: args.sessionQuery.getDiffPreview,
     previewComposerInput: args.sessionQuery.previewComposerInput,
     searchWorkspaceFiles: args.sessionQuery.searchWorkspaceFiles,
+    createCompanionSession: args.companion.createCompanionSession,
     getLiveSessionRun: args.sessionRuntime.getLiveSessionRun,
     getProviderQuotaTelemetry: args.sessionRuntime.getProviderQuotaTelemetry,
     getSessionContextTelemetry: args.sessionRuntime.getSessionContextTelemetry,

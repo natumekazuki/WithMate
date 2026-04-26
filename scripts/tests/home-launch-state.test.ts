@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
 import type { CharacterProfile, SessionSummary } from "../../src/app-state.js";
 import {
+  buildCreateCompanionSessionInputFromLaunchDraft,
   buildCreateSessionInputFromLaunchDraft,
   closeLaunchDraft,
   createClosedLaunchDraft,
@@ -19,6 +21,7 @@ function createCharacter(partial: Partial<CharacterProfile> & Pick<CharacterProf
     iconPath: "icon.png",
     roleMarkdown: "",
     notesMarkdown: "",
+    updatedAt: "",
     themeColors: {
       main: "#000000",
       sub: "#ffffff",
@@ -45,6 +48,7 @@ describe("home-launch-state", () => {
     const opened = openLaunchDraft(
       {
         open: false,
+        mode: "companion",
         title: "keep",
         workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
         providerId: "old",
@@ -56,6 +60,7 @@ describe("home-launch-state", () => {
 
     assert.deepEqual(opened, {
       open: true,
+      mode: "agent",
       title: "",
       workspace: null,
       providerId: "codex",
@@ -65,6 +70,7 @@ describe("home-launch-state", () => {
 
     assert.deepEqual(closeLaunchDraft(opened), {
       open: false,
+      mode: "agent",
       title: "",
       workspace: null,
       providerId: "",
@@ -97,6 +103,7 @@ describe("home-launch-state", () => {
     const input = buildCreateSessionInputFromLaunchDraft({
       draft: {
         open: true,
+        mode: "agent",
         title: "  task  ",
         workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
         providerId: "codex",
@@ -127,6 +134,47 @@ describe("home-launch-state", () => {
         sub: "#ffffff",
       },
       approvalMode: DEFAULT_APPROVAL_MODE,
+      model: "gpt-5.4-mini",
+      reasoningEffort: "medium",
+      customAgentName: "reviewer",
+    });
+  });
+
+  it("launch draft から companion session input を組み立てる", () => {
+    const input = buildCreateCompanionSessionInputFromLaunchDraft({
+      draft: {
+        open: true,
+        mode: "companion",
+        title: "  companion task  ",
+        workspace: { label: "demo", path: "F:/work/demo/src", branch: "main" },
+        providerId: "codex",
+        characterId: "a",
+        characterSearchText: "",
+      },
+      selectedCharacter: createCharacter({ id: "a", name: "Mia" }),
+      selectedProviderId: "codex",
+      approvalMode: DEFAULT_APPROVAL_MODE,
+      codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
+      lastUsedSelection: {
+        model: "gpt-5.4-mini",
+        reasoningEffort: "medium",
+        customAgentName: "reviewer",
+      },
+    });
+
+    assert.deepEqual(input, {
+      provider: "codex",
+      taskTitle: "companion task",
+      workspacePath: "F:/work/demo/src",
+      characterId: "a",
+      character: "Mia",
+      characterIconPath: "icon.png",
+      characterThemeColors: {
+        main: "#000000",
+        sub: "#ffffff",
+      },
+      approvalMode: DEFAULT_APPROVAL_MODE,
+      codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
       model: "gpt-5.4-mini",
       reasoningEffort: "medium",
       customAgentName: "reviewer",

@@ -1,7 +1,7 @@
 # Database Schema
 
 - 作成日: 2026-03-27
-- 更新日: 2026-04-25
+- 更新日: 2026-04-26
 - 対象: WithMate の current 保存構造
 
 ## Goal
@@ -62,6 +62,7 @@ future design だけで未実装のものは、最後に別枠で注記する。
 | Model Catalog | `model_catalog_*` | revision 管理あり |
 | Character Memory | `character_scopes` / `character_memory_entries` | character 単位の関係性記憶 |
 | Characters | `<userData>/characters/` | DB ではなく file system |
+| Companion Mode | `companion_groups` / `companion_sessions` | Git repo root 単位の Companion 作業単位 |
 
 ## Table Summary
 
@@ -78,6 +79,8 @@ future design だけで未実装のものは、最後に別枠で注記する。
 | `project_memory_entries` | `id` | project 単位の durable knowledge |
 | `character_scopes` | `id` | Character Memory の anchor |
 | `character_memory_entries` | `id` | character 単位の関係性記憶 |
+| `companion_groups` | `id` | Companion Mode の repo root 単位の親 |
+| `companion_sessions` | `id` | Companion Mode の 1 chat / 1 branch / 1 worktree 作業単位 |
 
 ## Table Details
 
@@ -527,6 +530,66 @@ JSON カラム:
 ```
 ```
 
+### `companion_groups`
+
+Companion Mode の repo root 単位の親。  
+1 row が 1 Git repo root を表す。
+
+主なカラム:
+
+| Column | Type | Meaning |
+| --- | --- | --- |
+| `id` | `TEXT` | CompanionGroup id |
+| `repo_root` | `TEXT` | Git repo root |
+| `display_name` | `TEXT` | Home 表示用名 |
+| `created_at` | `TEXT` | 作成時刻 |
+| `updated_at` | `TEXT` | 更新時刻 |
+
+補足:
+
+- `repo_root` は unique
+- Companion 起動時に同一 repo root の group があれば再利用する
+
+### `companion_sessions`
+
+Companion Mode の作業単位。  
+1 row が 1 CompanionSession を表す。
+
+主なカラム:
+
+| Column | Type | Meaning |
+| --- | --- | --- |
+| `id` | `TEXT` | CompanionSession id |
+| `group_id` | `TEXT` | `companion_groups.id` |
+| `task_title` | `TEXT` | session title |
+| `status` | `TEXT` | `active` / `merged` / `discarded` / `recovery-required` |
+| `repo_root` | `TEXT` | 作業対象 Git repo root |
+| `focus_path` | `TEXT` | 起動元 workspace が repo root 配下の sub directory だった場合の相対 path |
+| `target_branch` | `TEXT` | merge 対象 branch |
+| `companion_branch` | `TEXT` | Companion 用 branch 名 |
+| `worktree_path` | `TEXT` | shadow worktree 予定 path |
+| `provider` | `TEXT` | coding provider |
+| `catalog_revision` | `INTEGER` | model catalog revision |
+| `model` | `TEXT` | model |
+| `reasoning_effort` | `TEXT` | reasoning depth |
+| `custom_agent_name` | `TEXT` | Copilot custom agent 名 |
+| `approval_mode` | `TEXT` | approval mode |
+| `codex_sandbox_mode` | `TEXT` | Codex sandbox mode |
+| `character_id` | `TEXT` | character id |
+| `character_name` | `TEXT` | session snapshot としての character 名 |
+| `character_icon_path` | `TEXT` | session snapshot としての icon path |
+| `character_theme_main` | `TEXT` | session snapshot のテーマ色 main |
+| `character_theme_sub` | `TEXT` | session snapshot のテーマ色 sub |
+| `created_at` | `TEXT` | 作成時刻 |
+| `updated_at` | `TEXT` | 更新時刻 |
+
+補足:
+
+- current 実装では CompanionSession の作成と Home での active 一覧表示までを扱う
+- snapshot ref、shadow worktree 実体作成、selected files merge / discard は future slice
+- `companion_branch` と `worktree_path` は DB id 由来の safe id で生成する
+- `companion_sessions.group_id` は `companion_groups(id) ON DELETE CASCADE`
+
 ## DB Outside: Characters
 
 character は SQLite ではなく file system に保存する。
@@ -606,6 +669,8 @@ Settings の `DB を初期化` で対象にできるのは次の 6 系統。
 - `project_memory_entries`
 - `character_scopes`
 - `character_memory_entries`
+- `companion_groups`
+- `companion_sessions`
 - `<userData>/characters/`
 
 ### Future design only

@@ -8,6 +8,7 @@ import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
+  WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
@@ -31,6 +32,7 @@ import {
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
+  WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
@@ -214,12 +216,18 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     async openSessionTerminal() {
       calls.push("openTerminal");
     },
+    listCompanionSessionSummaries: () => [],
+    async createCompanionSession() {
+      calls.push("createCompanion");
+      return {} as never;
+    },
   });
 
     assert.ok(handlers.has("withmate:open-session"));
     assert.ok(handlers.has("withmate:list-session-summaries"));
     assert.ok(handlers.has("withmate:get-app-settings"));
   assert.ok(handlers.has("withmate:run-session-turn"));
+  assert.ok(handlers.has("withmate:create-companion-session"));
 
   await handlers.get("withmate:open-session")?.({}, "session-1");
   await handlers.get("withmate:open-memory-management-window")?.({});
@@ -299,6 +307,8 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async openAppLogFolder() {},
     async openCrashDumpFolder() {},
     async openSessionTerminal() {},
+    listCompanionSessionSummaries: () => [],
+    async createCompanionSession() { return {} as never; },
   });
 
   const expectedChannels = [
@@ -329,6 +339,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
      WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
      WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+    WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
     WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
     WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
     WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
@@ -344,6 +355,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
     WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
     WITHMATE_CREATE_SESSION_CHANNEL,
+    WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
     WITHMATE_UPDATE_SESSION_CHANNEL,
     WITHMATE_DELETE_SESSION_CHANNEL,
     WITHMATE_RUN_SESSION_TURN_CHANNEL,

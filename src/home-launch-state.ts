@@ -1,5 +1,7 @@
 import type { ApprovalMode } from "./approval-mode.js";
 import type { CharacterProfile, CreateSessionInput, SessionSummary } from "./app-state.js";
+import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
+import type { CreateCompanionSessionInput } from "./companion-state.js";
 import { inferWorkspaceFromPath, type LaunchWorkspace } from "./home-launch-projection.js";
 
 type LastUsedSessionSelectionSource = Pick<
@@ -9,6 +11,7 @@ type LastUsedSessionSelectionSource = Pick<
 
 export type HomeLaunchDraft = {
   open: boolean;
+  mode: "agent" | "companion";
   title: string;
   workspace: LaunchWorkspace | null;
   providerId: string;
@@ -19,6 +22,7 @@ export type HomeLaunchDraft = {
 export function createClosedLaunchDraft(characterId = ""): HomeLaunchDraft {
   return {
     open: false,
+    mode: "agent",
     title: "",
     workspace: null,
     providerId: "",
@@ -45,6 +49,7 @@ export function openLaunchDraft(draft: HomeLaunchDraft, defaultProviderId: strin
   return {
     ...draft,
     open: true,
+    mode: "agent",
     title: "",
     workspace: null,
     providerId: defaultProviderId,
@@ -56,10 +61,47 @@ export function closeLaunchDraft(draft: HomeLaunchDraft): HomeLaunchDraft {
   return {
     ...draft,
     open: false,
+    mode: "agent",
     title: "",
     workspace: null,
     providerId: "",
     characterSearchText: "",
+  };
+}
+
+export function buildCreateCompanionSessionInputFromLaunchDraft({
+  draft,
+  selectedCharacter,
+  selectedProviderId,
+  approvalMode,
+  codexSandboxMode,
+  lastUsedSelection,
+}: {
+  draft: HomeLaunchDraft;
+  selectedCharacter: CharacterProfile | null;
+  selectedProviderId: string | null;
+  approvalMode: ApprovalMode;
+  codexSandboxMode: CodexSandboxMode;
+  lastUsedSelection?: Pick<CreateSessionInput, "model" | "reasoningEffort" | "customAgentName"> | null;
+}): CreateCompanionSessionInput | null {
+  const normalizedTitle = draft.title.trim();
+  if (!normalizedTitle || !draft.workspace || !selectedCharacter || !selectedProviderId) {
+    return null;
+  }
+
+  return {
+    provider: selectedProviderId,
+    taskTitle: normalizedTitle,
+    workspacePath: draft.workspace.path,
+    characterId: selectedCharacter.id,
+    character: selectedCharacter.name,
+    characterIconPath: selectedCharacter.iconPath,
+    characterThemeColors: selectedCharacter.themeColors,
+    approvalMode,
+    codexSandboxMode,
+    model: lastUsedSelection?.model,
+    reasoningEffort: lastUsedSelection?.reasoningEffort,
+    customAgentName: lastUsedSelection?.customAgentName,
   };
 }
 

@@ -8,6 +8,8 @@ import {
 } from "./provider-settings-state.js";
 import { type SessionSummary } from "./session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "./approval-mode.js";
+import { DEFAULT_CODEX_SANDBOX_MODE } from "./codex-sandbox-mode.js";
+import { type CompanionSessionSummary } from "./companion-state.js";
 import {
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
@@ -25,6 +27,7 @@ import {
 } from "./home-character-projection.js";
 import {
   buildCreateSessionInputFromLaunchDraft,
+  buildCreateCompanionSessionInputFromLaunchDraft,
   closeLaunchDraft,
   createClosedLaunchDraft,
   openLaunchDraft,
@@ -116,6 +119,7 @@ export default function HomeApp() {
   const isMemoryWindowMode = homeWindowMode === "memory";
   const usesMemoryManagementWindow = isSettingsWindowMode || isMemoryWindowMode;
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [openSessionWindowIds, setOpenSessionWindowIds] = useState<string[]>([]);
   const [sessionSearchText, setSessionSearchText] = useState("");
@@ -163,6 +167,11 @@ export default function HomeApp() {
         setSessions(nextSessions);
       }
     });
+    void withmateApi.listCompanionSessionSummaries().then((nextSessions) => {
+      if (active) {
+        setCompanionSessions(nextSessions);
+      }
+    });
     void Promise.all([withmateApi.getAppSettings(), withmateApi.getModelCatalog(null)]).then(([settings, snapshot]) => {
       if (!active) {
         return;
@@ -206,6 +215,11 @@ export default function HomeApp() {
         setSessions(nextSessions);
       }
     });
+    const unsubscribeCompanionSessions = withmateApi.subscribeCompanionSessionSummaries((nextSessions) => {
+      if (active) {
+        setCompanionSessions(nextSessions);
+      }
+    });
 
     const unsubscribeCharacters = withmateApi.subscribeCharacters((nextCharacters) => {
       if (!active) {
@@ -230,6 +244,7 @@ export default function HomeApp() {
     return () => {
       active = false;
       unsubscribeSessions();
+      unsubscribeCompanionSessions();
       unsubscribeCharacters();
       unsubscribeModelCatalog();
       unsubscribeAppSettings();
@@ -365,6 +380,28 @@ export default function HomeApp() {
 
   const handleStartSession = async () => {
     const lastUsedSelection = resolveLastUsedSessionSelection(sessions, selectedLaunchProvider?.id ?? null);
+    if (launchDraft.mode === "companion") {
+      const companionInput = buildCreateCompanionSessionInputFromLaunchDraft({
+        draft: launchDraft,
+        selectedCharacter,
+        selectedProviderId: selectedLaunchProvider?.id ?? null,
+        approvalMode: DEFAULT_APPROVAL_MODE,
+        codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
+        lastUsedSelection,
+      });
+      if (!companionInput) {
+        return;
+      }
+
+      const createdSession = await withWithMateApi((api) => api.createCompanionSession(companionInput));
+      if (!createdSession) {
+        return;
+      }
+      setCompanionSessions((current) => [createdSession, ...current.filter((session) => session.id !== createdSession.id)]);
+      closeLaunchDialog();
+      return;
+    }
+
     const sessionInput = buildCreateSessionInputFromLaunchDraft({
       draft: launchDraft,
       selectedCharacter,
@@ -794,6 +831,7 @@ export default function HomeApp() {
       <main className="home-layout rise-2">
         <HomeRecentSessionsPanel
           filteredSessionEntries={filteredSessionEntries}
+          companionSessions={companionSessions}
           normalizedSessionSearch={normalizedSessionSearch}
           searchText={sessionSearchText}
           searchIcon={renderSearchIcon()}
@@ -825,6 +863,7 @@ export default function HomeApp() {
 
       <HomeLaunchDialog
         open={launchDraft.open}
+        mode={launchDraft.mode}
         title={launchDraft.title}
         workspace={launchDraft.workspace}
         launchWorkspacePathLabel={launchWorkspacePathLabel}
@@ -838,6 +877,7 @@ export default function HomeApp() {
         searchIcon={renderSearchIcon()}
         onClose={closeLaunchDialog}
         onChangeTitle={(value) => setLaunchDraft((current) => ({ ...current, title: value }))}
+        onChangeMode={(mode) => setLaunchDraft((current) => ({ ...current, mode }))}
         onBrowseWorkspace={() => void handleBrowseWorkspace()}
         onSelectProvider={(providerId) => setLaunchDraft((current) => ({ ...current, providerId }))}
         onChangeCharacterSearch={(value) => setLaunchDraft((current) => ({ ...current, characterSearchText: value }))}

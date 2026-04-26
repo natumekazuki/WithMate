@@ -16,6 +16,7 @@ import type {
 } from "../src/app-state.js";
 import type { CreateCharacterInput } from "../src/character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
+import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
 import type { MemoryManagementSnapshot } from "../src/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
@@ -25,6 +26,7 @@ import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
+  WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
@@ -48,6 +50,7 @@ import {
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
+  WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
     WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
     WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
     WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
@@ -104,6 +107,7 @@ export type MainIpcRegistrationDeps = {
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   listSessionSummaries(): SessionSummary[];
+  listCompanionSessionSummaries(): CompanionSessionSummary[];
   listSessionAuditLogs(sessionId: string): AuditLogEntry[];
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
@@ -137,6 +141,7 @@ export type MainIpcRegistrationDeps = {
   extractCharacterUpdateMemory(characterId: string): Promise<CharacterUpdateMemoryExtract>;
   createCharacterUpdateSession(characterId: string, providerId: string): Promise<Session>;
   createSession(input: CreateSessionInput): Session;
+  createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
   updateSession(session: Session): Session;
   deleteSession(sessionId: string): void;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
@@ -203,6 +208,7 @@ type MainIpcSettingsDeps = Pick<
 type MainIpcSessionQueryDeps = Pick<
   MainIpcRegistrationDeps,
   | "listSessionSummaries"
+  | "listCompanionSessionSummaries"
   | "listSessionAuditLogs"
   | "listSessionSkills"
   | "listSessionCustomAgents"
@@ -211,6 +217,12 @@ type MainIpcSessionQueryDeps = Pick<
   | "getDiffPreview"
   | "previewComposerInput"
   | "searchWorkspaceFiles"
+>;
+
+type MainIpcCompanionDeps = Pick<
+  MainIpcRegistrationDeps,
+  | "createCompanionSession"
+  | "listCompanionSessionSummaries"
 >;
 
 type MainIpcSessionRuntimeDeps = Pick<
@@ -326,6 +338,7 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
 
 function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSessionQueryDeps): void {
   ipcMain.handle(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL, () => deps.listSessionSummaries());
+  ipcMain.handle(WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL, () => deps.listCompanionSessionSummaries());
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => deps.listSessionAuditLogs(sessionId));
   ipcMain.handle(WITHMATE_LIST_SESSION_SKILLS_CHANNEL, async (_event, sessionId: string) => deps.listSessionSkills(sessionId));
   ipcMain.handle(WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL, async (_event, sessionId: string) =>
@@ -349,6 +362,12 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
   );
   ipcMain.handle(WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL, (_event, sessionId: string, query: string) =>
     deps.searchWorkspaceFiles(sessionId, query),
+  );
+}
+
+function registerCompanionHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCompanionDeps): void {
+  ipcMain.handle(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL, async (_event, input: CreateCompanionSessionInput) =>
+    deps.createCompanionSession(input),
   );
 }
 
@@ -438,6 +457,7 @@ export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrat
   registerCatalogHandlers(wrappedIpcMain, deps);
   registerSettingsHandlers(wrappedIpcMain, deps);
   registerSessionQueryHandlers(wrappedIpcMain, deps);
+  registerCompanionHandlers(wrappedIpcMain, deps);
   registerSessionRuntimeHandlers(wrappedIpcMain, deps);
   registerCharacterHandlers(wrappedIpcMain, deps);
   ipcMain.on(WITHMATE_RENDERER_LOG_CHANNEL, (event, input: RendererLogInput) => {

@@ -17,8 +17,9 @@ import type {
   SessionContextTelemetry,
     RunSessionTurnRequest,
     Session,
-    SessionSummary,
-  } from "./app-state.js";
+  SessionSummary,
+} from "./app-state.js";
+import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "./companion-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "./character-update-state.js";
 import type { MemoryManagementSnapshot } from "./memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
@@ -65,6 +66,11 @@ export type WithMateWindowSessionApi = {
   getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): Promise<void>;
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): Promise<void>;
+};
+
+export type WithMateWindowCompanionApi = {
+  listCompanionSessionSummaries(): Promise<CompanionSessionSummary[]>;
+  createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
 };
 
 export type WithMateWindowObservabilityApi = {
@@ -121,12 +127,14 @@ export type WithMateWindowSubscriptionApi = {
     ) => void,
   ): () => void;
   subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
+  subscribeCompanionSessionSummaries(listener: (sessions: CompanionSessionSummary[]) => void): () => void;
 };
 
 export type WithMateWindowApi =
   & WithMateWindowNavigationApi
   & WithMateWindowCatalogApi
   & WithMateWindowSessionApi
+  & WithMateWindowCompanionApi
   & WithMateWindowObservabilityApi
   & WithMateWindowSettingsApi
   & WithMateWindowCharacterApi

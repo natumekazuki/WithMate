@@ -5,6 +5,7 @@ import type { Session } from "../src/session-state.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { CharacterMemoryStorage } from "./character-memory-storage.js";
+import { CompanionStorage } from "./companion-storage.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { ProjectMemoryStorage } from "./project-memory-storage.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
@@ -21,6 +22,7 @@ export type PersistentStoreBundle = {
   sessionMemoryStorage: SessionMemoryStorage;
   projectMemoryStorage: ProjectMemoryStorage;
   characterMemoryStorage: CharacterMemoryStorage;
+  companionStorage: CompanionStorage;
   auditLogStorage: AuditLogStorage;
   appSettingsStorage: AppSettingsStorage;
   activeModelCatalog: ModelCatalogSnapshot;
@@ -40,6 +42,7 @@ type PersistentStoreLifecycleDeps = {
   createSessionMemoryStorage(dbPath: string): SessionMemoryStorage;
   createProjectMemoryStorage(dbPath: string): ProjectMemoryStorage;
   createCharacterMemoryStorage(dbPath: string): CharacterMemoryStorage;
+  createCompanionStorage(dbPath: string): CompanionStorage;
   createAuditLogStorage(dbPath: string): AuditLogStorage;
   createAppSettingsStorage(dbPath: string): AppSettingsStorage;
   onBeforeClose(): void;
@@ -57,6 +60,7 @@ export class PersistentStoreLifecycleService {
     const sessionMemoryStorage = this.deps.createSessionMemoryStorage(dbPath);
     const projectMemoryStorage = this.deps.createProjectMemoryStorage(dbPath);
     const characterMemoryStorage = this.deps.createCharacterMemoryStorage(dbPath);
+    const companionStorage = this.deps.createCompanionStorage(dbPath);
     const auditLogStorage = this.deps.createAuditLogStorage(dbPath);
     const appSettingsStorage = this.deps.createAppSettingsStorage(dbPath);
     const sessions = sessionStorage.listSessions();
@@ -67,6 +71,7 @@ export class PersistentStoreLifecycleService {
       sessionMemoryStorage,
       projectMemoryStorage,
       characterMemoryStorage,
+      companionStorage,
       auditLogStorage,
       appSettingsStorage,
       activeModelCatalog,
@@ -83,6 +88,7 @@ export class PersistentStoreLifecycleService {
       bundle.sessionMemoryStorage,
       bundle.projectMemoryStorage,
       bundle.characterMemoryStorage,
+      bundle.companionStorage,
       bundle.auditLogStorage,
       bundle.appSettingsStorage,
     ];
@@ -125,6 +131,7 @@ export function createPersistentStoreLifecycleService(): PersistentStoreLifecycl
     createSessionMemoryStorage: (dbPath) => new SessionMemoryStorage(dbPath),
     createProjectMemoryStorage: (dbPath) => new ProjectMemoryStorage(dbPath),
     createCharacterMemoryStorage: (dbPath) => new CharacterMemoryStorage(dbPath),
+    createCompanionStorage: (dbPath) => new CompanionStorage(dbPath),
     createAuditLogStorage: (dbPath) => new AuditLogStorage(dbPath),
     createAppSettingsStorage: (dbPath) => new AppSettingsStorage(dbPath),
     onBeforeClose: () => {},
