@@ -70,7 +70,9 @@ describe("CompanionReviewService", () => {
       await writeFile(path.join(repoRoot, "README.md"), "hello\n", "utf8");
       await git(repoRoot, ["add", "README.md"]);
       await git(repoRoot, ["commit", "-m", "initial"]);
-      const baseSnapshotCommit = await git(repoRoot, ["rev-parse", "HEAD"]);
+      const headCommit = await git(repoRoot, ["rev-parse", "HEAD"]);
+      const headTree = await git(repoRoot, ["rev-parse", "HEAD^{tree}"]);
+      const baseSnapshotCommit = await git(repoRoot, ["commit-tree", headTree, "-p", headCommit, "-m", "snapshot"]);
       await git(repoRoot, ["branch", "withmate/companion/session-1", baseSnapshotCommit]);
       await git(repoRoot, ["worktree", "add", worktreePath, "withmate/companion/session-1"]);
       await writeFile(path.join(worktreePath, "README.md"), "hello\nreview\n", "utf8");
@@ -90,6 +92,7 @@ describe("CompanionReviewService", () => {
       const snapshot = await service.getReviewSnapshot(session.id);
 
       assert.ok(snapshot);
+      assert.equal(snapshot.mergeReadiness.status, "ready");
       assert.deepEqual(snapshot.changedFiles.map((file) => [file.kind, file.path]), [
         ["add", "new-file.txt"],
         ["edit", "README.md"],
@@ -118,7 +121,9 @@ describe("CompanionReviewService", () => {
       await writeFile(path.join(repoRoot, "README.md"), "hello\n", "utf8");
       await git(repoRoot, ["add", "README.md"]);
       await git(repoRoot, ["commit", "-m", "initial"]);
-      const baseSnapshotCommit = await git(repoRoot, ["rev-parse", "HEAD"]);
+      const headCommit = await git(repoRoot, ["rev-parse", "HEAD"]);
+      const headTree = await git(repoRoot, ["rev-parse", "HEAD^{tree}"]);
+      const baseSnapshotCommit = await git(repoRoot, ["commit-tree", headTree, "-p", headCommit, "-m", "snapshot"]);
       await git(repoRoot, ["branch", "withmate/companion/session-1", baseSnapshotCommit]);
       await git(repoRoot, ["worktree", "add", worktreePath, "withmate/companion/session-1"]);
       await writeFile(path.join(worktreePath, "README.md"), "hello\nmerged\n", "utf8");
@@ -162,7 +167,9 @@ describe("CompanionReviewService", () => {
       await writeFile(path.join(repoRoot, "README.md"), "hello\n", "utf8");
       await git(repoRoot, ["add", "README.md"]);
       await git(repoRoot, ["commit", "-m", "initial"]);
-      const baseSnapshotCommit = await git(repoRoot, ["rev-parse", "HEAD"]);
+      const headCommit = await git(repoRoot, ["rev-parse", "HEAD"]);
+      const headTree = await git(repoRoot, ["rev-parse", "HEAD^{tree}"]);
+      const baseSnapshotCommit = await git(repoRoot, ["commit-tree", headTree, "-p", headCommit, "-m", "snapshot"]);
       await git(repoRoot, ["branch", "withmate/companion/session-1", baseSnapshotCommit]);
       await git(repoRoot, ["worktree", "add", worktreePath, "withmate/companion/session-1"]);
       await writeFile(path.join(repoRoot, "README.md"), "target drift\n", "utf8");
@@ -181,7 +188,7 @@ describe("CompanionReviewService", () => {
 
       await assert.rejects(
         () => service.mergeSelectedFiles(session.id, ["README.md"]),
-        /base から変更されている/,
+        /target workspace が base snapshot から変わっている/,
       );
       assert.equal(session.status, "active");
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "target drift\n");
@@ -205,7 +212,9 @@ describe("CompanionReviewService", () => {
       await writeFile(path.join(repoRoot, "README.md"), "hello\n", "utf8");
       await git(repoRoot, ["add", "README.md"]);
       await git(repoRoot, ["commit", "-m", "initial"]);
-      const baseSnapshotCommit = await git(repoRoot, ["rev-parse", "HEAD"]);
+      const targetBaseHead = await git(repoRoot, ["rev-parse", "HEAD"]);
+      const targetBaseTree = await git(repoRoot, ["rev-parse", "HEAD^{tree}"]);
+      const baseSnapshotCommit = await git(repoRoot, ["commit-tree", targetBaseTree, "-p", targetBaseHead, "-m", "snapshot"]);
       await git(repoRoot, ["branch", "withmate/companion/session-1", baseSnapshotCommit]);
       await git(repoRoot, ["worktree", "add", worktreePath, "withmate/companion/session-1"]);
       await writeFile(path.join(worktreePath, "README.md"), "discarded\n", "utf8");
@@ -226,6 +235,100 @@ describe("CompanionReviewService", () => {
       assert.equal(discarded.status, "discarded");
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\n");
       await assert.rejects(() => stat(worktreePath));
+    } finally {
+      await git(repoRoot, ["worktree", "remove", "--force", worktreePath]).catch(() => undefined);
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("target branch が base snapshot parent から進んでいる場合は readiness を blocked にする", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-review-"));
+    const repoRoot = path.join(tempDirectory, "repo");
+    const worktreePath = path.join(tempDirectory, "worktree");
+
+    try {
+      await mkdir(repoRoot, { recursive: true });
+      await git(repoRoot, ["init", "-b", "main"]);
+      await git(repoRoot, ["config", "user.name", "WithMate Test"]);
+      await git(repoRoot, ["config", "user.email", "withmate@example.invalid"]);
+      await writeFile(path.join(repoRoot, "README.md"), "hello\n", "utf8");
+      await git(repoRoot, ["add", "README.md"]);
+      await git(repoRoot, ["commit", "-m", "initial"]);
+      const targetBaseHead = await git(repoRoot, ["rev-parse", "HEAD"]);
+      const targetBaseTree = await git(repoRoot, ["rev-parse", "HEAD^{tree}"]);
+      const baseSnapshotCommit = await git(repoRoot, ["commit-tree", targetBaseTree, "-p", targetBaseHead, "-m", "snapshot"]);
+      await git(repoRoot, ["branch", "withmate/companion/session-1", baseSnapshotCommit]);
+      await git(repoRoot, ["worktree", "add", worktreePath, "withmate/companion/session-1"]);
+      await writeFile(path.join(worktreePath, "README.md"), "hello\nreview\n", "utf8");
+      await writeFile(path.join(repoRoot, "target.txt"), "target\n", "utf8");
+      await git(repoRoot, ["add", "target.txt"]);
+      await git(repoRoot, ["commit", "-m", "target moved"]);
+
+      let session = createCompanionSession({ repoRoot, worktreePath, baseSnapshotCommit });
+      const service = new CompanionReviewService({
+        getCompanionSession(sessionId) {
+          return sessionId === session.id ? session : null;
+        },
+        updateCompanionSession(updatedSession) {
+          session = updatedSession;
+          return session;
+        },
+      });
+
+      const snapshot = await service.getReviewSnapshot(session.id);
+
+      assert.equal(snapshot?.mergeReadiness.status, "blocked");
+      assert.ok(snapshot?.mergeReadiness.blockers.some((blocker) => blocker.kind === "target-branch-drift"));
+      await assert.rejects(
+        () => service.mergeSelectedFiles(session.id, ["README.md"]),
+        /target branch が Companion 作成時点から進んでいる/,
+      );
+    } finally {
+      await git(repoRoot, ["worktree", "remove", "--force", worktreePath]).catch(() => undefined);
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("selected path 以外でも target workspace が base から変わっている場合は merge を止める", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-review-"));
+    const repoRoot = path.join(tempDirectory, "repo");
+    const worktreePath = path.join(tempDirectory, "worktree");
+
+    try {
+      await mkdir(repoRoot, { recursive: true });
+      await git(repoRoot, ["init", "-b", "main"]);
+      await git(repoRoot, ["config", "user.name", "WithMate Test"]);
+      await git(repoRoot, ["config", "user.email", "withmate@example.invalid"]);
+      await writeFile(path.join(repoRoot, "README.md"), "hello\n", "utf8");
+      await writeFile(path.join(repoRoot, "other.txt"), "base\n", "utf8");
+      await git(repoRoot, ["add", "README.md", "other.txt"]);
+      await git(repoRoot, ["commit", "-m", "initial"]);
+      const baseSnapshotCommit = await git(repoRoot, ["rev-parse", "HEAD"]);
+      await git(repoRoot, ["branch", "withmate/companion/session-1", baseSnapshotCommit]);
+      await git(repoRoot, ["worktree", "add", worktreePath, "withmate/companion/session-1"]);
+      await writeFile(path.join(worktreePath, "README.md"), "hello\nreview\n", "utf8");
+      await writeFile(path.join(repoRoot, "other.txt"), "dirty\n", "utf8");
+
+      let session = createCompanionSession({ repoRoot, worktreePath, baseSnapshotCommit });
+      const service = new CompanionReviewService({
+        getCompanionSession(sessionId) {
+          return sessionId === session.id ? session : null;
+        },
+        updateCompanionSession(updatedSession) {
+          session = updatedSession;
+          return session;
+        },
+      });
+
+      const snapshot = await service.getReviewSnapshot(session.id);
+
+      assert.equal(snapshot?.mergeReadiness.status, "blocked");
+      assert.ok(snapshot?.mergeReadiness.blockers.some((blocker) => blocker.paths?.includes("other.txt")));
+      await assert.rejects(
+        () => service.mergeSelectedFiles(session.id, ["README.md"]),
+        /target workspace が base snapshot から変わっている/,
+      );
+      assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\n");
     } finally {
       await git(repoRoot, ["worktree", "remove", "--force", worktreePath]).catch(() => undefined);
       await rm(tempDirectory, { recursive: true, force: true });

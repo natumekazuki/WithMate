@@ -6614,6 +6614,68 @@ button:disabled {
   color: #fda4af;
 }
 
+.companion-review-readiness {
+  display: grid;
+  grid-template-columns: minmax(160px, auto) minmax(0, 1fr);
+  gap: 8px 18px;
+  padding: 12px 22px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--panel-raised) 88%, #000 12%);
+}
+
+.companion-review-readiness strong {
+  display: block;
+  margin-top: 2px;
+  text-transform: uppercase;
+}
+
+.companion-review-readiness.ready strong {
+  color: #86efac;
+}
+
+.companion-review-readiness.warning strong {
+  color: #fde68a;
+}
+
+.companion-review-readiness.blocked strong {
+  color: #fda4af;
+}
+
+.companion-review-readiness-details {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: start;
+  gap: 8px 14px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+.companion-review-issues {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.companion-review-issues li {
+  display: grid;
+  gap: 3px;
+  color: #fda4af;
+  font-size: 0.88rem;
+}
+
+.companion-review-issues.warning li {
+  color: #fde68a;
+}
+
+.companion-review-issues small {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
 .companion-review-layout {
   display: grid;
   grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);

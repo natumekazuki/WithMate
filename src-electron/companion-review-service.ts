@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
 import type { ChangedFile } from "../src/runtime-state.js";
-import type { CompanionReviewSnapshot } from "../src/companion-review-state.js";
+import type { CompanionMergeReadiness, CompanionMergeReadinessIssue, CompanionReviewSnapshot } from "../src/companion-review-state.js";
 import type { CompanionSession } from "../src/companion-state.js";
 import { currentTimestampLabel } from "../src/time-state.js";
 import { cleanupCompanionWorkspaceArtifacts } from "./companion-git.js";
@@ -17,6 +18,10 @@ type GitCommandResult = {
   stderr: string;
 };
 
+type GitCommandOptions = {
+  env?: NodeJS.ProcessEnv;
+};
+
 type ChangedPath = {
   path: string;
   kind: ChangedFile["kind"];
@@ -27,33 +32,18 @@ export type CompanionReviewServiceDeps = {
   updateCompanionSession(session: CompanionSession): CompanionSession;
 };
 
-async function runGit(cwd: string, args: string[]): Promise<GitCommandResult> {
+async function runGit(cwd: string, args: string[], options: GitCommandOptions = {}): Promise<GitCommandResult> {
   try {
     const result = await execFileAsync("git", ["-C", cwd, ...args], {
       encoding: "buffer",
       windowsHide: true,
       maxBuffer: 10 * 1024 * 1024,
+      env: options.env,
     });
     return {
       stdout: result.stdout.toString("utf8"),
       stderr: result.stderr.toString("utf8"),
     };
-  } catch (error) {
-    const candidate = error as { stdout?: Buffer | string; stderr?: Buffer | string; message?: string };
-    const stderr = Buffer.isBuffer(candidate.stderr) ? candidate.stderr.toString("utf8") : candidate.stderr;
-    const stdout = Buffer.isBuffer(candidate.stdout) ? candidate.stdout.toString("utf8") : candidate.stdout;
-    throw new Error(stderr?.trim() || stdout?.trim() || candidate.message || "git command failed");
-  }
-}
-
-async function runGitBuffer(cwd: string, args: string[]): Promise<Buffer> {
-  try {
-    const result = await execFileAsync("git", ["-C", cwd, ...args], {
-      encoding: "buffer",
-      windowsHide: true,
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    return result.stdout;
   } catch (error) {
     const candidate = error as { stdout?: Buffer | string; stderr?: Buffer | string; message?: string };
     const stderr = Buffer.isBuffer(candidate.stderr) ? candidate.stderr.toString("utf8") : candidate.stderr;
@@ -119,14 +109,6 @@ async function readGitFile(repoRoot: string, ref: string, filePath: string): Pro
   }
 }
 
-async function readGitFileBuffer(repoRoot: string, ref: string, filePath: string): Promise<Buffer | null> {
-  try {
-    return await runGitBuffer(repoRoot, ["show", `${ref}:${filePath}`]);
-  } catch {
-    return null;
-  }
-}
-
 async function readWorktreeFile(worktreePath: string, filePath: string): Promise<string | null> {
   try {
     return await readFile(path.join(worktreePath, filePath), "utf8");
@@ -135,19 +117,12 @@ async function readWorktreeFile(worktreePath: string, filePath: string): Promise
   }
 }
 
-async function readWorktreeFileBuffer(worktreePath: string, filePath: string): Promise<Buffer | null> {
-  try {
-    return await readFile(path.join(worktreePath, filePath));
-  } catch {
-    return null;
+function toIssuePaths(changes: ChangedPath[]): string[] | undefined {
+  const paths = changes.slice(0, 8).map((change) => change.path);
+  if (changes.length > paths.length) {
+    paths.push(`ほか ${changes.length - paths.length} 件`);
   }
-}
-
-function buffersEqual(left: Buffer | null, right: Buffer | null): boolean {
-  if (left === null || right === null) {
-    return left === right;
-  }
-  return left.equals(right);
+  return paths.length > 0 ? paths : undefined;
 }
 
 export class CompanionReviewService {
@@ -161,10 +136,15 @@ export class CompanionReviewService {
 
     const changedPaths = await this.resolveChangedPaths(session);
     const changedFiles = await Promise.all(changedPaths.map((change) => this.buildChangedFile(session, change)));
+    const mergeReadiness = await this.evaluateMergeReadiness(
+      session,
+      changedPaths.map((change) => change.path),
+    );
 
     return {
       session,
       changedFiles,
+      mergeReadiness,
       generatedAt: currentTimestampLabel(),
       warnings: [],
     };
@@ -191,7 +171,11 @@ export class CompanionReviewService {
       return change;
     });
 
-    await Promise.all(selectedChanges.map((change) => this.assertTargetPathMatchesBase(session, change.path)));
+    const readiness = await this.evaluateMergeReadiness(session, normalizedSelectedPaths);
+    if (readiness.blockers.length > 0) {
+      throw new Error(readiness.blockers.map((blocker) => blocker.message).join("\n"));
+    }
+
     for (const change of selectedChanges) {
       await this.applySelectedChange(session, change);
     }
@@ -261,6 +245,151 @@ export class CompanionReviewService {
     return [...changes.values()].sort((left, right) => left.path.localeCompare(right.path));
   }
 
+  private async evaluateMergeReadiness(
+    session: CompanionSession,
+    selectedPaths: string[],
+  ): Promise<CompanionMergeReadiness> {
+    const blockers: CompanionMergeReadinessIssue[] = [];
+    const warnings: CompanionMergeReadinessIssue[] = [];
+
+    if (session.status !== "active") {
+      blockers.push({
+        kind: "lifecycle",
+        message: "active ではない CompanionSession は merge できないよ。",
+      });
+    }
+    if (session.runState === "running") {
+      blockers.push({
+        kind: "lifecycle",
+        message: "Companion が実行中なので merge できないよ。",
+      });
+    }
+
+    const baseParent = await this.resolveBaseSnapshotParent(session);
+    const targetHead = await this.resolveTargetHead(session);
+    if (baseParent && targetHead && baseParent !== targetHead) {
+      blockers.push({
+        kind: "target-branch-drift",
+        message: "target branch が Companion 作成時点から進んでいるため merge できないよ。",
+      });
+    }
+
+    const targetTree = await this.captureTargetWorktreeTree(session);
+    const baseTree = await this.resolveCommitTree(session.repoRoot, session.baseSnapshotCommit);
+    if (targetTree && baseTree && targetTree !== baseTree) {
+      const dirtyPaths = await this.resolveTreeDiffPaths(session.repoRoot, baseTree, targetTree);
+      blockers.push({
+        kind: "target-worktree-dirty",
+        message: "target workspace が base snapshot から変わっているため merge できないよ。",
+        paths: toIssuePaths(dirtyPaths),
+      });
+    }
+
+    if (selectedPaths.length > 0) {
+      try {
+        await this.simulateSelectedFilesMerge(session, selectedPaths);
+      } catch (error) {
+        blockers.push({
+          kind: "merge-simulation",
+          message: error instanceof Error ? error.message : "merge simulation に失敗したよ。",
+        });
+      }
+    } else {
+      warnings.push({
+        kind: "merge-simulation",
+        message: "merge 対象 file が選択されていないよ。",
+      });
+    }
+
+    return {
+      status: blockers.length > 0 ? "blocked" : warnings.length > 0 ? "warning" : "ready",
+      blockers,
+      warnings,
+      targetHead,
+      baseParent,
+      simulatedAt: currentTimestampLabel(),
+    };
+  }
+
+  private async resolveBaseSnapshotParent(session: CompanionSession): Promise<string> {
+    try {
+      return (await runGit(session.repoRoot, ["rev-parse", `${session.baseSnapshotCommit}^`])).stdout.trim();
+    } catch {
+      return "";
+    }
+  }
+
+  private async resolveTargetHead(session: CompanionSession): Promise<string> {
+    try {
+      return (await runGit(session.repoRoot, ["rev-parse", session.targetBranch])).stdout.trim();
+    } catch {
+      return "";
+    }
+  }
+
+  private async resolveCommitTree(repoRoot: string, commit: string): Promise<string> {
+    try {
+      return (await runGit(repoRoot, ["rev-parse", `${commit}^{tree}`])).stdout.trim();
+    } catch {
+      return "";
+    }
+  }
+
+  private async captureTargetWorktreeTree(session: CompanionSession): Promise<string> {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-target-index-"));
+    const tempIndexPath = path.join(tempDirectory, "index");
+    const gitEnv = {
+      ...process.env,
+      GIT_INDEX_FILE: tempIndexPath,
+    };
+
+    try {
+      await runGit(session.repoRoot, ["read-tree", "HEAD"], { env: gitEnv });
+      await runGit(session.repoRoot, ["add", "-A", "--", "."], { env: gitEnv });
+      return (await runGit(session.repoRoot, ["write-tree"], { env: gitEnv })).stdout.trim();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private async resolveTreeDiffPaths(repoRoot: string, baseTree: string, targetTree: string): Promise<ChangedPath[]> {
+    const diffOutput = (await runGit(repoRoot, ["diff-tree", "--name-status", "-z", "-r", baseTree, targetTree])).stdout;
+    return parseNameStatusZ(diffOutput);
+  }
+
+  private async simulateSelectedFilesMerge(session: CompanionSession, selectedPaths: string[]): Promise<void> {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-merge-index-"));
+    const tempIndexPath = path.join(tempDirectory, "index");
+    const gitEnv = {
+      ...process.env,
+      GIT_INDEX_FILE: tempIndexPath,
+    };
+    const worktreeGitEnv = {
+      ...gitEnv,
+      GIT_WORK_TREE: session.worktreePath,
+    };
+    const changedPaths = await this.resolveChangedPaths(session);
+    const changedPathByPath = new Map(changedPaths.map((change) => [change.path, change]));
+
+    try {
+      await runGit(session.repoRoot, ["read-tree", session.baseSnapshotCommit], { env: gitEnv });
+      for (const selectedPath of selectedPaths) {
+        const change = changedPathByPath.get(selectedPath);
+        if (!change) {
+          throw new Error(`changed files にない file は merge できないよ: ${selectedPath}`);
+        }
+        if (change.kind === "delete") {
+          await runGit(session.repoRoot, ["update-index", "--force-remove", "--", selectedPath], { env: gitEnv });
+        } else {
+          await runGit(session.repoRoot, ["add", "--", selectedPath], { env: worktreeGitEnv });
+        }
+      }
+      await runGit(session.repoRoot, ["write-tree"], { env: gitEnv });
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
   private async buildChangedFile(session: CompanionSession, change: ChangedPath): Promise<ChangedFile> {
     const beforeContent = change.kind === "add"
       ? null
@@ -275,14 +404,6 @@ export class CompanionReviewService {
       summary: summarizeChangedFile(change.kind, change.path),
       diffRows: buildDiffRows(beforeContent, afterContent),
     };
-  }
-
-  private async assertTargetPathMatchesBase(session: CompanionSession, filePath: string): Promise<void> {
-    const baseContent = await readGitFileBuffer(session.repoRoot, session.baseSnapshotCommit, filePath);
-    const targetContent = await readWorktreeFileBuffer(session.repoRoot, filePath);
-    if (!buffersEqual(baseContent, targetContent)) {
-      throw new Error(`target workspace 側で base から変更されているため merge できないよ: ${filePath}`);
-    }
   }
 
   private async applySelectedChange(session: CompanionSession, change: ChangedPath): Promise<void> {

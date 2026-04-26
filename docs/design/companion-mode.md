@@ -141,7 +141,7 @@ warning:
 
 Companion は既存 `sessions` table に相乗りしない。専用 table 群として分離し、UI / service 層で Agent session と統合表示する。
 
-Current MVP 実装では、`companion_groups`、`companion_sessions`、`companion_messages` を追加し、CompanionSession 作成、base snapshot ref / shadow worktree 作成、Home での active 一覧表示、CompanionSession から shadow worktree 上で provider 実行する最小導線、Review Window での changed files / split diff 表示、selected files merge / discard の初期導線までを扱う。merge / discard / review window 用の詳細 table は後続実装で追加する。
+Current MVP 実装では、`companion_groups`、`companion_sessions`、`companion_messages` を追加し、CompanionSession 作成、base snapshot ref / shadow worktree 作成、Home での active 一覧表示、CompanionSession から shadow worktree 上で provider 実行する最小導線、Review Window での changed files / split diff / merge readiness 表示、selected files merge / discard の初期導線までを扱う。merge / discard / review window 用の詳細 table は後続実装で追加する。
 
 候補 table:
 
@@ -304,7 +304,7 @@ actions:
 - `Run Checks`
 - `Retry Merge`
 
-Current MVP 実装の Review Window は、Home の active CompanionSession から開く補助 window とし、base snapshot commit と shadow worktree の差分を都度読み取って changed file list と split diff を表示する。changed file list は default selected とし、user は file 単位で merge 対象を外せる。`Merge Selected Files` / `Discard Companion` は実行できるが、target drift / dirty の完全判定、merge simulation、sibling check、checks 表示は後続実装で追加する。
+Current MVP 実装の Review Window は、Home の active CompanionSession から開く補助 window とし、base snapshot commit と shadow worktree の差分を都度読み取って changed file list と split diff を表示する。changed file list は default selected とし、user は file 単位で merge 対象を外せる。`Merge Selected Files` / `Discard Companion` は実行でき、target branch drift、target workspace dirty、merge simulation の結果を merge readiness として表示する。sibling check、checks 表示は後続実装で追加する。
 
 MVP に入れないもの:
 
@@ -347,7 +347,7 @@ merge blocker:
 
 checks failed / stale / missing は warning とし、MVP ではそれだけで merge を完全ブロックしない。
 
-Current MVP 実装の merge は selected files の各 path を base snapshot commit と target workspace の現在内容で比較し、対象 path が base から変わっていない場合だけ shadow worktree の内容を target workspace へ反映する。selected path 以外の dirty state は初期実装では blocker にしない。
+Current MVP 実装の merge は、target branch の HEAD が base snapshot commit の parent と一致し、target workspace の captured tree が base snapshot commit の tree と一致し、一時 index 上の selected files merge simulation が成功する場合だけ実行する。target workspace dirty は selected path 以外も blocker として扱う。
 
 ## Sibling Check
 

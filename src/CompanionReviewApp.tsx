@@ -66,6 +66,7 @@ export default function CompanionReviewApp() {
   );
   const selectedPathSet = useMemo(() => new Set(selectedPaths), [selectedPaths]);
   const operationDisabled = operationRunning || !snapshot || snapshot.session.status !== "active";
+  const mergeBlocked = (snapshot?.mergeReadiness.blockers.length ?? 0) > 0;
 
   function toggleSelectedPath(filePath: string): void {
     setSelectedPaths((current) =>
@@ -158,7 +159,7 @@ export default function CompanionReviewApp() {
             <button
               className="primary-button"
               type="button"
-              disabled={operationDisabled || selectedPaths.length === 0}
+              disabled={operationDisabled || mergeBlocked || selectedPaths.length === 0}
               onClick={() => void mergeSelectedFiles()}
             >
               Merge Selected Files
@@ -181,6 +182,34 @@ export default function CompanionReviewApp() {
             {errorMessage || operationMessage}
           </div>
         )}
+        <section className={`companion-review-readiness ${snapshot.mergeReadiness.status}`}>
+          <div>
+            <p className="eyebrow">Merge Readiness</p>
+            <strong>{snapshot.mergeReadiness.status}</strong>
+          </div>
+          <div className="companion-review-readiness-details">
+            <span>{`target: ${snapshot.mergeReadiness.targetHead.slice(0, 8) || "unknown"}`}</span>
+            <span>{`base: ${snapshot.mergeReadiness.baseParent.slice(0, 8) || "unknown"}`}</span>
+            <span>{snapshot.mergeReadiness.simulatedAt}</span>
+          </div>
+          {snapshot.mergeReadiness.blockers.length > 0 && (
+            <ul className="companion-review-issues">
+              {snapshot.mergeReadiness.blockers.map((issue) => (
+                <li key={`${issue.kind}:${issue.message}`}>
+                  <span>{issue.message}</span>
+                  {issue.paths && <small>{issue.paths.join(", ")}</small>}
+                </li>
+              ))}
+            </ul>
+          )}
+          {snapshot.mergeReadiness.warnings.length > 0 && (
+            <ul className="companion-review-issues warning">
+              {snapshot.mergeReadiness.warnings.map((issue) => (
+                <li key={`${issue.kind}:${issue.message}`}>{issue.message}</li>
+              ))}
+            </ul>
+          )}
+        </section>
 
         <div className="companion-review-layout">
           <aside className="companion-review-file-list" aria-label="Changed files">

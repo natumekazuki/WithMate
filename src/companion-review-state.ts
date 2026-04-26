@@ -1,9 +1,27 @@
 import type { ChangedFile } from "./runtime-state.js";
 import type { CompanionSession } from "./companion-state.js";
 
+export type CompanionMergeReadinessStatus = "ready" | "blocked" | "warning";
+
+export type CompanionMergeReadinessIssue = {
+  kind: "lifecycle" | "target-branch-drift" | "target-worktree-dirty" | "merge-simulation";
+  message: string;
+  paths?: string[];
+};
+
+export type CompanionMergeReadiness = {
+  status: CompanionMergeReadinessStatus;
+  blockers: CompanionMergeReadinessIssue[];
+  warnings: CompanionMergeReadinessIssue[];
+  targetHead: string;
+  baseParent: string;
+  simulatedAt: string;
+};
+
 export type CompanionReviewSnapshot = {
   session: CompanionSession;
   changedFiles: ChangedFile[];
+  mergeReadiness: CompanionMergeReadiness;
   generatedAt: string;
   warnings: string[];
 };
