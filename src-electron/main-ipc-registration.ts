@@ -23,6 +23,7 @@ import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionInput, DiffPreviewPayload, Session } from "../src/session-state.js";
 import {
+  WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
@@ -39,6 +40,7 @@ import {
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
+  WITHMATE_GET_COMPANION_SESSION_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
@@ -75,6 +77,7 @@ import {
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_MEMORY_EXTRACTION_CHANNEL,
+  WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
@@ -142,6 +145,9 @@ export type MainIpcRegistrationDeps = {
   createCharacterUpdateSession(characterId: string, providerId: string): Promise<Session>;
   createSession(input: CreateSessionInput): Session;
   createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
+  getCompanionSession(sessionId: string): CompanionSession | null;
+  runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
+  cancelCompanionSessionRun(sessionId: string): void;
   updateSession(session: Session): Session;
   deleteSession(sessionId: string): void;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
@@ -222,7 +228,10 @@ type MainIpcSessionQueryDeps = Pick<
 type MainIpcCompanionDeps = Pick<
   MainIpcRegistrationDeps,
   | "createCompanionSession"
+  | "getCompanionSession"
   | "listCompanionSessionSummaries"
+  | "runCompanionSessionTurn"
+  | "cancelCompanionSessionRun"
 >;
 
 type MainIpcSessionRuntimeDeps = Pick<
@@ -366,9 +375,21 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
 }
 
 function registerCompanionHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCompanionDeps): void {
+  ipcMain.handle(WITHMATE_GET_COMPANION_SESSION_CHANNEL, (_event, sessionId: string) => {
+    if (!sessionId) {
+      return null;
+    }
+    return deps.getCompanionSession(sessionId);
+  });
   ipcMain.handle(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL, async (_event, input: CreateCompanionSessionInput) =>
     deps.createCompanionSession(input),
   );
+  ipcMain.handle(WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL, async (_event, sessionId: string, request: RunSessionTurnRequest) =>
+    deps.runCompanionSessionTurn(sessionId, request),
+  );
+  ipcMain.handle(WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL, (_event, sessionId: string) => {
+    deps.cancelCompanionSessionRun(sessionId);
+  });
 }
 
 function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSessionRuntimeDeps): void {

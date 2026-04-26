@@ -81,7 +81,10 @@ export type MainIpcSessionQueryDepsArgs = {
 
 export type MainIpcCompanionDepsArgs = {
   createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
+  getCompanionSession(sessionId: string): CompanionSession | null;
   listCompanionSessionSummaries(): CompanionSessionSummary[];
+  runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
+  cancelCompanionSessionRun(sessionId: string): void;
 };
 
 export type MainIpcSessionRuntimeDepsArgs = {
@@ -182,6 +185,9 @@ export function createMainIpcRegistrationDeps(
     previewComposerInput: args.sessionQuery.previewComposerInput,
     searchWorkspaceFiles: args.sessionQuery.searchWorkspaceFiles,
     createCompanionSession: args.companion.createCompanionSession,
+    getCompanionSession: args.companion.getCompanionSession,
+    runCompanionSessionTurn: args.companion.runCompanionSessionTurn,
+    cancelCompanionSessionRun: args.companion.cancelCompanionSessionRun,
     getLiveSessionRun: args.sessionRuntime.getLiveSessionRun,
     getProviderQuotaTelemetry: args.sessionRuntime.getProviderQuotaTelemetry,
     getSessionContextTelemetry: args.sessionRuntime.getSessionContextTelemetry,

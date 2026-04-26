@@ -62,6 +62,18 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:create-companion-session",
     args: [{ taskTitle: "task" }],
   });
+  assert.deepEqual(await api.getCompanionSession("companion-1"), {
+    channel: "withmate:get-companion-session",
+    args: ["companion-1"],
+  });
+  assert.deepEqual(await api.runCompanionSessionTurn("companion-1", { userMessage: "go" }), {
+    channel: "withmate:run-companion-session-turn",
+    args: ["companion-1", { userMessage: "go" }],
+  });
+  assert.deepEqual(await api.cancelCompanionSessionRun("companion-1"), {
+    channel: "withmate:cancel-companion-session-run",
+    args: ["companion-1"],
+  });
   assert.deepEqual(await api.runSessionMemoryExtraction("session-1"), {
     channel: "withmate:run-session-memory-extraction",
     args: ["session-1"],
@@ -75,6 +87,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
   const keys = Object.keys(api).sort();
   const expectedKeys = [
     "cancelSessionRun",
+    "cancelCompanionSessionRun",
     "createCharacter",
     "createCharacterUpdateSession",
     "createCompanionSession",
@@ -90,6 +103,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getAppSettings",
     "getCharacter",
     "getCharacterUpdateWorkspace",
+    "getCompanionSession",
     "getDiffPreview",
     "getLiveSessionRun",
     "getMemoryManagementSnapshot",
@@ -125,6 +139,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "resetAppDatabase",
     "resolveLiveApproval",
     "resolveLiveElicitation",
+    "runCompanionSessionTurn",
     "runSessionMemoryExtraction",
     "runSessionTurn",
     "searchWorkspaceFiles",

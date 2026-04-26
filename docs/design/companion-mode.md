@@ -141,7 +141,7 @@ warning:
 
 Companion は既存 `sessions` table に相乗りしない。専用 table 群として分離し、UI / service 層で Agent session と統合表示する。
 
-Current MVP 実装では、`companion_groups` と `companion_sessions` を追加し、CompanionSession 作成、base snapshot ref / shadow worktree 作成、Home での active 一覧表示までを扱う。merge / discard / review window 用の詳細 table は後続実装で追加する。
+Current MVP 実装では、`companion_groups`、`companion_sessions`、`companion_messages` を追加し、CompanionSession 作成、base snapshot ref / shadow worktree 作成、Home での active 一覧表示、CompanionSession から shadow worktree 上で provider 実行する最小導線までを扱う。merge / discard / review window 用の詳細 table は後続実装で追加する。
 
 候補 table:
 
@@ -259,6 +259,8 @@ Companion UI に approval / sandbox の権限設定を置く。
 - provider runtime は通常 Session の `workspacePath` と別に実行用 workspace path を受け取れる
 - Companion runtime は provider に `executionWorkspacePath` として `CompanionSession.worktreePath` を渡す
 - `executionWorkspacePath` がない通常 Session は従来通り `workspacePath` を cwd / snapshot root / path summary の基準にする
+- Companion runtime は CompanionSession を一時的な provider runtime 用 Session 形状へ変換するが、通常 `sessions` table には保存しない
+- Companion の初期 provider 実行導線では message / thread / run state を Companion 専用 table に保存し、MemoryGeneration / CharacterReflection は実行しない
 
 WithMate 管理操作は provider に自由実行させず、Main Process 側の Companion lifecycle service が実行する。
 

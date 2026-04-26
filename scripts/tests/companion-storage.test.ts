@@ -49,6 +49,8 @@ function createSession(groupId: string): CompanionSession {
     baseSnapshotCommit: "abc123",
     companionBranch: "withmate/companion/session-1",
     worktreePath: "F:/app/companion-worktrees/group-1/session-1",
+    runState: "idle",
+    threadId: "",
     provider: "codex",
     catalogRevision: DEFAULT_CATALOG_REVISION,
     model: DEFAULT_MODEL_ID,
@@ -58,6 +60,7 @@ function createSession(groupId: string): CompanionSession {
     codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
     characterId: "char-1",
     character: "Mia",
+    characterRoleMarkdown: "落ち着いて伴走する。",
     characterIconPath: "icon.png",
     characterThemeColors: {
       main: "#6f8cff",
@@ -65,6 +68,7 @@ function createSession(groupId: string): CompanionSession {
     },
     createdAt: "2026-04-26 10:01",
     updatedAt: "2026-04-26 10:01",
+    messages: [],
   };
 }
 
@@ -91,12 +95,15 @@ describe("CompanionStorage", () => {
           targetBranch: "main",
           baseSnapshotRef: "refs/withmate/companion/session-1/base",
           baseSnapshotCommit: "abc123",
+          runState: "idle",
+          threadId: "",
           provider: "codex",
           model: DEFAULT_MODEL_ID,
           reasoningEffort: DEFAULT_REASONING_EFFORT,
           approvalMode: DEFAULT_APPROVAL_MODE,
           codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
           character: "Mia",
+          characterRoleMarkdown: "落ち着いて伴走する。",
           characterIconPath: "icon.png",
           characterThemeColors: {
             main: "#6f8cff",

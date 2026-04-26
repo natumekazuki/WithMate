@@ -1,6 +1,7 @@
 import type { ApprovalMode } from "./approval-mode.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import type { ModelReasoningEffort } from "./model-catalog.js";
+import type { Message } from "./session-state.js";
 
 export type CompanionSessionStatus = "active" | "merged" | "discarded" | "recovery-required";
 
@@ -16,6 +17,7 @@ export type CreateCompanionSessionInput = {
   codexSandboxMode: CodexSandboxMode;
   characterId: string;
   character: string;
+  characterRoleMarkdown: string;
   characterIconPath: string;
   characterThemeColors: {
     main: string;
@@ -43,6 +45,8 @@ export type CompanionSession = {
   baseSnapshotCommit: string;
   companionBranch: string;
   worktreePath: string;
+  runState: "idle" | "running" | "error";
+  threadId: string;
   provider: string;
   catalogRevision: number;
   model: string;
@@ -52,6 +56,7 @@ export type CompanionSession = {
   codexSandboxMode: CodexSandboxMode;
   characterId: string;
   character: string;
+  characterRoleMarkdown: string;
   characterIconPath: string;
   characterThemeColors: {
     main: string;
@@ -59,6 +64,7 @@ export type CompanionSession = {
   };
   createdAt: string;
   updatedAt: string;
+  messages: Message[];
 };
 
 export type CompanionSessionSummary = Pick<
@@ -72,12 +78,15 @@ export type CompanionSessionSummary = Pick<
   | "targetBranch"
   | "baseSnapshotRef"
   | "baseSnapshotCommit"
+  | "runState"
+  | "threadId"
   | "provider"
   | "model"
   | "reasoningEffort"
   | "approvalMode"
   | "codexSandboxMode"
   | "character"
+  | "characterRoleMarkdown"
   | "characterIconPath"
   | "characterThemeColors"
   | "updatedAt"
@@ -87,6 +96,23 @@ export function cloneCompanionSession(session: CompanionSession): CompanionSessi
   return {
     ...session,
     characterThemeColors: { ...session.characterThemeColors },
+    messages: session.messages.map((message) => ({
+      ...message,
+      artifact: message.artifact
+        ? {
+          ...message.artifact,
+          activitySummary: [...message.artifact.activitySummary],
+          operationTimeline: message.artifact.operationTimeline
+            ? [...message.artifact.operationTimeline]
+            : undefined,
+          changedFiles: message.artifact.changedFiles.map((file) => ({
+            ...file,
+            diffRows: file.diffRows.map((row) => ({ ...row })),
+          })),
+          runChecks: message.artifact.runChecks.map((check) => ({ ...check })),
+        }
+        : undefined,
+    })),
   };
 }
 

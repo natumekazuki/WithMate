@@ -67,6 +67,7 @@ describe("CompanionSessionService", () => {
         codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
         characterId: "char-1",
         character: "Mia",
+        characterRoleMarkdown: "落ち着いて伴走する。",
         characterIconPath: "icon.png",
         characterThemeColors: {
           main: "#6f8cff",

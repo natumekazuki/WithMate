@@ -95,6 +95,7 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
     workspacePath: draft.workspace.path,
     characterId: selectedCharacter.id,
     character: selectedCharacter.name,
+    characterRoleMarkdown: selectedCharacter.roleMarkdown,
     characterIconPath: selectedCharacter.iconPath,
     characterThemeColors: selectedCharacter.themeColors,
     approvalMode,

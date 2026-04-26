@@ -70,7 +70,10 @@ export type WithMateWindowSessionApi = {
 
 export type WithMateWindowCompanionApi = {
   listCompanionSessionSummaries(): Promise<CompanionSessionSummary[]>;
+  getCompanionSession(sessionId: string): Promise<CompanionSession | null>;
   createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
+  runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
+  cancelCompanionSessionRun(sessionId: string): Promise<void>;
 };
 
 export type WithMateWindowObservabilityApi = {

@@ -62,6 +62,7 @@ import { ProjectMemoryStorage } from "./project-memory-storage.js";
 import { CharacterMemoryStorage } from "./character-memory-storage.js";
 import { CompanionStorage } from "./companion-storage.js";
 import { CompanionSessionService } from "./companion-session-service.js";
+import { CompanionRuntimeService } from "./companion-runtime-service.js";
 import { SessionRuntimeService } from "./session-runtime-service.js";
 import { SessionPersistenceService } from "./session-persistence-service.js";
 import { SessionWindowBridge } from "./session-window-bridge.js";
@@ -170,6 +171,7 @@ let memoryManagementService: MemoryManagementService | null = null;
 let characterRuntimeService: CharacterRuntimeService | null = null;
 let characterUpdateWorkspaceService: CharacterUpdateWorkspaceService | null = null;
 let companionSessionService: CompanionSessionService | null = null;
+let companionRuntimeService: CompanionRuntimeService | null = null;
 let mainBroadcastFacade: MainBroadcastFacade<BrowserWindow> | null = null;
 let mainCharacterFacade: MainCharacterFacade | null = null;
 let mainObservabilityFacade: MainObservabilityFacade | null = null;
@@ -590,10 +592,28 @@ function listCompanionSessionSummaries(): CompanionSessionSummary[] {
   return requireCompanionSessionService().listSessionSummaries();
 }
 
+function getCompanionSession(sessionId: string): CompanionSession | null {
+  return requireCompanionStorage().getSession(sessionId);
+}
+
 async function createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession> {
   const session = await requireCompanionSessionService().createSession(input);
   requireWindowBroadcastService().broadcastCompanionSessionSummaries(listCompanionSessionSummaries());
   return session;
+}
+
+function updateCompanionSession(session: CompanionSession): CompanionSession {
+  const stored = requireCompanionStorage().updateSession(session);
+  requireWindowBroadcastService().broadcastCompanionSessionSummaries(listCompanionSessionSummaries());
+  return stored;
+}
+
+async function runCompanionSessionTurn(sessionId: string, request: Parameters<CompanionRuntimeService["runSessionTurn"]>[1]): Promise<CompanionSession> {
+  return requireCompanionRuntimeService().runSessionTurn(sessionId, request);
+}
+
+function cancelCompanionSessionRun(sessionId: string): void {
+  requireCompanionRuntimeService().cancelRun(sessionId);
 }
 
 function isRunningSession(session: Session): boolean {
@@ -601,7 +621,7 @@ function isRunningSession(session: Session): boolean {
 }
 
 function hasInFlightSessionRuns(): boolean {
-  return requireSessionRuntimeService().hasInFlightRuns();
+  return requireSessionRuntimeService().hasInFlightRuns() || requireCompanionRuntimeService().hasInFlightRuns();
 }
 
 function isSessionRunInFlight(sessionId: string): boolean {
@@ -819,7 +839,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               },
               companion: {
                 createCompanionSession: (input) => createCompanionSession(input),
+                getCompanionSession: (sessionId) => getCompanionSession(sessionId),
                 listCompanionSessionSummaries: () => listCompanionSessionSummaries(),
+                runCompanionSessionTurn: (sessionId, request) => runCompanionSessionTurn(sessionId, request),
+                cancelCompanionSessionRun: (sessionId) => cancelCompanionSessionRun(sessionId),
               },
               character: {
                 listCharacters: async () => refreshCharactersFromStorage(),
@@ -1419,6 +1442,53 @@ function requireCompanionSessionService(): CompanionSessionService {
   return companionSessionService;
 }
 
+function requireCompanionRuntimeService(): CompanionRuntimeService {
+  if (!companionRuntimeService) {
+    companionRuntimeService = new CompanionRuntimeService({
+      getCompanionSession,
+      updateCompanionSession,
+      resolveComposerPreview,
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      resolveProviderCatalog,
+      getProviderCodingAdapter,
+      setLiveSessionRun,
+      getLiveSessionRun,
+      waitForApprovalDecision: (sessionId, request, signal) =>
+        waitForLiveApprovalDecision(sessionId, request, signal),
+      waitForElicitationResponse: (sessionId, request, signal) =>
+        waitForLiveElicitationResponse(sessionId, request, signal),
+      setProviderQuotaTelemetry: (telemetry) => {
+        setProviderQuotaTelemetry(telemetry.provider, telemetry);
+      },
+      setSessionContextTelemetry: (telemetry) => {
+        setSessionContextTelemetry(telemetry.sessionId, telemetry);
+      },
+      invalidateProviderSessionThread,
+      scheduleProviderQuotaTelemetryRefresh,
+      clearWorkspaceFileIndex,
+      broadcastCompanionSessions: () =>
+        requireWindowBroadcastService().broadcastCompanionSessionSummaries(listCompanionSessionSummaries()),
+      resolvePendingApprovalRequest: (sessionId, decision) => {
+        const liveRun = getLiveSessionRun(sessionId);
+        const requestId = liveRun?.approvalRequest?.requestId;
+        if (requestId) {
+          requireSessionApprovalService().resolveLiveApproval(sessionId, requestId, decision);
+        }
+      },
+      resolvePendingElicitationRequest: (sessionId, response) => {
+        const liveRun = getLiveSessionRun(sessionId);
+        const requestId = liveRun?.elicitationRequest?.requestId;
+        if (requestId) {
+          requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response);
+        }
+      },
+      currentTimestampLabel,
+    });
+  }
+
+  return companionRuntimeService;
+}
+
 function requirePersistentStoreLifecycleService(): PersistentStoreLifecycleService {
   return requireMainInfrastructureRegistry().getPersistentStoreLifecycleService();
 }
@@ -1515,6 +1585,7 @@ function closePersistentStores(): void {
   characterRuntimeService = null;
   characterUpdateWorkspaceService = null;
   companionSessionService = null;
+  companionRuntimeService = null;
   mainBroadcastFacade = null;
   mainCharacterFacade = null;
   mainObservabilityFacade = null;
@@ -1553,6 +1624,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   characterRuntimeService = null;
   characterUpdateWorkspaceService = null;
   companionSessionService = null;
+  companionRuntimeService = null;
   mainBroadcastFacade = null;
   mainCharacterFacade = null;
   mainObservabilityFacade = null;

@@ -88,6 +88,8 @@ export class CompanionSessionService {
       baseSnapshotCommit: artifacts.baseSnapshotCommit,
       companionBranch: artifacts.companionBranch,
       worktreePath: artifacts.worktreePath,
+      runState: "idle",
+      threadId: "",
       provider: input.provider,
       catalogRevision: input.catalogRevision ?? DEFAULT_CATALOG_REVISION,
       model: input.model ?? DEFAULT_MODEL_ID,
@@ -97,10 +99,12 @@ export class CompanionSessionService {
       codexSandboxMode: input.codexSandboxMode,
       characterId: input.characterId,
       character: input.character,
+      characterRoleMarkdown: input.characterRoleMarkdown,
       characterIconPath: input.characterIconPath,
       characterThemeColors: input.characterThemeColors,
       createdAt: now,
       updatedAt: now,
+      messages: [],
     };
 
     try {

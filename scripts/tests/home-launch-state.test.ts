@@ -168,6 +168,7 @@ describe("home-launch-state", () => {
       workspacePath: "F:/work/demo/src",
       characterId: "a",
       character: "Mia",
+      characterRoleMarkdown: "",
       characterIconPath: "icon.png",
       characterThemeColors: {
         main: "#000000",
