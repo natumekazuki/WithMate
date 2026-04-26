@@ -200,6 +200,7 @@ export class CompanionReviewService {
       ...session,
       status: "merged",
       selectedPaths: normalizedSelectedPaths,
+      changedFiles: changedPaths,
       runState: "idle",
       updatedAt: currentTimestampLabel(),
     });
@@ -215,6 +216,8 @@ export class CompanionReviewService {
       throw new Error("Companion が実行中なので discard できないよ。");
     }
 
+    const changedPaths = await this.resolveChangedPaths(session);
+
     await cleanupCompanionWorkspaceArtifacts({
       repoRoot: session.repoRoot,
       baseSnapshotRef: session.baseSnapshotRef,
@@ -227,6 +230,7 @@ export class CompanionReviewService {
       ...session,
       status: "discarded",
       selectedPaths: [],
+      changedFiles: changedPaths,
       runState: "idle",
       updatedAt: currentTimestampLabel(),
     });

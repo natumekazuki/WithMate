@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   cloneCompanionSessions,
   cloneCompanionSessionSummaries,
+  type CompanionChangedFileSummary,
   type CompanionGroup,
   type CompanionSession,
   type CompanionSessionSummary,
@@ -34,6 +35,7 @@ type CompanionSessionRow = {
   companion_branch: string;
   worktree_path: string;
   selected_paths_json: string;
+  changed_files_json: string;
   run_state: string;
   thread_id: string;
   provider: string;
@@ -77,6 +79,7 @@ const COMPANION_SESSION_COLUMNS = `
   companion_branch,
   worktree_path,
   selected_paths_json,
+  changed_files_json,
   run_state,
   thread_id,
   provider,
@@ -122,6 +125,7 @@ function rowToSession(row: CompanionSessionRow): CompanionSession {
     companionBranch: row.companion_branch,
     worktreePath: row.worktree_path,
     selectedPaths: parseSelectedPaths(row.selected_paths_json),
+    changedFiles: parseChangedFiles(row.changed_files_json),
     runState: row.run_state === "running" || row.run_state === "error" ? row.run_state : "idle",
     threadId: row.thread_id,
     provider: row.provider,
@@ -195,6 +199,33 @@ function parseSelectedPaths(value: string): string[] {
   }
 }
 
+function parseChangedFiles(value: string): CompanionChangedFileSummary[] {
+  if (!value.trim()) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.flatMap((item): CompanionChangedFileSummary[] => {
+      if (
+        typeof item === "object" &&
+        item !== null &&
+        "path" in item &&
+        "kind" in item &&
+        typeof item.path === "string" &&
+        (item.kind === "add" || item.kind === "edit" || item.kind === "delete")
+      ) {
+        return [{ path: item.path, kind: item.kind }];
+      }
+      return [];
+    });
+  } catch {
+    return [];
+  }
+}
+
 function sessionToSummary(session: CompanionSession): CompanionSessionSummary {
   return {
     id: session.id,
@@ -207,6 +238,7 @@ function sessionToSummary(session: CompanionSession): CompanionSessionSummary {
     baseSnapshotRef: session.baseSnapshotRef,
     baseSnapshotCommit: session.baseSnapshotCommit,
     selectedPaths: session.selectedPaths,
+    changedFiles: session.changedFiles,
     runState: session.runState,
     threadId: session.threadId,
     provider: session.provider,
@@ -256,6 +288,7 @@ export class CompanionStorage {
         companion_branch TEXT NOT NULL,
         worktree_path TEXT NOT NULL,
         selected_paths_json TEXT NOT NULL DEFAULT '[]',
+        changed_files_json TEXT NOT NULL DEFAULT '[]',
         run_state TEXT NOT NULL DEFAULT 'idle',
         thread_id TEXT NOT NULL DEFAULT '',
         provider TEXT NOT NULL,
@@ -315,6 +348,9 @@ export class CompanionStorage {
     if (!columns.has("selected_paths_json")) {
       this.db.exec("ALTER TABLE companion_sessions ADD COLUMN selected_paths_json TEXT NOT NULL DEFAULT '[]';");
     }
+    if (!columns.has("changed_files_json")) {
+      this.db.exec("ALTER TABLE companion_sessions ADD COLUMN changed_files_json TEXT NOT NULL DEFAULT '[]';");
+    }
     if (!columns.has("thread_id")) {
       this.db.exec("ALTER TABLE companion_sessions ADD COLUMN thread_id TEXT NOT NULL DEFAULT '';");
     }
@@ -345,7 +381,7 @@ export class CompanionStorage {
     this.db.prepare(`
       INSERT INTO companion_sessions (
         ${COMPANION_SESSION_COLUMNS}
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.id,
       session.groupId,
@@ -359,6 +395,7 @@ export class CompanionStorage {
       session.companionBranch,
       session.worktreePath,
       JSON.stringify(session.selectedPaths),
+      JSON.stringify(session.changedFiles),
       session.runState,
       session.threadId,
       session.provider,
@@ -423,6 +460,7 @@ export class CompanionStorage {
         task_title = ?,
         status = ?,
         selected_paths_json = ?,
+        changed_files_json = ?,
         run_state = ?,
         thread_id = ?,
         provider = ?,
@@ -444,6 +482,7 @@ export class CompanionStorage {
       session.taskTitle,
       session.status,
       JSON.stringify(session.selectedPaths),
+      JSON.stringify(session.changedFiles),
       session.runState,
       session.threadId,
       session.provider,

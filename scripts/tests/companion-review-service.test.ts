@@ -41,6 +41,7 @@ function createCompanionSession(input: {
     companionBranch: input.companionBranch ?? "withmate/companion/session-1",
     worktreePath: input.worktreePath,
     selectedPaths: [],
+    changedFiles: [],
     runState: "idle",
     threadId: "",
     provider: "codex",
@@ -73,6 +74,7 @@ function toCompanionSessionSummary(session: CompanionSession): CompanionSessionS
     baseSnapshotRef: session.baseSnapshotRef,
     baseSnapshotCommit: session.baseSnapshotCommit,
     selectedPaths: session.selectedPaths,
+    changedFiles: session.changedFiles,
     runState: session.runState,
     threadId: session.threadId,
     provider: session.provider,
@@ -182,6 +184,10 @@ describe("CompanionReviewService", () => {
 
       assert.equal(merged.session.status, "merged");
       assert.deepEqual(merged.session.selectedPaths, ["README.md"]);
+      assert.deepEqual(merged.session.changedFiles, [
+        { path: "new-file.txt", kind: "add" },
+        { path: "README.md", kind: "edit" },
+      ]);
       assert.deepEqual(merged.siblingWarnings, []);
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\nmerged\n");
       await assert.rejects(() => stat(path.join(repoRoot, "new-file.txt")));
@@ -280,6 +286,7 @@ describe("CompanionReviewService", () => {
 
       assert.equal(discarded.status, "discarded");
       assert.deepEqual(discarded.selectedPaths, []);
+      assert.deepEqual(discarded.changedFiles, [{ path: "README.md", kind: "edit" }]);
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\n");
       await assert.rejects(() => stat(worktreePath));
     } finally {
@@ -449,6 +456,7 @@ describe("CompanionReviewService", () => {
 
       assert.equal(result.session.status, "merged");
       assert.deepEqual(result.session.selectedPaths, ["README.md"]);
+      assert.deepEqual(result.session.changedFiles, [{ path: "README.md", kind: "edit" }]);
       assert.deepEqual(result.siblingWarnings, [
         {
           sessionId: siblingSession.id,

@@ -1129,6 +1129,7 @@ function matchesCompanionSessionSearch(session: CompanionSessionSummary, normali
     session.provider,
     session.model,
     ...session.selectedPaths,
+    ...session.changedFiles.map((file) => file.path),
   ].some((value) => value.toLocaleLowerCase().includes(normalizedSearch));
 }
 
@@ -1139,6 +1140,15 @@ function buildCompanionSelectedFilesSummary(paths: string[]): string {
   const visiblePaths = paths.slice(0, 3);
   const suffix = paths.length > visiblePaths.length ? ` / +${paths.length - visiblePaths.length}` : "";
   return `selected files: ${visiblePaths.join(", ")}${suffix}`;
+}
+
+function buildCompanionChangedFilesSummary(files: CompanionSessionSummary["changedFiles"]): string {
+  if (files.length === 0) {
+    return "changed files: none";
+  }
+  const visibleFiles = files.slice(0, 3).map((file) => `${file.kind}: ${file.path}`);
+  const suffix = files.length > visibleFiles.length ? ` / +${files.length - visibleFiles.length}` : "";
+  return `changed files: ${visibleFiles.join(", ")}${suffix}`;
 }
 
 export function HomeRecentSessionsPanel({
@@ -1237,6 +1247,7 @@ export function HomeRecentSessionsPanel({
                       <div className="session-card-subline home-session-card-meta">
                         <span>{`Repo : ${session.repoRoot}`}</span>
                         <span>{`target: ${session.targetBranch}`}</span>
+                        <span>{buildCompanionChangedFilesSummary(session.changedFiles)}</span>
                         <span>{buildCompanionSelectedFilesSummary(session.selectedPaths)}</span>
                         <span>{`updatedAt: ${session.updatedAt}`}</span>
                       </div>

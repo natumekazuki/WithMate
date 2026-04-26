@@ -5,6 +5,11 @@ import type { Message } from "./session-state.js";
 
 export type CompanionSessionStatus = "active" | "merged" | "discarded" | "recovery-required";
 
+export type CompanionChangedFileSummary = {
+  kind: "add" | "edit" | "delete";
+  path: string;
+};
+
 export type CreateCompanionSessionInput = {
   taskTitle: string;
   workspacePath: string;
@@ -46,6 +51,7 @@ export type CompanionSession = {
   companionBranch: string;
   worktreePath: string;
   selectedPaths: string[];
+  changedFiles: CompanionChangedFileSummary[];
   runState: "idle" | "running" | "error";
   threadId: string;
   provider: string;
@@ -80,6 +86,7 @@ export type CompanionSessionSummary = Pick<
   | "baseSnapshotRef"
   | "baseSnapshotCommit"
   | "selectedPaths"
+  | "changedFiles"
   | "runState"
   | "threadId"
   | "provider"
@@ -98,6 +105,7 @@ export function cloneCompanionSession(session: CompanionSession): CompanionSessi
   return {
     ...session,
     selectedPaths: [...session.selectedPaths],
+    changedFiles: session.changedFiles.map((file) => ({ ...file })),
     characterThemeColors: { ...session.characterThemeColors },
     messages: session.messages.map((message) => ({
       ...message,
@@ -127,6 +135,7 @@ export function cloneCompanionSessionSummary(summary: CompanionSessionSummary): 
   return {
     ...summary,
     selectedPaths: [...summary.selectedPaths],
+    changedFiles: summary.changedFiles.map((file) => ({ ...file })),
     characterThemeColors: { ...summary.characterThemeColors },
   };
 }

@@ -89,6 +89,7 @@ export class CompanionSessionService {
       companionBranch: artifacts.companionBranch,
       worktreePath: artifacts.worktreePath,
       selectedPaths: [],
+      changedFiles: [],
       runState: "idle",
       threadId: "",
       provider: input.provider,
