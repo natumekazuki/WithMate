@@ -796,6 +796,37 @@ button:disabled {
   min-height: 108px;
 }
 
+.home-page .home-companion-section {
+  display: grid;
+  gap: 8px;
+}
+
+.home-page .home-companion-section + .home-companion-section {
+  margin-top: 4px;
+}
+
+.home-page .home-companion-section-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.home-page .companion-session-history-card {
+  cursor: default;
+  opacity: 0.82;
+}
+
+.home-page .companion-session-history-card:hover {
+  transform: none;
+  border-color: var(--card-border, rgba(32, 36, 55, 0.08));
+  box-shadow: 0 8px 24px var(--card-shadow, rgba(18, 24, 39, 0.05));
+}
+
 .home-page .home-session-card-topline {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

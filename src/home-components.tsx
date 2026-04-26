@@ -1088,6 +1088,49 @@ export type HomeRecentSessionsPanelProps = {
   onOpenCompanionReview: (sessionId: string) => void;
 };
 
+function getCompanionSessionStatusLabel(session: CompanionSessionSummary): string {
+  if (session.status === "active") {
+    return session.runState === "idle" ? "active" : session.runState;
+  }
+  if (session.status === "merged") {
+    return "merged";
+  }
+  if (session.status === "discarded") {
+    return "discarded";
+  }
+  return "recovery";
+}
+
+function getCompanionSessionStatusClass(session: CompanionSessionSummary): string {
+  if (session.status === "active") {
+    return session.runState;
+  }
+  if (session.status === "merged") {
+    return "saved";
+  }
+  if (session.status === "discarded") {
+    return "neutral";
+  }
+  return "error";
+}
+
+function matchesCompanionSessionSearch(session: CompanionSessionSummary, normalizedSearch: string): boolean {
+  if (!normalizedSearch) {
+    return true;
+  }
+  return [
+    session.taskTitle,
+    session.repoRoot,
+    session.focusPath,
+    session.targetBranch,
+    session.status,
+    session.runState,
+    session.character,
+    session.provider,
+    session.model,
+  ].some((value) => value.toLocaleLowerCase().includes(normalizedSearch));
+}
+
 export function HomeRecentSessionsPanel({
   filteredSessionEntries,
   companionSessions,
@@ -1099,6 +1142,12 @@ export function HomeRecentSessionsPanel({
   onOpenSession,
   onOpenCompanionReview,
 }: HomeRecentSessionsPanelProps) {
+  const visibleCompanionSessions = companionSessions.filter((session) =>
+    matchesCompanionSessionSearch(session, normalizedSessionSearch),
+  );
+  const activeCompanionSessions = visibleCompanionSessions.filter((session) => session.status === "active");
+  const historyCompanionSessions = visibleCompanionSessions.filter((session) => session.status !== "active");
+
   return (
     <section className="panel session-list-panel home-session-list-panel rise-3">
       <div className="toolbar-search-row">
@@ -1120,32 +1169,71 @@ export function HomeRecentSessionsPanel({
       </div>
 
       <div className="session-card-list home-session-card-list">
-        {companionSessions.length > 0 ? (
+        {visibleCompanionSessions.length > 0 ? (
           <section className="home-companion-list" aria-label="Companion Sessions">
             <div className="home-monitor-section-head">
               <h3>Companion</h3>
-              <span className="home-monitor-count">{companionSessions.length}</span>
+              <span className="home-monitor-count">{visibleCompanionSessions.length}</span>
             </div>
-            {companionSessions.map((session) => (
-              <button
-                key={session.id}
-                className="session-card home-session-card companion-session-card"
-                type="button"
-                style={buildCardThemeStyle(session.characterThemeColors)}
-                onClick={() => onOpenCompanionReview(session.id)}
-              >
-                <div className="session-card-copy">
-                  <div className="session-card-topline home-session-card-topline">
-                    <strong>{session.taskTitle}</strong>
-                    <span className={`session-status home-session-status ${session.runState}`}>{session.runState}</span>
-                  </div>
-                  <div className="session-card-subline home-session-card-meta">
-                    <span>{`Repo : ${session.repoRoot}`}</span>
-                    <span>{`target: ${session.targetBranch}`}</span>
-                  </div>
+            {activeCompanionSessions.length > 0 ? (
+              <div className="home-companion-section">
+                <div className="home-companion-section-label">
+                  <span>Active</span>
+                  <span>{activeCompanionSessions.length}</span>
                 </div>
-              </button>
-            ))}
+                {activeCompanionSessions.map((session) => (
+                  <button
+                    key={session.id}
+                    className="session-card home-session-card companion-session-card"
+                    type="button"
+                    style={buildCardThemeStyle(session.characterThemeColors)}
+                    onClick={() => onOpenCompanionReview(session.id)}
+                  >
+                    <div className="session-card-copy">
+                      <div className="session-card-topline home-session-card-topline">
+                        <strong>{session.taskTitle}</strong>
+                        <span className={`session-status home-session-status ${getCompanionSessionStatusClass(session)}`}>
+                          {getCompanionSessionStatusLabel(session)}
+                        </span>
+                      </div>
+                      <div className="session-card-subline home-session-card-meta">
+                        <span>{`Repo : ${session.repoRoot}`}</span>
+                        <span>{`target: ${session.targetBranch}`}</span>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {historyCompanionSessions.length > 0 ? (
+              <div className="home-companion-section">
+                <div className="home-companion-section-label">
+                  <span>History</span>
+                  <span>{historyCompanionSessions.length}</span>
+                </div>
+                {historyCompanionSessions.map((session) => (
+                  <article
+                    key={session.id}
+                    className="session-card home-session-card companion-session-card companion-session-history-card"
+                    style={buildCardThemeStyle(session.characterThemeColors)}
+                  >
+                    <div className="session-card-copy">
+                      <div className="session-card-topline home-session-card-topline">
+                        <strong>{session.taskTitle}</strong>
+                        <span className={`session-status home-session-status ${getCompanionSessionStatusClass(session)}`}>
+                          {getCompanionSessionStatusLabel(session)}
+                        </span>
+                      </div>
+                      <div className="session-card-subline home-session-card-meta">
+                        <span>{`Repo : ${session.repoRoot}`}</span>
+                        <span>{`target: ${session.targetBranch}`}</span>
+                        <span>{`updatedAt: ${session.updatedAt}`}</span>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : null}
           </section>
         ) : null}
 

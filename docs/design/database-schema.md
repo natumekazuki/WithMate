@@ -588,7 +588,8 @@ Companion Mode の作業単位。
 補足:
 
 - current 実装では CompanionSession 作成時に base snapshot ref と shadow worktree を実体化する
-- selected files merge / discard は future slice
+- selected files merge / discard は `status` と `updated_at` を更新し、terminal session は Home の history card として表示する
+- selected files summary / changed file summary / sibling warning の永続化は future slice
 - `base_snapshot_ref`、`companion_branch`、`worktree_path` は DB id 由来の safe id で生成する
 - `companion_sessions.group_id` は `companion_groups(id) ON DELETE CASCADE`
 

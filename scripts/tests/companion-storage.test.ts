@@ -36,7 +36,7 @@ function createGroup(): CompanionGroup {
   };
 }
 
-function createSession(groupId: string): CompanionSession {
+function createSession(groupId: string, overrides: Partial<CompanionSession> = {}): CompanionSession {
   return {
     id: "session-1",
     groupId,
@@ -69,6 +69,7 @@ function createSession(groupId: string): CompanionSession {
     createdAt: "2026-04-26 10:01",
     updatedAt: "2026-04-26 10:01",
     messages: [],
+    ...overrides,
   };
 }
 
@@ -113,6 +114,38 @@ describe("CompanionStorage", () => {
         },
       ]);
       assert.equal(storage.getSession("session-1")?.companionBranch, "withmate/companion/session-1");
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("merged / discarded session は全 summary に残し active summary からは除外する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: CompanionStorage | null = null;
+
+    try {
+      storage = new CompanionStorage(dbPath);
+      const group = storage.ensureGroup(createGroup());
+      storage.createSession(createSession(group.id, {
+        id: "session-merged",
+        status: "merged",
+        taskTitle: "Merged task",
+        updatedAt: "2026-04-26 10:03",
+      }));
+      storage.createSession(createSession(group.id, {
+        id: "session-discarded",
+        status: "discarded",
+        taskTitle: "Discarded task",
+        updatedAt: "2026-04-26 10:02",
+      }));
+
+      assert.deepEqual(storage.listActiveSessionSummaries(), []);
+      assert.deepEqual(storage.listSessionSummaries().map((session) => [session.id, session.status]), [
+        ["session-merged", "merged"],
+        ["session-discarded", "discarded"],
+      ]);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);
