@@ -199,6 +199,7 @@ export class CompanionReviewService {
     const storedSession = this.deps.updateCompanionSession({
       ...session,
       status: "merged",
+      selectedPaths: normalizedSelectedPaths,
       runState: "idle",
       updatedAt: currentTimestampLabel(),
     });
@@ -225,6 +226,7 @@ export class CompanionReviewService {
     return this.deps.updateCompanionSession({
       ...session,
       status: "discarded",
+      selectedPaths: [],
       runState: "idle",
       updatedAt: currentTimestampLabel(),
     });

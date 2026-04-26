@@ -45,6 +45,7 @@ export type CompanionSession = {
   baseSnapshotCommit: string;
   companionBranch: string;
   worktreePath: string;
+  selectedPaths: string[];
   runState: "idle" | "running" | "error";
   threadId: string;
   provider: string;
@@ -78,6 +79,7 @@ export type CompanionSessionSummary = Pick<
   | "targetBranch"
   | "baseSnapshotRef"
   | "baseSnapshotCommit"
+  | "selectedPaths"
   | "runState"
   | "threadId"
   | "provider"
@@ -95,6 +97,7 @@ export type CompanionSessionSummary = Pick<
 export function cloneCompanionSession(session: CompanionSession): CompanionSession {
   return {
     ...session,
+    selectedPaths: [...session.selectedPaths],
     characterThemeColors: { ...session.characterThemeColors },
     messages: session.messages.map((message) => ({
       ...message,
@@ -123,6 +126,7 @@ export function cloneCompanionSessions(sessions: readonly CompanionSession[]): C
 export function cloneCompanionSessionSummary(summary: CompanionSessionSummary): CompanionSessionSummary {
   return {
     ...summary,
+    selectedPaths: [...summary.selectedPaths],
     characterThemeColors: { ...summary.characterThemeColors },
   };
 }

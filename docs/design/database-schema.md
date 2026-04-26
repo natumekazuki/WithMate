@@ -570,6 +570,7 @@ Companion Mode の作業単位。
 | `base_snapshot_commit` | `TEXT` | base snapshot commit hash |
 | `companion_branch` | `TEXT` | Companion 用 branch 名 |
 | `worktree_path` | `TEXT` | shadow worktree path |
+| `selected_paths_json` | `TEXT` | merge 時に選択された file path の JSON 配列 |
 | `provider` | `TEXT` | coding provider |
 | `catalog_revision` | `INTEGER` | model catalog revision |
 | `model` | `TEXT` | model |
@@ -588,8 +589,8 @@ Companion Mode の作業単位。
 補足:
 
 - current 実装では CompanionSession 作成時に base snapshot ref と shadow worktree を実体化する
-- selected files merge / discard は `status` と `updated_at` を更新し、terminal session は Home の history card として表示する
-- selected files summary / changed file summary / sibling warning の永続化は future slice
+- selected files merge / discard は `status`、`updated_at`、`selected_paths_json` を更新し、terminal session は Home の history card として表示する
+- changed file summary / sibling warning の永続化は future slice
 - `base_snapshot_ref`、`companion_branch`、`worktree_path` は DB id 由来の safe id で生成する
 - `companion_sessions.group_id` は `companion_groups(id) ON DELETE CASCADE`
 

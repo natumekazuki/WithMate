@@ -40,6 +40,7 @@ function createCompanionSession(input: {
     baseSnapshotCommit: input.baseSnapshotCommit,
     companionBranch: input.companionBranch ?? "withmate/companion/session-1",
     worktreePath: input.worktreePath,
+    selectedPaths: [],
     runState: "idle",
     threadId: "",
     provider: "codex",
@@ -71,6 +72,7 @@ function toCompanionSessionSummary(session: CompanionSession): CompanionSessionS
     targetBranch: session.targetBranch,
     baseSnapshotRef: session.baseSnapshotRef,
     baseSnapshotCommit: session.baseSnapshotCommit,
+    selectedPaths: session.selectedPaths,
     runState: session.runState,
     threadId: session.threadId,
     provider: session.provider,
@@ -179,6 +181,7 @@ describe("CompanionReviewService", () => {
       const merged = await service.mergeSelectedFiles(session.id, ["README.md"]);
 
       assert.equal(merged.session.status, "merged");
+      assert.deepEqual(merged.session.selectedPaths, ["README.md"]);
       assert.deepEqual(merged.siblingWarnings, []);
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\nmerged\n");
       await assert.rejects(() => stat(path.join(repoRoot, "new-file.txt")));
@@ -276,6 +279,7 @@ describe("CompanionReviewService", () => {
       const discarded = await service.discardSession(session.id);
 
       assert.equal(discarded.status, "discarded");
+      assert.deepEqual(discarded.selectedPaths, []);
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\n");
       await assert.rejects(() => stat(worktreePath));
     } finally {
@@ -444,6 +448,7 @@ describe("CompanionReviewService", () => {
       const result = await service.mergeSelectedFiles(session.id, ["README.md"]);
 
       assert.equal(result.session.status, "merged");
+      assert.deepEqual(result.session.selectedPaths, ["README.md"]);
       assert.deepEqual(result.siblingWarnings, [
         {
           sessionId: siblingSession.id,

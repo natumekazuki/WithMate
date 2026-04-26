@@ -49,6 +49,7 @@ function createSession(groupId: string, overrides: Partial<CompanionSession> = {
     baseSnapshotCommit: "abc123",
     companionBranch: "withmate/companion/session-1",
     worktreePath: "F:/app/companion-worktrees/group-1/session-1",
+    selectedPaths: [],
     runState: "idle",
     threadId: "",
     provider: "codex",
@@ -96,6 +97,7 @@ describe("CompanionStorage", () => {
           targetBranch: "main",
           baseSnapshotRef: "refs/withmate/companion/session-1/base",
           baseSnapshotCommit: "abc123",
+          selectedPaths: [],
           runState: "idle",
           threadId: "",
           provider: "codex",
@@ -132,6 +134,7 @@ describe("CompanionStorage", () => {
         id: "session-merged",
         status: "merged",
         taskTitle: "Merged task",
+        selectedPaths: ["README.md", "src/app.ts"],
         updatedAt: "2026-04-26 10:03",
       }));
       storage.createSession(createSession(group.id, {
@@ -146,6 +149,8 @@ describe("CompanionStorage", () => {
         ["session-merged", "merged"],
         ["session-discarded", "discarded"],
       ]);
+      assert.deepEqual(storage.getSession("session-merged")?.selectedPaths, ["README.md", "src/app.ts"]);
+      assert.deepEqual(storage.listSessionSummaries()[0]?.selectedPaths, ["README.md", "src/app.ts"]);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

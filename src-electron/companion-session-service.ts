@@ -88,6 +88,7 @@ export class CompanionSessionService {
       baseSnapshotCommit: artifacts.baseSnapshotCommit,
       companionBranch: artifacts.companionBranch,
       worktreePath: artifacts.worktreePath,
+      selectedPaths: [],
       runState: "idle",
       threadId: "",
       provider: input.provider,

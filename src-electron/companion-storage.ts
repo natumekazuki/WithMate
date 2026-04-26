@@ -33,6 +33,7 @@ type CompanionSessionRow = {
   base_snapshot_commit: string;
   companion_branch: string;
   worktree_path: string;
+  selected_paths_json: string;
   run_state: string;
   thread_id: string;
   provider: string;
@@ -75,6 +76,7 @@ const COMPANION_SESSION_COLUMNS = `
   base_snapshot_commit,
   companion_branch,
   worktree_path,
+  selected_paths_json,
   run_state,
   thread_id,
   provider,
@@ -119,6 +121,7 @@ function rowToSession(row: CompanionSessionRow): CompanionSession {
     baseSnapshotCommit: row.base_snapshot_commit,
     companionBranch: row.companion_branch,
     worktreePath: row.worktree_path,
+    selectedPaths: parseSelectedPaths(row.selected_paths_json),
     runState: row.run_state === "running" || row.run_state === "error" ? row.run_state : "idle",
     threadId: row.thread_id,
     provider: row.provider,
@@ -177,6 +180,21 @@ function rowToMessage(row: CompanionMessageRow): Message {
   };
 }
 
+function parseSelectedPaths(value: string): string[] {
+  if (!value.trim()) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter((item): item is string => typeof item === "string");
+  } catch {
+    return [];
+  }
+}
+
 function sessionToSummary(session: CompanionSession): CompanionSessionSummary {
   return {
     id: session.id,
@@ -188,6 +206,7 @@ function sessionToSummary(session: CompanionSession): CompanionSessionSummary {
     targetBranch: session.targetBranch,
     baseSnapshotRef: session.baseSnapshotRef,
     baseSnapshotCommit: session.baseSnapshotCommit,
+    selectedPaths: session.selectedPaths,
     runState: session.runState,
     threadId: session.threadId,
     provider: session.provider,
@@ -236,6 +255,7 @@ export class CompanionStorage {
         base_snapshot_commit TEXT NOT NULL DEFAULT '',
         companion_branch TEXT NOT NULL,
         worktree_path TEXT NOT NULL,
+        selected_paths_json TEXT NOT NULL DEFAULT '[]',
         run_state TEXT NOT NULL DEFAULT 'idle',
         thread_id TEXT NOT NULL DEFAULT '',
         provider TEXT NOT NULL,
@@ -292,6 +312,9 @@ export class CompanionStorage {
     if (!columns.has("run_state")) {
       this.db.exec("ALTER TABLE companion_sessions ADD COLUMN run_state TEXT NOT NULL DEFAULT 'idle';");
     }
+    if (!columns.has("selected_paths_json")) {
+      this.db.exec("ALTER TABLE companion_sessions ADD COLUMN selected_paths_json TEXT NOT NULL DEFAULT '[]';");
+    }
     if (!columns.has("thread_id")) {
       this.db.exec("ALTER TABLE companion_sessions ADD COLUMN thread_id TEXT NOT NULL DEFAULT '';");
     }
@@ -322,7 +345,7 @@ export class CompanionStorage {
     this.db.prepare(`
       INSERT INTO companion_sessions (
         ${COMPANION_SESSION_COLUMNS}
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.id,
       session.groupId,
@@ -335,6 +358,7 @@ export class CompanionStorage {
       session.baseSnapshotCommit,
       session.companionBranch,
       session.worktreePath,
+      JSON.stringify(session.selectedPaths),
       session.runState,
       session.threadId,
       session.provider,
@@ -398,6 +422,7 @@ export class CompanionStorage {
       UPDATE companion_sessions SET
         task_title = ?,
         status = ?,
+        selected_paths_json = ?,
         run_state = ?,
         thread_id = ?,
         provider = ?,
@@ -418,6 +443,7 @@ export class CompanionStorage {
     `).run(
       session.taskTitle,
       session.status,
+      JSON.stringify(session.selectedPaths),
       session.runState,
       session.threadId,
       session.provider,

@@ -1128,7 +1128,17 @@ function matchesCompanionSessionSearch(session: CompanionSessionSummary, normali
     session.character,
     session.provider,
     session.model,
+    ...session.selectedPaths,
   ].some((value) => value.toLocaleLowerCase().includes(normalizedSearch));
+}
+
+function buildCompanionSelectedFilesSummary(paths: string[]): string {
+  if (paths.length === 0) {
+    return "selected files: none";
+  }
+  const visiblePaths = paths.slice(0, 3);
+  const suffix = paths.length > visiblePaths.length ? ` / +${paths.length - visiblePaths.length}` : "";
+  return `selected files: ${visiblePaths.join(", ")}${suffix}`;
 }
 
 export function HomeRecentSessionsPanel({
@@ -1227,6 +1237,7 @@ export function HomeRecentSessionsPanel({
                       <div className="session-card-subline home-session-card-meta">
                         <span>{`Repo : ${session.repoRoot}`}</span>
                         <span>{`target: ${session.targetBranch}`}</span>
+                        <span>{buildCompanionSelectedFilesSummary(session.selectedPaths)}</span>
                         <span>{`updatedAt: ${session.updatedAt}`}</span>
                       </div>
                     </div>
