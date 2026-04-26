@@ -106,6 +106,16 @@ describe("CompanionReviewService", () => {
       changedFiles: [{ path: "README.md", kind: "edit" as const }],
       updatedAt: "2026-04-26 10:05",
     };
+    const olderMergeRun: CompanionMergeRun = {
+      id: "merge-run-0",
+      sessionId: session.id,
+      groupId: session.groupId,
+      operation: "discard",
+      selectedPaths: [],
+      changedFiles: [{ path: "docs/old.md", kind: "delete" }],
+      siblingWarnings: [],
+      createdAt: "2026-04-26 10:03",
+    };
     const mergeRun: CompanionMergeRun = {
       id: "merge-run-1",
       sessionId: session.id,
@@ -130,7 +140,7 @@ describe("CompanionReviewService", () => {
         return updatedSession;
       },
       listCompanionMergeRunsForSession(sessionId) {
-        return sessionId === session.id ? [mergeRun] : [];
+        return sessionId === session.id ? [mergeRun, olderMergeRun] : [];
       },
     });
 
@@ -142,6 +152,13 @@ describe("CompanionReviewService", () => {
       ["edit", "README.md", 0],
       ["add", "src/app.ts", 0],
     ]);
+    assert.deepEqual(
+      snapshot?.mergeRuns.map((run) => [run.id, run.operation, run.createdAt]),
+      [
+        ["merge-run-1", "merge", "2026-04-26 10:04"],
+        ["merge-run-0", "discard", "2026-04-26 10:03"],
+      ],
+    );
   });
 
   it("base snapshot と shadow worktree から tracked / untracked の changed files を作る", async () => {
@@ -187,6 +204,7 @@ describe("CompanionReviewService", () => {
         ["add", "new-file.txt"],
         ["edit", "README.md"],
       ]);
+      assert.deepEqual(snapshot.mergeRuns, []);
       assert.ok(
         snapshot.changedFiles
           .find((file) => file.path === "README.md")

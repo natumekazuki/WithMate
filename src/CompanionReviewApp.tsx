@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import type { CompanionMergeRun } from "./companion-state.js";
 import type { ChangedFile } from "./runtime-state.js";
 import type { CompanionReviewSnapshot, CompanionSiblingCheckWarning } from "./companion-review-state.js";
 import { getCompanionSessionIdFromLocation } from "./companion-review-state.js";
@@ -10,6 +11,24 @@ import { fileKindLabel } from "./ui-utils.js";
 
 function pickInitialFile(files: ChangedFile[]): ChangedFile | null {
   return files[0] ?? null;
+}
+
+function summarizeMergeRunPaths(paths: string[]): string {
+  if (paths.length === 0) {
+    return "none";
+  }
+  const visiblePaths = paths.slice(0, 2);
+  const suffix = paths.length > visiblePaths.length ? ` / +${paths.length - visiblePaths.length}` : "";
+  return `${visiblePaths.join(", ")}${suffix}`;
+}
+
+function summarizeMergeRunChangedFiles(run: CompanionMergeRun): string {
+  if (run.changedFiles.length === 0) {
+    return "none";
+  }
+  const visibleFiles = run.changedFiles.slice(0, 2).map((file) => `${file.kind}: ${file.path}`);
+  const suffix = run.changedFiles.length > visibleFiles.length ? ` / +${run.changedFiles.length - visibleFiles.length}` : "";
+  return `${visibleFiles.join(", ")}${suffix}`;
 }
 
 export default function CompanionReviewApp() {
@@ -198,6 +217,29 @@ export default function CompanionReviewApp() {
                 </li>
               ))}
             </ul>
+          </section>
+        )}
+        {snapshot.mergeRuns.length > 0 && (
+          <section className="companion-review-timeline" aria-label="Merge run timeline">
+            <div className="companion-review-timeline-head">
+              <p className="eyebrow">Merge Runs</p>
+              <span>{`${snapshot.mergeRuns.length} history`}</span>
+            </div>
+            <ol>
+              {snapshot.mergeRuns.map((run) => (
+                <li key={run.id}>
+                  <div className="companion-review-timeline-topline">
+                    <strong>{run.operation}</strong>
+                    <span>{run.createdAt}</span>
+                  </div>
+                  <div className="companion-review-timeline-meta">
+                    <span>{`selected: ${summarizeMergeRunPaths(run.selectedPaths)}`}</span>
+                    <span>{`changed: ${summarizeMergeRunChangedFiles(run)}`}</span>
+                    <span>{`sibling warnings: ${run.siblingWarnings.length}`}</span>
+                  </div>
+                </li>
+              ))}
+            </ol>
           </section>
         )}
         <section className={`companion-review-readiness ${snapshot.mergeReadiness.status}`}>

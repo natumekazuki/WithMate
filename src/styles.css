@@ -6671,6 +6671,58 @@ button:disabled {
   font-family: var(--font-mono);
 }
 
+.companion-review-timeline {
+  display: grid;
+  gap: 10px;
+  padding: 12px 22px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--theme-main) 7%, transparent);
+}
+
+.companion-review-timeline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.companion-review-timeline ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.companion-review-timeline li {
+  display: grid;
+  gap: 5px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+}
+
+.companion-review-timeline-topline,
+.companion-review-timeline-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.companion-review-timeline-topline strong {
+  text-transform: uppercase;
+}
+
+.companion-review-timeline-topline span,
+.companion-review-timeline-meta {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
 .companion-review-readiness {
   display: grid;
   grid-template-columns: minmax(160px, auto) minmax(0, 1fr);

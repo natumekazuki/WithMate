@@ -158,6 +158,7 @@ export class CompanionReviewService {
     return {
       session,
       changedFiles,
+      mergeRuns: this.deps.listCompanionMergeRunsForSession?.(session.id) ?? [],
       mergeReadiness,
       generatedAt: currentTimestampLabel(),
       warnings: [],
@@ -165,7 +166,8 @@ export class CompanionReviewService {
   }
 
   private buildTerminalReviewSnapshot(session: CompanionSession): CompanionReviewSnapshot {
-    const latestRun = this.deps.listCompanionMergeRunsForSession?.(session.id)[0] ?? null;
+    const mergeRuns = this.deps.listCompanionMergeRunsForSession?.(session.id) ?? [];
+    const latestRun = mergeRuns[0] ?? null;
     const changedFiles = (latestRun?.changedFiles ?? session.changedFiles).map((change): ChangedFile => ({
       kind: change.kind,
       path: change.path,
@@ -176,6 +178,7 @@ export class CompanionReviewService {
     return {
       session,
       changedFiles,
+      mergeRuns,
       mergeReadiness: {
         status: "warning",
         blockers: [],
