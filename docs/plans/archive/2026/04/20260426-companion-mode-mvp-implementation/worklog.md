@@ -18,4 +18,4 @@
 
 | checkpoint | commit | summary |
 | --- | --- | --- |
-| CompanionSession 作成 MVP | 未コミット | Home から CompanionSession を作成し、専用 table と Home 一覧に反映できる状態 |
+| CompanionSession 作成 MVP | `c1bc19e` | Home から CompanionSession を作成し、専用 table と Home 一覧に反映できる状態 |
