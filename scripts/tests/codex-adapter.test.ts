@@ -90,6 +90,23 @@ describe("CodexAdapter thread settings", () => {
     assert.equal(nextSettings.options.modelReasoningEffort, "low");
   });
 
+  it("executionWorkspacePath がある場合は workingDirectory と additionalDirectories の基準に使う", () => {
+    const session = {
+      ...createSession(),
+      allowedAdditionalDirectories: ["F:/repo/src", "F:/shared"],
+    };
+
+    const settings = buildCodexThreadSettings(
+      session,
+      CODEX_PROVIDER_CATALOG,
+      "client-key",
+      "F:/repo/.withmate/companion-worktree",
+    );
+
+    assert.equal(settings.options.workingDirectory, "F:/repo/.withmate/companion-worktree");
+    assert.deepEqual(settings.options.additionalDirectories, [path.normalize("F:/repo/src"), path.normalize("F:/shared")]);
+  });
+
   it("threadId がある場合は startThread ではなく resumeThread(threadId, options) を使う", () => {
     const previousSession = createSession({
       threadId: "thread-1",

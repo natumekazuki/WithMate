@@ -36,6 +36,7 @@ import { buildArtifactFromOperations } from "./provider-artifact.js";
 import { composeProviderPrompt, isCanceledProviderMessage } from "./provider-prompt.js";
 import {
   ProviderTurnError,
+  resolveRunWorkspacePath,
   type ExtractSessionMemoryResult,
   type ExtractSessionMemoryInput,
   type ProviderPromptComposition,
@@ -1093,7 +1094,7 @@ function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
         }
 
         const decision = await input.onApprovalRequest(
-          buildCopilotApprovalRequest(request, input.providerCatalog.id, input.session.workspacePath),
+          buildCopilotApprovalRequest(request, input.providerCatalog.id, resolveRunWorkspacePath(input)),
         );
         return toPermissionDecision(decision === "approve" ? "approved" : "denied-interactively-by-user");
       };
@@ -1116,7 +1117,7 @@ function buildCopilotBootstrapDebugItems(
       model: input.session.model,
       reasoningEffort: input.session.reasoningEffort,
       approvalMode: input.session.approvalMode,
-      workspacePath: input.session.workspacePath,
+      workspacePath: resolveRunWorkspacePath(input),
       threadId: input.session.threadId,
       hasApiKey: getProviderAppSettings(input.appSettings, input.providerCatalog.id).apiKey.trim().length > 0,
       useLoggedInUser: getProviderAppSettings(input.appSettings, input.providerCatalog.id).apiKey.trim().length === 0,
@@ -1212,15 +1213,16 @@ export function buildCopilotSessionSettings(
   resolveCustomAgents: typeof resolveSessionCustomAgentConfigs = resolveSessionCustomAgentConfigs,
 ): CopilotSessionSettings {
   const selection = resolveModelSelection(input.providerCatalog, input.session.model, input.session.reasoningEffort);
+  const workspacePath = resolveRunWorkspacePath(input);
   const resolvedCustomAgents = resolveCustomAgents(
-    input.session.workspacePath,
+    workspacePath,
     input.session.customAgentName,
   );
   const systemMessage = buildCopilotSystemMessage(prompt);
   const config: SessionConfig = {
     model: selection.resolvedModel,
     reasoningEffort: selection.resolvedReasoningEffort === "minimal" ? "low" : selection.resolvedReasoningEffort,
-    workingDirectory: input.session.workspacePath,
+    workingDirectory: workspacePath,
     streaming: true,
     onPermissionRequest: buildPermissionHandler(input),
     ...(systemMessage ? { systemMessage } : {}),
@@ -1903,11 +1905,12 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     onProgress?: RunSessionTurnProgressHandler,
   ): Promise<RunSessionTurnResult> {
     const messageAttachments = buildCopilotMessageAttachments(input.attachments);
+    const workspacePath = resolveRunWorkspacePath(input);
 
     const cliPath = resolveCopilotCliPath();
     const { snapshot: beforeSnapshot, stats: beforeSnapshotStats } = await captureWorkspaceSnapshot([
-      input.session.workspacePath,
-      ...normalizeAllowedAdditionalDirectories(input.session.workspacePath, input.session.allowedAdditionalDirectories),
+      workspacePath,
+      ...normalizeAllowedAdditionalDirectories(workspacePath, input.session.allowedAdditionalDirectories),
     ]);
     let session: CopilotSession;
     let selection: ResolvedModelSelection;
@@ -1919,7 +1922,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         cliPath,
         provider: input.providerCatalog.id,
         model: input.session.model,
-        workspacePath: input.session.workspacePath,
+        workspacePath,
         threadId: input.session.threadId,
         message,
       });
@@ -1973,7 +1976,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         state: streamState,
         providerId: input.providerCatalog.id,
         sessionId: input.session.id,
-        workspacePath: input.session.workspacePath,
+        workspacePath,
         onProviderQuotaTelemetry: input.onProviderQuotaTelemetry,
         onSessionContextTelemetry: input.onSessionContextTelemetry,
       });
@@ -1985,7 +1988,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
             logCopilotRuntime("elicitation handling failed", {
               provider: input.providerCatalog.id,
               model: input.session.model,
-              workspacePath: input.session.workspacePath,
+              workspacePath,
               threadId: session.sessionId,
               requestId: request.requestId,
               message: error instanceof Error ? error.message : String(error),
@@ -2026,7 +2029,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           streamState.liveSteps,
           streamState.usage,
           streamState.events,
-          input.session.workspacePath,
+          workspacePath,
           input.session,
           input.providerCatalog,
           selection,
@@ -2051,7 +2054,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         streamState.liveSteps,
         streamState.usage,
         streamState.events,
-        input.session.workspacePath,
+        workspacePath,
         input.session,
         input.providerCatalog,
         selection,
@@ -2075,7 +2078,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         streamState.liveSteps,
         streamState.usage,
         streamState.events,
-        input.session.workspacePath,
+        workspacePath,
         input.session,
         input.providerCatalog,
         selection,
@@ -2087,7 +2090,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         cliPath,
         provider: input.providerCatalog.id,
         model: input.session.model,
-        workspacePath: input.session.workspacePath,
+        workspacePath,
         threadId: session.sessionId,
         message,
       });
@@ -2115,7 +2118,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       logCopilotRuntime("retrying stale connection", {
         provider: input.providerCatalog.id,
         model: input.session.model,
-        workspacePath: input.session.workspacePath,
+        workspacePath: resolveRunWorkspacePath(input),
         threadId: input.session.threadId,
         message: error instanceof Error ? error.message : String(error),
       });

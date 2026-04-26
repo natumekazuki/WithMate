@@ -1,4 +1,5 @@
 import type { RunSessionTurnInput, ProviderPromptComposition } from "./provider-runtime.js";
+import { resolveRunWorkspacePath } from "./provider-runtime.js";
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 
 function renderBulletSection(title: string, values: string[], maxItems: number): string {
@@ -83,7 +84,7 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
     },
     imagePaths: referencedImages.map((attachment) => attachment.absolutePath),
     additionalDirectories: normalizeAllowedAdditionalDirectories(
-      input.session.workspacePath,
+      resolveRunWorkspacePath(input),
       input.session.allowedAdditionalDirectories,
     ),
   };

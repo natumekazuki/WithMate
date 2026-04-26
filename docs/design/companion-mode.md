@@ -256,6 +256,9 @@ Companion UI に approval / sandbox の権限設定を置く。
 - WithMate は prompt で AI の操作を細かく縛るルールを追加しない
 - provider 実行の許可範囲は user が選んだ approval / sandbox policy に従う
 - provider 実行 cwd は CompanionSession の shadow worktree を基本にする
+- provider runtime は通常 Session の `workspacePath` と別に実行用 workspace path を受け取れる
+- Companion runtime は provider に `executionWorkspacePath` として `CompanionSession.worktreePath` を渡す
+- `executionWorkspacePath` がない通常 Session は従来通り `workspacePath` を cwd / snapshot root / path summary の基準にする
 
 WithMate 管理操作は provider に自由実行させず、Main Process 側の Companion lifecycle service が実行する。
 

@@ -35,6 +35,7 @@ export type ProviderPromptComposition = {
 
 export type RunSessionTurnInput = {
   session: Session;
+  executionWorkspacePath?: string;
   sessionMemory: SessionMemory;
   projectMemoryEntries: ProjectMemoryEntry[];
   character: CharacterProfile;
@@ -48,6 +49,11 @@ export type RunSessionTurnInput = {
   onProviderQuotaTelemetry?: RunSessionTurnProviderQuotaTelemetryHandler;
   onSessionContextTelemetry?: RunSessionTurnSessionContextTelemetryHandler;
 };
+
+export function resolveRunWorkspacePath(input: Pick<RunSessionTurnInput, "session" | "executionWorkspacePath">): string {
+  const normalized = input.executionWorkspacePath?.trim() ?? "";
+  return normalized || input.session.workspacePath;
+}
 
 export type RunSessionTurnProgressHandler = (state: LiveSessionRunState) => void | Promise<void>;
 

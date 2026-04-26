@@ -111,6 +111,13 @@ function resolveCustomAgents(_workspacePath: string, selectedAgentName: string) 
   };
 }
 
+function assertExecutionWorkspaceCustomAgents(expectedWorkspacePath: string) {
+  return (workspacePath: string, selectedAgentName: string) => {
+    assert.equal(workspacePath, expectedWorkspacePath);
+    return resolveCustomAgents(workspacePath, selectedAgentName);
+  };
+}
+
 function createRunSessionInput(options?: {
   customAgentName?: string;
   threadId?: string;
@@ -927,6 +934,23 @@ describe("CopilotAdapter session settings", () => {
     assert.notEqual(previousSettings.settingsKey, nextSettings.settingsKey);
     assert.equal(nextSettings.config.agent, "planner");
     assert.deepEqual(nextSettings.config.customAgents, CUSTOM_AGENT_CONFIGS);
+  });
+
+  it("executionWorkspacePath がある場合は workingDirectory と custom agent 探索に使う", () => {
+    const input = {
+      ...createRunSessionInput({ customAgentName: "reviewer" }),
+      executionWorkspacePath: "F:/repo/.withmate/companion-worktree",
+    };
+
+    const settings = buildCopilotSessionSettings(
+      input,
+      EMPTY_PROMPT,
+      "client-key",
+      assertExecutionWorkspaceCustomAgents("F:/repo/.withmate/companion-worktree"),
+    );
+
+    assert.equal(settings.config.workingDirectory, "F:/repo/.withmate/companion-worktree");
+    assert.equal(settings.config.agent, "reviewer");
   });
 
   it("model / reasoning 変更後の session settings は新 config を反映する", () => {
