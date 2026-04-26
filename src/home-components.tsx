@@ -1130,11 +1130,18 @@ function matchesCompanionSessionSearch(session: CompanionSessionSummary, normali
     session.model,
     ...session.selectedPaths,
     ...session.changedFiles.map((file) => file.path),
+    ...(session.latestMergeRun?.selectedPaths ?? []),
+    ...(session.latestMergeRun?.changedFiles.map((file) => file.path) ?? []),
     ...session.siblingWarnings.flatMap((warning) => [
       warning.taskTitle,
       warning.message,
       ...warning.paths,
     ]),
+    ...(session.latestMergeRun?.siblingWarnings.flatMap((warning) => [
+      warning.taskTitle,
+      warning.message,
+      ...warning.paths,
+    ]) ?? []),
   ].some((value) => value.toLocaleLowerCase().includes(normalizedSearch));
 }
 
@@ -1256,10 +1263,12 @@ export function HomeRecentSessionsPanel({
                   <span>{historyCompanionSessions.length}</span>
                 </div>
                 {historyCompanionSessions.map((session) => (
-                  <article
+                  <button
                     key={session.id}
                     className="session-card home-session-card companion-session-card companion-session-history-card"
+                    type="button"
                     style={buildCardThemeStyle(session.characterThemeColors)}
+                    onClick={() => onOpenCompanionReview(session.id)}
                   >
                     <div className="session-card-copy">
                       <div className="session-card-topline home-session-card-topline">
@@ -1271,13 +1280,14 @@ export function HomeRecentSessionsPanel({
                       <div className="session-card-subline home-session-card-meta">
                         <span>{`Repo : ${session.repoRoot}`}</span>
                         <span>{`target: ${session.targetBranch}`}</span>
-                        <span>{buildCompanionChangedFilesSummary(session.changedFiles)}</span>
-                        <span>{buildCompanionSiblingWarningSummary(session.siblingWarnings)}</span>
-                        <span>{buildCompanionSelectedFilesSummary(session.selectedPaths)}</span>
+                        <span>{`operation: ${session.latestMergeRun?.operation ?? session.status}`}</span>
+                        <span>{buildCompanionChangedFilesSummary(session.latestMergeRun?.changedFiles ?? session.changedFiles)}</span>
+                        <span>{buildCompanionSiblingWarningSummary(session.latestMergeRun?.siblingWarnings ?? session.siblingWarnings)}</span>
+                        <span>{buildCompanionSelectedFilesSummary(session.latestMergeRun?.selectedPaths ?? session.selectedPaths)}</span>
                         <span>{`updatedAt: ${session.updatedAt}`}</span>
                       </div>
                     </div>
-                  </article>
+                  </button>
                 ))}
               </div>
             ) : null}

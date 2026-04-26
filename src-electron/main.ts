@@ -631,6 +631,10 @@ function createCompanionMergeRun(run: CompanionMergeRun): CompanionMergeRun {
   return requireCompanionStorage().createMergeRun(run);
 }
 
+function listCompanionMergeRunsForSession(sessionId: string): CompanionMergeRun[] {
+  return requireCompanionStorage().listMergeRunsForSession(sessionId);
+}
+
 async function runCompanionSessionTurn(sessionId: string, request: Parameters<CompanionRuntimeService["runSessionTurn"]>[1]): Promise<CompanionSession> {
   return requireCompanionRuntimeService().runSessionTurn(sessionId, request);
 }
@@ -1525,6 +1529,7 @@ function requireCompanionReviewService(): CompanionReviewService {
       listCompanionSessionSummaries,
       updateCompanionSession,
       createCompanionMergeRun,
+      listCompanionMergeRunsForSession,
     });
   }
 

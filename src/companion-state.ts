@@ -121,7 +121,9 @@ export type CompanionSessionSummary = Pick<
   | "characterIconPath"
   | "characterThemeColors"
   | "updatedAt"
->;
+> & {
+  latestMergeRun: CompanionMergeRun | null;
+};
 
 export function cloneCompanionSession(session: CompanionSession): CompanionSession {
   return {
@@ -182,6 +184,7 @@ export function cloneCompanionSessionSummary(summary: CompanionSessionSummary): 
       ...warning,
       paths: [...warning.paths],
     })),
+    latestMergeRun: summary.latestMergeRun ? cloneCompanionMergeRun(summary.latestMergeRun) : null,
     characterThemeColors: { ...summary.characterThemeColors },
   };
 }

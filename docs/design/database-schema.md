@@ -616,7 +616,7 @@ Companion Mode の merge / discard terminal 操作履歴。
 
 - current 実装では completed の merge / discard 操作だけを保存する
 - blocked / failed merge attempt の履歴化は future slice
-- Home 履歴カードの表示元は current 実装では `companion_sessions` summary を維持する
+- Home 履歴カードと terminal read-only Review Window は latest merge run を優先して summary を表示する
 - `companion_merge_runs.session_id` は `companion_sessions(id) ON DELETE CASCADE`
 - `companion_merge_runs.group_id` は `companion_groups(id) ON DELETE CASCADE`
 

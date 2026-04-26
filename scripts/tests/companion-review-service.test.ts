@@ -88,11 +88,62 @@ function toCompanionSessionSummary(session: CompanionSession): CompanionSessionS
     characterRoleMarkdown: session.characterRoleMarkdown,
     characterIconPath: session.characterIconPath,
     characterThemeColors: session.characterThemeColors,
+    latestMergeRun: null,
     updatedAt: session.updatedAt,
   };
 }
 
 describe("CompanionReviewService", () => {
+  it("terminal CompanionSession は merge run から read-only snapshot を作る", async () => {
+    const session = {
+      ...createCompanionSession({
+        repoRoot: "F:/repo",
+        worktreePath: "F:/repo/.withmate/removed-worktree",
+        baseSnapshotCommit: "base",
+      }),
+      status: "merged" as const,
+      selectedPaths: ["README.md"],
+      changedFiles: [{ path: "README.md", kind: "edit" as const }],
+      updatedAt: "2026-04-26 10:05",
+    };
+    const mergeRun: CompanionMergeRun = {
+      id: "merge-run-1",
+      sessionId: session.id,
+      groupId: session.groupId,
+      operation: "merge",
+      selectedPaths: ["README.md"],
+      changedFiles: [
+        { path: "README.md", kind: "edit" },
+        { path: "src/app.ts", kind: "add" },
+      ],
+      siblingWarnings: [],
+      createdAt: "2026-04-26 10:04",
+    };
+    const service = new CompanionReviewService({
+      getCompanionSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      listCompanionSessionSummaries() {
+        return [];
+      },
+      updateCompanionSession(updatedSession) {
+        return updatedSession;
+      },
+      listCompanionMergeRunsForSession(sessionId) {
+        return sessionId === session.id ? [mergeRun] : [];
+      },
+    });
+
+    const snapshot = await service.getReviewSnapshot(session.id);
+
+    assert.equal(snapshot?.session.status, "merged");
+    assert.equal(snapshot?.mergeReadiness.status, "warning");
+    assert.deepEqual(snapshot?.changedFiles.map((file) => [file.kind, file.path, file.diffRows.length]), [
+      ["edit", "README.md", 0],
+      ["add", "src/app.ts", 0],
+    ]);
+  });
+
   it("base snapshot と shadow worktree から tracked / untracked の changed files を作る", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-review-"));
     const repoRoot = path.join(tempDirectory, "repo");

@@ -40,6 +40,7 @@ export type CompanionReviewServiceDeps = {
   listCompanionSessionSummaries(): CompanionSessionSummary[];
   updateCompanionSession(session: CompanionSession): CompanionSession;
   createCompanionMergeRun?(run: CompanionMergeRun): CompanionMergeRun;
+  listCompanionMergeRunsForSession?(sessionId: string): CompanionMergeRun[];
 };
 
 async function runGit(cwd: string, args: string[], options: GitCommandOptions = {}): Promise<GitCommandResult> {
@@ -143,6 +144,9 @@ export class CompanionReviewService {
     if (!session) {
       return null;
     }
+    if (session.status !== "active") {
+      return this.buildTerminalReviewSnapshot(session);
+    }
 
     const changedPaths = await this.resolveChangedPaths(session);
     const changedFiles = await Promise.all(changedPaths.map((change) => this.buildChangedFile(session, change)));
@@ -157,6 +161,38 @@ export class CompanionReviewService {
       mergeReadiness,
       generatedAt: currentTimestampLabel(),
       warnings: [],
+    };
+  }
+
+  private buildTerminalReviewSnapshot(session: CompanionSession): CompanionReviewSnapshot {
+    const latestRun = this.deps.listCompanionMergeRunsForSession?.(session.id)[0] ?? null;
+    const changedFiles = (latestRun?.changedFiles ?? session.changedFiles).map((change): ChangedFile => ({
+      kind: change.kind,
+      path: change.path,
+      summary: summarizeChangedFile(change.kind, change.path),
+      diffRows: [],
+    }));
+
+    return {
+      session,
+      changedFiles,
+      mergeReadiness: {
+        status: "warning",
+        blockers: [],
+        warnings: [
+          {
+            kind: "lifecycle",
+            message: "terminal CompanionSession のため read-only で表示しているよ。",
+          },
+        ],
+        targetHead: "",
+        baseParent: "",
+        simulatedAt: latestRun?.createdAt ?? session.updatedAt,
+      },
+      generatedAt: currentTimestampLabel(),
+      warnings: latestRun
+        ? [`operation: ${latestRun.operation}`]
+        : ["merge run history がないため session summary から表示しているよ。"],
     };
   }
 

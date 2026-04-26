@@ -116,6 +116,7 @@ describe("CompanionStorage", () => {
           selectedPaths: [],
           changedFiles: [],
           siblingWarnings: [],
+          latestMergeRun: null,
           runState: "idle",
           threadId: "",
           provider: "codex",
@@ -219,6 +220,16 @@ describe("CompanionStorage", () => {
           createdAt: "2026-04-26 10:04",
         },
       ]);
+      assert.deepEqual(storage.listSessionSummaries()[0]?.latestMergeRun, {
+        id: "merge-run-1",
+        sessionId: "session-merged",
+        groupId: group.id,
+        operation: "merge",
+        selectedPaths: ["README.md"],
+        changedFiles: [{ path: "README.md", kind: "edit" }],
+        siblingWarnings: [],
+        createdAt: "2026-04-26 10:04",
+      });
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

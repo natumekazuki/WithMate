@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import {
+  cloneCompanionMergeRun,
   cloneCompanionMergeRuns,
   cloneCompanionSessions,
   cloneCompanionSessionSummaries,
@@ -303,7 +304,7 @@ function parseSiblingWarnings(value: string): CompanionSiblingWarningSummary[] {
   }
 }
 
-function sessionToSummary(session: CompanionSession): CompanionSessionSummary {
+function sessionToSummary(session: CompanionSession, latestMergeRun: CompanionMergeRun | null = null): CompanionSessionSummary {
   return {
     id: session.id,
     groupId: session.groupId,
@@ -328,6 +329,7 @@ function sessionToSummary(session: CompanionSession): CompanionSessionSummary {
     characterRoleMarkdown: session.characterRoleMarkdown,
     characterIconPath: session.characterIconPath,
     characterThemeColors: session.characterThemeColors,
+    latestMergeRun,
     updatedAt: session.updatedAt,
   };
 }
@@ -526,7 +528,9 @@ export class CompanionStorage {
       FROM companion_sessions
       ORDER BY updated_at DESC, id DESC
     `).all() as CompanionSessionRow[];
-    return cloneCompanionSessionSummaries(rows.map(rowToSession).map(sessionToSummary));
+    return cloneCompanionSessionSummaries(rows.map(rowToSession).map((session) =>
+      sessionToSummary(session, this.getLatestMergeRunForSession(session.id))
+    ));
   }
 
   listActiveSessionSummaries(): CompanionSessionSummary[] {
@@ -536,7 +540,7 @@ export class CompanionStorage {
       WHERE status = 'active'
       ORDER BY updated_at DESC, id DESC
     `).all() as CompanionSessionRow[];
-    return cloneCompanionSessionSummaries(rows.map(rowToSession).map(sessionToSummary));
+    return cloneCompanionSessionSummaries(rows.map(rowToSession).map((session) => sessionToSummary(session)));
   }
 
   getSession(sessionId: string): CompanionSession | null {
@@ -634,6 +638,17 @@ export class CompanionStorage {
       ORDER BY created_at DESC, id DESC
     `).all(sessionId) as CompanionMergeRunRow[];
     return cloneCompanionMergeRuns(rows.map(rowToMergeRun));
+  }
+
+  private getLatestMergeRunForSession(sessionId: string): CompanionMergeRun | null {
+    const row = this.db.prepare(`
+      SELECT ${COMPANION_MERGE_RUN_COLUMNS}
+      FROM companion_merge_runs
+      WHERE session_id = ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `).get(sessionId) as CompanionMergeRunRow | undefined;
+    return row ? cloneCompanionMergeRun(rowToMergeRun(row)) : null;
   }
 
   private listMessages(sessionId: string): Message[] {
