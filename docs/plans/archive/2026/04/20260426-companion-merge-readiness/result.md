@@ -1,8 +1,8 @@
 # Companion Merge Readiness 実装 Result
 
-- status: implementation_done
+- status: completed
 - started: 2026-04-26
-- completed:
+- completed: 2026-04-26
 
 ## 結果
 
@@ -19,4 +19,4 @@
 
 ## コミット
 
-未コミット。
+- `77ae505` `feat(companion): merge readiness を表示して blocker を適用する`

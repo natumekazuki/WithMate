@@ -1,6 +1,6 @@
 # Companion Merge Readiness 実装 Plan
 
-- status: implementation_done
+- status: completed
 - started: 2026-04-26
 
 ## 目的
@@ -32,4 +32,4 @@ Review Window と merge 実行時に target branch drift、target worktree dirty
 3. [x] selected files merge simulation の追加。
 4. [x] Review Window UI と merge 実行時 blocker の接続。
 5. [x] design doc と検証を更新する。
-6. [ ] archive、commit。
+6. [x] archive、commit。

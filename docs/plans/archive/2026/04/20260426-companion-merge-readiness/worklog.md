@@ -21,4 +21,4 @@
 
 | checkpoint | commit | summary |
 | --- | --- | --- |
-| Companion merge readiness | 未コミット | Review Window に merge readiness と blocker 判定を追加する |
+| Companion merge readiness | `77ae505` | Review Window に merge readiness と blocker 判定を追加する |
