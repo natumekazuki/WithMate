@@ -1,6 +1,6 @@
 # Companion Merge / Discard 実装 Plan
 
-- status: implementation_done
+- status: completed
 - started: 2026-04-26
 
 ## 目的
@@ -32,4 +32,4 @@ Review Window から selected files を target workspace へ merge し、Compani
 3. [x] IPC / preload / renderer API を追加する。
 4. [x] Review Window UI に checkbox と actions を追加する。
 5. [x] design doc と検証を更新する。
-6. [ ] archive、commit。
+6. [x] archive、commit。

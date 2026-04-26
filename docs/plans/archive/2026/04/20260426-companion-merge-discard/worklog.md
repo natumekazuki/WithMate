@@ -20,4 +20,4 @@
 
 | checkpoint | commit | summary |
 | --- | --- | --- |
-| Companion merge / discard | 未コミット | Review Window から selected files merge / discard を実行する |
+| Companion merge / discard | `73fa8d0` | Review Window から selected files merge / discard を実行する |

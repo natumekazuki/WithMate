@@ -1,8 +1,8 @@
 # Companion Merge / Discard 実装 Result
 
-- status: implementation_done
+- status: completed
 - started: 2026-04-26
-- completed:
+- completed: 2026-04-26
 
 ## 結果
 
@@ -19,4 +19,4 @@
 
 ## コミット
 
-未コミット。
+- `73fa8d0` `feat(companion): selected files の merge と discard を追加`
