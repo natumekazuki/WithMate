@@ -838,6 +838,7 @@ export default function HomeApp() {
           onChangeSearchText={setSessionSearchText}
           onOpenLaunchDialog={openLaunchDialog}
           onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
+          onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
         />
 
         <HomeRightPane

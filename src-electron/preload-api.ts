@@ -35,6 +35,7 @@ import {
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_COMPANION_SESSION_CHANNEL,
+  WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
@@ -56,6 +57,7 @@ import {
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
+  WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
@@ -168,6 +170,9 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     openDiffWindow(diffPreview) {
       return ipcRenderer.invoke(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, diffPreview);
     },
+    openCompanionReviewWindow(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL, sessionId);
+    },
     openPath(target, options) {
       return ipcRenderer.invoke(WITHMATE_OPEN_PATH_CHANNEL, target, options ?? null);
     },
@@ -266,6 +271,9 @@ function createCompanionApi(ipcRenderer: IpcRendererLike): WithMateWindowCompani
     },
     getCompanionSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_COMPANION_SESSION_CHANNEL, sessionId);
+    },
+    getCompanionReviewSnapshot(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL, sessionId);
     },
     createCompanionSession(input) {
       return ipcRenderer.invoke(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL, input);

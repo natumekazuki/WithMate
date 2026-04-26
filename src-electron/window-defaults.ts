@@ -18,3 +18,10 @@ export const DIFF_WINDOW_DEFAULT_BOUNDS = {
   minWidth: 900,
   minHeight: 640,
 } as const;
+
+export const COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS = {
+  width: 1680,
+  height: 980,
+  minWidth: 980,
+  minHeight: 680,
+} as const;

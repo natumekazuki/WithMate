@@ -35,6 +35,11 @@ export class WindowEntryLoader {
     await this.load(window, "diff.html", search);
   }
 
+  async loadCompanionReviewEntry(window: WindowLike, sessionId: string): Promise<void> {
+    const search = `?companionSessionId=${encodeURIComponent(sessionId)}`;
+    await this.load(window, "review.html", search);
+  }
+
   private async load(window: WindowLike, entryFileName: string, search: string): Promise<void> {
     const { devServerUrl } = this.deps;
     if (devServerUrl) {

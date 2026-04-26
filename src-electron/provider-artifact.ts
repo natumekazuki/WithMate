@@ -12,7 +12,7 @@ import type { SnapshotCaptureStats, WorkspaceSnapshot } from "./snapshot-ignore.
 
 const MAX_DIFF_MATRIX_CELLS = 2_000_000;
 
-function summarizeChangedFile(kind: ChangedFile["kind"], filePath: string): string {
+export function summarizeChangedFile(kind: ChangedFile["kind"], filePath: string): string {
   switch (kind) {
     case "add":
       return `${filePath} を新規作成した`;
@@ -85,7 +85,7 @@ function buildFallbackDiffRows(beforeLines: string[], afterLines: string[]): Dif
   return rows;
 }
 
-function buildDiffRows(beforeContent: string | null, afterContent: string | null): DiffRow[] {
+export function buildDiffRows(beforeContent: string | null, afterContent: string | null): DiffRow[] {
   const beforeLines = toLines(beforeContent);
   const afterLines = toLines(afterContent);
 

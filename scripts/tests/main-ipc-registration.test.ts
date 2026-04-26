@@ -22,6 +22,7 @@ import {
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
+  WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
   WITHMATE_GET_COMPANION_SESSION_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
@@ -41,6 +42,7 @@ import {
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
+  WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
@@ -110,6 +112,9 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     },
     async openDiffWindow() {
       calls.push("openDiff");
+    },
+    async openCompanionReviewWindow(sessionId) {
+      calls.push(`openCompanionReview:${sessionId}`);
     },
     listSessionSummaries: () => [],
     listSessionAuditLogs: () => [],
@@ -220,10 +225,18 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
       calls.push("openTerminal");
     },
     listCompanionSessionSummaries: () => [],
+    getCompanionSession: () => null,
+    async getCompanionReviewSnapshot() {
+      return null;
+    },
     async createCompanionSession() {
       calls.push("createCompanion");
       return {} as never;
     },
+    async runCompanionSessionTurn() {
+      return {} as never;
+    },
+    cancelCompanionSessionRun() {},
   });
 
     assert.ok(handlers.has("withmate:open-session"));
@@ -262,6 +275,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async openMemoryManagementWindow() {},
     async openCharacterEditorWindow() {},
     async openDiffWindow() {},
+    async openCompanionReviewWindow() {},
      listSessionSummaries: () => [],
     listSessionAuditLogs: () => [],
     async listSessionSkills() { return []; },
@@ -311,7 +325,11 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async openCrashDumpFolder() {},
     async openSessionTerminal() {},
     listCompanionSessionSummaries: () => [],
+    getCompanionSession: () => null,
+    async getCompanionReviewSnapshot() { return null; },
     async createCompanionSession() { return {} as never; },
+    async runCompanionSessionTurn() { return {} as never; },
+    cancelCompanionSessionRun() {},
   });
 
   const expectedChannels = [
@@ -321,6 +339,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
     WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
     WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
+    WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
     WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
     WITHMATE_PICK_DIRECTORY_CHANNEL,
     WITHMATE_PICK_FILE_CHANNEL,
@@ -360,6 +379,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_CREATE_SESSION_CHANNEL,
     WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
     WITHMATE_GET_COMPANION_SESSION_CHANNEL,
+    WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
     WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
     WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
     WITHMATE_UPDATE_SESSION_CHANNEL,

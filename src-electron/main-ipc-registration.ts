@@ -17,6 +17,7 @@ import type {
 import type { CreateCharacterInput } from "../src/character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
+import type { CompanionReviewSnapshot } from "../src/companion-review-state.js";
 import type { MemoryManagementSnapshot } from "../src/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
@@ -41,6 +42,7 @@ import {
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_COMPANION_SESSION_CHANNEL,
+  WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
@@ -60,6 +62,7 @@ import {
     WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
     WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
+  WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
@@ -109,6 +112,7 @@ export type MainIpcRegistrationDeps = {
   openMemoryManagementWindow(): Promise<void>;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
+  openCompanionReviewWindow(sessionId: string): Promise<void>;
   listSessionSummaries(): SessionSummary[];
   listCompanionSessionSummaries(): CompanionSessionSummary[];
   listSessionAuditLogs(sessionId: string): AuditLogEntry[];
@@ -146,6 +150,7 @@ export type MainIpcRegistrationDeps = {
   createSession(input: CreateSessionInput): Session;
   createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
   getCompanionSession(sessionId: string): CompanionSession | null;
+  getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
   runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
   cancelCompanionSessionRun(sessionId: string): void;
   updateSession(session: Session): Session;
@@ -180,6 +185,7 @@ type MainIpcWindowDeps = Pick<
   | "openMemoryManagementWindow"
   | "openCharacterEditorWindow"
   | "openDiffWindow"
+  | "openCompanionReviewWindow"
   | "openPathTarget"
   | "openAppLogFolder"
   | "openCrashDumpFolder"
@@ -229,6 +235,7 @@ type MainIpcCompanionDeps = Pick<
   MainIpcRegistrationDeps,
   | "createCompanionSession"
   | "getCompanionSession"
+  | "getCompanionReviewSnapshot"
   | "listCompanionSessionSummaries"
   | "runCompanionSessionTurn"
   | "cancelCompanionSessionRun"
@@ -293,6 +300,9 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   });
   ipcMain.handle(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, async (_event, diffPreview: DiffPreviewPayload) => {
     await deps.openDiffWindow(diffPreview);
+  });
+  ipcMain.handle(WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL, async (_event, sessionId: string) => {
+    await deps.openCompanionReviewWindow(sessionId);
   });
   ipcMain.handle(WITHMATE_PICK_DIRECTORY_CHANNEL, async (event, initialPath: string | null) =>
     deps.pickDirectory(resolveTargetWindow(event, deps), initialPath),
@@ -380,6 +390,12 @@ function registerCompanionHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCom
       return null;
     }
     return deps.getCompanionSession(sessionId);
+  });
+  ipcMain.handle(WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL, async (_event, sessionId: string) => {
+    if (!sessionId) {
+      return null;
+    }
+    return deps.getCompanionReviewSnapshot(sessionId);
   });
   ipcMain.handle(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL, async (_event, input: CreateCompanionSessionInput) =>
     deps.createCompanionSession(input),

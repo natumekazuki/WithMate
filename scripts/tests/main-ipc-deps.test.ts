@@ -34,6 +34,10 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
       async openDiffWindow() {
         return {} as never;
       },
+      async openCompanionReviewWindow(sessionId) {
+        calls.push(`openCompanionReview:${sessionId}`);
+        return {} as never;
+      },
       async pickDirectory() {
         return null;
       },
@@ -91,7 +95,15 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
       async createCompanionSession() {
         return {} as never;
       },
+      getCompanionSession: () => null,
+      async getCompanionReviewSnapshot() {
+        return null;
+      },
       listCompanionSessionSummaries: () => [],
+      async runCompanionSessionTurn() {
+        return {} as never;
+      },
+      cancelCompanionSessionRun: () => {},
     },
     sessionRuntime: {
       getLiveSessionRun: () => null,
@@ -140,5 +152,6 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
   assert.equal(await deps.openHomeWindow(), undefined);
   assert.equal(await deps.openMemoryManagementWindow(), undefined);
   assert.equal(await deps.openSessionWindow("session-1"), undefined);
-  assert.deepEqual(calls, ["openHome", "openMemory", "openSession:session-1"]);
+  assert.equal(await deps.openCompanionReviewWindow("companion-1"), undefined);
+  assert.deepEqual(calls, ["openHome", "openMemory", "openSession:session-1", "openCompanionReview:companion-1"]);
 });

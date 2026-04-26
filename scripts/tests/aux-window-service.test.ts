@@ -72,6 +72,7 @@ test("AuxWindowService は singleton window を再利用する", async () => {
       characterLoads.push(characterId);
     },
     async loadDiffEntry() {},
+    async loadCompanionReviewEntry() {},
     generateDiffToken() {
       return "diff-token";
     },
@@ -109,6 +110,7 @@ test("AuxWindowService は diff preview を保持し reset 時に close する",
     async loadDiffEntry(_window, token) {
       diffLoads.push(token);
     },
+    async loadCompanionReviewEntry() {},
     generateDiffToken() {
       return "diff-token";
     },

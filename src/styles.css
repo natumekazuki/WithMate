@@ -6525,13 +6525,119 @@ button:disabled {
     padding: 12px 18px 18px;
   }
 
-  .diff-split-view {
-    grid-template-columns: 1fr;
-  }
+.diff-split-view {
+  grid-template-columns: 1fr;
+}
 
   .composer-attachment-list {
     max-height: min(20vh, 144px);
   }
+}
+
+.companion-review-page {
+  min-height: 100vh;
+}
+
+.companion-review-shell {
+  display: flex;
+  flex-direction: column;
+  height: min(92vh, 980px);
+  overflow: hidden;
+}
+
+.companion-review-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 22px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.companion-review-header h1 {
+  margin: 0;
+  font-size: 1.45rem;
+  line-height: 1.25;
+}
+
+.companion-review-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.companion-review-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+  min-height: 0;
+  flex: 1;
+}
+
+.companion-review-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+  border-right: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--panel-raised) 88%, #000 12%);
+}
+
+.companion-review-file {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  color: var(--text-main);
+  background: var(--panel);
+  text-align: left;
+  cursor: pointer;
+}
+
+.companion-review-file:hover,
+.companion-review-file.active {
+  border-color: color-mix(in srgb, var(--theme-main) 56%, var(--border-subtle));
+  background: color-mix(in srgb, var(--theme-main) 12%, var(--panel));
+}
+
+.companion-review-file-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.83rem;
+}
+
+.companion-review-diff {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.companion-review-diff-title {
+  border-top: 0;
+}
+
+.companion-review-empty,
+.companion-review-empty-state {
+  color: var(--text-muted);
+}
+
+.companion-review-empty-state {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
 }
 
 

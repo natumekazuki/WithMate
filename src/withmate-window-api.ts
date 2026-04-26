@@ -20,6 +20,7 @@ import type {
   SessionSummary,
 } from "./app-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "./companion-state.js";
+import type { CompanionReviewSnapshot } from "./companion-review-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "./character-update-state.js";
 import type { MemoryManagementSnapshot } from "./memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
@@ -34,6 +35,7 @@ export type WithMateWindowNavigationApi = {
   openMemoryManagementWindow(): Promise<void>;
   openCharacterEditor(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
+  openCompanionReviewWindow(sessionId: string): Promise<void>;
   openPath(target: string, options?: OpenPathOptions): Promise<void>;
   openAppLogFolder(): Promise<void>;
   openCrashDumpFolder(): Promise<void>;
@@ -71,6 +73,7 @@ export type WithMateWindowSessionApi = {
 export type WithMateWindowCompanionApi = {
   listCompanionSessionSummaries(): Promise<CompanionSessionSummary[]>;
   getCompanionSession(sessionId: string): Promise<CompanionSession | null>;
+  getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
   createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
   runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
   cancelCompanionSessionRun(sessionId: string): Promise<void>;

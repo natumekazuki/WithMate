@@ -1085,6 +1085,7 @@ export type HomeRecentSessionsPanelProps = {
   onChangeSearchText: (value: string) => void;
   onOpenLaunchDialog: () => void;
   onOpenSession: (sessionId: string) => void;
+  onOpenCompanionReview: (sessionId: string) => void;
 };
 
 export function HomeRecentSessionsPanel({
@@ -1096,6 +1097,7 @@ export function HomeRecentSessionsPanel({
   onChangeSearchText,
   onOpenLaunchDialog,
   onOpenSession,
+  onOpenCompanionReview,
 }: HomeRecentSessionsPanelProps) {
   return (
     <section className="panel session-list-panel home-session-list-panel rise-3">
@@ -1125,18 +1127,24 @@ export function HomeRecentSessionsPanel({
               <span className="home-monitor-count">{companionSessions.length}</span>
             </div>
             {companionSessions.map((session) => (
-              <article key={session.id} className="session-card home-session-card companion-session-card">
+              <button
+                key={session.id}
+                className="session-card home-session-card companion-session-card"
+                type="button"
+                style={buildCardThemeStyle(session.characterThemeColors)}
+                onClick={() => onOpenCompanionReview(session.id)}
+              >
                 <div className="session-card-copy">
                   <div className="session-card-topline home-session-card-topline">
                     <strong>{session.taskTitle}</strong>
-                    <span className="session-status home-session-status idle">{session.status}</span>
+                    <span className={`session-status home-session-status ${session.runState}`}>{session.runState}</span>
                   </div>
                   <div className="session-card-subline home-session-card-meta">
                     <span>{`Repo : ${session.repoRoot}`}</span>
                     <span>{`target: ${session.targetBranch}`}</span>
                   </div>
                 </div>
-              </article>
+              </button>
             ))}
           </section>
         ) : null}

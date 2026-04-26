@@ -63,6 +63,7 @@ import { CharacterMemoryStorage } from "./character-memory-storage.js";
 import { CompanionStorage } from "./companion-storage.js";
 import { CompanionSessionService } from "./companion-session-service.js";
 import { CompanionRuntimeService } from "./companion-runtime-service.js";
+import { CompanionReviewService } from "./companion-review-service.js";
 import { SessionRuntimeService } from "./session-runtime-service.js";
 import { SessionPersistenceService } from "./session-persistence-service.js";
 import { SessionWindowBridge } from "./session-window-bridge.js";
@@ -172,6 +173,7 @@ let characterRuntimeService: CharacterRuntimeService | null = null;
 let characterUpdateWorkspaceService: CharacterUpdateWorkspaceService | null = null;
 let companionSessionService: CompanionSessionService | null = null;
 let companionRuntimeService: CompanionRuntimeService | null = null;
+let companionReviewService: CompanionReviewService | null = null;
 let mainBroadcastFacade: MainBroadcastFacade<BrowserWindow> | null = null;
 let mainCharacterFacade: MainCharacterFacade | null = null;
 let mainObservabilityFacade: MainObservabilityFacade | null = null;
@@ -596,6 +598,10 @@ function getCompanionSession(sessionId: string): CompanionSession | null {
   return requireCompanionStorage().getSession(sessionId);
 }
 
+async function getCompanionReviewSnapshot(sessionId: string) {
+  return requireCompanionReviewService().getReviewSnapshot(sessionId);
+}
+
 async function createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession> {
   const session = await requireCompanionSessionService().createSession(input);
   requireWindowBroadcastService().broadcastCompanionSessionSummaries(listCompanionSessionSummaries());
@@ -703,6 +709,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           loadCharacterEntry: (window, characterId) =>
             requireWindowEntryLoader().loadCharacterEntry(window, characterId),
           loadDiffEntry: (window, token) => requireWindowEntryLoader().loadDiffEntry(window, token),
+          loadCompanionReviewEntry: (window, sessionId) =>
+            requireWindowEntryLoader().loadCompanionReviewEntry(window, sessionId),
           generateDiffToken: () => crypto.randomUUID(),
         }),
       createPersistentStoreLifecycleService: () =>
@@ -780,6 +788,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openMemoryManagementWindow,
                 openCharacterEditorWindow,
                 openDiffWindow,
+                openCompanionReviewWindow,
                 pickDirectory: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickDirectory(targetWindow, initialPath),
                 pickFile: (targetWindow, initialPath) =>
@@ -840,6 +849,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               companion: {
                 createCompanionSession: (input) => createCompanionSession(input),
                 getCompanionSession: (sessionId) => getCompanionSession(sessionId),
+                getCompanionReviewSnapshot: (sessionId) => getCompanionReviewSnapshot(sessionId),
                 listCompanionSessionSummaries: () => listCompanionSessionSummaries(),
                 runCompanionSessionTurn: (sessionId, request) => runCompanionSessionTurn(sessionId, request),
                 cancelCompanionSessionRun: (sessionId) => cancelCompanionSessionRun(sessionId),
@@ -1489,6 +1499,16 @@ function requireCompanionRuntimeService(): CompanionRuntimeService {
   return companionRuntimeService;
 }
 
+function requireCompanionReviewService(): CompanionReviewService {
+  if (!companionReviewService) {
+    companionReviewService = new CompanionReviewService({
+      getCompanionSession,
+    });
+  }
+
+  return companionReviewService;
+}
+
 function requirePersistentStoreLifecycleService(): PersistentStoreLifecycleService {
   return requireMainInfrastructureRegistry().getPersistentStoreLifecycleService();
 }
@@ -1586,6 +1606,7 @@ function closePersistentStores(): void {
   characterUpdateWorkspaceService = null;
   companionSessionService = null;
   companionRuntimeService = null;
+  companionReviewService = null;
   mainBroadcastFacade = null;
   mainCharacterFacade = null;
   mainObservabilityFacade = null;
@@ -1625,6 +1646,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   characterUpdateWorkspaceService = null;
   companionSessionService = null;
   companionRuntimeService = null;
+  companionReviewService = null;
   mainBroadcastFacade = null;
   mainCharacterFacade = null;
   mainObservabilityFacade = null;
@@ -1943,6 +1965,10 @@ async function openCharacterEditorWindow(characterId?: string | null): Promise<B
 
 async function openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow> {
   return requireMainWindowFacade().openDiffWindow(diffPreview);
+}
+
+async function openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow> {
+  return requireAuxWindowService().openCompanionReviewWindow(sessionId);
 }
 
 app.whenReady().then(async () => {

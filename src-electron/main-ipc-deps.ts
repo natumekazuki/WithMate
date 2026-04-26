@@ -16,6 +16,7 @@ import type {
 import type { CreateCharacterInput } from "../src/character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
+import type { CompanionReviewSnapshot } from "../src/companion-review-state.js";
 import type { MemoryManagementSnapshot } from "../src/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
@@ -37,6 +38,7 @@ export type MainIpcWindowDepsArgs = {
   openMemoryManagementWindow(): Promise<BrowserWindow>;
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
+  openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickImageFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
@@ -82,6 +84,7 @@ export type MainIpcSessionQueryDepsArgs = {
 export type MainIpcCompanionDepsArgs = {
   createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
   getCompanionSession(sessionId: string): CompanionSession | null;
+  getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
   listCompanionSessionSummaries(): CompanionSessionSummary[];
   runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
   cancelCompanionSessionRun(sessionId: string): void;
@@ -153,6 +156,9 @@ export function createMainIpcRegistrationDeps(
     openDiffWindow: async (diffPreview) => {
       await args.window.openDiffWindow(diffPreview);
     },
+    openCompanionReviewWindow: async (sessionId) => {
+      await args.window.openCompanionReviewWindow(sessionId);
+    },
     pickDirectory: args.window.pickDirectory,
     pickFile: args.window.pickFile,
     pickImageFile: args.window.pickImageFile,
@@ -186,6 +192,7 @@ export function createMainIpcRegistrationDeps(
     searchWorkspaceFiles: args.sessionQuery.searchWorkspaceFiles,
     createCompanionSession: args.companion.createCompanionSession,
     getCompanionSession: args.companion.getCompanionSession,
+    getCompanionReviewSnapshot: args.companion.getCompanionReviewSnapshot,
     runCompanionSessionTurn: args.companion.runCompanionSessionTurn,
     cancelCompanionSessionRun: args.companion.cancelCompanionSessionRun,
     getLiveSessionRun: args.sessionRuntime.getLiveSessionRun,

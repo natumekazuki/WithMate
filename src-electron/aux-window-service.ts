@@ -1,6 +1,6 @@
 import type { DiffPreviewPayload } from "../src/session-state.js";
 import type { HomeEntryMode, WindowLike } from "./window-entry-loader.js";
-import { DIFF_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
+import { COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS, DIFF_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
 
 type BaseWindowLike = WindowLike & {
   isDestroyed(): boolean;
@@ -28,6 +28,7 @@ export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
   loadHomeEntry(window: TWindow, mode: HomeEntryMode): Promise<void>;
   loadCharacterEntry(window: TWindow, characterId?: string | null): Promise<void>;
   loadDiffEntry(window: TWindow, token: string): Promise<void>;
+  loadCompanionReviewEntry(window: TWindow, sessionId: string): Promise<void>;
   generateDiffToken(): string;
 };
 
@@ -38,6 +39,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   private memoryManagementWindow: TWindow | null = null;
   private readonly characterEditorWindows = new Map<string, TWindow>();
   private readonly diffWindows = new Map<string, TWindow>();
+  private readonly companionReviewWindows = new Map<string, TWindow>();
   private readonly diffPreviewStore = new Map<string, DiffPreviewPayload>();
 
   constructor(private readonly deps: AuxWindowServiceDeps<TWindow>) {}
@@ -191,6 +193,25 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return window;
   }
 
+  async openCompanionReviewWindow(sessionId: string): Promise<TWindow> {
+    const existing = this.reuseWindow(this.companionReviewWindows.get(sessionId) ?? null);
+    if (existing) {
+      return existing;
+    }
+
+    const window = this.deps.createWindow({
+      ...COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
+      title: `Companion Review - ${sessionId}`,
+    });
+    this.companionReviewWindows.set(sessionId, window);
+    window.once("ready-to-show", () => window.show());
+    window.on("closed", () => {
+      this.companionReviewWindows.delete(sessionId);
+    });
+    await this.deps.loadCompanionReviewEntry(window, sessionId);
+    return window;
+  }
+
   closeCharacterEditor(characterId: string): void {
     const window = this.characterEditorWindows.get(characterId);
     if (!window || window.isDestroyed()) {
@@ -208,6 +229,12 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       this.diffPreviewStore.delete(token);
     }
     this.diffWindows.clear();
+    for (const [sessionId, window] of this.companionReviewWindows.entries()) {
+      if (!window.isDestroyed()) {
+        window.close();
+      }
+      this.companionReviewWindows.delete(sessionId);
+    }
   }
 
   private reuseWindow(window: TWindow | null): TWindow | null {

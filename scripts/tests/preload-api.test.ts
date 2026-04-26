@@ -62,8 +62,16 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:create-companion-session",
     args: [{ taskTitle: "task" }],
   });
+  assert.deepEqual(await api.openCompanionReviewWindow("companion-1"), {
+    channel: "withmate:open-companion-review-window",
+    args: ["companion-1"],
+  });
   assert.deepEqual(await api.getCompanionSession("companion-1"), {
     channel: "withmate:get-companion-session",
+    args: ["companion-1"],
+  });
+  assert.deepEqual(await api.getCompanionReviewSnapshot("companion-1"), {
+    channel: "withmate:get-companion-review-snapshot",
     args: ["companion-1"],
   });
   assert.deepEqual(await api.runCompanionSessionTurn("companion-1", { userMessage: "go" }), {
@@ -103,6 +111,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getAppSettings",
     "getCharacter",
     "getCharacterUpdateWorkspace",
+    "getCompanionReviewSnapshot",
     "getCompanionSession",
     "getDiffPreview",
     "getLiveSessionRun",
@@ -122,6 +131,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionSkills",
     "listSessionSummaries",
     "openCharacterEditor",
+    "openCompanionReviewWindow",
     "openDiffWindow",
     "openHomeWindow",
     "openAppLogFolder",
