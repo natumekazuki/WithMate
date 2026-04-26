@@ -18,4 +18,4 @@
 
 | checkpoint | commit | summary |
 | --- | --- | --- |
-| Companion Review Window | 未コミット | CompanionSession の changed files と diff を Review Window に表示する |
+| Companion Review Window | `c572fc6` | CompanionSession の changed files と diff を Review Window に表示する |

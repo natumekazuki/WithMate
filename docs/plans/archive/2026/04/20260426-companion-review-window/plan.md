@@ -1,6 +1,6 @@
 # Companion Review Window 実装 Plan
 
-- status: implementation_done
+- status: completed
 - started: 2026-04-26
 
 ## 目的
@@ -31,4 +31,4 @@ CompanionSession の base snapshot と shadow worktree の差分を Review Windo
 3. [x] Review Window の IPC / preload / entry を追加する。
 4. [x] Review Window UI と Home 導線を追加する。
 5. [x] design doc と検証を更新する。
-6. [ ] archive、commit。
+6. [x] archive、commit。
