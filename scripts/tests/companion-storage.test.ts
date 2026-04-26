@@ -84,6 +84,14 @@ function createMergeRun(groupId: string, overrides: Partial<CompanionMergeRun> =
     operation: "merge",
     selectedPaths: ["README.md"],
     changedFiles: [{ path: "README.md", kind: "edit" }],
+    diffSnapshot: [
+      {
+        kind: "edit",
+        path: "README.md",
+        summary: "README.md を更新",
+        diffRows: [{ kind: "add", rightNumber: 1, rightText: "merged" }],
+      },
+    ],
     siblingWarnings: [],
     createdAt: "2026-04-26 10:04",
     ...overrides,
@@ -216,6 +224,14 @@ describe("CompanionStorage", () => {
           operation: "merge",
           selectedPaths: ["README.md"],
           changedFiles: [{ path: "README.md", kind: "edit" }],
+          diffSnapshot: [
+            {
+              kind: "edit",
+              path: "README.md",
+              summary: "README.md を更新",
+              diffRows: [{ kind: "add", rightNumber: 1, rightText: "merged" }],
+            },
+          ],
           siblingWarnings: [],
           createdAt: "2026-04-26 10:04",
         },
@@ -227,6 +243,14 @@ describe("CompanionStorage", () => {
         operation: "merge",
         selectedPaths: ["README.md"],
         changedFiles: [{ path: "README.md", kind: "edit" }],
+        diffSnapshot: [
+          {
+            kind: "edit",
+            path: "README.md",
+            summary: "README.md を更新",
+            diffRows: [{ kind: "add", rightNumber: 1, rightText: "merged" }],
+          },
+        ],
         siblingWarnings: [],
         createdAt: "2026-04-26 10:04",
       });

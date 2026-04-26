@@ -113,6 +113,7 @@ describe("CompanionReviewService", () => {
       operation: "discard",
       selectedPaths: [],
       changedFiles: [{ path: "docs/old.md", kind: "delete" }],
+      diffSnapshot: [],
       siblingWarnings: [],
       createdAt: "2026-04-26 10:03",
     };
@@ -125,6 +126,14 @@ describe("CompanionReviewService", () => {
       changedFiles: [
         { path: "README.md", kind: "edit" },
         { path: "src/app.ts", kind: "add" },
+      ],
+      diffSnapshot: [
+        {
+          kind: "edit",
+          path: "README.md",
+          summary: "README.md を更新",
+          diffRows: [{ kind: "add", rightNumber: 2, rightText: "reviewed" }],
+        },
       ],
       siblingWarnings: [],
       createdAt: "2026-04-26 10:04",
@@ -149,8 +158,7 @@ describe("CompanionReviewService", () => {
     assert.equal(snapshot?.session.status, "merged");
     assert.equal(snapshot?.mergeReadiness.status, "warning");
     assert.deepEqual(snapshot?.changedFiles.map((file) => [file.kind, file.path, file.diffRows.length]), [
-      ["edit", "README.md", 0],
-      ["add", "src/app.ts", 0],
+      ["edit", "README.md", 1],
     ]);
     assert.deepEqual(
       snapshot?.mergeRuns.map((run) => [run.id, run.operation, run.createdAt]),
@@ -272,6 +280,15 @@ describe("CompanionReviewService", () => {
         { path: "new-file.txt", kind: "add" },
         { path: "README.md", kind: "edit" },
       ]);
+      assert.deepEqual(mergeRuns[0]?.diffSnapshot.map((file) => [file.kind, file.path]), [
+        ["add", "new-file.txt"],
+        ["edit", "README.md"],
+      ]);
+      assert.ok(
+        mergeRuns[0]?.diffSnapshot
+          .find((file) => file.path === "README.md")
+          ?.diffRows.some((row) => row.kind === "add" && row.rightText === "merged"),
+      );
       assert.deepEqual(mergeRuns[0]?.siblingWarnings, []);
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\nmerged\n");
       await assert.rejects(() => stat(path.join(repoRoot, "new-file.txt")));
@@ -380,6 +397,10 @@ describe("CompanionReviewService", () => {
       assert.equal(mergeRuns[0]?.operation, "discard");
       assert.deepEqual(mergeRuns[0]?.selectedPaths, []);
       assert.deepEqual(mergeRuns[0]?.changedFiles, [{ path: "README.md", kind: "edit" }]);
+      assert.deepEqual(mergeRuns[0]?.diffSnapshot.map((file) => [file.kind, file.path]), [["edit", "README.md"]]);
+      assert.ok(
+        mergeRuns[0]?.diffSnapshot[0]?.diffRows.some((row) => row.kind === "modify" && row.rightText === "discarded"),
+      );
       assert.deepEqual(mergeRuns[0]?.siblingWarnings, []);
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\n");
       await assert.rejects(() => stat(worktreePath));

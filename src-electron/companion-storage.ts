@@ -12,6 +12,7 @@ import {
   type CompanionSessionSummary,
   type CompanionSiblingWarningSummary,
 } from "../src/companion-state.js";
+import type { ChangedFile, DiffRow } from "../src/runtime-state.js";
 import type { Message } from "../src/session-state.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
@@ -78,6 +79,7 @@ type CompanionMergeRunRow = {
   operation: string;
   selected_paths_json: string;
   changed_files_json: string;
+  diff_snapshot_json: string;
   sibling_warnings_json: string;
   created_at: string;
 };
@@ -123,6 +125,7 @@ const COMPANION_MERGE_RUN_COLUMNS = `
   operation,
   selected_paths_json,
   changed_files_json,
+  diff_snapshot_json,
   sibling_warnings_json,
   created_at
 `;
@@ -221,6 +224,7 @@ function rowToMergeRun(row: CompanionMergeRunRow): CompanionMergeRun {
     operation: row.operation === "discard" ? "discard" : "merge",
     selectedPaths: parseSelectedPaths(row.selected_paths_json),
     changedFiles: parseChangedFiles(row.changed_files_json),
+    diffSnapshot: parseDiffSnapshot(row.diff_snapshot_json),
     siblingWarnings: parseSiblingWarnings(row.sibling_warnings_json),
     createdAt: row.created_at,
   };
@@ -295,6 +299,70 @@ function parseSiblingWarnings(value: string): CompanionSiblingWarningSummary[] {
           taskTitle: item.taskTitle,
           paths: (item.paths as unknown[]).filter((filePath): filePath is string => typeof filePath === "string"),
           message: item.message,
+        }];
+      }
+      return [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function parseDiffRows(value: unknown): DiffRow[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((item): DiffRow[] => {
+    if (
+      typeof item === "object" &&
+      item !== null &&
+      "kind" in item &&
+      (item.kind === "context" || item.kind === "add" || item.kind === "delete" || item.kind === "modify")
+    ) {
+      const row: DiffRow = {
+        kind: item.kind,
+      };
+      if ("leftNumber" in item && typeof item.leftNumber === "number") {
+        row.leftNumber = item.leftNumber;
+      }
+      if ("rightNumber" in item && typeof item.rightNumber === "number") {
+        row.rightNumber = item.rightNumber;
+      }
+      if ("leftText" in item && typeof item.leftText === "string") {
+        row.leftText = item.leftText;
+      }
+      if ("rightText" in item && typeof item.rightText === "string") {
+        row.rightText = item.rightText;
+      }
+      return [row];
+    }
+    return [];
+  });
+}
+
+function parseDiffSnapshot(value: string): ChangedFile[] {
+  if (!value.trim()) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.flatMap((item): ChangedFile[] => {
+      if (
+        typeof item === "object" &&
+        item !== null &&
+        "path" in item &&
+        "kind" in item &&
+        typeof item.path === "string" &&
+        (item.kind === "add" || item.kind === "edit" || item.kind === "delete")
+      ) {
+        return [{
+          kind: item.kind,
+          path: item.path,
+          summary: "summary" in item && typeof item.summary === "string" ? item.summary : `${item.kind}: ${item.path}`,
+          diffRows: "diffRows" in item ? parseDiffRows(item.diffRows) : [],
         }];
       }
       return [];
@@ -414,6 +482,7 @@ export class CompanionStorage {
         operation TEXT NOT NULL,
         selected_paths_json TEXT NOT NULL DEFAULT '[]',
         changed_files_json TEXT NOT NULL DEFAULT '[]',
+        diff_snapshot_json TEXT NOT NULL DEFAULT '[]',
         sibling_warnings_json TEXT NOT NULL DEFAULT '[]',
         created_at TEXT NOT NULL
       );
@@ -457,6 +526,15 @@ export class CompanionStorage {
     }
     if (!columns.has("character_role_markdown")) {
       this.db.exec("ALTER TABLE companion_sessions ADD COLUMN character_role_markdown TEXT NOT NULL DEFAULT '';");
+    }
+
+    const mergeRunColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(companion_merge_runs)").all() as { name: string }[]).map(
+        (column) => column.name,
+      ),
+    );
+    if (!mergeRunColumns.has("diff_snapshot_json")) {
+      this.db.exec("ALTER TABLE companion_merge_runs ADD COLUMN diff_snapshot_json TEXT NOT NULL DEFAULT '[]';");
     }
   }
 
@@ -615,7 +693,7 @@ export class CompanionStorage {
     this.db.prepare(`
       INSERT INTO companion_merge_runs (
         ${COMPANION_MERGE_RUN_COLUMNS}
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       run.id,
       run.sessionId,
@@ -623,6 +701,7 @@ export class CompanionStorage {
       run.operation,
       JSON.stringify(run.selectedPaths),
       JSON.stringify(run.changedFiles),
+      JSON.stringify(run.diffSnapshot),
       JSON.stringify(run.siblingWarnings),
       run.createdAt,
     );

@@ -1,6 +1,7 @@
 import type { ApprovalMode } from "./approval-mode.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import type { ModelReasoningEffort } from "./model-catalog.js";
+import type { ChangedFile } from "./runtime-state.js";
 import type { Message } from "./session-state.js";
 
 export type CompanionSessionStatus = "active" | "merged" | "discarded" | "recovery-required";
@@ -26,6 +27,7 @@ export type CompanionMergeRun = {
   operation: CompanionMergeRunOperation;
   selectedPaths: string[];
   changedFiles: CompanionChangedFileSummary[];
+  diffSnapshot: ChangedFile[];
   siblingWarnings: CompanionSiblingWarningSummary[];
   createdAt: string;
 };
@@ -160,6 +162,10 @@ export function cloneCompanionMergeRun(run: CompanionMergeRun): CompanionMergeRu
     ...run,
     selectedPaths: [...run.selectedPaths],
     changedFiles: run.changedFiles.map((file) => ({ ...file })),
+    diffSnapshot: run.diffSnapshot.map((file) => ({
+      ...file,
+      diffRows: file.diffRows.map((row) => ({ ...row })),
+    })),
     siblingWarnings: run.siblingWarnings.map((warning) => ({
       ...warning,
       paths: [...warning.paths],

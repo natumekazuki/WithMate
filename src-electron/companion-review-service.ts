@@ -168,12 +168,14 @@ export class CompanionReviewService {
   private buildTerminalReviewSnapshot(session: CompanionSession): CompanionReviewSnapshot {
     const mergeRuns = this.deps.listCompanionMergeRunsForSession?.(session.id) ?? [];
     const latestRun = mergeRuns[0] ?? null;
-    const changedFiles = (latestRun?.changedFiles ?? session.changedFiles).map((change): ChangedFile => ({
-      kind: change.kind,
-      path: change.path,
-      summary: summarizeChangedFile(change.kind, change.path),
-      diffRows: [],
-    }));
+    const changedFiles = latestRun && latestRun.diffSnapshot.length > 0
+      ? latestRun.diffSnapshot
+      : (latestRun?.changedFiles ?? session.changedFiles).map((change): ChangedFile => ({
+        kind: change.kind,
+        path: change.path,
+        summary: summarizeChangedFile(change.kind, change.path),
+        diffRows: [],
+      }));
 
     return {
       session,
@@ -225,6 +227,8 @@ export class CompanionReviewService {
       throw new Error(readiness.blockers.map((blocker) => blocker.message).join("\n"));
     }
 
+    const diffSnapshot = await Promise.all(changedPaths.map((change) => this.buildChangedFile(session, change)));
+
     for (const change of selectedChanges) {
       await this.applySelectedChange(session, change);
     }
@@ -255,6 +259,7 @@ export class CompanionReviewService {
       operation: "merge",
       selectedPaths: normalizedSelectedPaths,
       changedFiles: changedPaths,
+      diffSnapshot,
       siblingWarnings,
       createdAt: completedAt,
     });
@@ -271,6 +276,7 @@ export class CompanionReviewService {
     }
 
     const changedPaths = await this.resolveChangedPaths(session);
+    const diffSnapshot = await Promise.all(changedPaths.map((change) => this.buildChangedFile(session, change)));
 
     await cleanupCompanionWorkspaceArtifacts({
       repoRoot: session.repoRoot,
@@ -297,6 +303,7 @@ export class CompanionReviewService {
       operation: "discard",
       selectedPaths: [],
       changedFiles: changedPaths,
+      diffSnapshot,
       siblingWarnings: [],
       createdAt: completedAt,
     });

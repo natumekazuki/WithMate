@@ -609,12 +609,14 @@ Companion Mode の merge / discard terminal 操作履歴。
 | `operation` | `TEXT` | `merge` / `discard` |
 | `selected_paths_json` | `TEXT` | merge 時に選択された file path の JSON 配列 |
 | `changed_files_json` | `TEXT` | terminal 操作時点の changed file summary JSON 配列 |
+| `diff_snapshot_json` | `TEXT` | terminal 操作時点の `ChangedFile[]` diff snapshot JSON 配列 |
 | `sibling_warnings_json` | `TEXT` | merge 完了時の sibling warning summary JSON 配列 |
 | `created_at` | `TEXT` | terminal 操作日時 |
 
 補足:
 
 - current 実装では completed の merge / discard 操作だけを保存する
+- `diff_snapshot_json` は cleanup 後の read-only Review Window で diff rows を復元するために使う
 - blocked / failed merge attempt の履歴化は future slice
 - Home 履歴カードは latest merge run を優先して summary を表示する
 - terminal read-only Review Window は session の merge runs を newest-first timeline として表示する
