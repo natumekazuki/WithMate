@@ -17,7 +17,11 @@ import type {
 import type { CreateCharacterInput } from "../src/character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
-import type { CompanionMergeSelectedFilesRequest, CompanionReviewSnapshot } from "../src/companion-review-state.js";
+import type {
+  CompanionMergeSelectedFilesRequest,
+  CompanionMergeSelectedFilesResult,
+  CompanionReviewSnapshot,
+} from "../src/companion-review-state.js";
 import type { MemoryManagementSnapshot } from "../src/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
@@ -153,7 +157,7 @@ export type MainIpcRegistrationDeps = {
   createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
   getCompanionSession(sessionId: string): CompanionSession | null;
   getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
-  mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionSession>;
+  mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionMergeSelectedFilesResult>;
   discardCompanionSession(sessionId: string): Promise<CompanionSession>;
   runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
   cancelCompanionSessionRun(sessionId: string): void;

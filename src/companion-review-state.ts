@@ -18,6 +18,18 @@ export type CompanionMergeReadiness = {
   simulatedAt: string;
 };
 
+export type CompanionSiblingCheckWarning = {
+  sessionId: string;
+  taskTitle: string;
+  paths: string[];
+  message: string;
+};
+
+export type CompanionMergeSelectedFilesResult = {
+  session: CompanionSession;
+  siblingWarnings: CompanionSiblingCheckWarning[];
+};
+
 export type CompanionReviewSnapshot = {
   session: CompanionSession;
   changedFiles: ChangedFile[];

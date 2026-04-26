@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
-import type { CompanionSession } from "../../src/companion-state.js";
+import type { CompanionSession, CompanionSessionSummary } from "../../src/companion-state.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../../src/model-catalog.js";
 import { CompanionReviewService } from "../../src-electron/companion-review-service.js";
 
@@ -23,18 +23,22 @@ function createCompanionSession(input: {
   repoRoot: string;
   worktreePath: string;
   baseSnapshotCommit: string;
+  id?: string;
+  taskTitle?: string;
+  companionBranch?: string;
 }): CompanionSession {
+  const id = input.id ?? "companion-session-1";
   return {
-    id: "companion-session-1",
+    id,
     groupId: "group-1",
-    taskTitle: "Review task",
+    taskTitle: input.taskTitle ?? "Review task",
     status: "active",
     repoRoot: input.repoRoot,
     focusPath: "",
     targetBranch: "main",
-    baseSnapshotRef: "refs/withmate/companion/session-1/base",
+    baseSnapshotRef: `refs/withmate/companion/${id}/base`,
     baseSnapshotCommit: input.baseSnapshotCommit,
-    companionBranch: "withmate/companion/session-1",
+    companionBranch: input.companionBranch ?? "withmate/companion/session-1",
     worktreePath: input.worktreePath,
     runState: "idle",
     threadId: "",
@@ -53,6 +57,32 @@ function createCompanionSession(input: {
     createdAt: "2026-04-26 10:00",
     updatedAt: "2026-04-26 10:00",
     messages: [],
+  };
+}
+
+function toCompanionSessionSummary(session: CompanionSession): CompanionSessionSummary {
+  return {
+    id: session.id,
+    groupId: session.groupId,
+    taskTitle: session.taskTitle,
+    status: session.status,
+    repoRoot: session.repoRoot,
+    focusPath: session.focusPath,
+    targetBranch: session.targetBranch,
+    baseSnapshotRef: session.baseSnapshotRef,
+    baseSnapshotCommit: session.baseSnapshotCommit,
+    runState: session.runState,
+    threadId: session.threadId,
+    provider: session.provider,
+    model: session.model,
+    reasoningEffort: session.reasoningEffort,
+    approvalMode: session.approvalMode,
+    codexSandboxMode: session.codexSandboxMode,
+    character: session.character,
+    characterRoleMarkdown: session.characterRoleMarkdown,
+    characterIconPath: session.characterIconPath,
+    characterThemeColors: session.characterThemeColors,
+    updatedAt: session.updatedAt,
   };
 }
 
@@ -82,6 +112,9 @@ describe("CompanionReviewService", () => {
       const service = new CompanionReviewService({
         getCompanionSession(sessionId) {
           return sessionId === session.id ? session : null;
+        },
+        listCompanionSessionSummaries() {
+          return [];
         },
         updateCompanionSession(updatedSession) {
           session = updatedSession;
@@ -134,6 +167,9 @@ describe("CompanionReviewService", () => {
         getCompanionSession(sessionId) {
           return sessionId === session.id ? session : null;
         },
+        listCompanionSessionSummaries() {
+          return [];
+        },
         updateCompanionSession(updatedSession) {
           session = updatedSession;
           return session;
@@ -142,7 +178,8 @@ describe("CompanionReviewService", () => {
 
       const merged = await service.mergeSelectedFiles(session.id, ["README.md"]);
 
-      assert.equal(merged.status, "merged");
+      assert.equal(merged.session.status, "merged");
+      assert.deepEqual(merged.siblingWarnings, []);
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\nmerged\n");
       await assert.rejects(() => stat(path.join(repoRoot, "new-file.txt")));
       await assert.rejects(() => stat(worktreePath));
@@ -179,6 +216,9 @@ describe("CompanionReviewService", () => {
       const service = new CompanionReviewService({
         getCompanionSession(sessionId) {
           return sessionId === session.id ? session : null;
+        },
+        listCompanionSessionSummaries() {
+          return [];
         },
         updateCompanionSession(updatedSession) {
           session = updatedSession;
@@ -223,6 +263,9 @@ describe("CompanionReviewService", () => {
       const service = new CompanionReviewService({
         getCompanionSession(sessionId) {
           return sessionId === session.id ? session : null;
+        },
+        listCompanionSessionSummaries() {
+          return [];
         },
         updateCompanionSession(updatedSession) {
           session = updatedSession;
@@ -269,6 +312,9 @@ describe("CompanionReviewService", () => {
         getCompanionSession(sessionId) {
           return sessionId === session.id ? session : null;
         },
+        listCompanionSessionSummaries() {
+          return [];
+        },
         updateCompanionSession(updatedSession) {
           session = updatedSession;
           return session;
@@ -314,6 +360,9 @@ describe("CompanionReviewService", () => {
         getCompanionSession(sessionId) {
           return sessionId === session.id ? session : null;
         },
+        listCompanionSessionSummaries() {
+          return [];
+        },
         updateCompanionSession(updatedSession) {
           session = updatedSession;
           return session;
@@ -331,6 +380,83 @@ describe("CompanionReviewService", () => {
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\n");
     } finally {
       await git(repoRoot, ["worktree", "remove", "--force", worktreePath]).catch(() => undefined);
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("同じ CompanionGroup の active sibling と selected path が重なる場合は warning を返す", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-review-"));
+    const repoRoot = path.join(tempDirectory, "repo");
+    const worktreePath = path.join(tempDirectory, "worktree");
+    const siblingWorktreePath = path.join(tempDirectory, "sibling-worktree");
+
+    try {
+      await mkdir(repoRoot, { recursive: true });
+      await git(repoRoot, ["init", "-b", "main"]);
+      await git(repoRoot, ["config", "user.name", "WithMate Test"]);
+      await git(repoRoot, ["config", "user.email", "withmate@example.invalid"]);
+      await writeFile(path.join(repoRoot, "README.md"), "hello\n", "utf8");
+      await git(repoRoot, ["add", "README.md"]);
+      await git(repoRoot, ["commit", "-m", "initial"]);
+      const targetBaseHead = await git(repoRoot, ["rev-parse", "HEAD"]);
+      const targetBaseTree = await git(repoRoot, ["rev-parse", "HEAD^{tree}"]);
+      const baseSnapshotCommit = await git(repoRoot, ["commit-tree", targetBaseTree, "-p", targetBaseHead, "-m", "snapshot"]);
+      await git(repoRoot, ["branch", "withmate/companion/session-1", baseSnapshotCommit]);
+      await git(repoRoot, ["branch", "withmate/companion/session-2", baseSnapshotCommit]);
+      await git(repoRoot, ["worktree", "add", worktreePath, "withmate/companion/session-1"]);
+      await git(repoRoot, ["worktree", "add", siblingWorktreePath, "withmate/companion/session-2"]);
+      await writeFile(path.join(worktreePath, "README.md"), "hello\nselected\n", "utf8");
+      await writeFile(path.join(siblingWorktreePath, "README.md"), "hello\nsibling\n", "utf8");
+
+      const session = createCompanionSession({
+        repoRoot,
+        worktreePath,
+        baseSnapshotCommit,
+        id: "companion-session-1",
+        taskTitle: "Selected task",
+        companionBranch: "withmate/companion/session-1",
+      });
+      const siblingSession = createCompanionSession({
+        repoRoot,
+        worktreePath: siblingWorktreePath,
+        baseSnapshotCommit,
+        id: "companion-session-2",
+        taskTitle: "Sibling task",
+        companionBranch: "withmate/companion/session-2",
+      });
+      const sessions = new Map<string, CompanionSession>([
+        [session.id, session],
+        [siblingSession.id, siblingSession],
+      ]);
+      const service = new CompanionReviewService({
+        getCompanionSession(sessionId) {
+          return sessions.get(sessionId) ?? null;
+        },
+        listCompanionSessionSummaries() {
+          return [...sessions.values()].map(toCompanionSessionSummary);
+        },
+        updateCompanionSession(updatedSession) {
+          sessions.set(updatedSession.id, updatedSession);
+          return updatedSession;
+        },
+      });
+
+      const result = await service.mergeSelectedFiles(session.id, ["README.md"]);
+
+      assert.equal(result.session.status, "merged");
+      assert.deepEqual(result.siblingWarnings, [
+        {
+          sessionId: siblingSession.id,
+          taskTitle: "Sibling task",
+          paths: ["README.md"],
+          message: "Sibling task と 1 file が重なっているよ。",
+        },
+      ]);
+      assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\nselected\n");
+      await stat(siblingWorktreePath);
+    } finally {
+      await git(repoRoot, ["worktree", "remove", "--force", worktreePath]).catch(() => undefined);
+      await git(repoRoot, ["worktree", "remove", "--force", siblingWorktreePath]).catch(() => undefined);
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });

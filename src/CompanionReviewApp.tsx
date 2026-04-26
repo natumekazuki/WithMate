@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type { ChangedFile } from "./runtime-state.js";
-import type { CompanionReviewSnapshot } from "./companion-review-state.js";
+import type { CompanionReviewSnapshot, CompanionSiblingCheckWarning } from "./companion-review-state.js";
 import { getCompanionSessionIdFromLocation } from "./companion-review-state.js";
 import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
@@ -19,6 +19,7 @@ export default function CompanionReviewApp() {
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState("");
   const [operationMessage, setOperationMessage] = useState("");
+  const [siblingWarnings, setSiblingWarnings] = useState<CompanionSiblingCheckWarning[]>([]);
   const [operationRunning, setOperationRunning] = useState(false);
 
   useEffect(() => {
@@ -85,12 +86,14 @@ export default function CompanionReviewApp() {
     setOperationRunning(true);
     setErrorMessage("");
     setOperationMessage("");
+    setSiblingWarnings([]);
     try {
-      const session = await withmateApi.mergeCompanionSelectedFiles({
+      const result = await withmateApi.mergeCompanionSelectedFiles({
         sessionId: snapshot.session.id,
         selectedPaths,
       });
-      setSnapshot((current) => current ? { ...current, session } : current);
+      setSnapshot((current) => current ? { ...current, session: result.session } : current);
+      setSiblingWarnings(result.siblingWarnings);
       setOperationMessage("selected files を merge したよ。");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "selected files の merge に失敗したよ。");
@@ -108,6 +111,7 @@ export default function CompanionReviewApp() {
     setOperationRunning(true);
     setErrorMessage("");
     setOperationMessage("");
+    setSiblingWarnings([]);
     try {
       const session = await withmateApi.discardCompanionSession(snapshot.session.id);
       setSnapshot((current) => current ? { ...current, session } : current);
@@ -181,6 +185,20 @@ export default function CompanionReviewApp() {
           <div className={`companion-review-operation ${errorMessage ? "error" : "success"}`}>
             {errorMessage || operationMessage}
           </div>
+        )}
+        {siblingWarnings.length > 0 && (
+          <section className="companion-review-sibling-warnings">
+            <p className="eyebrow">Sibling Check</p>
+            <ul>
+              {siblingWarnings.map((warning) => (
+                <li key={warning.sessionId}>
+                  <strong>{warning.taskTitle}</strong>
+                  <span>{warning.message}</span>
+                  <small>{warning.paths.join(", ")}</small>
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
         <section className={`companion-review-readiness ${snapshot.mergeReadiness.status}`}>
           <div>

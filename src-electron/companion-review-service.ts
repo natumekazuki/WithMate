@@ -5,8 +5,14 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import type { ChangedFile } from "../src/runtime-state.js";
-import type { CompanionMergeReadiness, CompanionMergeReadinessIssue, CompanionReviewSnapshot } from "../src/companion-review-state.js";
-import type { CompanionSession } from "../src/companion-state.js";
+import type {
+  CompanionMergeReadiness,
+  CompanionMergeReadinessIssue,
+  CompanionMergeSelectedFilesResult,
+  CompanionReviewSnapshot,
+  CompanionSiblingCheckWarning,
+} from "../src/companion-review-state.js";
+import type { CompanionSession, CompanionSessionSummary } from "../src/companion-state.js";
 import { currentTimestampLabel } from "../src/time-state.js";
 import { cleanupCompanionWorkspaceArtifacts } from "./companion-git.js";
 import { buildDiffRows, summarizeChangedFile } from "./provider-artifact.js";
@@ -29,6 +35,7 @@ type ChangedPath = {
 
 export type CompanionReviewServiceDeps = {
   getCompanionSession(sessionId: string): CompanionSession | null;
+  listCompanionSessionSummaries(): CompanionSessionSummary[];
   updateCompanionSession(session: CompanionSession): CompanionSession;
 };
 
@@ -150,7 +157,7 @@ export class CompanionReviewService {
     };
   }
 
-  async mergeSelectedFiles(sessionId: string, selectedPaths: string[]): Promise<CompanionSession> {
+  async mergeSelectedFiles(sessionId: string, selectedPaths: string[]): Promise<CompanionMergeSelectedFilesResult> {
     const session = this.requireActiveSession(sessionId);
     if (session.runState === "running") {
       throw new Error("Companion が実行中なので merge できないよ。");
@@ -179,6 +186,7 @@ export class CompanionReviewService {
     for (const change of selectedChanges) {
       await this.applySelectedChange(session, change);
     }
+    const siblingWarnings = await this.checkSiblingImpact(session, selectedChanges);
 
     await cleanupCompanionWorkspaceArtifacts({
       repoRoot: session.repoRoot,
@@ -188,12 +196,16 @@ export class CompanionReviewService {
       worktreePath: session.worktreePath,
     });
 
-    return this.deps.updateCompanionSession({
+    const storedSession = this.deps.updateCompanionSession({
       ...session,
       status: "merged",
       runState: "idle",
       updatedAt: currentTimestampLabel(),
     });
+    return {
+      session: storedSession,
+      siblingWarnings,
+    };
   }
 
   async discardSession(sessionId: string): Promise<CompanionSession> {
@@ -309,6 +321,53 @@ export class CompanionReviewService {
       baseParent,
       simulatedAt: currentTimestampLabel(),
     };
+  }
+
+  private async checkSiblingImpact(
+    session: CompanionSession,
+    selectedChanges: ChangedPath[],
+  ): Promise<CompanionSiblingCheckWarning[]> {
+    const selectedPathSet = new Set(selectedChanges.map((change) => change.path));
+    const siblingSummaries = this.deps.listCompanionSessionSummaries()
+      .filter((summary) =>
+        summary.groupId === session.groupId &&
+        summary.id !== session.id &&
+        summary.status === "active"
+      );
+    const warnings: CompanionSiblingCheckWarning[] = [];
+
+    for (const summary of siblingSummaries) {
+      const sibling = this.deps.getCompanionSession(summary.id);
+      if (!sibling) {
+        continue;
+      }
+      let siblingChangedPaths: ChangedPath[];
+      try {
+        siblingChangedPaths = await this.resolveChangedPaths(sibling);
+      } catch {
+        warnings.push({
+          sessionId: sibling.id,
+          taskTitle: sibling.taskTitle,
+          paths: [],
+          message: `${sibling.taskTitle} の sibling check に失敗したよ。`,
+        });
+        continue;
+      }
+      const overlapPaths = siblingChangedPaths
+        .map((change) => change.path)
+        .filter((filePath) => selectedPathSet.has(filePath));
+      if (overlapPaths.length === 0) {
+        continue;
+      }
+      warnings.push({
+        sessionId: sibling.id,
+        taskTitle: sibling.taskTitle,
+        paths: overlapPaths,
+        message: `${sibling.taskTitle} と ${overlapPaths.length} file が重なっているよ。`,
+      });
+    }
+
+    return warnings;
   }
 
   private async resolveBaseSnapshotParent(session: CompanionSession): Promise<string> {

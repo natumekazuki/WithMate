@@ -6614,6 +6614,32 @@ button:disabled {
   color: #fda4af;
 }
 
+.companion-review-sibling-warnings {
+  padding: 12px 22px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: rgba(253, 230, 138, 0.08);
+}
+
+.companion-review-sibling-warnings ul {
+  display: grid;
+  gap: 8px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.companion-review-sibling-warnings li {
+  display: grid;
+  gap: 3px;
+  color: #fde68a;
+  font-size: 0.9rem;
+}
+
+.companion-review-sibling-warnings small {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
 .companion-review-readiness {
   display: grid;
   grid-template-columns: minmax(160px, auto) minmax(0, 1fr);

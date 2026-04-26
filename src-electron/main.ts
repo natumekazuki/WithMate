@@ -602,7 +602,7 @@ async function getCompanionReviewSnapshot(sessionId: string) {
   return requireCompanionReviewService().getReviewSnapshot(sessionId);
 }
 
-async function mergeCompanionSelectedFiles(request: { sessionId: string; selectedPaths: string[] }): Promise<CompanionSession> {
+async function mergeCompanionSelectedFiles(request: { sessionId: string; selectedPaths: string[] }) {
   return requireCompanionReviewService().mergeSelectedFiles(request.sessionId, request.selectedPaths);
 }
 
@@ -1513,6 +1513,7 @@ function requireCompanionReviewService(): CompanionReviewService {
   if (!companionReviewService) {
     companionReviewService = new CompanionReviewService({
       getCompanionSession,
+      listCompanionSessionSummaries,
       updateCompanionSession,
     });
   }

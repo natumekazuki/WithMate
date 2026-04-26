@@ -141,7 +141,7 @@ warning:
 
 Companion は既存 `sessions` table に相乗りしない。専用 table 群として分離し、UI / service 層で Agent session と統合表示する。
 
-Current MVP 実装では、`companion_groups`、`companion_sessions`、`companion_messages` を追加し、CompanionSession 作成、base snapshot ref / shadow worktree 作成、Home での active 一覧表示、CompanionSession から shadow worktree 上で provider 実行する最小導線、Review Window での changed files / split diff / merge readiness 表示、selected files merge / discard の初期導線までを扱う。merge / discard / review window 用の詳細 table は後続実装で追加する。
+Current MVP 実装では、`companion_groups`、`companion_sessions`、`companion_messages` を追加し、CompanionSession 作成、base snapshot ref / shadow worktree 作成、Home での active 一覧表示、CompanionSession から shadow worktree 上で provider 実行する最小導線、Review Window での changed files / split diff / merge readiness 表示、selected files merge / discard、merge 後の sibling path overlap warning までを扱う。merge / discard / review window 用の詳細 table は後続実装で追加する。
 
 候補 table:
 
@@ -304,7 +304,7 @@ actions:
 - `Run Checks`
 - `Retry Merge`
 
-Current MVP 実装の Review Window は、Home の active CompanionSession から開く補助 window とし、base snapshot commit と shadow worktree の差分を都度読み取って changed file list と split diff を表示する。changed file list は default selected とし、user は file 単位で merge 対象を外せる。`Merge Selected Files` / `Discard Companion` は実行でき、target branch drift、target workspace dirty、merge simulation の結果を merge readiness として表示する。sibling check、checks 表示は後続実装で追加する。
+Current MVP 実装の Review Window は、Home の active CompanionSession から開く補助 window とし、base snapshot commit と shadow worktree の差分を都度読み取って changed file list と split diff を表示する。changed file list は default selected とし、user は file 単位で merge 対象を外せる。`Merge Selected Files` / `Discard Companion` は実行でき、target branch drift、target workspace dirty、merge simulation の結果を merge readiness として表示する。merge 後は同じ CompanionGroup の active sibling CompanionSession と selected files の path overlap warning を表示する。checks 表示は後続実装で追加する。
 
 MVP に入れないもの:
 
@@ -356,6 +356,8 @@ Current MVP 実装の merge は、target branch の HEAD が base snapshot commi
 - sibling check は selected CompanionSession の merge 完了を妨げない
 - conflict した sibling CompanionSession に warning を紐づける
 - user は該当 sibling CompanionSession 上で target 更新分との conflict を解消する
+
+Current MVP 実装の sibling check は DB 永続化や temporary sibling check ref を作らず、merge 後の結果として Review Window に返す。判定は selected files と active sibling CompanionSession の changed files の path 一致に限定し、overlap がある場合は warning を表示する。sibling check 自体に失敗しても selected CompanionSession の merge は完了させ、warning として user に返す。
 
 ## Discard Policy
 

@@ -20,7 +20,11 @@ import type {
   SessionSummary,
 } from "./app-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "./companion-state.js";
-import type { CompanionMergeSelectedFilesRequest, CompanionReviewSnapshot } from "./companion-review-state.js";
+import type {
+  CompanionMergeSelectedFilesRequest,
+  CompanionMergeSelectedFilesResult,
+  CompanionReviewSnapshot,
+} from "./companion-review-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "./character-update-state.js";
 import type { MemoryManagementSnapshot } from "./memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
@@ -74,7 +78,7 @@ export type WithMateWindowCompanionApi = {
   listCompanionSessionSummaries(): Promise<CompanionSessionSummary[]>;
   getCompanionSession(sessionId: string): Promise<CompanionSession | null>;
   getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
-  mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionSession>;
+  mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionMergeSelectedFilesResult>;
   discardCompanionSession(sessionId: string): Promise<CompanionSession>;
   createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
   runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
