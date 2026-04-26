@@ -21,4 +21,4 @@
 
 ## コミット
 
-未コミット。
+- `7e1bb66` feat(companion): shadow worktree を作成する

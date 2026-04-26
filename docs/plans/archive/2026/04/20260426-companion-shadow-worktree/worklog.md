@@ -19,4 +19,4 @@
 
 | checkpoint | commit | summary |
 | --- | --- | --- |
-| shadow worktree 作成 | 未コミット | snapshot ref と shadow worktree を CompanionSession 作成時に実体化する |
+| shadow worktree 作成 | `7e1bb66` | snapshot ref と shadow worktree を CompanionSession 作成時に実体化する |
