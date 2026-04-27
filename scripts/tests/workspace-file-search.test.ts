@@ -1,6 +1,6 @@
 import type { Stats } from "node:fs";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -535,6 +535,8 @@ describe("workspace-file-search", () => {
 
       // TTL 超過前に 2 段目ディレクトリ配下へファイル追加
       await writeFile(path.join(workspacePath, "src", "components", "NewComp.tsx"), "", "utf8");
+      // 一部環境では短時間の作成だと directory mtime が更新されないため、明示的に更新する。
+      await utimes(path.join(workspacePath, "src", "components"), new Date(fakeNow), new Date(fakeNow));
       assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "NewComp"), []);
 
       // TTL 超過 → src/components の mtime が変化 → visitedDirectories で構造変化と判定 → 再走査
@@ -565,6 +567,8 @@ describe("workspace-file-search", () => {
       // TTL 超過 + ファイル追加（構造変化あり）→ 再走査
       fakeNow += DEFAULT_WORKSPACE_FILE_INDEX_TTL_MS + 100;
       await writeFile(path.join(workspacePath, "added.ts"), "", "utf8");
+      // 一部環境では短時間の作成だと directory mtime が更新されないため、明示的に更新する。
+      await utimes(workspacePath, new Date(fakeNow), new Date(fakeNow));
 
       // 再走査後は新ファイルが見え、contentVersion も更新される
       assert.deepEqual(await searchWorkspaceFilePaths(workspacePath, "added"), ["added.ts"]);

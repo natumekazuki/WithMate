@@ -43,7 +43,11 @@ export class WindowEntryLoader {
       return;
     }
 
-    const filePath = path.resolve(this.deps.rendererDistPath, entryFileName);
+    const rendererDistPath = this.deps.rendererDistPath.trim();
+    const filePath =
+      /^[a-zA-Z]:[\\/]/.test(rendererDistPath) || /^\\\\[^\\]+\\[^\\]+/.test(rendererDistPath)
+        ? path.win32.resolve(rendererDistPath, entryFileName)
+        : path.resolve(rendererDistPath, entryFileName);
     await window.loadFile(filePath, search ? { search } : undefined);
   }
 }

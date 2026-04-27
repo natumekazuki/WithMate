@@ -80,6 +80,7 @@ type IgnoreMatcher = {
 
 export type ObservedMtime = {
   mtimeMs: number;
+  size: number;
   observedAt: number;
 };
 
@@ -166,7 +167,7 @@ export type SnapshotScanResult = {
 };
 
 export type IgnoreFileState =
-  | { kind: "loaded"; mtimeMs: number; observedAt: number }
+  | { kind: "loaded"; mtimeMs: number; size: number; observedAt: number }
   | { kind: "unreadable"; mtimeMs: number | null; observedAt: number | null }
   | { kind: "race" };
 
@@ -249,7 +250,7 @@ async function collectIgnoreSourceDirectories(rootDirectory: string): Promise<st
 
 /** createIgnoreMatcher の戻り値。 */
 type CreateIgnoreMatcherResult =
-  | { kind: "loaded"; matcher: IgnoreMatcher; mtimeMs: number; observedAt: number }
+  | { kind: "loaded"; matcher: IgnoreMatcher; mtimeMs: number; size: number; observedAt: number }
   | { kind: "absent" } // ファイルが存在しない（最初の stat が失敗）
   | { kind: "unreadable"; mtimeMs: number | null; observedAt: number | null } // 安定したアクセス拒否・型不整合などで読めない
   | { kind: "race" }; // 全試行で読み取り中に変更が続いた
@@ -459,6 +460,7 @@ async function createIgnoreMatcher(baseDirectory: string, ignoreFilePath: string
           kind: "loaded",
           matcher: { baseDirectory, matcher: ignore().add(rules) },
           mtimeMs: statAfter.mtimeMs,
+          size: statAfter.size,
           observedAt: statAfterObserved.observedAt,
         };
       }
@@ -585,7 +587,12 @@ function applyIgnoreFileResult(
     if (directory !== null) {
       loadedDirectories.add(directory);
     }
-    ignoreFiles.set(ignoreFilePath, { kind: "loaded", mtimeMs: result.mtimeMs, observedAt: result.observedAt });
+    ignoreFiles.set(ignoreFilePath, {
+      kind: "loaded",
+      mtimeMs: result.mtimeMs,
+      size: result.size,
+      observedAt: result.observedAt,
+    });
     return result.matcher;
   }
   if (result.kind === "unreadable") {
@@ -791,6 +798,7 @@ async function walkWorkspace(
       const dirObserved = await statWalkDirectoryWithObservedAt(directory);
       visitedDirectories.set(relDir, {
         mtimeMs: dirObserved.stats.mtimeMs,
+        size: dirObserved.stats.size,
         observedAt: dirObserved.observedAt,
       });
     } catch {
@@ -1002,7 +1010,7 @@ async function hasIgnoreStateChanged(root: SnapshotRootIndex): Promise<boolean> 
 
     try {
       const current = await statIgnoreFile(ignoreFilePath);
-      if (current.mtimeMs !== state.mtimeMs) {
+      if (current.mtimeMs !== state.mtimeMs || current.size !== state.size) {
         return true;
       }
     } catch {
@@ -1029,7 +1037,7 @@ async function hasDirectoryStructureChanged(root: SnapshotRootIndex): Promise<bo
     const directoryPath = relativePath ? path.join(root.directory, relativePath) : root.directory;
     try {
       const current = await statWalkDirectory(directoryPath);
-      if (current.mtimeMs !== observed.mtimeMs) {
+      if (current.mtimeMs !== observed.mtimeMs || current.size !== observed.size) {
         return true;
       }
     } catch {

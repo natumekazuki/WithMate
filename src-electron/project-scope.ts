@@ -12,7 +12,19 @@ export type ResolvedProjectScopeInput = {
   displayName: string;
 };
 
+function isWindowsAbsolutePath(targetPath: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(targetPath) || /^\\\\[^\\]+\\[^\\]+/.test(targetPath);
+}
+
 function normalizeProjectPath(targetPath: string): string {
+  if (isWindowsAbsolutePath(targetPath)) {
+    const normalizedWindowsPath = path.win32.normalize(targetPath).replace(/\\/g, "/");
+    if (/^[A-Za-z]:\/$/.test(normalizedWindowsPath)) {
+      return normalizedWindowsPath;
+    }
+    return normalizedWindowsPath.replace(/\/+$/, "");
+  }
+
   const resolved = path.resolve(targetPath).replace(/\\/g, "/");
   if (resolved === "/" || /^[A-Za-z]:\/$/.test(resolved)) {
     return resolved;
@@ -39,7 +51,7 @@ function readTextFile(targetPath: string): string | null {
 }
 
 export function findGitRootSync(startDirectory: string): string | null {
-  let currentDirectory = path.resolve(startDirectory);
+  let currentDirectory = normalizeProjectPath(startDirectory);
 
   while (true) {
     if (pathExists(path.join(currentDirectory, ".git"))) {
@@ -190,13 +202,25 @@ function resolveRepositoryIdentity(gitRemoteUrl: string | null, gitCommonDir: st
 }
 
 function toDisplayName(targetPath: string): string {
-  const resolvedPath = path.resolve(targetPath);
+  const resolvedPath = isWindowsAbsolutePath(targetPath)
+    ? path.win32.normalize(targetPath)
+    : path.resolve(targetPath);
   const baseName = path.basename(resolvedPath);
   return baseName || normalizeProjectPath(targetPath);
 }
 
 export function resolveProjectScope(workspacePath: string): ResolvedProjectScopeInput {
   const normalizedWorkspacePath = normalizeProjectPath(workspacePath);
+  if (isWindowsAbsolutePath(normalizedWorkspacePath) && process.platform !== "win32") {
+    return {
+      projectType: "directory",
+      projectKey: `directory:${normalizedWorkspacePath}`,
+      workspacePath: normalizedWorkspacePath,
+      gitRoot: null,
+      gitRemoteUrl: null,
+      displayName: toDisplayName(normalizedWorkspacePath),
+    };
+  }
   const gitRoot = findGitRootSync(normalizedWorkspacePath);
   const projectType: ProjectScopeType = gitRoot ? "git" : "directory";
   if (!gitRoot) {
