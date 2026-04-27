@@ -650,7 +650,7 @@ describe("workspace-file-search", () => {
       _setWalkDirectoryStatOverrideForTesting(null);
       _setStatOverrideForTesting(async (targetPath) => {
         if (path.resolve(targetPath) === rootDirectoryPath) {
-          return { mtimeMs: coarseRootStat.mtimeMs };
+          return { mtimeMs: coarseRootStat.mtimeMs, size: coarseRootStat.size };
         }
         return stat(targetPath);
       });
@@ -711,7 +711,7 @@ describe("workspace-file-search", () => {
       _setWalkDirectoryStatOverrideForTesting(null);
       _setStatOverrideForTesting(async (targetPath) => {
         if (path.resolve(targetPath) === rootDirectoryPath) {
-          return { mtimeMs: coarseRootStat.mtimeMs };
+          return { mtimeMs: coarseRootStat.mtimeMs, size: coarseRootStat.size };
         }
         return stat(targetPath);
       });
@@ -786,10 +786,10 @@ describe("workspace-file-search", () => {
       _setWalkDirectoryStatOverrideForTesting(null);
       _setStatOverrideForTesting(async (targetPath) => {
         if (path.resolve(targetPath) === rootDirectoryPath) {
-          return { mtimeMs: nonCoarseRootStat.mtimeMs };
+          return { mtimeMs: nonCoarseRootStat.mtimeMs, size: nonCoarseRootStat.size };
         }
         if (path.resolve(targetPath) === deepDirectoryPath) {
-          return { mtimeMs: coarseDeepStat.mtimeMs };
+          return { mtimeMs: coarseDeepStat.mtimeMs, size: coarseDeepStat.size };
         }
         return stat(targetPath);
       });
@@ -839,7 +839,7 @@ describe("workspace-file-search", () => {
       _setIgnoreFileStatOverrideForTesting(null);
       _setStatOverrideForTesting(async (targetPath) => {
         if (path.resolve(targetPath) === gitignorePath) {
-          return { mtimeMs: coarseGitignoreStat.mtimeMs };
+          return { mtimeMs: coarseGitignoreStat.mtimeMs, size: coarseGitignoreStat.size };
         }
         return stat(targetPath);
       });
@@ -901,7 +901,7 @@ describe("workspace-file-search", () => {
       _setIgnoreFileStatOverrideForTesting(null);
       _setStatOverrideForTesting(async (targetPath) => {
         if (path.resolve(targetPath) === gitignorePath) {
-          return { mtimeMs: coarseGitignoreStat.mtimeMs };
+          return { mtimeMs: coarseGitignoreStat.mtimeMs, size: coarseGitignoreStat.size };
         }
         return stat(targetPath);
       });
@@ -990,13 +990,13 @@ describe("workspace-file-search", () => {
       _setIgnoreFileStatOverrideForTesting(null);
       _setStatOverrideForTesting(async (targetPath) => {
         if (path.resolve(targetPath) === rootDirectoryPath) {
-          return { mtimeMs: nonCoarseRootStat.mtimeMs };
+          return { mtimeMs: nonCoarseRootStat.mtimeMs, size: nonCoarseRootStat.size };
         }
         if (path.resolve(targetPath) === subDirectoryPath) {
-          return { mtimeMs: nonCoarseSubStat.mtimeMs };
+          return { mtimeMs: nonCoarseSubStat.mtimeMs, size: nonCoarseSubStat.size };
         }
         if (path.resolve(targetPath) === subGitignorePath) {
-          return { mtimeMs: coarseSubGitignoreStat.mtimeMs };
+          return { mtimeMs: coarseSubGitignoreStat.mtimeMs, size: coarseSubGitignoreStat.size };
         }
         return stat(targetPath);
       });
