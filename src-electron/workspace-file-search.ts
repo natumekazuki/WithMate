@@ -266,7 +266,7 @@ async function checkStructureUnchanged(index: WorkspaceFileIndex, now = getNow()
       relativeDir === "" ? index.workspacePath : path.join(index.workspacePath, relativeDir);
     try {
       const s = await statPath(absoluteDir);
-      if (s.mtimeMs !== directoryState.mtimeMs) {
+      if (s.mtimeMs !== directoryState.mtimeMs || s.size !== directoryState.size) {
         return false;
       }
     } catch {
@@ -292,7 +292,7 @@ async function checkStructureUnchanged(index: WorkspaceFileIndex, now = getNow()
     }
     try {
       const s = await statPath(ignoreFilePath);
-      if (s.mtimeMs !== ignoreFileState.mtimeMs) {
+      if (s.mtimeMs !== ignoreFileState.mtimeMs || s.size !== ignoreFileState.size) {
         return false;
       }
     } catch {
