@@ -1,5 +1,6 @@
 ﻿import { stat } from "node:fs/promises";
 import path from "node:path";
+import type { Stats } from "node:fs";
 
 import {
   scanWorkspacePaths,
@@ -25,7 +26,7 @@ let _nowFn: (() => number) | null = null;
 let _queryCacheMaxEntriesOverride: number | null = null;
 let _queryCacheMaxMatchedIndicesOverride: number | null = null;
 let _statOverrideForTesting:
-  | ((targetPath: string) => Promise<{ mtimeMs: number }> | { mtimeMs: number })
+  | ((targetPath: string) => Promise<Pick<Stats, "mtimeMs" | "size">> | Pick<Stats, "mtimeMs" | "size">)
   | null = null;
 
 /** テスト専用: Date.now() の差し替えを設定する。null で元に戻す。 */
@@ -69,7 +70,9 @@ export function _setQueryCacheMaxMatchedIndicesForTesting(value: number | null):
 
 /** テスト専用: TTL 検証で使う stat を差し替える。 */
 export function _setStatOverrideForTesting(
-  fn: ((targetPath: string) => Promise<{ mtimeMs: number }> | { mtimeMs: number }) | null,
+  fn:
+    | ((targetPath: string) => Promise<Pick<Stats, "mtimeMs" | "size">> | Pick<Stats, "mtimeMs" | "size">)
+    | null,
 ): void {
   _statOverrideForTesting = fn;
 }
@@ -86,7 +89,7 @@ function getWorkspaceQueryCacheMaxMatchedIndices(): number {
   return Math.max(_queryCacheMaxMatchedIndicesOverride ?? DEFAULT_WORKSPACE_QUERY_CACHE_MAX_MATCHED_INDICES, 1);
 }
 
-async function statPath(targetPath: string): Promise<{ mtimeMs: number }> {
+async function statPath(targetPath: string): Promise<Pick<Stats, "mtimeMs" | "size">> {
   if (_statOverrideForTesting !== null) {
     return await _statOverrideForTesting(targetPath);
   }
