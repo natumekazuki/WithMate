@@ -60,4 +60,5 @@
 
 ## Commit tracking
 
-- 未コミット。
+- `7d87c4b` `feat(database): prepare v2 data loading migration`
+  - MemoryGeneration / 独り言削除、V2 DB schema / migration、V2 runtime read path first slice までの実装と関連 docs / tests。
