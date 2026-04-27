@@ -6,6 +6,7 @@ import {
   type Session,
   type SessionMemory,
 } from "../src/app-state.js";
+import { CREATE_SESSION_MEMORIES_TABLE_SQL } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 type SessionMemoryRow = {
@@ -93,20 +94,7 @@ export class SessionMemoryStorage {
 
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS session_memories (
-        session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-        workspace_path TEXT NOT NULL,
-        thread_id TEXT NOT NULL DEFAULT '',
-        schema_version INTEGER NOT NULL DEFAULT 1,
-        goal TEXT NOT NULL DEFAULT '',
-        decisions_json TEXT NOT NULL DEFAULT '[]',
-        open_questions_json TEXT NOT NULL DEFAULT '[]',
-        next_actions_json TEXT NOT NULL DEFAULT '[]',
-        notes_json TEXT NOT NULL DEFAULT '[]',
-        updated_at TEXT NOT NULL
-      );
-    `);
+    this.db.exec(CREATE_SESSION_MEMORIES_TABLE_SQL);
   }
 
   getSessionMemory(sessionId: string): SessionMemory | null {

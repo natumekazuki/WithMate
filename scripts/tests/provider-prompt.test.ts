@@ -66,7 +66,7 @@ function assertSectionOrder(text: string, sections: string[]): void {
 }
 
 describe("composeProviderPrompt", () => {
-  it("System / Character / Session Memory / Project Memory / User Input の順で合成する", () => {
+  it("System / Character / User Input の順で合成し、Memory は注入しない", () => {
     const session = buildNewSession({
       taskTitle: "task",
       workspaceLabel: "workspace",
@@ -117,14 +117,12 @@ describe("composeProviderPrompt", () => {
       `${prompt.logicalPrompt.systemText}\n\n${prompt.logicalPrompt.inputText}`,
     );
     assert.match(prompt.logicalPrompt.composedText, /# Character/);
-    assert.match(prompt.inputBodyText, /# Session Memory/);
-    assert.match(prompt.inputBodyText, /# Project Memory/);
+    assert.doesNotMatch(prompt.inputBodyText, /# Session Memory/);
+    assert.doesNotMatch(prompt.inputBodyText, /# Project Memory/);
     assert.match(prompt.inputBodyText, /# User Input/);
     assertSectionOrder(prompt.logicalPrompt.composedText, [
       "# System Prompt",
       "# Character",
-      "# Session Memory",
-      "# Project Memory",
       "# User Input",
     ]);
   });

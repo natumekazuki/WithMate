@@ -11,9 +11,7 @@ import type {
   LiveElicitationResponse,
   Message,
   DiffPreviewPayload,
-  SessionBackgroundActivityState,
   SessionContextTelemetry,
-  StreamEntry,
 } from "./app-state.js";
 import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
 import { MessageRichText } from "./MessageRichText.js";
@@ -787,11 +785,6 @@ export type SessionContextPaneProps = {
   backgroundTasks: LiveBackgroundTask[];
   selectedSessionLiveRunErrorMessage: string;
   isSelectedSessionRunning: boolean;
-  selectedSessionCharacter: { name: string; iconPath: string } | null;
-  selectedMemoryGenerationActivity: SessionBackgroundActivityState | null;
-  selectedCharacterMemoryGenerationActivity: SessionBackgroundActivityState | null;
-  selectedMonologueActivity: SessionBackgroundActivityState | null;
-  selectedMonologueEntries: StreamEntry[];
   isCopilotSession: boolean;
   selectedCopilotRemainingPercentLabel: string;
   selectedCopilotRemainingRequestsLabel: string;
@@ -799,11 +792,8 @@ export type SessionContextPaneProps = {
   selectedSessionContextTelemetry: SessionContextTelemetry | null;
   selectedSessionContextTelemetryProjection: SessionContextTelemetryProjection;
   contextEmptyText: string;
-  canRunSessionMemoryGeneration: boolean;
   onToggleHeaderExpanded: () => void;
-  isSessionMemoryGenerationRunning: boolean;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
-  onRunSessionMemoryGeneration: () => void;
 };
 
 type SessionPaneErrorBoundaryProps = {
@@ -902,11 +892,6 @@ export function SessionContextPane({
   backgroundTasks,
   selectedSessionLiveRunErrorMessage,
   isSelectedSessionRunning,
-  selectedSessionCharacter,
-  selectedMemoryGenerationActivity,
-  selectedCharacterMemoryGenerationActivity,
-  selectedMonologueActivity,
-  selectedMonologueEntries,
   isCopilotSession,
   selectedCopilotRemainingPercentLabel,
   selectedCopilotRemainingRequestsLabel,
@@ -914,22 +899,11 @@ export function SessionContextPane({
   selectedSessionContextTelemetry,
   selectedSessionContextTelemetryProjection,
   contextEmptyText,
-  canRunSessionMemoryGeneration,
   onToggleHeaderExpanded,
-  isSessionMemoryGenerationRunning,
   onCycleContextPaneTab,
-  onRunSessionMemoryGeneration,
 }: SessionContextPaneProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
-  const isMemoryGenerationTab = activeContextPaneTab === "memory-generation";
   const taskEntries = backgroundTasks ?? [];
-  const memoryGenerationActivities = useMemo(
-    () =>
-      [selectedMemoryGenerationActivity, selectedCharacterMemoryGenerationActivity]
-        .filter((activity): activity is SessionBackgroundActivityState => activity !== null)
-        .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt)),
-    [selectedCharacterMemoryGenerationActivity, selectedMemoryGenerationActivity],
-  );
   const contentScrollKey = useMemo(() => {
     switch (activeContextPaneTab) {
       case "latest-command":
@@ -946,14 +920,6 @@ export function SessionContextPane({
         return taskEntries
           .map((task) => `${task.id}:${task.kind}:${task.status}:${task.title}:${task.details ?? ""}:${task.updatedAt}`)
           .join("|");
-      case "memory-generation":
-        return memoryGenerationActivities
-          .map((activity) => `${activity.kind}:${activity.status}:${activity.updatedAt}:${activity.summary}`)
-          .join("|");
-      case "monologue":
-        return selectedMonologueEntries
-          .map((entry) => `${entry.time}:${entry.text}`)
-          .join("|");
       default:
         return "";
     }
@@ -962,8 +928,6 @@ export function SessionContextPane({
     latestCommandView,
     runningDetailsEntries,
     taskEntries,
-    memoryGenerationActivities,
-    selectedMonologueEntries,
     selectedSessionLiveRunErrorMessage,
   ]);
 
@@ -980,7 +944,7 @@ export function SessionContextPane({
     <aside className={`session-context-pane${isHeaderExpanded ? " session-context-pane-header-expanded" : ""}`}>
       {!isHeaderExpanded ? <SessionHeaderHandle taskTitle={taskTitle} onClick={onToggleHeaderExpanded} /> : null}
       <section className="command-monitor-shell" aria-label="右ペイン">
-        <div className={`command-monitor-head${isMemoryGenerationTab ? " memory-generation-layout" : ""}`}>
+        <div className="command-monitor-head">
           <div className="command-monitor-switcher" aria-label="右ペイン表示切り替え">
             <button
               type="button"
@@ -1004,18 +968,6 @@ export function SessionContextPane({
               ›
             </button>
           </div>
-          {isMemoryGenerationTab ? (
-            <div className="command-monitor-head-actions">
-              <button
-                className="launch-toggle compact session-memory-trigger-button"
-                type="button"
-                onClick={onRunSessionMemoryGeneration}
-                disabled={!canRunSessionMemoryGeneration || isSessionMemoryGenerationRunning}
-              >
-                {isSessionMemoryGenerationRunning ? "Generating..." : "Generate Memory"}
-              </button>
-            </div>
-          ) : null}
         </div>
 
         <div ref={contentRef} className="command-monitor-content">
@@ -1155,79 +1107,6 @@ export function SessionContextPane({
               )
             ) : null}
 
-            {activeContextPaneTab === "memory-generation" ? (
-              memoryGenerationActivities.length > 0 ? (
-                <>
-                  {memoryGenerationActivities.map((activity) => {
-                    const isCharacterActivity = activity.kind === "character-memory-generation";
-                    return (
-                    <div key={`${activity.kind}:${activity.updatedAt}`} className="command-monitor-card">
-                      <div className="command-monitor-card-head">
-                        <div className="command-monitor-meta">
-                          <span className={`live-run-step-status ${isCharacterActivity ? contextPaneProjection.characterMemoryGenerationToneClassName : contextPaneProjection.memoryGenerationToneClassName}`}>
-                            {sessionBackgroundActivityStatusLabel(activity.status)}
-                          </span>
-                          <span className="live-run-step-type">Background</span>
-                          <span className="command-monitor-source">{isCharacterActivity ? "CHARACTER" : "SESSION"}</span>
-                        </div>
-                      </div>
-
-                      <div className="background-activity-summary">
-                        <strong>{activity.title}</strong>
-                        <p>{activity.summary}</p>
-                      </div>
-
-                      {activity.details ? (
-                        <details className="command-monitor-details live-run-step-details">
-                          <summary>詳細</summary>
-                          <pre>{activity.details}</pre>
-                        </details>
-                      ) : null}
-
-                      {activity.errorMessage ? (
-                        <div className="live-run-error-block" role="alert">
-                          <strong>実行エラー</strong>
-                          <p className="live-run-error">{activity.errorMessage}</p>
-                        </div>
-                      ) : null}
-                    </div>
-                    );
-                  })}
-                </>
-              ) : (
-                <div className="command-monitor-empty-shell" />
-              )
-            ) : null}
-
-            {activeContextPaneTab === "monologue" ? (
-              selectedMonologueEntries.length > 0 ? (
-                <>
-                  {selectedMonologueEntries.map((entry, index) => (
-                    <div
-                      key={`${entry.time}-${index}`}
-                      className={`command-monitor-card monologue-entry-card mood-${entry.mood}`}
-                    >
-                      <div className="monologue-entry-time">{entry.time}</div>
-                      <div className="monologue-entry-row">
-                        <CharacterAvatar
-                          character={{
-                            name: selectedSessionCharacter?.name ?? "?",
-                            iconPath: selectedSessionCharacter?.iconPath ?? "",
-                          }}
-                          size="large"
-                          className="monologue-entry-avatar"
-                        />
-                        <div className="background-activity-summary">
-                          <p className="monologue-entry-text">{entry.text}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </>
-              ) : (
-                <div className="command-monitor-empty-shell" />
-              )
-            ) : null}
           </div>
         </div>
       </section>

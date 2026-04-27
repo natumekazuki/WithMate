@@ -124,10 +124,14 @@
 **提案**
 
 - `sessions`（軽量ヘッダ）
-- `session_messages`（1 message = 1 row、`session_id`, `seq`, `role`, `text`, `artifact_json`）
-- `session_stream_entries`（1 entry = 1 row）
+- `session_messages`（1 message = 1 row、`session_id`, `seq`, `role`, `text`）
+- `session_message_artifacts`（1 message artifact = 1 row、重い artifact payload を展開時取得）
 
 これにより、一覧/集計処理で巨大 JSON を触らない設計にできる。
+
+V2 では独り言機能を削除するため、V1 `sessions.stream_json` は legacy data として V1 DB に残し、V2 正本 schema には持ち込まない。V2 の確定 schema は `src-electron/database-schema-v2.ts` と `docs/design/database-v2-migration.md` を参照する。
+
+runtime read-path の最初の slice では、有効な `withmate-v2.db` が存在する場合に V2 `sessions` から session summary を復元する。summary 取得では `session_messages` / `session_message_artifacts` を読まず、session detail 取得時だけ対象 session の message row と artifact row を読む。V2 DB では V1 `SessionStorage` を開かず、`SessionStorageV2Read` を使う。
 
 ### 2-2. `audit_logs` に一覧用サマリ列を持つ
 
@@ -136,7 +140,12 @@
 **提案**
 
 - 一覧用: `summary_text`, `has_error`, `operation_count`, `assistant_text_preview`
-- 詳細用 JSON 列は別テーブル `audit_log_details` に退避するか、詳細 API でのみ取得
+- timeline 用: `audit_log_operations`（1 operation = 1 row）
+- 詳細用 JSON 列は別テーブル `audit_log_details` に退避し、詳細 API でのみ取得
+
+runtime read-path の最初の slice では、既存 IPC / UI contract を変えずに `AuditLogEntry[]` を復元する。`audit_logs` の summary row を入口にし、対象 row の `audit_log_details` と `audit_log_operations` だけを読む。V2 DB では V1 `AuditLogStorage` を開かず、`AuditLogStorageV2Read` を使う。ページング API と詳細遅延 API の新設は後続 slice に分ける。
+
+V2 DB では legacy memory table を作らないため、memory 系 storage は read-only/no-op adapter に差し替える。これにより V2 read-path 起動時に `session_memories`、`project_scopes`、`character_scopes` などを暗黙作成しない。
 
 ### 2-3. 古いデータの保持ポリシーを明確化
 
@@ -162,8 +171,8 @@
 
 ### Phase 3（構造改革）
 
-1. `sessions` の履歴分離（`session_messages` / `session_stream_entries`）。  
-2. `audit_logs` 詳細分離（`audit_log_details`）。  
+1. `sessions` の履歴分離（`session_messages` / `session_message_artifacts`）。  
+2. `audit_logs` 詳細分離（`audit_log_details` / `audit_log_operations`）。  
 3. 長期保持ポリシー（TTL、上限件数、圧縮）を仕様化。
 
 ---

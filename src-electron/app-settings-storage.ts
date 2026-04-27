@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from "../src/provider-settings-state.js";
+import { CREATE_APP_SETTINGS_TABLE_SQL } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
@@ -22,13 +23,7 @@ export class AppSettingsStorage {
 
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS app_settings (
-        setting_key TEXT PRIMARY KEY,
-        setting_value TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-    `);
+    this.db.exec(CREATE_APP_SETTINGS_TABLE_SQL);
     this.ensureDefaults();
   }
 

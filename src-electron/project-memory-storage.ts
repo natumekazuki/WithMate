@@ -8,6 +8,7 @@ import {
   normalizeProjectScope,
 } from "../src/memory-state.js";
 import type { ProjectMemoryEntry, ProjectScope } from "../src/memory-state.js";
+import { CREATE_PROJECT_MEMORY_TABLES_SQL } from "./database-schema-v1.js";
 import type { ResolvedProjectScopeInput } from "./project-scope.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
@@ -102,39 +103,7 @@ export class ProjectMemoryStorage {
   }
 
   private ensureSchema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS project_scopes (
-        id TEXT PRIMARY KEY,
-        project_type TEXT NOT NULL,
-        project_key TEXT NOT NULL UNIQUE,
-        workspace_path TEXT NOT NULL,
-        git_root TEXT,
-        git_remote_url TEXT,
-        display_name TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS project_memory_entries (
-        id TEXT PRIMARY KEY,
-        project_scope_id TEXT NOT NULL REFERENCES project_scopes(id) ON DELETE CASCADE,
-        source_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-        category TEXT NOT NULL,
-        title TEXT NOT NULL,
-        detail TEXT NOT NULL,
-        keywords_json TEXT NOT NULL DEFAULT '[]',
-        evidence_json TEXT NOT NULL DEFAULT '[]',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        last_used_at TEXT
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_project_memory_entries_scope
-        ON project_memory_entries(project_scope_id, updated_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_project_memory_entries_category
-        ON project_memory_entries(project_scope_id, category, updated_at DESC);
-    `);
+    this.db.exec(CREATE_PROJECT_MEMORY_TABLES_SQL);
   }
 
   listProjectScopes(): ProjectScope[] {

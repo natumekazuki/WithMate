@@ -1,27 +1,54 @@
+import { basename } from "node:path";
 import { rm } from "node:fs/promises";
 
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { Session } from "../src/session-state.js";
+import { APP_DATABASE_V2_FILENAME } from "./database-schema-v2.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
+import { AuditLogStorageV2Read } from "./audit-log-storage-v2-read.js";
 import { CharacterMemoryStorage } from "./character-memory-storage.js";
+import {
+  CharacterMemoryStorageV2Read,
+  ProjectMemoryStorageV2Read,
+  SessionMemoryStorageV2Read,
+} from "./memory-storage-v2-read.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { ProjectMemoryStorage } from "./project-memory-storage.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
 import { SessionStorage } from "./session-storage.js";
+import { SessionStorageV2Read } from "./session-storage-v2-read.js";
 import { truncateAppDatabaseWal } from "./sqlite-connection.js";
 
 type ClosableStore = {
   close(): void;
 };
 
+export type SessionStorageRead = Pick<
+  SessionStorage,
+  "listSessions" | "listSessionSummaries" | "getSession" | "close"
+>;
+export type SessionStorageWrite = Pick<
+  SessionStorage,
+  "upsertSession" | "replaceSessions" | "deleteSession" | "clearSessions"
+> & SessionStorageRead;
+
+export type AuditLogStorageRead = Pick<AuditLogStorage, "listSessionAuditLogs" | "close">;
+export type AuditLogStorageWrite = Pick<
+  AuditLogStorage,
+  "createAuditLog" | "updateAuditLog" | "clearAuditLogs"
+> & AuditLogStorageRead;
+export type SessionMemoryStorageAccess = SessionMemoryStorage | SessionMemoryStorageV2Read;
+export type ProjectMemoryStorageAccess = ProjectMemoryStorage | ProjectMemoryStorageV2Read;
+export type CharacterMemoryStorageAccess = CharacterMemoryStorage | CharacterMemoryStorageV2Read;
+
 export type PersistentStoreBundle = {
   modelCatalogStorage: ModelCatalogStorage;
-  sessionStorage: SessionStorage;
-  sessionMemoryStorage: SessionMemoryStorage;
-  projectMemoryStorage: ProjectMemoryStorage;
-  characterMemoryStorage: CharacterMemoryStorage;
-  auditLogStorage: AuditLogStorage;
+  sessionStorage: SessionStorageRead;
+  sessionMemoryStorage: SessionMemoryStorageAccess;
+  projectMemoryStorage: ProjectMemoryStorageAccess;
+  characterMemoryStorage: CharacterMemoryStorageAccess;
+  auditLogStorage: AuditLogStorageRead;
   appSettingsStorage: AppSettingsStorage;
   activeModelCatalog: ModelCatalogSnapshot;
   sessions: Session[];
@@ -53,13 +80,25 @@ export class PersistentStoreLifecycleService {
   async initialize(dbPath: string, bundledModelCatalogPath: string): Promise<PersistentStoreBundle> {
     const modelCatalogStorage = this.deps.createModelCatalogStorage(dbPath, bundledModelCatalogPath);
     const activeModelCatalog = modelCatalogStorage.ensureSeeded();
-    const sessionStorage = this.deps.createSessionStorage(dbPath);
-    const sessionMemoryStorage = this.deps.createSessionMemoryStorage(dbPath);
-    const projectMemoryStorage = this.deps.createProjectMemoryStorage(dbPath);
-    const characterMemoryStorage = this.deps.createCharacterMemoryStorage(dbPath);
-    const auditLogStorage = this.deps.createAuditLogStorage(dbPath);
+    const isV2Database = this.isV2DatabasePath(dbPath);
+    const sessionStorage = isV2Database
+      ? new SessionStorageV2Read(dbPath)
+      : this.deps.createSessionStorage(dbPath);
+    const sessionMemoryStorage = isV2Database
+      ? new SessionMemoryStorageV2Read()
+      : this.deps.createSessionMemoryStorage(dbPath);
+    const projectMemoryStorage = isV2Database
+      ? new ProjectMemoryStorageV2Read()
+      : this.deps.createProjectMemoryStorage(dbPath);
+    const characterMemoryStorage = isV2Database
+      ? new CharacterMemoryStorageV2Read()
+      : this.deps.createCharacterMemoryStorage(dbPath);
+    const auditLogStorage = isV2Database
+      ? new AuditLogStorageV2Read(dbPath)
+      : this.deps.createAuditLogStorage(dbPath);
     const appSettingsStorage = this.deps.createAppSettingsStorage(dbPath);
-    const sessions = sessionStorage.listSessions();
+    const loadedSessions = sessionStorage.listSessions();
+    const sessions = loadedSessions.length === 0 ? [] : loadedSessions;
 
     return {
       modelCatalogStorage,
@@ -114,6 +153,10 @@ export class PersistentStoreLifecycleService {
     ]);
 
     return this.initialize(dbPath, bundledModelCatalogPath);
+  }
+
+  private isV2DatabasePath(dbPath: string): boolean {
+    return basename(dbPath) === APP_DATABASE_V2_FILENAME;
   }
 }
 

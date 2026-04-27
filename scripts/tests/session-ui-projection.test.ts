@@ -5,7 +5,6 @@ import type {
   AuditLogOperation,
   LiveBackgroundTask,
   ProviderQuotaTelemetry,
-  SessionBackgroundActivityState,
 } from "../../src/app-state.js";
 import {
   buildContextPaneProjection,
@@ -17,18 +16,6 @@ import {
   resolveAvailableContextPaneTabs,
   resolveAutoContextPaneTab,
 } from "../../src/session-ui-projection.js";
-
-function makeBackgroundActivity(
-  partial: Partial<SessionBackgroundActivityState> & Pick<SessionBackgroundActivityState, "kind" | "status" | "title" | "summary">,
-): SessionBackgroundActivityState {
-  return {
-    sessionId: "session-1",
-    details: undefined,
-    errorMessage: "",
-    updatedAt: "2026-03-28T00:00:00.000Z",
-    ...partial,
-  };
-}
 
 function makeBackgroundTask(partial: Partial<LiveBackgroundTask> & Pick<LiveBackgroundTask, "id" | "kind" | "status" | "title" | "updatedAt">): LiveBackgroundTask {
   return {
@@ -103,14 +90,6 @@ describe("session-ui-projection", () => {
           updatedAt: "2026-03-28T00:00:00.000Z",
         }),
       ],
-      selectedMemoryGenerationActivity: null,
-      selectedCharacterMemoryGenerationActivity: null,
-      selectedMonologueActivity: makeBackgroundActivity({
-        kind: "monologue",
-        status: "running",
-        title: "独り言を生成中",
-        summary: "stream を作っている",
-      }),
     });
 
     assert.equal(tab, "latest-command");
@@ -129,17 +108,14 @@ describe("session-ui-projection", () => {
           updatedAt: "2026-03-28T00:00:00.000Z",
         }),
       ],
-      selectedMemoryGenerationActivity: null,
-      selectedCharacterMemoryGenerationActivity: null,
-      selectedMonologueActivity: null,
     });
 
     assert.equal(tab, "tasks");
   });
 
-  it("ContextPaneProjection は active tab に応じて badge と tone を切り替える", () => {
+  it("ContextPaneProjection は LatestCommand tab の表示情報を作る", () => {
     const projection = buildContextPaneProjection({
-      activeContextPaneTab: "memory-generation",
+      activeContextPaneTab: "latest-command",
       latestCommandView: {
         status: "completed",
         summary: "npm run build",
@@ -155,28 +131,13 @@ describe("session-ui-projection", () => {
           updatedAt: "2026-03-28T00:00:00.000Z",
         }),
       ],
-      selectedMemoryGenerationActivity: makeBackgroundActivity({
-        kind: "memory-generation",
-        status: "running",
-        title: "Session Memory を更新中",
-        summary: "delta を生成している",
-      }),
-      selectedCharacterMemoryGenerationActivity: makeBackgroundActivity({
-        kind: "character-memory-generation",
-        status: "completed",
-        title: "Character Memory を更新中",
-        summary: "relationship を整理している",
-      }),
-      selectedMonologueActivity: null,
     });
 
-    assert.equal(projection.badgeLabel, "実行中");
-    assert.equal(projection.toneClassName, "running");
+    assert.equal(projection.badgeLabel, "");
+    assert.equal(projection.toneClassName, "completed");
     assert.equal(projection.latestCommandToneClassName, "completed");
     assert.equal(projection.latestCommandStatusLabel, "完了");
     assert.equal(projection.latestCommandSourceCopy, "LAST RUN");
-    assert.equal(projection.memoryGenerationToneClassName, "running");
-    assert.equal(projection.characterMemoryGenerationToneClassName, "completed");
   });
 
   it("ContextPaneProjection は Tasks tab の tone を background task 状態から作る", () => {
@@ -192,9 +153,6 @@ describe("session-ui-projection", () => {
           updatedAt: "2026-03-28T00:00:00.000Z",
         }),
       ],
-      selectedMemoryGenerationActivity: null,
-      selectedCharacterMemoryGenerationActivity: null,
-      selectedMonologueActivity: null,
     });
 
     assert.equal(projection.toneClassName, "failed");
@@ -323,28 +281,24 @@ describe("session-ui-projection", () => {
     assert.equal(projection.conversationTokensLabel, "3,090");
   });
 
-  it("cycleContextPaneTab は 3 面を循環する", () => {
+  it("cycleContextPaneTab は利用可能な command pane を循環する", () => {
     assert.equal(cycleContextPaneTab("latest-command", 1), "tasks");
-    assert.equal(cycleContextPaneTab("latest-command", -1), "monologue");
+    assert.equal(cycleContextPaneTab("latest-command", -1), "tasks");
   });
 
   it("available tabs は non-Copilot で Tasks を除外する", () => {
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false }), [
       "latest-command",
-      "memory-generation",
-      "monologue",
     ]);
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true }), [
       "latest-command",
       "tasks",
-      "memory-generation",
-      "monologue",
     ]);
   });
 
   it("cycleContextPaneTab は利用可能 tab だけを循環する", () => {
     const availableTabs = resolveAvailableContextPaneTabs({ isCopilotSession: false });
-    assert.equal(cycleContextPaneTab("latest-command", 1, availableTabs), "memory-generation");
-    assert.equal(cycleContextPaneTab("latest-command", -1, availableTabs), "monologue");
+    assert.equal(cycleContextPaneTab("latest-command", 1, availableTabs), "latest-command");
+    assert.equal(cycleContextPaneTab("latest-command", -1, availableTabs), "latest-command");
   });
 });

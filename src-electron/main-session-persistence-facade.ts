@@ -1,7 +1,7 @@
 import { currentTimestampLabel } from "../src/time-state.js";
 import type { Session } from "../src/session-state.js";
 import type { SessionPersistenceService } from "./session-persistence-service.js";
-import type { SessionStorage } from "./session-storage.js";
+import type { SessionStorageRead } from "./persistent-store-lifecycle-service.js";
 
 type ReplaceAllSessionsOptions = {
   broadcast?: boolean;
@@ -12,7 +12,7 @@ type MainSessionPersistenceFacadeDeps = {
   getSessions(): Session[];
   setSessions(nextSessions: Session[]): void;
   getSessionPersistenceService(): SessionPersistenceService;
-  getSessionStorage(): SessionStorage;
+  getSessionStorage(): SessionStorageRead;
 };
 
 function isRunningSession(session: Session): boolean {

@@ -111,7 +111,7 @@ class StubWindow implements SessionWindowLike {
 }
 
 describe("SessionWindowBridge", () => {
-  it("新規 open で registry 更新・entry load・session-start reflection を行う", async () => {
+  it("新規 open で registry 更新・entry load を行う", async () => {
     const session = createSession();
     const windows: StubWindow[] = [];
     const broadcasts: string[][] = [];
@@ -152,7 +152,7 @@ describe("SessionWindowBridge", () => {
 
     assert.equal(loadedSessionId, session.id);
     assert.deepEqual(broadcasts.at(-1), [session.id]);
-    assert.deepEqual(reflections, [{ sessionId: session.id, triggerReason: "session-start" }]);
+    assert.deepEqual(reflections, []);
     assert.equal(window.showCount, 1);
   });
 

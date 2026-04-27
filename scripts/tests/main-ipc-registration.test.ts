@@ -54,7 +54,6 @@ import {
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
-  WITHMATE_RUN_SESSION_MEMORY_EXTRACTION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
@@ -178,9 +177,6 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     async runSessionTurn() {
       return {} as never;
     },
-    runSessionMemoryExtraction: () => {
-      calls.push("runSessionMemoryExtraction");
-    },
     cancelSessionRun: () => {
       calls.push("cancelRun");
     },
@@ -223,7 +219,6 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
 
   await handlers.get("withmate:open-session")?.({}, "session-1");
   await handlers.get("withmate:open-memory-management-window")?.({});
-  handlers.get("withmate:run-session-memory-extraction")?.({}, "session-1");
   handlers.get("withmate:cancel-session-run")?.({}, "session-1");
   await handlers.get("withmate:open-path")?.({}, "target", null);
   await handlers.get(WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL)?.({});
@@ -231,7 +226,6 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   assert.deepEqual(calls, [
     "openSession:session-1",
     "openMemory",
-    "runSessionMemoryExtraction",
     "cancelRun",
     "openPath",
     "openLogs",
@@ -287,7 +281,6 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async previewComposerInput() { return null; },
     async searchWorkspaceFiles() { return []; },
     async runSessionTurn() { return {} as never; },
-    runSessionMemoryExtraction() {},
     cancelSessionRun() {},
     async createCharacter() { return {} as never; },
     async updateCharacter() { return {} as never; },
@@ -347,7 +340,6 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_UPDATE_SESSION_CHANNEL,
     WITHMATE_DELETE_SESSION_CHANNEL,
     WITHMATE_RUN_SESSION_TURN_CHANNEL,
-    WITHMATE_RUN_SESSION_MEMORY_EXTRACTION_CHANNEL,
     WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
     WITHMATE_LIST_CHARACTERS_CHANNEL,
     WITHMATE_GET_CHARACTER_CHANNEL,

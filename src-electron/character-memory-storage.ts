@@ -8,6 +8,7 @@ import {
   normalizeCharacterScope,
 } from "../src/memory-state.js";
 import type { CharacterMemoryEntry, CharacterScope } from "../src/memory-state.js";
+import { CREATE_CHARACTER_MEMORY_TABLES_SQL } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 type CharacterScopeRow = {
@@ -89,35 +90,7 @@ export class CharacterMemoryStorage {
   }
 
   private ensureSchema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS character_scopes (
-        id TEXT PRIMARY KEY,
-        character_id TEXT NOT NULL UNIQUE,
-        display_name TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS character_memory_entries (
-        id TEXT PRIMARY KEY,
-        character_scope_id TEXT NOT NULL REFERENCES character_scopes(id) ON DELETE CASCADE,
-        source_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-        category TEXT NOT NULL,
-        title TEXT NOT NULL,
-        detail TEXT NOT NULL,
-        keywords_json TEXT NOT NULL DEFAULT '[]',
-        evidence_json TEXT NOT NULL DEFAULT '[]',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        last_used_at TEXT
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_character_memory_entries_scope
-        ON character_memory_entries(character_scope_id, updated_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_character_memory_entries_category
-        ON character_memory_entries(character_scope_id, category, updated_at DESC);
-    `);
+    this.db.exec(CREATE_CHARACTER_MEMORY_TABLES_SQL);
   }
 
   listCharacterScopes(): CharacterScope[] {

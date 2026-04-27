@@ -68,7 +68,6 @@ import {
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
-  WITHMATE_RUN_SESSION_MEMORY_EXTRACTION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SESSIONS_CHANGED_EVENT,
@@ -230,9 +229,6 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     runSessionTurn(sessionId, request) {
       return ipcRenderer.invoke(WITHMATE_RUN_SESSION_TURN_CHANNEL, sessionId, request);
-    },
-    runSessionMemoryExtraction(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_RUN_SESSION_MEMORY_EXTRACTION_CHANNEL, sessionId);
     },
     cancelSessionRun(sessionId) {
       return ipcRenderer.invoke(WITHMATE_CANCEL_SESSION_RUN_CHANNEL, sessionId);

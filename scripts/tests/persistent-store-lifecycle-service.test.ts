@@ -1,8 +1,19 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { Session } from "../../src/session-state.js";
+import {
+  APP_DATABASE_V2_FILENAME,
+  CREATE_V2_SCHEMA_SQL,
+} from "../../src-electron/database-schema-v2.js";
+import { AuditLogStorageV2Read } from "../../src-electron/audit-log-storage-v2-read.js";
+import { SessionStorage } from "../../src-electron/session-storage.js";
+import { SessionStorageV2Read } from "../../src-electron/session-storage-v2-read.js";
 import {
   PersistentStoreLifecycleService,
   type PersistentStoreBundleLike,
@@ -15,6 +26,26 @@ function createClosableStore(name: string, closeCalls: string[]) {
       closeCalls.push(name);
     },
   };
+}
+
+async function withTempV2Database<T>(fn: (dbPath: string) => T | Promise<T>): Promise<T> {
+  const dir = await mkdtemp(path.join(tmpdir(), "withmate-v2-lifecycle-"));
+  const dbPath = path.join(dir, APP_DATABASE_V2_FILENAME);
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec("PRAGMA foreign_keys = ON;");
+    for (const statement of CREATE_V2_SCHEMA_SQL) {
+      db.exec(statement);
+    }
+  } finally {
+    db.close();
+  }
+
+  try {
+    return await fn(dbPath);
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
 }
 
 test("PersistentStoreLifecycleService は store を初期化して session dependency を同期する", async () => {
@@ -213,4 +244,149 @@ test("PersistentStoreLifecycleService は DB を再生成して再初期化す�
   ]);
   assert.deepEqual(truncateWalCalls, ["withmate.db"]);
   assert.equal(bundle.activeModelCatalog.revision, 2);
+});
+
+test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2Read を使ってセッション要約を読む", async () => {
+  const activeModelCatalog = { revision: 1, providers: [] } as ModelCatalogSnapshot;
+
+  await withTempV2Database(async (dbPath) => {
+    let v1SessionStorage: { close(): void } | null = null;
+
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => activeModelCatalog,
+          close() {},
+        }) as never,
+      createSessionStorage: () => {
+        const storage = new SessionStorage(dbPath);
+        v1SessionStorage = storage;
+        return storage as never;
+      },
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => ({ close() {} }) as never,
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile() {},
+    });
+
+    try {
+      const bundle = await service.initialize(dbPath, "model-catalog.json");
+      assert.equal(bundle.sessionStorage instanceof SessionStorageV2Read, true);
+      assert.deepEqual(bundle.sessions, []);
+    } finally {
+      v1SessionStorage?.close();
+    }
+  });
+});
+
+test("PersistentStoreLifecycleService は V2 DB では V1 write-capable storages を生成せず V2 read storages を返す", async () => {
+  const activeModelCatalog = { revision: 2, providers: [] } as ModelCatalogSnapshot;
+  let createSessionStorageCallCount = 0;
+  let createAuditLogStorageCallCount = 0;
+
+  await withTempV2Database(async (dbPath) => {
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => activeModelCatalog,
+          close() {},
+        }) as never,
+      createSessionStorage: () => {
+        createSessionStorageCallCount += 1;
+        return {
+          listSessions: () => [],
+          close() {},
+        } as never;
+      },
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => {
+        createAuditLogStorageCallCount += 1;
+        return {
+          close() {},
+        } as never;
+      },
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile() {},
+    });
+
+    const bundle = await service.initialize(dbPath, "model-catalog.json");
+
+    assert.equal(bundle.sessionStorage instanceof SessionStorageV2Read, true);
+    assert.equal(bundle.auditLogStorage instanceof AuditLogStorageV2Read, true);
+    assert.equal(createSessionStorageCallCount, 0);
+    assert.equal(createAuditLogStorageCallCount, 0);
+  });
+});
+
+test("PersistentStoreLifecycleService は V2 DB に legacy memory table を作成しない", async () => {
+  const activeModelCatalog = { revision: 3, providers: [] } as ModelCatalogSnapshot;
+  let createSessionMemoryStorageCallCount = 0;
+  let createProjectMemoryStorageCallCount = 0;
+  let createCharacterMemoryStorageCallCount = 0;
+
+  await withTempV2Database(async (dbPath) => {
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => activeModelCatalog,
+          close() {},
+        }) as never,
+      createSessionStorage: () => {
+        throw new Error("V2 DB では V1 session storage を生成しない");
+      },
+      createSessionMemoryStorage: () => {
+        createSessionMemoryStorageCallCount += 1;
+        return { close() {} } as never;
+      },
+      createProjectMemoryStorage: () => {
+        createProjectMemoryStorageCallCount += 1;
+        return { close() {} } as never;
+      },
+      createCharacterMemoryStorage: () => {
+        createCharacterMemoryStorageCallCount += 1;
+        return { close() {} } as never;
+      },
+      createAuditLogStorage: () => {
+        throw new Error("V2 DB では V1 audit log storage を生成しない");
+      },
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile() {},
+    });
+
+    await service.initialize(dbPath, "model-catalog.json");
+
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const rows = db.prepare(`
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name IN (
+            'session_memories',
+            'project_scopes',
+            'project_memory_entries',
+            'character_scopes',
+            'character_memory_entries'
+          )
+        ORDER BY name
+      `).all() as Array<{ name: string }>;
+      assert.deepEqual(rows, []);
+    } finally {
+      db.close();
+    }
+
+    assert.equal(createSessionMemoryStorageCallCount, 0);
+    assert.equal(createProjectMemoryStorageCallCount, 0);
+    assert.equal(createCharacterMemoryStorageCallCount, 0);
+  });
 });

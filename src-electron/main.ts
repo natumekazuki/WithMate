@@ -78,7 +78,12 @@ import { AuxWindowService } from "./aux-window-service.js";
 import { registerMainIpcHandlers } from "./main-ipc-registration.js";
 import {
   PersistentStoreLifecycleService,
+  type AuditLogStorageRead,
+  type CharacterMemoryStorageAccess,
   type PersistentStoreBundle,
+  type ProjectMemoryStorageAccess,
+  type SessionMemoryStorageAccess,
+  type SessionStorageRead,
 } from "./persistent-store-lifecycle-service.js";
 import { AppLifecycleService } from "./app-lifecycle-service.js";
 import { createAppLifecycleDeps } from "./app-lifecycle-deps.js";
@@ -105,6 +110,7 @@ import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./win
 import { resolveCursorAnchoredPosition } from "./window-placement.js";
 import { clearWorkspaceFileIndex, searchWorkspacePathCandidates } from "./workspace-file-search.js";
 import { AppLogService } from "./app-log-service.js";
+import { resolveAppDatabasePath } from "./app-database-path.js";
 import {
   SQLITE_MAINTENANCE_BUSY_TIMEOUT_MS,
   truncateAppDatabaseWal,
@@ -142,12 +148,12 @@ const WAL_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 
 let sessions: Session[] = [];
 let characters: CharacterProfile[] = [];
-let sessionStorage: SessionStorage | null = null;
-let sessionMemoryStorage: SessionMemoryStorage | null = null;
-let projectMemoryStorage: ProjectMemoryStorage | null = null;
-let characterMemoryStorage: CharacterMemoryStorage | null = null;
+let sessionStorage: SessionStorageRead | null = null;
+let sessionMemoryStorage: SessionMemoryStorageAccess | null = null;
+let projectMemoryStorage: ProjectMemoryStorageAccess | null = null;
+let characterMemoryStorage: CharacterMemoryStorageAccess | null = null;
 let modelCatalogStorage: ModelCatalogStorage | null = null;
-let auditLogStorage: AuditLogStorage | null = null;
+let auditLogStorage: AuditLogStorageRead | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
 let allowQuitWithInFlightRuns = false;
 let dbPath = "";
@@ -796,8 +802,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 updateSession: (session) => requireMainSessionCommandFacade().updateSession(session),
                 deleteSession: (sessionId) => requireMainSessionCommandFacade().deleteSession(sessionId),
                 runSessionTurn: (sessionId, request) => requireMainSessionCommandFacade().runSessionTurn(sessionId, request),
-                runSessionMemoryExtraction: (sessionId) =>
-                  requireMainSessionCommandFacade().runSessionMemoryExtraction(sessionId),
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
               },
               character: {
@@ -822,12 +826,31 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
   return mainInfrastructureRegistry;
 }
 
-function requireSessionStorage(): SessionStorage {
+function requireSessionStorage(): SessionStorageRead {
   if (!sessionStorage) {
     throw new Error("session storage が初期化されていないよ。");
   }
 
   return sessionStorage;
+}
+
+function requireSessionStorageForWrite(): SessionStorage {
+  const storage = requireSessionStorage();
+  if (isSessionStorageWritable(storage)) {
+    return storage;
+  }
+
+  throw new Error("session storage は V2 DB の読み取り専用のため書き込み不可です。");
+}
+
+function isSessionStorageWritable(storage: SessionStorageRead): storage is SessionStorage {
+  const candidate = storage as Partial<SessionStorage>;
+  return (
+    typeof candidate.upsertSession === "function" &&
+    typeof candidate.replaceSessions === "function" &&
+    typeof candidate.deleteSession === "function" &&
+    typeof candidate.clearSessions === "function"
+  );
 }
 
 function requireMainQueryService(): MainQueryService {
@@ -836,7 +859,7 @@ function requireMainQueryService(): MainQueryService {
       getSessionSummaries: () => requireSessionStorage().listSessionSummaries(),
       getSession: (sessionId) => requireSessionStorage().getSession(sessionId),
       getCharacters: () => characters,
-      getAuditLogs: (sessionId) => requireAuditLogService().listSessionAuditLogs(sessionId),
+      getAuditLogs: (sessionId) => requireAuditLogStorage().listSessionAuditLogs(sessionId),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       discoverSessionSkills,
       discoverSessionCustomAgents,
@@ -921,7 +944,6 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       getSession,
       getSessionPersistenceService: () => requireSessionPersistenceService(),
       getSessionRuntimeService: () => requireSessionRuntimeService(),
-      getMemoryOrchestrationService: () => requireMemoryOrchestrationService(),
       getProviderQuotaTelemetry: (providerId) => getProviderQuotaTelemetry(providerId),
       isProviderQuotaTelemetryStale: (telemetry) => isProviderQuotaTelemetryStale(telemetry),
       refreshProviderQuotaTelemetry: (providerId) => refreshProviderQuotaTelemetry(providerId),
@@ -954,7 +976,7 @@ function requireModelCatalogStorage(): ModelCatalogStorage {
   return modelCatalogStorage;
 }
 
-function requireAuditLogStorage(): AuditLogStorage {
+function requireAuditLogStorage(): AuditLogStorageRead {
   if (!auditLogStorage) {
     throw new Error("audit log storage が初期化されていないよ。");
   }
@@ -962,9 +984,27 @@ function requireAuditLogStorage(): AuditLogStorage {
   return auditLogStorage;
 }
 
+function requireAuditLogStorageForWrite(): AuditLogStorage {
+  const storage = requireAuditLogStorage();
+  if (isAuditLogStorageWritable(storage)) {
+    return storage;
+  }
+
+  throw new Error("audit log storage は V2 DB の読み取り専用のため書き込み不可です。");
+}
+
+function isAuditLogStorageWritable(storage: AuditLogStorageRead): storage is AuditLogStorage {
+  const candidate = storage as Partial<AuditLogStorage>;
+  return (
+    typeof candidate.createAuditLog === "function" &&
+    typeof candidate.updateAuditLog === "function" &&
+    typeof candidate.clearAuditLogs === "function"
+  );
+}
+
 function requireAuditLogService(): AuditLogService {
   if (!auditLogService) {
-    auditLogService = new AuditLogService(requireAuditLogStorage());
+    auditLogService = new AuditLogService(requireAuditLogStorageForWrite());
   }
 
   return auditLogService;
@@ -1042,7 +1082,7 @@ function requireCharacterRuntimeService(): CharacterRuntimeService {
       updateStoredCharacter,
       deleteStoredCharacter,
       listSessions: () => sessions,
-      upsertStoredSession: (session) => requireSessionStorage().upsertSession(session),
+      upsertStoredSession: (session) => requireSessionStorageForWrite().upsertSession(session),
       reloadStoredSessions: () => requireSessionStorage().listSessions(),
       setSessions: (nextSessions) => {
         sessions = nextSessions;
@@ -1114,12 +1154,6 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       },
       invalidateProviderSessionThread,
       scheduleProviderQuotaTelemetryRefresh,
-      runSessionMemoryExtraction: (session, usage, options) => {
-        void requireMemoryOrchestrationService().runSessionMemoryExtraction(session, usage, options);
-      },
-      runCharacterReflection: (session, options) => {
-        void requireMemoryOrchestrationService().runCharacterReflection(session, options);
-      },
       clearWorkspaceFileIndex,
       broadcastLiveSessionRun,
       resolvePendingApprovalRequest: (sessionId, decision) => {
@@ -1152,12 +1186,12 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       },
       getSession,
       isSessionRunInFlight,
-      upsertStoredSession: (session) => requireSessionStorage().upsertSession(session),
+      upsertStoredSession: (session) => requireSessionStorageForWrite().upsertSession(session),
       replaceStoredSessions: (nextSessions) => {
-        requireSessionStorage().replaceSessions(nextSessions);
+        requireSessionStorageForWrite().replaceSessions(nextSessions);
       },
       listStoredSessions: () => requireSessionStorage().listSessions(),
-      deleteStoredSession: (sessionId) => requireSessionStorage().deleteSession(sessionId),
+      deleteStoredSession: (sessionId) => requireSessionStorageForWrite().deleteSession(sessionId),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
       syncSessionDependencies: (session) => requireSessionMemorySupportService().syncSessionDependencies(session),
@@ -1206,9 +1240,6 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
         return choice === 1;
       },
       broadcastOpenSessionWindowIds,
-      runCharacterReflection: (session, options) => {
-        void requireMemoryOrchestrationService().runCharacterReflection(session, options);
-      },
     });
   }
 
@@ -1355,7 +1386,7 @@ function requireSessionElicitationService(): SessionElicitationService {
   return sessionElicitationService;
 }
 
-function requireSessionMemoryStorage(): SessionMemoryStorage {
+function requireSessionMemoryStorage(): SessionMemoryStorageAccess {
   if (!sessionMemoryStorage) {
     throw new Error("session memory storage が初期化されていないよ。");
   }
@@ -1363,7 +1394,7 @@ function requireSessionMemoryStorage(): SessionMemoryStorage {
   return sessionMemoryStorage;
 }
 
-function requireProjectMemoryStorage(): ProjectMemoryStorage {
+function requireProjectMemoryStorage(): ProjectMemoryStorageAccess {
   if (!projectMemoryStorage) {
     throw new Error("project memory storage が初期化されていないよ。");
   }
@@ -1371,7 +1402,7 @@ function requireProjectMemoryStorage(): ProjectMemoryStorage {
   return projectMemoryStorage;
 }
 
-function requireCharacterMemoryStorage(): CharacterMemoryStorage {
+function requireCharacterMemoryStorage(): CharacterMemoryStorageAccess {
   if (!characterMemoryStorage) {
     throw new Error("character memory storage が初期化されていないよ。");
   }
@@ -1828,7 +1859,7 @@ async function openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserW
 }
 
 app.whenReady().then(async () => {
-  dbPath = path.join(app.getPath("userData"), "withmate.db");
+  dbPath = resolveAppDatabasePath(app.getPath("userData"));
   writeAppLog({
     level: "info",
     kind: "app.ready",
@@ -1873,7 +1904,4 @@ app.on("will-quit", () => {
     message: "App will quit",
   });
 });
-
-
-
 

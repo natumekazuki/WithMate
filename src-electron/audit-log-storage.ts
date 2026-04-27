@@ -10,6 +10,10 @@ import {
 } from "../src/app-state.js";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
 import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
+import {
+  CREATE_AUDIT_LOGS_TABLE_SQL,
+  LEGACY_AUDIT_LOG_COLUMN_DEFINITIONS,
+} from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 type AuditLogRow = {
@@ -271,36 +275,14 @@ export class AuditLogStorage {
   }
 
   private createTable(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS audit_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        phase TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        model TEXT NOT NULL,
-        reasoning_effort TEXT NOT NULL,
-        approval_mode TEXT NOT NULL,
-        thread_id TEXT NOT NULL DEFAULT '',
-        logical_prompt_json TEXT NOT NULL DEFAULT '{}',
-        transport_payload_json TEXT NOT NULL DEFAULT '',
-        assistant_text TEXT NOT NULL DEFAULT '',
-        operations_json TEXT NOT NULL DEFAULT '[]',
-        raw_items_json TEXT NOT NULL DEFAULT '[]',
-        usage_json TEXT NOT NULL DEFAULT '',
-        error_message TEXT NOT NULL DEFAULT '',
-        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-      );
-    `);
+    this.db.exec(CREATE_AUDIT_LOGS_TABLE_SQL);
   }
 
   private ensureColumns(): void {
     const columnNames = this.getCurrentColumnNames();
 
-    const requiredColumns = [
-      { name: "logical_prompt_json", definition: "TEXT NOT NULL DEFAULT '{}'" },
-      { name: "transport_payload_json", definition: "TEXT NOT NULL DEFAULT ''" },
-    ];
+    const requiredColumns = Object.entries(LEGACY_AUDIT_LOG_COLUMN_DEFINITIONS)
+      .map(([name, definition]) => ({ name, definition }));
 
     for (const column of requiredColumns) {
       if (!columnNames.has(column.name)) {

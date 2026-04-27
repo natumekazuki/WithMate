@@ -91,7 +91,6 @@ export type MainIpcSessionRuntimeDepsArgs = {
   updateSession(session: Session): Session;
   deleteSession(sessionId: string): void;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
-  runSessionMemoryExtraction(sessionId: string): void;
   cancelSessionRun(sessionId: string): void;
 };
 
@@ -182,7 +181,6 @@ export function createMainIpcRegistrationDeps(
     updateSession: args.sessionRuntime.updateSession,
     deleteSession: args.sessionRuntime.deleteSession,
     runSessionTurn: args.sessionRuntime.runSessionTurn,
-    runSessionMemoryExtraction: args.sessionRuntime.runSessionMemoryExtraction,
     cancelSessionRun: args.sessionRuntime.cancelSessionRun,
     listCharacters: args.character.listCharacters,
     getCharacter: args.character.getCharacter,
