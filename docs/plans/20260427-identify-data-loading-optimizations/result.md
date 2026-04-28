@@ -114,3 +114,5 @@
   - Memory Management storage-level page query、DB query 側 search / filter / sort / `LIMIT` / `OFFSET` / count、literal search parity、review 指摘対応。
 - `6a020a9` `feat(session): 起動時 session 読み込みを summary-first にする`
   - session 起動時 summary-first 読み込み、running session 復旧時の詳細 hydrate、settings / model catalog 保存経路の full detail hydrate、review 指摘対応。
+- `4ae87af` `feat(audit): 監査ログ一覧を page API にする`
+  - audit log summary page API、V1 / V2 summary page の軽量読み込み、Audit Log modal の `Load More`、IPC / preload contract test、review 指摘対応。
