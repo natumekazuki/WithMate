@@ -22,3 +22,4 @@
 - 検証: `npm run build:renderer`
 - 検証: `npm run build:electron`
 - 検証: `npm test`
+- commit `0a62452`: `feat(renderer): Audit Log 表示を仮想化`

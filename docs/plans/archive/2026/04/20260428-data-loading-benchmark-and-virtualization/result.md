@@ -11,6 +11,11 @@
 - Audit Log モーダルの一覧を windowing し、既存の paging / detail lazy load を維持した。
 - `calculateVirtualListWindow` の境界テストと Audit Log 初期描画の SSR テストを追加した。
 
+## Commits
+
+- `fb7d4ee`: `feat(benchmark): データ読み込み計測ツールを追加`
+- `0a62452`: `feat(renderer): Audit Log 表示を仮想化`
+
 ## Validation
 
 - `npx tsx --test scripts/tests/virtual-list.test.ts scripts/tests/session-audit-log-modal.test.ts scripts/tests/data-loading-benchmark.test.ts`
