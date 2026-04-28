@@ -137,6 +137,74 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(broadcastedSessionIds, [[created.id]]);
   });
 
+  it("upsertSession は summary-only session 更新でも既存 messages を保持する", () => {
+    const fullSession = createSession({
+      id: "session-with-messages",
+      taskTitle: "Before",
+      messages: [
+        { role: "user", text: "残すメッセージ" },
+        { role: "assistant", text: "残す返答" },
+      ],
+    });
+    const summaryOnlySession: Session = {
+      ...fullSession,
+      taskTitle: "After",
+      messages: [],
+      stream: [],
+    };
+    let storedSession: Session | null = null;
+    const inMemorySessions = [summaryOnlySession];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return inMemorySessions;
+      },
+      setSessions(nextSessions) {
+        inMemorySessions.splice(0, inMemorySessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return inMemorySessions.find((session) => session.id === sessionId) ?? null;
+      },
+      getStoredSession(sessionId) {
+        return sessionId === fullSession.id ? fullSession : null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      upsertStoredSession(session) {
+        storedSession = session;
+        return session;
+      },
+      replaceStoredSessions() {},
+      listStoredSessions() {
+        return [];
+      },
+      deleteStoredSession() {},
+      getAppSettings() {
+        return normalizeAppSettings();
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      clearCharacterReflectionCheckpoint() {},
+      clearInFlightCharacterReflection() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    const updated = service.upsertSession(summaryOnlySession);
+
+    assert.deepEqual(
+      storedSession?.messages.map((message) => message.text),
+      ["残すメッセージ", "残す返答"],
+    );
+    assert.deepEqual(updated.messages.map((message) => message.text), ["残すメッセージ", "残す返答"]);
+  });
+
   it("createSession は last-used model / reasoning / customAgentName を正規化して保存する", () => {
     const storedSessions: Session[] = [];
 

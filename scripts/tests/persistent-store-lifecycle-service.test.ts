@@ -275,6 +275,63 @@ test("PersistentStoreLifecycleService は DB を再生成して再初期化す�
   assert.equal(bundle.activeModelCatalog.revision, 2);
 });
 
+test("PersistentStoreLifecycleService は V2 DB 再生成後に V2 schema を作成して再初期化する", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "withmate-v2-recreate-"));
+  const dbPath = path.join(dir, APP_DATABASE_V2_FILENAME);
+
+  try {
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => ({ revision: 4, providers: [] }),
+          close() {},
+        }) as never,
+      createSessionStorage: () => {
+        throw new Error("V2 DB では V1 session storage を生成しない");
+      },
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => {
+        throw new Error("V2 DB では V1 audit log storage を生成しない");
+      },
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      ensureV2Schema(pathToDb) {
+        const db = new DatabaseSync(pathToDb);
+        try {
+          db.exec("PRAGMA foreign_keys = ON;");
+          for (const statement of CREATE_V2_SCHEMA_SQL) {
+            db.exec(statement);
+          }
+        } finally {
+          db.close();
+        }
+      },
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile(filePath) {
+        await rm(filePath, { force: true });
+      },
+    });
+
+    const bundle = await service.recreate(dbPath, "model-catalog.json", {});
+
+    assert.equal(bundle.activeModelCatalog.revision, 4);
+    assert.equal(bundle.sessionStorage instanceof SessionStorageV2Read, true);
+    assert.deepEqual(bundle.sessions, []);
+
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sessions'").get();
+      assert.ok(row);
+    } finally {
+      db.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
 test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2Read を使ってセッション要約を読む", async () => {
   const activeModelCatalog = { revision: 1, providers: [] } as ModelCatalogSnapshot;
 

@@ -1102,9 +1102,9 @@ function requireCharacterRuntimeService(): CharacterRuntimeService {
       createStoredCharacter,
       updateStoredCharacter,
       deleteStoredCharacter,
-      listSessions: () => sessions,
+      listSessions: () => listFullStoredSessions(),
       upsertStoredSession: (session) => requireSessionStorageForWrite().upsertSession(session),
-      reloadStoredSessions: () => requireSessionStorage().listSessions(),
+      reloadStoredSessions: () => listFullStoredSessions(),
       setSessions: (nextSessions) => {
         sessions = nextSessions;
       },
@@ -1206,6 +1206,7 @@ function requireSessionPersistenceService(): SessionPersistenceService {
         sessions = nextSessions;
       },
       getSession,
+      getStoredSession: (sessionId) => requireSessionStorage().getSession(sessionId),
       isSessionRunInFlight,
       upsertStoredSession: (session) => requireSessionStorageForWrite().upsertSession(session),
       replaceStoredSessions: (nextSessions) => {

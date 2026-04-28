@@ -18,6 +18,7 @@ export type SessionPersistenceServiceDeps = {
   getSessions(): Session[];
   setSessions(nextSessions: Session[]): void;
   getSession(sessionId: string): Session | null;
+  getStoredSession?(sessionId: string): Session | null;
   isSessionRunInFlight(sessionId: string): boolean;
   upsertStoredSession(session: Session): Session;
   replaceStoredSessions(sessions: Session[]): void;
@@ -132,11 +133,12 @@ export class SessionPersistenceService {
   }
 
   upsertSession(nextSession: Session): Session {
+    const sessionToStore = this.mergeStoredMessagesForSummaryOnlySession(nextSession);
     const stored = this.deps.upsertStoredSession({
-      ...nextSession,
+      ...sessionToStore,
       allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
-        nextSession.workspacePath,
-        nextSession.allowedAdditionalDirectories,
+        sessionToStore.workspacePath,
+        sessionToStore.allowedAdditionalDirectories,
       ),
     });
     this.syncStoredSession(stored);
@@ -198,6 +200,32 @@ export class SessionPersistenceService {
     }
 
     return cloneSessions(storedSessions);
+  }
+
+  private mergeStoredMessagesForSummaryOnlySession(nextSession: Session): Session {
+    if (nextSession.messages.length > 0) {
+      return nextSession;
+    }
+
+    const currentSession = this.deps.getSession(nextSession.id);
+    if (!currentSession) {
+      return nextSession;
+    }
+
+    const sourceSession =
+      currentSession.messages.length > 0
+        ? currentSession
+        : this.deps.getStoredSession?.(nextSession.id) ?? null;
+
+    if (!sourceSession || sourceSession.messages.length === 0) {
+      return nextSession;
+    }
+
+    return {
+      ...nextSession,
+      messages: sourceSession.messages,
+      stream: sourceSession.stream,
+    };
   }
 
   private resolveEnabledProviderCatalog(

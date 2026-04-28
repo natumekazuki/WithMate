@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { Session } from "../src/session-state.js";
-import { APP_DATABASE_V2_FILENAME } from "./database-schema-v2.js";
+import { APP_DATABASE_V2_FILENAME, CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogStorageV2Read } from "./audit-log-storage-v2-read.js";
@@ -19,7 +19,7 @@ import { SessionMemoryStorage } from "./session-memory-storage.js";
 import { SessionStorage } from "./session-storage.js";
 import { SessionStorageV2Read } from "./session-storage-v2-read.js";
 import { sessionSummariesToSessions } from "./session-summary-adapter.js";
-import { truncateAppDatabaseWal } from "./sqlite-connection.js";
+import { openAppDatabase, truncateAppDatabaseWal } from "./sqlite-connection.js";
 
 type ClosableStore = {
   close(): void;
@@ -73,6 +73,7 @@ type PersistentStoreLifecycleDeps = {
   createCharacterMemoryStorage(dbPath: string): CharacterMemoryStorage;
   createAuditLogStorage(dbPath: string): AuditLogStorage;
   createAppSettingsStorage(dbPath: string): AppSettingsStorage;
+  ensureV2Schema?(dbPath: string): void;
   onBeforeClose(): void;
   truncateWal(dbPath: string): void;
   removeFile(filePath: string): Promise<void>;
@@ -82,9 +83,13 @@ export class PersistentStoreLifecycleService {
   constructor(private readonly deps: PersistentStoreLifecycleDeps) {}
 
   async initialize(dbPath: string, bundledModelCatalogPath: string): Promise<PersistentStoreBundle> {
+    const isV2Database = this.isV2DatabasePath(dbPath);
+    if (isV2Database) {
+      this.deps.ensureV2Schema?.(dbPath);
+    }
+
     const modelCatalogStorage = this.deps.createModelCatalogStorage(dbPath, bundledModelCatalogPath);
     const activeModelCatalog = modelCatalogStorage.ensureSeeded();
-    const isV2Database = this.isV2DatabasePath(dbPath);
     const sessionStorage = isV2Database
       ? new SessionStorageV2Read(dbPath)
       : this.deps.createSessionStorage(dbPath);
@@ -174,6 +179,16 @@ export function createPersistentStoreLifecycleService(): PersistentStoreLifecycl
     createCharacterMemoryStorage: (dbPath) => new CharacterMemoryStorage(dbPath),
     createAuditLogStorage: (dbPath) => new AuditLogStorage(dbPath),
     createAppSettingsStorage: (dbPath) => new AppSettingsStorage(dbPath),
+    ensureV2Schema: (dbPath) => {
+      const db = openAppDatabase(dbPath);
+      try {
+        for (const statement of CREATE_V2_SCHEMA_SQL) {
+          db.exec(statement);
+        }
+      } finally {
+        db.close();
+      }
+    },
     onBeforeClose: () => {},
     truncateWal: truncateAppDatabaseWal,
     removeFile: async (filePath) => {
