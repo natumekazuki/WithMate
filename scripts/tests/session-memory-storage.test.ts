@@ -154,4 +154,58 @@ describe("SessionMemoryStorage", () => {
       await removeDirectoryWithRetry(tempDirectory);
     }
   });
+
+  it("management page query は filter / sort / cursor / total を DB 側で適用する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-memory-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let sessionStorage: SessionStorage | null = null;
+    let memoryStorage: SessionMemoryStorage | null = null;
+
+    try {
+      sessionStorage = new SessionStorage(dbPath);
+      const firstSession = sessionStorage.upsertSession({
+        ...createSession(),
+        taskTitle: "Old task",
+      });
+      const secondSession = sessionStorage.upsertSession({
+        ...createSession(),
+        id: `${firstSession.id}-next`,
+        taskTitle: "New target task",
+      });
+      const wildcardSession = sessionStorage.upsertSession({
+        ...createSession(),
+        id: `${firstSession.id}-wildcard`,
+        taskTitle: "Wildcard task",
+      });
+      memoryStorage = new SessionMemoryStorage(dbPath);
+      memoryStorage.upsertSessionMemory({
+        ...createDefaultSessionMemory(firstSession),
+        goal: "target",
+        decisions: ["literal _needle%"],
+        updatedAt: "2026-04-02T10:00:00.000Z",
+      });
+      memoryStorage.upsertSessionMemory({
+        ...createDefaultSessionMemory(secondSession),
+        goal: "target",
+        decisions: ["literal _needle%"],
+        updatedAt: "2026-04-02T10:00:00.000Z",
+      });
+      memoryStorage.upsertSessionMemory({
+        ...createDefaultSessionMemory(wildcardSession),
+        goal: "target",
+        decisions: ["xneedle plus"],
+        updatedAt: "2026-04-03T10:00:00.000Z",
+      });
+
+      const page = memoryStorage.listSessionMemoryPage({ searchText: "_needle%", limit: 1 });
+
+      assert.equal(page.total, 2);
+      assert.deepEqual(page.items.map((item) => item.sessionId), [firstSession.id]);
+      assert.equal(page.items[0]?.taskTitle, "Old task");
+    } finally {
+      closeStorage(memoryStorage);
+      closeStorage(sessionStorage);
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
 });

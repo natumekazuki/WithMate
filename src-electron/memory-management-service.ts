@@ -18,12 +18,15 @@ const MAX_MEMORY_MANAGEMENT_PAGE_LIMIT = 200;
 type MemoryManagementServiceDeps = {
   listSessionSummaries(): SessionSummary[];
   listSessionMemories(): SessionMemory[];
+  listSessionMemoryPage?(request: MemoryManagementPageRequest): { items: ManagedSessionMemoryItem[]; total: number };
   deleteSessionMemory(sessionId: string): void;
   listProjectScopes(): ProjectScope[];
   listProjectMemoryEntries(projectScopeId: string): ProjectMemoryEntry[];
+  listProjectMemoryPage?(request: MemoryManagementPageRequest): { groups: ManagedProjectMemoryGroup[]; total: number };
   deleteProjectMemoryEntry(entryId: string): void;
   listCharacterScopes(): CharacterScope[];
   listCharacterMemoryEntries(characterScopeId: string): CharacterMemoryEntry[];
+  listCharacterMemoryPage?(request: MemoryManagementPageRequest): { groups: ManagedCharacterMemoryGroup[]; total: number };
   deleteCharacterMemoryEntry(entryId: string): void;
 };
 
@@ -75,20 +78,13 @@ export class MemoryManagementService {
     const domain = normalizeDomain(request.domain);
     const cursor = normalizeCursor(request.cursor);
     const limit = normalizeLimit(request.limit);
-    const fullSnapshot = this.getSnapshot();
     const includeSession = domain === "all" || domain === "session";
     const includeProject = domain === "all" || domain === "project";
     const includeCharacter = domain === "all" || domain === "character";
 
-    const sessionPage = includeSession
-      ? sliceItems(filterSessionMemories(fullSnapshot.sessionMemories, request), cursor, limit)
-      : emptyPage(fullSnapshot.sessionMemories.length);
-    const projectPage = includeProject
-      ? sliceGroupedEntries(filterProjectMemories(fullSnapshot.projectMemories, request), cursor, limit, request)
-      : emptyGroupedPage(fullSnapshot.projectMemories);
-    const characterPage = includeCharacter
-      ? sliceGroupedEntries(filterCharacterMemories(fullSnapshot.characterMemories, request), cursor, limit, request)
-      : emptyGroupedPage(fullSnapshot.characterMemories);
+    const sessionPage = includeSession ? this.getSessionPage(request, cursor, limit) : emptyPage(0);
+    const projectPage = includeProject ? this.getProjectPage(request, cursor, limit) : emptyGroupedPage([]);
+    const characterPage = includeCharacter ? this.getCharacterPage(request, cursor, limit) : emptyGroupedPage([]);
 
     return {
       snapshot: cloneMemoryManagementSnapshot({
@@ -102,6 +98,57 @@ export class MemoryManagementService {
         character: characterPage.page,
       },
     };
+  }
+
+  private getSessionPage(
+    request: MemoryManagementPageRequest,
+    cursor: number,
+    limit: number,
+  ): { items: ManagedSessionMemoryItem[]; page: MemoryManagementDomainPageInfo } {
+    const storagePage = this.deps.listSessionMemoryPage?.({ ...request, cursor, limit });
+    if (storagePage) {
+      return {
+        items: storagePage.items,
+        page: buildPageInfo(cursor, limit, storagePage.total),
+      };
+    }
+
+    const items = filterSessionMemories(this.getSnapshot().sessionMemories, request);
+    return sliceItems(items, cursor, limit);
+  }
+
+  private getProjectPage(
+    request: MemoryManagementPageRequest,
+    cursor: number,
+    limit: number,
+  ): { groups: ManagedProjectMemoryGroup[]; page: MemoryManagementDomainPageInfo } {
+    const storagePage = this.deps.listProjectMemoryPage?.({ ...request, cursor, limit });
+    if (storagePage) {
+      return {
+        groups: storagePage.groups,
+        page: buildPageInfo(cursor, limit, storagePage.total),
+      };
+    }
+
+    const groups = filterProjectMemories(this.getSnapshot().projectMemories, request);
+    return sliceGroupedEntries(groups, cursor, limit, request);
+  }
+
+  private getCharacterPage(
+    request: MemoryManagementPageRequest,
+    cursor: number,
+    limit: number,
+  ): { groups: ManagedCharacterMemoryGroup[]; page: MemoryManagementDomainPageInfo } {
+    const storagePage = this.deps.listCharacterMemoryPage?.({ ...request, cursor, limit });
+    if (storagePage) {
+      return {
+        groups: storagePage.groups,
+        page: buildPageInfo(cursor, limit, storagePage.total),
+      };
+    }
+
+    const groups = filterCharacterMemories(this.getSnapshot().characterMemories, request);
+    return sliceGroupedEntries(groups, cursor, limit, request);
   }
 
   deleteSessionMemory(sessionId: string): void {

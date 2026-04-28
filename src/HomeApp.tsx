@@ -16,6 +16,7 @@ import {
   type MemoryManagementViewFilters,
 } from "./memory-management-view.js";
 import {
+  buildMemoryManagementPageRequest,
   mergeMemoryManagementSnapshots,
   removeCharacterMemoryEntryFromSnapshot,
   removeProjectMemoryEntryFromSnapshot,
@@ -114,22 +115,6 @@ function getMemoryManagementCursor(pages: MemoryManagementPageState, domain: Mem
     return pages.character.nextCursor;
   }
   return null;
-}
-
-function buildMemoryManagementPageRequest(
-  filters: MemoryManagementViewFilters,
-  options?: { domain?: MemoryManagementDomain; cursor?: number | null },
-) {
-  return {
-    domain: options?.domain ?? "all",
-    cursor: options?.cursor ?? 0,
-    limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-    searchText: filters.searchText,
-    sort: filters.sort,
-    sessionStatus: filters.sessionStatus,
-    projectCategory: filters.projectCategory,
-    characterCategory: filters.characterCategory,
-  };
 }
 
 type HomeRightPaneView = "monitor" | "characters";
@@ -242,7 +227,9 @@ export default function HomeApp() {
       setModelCatalogLoaded(true);
     });
     if (usesMemoryManagementWindow) {
-      void withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters))
+      void withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
+        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
+      }))
         .then((page) => {
           if (!active) {
             return;
@@ -571,7 +558,9 @@ export default function HomeApp() {
     const requestId = beginMemoryManagementRequest();
     try {
       setMemoryManagementLoaded(false);
-      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters));
+      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
+        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
+      }));
       if (!isLatestMemoryManagementRequest(requestId)) {
         return;
       }
@@ -600,7 +589,11 @@ export default function HomeApp() {
     try {
       setMemoryManagementLoaded(false);
       const page = await withmateApi.getMemoryManagementPage({
-        ...buildMemoryManagementPageRequest(memoryManagementFilters, { domain, cursor }),
+        ...buildMemoryManagementPageRequest(memoryManagementFilters, {
+          domain,
+          cursor,
+          limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
+        }),
       });
       if (!isLatestMemoryManagementRequest(requestId)) {
         return;
@@ -633,7 +626,9 @@ export default function HomeApp() {
     const requestId = beginMemoryManagementRequest();
     try {
       setMemoryManagementLoaded(false);
-      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(filters));
+      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(filters, {
+        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
+      }));
       if (!isLatestMemoryManagementRequest(requestId)) {
         return;
       }
@@ -661,7 +656,9 @@ export default function HomeApp() {
       setMemoryManagementBusyTarget(`session:${sessionId}`);
       await withmateApi.deleteSessionMemory(sessionId);
       const requestId = beginMemoryManagementRequest();
-      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters));
+      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
+        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
+      }));
       if (!isLatestMemoryManagementRequest(requestId)) {
         return;
       }
@@ -686,7 +683,9 @@ export default function HomeApp() {
       setMemoryManagementBusyTarget(`project:${entryId}`);
       await withmateApi.deleteProjectMemoryEntry(entryId);
       const requestId = beginMemoryManagementRequest();
-      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters));
+      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
+        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
+      }));
       if (!isLatestMemoryManagementRequest(requestId)) {
         return;
       }
@@ -711,7 +710,9 @@ export default function HomeApp() {
       setMemoryManagementBusyTarget(`character:${entryId}`);
       await withmateApi.deleteCharacterMemoryEntry(entryId);
       const requestId = beginMemoryManagementRequest();
-      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters));
+      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
+        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
+      }));
       if (!isLatestMemoryManagementRequest(requestId)) {
         return;
       }

@@ -49,7 +49,7 @@
 4. [x] 確定方針に従い MemoryGeneration / 独り言の UI / IPC / background 実行経路を整理する。
 5. [ ] session 一覧を summary-first に寄せ、履歴本体の不要読込を減らす。
 6. [ ] audit log 一覧をページング + 詳細遅延取得へ分割する。
-7. [ ] Memory Management の snapshot 一括取得を分割 API に置き換える。
+7. [x] Memory Management の snapshot 一括取得を分割 API に置き換える。
 8. [x] MemoryGeneration / 独り言削除に関する関連設計書を同期する。
 9. [x] MemoryGeneration / 独り言削除に関する対象テスト、typecheck、build を実行する。
 10. [x] V1 DB schema source を切り出し、V2 migration 方針の設計書を追加する。

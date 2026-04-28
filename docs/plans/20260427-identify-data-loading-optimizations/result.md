@@ -28,7 +28,9 @@
 - 既存互換用の `listSessionAuditLogs(sessionId)` は維持している。
 - Memory Management の data loading optimization first slice は実装済み。Renderer / IPC は `getMemoryManagementPage({ domain, cursor, limit, searchText, sort, ...filters })` を使い、初期取得・Reload・filter 変更・domain 追加読み込みで page 単位の payload を扱う。
 - Memory Management page API は search / filter / stable sort を Main 側で適用してから page 化し、削除後は current filters の first page を reload して stale cursor を避ける。
-- 既存互換用の `getMemoryManagementSnapshot()` は残しており、DB query level の LIMIT/OFFSET 化と storage/query 側 filter/sort 最適化は未完了。
+- Memory Management page API は storage query 側で search / filter / sort / `LIMIT` / `OFFSET` / count を処理し、通常の `getPage()` 経路では `getSnapshot()` を通らない。
+- storage query の検索は `instr(lower(...), ?)` と `json_each(...)` の literal search に統一し、`%` / `_` を wildcard として扱わない。
+- 既存互換用の `getMemoryManagementSnapshot()` は残している。
 
 ## 検証結果
 
@@ -75,10 +77,15 @@
 - 再レビュー指摘対応後の `npx tsx --test scripts/tests/memory-management-service.test.ts scripts/tests/memory-management-state.test.ts scripts/tests/memory-management-view.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`: pass
 - 再レビュー指摘対応後の `npm run build:electron`: pass
 - 再レビュー指摘対応後の `npm run build:renderer`: pass
+- storage-level Memory Management page query 追加後の `npx tsx --test scripts/tests/session-memory-storage.test.ts scripts/tests/project-memory-storage.test.ts scripts/tests/character-memory-storage.test.ts scripts/tests/memory-management-service.test.ts scripts/tests/memory-management-state.test.ts scripts/tests/memory-management-view.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`: pass
+- storage-level Memory Management page query 追加後の `npm run build:electron`: pass
+- storage-level Memory Management page query 追加後の `npm run build:renderer`: pass
+- storage-level Memory Management page query 追加後の `git diff --check`: pass。LF / CRLF 警告のみ。
+- quality review: filter domain 保持、同一 `updatedAt` の tie-break、JSON 配列検索、`LIKE` wildcard parity の same-plan 指摘は反映済み。最終再レビューで current slice blocker なし。
 
 ## 残タスク
 
-- Memory Management page API を DB query level の LIMIT/OFFSET と storage/query 側 filter/sort へ寄せ、`getSnapshot()` 互換経路への依存をさらに下げる。
+- データ増加時は Memory Management 検索の FTS / 追加 index を検討する。
 - 必要に応じて per-call DB open / close を connection lifecycle 管理へ寄せる。
 
 ## Commit tracking

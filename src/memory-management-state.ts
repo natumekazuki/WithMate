@@ -59,6 +59,25 @@ export type MemoryManagementPageResult = {
   };
 };
 
+export function buildMemoryManagementPageRequest(
+  filters: Pick<
+    MemoryManagementPageRequest,
+    "domain" | "searchText" | "sort" | "sessionStatus" | "projectCategory" | "characterCategory"
+  >,
+  options?: { domain?: MemoryManagementDomain; cursor?: number | null; limit?: number },
+): MemoryManagementPageRequest {
+  return {
+    domain: options?.domain ?? filters.domain ?? "all",
+    cursor: options?.cursor ?? 0,
+    limit: options?.limit,
+    searchText: filters.searchText,
+    sort: filters.sort,
+    sessionStatus: filters.sessionStatus,
+    projectCategory: filters.projectCategory,
+    characterCategory: filters.characterCategory,
+  };
+}
+
 export function cloneMemoryManagementSnapshot(snapshot: MemoryManagementSnapshot): MemoryManagementSnapshot {
   return JSON.parse(JSON.stringify(snapshot)) as MemoryManagementSnapshot;
 }

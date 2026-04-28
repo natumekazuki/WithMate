@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { buildNewSession } from "../../src/app-state.js";
@@ -193,6 +194,82 @@ describe("CharacterMemoryStorage", () => {
       storage.deleteCharacterMemoryEntry(entry.id);
 
       assert.equal(storage.listCharacterScopes().length, 0);
+    } finally {
+      storage?.close();
+      sessionStorage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("management page query は category / search / sort / cursor / total を DB 側で適用する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-character-memory-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: CharacterMemoryStorage | null = null;
+    let sessionStorage: SessionStorage | null = null;
+
+    try {
+      sessionStorage = new SessionStorage(dbPath);
+      storage = new CharacterMemoryStorage(dbPath);
+      const scope = storage.ensureCharacterScope({
+        characterId: "char-a",
+        displayName: "A",
+      });
+      storage.upsertCharacterMemoryEntry({
+        id: "entry-a",
+        characterScopeId: scope.id,
+        sourceSessionId: null,
+        category: "tone",
+        title: "old",
+        detail: "",
+        keywords: ["literal _needle%"],
+        evidence: [],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      storage.upsertCharacterMemoryEntry({
+        id: "entry-b",
+        characterScopeId: scope.id,
+        sourceSessionId: null,
+        category: "tone",
+        title: "new",
+        detail: "",
+        keywords: ["literal _needle%"],
+        evidence: [],
+      });
+      storage.upsertCharacterMemoryEntry({
+        id: "entry-c",
+        characterScopeId: scope.id,
+        sourceSessionId: null,
+        category: "tone",
+        title: "wildcard only",
+        detail: "",
+        keywords: ["xneedle plus"],
+        evidence: [],
+      });
+      storage.upsertCharacterMemoryEntry({
+        characterScopeId: scope.id,
+        sourceSessionId: null,
+        category: "boundary",
+        title: "filtered out",
+        detail: "",
+        keywords: ["literal _needle%"],
+        evidence: [],
+      });
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare("UPDATE character_memory_entries SET updated_at = ? WHERE id IN ('entry-a', 'entry-b')")
+          .run("2026-04-02T10:00:00.000Z");
+      } finally {
+        db.close();
+      }
+
+      const page = storage.listCharacterMemoryPage({
+        characterCategory: "tone",
+        searchText: "_needle%",
+        limit: 1,
+      });
+
+      assert.equal(page.total, 2);
+      assert.deepEqual(page.groups.flatMap((group) => group.entries.map((entry) => entry.id)), ["entry-a"]);
     } finally {
       storage?.close();
       sessionStorage?.close();

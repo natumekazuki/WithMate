@@ -60,9 +60,10 @@
 
 **実装状況**
 
-- `getMemoryManagementPage({ domain, cursor, limit })` を追加し、Renderer / IPC の初期取得と Reload は page API 経由へ移行済み。
+- `getMemoryManagementPage({ domain, cursor, limit, searchText, sort, ...filters })` を追加し、Renderer / IPC の初期取得と Reload は page API 経由へ移行済み。
 - 既存互換用の `getMemoryManagementSnapshot()` は残している。
-- 現段階の page API は Main 側で search / filter / sort を適用してから page 化するが、DB query level の `LIMIT` / `OFFSET` 化と storage/query 側 filter/sort 最適化は後続改善として扱う。
+- `session_memories` / `project_memory_entries` / `character_memory_entries` は storage query 側で search / filter / sort / `LIMIT` / `OFFSET` / count を処理し、`getPage()` は通常経路で `getSnapshot()` を通らない。検索は `instr(lower(...), ?)` と `json_each(...)` による literal search とし、`%` / `_` を wildcard として扱わない。
+- `getSnapshot()` は既存互換用に残し、将来的な FTS / 追加 index はデータ増加時の follow-up として扱う。
 
 ---
 
@@ -172,7 +173,7 @@ V2 DB では legacy memory table を作らないため、memory 系 storage は 
 ### Phase 2（中期）
 
 1. Message List / Audit Log List の virtualization 導入。  
-2. Memory Management 検索を SQLite query level に移動。
+2. Memory Management 検索の FTS / 追加 index を必要に応じて検討する。
 3. 大きい JSON を展開時取得に変更（詳細 API 化）。
 
 ### Phase 3（構造改革）

@@ -11,6 +11,12 @@ import {
   type Session,
   type SessionMemory,
 } from "../src/app-state.js";
+import type {
+  ManagedCharacterMemoryGroup,
+  ManagedProjectMemoryGroup,
+  ManagedSessionMemoryItem,
+  MemoryManagementPageRequest,
+} from "../src/memory-management-state.js";
 import type { ResolvedProjectScopeInput } from "./project-scope.js";
 
 function currentIsoTimestamp(): string {
@@ -24,6 +30,10 @@ export class SessionMemoryStorageV2Read {
 
   listSessionMemories(): SessionMemory[] {
     return [];
+  }
+
+  listSessionMemoryPage(_request: MemoryManagementPageRequest): { items: ManagedSessionMemoryItem[]; total: number } {
+    return { items: [], total: 0 };
   }
 
   upsertSessionMemory(memory: SessionMemory): SessionMemory {
@@ -81,6 +91,10 @@ export class ProjectMemoryStorageV2Read {
 
   listProjectMemoryEntries(_projectScopeId: string): ProjectMemoryEntry[] {
     return [];
+  }
+
+  listProjectMemoryPage(_request: MemoryManagementPageRequest): { groups: ManagedProjectMemoryGroup[]; total: number } {
+    return { groups: [], total: 0 };
   }
 
   deleteProjectMemoryEntry(_entryId: string): void {
@@ -147,6 +161,10 @@ export class CharacterMemoryStorageV2Read {
 
   listCharacterMemoryEntries(_characterScopeId: string): CharacterMemoryEntry[] {
     return [];
+  }
+
+  listCharacterMemoryPage(_request: MemoryManagementPageRequest): { groups: ManagedCharacterMemoryGroup[]; total: number } {
+    return { groups: [], total: 0 };
   }
 
   deleteCharacterMemoryEntry(_entryId: string): void {

@@ -163,6 +163,19 @@
   - `npx tsx --test scripts/tests/memory-management-service.test.ts scripts/tests/memory-management-state.test.ts scripts/tests/memory-management-view.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`
   - `npm run build:electron`
   - `npm run build:renderer`
+- サブエージェントで Memory Management page API の DB query level 移行 scope を調査した。
+- `SessionMemoryStorage.listSessionMemoryPage()` を追加し、`session_memories` と `sessions` の join で search / status / sort / `LIMIT` / `OFFSET` / count を SQL 側で処理するようにした。
+- `ProjectMemoryStorage.listProjectMemoryPage()` を追加し、`project_memory_entries` と `project_scopes` の join で category / search / sort / `LIMIT` / `OFFSET` / count を SQL 側で処理するようにした。
+- `CharacterMemoryStorage.listCharacterMemoryPage()` を追加し、`character_memory_entries` と `character_scopes` の join で category / search / sort / `LIMIT` / `OFFSET` / count を SQL 側で処理するようにした。
+- SQL 検索は `LIKE` wildcard による UI 検索との差分を避けるため、`instr(lower(...), ?)` と `json_each(...)` の literal search に統一した。
+- V2 no-op memory storage に page methods を追加し、V2 runtime でも同じ service dependency を満たせるようにした。
+- `MemoryManagementService.getPage()` は storage page dependency がある場合、`getSnapshot()` を通らず domain ごとの page query を使うようにした。
+- quality review で、filter domain 保持、同一 `updatedAt` の tie-break、JSON 配列検索、`LIKE` wildcard parity の same-plan 指摘を受け、すべて反映済み。再レビューで current slice blocker なし。
+- storage-level Memory Management page query 追加後の検証:
+  - `npx tsx --test scripts/tests/session-memory-storage.test.ts scripts/tests/project-memory-storage.test.ts scripts/tests/character-memory-storage.test.ts scripts/tests/memory-management-service.test.ts scripts/tests/memory-management-state.test.ts scripts/tests/memory-management-view.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`
+  - `npm run build:electron`
+  - `npm run build:renderer`
+  - `git diff --check`
 
 ## Commit tracking
 

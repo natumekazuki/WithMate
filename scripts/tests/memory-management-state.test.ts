@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  buildMemoryManagementPageRequest,
   cloneMemoryManagementSnapshot,
   mergeMemoryManagementSnapshots,
   removeCharacterMemoryEntryFromSnapshot,
@@ -161,6 +162,42 @@ function createSnapshot(): MemoryManagementSnapshot {
 }
 
 describe("memory-management-state", () => {
+  it("page request は現在の domain filter と明示 limit を保持する", () => {
+    const request = buildMemoryManagementPageRequest({
+      domain: "project",
+      searchText: "target",
+      sort: "updated-desc",
+      sessionStatus: "all",
+      projectCategory: "decision",
+      characterCategory: "all",
+    }, {
+      limit: 50,
+    });
+
+    assert.equal(request.domain, "project");
+    assert.equal(request.limit, 50);
+    assert.equal(request.cursor, 0);
+  });
+
+  it("page request は追加読み込み時の domain override と cursor を優先する", () => {
+    const request = buildMemoryManagementPageRequest({
+      domain: "all",
+      searchText: "",
+      sort: "updated-desc",
+      sessionStatus: "all",
+      projectCategory: "all",
+      characterCategory: "all",
+    }, {
+      domain: "session",
+      cursor: 50,
+      limit: 25,
+    });
+
+    assert.equal(request.domain, "session");
+    assert.equal(request.cursor, 50);
+    assert.equal(request.limit, 25);
+  });
+
   it("session memory を local snapshot から削除する", () => {
     const snapshot = createSnapshot();
     const original = cloneMemoryManagementSnapshot(snapshot);

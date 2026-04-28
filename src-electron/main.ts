@@ -1062,13 +1062,16 @@ function requireMemoryManagementService(): MemoryManagementService {
     memoryManagementService = new MemoryManagementService({
       listSessionSummaries: () => listSessionSummaries(),
       listSessionMemories: () => requireSessionMemoryStorage().listSessionMemories(),
+      listSessionMemoryPage: (request) => requireSessionMemoryStorage().listSessionMemoryPage(request),
       deleteSessionMemory: (sessionId) => requireSessionMemoryStorage().deleteSessionMemory(sessionId),
       listProjectScopes: () => requireProjectMemoryStorage().listProjectScopes(),
       listProjectMemoryEntries: (projectScopeId) => requireProjectMemoryStorage().listProjectMemoryEntries(projectScopeId),
+      listProjectMemoryPage: (request) => requireProjectMemoryStorage().listProjectMemoryPage(request),
       deleteProjectMemoryEntry: (entryId) => requireProjectMemoryStorage().deleteProjectMemoryEntry(entryId),
       listCharacterScopes: () => requireCharacterMemoryStorage().listCharacterScopes(),
       listCharacterMemoryEntries: (characterScopeId) =>
         requireCharacterMemoryStorage().listCharacterMemoryEntries(characterScopeId),
+      listCharacterMemoryPage: (request) => requireCharacterMemoryStorage().listCharacterMemoryPage(request),
       deleteCharacterMemoryEntry: (entryId) => requireCharacterMemoryStorage().deleteCharacterMemoryEntry(entryId),
     });
   }
