@@ -116,7 +116,9 @@ import { resolveCursorAnchoredPosition } from "./window-placement.js";
 import { clearWorkspaceFileIndex, searchWorkspacePathCandidates } from "./workspace-file-search.js";
 import { AppLogService } from "./app-log-service.js";
 import { resolveAppDatabasePath } from "./app-database-path.js";
+import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import {
+  openAppDatabase,
   SQLITE_MAINTENANCE_BUSY_TIMEOUT_MS,
   truncateAppDatabaseWal,
   truncateAppDatabaseWalIfLargerThan,
@@ -695,6 +697,16 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           createCharacterMemoryStorage: (nextDbPath) => new CharacterMemoryStorage(nextDbPath),
           createAuditLogStorage: (nextDbPath) => new AuditLogStorage(nextDbPath),
           createAppSettingsStorage: (nextDbPath) => new AppSettingsStorage(nextDbPath),
+          ensureV2Schema: (nextDbPath) => {
+            const db = openAppDatabase(nextDbPath);
+            try {
+              for (const statement of CREATE_V2_SCHEMA_SQL) {
+                db.exec(statement);
+              }
+            } finally {
+              db.close();
+            }
+          },
           onBeforeClose: () => {
             sessionApprovalService?.reset();
             sessionElicitationService?.reset();

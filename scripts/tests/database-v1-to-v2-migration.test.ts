@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
@@ -14,6 +14,13 @@ import {
   CREATE_SESSION_MEMORIES_TABLE_SQL,
   CREATE_SESSIONS_TABLE_SQL,
 } from "../../src-electron/database-schema-v1.js";
+import { CREATE_V2_SCHEMA_SQL } from "../../src-electron/database-schema-v2.js";
+import { AuditLogStorageV2Read } from "../../src-electron/audit-log-storage-v2-read.js";
+import { CharacterRuntimeService } from "../../src-electron/character-runtime-service.js";
+import { PersistentStoreLifecycleService, type PersistentStoreBundle } from "../../src-electron/persistent-store-lifecycle-service.js";
+import { SessionStorageV2Read } from "../../src-electron/session-storage-v2-read.js";
+import { hydrateSessionsFromSummaries } from "../../src-electron/session-summary-adapter.js";
+import type { CharacterProfile } from "../../src/character-state.js";
 import { createMigrationDryRunReport, createMigrationWriteReport } from "../migrate-database-v1-to-v2.js";
 
 function createV1FixtureDatabase(): { dbPath: string; dirPath: string; cleanup: () => void } {
@@ -168,6 +175,34 @@ function insertAuditLog(db: DatabaseSync, input: {
     input.usageJson ?? "",
     "",
   );
+}
+
+function createCharacterProfile(overrides?: Partial<CharacterProfile>): CharacterProfile {
+  return {
+    id: "character",
+    name: "Character",
+    iconPath: "",
+    description: "",
+    roleMarkdown: "",
+    notesMarkdown: "",
+    themeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    sessionCopy: {
+      pendingApproval: [],
+      pendingWorking: [],
+      pendingResponding: [],
+      pendingPreparing: [],
+      retryInterruptedTitle: [],
+      retryFailedTitle: [],
+      retryCanceledTitle: [],
+      latestCommandEmpty: [],
+      latestCommandWaiting: [],
+      contextEmpty: [],
+      changedFilesEmpty: [],
+    },
+    createdAt: "2026-04-27T00:00:00.000Z",
+    updatedAt: "2026-04-27T00:00:00.000Z",
+    ...overrides,
+  };
 }
 
 describe("V1 to V2 database migration dry-run", () => {
@@ -666,6 +701,260 @@ describe("V1 to V2 database migration write mode", () => {
         assert.equal(row.usage_json, "");
       } finally {
         v2Db.close();
+      }
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("V1 から移行した V2 DB を runtime lifecycle で開き主要 read/write path を通せる", async () => {
+    const fixture = createV1FixtureDatabase();
+    try {
+      const sourceDb = new DatabaseSync(fixture.dbPath);
+      try {
+        insertSession(sourceDb, {
+          id: "session-1",
+          messagesJson: JSON.stringify([
+            { role: "user", text: "hello from v1" },
+            {
+              role: "assistant",
+              text: "done from v1",
+              artifact: {
+                title: "runtime artifact",
+                activitySummary: ["migrated"],
+                changedFiles: [
+                  { kind: "edit", path: "src/index.ts", summary: "updated", diffRows: [] },
+                ],
+                runChecks: [{ label: "test", value: "pass" }],
+              },
+            },
+          ]),
+          streamJson: JSON.stringify([{ mood: "calm", text: "legacy monologue" }]),
+        });
+        insertAuditLog(sourceDb, {
+          sessionId: "session-1",
+          phase: "completed",
+          operationsJson: JSON.stringify([
+            { type: "tool", summary: "run test", details: "ok" },
+          ]),
+          assistantText: "assistant detail",
+          rawItemsJson: JSON.stringify([{ type: "message" }]),
+          usageJson: JSON.stringify({ inputTokens: 10, cachedInputTokens: 2, outputTokens: 5 }),
+        });
+      } finally {
+        sourceDb.close();
+      }
+
+      const v2DbPath = join(fixture.dirPath, "withmate-v2.db");
+      const migrationReport = createMigrationWriteReport({
+        v1DbPath: fixture.dbPath,
+        v2DbPath,
+      });
+      assert.equal(migrationReport.migratedV2Counts.sessions, 1);
+      assert.equal(migrationReport.migratedV2Counts.sessionMessages, 2);
+      assert.equal(migrationReport.migratedV2Counts.sessionMessageArtifacts, 1);
+      assert.equal(migrationReport.migratedV2Counts.auditLogs, 1);
+
+      const removedPaths: string[] = [];
+      const truncatedWalPaths: string[] = [];
+      const lifecycle = new PersistentStoreLifecycleService({
+        createModelCatalogStorage: () =>
+          ({
+            ensureSeeded: () => ({ revision: 1, providers: [] }),
+            close() {},
+          }) as never,
+        createSessionStorage: () => {
+          throw new Error("V2 lifecycle では V1 session storage を生成しない");
+        },
+        createSessionMemoryStorage: () => ({ close() {} }) as never,
+        createProjectMemoryStorage: () => ({ close() {} }) as never,
+        createCharacterMemoryStorage: () => ({ close() {} }) as never,
+        createAuditLogStorage: () => {
+          throw new Error("V2 lifecycle では V1 audit log storage を生成しない");
+        },
+        createAppSettingsStorage: () => ({ close() {} }) as never,
+        ensureV2Schema(dbPath) {
+          const db = new DatabaseSync(dbPath);
+          try {
+            for (const statement of CREATE_V2_SCHEMA_SQL) {
+              db.exec(statement);
+            }
+          } finally {
+            db.close();
+          }
+        },
+        onBeforeClose: () => {},
+        truncateWal(dbPath) {
+          truncatedWalPaths.push(dbPath);
+        },
+        async removeFile(filePath) {
+          removedPaths.push(filePath);
+          rmSync(filePath, { force: true });
+        },
+      });
+
+      let bundle: PersistentStoreBundle | null = await lifecycle.initialize(v2DbPath, "model-catalog.json");
+      const sessionStorage = bundle.sessionStorage as SessionStorageV2Read;
+      const auditLogStorage = bundle.auditLogStorage as AuditLogStorageV2Read;
+
+      try {
+        assert.equal(bundle.sessionStorage instanceof SessionStorageV2Read, true);
+        assert.equal(bundle.auditLogStorage instanceof AuditLogStorageV2Read, true);
+        assert.deepEqual(bundle.sessions.map((session) => ({
+          id: session.id,
+          messages: session.messages.length,
+        })), [{ id: "session-1", messages: 0 }]);
+
+        const migratedSession = sessionStorage.getSession("session-1");
+        assert.ok(migratedSession);
+        assert.deepEqual(migratedSession.messages.map((message) => message.text), [
+          "hello from v1",
+          "done from v1",
+        ]);
+        assert.equal(migratedSession.messages[1]?.artifact?.title, "runtime artifact");
+
+        const auditPage = auditLogStorage.listSessionAuditLogSummaryPage("session-1", { cursor: 0, limit: 10 });
+        assert.equal(auditPage.entries.length, 1);
+        assert.equal(auditPage.entries[0]?.operations.length, 1);
+        assert.equal(auditPage.entries[0]?.operations[0]?.details, undefined);
+        const auditDetail = auditLogStorage.getSessionAuditLogDetail("session-1", auditPage.entries[0]?.id ?? -1);
+        assert.equal(auditDetail?.assistantText, "assistant detail");
+        assert.deepEqual(auditDetail?.operations.map((operation) => operation.summary), ["run test"]);
+        assert.equal(auditDetail?.operations[0]?.details, "ok");
+
+        sessionStorage.upsertSession({
+          ...migratedSession,
+          taskTitle: "updated in runtime",
+        });
+        const updatedSession = sessionStorage.getSession("session-1");
+        assert.equal(updatedSession?.taskTitle, "updated in runtime");
+        assert.deepEqual(updatedSession?.messages.map((message) => message.text), [
+          "hello from v1",
+          "done from v1",
+        ]);
+        assert.equal(updatedSession?.messages[1]?.artifact?.title, "runtime artifact");
+
+        const createdAuditLog = auditLogStorage.createAuditLog({
+          sessionId: "session-1",
+          createdAt: "2026-04-27T01:00:00.000Z",
+          phase: "completed",
+          provider: "codex",
+          model: "gpt-5.4-mini",
+          reasoningEffort: "medium",
+          approvalMode: "never",
+          threadId: "thread-runtime",
+          logicalPrompt: {
+            systemText: "system",
+            inputText: "input",
+            composedText: "system\n\ninput",
+          },
+          transportPayload: { summary: "payload", fields: [] },
+          assistantText: "new assistant detail",
+          operations: [{ type: "analysis", summary: "runtime write", details: "ok" }],
+          rawItemsJson: "[]",
+          usage: { inputTokens: 1, cachedInputTokens: 0, outputTokens: 2 },
+          errorMessage: "",
+        });
+        assert.equal(auditLogStorage.getSessionAuditLogDetail("session-1", createdAuditLog.id)?.assistantText, "new assistant detail");
+
+        let runtimeSessions = bundle.sessions;
+        const listFullSessions = () => hydrateSessionsFromSummaries(sessionStorage);
+        const characterRuntime = new CharacterRuntimeService({
+          getCharacters: () => [createCharacterProfile()],
+          setCharacters() {},
+          async listStoredCharacters() {
+            return [createCharacterProfile({ name: "Character+" })];
+          },
+          async getStoredCharacter() {
+            return createCharacterProfile();
+          },
+          async createStoredCharacter(input) {
+            return createCharacterProfile({ id: "character-2", name: input.name });
+          },
+          async updateStoredCharacter(character) {
+            return createCharacterProfile(character);
+          },
+          async deleteStoredCharacter() {},
+          listSessions: listFullSessions,
+          upsertStoredSession(session) {
+            return sessionStorage.upsertSession(session);
+          },
+          reloadStoredSessions: listFullSessions,
+          setSessions(nextSessions) {
+            runtimeSessions = nextSessions;
+          },
+          closeCharacterEditor() {},
+          broadcastCharacters() {},
+          broadcastSessions() {},
+        });
+
+        await characterRuntime.updateCharacter(createCharacterProfile({ name: "Character+" }));
+
+        const characterUpdatedSession = sessionStorage.getSession("session-1");
+        assert.equal(characterUpdatedSession?.character, "Character+");
+        assert.deepEqual(characterUpdatedSession?.messages.map((message) => message.text), [
+          "hello from v1",
+          "done from v1",
+        ]);
+        assert.equal(characterUpdatedSession?.messages[1]?.artifact?.title, "runtime artifact");
+        assert.equal(runtimeSessions[0]?.messages.length, 2);
+        assert.equal(runtimeSessions[0]?.messages[1]?.artifact?.title, "runtime artifact");
+
+        const recreated = await lifecycle.recreate(v2DbPath, "model-catalog.json", bundle);
+        bundle = null;
+        try {
+          assert.deepEqual(truncatedWalPaths.map((filePath) => basename(filePath)), ["withmate-v2.db"]);
+          assert.deepEqual(removedPaths.map((filePath) => basename(filePath)), [
+            "withmate-v2.db-wal",
+            "withmate-v2.db-shm",
+            "withmate-v2.db",
+          ]);
+          assert.deepEqual(recreated.sessions, []);
+          assert.equal(recreated.sessionStorage instanceof SessionStorageV2Read, true);
+          assert.equal(recreated.auditLogStorage instanceof AuditLogStorageV2Read, true);
+
+          const recreatedSessionStorage = recreated.sessionStorage as SessionStorageV2Read;
+          const recreatedAuditLogStorage = recreated.auditLogStorage as AuditLogStorageV2Read;
+          recreatedSessionStorage.upsertSession({
+            ...characterUpdatedSession,
+            id: "session-after-recreate",
+            messages: [{ role: "user", text: "after recreate" }],
+          });
+          assert.deepEqual(
+            recreatedSessionStorage.getSession("session-after-recreate")?.messages.map((message) => message.text),
+            ["after recreate"],
+          );
+          const recreatedAuditLog = recreatedAuditLogStorage.createAuditLog({
+            sessionId: "session-after-recreate",
+            createdAt: "2026-04-27T02:00:00.000Z",
+            phase: "completed",
+            provider: "codex",
+            model: "gpt-5.4-mini",
+            reasoningEffort: "medium",
+            approvalMode: "never",
+            threadId: "thread-recreate",
+            logicalPrompt: {
+              systemText: "system",
+              inputText: "input",
+              composedText: "system\n\ninput",
+            },
+            transportPayload: { summary: "payload", fields: [] },
+            assistantText: "recreated assistant detail",
+            operations: [{ type: "analysis", summary: "recreate write", details: "ok" }],
+            rawItemsJson: "[]",
+            usage: { inputTokens: 3, cachedInputTokens: 0, outputTokens: 4 },
+            errorMessage: "",
+          });
+          const recreatedAuditDetail = recreatedAuditLogStorage.getSessionAuditLogDetail("session-after-recreate", recreatedAuditLog.id);
+          assert.equal(recreatedAuditDetail?.assistantText, "recreated assistant detail");
+          assert.equal(recreatedAuditDetail?.operations[0]?.details, "ok");
+        } finally {
+          lifecycle.close(recreated, v2DbPath);
+        }
+      } finally {
+        if (bundle) {
+          lifecycle.close(bundle, v2DbPath);
+        }
       }
     } finally {
       fixture.cleanup();
