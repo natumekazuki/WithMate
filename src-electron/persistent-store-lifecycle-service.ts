@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { Session } from "../src/session-state.js";
-import { APP_DATABASE_V2_FILENAME, CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
+import { APP_DATABASE_V2_FILENAME, CREATE_V2_SCHEMA_SQL, isValidV2Database } from "./database-schema-v2.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogStorageV2Read } from "./audit-log-storage-v2-read.js";
@@ -83,7 +83,7 @@ export class PersistentStoreLifecycleService {
   constructor(private readonly deps: PersistentStoreLifecycleDeps) {}
 
   async initialize(dbPath: string, bundledModelCatalogPath: string): Promise<PersistentStoreBundle> {
-    const isV2Database = this.isV2DatabasePath(dbPath);
+    const isV2Database = isValidV2Database(dbPath);
     if (isV2Database) {
       this.deps.ensureV2Schema?.(dbPath);
     }
@@ -160,6 +160,10 @@ export class PersistentStoreLifecycleService {
       this.deps.removeFile(`${dbPath}-shm`),
       this.deps.removeFile(dbPath),
     ]);
+
+    if (this.isV2DatabasePath(dbPath)) {
+      this.deps.ensureV2Schema?.(dbPath);
+    }
 
     return this.initialize(dbPath, bundledModelCatalogPath);
   }

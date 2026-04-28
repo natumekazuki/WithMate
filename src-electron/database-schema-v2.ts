@@ -1,3 +1,6 @@
+import { basename } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
 
@@ -5,6 +8,39 @@ export const APP_DATABASE_V2_FILENAME = "withmate-v2.db";
 export const APP_DATABASE_V2_SCHEMA_VERSION = 2;
 
 export const V2_SCHEMA_STATUS = "ready-for-implementation";
+
+export const REQUIRED_V2_TABLES = [
+  "sessions",
+  "session_messages",
+  "session_message_artifacts",
+  "audit_logs",
+  "audit_log_details",
+  "audit_log_operations",
+] as const;
+
+export function isValidV2Database(dbPath: string): boolean {
+  if (basename(dbPath) !== APP_DATABASE_V2_FILENAME) {
+    return false;
+  }
+
+  let db: DatabaseSync | null = null;
+  try {
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    const placeholders = REQUIRED_V2_TABLES.map(() => "?").join(", ");
+    const rows = db.prepare(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name IN (${placeholders})
+    `).all(...REQUIRED_V2_TABLES) as Array<{ name: string }>;
+    const tableNames = new Set(rows.map((row) => row.name));
+    return REQUIRED_V2_TABLES.every((tableName) => tableNames.has(tableName));
+  } catch {
+    return false;
+  } finally {
+    db?.close();
+  }
+}
 
 function sqlStringLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;

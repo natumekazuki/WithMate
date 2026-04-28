@@ -48,6 +48,19 @@ async function withTempV2Database<T>(fn: (dbPath: string) => T | Promise<T>): Pr
   }
 }
 
+async function withTempEmptyV2NamedDatabase<T>(fn: (dbPath: string) => T | Promise<T>): Promise<T> {
+  const dir = await mkdtemp(path.join(tmpdir(), "withmate-v2-empty-lifecycle-"));
+  const dbPath = path.join(dir, APP_DATABASE_V2_FILENAME);
+  const db = new DatabaseSync(dbPath);
+  db.close();
+
+  try {
+    return await fn(dbPath);
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+}
+
 test("PersistentStoreLifecycleService は store を初期化して session dependency を同期する", async () => {
   const closeCalls: string[] = [];
   const sessionSummaries = [
@@ -330,6 +343,51 @@ test("PersistentStoreLifecycleService は V2 DB 再生成後に V2 schema を作
   } finally {
     await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
+});
+
+test("PersistentStoreLifecycleService は required V2 tables がない withmate-v2.db では V1-compatible injected storages を使う", async () => {
+  const activeModelCatalog = { revision: 5, providers: [] } as ModelCatalogSnapshot;
+  let createSessionStorageCallCount = 0;
+  let createAuditLogStorageCallCount = 0;
+
+  await withTempEmptyV2NamedDatabase(async (dbPath) => {
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => activeModelCatalog,
+          close() {},
+        }) as never,
+      createSessionStorage: () => {
+        createSessionStorageCallCount += 1;
+        return {
+          listSessions: () => [],
+          listSessionSummaries: () => [],
+          close() {},
+        } as never;
+      },
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => {
+        createAuditLogStorageCallCount += 1;
+        return {
+          close() {},
+        } as never;
+      },
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile() {},
+    });
+
+    const bundle = await service.initialize(dbPath, "model-catalog.json");
+
+    assert.equal(bundle.activeModelCatalog, activeModelCatalog);
+    assert.equal(bundle.sessionStorage instanceof SessionStorageV2Read, false);
+    assert.equal(bundle.auditLogStorage instanceof AuditLogStorageV2Read, false);
+    assert.equal(createSessionStorageCallCount, 1);
+    assert.equal(createAuditLogStorageCallCount, 1);
+  });
 });
 
 test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2Read を使ってセッション要約を読む", async () => {
