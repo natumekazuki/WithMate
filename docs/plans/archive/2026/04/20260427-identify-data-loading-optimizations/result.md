@@ -1,6 +1,6 @@
 # Result
 
-- Status: 進行中
+- Status: 完了
 
 ## 現在の状態
 
@@ -99,8 +99,10 @@
 
 ## 残タスク
 
+- 完了条件は満たした。以下は今回 plan からは切り離す follow-up 候補として残す。
 - データ増加時は Memory Management 検索の FTS / 追加 index を検討する。
 - 必要に応じて per-call DB open / close を connection lifecycle 管理へ寄せる。
+- Message / Audit Log UI の virtualization は別タスクとして検討する。
 
 ## Commit tracking
 

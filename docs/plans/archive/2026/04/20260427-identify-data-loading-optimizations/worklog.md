@@ -199,6 +199,9 @@
   - `npm run build:electron`
   - `npm run build:renderer`
   - `git diff --check`
+- 全チェックポイントが完了し、`questions.md` が `確認済み` であることを確認した。
+- follow-up 候補は Memory Management FTS / 追加 index、per-call DB open / close の connection lifecycle 管理、Message / Audit Log UI virtualization として result に残した。
+- repo plan を完了扱いにし、archive へ移動する。
 
 ## Commit tracking
 
