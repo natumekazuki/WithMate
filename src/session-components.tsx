@@ -38,6 +38,7 @@ import {
   type SessionContextTelemetryProjection,
 } from "./session-ui-projection.js";
 import type { CharacterUpdateMemoryExtract } from "./character-update-state.js";
+import { calculateVirtualListWindow } from "./virtual-list.js";
 
 function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
@@ -424,6 +425,16 @@ function isBackgroundAuditPhase(phase: AuditLogSummary["phase"]): boolean {
   return phase.startsWith("background-");
 }
 
+const AUDIT_LOG_ESTIMATED_ROW_HEIGHT = 360;
+const AUDIT_LOG_OVERSCAN = 4;
+const AUDIT_LOG_FALLBACK_VIEWPORT_HEIGHT = 720;
+
+type AuditLogFoldSection = "logical" | "transport" | "response" | "operations" | "usage" | "error" | "raw";
+
+function auditLogFoldKey(entry: Pick<AuditLogSummary, "id" | "sessionId">, section: AuditLogFoldSection): string {
+  return `${entry.sessionId}:${entry.id}:${section}`;
+}
+
 export type SessionDiffModalProps = {
   selectedDiff: DiffPreviewPayload | null;
   themeStyle: CSSProperties;
@@ -605,6 +616,9 @@ export function SessionAuditLogModal({
   onClose,
 }: SessionAuditLogModalProps) {
   const [activeSection, setActiveSection] = useState<"main" | "background">("main");
+  const [openAuditLogFolds, setOpenAuditLogFolds] = useState<Record<string, boolean>>({});
+  const auditLogListRef = useRef<HTMLDivElement | null>(null);
+  const [auditLogListViewport, setAuditLogListViewport] = useState({ scrollTop: 0, viewportHeight: 0 });
   const { dialogRef, handleDialogKeyDown } = useDialogA11y<HTMLElement>({ open, onClose });
   const mainEntries = useMemo(
     () => entries.filter((entry) => !isBackgroundAuditPhase(entry.phase)),
@@ -614,7 +628,121 @@ export function SessionAuditLogModal({
     () => entries.filter((entry) => isBackgroundAuditPhase(entry.phase)),
     [entries],
   );
+  const auditLogFoldKeyPrefixes = useMemo(
+    () => new Set(entries.map((entry) => `${entry.sessionId}:${entry.id}:`)),
+    [entries],
+  );
   const visibleEntries = activeSection === "main" ? mainEntries : backgroundEntries;
+  const virtualWindow = useMemo(
+    () => calculateVirtualListWindow({
+      itemCount: visibleEntries.length,
+      scrollTop: auditLogListViewport.scrollTop,
+      viewportHeight: auditLogListViewport.viewportHeight || AUDIT_LOG_FALLBACK_VIEWPORT_HEIGHT,
+      estimatedItemHeight: AUDIT_LOG_ESTIMATED_ROW_HEIGHT,
+      overscan: AUDIT_LOG_OVERSCAN,
+    }),
+    [auditLogListViewport.scrollTop, auditLogListViewport.viewportHeight, visibleEntries.length],
+  );
+  const renderedEntries = useMemo(
+    () => visibleEntries.slice(virtualWindow.startIndex, virtualWindow.endIndex),
+    [visibleEntries, virtualWindow.endIndex, virtualWindow.startIndex],
+  );
+
+  const handleAuditLogListScroll: UIEventHandler<HTMLDivElement> = (event) => {
+    const currentTarget = event.currentTarget;
+    setAuditLogListViewport({
+      scrollTop: currentTarget.scrollTop,
+      viewportHeight: currentTarget.clientHeight,
+    });
+  };
+
+  const isAuditLogFoldOpen = (entry: AuditLogSummary, section: AuditLogFoldSection) =>
+    Boolean(openAuditLogFolds[auditLogFoldKey(entry, section)]);
+
+  const handleAuditLogFoldToggle = (
+    entry: AuditLogSummary,
+    section: AuditLogFoldSection,
+    shouldLoadDetail: boolean,
+    openFold: boolean,
+  ) => {
+    setOpenAuditLogFolds((current) => {
+      const key = auditLogFoldKey(entry, section);
+      if (openFold) {
+        if (current[key]) {
+          return current;
+        }
+        return { ...current, [key]: true };
+      }
+
+      if (!current[key]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+
+    if (openFold && shouldLoadDetail && !details[entry.id]?.detail && !details[entry.id]?.loading) {
+      onLoadDetail(entry);
+    }
+  };
+
+  useLayoutEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const listNode = auditLogListRef.current;
+    if (!listNode) {
+      return;
+    }
+
+    listNode.scrollTop = 0;
+    setAuditLogListViewport({
+      scrollTop: 0,
+      viewportHeight: listNode.clientHeight,
+    });
+  }, [activeSection, open]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setOpenAuditLogFolds({});
+      return;
+    }
+
+    const listNode = auditLogListRef.current;
+    if (!listNode || visibleEntries.length === 0) {
+      return;
+    }
+
+    const maxScrollTop = Math.max(0, visibleEntries.length * AUDIT_LOG_ESTIMATED_ROW_HEIGHT - listNode.clientHeight);
+    if (auditLogListViewport.scrollTop <= maxScrollTop) {
+      return;
+    }
+
+    listNode.scrollTop = maxScrollTop;
+    setAuditLogListViewport({
+      scrollTop: maxScrollTop,
+      viewportHeight: listNode.clientHeight,
+    });
+  }, [auditLogListViewport.scrollTop, open, visibleEntries.length]);
+
+  useEffect(() => {
+    setOpenAuditLogFolds((current) => {
+      let changed = false;
+      const next: Record<string, boolean> = {};
+      for (const [key, value] of Object.entries(current)) {
+        const entryStillVisible = Array.from(auditLogFoldKeyPrefixes).some((prefix) => key.startsWith(prefix));
+        if (entryStillVisible) {
+          next[key] = value;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [auditLogFoldKeyPrefixes]);
 
   if (!open) {
     return null;
@@ -659,9 +787,15 @@ export function SessionAuditLogModal({
           {errorMessage ? <span className="audit-log-page-error">{errorMessage}</span> : null}
         </div>
 
-        <div className="audit-log-list">
+        <div ref={auditLogListRef} className="audit-log-list" onScroll={handleAuditLogListScroll}>
           {visibleEntries.length > 0 ? (
-            visibleEntries.map((entry) => {
+            <div
+              className="audit-log-list-window"
+              style={{ "--audit-log-total-height": `${virtualWindow.totalHeight}px` } as CSSProperties}
+            >
+              <div className="audit-log-list-spacer" style={{ height: virtualWindow.paddingTop }} aria-hidden="true" />
+              <div className="audit-log-list-window-items">
+                {renderedEntries.map((entry) => {
               const detailState = details[entry.id];
               const detail = detailState?.detail ?? null;
               const operations = detail?.operations ?? entry.operations;
@@ -693,11 +827,13 @@ export function SessionAuditLogModal({
                   <span>{displayApprovalValue(entry.approvalMode)}</span>
                 </div>
 
-                <details className="audit-log-fold" onToggle={(event) => {
-                  if (event.currentTarget.open) {
-                    onLoadDetail(entry);
-                  }
-                }}>
+                <details
+                  className="audit-log-fold"
+                  open={isAuditLogFoldOpen(entry, "logical")}
+                  onToggle={(event) => {
+                    handleAuditLogFoldToggle(entry, "logical", true, event.currentTarget.open);
+                  }}
+                >
                   <summary>
                     <strong>Logical Prompt</strong>
                   </summary>
@@ -721,11 +857,13 @@ export function SessionAuditLogModal({
                   </section>
                 </details>
 
-                <details className="audit-log-fold" onToggle={(event) => {
-                  if (event.currentTarget.open) {
-                    onLoadDetail(entry);
-                  }
-                }}>
+                <details
+                  className="audit-log-fold"
+                  open={isAuditLogFoldOpen(entry, "transport")}
+                  onToggle={(event) => {
+                    handleAuditLogFoldToggle(entry, "transport", true, event.currentTarget.open);
+                  }}
+                >
                   <summary>
                     <strong>Transport Payload</strong>
                   </summary>
@@ -756,11 +894,13 @@ export function SessionAuditLogModal({
                   </section>
                 </details>
 
-                <details className="audit-log-fold" onToggle={(event) => {
-                  if (event.currentTarget.open) {
-                    onLoadDetail(entry);
-                  }
-                }}>
+                <details
+                  className="audit-log-fold"
+                  open={isAuditLogFoldOpen(entry, "response")}
+                  onToggle={(event) => {
+                    handleAuditLogFoldToggle(entry, "response", true, event.currentTarget.open);
+                  }}
+                >
                   <summary>
                     <strong>Response</strong>
                   </summary>
@@ -769,7 +909,13 @@ export function SessionAuditLogModal({
                   </section>
                 </details>
 
-                <details className="audit-log-fold">
+                <details
+                  className="audit-log-fold"
+                  open={isAuditLogFoldOpen(entry, "operations")}
+                  onToggle={(event) => {
+                    handleAuditLogFoldToggle(entry, "operations", false, event.currentTarget.open);
+                  }}
+                >
                   <summary>
                     <strong>Operations</strong>
                   </summary>
@@ -793,7 +939,13 @@ export function SessionAuditLogModal({
                 </details>
 
                 {usage ? (
-                  <details className="audit-log-fold compact">
+                  <details
+                    className="audit-log-fold compact"
+                    open={isAuditLogFoldOpen(entry, "usage")}
+                    onToggle={(event) => {
+                      handleAuditLogFoldToggle(entry, "usage", false, event.currentTarget.open);
+                    }}
+                  >
                     <summary>
                       <strong>Usage</strong>
                     </summary>
@@ -808,7 +960,13 @@ export function SessionAuditLogModal({
                 ) : null}
 
                 {errorMessage ? (
-                  <details className="audit-log-fold compact">
+                  <details
+                    className="audit-log-fold compact"
+                    open={isAuditLogFoldOpen(entry, "error")}
+                    onToggle={(event) => {
+                      handleAuditLogFoldToggle(entry, "error", false, event.currentTarget.open);
+                    }}
+                  >
                     <summary>
                       <strong>Error</strong>
                     </summary>
@@ -818,11 +976,13 @@ export function SessionAuditLogModal({
                   </details>
                 ) : null}
 
-                <details className="audit-log-fold audit-log-raw" onToggle={(event) => {
-                  if (event.currentTarget.open) {
-                    onLoadDetail(entry);
-                  }
-                }}>
+                <details
+                  className="audit-log-fold audit-log-raw"
+                  open={isAuditLogFoldOpen(entry, "raw")}
+                  onToggle={(event) => {
+                    handleAuditLogFoldToggle(entry, "raw", true, event.currentTarget.open);
+                  }}
+                >
                   <summary>
                     <strong>Raw Items</strong>
                   </summary>
@@ -830,7 +990,10 @@ export function SessionAuditLogModal({
                 </details>
                 </article>
               );
-            })
+                })}
+              </div>
+              <div className="audit-log-list-spacer" style={{ height: virtualWindow.paddingBottom }} aria-hidden="true" />
+            </div>
           ) : null}
         </div>
         {hasMore ? (

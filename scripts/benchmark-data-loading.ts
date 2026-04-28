@@ -138,7 +138,7 @@ function createSchema(dbPath: string): void {
 
 function createSession(sessionIndex: number, options: ResolvedBenchmarkOptions): Session {
   const messages = Array.from({ length: options.messagesPerSession }, (_, messageIndex) => {
-    const role = messageIndex % 2 === 0 ? "user" : "assistant";
+    const role: "user" | "assistant" = messageIndex % 2 === 0 ? "user" : "assistant";
     const artifact = role === "assistant" && messageIndex % options.artifactEvery === 1
       ? {
           title: `artifact ${sessionIndex}-${messageIndex}`,
@@ -233,7 +233,7 @@ function createAuditLog(auditStorage: AuditLogStorageV2Read, sessionId: string, 
     },
     transportPayload: {
       summary: "benchmark payload",
-      fields: [{ name: "prompt", value: "x".repeat(512) }],
+      fields: [{ label: "prompt", value: "x".repeat(512) }],
     },
     assistantText: `assistant response ${"x".repeat(1200)}`,
     operations: Array.from({ length: options.operationCount }, (_, operationIndex) => ({

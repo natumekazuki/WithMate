@@ -5250,10 +5250,22 @@ button:disabled {
 
 .audit-log-list {
   display: grid;
-  gap: 14px;
   min-height: 0;
   overflow: auto;
   padding: 0 22px 22px;
+}
+
+.audit-log-list-window {
+  min-height: var(--audit-log-total-height, 0);
+}
+
+.audit-log-list-window-items {
+  display: grid;
+  gap: 14px;
+}
+
+.audit-log-list-spacer {
+  min-height: 0;
 }
 
 .audit-log-load-more {
