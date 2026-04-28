@@ -170,3 +170,5 @@
   - 対応チェックポイント: MemoryGeneration / 独り言削除、V1 schema 切り出し、V2 schema、V1→V2 migration dry-run / write mode、V2 runtime read path first slice。
 - `c18ab28` `feat(database): V2 runtime 書き込みと audit lazy load を追加`
   - 対応チェックポイント: V2 runtime session / audit write path、audit log summary page、audit log detail lazy load API。
+- `27fd437` `feat(memory): Memory 管理を page API 経由にする`
+  - 対応チェックポイント: Memory Management page API first slice、Main 側 search / filter / sort、Renderer の追加読み込み、review 指摘対応。
