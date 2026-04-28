@@ -10,11 +10,11 @@
 
 | Checkpoint | Status | Commit | Notes |
 | --- | --- | --- | --- |
-| Red-1 virtual window 境界テスト | done | 未作成 | `scripts/tests/session-message-column.test.ts` を追加し、現状は全件描画で失敗することを確認 |
-| Green-1 `SessionMessageColumn` windowing | done | 未作成 | 元配列 index と `artifactKey` を維持して windowed rendering を実装 |
-| Green-2 追従/未読/末尾移動の整合 | done | 未作成 | 既存 `messageListRef` と scroll handler を維持し、viewport state を component 内で同期 |
-| Green-3 CSS と Markdown list 副作用確認 | done | 未作成 | `session-message-list-*` 専用 class を追加し、Markdown 側 `.message-list` との衝突を回避 |
-| Review-1 build/test/手動確認 | done | 未作成 | targeted tests、renderer/electron build、diff check を通過 |
+| Red-1 virtual window 境界テスト | done | `a1c947c` | `scripts/tests/session-message-column.test.ts` を追加し、現状は全件描画で失敗することを確認 |
+| Green-1 `SessionMessageColumn` windowing | done | `a1c947c` | 元配列 index と `artifactKey` を維持して windowed rendering を実装 |
+| Green-2 追従/未読/末尾移動の整合 | done | `a1c947c` | 既存 `messageListRef` と scroll handler を維持し、viewport state を component 内で同期 |
+| Green-3 CSS と Markdown list 副作用確認 | done | `a1c947c` | `session-message-list-*` 専用 class を追加し、Markdown 側 `.message-list` との衝突を回避 |
+| Review-1 build/test/手動確認 | done | `a1c947c` | targeted tests、renderer/electron build、diff check、full test を通過 |
 
 ## Log
 
@@ -46,7 +46,7 @@
 
 | Commit | Summary | Related Checkpoint |
 | --- | --- | --- |
-| 未作成 | Message 一覧の仮想化実装 | Red-1, Green-1, Green-2, Green-3, Review-1 |
+| `a1c947c` | `feat(renderer): Message 一覧を仮想化` | Red-1, Green-1, Green-2, Green-3, Review-1 |
 
 ## Archive Notes
 

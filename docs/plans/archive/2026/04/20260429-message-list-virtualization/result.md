@@ -13,6 +13,8 @@
 
 レビュー指摘を受けて、viewport 高さ変更時の `ResizeObserver` 再計測、artifact 内 fold の controlled state、artifact / pending / live の static render coverage を追加した。
 
+実装コミット: `a1c947c` (`feat(renderer): Message 一覧を仮想化`)
+
 ## Validation
 
 - `npx tsx --test scripts/tests/session-message-column.test.ts`
