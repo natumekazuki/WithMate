@@ -101,7 +101,26 @@ type RetryBannerState = {
 type SessionOwnedAuditLogs = {
   ownerSessionId: string | null;
   entries: AuditLogSummary[];
+  nextCursor: number | null;
+  hasMore: boolean;
+  total: number;
+  loading: boolean;
+  errorMessage: string | null;
 };
+
+const AUDIT_LOG_PAGE_LIMIT = 50;
+
+function createEmptyAuditLogsState(ownerSessionId: string | null): SessionOwnedAuditLogs {
+  return {
+    ownerSessionId,
+    entries: [],
+    nextCursor: null,
+    hasMore: false,
+    total: 0,
+    loading: false,
+    errorMessage: null,
+  };
+}
 
 type AuditLogDetailLoadState = {
   detail: AuditLogDetail | null;
@@ -629,7 +648,7 @@ export default function App() {
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
   const [auditLogsOpen, setAuditLogsOpen] = useState(false);
-  const [auditLogsState, setAuditLogsState] = useState<SessionOwnedAuditLogs>({ ownerSessionId: null, entries: [] });
+  const [auditLogsState, setAuditLogsState] = useState<SessionOwnedAuditLogs>(() => createEmptyAuditLogsState(null));
   const [auditLogDetails, setAuditLogDetails] = useState<Record<number, AuditLogDetailLoadState>>({});
   const auditLogDetailOwnerRef = useRef<string | null>(null);
   const [liveRunState, setLiveRunState] = useState<SessionOwnedLiveRun>({ ownerSessionId: null, state: null });
@@ -1206,7 +1225,7 @@ export default function App() {
     setIsComposerImeComposing(false);
     setIsActivityMonitorFollowing(true);
     setHasActivityMonitorUnread(false);
-    setAuditLogsState({ ownerSessionId: selectedSessionId, entries: [] });
+    setAuditLogsState(createEmptyAuditLogsState(selectedSessionId));
     setLiveRunState({ ownerSessionId: selectedSessionId, state: null });
     setProviderQuotaTelemetryState((current) =>
       current.ownerProviderId === (selectedSession?.provider ?? null)
@@ -1322,7 +1341,7 @@ export default function App() {
 
     if (!withmateApi || !selectedSession) {
       if (active) {
-        setAuditLogsState({ ownerSessionId: null, entries: [] });
+        setAuditLogsState(createEmptyAuditLogsState(null));
         setAuditLogDetails({});
         auditLogDetailOwnerRef.current = null;
       }
@@ -1333,18 +1352,41 @@ export default function App() {
 
     setAuditLogsState((current) =>
       current.ownerSessionId === selectedSession.id
-        ? current
-        : { ownerSessionId: selectedSession.id, entries: [] },
+        ? { ...current, loading: true, errorMessage: null }
+        : { ...createEmptyAuditLogsState(selectedSession.id), loading: true },
     );
     if (auditLogDetailOwnerRef.current !== selectedSession.id) {
       setAuditLogDetails({});
       auditLogDetailOwnerRef.current = selectedSession.id;
     }
-    void withmateApi.listSessionAuditLogSummaries(selectedSession.id).then((nextAuditLogs) => {
-      if (active) {
-        setAuditLogsState({ ownerSessionId: selectedSession.id, entries: nextAuditLogs });
-      }
-    });
+    void withmateApi.listSessionAuditLogSummaryPage(selectedSession.id, {
+      cursor: 0,
+      limit: AUDIT_LOG_PAGE_LIMIT,
+    }).then(
+      (page) => {
+        if (active) {
+          setAuditLogsState({
+            ownerSessionId: selectedSession.id,
+            entries: page.entries,
+            nextCursor: page.nextCursor,
+            hasMore: page.hasMore,
+            total: page.total,
+            loading: false,
+            errorMessage: null,
+          });
+        }
+      },
+      (error: unknown) => {
+        if (active) {
+          setAuditLogsState((current) => ({
+            ...current,
+            ownerSessionId: selectedSession.id,
+            loading: false,
+            errorMessage: error instanceof Error ? error.message : "audit log summary の取得に失敗したよ。",
+          }));
+        }
+      },
+    );
 
     return () => {
       active = false;
@@ -2822,6 +2864,65 @@ export default function App() {
     await navigator.clipboard.writeText(selectedCharacterUpdateMemoryExtract.text);
   };
 
+  const handleLoadMoreAuditLogs = () => {
+    if (!withmateApi || !selectedSessionId) {
+      return;
+    }
+
+    const currentState = auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState : null;
+    if (!currentState?.hasMore || currentState.loading || currentState.nextCursor === null) {
+      return;
+    }
+
+    const ownerSessionId = selectedSessionId;
+    const cursor = currentState.nextCursor;
+    setAuditLogsState((current) =>
+      current.ownerSessionId === ownerSessionId
+        ? { ...current, loading: true, errorMessage: null }
+        : current,
+    );
+
+    void withmateApi.listSessionAuditLogSummaryPage(ownerSessionId, {
+      cursor,
+      limit: AUDIT_LOG_PAGE_LIMIT,
+    }).then(
+      (page) => {
+        setAuditLogsState((current) => {
+          if (current.ownerSessionId !== ownerSessionId) {
+            return current;
+          }
+
+          const existingIds = new Set(current.entries.map((entry) => entry.id));
+          const nextEntries = [
+            ...current.entries,
+            ...page.entries.filter((entry) => !existingIds.has(entry.id)),
+          ];
+
+          return {
+            ownerSessionId,
+            entries: nextEntries,
+            nextCursor: page.nextCursor,
+            hasMore: page.hasMore,
+            total: page.total,
+            loading: false,
+            errorMessage: null,
+          };
+        });
+      },
+      (error: unknown) => {
+        setAuditLogsState((current) =>
+          current.ownerSessionId === ownerSessionId
+            ? {
+                ...current,
+                loading: false,
+                errorMessage: error instanceof Error ? error.message : "audit log summary の追加取得に失敗したよ。",
+              }
+            : current,
+        );
+      },
+    );
+  };
+
   const handleLoadAuditLogDetail = (entry: AuditLogSummary) => {
     if (!withmateApi || !selectedSessionId || entry.id < 0 || !entry.detailAvailable) {
       return;
@@ -3153,6 +3254,13 @@ export default function App() {
         open={auditLogsOpen}
         entries={displayedSessionAuditLogs}
         details={auditLogDetails}
+        hasMore={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.hasMore : false}
+        loadingMore={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.loading : false}
+        total={auditLogsState.ownerSessionId === selectedSessionId
+          ? Math.max(auditLogsState.total, displayedSessionAuditLogs.length)
+          : displayedSessionAuditLogs.length}
+        errorMessage={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.errorMessage : null}
+        onLoadMore={handleLoadMoreAuditLogs}
         onLoadDetail={handleLoadAuditLogDetail}
         onClose={() => setAuditLogsOpen(false)}
       />

@@ -80,6 +80,9 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
     sessionQuery: {
       listSessionSummaries: () => [],
       listSessionAuditLogs: () => [],
+      listSessionAuditLogSummaries: () => [],
+      listSessionAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
+      getSessionAuditLogDetail: () => null,
       async listSessionSkills() { return []; },
       async listSessionCustomAgents() { return []; },
       listOpenSessionWindowIds: () => [],

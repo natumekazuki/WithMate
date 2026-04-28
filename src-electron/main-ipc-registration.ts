@@ -5,6 +5,8 @@ import type {
   AuditLogDetail,
   AuditLogEntry,
   AuditLogSummary,
+  AuditLogSummaryPageRequest,
+  AuditLogSummaryPageResult,
   CharacterProfile,
   LiveApprovalDecision,
   LiveElicitationResponse,
@@ -59,6 +61,7 @@ import {
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
@@ -114,6 +117,10 @@ export type MainIpcRegistrationDeps = {
   listSessionSummaries(): SessionSummary[];
   listSessionAuditLogs(sessionId: string): AuditLogEntry[];
   listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[];
+  listSessionAuditLogSummaryPage(
+    sessionId: string,
+    request?: AuditLogSummaryPageRequest | null,
+  ): AuditLogSummaryPageResult;
   getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
@@ -216,6 +223,7 @@ type MainIpcSessionQueryDeps = Pick<
   | "listSessionSummaries"
   | "listSessionAuditLogs"
   | "listSessionAuditLogSummaries"
+  | "listSessionAuditLogSummaryPage"
   | "getSessionAuditLogDetail"
   | "listSessionSkills"
   | "listSessionCustomAgents"
@@ -344,6 +352,11 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => deps.listSessionAuditLogs(sessionId));
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL, (_event, sessionId: string) =>
     deps.listSessionAuditLogSummaries(sessionId),
+  );
+  ipcMain.handle(
+    WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
+    (_event, sessionId: string, request: AuditLogSummaryPageRequest | null | undefined) =>
+      deps.listSessionAuditLogSummaryPage(sessionId, request),
   );
   ipcMain.handle(WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL, (_event, sessionId: string, auditLogId: number) =>
     deps.getSessionAuditLogDetail(sessionId, auditLogId),

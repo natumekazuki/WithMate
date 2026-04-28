@@ -36,6 +36,7 @@ import {
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
@@ -83,6 +84,7 @@ function createIpcMainStub() {
 test("registerMainIpcHandlers は主要 channel を登録して delegate を呼ぶ", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const calls: string[] = [];
+  const auditPageRequests: unknown[] = [];
 
   registerMainIpcHandlers(ipcMain, {
     resolveEventWindow: () => null,
@@ -111,6 +113,10 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     listSessionSummaries: () => [],
     listSessionAuditLogs: () => [],
     listSessionAuditLogSummaries: () => [],
+    listSessionAuditLogSummaryPage: (sessionId, request) => {
+      auditPageRequests.push({ sessionId, request });
+      return { entries: [], nextCursor: null, hasMore: false, total: 0 };
+    },
     getSessionAuditLogDetail: () => null,
     async listSessionSkills() { return []; },
     async listSessionCustomAgents() { return []; },
@@ -235,6 +241,11 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   handlers.get("withmate:cancel-session-run")?.({}, "session-1");
   await handlers.get("withmate:open-path")?.({}, "target", null);
   await handlers.get(WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL)?.({});
+  const auditPageResult = await handlers.get(WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL)?.(
+    {},
+    "session-1",
+    { cursor: 50, limit: 25 },
+  );
 
   assert.deepEqual(calls, [
     "openSession:session-1",
@@ -243,6 +254,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     "openPath",
     "openLogs",
   ]);
+  assert.deepEqual(auditPageRequests, [{ sessionId: "session-1", request: { cursor: 50, limit: 25 } }]);
+  assert.deepEqual(auditPageResult, { entries: [], nextCursor: null, hasMore: false, total: 0 });
 });
 
 test("registerMainIpcHandlers は current invoke channel を domain ごとにすべて登録する", () => {
@@ -261,6 +274,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     listSessionSummaries: () => [],
     listSessionAuditLogs: () => [],
     listSessionAuditLogSummaries: () => [],
+    listSessionAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
     getSessionAuditLogDetail: () => null,
     async listSessionSkills() { return []; },
     async listSessionCustomAgents() { return []; },
@@ -348,6 +362,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
     WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
     WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
+    WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
     WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
     WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
     WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,

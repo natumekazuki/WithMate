@@ -28,6 +28,8 @@ export type {
   AuditLogOperation,
   AuditLogPhase,
   AuditLogSummary,
+  AuditLogSummaryPageRequest,
+  AuditLogSummaryPageResult,
   AuditLogUsage,
   AuditLogicalPrompt,
   AuditTransportField,

@@ -25,6 +25,8 @@
 - `updateAuditLog` は mismatched sessionId を拒否し、summary/detail/operations を部分更新しない。
 - audit log modal 初期表示は `AuditLogSummary[]` を取得し、V2 では `audit_logs` summary と `audit_log_operations` の type / summary だけを読む。
 - audit log detail は `getSessionAuditLogDetail(sessionId, auditLogId)` で detail section 展開時だけ読み、`audit_log_details` と `audit_log_operations.details` は初期表示では読まない。
+- audit log modal 初期表示は `listSessionAuditLogSummaryPage(sessionId, { cursor, limit })` で最新 50 件だけを取得し、`Load More` で追加 page を取得する。
+- V1 fallback の summary page も `assistant_text` / `operations_json` / raw detail payload を読まず、detail API 側へ縮退する。
 - 既存互換用の `listSessionAuditLogs(sessionId)` は維持している。
 - Memory Management の data loading optimization first slice は実装済み。Renderer / IPC は `getMemoryManagementPage({ domain, cursor, limit, searchText, sort, ...filters })` を使い、初期取得・Reload・filter 変更・domain 追加読み込みで page 単位の payload を扱う。
 - Memory Management page API は search / filter / stable sort を Main 側で適用してから page 化し、削除後は current filters の first page を reload して stale cursor を避ける。
@@ -89,6 +91,11 @@
 - session summary-first slice 追加後の `npm run build:electron`: pass
 - session summary-first slice 追加後の `git diff --check`: pass。LF / CRLF 警告のみ。
 - quality review: settings / model catalog 経路の summary-derived empty messages 保存リスクは反映済み。最終再レビューで checkpoint 5 完了扱い、blocker なし。
+- audit log summary page 追加後の `npx tsx --test scripts/tests/audit-log-storage.test.ts scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`: pass
+- audit log summary page 追加後の `npm run build:electron`: pass
+- audit log summary page 追加後の `npm run build:renderer`: pass
+- audit log summary page 追加後の `git diff --check`: pass。LF / CRLF 警告のみ。
+- quality review: V1 fallback が重い `assistant_text` / `operations_json` を読んでいた点と、IPC / preload contract test が弱い点は same-plan で反映済み。
 
 ## 残タスク
 

@@ -40,6 +40,7 @@ export const WITHMATE_RUN_SESSION_TURN_CHANNEL = "withmate:run-session-turn";
 export const WITHMATE_CANCEL_SESSION_RUN_CHANNEL = "withmate:cancel-session-run";
 export const WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL = "withmate:list-session-audit-logs";
 export const WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL = "withmate:list-session-audit-log-summaries";
+export const WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL = "withmate:list-session-audit-log-summary-page";
 export const WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL = "withmate:get-session-audit-log-detail";
 export const WITHMATE_GET_APP_SETTINGS_CHANNEL = "withmate:get-app-settings";
 export const WITHMATE_UPDATE_APP_SETTINGS_CHANNEL = "withmate:update-app-settings";

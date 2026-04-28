@@ -7,6 +7,8 @@ import {
   type AuditLogOperation,
   type AuditLogPhase,
   type AuditLogSummary,
+  type AuditLogSummaryPageRequest,
+  type AuditLogSummaryPageResult,
   type AuditLogUsage,
   type AuditTransportPayload,
 } from "../src/app-state.js";
@@ -57,7 +59,13 @@ type AuditLogSessionIdRow = {
   session_id: string;
 };
 
+type CountRow = {
+  count: number;
+};
+
 const ASSISTANT_TEXT_PREVIEW_MAX_LENGTH = 500;
+const DEFAULT_AUDIT_LOG_PAGE_LIMIT = 50;
+const MAX_AUDIT_LOG_PAGE_LIMIT = 200;
 
 const DEFAULT_LOGICAL_PROMPT: AuditLogicalPrompt = {
   systemText: "",
@@ -237,6 +245,61 @@ const LIST_SESSION_AUDIT_LOG_SUMMARIES_SQL = `
   FROM audit_logs AS a
   WHERE a.session_id = ?
   ORDER BY a.id DESC
+`;
+
+const LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_SQL = `
+  SELECT
+    a.id,
+    a.session_id,
+    a.created_at,
+    a.phase,
+    a.provider,
+    a.model,
+    a.reasoning_effort,
+    a.approval_mode,
+    a.thread_id,
+    a.assistant_text_preview,
+    a.input_tokens,
+    a.cached_input_tokens,
+    a.output_tokens,
+    a.error_message,
+    a.detail_available,
+    NULL AS logical_prompt_json,
+    NULL AS transport_payload_json,
+    NULL AS assistant_text,
+    NULL AS raw_items_json,
+    NULL AS usage_json
+  FROM audit_logs AS a
+  WHERE a.session_id = ?
+  ORDER BY a.id DESC
+  LIMIT ? OFFSET ?
+`;
+
+const LIST_SESSION_AUDIT_LOG_OPERATION_SUMMARY_PAGE_SQL = `
+  SELECT
+    o.audit_log_id,
+    o.seq,
+    o.operation_type,
+    o.summary,
+    '' AS details
+  FROM audit_log_operations AS o
+  INNER JOIN audit_logs AS a
+    ON a.id = o.audit_log_id
+  WHERE a.session_id = ?
+    AND o.audit_log_id IN (
+      SELECT id
+      FROM audit_logs
+      WHERE session_id = ?
+      ORDER BY id DESC
+      LIMIT ? OFFSET ?
+    )
+  ORDER BY o.audit_log_id ASC, o.seq ASC
+`;
+
+const COUNT_SESSION_AUDIT_LOGS_SQL = `
+  SELECT COUNT(*) AS count
+  FROM audit_logs
+  WHERE session_id = ?
 `;
 
 const GET_SESSION_AUDIT_LOG_DETAIL_SQL = `
@@ -447,6 +510,34 @@ function buildAuditLogSummaries(rows: AuditLogSummaryRow[], operationRows: Audit
   return rows.map((row) => rowToAuditLogSummary(row, operationMap.get(row.id) ?? []));
 }
 
+function normalizeAuditLogSummaryPageRequest(request?: AuditLogSummaryPageRequest | null): { offset: number; limit: number } {
+  const cursor = request?.cursor ?? 0;
+  const requestedLimit = request?.limit ?? DEFAULT_AUDIT_LOG_PAGE_LIMIT;
+  const offset = Number.isFinite(cursor) && cursor > 0 ? Math.floor(cursor) : 0;
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(Math.max(1, Math.floor(requestedLimit)), MAX_AUDIT_LOG_PAGE_LIMIT)
+    : DEFAULT_AUDIT_LOG_PAGE_LIMIT;
+
+  return { offset, limit };
+}
+
+function buildAuditLogSummaryPage(
+  rows: AuditLogSummaryRow[],
+  operationRows: AuditLogOperationRow[],
+  total: number,
+  offset: number,
+): AuditLogSummaryPageResult {
+  const entries = buildAuditLogSummaries(rows, operationRows);
+  const nextCursor = offset + entries.length < total ? offset + entries.length : null;
+
+  return {
+    entries,
+    nextCursor,
+    hasMore: nextCursor !== null,
+    total,
+  };
+}
+
 function rowToAuditLogSummary(row: AuditLogSummaryRow, operations: AuditLogOperation[]): AuditLogSummary {
   return {
     id: row.id,
@@ -555,6 +646,26 @@ export class AuditLogStorageV2Read {
       const operationRows = db.prepare(LIST_SESSION_AUDIT_LOG_OPERATION_SUMMARIES_SQL).all(sessionId) as AuditLogOperationRow[];
 
       return buildAuditLogSummaries(rows, operationRows);
+    });
+  }
+
+  listSessionAuditLogSummaryPage(
+    sessionId: string,
+    request?: AuditLogSummaryPageRequest | null,
+  ): AuditLogSummaryPageResult {
+    const { offset, limit } = normalizeAuditLogSummaryPageRequest(request);
+
+    return this.withDb((db) => {
+      const rows = db.prepare(LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_SQL).all(sessionId, limit, offset) as AuditLogSummaryRow[];
+      const operationRows = db.prepare(LIST_SESSION_AUDIT_LOG_OPERATION_SUMMARY_PAGE_SQL).all(
+        sessionId,
+        sessionId,
+        limit,
+        offset,
+      ) as AuditLogOperationRow[];
+      const countRow = db.prepare(COUNT_SESSION_AUDIT_LOGS_SQL).get(sessionId) as CountRow | undefined;
+
+      return buildAuditLogSummaryPage(rows, operationRows, countRow?.count ?? 0, offset);
     });
   }
 

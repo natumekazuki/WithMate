@@ -481,6 +481,54 @@ describe("AuditLogStorageV2Read", () => {
     });
   });
 
+  it("listSessionAuditLogSummaryPage は limit/cursor で summary だけをページングする", async () => {
+    await withTempV2Database((dbPath) => {
+      const db = new DatabaseSync(dbPath);
+      try {
+        const sessionId = insertSessionHeader(db, { id: "session-page" });
+        const ids = Array.from({ length: 5 }, (_, index) => {
+          const id = insertAuditLogSummary(db, {
+            sessionId,
+            assistantTextPreview: `summary ${index + 1}`,
+          });
+          insertAuditLogDetails(db, id, {
+            logicalPromptJson: JSON.stringify({ systemText: `system ${index + 1}` }),
+            transportPayloadJson: "",
+            assistantText: `detail ${index + 1}`,
+            rawItemsJson: `[${index + 1}]`,
+            usageJson: "",
+          });
+          insertAuditLogOperation(db, {
+            auditLogId: id,
+            seq: 0,
+            type: "operation",
+            summary: `operation ${index + 1}`,
+            details: `detail ${index + 1}`,
+          });
+          return id;
+        });
+
+        const storage = new AuditLogStorageV2Read(dbPath);
+        const firstPage = storage.listSessionAuditLogSummaryPage(sessionId, { cursor: 0, limit: 2 });
+        assert.deepEqual(firstPage.entries.map((entry) => entry.id), [ids[4], ids[3]]);
+        assert.equal(firstPage.nextCursor, 2);
+        assert.equal(firstPage.hasMore, true);
+        assert.equal(firstPage.total, 5);
+        assert.equal("rawItemsJson" in (firstPage.entries[0] as object), false);
+        assert.deepEqual(firstPage.entries[0]?.operations.map((operation) => operation.details), [undefined]);
+
+        const secondPage = storage.listSessionAuditLogSummaryPage(sessionId, { cursor: firstPage.nextCursor, limit: 3 });
+        assert.deepEqual(secondPage.entries.map((entry) => entry.id), [ids[2], ids[1], ids[0]]);
+        assert.equal(secondPage.nextCursor, null);
+        assert.equal(secondPage.hasMore, false);
+        assert.equal(secondPage.total, 5);
+        storage.close();
+      } finally {
+        db.close();
+      }
+    });
+  });
+
   it("usage_json が空でも usage 列を使える形で復元し、未提供時は null でも許容する", async () => {
     await withTempV2Database((dbPath) => {
       const db = new DatabaseSync(dbPath);

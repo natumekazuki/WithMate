@@ -58,6 +58,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:list-session-summaries",
     args: [],
   });
+  assert.deepEqual(await api.listSessionAuditLogSummaryPage("session-1", { cursor: 50, limit: 25 }), {
+    channel: "withmate:list-session-audit-log-summary-page",
+    args: ["session-1", { cursor: 50, limit: 25 }],
+  });
 });
 
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
@@ -95,6 +99,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "importModelCatalogFile",
     "listCharacters",
     "listOpenSessionWindowIds",
+    "listSessionAuditLogSummaryPage",
     "listSessionAuditLogSummaries",
     "listSessionAuditLogs",
     "listSessionCustomAgents",

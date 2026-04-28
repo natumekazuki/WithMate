@@ -7,6 +7,8 @@ import {
   type AuditLogOperation,
   type AuditLogPhase,
   type AuditLogSummary,
+  type AuditLogSummaryPageRequest,
+  type AuditLogSummaryPageResult,
   type AuditLogUsage,
   type AuditTransportPayload,
 } from "../src/app-state.js";
@@ -41,6 +43,19 @@ type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 type TableInfoRow = {
   name: string;
 };
+type AuditLogSummaryRow = Omit<
+  AuditLogRow,
+  "logical_prompt_json" | "transport_payload_json" | "assistant_text" | "operations_json" | "raw_items_json"
+> & {
+  assistant_text_preview: string;
+  operation_count: number;
+};
+type CountRow = {
+  count: number;
+};
+
+const DEFAULT_AUDIT_LOG_PAGE_LIMIT = 50;
+const MAX_AUDIT_LOG_PAGE_LIMIT = 200;
 
 function toAuditLogPhase(value: string): AuditLogPhase {
   if (
@@ -185,6 +200,61 @@ function rowToAuditLogSummary(row: AuditLogRow): AuditLogSummary {
   };
 }
 
+function rowToAuditLogSummaryFromSummaryRow(row: AuditLogSummaryRow): AuditLogSummary {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    createdAt: row.created_at,
+    phase: toAuditLogPhase(row.phase),
+    provider: row.provider || DEFAULT_PROVIDER_ID,
+    model: row.model || DEFAULT_MODEL_ID,
+    reasoningEffort:
+      row.reasoning_effort === "minimal" ||
+      row.reasoning_effort === "low" ||
+      row.reasoning_effort === "medium" ||
+      row.reasoning_effort === "high" ||
+      row.reasoning_effort === "xhigh"
+        ? row.reasoning_effort
+        : DEFAULT_REASONING_EFFORT,
+    approvalMode: normalizeApprovalMode(row.approval_mode, DEFAULT_APPROVAL_MODE),
+    threadId: row.thread_id || "",
+    assistantTextPreview: row.assistant_text_preview || "",
+    operations: row.operation_count > 0
+      ? [{ type: "operation", summary: `${row.operation_count} operations` }]
+      : [],
+    usage: toAuditLogUsage(row.usage_json),
+    errorMessage: row.error_message || "",
+    detailAvailable: true,
+  };
+}
+
+function normalizeAuditLogSummaryPageRequest(request?: AuditLogSummaryPageRequest | null): { offset: number; limit: number } {
+  const cursor = request?.cursor ?? 0;
+  const requestedLimit = request?.limit ?? DEFAULT_AUDIT_LOG_PAGE_LIMIT;
+  const offset = Number.isFinite(cursor) && cursor > 0 ? Math.floor(cursor) : 0;
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(Math.max(1, Math.floor(requestedLimit)), MAX_AUDIT_LOG_PAGE_LIMIT)
+    : DEFAULT_AUDIT_LOG_PAGE_LIMIT;
+
+  return { offset, limit };
+}
+
+function buildAuditLogSummaryPage(
+  rows: AuditLogSummaryRow[],
+  total: number,
+  offset: number,
+): AuditLogSummaryPageResult {
+  const entries = rows.map(rowToAuditLogSummaryFromSummaryRow);
+  const nextCursor = offset + entries.length < total ? offset + entries.length : null;
+
+  return {
+    entries,
+    nextCursor,
+    hasMore: nextCursor !== null,
+    total,
+  };
+}
+
 function entryToAuditLogDetail(entry: AuditLogEntry): AuditLogDetail {
   return {
     id: entry.id,
@@ -202,6 +272,9 @@ function entryToAuditLogDetail(entry: AuditLogEntry): AuditLogDetail {
 export class AuditLogStorage {
   private readonly db: DatabaseSync;
   private readonly listStatement: StatementSync;
+  private readonly listSummaryStatement: StatementSync;
+  private readonly listSummaryPageStatement: StatementSync;
+  private readonly countSessionLogsStatement: StatementSync;
   private readonly getStatement: StatementSync;
   private readonly insertStatement: StatementSync;
   private readonly updateStatement: StatementSync;
@@ -232,6 +305,59 @@ export class AuditLogStorage {
       FROM audit_logs
       WHERE session_id = ?
       ORDER BY id DESC
+    `);
+
+    this.listSummaryStatement = this.db.prepare(`
+      SELECT
+        id,
+        session_id,
+        created_at,
+        phase,
+        provider,
+        model,
+        reasoning_effort,
+        approval_mode,
+        thread_id,
+        '' AS assistant_text_preview,
+        CASE
+          WHEN operations_json IS NULL OR operations_json = '' OR operations_json = '[]' THEN 0
+          ELSE 1
+        END AS operation_count,
+        usage_json,
+        error_message
+      FROM audit_logs
+      WHERE session_id = ?
+      ORDER BY id DESC
+    `);
+
+    this.listSummaryPageStatement = this.db.prepare(`
+      SELECT
+        id,
+        session_id,
+        created_at,
+        phase,
+        provider,
+        model,
+        reasoning_effort,
+        approval_mode,
+        thread_id,
+        '' AS assistant_text_preview,
+        CASE
+          WHEN operations_json IS NULL OR operations_json = '' OR operations_json = '[]' THEN 0
+          ELSE 1
+        END AS operation_count,
+        usage_json,
+        error_message
+      FROM audit_logs
+      WHERE session_id = ?
+      ORDER BY id DESC
+      LIMIT ? OFFSET ?
+    `);
+
+    this.countSessionLogsStatement = this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM audit_logs
+      WHERE session_id = ?
     `);
 
     this.getStatement = this.db.prepare(`
@@ -359,8 +485,18 @@ export class AuditLogStorage {
   }
 
   listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[] {
-    const rows = this.listStatement.all(sessionId) as AuditLogRow[];
-    return rows.map(rowToAuditLogSummary);
+    const rows = this.listSummaryStatement.all(sessionId) as AuditLogSummaryRow[];
+    return rows.map(rowToAuditLogSummaryFromSummaryRow);
+  }
+
+  listSessionAuditLogSummaryPage(
+    sessionId: string,
+    request?: AuditLogSummaryPageRequest | null,
+  ): AuditLogSummaryPageResult {
+    const { offset, limit } = normalizeAuditLogSummaryPageRequest(request);
+    const rows = this.listSummaryPageStatement.all(sessionId, limit, offset) as AuditLogSummaryRow[];
+    const countRow = this.countSessionLogsStatement.get(sessionId) as CountRow | undefined;
+    return buildAuditLogSummaryPage(rows, countRow?.count ?? 0, offset);
   }
 
   getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null {

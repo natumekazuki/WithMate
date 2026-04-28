@@ -186,6 +186,19 @@
   - `npx tsx --test scripts/tests/session-summary-adapter.test.ts scripts/tests/persistent-store-lifecycle-service.test.ts scripts/tests/main-session-persistence-facade.test.ts scripts/tests/session-persistence-service.test.ts scripts/tests/session-storage.test.ts scripts/tests/session-storage-v2-read.test.ts scripts/tests/settings-catalog-service.test.ts`
   - `npm run build:electron`
   - `git diff --check`
+- サブエージェントで audit log summary page / detail lazy load の残スコープを調査し、V1 summary が重い列を読んでいることと、UI に load more が未実装であることを確認した。
+- `AuditLogSummaryPageRequest` / `AuditLogSummaryPageResult` を追加し、`listSessionAuditLogSummaryPage(sessionId, { cursor, limit })` を IPC / preload / window API / main query service に追加した。
+- V2 `AuditLogStorageV2Read` は `audit_logs` summary と `audit_log_operations` の type / summary だけを `LIMIT` / `OFFSET` で取得し、`COUNT(*)` から `total` / `hasMore` / `nextCursor` を返すようにした。
+- V1 `AuditLogStorage` も summary page では `assistant_text` / `operations_json` / raw detail payload を読まず、detail API 側へ縮退する fallback にした。
+- `App.tsx` の audit log 初期取得を最新 50 件の page API に変更し、`SessionAuditLogModal` に `Load More` と page status を追加した。
+- detail section 展開時だけ `getSessionAuditLogDetail(sessionId, auditLogId)` を呼ぶ既存 lazy load と、live run merge / detail cache は維持した。
+- quality review で、V1 fallback が重い `assistant_text` / `operations_json` を読んでいた点と、IPC / preload contract test が弱い点の same-plan 指摘を受けた。
+- V1 summary page から `assistant_text` / `operations_json` 読込を外し、IPC handler / preload invoke の request payload をテストで固定した。
+- audit log summary page 追加後の検証:
+  - `npx tsx --test scripts/tests/audit-log-storage.test.ts scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`
+  - `npm run build:electron`
+  - `npm run build:renderer`
+  - `git diff --check`
 
 ## Commit tracking
 

@@ -10,6 +10,8 @@ import {
   type AuditLogDetail,
   type AuditLogEntry,
   type AuditLogSummary,
+  type AuditLogSummaryPageRequest,
+  type AuditLogSummaryPageResult,
   currentTimestampLabel,
   type DiscoveredCustomAgent,
   type DiscoveredSkill,
@@ -792,6 +794,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 listSessionSummaries: () => listSessionSummaries(),
                 listSessionAuditLogs: (sessionId) => listSessionAuditLogs(sessionId),
                 listSessionAuditLogSummaries: (sessionId) => listSessionAuditLogSummaries(sessionId),
+                listSessionAuditLogSummaryPage: (sessionId, request) =>
+                  listSessionAuditLogSummaryPage(sessionId, request),
                 getSessionAuditLogDetail: (sessionId, auditLogId) => getSessionAuditLogDetail(sessionId, auditLogId),
                 listSessionSkills: async (sessionId) => listSessionSkills(sessionId),
                 listSessionCustomAgents: async (sessionId) => listSessionCustomAgents(sessionId),
@@ -871,6 +875,8 @@ function requireMainQueryService(): MainQueryService {
       getCharacters: () => characters,
       getAuditLogs: (sessionId) => requireAuditLogStorage().listSessionAuditLogs(sessionId),
       getAuditLogSummaries: (sessionId) => requireAuditLogStorage().listSessionAuditLogSummaries(sessionId),
+      getAuditLogSummaryPage: (sessionId, request) =>
+        requireAuditLogStorage().listSessionAuditLogSummaryPage(sessionId, request),
       getAuditLogDetail: (sessionId, auditLogId) => requireAuditLogStorage().getSessionAuditLogDetail(sessionId, auditLogId),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       discoverSessionSkills,
@@ -1607,6 +1613,13 @@ function listSessionAuditLogs(sessionId: string): AuditLogEntry[] {
 
 function listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[] {
   return requireMainQueryService().listSessionAuditLogSummaries(sessionId);
+}
+
+function listSessionAuditLogSummaryPage(
+  sessionId: string,
+  request?: AuditLogSummaryPageRequest | null,
+): AuditLogSummaryPageResult {
+  return requireMainQueryService().listSessionAuditLogSummaryPage(sessionId, request);
 }
 
 function getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null {

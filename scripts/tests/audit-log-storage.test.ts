@@ -138,6 +138,65 @@ describe("AuditLogStorage", () => {
     }
   });
 
+  it("listSessionAuditLogSummaryPage は V1 でも detail payload を返さずページングする", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-audit-log-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const sessionStorage = new SessionStorage(dbPath);
+      const session = sessionStorage.upsertSession(createSession());
+      sessionStorage.close();
+
+      const storage = new AuditLogStorage(dbPath);
+      const ids = Array.from({ length: 4 }, (_, index) =>
+        storage.createAuditLog({
+          sessionId: session.id,
+          createdAt: `2026/03/24 23:0${index}`,
+          phase: "completed",
+          provider: "codex",
+          model: "gpt-5",
+          reasoningEffort: "medium",
+          approvalMode: DEFAULT_APPROVAL_MODE,
+          threadId: "thread-1",
+          logicalPrompt: {
+            systemText: `system ${index}`,
+            inputText: "input",
+            composedText: "system\n\ninput",
+          },
+          transportPayload: null,
+          assistantText: `assistant ${index}`,
+          operations: [
+            {
+              type: "analysis",
+              summary: `summary ${index}`,
+              details: `detail ${index}`,
+            },
+          ],
+          rawItemsJson: `[${index}]`,
+          usage: null,
+          errorMessage: "",
+        }).id,
+      );
+
+      const firstPage = storage.listSessionAuditLogSummaryPage(session.id, { cursor: 0, limit: 2 });
+      assert.deepEqual(firstPage.entries.map((entry) => entry.id), [ids[3], ids[2]]);
+      assert.equal(firstPage.nextCursor, 2);
+      assert.equal(firstPage.hasMore, true);
+      assert.equal(firstPage.total, 4);
+      assert.equal("rawItemsJson" in (firstPage.entries[0] as object), false);
+      assert.equal(firstPage.entries[0]?.assistantTextPreview, "");
+      assert.deepEqual(firstPage.entries[0]?.operations, [{ type: "operation", summary: "1 operations" }]);
+
+      const secondPage = storage.listSessionAuditLogSummaryPage(session.id, { cursor: firstPage.nextCursor, limit: 10 });
+      assert.deepEqual(secondPage.entries.map((entry) => entry.id), [ids[1], ids[0]]);
+      assert.equal(secondPage.nextCursor, null);
+      assert.equal(secondPage.hasMore, false);
+      storage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("background phase の audit log を roundtrip できる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-audit-log-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");

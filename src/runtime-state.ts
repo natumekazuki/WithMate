@@ -87,6 +87,18 @@ export type AuditLogSummary = Omit<
   detailAvailable: boolean;
 };
 
+export type AuditLogSummaryPageRequest = {
+  cursor?: number | null;
+  limit?: number | null;
+};
+
+export type AuditLogSummaryPageResult = {
+  entries: AuditLogSummary[];
+  nextCursor: number | null;
+  hasMore: boolean;
+  total: number;
+};
+
 export type AuditLogDetail = Pick<
   AuditLogEntry,
   "id" | "sessionId" | "logicalPrompt" | "transportPayload" | "assistantText" | "operations" | "rawItemsJson" | "usage" | "errorMessage"

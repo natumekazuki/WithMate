@@ -36,7 +36,7 @@ export type SessionStorageWrite = Pick<
 
 export type AuditLogStorageRead = Pick<
   AuditLogStorage,
-  "listSessionAuditLogs" | "listSessionAuditLogSummaries" | "getSessionAuditLogDetail" | "close"
+  "listSessionAuditLogs" | "listSessionAuditLogSummaries" | "listSessionAuditLogSummaryPage" | "getSessionAuditLogDetail" | "close"
 >;
 export type AuditLogStorageWrite = Pick<
   AuditLogStorage,

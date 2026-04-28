@@ -4,6 +4,8 @@ import type {
   AuditLogDetail,
   AuditLogEntry,
   AuditLogSummary,
+  AuditLogSummaryPageRequest,
+  AuditLogSummaryPageResult,
   CharacterProfile,
   LiveApprovalDecision,
   LiveElicitationResponse,
@@ -76,6 +78,10 @@ export type MainIpcSessionQueryDepsArgs = {
   listSessionSummaries(): SessionSummary[];
   listSessionAuditLogs(sessionId: string): AuditLogEntry[];
   listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[];
+  listSessionAuditLogSummaryPage(
+    sessionId: string,
+    request?: AuditLogSummaryPageRequest | null,
+  ): AuditLogSummaryPageResult;
   getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
@@ -175,6 +181,7 @@ export function createMainIpcRegistrationDeps(
     listSessionSummaries: args.sessionQuery.listSessionSummaries,
     listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,
     listSessionAuditLogSummaries: args.sessionQuery.listSessionAuditLogSummaries,
+    listSessionAuditLogSummaryPage: args.sessionQuery.listSessionAuditLogSummaryPage,
     getSessionAuditLogDetail: args.sessionQuery.getSessionAuditLogDetail,
     listSessionSkills: args.sessionQuery.listSessionSkills,
     listSessionCustomAgents: args.sessionQuery.listSessionCustomAgents,

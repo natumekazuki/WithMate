@@ -2,6 +2,8 @@ import type {
   AuditLogEntry,
   AuditLogDetail,
   AuditLogSummary,
+  AuditLogSummaryPageRequest,
+  AuditLogSummaryPageResult,
   AppSettings,
   CharacterProfile,
   ComposerPreview,
@@ -68,6 +70,10 @@ export type WithMateWindowSessionApi = {
   cancelSessionRun(sessionId: string): Promise<void>;
   listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
   listSessionAuditLogSummaries(sessionId: string): Promise<AuditLogSummary[]>;
+  listSessionAuditLogSummaryPage(
+    sessionId: string,
+    request?: AuditLogSummaryPageRequest | null,
+  ): Promise<AuditLogSummaryPageResult>;
   getSessionAuditLogDetail(sessionId: string, auditLogId: number): Promise<AuditLogDetail | null>;
   getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): Promise<void>;

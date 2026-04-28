@@ -8,6 +8,8 @@ import {
   type AuditLogDetail,
   type AuditLogEntry,
   type AuditLogSummary,
+  type AuditLogSummaryPageRequest,
+  type AuditLogSummaryPageResult,
   type SessionSummary,
   cloneSessionSummaries,
   cloneSessions,
@@ -22,6 +24,7 @@ type MainQueryServiceDeps = {
   getCharacters(): CharacterProfile[];
   getAuditLogs(sessionId: string): AuditLogEntry[];
   getAuditLogSummaries(sessionId: string): AuditLogSummary[];
+  getAuditLogSummaryPage(sessionId: string, request?: AuditLogSummaryPageRequest | null): AuditLogSummaryPageResult;
   getAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null;
   getAppSettings(): AppSettings;
   discoverSessionSkills(workspacePath: string, skillRootPath: string | null): Promise<DiscoveredSkill[]>;
@@ -63,6 +66,13 @@ export class MainQueryService {
 
   listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[] {
     return this.deps.getAuditLogSummaries(sessionId);
+  }
+
+  listSessionAuditLogSummaryPage(
+    sessionId: string,
+    request?: AuditLogSummaryPageRequest | null,
+  ): AuditLogSummaryPageResult {
+    return this.deps.getAuditLogSummaryPage(sessionId, request);
   }
 
   getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null {

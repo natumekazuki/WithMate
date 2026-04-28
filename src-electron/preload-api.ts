@@ -46,6 +46,7 @@ import {
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
@@ -241,6 +242,9 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     listSessionAuditLogSummaries(sessionId) {
       return ipcRenderer.invoke(WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL, sessionId);
+    },
+    listSessionAuditLogSummaryPage(sessionId, request) {
+      return ipcRenderer.invoke(WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL, sessionId, request ?? null);
     },
     getSessionAuditLogDetail(sessionId, auditLogId) {
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL, sessionId, auditLogId);

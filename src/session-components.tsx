@@ -583,6 +583,11 @@ export type SessionAuditLogModalProps = {
     loading: boolean;
     errorMessage: string | null;
   }>;
+  hasMore: boolean;
+  loadingMore: boolean;
+  total: number;
+  errorMessage: string | null;
+  onLoadMore: () => void;
   onLoadDetail: (entry: AuditLogSummary) => void;
   onClose: () => void;
 };
@@ -591,6 +596,11 @@ export function SessionAuditLogModal({
   open,
   entries,
   details,
+  hasMore,
+  loadingMore,
+  total,
+  errorMessage,
+  onLoadMore,
   onLoadDetail,
   onClose,
 }: SessionAuditLogModalProps) {
@@ -642,6 +652,11 @@ export function SessionAuditLogModal({
           >
             Background
           </button>
+        </div>
+
+        <div className="audit-log-page-status">
+          <span>{entries.length} / {total}</span>
+          {errorMessage ? <span className="audit-log-page-error">{errorMessage}</span> : null}
         </div>
 
         <div className="audit-log-list">
@@ -818,6 +833,16 @@ export function SessionAuditLogModal({
             })
           ) : null}
         </div>
+        {hasMore ? (
+          <button
+            type="button"
+            className="audit-log-load-more"
+            onClick={onLoadMore}
+            disabled={loadingMore}
+          >
+            {loadingMore ? "Loading..." : "Load More"}
+          </button>
+        ) : null}
       </section>
     </div>
   );
