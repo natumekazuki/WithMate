@@ -1,4 +1,4 @@
-import { Component, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type UIEventHandler } from "react";
+import { Component, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type UIEventHandler } from "react";
 
 import type {
   AuditLogDetail,
@@ -428,6 +428,16 @@ function isBackgroundAuditPhase(phase: AuditLogSummary["phase"]): boolean {
 const AUDIT_LOG_ESTIMATED_ROW_HEIGHT = 360;
 const AUDIT_LOG_OVERSCAN = 4;
 const AUDIT_LOG_FALLBACK_VIEWPORT_HEIGHT = 720;
+
+const SESSION_MESSAGE_LIST_ESTIMATED_ROW_HEIGHT = 156;
+const SESSION_MESSAGE_LIST_OVERSCAN = 4;
+const SESSION_MESSAGE_LIST_FALLBACK_VIEWPORT_HEIGHT = 720;
+
+type MessageArtifactFoldSection = "files" | "operation";
+
+function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFoldSection, index?: number): string {
+  return `${artifactKey}:${section}${index === undefined ? "" : `:${index}`}`;
+}
 
 type AuditLogFoldSection = "logical" | "transport" | "response" | "operations" | "usage" | "error" | "raw";
 
@@ -1733,12 +1743,96 @@ export function SessionMessageColumn({
   onOpenPath,
   getChangedFilesEmptyText,
 }: SessionMessageColumnProps) {
+  const [messageListViewport, setMessageListViewport] = useState({ scrollTop: 0, viewportHeight: 0 });
+  const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
+  const virtualWindow = useMemo(
+    () => calculateVirtualListWindow({
+      itemCount: messages.length,
+      scrollTop: messageListViewport.scrollTop,
+      viewportHeight: messageListViewport.viewportHeight || SESSION_MESSAGE_LIST_FALLBACK_VIEWPORT_HEIGHT,
+      estimatedItemHeight: SESSION_MESSAGE_LIST_ESTIMATED_ROW_HEIGHT,
+      overscan: SESSION_MESSAGE_LIST_OVERSCAN,
+    }),
+    [messageListViewport.scrollTop, messageListViewport.viewportHeight, messages.length],
+  );
+  const renderedMessages = useMemo(
+    () => messages.slice(virtualWindow.startIndex, virtualWindow.endIndex),
+    [messages, virtualWindow.endIndex, virtualWindow.startIndex],
+  );
+
+  const updateMessageListViewport = useCallback((listElement: HTMLDivElement | null = messageListRef.current) => {
+    if (!listElement) {
+      return;
+    }
+
+    const nextViewport = {
+      scrollTop: listElement.scrollTop,
+      viewportHeight: listElement.clientHeight,
+    };
+    setMessageListViewport((current) =>
+      current.scrollTop === nextViewport.scrollTop && current.viewportHeight === nextViewport.viewportHeight
+        ? current
+        : nextViewport,
+    );
+  }, [messageListRef]);
+
+  const handleMessageListScroll: UIEventHandler<HTMLDivElement> = (event) => {
+    updateMessageListViewport(event.currentTarget);
+    onMessageListScroll(event);
+  };
+
+  useLayoutEffect(() => {
+    updateMessageListViewport();
+  }, [messages.length, updateMessageListViewport]);
+
+  useEffect(() => {
+    const messageListElement = messageListRef.current;
+    if (!messageListElement || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateMessageListViewport(messageListElement);
+    });
+    resizeObserver.observe(messageListElement);
+    return () => resizeObserver.disconnect();
+  }, [messageListRef, updateMessageListViewport]);
+
+  const isArtifactFoldOpen = (artifactKey: string, section: MessageArtifactFoldSection, index?: number) =>
+    Boolean(openArtifactFolds[messageArtifactFoldKey(artifactKey, section, index)]);
+
+  const handleArtifactFoldToggle = (
+    artifactKey: string,
+    section: MessageArtifactFoldSection,
+    openFold: boolean,
+    index?: number,
+  ) => {
+    setOpenArtifactFolds((current) => {
+      const key = messageArtifactFoldKey(artifactKey, section, index);
+      if (openFold) {
+        return current[key] ? current : { ...current, [key]: true };
+      }
+
+      if (!current[key]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  };
+
   return (
     <div className="session-message-column">
-      <div className="message-list" ref={messageListRef} onScroll={onMessageListScroll}>
+      <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
         {messages.length > 0 ? (
-          messages.map((message, index) => {
-            const artifactKey = `${sessionId}-${index}`;
+          <div className="session-message-list-window">
+            <div className="session-message-list-spacer" style={{ height: virtualWindow.paddingTop }} aria-hidden="true" />
+            <div className="session-message-list-window-items">
+          {renderedMessages.map((message, index) => {
+            const absoluteIndex = virtualWindow.startIndex + index;
+            const artifactKey = `${sessionId}-${absoluteIndex}`;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
             const artifactHasSnapshotRisk =
@@ -1754,7 +1848,7 @@ export function SessionMessageColumn({
 
             return (
               <article
-                key={`${message.role}-${index}`}
+                key={`${message.role}-${absoluteIndex}`}
                 className={`message-row ${message.role}${message.accent ? " accent" : ""}`}
               >
                 {isAssistant ? (
@@ -1798,7 +1892,13 @@ export function SessionMessageColumn({
                           <div className="artifact-grid">
                             <section className="artifact-section">
                               {message.artifact.changedFiles.length > 0 ? (
-                                  <details className="artifact-fold artifact-files-fold">
+                                  <details
+                                    className="artifact-fold artifact-files-fold"
+                                    open={isArtifactFoldOpen(artifactKey, "files")}
+                                    onToggle={(event) => {
+                                      handleArtifactFoldToggle(artifactKey, "files", event.currentTarget.open);
+                                    }}
+                                  >
                                     <summary className="artifact-fold-summary">
                                       <span className="artifact-fold-summary-copy">
                                         <strong>Changed Files</strong>
@@ -1827,7 +1927,13 @@ export function SessionMessageColumn({
                                     </div>
                                   </details>
                                 ) : (
-                                  <details className="artifact-fold artifact-files-fold">
+                                  <details
+                                    className="artifact-fold artifact-files-fold"
+                                    open={isArtifactFoldOpen(artifactKey, "files")}
+                                    onToggle={(event) => {
+                                      handleArtifactFoldToggle(artifactKey, "files", event.currentTarget.open);
+                                    }}
+                                  >
                                     <summary className="artifact-fold-summary">
                                       <span className="artifact-fold-summary-copy">
                                         <strong>Changed Files</strong>
@@ -1868,7 +1974,13 @@ export function SessionMessageColumn({
                                   const operationSummary = collapseSummaryText(operation.summary) || operationTypeLabel(operation.type);
                                   return (
                                     <li key={`${operation.type}-${operationIndex}`} className={`artifact-operation-item ${operation.type}`}>
-                                      <details className="artifact-operation-fold">
+                                      <details
+                                        className="artifact-operation-fold"
+                                        open={isArtifactFoldOpen(artifactKey, "operation", operationIndex)}
+                                        onToggle={(event) => {
+                                          handleArtifactFoldToggle(artifactKey, "operation", event.currentTarget.open, operationIndex);
+                                        }}
+                                      >
                                         <summary className="artifact-operation-summary" title={operationSummary}>
                                           <div className="artifact-operation-head">
                                             <span className={`artifact-operation-type ${operation.type}`}>{operationTypeLabel(operation.type)}</span>
@@ -1900,6 +2012,10 @@ export function SessionMessageColumn({
               </article>
             );
           })
+            }
+            </div>
+            <div className="session-message-list-spacer" style={{ height: virtualWindow.paddingBottom }} aria-hidden="true" />
+          </div>
         ) : null}
 
         {isRunning ? (

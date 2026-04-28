@@ -3019,6 +3019,31 @@ button:disabled {
   margin-top: 0;
 }
 
+.session-message-list {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  align-content: start;
+  padding-right: 6px;
+}
+
+.session-message-list-window {
+  display: grid;
+  min-height: 0;
+}
+
+.session-message-list-window-items {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+}
+
+.session-message-list-spacer {
+  min-height: 0;
+  pointer-events: none;
+}
+
 .composer {
   display: grid;
   gap: 12px;
