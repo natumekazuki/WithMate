@@ -32,6 +32,12 @@
 - `listSessions()` の利用箇所で、本当に履歴本体が必要かを分類し、**summary だけで足りる経路を `listSessionSummaries()` に統一**する。
 - `sessions` への一覧用途では `messages_json`, `stream_json` を取得しないようにする（既存 `listSessionSummaries()` を優先利用）。
 
+**実装状況**
+
+- 起動時の session 初期 state は `listSessionSummaries()` から復元し、V1 fallback でも `messages_json` / `stream_json` を初期一覧ロードで読まない。
+- running session 復旧時だけ対象 session を `getSession(id)` で詳細 hydrate し、既存 messages に interrupted message を追加して保存する。
+- settings / model catalog の一括保存経路は、summary-derived empty messages を保存しないように `listSessionSummaries()` + `getSession(id)` で full detail hydrate した session を使う。
+
 ---
 
 ### 1-2. Memory Management が「全ドメイン全件」を一括取得している

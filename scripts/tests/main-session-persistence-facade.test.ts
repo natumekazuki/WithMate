@@ -19,7 +19,7 @@ test("MainSessionPersistenceFacade は upsert/replaceAll を SessionPersistenceS
           return sessions as never;
         },
       }) as never,
-    getSessionStorage: () => ({ listSessions: () => [] }) as never,
+    getSessionStorage: () => ({ listSessionSummaries: () => [], getSession: () => null }) as never,
   });
 
   facade.upsertSession({ id: "s-1" } as never);
@@ -28,17 +28,36 @@ test("MainSessionPersistenceFacade は upsert/replaceAll を SessionPersistenceS
   assert.deepEqual(calls, ["upsert:s-1", "replace:1"]);
 });
 
-test("MainSessionPersistenceFacade は running session を interrupted に変換して再保存する", () => {
-  const storedSessions = [
+test("MainSessionPersistenceFacade は running session を詳細 hydrate して interrupted に変換する", () => {
+  const storedSessionSummaries = [
     {
       id: "s-1",
       status: "idle",
       runState: "interrupted",
       updatedAt: "2026-03-28 10:00:00",
-      messages: [
-        { role: "user", text: "hello" },
-        { role: "assistant", text: "前回の実行はアプリ終了で中断された可能性があるよ。必要ならもう一度送ってね。", accent: true },
-      ],
+      taskTitle: "Recovered",
+    },
+  ];
+  const hydratedSession = {
+    id: "s-1",
+    status: "running",
+    runState: "running",
+    updatedAt: "2026-03-28 09:00:00",
+    taskTitle: "Recovered",
+    messages: [
+      { role: "user", text: "hello" },
+    ],
+  };
+  const expectedInterruptedMessage = "前回の実行はアプリ終了で中断された可能性があるよ。必要ならもう一度送ってね。";
+  const expectedSetSessionsPayload = [
+    {
+      id: "s-1",
+      taskTitle: "Recovered",
+      status: "idle",
+      runState: "interrupted",
+      updatedAt: "2026-03-28 10:00:00",
+      messages: [],
+      stream: [],
     },
   ];
   const upserted: string[] = [];
@@ -51,12 +70,62 @@ test("MainSessionPersistenceFacade は running session を interrupted に変換
           status: "running",
           runState: "running",
           updatedAt: "2026-03-28 09:00:00",
-          messages: [{ role: "user", text: "hello" }],
+          messages: [],
         },
       ] as never,
     setSessions: (nextSessions) => {
       setSessionsPayload = nextSessions;
     },
+    getSessionPersistenceService: () =>
+      ({
+        upsertSession(session) {
+          upserted.push(`${session.id}:${session.runState}:${session.messages.length}:${session.messages.at(-1)?.text}`);
+          return session as never;
+        },
+      }) as never,
+    getSessionStorage: () =>
+      ({
+        getSession(sessionId) {
+          return sessionId === "s-1" ? hydratedSession : null;
+        },
+        listSessionSummaries() {
+          return storedSessionSummaries as never;
+        },
+      }) as never,
+  });
+
+  facade.recoverInterruptedSessions();
+
+  assert.deepEqual(upserted, [`s-1:interrupted:2:${expectedInterruptedMessage}`]);
+  assert.deepEqual(setSessionsPayload, expectedSetSessionsPayload);
+});
+
+test("MainSessionPersistenceFacade は既存 interrupted message を重複追加しない", () => {
+  const interruptedMessage = "前回の実行はアプリ終了で中断された可能性があるよ。必要ならもう一度送ってね。";
+  const hydratedSession = {
+    id: "s-1",
+    status: "running",
+    runState: "running",
+    updatedAt: "2026-03-28 09:00:00",
+    taskTitle: "Recovered",
+    messages: [
+      { role: "user", text: "hello" },
+      { role: "assistant", text: interruptedMessage, accent: true },
+    ],
+  };
+  const upserted: string[] = [];
+  const facade = new MainSessionPersistenceFacade({
+    getSessions: () =>
+      [
+        {
+          id: "s-1",
+          status: "running",
+          runState: "running",
+          updatedAt: "2026-03-28 09:00:00",
+          messages: [],
+        },
+      ] as never,
+    setSessions: () => undefined,
     getSessionPersistenceService: () =>
       ({
         upsertSession(session) {
@@ -66,8 +135,11 @@ test("MainSessionPersistenceFacade は running session を interrupted に変換
       }) as never,
     getSessionStorage: () =>
       ({
-        listSessions() {
-          return storedSessions as never;
+        getSession(sessionId) {
+          return sessionId === "s-1" ? hydratedSession : null;
+        },
+        listSessionSummaries() {
+          return [] as never;
         },
       }) as never,
   });
@@ -75,5 +147,63 @@ test("MainSessionPersistenceFacade は running session を interrupted に変換
   facade.recoverInterruptedSessions();
 
   assert.deepEqual(upserted, ["s-1:interrupted:2"]);
-  assert.equal(setSessionsPayload, storedSessions);
+});
+
+test("MainSessionPersistenceFacade は hydrate できない running session を skip する", () => {
+  const upserted: string[] = [];
+  const facade = new MainSessionPersistenceFacade({
+    getSessions: () =>
+      [
+        {
+          id: "s-1",
+          status: "running",
+          runState: "running",
+          updatedAt: "2026-03-28 09:00:00",
+          messages: [],
+        },
+      ] as never,
+    setSessions: () => undefined,
+    getSessionPersistenceService: () =>
+      ({
+        upsertSession(session) {
+          upserted.push(session.id);
+          return session as never;
+        },
+      }) as never,
+    getSessionStorage: () =>
+      ({
+        getSession() {
+          return null;
+        },
+        listSessionSummaries() {
+          return [] as never;
+        },
+      }) as never,
+  });
+
+  facade.recoverInterruptedSessions();
+
+  assert.deepEqual(upserted, []);
+});
+
+test("MainSessionPersistenceFacade は running session がなければ storage を読まない", () => {
+  const facade = new MainSessionPersistenceFacade({
+    getSessions: () =>
+      [
+        {
+          id: "s-1",
+          status: "idle",
+          runState: "idle",
+          updatedAt: "2026-03-28 09:00:00",
+          messages: [],
+        },
+      ] as never,
+    setSessions: () => undefined,
+    getSessionPersistenceService: () => ({}) as never,
+    getSessionStorage: () => {
+      throw new Error("running session がない時は storage を読まない");
+    },
+  });
+
+  facade.recoverInterruptedSessions();
 });

@@ -39,6 +39,10 @@ function isRunningSession(session: Session): boolean {
   return session.status === "running" || session.runState === "running";
 }
 
+function upsertSessionInList(sessions: Session[], stored: Session): Session[] {
+  return [stored, ...sessions.filter((session) => session.id !== stored.id)];
+}
+
 export class SessionPersistenceService {
   constructor(private readonly deps: SessionPersistenceServiceDeps) {}
 
@@ -118,7 +122,7 @@ export class SessionPersistenceService {
     }
 
     this.deps.deleteStoredSession(sessionId);
-    this.deps.setSessions(this.deps.listStoredSessions());
+    this.deps.setSessions(this.deps.getSessions().filter((entry) => entry.id !== sessionId));
     this.deps.clearSessionContextTelemetry(sessionId);
     this.deps.clearSessionBackgroundActivities(sessionId);
     this.deps.clearCharacterReflectionCheckpoint(sessionId);
@@ -136,7 +140,7 @@ export class SessionPersistenceService {
       ),
     });
     this.syncStoredSession(stored);
-    this.deps.setSessions(this.deps.listStoredSessions());
+    this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), stored));
     this.deps.broadcastSessions([stored.id]);
     return cloneSessions([stored])[0];
   }
@@ -158,8 +162,8 @@ export class SessionPersistenceService {
     }));
 
     this.deps.replaceStoredSessions(normalizedSessions);
-    this.deps.setSessions(this.deps.listStoredSessions());
-    const storedSessions = this.deps.getSessions();
+    this.deps.setSessions(normalizedSessions);
+    const storedSessions = normalizedSessions;
     for (const session of storedSessions) {
       this.syncStoredSession(session);
     }

@@ -50,8 +50,22 @@ async function withTempV2Database<T>(fn: (dbPath: string) => T | Promise<T>): Pr
 
 test("PersistentStoreLifecycleService は store を初期化して session dependency を同期する", async () => {
   const closeCalls: string[] = [];
-  const sessions = [{ id: "session-1" }, { id: "session-2" }] as Session[];
+  const sessionSummaries = [
+    {
+      id: "session-1",
+      taskTitle: "Session 1",
+      status: "idle",
+      runState: "idle",
+    },
+    {
+      id: "session-2",
+      taskTitle: "Session 2",
+      status: "saved",
+      runState: "idle",
+    },
+  ] as never;
   const activeModelCatalog = { revision: 1, providers: [] } as ModelCatalogSnapshot;
+  let listSessionsCallCount = 0;
 
   const service = new PersistentStoreLifecycleService({
     createModelCatalogStorage: () =>
@@ -63,7 +77,11 @@ test("PersistentStoreLifecycleService は store を初期化して session depen
       }) as never,
     createSessionStorage: () =>
       ({
-        listSessions: () => sessions,
+        listSessions: () => {
+          listSessionsCallCount += 1;
+          return [];
+        },
+        listSessionSummaries: () => sessionSummaries,
         close() {
           closeCalls.push("session");
         },
@@ -83,7 +101,16 @@ test("PersistentStoreLifecycleService は store を初期化して session depen
   const bundle = await service.initialize("withmate.db", "model-catalog.json");
 
   assert.equal(bundle.activeModelCatalog, activeModelCatalog);
-  assert.deepEqual(bundle.sessions, sessions);
+  assert.deepEqual(bundle.sessions.map((session) => ({
+    id: session.id,
+    taskTitle: session.taskTitle,
+    messages: session.messages,
+    stream: session.stream,
+  })), [
+    { id: "session-1", taskTitle: "Session 1", messages: [], stream: [] },
+    { id: "session-2", taskTitle: "Session 2", messages: [], stream: [] },
+  ]);
+  assert.equal(listSessionsCallCount, 0);
 });
 
 test("PersistentStoreLifecycleService は close 時に hook と各 store close を呼ぶ", () => {
@@ -176,6 +203,7 @@ test("PersistentStoreLifecycleService は WAL truncate 失敗後も DB 再生成
     createSessionStorage: () =>
       ({
         listSessions: () => [],
+        listSessionSummaries: () => [],
         close() {},
       }) as never,
     createSessionMemoryStorage: () => ({ close() {} }) as never,
@@ -219,6 +247,7 @@ test("PersistentStoreLifecycleService は DB を再生成して再初期化す�
     createSessionStorage: () =>
       ({
         listSessions: () => [],
+        listSessionSummaries: () => [],
         close() {},
       }) as never,
     createSessionMemoryStorage: () => ({ close() {} }) as never,
@@ -299,6 +328,7 @@ test("PersistentStoreLifecycleService は V2 DB では V1 write-capable storages
         createSessionStorageCallCount += 1;
         return {
           listSessions: () => [],
+          listSessionSummaries: () => [],
           close() {},
         } as never;
       },

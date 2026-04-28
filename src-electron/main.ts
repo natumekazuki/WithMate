@@ -100,6 +100,7 @@ import { MainSessionCommandFacade } from "./main-session-command-facade.js";
 import { MainSessionPersistenceFacade } from "./main-session-persistence-facade.js";
 import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
+import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
 import {
   type CharacterReflectionTriggerReason,
 } from "./character-reflection.js";
@@ -587,6 +588,10 @@ function listSessions(): Session[] {
 
 function listSessionSummaries(): SessionSummary[] {
   return requireMainQueryService().listSessionSummaries();
+}
+
+function listFullStoredSessions(): Session[] {
+  return hydrateSessionsFromSummaries(requireSessionStorage());
 }
 
 function isRunningSession(session: Session): boolean {
@@ -1292,7 +1297,7 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       hasInFlightSessionRuns,
       isSessionRunInFlight,
       isRunningSession,
-      listSessions,
+      listSessions: listFullStoredSessions,
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       updateAppSettings: (settings) => requireAppSettingsStorage().updateSettings(settings),
       getModelCatalog,

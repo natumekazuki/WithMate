@@ -18,6 +18,7 @@ import { ProjectMemoryStorage } from "./project-memory-storage.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
 import { SessionStorage } from "./session-storage.js";
 import { SessionStorageV2Read } from "./session-storage-v2-read.js";
+import { sessionSummariesToSessions } from "./session-summary-adapter.js";
 import { truncateAppDatabaseWal } from "./sqlite-connection.js";
 
 type ClosableStore = {
@@ -100,8 +101,8 @@ export class PersistentStoreLifecycleService {
       ? new AuditLogStorageV2Read(dbPath)
       : this.deps.createAuditLogStorage(dbPath);
     const appSettingsStorage = this.deps.createAppSettingsStorage(dbPath);
-    const loadedSessions = sessionStorage.listSessions();
-    const sessions = loadedSessions.length === 0 ? [] : loadedSessions;
+    const loadedSessionSummaries = sessionStorage.listSessionSummaries();
+    const sessions = loadedSessionSummaries.length === 0 ? [] : sessionSummariesToSessions(loadedSessionSummaries);
 
     return {
       modelCatalogStorage,

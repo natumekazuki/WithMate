@@ -176,6 +176,16 @@
   - `npm run build:electron`
   - `npm run build:renderer`
   - `git diff --check`
+- サブエージェントで session 一覧 summary-first の残スコープを調査し、V2 は対応済みだが V1 fallback と起動復元で full `listSessions()` が残っていることを確認した。
+- `PersistentStoreLifecycleService.initialize()` は `listSessionSummaries()` から in-memory 用 session shape を作り、起動時に V1 `messages_json` / `stream_json` を読まないようにした。
+- `MainSessionPersistenceFacade.recoverInterruptedSessions()` は running summary だけ `getSession(id)` で詳細 hydrate し、interrupted message を既存履歴へ追加してから保存するようにした。
+- `SessionPersistenceService` は upsert / delete / replace 後に storage の full `listSessions()` で全件詳細を読み直さず、現在の in-memory list を局所更新または normalized input で更新するようにした。
+- settings / model catalog の一括保存経路は data loss を避けるため、`listSessionSummaries()` + `getSession(id)` で full detail hydrate した session を入力にする専用 helper へ分離した。
+- quality review で、summary-derived session を settings / model catalog import に渡すと V1/V2 とも履歴を空で上書きし得る P0 指摘を受け、full detail hydrate と回帰テストを反映済み。最終再レビューで checkpoint 5 完了扱いの判断。
+- session summary-first slice 追加後の検証:
+  - `npx tsx --test scripts/tests/session-summary-adapter.test.ts scripts/tests/persistent-store-lifecycle-service.test.ts scripts/tests/main-session-persistence-facade.test.ts scripts/tests/session-persistence-service.test.ts scripts/tests/session-storage.test.ts scripts/tests/session-storage-v2-read.test.ts scripts/tests/settings-catalog-service.test.ts`
+  - `npm run build:electron`
+  - `git diff --check`
 
 ## Commit tracking
 

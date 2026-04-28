@@ -47,7 +47,7 @@
 2. [x] MemoryGeneration / 独り言 / Memory prompt 注入の削除・縮退方針を確認する。
 3. [x] 確定方針に従い `Session Memory` / `Project Memory` の prompt 注入を削除または縮退する。
 4. [x] 確定方針に従い MemoryGeneration / 独り言の UI / IPC / background 実行経路を整理する。
-5. [ ] session 一覧を summary-first に寄せ、履歴本体の不要読込を減らす。
+5. [x] session 一覧を summary-first に寄せ、履歴本体の不要読込を減らす。
 6. [ ] audit log 一覧をページング + 詳細遅延取得へ分割する。
 7. [x] Memory Management の snapshot 一括取得を分割 API に置き換える。
 8. [x] MemoryGeneration / 独り言削除に関する関連設計書を同期する。

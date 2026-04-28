@@ -31,6 +31,9 @@
 - Memory Management page API は storage query 側で search / filter / sort / `LIMIT` / `OFFSET` / count を処理し、通常の `getPage()` 経路では `getSnapshot()` を通らない。
 - storage query の検索は `instr(lower(...), ?)` と `json_each(...)` の literal search に統一し、`%` / `_` を wildcard として扱わない。
 - 既存互換用の `getMemoryManagementSnapshot()` は残している。
+- session 起動時の初期 state は `listSessionSummaries()` から作り、V1 fallback でも `messages_json` / `stream_json` を初期一覧ロードで読まない。
+- running session 復旧時だけ対象 session を `getSession(id)` で詳細 hydrate し、既存 messages に interrupted message を追加して保存する。
+- settings / model catalog の一括保存経路は、summary-derived empty messages を保存しないように `listSessionSummaries()` + `getSession(id)` で full detail hydrate した session を使う。
 
 ## 検証結果
 
@@ -82,6 +85,10 @@
 - storage-level Memory Management page query 追加後の `npm run build:renderer`: pass
 - storage-level Memory Management page query 追加後の `git diff --check`: pass。LF / CRLF 警告のみ。
 - quality review: filter domain 保持、同一 `updatedAt` の tie-break、JSON 配列検索、`LIKE` wildcard parity の same-plan 指摘は反映済み。最終再レビューで current slice blocker なし。
+- session summary-first slice 追加後の `npx tsx --test scripts/tests/session-summary-adapter.test.ts scripts/tests/persistent-store-lifecycle-service.test.ts scripts/tests/main-session-persistence-facade.test.ts scripts/tests/session-persistence-service.test.ts scripts/tests/session-storage.test.ts scripts/tests/session-storage-v2-read.test.ts scripts/tests/settings-catalog-service.test.ts`: pass
+- session summary-first slice 追加後の `npm run build:electron`: pass
+- session summary-first slice 追加後の `git diff --check`: pass。LF / CRLF 警告のみ。
+- quality review: settings / model catalog 経路の summary-derived empty messages 保存リスクは反映済み。最終再レビューで checkpoint 5 完了扱い、blocker なし。
 
 ## 残タスク
 

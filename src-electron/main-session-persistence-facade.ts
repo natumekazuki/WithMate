@@ -2,6 +2,7 @@ import { currentTimestampLabel } from "../src/time-state.js";
 import type { Session } from "../src/session-state.js";
 import type { SessionPersistenceService } from "./session-persistence-service.js";
 import type { SessionStorageRead } from "./persistent-store-lifecycle-service.js";
+import { sessionSummariesToSessions } from "./session-summary-adapter.js";
 
 type ReplaceAllSessionsOptions = {
   broadcast?: boolean;
@@ -60,10 +61,16 @@ export class MainSessionPersistenceFacade {
       return;
     }
 
+    const storage = this.deps.getSessionStorage();
     for (const session of runningSessions) {
-      this.upsertSession(buildInterruptedSession(session));
+      const hydratedSession = storage.getSession(session.id);
+      if (!hydratedSession) {
+        continue;
+      }
+
+      this.upsertSession(buildInterruptedSession(hydratedSession));
     }
 
-    this.deps.setSessions(this.deps.getSessionStorage().listSessions());
+    this.deps.setSessions(sessionSummariesToSessions(storage.listSessionSummaries()));
   }
 }
