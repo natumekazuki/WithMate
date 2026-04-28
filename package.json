@@ -18,6 +18,7 @@
     "dist:mac": "npm run icon:generate && npm run stage:provider-binaries && npm run build && electron-builder --mac dmg",
     "dist:dir": "npm run icon:generate && npm run stage:provider-binaries && npm run build && electron-builder --dir",
     "preview": "vite preview",
+    "benchmark:data-loading": "tsx scripts/benchmark-data-loading.ts",
     "test": "tsx --test scripts/tests/*.test.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "validate:snapshot-ignore": "tsx scripts/validate-snapshot-ignore.ts"

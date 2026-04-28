@@ -215,6 +215,12 @@ V2 DB では legacy memory table を作らないため、memory 系 storage は 
   - Memory Management 初回表示時間
 - 既存の JSON migration / normalize の互換性（旧DB読み込み）
 
+### 4-3. 計測用データの準備
+
+- `npm run benchmark:data-loading -- --profile medium` で synthetic V2 DB を生成し、session summary/detail と audit summary/detail の read path を計測できる。
+- 検証用 DB を残す場合は `--out tmp/data-loading-benchmark/withmate-v2-medium.db --overwrite` を指定する。
+- `tmp/` は git 管理外のため、生成済み benchmark DB は成果物には含めない。
+
 ---
 
 ## 5. 優先回収チケット候補
