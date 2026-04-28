@@ -185,3 +185,5 @@
   - 対応チェックポイント: V2 runtime session / audit write path、audit log summary page、audit log detail lazy load API。
 - `27fd437` `feat(memory): Memory 管理を page API 経由にする`
   - 対応チェックポイント: Memory Management page API first slice、Main 側 search / filter / sort、Renderer の追加読み込み、review 指摘対応。
+- `8a1e871` `feat(memory): Memory 管理を storage page query に寄せる`
+  - 対応チェックポイント: Memory Management storage-level page query、DB query 側 search / filter / sort / `LIMIT` / `OFFSET` / count、literal search parity、review 指摘対応。
