@@ -1,10 +1,12 @@
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 
 import {
+  type AuditLogDetail,
   type AuditLogEntry,
   type AuditLogicalPrompt,
   type AuditLogOperation,
   type AuditLogPhase,
+  type AuditLogSummary,
   type AuditLogUsage,
   type AuditTransportPayload,
 } from "../src/app-state.js";
@@ -160,9 +162,47 @@ function rowToAuditLogEntry(row: AuditLogRow): AuditLogEntry {
   };
 }
 
+function rowToAuditLogSummary(row: AuditLogRow): AuditLogSummary {
+  const entry = rowToAuditLogEntry(row);
+  return {
+    id: entry.id,
+    sessionId: entry.sessionId,
+    createdAt: entry.createdAt,
+    phase: entry.phase,
+    provider: entry.provider,
+    model: entry.model,
+    reasoningEffort: entry.reasoningEffort,
+    approvalMode: entry.approvalMode,
+    threadId: entry.threadId,
+    assistantTextPreview: entry.assistantText.slice(0, 500),
+    operations: entry.operations.map((operation) => ({
+      type: operation.type,
+      summary: operation.summary,
+    })),
+    usage: entry.usage,
+    errorMessage: entry.errorMessage,
+    detailAvailable: true,
+  };
+}
+
+function entryToAuditLogDetail(entry: AuditLogEntry): AuditLogDetail {
+  return {
+    id: entry.id,
+    sessionId: entry.sessionId,
+    logicalPrompt: entry.logicalPrompt,
+    transportPayload: entry.transportPayload,
+    assistantText: entry.assistantText,
+    operations: entry.operations,
+    rawItemsJson: entry.rawItemsJson,
+    usage: entry.usage,
+    errorMessage: entry.errorMessage,
+  };
+}
+
 export class AuditLogStorage {
   private readonly db: DatabaseSync;
   private readonly listStatement: StatementSync;
+  private readonly getStatement: StatementSync;
   private readonly insertStatement: StatementSync;
   private readonly updateStatement: StatementSync;
 
@@ -192,6 +232,28 @@ export class AuditLogStorage {
       FROM audit_logs
       WHERE session_id = ?
       ORDER BY id DESC
+    `);
+
+    this.getStatement = this.db.prepare(`
+      SELECT
+        id,
+        session_id,
+        created_at,
+        phase,
+        provider,
+        model,
+        reasoning_effort,
+        approval_mode,
+        thread_id,
+        logical_prompt_json,
+        transport_payload_json,
+        assistant_text,
+        operations_json,
+        raw_items_json,
+        usage_json,
+        error_message
+      FROM audit_logs
+      WHERE session_id = ? AND id = ?
     `);
 
     this.insertStatement = this.db.prepare(`
@@ -294,6 +356,16 @@ export class AuditLogStorage {
   listSessionAuditLogs(sessionId: string): AuditLogEntry[] {
     const rows = this.listStatement.all(sessionId) as AuditLogRow[];
     return rows.map(rowToAuditLogEntry);
+  }
+
+  listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[] {
+    const rows = this.listStatement.all(sessionId) as AuditLogRow[];
+    return rows.map(rowToAuditLogSummary);
+  }
+
+  getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null {
+    const row = this.getStatement.get(sessionId, auditLogId) as AuditLogRow | undefined;
+    return row ? entryToAuditLogDetail(rowToAuditLogEntry(row)) : null;
   }
 
   createAuditLog(input: CreateAuditLogInput): AuditLogEntry {

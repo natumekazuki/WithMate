@@ -24,8 +24,10 @@ export {
 } from "./runtime-state.js";
 export type {
   AuditLogEntry,
+  AuditLogDetail,
   AuditLogOperation,
   AuditLogPhase,
+  AuditLogSummary,
   AuditLogUsage,
   AuditLogicalPrompt,
   AuditTransportField,

@@ -206,28 +206,32 @@ app runtime は V2 migration を暗黙実行しない。
   - V2 DB を優先して開く
 - V1 DB は backup / rollback source として残す
 
-### Runtime Read-path First Slice
+### Runtime Read / Write Path
 
-最初の runtime 対応 slice では、既存 IPC / preload / renderer contract を変更しない。
+runtime 対応 slice では、既存 IPC / preload / renderer contract を変更しない。
 
 - `withmate-v2.db` が存在する場合だけ V2 read-path を使う
 - app 起動時に V1 -> V2 migration script は呼ばない
-- V2 runtime write-path はまだ切り替えない
+- V2 runtime write-path は session / audit log の既存 write-capable method を V2 split schema へ保存する
 - V1-only install は既存 V1 storage class で読み書きする
 
-V2 read-path は既存 DTO shape を復元する互換 layer として扱う。
+V2 runtime path は既存 DTO shape を復元・保存する互換 layer として扱う。
 
 - runtime の DB 判定は `withmate-v2.db` の filename で行う
 - runtime は `withmate-v2.db` を選択する前に、V2 の必須 table が存在することを検証する。空または未完成の V2 DB は V1 を shadow しない。
 - V2 DB では `PersistentStoreLifecycleService` が V1 `SessionStorage` / `AuditLogStorage` を生成せず、`SessionStorageV2Read` / `AuditLogStorageV2Read` を使う
-- V2 DB では session / audit log の write-capable method を明示エラーにし、V2 schema へ V1 writer が legacy column を作らないようにする
+- V2 DB では session / audit log の write-capable method が V2 schema へ書く。V1 writer は V2 DB へ接続しない。
 - V2 DB では legacy memory storage を生成しない。`SessionMemoryStorageV2Read` / `ProjectMemoryStorageV2Read` / `CharacterMemoryStorageV2Read` は read-only/no-op adapter として振る舞い、V2 DB に memory legacy table を作成しない。
 - session summary は V2 `sessions` だけから復元し、`session_messages` / `session_message_artifacts` を読まない
 - session detail は V2 `sessions`、`session_messages`、`session_message_artifacts` から `Session` を復元する
 - V2 には `stream_json` がないため、session detail の `stream` は `[]` として復元する
-- audit logs は既存 IPC contract 維持のため、当面は V2 `audit_logs`、`audit_log_details`、`audit_log_operations` から `AuditLogEntry[]` を復元する
+- session write は `sessions` header を upsert し、対象 session の `session_messages` / `session_message_artifacts` を transaction 内で再構築する。`stream` は V2 へ保存しない。
+- audit log modal 初期表示は V2 `audit_logs` と `audit_log_operations` から `AuditLogSummary[]` を復元し、`audit_log_details` は読まない
+- audit log detail は `getSessionAuditLogDetail(sessionId, auditLogId)` で対象 row の `audit_log_details` と `audit_log_operations` から復元する
+- 既存互換用の `listSessionAuditLogs(sessionId)` は V2 `audit_logs`、`audit_log_details`、`audit_log_operations` から `AuditLogEntry[]` を復元する
 - `assistantText` は `audit_log_details.assistant_text` の全文を使い、`audit_logs.assistant_text_preview` は一覧用 preview として保持する
 - V2 read adapter は missing detail row を empty detail として扱い、既存 UI の表示を壊さない
+- audit log write は `audit_logs` summary、`audit_log_details` detail payload、`audit_log_operations` operation rows を transaction 内で保存・置換する。`assistant_text_preview` は 500 文字上限とする。
 
 ## Related
 

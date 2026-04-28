@@ -7,7 +7,9 @@ import { app, BrowserWindow, crashReporter, dialog, ipcMain, screen, shell } fro
 
 import type { RendererLogInput } from "../src/app-log-types.js";
 import {
+  type AuditLogDetail,
   type AuditLogEntry,
+  type AuditLogSummary,
   currentTimestampLabel,
   type DiscoveredCustomAgent,
   type DiscoveredSkill,
@@ -783,6 +785,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               sessionQuery: {
                 listSessionSummaries: () => listSessionSummaries(),
                 listSessionAuditLogs: (sessionId) => listSessionAuditLogs(sessionId),
+                listSessionAuditLogSummaries: (sessionId) => listSessionAuditLogSummaries(sessionId),
+                getSessionAuditLogDetail: (sessionId, auditLogId) => getSessionAuditLogDetail(sessionId, auditLogId),
                 listSessionSkills: async (sessionId) => listSessionSkills(sessionId),
                 listSessionCustomAgents: async (sessionId) => listSessionCustomAgents(sessionId),
                 listOpenSessionWindowIds: () => listOpenSessionWindowIds(),
@@ -860,6 +864,8 @@ function requireMainQueryService(): MainQueryService {
       getSession: (sessionId) => requireSessionStorage().getSession(sessionId),
       getCharacters: () => characters,
       getAuditLogs: (sessionId) => requireAuditLogStorage().listSessionAuditLogs(sessionId),
+      getAuditLogSummaries: (sessionId) => requireAuditLogStorage().listSessionAuditLogSummaries(sessionId),
+      getAuditLogDetail: (sessionId, auditLogId) => requireAuditLogStorage().getSessionAuditLogDetail(sessionId, auditLogId),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       discoverSessionSkills,
       discoverSessionCustomAgents,
@@ -1588,6 +1594,14 @@ function listCharacters(): CharacterProfile[] {
 
 function listSessionAuditLogs(sessionId: string): AuditLogEntry[] {
   return requireMainQueryService().listSessionAuditLogs(sessionId);
+}
+
+function listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[] {
+  return requireMainQueryService().listSessionAuditLogSummaries(sessionId);
+}
+
+function getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null {
+  return requireMainQueryService().getSessionAuditLogDetail(sessionId, auditLogId);
 }
 
 async function listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]> {

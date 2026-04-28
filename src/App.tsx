@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 
 import {
-  type AuditLogEntry,
+  type AuditLogDetail,
+  type AuditLogSummary,
   type ComposerAttachment,
   type ComposerPreview,
   currentTimestampLabel,
@@ -99,7 +100,13 @@ type RetryBannerState = {
 
 type SessionOwnedAuditLogs = {
   ownerSessionId: string | null;
-  entries: AuditLogEntry[];
+  entries: AuditLogSummary[];
+};
+
+type AuditLogDetailLoadState = {
+  detail: AuditLogDetail | null;
+  loading: boolean;
+  errorMessage: string | null;
 };
 
 type SessionOwnedLiveRun = {
@@ -456,7 +463,7 @@ function buildDisplayedMessagesScrollSignature(messages: Message[]): string {
     .join("\u001c");
 }
 
-function isTerminalAuditLogPhase(phase: AuditLogEntry["phase"]): boolean {
+function isTerminalAuditLogPhase(phase: AuditLogSummary["phase"]): boolean {
   return (
     phase === "completed"
     || phase === "failed"
@@ -485,7 +492,7 @@ function displayApprovalValue(value: string): string {
 function buildRetryStopSummary(
   kind: RetryBannerKind,
   liveRun: LiveSessionRunState | null,
-  latestTerminalAuditLog: AuditLogEntry | null,
+  latestTerminalAuditLog: AuditLogSummary | null,
   lastAssistantMessage: Message | null,
 ): string {
   const liveRunSummary = getLastNonEmptyValue((liveRun?.steps ?? []).map((step) => step.summary));
@@ -623,6 +630,8 @@ export default function App() {
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
   const [auditLogsOpen, setAuditLogsOpen] = useState(false);
   const [auditLogsState, setAuditLogsState] = useState<SessionOwnedAuditLogs>({ ownerSessionId: null, entries: [] });
+  const [auditLogDetails, setAuditLogDetails] = useState<Record<number, AuditLogDetailLoadState>>({});
+  const auditLogDetailOwnerRef = useRef<string | null>(null);
   const [liveRunState, setLiveRunState] = useState<SessionOwnedLiveRun>({ ownerSessionId: null, state: null });
   const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] = useState<ProviderOwnedQuotaTelemetry>({
     ownerProviderId: null,
@@ -1314,6 +1323,8 @@ export default function App() {
     if (!withmateApi || !selectedSession) {
       if (active) {
         setAuditLogsState({ ownerSessionId: null, entries: [] });
+        setAuditLogDetails({});
+        auditLogDetailOwnerRef.current = null;
       }
       return () => {
         active = false;
@@ -1325,7 +1336,11 @@ export default function App() {
         ? current
         : { ownerSessionId: selectedSession.id, entries: [] },
     );
-    void withmateApi.listSessionAuditLogs(selectedSession.id).then((nextAuditLogs) => {
+    if (auditLogDetailOwnerRef.current !== selectedSession.id) {
+      setAuditLogDetails({});
+      auditLogDetailOwnerRef.current = selectedSession.id;
+    }
+    void withmateApi.listSessionAuditLogSummaries(selectedSession.id).then((nextAuditLogs) => {
       if (active) {
         setAuditLogsState({ ownerSessionId: selectedSession.id, entries: nextAuditLogs });
       }
@@ -2806,6 +2821,58 @@ export default function App() {
 
     await navigator.clipboard.writeText(selectedCharacterUpdateMemoryExtract.text);
   };
+
+  const handleLoadAuditLogDetail = (entry: AuditLogSummary) => {
+    if (!withmateApi || !selectedSessionId || entry.id < 0 || !entry.detailAvailable) {
+      return;
+    }
+
+    let shouldLoad = false;
+    setAuditLogDetails((current) => {
+      const existing = current[entry.id];
+      if (existing?.detail || existing?.loading) {
+        return current;
+      }
+
+      shouldLoad = true;
+      return {
+        ...current,
+        [entry.id]: {
+          detail: null,
+          loading: true,
+          errorMessage: null,
+        },
+      };
+    });
+
+    if (!shouldLoad) {
+      return;
+    }
+
+    void withmateApi.getSessionAuditLogDetail(selectedSessionId, entry.id).then(
+      (detail) => {
+        setAuditLogDetails((current) => ({
+          ...current,
+          [entry.id]: {
+            detail,
+            loading: false,
+            errorMessage: detail ? null : "audit log detail が見つからなかったよ。",
+          },
+        }));
+      },
+      (error: unknown) => {
+        setAuditLogDetails((current) => ({
+          ...current,
+          [entry.id]: {
+            detail: null,
+            loading: false,
+            errorMessage: error instanceof Error ? error.message : "audit log detail の取得に失敗したよ。",
+          },
+        }));
+      },
+    );
+  };
+
   const sessionWorkbenchStyle = useMemo(
     () =>
       ({
@@ -3085,6 +3152,8 @@ export default function App() {
       <SessionAuditLogModal
         open={auditLogsOpen}
         entries={displayedSessionAuditLogs}
+        details={auditLogDetails}
+        onLoadDetail={handleLoadAuditLogDetail}
         onClose={() => setAuditLogsOpen(false)}
       />
     </div>

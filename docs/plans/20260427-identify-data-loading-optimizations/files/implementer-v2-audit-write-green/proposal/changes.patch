@@ -1,0 +1,327 @@
+diff --git a/src-electron/audit-log-storage-v2-read.ts b/src-electron/audit-log-storage-v2-read.ts
+--- a/src-electron/audit-log-storage-v2-read.ts
++++ b/src-electron/audit-log-storage-v2-read.ts
+@@
+ type AuditLogSummaryRow = {
+   id: number;
+   session_id: string;
+@@
+   usage_json: string | null;
+ };
+ 
+ type AuditLogOperationRow = {
+@@
+   details: string;
+ };
++
++type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
++
++type AuditLogUsageColumns = {
++  input_tokens: number | null;
++  cached_input_tokens: number | null;
++  output_tokens: number | null;
++};
++
++const ASSISTANT_TEXT_PREVIEW_MAX_LENGTH = 500;
+ 
+ const DEFAULT_LOGICAL_PROMPT: AuditLogicalPrompt = {
+   systemText: "",
+   inputText: "",
+   composedText: "",
+ };
++
++const INSERT_AUDIT_LOG_SQL = `
++  INSERT INTO audit_logs (
++    session_id,
++    created_at,
++    phase,
++    provider,
++    model,
++    reasoning_effort,
++    approval_mode,
++    thread_id,
++    assistant_text_preview,
++    operation_count,
++    raw_item_count,
++    input_tokens,
++    cached_input_tokens,
++    output_tokens,
++    has_error,
++    error_message,
++    detail_available
++  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
++`;
++
++const INSERT_AUDIT_LOG_DETAIL_SQL = `
++  INSERT INTO audit_log_details (
++    audit_log_id,
++    logical_prompt_json,
++    transport_payload_json,
++    assistant_text,
++    raw_items_json,
++    usage_json
++  ) VALUES (?, ?, ?, ?, ?, ?)
++`;
++
++const INSERT_AUDIT_LOG_OPERATION_SQL = `
++  INSERT INTO audit_log_operations (
++    audit_log_id,
++    seq,
++    operation_type,
++    summary,
++    details
++  ) VALUES (?, ?, ?, ?, ?)
++`;
++
++const UPDATE_AUDIT_LOG_SQL = `
++  UPDATE audit_logs
++  SET
++    phase = ?,
++    provider = ?,
++    model = ?,
++    reasoning_effort = ?,
++    approval_mode = ?,
++    thread_id = ?,
++    assistant_text_preview = ?,
++    operation_count = ?,
++    raw_item_count = ?,
++    input_tokens = ?,
++    cached_input_tokens = ?,
++    output_tokens = ?,
++    has_error = ?,
++    error_message = ?,
++    detail_available = ?
++  WHERE id = ?
++`;
++
++const DELETE_AUDIT_LOGS_SQL = "DELETE FROM audit_logs";
++const DELETE_AUDIT_LOG_DETAIL_SQL = "DELETE FROM audit_log_details WHERE audit_log_id = ?";
++const DELETE_AUDIT_LOG_OPERATION_SQL = "DELETE FROM audit_log_operations WHERE audit_log_id = ?";
+ 
+ const LIST_SESSION_AUDIT_LOGS_SQL = `
+   SELECT
+@@
+   FROM audit_log_operations AS o
+   INNER JOIN audit_logs AS a
+     ON a.id = o.audit_log_id
+@@
+   ORDER BY o.audit_log_id ASC, o.seq ASC
+ `;
++
++function buildAuditLogEntries(
++  rows: AuditLogSummaryRow[],
++  operationRows: AuditLogOperationRow[],
++): AuditLogEntry[] {
++  const operationMap = new Map<number, AuditLogOperation[]>();
++
++  for (const row of operationRows) {
++    const operations = operationMap.get(row.audit_log_id);
++    const operation = parseAuditLogOperation(row);
++
++    if (operations) {
++      operations.push(operation);
++    } else {
++      operationMap.set(row.audit_log_id, [operation]);
++    }
++  }
++
++  return rows.map((row) => rowToAuditLogEntry(row, operationMap.get(row.id) ?? []));
++}
++
++function buildAssistantTextPreview(value: string): string {
++  return value.length > ASSISTANT_TEXT_PREVIEW_MAX_LENGTH ? value.slice(0, ASSISTANT_TEXT_PREVIEW_MAX_LENGTH) : value;
++}
++
++function calculateRawItemCount(rawItemsJson: string): number {
++  try {
++    const parsed = JSON.parse(rawItemsJson);
++    return Array.isArray(parsed) ? parsed.length : 0;
++  } catch {
++    return 0;
++  }
++}
++
++function toAuditLogUsageColumns(usage: AuditLogUsage | null): AuditLogUsageColumns {
++  return {
++    input_tokens: usage === null ? null : usage.inputTokens,
++    cached_input_tokens: usage === null ? null : usage.cachedInputTokens,
++    output_tokens: usage === null ? null : usage.outputTokens,
++  };
++}
+@@
+ function rowToAuditLogEntry(row: AuditLogSummaryRow, operations: AuditLogOperation[]): AuditLogEntry {
+@@
+ }
++
+ export class AuditLogStorageV2Read {
+   private readonly dbPath: string;
+@@
+   listSessionAuditLogs(sessionId: string): AuditLogEntry[] {
+     return this.withDb((db) => {
+       const rows = db.prepare(LIST_SESSION_AUDIT_LOGS_SQL).all(sessionId) as AuditLogSummaryRow[];
+       const operationRows = db.prepare(LIST_SESSION_AUDIT_LOG_OPERATIONS_SQL).all(sessionId) as AuditLogOperationRow[];
+-
+-      const operationMap = new Map<number, AuditLogOperation[]>();
+-
+-      for (const row of operationRows) {
+-        const operations = operationMap.get(row.audit_log_id);
+-        const operation = parseAuditLogOperation(row);
+-
+-        if (operations) {
+-          operations.push(operation);
+-        } else {
+-          operationMap.set(row.audit_log_id, [operation]);
+-        }
+-      }
+-
+-      return rows.map((row) => rowToAuditLogEntry(row, operationMap.get(row.id) ?? []));
++
++      return buildAuditLogEntries(rows, operationRows);
+     });
+   }
++
++  createAuditLog(input: CreateAuditLogInput): AuditLogEntry {
++    const usageColumns = toAuditLogUsageColumns(input.usage);
++
++    const createdId = this.withDb((db) => {
++      const insertAuditLogStatement = db.prepare(INSERT_AUDIT_LOG_SQL);
++      const insertDetailStatement = db.prepare(INSERT_AUDIT_LOG_DETAIL_SQL);
++      const insertOperationStatement = db.prepare(INSERT_AUDIT_LOG_OPERATION_SQL);
++
++      db.exec("BEGIN IMMEDIATE");
++      try {
++        const result = insertAuditLogStatement.run(
++          input.sessionId,
++          input.createdAt,
++          input.phase,
++          input.provider,
++          input.model,
++          input.reasoningEffort,
++          input.approvalMode,
++          input.threadId,
++          buildAssistantTextPreview(input.assistantText),
++          input.operations.length,
++          calculateRawItemCount(input.rawItemsJson),
++          usageColumns.input_tokens,
++          usageColumns.cached_input_tokens,
++          usageColumns.output_tokens,
++          input.errorMessage ? 1 : 0,
++          input.errorMessage,
++          1,
++        );
++
++        const auditLogId = Number(result.lastInsertRowid);
++
++        insertDetailStatement.run(
++          auditLogId,
++          JSON.stringify(input.logicalPrompt),
++          input.transportPayload ? JSON.stringify(input.transportPayload) : "",
++          input.assistantText,
++          input.rawItemsJson,
++          input.usage ? JSON.stringify(input.usage) : "",
++        );
++
++        for (let index = 0; index < input.operations.length; index += 1) {
++          const operation = input.operations[index];
++          insertOperationStatement.run(auditLogId, index, operation.type, operation.summary, operation.details ?? "");
++        }
++
++        db.exec("COMMIT");
++        return auditLogId;
++      } catch (error) {
++        db.exec("ROLLBACK");
++        throw error;
++      }
++    });
++
++    const entries = this.listSessionAuditLogs(input.sessionId);
++    const created = entries.find((entry) => entry.id === createdId);
++    if (!created) {
++      throw new Error(`audit log ${createdId} の再取得に失敗したよ。`);
++    }
++
++    return created;
++  }
++
++  updateAuditLog(id: number, input: CreateAuditLogInput): AuditLogEntry {
++    const usageColumns = toAuditLogUsageColumns(input.usage);
++    const operationCount = input.operations.length;
++    const rawItemCount = calculateRawItemCount(input.rawItemsJson);
++
++    this.withDb((db) => {
++      const updateAuditLogStatement = db.prepare(UPDATE_AUDIT_LOG_SQL);
++      const deleteDetailStatement = db.prepare(DELETE_AUDIT_LOG_DETAIL_SQL);
++      const deleteOperationStatement = db.prepare(DELETE_AUDIT_LOG_OPERATION_SQL);
++      const insertDetailStatement = db.prepare(INSERT_AUDIT_LOG_DETAIL_SQL);
++      const insertOperationStatement = db.prepare(INSERT_AUDIT_LOG_OPERATION_SQL);
++
++      db.exec("BEGIN IMMEDIATE");
++      try {
++        const updateResult = updateAuditLogStatement.run(
++          input.phase,
++          input.provider,
++          input.model,
++          input.reasoningEffort,
++          input.approvalMode,
++          input.threadId,
++          buildAssistantTextPreview(input.assistantText),
++          operationCount,
++          rawItemCount,
++          usageColumns.input_tokens,
++          usageColumns.cached_input_tokens,
++          usageColumns.output_tokens,
++          input.errorMessage ? 1 : 0,
++          input.errorMessage,
++          1,
++          id,
++        );
++
++        if (updateResult.changes === 0) {
++          throw new Error(`audit log ${id} の更新に失敗したよ。`);
++        }
++
++        deleteDetailStatement.run(id);
++        deleteOperationStatement.run(id);
++
++        insertDetailStatement.run(
++          id,
++          JSON.stringify(input.logicalPrompt),
++          input.transportPayload ? JSON.stringify(input.transportPayload) : "",
++          input.assistantText,
++          input.rawItemsJson,
++          input.usage ? JSON.stringify(input.usage) : "",
++        );
++
++        for (let index = 0; index < input.operations.length; index += 1) {
++          const operation = input.operations[index];
++          insertOperationStatement.run(id, index, operation.type, operation.summary, operation.details ?? "");
++        }
++
++        db.exec("COMMIT");
++      } catch (error) {
++        db.exec("ROLLBACK");
++        throw error;
++      }
++    });
++
++    const entries = this.listSessionAuditLogs(input.sessionId);
++    const updated = entries.find((entry) => entry.id === id);
++    if (!updated) {
++      throw new Error(`audit log ${id} の再取得に失敗したよ。`);
++    }
++
++    return updated;
++  }
++
++  clearAuditLogs(): void {
++    this.withDb((db) => {
++      db.prepare(DELETE_AUDIT_LOGS_SQL).run();
++    });
++  }
+ 
+   close(): void {
+     return;
+   }
+ }
+
+

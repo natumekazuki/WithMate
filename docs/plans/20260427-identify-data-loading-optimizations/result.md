@@ -19,8 +19,13 @@
 - write mode は session / audit log の header row と detail payload を分けて読み、重い payload 全件を同時に保持しない。
 - broken `usage_json`、object ではない `logical_prompt_json` / `transport_payload_json` は V2 detail payload に持ち込まず report に記録し、message `accent` と bounded `assistant_text_preview` を migration test で固定済み。
 - V2 DB runtime read path の first slice は実装済み。valid な `withmate-v2.db` がある場合だけ V2 を選び、session / audit は V2 read adapter で読み、legacy memory domain は no-op / read-only adapter で扱う。
-- V2 runtime では session / audit の write-capable method を明示的に unsupported として guard している。V2 write path は次スコープで実装する。
-- audit log は既存 IPC contract 維持のため detail を復元して返している。summary page / detail lazy load への API 分割は次スコープで扱う。
+- V2 DB runtime write path は実装済み。session は V2 `sessions` header と `session_messages` / `session_message_artifacts` を保存し、audit log は V2 `audit_logs` summary、`audit_log_details`、`audit_log_operations` を保存・置換する。
+- `replaceSessions` は保持対象 session の audit logs を残し、除外 session の audit logs だけを cascade delete する。
+- audit write path では `sessions.audit_log_count` を create / clear と同じ transaction 内で更新する。
+- `updateAuditLog` は mismatched sessionId を拒否し、summary/detail/operations を部分更新しない。
+- audit log modal 初期表示は `AuditLogSummary[]` を取得し、V2 では `audit_logs` summary と `audit_log_operations` の type / summary だけを読む。
+- audit log detail は `getSessionAuditLogDetail(sessionId, auditLogId)` で detail section 展開時だけ読み、`audit_log_details` と `audit_log_operations.details` は初期表示では読まない。
+- 既存互換用の `listSessionAuditLogs(sessionId)` は維持している。
 - Memory Management の data loading optimization slice は未着手。
 
 ## 検証結果
@@ -50,11 +55,18 @@
 - V2 runtime read path 追加後の `npx tsx --test scripts/tests/session-storage-v2-read.test.ts scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/session-storage.test.ts scripts/tests/audit-log-storage.test.ts`: pass
 - V2 runtime read path 追加後の `npx tsx --test scripts/tests/app-database-path.test.ts scripts/tests/persistent-store-lifecycle-service.test.ts scripts/tests/session-storage-v2-read.test.ts scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/session-storage.test.ts scripts/tests/audit-log-storage.test.ts`: pass
 - V2 runtime read path 追加後の `npm run build:electron`: pass
+- V2 runtime write path 追加後の `npx tsx --test scripts/tests/session-storage-v2-read.test.ts scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/persistent-store-lifecycle-service.test.ts scripts/tests/session-storage.test.ts scripts/tests/audit-log-storage.test.ts scripts/tests/audit-log-service.test.ts scripts/tests/session-runtime-service.test.ts`: pass
+- V2 runtime write path 追加後の `npm run build:electron`: pass
+- V2 runtime write path 追加後の `git diff --check`: pass。LF / CRLF 警告のみ。
+- quality review: 初回レビューの same-plan 指摘は反映済み。再レビューで重大な指摘なし。broader `npm run typecheck` は既存の広範な型エラーが残るが、対象差分由来の `SQLInputValue` 指摘は修正済み。
+- audit log summary / detail lazy load 追加後の `npx tsx --test scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/audit-log-storage.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts scripts/tests/audit-log-refresh.test.ts scripts/tests/session-ui-projection.test.ts scripts/tests/session-window-bridge.test.ts scripts/tests/session-runtime-service.test.ts`: pass
+- audit log summary / detail lazy load 追加後の `npm run build:electron`: pass
+- audit log summary / detail lazy load 追加後の `npm run build:renderer`: pass
+- audit log summary / detail lazy load 追加後の `git diff --check`: pass。LF / CRLF 警告のみ。
+- quality review: summary API が `audit_log_operations.details` を読んでいた点と、同一 session refresh で detail cache を消していた点は same-plan で反映済み。
 
 ## 残タスク
 
-- V2 write path を実装し、session / audit の新規書き込みを V2 schema へ対応させる。
-- audit log 一覧を summary page / detail lazy load API へ分割する。
 - Memory Management の snapshot 一括取得を分割 API に置き換える。
 - 必要に応じて per-call DB open / close を connection lifecycle 管理へ寄せる。
 

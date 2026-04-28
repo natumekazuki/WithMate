@@ -57,8 +57,8 @@
 12. [x] V1→V2 migration dry-run と fixture test を追加する。
 13. [x] V1→V2 migration write mode と安全な overwrite 復旧を実装する。
 14. [x] V2 DB runtime read path の first slice として、V2 DB 選択、session / audit read adapter、legacy memory no-op adapter、V2 write guard を実装する。
-15. [ ] V2 DB runtime write path を実装し、session / audit の新規書き込みを V2 schema へ対応させる。
-16. [ ] audit log 一覧 API を summary page / detail lazy load へ分割する。
+15. [x] V2 DB runtime write path を実装し、session / audit の新規書き込みを V2 schema へ対応させる。
+16. [x] audit log 一覧 API を summary page / detail lazy load へ分割する。
 
 ## Design Gate
 

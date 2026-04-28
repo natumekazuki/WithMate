@@ -79,6 +79,19 @@ export type AuditLogEntry = {
   errorMessage: string;
 };
 
+export type AuditLogSummary = Omit<
+  AuditLogEntry,
+  "logicalPrompt" | "transportPayload" | "assistantText" | "rawItemsJson"
+> & {
+  assistantTextPreview: string;
+  detailAvailable: boolean;
+};
+
+export type AuditLogDetail = Pick<
+  AuditLogEntry,
+  "id" | "sessionId" | "logicalPrompt" | "transportPayload" | "assistantText" | "operations" | "rawItemsJson" | "usage" | "errorMessage"
+>;
+
 export type LiveRunStepStatus = "in_progress" | "completed" | "failed" | "canceled" | "pending" | (string & {});
 
 export type LiveRunStep = {

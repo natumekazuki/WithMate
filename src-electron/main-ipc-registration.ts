@@ -2,7 +2,9 @@ import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
 import type {
+  AuditLogDetail,
   AuditLogEntry,
+  AuditLogSummary,
   CharacterProfile,
   LiveApprovalDecision,
   LiveElicitationResponse,
@@ -42,18 +44,20 @@ import {
   WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
+  WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
-    WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
-    WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
-    WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
-    WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
-    WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
-    WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
+  WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
+  WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
+  WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
+  WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
+  WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
@@ -104,6 +108,8 @@ export type MainIpcRegistrationDeps = {
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   listSessionSummaries(): SessionSummary[];
   listSessionAuditLogs(sessionId: string): AuditLogEntry[];
+  listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[];
+  getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listOpenSessionWindowIds(): string[];
@@ -202,6 +208,8 @@ type MainIpcSessionQueryDeps = Pick<
   MainIpcRegistrationDeps,
   | "listSessionSummaries"
   | "listSessionAuditLogs"
+  | "listSessionAuditLogSummaries"
+  | "getSessionAuditLogDetail"
   | "listSessionSkills"
   | "listSessionCustomAgents"
   | "listOpenSessionWindowIds"
@@ -324,6 +332,12 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
 function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSessionQueryDeps): void {
   ipcMain.handle(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL, () => deps.listSessionSummaries());
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => deps.listSessionAuditLogs(sessionId));
+  ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL, (_event, sessionId: string) =>
+    deps.listSessionAuditLogSummaries(sessionId),
+  );
+  ipcMain.handle(WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL, (_event, sessionId: string, auditLogId: number) =>
+    deps.getSessionAuditLogDetail(sessionId, auditLogId),
+  );
   ipcMain.handle(WITHMATE_LIST_SESSION_SKILLS_CHANNEL, async (_event, sessionId: string) => deps.listSessionSkills(sessionId));
   ipcMain.handle(WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL, async (_event, sessionId: string) =>
     deps.listSessionCustomAgents(sessionId),

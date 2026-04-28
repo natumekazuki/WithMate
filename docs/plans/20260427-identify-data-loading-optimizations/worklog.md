@@ -104,6 +104,40 @@
   - `npx tsx --test scripts/tests/session-storage-v2-read.test.ts scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/session-storage.test.ts scripts/tests/audit-log-storage.test.ts`
   - `npx tsx --test scripts/tests/app-database-path.test.ts scripts/tests/persistent-store-lifecycle-service.test.ts scripts/tests/session-storage-v2-read.test.ts scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/session-storage.test.ts scripts/tests/audit-log-storage.test.ts`
   - `npm run build:electron`
+- サブエージェントで V2 DB runtime write path の session / audit slice を red / green / review で実施した。
+- `SessionStorageV2Read` に `upsertSession`、`replaceSessions`、`deleteSession`、`clearSessions` を追加し、V2 `sessions` header と `session_messages` / `session_message_artifacts` を transaction 内で保存するようにした。
+- `replaceSessions` は保持対象 session の audit logs を残し、除外 session だけを削除するようにした。
+- `AuditLogStorageV2Read` に `createAuditLog`、`updateAuditLog`、`clearAuditLogs` を追加し、V2 `audit_logs` summary、`audit_log_details`、`audit_log_operations` を transaction 内で保存・置換するようにした。
+- audit write path では `sessions.audit_log_count` を create / clear と同じ transaction 内で更新するようにした。
+- `updateAuditLog` は対象 audit log の session id と input session id が一致しない場合、summary/detail/operations を変更せず rollback するようにした。
+- quality review で、`replaceSessions` の audit log 誤削除、`audit_log_count` 未更新、`updateAuditLog` の session id mismatch 部分更新、summary columns 直接検証不足、`summary_text` docs drift の same-plan 指摘を受けた。
+- same-plan 指摘に対し、保持対象 audit log の維持、除外 session の cascade delete、audit summary columns、`audit_log_count`、mismatched sessionId rollback をテストで固定した。
+- `docs/design/database-schema.md`、`docs/design/database-v2-migration.md`、`docs/design/data-loading-performance-audit.md` を V2 runtime write path に同期した。
+- 再レビューで、テスト helper の `unknown[]` が broader typecheck で `SQLInputValue[]` と合わない指摘を受け、対象 helper の型を修正した。
+- V2 runtime write path 追加後の検証:
+  - `npx tsx --test scripts/tests/session-storage-v2-read.test.ts scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/persistent-store-lifecycle-service.test.ts scripts/tests/session-storage.test.ts scripts/tests/audit-log-storage.test.ts scripts/tests/audit-log-service.test.ts scripts/tests/session-runtime-service.test.ts`
+  - `npm run build:electron`
+  - `git diff --check`
+- サブエージェントで audit log summary page / detail lazy load API の現行 flow を調査した。
+- audit log 初期表示は `listSessionAuditLogSummaries(sessionId)` を使い、V2 では `audit_logs` summary と `audit_log_operations` だけを読むようにした。
+- detail section 展開時だけ `getSessionAuditLogDetail(sessionId, auditLogId)` を呼び、対象 audit log の `audit_log_details` を遅延取得するようにした。
+- 既存互換用の `listSessionAuditLogs(sessionId)` は残し、V1 storage でも summary / detail API を利用できる fallback を追加した。
+- renderer では `AuditLogSummary` と detail cache を分け、Audit Log modal の Logical Prompt / Transport Payload / Response / Raw Items 展開時だけ detail を読み込むようにした。
+- `src/withmate-ipc-channels.ts`、`src/withmate-window-api.ts`、`src-electron/preload-api.ts`、`src-electron/main-ipc-registration.ts`、`src-electron/main-ipc-deps.ts`、`src-electron/main-query-service.ts` に summary / detail API を追加した。
+- `docs/design/database-schema.md`、`docs/design/database-v2-migration.md`、`docs/design/data-loading-performance-audit.md` を summary / detail lazy load 実装後の current spec に同期した。
+- audit log summary / detail lazy load 追加後の検証:
+  - `npx tsx --test scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/audit-log-storage.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts scripts/tests/audit-log-refresh.test.ts scripts/tests/session-ui-projection.test.ts scripts/tests/session-window-bridge.test.ts scripts/tests/session-runtime-service.test.ts`
+  - `npm run build:electron`
+  - `npm run build:renderer`
+  - `git diff --check`
+- quality review で、summary API が `audit_log_operations.details` を全件読んでいる点と、同一 session refresh で開いた detail cache を消してしまう点の same-plan 指摘を受けた。
+- summary API は `operation_type` / `summary` だけを読み、`operation.details` は `getSessionAuditLogDetail()` 側で復元するようにした。
+- audit log detail cache は session 変更時だけ clear し、同一 session の summary refresh では保持するようにした。
+- quality review 指摘対応後の検証:
+  - `npx tsx --test scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/audit-log-storage.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts scripts/tests/audit-log-refresh.test.ts scripts/tests/session-ui-projection.test.ts scripts/tests/session-window-bridge.test.ts scripts/tests/session-runtime-service.test.ts`
+  - `npm run build:electron`
+  - `npm run build:renderer`
+  - `git diff --check`
 
 ## Commit tracking
 

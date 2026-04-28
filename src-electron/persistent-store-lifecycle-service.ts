@@ -33,7 +33,10 @@ export type SessionStorageWrite = Pick<
   "upsertSession" | "replaceSessions" | "deleteSession" | "clearSessions"
 > & SessionStorageRead;
 
-export type AuditLogStorageRead = Pick<AuditLogStorage, "listSessionAuditLogs" | "close">;
+export type AuditLogStorageRead = Pick<
+  AuditLogStorage,
+  "listSessionAuditLogs" | "listSessionAuditLogSummaries" | "getSessionAuditLogDetail" | "close"
+>;
 export type AuditLogStorageWrite = Pick<
   AuditLogStorage,
   "createAuditLog" | "updateAuditLog" | "clearAuditLogs"

@@ -1,7 +1,9 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from "electron";
 
 import type {
+  AuditLogDetail,
   AuditLogEntry,
+  AuditLogSummary,
   CharacterProfile,
   LiveApprovalDecision,
   LiveElicitationResponse,
@@ -68,6 +70,8 @@ export type MainIpcSettingsDepsArgs = {
 export type MainIpcSessionQueryDepsArgs = {
   listSessionSummaries(): SessionSummary[];
   listSessionAuditLogs(sessionId: string): AuditLogEntry[];
+  listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[];
+  getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listOpenSessionWindowIds(): string[];
@@ -164,6 +168,8 @@ export function createMainIpcRegistrationDeps(
     deleteCharacterMemoryEntry: args.settings.deleteCharacterMemoryEntry,
     listSessionSummaries: args.sessionQuery.listSessionSummaries,
     listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,
+    listSessionAuditLogSummaries: args.sessionQuery.listSessionAuditLogSummaries,
+    getSessionAuditLogDetail: args.sessionQuery.getSessionAuditLogDetail,
     listSessionSkills: args.sessionQuery.listSessionSkills,
     listSessionCustomAgents: args.sessionQuery.listSessionCustomAgents,
     listOpenSessionWindowIds: args.sessionQuery.listOpenSessionWindowIds,
