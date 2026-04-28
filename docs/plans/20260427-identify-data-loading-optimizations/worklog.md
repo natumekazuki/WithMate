@@ -143,3 +143,5 @@
 
 - `7d87c4b` `feat(database): prepare v2 data loading migration`
   - 対応チェックポイント: MemoryGeneration / 独り言削除、V1 schema 切り出し、V2 schema、V1→V2 migration dry-run / write mode、V2 runtime read path first slice。
+- `c18ab28` `feat(database): V2 runtime 書き込みと audit lazy load を追加`
+  - 対応チェックポイント: V2 runtime session / audit write path、audit log summary page、audit log detail lazy load API。
