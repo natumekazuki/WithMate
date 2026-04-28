@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type {
   AppSettings,
@@ -7,13 +7,18 @@ import type {
   MemoryExtractionProviderSettings,
   SessionSummary,
 } from "./app-state.js";
-import type { MemoryManagementSnapshot } from "./memory-management-state.js";
+import type {
+  MemoryManagementDomain,
+  MemoryManagementDomainPageInfo,
+  MemoryManagementSnapshot,
+} from "./memory-management-state.js";
 import {
   buildFilteredMemoryManagementSnapshot,
   DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
   type CharacterMemoryCategoryFilter,
   type MemoryManagementDomainFilter,
   type MemoryManagementSort,
+  type MemoryManagementViewFilters,
   type ProjectMemoryCategoryFilter,
   type SessionMemoryStatusFilter,
 } from "./memory-management-view.js";
@@ -49,6 +54,11 @@ export type HomeSettingsContentProps = {
   settingsDirty: boolean;
   settingsFeedback: string;
   memoryManagementSnapshot: MemoryManagementSnapshot | null;
+  memoryManagementPages: {
+    session: MemoryManagementDomainPageInfo;
+    project: MemoryManagementDomainPageInfo;
+    character: MemoryManagementDomainPageInfo;
+  };
   memoryManagementLoading: boolean;
   memoryManagementBusyTarget: string | null;
   memoryManagementFeedback: string;
@@ -80,6 +90,8 @@ export type HomeSettingsContentProps = {
   onOpenAppLogFolder: () => void;
   onOpenCrashDumpFolder: () => void;
   onReloadMemoryManagement: () => void;
+  onChangeMemoryManagementViewFilters: (filters: MemoryManagementViewFilters) => void;
+  onLoadMoreMemoryManagement: (domain: MemoryManagementDomain) => void;
   onDeleteSessionMemory: (sessionId: string) => void;
   onDeleteProjectMemoryEntry: (entryId: string) => void;
   onDeleteCharacterMemoryEntry: (entryId: string) => void;
@@ -93,6 +105,7 @@ export function HomeSettingsContent({
   settingsDirty,
   settingsFeedback,
   memoryManagementSnapshot,
+  memoryManagementPages,
   memoryManagementLoading,
   memoryManagementBusyTarget,
   memoryManagementFeedback,
@@ -118,6 +131,8 @@ export function HomeSettingsContent({
   onOpenAppLogFolder,
   onOpenCrashDumpFolder,
   onReloadMemoryManagement,
+  onChangeMemoryManagementViewFilters,
+  onLoadMoreMemoryManagement,
   onDeleteSessionMemory,
   onDeleteProjectMemoryEntry,
   onDeleteCharacterMemoryEntry,
@@ -129,10 +144,13 @@ export function HomeSettingsContent({
         <div className="settings-panel-memory-scroll">
           <SettingsMemoryManagementSection
             snapshot={memoryManagementSnapshot}
+            pages={memoryManagementPages}
             loading={memoryManagementLoading}
             busyTarget={memoryManagementBusyTarget}
             feedback={memoryManagementFeedback}
             onReload={onReloadMemoryManagement}
+            onChangeViewFilters={onChangeMemoryManagementViewFilters}
+            onLoadMore={onLoadMoreMemoryManagement}
             onDeleteSessionMemory={onDeleteSessionMemory}
             onDeleteProjectMemoryEntry={onDeleteProjectMemoryEntry}
             onDeleteCharacterMemoryEntry={onDeleteCharacterMemoryEntry}
@@ -276,11 +294,18 @@ export function HomeSettingsContent({
 
 type SettingsMemoryManagementSectionProps = {
   snapshot: MemoryManagementSnapshot | null;
+  pages: {
+    session: MemoryManagementDomainPageInfo;
+    project: MemoryManagementDomainPageInfo;
+    character: MemoryManagementDomainPageInfo;
+  };
   loading: boolean;
   busyTarget: string | null;
   feedback: string;
   standalone?: boolean;
   onReload: () => void;
+  onChangeViewFilters: (filters: MemoryManagementViewFilters) => void;
+  onLoadMore: (domain: MemoryManagementDomain) => void;
   onDeleteSessionMemory: (sessionId: string) => void;
   onDeleteProjectMemoryEntry: (entryId: string) => void;
   onDeleteCharacterMemoryEntry: (entryId: string) => void;
@@ -325,11 +350,14 @@ const CHARACTER_CATEGORY_OPTIONS: Array<{ value: CharacterMemoryCategoryFilter; 
 
 function SettingsMemoryManagementSection({
   snapshot,
+  pages,
   loading,
   busyTarget,
   feedback,
   standalone = false,
   onReload,
+  onChangeViewFilters,
+  onLoadMore,
   onDeleteSessionMemory,
   onDeleteProjectMemoryEntry,
   onDeleteCharacterMemoryEntry,
@@ -344,18 +372,26 @@ function SettingsMemoryManagementSection({
   const [characterCategory, setCharacterCategory] = useState<CharacterMemoryCategoryFilter>(
     DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.characterCategory,
   );
+  const activeFilters = useMemo<MemoryManagementViewFilters>(
+    () => ({
+      searchText,
+      domain,
+      sort,
+      sessionStatus,
+      projectCategory,
+      characterCategory,
+    }),
+    [characterCategory, domain, projectCategory, searchText, sessionStatus, sort],
+  );
+
+  useEffect(() => {
+    onChangeViewFilters(activeFilters);
+  }, [activeFilters, onChangeViewFilters]);
 
   const filteredSnapshot = useMemo(
     () =>
-      buildFilteredMemoryManagementSnapshot(snapshot, {
-        searchText,
-        domain,
-        sort,
-        sessionStatus,
-        projectCategory,
-        characterCategory,
-      }),
-    [characterCategory, domain, projectCategory, searchText, sessionStatus, snapshot, sort],
+      buildFilteredMemoryManagementSnapshot(snapshot, activeFilters),
+    [activeFilters, snapshot],
   );
   const sessionCount = filteredSnapshot?.sessionMemories.length ?? 0;
   const projectEntryCount = filteredSnapshot?.projectMemories.reduce((count, group) => count + group.entries.length, 0) ?? 0;
@@ -548,6 +584,16 @@ function SettingsMemoryManagementSection({
                 <p>{loading ? "Session Memory を読み込み中..." : "一致する Session Memory はないよ。"}</p>
               </article>
             )}
+            {pages.session.hasMore ? (
+              <button
+                className="launch-toggle compact"
+                type="button"
+                disabled={loading}
+                onClick={() => onLoadMore("session")}
+              >
+                {loading ? "追加読み込み中..." : `Load More (${pages.session.total - (pages.session.nextCursor ?? pages.session.total)} left)`}
+              </button>
+            ) : null}
             </section>
           ) : null}
 
@@ -600,6 +646,16 @@ function SettingsMemoryManagementSection({
                 <p>{loading ? "Project Memory を読み込み中..." : "一致する Project Memory はないよ。"}</p>
               </article>
             )}
+            {pages.project.hasMore ? (
+              <button
+                className="launch-toggle compact"
+                type="button"
+                disabled={loading}
+                onClick={() => onLoadMore("project")}
+              >
+                {loading ? "追加読み込み中..." : `Load More (${pages.project.total - (pages.project.nextCursor ?? pages.project.total)} left)`}
+              </button>
+            ) : null}
             </section>
           ) : null}
 
@@ -652,6 +708,16 @@ function SettingsMemoryManagementSection({
                 <p>{loading ? "Character Memory を読み込み中..." : "一致する Character Memory はないよ。"}</p>
               </article>
             )}
+            {pages.character.hasMore ? (
+              <button
+                className="launch-toggle compact"
+                type="button"
+                disabled={loading}
+                onClick={() => onLoadMore("character")}
+              >
+                {loading ? "追加読み込み中..." : `Load More (${pages.character.total - (pages.character.nextCursor ?? pages.character.total)} left)`}
+              </button>
+            ) : null}
             </section>
           ) : null}
         </div>

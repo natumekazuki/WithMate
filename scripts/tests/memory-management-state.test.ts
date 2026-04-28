@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   cloneMemoryManagementSnapshot,
+  mergeMemoryManagementSnapshots,
   removeCharacterMemoryEntryFromSnapshot,
   removeProjectMemoryEntryFromSnapshot,
   removeSessionMemoryFromSnapshot,
@@ -206,5 +207,68 @@ describe("memory-management-state", () => {
     const nextSnapshot = removeCharacterMemoryEntryFromSnapshot(snapshot, "missing-entry");
 
     assert.equal(nextSnapshot, snapshot);
+  });
+
+  it("session page merge は sessionId で重複を落とす", () => {
+    const snapshot = createSnapshot();
+
+    const nextSnapshot = mergeMemoryManagementSnapshots(snapshot, {
+      sessionMemories: [
+        snapshot.sessionMemories[1],
+        {
+          ...snapshot.sessionMemories[1],
+          sessionId: "session-3",
+          taskTitle: "Task C",
+        },
+      ],
+      projectMemories: [],
+      characterMemories: [],
+    }, "session");
+
+    assert.deepEqual(nextSnapshot.sessionMemories.map((item) => item.sessionId), ["session-1", "session-2", "session-3"]);
+  });
+
+  it("project / character page merge は entry id で重複を落とす", () => {
+    const snapshot = createSnapshot();
+
+    const nextProjectSnapshot = mergeMemoryManagementSnapshots(snapshot, {
+      sessionMemories: [],
+      projectMemories: [{
+        scope: snapshot.projectMemories[0].scope,
+        entries: [
+          snapshot.projectMemories[0].entries[0],
+          {
+            ...snapshot.projectMemories[0].entries[0],
+            id: "project-entry-4",
+            title: "entry-4",
+          },
+        ],
+      }],
+      characterMemories: [],
+    }, "project");
+    const nextCharacterSnapshot = mergeMemoryManagementSnapshots(snapshot, {
+      sessionMemories: [],
+      projectMemories: [],
+      characterMemories: [{
+        scope: snapshot.characterMemories[0].scope,
+        entries: [
+          snapshot.characterMemories[0].entries[0],
+          {
+            ...snapshot.characterMemories[0].entries[0],
+            id: "character-entry-2",
+            title: "tone-2",
+          },
+        ],
+      }],
+    }, "character");
+
+    assert.deepEqual(nextProjectSnapshot.projectMemories[0]?.entries.map((entry) => entry.id), [
+      "project-entry-1",
+      "project-entry-4",
+    ]);
+    assert.deepEqual(nextCharacterSnapshot.characterMemories[0]?.entries.map((entry) => entry.id), [
+      "character-entry-1",
+      "character-entry-2",
+    ]);
   });
 });

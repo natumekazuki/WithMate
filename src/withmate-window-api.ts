@@ -22,7 +22,11 @@ import type {
     SessionSummary,
   } from "./app-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "./character-update-state.js";
-import type { MemoryManagementSnapshot } from "./memory-management-state.js";
+import type {
+  MemoryManagementPageRequest,
+  MemoryManagementPageResult,
+  MemoryManagementSnapshot,
+} from "./memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import type { OpenPathOptions, ResetAppDatabaseRequest, ResetAppDatabaseResult } from "./withmate-window-types.js";
@@ -85,6 +89,7 @@ export type WithMateWindowSettingsApi = {
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
   resetAppDatabase(request: ResetAppDatabaseRequest): Promise<ResetAppDatabaseResult>;
   getMemoryManagementSnapshot(): Promise<MemoryManagementSnapshot>;
+  getMemoryManagementPage(request: MemoryManagementPageRequest): Promise<MemoryManagementPageResult>;
   deleteSessionMemory(sessionId: string): Promise<void>;
   deleteProjectMemoryEntry(entryId: string): Promise<void>;
   deleteCharacterMemoryEntry(entryId: string): Promise<void>;

@@ -18,7 +18,11 @@ import type {
 } from "../src/app-state.js";
 import type { CreateCharacterInput } from "../src/character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
-import type { MemoryManagementSnapshot } from "../src/memory-management-state.js";
+import type {
+  MemoryManagementPageRequest,
+  MemoryManagementPageResult,
+  MemoryManagementSnapshot,
+} from "../src/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
@@ -41,6 +45,7 @@ import {
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
+  WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
@@ -117,6 +122,7 @@ export type MainIpcRegistrationDeps = {
   updateAppSettings(settings: AppSettings): AppSettings;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
   getMemoryManagementSnapshot(): MemoryManagementSnapshot;
+  getMemoryManagementPage(request: MemoryManagementPageRequest): MemoryManagementPageResult;
   deleteSessionMemory(sessionId: string): void;
   deleteProjectMemoryEntry(entryId: string): void;
   deleteCharacterMemoryEntry(entryId: string): void;
@@ -199,6 +205,7 @@ type MainIpcSettingsDeps = Pick<
   | "updateAppSettings"
   | "resetAppDatabase"
   | "getMemoryManagementSnapshot"
+  | "getMemoryManagementPage"
   | "deleteSessionMemory"
   | "deleteProjectMemoryEntry"
   | "deleteCharacterMemoryEntry"
@@ -320,6 +327,9 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
     deps.resetAppDatabase(request),
   );
   ipcMain.handle(WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL, () => deps.getMemoryManagementSnapshot());
+  ipcMain.handle(WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL, (_event, request: MemoryManagementPageRequest) =>
+    deps.getMemoryManagementPage(request),
+  );
   ipcMain.handle(WITHMATE_DELETE_SESSION_MEMORY_CHANNEL, (_event, sessionId: string) => deps.deleteSessionMemory(sessionId));
   ipcMain.handle(WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL, (_event, entryId: string) =>
     deps.deleteProjectMemoryEntry(entryId),

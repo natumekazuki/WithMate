@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { type CharacterProfile } from "./character-state.js";
 import {
@@ -12,9 +12,16 @@ import {
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
 import {
+  DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
+  type MemoryManagementViewFilters,
+} from "./memory-management-view.js";
+import {
+  mergeMemoryManagementSnapshots,
   removeCharacterMemoryEntryFromSnapshot,
   removeProjectMemoryEntryFromSnapshot,
   removeSessionMemoryFromSnapshot,
+  type MemoryManagementDomain,
+  type MemoryManagementDomainPageInfo,
   type MemoryManagementSnapshot,
 } from "./memory-management-state.js";
 import {
@@ -96,8 +103,57 @@ async function openCharacterEditor(characterId?: string | null) {
   await withWithMateApi((api) => api.openCharacterEditor(characterId));
 }
 
+function getMemoryManagementCursor(pages: MemoryManagementPageState, domain: MemoryManagementDomain): number | null {
+  if (domain === "session") {
+    return pages.session.nextCursor;
+  }
+  if (domain === "project") {
+    return pages.project.nextCursor;
+  }
+  if (domain === "character") {
+    return pages.character.nextCursor;
+  }
+  return null;
+}
+
+function buildMemoryManagementPageRequest(
+  filters: MemoryManagementViewFilters,
+  options?: { domain?: MemoryManagementDomain; cursor?: number | null },
+) {
+  return {
+    domain: options?.domain ?? "all",
+    cursor: options?.cursor ?? 0,
+    limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
+    searchText: filters.searchText,
+    sort: filters.sort,
+    sessionStatus: filters.sessionStatus,
+    projectCategory: filters.projectCategory,
+    characterCategory: filters.characterCategory,
+  };
+}
+
 type HomeRightPaneView = "monitor" | "characters";
 type HomeWindowMode = "home" | "monitor" | "settings" | "memory";
+
+const MEMORY_MANAGEMENT_PAGE_LIMIT = 50;
+
+type MemoryManagementPageState = {
+  session: MemoryManagementDomainPageInfo;
+  project: MemoryManagementDomainPageInfo;
+  character: MemoryManagementDomainPageInfo;
+};
+
+const EMPTY_MEMORY_MANAGEMENT_PAGE_INFO: MemoryManagementDomainPageInfo = {
+  nextCursor: null,
+  hasMore: false,
+  total: 0,
+};
+
+const EMPTY_MEMORY_MANAGEMENT_PAGE_STATE: MemoryManagementPageState = {
+  session: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
+  project: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
+  character: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
+};
 
 function getHomeWindowMode(): HomeWindowMode {
   if (typeof window === "undefined") {
@@ -128,12 +184,25 @@ export default function HomeApp() {
   const [settingsDraftLoaded, setSettingsDraftLoaded] = useState(!isSettingsWindowMode);
   const [modelCatalogLoaded, setModelCatalogLoaded] = useState(!isSettingsWindowMode);
   const [memoryManagementSnapshot, setMemoryManagementSnapshot] = useState<MemoryManagementSnapshot | null>(null);
+  const [memoryManagementPages, setMemoryManagementPages] =
+    useState<MemoryManagementPageState>(EMPTY_MEMORY_MANAGEMENT_PAGE_STATE);
+  const [memoryManagementFilters, setMemoryManagementFilters] =
+    useState<MemoryManagementViewFilters>(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS);
   const [memoryManagementLoaded, setMemoryManagementLoaded] = useState(!usesMemoryManagementWindow);
   const [memoryManagementBusyTarget, setMemoryManagementBusyTarget] = useState<string | null>(null);
   const [memoryManagementFeedback, setMemoryManagementFeedback] = useState("");
   const [launchDraft, setLaunchDraft] = useState<HomeLaunchDraft>(() => createClosedLaunchDraft());
   const settingsDirtyRef = useRef(false);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
+  const memoryManagementRequestIdRef = useRef(0);
+
+  const beginMemoryManagementRequest = () => {
+    memoryManagementRequestIdRef.current += 1;
+    return memoryManagementRequestIdRef.current;
+  };
+
+  const isLatestMemoryManagementRequest = (requestId: number) =>
+    memoryManagementRequestIdRef.current === requestId;
 
   const applyIncomingAppSettings = (settings: AppSettings, options?: { force?: boolean }) => {
     setAppSettings(settings);
@@ -173,13 +242,14 @@ export default function HomeApp() {
       setModelCatalogLoaded(true);
     });
     if (usesMemoryManagementWindow) {
-      void withmateApi.getMemoryManagementSnapshot()
-        .then((snapshot) => {
+      void withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters))
+        .then((page) => {
           if (!active) {
             return;
           }
 
-          setMemoryManagementSnapshot(snapshot);
+          setMemoryManagementSnapshot(page.snapshot);
+          setMemoryManagementPages(page.pages);
           setMemoryManagementLoaded(true);
         })
         .catch((error) => {
@@ -498,10 +568,15 @@ export default function HomeApp() {
       return;
     }
 
+    const requestId = beginMemoryManagementRequest();
     try {
       setMemoryManagementLoaded(false);
-      const snapshot = await withmateApi.getMemoryManagementSnapshot();
-      setMemoryManagementSnapshot(snapshot);
+      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters));
+      if (!isLatestMemoryManagementRequest(requestId)) {
+        return;
+      }
+      setMemoryManagementSnapshot(page.snapshot);
+      setMemoryManagementPages(page.pages);
       setMemoryManagementFeedback("Memory 管理ビューを更新したよ。");
     } catch (error) {
       setMemoryManagementFeedback(error instanceof Error ? error.message : "Memory 一覧の読み込みに失敗したよ。");
@@ -509,6 +584,72 @@ export default function HomeApp() {
       setMemoryManagementLoaded(true);
     }
   };
+
+  const handleLoadMoreMemoryManagement = async (domain: MemoryManagementDomain) => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !usesMemoryManagementWindow || domain === "all") {
+      return;
+    }
+
+    const cursor = getMemoryManagementCursor(memoryManagementPages, domain);
+    if (cursor === null) {
+      return;
+    }
+
+    const requestId = beginMemoryManagementRequest();
+    try {
+      setMemoryManagementLoaded(false);
+      const page = await withmateApi.getMemoryManagementPage({
+        ...buildMemoryManagementPageRequest(memoryManagementFilters, { domain, cursor }),
+      });
+      if (!isLatestMemoryManagementRequest(requestId)) {
+        return;
+      }
+      setMemoryManagementSnapshot((current) => mergeMemoryManagementSnapshots(current, page.snapshot, domain));
+      setMemoryManagementPages((current) => ({
+        ...current,
+        [domain]: page.pages[domain],
+      }));
+      setMemoryManagementFeedback("Memory 管理ビューを追加読み込みしたよ。");
+    } catch (error) {
+      if (!isLatestMemoryManagementRequest(requestId)) {
+        return;
+      }
+      setMemoryManagementFeedback(error instanceof Error ? error.message : "Memory 一覧の追加読み込みに失敗したよ。");
+    } finally {
+      if (isLatestMemoryManagementRequest(requestId)) {
+        setMemoryManagementLoaded(true);
+      }
+    }
+  };
+
+  const handleChangeMemoryManagementViewFilters = useCallback(async (filters: MemoryManagementViewFilters) => {
+    setMemoryManagementFilters(filters);
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !usesMemoryManagementWindow) {
+      return;
+    }
+
+    const requestId = beginMemoryManagementRequest();
+    try {
+      setMemoryManagementLoaded(false);
+      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(filters));
+      if (!isLatestMemoryManagementRequest(requestId)) {
+        return;
+      }
+      setMemoryManagementSnapshot(page.snapshot);
+      setMemoryManagementPages(page.pages);
+    } catch (error) {
+      if (!isLatestMemoryManagementRequest(requestId)) {
+        return;
+      }
+      setMemoryManagementFeedback(error instanceof Error ? error.message : "Memory 一覧の読み込みに失敗したよ。");
+    } finally {
+      if (isLatestMemoryManagementRequest(requestId)) {
+        setMemoryManagementLoaded(true);
+      }
+    }
+  }, [usesMemoryManagementWindow]);
 
   const handleDeleteSessionMemory = async (sessionId: string) => {
     const withmateApi = getWithMateApi();
@@ -519,9 +660,13 @@ export default function HomeApp() {
     try {
       setMemoryManagementBusyTarget(`session:${sessionId}`);
       await withmateApi.deleteSessionMemory(sessionId);
-      setMemoryManagementSnapshot((current) => current
-        ? removeSessionMemoryFromSnapshot(current, sessionId)
-        : current);
+      const requestId = beginMemoryManagementRequest();
+      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters));
+      if (!isLatestMemoryManagementRequest(requestId)) {
+        return;
+      }
+      setMemoryManagementSnapshot(removeSessionMemoryFromSnapshot(page.snapshot, sessionId));
+      setMemoryManagementPages(page.pages);
       setMemoryManagementFeedback("Session Memory を削除したよ。");
     } catch (error) {
       setMemoryManagementFeedback(error instanceof Error ? error.message : "Session Memory の削除に失敗したよ。");
@@ -540,9 +685,13 @@ export default function HomeApp() {
     try {
       setMemoryManagementBusyTarget(`project:${entryId}`);
       await withmateApi.deleteProjectMemoryEntry(entryId);
-      setMemoryManagementSnapshot((current) => current
-        ? removeProjectMemoryEntryFromSnapshot(current, entryId)
-        : current);
+      const requestId = beginMemoryManagementRequest();
+      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters));
+      if (!isLatestMemoryManagementRequest(requestId)) {
+        return;
+      }
+      setMemoryManagementSnapshot(removeProjectMemoryEntryFromSnapshot(page.snapshot, entryId));
+      setMemoryManagementPages(page.pages);
       setMemoryManagementFeedback("Project Memory を削除したよ。");
     } catch (error) {
       setMemoryManagementFeedback(error instanceof Error ? error.message : "Project Memory の削除に失敗したよ。");
@@ -561,9 +710,13 @@ export default function HomeApp() {
     try {
       setMemoryManagementBusyTarget(`character:${entryId}`);
       await withmateApi.deleteCharacterMemoryEntry(entryId);
-      setMemoryManagementSnapshot((current) => current
-        ? removeCharacterMemoryEntryFromSnapshot(current, entryId)
-        : current);
+      const requestId = beginMemoryManagementRequest();
+      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters));
+      if (!isLatestMemoryManagementRequest(requestId)) {
+        return;
+      }
+      setMemoryManagementSnapshot(removeCharacterMemoryEntryFromSnapshot(page.snapshot, entryId));
+      setMemoryManagementPages(page.pages);
       setMemoryManagementFeedback("Character Memory を削除したよ。");
     } catch (error) {
       setMemoryManagementFeedback(error instanceof Error ? error.message : "Character Memory の削除に失敗したよ。");
@@ -642,6 +795,7 @@ export default function HomeApp() {
       settingsDirty={settingsDirty}
       settingsFeedback={settingsFeedback}
       memoryManagementSnapshot={memoryManagementSnapshot}
+      memoryManagementPages={memoryManagementPages}
       memoryManagementLoading={!memoryManagementLoaded}
       memoryManagementBusyTarget={memoryManagementBusyTarget}
       memoryManagementFeedback={memoryManagementFeedback}
@@ -670,6 +824,8 @@ export default function HomeApp() {
       onOpenAppLogFolder={() => void handleOpenAppLogFolder()}
       onOpenCrashDumpFolder={() => void handleOpenCrashDumpFolder()}
       onReloadMemoryManagement={() => void handleReloadMemoryManagement()}
+      onChangeMemoryManagementViewFilters={handleChangeMemoryManagementViewFilters}
+      onLoadMoreMemoryManagement={(domain) => void handleLoadMoreMemoryManagement(domain)}
       onDeleteSessionMemory={(sessionId) => void handleDeleteSessionMemory(sessionId)}
       onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}
       onDeleteCharacterMemoryEntry={(entryId) => void handleDeleteCharacterMemoryEntry(entryId)}
@@ -685,6 +841,7 @@ export default function HomeApp() {
       settingsDirty={settingsDirty}
       settingsFeedback={settingsFeedback}
       memoryManagementSnapshot={memoryManagementSnapshot}
+      memoryManagementPages={memoryManagementPages}
       memoryManagementLoading={!memoryManagementLoaded}
       memoryManagementBusyTarget={memoryManagementBusyTarget}
       memoryManagementFeedback={memoryManagementFeedback}
@@ -714,6 +871,8 @@ export default function HomeApp() {
       onOpenAppLogFolder={() => void handleOpenAppLogFolder()}
       onOpenCrashDumpFolder={() => void handleOpenCrashDumpFolder()}
       onReloadMemoryManagement={() => void handleReloadMemoryManagement()}
+      onChangeMemoryManagementViewFilters={handleChangeMemoryManagementViewFilters}
+      onLoadMoreMemoryManagement={(domain) => void handleLoadMoreMemoryManagement(domain)}
       onDeleteSessionMemory={(sessionId) => void handleDeleteSessionMemory(sessionId)}
       onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}
       onDeleteCharacterMemoryEntry={(entryId) => void handleDeleteCharacterMemoryEntry(entryId)}

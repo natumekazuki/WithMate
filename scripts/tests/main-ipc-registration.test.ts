@@ -22,6 +22,7 @@ import {
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
+  WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
@@ -120,6 +121,14 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
       return null;
     },
     getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], characterMemories: [] }),
+    getMemoryManagementPage: () => ({
+      snapshot: { sessionMemories: [], projectMemories: [], characterMemories: [] },
+      pages: {
+        session: { nextCursor: null, hasMore: false, total: 0 },
+        project: { nextCursor: null, hasMore: false, total: 0 },
+        character: { nextCursor: null, hasMore: false, total: 0 },
+      },
+    }),
     deleteSessionMemory: () => {
       calls.push("deleteSessionMemory");
     },
@@ -260,6 +269,14 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     updateAppSettings: (settings) => settings,
     async resetAppDatabase() { return null; },
     getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], characterMemories: [] }),
+    getMemoryManagementPage: () => ({
+      snapshot: { sessionMemories: [], projectMemories: [], characterMemories: [] },
+      pages: {
+        session: { nextCursor: null, hasMore: false, total: 0 },
+        project: { nextCursor: null, hasMore: false, total: 0 },
+        character: { nextCursor: null, hasMore: false, total: 0 },
+      },
+    }),
     deleteSessionMemory() {},
     deleteProjectMemoryEntry() {},
     deleteCharacterMemoryEntry() {},
@@ -324,6 +341,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
     WITHMATE_RESET_APP_DATABASE_CHANNEL,
     WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
+    WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
     WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
     WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
     WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,

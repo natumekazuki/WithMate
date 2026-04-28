@@ -58,6 +58,12 @@
   - `getCharacterMemoryEntriesPage(scopeId, cursor, limit)`
 - 画面では「表示中タブのみ読込」「スクロールで追加取得」に変更する。
 
+**実装状況**
+
+- `getMemoryManagementPage({ domain, cursor, limit })` を追加し、Renderer / IPC の初期取得と Reload は page API 経由へ移行済み。
+- 既存互換用の `getMemoryManagementSnapshot()` は残している。
+- 現段階の page API は Main 側で search / filter / sort を適用してから page 化するが、DB query level の `LIMIT` / `OFFSET` 化と storage/query 側 filter/sort 最適化は後続改善として扱う。
+
 ---
 
 ### 1-3. 監査ログが全件・重列を毎回取得している
@@ -110,7 +116,7 @@
 
 **回収ポイント**
 
-- サーバー側（Main/SQLite）へ検索を寄せる。`LIKE` + index または FTS テーブル検討。
+- Main 側 page API へ検索を寄せる。さらに SQLite query level では `LIKE` + index または FTS テーブルを検討する。
 - Renderer での検索キー全件構築をやめ、ページ単位で必要分だけ計算する。
 
 ---
@@ -166,7 +172,7 @@ V2 DB では legacy memory table を作らないため、memory 系 storage は 
 ### Phase 2（中期）
 
 1. Message List / Audit Log List の virtualization 導入。  
-2. Memory Management 検索を Main 側クエリに移動。  
+2. Memory Management 検索を SQLite query level に移動。
 3. 大きい JSON を展開時取得に変更（詳細 API 化）。
 
 ### Phase 3（構造改革）

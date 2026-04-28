@@ -26,7 +26,9 @@
 - audit log modal 初期表示は `AuditLogSummary[]` を取得し、V2 では `audit_logs` summary と `audit_log_operations` の type / summary だけを読む。
 - audit log detail は `getSessionAuditLogDetail(sessionId, auditLogId)` で detail section 展開時だけ読み、`audit_log_details` と `audit_log_operations.details` は初期表示では読まない。
 - 既存互換用の `listSessionAuditLogs(sessionId)` は維持している。
-- Memory Management の data loading optimization slice は未着手。
+- Memory Management の data loading optimization first slice は実装済み。Renderer / IPC は `getMemoryManagementPage({ domain, cursor, limit, searchText, sort, ...filters })` を使い、初期取得・Reload・filter 変更・domain 追加読み込みで page 単位の payload を扱う。
+- Memory Management page API は search / filter / stable sort を Main 側で適用してから page 化し、削除後は current filters の first page を reload して stale cursor を避ける。
+- 既存互換用の `getMemoryManagementSnapshot()` は残しており、DB query level の LIMIT/OFFSET 化と storage/query 側 filter/sort 最適化は未完了。
 
 ## 検証結果
 
@@ -64,10 +66,19 @@
 - audit log summary / detail lazy load 追加後の `npm run build:renderer`: pass
 - audit log summary / detail lazy load 追加後の `git diff --check`: pass。LF / CRLF 警告のみ。
 - quality review: summary API が `audit_log_operations.details` を読んでいた点と、同一 session refresh で detail cache を消していた点は same-plan で反映済み。
+- Memory Management page API first slice 追加後の `npx tsx --test scripts/tests/memory-management-service.test.ts scripts/tests/memory-management-state.test.ts scripts/tests/memory-management-view.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`: pass
+- Memory Management page API first slice 追加後の `npm run build:electron`: pass
+- Memory Management page API first slice 追加後の `npm run build:renderer`: pass
+- quality review 指摘対応後の `npx tsx --test scripts/tests/memory-management-service.test.ts scripts/tests/memory-management-state.test.ts scripts/tests/memory-management-view.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`: pass
+- quality review 指摘対応後の `npm run build:electron`: pass
+- quality review 指摘対応後の `npm run build:renderer`: pass
+- 再レビュー指摘対応後の `npx tsx --test scripts/tests/memory-management-service.test.ts scripts/tests/memory-management-state.test.ts scripts/tests/memory-management-view.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`: pass
+- 再レビュー指摘対応後の `npm run build:electron`: pass
+- 再レビュー指摘対応後の `npm run build:renderer`: pass
 
 ## 残タスク
 
-- Memory Management の snapshot 一括取得を分割 API に置き換える。
+- Memory Management page API を DB query level の LIMIT/OFFSET と storage/query 側 filter/sort へ寄せ、`getSnapshot()` 互換経路への依存をさらに下げる。
 - 必要に応じて per-call DB open / close を connection lifecycle 管理へ寄せる。
 
 ## Commit tracking

@@ -46,6 +46,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-memory-management-snapshot",
     args: [],
   });
+  assert.deepEqual(await api.getMemoryManagementPage({ domain: "session", limit: 50 }), {
+    channel: "withmate:get-memory-management-page",
+    args: [{ domain: "session", limit: 50 }],
+  });
   assert.deepEqual(await api.getSessionBackgroundActivity("session-1", "memory-generation"), {
     channel: "withmate:get-session-background-activity",
     args: ["session-1", "memory-generation"],
@@ -79,6 +83,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getCharacterUpdateWorkspace",
     "getDiffPreview",
     "getLiveSessionRun",
+    "getMemoryManagementPage",
     "getMemoryManagementSnapshot",
     "getModelCatalog",
     "getProviderQuotaTelemetry",

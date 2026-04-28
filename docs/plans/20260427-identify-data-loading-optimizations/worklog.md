@@ -138,6 +138,31 @@
   - `npm run build:electron`
   - `npm run build:renderer`
   - `git diff --check`
+- サブエージェントで Memory Management snapshot 一括取得 flow を調査し、`HomeApp` → preload → IPC → `MemoryManagementService.getSnapshot()` の全件返却経路を確認した。
+- `MemoryManagementPageRequest` / `MemoryManagementPageResult` を追加し、`getMemoryManagementPage({ domain, cursor, limit })` で domain/page 単位の snapshot 部分返却を扱えるようにした。
+- `src/withmate-ipc-channels.ts`、`src/withmate-window-api.ts`、`src-electron/preload-api.ts`、`src-electron/main-ipc-registration.ts`、`src-electron/main-ipc-deps.ts` に Memory Management page API を追加した。
+- `HomeApp` の初期取得と Reload を `getMemoryManagementPage({ domain: "all", limit: 50 })` へ切り替え、domain ごとの追加読み込みを `Load More` ボタンから実行できるようにした。
+- 既存互換用の `getMemoryManagementSnapshot()` は残し、DB query level の LIMIT/OFFSET 化と検索の Main 側移動は後続の same-plan 残タスクとして扱う。
+- Memory Management page API first slice 追加後の検証:
+  - `npx tsx --test scripts/tests/memory-management-service.test.ts scripts/tests/memory-management-state.test.ts scripts/tests/memory-management-view.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`
+  - `npm run build:electron`
+  - `npm run build:renderer`
+- quality review で、page 化前に search / sort / filter が適用されない点、削除後 offset cursor が stale になる点、session page merge の重複排除不足の same-plan 指摘を受けた。
+- `MemoryManagementPageRequest` に `searchText` / `sort` / `sessionStatus` / `projectCategory` / `characterCategory` を追加し、Main 側で search / filter / stable sort を適用してから page 化するようにした。
+- Memory Management view filters 変更時も page API で再取得し、削除後は current filters の first page を reload して offset cursor のずれを避けるようにした。
+- `mergeMemoryManagementSnapshots()` の session merge を `sessionId` dedupe に変更し、session / project / character の merge test を追加した。
+- quality review 指摘対応後の検証:
+  - `npx tsx --test scripts/tests/memory-management-service.test.ts scripts/tests/memory-management-state.test.ts scripts/tests/memory-management-view.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`
+  - `npm run build:electron`
+  - `npm run build:renderer`
+- 再レビューで、filter 変更時の非同期 response race、service 側 filter/sort/page 化の regression test 不足、docs の残リスク表現ずれについて same-plan 指摘を受けた。
+- Memory Management の page request に request id 世代チェックを入れ、古い response が最新 filters の snapshot / page state を上書きしないようにした。
+- `scripts/tests/memory-management-service.test.ts` に、project / character page が filter 後に entry `updatedAt` 順で返ることを固定する regression test を追加した。
+- docs / result の残リスク表現を、Main 側検索ではなく DB query level の LIMIT/OFFSET と storage/query 側 filter/sort 最適化に更新した。
+- 再レビュー指摘対応後の検証:
+  - `npx tsx --test scripts/tests/memory-management-service.test.ts scripts/tests/memory-management-state.test.ts scripts/tests/memory-management-view.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`
+  - `npm run build:electron`
+  - `npm run build:renderer`
 
 ## Commit tracking
 

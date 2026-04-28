@@ -45,6 +45,7 @@ export const WITHMATE_GET_APP_SETTINGS_CHANNEL = "withmate:get-app-settings";
 export const WITHMATE_UPDATE_APP_SETTINGS_CHANNEL = "withmate:update-app-settings";
 export const WITHMATE_RESET_APP_DATABASE_CHANNEL = "withmate:reset-app-database";
 export const WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL = "withmate:get-memory-management-snapshot";
+export const WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL = "withmate:get-memory-management-page";
 export const WITHMATE_DELETE_SESSION_MEMORY_CHANNEL = "withmate:delete-session-memory";
 export const WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL = "withmate:delete-project-memory-entry";
 export const WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL = "withmate:delete-character-memory-entry";

@@ -777,6 +777,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
                 resetAppDatabase: async (request) => requireSettingsCatalogService().resetAppDatabase(request),
                 getMemoryManagementSnapshot: () => requireMemoryManagementService().getSnapshot(),
+                getMemoryManagementPage: (request) => requireMemoryManagementService().getPage(request),
                 deleteSessionMemory: (sessionId) => requireMemoryManagementService().deleteSessionMemory(sessionId),
                 deleteProjectMemoryEntry: (entryId) => requireMemoryManagementService().deleteProjectMemoryEntry(entryId),
                 deleteCharacterMemoryEntry: (entryId) =>
@@ -1059,7 +1060,7 @@ function requireSessionMemorySupportService(): SessionMemorySupportService {
 function requireMemoryManagementService(): MemoryManagementService {
   if (!memoryManagementService) {
     memoryManagementService = new MemoryManagementService({
-      listSessions: () => listSessions(),
+      listSessionSummaries: () => listSessionSummaries(),
       listSessionMemories: () => requireSessionMemoryStorage().listSessionMemories(),
       deleteSessionMemory: (sessionId) => requireSessionMemoryStorage().deleteSessionMemory(sessionId),
       listProjectScopes: () => requireProjectMemoryStorage().listProjectScopes(),

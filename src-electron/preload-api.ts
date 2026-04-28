@@ -32,6 +32,7 @@ import {
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
+  WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
@@ -292,6 +293,9 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
     },
     getMemoryManagementSnapshot() {
       return ipcRenderer.invoke(WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL);
+    },
+    getMemoryManagementPage(request) {
+      return ipcRenderer.invoke(WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL, request);
     },
     deleteSessionMemory(sessionId) {
       return ipcRenderer.invoke(WITHMATE_DELETE_SESSION_MEMORY_CHANNEL, sessionId);
