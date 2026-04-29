@@ -1,9 +1,8 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   type AuditLogDetail,
   type AuditLogSummary,
-  type ComposerAttachment,
   type ComposerPreview,
   currentTimestampLabel,
   type DiscoveredCustomAgent,
@@ -61,15 +60,12 @@ import {
   resolveAutoContextPaneTab,
 } from "./session-ui-projection.js";
 import {
-  SessionComposerExpanded,
-  SessionActionDockCompactRow,
   SessionAuditLogModal,
   CharacterUpdateContextPane,
   SessionPaneErrorBoundary,
   SessionContextPane,
   SessionDiffModal,
-  SessionHeader,
-  SessionMessageColumn,
+  SessionChatWindow,
   SessionRetryBanner,
 } from "./session-components.js";
 import {
@@ -78,15 +74,32 @@ import {
   withForcedComposerBlockedFeedback,
   type ComposerSendabilityState,
 } from "./session-composer-feedback.js";
+import {
+  buildCustomAgentMatchDisplay,
+  buildSelectedCustomAgentDisplay,
+  buildSkillMatchDisplay,
+  buildSkillPromptSnippet,
+} from "./session-composer-selection.js";
+import {
+  buildAdditionalDirectoryDisplay,
+  buildComposerAttachmentDisplay,
+  buildWorkspacePathMatchDisplay,
+  formatPathReference,
+  getActivePathReference,
+  normalizePathForReference,
+  removeActivePathReference,
+  toDirectoryPath,
+  toWorkspaceRelativeReference,
+} from "./session-composer-paths.js";
+import {
+  useSessionContextRail,
+  useSessionMessageListFollowing,
+} from "./session-chat-layout-hooks.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { extractTextReferenceCandidates } from "./path-reference.js";
-import type { WorkspacePathCandidate, WorkspacePathCandidateKind } from "./workspace-path-candidate.js";
-
-type ActivePathReference = {
-  query: string;
-  start: number;
-  end: number;
-};
+import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
+import CompanionReviewApp from "./CompanionReviewApp.js";
+import { resolveSessionWindowModeFromSearch } from "./session-window-mode.js";
 
 type RetryBannerKind = "interrupted" | "failed" | "canceled";
 
@@ -148,44 +161,6 @@ type CharacterOwnedMemoryExtract = {
   extract: CharacterUpdateMemoryExtract | null;
 };
 
-type ComposerAttachmentDisplay = {
-  kindLabel: string;
-  locationLabel: string;
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-};
-
-type WorkspacePathMatchDisplay = {
-  kindLabel: string;
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-};
-
-type AdditionalDirectoryDisplay = {
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-};
-
-type SkillMatchDisplay = {
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-};
-
-type CustomAgentMatchDisplay = {
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-};
-
-type SelectedCustomAgentDisplay = {
-  label: string;
-  title?: string;
-};
-
 const EMPTY_COMPOSER_PREVIEW: ComposerPreview = { attachments: [], errors: [] };
 const COMPOSER_PREVIEW_DEBOUNCE_MS = 120;
 const COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS = 280;
@@ -193,192 +168,6 @@ const WORKSPACE_PATH_QUERY_MIN_LENGTH = 2;
 
 function defaultRetryBannerDetailsOpen(kind: RetryBannerKind): boolean {
   return kind !== "canceled";
-}
-
-function getActivePathReference(value: string, caret: number): ActivePathReference | null {
-  const prefix = value.slice(0, caret);
-  const match = /(^|[\s(])@(?:"([^"\r\n]*)|([^\s@"\r\n]*))$/.exec(prefix);
-  if (!match) {
-    return null;
-  }
-
-  const query = (match[2] ?? match[3] ?? "").replace(/\\/g, "/");
-  const start = (match.index ?? 0) + match[1].length;
-
-  return {
-    query,
-    start,
-    end: caret,
-  };
-}
-
-function removeActivePathReference(value: string, activeReference: ActivePathReference | null): string {
-  if (!activeReference) {
-    return value;
-  }
-
-  return `${value.slice(0, activeReference.start)}${value.slice(activeReference.end)}`;
-}
-
-function buildSkillPromptSnippet(providerId: string, skillName: string): string {
-  return providerId === "codex"
-    ? `$${skillName}`
-    : `Use the skill "${skillName}" for this task.`;
-}
-
-function formatPathReference(path: string): string {
-  return /\s/.test(path) ? `@"${path}"` : `@${path}`;
-}
-
-function normalizePathForReference(filePath: string): string {
-  return filePath.replace(/\\/g, "/");
-}
-
-function splitPathForDisplay(filePath: string): { basename: string; parentPath: string } {
-  const normalized = normalizePathForReference(filePath).replace(/\/+$/, "");
-  if (!normalized) {
-    return { basename: "", parentPath: "" };
-  }
-
-  const lastSlashIndex = normalized.lastIndexOf("/");
-  if (lastSlashIndex < 0) {
-    return {
-      basename: normalized,
-      parentPath: "",
-    };
-  }
-
-  return {
-    basename: normalized.slice(lastSlashIndex + 1),
-    parentPath: normalized.slice(0, lastSlashIndex),
-  };
-}
-
-function compactPathForDisplay(filePath: string, maxLength = 40): string {
-  if (filePath.length <= maxLength) {
-    return filePath;
-  }
-
-  const headLength = Math.max(10, Math.floor((maxLength - 1) * 0.4));
-  const tailLength = Math.max(14, maxLength - headLength - 1);
-  return `${filePath.slice(0, headLength)}…${filePath.slice(-tailLength)}`;
-}
-
-function attachmentKindLabel(kind: ComposerAttachment["kind"]): string {
-  switch (kind) {
-    case "folder":
-      return "フォルダ";
-    case "image":
-      return "画像";
-    case "file":
-    default:
-      return "ファイル";
-  }
-}
-
-function buildComposerAttachmentDisplay(attachment: ComposerAttachment): ComposerAttachmentDisplay {
-  const preferredPath = attachment.workspaceRelativePath ?? attachment.displayPath ?? normalizePathForReference(attachment.absolutePath);
-  const title = attachment.isOutsideWorkspace
-    ? normalizePathForReference(attachment.absolutePath)
-    : preferredPath;
-  const { basename, parentPath } = splitPathForDisplay(title);
-  const secondaryPath = attachment.isOutsideWorkspace
-    ? parentPath
-      ? compactPathForDisplay(parentPath, 48)
-      : compactPathForDisplay(title, 48)
-    : parentPath
-      ? compactPathForDisplay(parentPath, 42)
-      : "ワークスペース直下";
-
-  return {
-    kindLabel: attachmentKindLabel(attachment.kind),
-    locationLabel: attachment.isOutsideWorkspace ? "ワークスペース外" : "ワークスペース内",
-    primaryLabel: basename || title,
-    secondaryLabel: secondaryPath,
-    title,
-  };
-}
-
-function workspacePathCandidateKindLabel(kind: WorkspacePathCandidateKind): string {
-  return kind === "folder" ? "Dir" : "File";
-}
-
-function buildWorkspacePathMatchDisplay(pathMatch: WorkspacePathCandidate): WorkspacePathMatchDisplay {
-  const normalizedPath = normalizePathForReference(pathMatch.path);
-  const { basename, parentPath } = splitPathForDisplay(normalizedPath);
-  return {
-    kindLabel: workspacePathCandidateKindLabel(pathMatch.kind),
-    primaryLabel: basename || normalizedPath,
-    secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 42) : "ワークスペース直下",
-    title: normalizedPath,
-  };
-}
-
-function buildAdditionalDirectoryDisplay(directoryPath: string): AdditionalDirectoryDisplay {
-  const normalizedPath = normalizePathForReference(directoryPath).replace(/\/+$/, "");
-  const { basename, parentPath } = splitPathForDisplay(normalizedPath);
-  return {
-    primaryLabel: basename || normalizedPath,
-    secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 52) : "ルート",
-    title: normalizedPath,
-  };
-}
-
-function buildSkillMatchDisplay(skill: DiscoveredSkill): SkillMatchDisplay {
-  return {
-    primaryLabel: skill.name,
-    secondaryLabel: `${skill.sourceLabel}${skill.description ? ` · ${skill.description}` : ""}`,
-    title: `${skill.name}\n${skill.sourcePath}`,
-  };
-}
-
-function buildCustomAgentMatchDisplay(agent: DiscoveredCustomAgent): CustomAgentMatchDisplay {
-  return {
-    primaryLabel: agent.displayName || agent.name,
-    secondaryLabel: `${agent.sourceLabel}${agent.description ? ` · ${agent.description}` : ""}`,
-    title: `${agent.displayName || agent.name}\n${agent.sourcePath}`,
-  };
-}
-
-function buildSelectedCustomAgentDisplay(
-  session: Session | null,
-  selectedAgent: DiscoveredCustomAgent | null,
-): SelectedCustomAgentDisplay {
-  if (!session || session.provider !== "copilot") {
-    return {
-      label: "",
-    };
-  }
-
-  if (!session.customAgentName.trim()) {
-    return {
-      label: "Default Agent",
-      title: "Copilot の標準 agent を使う",
-    };
-  }
-
-  if (selectedAgent) {
-    return {
-      label: selectedAgent.displayName || selectedAgent.name,
-      title: `${selectedAgent.displayName || selectedAgent.name}\n${selectedAgent.sourcePath}`,
-    };
-  }
-
-  return {
-    label: session.customAgentName.trim(),
-    title: session.customAgentName.trim(),
-  };
-}
-
-function toWorkspaceRelativeReference(workspacePath: string, selectedPath: string): string | null {
-  const normalizedWorkspacePath = normalizePathForReference(workspacePath).replace(/\/+$/, "");
-  const normalizedSelectedPath = normalizePathForReference(selectedPath);
-  const workspacePrefix = `${normalizedWorkspacePath}/`;
-  if (!normalizedSelectedPath.toLocaleLowerCase().startsWith(workspacePrefix.toLocaleLowerCase())) {
-    return null;
-  }
-
-  return normalizedSelectedPath.slice(workspacePrefix.length);
 }
 
 function liveRunStepBucketPriority(status: string): number {
@@ -613,15 +402,6 @@ function createPendingLiveSessionRunState(
   };
 }
 
-function scrollMessageListElementToBottom(messageListElement: HTMLDivElement): void {
-  const bottomAnchor = messageListElement.querySelector<HTMLElement>(".message-list-bottom-anchor");
-  if (bottomAnchor) {
-    bottomAnchor.scrollIntoView({ block: "end", inline: "nearest" });
-  }
-
-  messageListElement.scrollTop = Math.max(0, messageListElement.scrollHeight - messageListElement.clientHeight);
-}
-
 function hashStringToPositiveInt(value: string): number {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -647,22 +427,16 @@ function renderCharacterSessionCopy(
   return selectedTemplate.replaceAll("{name}", characterName?.trim() || "キャラクター");
 }
 
-const SESSION_CONTEXT_RAIL_DEFAULT_WIDTH = 420;
-const SESSION_CONTEXT_RAIL_MIN_WIDTH = 360;
-const SESSION_CONTEXT_RAIL_MAX_WIDTH = 620;
-const SESSION_CONVERSATION_MIN_WIDTH = 760;
-const SESSION_LAYOUT_BREAKPOINT = 1400;
+export default function App() {
+  const sessionWindowMode = useMemo(() => resolveSessionWindowModeFromSearch(window.location.search), []);
+  if (sessionWindowMode.kind === "companion") {
+    return <CompanionReviewApp />;
+  }
 
-function clampContextRailWidth(requestedWidth: number, workbenchWidth: number): number {
-  const maxWidth = Math.min(
-    SESSION_CONTEXT_RAIL_MAX_WIDTH,
-    Math.max(SESSION_CONTEXT_RAIL_MIN_WIDTH, workbenchWidth - SESSION_CONVERSATION_MIN_WIDTH),
-  );
-
-  return Math.min(maxWidth, Math.max(SESSION_CONTEXT_RAIL_MIN_WIDTH, requestedWidth));
+  return <AgentSessionWindowApp />;
 }
 
-export default function App() {
+function AgentSessionWindowApp() {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -708,27 +482,18 @@ export default function App() {
   const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
   const [isSkillListLoading, setIsSkillListLoading] = useState(false);
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
-  const [isMessageListFollowing, setIsMessageListFollowing] = useState(true);
-  const [hasMessageListUnread, setHasMessageListUnread] = useState(false);
   const [isActivityMonitorFollowing, setIsActivityMonitorFollowing] = useState(true);
   const [hasActivityMonitorUnread, setHasActivityMonitorUnread] = useState(false);
-  const [contextRailWidth, setContextRailWidth] = useState(SESSION_CONTEXT_RAIL_DEFAULT_WIDTH);
-  const [isContextRailResizing, setIsContextRailResizing] = useState(false);
   const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
   const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
   const [elicitationActionRequestId, setElicitationActionRequestId] = useState<string | null>(null);
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
   const [isActionDockPinnedExpanded, setIsActionDockPinnedExpanded] = useState(false);
-  const messageListRef = useRef<HTMLDivElement | null>(null);
   const activityMonitorRef = useRef<HTMLDivElement | null>(null);
-  const sessionWorkbenchRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const messageListSignatureRef = useRef("");
-  const messageListSessionIdRef = useRef<string | null>(null);
   const activityMonitorSignatureRef = useRef("");
   const activityMonitorSessionIdRef = useRef<string | null>(null);
-  const contextRailWidthRef = useRef(SESSION_CONTEXT_RAIL_DEFAULT_WIDTH);
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
 
   useEffect(() => {
@@ -778,6 +543,12 @@ export default function App() {
     [selectedId, sessions],
   );
   const selectedSessionId = selectedSession?.id ?? null;
+  const {
+    sessionWorkbenchRef,
+    sessionWorkbenchStyle,
+    isContextRailResizing,
+    handleStartContextRailResize,
+  } = useSessionContextRail({ ownerKey: selectedSessionId });
   const selectedSessionAuditLogs = useMemo(
     () => (selectedSessionId !== null && auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.entries : []),
     [auditLogsState.entries, auditLogsState.ownerSessionId, selectedSessionId],
@@ -1044,74 +815,6 @@ export default function App() {
   }, [isCharacterUpdateSession, selectedSession?.runState]);
 
   useEffect(() => {
-    contextRailWidthRef.current = contextRailWidth;
-  }, [contextRailWidth]);
-
-  useLayoutEffect(() => {
-    const syncContextRailWidth = () => {
-      const workbenchElement = sessionWorkbenchRef.current;
-      if (!workbenchElement) {
-        return;
-      }
-
-      const nextWidth = clampContextRailWidth(
-        contextRailWidthRef.current,
-        workbenchElement.getBoundingClientRect().width,
-      );
-      contextRailWidthRef.current = nextWidth;
-      setContextRailWidth((current) => (current === nextWidth ? current : nextWidth));
-    };
-
-    syncContextRailWidth();
-    window.addEventListener("resize", syncContextRailWidth);
-    return () => window.removeEventListener("resize", syncContextRailWidth);
-  }, [selectedSessionId]);
-
-  useEffect(() => {
-    if (!isContextRailResizing) {
-      return;
-    }
-
-    const handlePointerMove = (event: PointerEvent) => {
-      const workbenchElement = sessionWorkbenchRef.current;
-      if (!workbenchElement) {
-        return;
-      }
-
-      const bounds = workbenchElement.getBoundingClientRect();
-      if (bounds.width < SESSION_LAYOUT_BREAKPOINT) {
-        return;
-      }
-
-      const requestedWidth = bounds.right - event.clientX;
-      const nextWidth = clampContextRailWidth(requestedWidth, bounds.width);
-      contextRailWidthRef.current = nextWidth;
-      setContextRailWidth(nextWidth);
-    };
-
-    const handlePointerEnd = () => {
-      setIsContextRailResizing(false);
-    };
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerEnd);
-    window.addEventListener("pointercancel", handlePointerEnd);
-
-    const previousCursor = document.body.style.cursor;
-    const previousUserSelect = document.body.style.userSelect;
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerEnd);
-      window.removeEventListener("pointercancel", handlePointerEnd);
-      document.body.style.cursor = previousCursor;
-      document.body.style.userSelect = previousUserSelect;
-    };
-  }, [isContextRailResizing]);
-
-  useEffect(() => {
     let active = true;
 
     if (!withmateApi) {
@@ -1242,6 +945,15 @@ export default function App() {
       ].join("\u001a"),
     [displayedMessagesScrollSignature, pendingBubbleScrollSignature, selectedSession?.id, selectedSession?.runState],
   );
+  const {
+    messageListRef,
+    isMessageListFollowing,
+    handleMessageListScroll,
+    handleJumpToMessageListBottom,
+  } = useSessionMessageListFollowing({
+    ownerKey: selectedSessionId,
+    scrollSignature: messageListScrollSignature,
+  });
 
   useEffect(() => {
     setDraft("");
@@ -1284,41 +996,6 @@ export default function App() {
       setIsRetryDraftReplacePending(false);
     }
   }, [draft]);
-
-  useLayoutEffect(() => {
-    const messageListElement = messageListRef.current;
-    const currentSignature = messageListScrollSignature;
-    const wasSameSession = messageListSessionIdRef.current === selectedSessionId;
-    const hasSignatureChanged = messageListSignatureRef.current !== currentSignature;
-
-    if (!messageListElement) {
-      messageListSessionIdRef.current = selectedSessionId;
-      messageListSignatureRef.current = currentSignature;
-      return;
-    }
-
-    if (!wasSameSession) {
-      messageListSessionIdRef.current = selectedSessionId;
-      messageListSignatureRef.current = currentSignature;
-      setIsMessageListFollowing(true);
-      setHasMessageListUnread(false);
-      scrollMessageListElementToBottom(messageListElement);
-      return;
-    }
-
-    if (!hasSignatureChanged) {
-      return;
-    }
-
-    messageListSignatureRef.current = currentSignature;
-
-    if (isMessageListFollowing) {
-      scrollMessageListElementToBottom(messageListElement);
-      return;
-    }
-
-    setHasMessageListUnread(true);
-  }, [isMessageListFollowing, messageListScrollSignature, selectedSessionId]);
 
   useLayoutEffect(() => {
     const isActivityMonitorVisible = selectedSession?.runState === "running";
@@ -2574,16 +2251,6 @@ export default function App() {
     }
   };
 
-  const toDirectoryPath = (selectedPath: string) => {
-    const normalized = selectedPath.replace(/[\\/]+$/, "");
-    const lastSlashIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
-    if (lastSlashIndex < 0) {
-      return normalized;
-    }
-
-    return normalized.slice(0, lastSlashIndex);
-  };
-
   const insertReferencePath = (selectedPath: string) => {
     const textarea = composerTextareaRef.current;
     const referencePath = selectedSession
@@ -2736,37 +2403,6 @@ export default function App() {
     }));
   };
 
-  const scrollMessageListToBottom = () => {
-    const messageListElement = messageListRef.current;
-    if (!messageListElement) {
-      return;
-    }
-
-    scrollMessageListElementToBottom(messageListElement);
-  };
-
-  const handleMessageListScroll = () => {
-    const messageListElement = messageListRef.current;
-    if (!messageListElement) {
-      return;
-    }
-
-    const bottomGap = Math.max(0, messageListElement.scrollHeight - messageListElement.clientHeight - messageListElement.scrollTop);
-    const nextFollowing = bottomGap <= 80;
-
-    setIsMessageListFollowing((current) => (current === nextFollowing ? current : nextFollowing));
-    if (nextFollowing) {
-      setHasMessageListUnread(false);
-    }
-  };
-
-  const handleJumpToMessageListBottom = () => {
-    setIsMessageListFollowing(true);
-    setHasMessageListUnread(false);
-    scrollMessageListToBottom();
-    window.requestAnimationFrame(scrollMessageListToBottom);
-  };
-
   const scrollActivityMonitorToBottom = () => {
     const activityMonitorElement = activityMonitorRef.current;
     if (!activityMonitorElement) {
@@ -2806,19 +2442,22 @@ export default function App() {
     }
   };
 
+  const handleOpenSessionExplorer = async () => {
+    if (!withmateApi || !selectedSession) {
+      return;
+    }
+
+    try {
+      await withmateApi.openPath(selectedSession.workspacePath);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Explorer を開けなかったよ。");
+    }
+  };
+
   const handleJumpToActivityMonitorBottom = () => {
     setIsActivityMonitorFollowing(true);
     setHasActivityMonitorUnread(false);
     scrollActivityMonitorToBottom();
-  };
-
-  const handleStartContextRailResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0) {
-      return;
-    }
-
-    event.preventDefault();
-    setIsContextRailResizing(true);
   };
 
   const pendingRunIndicatorText = isApprovalRequestPending || isElicitationRequestPending
@@ -3013,14 +2652,6 @@ export default function App() {
     );
   };
 
-  const sessionWorkbenchStyle = useMemo(
-    () =>
-      ({
-        ["--session-context-rail-width" as string]: `${contextRailWidth}px`,
-      }) as CSSProperties,
-    [contextRailWidth],
-  );
-
   if (!desktopRuntime) {
     return (
       <div className="page-shell session-page">
@@ -3046,266 +2677,263 @@ export default function App() {
   }
 
   return (
-    <div
-      className={`page-shell session-page${isSessionHeaderExpanded ? "" : " session-page-header-collapsed"}`}
+    <SessionChatWindow
+      mode="agent"
+      className={isSessionHeaderExpanded ? "" : "session-page-header-collapsed"}
       style={sessionThemeStyle}
-    >
-      {isSessionHeaderExpanded ? (
-        <SessionHeader
-          taskTitle={selectedSession.taskTitle}
-          isEditingTitle={isEditingTitle}
-          titleDraft={titleDraft}
-          isRunning={isSelectedSessionRunning}
-          showTerminalButton={!isCharacterUpdateSession}
-          onToggleExpanded={handleToggleHeaderExpanded}
-          onOpenAuditLog={() => setAuditLogsOpen(true)}
-          onOpenTerminal={() => void handleOpenSessionTerminal()}
-          onTitleDraftChange={setTitleDraft}
-          onTitleInputKeyDown={handleTitleInputKeyDown}
-          onSaveTitle={() => void handleSaveTitle()}
-          onCancelTitleEdit={handleCancelTitleEdit}
-          onStartTitleEdit={handleStartTitleEdit}
-          onDeleteSession={() => void handleDeleteSession()}
+      workbenchRef={sessionWorkbenchRef}
+      workbenchStyle={sessionWorkbenchStyle}
+      isHeaderExpanded={isSessionHeaderExpanded}
+      headerProps={{
+        taskTitle: selectedSession.taskTitle,
+        isEditingTitle,
+        titleDraft,
+        isRunning: isSelectedSessionRunning,
+        showTerminalButton: !isCharacterUpdateSession,
+        onToggleExpanded: handleToggleHeaderExpanded,
+        onOpenAuditLog: () => setAuditLogsOpen(true),
+        onOpenTerminal: () => void handleOpenSessionTerminal(),
+        onTitleDraftChange: setTitleDraft,
+        onTitleInputKeyDown: handleTitleInputKeyDown,
+        onSaveTitle: () => void handleSaveTitle(),
+        onCancelTitleEdit: handleCancelTitleEdit,
+        onStartTitleEdit: handleStartTitleEdit,
+        onDeleteSession: () => void handleDeleteSession(),
+        actions: !isCharacterUpdateSession ? (
+          <button
+            className="drawer-toggle compact secondary"
+            type="button"
+            onClick={() => void handleOpenSessionExplorer()}
+          >
+            Explorer
+          </button>
+        ) : null,
+      }}
+      messageColumnProps={{
+        sessionId: selectedSession.id,
+        character: selectedSessionCharacter,
+        messages: displayedMessages,
+        expandedArtifacts,
+        messageListRef,
+        isRunning: isSelectedSessionRunning,
+        pendingRunIndicatorAnnouncement,
+        pendingRunIndicatorText,
+        liveApprovalRequest,
+        approvalActionRequestId,
+        liveElicitationRequest,
+        elicitationActionRequestId,
+        liveRunAssistantText,
+        hasLiveRunAssistantText,
+        liveRunErrorMessage: selectedSessionLiveRun?.errorMessage ?? "",
+        isMessageListFollowing,
+        onMessageListScroll: handleMessageListScroll,
+        onToggleArtifact: toggleArtifact,
+        onOpenDiff: (title, file) =>
+          setSelectedDiff({
+            title,
+            file,
+            themeColors: selectedSession.characterThemeColors,
+          }),
+        onResolveLiveApproval: (request, decision) => void handleResolveLiveApproval(request, decision),
+        onResolveLiveElicitation: (request, response) => void handleResolveLiveElicitation(request, response),
+        onOpenPath: handleOpenInlinePath,
+        getChangedFilesEmptyText: (artifactKey, artifactHasSnapshotRisk) =>
+          artifactHasSnapshotRisk
+            ? "差分は見つからなかったけど、snapshot の上限や省略で取りこぼしがあるかもしれないよ。"
+            : renderCharacterSessionCopy(
+              selectedSessionCopy.changedFilesEmpty,
+              pendingIndicatorCharacterName,
+              `changed-files-empty:${artifactKey}`,
+            ),
+      }}
+      isActionDockExpanded={isActionDockExpanded}
+      composerProps={{
+        retryBanner: (
+          <SessionRetryBanner
+            retryBanner={retryBanner}
+            isRetryDetailsOpen={isRetryDetailsOpen}
+            isRetryActionDisabled={isRetryActionDisabled}
+            isRetryEditDisabled={isRetryEditDisabled}
+            isRetryDraftReplacePending={isRetryDraftReplacePending}
+            onToggleDetails={() => setIsRetryDetailsOpen((current) => !current)}
+            onResendLastMessage={() => void handleResendLastMessage()}
+            onEditLastMessage={handleEditLastMessage}
+            onConfirmRetryDraftReplace={handleConfirmRetryDraftReplace}
+            onCancelRetryDraftReplace={handleCancelRetryDraftReplace}
+            onOpenPath={handleOpenInlinePath}
+          />
+        ),
+        isRunning: selectedSession.runState === "running",
+        composerBlocked: !!composerBlockedReason,
+        canSelectCustomAgent: !isCharacterUpdateSession && selectedSession.provider === "copilot",
+        showCustomAgentPicker: !isCharacterUpdateSession,
+        showSkillPicker: !isCharacterUpdateSession,
+        isAgentPickerOpen,
+        isSkillPickerOpen,
+        isAdditionalDirectoryListOpen,
+        selectedCustomAgentLabel: selectedSession.provider === "copilot" ? selectedCustomAgentDisplay.label : "Agent",
+        selectedCustomAgentTitle: selectedCustomAgentDisplay.title ?? "Copilot custom agent を選択",
+        additionalDirectoryCount: selectedSession.allowedAdditionalDirectories.length,
+        canCollapseActionDock,
+        showJumpToBottom: !isMessageListFollowing,
+        isCustomAgentListLoading,
+        isSkillListLoading,
+        customAgentItems,
+        skillItems,
+        attachmentItems: composerAttachmentItems,
+        additionalDirectoryItems,
+        workspacePathMatchItems,
+        draft,
+        composerTextareaRef,
+        isComposerDisabled,
+        isSendDisabled,
+        composerSendability,
+        sendButtonTitle: composerSendButtonTitle,
+        isComposerBlockedFeedbackActive: forceComposerBlockedFeedback && composerSendability.shouldShowFeedback,
+        approvalOptions: approvalChoiceOptions,
+        selectedApprovalMode: selectedSession.approvalMode,
+        sandboxOptions: sandboxChoiceOptions,
+        selectedCodexSandboxMode: selectedSession.codexSandboxMode,
+        modelOptions: modelSelectOptions,
+        selectedModel: selectedSession.model,
+        selectedModelFallbackLabel,
+        reasoningOptions: reasoningSelectOptions,
+        selectedReasoningEffort: selectedSession.reasoningEffort,
+        onPickFile: () => void handlePickFile(),
+        onPickFolder: () => void handlePickFolder(),
+        onPickImage: () => void handlePickImage(),
+        onToggleAgentPicker: () => {
+          setIsSkillPickerOpen(false);
+          setIsAgentPickerOpen((current) => !current);
+        },
+        onToggleSkillPicker: () => {
+          setIsAgentPickerOpen(false);
+          setIsSkillPickerOpen((current) => !current);
+        },
+        onAddAdditionalDirectory: () => void handleAddAdditionalDirectory(),
+        onToggleAdditionalDirectoryList: () => setIsAdditionalDirectoryListOpen((current) => !current),
+        onCollapse: handleCollapseActionDock,
+        onJumpToBottom: handleJumpToMessageListBottom,
+        onSelectCustomAgent: (value) => void handleSelectCustomAgent(
+          value ? availableCustomAgents.find((agent) => agent.name === value) ?? null : null,
+        ),
+        onSelectSkill: (skillId) => {
+          const skill = availableSkills.find((entry) => entry.id === skillId);
+          if (skill) {
+            handleSelectSkill(skill);
+          }
+        },
+        onRemoveAttachment: handleRemoveAttachmentReference,
+        onRemoveAdditionalDirectory: (path) => void handleRemoveAdditionalDirectory(path),
+        onDraftChange: (value, selectionStart) => {
+          setForceComposerBlockedFeedback(false);
+          setDraft(value);
+          setComposerCaret(selectionStart);
+        },
+        onDraftFocus: () => setIsActionDockPinnedExpanded(true),
+        onDraftKeyDown: handleComposerKeyDown,
+        onDraftSelect: setComposerCaret,
+        onDraftCompositionStart: () => setIsComposerImeComposing(true),
+        onDraftCompositionEnd: () => {
+          setIsComposerImeComposing(false);
+          setComposerCaret(composerTextareaRef.current?.selectionStart ?? draft.length);
+        },
+        onSendOrCancel: () => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend()),
+        onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
+        onActivateWorkspacePathMatch: setActiveWorkspacePathMatchIndex,
+        onChangeApprovalMode: (value) => void handleChangeApproval(value),
+        onChangeCodexSandboxMode: (value) => void handleChangeCodexSandboxMode(value),
+        onChangeModel: (value) => void handleChangeModel(value),
+        onChangeReasoningEffort: (value) => void handleChangeReasoningEffort(value as Session["reasoningEffort"]),
+      }}
+      compactActionDockProps={{
+        draft,
+        actionDockCompactPreview,
+        attachmentCount: composerPreview.attachments.length,
+        isRunning: selectedSession.runState === "running",
+        isSendDisabled,
+        showJumpToBottom: !isMessageListFollowing,
+        sendButtonTitle: composerSendButtonTitle,
+        onExpand: () => handleExpandActionDock({ focusComposer: true }),
+        onJumpToBottom: handleJumpToMessageListBottom,
+        onSendOrCancel: () => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend()),
+      }}
+      splitter={(
+        <button
+          className={`session-workbench-splitter${isContextRailResizing ? " is-active" : ""}`}
+          type="button"
+          onPointerDown={handleStartContextRailResize}
+          aria-label="会話と command pane の幅を調整"
+          title="左右の幅をドラッグで調整"
         />
-      ) : null}
+      )}
+      rightPane={(
+        <SessionPaneErrorBoundary>
+          {isCharacterUpdateSession ? (
+            <CharacterUpdateContextPane
+              taskTitle={selectedSession.taskTitle}
+              isHeaderExpanded={isSessionHeaderExpanded}
+              activePaneTab={activeCharacterUpdatePaneTab}
+              latestCommandView={latestCommandView}
+              runningDetailsEntries={runningDetailsEntries}
+              selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
+              memoryExtract={selectedCharacterUpdateMemoryExtract}
+              isLoadingMemoryExtract={isCharacterUpdateMemoryExtractLoading}
+              onToggleHeaderExpanded={handleToggleHeaderExpanded}
+              onSelectPaneTab={setActiveCharacterUpdatePaneTab}
+              onRefreshMemoryExtract={() => void handleRefreshCharacterUpdateMemoryExtract()}
+              onCopyMemoryExtract={() => void handleCopyCharacterUpdateMemoryExtract()}
+            />
+          ) : (
+            <SessionContextPane
+              taskTitle={selectedSession.taskTitle}
+              isHeaderExpanded={isSessionHeaderExpanded}
+              activeContextPaneTab={activeContextPaneTab}
+              contextPaneProjection={contextPaneProjection}
+              latestCommandView={latestCommandView}
+              runningDetailsEntries={runningDetailsEntries}
+              backgroundTasks={selectedBackgroundTasks}
+              selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
+              isSelectedSessionRunning={isSelectedSessionRunning}
+              isCopilotSession={isCopilotSession}
+              selectedCopilotRemainingPercentLabel={selectedCopilotRemainingPercentLabel}
+              selectedCopilotRemainingRequestsLabel={selectedCopilotRemainingRequestsLabel}
+              selectedCopilotQuotaResetLabel={selectedCopilotQuotaResetLabel}
+              selectedSessionContextTelemetry={selectedSessionContextTelemetry}
+              selectedSessionContextTelemetryProjection={selectedSessionContextTelemetryProjection}
+              contextEmptyText={selectedContextEmptyText}
+              onToggleHeaderExpanded={handleToggleHeaderExpanded}
+              onCycleContextPaneTab={handleCycleContextPaneTab}
+            />
+          )}
+        </SessionPaneErrorBoundary>
+      )}
+      modals={(
+        <>
+          <SessionDiffModal
+            selectedDiff={selectedDiff}
+            themeStyle={selectedDiffThemeStyle}
+            onClose={() => setSelectedDiff(null)}
+            onOpenDiffWindow={(payload) => void handleOpenDiffWindow(payload)}
+          />
 
-      <section className="content-grid session-content-grid">
-        <section className="chat-panel session-work-surface rise-3">
-          <div className="session-workbench" ref={sessionWorkbenchRef} style={sessionWorkbenchStyle}>
-            <div className="session-main-grid">
-              <div className="session-message-stack">
-                <SessionMessageColumn
-                  sessionId={selectedSession.id}
-                  character={selectedSessionCharacter}
-                  messages={displayedMessages}
-                  expandedArtifacts={expandedArtifacts}
-                  messageListRef={messageListRef}
-                  isRunning={isSelectedSessionRunning}
-                  pendingRunIndicatorAnnouncement={pendingRunIndicatorAnnouncement}
-                  pendingRunIndicatorText={pendingRunIndicatorText}
-                  liveApprovalRequest={liveApprovalRequest}
-                  approvalActionRequestId={approvalActionRequestId}
-                  liveElicitationRequest={liveElicitationRequest}
-                  elicitationActionRequestId={elicitationActionRequestId}
-                  liveRunAssistantText={liveRunAssistantText}
-                  hasLiveRunAssistantText={hasLiveRunAssistantText}
-                  liveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
-                  isMessageListFollowing={isMessageListFollowing}
-                  onMessageListScroll={handleMessageListScroll}
-                  onToggleArtifact={toggleArtifact}
-                  onOpenDiff={(title, file) =>
-                    setSelectedDiff({
-                      title,
-                      file,
-                      themeColors: selectedSession.characterThemeColors,
-                    })}
-                  onResolveLiveApproval={(request, decision) => void handleResolveLiveApproval(request, decision)}
-                  onResolveLiveElicitation={(request, response) => void handleResolveLiveElicitation(request, response)}
-                  onOpenPath={handleOpenInlinePath}
-                  getChangedFilesEmptyText={(artifactKey, artifactHasSnapshotRisk) =>
-                    artifactHasSnapshotRisk
-                      ? "差分は見つからなかったけど、snapshot の上限や省略で取りこぼしがあるかもしれないよ。"
-                      : renderCharacterSessionCopy(
-                        selectedSessionCopy.changedFilesEmpty,
-                        pendingIndicatorCharacterName,
-                        `changed-files-empty:${artifactKey}`,
-                      )}
-                />
-
-                <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
-                  {isActionDockExpanded ? (
-                    <>
-                      <SessionComposerExpanded
-                        retryBanner={(
-                          <SessionRetryBanner
-                            retryBanner={retryBanner}
-                            isRetryDetailsOpen={isRetryDetailsOpen}
-                            isRetryActionDisabled={isRetryActionDisabled}
-                            isRetryEditDisabled={isRetryEditDisabled}
-                            isRetryDraftReplacePending={isRetryDraftReplacePending}
-                            onToggleDetails={() => setIsRetryDetailsOpen((current) => !current)}
-                            onResendLastMessage={() => void handleResendLastMessage()}
-                            onEditLastMessage={handleEditLastMessage}
-                            onConfirmRetryDraftReplace={handleConfirmRetryDraftReplace}
-                            onCancelRetryDraftReplace={handleCancelRetryDraftReplace}
-                            onOpenPath={handleOpenInlinePath}
-                          />
-                        )}
-                        isRunning={selectedSession.runState === "running"}
-                        composerBlocked={!!composerBlockedReason}
-                        canSelectCustomAgent={!isCharacterUpdateSession && selectedSession.provider === "copilot"}
-                        showCustomAgentPicker={!isCharacterUpdateSession}
-                        showSkillPicker={!isCharacterUpdateSession}
-                        isAgentPickerOpen={isAgentPickerOpen}
-                        isSkillPickerOpen={isSkillPickerOpen}
-                        isAdditionalDirectoryListOpen={isAdditionalDirectoryListOpen}
-                        selectedCustomAgentLabel={selectedSession.provider === "copilot" ? selectedCustomAgentDisplay.label : "Agent"}
-                        selectedCustomAgentTitle={selectedCustomAgentDisplay.title ?? "Copilot custom agent を選択"}
-                        additionalDirectoryCount={selectedSession.allowedAdditionalDirectories.length}
-                        canCollapseActionDock={canCollapseActionDock}
-                        showJumpToBottom={!isMessageListFollowing}
-                        isCustomAgentListLoading={isCustomAgentListLoading}
-                        isSkillListLoading={isSkillListLoading}
-                        customAgentItems={customAgentItems}
-                        skillItems={skillItems}
-                        attachmentItems={composerAttachmentItems}
-                        additionalDirectoryItems={additionalDirectoryItems}
-                        workspacePathMatchItems={workspacePathMatchItems}
-                        draft={draft}
-                        composerTextareaRef={composerTextareaRef}
-                        isComposerDisabled={isComposerDisabled}
-                        isSendDisabled={isSendDisabled}
-                        composerSendability={composerSendability}
-                        sendButtonTitle={composerSendButtonTitle}
-                        isComposerBlockedFeedbackActive={forceComposerBlockedFeedback && composerSendability.shouldShowFeedback}
-                        approvalOptions={approvalChoiceOptions}
-                        selectedApprovalMode={selectedSession.approvalMode}
-                        sandboxOptions={sandboxChoiceOptions}
-                        selectedCodexSandboxMode={selectedSession.codexSandboxMode}
-                        modelOptions={modelSelectOptions}
-                        selectedModel={selectedSession.model}
-                        selectedModelFallbackLabel={selectedModelFallbackLabel}
-                        reasoningOptions={reasoningSelectOptions}
-                        selectedReasoningEffort={selectedSession.reasoningEffort}
-                        onPickFile={() => void handlePickFile()}
-                        onPickFolder={() => void handlePickFolder()}
-                        onPickImage={() => void handlePickImage()}
-                        onToggleAgentPicker={() => {
-                          setIsSkillPickerOpen(false);
-                          setIsAgentPickerOpen((current) => !current);
-                        }}
-                        onToggleSkillPicker={() => {
-                          setIsAgentPickerOpen(false);
-                          setIsSkillPickerOpen((current) => !current);
-                        }}
-                        onAddAdditionalDirectory={() => void handleAddAdditionalDirectory()}
-                        onToggleAdditionalDirectoryList={() => setIsAdditionalDirectoryListOpen((current) => !current)}
-                        onCollapse={handleCollapseActionDock}
-                        onJumpToBottom={handleJumpToMessageListBottom}
-                        onSelectCustomAgent={(value) => void handleSelectCustomAgent(
-                          value ? availableCustomAgents.find((agent) => agent.name === value) ?? null : null,
-                        )}
-                        onSelectSkill={(skillId) => {
-                          const skill = availableSkills.find((entry) => entry.id === skillId);
-                          if (skill) {
-                            handleSelectSkill(skill);
-                          }
-                        }}
-                        onRemoveAttachment={handleRemoveAttachmentReference}
-                        onRemoveAdditionalDirectory={(path) => void handleRemoveAdditionalDirectory(path)}
-                        onDraftChange={(value, selectionStart) => {
-                          setForceComposerBlockedFeedback(false);
-                          setDraft(value);
-                          setComposerCaret(selectionStart);
-                        }}
-                        onDraftFocus={() => setIsActionDockPinnedExpanded(true)}
-                        onDraftKeyDown={handleComposerKeyDown}
-                        onDraftSelect={setComposerCaret}
-                        onDraftCompositionStart={() => setIsComposerImeComposing(true)}
-                        onDraftCompositionEnd={() => {
-                          setIsComposerImeComposing(false);
-                          setComposerCaret(composerTextareaRef.current?.selectionStart ?? draft.length);
-                        }}
-                        onSendOrCancel={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
-                        onSelectWorkspacePathMatch={handleSelectWorkspacePathMatch}
-                        onActivateWorkspacePathMatch={setActiveWorkspacePathMatchIndex}
-                        onChangeApprovalMode={(value) => void handleChangeApproval(value)}
-                        onChangeCodexSandboxMode={(value) => void handleChangeCodexSandboxMode(value)}
-                        onChangeModel={(value) => void handleChangeModel(value)}
-                        onChangeReasoningEffort={(value) => void handleChangeReasoningEffort(value as Session["reasoningEffort"])}
-                      />
-                    </>
-                  ) : (
-                    <SessionActionDockCompactRow
-                      draft={draft}
-                      actionDockCompactPreview={actionDockCompactPreview}
-                      attachmentCount={composerPreview.attachments.length}
-                      isRunning={selectedSession.runState === "running"}
-                      isSendDisabled={isSendDisabled}
-                      showJumpToBottom={!isMessageListFollowing}
-                      sendButtonTitle={composerSendButtonTitle}
-                      onExpand={() => handleExpandActionDock({ focusComposer: true })}
-                      onJumpToBottom={handleJumpToMessageListBottom}
-                      onSendOrCancel={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
-                    />
-                  )}
-                </div>
-              </div>
-
-              <button
-                className={`session-workbench-splitter${isContextRailResizing ? " is-active" : ""}`}
-                type="button"
-                onPointerDown={handleStartContextRailResize}
-                aria-label="会話と command pane の幅を調整"
-                title="左右の幅をドラッグで調整"
-              />
-
-              <SessionPaneErrorBoundary>
-                {isCharacterUpdateSession ? (
-                  <CharacterUpdateContextPane
-                    taskTitle={selectedSession.taskTitle}
-                    isHeaderExpanded={isSessionHeaderExpanded}
-                    activePaneTab={activeCharacterUpdatePaneTab}
-                    latestCommandView={latestCommandView}
-                    runningDetailsEntries={runningDetailsEntries}
-                    selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
-                    memoryExtract={selectedCharacterUpdateMemoryExtract}
-                    isLoadingMemoryExtract={isCharacterUpdateMemoryExtractLoading}
-                    onToggleHeaderExpanded={handleToggleHeaderExpanded}
-                    onSelectPaneTab={setActiveCharacterUpdatePaneTab}
-                    onRefreshMemoryExtract={() => void handleRefreshCharacterUpdateMemoryExtract()}
-                    onCopyMemoryExtract={() => void handleCopyCharacterUpdateMemoryExtract()}
-                  />
-                ) : (
-                  <SessionContextPane
-                    taskTitle={selectedSession.taskTitle}
-                    isHeaderExpanded={isSessionHeaderExpanded}
-                    activeContextPaneTab={activeContextPaneTab}
-                    contextPaneProjection={contextPaneProjection}
-                    latestCommandView={latestCommandView}
-                    runningDetailsEntries={runningDetailsEntries}
-                    backgroundTasks={selectedBackgroundTasks}
-                    selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
-                    isSelectedSessionRunning={isSelectedSessionRunning}
-                    isCopilotSession={isCopilotSession}
-                    selectedCopilotRemainingPercentLabel={selectedCopilotRemainingPercentLabel}
-                    selectedCopilotRemainingRequestsLabel={selectedCopilotRemainingRequestsLabel}
-                    selectedCopilotQuotaResetLabel={selectedCopilotQuotaResetLabel}
-                    selectedSessionContextTelemetry={selectedSessionContextTelemetry}
-                    selectedSessionContextTelemetryProjection={selectedSessionContextTelemetryProjection}
-                    contextEmptyText={selectedContextEmptyText}
-                    onToggleHeaderExpanded={handleToggleHeaderExpanded}
-                    onCycleContextPaneTab={handleCycleContextPaneTab}
-                  />
-                )}
-              </SessionPaneErrorBoundary>
-            </div>
-          </div>
-        </section>
-      </section>
-
-      <SessionDiffModal
-        selectedDiff={selectedDiff}
-        themeStyle={selectedDiffThemeStyle}
-        onClose={() => setSelectedDiff(null)}
-        onOpenDiffWindow={(payload) => void handleOpenDiffWindow(payload)}
-      />
-
-      <SessionAuditLogModal
-        open={auditLogsOpen}
-        entries={displayedSessionAuditLogs}
-        details={auditLogDetails}
-        hasMore={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.hasMore : false}
-        loadingMore={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.loading : false}
-        total={auditLogsState.ownerSessionId === selectedSessionId
-          ? Math.max(auditLogsState.total, displayedSessionAuditLogs.length)
-          : displayedSessionAuditLogs.length}
-        errorMessage={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.errorMessage : null}
-        onLoadMore={handleLoadMoreAuditLogs}
-        onLoadDetail={handleLoadAuditLogDetail}
-        onClose={() => setAuditLogsOpen(false)}
-      />
-    </div>
+          <SessionAuditLogModal
+            open={auditLogsOpen}
+            entries={displayedSessionAuditLogs}
+            details={auditLogDetails}
+            hasMore={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.hasMore : false}
+            loadingMore={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.loading : false}
+            total={auditLogsState.ownerSessionId === selectedSessionId
+              ? Math.max(auditLogsState.total, displayedSessionAuditLogs.length)
+              : displayedSessionAuditLogs.length}
+            errorMessage={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.errorMessage : null}
+            onLoadMore={handleLoadMoreAuditLogs}
+            onLoadDetail={handleLoadAuditLogDetail}
+            onClose={() => setAuditLogsOpen(false)}
+          />
+        </>
+      )}
+    />
   );
 }
 

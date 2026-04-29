@@ -27,6 +27,7 @@ import {
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
+import type { SessionWindowModeKind } from "./session-window-mode.js";
 import {
   contextPaneTabLabel,
   liveRunStepToneClassName,
@@ -74,7 +75,10 @@ function liveElicitationModeLabel(mode: LiveElicitationRequest["mode"]): string 
   return mode === "url" ? "URL" : "Form";
 }
 
-function createLiveElicitationFieldValue(field: LiveElicitationField): string | number | boolean | string[] {
+type LiveElicitationFieldValue = string | number | boolean | string[];
+type LiveElicitationContentEntry = readonly [string, LiveElicitationFieldValue];
+
+function createLiveElicitationFieldValue(field: LiveElicitationField): LiveElicitationFieldValue {
   switch (field.type) {
     case "boolean":
       return field.defaultValue ?? false;
@@ -91,13 +95,13 @@ function createLiveElicitationFieldValue(field: LiveElicitationField): string | 
   }
 }
 
-function createLiveElicitationFormState(request: LiveElicitationRequest): Record<string, string | number | boolean | string[]> {
+function createLiveElicitationFormState(request: LiveElicitationRequest): Record<string, LiveElicitationFieldValue> {
   return Object.fromEntries(request.fields.map((field) => [field.name, createLiveElicitationFieldValue(field)]));
 }
 
 function validateLiveElicitationField(
   field: LiveElicitationField,
-  value: string | number | boolean | string[],
+  value: LiveElicitationFieldValue,
 ): string | null {
   switch (field.type) {
     case "text": {
@@ -160,9 +164,9 @@ function validateLiveElicitationField(
 
 function buildLiveElicitationResponseContent(
   request: LiveElicitationRequest,
-  fieldValues: Record<string, string | number | boolean | string[]>,
-): Record<string, string | number | boolean | string[]> {
-  const entries = request.fields.flatMap((field) => {
+  fieldValues: Record<string, LiveElicitationFieldValue>,
+): Record<string, LiveElicitationFieldValue> {
+  const entries = request.fields.flatMap<LiveElicitationContentEntry>((field) => {
     const value = fieldValues[field.name];
     if (field.type === "text" || field.type === "select") {
       if (typeof value !== "string") {
@@ -201,6 +205,14 @@ function buildLiveElicitationResponseContent(
   return Object.fromEntries(entries);
 }
 
+function liveElicitationTextValue(value: LiveElicitationFieldValue | undefined): string {
+  return typeof value === "string" ? value : "";
+}
+
+function liveElicitationMultiSelectValue(value: LiveElicitationFieldValue | undefined): string[] {
+  return Array.isArray(value) ? value : [];
+}
+
 type LiveElicitationCardProps = {
   request: LiveElicitationRequest;
   elicitationActionRequestId: string | null;
@@ -214,7 +226,7 @@ function LiveElicitationCard({
   onResolveLiveElicitation,
   onOpenPath,
 }: LiveElicitationCardProps) {
-  const [fieldValues, setFieldValues] = useState<Record<string, string | number | boolean | string[]>>(
+  const [fieldValues, setFieldValues] = useState<Record<string, LiveElicitationFieldValue>>(
     () => createLiveElicitationFormState(request),
   );
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
@@ -286,14 +298,14 @@ function LiveElicitationCard({
               {field.type === "text" ? (
                 field.maxLength !== undefined && field.maxLength > 120 ? (
                   <textarea
-                    value={typeof fieldValues[field.name] === "string" ? fieldValues[field.name] : ""}
+                    value={liveElicitationTextValue(fieldValues[field.name])}
                     onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
                     disabled={isSubmitting}
                   />
                 ) : (
                   <input
                     type={field.format === "email" ? "email" : field.format === "uri" ? "url" : field.format === "date" ? "date" : "text"}
-                    value={typeof fieldValues[field.name] === "string" ? fieldValues[field.name] : ""}
+                    value={liveElicitationTextValue(fieldValues[field.name])}
                     onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
                     disabled={isSubmitting}
                   />
@@ -325,7 +337,7 @@ function LiveElicitationCard({
               ) : null}
               {field.type === "select" ? (
                 <select
-                  value={typeof fieldValues[field.name] === "string" ? fieldValues[field.name] : ""}
+                  value={liveElicitationTextValue(fieldValues[field.name])}
                   onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
                   disabled={isSubmitting}
                 >
@@ -340,7 +352,7 @@ function LiveElicitationCard({
               {field.type === "multi-select" ? (
                 <div className="live-elicitation-options">
                   {field.options.map((option) => {
-                    const selectedValues = Array.isArray(fieldValues[field.name]) ? fieldValues[field.name] : [];
+                    const selectedValues = liveElicitationMultiSelectValue(fieldValues[field.name]);
                     const checked = selectedValues.includes(option.value);
                     return (
                       <label key={option.value} className="live-elicitation-option">
@@ -349,7 +361,7 @@ function LiveElicitationCard({
                           checked={checked}
                           onChange={(event) => {
                             setFieldValues((current) => {
-                              const currentValues = Array.isArray(current[field.name]) ? current[field.name] : [];
+                              const currentValues = liveElicitationMultiSelectValue(current[field.name]);
                               return {
                                 ...current,
                                 [field.name]: event.target.checked
@@ -460,7 +472,11 @@ export type SessionHeaderProps = {
   isEditingTitle: boolean;
   titleDraft: string;
   isRunning: boolean;
+  showRenameButton?: boolean;
+  showAuditLogButton?: boolean;
   showTerminalButton?: boolean;
+  showDeleteButton?: boolean;
+  actions?: ReactNode;
   onToggleExpanded: () => void;
   onOpenAuditLog: () => void;
   onOpenTerminal: () => void;
@@ -477,7 +493,11 @@ export function SessionHeader({
   isEditingTitle,
   titleDraft,
   isRunning,
+  showRenameButton = true,
+  showAuditLogButton = true,
   showTerminalButton = true,
+  showDeleteButton = true,
+  actions,
   onToggleExpanded,
   onOpenAuditLog,
   onOpenTerminal,
@@ -509,22 +529,27 @@ export function SessionHeader({
           </label>
         )}
         <div className="session-window-controls">
-          {!isEditingTitle ? (
+          {!isEditingTitle && showRenameButton ? (
             <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning}>
               Rename
             </button>
           ) : null}
-          <button className="drawer-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
-            Audit Log
-          </button>
+          {showAuditLogButton ? (
+            <button className="drawer-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
+              Audit Log
+            </button>
+          ) : null}
           {showTerminalButton ? (
             <button className="drawer-toggle compact secondary" type="button" onClick={onOpenTerminal}>
               Terminal
             </button>
           ) : null}
-          <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
-            Delete
-          </button>
+          {showDeleteButton ? (
+            <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
+              Delete
+            </button>
+          ) : null}
+          {actions}
         </div>
       </div>
     </header>
@@ -553,6 +578,94 @@ export function SessionHeaderHandle({ taskTitle, onClick }: SessionHeaderHandleP
     <button className="session-header-handle" type="button" onClick={onClick}>
       <span className="session-window-title session-title-accent">{taskTitle}</span>
     </button>
+  );
+}
+
+export type SessionChatScreenProps = {
+  mode: SessionWindowModeKind;
+  className?: string;
+  style?: CSSProperties;
+  header: ReactNode;
+  messageColumn: ReactNode;
+  actionDock: ReactNode;
+  rightPane: ReactNode;
+  splitter: ReactNode;
+  workbenchRef?: RefObject<HTMLDivElement | null>;
+  workbenchStyle?: CSSProperties;
+  modals?: ReactNode;
+};
+
+export function SessionChatScreen({
+  mode,
+  className = "",
+  style,
+  header,
+  messageColumn,
+  actionDock,
+  rightPane,
+  splitter,
+  workbenchRef,
+  workbenchStyle,
+  modals,
+}: SessionChatScreenProps) {
+  return (
+    <div className={`page-shell session-page${className ? ` ${className}` : ""}`} style={style} data-session-mode={mode}>
+      {header}
+
+      <section className="content-grid session-content-grid">
+        <section className="chat-panel session-work-surface rise-3">
+          <div className="session-workbench" ref={workbenchRef} style={workbenchStyle}>
+            <div className="session-main-grid">
+              <div className="session-message-stack">
+                {messageColumn}
+                {actionDock}
+              </div>
+
+              {splitter}
+              {rightPane}
+            </div>
+          </div>
+        </section>
+      </section>
+
+      {modals}
+    </div>
+  );
+}
+
+export type SessionChatWindowProps = Omit<SessionChatScreenProps, "header" | "messageColumn" | "actionDock"> & {
+  isHeaderExpanded: boolean;
+  headerProps: SessionHeaderProps;
+  messageColumnProps: SessionMessageColumnProps;
+  isActionDockExpanded: boolean;
+  composerProps: SessionComposerExpandedProps;
+  compactActionDockProps: SessionActionDockCompactRowProps;
+};
+
+export function SessionChatWindow({
+  isHeaderExpanded,
+  headerProps,
+  messageColumnProps,
+  isActionDockExpanded,
+  composerProps,
+  compactActionDockProps,
+  ...screenProps
+}: SessionChatWindowProps) {
+  return (
+    <SessionChatScreen
+      {...screenProps}
+      header={isHeaderExpanded ? <SessionHeader {...headerProps} /> : null}
+      messageColumn={<SessionMessageColumn {...messageColumnProps} />}
+      actionDock={(
+        <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
+          {isActionDockExpanded ? (
+            <SessionComposerExpanded {...composerProps} />
+          ) : (
+            <SessionActionDockCompactRow {...compactActionDockProps} />
+          )}
+        </div>
+      )}
+    />
   );
 }
 
@@ -1021,6 +1134,7 @@ export class SessionPaneErrorBoundary extends Component<
   static getDerivedStateFromError(error: Error): SessionPaneErrorBoundaryState {
     return {
       errorMessage: error.message || "右ペインの描画に失敗したよ。",
+      resetNonce: 0,
     };
   }
 
@@ -2191,6 +2305,7 @@ export type SessionComposerExpandedProps = {
   canSelectCustomAgent: boolean;
   showCustomAgentPicker?: boolean;
   showSkillPicker?: boolean;
+  showAdditionalDirectoryControls?: boolean;
   isAgentPickerOpen: boolean;
   isSkillPickerOpen: boolean;
   isAdditionalDirectoryListOpen: boolean;
@@ -2257,6 +2372,7 @@ export function SessionComposerExpanded({
   canSelectCustomAgent,
   showCustomAgentPicker = true,
   showSkillPicker = true,
+  showAdditionalDirectoryControls = true,
   isAgentPickerOpen,
   isSkillPickerOpen,
   isAdditionalDirectoryListOpen,
@@ -2387,25 +2503,27 @@ export function SessionComposerExpanded({
             Skill
           </button>
         ) : null}
-        <div className="composer-additional-directory-toolbar">
-          <button
-            className="drawer-toggle compact secondary composer-skill-button"
-            type="button"
-            onClick={onAddAdditionalDirectory}
-            disabled={isRunning || composerBlocked}
-          >
-            Add Directory
-          </button>
-          <button
-            className={`drawer-toggle compact secondary composer-skill-button${isAdditionalDirectoryListOpen ? " is-open" : ""}`}
-            type="button"
-            onClick={onToggleAdditionalDirectoryList}
-            disabled={additionalDirectoryCount === 0}
-            aria-expanded={isAdditionalDirectoryListOpen}
-          >
-            {`Dirs ${additionalDirectoryCount}`}
-          </button>
-        </div>
+        {showAdditionalDirectoryControls ? (
+          <div className="composer-additional-directory-toolbar">
+            <button
+              className="drawer-toggle compact secondary composer-skill-button"
+              type="button"
+              onClick={onAddAdditionalDirectory}
+              disabled={isRunning || composerBlocked}
+            >
+              Add Directory
+            </button>
+            <button
+              className={`drawer-toggle compact secondary composer-skill-button${isAdditionalDirectoryListOpen ? " is-open" : ""}`}
+              type="button"
+              onClick={onToggleAdditionalDirectoryList}
+              disabled={additionalDirectoryCount === 0}
+              aria-expanded={isAdditionalDirectoryListOpen}
+            >
+              {`Dirs ${additionalDirectoryCount}`}
+            </button>
+          </div>
+        ) : null}
         {showJumpToBottom ? (
           <button
             className="drawer-toggle compact secondary message-jump-bottom-button"

@@ -7,6 +7,7 @@ import type {
   MemoryExtractionProviderSettings,
   SessionSummary,
 } from "./app-state.js";
+import type { CompanionSessionSummary } from "./companion-state.js";
 import type {
   MemoryManagementDomain,
   MemoryManagementDomainPageInfo,
@@ -45,7 +46,7 @@ import {
   SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
 } from "./settings-ui.js";
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
-import { buildCardThemeStyle, CharacterAvatar, modelOptionLabel, reasoningDepthLabel } from "./ui-utils.js";
+import { buildCardThemeStyle, CharacterAvatar } from "./ui-utils.js";
 
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
@@ -754,6 +755,7 @@ function SettingsMemoryTagLine({ label, items }: { label: string; items: string[
 
 export type HomeLaunchDialogProps = {
   open: boolean;
+  mode: "session" | "companion";
   title: string;
   workspace: LaunchWorkspace | null;
   launchWorkspacePathLabel: string;
@@ -764,19 +766,23 @@ export type HomeLaunchDialogProps = {
   selectedCharacterId: string | null;
   launchCharacterSearchText: string;
   canStartSession: boolean;
+  launchFeedback: string;
+  launchStarting: boolean;
   searchIcon: ReactNode;
   onClose: () => void;
+  onSelectMode: (mode: "session" | "companion") => void;
   onChangeTitle: (value: string) => void;
   onBrowseWorkspace: () => void;
   onSelectProvider: (providerId: string) => void;
   onChangeCharacterSearch: (value: string) => void;
   onSelectCharacter: (characterId: string) => void;
   onOpenCharacterEditor: () => void;
-  onStartSession: () => void;
+  onStartSession: (mode: "session" | "companion") => void;
 };
 
 export function HomeLaunchDialog({
   open,
+  mode,
   title,
   workspace,
   launchWorkspacePathLabel,
@@ -787,8 +793,11 @@ export function HomeLaunchDialog({
   selectedCharacterId,
   launchCharacterSearchText,
   canStartSession,
+  launchFeedback,
+  launchStarting,
   searchIcon,
   onClose,
+  onSelectMode,
   onChangeTitle,
   onBrowseWorkspace,
   onSelectProvider,
@@ -823,6 +832,34 @@ export function HomeLaunchDialog({
         </div>
 
         <div className="launch-panel minimal">
+          <section className="launch-section minimal">
+            <div
+              className="choice-list launch-provider-list"
+              role="tablist"
+              aria-label="Session mode"
+              onKeyDown={(event) => {
+                focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
+              }}
+            >
+              {[
+                { value: "session" as const, label: "Agent Mode" },
+                { value: "companion" as const, label: "Companion Mode" },
+              ].map((option) => (
+                <button
+                  key={option.value}
+                  className={`choice-chip${mode === option.value ? " active" : ""}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === option.value}
+                  tabIndex={mode === option.value ? 0 : -1}
+                  onClick={() => onSelectMode(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </section>
+
           <section className="launch-section minimal">
             <div className="launch-field">
               <label className="launch-field-label" htmlFor="launch-session-title">
@@ -937,8 +974,15 @@ export function HomeLaunchDialog({
         </div>
 
         <div className="launch-dialog-foot minimal">
-          <button className="start-session-button" type="button" disabled={!canStartSession} onClick={onStartSession}>
-            Start New Session
+          {launchFeedback ? <p className="launch-feedback">{launchFeedback}</p> : null}
+          <button
+            className="start-session-button"
+            type="button"
+            aria-disabled={!canStartSession || launchStarting}
+            disabled={launchStarting}
+            onClick={() => onStartSession(mode)}
+          >
+            {launchStarting ? "Starting..." : mode === "companion" ? "Start Companion" : "Start New Session"}
           </button>
         </div>
       </section>
@@ -948,23 +992,59 @@ export function HomeLaunchDialog({
 
 export type HomeRecentSessionsPanelProps = {
   filteredSessionEntries: Array<{ session: SessionSummary; state: HomeSessionState }>;
+  companionSessions: CompanionSessionSummary[];
   normalizedSessionSearch: string;
   searchText: string;
   searchIcon: ReactNode;
   onChangeSearchText: (value: string) => void;
   onOpenLaunchDialog: () => void;
   onOpenSession: (sessionId: string) => void;
+  onOpenCompanionReview: (sessionId: string) => void;
 };
 
 export function HomeRecentSessionsPanel({
   filteredSessionEntries,
+  companionSessions,
   normalizedSessionSearch,
   searchText,
   searchIcon,
   onChangeSearchText,
   onOpenLaunchDialog,
   onOpenSession,
+  onOpenCompanionReview,
 }: HomeRecentSessionsPanelProps) {
+  const visibleCompanionSessions = companionSessions.filter((session) => {
+    if (!normalizedSessionSearch) {
+      return true;
+    }
+    const haystack = [
+      session.taskTitle,
+      session.character,
+      session.repoRoot,
+      session.focusPath,
+      session.targetBranch,
+      session.status,
+    ].join(" ").toLowerCase();
+    return haystack.includes(normalizedSessionSearch);
+  });
+  const visibleSessionEntries = [
+    ...filteredSessionEntries.map((entry) => ({
+      kind: "agent" as const,
+      updatedAt: entry.session.updatedAt,
+      entry,
+    })),
+    ...visibleCompanionSessions.map((session) => ({
+      kind: "companion" as const,
+      updatedAt: session.updatedAt,
+      session,
+    })),
+  ].sort((left, right) => {
+    const leftTime = Date.parse(left.updatedAt);
+    const rightTime = Date.parse(right.updatedAt);
+    return (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
+  });
+  const hasVisibleEntries = visibleSessionEntries.length > 0;
+
   return (
     <section className="panel session-list-panel home-session-list-panel rise-3">
       <div className="toolbar-search-row">
@@ -986,10 +1066,39 @@ export function HomeRecentSessionsPanel({
       </div>
 
       <div className="session-card-list home-session-card-list">
-        {filteredSessionEntries.length > 0 ? (
-          filteredSessionEntries.map(({ session, state }) => (
+        {visibleSessionEntries.map((item) => {
+          if (item.kind === "companion") {
+            const { session } = item;
+            return (
+              <button
+                key={`companion-${session.id}`}
+                className="session-card home-session-card"
+                type="button"
+                style={buildCardThemeStyle(session.characterThemeColors)}
+                onClick={() => onOpenCompanionReview(session.id)}
+              >
+                <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="small" className="session-card-avatar" />
+                <div className="session-card-copy">
+                  <div className="session-card-topline home-session-card-topline">
+                    <strong>{session.taskTitle}</strong>
+                    <div className="home-session-card-badges">
+                      <span className="session-mode-badge companion">Companion</span>
+                      <span className={`session-status home-session-status ${session.status}`.trim()}>{session.status}</span>
+                    </div>
+                  </div>
+                  <div className="session-card-subline home-session-card-meta">
+                    <span>{`Workspace : ${session.focusPath || session.repoRoot}`}</span>
+                    <span>{`updatedAt: ${session.updatedAt}`}</span>
+                  </div>
+                </div>
+              </button>
+            );
+          }
+
+          const { session, state } = item.entry;
+          return (
             <button
-              key={session.id}
+              key={`agent-${session.id}`}
               className="session-card home-session-card"
               type="button"
               style={buildCardThemeStyle(session.characterThemeColors)}
@@ -999,7 +1108,10 @@ export function HomeRecentSessionsPanel({
               <div className="session-card-copy">
                 <div className="session-card-topline home-session-card-topline">
                   <strong>{session.taskTitle}</strong>
-                  <span className={`session-status home-session-status ${state.kind}`.trim()}>{state.label}</span>
+                  <div className="home-session-card-badges">
+                    <span className="session-mode-badge agent">Agent</span>
+                    <span className={`session-status home-session-status ${state.kind}`.trim()}>{state.label}</span>
+                  </div>
                 </div>
                 <div className="session-card-subline home-session-card-meta">
                   <span>{`Workspace : ${session.workspacePath || session.workspaceLabel}`}</span>
@@ -1008,19 +1120,22 @@ export function HomeRecentSessionsPanel({
                 {session.taskSummary.trim() ? <p className="session-card-summary home-session-card-summary">{session.taskSummary}</p> : null}
               </div>
             </button>
-          ))
-        ) : normalizedSessionSearch ? (
-          <article className="empty-list-card">
-            <p>一致するセッションはないよ。</p>
-          </article>
-        ) : (
-          <article className="empty-list-card">
-            <p>まだセッションはないよ。</p>
-            <button className="start-session-button" type="button" onClick={onOpenLaunchDialog}>
-              New Session
-            </button>
-          </article>
-        )}
+          );
+        })}
+        {!hasVisibleEntries ? (
+          normalizedSessionSearch ? (
+            <article className="empty-list-card">
+              <p>一致するセッションはないよ。</p>
+            </article>
+          ) : (
+            <article className="empty-list-card">
+              <p>まだセッションはないよ。</p>
+              <button className="start-session-button" type="button" onClick={onOpenLaunchDialog}>
+                New Session
+              </button>
+            </article>
+          )
+        ) : null}
       </div>
     </section>
   );

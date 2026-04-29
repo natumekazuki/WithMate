@@ -5,6 +5,7 @@ import type {
   WithMateWindowApi,
   WithMateWindowCatalogApi,
   WithMateWindowCharacterApi,
+  WithMateWindowCompanionApi,
   WithMateWindowNavigationApi,
   WithMateWindowObservabilityApi,
   WithMateWindowPickerApi,
@@ -16,20 +17,25 @@ import {
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CHARACTERS_CHANGED_EVENT,
+  WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
+  WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
+  WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
+  WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
+  WITHMATE_GET_COMPANION_SESSION_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
@@ -43,6 +49,7 @@ import {
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
+  WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
@@ -50,10 +57,14 @@ import {
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
+  WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
+  WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL,
+  WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
@@ -64,23 +75,30 @@ import {
   WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
+  WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
   WITHMATE_PICK_FILE_CHANNEL,
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
+  WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL,
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
   WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT,
+  WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
+  WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
+  WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SESSIONS_CHANGED_EVENT,
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
+  WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
+  WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
 } from "../src/withmate-ipc-channels.js";
 
@@ -164,6 +182,12 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     openDiffWindow(diffPreview) {
       return ipcRenderer.invoke(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, diffPreview);
     },
+    openCompanionReviewWindow(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL, sessionId);
+    },
+    openCompanionMergeWindow(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL, sessionId);
+    },
     openPath(target, options) {
       return ipcRenderer.invoke(WITHMATE_OPEN_PATH_CHANNEL, target, options ?? null);
     },
@@ -175,6 +199,9 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     },
     openSessionTerminal(sessionId) {
       return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL, sessionId);
+    },
+    openTerminalAtPath(target) {
+      return ipcRenderer.invoke(WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL, target);
     },
   };
 }
@@ -231,6 +258,12 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     listSessionCustomAgents(sessionId) {
       return ipcRenderer.invoke(WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL, sessionId);
     },
+    listWorkspaceSkills(providerId, workspacePath) {
+      return ipcRenderer.invoke(WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL, providerId, workspacePath);
+    },
+    listWorkspaceCustomAgents(providerId, workspacePath) {
+      return ipcRenderer.invoke(WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL, providerId, workspacePath);
+    },
     runSessionTurn(sessionId, request) {
       return ipcRenderer.invoke(WITHMATE_RUN_SESSION_TURN_CHANNEL, sessionId, request);
     },
@@ -257,6 +290,44 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     resolveLiveElicitation(sessionId, requestId, response) {
       return ipcRenderer.invoke(WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL, sessionId, requestId, response);
+    },
+  };
+}
+
+function createCompanionApi(ipcRenderer: IpcRendererLike): WithMateWindowCompanionApi {
+  return {
+    listCompanionSessionSummaries() {
+      return ipcRenderer.invoke(WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL);
+    },
+    getCompanionSession(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_GET_COMPANION_SESSION_CHANNEL, sessionId);
+    },
+    getCompanionReviewSnapshot(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL, sessionId);
+    },
+    mergeCompanionSelectedFiles(request) {
+      return ipcRenderer.invoke(WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL, request);
+    },
+    discardCompanionSession(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL, sessionId);
+    },
+    createCompanionSession(input) {
+      return ipcRenderer.invoke(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL, input);
+    },
+    updateCompanionSession(session) {
+      return ipcRenderer.invoke(WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL, session);
+    },
+    previewCompanionComposerInput(sessionId, userMessage) {
+      return ipcRenderer.invoke(WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL, sessionId, userMessage);
+    },
+    searchCompanionWorkspaceFiles(sessionId, query) {
+      return ipcRenderer.invoke(WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL, sessionId, query);
+    },
+    runCompanionSessionTurn(sessionId, request) {
+      return ipcRenderer.invoke(WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL, sessionId, request);
+    },
+    cancelCompanionSessionRun(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL, sessionId);
     },
   };
 }
@@ -404,6 +475,9 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
     subscribeOpenSessionWindowIds(listener) {
       return subscribe(ipcRenderer, WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, listener);
     },
+    subscribeCompanionSessionSummaries(listener) {
+      return subscribe(ipcRenderer, WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT, listener);
+    },
   };
 }
 
@@ -467,6 +541,7 @@ export function createWithMateWindowApi(ipcRenderer: IpcRendererLike): WithMateW
     ...createWindowApi(ipcRenderer),
     ...createCatalogApi(ipcRenderer),
     ...createSessionApi(ipcRenderer),
+    ...createCompanionApi(ipcRenderer),
     ...createObservabilityApi(ipcRenderer),
     ...createSettingsApi(ipcRenderer),
     ...createCharacterApi(ipcRenderer),

@@ -1,6 +1,9 @@
-import type { ApprovalMode } from "./approval-mode.js";
+import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "./approval-mode.js";
 import type { CharacterProfile, CreateSessionInput, SessionSummary } from "./app-state.js";
+import { DEFAULT_CODEX_SANDBOX_MODE, type CodexSandboxMode } from "./codex-sandbox-mode.js";
+import type { CreateCompanionSessionInput } from "./companion-state.js";
 import { inferWorkspaceFromPath, type LaunchWorkspace } from "./home-launch-projection.js";
+import { DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT, type ModelReasoningEffort } from "./model-catalog.js";
 
 type LastUsedSessionSelectionSource = Pick<
   SessionSummary,
@@ -9,9 +12,14 @@ type LastUsedSessionSelectionSource = Pick<
 
 export type HomeLaunchDraft = {
   open: boolean;
+  mode: "session" | "companion";
   title: string;
   workspace: LaunchWorkspace | null;
   providerId: string;
+  model: string;
+  reasoningEffort: ModelReasoningEffort;
+  approvalMode: ApprovalMode;
+  codexSandboxMode: CodexSandboxMode;
   characterId: string;
   characterSearchText: string;
 };
@@ -19,9 +27,14 @@ export type HomeLaunchDraft = {
 export function createClosedLaunchDraft(characterId = ""): HomeLaunchDraft {
   return {
     open: false,
+    mode: "session",
     title: "",
     workspace: null,
     providerId: "",
+    model: DEFAULT_MODEL_ID,
+    reasoningEffort: DEFAULT_REASONING_EFFORT,
+    approvalMode: DEFAULT_APPROVAL_MODE,
+    codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
     characterId,
     characterSearchText: "",
   };
@@ -41,14 +54,56 @@ export function syncLaunchDraftCharacter(
   };
 }
 
-export function openLaunchDraft(draft: HomeLaunchDraft, defaultProviderId: string): HomeLaunchDraft {
+export function openLaunchDraft(
+  draft: HomeLaunchDraft,
+  defaultProviderId: string,
+  mode: HomeLaunchDraft["mode"] = "session",
+): HomeLaunchDraft {
   return {
     ...draft,
     open: true,
+    mode,
     title: "",
     workspace: null,
     providerId: defaultProviderId,
+    model: DEFAULT_MODEL_ID,
+    reasoningEffort: DEFAULT_REASONING_EFFORT,
+    approvalMode: draft.approvalMode,
+    codexSandboxMode: draft.codexSandboxMode,
     characterSearchText: "",
+  };
+}
+
+export function buildCreateCompanionSessionInputFromLaunchDraft({
+  draft,
+  selectedCharacter,
+  selectedProviderId,
+  lastUsedSelection,
+}: {
+  draft: HomeLaunchDraft;
+  selectedCharacter: CharacterProfile | null;
+  selectedProviderId: string | null;
+  lastUsedSelection?: Pick<CreateSessionInput, "model" | "reasoningEffort" | "customAgentName"> | null;
+}): CreateCompanionSessionInput | null {
+  const normalizedTitle = draft.title.trim();
+  if (!normalizedTitle || !draft.workspace || !selectedCharacter || !selectedProviderId) {
+    return null;
+  }
+
+  return {
+    taskTitle: normalizedTitle,
+    workspacePath: draft.workspace.path,
+    provider: selectedProviderId,
+    characterId: selectedCharacter.id,
+    character: selectedCharacter.name,
+    characterRoleMarkdown: selectedCharacter.roleMarkdown,
+    characterIconPath: selectedCharacter.iconPath,
+    characterThemeColors: selectedCharacter.themeColors,
+    approvalMode: draft.approvalMode,
+    codexSandboxMode: draft.codexSandboxMode,
+    model: draft.model || lastUsedSelection?.model,
+    reasoningEffort: draft.reasoningEffort || lastUsedSelection?.reasoningEffort,
+    customAgentName: lastUsedSelection?.customAgentName,
   };
 }
 

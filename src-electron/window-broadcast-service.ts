@@ -8,10 +8,12 @@ import type {
   SessionBackgroundActivityState,
   SessionContextTelemetry,
 } from "../src/app-state.js";
+import type { CompanionSessionSummary } from "../src/companion-state.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import {
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
   WITHMATE_CHARACTERS_CHANGED_EVENT,
+  WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
@@ -40,6 +42,10 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
 
   public broadcastSessionSummaries(sessions: SessionSummary[]): void {
     this.broadcastTo(this.options.getHomeWindows(), WITHMATE_SESSIONS_CHANGED_EVENT, sessions);
+  }
+
+  public broadcastCompanionSessionSummaries(sessions: CompanionSessionSummary[]): void {
+    this.broadcastTo(this.options.getHomeWindows(), WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT, sessions);
   }
 
   public broadcastSessionInvalidation(sessionIds: string[]): void {

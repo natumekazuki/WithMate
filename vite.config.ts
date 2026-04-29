@@ -15,6 +15,7 @@ export default defineConfig({
         session: path.resolve(projectRoot, "session.html"),
         character: path.resolve(projectRoot, "character.html"),
         diff: path.resolve(projectRoot, "diff.html"),
+        review: path.resolve(projectRoot, "review.html"),
       },
     },
   },
