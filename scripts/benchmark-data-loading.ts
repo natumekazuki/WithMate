@@ -274,55 +274,65 @@ export async function runDataLoadingBenchmark(options: DataLoadingBenchmarkOptio
     const sessionStorage = new SessionStorageV2(resolved.outputPath);
     const auditStorage = new AuditLogStorageV2(resolved.outputPath);
 
-    for (let sessionIndex = 0; sessionIndex < resolved.sessions; sessionIndex += 1) {
-      const session = createSession(sessionIndex, resolved);
-      sessionStorage.upsertSession(session);
-      for (let auditIndex = 0; auditIndex < resolved.auditLogsPerSession; auditIndex += 1) {
-        createAuditLog(auditStorage, session.id, sessionIndex, auditIndex, resolved);
+    try {
+      for (let sessionIndex = 0; sessionIndex < resolved.sessions; sessionIndex += 1) {
+        const session = createSession(sessionIndex, resolved);
+        sessionStorage.upsertSession(session);
+        for (let auditIndex = 0; auditIndex < resolved.auditLogsPerSession; auditIndex += 1) {
+          createAuditLog(auditStorage, session.id, sessionIndex, auditIndex, resolved);
+        }
       }
+    } finally {
+      auditStorage.close();
+      sessionStorage.close();
     }
   });
 
   const sessionStorage = new SessionStorageV2(resolved.outputPath);
   const auditStorage = new AuditLogStorageV2(resolved.outputPath);
 
-  const summaries = timed(() => sessionStorage.listSessionSummaries());
-  const firstSessionId = summaries.value[0]?.id ?? "benchmark-session-0";
-  const middleSessionId = summaries.value[Math.floor(summaries.value.length / 2)]?.id ?? firstSessionId;
-  const firstSession = timed(() => sessionStorage.getSession(firstSessionId));
-  const middleSession = timed(() => sessionStorage.getSession(middleSessionId));
-  const auditPage = timed(() => auditStorage.listSessionAuditLogSummaryPage(firstSessionId, { cursor: 0, limit: 50 }));
-  const firstAuditId = auditPage.value.entries[0]?.id ?? -1;
-  const auditDetail = timed(() => auditStorage.getSessionAuditLogDetail(firstSessionId, firstAuditId));
+  try {
+    const summaries = timed(() => sessionStorage.listSessionSummaries());
+    const firstSessionId = summaries.value[0]?.id ?? "benchmark-session-0";
+    const middleSessionId = summaries.value[Math.floor(summaries.value.length / 2)]?.id ?? firstSessionId;
+    const firstSession = timed(() => sessionStorage.getSession(firstSessionId));
+    const middleSession = timed(() => sessionStorage.getSession(middleSessionId));
+    const auditPage = timed(() => auditStorage.listSessionAuditLogSummaryPage(firstSessionId, { cursor: 0, limit: 50 }));
+    const firstAuditId = auditPage.value.entries[0]?.id ?? -1;
+    const auditDetail = timed(() => auditStorage.getSessionAuditLogDetail(firstSessionId, firstAuditId));
 
-  const messageArtifacts = resolved.sessions * countArtifactsPerSession(resolved);
-  return {
-    dbPath: resolved.outputPath,
-    generated: {
-      sessions: resolved.sessions,
-      messages: resolved.sessions * resolved.messagesPerSession,
-      messageArtifacts,
-      auditLogs: resolved.sessions * resolved.auditLogsPerSession,
-      auditOperations: resolved.sessions * resolved.auditLogsPerSession * resolved.operationCount,
-      rawItems: resolved.sessions * resolved.auditLogsPerSession * resolved.rawItemCount,
-      dbBytes: statSync(resolved.outputPath).size,
-    },
-    timingsMs: {
-      generateDatabase: roundDuration(generation.durationMs),
-      listSessionSummaries: roundDuration(summaries.durationMs),
-      hydrateFirstSession: roundDuration(firstSession.durationMs),
-      hydrateMiddleSession: roundDuration(middleSession.durationMs),
-      auditSummaryFirstPage: roundDuration(auditPage.durationMs),
-      auditDetailFirstEntry: roundDuration(auditDetail.durationMs),
-    },
-    sample: {
-      sessionSummaryCount: summaries.value.length,
-      firstSessionMessageCount: firstSession.value?.messages.length ?? 0,
-      middleSessionMessageCount: middleSession.value?.messages.length ?? 0,
-      firstAuditPageCount: auditPage.value.entries.length,
-      firstAuditDetailOperationCount: auditDetail.value?.operations.length ?? 0,
-    },
-  };
+    const messageArtifacts = resolved.sessions * countArtifactsPerSession(resolved);
+    return {
+      dbPath: resolved.outputPath,
+      generated: {
+        sessions: resolved.sessions,
+        messages: resolved.sessions * resolved.messagesPerSession,
+        messageArtifacts,
+        auditLogs: resolved.sessions * resolved.auditLogsPerSession,
+        auditOperations: resolved.sessions * resolved.auditLogsPerSession * resolved.operationCount,
+        rawItems: resolved.sessions * resolved.auditLogsPerSession * resolved.rawItemCount,
+        dbBytes: statSync(resolved.outputPath).size,
+      },
+      timingsMs: {
+        generateDatabase: roundDuration(generation.durationMs),
+        listSessionSummaries: roundDuration(summaries.durationMs),
+        hydrateFirstSession: roundDuration(firstSession.durationMs),
+        hydrateMiddleSession: roundDuration(middleSession.durationMs),
+        auditSummaryFirstPage: roundDuration(auditPage.durationMs),
+        auditDetailFirstEntry: roundDuration(auditDetail.durationMs),
+      },
+      sample: {
+        sessionSummaryCount: summaries.value.length,
+        firstSessionMessageCount: firstSession.value?.messages.length ?? 0,
+        middleSessionMessageCount: middleSession.value?.messages.length ?? 0,
+        firstAuditPageCount: auditPage.value.entries.length,
+        firstAuditDetailOperationCount: auditDetail.value?.operations.length ?? 0,
+      },
+    };
+  } finally {
+    auditStorage.close();
+    sessionStorage.close();
+  }
 }
 
 export function parseBenchmarkArgs(args: string[]): DataLoadingBenchmarkOptions {
