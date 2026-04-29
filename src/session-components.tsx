@@ -2053,6 +2053,7 @@ export function SessionMessageColumn({
             </div>
           </article>
         ) : null}
+        <div className="message-list-bottom-anchor" aria-hidden="true" />
         {!isMessageListFollowing ? (
           <aside className={`message-follow-banner sticky ${hasMessageListUnread ? "has-unread" : "idle"}`}>
             <div className="message-follow-banner-copy">

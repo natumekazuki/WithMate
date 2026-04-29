@@ -194,6 +194,10 @@ test("SessionMessageColumn は pending と live approval\/elicitation を window
   assert.match(html, /コマンド実行の承認/);
   assert.match(html, /対象ブランチを選んでね。/);
   assert.match(html, /Branch/);
+  assert.ok(
+    html.indexOf("pending-row") < html.indexOf("message-list-bottom-anchor"),
+    "pending row は bottom anchor より前に描画する",
+  );
 });
 
 test("SessionMessageColumn は実行中の assistant text を pending bubble に表示する", () => {

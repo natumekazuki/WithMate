@@ -3026,6 +3026,7 @@ button:disabled {
   overflow: auto;
   align-content: start;
   padding-right: 6px;
+  overflow-anchor: none;
 }
 
 .session-message-list-window {
@@ -3048,6 +3049,11 @@ button:disabled {
   background: color-mix(in srgb, var(--character-main-soft) 42%, rgba(15, 19, 26, 0.94));
   color: var(--ink);
   box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
+}
+
+.message-list-bottom-anchor {
+  min-height: 1px;
+  overflow-anchor: auto;
 }
 
 .composer {

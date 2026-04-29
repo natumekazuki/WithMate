@@ -613,6 +613,16 @@ function createPendingLiveSessionRunState(
   };
 }
 
+function scrollMessageListElementToBottom(messageListElement: HTMLDivElement): void {
+  const bottomAnchor = messageListElement.querySelector<HTMLElement>(".message-list-bottom-anchor");
+  if (bottomAnchor) {
+    bottomAnchor.scrollIntoView({ block: "end" });
+    return;
+  }
+
+  messageListElement.scrollTop = messageListElement.scrollHeight;
+}
+
 function hashStringToPositiveInt(value: string): number {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -1293,7 +1303,7 @@ export default function App() {
       messageListSignatureRef.current = currentSignature;
       setIsMessageListFollowing(true);
       setHasMessageListUnread(false);
-      messageListElement.scrollTop = messageListElement.scrollHeight;
+      scrollMessageListElementToBottom(messageListElement);
       return;
     }
 
@@ -1304,7 +1314,7 @@ export default function App() {
     messageListSignatureRef.current = currentSignature;
 
     if (isMessageListFollowing) {
-      messageListElement.scrollTop = messageListElement.scrollHeight;
+      scrollMessageListElementToBottom(messageListElement);
       return;
     }
 
@@ -2733,7 +2743,7 @@ export default function App() {
       return;
     }
 
-    messageListElement.scrollTop = messageListElement.scrollHeight;
+    scrollMessageListElementToBottom(messageListElement);
   };
 
   const handleMessageListScroll = () => {
