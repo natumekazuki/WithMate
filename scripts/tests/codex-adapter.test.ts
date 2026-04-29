@@ -10,6 +10,7 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
   buildCodexThreadSettings,
+  collectCodexAssistantTextFromEventsForTesting,
   resolveCodexThreadForSettings,
   type CodexThreadOptions,
 } from "../../src-electron/codex-adapter.js";
@@ -70,6 +71,40 @@ function createSession(options?: {
 }
 
 describe("CodexAdapter thread settings", () => {
+  it("delta 系 event から assistant text を逐次復元し、final item で確定形に置き換える", () => {
+    const streamedText = collectCodexAssistantTextFromEventsForTesting([
+      {
+        type: "agent_message.delta",
+        delta: "こ",
+      } as never,
+      {
+        type: "response.output_text.delta",
+        data: {
+          delta: "んにちは",
+        },
+      } as never,
+    ]);
+
+    assert.equal(streamedText, "こんにちは");
+
+    const finalizedText = collectCodexAssistantTextFromEventsForTesting([
+      {
+        type: "agent_message.delta",
+        delta: "途中",
+      } as never,
+      {
+        type: "item.completed",
+        item: {
+          id: "message-1",
+          type: "agent_message",
+          text: "確定メッセージ",
+        },
+      } as never,
+    ]);
+
+    assert.equal(finalizedText, "確定メッセージ");
+  });
+
   it("model / reasoning 変更後の thread settings は新 options と settingsKey を反映する", () => {
     const previousSession = createSession({
       threadId: "thread-1",

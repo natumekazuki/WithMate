@@ -102,6 +102,8 @@ type CodexTurnStreamState = {
   streamErrorMessage: string;
 };
 
+type CodexEventRecord = Record<string, unknown>;
+
 export type CodexThreadOptions = {
   workingDirectory: string;
   skipGitRepoCheck: true;
@@ -687,7 +689,58 @@ function createCodexTurnStreamState(threadId: string | null): CodexTurnStreamSta
   };
 }
 
+function readStringProperty(source: unknown, keys: string[]): string | null {
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+
+  const record = source as CodexEventRecord;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function readCodexAssistantDelta(event: ThreadEvent): string | null {
+  const record = event as unknown as CodexEventRecord;
+  const eventType = typeof record.type === "string" ? record.type.toLowerCase() : "";
+  if (!eventType.includes("delta")) {
+    return null;
+  }
+
+  const isAssistantTextDelta =
+    eventType.includes("agent_message")
+    || eventType.includes("assistant")
+    || eventType.includes("message")
+    || eventType.includes("output_text");
+  if (!isAssistantTextDelta) {
+    return null;
+  }
+
+  const deltaKeys = ["delta", "text_delta", "message_delta", "content_delta", "text", "content"];
+  const directValue = readStringProperty(record, deltaKeys);
+  if (directValue !== null) {
+    return directValue;
+  }
+
+  const dataValue = readStringProperty(record.data, deltaKeys);
+  if (dataValue !== null) {
+    return dataValue;
+  }
+
+  return readStringProperty(record.delta, ["text", "content", "value"]);
+}
+
 function applyCodexTurnEvent(state: CodexTurnStreamState, event: ThreadEvent): void {
+  const assistantDelta = readCodexAssistantDelta(event);
+  if (assistantDelta !== null) {
+    state.assistantText += assistantDelta;
+  }
+
   switch (event.type) {
     case "thread.started":
       state.threadId = event.thread_id;
@@ -719,6 +772,14 @@ function applyCodexTurnEvent(state: CodexTurnStreamState, event: ThreadEvent): v
     default:
       break;
   }
+}
+
+export function collectCodexAssistantTextFromEventsForTesting(events: ThreadEvent[]): string {
+  const state = createCodexTurnStreamState(null);
+  for (const event of events) {
+    applyCodexTurnEvent(state, event);
+  }
+  return state.assistantText;
 }
 
 function buildCodexTransportPayload(prompt: ProviderPromptComposition): AuditTransportPayload {

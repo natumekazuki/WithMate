@@ -56,6 +56,7 @@ type CountRow = {
 
 const DEFAULT_AUDIT_LOG_PAGE_LIMIT = 50;
 const MAX_AUDIT_LOG_PAGE_LIMIT = 200;
+const ASSISTANT_TEXT_PREVIEW_MAX_LENGTH = 500;
 
 function toAuditLogPhase(value: string): AuditLogPhase {
   if (
@@ -318,7 +319,7 @@ export class AuditLogStorage {
         reasoning_effort,
         approval_mode,
         thread_id,
-        '' AS assistant_text_preview,
+        substr(COALESCE(assistant_text, ''), 1, ${ASSISTANT_TEXT_PREVIEW_MAX_LENGTH}) AS assistant_text_preview,
         CASE
           WHEN operations_json IS NULL OR operations_json = '' OR operations_json = '[]' THEN 0
           ELSE 1
@@ -341,7 +342,7 @@ export class AuditLogStorage {
         reasoning_effort,
         approval_mode,
         thread_id,
-        '' AS assistant_text_preview,
+        substr(COALESCE(assistant_text, ''), 1, ${ASSISTANT_TEXT_PREVIEW_MAX_LENGTH}) AS assistant_text_preview,
         CASE
           WHEN operations_json IS NULL OR operations_json = '' OR operations_json = '[]' THEN 0
           ELSE 1

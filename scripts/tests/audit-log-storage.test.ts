@@ -184,7 +184,7 @@ describe("AuditLogStorage", () => {
       assert.equal(firstPage.hasMore, true);
       assert.equal(firstPage.total, 4);
       assert.equal("rawItemsJson" in (firstPage.entries[0] as object), false);
-      assert.equal(firstPage.entries[0]?.assistantTextPreview, "");
+      assert.equal(firstPage.entries[0]?.assistantTextPreview, "assistant 3");
       assert.deepEqual(firstPage.entries[0]?.operations, [{ type: "operation", summary: "1 operations" }]);
 
       const secondPage = storage.listSessionAuditLogSummaryPage(session.id, { cursor: firstPage.nextCursor, limit: 10 });

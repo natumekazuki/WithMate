@@ -396,19 +396,18 @@ function writeSessionMessages(
 }
 
 export class SessionStorageV2 {
-  private readonly dbPath: string;
+  private db: DatabaseSync | null;
 
   constructor(dbPath: string) {
-    this.dbPath = dbPath;
+    this.db = openAppDatabase(dbPath);
   }
 
   private withDb<T>(runner: (db: DatabaseSync) => T): T {
-    const db = openAppDatabase(this.dbPath);
-    try {
-      return runner(db);
-    } finally {
-      db.close();
+    if (!this.db) {
+      throw new Error("SessionStorageV2 は close 済みだよ。");
     }
+
+    return runner(this.db);
   }
 
   listSessions(): Session[] {
@@ -534,6 +533,11 @@ export class SessionStorageV2 {
   }
 
   close(): void {
-    return;
+    if (!this.db) {
+      return;
+    }
+
+    this.db.close();
+    this.db = null;
   }
 }

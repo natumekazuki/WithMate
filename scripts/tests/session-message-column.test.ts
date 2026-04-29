@@ -108,6 +108,7 @@ function renderSessionMessageColumn(options: {
   hasMessageListUnread?: boolean;
   liveApprovalRequest?: LiveApprovalRequest | null;
   liveElicitationRequest?: LiveElicitationRequest | null;
+  liveRunAssistantText?: string;
 }): string {
   return renderToStaticMarkup(
     React.createElement(SessionMessageColumn, {
@@ -123,8 +124,8 @@ function renderSessionMessageColumn(options: {
       approvalActionRequestId: null,
       liveElicitationRequest: options.liveElicitationRequest ?? null,
       elicitationActionRequestId: null,
-      liveRunAssistantText: "",
-      hasLiveRunAssistantText: false,
+      liveRunAssistantText: options.liveRunAssistantText ?? "",
+      hasLiveRunAssistantText: !!options.liveRunAssistantText,
       liveRunErrorMessage: "",
       isMessageListFollowing: options.isMessageListFollowing ?? false,
       hasMessageListUnread: options.hasMessageListUnread ?? false,
@@ -193,4 +194,15 @@ test("SessionMessageColumn は pending と live approval\/elicitation を window
   assert.match(html, /コマンド実行の承認/);
   assert.match(html, /対象ブランチを選んでね。/);
   assert.match(html, /Branch/);
+});
+
+test("SessionMessageColumn は実行中の assistant text を pending bubble に表示する", () => {
+  const html = renderSessionMessageColumn({
+    messages: createMessages(100),
+    isRunning: true,
+    liveRunAssistantText: "ストリーミング中の返答",
+  });
+
+  assert.match(html, /pending-row/);
+  assert.match(html, /ストリーミング中の返答/);
 });

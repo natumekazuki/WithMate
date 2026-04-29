@@ -636,6 +636,12 @@ describe("AuditLogStorageV2", () => {
         const storage = new AuditLogStorageV2(dbPath);
 
         try {
+          const originalListSessionAuditLogs = storage.listSessionAuditLogs.bind(storage);
+          let listSessionAuditLogsCalls = 0;
+          storage.listSessionAuditLogs = (targetSessionId: string) => {
+            listSessionAuditLogsCalls += 1;
+            return originalListSessionAuditLogs(targetSessionId);
+          };
           const assistantText = "a".repeat(600);
           const created = storage.createAuditLog({
             sessionId,
@@ -681,6 +687,7 @@ describe("AuditLogStorageV2", () => {
             },
             errorMessage: "",
           });
+          assert.equal(listSessionAuditLogsCalls, 0);
 
           const entries = storage.listSessionAuditLogs(sessionId);
           assert.equal(entries.length, 1);
@@ -810,7 +817,13 @@ describe("AuditLogStorageV2", () => {
             errorMessage: "",
           });
 
-          storage.updateAuditLog(created.id, {
+          const originalListSessionAuditLogs = storage.listSessionAuditLogs.bind(storage);
+          let listSessionAuditLogsCalls = 0;
+          storage.listSessionAuditLogs = (targetSessionId: string) => {
+            listSessionAuditLogsCalls += 1;
+            return originalListSessionAuditLogs(targetSessionId);
+          };
+          const updated = storage.updateAuditLog(created.id, {
             ...created,
             phase: "completed",
             logicalPrompt: {
@@ -843,6 +856,10 @@ describe("AuditLogStorageV2", () => {
             ],
             errorMessage: "updated error",
           });
+          assert.equal(listSessionAuditLogsCalls, 0);
+          assert.equal(updated.id, created.id);
+          assert.equal(updated.phase, "completed");
+          assert.equal(updated.assistantText, "assistant updated");
 
           const updatedEntries = storage.listSessionAuditLogs(sessionId);
           const updatedEntry = updatedEntries[0];

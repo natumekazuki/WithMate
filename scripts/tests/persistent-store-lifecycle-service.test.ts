@@ -332,6 +332,7 @@ test("PersistentStoreLifecycleService は V2 DB 再生成後に V2 schema を作
     assert.equal(bundle.activeModelCatalog.revision, 4);
     assert.equal(bundle.sessionStorage instanceof SessionStorageV2, true);
     assert.deepEqual(bundle.sessions, []);
+    service.close(bundle, dbPath);
 
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
@@ -417,11 +418,15 @@ test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2 を使�
       async removeFile() {},
     });
 
+    let bundle: Awaited<ReturnType<typeof service.initialize>> | null = null;
     try {
-      const bundle = await service.initialize(dbPath, "model-catalog.json");
+      bundle = await service.initialize(dbPath, "model-catalog.json");
       assert.equal(bundle.sessionStorage instanceof SessionStorageV2, true);
       assert.deepEqual(bundle.sessions, []);
     } finally {
+      if (bundle) {
+        service.close(bundle, dbPath);
+      }
       v1SessionStorage?.close();
     }
   });
@@ -463,11 +468,14 @@ test("PersistentStoreLifecycleService は V2 DB では V1 write-capable storages
     });
 
     const bundle = await service.initialize(dbPath, "model-catalog.json");
-
-    assert.equal(bundle.sessionStorage instanceof SessionStorageV2, true);
-    assert.equal(bundle.auditLogStorage instanceof AuditLogStorageV2, true);
-    assert.equal(createSessionStorageCallCount, 0);
-    assert.equal(createAuditLogStorageCallCount, 0);
+    try {
+      assert.equal(bundle.sessionStorage instanceof SessionStorageV2, true);
+      assert.equal(bundle.auditLogStorage instanceof AuditLogStorageV2, true);
+      assert.equal(createSessionStorageCallCount, 0);
+      assert.equal(createAuditLogStorageCallCount, 0);
+    } finally {
+      service.close(bundle, dbPath);
+    }
   });
 });
 
@@ -508,30 +516,33 @@ test("PersistentStoreLifecycleService は V2 DB に legacy memory table を作�
       async removeFile() {},
     });
 
-    await service.initialize(dbPath, "model-catalog.json");
-
-    const db = new DatabaseSync(dbPath, { readOnly: true });
+    const bundle = await service.initialize(dbPath, "model-catalog.json");
     try {
-      const rows = db.prepare(`
-        SELECT name
-        FROM sqlite_master
-        WHERE type = 'table'
-          AND name IN (
-            'session_memories',
-            'project_scopes',
-            'project_memory_entries',
-            'character_scopes',
-            'character_memory_entries'
-          )
-        ORDER BY name
-      `).all() as Array<{ name: string }>;
-      assert.deepEqual(rows, []);
-    } finally {
-      db.close();
-    }
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const rows = db.prepare(`
+          SELECT name
+          FROM sqlite_master
+          WHERE type = 'table'
+            AND name IN (
+              'session_memories',
+              'project_scopes',
+              'project_memory_entries',
+              'character_scopes',
+              'character_memory_entries'
+            )
+          ORDER BY name
+        `).all() as Array<{ name: string }>;
+        assert.deepEqual(rows, []);
+      } finally {
+        db.close();
+      }
 
-    assert.equal(createSessionMemoryStorageCallCount, 0);
-    assert.equal(createProjectMemoryStorageCallCount, 0);
-    assert.equal(createCharacterMemoryStorageCallCount, 0);
+      assert.equal(createSessionMemoryStorageCallCount, 0);
+      assert.equal(createProjectMemoryStorageCallCount, 0);
+      assert.equal(createCharacterMemoryStorageCallCount, 0);
+    } finally {
+      service.close(bundle, dbPath);
+    }
   });
 });

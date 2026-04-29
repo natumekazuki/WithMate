@@ -280,11 +280,15 @@ function isMessageCandidate(value: unknown): value is { role?: unknown; artifact
   return typeof value === "object" && value !== null;
 }
 
-function isValidMessage(value: unknown): value is { role: "user" | "assistant"; artifact?: unknown; text?: unknown } {
+function isValidMessage(value: unknown): value is { role: "user" | "assistant"; artifact?: unknown; text?: unknown; accent?: unknown } {
   if (!isMessageCandidate(value)) {
     return false;
   }
   return value.role === "user" || value.role === "assistant";
+}
+
+function isAuditOperationCandidate(value: unknown): value is { type?: unknown; summary?: unknown; details?: unknown } {
+  return typeof value === "object" && value !== null;
 }
 
 function hasArtifact(value: unknown): boolean {
@@ -967,9 +971,9 @@ export function createMigrationWriteReport(input: {
         if (operations !== null) {
           operations.forEach((operation: unknown, operationIndex) => {
             const operationType =
-              isMessageCandidate(operation) && typeof operation.type === "string" ? operation.type : "";
-            const summary = isMessageCandidate(operation) && typeof operation.summary === "string" ? operation.summary : "";
-            const details = isMessageCandidate(operation) && typeof operation.details === "string" ? operation.details : "";
+              isAuditOperationCandidate(operation) && typeof operation.type === "string" ? operation.type : "";
+            const summary = isAuditOperationCandidate(operation) && typeof operation.summary === "string" ? operation.summary : "";
+            const details = isAuditOperationCandidate(operation) && typeof operation.details === "string" ? operation.details : "";
 
             auditLogOperationStmt.run(auditLogId, operationIndex, operationType, summary, details);
           });

@@ -631,6 +631,18 @@ export class AuditLogStorageV2 {
     }
   }
 
+  private getSessionAuditLogEntry(sessionId: string, auditLogId: number): AuditLogEntry | null {
+    return this.withDb((db) => {
+      const row = db.prepare(GET_SESSION_AUDIT_LOG_DETAIL_SQL).get(sessionId, auditLogId) as AuditLogSummaryRow | undefined;
+      if (!row) {
+        return null;
+      }
+
+      const operationRows = db.prepare(LIST_AUDIT_LOG_OPERATIONS_SQL).all(auditLogId) as AuditLogOperationRow[];
+      return rowToAuditLogEntry(row, operationRows.map(parseAuditLogOperation));
+    });
+  }
+
   listSessionAuditLogs(sessionId: string): AuditLogEntry[] {
     return this.withDb((db) => {
       const rows = db.prepare(LIST_SESSION_AUDIT_LOGS_SQL).all(sessionId) as AuditLogSummaryRow[];
@@ -670,15 +682,8 @@ export class AuditLogStorageV2 {
   }
 
   getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null {
-    return this.withDb((db) => {
-      const row = db.prepare(GET_SESSION_AUDIT_LOG_DETAIL_SQL).get(sessionId, auditLogId) as AuditLogSummaryRow | undefined;
-      if (!row) {
-        return null;
-      }
-
-      const operationRows = db.prepare(LIST_AUDIT_LOG_OPERATIONS_SQL).all(auditLogId) as AuditLogOperationRow[];
-      return entryToAuditLogDetail(rowToAuditLogEntry(row, operationRows.map(parseAuditLogOperation)));
-    });
+    const entry = this.getSessionAuditLogEntry(sessionId, auditLogId);
+    return entry ? entryToAuditLogDetail(entry) : null;
   }
 
   createAuditLog(input: CreateAuditLogInput): AuditLogEntry {
@@ -733,7 +738,7 @@ export class AuditLogStorageV2 {
       }
     });
 
-    const created = this.listSessionAuditLogs(input.sessionId).find((entry) => entry.id === auditLogId);
+    const created = this.getSessionAuditLogEntry(input.sessionId, auditLogId);
     if (!created) {
       throw new Error(`audit log ${auditLogId} の再取得に失敗したよ。`);
     }
@@ -800,7 +805,7 @@ export class AuditLogStorageV2 {
       }
     });
 
-    const updated = this.listSessionAuditLogs(input.sessionId).find((entry) => entry.id === id);
+    const updated = this.getSessionAuditLogEntry(input.sessionId, id);
     if (!updated) {
       throw new Error(`audit log ${id} の再取得に失敗したよ。`);
     }
