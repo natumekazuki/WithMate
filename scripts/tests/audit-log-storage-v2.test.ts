@@ -7,7 +7,7 @@ import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { CREATE_V2_SCHEMA_SQL } from "../../src-electron/database-schema-v2.js";
-import { AuditLogStorageV2Read } from "../../src-electron/audit-log-storage-v2-read.js";
+import { AuditLogStorageV2 } from "../../src-electron/audit-log-storage-v2.js";
 
 async function withTempV2Database<T>(fn: (dbPath: string) => T | Promise<T>): Promise<T> {
   const dir = await mkdtemp(path.join(tmpdir(), "withmate-audit-log-v2-read-"));
@@ -256,7 +256,7 @@ function readRequiredRow<T>(db: DatabaseSync, sql: string, ...params: SQLInputVa
   return row;
 }
 
-describe("AuditLogStorageV2Read", () => {
+describe("AuditLogStorageV2", () => {
   it("listSessionAuditLogs は sessionId で絞り込み、id DESC で返す", async () => {
     await withTempV2Database((dbPath) => {
       const db = new DatabaseSync(dbPath);
@@ -305,7 +305,7 @@ describe("AuditLogStorageV2Read", () => {
           usageJson: "",
         });
 
-        const storage = new AuditLogStorageV2Read(dbPath);
+        const storage = new AuditLogStorageV2(dbPath);
         const entries = storage.listSessionAuditLogs(targetSessionId);
 
         assert.equal(entries.length, 3);
@@ -370,7 +370,7 @@ describe("AuditLogStorageV2Read", () => {
           details: "analysis complete",
         });
 
-        const storage = new AuditLogStorageV2Read(dbPath);
+        const storage = new AuditLogStorageV2(dbPath);
         const entries = storage.listSessionAuditLogs(sessionId);
         assert.equal(entries.length, 1);
 
@@ -448,7 +448,7 @@ describe("AuditLogStorageV2Read", () => {
           details: "operation detail",
         });
 
-        const storage = new AuditLogStorageV2Read(dbPath);
+        const storage = new AuditLogStorageV2(dbPath);
         const summaries = storage.listSessionAuditLogSummaries(sessionId);
         assert.equal(summaries.length, 1);
         assert.equal(summaries[0]?.assistantTextPreview, "summary preview");
@@ -508,7 +508,7 @@ describe("AuditLogStorageV2Read", () => {
           return id;
         });
 
-        const storage = new AuditLogStorageV2Read(dbPath);
+        const storage = new AuditLogStorageV2(dbPath);
         const firstPage = storage.listSessionAuditLogSummaryPage(sessionId, { cursor: 0, limit: 2 });
         assert.deepEqual(firstPage.entries.map((entry) => entry.id), [ids[4], ids[3]]);
         assert.equal(firstPage.nextCursor, 2);
@@ -565,7 +565,7 @@ describe("AuditLogStorageV2Read", () => {
           usageJson: "",
         });
 
-        const storage = new AuditLogStorageV2Read(dbPath);
+        const storage = new AuditLogStorageV2(dbPath);
         const entries = storage.listSessionAuditLogs(sessionId);
         assert.equal(entries.length, 2);
 
@@ -604,7 +604,7 @@ describe("AuditLogStorageV2Read", () => {
           assistantTextPreview: "missing detail preview",
         });
 
-        const storage = new AuditLogStorageV2Read(dbPath);
+        const storage = new AuditLogStorageV2(dbPath);
         const entries = storage.listSessionAuditLogs(sessionId);
         assert.equal(entries.length, 1);
         const entry = entries[0];
@@ -633,7 +633,7 @@ describe("AuditLogStorageV2Read", () => {
       const db = new DatabaseSync(dbPath);
       try {
         const sessionId = insertSessionHeader(db, { id: "session-create" });
-        const storage = new AuditLogStorageV2Read(dbPath);
+        const storage = new AuditLogStorageV2(dbPath);
 
         try {
           const assistantText = "a".repeat(600);
@@ -767,7 +767,7 @@ describe("AuditLogStorageV2Read", () => {
       const db = new DatabaseSync(dbPath);
       try {
         const sessionId = insertSessionHeader(db, { id: "session-update" });
-        const storage = new AuditLogStorageV2Read(dbPath);
+        const storage = new AuditLogStorageV2(dbPath);
 
         try {
           const created = storage.createAuditLog({
@@ -933,7 +933,7 @@ describe("AuditLogStorageV2Read", () => {
       try {
         const sourceSessionId = insertSessionHeader(db, { id: "session-update-source" });
         const otherSessionId = insertSessionHeader(db, { id: "session-update-other" });
-        const storage = new AuditLogStorageV2Read(dbPath);
+        const storage = new AuditLogStorageV2(dbPath);
 
         try {
           const created = storage.createAuditLog({
@@ -1036,7 +1036,7 @@ describe("AuditLogStorageV2Read", () => {
       const db = new DatabaseSync(dbPath);
       try {
         const sessionId = insertSessionHeader(db, { id: "session-clear" });
-        const storage = new AuditLogStorageV2Read(dbPath);
+        const storage = new AuditLogStorageV2(dbPath);
 
         try {
           storage.createAuditLog({

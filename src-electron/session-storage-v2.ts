@@ -395,7 +395,7 @@ function writeSessionMessages(
   });
 }
 
-export class SessionStorageV2Read {
+export class SessionStorageV2 {
   private readonly dbPath: string;
 
   constructor(dbPath: string) {

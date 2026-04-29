@@ -38,7 +38,6 @@ import {
   type SessionContextTelemetryProjection,
 } from "./session-ui-projection.js";
 import type { CharacterUpdateMemoryExtract } from "./character-update-state.js";
-import { calculateVirtualListWindow } from "./virtual-list.js";
 
 function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
@@ -425,13 +424,9 @@ function isBackgroundAuditPhase(phase: AuditLogSummary["phase"]): boolean {
   return phase.startsWith("background-");
 }
 
-const AUDIT_LOG_ESTIMATED_ROW_HEIGHT = 360;
-const AUDIT_LOG_OVERSCAN = 4;
-const AUDIT_LOG_FALLBACK_VIEWPORT_HEIGHT = 720;
-
-const SESSION_MESSAGE_LIST_ESTIMATED_ROW_HEIGHT = 156;
-const SESSION_MESSAGE_LIST_OVERSCAN = 4;
-const SESSION_MESSAGE_LIST_FALLBACK_VIEWPORT_HEIGHT = 720;
+const SESSION_MESSAGE_INITIAL_RENDER_COUNT = 80;
+const SESSION_MESSAGE_PREPEND_BATCH_SIZE = 80;
+const SESSION_MESSAGE_TOP_LOAD_THRESHOLD = 64;
 
 type MessageArtifactFoldSection = "files" | "operation";
 
@@ -628,7 +623,6 @@ export function SessionAuditLogModal({
   const [activeSection, setActiveSection] = useState<"main" | "background">("main");
   const [openAuditLogFolds, setOpenAuditLogFolds] = useState<Record<string, boolean>>({});
   const auditLogListRef = useRef<HTMLDivElement | null>(null);
-  const [auditLogListViewport, setAuditLogListViewport] = useState({ scrollTop: 0, viewportHeight: 0 });
   const { dialogRef, handleDialogKeyDown } = useDialogA11y<HTMLElement>({ open, onClose });
   const mainEntries = useMemo(
     () => entries.filter((entry) => !isBackgroundAuditPhase(entry.phase)),
@@ -643,28 +637,6 @@ export function SessionAuditLogModal({
     [entries],
   );
   const visibleEntries = activeSection === "main" ? mainEntries : backgroundEntries;
-  const virtualWindow = useMemo(
-    () => calculateVirtualListWindow({
-      itemCount: visibleEntries.length,
-      scrollTop: auditLogListViewport.scrollTop,
-      viewportHeight: auditLogListViewport.viewportHeight || AUDIT_LOG_FALLBACK_VIEWPORT_HEIGHT,
-      estimatedItemHeight: AUDIT_LOG_ESTIMATED_ROW_HEIGHT,
-      overscan: AUDIT_LOG_OVERSCAN,
-    }),
-    [auditLogListViewport.scrollTop, auditLogListViewport.viewportHeight, visibleEntries.length],
-  );
-  const renderedEntries = useMemo(
-    () => visibleEntries.slice(virtualWindow.startIndex, virtualWindow.endIndex),
-    [visibleEntries, virtualWindow.endIndex, virtualWindow.startIndex],
-  );
-
-  const handleAuditLogListScroll: UIEventHandler<HTMLDivElement> = (event) => {
-    const currentTarget = event.currentTarget;
-    setAuditLogListViewport({
-      scrollTop: currentTarget.scrollTop,
-      viewportHeight: currentTarget.clientHeight,
-    });
-  };
 
   const isAuditLogFoldOpen = (entry: AuditLogSummary, section: AuditLogFoldSection) =>
     Boolean(openAuditLogFolds[auditLogFoldKey(entry, section)]);
@@ -709,34 +681,13 @@ export function SessionAuditLogModal({
     }
 
     listNode.scrollTop = 0;
-    setAuditLogListViewport({
-      scrollTop: 0,
-      viewportHeight: listNode.clientHeight,
-    });
   }, [activeSection, open]);
 
   useLayoutEffect(() => {
     if (!open) {
       setOpenAuditLogFolds({});
-      return;
     }
-
-    const listNode = auditLogListRef.current;
-    if (!listNode || visibleEntries.length === 0) {
-      return;
-    }
-
-    const maxScrollTop = Math.max(0, visibleEntries.length * AUDIT_LOG_ESTIMATED_ROW_HEIGHT - listNode.clientHeight);
-    if (auditLogListViewport.scrollTop <= maxScrollTop) {
-      return;
-    }
-
-    listNode.scrollTop = maxScrollTop;
-    setAuditLogListViewport({
-      scrollTop: maxScrollTop,
-      viewportHeight: listNode.clientHeight,
-    });
-  }, [auditLogListViewport.scrollTop, open, visibleEntries.length]);
+  }, [open]);
 
   useEffect(() => {
     setOpenAuditLogFolds((current) => {
@@ -797,15 +748,11 @@ export function SessionAuditLogModal({
           {errorMessage ? <span className="audit-log-page-error">{errorMessage}</span> : null}
         </div>
 
-        <div ref={auditLogListRef} className="audit-log-list" onScroll={handleAuditLogListScroll}>
+        <div ref={auditLogListRef} className="audit-log-list">
           {visibleEntries.length > 0 ? (
-            <div
-              className="audit-log-list-window"
-              style={{ "--audit-log-total-height": `${virtualWindow.totalHeight}px` } as CSSProperties}
-            >
-              <div className="audit-log-list-spacer" style={{ height: virtualWindow.paddingTop }} aria-hidden="true" />
+            <div className="audit-log-list-window">
               <div className="audit-log-list-window-items">
-                {renderedEntries.map((entry) => {
+                {visibleEntries.map((entry) => {
               const detailState = details[entry.id];
               const detail = detailState?.detail ?? null;
               const operations = detail?.operations ?? entry.operations;
@@ -1002,7 +949,6 @@ export function SessionAuditLogModal({
               );
                 })}
               </div>
-              <div className="audit-log-list-spacer" style={{ height: virtualWindow.paddingBottom }} aria-hidden="true" />
             </div>
           ) : null}
         </div>
@@ -1743,60 +1689,61 @@ export function SessionMessageColumn({
   onOpenPath,
   getChangedFilesEmptyText,
 }: SessionMessageColumnProps) {
-  const [messageListViewport, setMessageListViewport] = useState({ scrollTop: 0, viewportHeight: 0 });
   const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
-  const virtualWindow = useMemo(
-    () => calculateVirtualListWindow({
-      itemCount: messages.length,
-      scrollTop: messageListViewport.scrollTop,
-      viewportHeight: messageListViewport.viewportHeight || SESSION_MESSAGE_LIST_FALLBACK_VIEWPORT_HEIGHT,
-      estimatedItemHeight: SESSION_MESSAGE_LIST_ESTIMATED_ROW_HEIGHT,
-      overscan: SESSION_MESSAGE_LIST_OVERSCAN,
-    }),
-    [messageListViewport.scrollTop, messageListViewport.viewportHeight, messages.length],
+  const [messageWindowStartIndex, setMessageWindowStartIndex] = useState(() =>
+    Math.max(0, messages.length - SESSION_MESSAGE_INITIAL_RENDER_COUNT),
+  );
+  const prependAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const latestMessageWindowStartIndex = Math.min(
+    Math.max(0, messageWindowStartIndex),
+    Math.max(0, messages.length - SESSION_MESSAGE_INITIAL_RENDER_COUNT),
   );
   const renderedMessages = useMemo(
-    () => messages.slice(virtualWindow.startIndex, virtualWindow.endIndex),
-    [messages, virtualWindow.endIndex, virtualWindow.startIndex],
+    () => messages.slice(latestMessageWindowStartIndex),
+    [latestMessageWindowStartIndex, messages],
   );
+  const hasOlderMessages = latestMessageWindowStartIndex > 0;
 
-  const updateMessageListViewport = useCallback((listElement: HTMLDivElement | null = messageListRef.current) => {
-    if (!listElement) {
+  const loadOlderMessages = useCallback((listElement: HTMLDivElement | null = messageListRef.current) => {
+    if (!listElement || latestMessageWindowStartIndex <= 0) {
       return;
     }
 
-    const nextViewport = {
+    prependAnchorRef.current = {
+      scrollHeight: listElement.scrollHeight,
       scrollTop: listElement.scrollTop,
-      viewportHeight: listElement.clientHeight,
     };
-    setMessageListViewport((current) =>
-      current.scrollTop === nextViewport.scrollTop && current.viewportHeight === nextViewport.viewportHeight
-        ? current
-        : nextViewport,
-    );
-  }, [messageListRef]);
+    setMessageWindowStartIndex((current) => Math.max(0, current - SESSION_MESSAGE_PREPEND_BATCH_SIZE));
+  }, [latestMessageWindowStartIndex, messageListRef]);
 
   const handleMessageListScroll: UIEventHandler<HTMLDivElement> = (event) => {
-    updateMessageListViewport(event.currentTarget);
+    if (event.currentTarget.scrollTop <= SESSION_MESSAGE_TOP_LOAD_THRESHOLD) {
+      loadOlderMessages(event.currentTarget);
+    }
     onMessageListScroll(event);
   };
 
   useLayoutEffect(() => {
-    updateMessageListViewport();
-  }, [messages.length, updateMessageListViewport]);
+    setMessageWindowStartIndex((current) => {
+      const latestStartIndex = Math.max(0, messages.length - SESSION_MESSAGE_INITIAL_RENDER_COUNT);
+      if (isMessageListFollowing) {
+        return latestStartIndex;
+      }
 
-  useEffect(() => {
+      return Math.min(current, latestStartIndex);
+    });
+  }, [isMessageListFollowing, messages.length]);
+
+  useLayoutEffect(() => {
+    const anchor = prependAnchorRef.current;
     const messageListElement = messageListRef.current;
-    if (!messageListElement || typeof ResizeObserver === "undefined") {
+    if (!anchor || !messageListElement) {
       return;
     }
 
-    const resizeObserver = new ResizeObserver(() => {
-      updateMessageListViewport(messageListElement);
-    });
-    resizeObserver.observe(messageListElement);
-    return () => resizeObserver.disconnect();
-  }, [messageListRef, updateMessageListViewport]);
+    prependAnchorRef.current = null;
+    messageListElement.scrollTop = messageListElement.scrollHeight - anchor.scrollHeight + anchor.scrollTop;
+  });
 
   const isArtifactFoldOpen = (artifactKey: string, section: MessageArtifactFoldSection, index?: number) =>
     Boolean(openArtifactFolds[messageArtifactFoldKey(artifactKey, section, index)]);
@@ -1826,12 +1773,20 @@ export function SessionMessageColumn({
   return (
     <div className="session-message-column">
       <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
+        {hasOlderMessages ? (
+          <button
+            type="button"
+            className="message-history-load-more"
+            onClick={() => loadOlderMessages()}
+          >
+            以前のメッセージを読み込む
+          </button>
+        ) : null}
         {messages.length > 0 ? (
           <div className="session-message-list-window">
-            <div className="session-message-list-spacer" style={{ height: virtualWindow.paddingTop }} aria-hidden="true" />
             <div className="session-message-list-window-items">
           {renderedMessages.map((message, index) => {
-            const absoluteIndex = virtualWindow.startIndex + index;
+            const absoluteIndex = latestMessageWindowStartIndex + index;
             const artifactKey = `${sessionId}-${absoluteIndex}`;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
@@ -2014,7 +1969,6 @@ export function SessionMessageColumn({
           })
             }
             </div>
-            <div className="session-message-list-spacer" style={{ height: virtualWindow.paddingBottom }} aria-hidden="true" />
           </div>
         ) : null}
 

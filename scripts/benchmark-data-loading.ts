@@ -7,8 +7,8 @@ import { performance } from "node:perf_hooks";
 import { DatabaseSync } from "node:sqlite";
 
 import { CREATE_V2_SCHEMA_SQL } from "../src-electron/database-schema-v2.js";
-import { AuditLogStorageV2Read } from "../src-electron/audit-log-storage-v2-read.js";
-import { SessionStorageV2Read } from "../src-electron/session-storage-v2-read.js";
+import { AuditLogStorageV2 } from "../src-electron/audit-log-storage-v2.js";
+import { SessionStorageV2 } from "../src-electron/session-storage-v2.js";
 import type { Session } from "../src/session-state.js";
 
 export type BenchmarkProfileName = "small" | "medium" | "large";
@@ -216,7 +216,7 @@ function countArtifactsPerSession(options: ResolvedBenchmarkOptions): number {
   return count;
 }
 
-function createAuditLog(auditStorage: AuditLogStorageV2Read, sessionId: string, sessionIndex: number, auditIndex: number, options: ResolvedBenchmarkOptions): void {
+function createAuditLog(auditStorage: AuditLogStorageV2, sessionId: string, sessionIndex: number, auditIndex: number, options: ResolvedBenchmarkOptions): void {
   auditStorage.createAuditLog({
     sessionId,
     createdAt: nowIso(sessionIndex * options.auditLogsPerSession + auditIndex),
@@ -271,8 +271,8 @@ export async function runDataLoadingBenchmark(options: DataLoadingBenchmarkOptio
 
   const generation = timed(() => {
     createSchema(resolved.outputPath);
-    const sessionStorage = new SessionStorageV2Read(resolved.outputPath);
-    const auditStorage = new AuditLogStorageV2Read(resolved.outputPath);
+    const sessionStorage = new SessionStorageV2(resolved.outputPath);
+    const auditStorage = new AuditLogStorageV2(resolved.outputPath);
 
     for (let sessionIndex = 0; sessionIndex < resolved.sessions; sessionIndex += 1) {
       const session = createSession(sessionIndex, resolved);
@@ -283,8 +283,8 @@ export async function runDataLoadingBenchmark(options: DataLoadingBenchmarkOptio
     }
   });
 
-  const sessionStorage = new SessionStorageV2Read(resolved.outputPath);
-  const auditStorage = new AuditLogStorageV2Read(resolved.outputPath);
+  const sessionStorage = new SessionStorageV2(resolved.outputPath);
+  const auditStorage = new AuditLogStorageV2(resolved.outputPath);
 
   const summaries = timed(() => sessionStorage.listSessionSummaries());
   const firstSessionId = summaries.value[0]?.id ?? "benchmark-session-0";

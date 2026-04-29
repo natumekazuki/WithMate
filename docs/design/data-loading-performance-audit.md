@@ -152,7 +152,7 @@
 
 V2 では独り言機能を削除するため、V1 `sessions.stream_json` は legacy data として V1 DB に残し、V2 正本 schema には持ち込まない。V2 の確定 schema は `src-electron/database-schema-v2.ts` と `docs/design/database-v2-migration.md` を参照する。
 
-runtime path では、有効な `withmate-v2.db` が存在する場合に V2 `sessions` から session summary を復元する。summary 取得では `session_messages` / `session_message_artifacts` を読まず、session detail 取得時だけ対象 session の message row と artifact row を読む。V2 DB では V1 `SessionStorage` を開かず、`SessionStorageV2Read` が V2 split schema の read / write を担当する。session write は `sessions` header と対象 session の message / artifact rows を transaction 内で更新し、`stream` は V2 へ保存しない。
+runtime path では、有効な `withmate-v2.db` が存在する場合に V2 `sessions` から session summary を復元する。summary 取得では `session_messages` / `session_message_artifacts` を読まず、session detail 取得時だけ対象 session の message row と artifact row を読む。V2 DB では V1 `SessionStorage` を開かず、`SessionStorageV2` が V2 split schema の read / write を担当する。session write は `sessions` header と対象 session の message / artifact rows を transaction 内で更新し、`stream` は V2 へ保存しない。
 
 ### 2-2. `audit_logs` に一覧用サマリ列を持つ
 
@@ -164,7 +164,7 @@ runtime path では、有効な `withmate-v2.db` が存在する場合に V2 `se
 - timeline 用: `audit_log_operations`（1 operation = 1 row）
 - 詳細用: `audit_log_details` に `logical_prompt_json`, `transport_payload_json`, `assistant_text`, `raw_items_json`, `usage_json` を退避する
 
-runtime path では、audit log modal 初期表示は `listSessionAuditLogSummaryPage(sessionId, { cursor, limit })` で最新 page の `AuditLogSummary[]` を取得する。summary は `audit_logs` の一覧列と `audit_log_operations` の type / summary だけを読み、`audit_log_details` と operation details は読まない。Logical Prompt / Transport Payload / Response / Raw Items などの detail section を開いた時だけ `getSessionAuditLogDetail(sessionId, auditLogId)` で対象 row の `audit_log_details` と `audit_log_operations.details` を読む。既存互換用の `listSessionAuditLogs(sessionId)` と `listSessionAuditLogSummaries(sessionId)` は残し、V2 DB では V1 `AuditLogStorage` を開かず `AuditLogStorageV2Read` が V2 split schema の read / write を担当する。audit write は summary / detail / operations を transaction 内で保存・置換し、`sessions.audit_log_count` も同じ transaction で更新する。
+runtime path では、audit log modal 初期表示は `listSessionAuditLogSummaryPage(sessionId, { cursor, limit })` で最新 page の `AuditLogSummary[]` を取得する。summary は `audit_logs` の一覧列と `audit_log_operations` の type / summary だけを読み、`audit_log_details` と operation details は読まない。Logical Prompt / Transport Payload / Response / Raw Items などの detail section を開いた時だけ `getSessionAuditLogDetail(sessionId, auditLogId)` で対象 row の `audit_log_details` と `audit_log_operations.details` を読む。既存互換用の `listSessionAuditLogs(sessionId)` と `listSessionAuditLogSummaries(sessionId)` は残し、V2 DB では V1 `AuditLogStorage` を開かず `AuditLogStorageV2` が V2 split schema の read / write を担当する。audit write は summary / detail / operations を transaction 内で保存・置換し、`sessions.audit_log_count` も同じ transaction で更新する。
 
 V2 DB では legacy memory table を作らないため、memory 系 storage は read-only/no-op adapter に差し替える。これにより V2 read-path 起動時に `session_memories`、`project_scopes`、`character_scopes` などを暗黙作成しない。
 

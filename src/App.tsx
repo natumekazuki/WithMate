@@ -820,7 +820,9 @@ export default function App() {
     () => previewPathReferenceCandidates.join("\u001f"),
     [previewPathReferenceCandidates],
   );
-  const selectedSessionRunState = selectedSession?.runState ?? null;
+  const selectedSessionRunState: Session["runState"] | null = selectedSessionLiveRun
+    ? "running"
+    : selectedSession?.runState ?? null;
 
   const selectedSessionCharacter = useMemo(
     () =>
@@ -2809,7 +2811,7 @@ export default function App() {
           `pending:preparing:${selectedSession?.id ?? ""}:${selectedSessionLiveRun?.threadId ?? ""}`,
         );
   const pendingRunIndicatorAnnouncement = pendingRunIndicatorText;
-  const isSelectedSessionRunning = selectedSession?.runState === "running";
+  const isSelectedSessionRunning = selectedSessionRunState === "running";
   const contextPaneProjection = useMemo(
     () => buildContextPaneProjection({
       activeContextPaneTab,
@@ -3016,7 +3018,7 @@ export default function App() {
           taskTitle={selectedSession.taskTitle}
           isEditingTitle={isEditingTitle}
           titleDraft={titleDraft}
-          isRunning={selectedSession.runState === "running"}
+          isRunning={isSelectedSessionRunning}
           showTerminalButton={!isCharacterUpdateSession}
           onToggleExpanded={handleToggleHeaderExpanded}
           onOpenAuditLog={() => setAuditLogsOpen(true)}
@@ -3041,7 +3043,7 @@ export default function App() {
                   messages={displayedMessages}
                   expandedArtifacts={expandedArtifacts}
                   messageListRef={messageListRef}
-                  isRunning={selectedSession.runState === "running"}
+                  isRunning={isSelectedSessionRunning}
                   pendingRunIndicatorAnnouncement={pendingRunIndicatorAnnouncement}
                   pendingRunIndicatorText={pendingRunIndicatorText}
                   liveApprovalRequest={liveApprovalRequest}

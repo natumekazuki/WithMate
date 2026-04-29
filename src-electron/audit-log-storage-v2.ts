@@ -615,7 +615,7 @@ function entryToAuditLogDetail(entry: AuditLogEntry): AuditLogDetail {
   };
 }
 
-export class AuditLogStorageV2Read {
+export class AuditLogStorageV2 {
   private readonly dbPath: string;
 
   constructor(dbPath: string) {

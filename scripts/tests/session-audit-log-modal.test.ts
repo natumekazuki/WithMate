@@ -26,8 +26,8 @@ function createAuditLogSummary(id: number): AuditLogSummary {
 }
 
 describe("SessionAuditLogModal", () => {
-  it("大量 entry でも初期 render は window 範囲だけを描画する", () => {
-    const entries = Array.from({ length: 100 }, (_, index) => createAuditLogSummary(index + 1));
+  it("取得済み page の entry を固定高 spacer なしで描画する", () => {
+    const entries = Array.from({ length: 50 }, (_, index) => createAuditLogSummary(index + 1));
     const html = renderToStaticMarkup(
       React.createElement(SessionAuditLogModal, {
         open: true,
@@ -44,10 +44,9 @@ describe("SessionAuditLogModal", () => {
     );
 
     const renderedCardCount = (html.match(/audit-log-card/g) ?? []).length;
-    assert.ok(renderedCardCount > 0);
-    assert.ok(renderedCardCount < 100);
+    assert.equal(renderedCardCount, 50);
     assert.match(html, /operation 1/);
-    assert.doesNotMatch(html, /operation 100/);
+    assert.doesNotMatch(html, /audit-log-list-spacer/);
     assert.match(html, /Load More/);
   });
 });

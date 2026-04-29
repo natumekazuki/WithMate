@@ -6,7 +6,7 @@ import type { Session } from "../src/session-state.js";
 import { APP_DATABASE_V2_FILENAME, CREATE_V2_SCHEMA_SQL, isValidV2Database } from "./database-schema-v2.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
-import { AuditLogStorageV2Read } from "./audit-log-storage-v2-read.js";
+import { AuditLogStorageV2 } from "./audit-log-storage-v2.js";
 import { CharacterMemoryStorage } from "./character-memory-storage.js";
 import {
   CharacterMemoryStorageV2Read,
@@ -17,7 +17,7 @@ import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { ProjectMemoryStorage } from "./project-memory-storage.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
 import { SessionStorage } from "./session-storage.js";
-import { SessionStorageV2Read } from "./session-storage-v2-read.js";
+import { SessionStorageV2 } from "./session-storage-v2.js";
 import { sessionSummariesToSessions } from "./session-summary-adapter.js";
 import { openAppDatabase, truncateAppDatabaseWal } from "./sqlite-connection.js";
 
@@ -91,7 +91,7 @@ export class PersistentStoreLifecycleService {
     const modelCatalogStorage = this.deps.createModelCatalogStorage(dbPath, bundledModelCatalogPath);
     const activeModelCatalog = modelCatalogStorage.ensureSeeded();
     const sessionStorage = isV2Database
-      ? new SessionStorageV2Read(dbPath)
+      ? new SessionStorageV2(dbPath)
       : this.deps.createSessionStorage(dbPath);
     const sessionMemoryStorage = isV2Database
       ? new SessionMemoryStorageV2Read()
@@ -103,7 +103,7 @@ export class PersistentStoreLifecycleService {
       ? new CharacterMemoryStorageV2Read()
       : this.deps.createCharacterMemoryStorage(dbPath);
     const auditLogStorage = isV2Database
-      ? new AuditLogStorageV2Read(dbPath)
+      ? new AuditLogStorageV2(dbPath)
       : this.deps.createAuditLogStorage(dbPath);
     const appSettingsStorage = this.deps.createAppSettingsStorage(dbPath);
     const loadedSessionSummaries = sessionStorage.listSessionSummaries();

@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { buildNewSession } from "../../src/app-state.js";
 import { CREATE_V2_SCHEMA_SQL } from "../../src-electron/database-schema-v2.js";
-import { SessionStorageV2Read } from "../../src-electron/session-storage-v2-read.js";
+import { SessionStorageV2 } from "../../src-electron/session-storage-v2.js";
 
 type V2SessionHeaderInput = {
   id?: string;
@@ -235,7 +235,7 @@ function createSession(taskTitle: string, workspaceLabel: string, characterId: s
   };
 }
 
-describe("SessionStorageV2Read", () => {
+describe("SessionStorageV2", () => {
   it("listSessionSummaries は V2 sessions header から summary を復元する", async () => {
     await withTempV2Database((dbPath) => {
       const db = new DatabaseSync(dbPath);
@@ -249,7 +249,7 @@ describe("SessionStorageV2Read", () => {
         db.close();
       }
 
-      const storage = new SessionStorageV2Read(dbPath);
+      const storage = new SessionStorageV2(dbPath);
       try {
         const summaries = storage.listSessionSummaries();
         assert.equal(summaries.length, 1);
@@ -295,7 +295,7 @@ describe("SessionStorageV2Read", () => {
         db.close();
       }
 
-      const storage = new SessionStorageV2Read(dbPath);
+      const storage = new SessionStorageV2(dbPath);
       try {
         const session = storage.getSession("session-with-messages");
         assert.ok(session);
@@ -319,7 +319,7 @@ describe("SessionStorageV2Read", () => {
 
   it("getSession は存在しない id で null を返す", async () => {
     await withTempV2Database((dbPath) => {
-      const storage = new SessionStorageV2Read(dbPath);
+      const storage = new SessionStorageV2(dbPath);
       try {
         assert.equal(storage.getSession("missing-session-id"), null);
       } finally {
@@ -346,7 +346,7 @@ describe("SessionStorageV2Read", () => {
         db.close();
       }
 
-      const storage = new SessionStorageV2Read(dbPath);
+      const storage = new SessionStorageV2(dbPath);
       try {
         assert.deepEqual(storage.listSessionSummaries().map((session) => session.id), ["session-valid"]);
         assert.throws(() => {
@@ -360,7 +360,7 @@ describe("SessionStorageV2Read", () => {
 
   it("upsertSession は getSession で messages と artifact を復元できる", async () => {
     await withTempV2Database((dbPath) => {
-      const storage = new SessionStorageV2Read(dbPath);
+      const storage = new SessionStorageV2(dbPath);
       try {
         const session = createSession("Upsert session", "workspace-upsert", "char-up", "U");
 
@@ -431,7 +431,7 @@ describe("SessionStorageV2Read", () => {
 
   it("replaceSessions は既存 session/message/artifact を置換する", async () => {
     await withTempV2Database((dbPath) => {
-      const storage = new SessionStorageV2Read(dbPath);
+      const storage = new SessionStorageV2(dbPath);
       try {
         const keepSession = createSession("Keep session", "workspace-keep", "char-k", "K");
         const targetSession = createSession("Target session", "workspace-target", "char-t", "T");
@@ -558,7 +558,7 @@ describe("SessionStorageV2Read", () => {
 
   it("replaceSessions は保持対象 session の audit logs を残し、除外 session の audit logs だけ削除する", async () => {
     await withTempV2Database((dbPath) => {
-      const storage = new SessionStorageV2Read(dbPath);
+      const storage = new SessionStorageV2(dbPath);
       try {
         const targetSession = createSession("Target session", "workspace-target-audit", "char-ta", "T");
         const removedSession = createSession("Removed session", "workspace-removed-audit", "char-ra", "R");
@@ -632,7 +632,7 @@ describe("SessionStorageV2Read", () => {
 
   it("deleteSession は child rows を残さず session を削除する", async () => {
     await withTempV2Database((dbPath) => {
-      const storage = new SessionStorageV2Read(dbPath);
+      const storage = new SessionStorageV2(dbPath);
       try {
         const targetSession = createSession("Delete target", "workspace-delete", "char-d", "D");
         const keepSession = createSession("Keep session", "workspace-keep-2", "char-k2", "K");
@@ -707,7 +707,7 @@ describe("SessionStorageV2Read", () => {
 
   it("clearSessions は child rows を残さず session を全削除する", async () => {
     await withTempV2Database((dbPath) => {
-      const storage = new SessionStorageV2Read(dbPath);
+      const storage = new SessionStorageV2(dbPath);
       try {
         const firstSession = createSession("Clear first", "workspace-clear-1", "char-c1", "C");
         const secondSession = createSession("Clear second", "workspace-clear-2", "char-c2", "C");

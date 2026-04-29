@@ -19,6 +19,12 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+export function quantizeVirtualListScrollTop(scrollTop: number, estimatedItemHeight: number): number {
+  const safeScrollTop = Math.max(0, scrollTop);
+  const safeEstimatedItemHeight = Math.max(1, estimatedItemHeight);
+  return Math.floor(safeScrollTop / safeEstimatedItemHeight) * safeEstimatedItemHeight;
+}
+
 export function calculateVirtualListWindow(input: VirtualListWindowInput): VirtualListWindow {
   const itemCount = Math.max(0, Math.floor(input.itemCount));
   const estimatedItemHeight = Math.max(1, input.estimatedItemHeight);

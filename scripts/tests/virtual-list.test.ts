@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { calculateVirtualListWindow } from "../../src/virtual-list.js";
+import { calculateVirtualListWindow, quantizeVirtualListScrollTop } from "../../src/virtual-list.js";
 
 describe("calculateVirtualListWindow", () => {
   it("空配列では空 window を返す", () => {
@@ -87,5 +87,19 @@ describe("calculateVirtualListWindow", () => {
       totalHeight: 300,
       visibleCount: 1,
     });
+  });
+});
+
+describe("quantizeVirtualListScrollTop", () => {
+  it("同じ推定行内の scrollTop を同じ anchor に丸める", () => {
+    assert.equal(quantizeVirtualListScrollTop(0, 100), 0);
+    assert.equal(quantizeVirtualListScrollTop(99, 100), 0);
+    assert.equal(quantizeVirtualListScrollTop(100, 100), 100);
+    assert.equal(quantizeVirtualListScrollTop(199, 100), 100);
+  });
+
+  it("負数と不正な推定高を安全な値に寄せる", () => {
+    assert.equal(quantizeVirtualListScrollTop(-20, 100), 0);
+    assert.equal(quantizeVirtualListScrollTop(12, 0), 12);
   });
 });

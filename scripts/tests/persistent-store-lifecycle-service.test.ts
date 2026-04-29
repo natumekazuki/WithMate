@@ -11,9 +11,9 @@ import {
   APP_DATABASE_V2_FILENAME,
   CREATE_V2_SCHEMA_SQL,
 } from "../../src-electron/database-schema-v2.js";
-import { AuditLogStorageV2Read } from "../../src-electron/audit-log-storage-v2-read.js";
+import { AuditLogStorageV2 } from "../../src-electron/audit-log-storage-v2.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";
-import { SessionStorageV2Read } from "../../src-electron/session-storage-v2-read.js";
+import { SessionStorageV2 } from "../../src-electron/session-storage-v2.js";
 import {
   PersistentStoreLifecycleService,
   type PersistentStoreBundleLike,
@@ -330,7 +330,7 @@ test("PersistentStoreLifecycleService は V2 DB 再生成後に V2 schema を作
     const bundle = await service.recreate(dbPath, "model-catalog.json", {});
 
     assert.equal(bundle.activeModelCatalog.revision, 4);
-    assert.equal(bundle.sessionStorage instanceof SessionStorageV2Read, true);
+    assert.equal(bundle.sessionStorage instanceof SessionStorageV2, true);
     assert.deepEqual(bundle.sessions, []);
 
     const db = new DatabaseSync(dbPath, { readOnly: true });
@@ -383,14 +383,14 @@ test("PersistentStoreLifecycleService は required V2 tables がない withmate-
     const bundle = await service.initialize(dbPath, "model-catalog.json");
 
     assert.equal(bundle.activeModelCatalog, activeModelCatalog);
-    assert.equal(bundle.sessionStorage instanceof SessionStorageV2Read, false);
-    assert.equal(bundle.auditLogStorage instanceof AuditLogStorageV2Read, false);
+    assert.equal(bundle.sessionStorage instanceof SessionStorageV2, false);
+    assert.equal(bundle.auditLogStorage instanceof AuditLogStorageV2, false);
     assert.equal(createSessionStorageCallCount, 1);
     assert.equal(createAuditLogStorageCallCount, 1);
   });
 });
 
-test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2Read を使ってセッション要約を読む", async () => {
+test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2 を使ってセッション要約を読む", async () => {
   const activeModelCatalog = { revision: 1, providers: [] } as ModelCatalogSnapshot;
 
   await withTempV2Database(async (dbPath) => {
@@ -419,7 +419,7 @@ test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2Read を�
 
     try {
       const bundle = await service.initialize(dbPath, "model-catalog.json");
-      assert.equal(bundle.sessionStorage instanceof SessionStorageV2Read, true);
+      assert.equal(bundle.sessionStorage instanceof SessionStorageV2, true);
       assert.deepEqual(bundle.sessions, []);
     } finally {
       v1SessionStorage?.close();
@@ -427,7 +427,7 @@ test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2Read を�
   });
 });
 
-test("PersistentStoreLifecycleService は V2 DB では V1 write-capable storages を生成せず V2 read storages を返す", async () => {
+test("PersistentStoreLifecycleService は V2 DB では V1 write-capable storages を生成せず V2 storages を返す", async () => {
   const activeModelCatalog = { revision: 2, providers: [] } as ModelCatalogSnapshot;
   let createSessionStorageCallCount = 0;
   let createAuditLogStorageCallCount = 0;
@@ -464,8 +464,8 @@ test("PersistentStoreLifecycleService は V2 DB では V1 write-capable storages
 
     const bundle = await service.initialize(dbPath, "model-catalog.json");
 
-    assert.equal(bundle.sessionStorage instanceof SessionStorageV2Read, true);
-    assert.equal(bundle.auditLogStorage instanceof AuditLogStorageV2Read, true);
+    assert.equal(bundle.sessionStorage instanceof SessionStorageV2, true);
+    assert.equal(bundle.auditLogStorage instanceof AuditLogStorageV2, true);
     assert.equal(createSessionStorageCallCount, 0);
     assert.equal(createAuditLogStorageCallCount, 0);
   });

@@ -3039,9 +3039,15 @@ button:disabled {
   min-height: 0;
 }
 
-.session-message-list-spacer {
-  min-height: 0;
-  pointer-events: none;
+.message-history-load-more {
+  justify-self: center;
+  width: fit-content;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--character-main) 26%, rgba(203, 213, 225, 0.24));
+  background: color-mix(in srgb, var(--character-main-soft) 42%, rgba(15, 19, 26, 0.94));
+  color: var(--ink);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
 }
 
 .composer {

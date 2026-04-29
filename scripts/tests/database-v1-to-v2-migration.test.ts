@@ -15,10 +15,10 @@ import {
   CREATE_SESSIONS_TABLE_SQL,
 } from "../../src-electron/database-schema-v1.js";
 import { CREATE_V2_SCHEMA_SQL } from "../../src-electron/database-schema-v2.js";
-import { AuditLogStorageV2Read } from "../../src-electron/audit-log-storage-v2-read.js";
+import { AuditLogStorageV2 } from "../../src-electron/audit-log-storage-v2.js";
 import { CharacterRuntimeService } from "../../src-electron/character-runtime-service.js";
 import { PersistentStoreLifecycleService, type PersistentStoreBundle } from "../../src-electron/persistent-store-lifecycle-service.js";
-import { SessionStorageV2Read } from "../../src-electron/session-storage-v2-read.js";
+import { SessionStorageV2 } from "../../src-electron/session-storage-v2.js";
 import { hydrateSessionsFromSummaries } from "../../src-electron/session-summary-adapter.js";
 import type { CharacterProfile } from "../../src/character-state.js";
 import { createMigrationDryRunReport, createMigrationWriteReport } from "../migrate-database-v1-to-v2.js";
@@ -794,12 +794,12 @@ describe("V1 to V2 database migration write mode", () => {
       });
 
       let bundle: PersistentStoreBundle | null = await lifecycle.initialize(v2DbPath, "model-catalog.json");
-      const sessionStorage = bundle.sessionStorage as SessionStorageV2Read;
-      const auditLogStorage = bundle.auditLogStorage as AuditLogStorageV2Read;
+      const sessionStorage = bundle.sessionStorage as SessionStorageV2;
+      const auditLogStorage = bundle.auditLogStorage as AuditLogStorageV2;
 
       try {
-        assert.equal(bundle.sessionStorage instanceof SessionStorageV2Read, true);
-        assert.equal(bundle.auditLogStorage instanceof AuditLogStorageV2Read, true);
+        assert.equal(bundle.sessionStorage instanceof SessionStorageV2, true);
+        assert.equal(bundle.auditLogStorage instanceof AuditLogStorageV2, true);
         assert.deepEqual(bundle.sessions.map((session) => ({
           id: session.id,
           messages: session.messages.length,
@@ -910,11 +910,11 @@ describe("V1 to V2 database migration write mode", () => {
             "withmate-v2.db",
           ]);
           assert.deepEqual(recreated.sessions, []);
-          assert.equal(recreated.sessionStorage instanceof SessionStorageV2Read, true);
-          assert.equal(recreated.auditLogStorage instanceof AuditLogStorageV2Read, true);
+          assert.equal(recreated.sessionStorage instanceof SessionStorageV2, true);
+          assert.equal(recreated.auditLogStorage instanceof AuditLogStorageV2, true);
 
-          const recreatedSessionStorage = recreated.sessionStorage as SessionStorageV2Read;
-          const recreatedAuditLogStorage = recreated.auditLogStorage as AuditLogStorageV2Read;
+          const recreatedSessionStorage = recreated.sessionStorage as SessionStorageV2;
+          const recreatedAuditLogStorage = recreated.auditLogStorage as AuditLogStorageV2;
           recreatedSessionStorage.upsertSession({
             ...characterUpdatedSession,
             id: "session-after-recreate",
