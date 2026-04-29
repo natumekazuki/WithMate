@@ -45,11 +45,17 @@ function createSession(options?: {
   threadId?: string;
   model?: string;
   reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+  approvalMode?: "never" | "on-request" | "untrusted";
+  codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
+  allowedAdditionalDirectories?: string[];
 }) {
   const {
     threadId = "",
     model = "gpt-5.4",
     reasoningEffort = "high",
+    approvalMode = DEFAULT_APPROVAL_MODE,
+    codexSandboxMode,
+    allowedAdditionalDirectories,
   } = options ?? {};
 
   return {
@@ -63,9 +69,11 @@ function createSession(options?: {
       character: "A",
       characterIconPath: "",
       characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-      approvalMode: DEFAULT_APPROVAL_MODE,
+      approvalMode,
+      codexSandboxMode,
       model,
       reasoningEffort,
+      allowedAdditionalDirectories,
     }),
     threadId,
   };
@@ -193,6 +201,29 @@ describe("CodexAdapter thread settings", () => {
     assert.notEqual(previousSettings.settingsKey, nextSettings.settingsKey);
     assert.equal(nextSettings.options.model, "gpt-5.4-mini");
     assert.equal(nextSettings.options.modelReasoningEffort, "low");
+  });
+
+  it("approval / sandbox / additional directories 変更後の thread settings は新 options と settingsKey を反映する", () => {
+    const previousSession = createSession({
+      threadId: "thread-1",
+      approvalMode: "untrusted",
+      codexSandboxMode: "workspace-write",
+      allowedAdditionalDirectories: ["F:/external-a"],
+    });
+    const nextSession = createSession({
+      threadId: "thread-1",
+      approvalMode: "never",
+      codexSandboxMode: "danger-full-access",
+      allowedAdditionalDirectories: ["F:/external-b"],
+    });
+
+    const previousSettings = buildCodexThreadSettings(previousSession, CODEX_PROVIDER_CATALOG, "client-key");
+    const nextSettings = buildCodexThreadSettings(nextSession, CODEX_PROVIDER_CATALOG, "client-key");
+
+    assert.notEqual(previousSettings.settingsKey, nextSettings.settingsKey);
+    assert.equal(nextSettings.options.approvalPolicy, "never");
+    assert.equal(nextSettings.options.sandboxMode, "danger-full-access");
+    assert.deepEqual(nextSettings.options.additionalDirectories, [path.resolve("F:/external-b")]);
   });
 
   it("threadId がある場合は startThread ではなく resumeThread(threadId, options) を使う", () => {

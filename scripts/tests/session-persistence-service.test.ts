@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import { describe, it } from "node:test";
 
 import {
@@ -337,7 +338,7 @@ describe("SessionPersistenceService", () => {
     );
   });
 
-  it("updateSession は model / reasoning 変更時に threadId を空にして invalidate する", () => {
+  it("updateSession は model / reasoning 変更時に threadId を維持する", () => {
     const baseSession = createSession({
       provider: "copilot",
       model: "copilot-default",
@@ -396,8 +397,76 @@ describe("SessionPersistenceService", () => {
       threadId: "thread-keep",
     });
 
-    assert.equal(updated.threadId, "");
-    assert.deepEqual(invalidatedThreads, [{ providerId: "copilot", sessionId: baseSession.id }]);
+    assert.equal(updated.threadId, "thread-keep");
+    assert.deepEqual(invalidatedThreads, []);
+  });
+
+  it("updateSession は runtime parameter 変更時に threadId を維持する", () => {
+    const baseSession = createSession({
+      provider: "codex",
+      model: "codex-default",
+      reasoningEffort: "medium",
+      approvalMode: "untrusted",
+      codexSandboxMode: "workspace-write",
+      allowedAdditionalDirectories: ["C:/external-a"],
+      threadId: "thread-keep",
+    });
+    const storedSessions: Session[] = [baseSession];
+    const invalidatedThreads: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return storedSessions.find((session) => session.id === sessionId) ?? null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      upsertStoredSession(session) {
+        storedSessions.splice(0, storedSessions.length, session);
+        return session;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      deleteStoredSession() {},
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      clearCharacterReflectionCheckpoint() {},
+      clearInFlightCharacterReflection() {},
+      invalidateProviderSessionThread(providerId, sessionId) {
+        invalidatedThreads.push({ providerId, sessionId });
+      },
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    const updated = service.updateSession({
+      ...baseSession,
+      approvalMode: "never",
+      codexSandboxMode: "danger-full-access",
+      allowedAdditionalDirectories: ["C:/external-b"],
+      threadId: "thread-keep",
+    });
+
+    assert.equal(updated.threadId, "thread-keep");
+    assert.deepEqual(updated.allowedAdditionalDirectories, [path.resolve("C:/external-b")]);
+    assert.deepEqual(invalidatedThreads, []);
   });
 
   it("deleteSession は関連状態を片付けて window close を呼ぶ", () => {

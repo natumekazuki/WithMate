@@ -409,7 +409,7 @@ export function applySessionModelMetadataUpdate(
     catalogRevision,
     model: selection.resolvedModel,
     reasoningEffort: selection.resolvedReasoningEffort,
-    threadId: "",
+    threadId: session.threadId,
     updatedAt,
   };
 }

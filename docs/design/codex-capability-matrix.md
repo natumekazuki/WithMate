@@ -46,7 +46,9 @@
 - `対応済み`
 - Home から `workspace / provider / character / model / depth / approval mode` を持つ session を作成できる
 - session ごとに `threadId` を保持し、次回 turn で `resumeThread()` できる
-- `model / depth / coding credential` を変えた session は `threadId` を空に戻して新規 thread へ切り替える
+- `model / depth` を変えた session は `threadId` を維持し、新しい runtime parameter で既存 thread の resume を試す
+- stale / incompatible thread が返った場合だけ、runtime が `threadId` を空に戻して 1 回 internal retry する
+- `coding credential` を変えた provider では provider cache を破棄し、security boundary として新規 thread へ切り替える
 - `run / cancel / interrupted / error / retry` の基本導線がある
 
 主な実装:

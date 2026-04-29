@@ -88,9 +88,7 @@ export class SessionPersistenceService {
 
     const shouldResetThreadId =
       Boolean(currentSession.threadId) &&
-      (currentSession.provider !== nextSession.provider ||
-        currentSession.model !== nextSession.model ||
-        currentSession.reasoningEffort !== nextSession.reasoningEffort);
+      currentSession.provider !== nextSession.provider;
 
     const updatedSession = this.upsertSession({
       ...nextSession,
