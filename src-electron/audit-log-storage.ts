@@ -322,7 +322,8 @@ export class AuditLogStorage {
         substr(COALESCE(assistant_text, ''), 1, ${ASSISTANT_TEXT_PREVIEW_MAX_LENGTH}) AS assistant_text_preview,
         CASE
           WHEN operations_json IS NULL OR operations_json = '' OR operations_json = '[]' THEN 0
-          ELSE 1
+          WHEN json_valid(operations_json) THEN json_array_length(operations_json)
+          ELSE 0
         END AS operation_count,
         usage_json,
         error_message
@@ -345,7 +346,8 @@ export class AuditLogStorage {
         substr(COALESCE(assistant_text, ''), 1, ${ASSISTANT_TEXT_PREVIEW_MAX_LENGTH}) AS assistant_text_preview,
         CASE
           WHEN operations_json IS NULL OR operations_json = '' OR operations_json = '[]' THEN 0
-          ELSE 1
+          WHEN json_valid(operations_json) THEN json_array_length(operations_json)
+          ELSE 0
         END AS operation_count,
         usage_json,
         error_message

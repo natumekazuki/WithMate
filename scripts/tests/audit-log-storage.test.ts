@@ -148,8 +148,28 @@ describe("AuditLogStorage", () => {
       sessionStorage.close();
 
       const storage = new AuditLogStorage(dbPath);
-      const ids = Array.from({ length: 4 }, (_, index) =>
-        storage.createAuditLog({
+      const ids = Array.from({ length: 4 }, (_, index) => {
+        const operations = index === 3
+          ? [
+              {
+                type: "analysis",
+                summary: `summary ${index}-a`,
+                details: `detail ${index}-a`,
+              },
+              {
+                type: "command_execution",
+                summary: `summary ${index}-b`,
+                details: `detail ${index}-b`,
+              },
+            ]
+          : [
+              {
+                type: "analysis",
+                summary: `summary ${index}`,
+                details: `detail ${index}`,
+              },
+            ];
+        return storage.createAuditLog({
           sessionId: session.id,
           createdAt: `2026/03/24 23:0${index}`,
           phase: "completed",
@@ -165,19 +185,15 @@ describe("AuditLogStorage", () => {
           },
           transportPayload: null,
           assistantText: `assistant ${index}`,
-          operations: [
-            {
-              type: "analysis",
-              summary: `summary ${index}`,
-              details: `detail ${index}`,
-            },
-          ],
+          operations,
           rawItemsJson: `[${index}]`,
           usage: null,
           errorMessage: "",
-        }).id,
-      );
+        }).id;
+      });
 
+      const summaries = storage.listSessionAuditLogSummaries(session.id);
+      assert.deepEqual(summaries[0]?.operations, [{ type: "operation", summary: "2 operations" }]);
       const firstPage = storage.listSessionAuditLogSummaryPage(session.id, { cursor: 0, limit: 2 });
       assert.deepEqual(firstPage.entries.map((entry) => entry.id), [ids[3], ids[2]]);
       assert.equal(firstPage.nextCursor, 2);
@@ -185,7 +201,8 @@ describe("AuditLogStorage", () => {
       assert.equal(firstPage.total, 4);
       assert.equal("rawItemsJson" in (firstPage.entries[0] as object), false);
       assert.equal(firstPage.entries[0]?.assistantTextPreview, "assistant 3");
-      assert.deepEqual(firstPage.entries[0]?.operations, [{ type: "operation", summary: "1 operations" }]);
+      assert.deepEqual(firstPage.entries[0]?.operations, [{ type: "operation", summary: "2 operations" }]);
+      assert.deepEqual(firstPage.entries[1]?.operations, [{ type: "operation", summary: "1 operations" }]);
 
       const secondPage = storage.listSessionAuditLogSummaryPage(session.id, { cursor: firstPage.nextCursor, limit: 10 });
       assert.deepEqual(secondPage.entries.map((entry) => entry.id), [ids[1], ids[0]]);
