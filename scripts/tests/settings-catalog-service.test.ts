@@ -26,7 +26,7 @@ function createSession(overrides?: Partial<Session>): Session {
     runState: "idle",
     threadId: "thread-1",
     updatedAt: "2026-03-28T00:00:00.000Z",
-    messages: [],
+    messages: [{ role: "user", text: "hello" }],
     stream: [],
     allowedAdditionalDirectories: [],
   };
@@ -195,6 +195,7 @@ describe("SettingsCatalogService", () => {
     assert.deepEqual(clearQuotaCalls, ["codex"]);
     assert.deepEqual(clearContextCalls, ["session-1"]);
     assert.equal(replacedSessions[0]?.threadId, "");
+    assert.deepEqual(replacedSessions[0]?.messages, previousSessions[0].messages);
     assert.deepEqual(invalidated, []);
   });
 
@@ -270,6 +271,7 @@ describe("SettingsCatalogService", () => {
     assert.equal(importedSource, "imported");
     assert.equal(replacedSessions[0]?.catalogRevision, 2);
     assert.equal(replacedSessions[0]?.model, "gpt-5.4");
+    assert.deepEqual(replacedSessions[0]?.messages, previousSessions[0].messages);
     assert.equal(broadcasted, true);
   });
 

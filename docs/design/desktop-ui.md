@@ -115,14 +115,9 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
     - provider ごとの path 入力
     - `Browse`
   - `Memory Extraction`
-    - `Memory Generation` global toggle
-    - provider ごとの `Model`
-    - provider ごとの `Reasoning Depth`
-    - provider ごとの `Output Tokens Threshold`
-    - provider ごとの `Timeout Seconds`
+    - current UI では表示しない
   - `Character Reflection`
-    - app-wide の `Cooldown Seconds` / `Min Char Delta` / `Min Message Delta`
-    - provider ごとの `Model / Reasoning Depth / Timeout Seconds`
+    - current UI では表示しない
   - `Model Catalog` import / export
   - 縦が小さいときも overlay 内スクロールで末尾まで操作できる
 
@@ -196,15 +191,14 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - `approvalRequest`: `今回だけ許可 / 拒否`
   - `elicitationRequest`: form または URL completion の `送信 / 拒否 / 閉じる`
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
-- right pane は `Latest Command / Memory生成 / 独り言` を基本 tab とし、provider が `Copilot` の時だけ `Tasks` tab を追加する
+- right pane は `Latest Command` を基本 tab とし、provider が `Copilot` の時だけ `Tasks` tab を追加する
 - right pane 上部には collapsed state の `title handle` を置く
-  - `Generate Memory` は `Memory生成` tab を表示している間だけ出し、switcher の下段へ回して横幅を空ける
+- `Generate Memory` は current UI では表示しない
 - `character-update` variant では right pane を `LatestCommand / MemoryExtract` の 2 面に切り替える
 - `character-update` variant では expanded header の `Terminal` を出さない
 - `character-update` variant では composer の `Skill / Agent` picker を出さない
 - command 実行中は `Latest Command` を最優先で自動表示する
-- background memory extraction 実行中は `Memory生成` へ自動切り替える
-- `独り言` は background state と recent monologue を表示する
+- MemoryGeneration / 独り言の right pane 自動切り替えは行わない
 - right pane の empty / idle copy は説明過多にせず、使えば分かる最小表現を優先する
 - `Latest Command` には raw command、status、source、rough risk badge、必要時だけ開く `details` を出す
 - 実行中に確定した live step があれば、`Latest Command` の下に `CONFIRMED Details` として直近数件だけ補助表示してよい
@@ -212,8 +206,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - full timeline には戻さず、summary + optional `details` に留める
 - provider が `Copilot` で background task snapshot が来た時は、right pane の `Tasks` tab で `agent / shell` の running / completed / failed を確認できるようにする
 - `Tasks` tab は `/tasks` 全機能の再現ではなく、current session に紐づく background task の coarse な観測面に留める
-- `Memory生成` には background activity の status、summary、必要時だけ開く `details` を出す
-  - `details` には trigger / model / reasoning に加えて、更新された Session / Character Memory の内容を含めてよい
+- `Memory生成` tab は current UI では表示しない
 - provider が `Copilot` の時だけ、`Latest Command` の下に `Premium Requests` の薄い strip を常設し、残量だけを即読できるようにする
 - `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない
 - `assistantText` は pending bubble の会話本文としてのみ扱い、`agent_message` を activity row へ戻さない

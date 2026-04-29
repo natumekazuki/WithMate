@@ -1,0 +1,24 @@
+# i-v2-review3 progress
+
+- 2026-04-27: review started.
+- Reviewed target runtime read-path files:
+  - `src-electron/app-database-path.ts`
+  - `src-electron/main.ts`
+  - `src-electron/session-storage-v2-read.ts`
+  - `src-electron/audit-log-storage-v2-read.ts`
+  - `scripts/tests/app-database-path.test.ts`
+  - `scripts/tests/session-storage-v2-read.test.ts`
+  - `scripts/tests/audit-log-storage-v2-read.test.ts`
+- Reviewed related lifecycle and design context:
+  - `src-electron/persistent-store-lifecycle-service.ts`
+  - `src-electron/session-storage.ts`
+  - `src-electron/audit-log-storage.ts`
+  - `src-electron/database-schema-v2.ts`
+  - `docs/design/database-v2-migration.md`
+  - `docs/design/data-loading-performance-audit.md`
+  - `docs/design/database-schema.md`
+  - `docs/plans/20260427-identify-data-loading-optimizations/plan.md`
+  - `docs/plans/20260427-identify-data-loading-optimizations/result.md`
+  - `docs/plans/20260427-identify-data-loading-optimizations/worklog.md`
+- Ran a targeted lifecycle reproduction with a V2 schema DB and current `SessionStorage`.
+- Review completed with blocking same-plan findings.

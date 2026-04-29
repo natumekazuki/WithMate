@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type {
   AppSettings,
@@ -7,13 +7,18 @@ import type {
   MemoryExtractionProviderSettings,
   SessionSummary,
 } from "./app-state.js";
-import type { MemoryManagementSnapshot } from "./memory-management-state.js";
+import type {
+  MemoryManagementDomain,
+  MemoryManagementDomainPageInfo,
+  MemoryManagementSnapshot,
+} from "./memory-management-state.js";
 import {
   buildFilteredMemoryManagementSnapshot,
   DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
   type CharacterMemoryCategoryFilter,
   type MemoryManagementDomainFilter,
   type MemoryManagementSort,
+  type MemoryManagementViewFilters,
   type ProjectMemoryCategoryFilter,
   type SessionMemoryStatusFilter,
 } from "./memory-management-view.js";
@@ -49,6 +54,11 @@ export type HomeSettingsContentProps = {
   settingsDirty: boolean;
   settingsFeedback: string;
   memoryManagementSnapshot: MemoryManagementSnapshot | null;
+  memoryManagementPages: {
+    session: MemoryManagementDomainPageInfo;
+    project: MemoryManagementDomainPageInfo;
+    character: MemoryManagementDomainPageInfo;
+  };
   memoryManagementLoading: boolean;
   memoryManagementBusyTarget: string | null;
   memoryManagementFeedback: string;
@@ -80,6 +90,8 @@ export type HomeSettingsContentProps = {
   onOpenAppLogFolder: () => void;
   onOpenCrashDumpFolder: () => void;
   onReloadMemoryManagement: () => void;
+  onChangeMemoryManagementViewFilters: (filters: MemoryManagementViewFilters) => void;
+  onLoadMoreMemoryManagement: (domain: MemoryManagementDomain) => void;
   onDeleteSessionMemory: (sessionId: string) => void;
   onDeleteProjectMemoryEntry: (entryId: string) => void;
   onDeleteCharacterMemoryEntry: (entryId: string) => void;
@@ -93,6 +105,7 @@ export function HomeSettingsContent({
   settingsDirty,
   settingsFeedback,
   memoryManagementSnapshot,
+  memoryManagementPages,
   memoryManagementLoading,
   memoryManagementBusyTarget,
   memoryManagementFeedback,
@@ -118,6 +131,8 @@ export function HomeSettingsContent({
   onOpenAppLogFolder,
   onOpenCrashDumpFolder,
   onReloadMemoryManagement,
+  onChangeMemoryManagementViewFilters,
+  onLoadMoreMemoryManagement,
   onDeleteSessionMemory,
   onDeleteProjectMemoryEntry,
   onDeleteCharacterMemoryEntry,
@@ -129,10 +144,13 @@ export function HomeSettingsContent({
         <div className="settings-panel-memory-scroll">
           <SettingsMemoryManagementSection
             snapshot={memoryManagementSnapshot}
+            pages={memoryManagementPages}
             loading={memoryManagementLoading}
             busyTarget={memoryManagementBusyTarget}
             feedback={memoryManagementFeedback}
             onReload={onReloadMemoryManagement}
+            onChangeViewFilters={onChangeMemoryManagementViewFilters}
+            onLoadMore={onLoadMoreMemoryManagement}
             onDeleteSessionMemory={onDeleteSessionMemory}
             onDeleteProjectMemoryEntry={onDeleteProjectMemoryEntry}
             onDeleteCharacterMemoryEntry={onDeleteCharacterMemoryEntry}
@@ -229,174 +247,6 @@ export function HomeSettingsContent({
                 </div>
               </section>
 
-              <section className="settings-section-card">
-              <div className="settings-field">
-                <strong>Memory Extraction</strong>
-                <label className="settings-provider-toggle-row settings-section-toggle">
-                  <span className="settings-provider-name">{SETTINGS_MEMORY_GENERATION_LABEL}</span>
-                  <input
-                    type="checkbox"
-                    checked={settingsDraft.memoryGenerationEnabled}
-                    onChange={(event) => onChangeMemoryGenerationEnabled(event.target.checked)}
-                  />
-                </label>
-                <div className="settings-provider-list">
-                    {providerSettingRows.map((row) => (
-                      <section key={row.provider.id} className="settings-provider-card">
-                        <p className="settings-provider-name">{row.provider.label}</p>
-                        <label className="settings-provider-input composer-setting-field">
-                          <span>{SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL}</span>
-                          <select
-                            value={row.resolvedMemoryExtractionModel}
-                            onChange={(event) => onChangeMemoryExtractionModel(row.provider.id, event.target.value)}
-                            aria-label={`${row.provider.label} model`}
-                          >
-                            {row.provider.models.map((model) => (
-                              <option key={model.id} value={model.id}>
-                                {modelOptionLabel(model)}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="settings-provider-input composer-setting-field">
-                          <span>{SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL}</span>
-                          <select
-                            value={row.resolvedMemoryExtractionReasoningEffort}
-                            onChange={(event) =>
-                              onChangeMemoryExtractionReasoningEffort(
-                                row.provider.id,
-                                event.target.value as MemoryExtractionProviderSettings["reasoningEffort"],
-                              )
-                            }
-                            aria-label={`${row.provider.label} reasoning depth`}
-                          >
-                            {row.availableMemoryExtractionReasoningEfforts.map((reasoningEffort) => (
-                              <option key={reasoningEffort} value={reasoningEffort}>
-                                {reasoningDepthLabel(reasoningEffort)}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="settings-provider-input">
-                          <span>{SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL}</span>
-                          <input
-                            type="number"
-                            min={1}
-                            step={1}
-                            value={row.memoryExtractionSettings.outputTokensThreshold}
-                            onChange={(event) => onChangeMemoryExtractionThreshold(row.provider.id, event.target.value)}
-                          />
-                        </label>
-                        <label className="settings-provider-input">
-                          <span>{SETTINGS_MEMORY_EXTRACTION_TIMEOUT_LABEL}</span>
-                          <input
-                            type="number"
-                            min={30}
-                            max={1800}
-                            step={30}
-                            value={row.memoryExtractionSettings.timeoutSeconds}
-                            onChange={(event) => onChangeMemoryExtractionTimeoutSeconds(row.provider.id, event.target.value)}
-                          />
-                        </label>
-                      </section>
-                    ))}
-                  </div>
-                </div>
-              </section>
-
-              <section className="settings-section-card">
-                <div className="settings-field">
-                  <strong>Character Reflection</strong>
-                  <div className="settings-provider-list">
-                    <section className="settings-provider-card">
-                      <label className="settings-provider-input composer-setting-field">
-                        <span>{SETTINGS_CHARACTER_REFLECTION_COOLDOWN_LABEL}</span>
-                        <input
-                          type="number"
-                          min={30}
-                          max={3600}
-                          step={30}
-                          value={settingsDraft.characterReflectionTriggerSettings.cooldownSeconds}
-                          onChange={(event) => onChangeCharacterReflectionCooldownSeconds(event.target.value)}
-                        />
-                      </label>
-                      <label className="settings-provider-input composer-setting-field">
-                        <span>{SETTINGS_CHARACTER_REFLECTION_CHAR_DELTA_LABEL}</span>
-                        <input
-                          type="number"
-                          min={1}
-                          max={20000}
-                          step={50}
-                          value={settingsDraft.characterReflectionTriggerSettings.charDeltaThreshold}
-                          onChange={(event) => onChangeCharacterReflectionCharDeltaThreshold(event.target.value)}
-                        />
-                      </label>
-                      <label className="settings-provider-input composer-setting-field">
-                        <span>{SETTINGS_CHARACTER_REFLECTION_MESSAGE_DELTA_LABEL}</span>
-                        <input
-                          type="number"
-                          min={1}
-                          max={100}
-                          step={1}
-                          value={settingsDraft.characterReflectionTriggerSettings.messageDeltaThreshold}
-                          onChange={(event) => onChangeCharacterReflectionMessageDeltaThreshold(event.target.value)}
-                        />
-                      </label>
-                    </section>
-                  </div>
-                  <div className="settings-provider-list">
-                    {providerSettingRows.map((row) => (
-                      <section key={row.provider.id} className="settings-provider-card">
-                        <p className="settings-provider-name">{row.provider.label}</p>
-                        <label className="settings-provider-input composer-setting-field">
-                          <span>{SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL}</span>
-                          <select
-                            value={row.resolvedCharacterReflectionModel}
-                            onChange={(event) => onChangeCharacterReflectionModel(row.provider.id, event.target.value)}
-                            aria-label={`${row.provider.label} character reflection model`}
-                          >
-                            {row.provider.models.map((model) => (
-                              <option key={model.id} value={model.id}>
-                                {modelOptionLabel(model)}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="settings-provider-input composer-setting-field">
-                          <span>{SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL}</span>
-                          <select
-                            value={row.resolvedCharacterReflectionReasoningEffort}
-                            onChange={(event) =>
-                              onChangeCharacterReflectionReasoningEffort(
-                                row.provider.id,
-                                event.target.value as CharacterReflectionProviderSettings["reasoningEffort"],
-                              )
-                            }
-                            aria-label={`${row.provider.label} character reflection reasoning depth`}
-                          >
-                            {row.availableCharacterReflectionReasoningEfforts.map((reasoningEffort) => (
-                              <option key={reasoningEffort} value={reasoningEffort}>
-                                {reasoningDepthLabel(reasoningEffort)}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="settings-provider-input">
-                          <span>{SETTINGS_CHARACTER_REFLECTION_TIMEOUT_LABEL}</span>
-                          <input
-                            type="number"
-                            min={30}
-                            max={1800}
-                            step={30}
-                            value={row.characterReflectionSettings.timeoutSeconds}
-                            onChange={(event) => onChangeCharacterReflectionTimeoutSeconds(row.provider.id, event.target.value)}
-                          />
-                        </label>
-                      </section>
-                    ))}
-                  </div>
-                </div>
-              </section>
             </>
           ) : null}
 
@@ -444,11 +294,18 @@ export function HomeSettingsContent({
 
 type SettingsMemoryManagementSectionProps = {
   snapshot: MemoryManagementSnapshot | null;
+  pages: {
+    session: MemoryManagementDomainPageInfo;
+    project: MemoryManagementDomainPageInfo;
+    character: MemoryManagementDomainPageInfo;
+  };
   loading: boolean;
   busyTarget: string | null;
   feedback: string;
   standalone?: boolean;
   onReload: () => void;
+  onChangeViewFilters: (filters: MemoryManagementViewFilters) => void;
+  onLoadMore: (domain: MemoryManagementDomain) => void;
   onDeleteSessionMemory: (sessionId: string) => void;
   onDeleteProjectMemoryEntry: (entryId: string) => void;
   onDeleteCharacterMemoryEntry: (entryId: string) => void;
@@ -493,11 +350,14 @@ const CHARACTER_CATEGORY_OPTIONS: Array<{ value: CharacterMemoryCategoryFilter; 
 
 function SettingsMemoryManagementSection({
   snapshot,
+  pages,
   loading,
   busyTarget,
   feedback,
   standalone = false,
   onReload,
+  onChangeViewFilters,
+  onLoadMore,
   onDeleteSessionMemory,
   onDeleteProjectMemoryEntry,
   onDeleteCharacterMemoryEntry,
@@ -512,18 +372,26 @@ function SettingsMemoryManagementSection({
   const [characterCategory, setCharacterCategory] = useState<CharacterMemoryCategoryFilter>(
     DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.characterCategory,
   );
+  const activeFilters = useMemo<MemoryManagementViewFilters>(
+    () => ({
+      searchText,
+      domain,
+      sort,
+      sessionStatus,
+      projectCategory,
+      characterCategory,
+    }),
+    [characterCategory, domain, projectCategory, searchText, sessionStatus, sort],
+  );
+
+  useEffect(() => {
+    onChangeViewFilters(activeFilters);
+  }, [activeFilters, onChangeViewFilters]);
 
   const filteredSnapshot = useMemo(
     () =>
-      buildFilteredMemoryManagementSnapshot(snapshot, {
-        searchText,
-        domain,
-        sort,
-        sessionStatus,
-        projectCategory,
-        characterCategory,
-      }),
-    [characterCategory, domain, projectCategory, searchText, sessionStatus, snapshot, sort],
+      buildFilteredMemoryManagementSnapshot(snapshot, activeFilters),
+    [activeFilters, snapshot],
   );
   const sessionCount = filteredSnapshot?.sessionMemories.length ?? 0;
   const projectEntryCount = filteredSnapshot?.projectMemories.reduce((count, group) => count + group.entries.length, 0) ?? 0;
@@ -716,6 +584,16 @@ function SettingsMemoryManagementSection({
                 <p>{loading ? "Session Memory を読み込み中..." : "一致する Session Memory はないよ。"}</p>
               </article>
             )}
+            {pages.session.hasMore ? (
+              <button
+                className="launch-toggle compact"
+                type="button"
+                disabled={loading}
+                onClick={() => onLoadMore("session")}
+              >
+                {loading ? "追加読み込み中..." : `Load More (${pages.session.total - (pages.session.nextCursor ?? pages.session.total)} left)`}
+              </button>
+            ) : null}
             </section>
           ) : null}
 
@@ -768,6 +646,16 @@ function SettingsMemoryManagementSection({
                 <p>{loading ? "Project Memory を読み込み中..." : "一致する Project Memory はないよ。"}</p>
               </article>
             )}
+            {pages.project.hasMore ? (
+              <button
+                className="launch-toggle compact"
+                type="button"
+                disabled={loading}
+                onClick={() => onLoadMore("project")}
+              >
+                {loading ? "追加読み込み中..." : `Load More (${pages.project.total - (pages.project.nextCursor ?? pages.project.total)} left)`}
+              </button>
+            ) : null}
             </section>
           ) : null}
 
@@ -820,6 +708,16 @@ function SettingsMemoryManagementSection({
                 <p>{loading ? "Character Memory を読み込み中..." : "一致する Character Memory はないよ。"}</p>
               </article>
             )}
+            {pages.character.hasMore ? (
+              <button
+                className="launch-toggle compact"
+                type="button"
+                disabled={loading}
+                onClick={() => onLoadMore("character")}
+              >
+                {loading ? "追加読み込み中..." : `Load More (${pages.character.total - (pages.character.nextCursor ?? pages.character.total)} left)`}
+              </button>
+            ) : null}
             </section>
           ) : null}
         </div>

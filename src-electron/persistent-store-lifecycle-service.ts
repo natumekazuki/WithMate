@@ -1,27 +1,58 @@
+import { basename } from "node:path";
 import { rm } from "node:fs/promises";
 
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { Session } from "../src/session-state.js";
+import { APP_DATABASE_V2_FILENAME, CREATE_V2_SCHEMA_SQL, isValidV2Database } from "./database-schema-v2.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
+import { AuditLogStorageV2 } from "./audit-log-storage-v2.js";
 import { CharacterMemoryStorage } from "./character-memory-storage.js";
+import {
+  CharacterMemoryStorageV2Read,
+  ProjectMemoryStorageV2Read,
+  SessionMemoryStorageV2Read,
+} from "./memory-storage-v2-read.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { ProjectMemoryStorage } from "./project-memory-storage.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
 import { SessionStorage } from "./session-storage.js";
-import { truncateAppDatabaseWal } from "./sqlite-connection.js";
+import { SessionStorageV2 } from "./session-storage-v2.js";
+import { sessionSummariesToSessions } from "./session-summary-adapter.js";
+import { openAppDatabase, truncateAppDatabaseWal } from "./sqlite-connection.js";
 
 type ClosableStore = {
   close(): void;
 };
 
+export type SessionStorageRead = Pick<
+  SessionStorage,
+  "listSessions" | "listSessionSummaries" | "getSession" | "close"
+>;
+export type SessionStorageWrite = Pick<
+  SessionStorage,
+  "upsertSession" | "replaceSessions" | "deleteSession" | "clearSessions"
+> & SessionStorageRead;
+
+export type AuditLogStorageRead = Pick<
+  AuditLogStorage,
+  "listSessionAuditLogs" | "listSessionAuditLogSummaries" | "listSessionAuditLogSummaryPage" | "getSessionAuditLogDetail" | "close"
+>;
+export type AuditLogStorageWrite = Pick<
+  AuditLogStorage,
+  "createAuditLog" | "updateAuditLog" | "clearAuditLogs"
+> & AuditLogStorageRead;
+export type SessionMemoryStorageAccess = SessionMemoryStorage | SessionMemoryStorageV2Read;
+export type ProjectMemoryStorageAccess = ProjectMemoryStorage | ProjectMemoryStorageV2Read;
+export type CharacterMemoryStorageAccess = CharacterMemoryStorage | CharacterMemoryStorageV2Read;
+
 export type PersistentStoreBundle = {
   modelCatalogStorage: ModelCatalogStorage;
-  sessionStorage: SessionStorage;
-  sessionMemoryStorage: SessionMemoryStorage;
-  projectMemoryStorage: ProjectMemoryStorage;
-  characterMemoryStorage: CharacterMemoryStorage;
-  auditLogStorage: AuditLogStorage;
+  sessionStorage: SessionStorageRead;
+  sessionMemoryStorage: SessionMemoryStorageAccess;
+  projectMemoryStorage: ProjectMemoryStorageAccess;
+  characterMemoryStorage: CharacterMemoryStorageAccess;
+  auditLogStorage: AuditLogStorageRead;
   appSettingsStorage: AppSettingsStorage;
   activeModelCatalog: ModelCatalogSnapshot;
   sessions: Session[];
@@ -42,6 +73,7 @@ type PersistentStoreLifecycleDeps = {
   createCharacterMemoryStorage(dbPath: string): CharacterMemoryStorage;
   createAuditLogStorage(dbPath: string): AuditLogStorage;
   createAppSettingsStorage(dbPath: string): AppSettingsStorage;
+  ensureV2Schema?(dbPath: string): void;
   onBeforeClose(): void;
   truncateWal(dbPath: string): void;
   removeFile(filePath: string): Promise<void>;
@@ -51,15 +83,31 @@ export class PersistentStoreLifecycleService {
   constructor(private readonly deps: PersistentStoreLifecycleDeps) {}
 
   async initialize(dbPath: string, bundledModelCatalogPath: string): Promise<PersistentStoreBundle> {
+    const isV2Database = isValidV2Database(dbPath);
+    if (isV2Database) {
+      this.deps.ensureV2Schema?.(dbPath);
+    }
+
     const modelCatalogStorage = this.deps.createModelCatalogStorage(dbPath, bundledModelCatalogPath);
     const activeModelCatalog = modelCatalogStorage.ensureSeeded();
-    const sessionStorage = this.deps.createSessionStorage(dbPath);
-    const sessionMemoryStorage = this.deps.createSessionMemoryStorage(dbPath);
-    const projectMemoryStorage = this.deps.createProjectMemoryStorage(dbPath);
-    const characterMemoryStorage = this.deps.createCharacterMemoryStorage(dbPath);
-    const auditLogStorage = this.deps.createAuditLogStorage(dbPath);
+    const sessionStorage = isV2Database
+      ? new SessionStorageV2(dbPath)
+      : this.deps.createSessionStorage(dbPath);
+    const sessionMemoryStorage = isV2Database
+      ? new SessionMemoryStorageV2Read()
+      : this.deps.createSessionMemoryStorage(dbPath);
+    const projectMemoryStorage = isV2Database
+      ? new ProjectMemoryStorageV2Read()
+      : this.deps.createProjectMemoryStorage(dbPath);
+    const characterMemoryStorage = isV2Database
+      ? new CharacterMemoryStorageV2Read()
+      : this.deps.createCharacterMemoryStorage(dbPath);
+    const auditLogStorage = isV2Database
+      ? new AuditLogStorageV2(dbPath)
+      : this.deps.createAuditLogStorage(dbPath);
     const appSettingsStorage = this.deps.createAppSettingsStorage(dbPath);
-    const sessions = sessionStorage.listSessions();
+    const loadedSessionSummaries = sessionStorage.listSessionSummaries();
+    const sessions = loadedSessionSummaries.length === 0 ? [] : sessionSummariesToSessions(loadedSessionSummaries);
 
     return {
       modelCatalogStorage,
@@ -113,7 +161,15 @@ export class PersistentStoreLifecycleService {
       this.deps.removeFile(dbPath),
     ]);
 
+    if (this.isV2DatabasePath(dbPath)) {
+      this.deps.ensureV2Schema?.(dbPath);
+    }
+
     return this.initialize(dbPath, bundledModelCatalogPath);
+  }
+
+  private isV2DatabasePath(dbPath: string): boolean {
+    return basename(dbPath) === APP_DATABASE_V2_FILENAME;
   }
 }
 
@@ -127,6 +183,16 @@ export function createPersistentStoreLifecycleService(): PersistentStoreLifecycl
     createCharacterMemoryStorage: (dbPath) => new CharacterMemoryStorage(dbPath),
     createAuditLogStorage: (dbPath) => new AuditLogStorage(dbPath),
     createAppSettingsStorage: (dbPath) => new AppSettingsStorage(dbPath),
+    ensureV2Schema: (dbPath) => {
+      const db = openAppDatabase(dbPath);
+      try {
+        for (const statement of CREATE_V2_SCHEMA_SQL) {
+          db.exec(statement);
+        }
+      } finally {
+        db.close();
+      }
+    },
     onBeforeClose: () => {},
     truncateWal: truncateAppDatabaseWal,
     removeFile: async (filePath) => {

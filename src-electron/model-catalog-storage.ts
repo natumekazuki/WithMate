@@ -11,6 +11,7 @@ import {
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
+import { CREATE_MODEL_CATALOG_TABLES_SQL } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 type RevisionRow = {
@@ -46,36 +47,7 @@ export class ModelCatalogStorage {
   }
 
   private ensureSchema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS model_catalog_revisions (
-        revision INTEGER PRIMARY KEY AUTOINCREMENT,
-        source TEXT NOT NULL,
-        imported_at TEXT NOT NULL,
-        is_active INTEGER NOT NULL DEFAULT 0
-      );
-
-      CREATE TABLE IF NOT EXISTS model_catalog_providers (
-        revision INTEGER NOT NULL,
-        provider_id TEXT NOT NULL,
-        label TEXT NOT NULL,
-        default_model_id TEXT NOT NULL,
-        default_reasoning_effort TEXT NOT NULL,
-        sort_order INTEGER NOT NULL,
-        PRIMARY KEY (revision, provider_id),
-        FOREIGN KEY (revision) REFERENCES model_catalog_revisions(revision) ON DELETE CASCADE
-      );
-
-      CREATE TABLE IF NOT EXISTS model_catalog_models (
-        revision INTEGER NOT NULL,
-        provider_id TEXT NOT NULL,
-        model_id TEXT NOT NULL,
-        label TEXT NOT NULL,
-        reasoning_efforts_json TEXT NOT NULL,
-        sort_order INTEGER NOT NULL,
-        PRIMARY KEY (revision, provider_id, model_id),
-        FOREIGN KEY (revision) REFERENCES model_catalog_revisions(revision) ON DELETE CASCADE
-      );
-    `);
+    this.db.exec(CREATE_MODEL_CATALOG_TABLES_SQL);
   }
 
   private readBundledCatalogDocument(): ModelCatalogDocument {

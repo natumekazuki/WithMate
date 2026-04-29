@@ -169,7 +169,7 @@ describe("SessionRuntimeService stale retry helpers", () => {
 });
 
 describe("SessionRuntimeService", () => {
-  it("成功時に running -> idle を保存し、background task を起動する", async () => {
+  it("成功時に running -> idle を保存し、Memory / reflection background task は起動しない", async () => {
     const session = createSession();
     const storedSessions: Session[] = [];
     const auditUpdates: UpdateAuditLogInput[] = [];
@@ -343,8 +343,8 @@ describe("SessionRuntimeService", () => {
       auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "attachmentCount")?.value,
       "0",
     );
-    assert.deepEqual(memoryTriggers, [{ sessionId: session.id, triggerReason: "outputTokensThreshold" }]);
-    assert.deepEqual(reflectionTriggers, [{ sessionId: session.id, triggerReason: "context-growth" }]);
+    assert.deepEqual(memoryTriggers, []);
+    assert.deepEqual(reflectionTriggers, []);
     assert.equal(liveStates.at(-1), null);
     assert.equal(service.isRunInFlight(session.id), false);
   });

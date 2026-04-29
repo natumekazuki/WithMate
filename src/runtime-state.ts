@@ -79,6 +79,31 @@ export type AuditLogEntry = {
   errorMessage: string;
 };
 
+export type AuditLogSummary = Omit<
+  AuditLogEntry,
+  "logicalPrompt" | "transportPayload" | "assistantText" | "rawItemsJson"
+> & {
+  assistantTextPreview: string;
+  detailAvailable: boolean;
+};
+
+export type AuditLogSummaryPageRequest = {
+  cursor?: number | null;
+  limit?: number | null;
+};
+
+export type AuditLogSummaryPageResult = {
+  entries: AuditLogSummary[];
+  nextCursor: number | null;
+  hasMore: boolean;
+  total: number;
+};
+
+export type AuditLogDetail = Pick<
+  AuditLogEntry,
+  "id" | "sessionId" | "logicalPrompt" | "transportPayload" | "assistantText" | "operations" | "rawItemsJson" | "usage" | "errorMessage"
+>;
+
 export type LiveRunStepStatus = "in_progress" | "completed" | "failed" | "canceled" | "pending" | (string & {});
 
 export type LiveRunStep = {

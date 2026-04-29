@@ -1,5 +1,5 @@
 import type {
-  AuditLogEntry,
+  AuditLogSummary,
   LiveSessionRunState,
 } from "./app-state.js";
 import { buildLiveRunAuditOperations } from "./live-run-audit-operations.js";
@@ -21,7 +21,7 @@ type BuildDisplayedAuditLogsInput = {
     Session,
     "id" | "updatedAt" | "provider" | "model" | "reasoningEffort" | "approvalMode" | "threadId" | "runState"
   > | null;
-  persistedEntries: AuditLogEntry[];
+  persistedEntries: AuditLogSummary[];
   liveRun: LiveSessionRunState | null;
 };
 
@@ -36,21 +36,24 @@ function serializeBackgroundActivity(activity: AuditLogRefreshActivity): string 
 // persisted audit log の running row があれば、live run state を merge して最新化する。
 // late running update (persisted が既に terminal に更新済みなのに live state が残っている) から
 // 最終 state を守るため、このマージは persisted が running の時だけ行う。
-function mergeRunningAuditLogEntry(entry: AuditLogEntry, liveRun: LiveSessionRunState): AuditLogEntry {
+function mergeRunningAuditLogEntry(entry: AuditLogSummary, liveRun: LiveSessionRunState): AuditLogSummary {
   const operations = buildLiveRunAuditOperations(liveRun);
   const assistantText = liveRun.assistantText.trim();
   const errorMessage = liveRun.errorMessage.trim();
   const threadId = liveRun.threadId.trim();
+  const previousAssistantText = entry.assistantTextPreview
+    || ("assistantText" in entry && typeof entry.assistantText === "string" ? entry.assistantText : "");
 
   return {
     ...entry,
     phase: "running",
     threadId: threadId || entry.threadId,
-    assistantText: assistantText || entry.assistantText,
+    assistantTextPreview: assistantText || previousAssistantText,
+    assistantText: assistantText || previousAssistantText,
     operations,
     usage: liveRun.usage ?? entry.usage,
     errorMessage: errorMessage || entry.errorMessage,
-  };
+  } as AuditLogSummary;
 }
 
 // 新しい run が live 中の時に、persisted に running row が無い場合に synthetic running row を生成する。
@@ -58,9 +61,9 @@ function mergeRunningAuditLogEntry(entry: AuditLogEntry, liveRun: LiveSessionRun
 // UI の key として十分安全（既存 ID と重複しない限り、同一 session 内で unique）。
 function buildSyntheticRunningAuditLog(
   selectedSession: BuildDisplayedAuditLogsInput["selectedSession"],
-  persistedEntries: AuditLogEntry[],
+  persistedEntries: AuditLogSummary[],
   liveRun: LiveSessionRunState,
-): AuditLogEntry | null {
+): AuditLogSummary | null {
   if (!selectedSession) {
     return null;
   }
@@ -80,6 +83,7 @@ function buildSyntheticRunningAuditLog(
     reasoningEffort: selectedSession.reasoningEffort,
     approvalMode: selectedSession.approvalMode,
     threadId: liveRun.threadId.trim() || selectedSession.threadId || latestEntry?.threadId || "",
+    assistantTextPreview: liveRun.assistantText,
     logicalPrompt: {
       systemText: "",
       inputText: "",
@@ -91,7 +95,8 @@ function buildSyntheticRunningAuditLog(
     rawItemsJson: "[]",
     usage: liveRun.usage,
     errorMessage: liveRun.errorMessage,
-  };
+    detailAvailable: false,
+  } as AuditLogSummary;
 }
 
 export function buildAuditLogRefreshSignature(input: BuildAuditLogRefreshSignatureInput): string {
@@ -115,7 +120,7 @@ export function buildAuditLogRefreshSignature(input: BuildAuditLogRefreshSignatu
 // - persisted に running row がある場合は、そこへ live state をマージ
 // - persisted に running row が無く、session が running 中なら synthetic running row を先頭に挿入
 //   (前回の run が completed で persisted に残っていても、新しい live run があれば synthetic row を表示する)
-export function buildDisplayedAuditLogs(input: BuildDisplayedAuditLogsInput): AuditLogEntry[] {
+export function buildDisplayedAuditLogs(input: BuildDisplayedAuditLogsInput): AuditLogSummary[] {
   // live run が無い、または session 自体が running でない場合は persisted をそのまま返す
   const liveRun = input.liveRun;
   if (!liveRun || input.selectedSession?.runState !== "running") {

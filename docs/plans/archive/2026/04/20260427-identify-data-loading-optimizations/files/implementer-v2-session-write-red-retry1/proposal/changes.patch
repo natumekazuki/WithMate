@@ -1,0 +1,318 @@
+diff --git a/scripts/tests/session-storage-v2-read.test.ts b/scripts/tests/session-storage-v2-read.test.ts
+@@ -1,14 +1,19 @@
+ import assert from "node:assert/strict";
+ import { mkdtemp, rm } from "node:fs/promises";
+ import { tmpdir } from "node:os";
+ import path from "node:path";
+ import { DatabaseSync } from "node:sqlite";
+ import { describe, it } from "node:test";
+ 
++import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
++import { buildNewSession } from "../../src/app-state.js";
+ import { CREATE_V2_SCHEMA_SQL } from "../../src-electron/database-schema-v2.js";
+ import { SessionStorageV2Read } from "../../src-electron/session-storage-v2-read.js";
+@@
+ function insertArtifact(db: DatabaseSync, messageId: number, artifact: object): void {
+   db.prepare("INSERT INTO session_message_artifacts (message_id, artifact_json) VALUES (?, ?)").run(
+     messageId,
+     JSON.stringify(artifact),
+   );
+ }
++
++function createSession(taskTitle: string, workspaceLabel: string, characterId: string, character: string) {
++  const session = buildNewSession({
++    taskTitle,
++    workspaceLabel,
++    workspacePath: `/${workspaceLabel}`,
++    branch: "main",
++    characterId,
++    character,
++    characterIconPath: "",
++    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
++    approvalMode: DEFAULT_APPROVAL_MODE,
++  });
++
++  return {
++    ...session,
++    id: `${session.id}-${workspaceLabel}`,
++  };
++}
+ 
+ describe("SessionStorageV2Read", () => {
+@@
+   it("getSession は存在しない id で null を返す", async () => {
+     await withTempV2Database((dbPath) => {
+       const storage = new SessionStorageV2Read(dbPath);
+       try {
+         assert.equal(storage.getSession("missing-session-id"), null);
+@@
+   it("壊れた allowed_additional_directories_json は summary で skip し detail で throw する", async () => {
+     await withTempV2Database((dbPath) => {
+       const db = new DatabaseSync(dbPath);
+       try {
+         insertSessionHeader(db, {
+           id: "session-valid",
+@@
+       } finally {
+         storage.close();
+       }
+     });
+   });
++
++  it("upsertSession は getSession で messages と artifact を復元できる", async () => {
++    await withTempV2Database((dbPath) => {
++      const storage = new SessionStorageV2Read(dbPath);
++      try {
++        const session = createSession("Upsert session", "workspace-upsert", "char-up", "U");
++
++        storage.upsertSession({
++          ...session,
++          messages: [
++            {
++              role: "user",
++              text: "まずはメッセージ",
++              accent: true,
++              artifact: {
++                title: "Upsert artifact",
++                activitySummary: ["done"],
++                changedFiles: ["src/app.ts"],
++                runChecks: ["test"],
++              },
++            },
++            {
++              role: "assistant",
++              text: "了解、実行します。",
++            },
++          ],
++        });
++
++        const loaded = storage.getSession(session.id);
++        assert.ok(loaded);
++        assert.deepEqual(loaded.messages.map((message) => message.text), ["まずはメッセージ", "了解、実行します。"]);
++        assert.equal(loaded.messages[0].role, "user");
++        assert.equal(loaded.messages[0].accent, true);
++        assert.deepEqual(loaded.messages[0].artifact, {
++          title: "Upsert artifact",
++          activitySummary: ["done"],
++          changedFiles: ["src/app.ts"],
++          runChecks: ["test"],
++        });
++        assert.equal(loaded.messages[1].role, "assistant");
++        assert.equal(loaded.messages[1].artifact, undefined);
++        assert.deepEqual(loaded.stream, []);
++      } finally {
++        storage.close();
++      }
++    });
++  });
++
++  it("replaceSessions は既存 session/message/artifact を置換する", async () => {
++    await withTempV2Database((dbPath) => {
++      const storage = new SessionStorageV2Read(dbPath);
++      try {
++        const keepSession = createSession("Keep session", "workspace-keep", "char-k", "K");
++        const targetSession = createSession("Target session", "workspace-target", "char-t", "T");
++
++        storage.upsertSession({
++          ...targetSession,
++          messages: [
++            {
++              role: "user",
++              text: "old target message",
++              accent: true,
++              artifact: {
++                title: "Old artifact",
++                activitySummary: ["old"],
++                changedFiles: ["old.ts"],
++                runChecks: ["old-check"],
++              },
++            },
++          ],
++        });
++        storage.upsertSession({
++          ...keepSession,
++          messages: [
++            {
++              role: "assistant",
++              text: "old keep message",
++            },
++          ],
++        });
++
++        storage.replaceSessions([
++          {
++            ...targetSession,
++            taskTitle: "Target replaced",
++            messages: [
++              {
++                role: "assistant",
++                text: "new target message",
++                artifact: {
++                  title: "New artifact",
++                  activitySummary: ["new"],
++                  changedFiles: ["new.ts"],
++                  runChecks: ["new-check"],
++                },
++              },
++            ],
++          },
++        ]);
++
++        assert.deepEqual(
++          storage.listSessions().map((session) => ({ id: session.id, taskTitle: session.taskTitle })),
++          [{ id: targetSession.id, taskTitle: "Target replaced" }],
++        );
++
++        const loaded = storage.getSession(targetSession.id);
++        assert.ok(loaded);
++        assert.deepEqual(loaded.messages.map((message) => message.text), ["new target message"]);
++        assert.deepEqual(loaded.messages[0].artifact, {
++          title: "New artifact",
++          activitySummary: ["new"],
++          changedFiles: ["new.ts"],
++          runChecks: ["new-check"],
++        });
++
++        assert.equal(storage.getSession(keepSession.id), null);
++
++        const db = new DatabaseSync(dbPath);
++        try {
++          assert.equal(
++            Number(db.prepare("SELECT COUNT(*) AS count FROM session_messages WHERE session_id = ?").get(keepSession.id).count),
++            0,
++          );
++          assert.equal(
++            Number(
++              db
++                .prepare(
++                  "SELECT COUNT(*) AS count FROM session_message_artifacts AS a JOIN session_messages AS m ON m.id = a.message_id WHERE m.session_id = ?",
++                )
++                .get(keepSession.id).count,
++            ),
++            0,
++          );
++        } finally {
++          db.close();
++        }
++      } finally {
++        storage.close();
++      }
++    });
++  });
++
++  it("deleteSession は child rows を残さず session を削除する", async () => {
++    await withTempV2Database((dbPath) => {
++      const storage = new SessionStorageV2Read(dbPath);
++      try {
++        const targetSession = createSession("Delete target", "workspace-delete", "char-d", "D");
++        const keepSession = createSession("Keep session", "workspace-keep-2", "char-k2", "K");
++
++        storage.upsertSession({
++          ...targetSession,
++          messages: [
++            {
++              role: "user",
++              text: "delete target message",
++              accent: true,
++              artifact: {
++                title: "Delete artifact",
++                activitySummary: ["delete"],
++                changedFiles: ["delete.ts"],
++                runChecks: ["delete-check"],
++              },
++            },
++          ],
++        });
++        storage.upsertSession({
++          ...keepSession,
++          messages: [
++            {
++              role: "assistant",
++              text: "keep session message",
++            },
++          ],
++        });
++
++        storage.deleteSession(targetSession.id);
++
++        assert.equal(storage.getSession(targetSession.id), null);
++        assert.ok(storage.getSession(keepSession.id));
++
++        const db = new DatabaseSync(dbPath);
++        try {
++          assert.equal(
++            Number(db.prepare("SELECT COUNT(*) AS count FROM session_messages WHERE session_id = ?").get(targetSession.id).count),
++            0,
++          );
++          assert.equal(
++            Number(
++              db
++                .prepare(
++                  "SELECT COUNT(*) AS count FROM session_message_artifacts AS a JOIN session_messages AS m ON m.id = a.message_id WHERE m.session_id = ?",
++                )
++                .get(targetSession.id).count,
++            ),
++            0,
++          );
++          assert.equal(Number(db.prepare("SELECT COUNT(*) AS count FROM session_messages").get().count), 1);
++          assert.equal(Number(db.prepare("SELECT COUNT(*) AS count FROM session_message_artifacts").get().count), 0);
++        } finally {
++          db.close();
++        }
++      } finally {
++        storage.close();
++      }
++    });
++  });
++
++  it("clearSessions は child rows を残さず session を全削除する", async () => {
++    await withTempV2Database((dbPath) => {
++      const storage = new SessionStorageV2Read(dbPath);
++      try {
++        const firstSession = createSession("Clear first", "workspace-clear-1", "char-c1", "C");
++        const secondSession = createSession("Clear second", "workspace-clear-2", "char-c2", "C");
++
++        storage.upsertSession({
++          ...firstSession,
++          messages: [
++            {
++              role: "user",
++              text: "first message",
++              accent: true,
++              artifact: {
++                title: "Clear artifact",
++                activitySummary: ["clear"],
++                changedFiles: ["clear.ts"],
++                runChecks: ["clear-check"],
++              },
++            },
++          ],
++        });
++        storage.upsertSession({
++          ...secondSession,
++          messages: [
++            {
++              role: "assistant",
++              text: "second message",
++            },
++          ],
++        });
++
++        storage.clearSessions();
++
++        assert.deepEqual(storage.listSessions(), []);
++
++        const db = new DatabaseSync(dbPath);
++        try {
++          assert.equal(Number(db.prepare("SELECT COUNT(*) AS count FROM sessions").get().count), 0);
++          assert.equal(Number(db.prepare("SELECT COUNT(*) AS count FROM session_messages").get().count), 0);
++          assert.equal(Number(db.prepare("SELECT COUNT(*) AS count FROM session_message_artifacts").get().count), 0);
++        } finally {
++          db.close();
++        }
++      } finally {
++        storage.close();
++      }
++    });
++  });
+ });

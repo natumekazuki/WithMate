@@ -1,9 +1,5 @@
 import type { Session } from "../src/app-state.js";
 
-type CharacterReflectionTriggerOptions = {
-  triggerReason: "session-start" | "context-growth";
-};
-
 export type SessionWindowCloseEvent = {
   preventDefault(): void;
 };
@@ -28,7 +24,6 @@ export type SessionWindowBridgeDeps<TWindow extends SessionWindowLike> = {
   getAllowQuitWithInFlightRuns(): boolean;
   confirmCloseWhileRunning(window: TWindow, sessionId: string): boolean;
   broadcastOpenSessionWindowIds(openSessionIds: string[]): void;
-  runCharacterReflection(session: Session, options: CharacterReflectionTriggerOptions): void;
 };
 
 export class SessionWindowBridge<TWindow extends SessionWindowLike> {
@@ -82,10 +77,6 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     window.on("closed", () => this.handleWindowClosed(sessionId));
 
     await this.deps.loadSessionEntry(window, sessionId);
-    const openedSession = this.deps.getSession(sessionId);
-    if (openedSession) {
-      this.deps.runCharacterReflection(openedSession, { triggerReason: "session-start" });
-    }
 
     return window;
   }

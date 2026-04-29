@@ -18,6 +18,7 @@ export type SessionPersistenceServiceDeps = {
   getSessions(): Session[];
   setSessions(nextSessions: Session[]): void;
   getSession(sessionId: string): Session | null;
+  getStoredSession?(sessionId: string): Session | null;
   isSessionRunInFlight(sessionId: string): boolean;
   upsertStoredSession(session: Session): Session;
   replaceStoredSessions(sessions: Session[]): void;
@@ -37,6 +38,10 @@ export type SessionPersistenceServiceDeps = {
 
 function isRunningSession(session: Session): boolean {
   return session.status === "running" || session.runState === "running";
+}
+
+function upsertSessionInList(sessions: Session[], stored: Session): Session[] {
+  return [stored, ...sessions.filter((session) => session.id !== stored.id)];
 }
 
 export class SessionPersistenceService {
@@ -83,9 +88,7 @@ export class SessionPersistenceService {
 
     const shouldResetThreadId =
       Boolean(currentSession.threadId) &&
-      (currentSession.provider !== nextSession.provider ||
-        currentSession.model !== nextSession.model ||
-        currentSession.reasoningEffort !== nextSession.reasoningEffort);
+      currentSession.provider !== nextSession.provider;
 
     const updatedSession = this.upsertSession({
       ...nextSession,
@@ -118,7 +121,7 @@ export class SessionPersistenceService {
     }
 
     this.deps.deleteStoredSession(sessionId);
-    this.deps.setSessions(this.deps.listStoredSessions());
+    this.deps.setSessions(this.deps.getSessions().filter((entry) => entry.id !== sessionId));
     this.deps.clearSessionContextTelemetry(sessionId);
     this.deps.clearSessionBackgroundActivities(sessionId);
     this.deps.clearCharacterReflectionCheckpoint(sessionId);
@@ -128,15 +131,16 @@ export class SessionPersistenceService {
   }
 
   upsertSession(nextSession: Session): Session {
+    const sessionToStore = this.mergeStoredMessagesForSummaryOnlySession(nextSession);
     const stored = this.deps.upsertStoredSession({
-      ...nextSession,
+      ...sessionToStore,
       allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
-        nextSession.workspacePath,
-        nextSession.allowedAdditionalDirectories,
+        sessionToStore.workspacePath,
+        sessionToStore.allowedAdditionalDirectories,
       ),
     });
     this.syncStoredSession(stored);
-    this.deps.setSessions(this.deps.listStoredSessions());
+    this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), stored));
     this.deps.broadcastSessions([stored.id]);
     return cloneSessions([stored])[0];
   }
@@ -158,8 +162,8 @@ export class SessionPersistenceService {
     }));
 
     this.deps.replaceStoredSessions(normalizedSessions);
-    this.deps.setSessions(this.deps.listStoredSessions());
-    const storedSessions = this.deps.getSessions();
+    this.deps.setSessions(normalizedSessions);
+    const storedSessions = normalizedSessions;
     for (const session of storedSessions) {
       this.syncStoredSession(session);
     }
@@ -194,6 +198,32 @@ export class SessionPersistenceService {
     }
 
     return cloneSessions(storedSessions);
+  }
+
+  private mergeStoredMessagesForSummaryOnlySession(nextSession: Session): Session {
+    if (nextSession.messages.length > 0) {
+      return nextSession;
+    }
+
+    const currentSession = this.deps.getSession(nextSession.id);
+    if (!currentSession) {
+      return nextSession;
+    }
+
+    const sourceSession =
+      currentSession.messages.length > 0
+        ? currentSession
+        : this.deps.getStoredSession?.(nextSession.id) ?? null;
+
+    if (!sourceSession || sourceSession.messages.length === 0) {
+      return nextSession;
+    }
+
+    return {
+      ...nextSession,
+      messages: sourceSession.messages,
+      stream: sourceSession.stream,
+    };
   }
 
   private resolveEnabledProviderCatalog(

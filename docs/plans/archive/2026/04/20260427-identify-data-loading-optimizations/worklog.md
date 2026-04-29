@@ -1,0 +1,219 @@
+# Worklog
+
+## 2026-04-27
+
+- `docs/design/data-loading-performance-audit.md` を確認した。
+- 実運用データのテーブル件数と JSON 列サイズを確認した。
+- `sessions.messages_json` が合計約 139 MB、最大約 32 MB で、一覧読込の主要負荷になりうることを確認した。
+- `audit_logs` の重い JSON 列が合計約 12 MB で、一覧と詳細の分離対象になることを確認した。
+- `session_memories` は 3 件、`character_memory_entries` は 0 件で、MemoryGeneration / 独り言の削除判断は容量削減より処理経路整理の判断になると整理した。
+- repo plan と質問ゲートを作成した。
+- ユーザーから、MemoryGeneration / 独り言の削除はデータ容量やレンダリング軽量化より AI エージェントのトークン効率改善が主目的だと補足を受けた。
+- `src-electron/provider-prompt.ts` を確認し、coding plane prompt には `Session Memory` が常設注入され、`Project Memory` が retrieval hit 最大 3 件で注入されることを確認した。
+- `Character Memory` と独り言は coding plane prompt には注入されないため、token 効率の直接対象は主に `Session Memory` / `Project Memory` 注入であると整理した。
+- plan と questions を prompt 有用性 / token 効率軸へ修正した。
+- 既存 `audit_logs.logical_prompt_json` から通常 prompt 27 件を分析した。
+- 27 件すべてで `Session Memory` が注入され、14 件で `Project Memory` が注入されていた。
+- 通常 prompt の input body 合計約 13,282 文字のうち、`Session Memory` は約 9,180 文字、`Project Memory` は約 2,772 文字だった。
+- `Session Memory` / `Project Memory` 合計は input body の約 90% を占めており、短い継続指示では memory section が input body の 95% 前後になるケースが複数あった。
+- user input との lexical overlap は低く、平均で `Session Memory` 約 1.9%、`Project Memory` 約 4.6% だった。
+- 現状の常設 `Session Memory` 注入は token 効率に対して有用性が見えにくく、少なくとも常設注入は削除または明確な条件付き注入へ縮退する候補と評価した。
+- ユーザー判断により、MemoryGeneration と独り言はいったん削除する方針に確定した。
+- `questions.md` を確認済みに更新し、既存 DB データは削除せず機能・自動実行・prompt 注入・UI 導線を外す方針を記録した。
+- `src-electron/provider-prompt.ts` から `Session Memory` / `Project Memory` の prompt section 合成を削除し、coding plane prompt を `System Prompt` / `Character` / `User Input` に縮小した。
+- session run 完了後、session window open / close、manual command 経由で MemoryGeneration / Character Reflection / Monologue が起動しないようにした。
+- Session Window 右ペインから `MemoryGeneration` / `Monologue` tab と `Generate Memory` 操作を削除し、`LatestCommand` と Copilot `Tasks` のみにした。
+- Settings UI から `Memory Extraction` / `Character Reflection` 設定 section を削除した。
+- renderer / preload / main IPC から手動 `runSessionMemoryExtraction` public API と channel を削除した。
+- 既存 DB data は削除せず、Memory Management / legacy storage / legacy audit log は互換用に残す方針を維持した。
+- `docs/design/prompt-composition.md`、`docs/design/memory-architecture.md`、`docs/design/monologue-provider-policy.md`、`docs/design/settings-ui.md`、`docs/design/audit-log.md`、`docs/design/database-schema.md`、`docs/design/desktop-ui.md`、`docs/design/session-live-activity-monitor.md`、`docs/design/product-direction.md`、`docs/design/character-memory-storage.md`、`docs/design/window-architecture.md` を current runtime に同期した。
+- 検証:
+  - `npx tsx --test scripts/tests/main-ipc-registration.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/preload-api.test.ts scripts/tests/main-session-command-facade.test.ts`
+  - `npx tsx --test scripts/tests/session-runtime-service.test.ts scripts/tests/provider-prompt.test.ts scripts/tests/session-ui-projection.test.ts scripts/tests/session-window-bridge.test.ts`
+  - `npx tsx --test scripts/tests/home-settings-draft.test.ts scripts/tests/home-settings-projection.test.ts scripts/tests/home-settings-view-model.test.ts scripts/tests/settings-ui.test.ts`
+  - `npm run build:renderer`
+  - `npm run build:electron`
+- V2 DB 移行前提に方針を更新した。
+- V1 schema の SQL 正本を `src-electron/database-schema-v1.ts` に切り出した。
+- V2 schema の入口として `src-electron/database-schema-v2.ts` を追加した。
+- app runtime の DB filename 参照を `APP_DATABASE_V1_FILENAME` に寄せ、V2 filename を同じ schema source で管理できるようにした。
+- `docs/design/database-v2-migration.md` を追加し、V1 `withmate.db` と V2 `withmate-v2.db`、別 migration script、V2 で削る legacy domain を整理した。
+- V1 schema 切り出し後の検証:
+  - `npm run build:electron`
+  - `npx tsx --test scripts/tests/session-storage.test.ts scripts/tests/audit-log-storage.test.ts scripts/tests/model-catalog-storage.test.ts scripts/tests/session-memory-storage.test.ts scripts/tests/project-memory-storage.test.ts scripts/tests/character-memory-storage.test.ts`
+  - `npx tsx --test scripts/tests/app-settings-storage.test.ts`
+- サブエージェントで V2 DB schema / migration 方針の proposal を作成した。
+- V2 DB schema は `sessions` と `session_messages`、`audit_logs` と `audit_log_details` の分離を正本にする方針で確定した。
+- V2 正本 schema には `session_memories`、`project_scopes`、`project_memory_entries`、`character_scopes`、`character_memory_entries`、`sessions.stream_json` を含めない方針にした。
+- V1 `sessions.stream_json` は独り言 legacy 表現として V1 DB に残し、V2 migration 対象外にする理由を `docs/design/database-v2-migration.md` と `docs/design/data-loading-performance-audit.md` に反映した。
+- `src-electron/database-schema-v2.ts` に V2 DDL 定数、`CREATE_V2_SCHEMA_SQL`、`V2_SESSION_SUMMARY_COLUMNS`、`V2_AUDIT_LOG_SUMMARY_COLUMNS` を追加した。
+- `scripts/tests/database-schema-v2.test.ts` を追加し、V2 schema の作成、legacy table / column 不在、session / audit detail 分離を固定した。
+- V2 DB 設計確定後の検証:
+  - `npx tsx --test scripts/tests/database-schema-v2.test.ts scripts/tests/session-storage.test.ts scripts/tests/audit-log-storage.test.ts`
+  - `npm run build:electron`
+- quality review で、V2 filename / schema version の正本境界、`docs/design/database-schema.md` の V1 / V2 境界、V2 schema test の厳密さについて same-plan 指摘を受けた。
+- `APP_DATABASE_V2_FILENAME` / `APP_DATABASE_V2_SCHEMA_VERSION` を `src-electron/database-schema-v2.ts` に移し、V1 schema source は V1 定数だけを持つ形に整理した。
+- `docs/design/database-schema.md` の `Source Of Truth` / `Table Summary` / `Table Details` を V1 current と明示し、V2 table detail は `docs/design/database-v2-migration.md` を正本にする導線を追記した。
+- `scripts/tests/database-schema-v2.test.ts` を exact contract 寄りに強化し、audit detail payload column が `audit_logs` に混入した場合も検出できるようにした。
+- quality review 指摘対応後の検証:
+  - `npx tsx --test scripts/tests/database-schema-v2.test.ts scripts/tests/session-storage.test.ts scripts/tests/audit-log-storage.test.ts`
+  - `npm run build:electron`
+- SQLite の performance / 実運用バランスを踏まえ、V2 schema の payload 粒度を見直した。
+- message は `session_messages` を 1 message = 1 row とし、重い artifact payload は `session_message_artifacts` に分離する方針へ変更した。
+- audit log は `audit_logs` を summary、`audit_log_details` を raw detail、`audit_log_operations` を 1 operation = 1 row とする方針へ変更した。
+- `raw_items_json` は通常 UI で検索・並び替え・個別ページングしない debug payload として、実運用バランス上 `audit_log_details` の blob に残す判断にした。
+- payload 粒度見直し後の検証:
+  - `npx tsx --test scripts/tests/database-schema-v2.test.ts scripts/tests/session-storage.test.ts scripts/tests/audit-log-storage.test.ts`
+  - `npm run build:electron`
+- `scripts/migrate-database-v1-to-v2.ts` に V1→V2 migration dry-run を追加した。
+- dry-run は V1 DB を読み取り専用で開き、V1 table 件数、V2 insert 予定件数、skip 件数、推定 JSON size、broken JSON issue を JSON report として出力する。
+- `scripts/tests/database-v1-to-v2-migration.test.ts` を追加し、fixture V1 DB から `session_messages` / `session_message_artifacts` / `audit_logs` / `audit_log_details` / `audit_log_operations` の予定件数を検証した。
+- fixture test で legacy stream / background audit log / legacy app setting / session memory が skip report に出ることを確認した。
+- fixture test で壊れた JSON と invalid message role が V2 予定件数に入らず `issues` に記録されることを確認した。
+- migration dry-run 追加後の検証:
+  - `npx tsx --test scripts/tests/database-v1-to-v2-migration.test.ts scripts/tests/database-schema-v2.test.ts scripts/tests/session-storage.test.ts scripts/tests/audit-log-storage.test.ts`
+  - `npm run build:electron`
+- サブエージェントで V1→V2 migration write mode の red test を追加し、未実装で失敗することを確認した。
+- `scripts/migrate-database-v1-to-v2.ts` に write mode を追加し、V1 DB から V2 DB を transaction で作成できるようにした。
+- write mode は `sessions` / `session_messages` / `session_message_artifacts` / `audit_logs` / `audit_log_details` / `audit_log_operations` / `app_settings` / `model_catalog_*` を移行する。
+- V1 DB と V2 DB の path 衝突は `--overwrite` 指定があっても拒否するようにした。
+- `--overwrite` 指定時は既存 V2 DB と SQLite companion file を退避し、migration 失敗時は作成途中の V2 DB を削除して退避 DB を復旧するようにした。
+- broken `usage_json` は V2 `audit_log_details.usage_json` へ持ち込まず、migration report の `issues` に記録するようにした。
+- `session_messages.accent` の移行と、一覧用 `assistant_text_preview` の上限を fixture test で固定した。
+- quality review で、overwrite の partial failure 復旧、write mode の重い payload 全件読込、V2 detail JSON の object 検証不足について same-plan 指摘を受けた。
+- backup 作成途中の失敗時も退避済みファイルを復旧し、DB open 失敗を含む migration failure が既存 V2 DB を復旧するようにした。
+- write mode の session / audit log 読込を header row と detail payload の個別取得に分け、重い payload 全件を `.all()` で同時保持しないようにした。
+- `logical_prompt_json` / `transport_payload_json` / `usage_json` は JSON object として parse できる場合だけ V2 detail へ保存し、壊れた JSON や配列は空文字にして `issues` に記録するようにした。
+- 再レビューで、backup 途中失敗時の復旧が未退避 companion file を削除し得ると指摘を受けた。
+- backup 途中失敗時は退避済みファイルだけを戻し、migration 本体の失敗時だけ target DB / companion file を掃除してから退避 DB を戻すように復旧処理を分離した。
+- write mode 追加後の検証:
+  - `npx tsx --test scripts/tests/database-v1-to-v2-migration.test.ts scripts/tests/database-schema-v2.test.ts`
+  - `npx tsx --test scripts/tests/database-v1-to-v2-migration.test.ts scripts/tests/database-schema-v2.test.ts scripts/tests/session-storage.test.ts scripts/tests/audit-log-storage.test.ts`
+  - `npm run build:electron`
+- サブエージェントで V2 DB runtime read path の red / green / review slice を順に実施した。
+- `src-electron/app-database-path.ts` を追加し、起動時は required table を満たす valid な `withmate-v2.db` がある場合だけ V2 を選び、不完全な V2 DB や V2 不在時は V1 `withmate.db` に戻るようにした。
+- `src-electron/session-storage-v2-read.ts` を追加し、V2 `sessions` header から session summary を読み、詳細要求時だけ `session_messages` と `session_message_artifacts` を復元する read adapter を実装した。
+- `src-electron/audit-log-storage-v2-read.ts` を追加し、V2 `audit_logs` summary、`audit_log_details`、`audit_log_operations` から既存 IPC contract の `AuditLogEntry` を復元する read adapter を実装した。
+- `src-electron/memory-storage-v2-read.ts` を追加し、V2 runtime では legacy memory table を作らず読まない no-op / read-only adapter を使うようにした。
+- `src-electron/persistent-store-lifecycle-service.ts` と `src-electron/main.ts` を更新し、V2 DB 選択時は V2 read adapter を接続し、session / audit の write-capable method は明示的に unsupported として guard するようにした。
+- `src-electron/main-session-persistence-facade.ts` の依存型を read-only contract に寄せ、session startup load が V2 summary-first read adapter でも動くようにした。
+- V2 runtime read path に合わせて `docs/design/database-v2-migration.md`、`docs/design/database-schema.md`、`docs/design/data-loading-performance-audit.md` を同期した。
+- quality review で、現行 IPC contract 上 audit detail をまだ同時復元している点、V2 write path 未対応、per-call DB open / close の性能余地は follow-up として扱い、同一スコープの blocker はなしと判断した。
+- V2 runtime read path 追加後の検証:
+  - `npx tsx --test scripts/tests/app-database-path.test.ts scripts/tests/persistent-store-lifecycle-service.test.ts`
+  - `npx tsx --test scripts/tests/session-storage-v2-read.test.ts scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/session-storage.test.ts scripts/tests/audit-log-storage.test.ts`
+  - `npx tsx --test scripts/tests/app-database-path.test.ts scripts/tests/persistent-store-lifecycle-service.test.ts scripts/tests/session-storage-v2-read.test.ts scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/session-storage.test.ts scripts/tests/audit-log-storage.test.ts`
+  - `npm run build:electron`
+- サブエージェントで V2 DB runtime write path の session / audit slice を red / green / review で実施した。
+- `SessionStorageV2Read` に `upsertSession`、`replaceSessions`、`deleteSession`、`clearSessions` を追加し、V2 `sessions` header と `session_messages` / `session_message_artifacts` を transaction 内で保存するようにした。
+- `replaceSessions` は保持対象 session の audit logs を残し、除外 session だけを削除するようにした。
+- `AuditLogStorageV2Read` に `createAuditLog`、`updateAuditLog`、`clearAuditLogs` を追加し、V2 `audit_logs` summary、`audit_log_details`、`audit_log_operations` を transaction 内で保存・置換するようにした。
+- audit write path では `sessions.audit_log_count` を create / clear と同じ transaction 内で更新するようにした。
+- `updateAuditLog` は対象 audit log の session id と input session id が一致しない場合、summary/detail/operations を変更せず rollback するようにした。
+- quality review で、`replaceSessions` の audit log 誤削除、`audit_log_count` 未更新、`updateAuditLog` の session id mismatch 部分更新、summary columns 直接検証不足、`summary_text` docs drift の same-plan 指摘を受けた。
+- same-plan 指摘に対し、保持対象 audit log の維持、除外 session の cascade delete、audit summary columns、`audit_log_count`、mismatched sessionId rollback をテストで固定した。
+- `docs/design/database-schema.md`、`docs/design/database-v2-migration.md`、`docs/design/data-loading-performance-audit.md` を V2 runtime write path に同期した。
+- 再レビューで、テスト helper の `unknown[]` が broader typecheck で `SQLInputValue[]` と合わない指摘を受け、対象 helper の型を修正した。
+- V2 runtime write path 追加後の検証:
+  - `npx tsx --test scripts/tests/session-storage-v2-read.test.ts scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/persistent-store-lifecycle-service.test.ts scripts/tests/session-storage.test.ts scripts/tests/audit-log-storage.test.ts scripts/tests/audit-log-service.test.ts scripts/tests/session-runtime-service.test.ts`
+  - `npm run build:electron`
+  - `git diff --check`
+- サブエージェントで audit log summary page / detail lazy load API の現行 flow を調査した。
+- audit log 初期表示は `listSessionAuditLogSummaries(sessionId)` を使い、V2 では `audit_logs` summary と `audit_log_operations` だけを読むようにした。
+- detail section 展開時だけ `getSessionAuditLogDetail(sessionId, auditLogId)` を呼び、対象 audit log の `audit_log_details` を遅延取得するようにした。
+- 既存互換用の `listSessionAuditLogs(sessionId)` は残し、V1 storage でも summary / detail API を利用できる fallback を追加した。
+- renderer では `AuditLogSummary` と detail cache を分け、Audit Log modal の Logical Prompt / Transport Payload / Response / Raw Items 展開時だけ detail を読み込むようにした。
+- `src/withmate-ipc-channels.ts`、`src/withmate-window-api.ts`、`src-electron/preload-api.ts`、`src-electron/main-ipc-registration.ts`、`src-electron/main-ipc-deps.ts`、`src-electron/main-query-service.ts` に summary / detail API を追加した。
+- `docs/design/database-schema.md`、`docs/design/database-v2-migration.md`、`docs/design/data-loading-performance-audit.md` を summary / detail lazy load 実装後の current spec に同期した。
+- audit log summary / detail lazy load 追加後の検証:
+  - `npx tsx --test scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/audit-log-storage.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts scripts/tests/audit-log-refresh.test.ts scripts/tests/session-ui-projection.test.ts scripts/tests/session-window-bridge.test.ts scripts/tests/session-runtime-service.test.ts`
+  - `npm run build:electron`
+  - `npm run build:renderer`
+  - `git diff --check`
+- quality review で、summary API が `audit_log_operations.details` を全件読んでいる点と、同一 session refresh で開いた detail cache を消してしまう点の same-plan 指摘を受けた。
+- summary API は `operation_type` / `summary` だけを読み、`operation.details` は `getSessionAuditLogDetail()` 側で復元するようにした。
+- audit log detail cache は session 変更時だけ clear し、同一 session の summary refresh では保持するようにした。
+- quality review 指摘対応後の検証:
+  - `npx tsx --test scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/audit-log-storage.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts scripts/tests/audit-log-refresh.test.ts scripts/tests/session-ui-projection.test.ts scripts/tests/session-window-bridge.test.ts scripts/tests/session-runtime-service.test.ts`
+  - `npm run build:electron`
+  - `npm run build:renderer`
+  - `git diff --check`
+- サブエージェントで Memory Management snapshot 一括取得 flow を調査し、`HomeApp` → preload → IPC → `MemoryManagementService.getSnapshot()` の全件返却経路を確認した。
+- `MemoryManagementPageRequest` / `MemoryManagementPageResult` を追加し、`getMemoryManagementPage({ domain, cursor, limit })` で domain/page 単位の snapshot 部分返却を扱えるようにした。
+- `src/withmate-ipc-channels.ts`、`src/withmate-window-api.ts`、`src-electron/preload-api.ts`、`src-electron/main-ipc-registration.ts`、`src-electron/main-ipc-deps.ts` に Memory Management page API を追加した。
+- `HomeApp` の初期取得と Reload を `getMemoryManagementPage({ domain: "all", limit: 50 })` へ切り替え、domain ごとの追加読み込みを `Load More` ボタンから実行できるようにした。
+- 既存互換用の `getMemoryManagementSnapshot()` は残し、DB query level の LIMIT/OFFSET 化と検索の Main 側移動は後続の same-plan 残タスクとして扱う。
+- Memory Management page API first slice 追加後の検証:
+  - `npx tsx --test scripts/tests/memory-management-service.test.ts scripts/tests/memory-management-state.test.ts scripts/tests/memory-management-view.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`
+  - `npm run build:electron`
+  - `npm run build:renderer`
+- quality review で、page 化前に search / sort / filter が適用されない点、削除後 offset cursor が stale になる点、session page merge の重複排除不足の same-plan 指摘を受けた。
+- `MemoryManagementPageRequest` に `searchText` / `sort` / `sessionStatus` / `projectCategory` / `characterCategory` を追加し、Main 側で search / filter / stable sort を適用してから page 化するようにした。
+- Memory Management view filters 変更時も page API で再取得し、削除後は current filters の first page を reload して offset cursor のずれを避けるようにした。
+- `mergeMemoryManagementSnapshots()` の session merge を `sessionId` dedupe に変更し、session / project / character の merge test を追加した。
+- quality review 指摘対応後の検証:
+  - `npx tsx --test scripts/tests/memory-management-service.test.ts scripts/tests/memory-management-state.test.ts scripts/tests/memory-management-view.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`
+  - `npm run build:electron`
+  - `npm run build:renderer`
+- 再レビューで、filter 変更時の非同期 response race、service 側 filter/sort/page 化の regression test 不足、docs の残リスク表現ずれについて same-plan 指摘を受けた。
+- Memory Management の page request に request id 世代チェックを入れ、古い response が最新 filters の snapshot / page state を上書きしないようにした。
+- `scripts/tests/memory-management-service.test.ts` に、project / character page が filter 後に entry `updatedAt` 順で返ることを固定する regression test を追加した。
+- docs / result の残リスク表現を、Main 側検索ではなく DB query level の LIMIT/OFFSET と storage/query 側 filter/sort 最適化に更新した。
+- 再レビュー指摘対応後の検証:
+  - `npx tsx --test scripts/tests/memory-management-service.test.ts scripts/tests/memory-management-state.test.ts scripts/tests/memory-management-view.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`
+  - `npm run build:electron`
+  - `npm run build:renderer`
+- サブエージェントで Memory Management page API の DB query level 移行 scope を調査した。
+- `SessionMemoryStorage.listSessionMemoryPage()` を追加し、`session_memories` と `sessions` の join で search / status / sort / `LIMIT` / `OFFSET` / count を SQL 側で処理するようにした。
+- `ProjectMemoryStorage.listProjectMemoryPage()` を追加し、`project_memory_entries` と `project_scopes` の join で category / search / sort / `LIMIT` / `OFFSET` / count を SQL 側で処理するようにした。
+- `CharacterMemoryStorage.listCharacterMemoryPage()` を追加し、`character_memory_entries` と `character_scopes` の join で category / search / sort / `LIMIT` / `OFFSET` / count を SQL 側で処理するようにした。
+- SQL 検索は `LIKE` wildcard による UI 検索との差分を避けるため、`instr(lower(...), ?)` と `json_each(...)` の literal search に統一した。
+- V2 no-op memory storage に page methods を追加し、V2 runtime でも同じ service dependency を満たせるようにした。
+- `MemoryManagementService.getPage()` は storage page dependency がある場合、`getSnapshot()` を通らず domain ごとの page query を使うようにした。
+- quality review で、filter domain 保持、同一 `updatedAt` の tie-break、JSON 配列検索、`LIKE` wildcard parity の same-plan 指摘を受け、すべて反映済み。再レビューで current slice blocker なし。
+- storage-level Memory Management page query 追加後の検証:
+  - `npx tsx --test scripts/tests/session-memory-storage.test.ts scripts/tests/project-memory-storage.test.ts scripts/tests/character-memory-storage.test.ts scripts/tests/memory-management-service.test.ts scripts/tests/memory-management-state.test.ts scripts/tests/memory-management-view.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`
+  - `npm run build:electron`
+  - `npm run build:renderer`
+  - `git diff --check`
+- サブエージェントで session 一覧 summary-first の残スコープを調査し、V2 は対応済みだが V1 fallback と起動復元で full `listSessions()` が残っていることを確認した。
+- `PersistentStoreLifecycleService.initialize()` は `listSessionSummaries()` から in-memory 用 session shape を作り、起動時に V1 `messages_json` / `stream_json` を読まないようにした。
+- `MainSessionPersistenceFacade.recoverInterruptedSessions()` は running summary だけ `getSession(id)` で詳細 hydrate し、interrupted message を既存履歴へ追加してから保存するようにした。
+- `SessionPersistenceService` は upsert / delete / replace 後に storage の full `listSessions()` で全件詳細を読み直さず、現在の in-memory list を局所更新または normalized input で更新するようにした。
+- settings / model catalog の一括保存経路は data loss を避けるため、`listSessionSummaries()` + `getSession(id)` で full detail hydrate した session を入力にする専用 helper へ分離した。
+- quality review で、summary-derived session を settings / model catalog import に渡すと V1/V2 とも履歴を空で上書きし得る P0 指摘を受け、full detail hydrate と回帰テストを反映済み。最終再レビューで checkpoint 5 完了扱いの判断。
+- session summary-first slice 追加後の検証:
+  - `npx tsx --test scripts/tests/session-summary-adapter.test.ts scripts/tests/persistent-store-lifecycle-service.test.ts scripts/tests/main-session-persistence-facade.test.ts scripts/tests/session-persistence-service.test.ts scripts/tests/session-storage.test.ts scripts/tests/session-storage-v2-read.test.ts scripts/tests/settings-catalog-service.test.ts`
+  - `npm run build:electron`
+  - `git diff --check`
+- サブエージェントで audit log summary page / detail lazy load の残スコープを調査し、V1 summary が重い列を読んでいることと、UI に load more が未実装であることを確認した。
+- `AuditLogSummaryPageRequest` / `AuditLogSummaryPageResult` を追加し、`listSessionAuditLogSummaryPage(sessionId, { cursor, limit })` を IPC / preload / window API / main query service に追加した。
+- V2 `AuditLogStorageV2Read` は `audit_logs` summary と `audit_log_operations` の type / summary だけを `LIMIT` / `OFFSET` で取得し、`COUNT(*)` から `total` / `hasMore` / `nextCursor` を返すようにした。
+- V1 `AuditLogStorage` も summary page では `assistant_text` / `operations_json` / raw detail payload を読まず、detail API 側へ縮退する fallback にした。
+- `App.tsx` の audit log 初期取得を最新 50 件の page API に変更し、`SessionAuditLogModal` に `Load More` と page status を追加した。
+- detail section 展開時だけ `getSessionAuditLogDetail(sessionId, auditLogId)` を呼ぶ既存 lazy load と、live run merge / detail cache は維持した。
+- quality review で、V1 fallback が重い `assistant_text` / `operations_json` を読んでいた点と、IPC / preload contract test が弱い点の same-plan 指摘を受けた。
+- V1 summary page から `assistant_text` / `operations_json` 読込を外し、IPC handler / preload invoke の request payload をテストで固定した。
+- audit log summary page 追加後の検証:
+  - `npx tsx --test scripts/tests/audit-log-storage.test.ts scripts/tests/audit-log-storage-v2-read.test.ts scripts/tests/main-ipc-deps.test.ts scripts/tests/main-ipc-registration.test.ts scripts/tests/preload-api.test.ts`
+  - `npm run build:electron`
+  - `npm run build:renderer`
+  - `git diff --check`
+- 全チェックポイントが完了し、`questions.md` が `確認済み` であることを確認した。
+- follow-up 候補は Memory Management FTS / 追加 index、per-call DB open / close の connection lifecycle 管理、Message / Audit Log UI virtualization として result に残した。
+- repo plan を完了扱いにし、archive へ移動する。
+
+## Commit tracking
+
+- `7d87c4b` `feat(database): prepare v2 data loading migration`
+  - 対応チェックポイント: MemoryGeneration / 独り言削除、V1 schema 切り出し、V2 schema、V1→V2 migration dry-run / write mode、V2 runtime read path first slice。
+- `c18ab28` `feat(database): V2 runtime 書き込みと audit lazy load を追加`
+  - 対応チェックポイント: V2 runtime session / audit write path、audit log summary page、audit log detail lazy load API。
+- `27fd437` `feat(memory): Memory 管理を page API 経由にする`
+  - 対応チェックポイント: Memory Management page API first slice、Main 側 search / filter / sort、Renderer の追加読み込み、review 指摘対応。
+- `8a1e871` `feat(memory): Memory 管理を storage page query に寄せる`
+  - 対応チェックポイント: Memory Management storage-level page query、DB query 側 search / filter / sort / `LIMIT` / `OFFSET` / count、literal search parity、review 指摘対応。
+- `6a020a9` `feat(session): 起動時 session 読み込みを summary-first にする`
+  - 対応チェックポイント: session 起動時 summary-first 読み込み、running session 復旧時の詳細 hydrate、settings / model catalog 保存経路の full detail hydrate、review 指摘対応。
+- `4ae87af` `feat(audit): 監査ログ一覧を page API にする`
+  - 対応チェックポイント: audit log summary page API、V1 / V2 summary page の軽量読み込み、Audit Log modal の `Load More`、IPC / preload contract test、review 指摘対応。

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
 import {
   cloneProjectMemoryEntries,
@@ -7,7 +7,9 @@ import {
   normalizeProjectMemoryEntry,
   normalizeProjectScope,
 } from "../src/memory-state.js";
+import type { ManagedProjectMemoryGroup, MemoryManagementPageRequest } from "../src/memory-management-state.js";
 import type { ProjectMemoryEntry, ProjectScope } from "../src/memory-state.js";
+import { CREATE_PROJECT_MEMORY_TABLES_SQL } from "./database-schema-v1.js";
 import type { ResolvedProjectScopeInput } from "./project-scope.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
@@ -93,6 +95,100 @@ function rowToProjectMemoryEntry(row: ProjectMemoryEntryRow): ProjectMemoryEntry
   });
 }
 
+type ProjectMemoryPageRow = ProjectMemoryEntryRow & {
+  scope_id: string;
+  scope_project_type: string;
+  scope_project_key: string;
+  scope_workspace_path: string;
+  scope_git_root: string | null;
+  scope_git_remote_url: string | null;
+  scope_display_name: string;
+  scope_created_at: string;
+  scope_updated_at: string;
+};
+
+function normalizePageCursor(cursor: MemoryManagementPageRequest["cursor"]): number {
+  return typeof cursor === "number" && Number.isFinite(cursor) && cursor > 0 ? Math.floor(cursor) : 0;
+}
+
+function normalizePageLimit(limit: MemoryManagementPageRequest["limit"]): number {
+  return typeof limit === "number" && Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 50;
+}
+
+function pushSearchParam(params: SQLInputValue[], searchText: string): void {
+  params.push(searchText);
+}
+
+function buildProjectMemoryPageWhere(request: MemoryManagementPageRequest): { sql: string; params: SQLInputValue[] } {
+  const clauses: string[] = [];
+  const params: SQLInputValue[] = [];
+  const searchText = typeof request.searchText === "string" ? request.searchText.trim().toLowerCase() : "";
+
+  if (request.projectCategory && request.projectCategory !== "all") {
+    clauses.push("e.category = ?");
+    params.push(request.projectCategory);
+  }
+
+  if (searchText) {
+    clauses.push(`
+      (
+        instr(lower(
+          s.display_name || char(10) ||
+          s.project_key || char(10) ||
+          s.workspace_path || char(10) ||
+          coalesce(s.git_root, '') || char(10) ||
+          coalesce(s.git_remote_url, '') || char(10) ||
+          e.title || char(10) ||
+          e.detail || char(10) ||
+          e.category
+        ), ?) > 0
+        OR EXISTS (SELECT 1 FROM json_each(e.keywords_json) WHERE instr(lower(CAST(value AS TEXT)), ?) > 0)
+        OR EXISTS (SELECT 1 FROM json_each(e.evidence_json) WHERE instr(lower(CAST(value AS TEXT)), ?) > 0)
+      )
+    `);
+    pushSearchParam(params, searchText);
+    pushSearchParam(params, searchText);
+    pushSearchParam(params, searchText);
+  }
+
+  return {
+    sql: clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "",
+    params,
+  };
+}
+
+function groupProjectMemoryPageRows(rows: ProjectMemoryPageRow[]): ManagedProjectMemoryGroup[] {
+  const groups = new Map<string, ManagedProjectMemoryGroup>();
+
+  for (const row of rows) {
+    const scope = rowToProjectScope({
+      id: row.scope_id,
+      project_type: row.scope_project_type,
+      project_key: row.scope_project_key,
+      workspace_path: row.scope_workspace_path,
+      git_root: row.scope_git_root,
+      git_remote_url: row.scope_git_remote_url,
+      display_name: row.scope_display_name,
+      created_at: row.scope_created_at,
+      updated_at: row.scope_updated_at,
+    });
+    const entry = rowToProjectMemoryEntry(row);
+    if (!scope || !entry) {
+      continue;
+    }
+
+    const existing = groups.get(scope.id);
+    if (existing) {
+      existing.entries.push(entry);
+      continue;
+    }
+
+    groups.set(scope.id, { scope, entries: [entry] });
+  }
+
+  return [...groups.values()];
+}
+
 export class ProjectMemoryStorage {
   private readonly db: DatabaseSync;
 
@@ -102,39 +198,7 @@ export class ProjectMemoryStorage {
   }
 
   private ensureSchema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS project_scopes (
-        id TEXT PRIMARY KEY,
-        project_type TEXT NOT NULL,
-        project_key TEXT NOT NULL UNIQUE,
-        workspace_path TEXT NOT NULL,
-        git_root TEXT,
-        git_remote_url TEXT,
-        display_name TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS project_memory_entries (
-        id TEXT PRIMARY KEY,
-        project_scope_id TEXT NOT NULL REFERENCES project_scopes(id) ON DELETE CASCADE,
-        source_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-        category TEXT NOT NULL,
-        title TEXT NOT NULL,
-        detail TEXT NOT NULL,
-        keywords_json TEXT NOT NULL DEFAULT '[]',
-        evidence_json TEXT NOT NULL DEFAULT '[]',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        last_used_at TEXT
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_project_memory_entries_scope
-        ON project_memory_entries(project_scope_id, updated_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_project_memory_entries_category
-        ON project_memory_entries(project_scope_id, category, updated_at DESC);
-    `);
+    this.db.exec(CREATE_PROJECT_MEMORY_TABLES_SQL);
   }
 
   listProjectScopes(): ProjectScope[] {
@@ -282,6 +346,52 @@ export class ProjectMemoryStorage {
       ORDER BY updated_at DESC, id DESC
     `).all(projectScopeId) as ProjectMemoryEntryRow[];
     return cloneProjectMemoryEntries(rows.map(rowToProjectMemoryEntry).filter((row): row is ProjectMemoryEntry => row !== null));
+  }
+
+  listProjectMemoryPage(request: MemoryManagementPageRequest = {}): { groups: ManagedProjectMemoryGroup[]; total: number } {
+    const cursor = normalizePageCursor(request.cursor);
+    const limit = normalizePageLimit(request.limit);
+    const direction = request.sort === "updated-asc" ? "ASC" : "DESC";
+    const where = buildProjectMemoryPageWhere(request);
+    const totalRow = this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM project_memory_entries AS e
+      INNER JOIN project_scopes AS s ON s.id = e.project_scope_id
+      ${where.sql}
+    `).get(...where.params) as { count: number };
+    const rows = this.db.prepare(`
+      SELECT
+        e.id,
+        e.project_scope_id,
+        e.source_session_id,
+        e.category,
+        e.title,
+        e.detail,
+        e.keywords_json,
+        e.evidence_json,
+        e.created_at,
+        e.updated_at,
+        e.last_used_at,
+        s.id AS scope_id,
+        s.project_type AS scope_project_type,
+        s.project_key AS scope_project_key,
+        s.workspace_path AS scope_workspace_path,
+        s.git_root AS scope_git_root,
+        s.git_remote_url AS scope_git_remote_url,
+        s.display_name AS scope_display_name,
+        s.created_at AS scope_created_at,
+        s.updated_at AS scope_updated_at
+      FROM project_memory_entries AS e
+      INNER JOIN project_scopes AS s ON s.id = e.project_scope_id
+      ${where.sql}
+      ORDER BY e.updated_at ${direction}, e.id ASC
+      LIMIT ? OFFSET ?
+    `).all(...where.params, limit, cursor) as ProjectMemoryPageRow[];
+
+    return {
+      groups: groupProjectMemoryPageRows(rows),
+      total: totalRow.count,
+    };
   }
 
   deleteProjectMemoryEntry(entryId: string): void {

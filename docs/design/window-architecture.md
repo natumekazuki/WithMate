@@ -72,7 +72,7 @@ Home は `PowerShell -> cd -> codex resume` の手前にある判断をまとめ
 Home に置かないもの:
 
 - `Work Chat`
-- `Monologue` の閲覧面
+- legacy `Monologue` の閲覧面
 - diff viewer
 - audit log viewer
 - turn 単位 artifact summary
@@ -343,5 +343,5 @@ flowchart LR
 - Home を閉じたまま Session だけ残す挙動をどうするか
 - session 終了時に Home へ戻る導線をどこへ置くか
 - Character Editor で更新した内容を開いている Session へどう反映するか
-- 独り言 UI の表示密度を今後どこまで増やすか
+- 独り言を将来再実装する場合の表示場所をどうするか
 

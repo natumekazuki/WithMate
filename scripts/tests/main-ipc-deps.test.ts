@@ -65,6 +65,14 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
         return null;
       },
       getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], characterMemories: [] }),
+      getMemoryManagementPage: () => ({
+        snapshot: { sessionMemories: [], projectMemories: [], characterMemories: [] },
+        pages: {
+          session: { nextCursor: null, hasMore: false, total: 0 },
+          project: { nextCursor: null, hasMore: false, total: 0 },
+          character: { nextCursor: null, hasMore: false, total: 0 },
+        },
+      }),
       deleteSessionMemory: () => {},
       deleteProjectMemoryEntry: () => {},
       deleteCharacterMemoryEntry: () => {},
@@ -72,6 +80,9 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
     sessionQuery: {
       listSessionSummaries: () => [],
       listSessionAuditLogs: () => [],
+      listSessionAuditLogSummaries: () => [],
+      listSessionAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
+      getSessionAuditLogDetail: () => null,
       async listSessionSkills() { return []; },
       async listSessionCustomAgents() { return []; },
       listOpenSessionWindowIds: () => [],
@@ -99,7 +110,6 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
       async runSessionTurn() {
         return {} as never;
       },
-      runSessionMemoryExtraction: () => {},
       cancelSessionRun: () => {},
     },
     character: {

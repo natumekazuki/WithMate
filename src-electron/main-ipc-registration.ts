@@ -2,7 +2,11 @@ import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
 import type {
+  AuditLogDetail,
   AuditLogEntry,
+  AuditLogSummary,
+  AuditLogSummaryPageRequest,
+  AuditLogSummaryPageResult,
   CharacterProfile,
   LiveApprovalDecision,
   LiveElicitationResponse,
@@ -16,7 +20,11 @@ import type {
 } from "../src/app-state.js";
 import type { CreateCharacterInput } from "../src/character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
-import type { MemoryManagementSnapshot } from "../src/memory-management-state.js";
+import type {
+  MemoryManagementPageRequest,
+  MemoryManagementPageResult,
+  MemoryManagementSnapshot,
+} from "../src/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
@@ -39,21 +47,25 @@ import {
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
+  WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
+  WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
-    WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
-    WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
-    WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
-    WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
-    WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
-    WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
+  WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
+  WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
+  WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
+  WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
+  WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
+  WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
@@ -71,7 +83,6 @@ import {
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
-  WITHMATE_RUN_SESSION_MEMORY_EXTRACTION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
@@ -105,6 +116,12 @@ export type MainIpcRegistrationDeps = {
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   listSessionSummaries(): SessionSummary[];
   listSessionAuditLogs(sessionId: string): AuditLogEntry[];
+  listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[];
+  listSessionAuditLogSummaryPage(
+    sessionId: string,
+    request?: AuditLogSummaryPageRequest | null,
+  ): AuditLogSummaryPageResult;
+  getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listOpenSessionWindowIds(): string[];
@@ -112,6 +129,7 @@ export type MainIpcRegistrationDeps = {
   updateAppSettings(settings: AppSettings): AppSettings;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
   getMemoryManagementSnapshot(): MemoryManagementSnapshot;
+  getMemoryManagementPage(request: MemoryManagementPageRequest): MemoryManagementPageResult;
   deleteSessionMemory(sessionId: string): void;
   deleteProjectMemoryEntry(entryId: string): void;
   deleteCharacterMemoryEntry(entryId: string): void;
@@ -142,7 +160,6 @@ export type MainIpcRegistrationDeps = {
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
   searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
-  runSessionMemoryExtraction(sessionId: string): void;
   cancelSessionRun(sessionId: string): void;
   createCharacter(input: CreateCharacterInput): Promise<CharacterProfile>;
   updateCharacter(character: CharacterProfile): Promise<CharacterProfile>;
@@ -195,6 +212,7 @@ type MainIpcSettingsDeps = Pick<
   | "updateAppSettings"
   | "resetAppDatabase"
   | "getMemoryManagementSnapshot"
+  | "getMemoryManagementPage"
   | "deleteSessionMemory"
   | "deleteProjectMemoryEntry"
   | "deleteCharacterMemoryEntry"
@@ -204,6 +222,9 @@ type MainIpcSessionQueryDeps = Pick<
   MainIpcRegistrationDeps,
   | "listSessionSummaries"
   | "listSessionAuditLogs"
+  | "listSessionAuditLogSummaries"
+  | "listSessionAuditLogSummaryPage"
+  | "getSessionAuditLogDetail"
   | "listSessionSkills"
   | "listSessionCustomAgents"
   | "listOpenSessionWindowIds"
@@ -225,7 +246,6 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "updateSession"
   | "deleteSession"
   | "runSessionTurn"
-  | "runSessionMemoryExtraction"
   | "cancelSessionRun"
 >;
 
@@ -315,6 +335,9 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
     deps.resetAppDatabase(request),
   );
   ipcMain.handle(WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL, () => deps.getMemoryManagementSnapshot());
+  ipcMain.handle(WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL, (_event, request: MemoryManagementPageRequest) =>
+    deps.getMemoryManagementPage(request),
+  );
   ipcMain.handle(WITHMATE_DELETE_SESSION_MEMORY_CHANNEL, (_event, sessionId: string) => deps.deleteSessionMemory(sessionId));
   ipcMain.handle(WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL, (_event, entryId: string) =>
     deps.deleteProjectMemoryEntry(entryId),
@@ -327,6 +350,17 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
 function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSessionQueryDeps): void {
   ipcMain.handle(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL, () => deps.listSessionSummaries());
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => deps.listSessionAuditLogs(sessionId));
+  ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL, (_event, sessionId: string) =>
+    deps.listSessionAuditLogSummaries(sessionId),
+  );
+  ipcMain.handle(
+    WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
+    (_event, sessionId: string, request: AuditLogSummaryPageRequest | null | undefined) =>
+      deps.listSessionAuditLogSummaryPage(sessionId, request),
+  );
+  ipcMain.handle(WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL, (_event, sessionId: string, auditLogId: number) =>
+    deps.getSessionAuditLogDetail(sessionId, auditLogId),
+  );
   ipcMain.handle(WITHMATE_LIST_SESSION_SKILLS_CHANNEL, async (_event, sessionId: string) => deps.listSessionSkills(sessionId));
   ipcMain.handle(WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL, async (_event, sessionId: string) =>
     deps.listSessionCustomAgents(sessionId),
@@ -398,9 +432,6 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
   ipcMain.handle(WITHMATE_RUN_SESSION_TURN_CHANNEL, async (_event, sessionId: string, request: RunSessionTurnRequest) =>
     deps.runSessionTurn(sessionId, request),
   );
-  ipcMain.handle(WITHMATE_RUN_SESSION_MEMORY_EXTRACTION_CHANNEL, (_event, sessionId: string) => {
-    deps.runSessionMemoryExtraction(sessionId);
-  });
   ipcMain.handle(WITHMATE_CANCEL_SESSION_RUN_CHANNEL, (_event, sessionId: string) => {
     deps.cancelSessionRun(sessionId);
   });

@@ -46,6 +46,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-memory-management-snapshot",
     args: [],
   });
+  assert.deepEqual(await api.getMemoryManagementPage({ domain: "session", limit: 50 }), {
+    channel: "withmate:get-memory-management-page",
+    args: [{ domain: "session", limit: 50 }],
+  });
   assert.deepEqual(await api.getSessionBackgroundActivity("session-1", "memory-generation"), {
     channel: "withmate:get-session-background-activity",
     args: ["session-1", "memory-generation"],
@@ -54,9 +58,9 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:list-session-summaries",
     args: [],
   });
-  assert.deepEqual(await api.runSessionMemoryExtraction("session-1"), {
-    channel: "withmate:run-session-memory-extraction",
-    args: ["session-1"],
+  assert.deepEqual(await api.listSessionAuditLogSummaryPage("session-1", { cursor: 50, limit: 25 }), {
+    channel: "withmate:list-session-audit-log-summary-page",
+    args: ["session-1", { cursor: 50, limit: 25 }],
   });
 });
 
@@ -83,16 +87,20 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getCharacterUpdateWorkspace",
     "getDiffPreview",
     "getLiveSessionRun",
+    "getMemoryManagementPage",
     "getMemoryManagementSnapshot",
     "getModelCatalog",
     "getProviderQuotaTelemetry",
     "getSession",
+    "getSessionAuditLogDetail",
     "getSessionBackgroundActivity",
     "getSessionContextTelemetry",
     "importModelCatalog",
     "importModelCatalogFile",
     "listCharacters",
     "listOpenSessionWindowIds",
+    "listSessionAuditLogSummaryPage",
+    "listSessionAuditLogSummaries",
     "listSessionAuditLogs",
     "listSessionCustomAgents",
     "listSessionSkills",
@@ -115,7 +123,6 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "resetAppDatabase",
     "resolveLiveApproval",
     "resolveLiveElicitation",
-    "runSessionMemoryExtraction",
     "runSessionTurn",
     "searchWorkspaceFiles",
     "subscribeAppSettings",

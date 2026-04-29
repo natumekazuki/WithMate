@@ -22,9 +22,11 @@ import {
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
+  WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
+  WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
@@ -33,6 +35,8 @@ import {
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
+  WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
@@ -54,7 +58,6 @@ import {
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
-  WITHMATE_RUN_SESSION_MEMORY_EXTRACTION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
@@ -81,6 +84,7 @@ function createIpcMainStub() {
 test("registerMainIpcHandlers は主要 channel を登録して delegate を呼ぶ", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const calls: string[] = [];
+  const auditPageRequests: unknown[] = [];
 
   registerMainIpcHandlers(ipcMain, {
     resolveEventWindow: () => null,
@@ -108,6 +112,12 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     },
     listSessionSummaries: () => [],
     listSessionAuditLogs: () => [],
+    listSessionAuditLogSummaries: () => [],
+    listSessionAuditLogSummaryPage: (sessionId, request) => {
+      auditPageRequests.push({ sessionId, request });
+      return { entries: [], nextCursor: null, hasMore: false, total: 0 };
+    },
+    getSessionAuditLogDetail: () => null,
     async listSessionSkills() { return []; },
     async listSessionCustomAgents() { return []; },
     listOpenSessionWindowIds: () => ["session-1"],
@@ -117,6 +127,14 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
       return null;
     },
     getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], characterMemories: [] }),
+    getMemoryManagementPage: () => ({
+      snapshot: { sessionMemories: [], projectMemories: [], characterMemories: [] },
+      pages: {
+        session: { nextCursor: null, hasMore: false, total: 0 },
+        project: { nextCursor: null, hasMore: false, total: 0 },
+        character: { nextCursor: null, hasMore: false, total: 0 },
+      },
+    }),
     deleteSessionMemory: () => {
       calls.push("deleteSessionMemory");
     },
@@ -178,9 +196,6 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     async runSessionTurn() {
       return {} as never;
     },
-    runSessionMemoryExtraction: () => {
-      calls.push("runSessionMemoryExtraction");
-    },
     cancelSessionRun: () => {
       calls.push("cancelRun");
     },
@@ -223,19 +238,24 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
 
   await handlers.get("withmate:open-session")?.({}, "session-1");
   await handlers.get("withmate:open-memory-management-window")?.({});
-  handlers.get("withmate:run-session-memory-extraction")?.({}, "session-1");
   handlers.get("withmate:cancel-session-run")?.({}, "session-1");
   await handlers.get("withmate:open-path")?.({}, "target", null);
   await handlers.get(WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL)?.({});
+  const auditPageResult = await handlers.get(WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL)?.(
+    {},
+    "session-1",
+    { cursor: 50, limit: 25 },
+  );
 
   assert.deepEqual(calls, [
     "openSession:session-1",
     "openMemory",
-    "runSessionMemoryExtraction",
     "cancelRun",
     "openPath",
     "openLogs",
   ]);
+  assert.deepEqual(auditPageRequests, [{ sessionId: "session-1", request: { cursor: 50, limit: 25 } }]);
+  assert.deepEqual(auditPageResult, { entries: [], nextCursor: null, hasMore: false, total: 0 });
 });
 
 test("registerMainIpcHandlers は current invoke channel を domain ごとにすべて登録する", () => {
@@ -251,8 +271,11 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async openMemoryManagementWindow() {},
     async openCharacterEditorWindow() {},
     async openDiffWindow() {},
-     listSessionSummaries: () => [],
+    listSessionSummaries: () => [],
     listSessionAuditLogs: () => [],
+    listSessionAuditLogSummaries: () => [],
+    listSessionAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
+    getSessionAuditLogDetail: () => null,
     async listSessionSkills() { return []; },
     async listSessionCustomAgents() { return []; },
     listOpenSessionWindowIds: () => [],
@@ -260,6 +283,14 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     updateAppSettings: (settings) => settings,
     async resetAppDatabase() { return null; },
     getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], characterMemories: [] }),
+    getMemoryManagementPage: () => ({
+      snapshot: { sessionMemories: [], projectMemories: [], characterMemories: [] },
+      pages: {
+        session: { nextCursor: null, hasMore: false, total: 0 },
+        project: { nextCursor: null, hasMore: false, total: 0 },
+        character: { nextCursor: null, hasMore: false, total: 0 },
+      },
+    }),
     deleteSessionMemory() {},
     deleteProjectMemoryEntry() {},
     deleteCharacterMemoryEntry() {},
@@ -287,7 +318,6 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async previewComposerInput() { return null; },
     async searchWorkspaceFiles() { return []; },
     async runSessionTurn() { return {} as never; },
-    runSessionMemoryExtraction() {},
     cancelSessionRun() {},
     async createCharacter() { return {} as never; },
     async updateCharacter() { return {} as never; },
@@ -325,11 +355,15 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
     WITHMATE_RESET_APP_DATABASE_CHANNEL,
     WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
+    WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
     WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
     WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
-     WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
-     WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+    WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
+    WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
     WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
+    WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
+    WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
+    WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
     WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
     WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
     WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
@@ -347,7 +381,6 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_UPDATE_SESSION_CHANNEL,
     WITHMATE_DELETE_SESSION_CHANNEL,
     WITHMATE_RUN_SESSION_TURN_CHANNEL,
-    WITHMATE_RUN_SESSION_MEMORY_EXTRACTION_CHANNEL,
     WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
     WITHMATE_LIST_CHARACTERS_CHANNEL,
     WITHMATE_GET_CHARACTER_CHANNEL,

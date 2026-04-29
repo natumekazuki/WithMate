@@ -25,15 +25,6 @@ import { appendTransportPayloadFields, calculateAuditDurationMs } from "./audit-
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
-type SessionMemoryExtractionTriggerOptions = {
-  triggerReason: "outputTokensThreshold" | "manual" | "compact-before";
-  force?: boolean;
-};
-
-type CharacterReflectionTriggerOptions = {
-  triggerReason: "session-start" | "context-growth";
-};
-
 export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Session | null;
   upsertSession(session: Session): Session;
@@ -69,8 +60,6 @@ export type SessionRuntimeServiceDeps = {
   setSessionContextTelemetry(telemetry: SessionContextTelemetry): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
   scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void;
-  runSessionMemoryExtraction(session: Session, usage: AuditLogEntry["usage"], options: SessionMemoryExtractionTriggerOptions): void;
-  runCharacterReflection(session: Session, options: CharacterReflectionTriggerOptions): void;
   clearWorkspaceFileIndex(workspacePath: string): void;
   broadcastLiveSessionRun(sessionId: string): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
@@ -627,10 +616,6 @@ export class SessionRuntimeService {
 
       const storedCompletedSession = this.deps.upsertSession(completedSession);
       activeRunningSession = storedCompletedSession;
-      this.deps.runSessionMemoryExtraction(storedCompletedSession, completedAuditEntry.usage, {
-        triggerReason: "outputTokensThreshold",
-      });
-      this.deps.runCharacterReflection(storedCompletedSession, { triggerReason: "context-growth" });
       return storedCompletedSession;
     } catch (error: unknown) {
       const providerTurnError = error instanceof ProviderTurnError ? error : null;
@@ -706,9 +691,6 @@ export class SessionRuntimeService {
 
       const storedFailedSession = this.deps.upsertSession(failedSession);
       activeRunningSession = storedFailedSession;
-      this.deps.runSessionMemoryExtraction(storedFailedSession, failedAuditEntry.usage, {
-        triggerReason: "outputTokensThreshold",
-      });
       return storedFailedSession;
     } finally {
       if (runningSession.provider === "copilot") {

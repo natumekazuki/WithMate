@@ -10,6 +10,8 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
   buildCodexThreadSettings,
+  collectCodexAssistantTextSnapshotsFromEventsForTesting,
+  collectCodexAssistantTextFromEventsForTesting,
   resolveCodexThreadForSettings,
   type CodexThreadOptions,
 } from "../../src-electron/codex-adapter.js";
@@ -43,11 +45,17 @@ function createSession(options?: {
   threadId?: string;
   model?: string;
   reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+  approvalMode?: "never" | "on-request" | "untrusted";
+  codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
+  allowedAdditionalDirectories?: string[];
 }) {
   const {
     threadId = "",
     model = "gpt-5.4",
     reasoningEffort = "high",
+    approvalMode = DEFAULT_APPROVAL_MODE,
+    codexSandboxMode,
+    allowedAdditionalDirectories,
   } = options ?? {};
 
   return {
@@ -61,15 +69,120 @@ function createSession(options?: {
       character: "A",
       characterIconPath: "",
       characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-      approvalMode: DEFAULT_APPROVAL_MODE,
+      approvalMode,
+      codexSandboxMode,
       model,
       reasoningEffort,
+      allowedAdditionalDirectories,
     }),
     threadId,
   };
 }
 
 describe("CodexAdapter thread settings", () => {
+  it("delta 系 event から assistant text を逐次復元し、final item で確定形に置き換える", () => {
+    const streamedText = collectCodexAssistantTextFromEventsForTesting([
+      {
+        type: "agent_message.delta",
+        delta: "こ",
+      } as never,
+      {
+        type: "response.output_text.delta",
+        data: {
+          delta: "んにちは",
+        },
+      } as never,
+    ]);
+
+    assert.equal(streamedText, "こんにちは");
+
+    const finalizedText = collectCodexAssistantTextFromEventsForTesting([
+      {
+        type: "agent_message.delta",
+        delta: "途中",
+      } as never,
+      {
+        type: "item.completed",
+        item: {
+          id: "message-1",
+          type: "agent_message",
+          text: "確定メッセージ",
+        },
+      } as never,
+    ]);
+
+    assert.equal(finalizedText, "確定メッセージ");
+  });
+
+  it("delta で受けた assistant text を空の agent_message item で消さない", () => {
+    const snapshots = collectCodexAssistantTextSnapshotsFromEventsForTesting([
+      {
+        type: "agent_message.delta",
+        delta: "処理",
+      } as never,
+      {
+        type: "item.started",
+        item: {
+          id: "message-1",
+          type: "agent_message",
+          text: "",
+        },
+      } as never,
+      {
+        type: "item.updated",
+        item: {
+          id: "message-1",
+          type: "agent_message",
+          text: "",
+        },
+      } as never,
+      {
+        type: "agent_message.delta",
+        delta: "中",
+      } as never,
+      {
+        type: "item.completed",
+        item: {
+          id: "message-1",
+          type: "agent_message",
+          text: "処理中です。",
+        },
+      } as never,
+    ]);
+
+    assert.deepEqual(snapshots, ["処理", "処理", "処理", "処理中", "処理中です。"]);
+  });
+
+  it("入れ子や配列の delta payload から assistant text を復元する", () => {
+    const snapshots = collectCodexAssistantTextSnapshotsFromEventsForTesting([
+      {
+        type: "response.output_text.delta",
+        data: {
+          content: [
+            { type: "output_text", text: "こ" },
+            { type: "output_text", text: "ん" },
+          ],
+        },
+      } as never,
+      {
+        type: "assistant.message_delta",
+        data: {
+          deltaContent: "にちは",
+        },
+      } as never,
+      {
+        type: "item.completed",
+        item: {
+          id: "message-1",
+          type: "agent_message",
+          text: "",
+        },
+      } as never,
+    ]);
+
+    assert.deepEqual(snapshots, ["こん", "こんにちは", "こんにちは"]);
+  });
+
   it("model / reasoning 変更後の thread settings は新 options と settingsKey を反映する", () => {
     const previousSession = createSession({
       threadId: "thread-1",
@@ -88,6 +201,29 @@ describe("CodexAdapter thread settings", () => {
     assert.notEqual(previousSettings.settingsKey, nextSettings.settingsKey);
     assert.equal(nextSettings.options.model, "gpt-5.4-mini");
     assert.equal(nextSettings.options.modelReasoningEffort, "low");
+  });
+
+  it("approval / sandbox / additional directories 変更後の thread settings は新 options と settingsKey を反映する", () => {
+    const previousSession = createSession({
+      threadId: "thread-1",
+      approvalMode: "untrusted",
+      codexSandboxMode: "workspace-write",
+      allowedAdditionalDirectories: ["F:/external-a"],
+    });
+    const nextSession = createSession({
+      threadId: "thread-1",
+      approvalMode: "never",
+      codexSandboxMode: "danger-full-access",
+      allowedAdditionalDirectories: ["F:/external-b"],
+    });
+
+    const previousSettings = buildCodexThreadSettings(previousSession, CODEX_PROVIDER_CATALOG, "client-key");
+    const nextSettings = buildCodexThreadSettings(nextSession, CODEX_PROVIDER_CATALOG, "client-key");
+
+    assert.notEqual(previousSettings.settingsKey, nextSettings.settingsKey);
+    assert.equal(nextSettings.options.approvalPolicy, "never");
+    assert.equal(nextSettings.options.sandboxMode, "danger-full-access");
+    assert.deepEqual(nextSettings.options.additionalDirectories, [path.resolve("F:/external-b")]);
   });
 
   it("threadId がある場合は startThread ではなく resumeThread(threadId, options) を使う", () => {

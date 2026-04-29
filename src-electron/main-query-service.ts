@@ -5,7 +5,11 @@ import {
   type DiscoveredCustomAgent,
   type DiscoveredSkill,
   type Session,
+  type AuditLogDetail,
   type AuditLogEntry,
+  type AuditLogSummary,
+  type AuditLogSummaryPageRequest,
+  type AuditLogSummaryPageResult,
   type SessionSummary,
   cloneSessionSummaries,
   cloneSessions,
@@ -19,6 +23,9 @@ type MainQueryServiceDeps = {
   getSession(sessionId: string): Session | null;
   getCharacters(): CharacterProfile[];
   getAuditLogs(sessionId: string): AuditLogEntry[];
+  getAuditLogSummaries(sessionId: string): AuditLogSummary[];
+  getAuditLogSummaryPage(sessionId: string, request?: AuditLogSummaryPageRequest | null): AuditLogSummaryPageResult;
+  getAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null;
   getAppSettings(): AppSettings;
   discoverSessionSkills(workspacePath: string, skillRootPath: string | null): Promise<DiscoveredSkill[]>;
   discoverSessionCustomAgents(workspacePath: string): Promise<DiscoveredCustomAgent[]>;
@@ -55,6 +62,21 @@ export class MainQueryService {
 
   listSessionAuditLogs(sessionId: string): AuditLogEntry[] {
     return this.deps.getAuditLogs(sessionId);
+  }
+
+  listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[] {
+    return this.deps.getAuditLogSummaries(sessionId);
+  }
+
+  listSessionAuditLogSummaryPage(
+    sessionId: string,
+    request?: AuditLogSummaryPageRequest | null,
+  ): AuditLogSummaryPageResult {
+    return this.deps.getAuditLogSummaryPage(sessionId, request);
+  }
+
+  getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null {
+    return this.deps.getAuditLogDetail(sessionId, auditLogId);
   }
 
   async listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]> {

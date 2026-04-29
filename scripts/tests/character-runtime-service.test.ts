@@ -49,7 +49,15 @@ function createSession(characterId = "char-1", character = "Muse"): Session {
 }
 
 test("CharacterRuntimeService は character 更新時に session 表示を同期する", async () => {
-  const storedSessions = [createSession()];
+  const storedSessions = [
+    {
+      ...createSession(),
+      messages: [
+        { role: "user", text: "残すメッセージ" },
+        { role: "assistant", text: "残す返答" },
+      ],
+    },
+  ];
   const upsertedCharacters: CharacterProfile[] = [];
   const broadcastedSessionIds: string[][] = [];
   const service = new CharacterRuntimeService({
@@ -97,6 +105,7 @@ test("CharacterRuntimeService は character 更新時に session 表示を同期
   assert.equal(updated.name, "Muse+");
   assert.equal(upsertedCharacters[0]?.name, "Muse+");
   assert.equal(storedSessions[0]?.character, "Muse+");
+  assert.deepEqual(storedSessions[0]?.messages.map((message) => message.text), ["残すメッセージ", "残す返答"]);
   assert.deepEqual(broadcastedSessionIds, [[storedSessions[0]?.id ?? ""]]);
 });
 

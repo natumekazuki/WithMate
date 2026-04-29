@@ -1,7 +1,7 @@
-import { Component, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type UIEventHandler } from "react";
+import { Component, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type UIEventHandler } from "react";
 
 import type {
-  AuditLogEntry,
+  AuditLogDetail,
   ChangedFile,
   CharacterProfile,
   LiveApprovalRequest,
@@ -11,9 +11,8 @@ import type {
   LiveElicitationResponse,
   Message,
   DiffPreviewPayload,
-  SessionBackgroundActivityState,
   SessionContextTelemetry,
-  StreamEntry,
+  AuditLogSummary,
 } from "./app-state.js";
 import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
 import { MessageRichText } from "./MessageRichText.js";
@@ -397,7 +396,7 @@ function LiveElicitationCard({
   );
 }
 
-function auditPhaseLabel(phase: AuditLogEntry["phase"]): string {
+function auditPhaseLabel(phase: AuditLogSummary["phase"]): string {
   switch (phase) {
     case "running":
     case "started":
@@ -421,8 +420,32 @@ function auditPhaseLabel(phase: AuditLogEntry["phase"]): string {
   }
 }
 
-function isBackgroundAuditPhase(phase: AuditLogEntry["phase"]): boolean {
+function isBackgroundAuditPhase(phase: AuditLogSummary["phase"]): boolean {
   return phase.startsWith("background-");
+}
+
+const SESSION_MESSAGE_INITIAL_RENDER_COUNT = 80;
+const SESSION_MESSAGE_PREPEND_BATCH_SIZE = 80;
+const SESSION_MESSAGE_TOP_LOAD_THRESHOLD = 64;
+
+type MessageArtifactFoldSection = "files" | "operation";
+
+function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFoldSection, index?: number): string {
+  return `${artifactKey}:${section}${index === undefined ? "" : `:${index}`}`;
+}
+
+export type AuditLogFoldSection = "logical" | "transport" | "response" | "operations" | "usage" | "error" | "raw";
+
+function auditLogFoldKey(entry: Pick<AuditLogSummary, "id" | "sessionId">, section: AuditLogFoldSection): string {
+  return `${entry.sessionId}:${entry.id}:${section}`;
+}
+
+export function shouldLoadAuditLogDetailForFold(section: AuditLogFoldSection): boolean {
+  return section === "logical"
+    || section === "transport"
+    || section === "response"
+    || section === "operations"
+    || section === "raw";
 }
 
 export type SessionDiffModalProps = {
@@ -578,16 +601,36 @@ export function SessionDiffModal({
 
 export type SessionAuditLogModalProps = {
   open: boolean;
-  entries: AuditLogEntry[];
+  entries: AuditLogSummary[];
+  details: Record<number, {
+    detail: AuditLogDetail | null;
+    loading: boolean;
+    errorMessage: string | null;
+  }>;
+  hasMore: boolean;
+  loadingMore: boolean;
+  total: number;
+  errorMessage: string | null;
+  onLoadMore: () => void;
+  onLoadDetail: (entry: AuditLogSummary) => void;
   onClose: () => void;
 };
 
 export function SessionAuditLogModal({
   open,
   entries,
+  details,
+  hasMore,
+  loadingMore,
+  total,
+  errorMessage,
+  onLoadMore,
+  onLoadDetail,
   onClose,
 }: SessionAuditLogModalProps) {
   const [activeSection, setActiveSection] = useState<"main" | "background">("main");
+  const [openAuditLogFolds, setOpenAuditLogFolds] = useState<Record<string, boolean>>({});
+  const auditLogListRef = useRef<HTMLDivElement | null>(null);
   const { dialogRef, handleDialogKeyDown } = useDialogA11y<HTMLElement>({ open, onClose });
   const mainEntries = useMemo(
     () => entries.filter((entry) => !isBackgroundAuditPhase(entry.phase)),
@@ -597,7 +640,82 @@ export function SessionAuditLogModal({
     () => entries.filter((entry) => isBackgroundAuditPhase(entry.phase)),
     [entries],
   );
+  const auditLogFoldKeyPrefixes = useMemo(
+    () => new Set(entries.map((entry) => `${entry.sessionId}:${entry.id}:`)),
+    [entries],
+  );
   const visibleEntries = activeSection === "main" ? mainEntries : backgroundEntries;
+
+  const isAuditLogFoldOpen = (entry: AuditLogSummary, section: AuditLogFoldSection) =>
+    Boolean(openAuditLogFolds[auditLogFoldKey(entry, section)]);
+
+  const handleAuditLogFoldToggle = (
+    entry: AuditLogSummary,
+    section: AuditLogFoldSection,
+    openFold: boolean,
+  ) => {
+    setOpenAuditLogFolds((current) => {
+      const key = auditLogFoldKey(entry, section);
+      if (openFold) {
+        if (current[key]) {
+          return current;
+        }
+        return { ...current, [key]: true };
+      }
+
+      if (!current[key]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+
+    if (
+      openFold
+      && shouldLoadAuditLogDetailForFold(section)
+      && !details[entry.id]?.detail
+      && !details[entry.id]?.loading
+    ) {
+      onLoadDetail(entry);
+    }
+  };
+
+  useLayoutEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const listNode = auditLogListRef.current;
+    if (!listNode) {
+      return;
+    }
+
+    listNode.scrollTop = 0;
+  }, [activeSection, open]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setOpenAuditLogFolds({});
+    }
+  }, [open]);
+
+  useEffect(() => {
+    setOpenAuditLogFolds((current) => {
+      let changed = false;
+      const next: Record<string, boolean> = {};
+      for (const [key, value] of Object.entries(current)) {
+        const entryStillVisible = Array.from(auditLogFoldKeyPrefixes).some((prefix) => key.startsWith(prefix));
+        if (entryStillVisible) {
+          next[key] = value;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [auditLogFoldKeyPrefixes]);
 
   if (!open) {
     return null;
@@ -637,10 +755,25 @@ export function SessionAuditLogModal({
           </button>
         </div>
 
-        <div className="audit-log-list">
+        <div className="audit-log-page-status">
+          <span>{entries.length} / {total}</span>
+          {errorMessage ? <span className="audit-log-page-error">{errorMessage}</span> : null}
+        </div>
+
+        <div ref={auditLogListRef} className="audit-log-list">
           {visibleEntries.length > 0 ? (
-            visibleEntries.map((entry) => (
-              <article key={entry.id} className={`audit-log-card ${entry.phase}`}>
+            <div className="audit-log-list-window">
+              <div className="audit-log-list-window-items">
+                {visibleEntries.map((entry) => {
+              const detailState = details[entry.id];
+              const detail = detailState?.detail ?? null;
+              const operations = detail?.operations ?? entry.operations;
+              const assistantText = detail?.assistantText ?? entry.assistantTextPreview;
+              const usage = detail?.usage ?? entry.usage;
+              const errorMessage = detail?.errorMessage ?? entry.errorMessage;
+
+              return (
+                <article key={entry.id} className={`audit-log-card ${entry.phase}`}>
                 <div className="audit-log-head">
                   <span className={`file-kind ${
                     entry.phase === "completed"
@@ -663,31 +796,53 @@ export function SessionAuditLogModal({
                   <span>{displayApprovalValue(entry.approvalMode)}</span>
                 </div>
 
-                <details className="audit-log-fold">
+                <details
+                  className="audit-log-fold"
+                  open={isAuditLogFoldOpen(entry, "logical")}
+                  onToggle={(event) => {
+                    handleAuditLogFoldToggle(entry, "logical", event.currentTarget.open);
+                  }}
+                >
                   <summary>
                     <strong>Logical Prompt</strong>
                   </summary>
                   <section className="audit-log-section">
-                    <p><strong>System</strong></p>
-                    <pre>{entry.logicalPrompt.systemText || "-"}</pre>
-                    <p><strong>Input</strong></p>
-                    <pre>{entry.logicalPrompt.inputText || "-"}</pre>
-                    <p><strong>Composed</strong></p>
-                    <pre>{entry.logicalPrompt.composedText || "-"}</pre>
+                    {detail ? (
+                      <>
+                        <p><strong>System</strong></p>
+                        <pre>{detail.logicalPrompt.systemText || "-"}</pre>
+                        <p><strong>Input</strong></p>
+                        <pre>{detail.logicalPrompt.inputText || "-"}</pre>
+                        <p><strong>Composed</strong></p>
+                        <pre>{detail.logicalPrompt.composedText || "-"}</pre>
+                      </>
+                    ) : (
+                      <p className="audit-log-empty">
+                        {detailState?.loading
+                          ? "audit log detail を読み込んでるよ。"
+                          : detailState?.errorMessage ?? "開くと audit log detail を読み込むよ。"}
+                      </p>
+                    )}
                   </section>
                 </details>
 
-                <details className="audit-log-fold">
+                <details
+                  className="audit-log-fold"
+                  open={isAuditLogFoldOpen(entry, "transport")}
+                  onToggle={(event) => {
+                    handleAuditLogFoldToggle(entry, "transport", event.currentTarget.open);
+                  }}
+                >
                   <summary>
                     <strong>Transport Payload</strong>
                   </summary>
                   <section className="audit-log-section">
-                    {entry.transportPayload ? (
+                    {detail?.transportPayload ? (
                       <>
-                        <p><strong>{entry.transportPayload.summary || "transport payload"}</strong></p>
-                        {entry.transportPayload.fields.length > 0 ? (
+                        <p><strong>{detail.transportPayload.summary || "transport payload"}</strong></p>
+                        {detail.transportPayload.fields.length > 0 ? (
                           <div className="audit-log-transport-fields">
-                            {entry.transportPayload.fields.map((field, index) => (
+                            {detail.transportPayload.fields.map((field, index) => (
                               <div key={`${entry.id}-${field.label}-${index}`} className="audit-log-transport-field">
                                 <p><strong>{field.label}</strong></p>
                                 <pre>{field.value || "-"}</pre>
@@ -699,28 +854,44 @@ export function SessionAuditLogModal({
                         )}
                       </>
                     ) : (
-                      <p className="audit-log-empty">記録された transport payload はまだないよ。</p>
+                      <p className="audit-log-empty">
+                        {detailState?.loading
+                          ? "audit log detail を読み込んでるよ。"
+                          : detailState?.errorMessage ?? "記録された transport payload はまだないよ。"}
+                      </p>
                     )}
                   </section>
                 </details>
 
-                <details className="audit-log-fold">
+                <details
+                  className="audit-log-fold"
+                  open={isAuditLogFoldOpen(entry, "response")}
+                  onToggle={(event) => {
+                    handleAuditLogFoldToggle(entry, "response", event.currentTarget.open);
+                  }}
+                >
                   <summary>
                     <strong>Response</strong>
                   </summary>
                   <section className="audit-log-section">
-                    <pre>{entry.assistantText || "-"}</pre>
+                    <pre>{assistantText || "-"}</pre>
                   </section>
                 </details>
 
-                <details className="audit-log-fold">
+                <details
+                  className="audit-log-fold"
+                  open={isAuditLogFoldOpen(entry, "operations")}
+                  onToggle={(event) => {
+                    handleAuditLogFoldToggle(entry, "operations", event.currentTarget.open);
+                  }}
+                >
                   <summary>
                     <strong>Operations</strong>
                   </summary>
                   <section className="audit-log-section">
-                    {entry.operations.length > 0 ? (
+                    {operations.length > 0 ? (
                       <ul className="audit-log-operations">
-                        {entry.operations.map((operation, index) => (
+                        {operations.map((operation, index) => (
                           <li key={`${entry.id}-${operation.type}-${index}`}>
                             <div className="audit-log-operation-head">
                               <span>{operation.type}</span>
@@ -736,42 +907,73 @@ export function SessionAuditLogModal({
                   </section>
                 </details>
 
-                {entry.usage ? (
-                  <details className="audit-log-fold compact">
+                {usage ? (
+                  <details
+                    className="audit-log-fold compact"
+                    open={isAuditLogFoldOpen(entry, "usage")}
+                    onToggle={(event) => {
+                      handleAuditLogFoldToggle(entry, "usage", event.currentTarget.open);
+                    }}
+                  >
                     <summary>
                       <strong>Usage</strong>
                     </summary>
                     <section className="audit-log-section compact">
                       <div className="audit-log-meta">
-                        <span>input {entry.usage.inputTokens}</span>
-                        <span>cached {entry.usage.cachedInputTokens}</span>
-                        <span>output {entry.usage.outputTokens}</span>
+                        <span>input {usage.inputTokens}</span>
+                        <span>cached {usage.cachedInputTokens}</span>
+                        <span>output {usage.outputTokens}</span>
                       </div>
                     </section>
                   </details>
                 ) : null}
 
-                {entry.errorMessage ? (
-                  <details className="audit-log-fold compact">
+                {errorMessage ? (
+                  <details
+                    className="audit-log-fold compact"
+                    open={isAuditLogFoldOpen(entry, "error")}
+                    onToggle={(event) => {
+                      handleAuditLogFoldToggle(entry, "error", event.currentTarget.open);
+                    }}
+                  >
                     <summary>
                       <strong>Error</strong>
                     </summary>
                     <section className="audit-log-section compact">
-                      <pre>{entry.errorMessage}</pre>
+                      <pre>{errorMessage}</pre>
                     </section>
                   </details>
                 ) : null}
 
-                <details className="audit-log-fold audit-log-raw">
+                <details
+                  className="audit-log-fold audit-log-raw"
+                  open={isAuditLogFoldOpen(entry, "raw")}
+                  onToggle={(event) => {
+                    handleAuditLogFoldToggle(entry, "raw", event.currentTarget.open);
+                  }}
+                >
                   <summary>
                     <strong>Raw Items</strong>
                   </summary>
-                  <pre>{entry.rawItemsJson}</pre>
+                  <pre>{detail?.rawItemsJson ?? (detailState?.loading ? "loading..." : "[]")}</pre>
                 </details>
-              </article>
-            ))
+                </article>
+              );
+                })}
+              </div>
+            </div>
           ) : null}
         </div>
+        {hasMore ? (
+          <button
+            type="button"
+            className="audit-log-load-more"
+            onClick={onLoadMore}
+            disabled={loadingMore}
+          >
+            {loadingMore ? "Loading..." : "Load More"}
+          </button>
+        ) : null}
       </section>
     </div>
   );
@@ -787,11 +989,6 @@ export type SessionContextPaneProps = {
   backgroundTasks: LiveBackgroundTask[];
   selectedSessionLiveRunErrorMessage: string;
   isSelectedSessionRunning: boolean;
-  selectedSessionCharacter: { name: string; iconPath: string } | null;
-  selectedMemoryGenerationActivity: SessionBackgroundActivityState | null;
-  selectedCharacterMemoryGenerationActivity: SessionBackgroundActivityState | null;
-  selectedMonologueActivity: SessionBackgroundActivityState | null;
-  selectedMonologueEntries: StreamEntry[];
   isCopilotSession: boolean;
   selectedCopilotRemainingPercentLabel: string;
   selectedCopilotRemainingRequestsLabel: string;
@@ -799,11 +996,8 @@ export type SessionContextPaneProps = {
   selectedSessionContextTelemetry: SessionContextTelemetry | null;
   selectedSessionContextTelemetryProjection: SessionContextTelemetryProjection;
   contextEmptyText: string;
-  canRunSessionMemoryGeneration: boolean;
   onToggleHeaderExpanded: () => void;
-  isSessionMemoryGenerationRunning: boolean;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
-  onRunSessionMemoryGeneration: () => void;
 };
 
 type SessionPaneErrorBoundaryProps = {
@@ -902,11 +1096,6 @@ export function SessionContextPane({
   backgroundTasks,
   selectedSessionLiveRunErrorMessage,
   isSelectedSessionRunning,
-  selectedSessionCharacter,
-  selectedMemoryGenerationActivity,
-  selectedCharacterMemoryGenerationActivity,
-  selectedMonologueActivity,
-  selectedMonologueEntries,
   isCopilotSession,
   selectedCopilotRemainingPercentLabel,
   selectedCopilotRemainingRequestsLabel,
@@ -914,22 +1103,11 @@ export function SessionContextPane({
   selectedSessionContextTelemetry,
   selectedSessionContextTelemetryProjection,
   contextEmptyText,
-  canRunSessionMemoryGeneration,
   onToggleHeaderExpanded,
-  isSessionMemoryGenerationRunning,
   onCycleContextPaneTab,
-  onRunSessionMemoryGeneration,
 }: SessionContextPaneProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
-  const isMemoryGenerationTab = activeContextPaneTab === "memory-generation";
   const taskEntries = backgroundTasks ?? [];
-  const memoryGenerationActivities = useMemo(
-    () =>
-      [selectedMemoryGenerationActivity, selectedCharacterMemoryGenerationActivity]
-        .filter((activity): activity is SessionBackgroundActivityState => activity !== null)
-        .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt)),
-    [selectedCharacterMemoryGenerationActivity, selectedMemoryGenerationActivity],
-  );
   const contentScrollKey = useMemo(() => {
     switch (activeContextPaneTab) {
       case "latest-command":
@@ -946,14 +1124,6 @@ export function SessionContextPane({
         return taskEntries
           .map((task) => `${task.id}:${task.kind}:${task.status}:${task.title}:${task.details ?? ""}:${task.updatedAt}`)
           .join("|");
-      case "memory-generation":
-        return memoryGenerationActivities
-          .map((activity) => `${activity.kind}:${activity.status}:${activity.updatedAt}:${activity.summary}`)
-          .join("|");
-      case "monologue":
-        return selectedMonologueEntries
-          .map((entry) => `${entry.time}:${entry.text}`)
-          .join("|");
       default:
         return "";
     }
@@ -962,8 +1132,6 @@ export function SessionContextPane({
     latestCommandView,
     runningDetailsEntries,
     taskEntries,
-    memoryGenerationActivities,
-    selectedMonologueEntries,
     selectedSessionLiveRunErrorMessage,
   ]);
 
@@ -980,7 +1148,7 @@ export function SessionContextPane({
     <aside className={`session-context-pane${isHeaderExpanded ? " session-context-pane-header-expanded" : ""}`}>
       {!isHeaderExpanded ? <SessionHeaderHandle taskTitle={taskTitle} onClick={onToggleHeaderExpanded} /> : null}
       <section className="command-monitor-shell" aria-label="右ペイン">
-        <div className={`command-monitor-head${isMemoryGenerationTab ? " memory-generation-layout" : ""}`}>
+        <div className="command-monitor-head">
           <div className="command-monitor-switcher" aria-label="右ペイン表示切り替え">
             <button
               type="button"
@@ -1004,18 +1172,6 @@ export function SessionContextPane({
               ›
             </button>
           </div>
-          {isMemoryGenerationTab ? (
-            <div className="command-monitor-head-actions">
-              <button
-                className="launch-toggle compact session-memory-trigger-button"
-                type="button"
-                onClick={onRunSessionMemoryGeneration}
-                disabled={!canRunSessionMemoryGeneration || isSessionMemoryGenerationRunning}
-              >
-                {isSessionMemoryGenerationRunning ? "Generating..." : "Generate Memory"}
-              </button>
-            </div>
-          ) : null}
         </div>
 
         <div ref={contentRef} className="command-monitor-content">
@@ -1155,79 +1311,6 @@ export function SessionContextPane({
               )
             ) : null}
 
-            {activeContextPaneTab === "memory-generation" ? (
-              memoryGenerationActivities.length > 0 ? (
-                <>
-                  {memoryGenerationActivities.map((activity) => {
-                    const isCharacterActivity = activity.kind === "character-memory-generation";
-                    return (
-                    <div key={`${activity.kind}:${activity.updatedAt}`} className="command-monitor-card">
-                      <div className="command-monitor-card-head">
-                        <div className="command-monitor-meta">
-                          <span className={`live-run-step-status ${isCharacterActivity ? contextPaneProjection.characterMemoryGenerationToneClassName : contextPaneProjection.memoryGenerationToneClassName}`}>
-                            {sessionBackgroundActivityStatusLabel(activity.status)}
-                          </span>
-                          <span className="live-run-step-type">Background</span>
-                          <span className="command-monitor-source">{isCharacterActivity ? "CHARACTER" : "SESSION"}</span>
-                        </div>
-                      </div>
-
-                      <div className="background-activity-summary">
-                        <strong>{activity.title}</strong>
-                        <p>{activity.summary}</p>
-                      </div>
-
-                      {activity.details ? (
-                        <details className="command-monitor-details live-run-step-details">
-                          <summary>詳細</summary>
-                          <pre>{activity.details}</pre>
-                        </details>
-                      ) : null}
-
-                      {activity.errorMessage ? (
-                        <div className="live-run-error-block" role="alert">
-                          <strong>実行エラー</strong>
-                          <p className="live-run-error">{activity.errorMessage}</p>
-                        </div>
-                      ) : null}
-                    </div>
-                    );
-                  })}
-                </>
-              ) : (
-                <div className="command-monitor-empty-shell" />
-              )
-            ) : null}
-
-            {activeContextPaneTab === "monologue" ? (
-              selectedMonologueEntries.length > 0 ? (
-                <>
-                  {selectedMonologueEntries.map((entry, index) => (
-                    <div
-                      key={`${entry.time}-${index}`}
-                      className={`command-monitor-card monologue-entry-card mood-${entry.mood}`}
-                    >
-                      <div className="monologue-entry-time">{entry.time}</div>
-                      <div className="monologue-entry-row">
-                        <CharacterAvatar
-                          character={{
-                            name: selectedSessionCharacter?.name ?? "?",
-                            iconPath: selectedSessionCharacter?.iconPath ?? "",
-                          }}
-                          size="large"
-                          className="monologue-entry-avatar"
-                        />
-                        <div className="background-activity-summary">
-                          <p className="monologue-entry-text">{entry.text}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </>
-              ) : (
-                <div className="command-monitor-empty-shell" />
-              )
-            ) : null}
           </div>
         </div>
       </section>
@@ -1580,13 +1663,11 @@ export type SessionMessageColumnProps = {
   hasLiveRunAssistantText: boolean;
   liveRunErrorMessage: string;
   isMessageListFollowing: boolean;
-  hasMessageListUnread: boolean;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
   onToggleArtifact: (artifactKey: string) => void;
   onOpenDiff: (title: string, file: ChangedFile) => void;
   onResolveLiveApproval: (request: LiveApprovalRequest, decision: "approve" | "deny") => void;
   onResolveLiveElicitation: (request: LiveElicitationRequest, response: LiveElicitationResponse) => void;
-  onJumpToBottom: () => void;
   onOpenPath?: (target: string) => void;
   getChangedFilesEmptyText: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
 };
@@ -1608,22 +1689,113 @@ export function SessionMessageColumn({
   hasLiveRunAssistantText,
   liveRunErrorMessage,
   isMessageListFollowing,
-  hasMessageListUnread,
   onMessageListScroll,
   onToggleArtifact,
   onOpenDiff,
   onResolveLiveApproval,
   onResolveLiveElicitation,
-  onJumpToBottom,
   onOpenPath,
   getChangedFilesEmptyText,
 }: SessionMessageColumnProps) {
+  const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
+  const [messageWindowStartIndex, setMessageWindowStartIndex] = useState(() =>
+    Math.max(0, messages.length - SESSION_MESSAGE_INITIAL_RENDER_COUNT),
+  );
+  const prependAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const latestMessageWindowStartIndex = Math.min(
+    Math.max(0, messageWindowStartIndex),
+    Math.max(0, messages.length - SESSION_MESSAGE_INITIAL_RENDER_COUNT),
+  );
+  const renderedMessages = useMemo(
+    () => messages.slice(latestMessageWindowStartIndex),
+    [latestMessageWindowStartIndex, messages],
+  );
+  const hasOlderMessages = latestMessageWindowStartIndex > 0;
+
+  const loadOlderMessages = useCallback((listElement: HTMLDivElement | null = messageListRef.current) => {
+    if (!listElement || latestMessageWindowStartIndex <= 0) {
+      return;
+    }
+
+    prependAnchorRef.current = {
+      scrollHeight: listElement.scrollHeight,
+      scrollTop: listElement.scrollTop,
+    };
+    setMessageWindowStartIndex((current) => Math.max(0, current - SESSION_MESSAGE_PREPEND_BATCH_SIZE));
+  }, [latestMessageWindowStartIndex, messageListRef]);
+
+  const handleMessageListScroll: UIEventHandler<HTMLDivElement> = (event) => {
+    if (event.currentTarget.scrollTop <= SESSION_MESSAGE_TOP_LOAD_THRESHOLD) {
+      loadOlderMessages(event.currentTarget);
+    }
+    onMessageListScroll(event);
+  };
+
+  useLayoutEffect(() => {
+    setMessageWindowStartIndex((current) => {
+      const latestStartIndex = Math.max(0, messages.length - SESSION_MESSAGE_INITIAL_RENDER_COUNT);
+      if (isMessageListFollowing) {
+        return latestStartIndex;
+      }
+
+      return Math.min(current, latestStartIndex);
+    });
+  }, [isMessageListFollowing, messages.length]);
+
+  useLayoutEffect(() => {
+    const anchor = prependAnchorRef.current;
+    const messageListElement = messageListRef.current;
+    if (!anchor || !messageListElement) {
+      return;
+    }
+
+    prependAnchorRef.current = null;
+    messageListElement.scrollTop = messageListElement.scrollHeight - anchor.scrollHeight + anchor.scrollTop;
+  });
+
+  const isArtifactFoldOpen = (artifactKey: string, section: MessageArtifactFoldSection, index?: number) =>
+    Boolean(openArtifactFolds[messageArtifactFoldKey(artifactKey, section, index)]);
+
+  const handleArtifactFoldToggle = (
+    artifactKey: string,
+    section: MessageArtifactFoldSection,
+    openFold: boolean,
+    index?: number,
+  ) => {
+    setOpenArtifactFolds((current) => {
+      const key = messageArtifactFoldKey(artifactKey, section, index);
+      if (openFold) {
+        return current[key] ? current : { ...current, [key]: true };
+      }
+
+      if (!current[key]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  };
+
   return (
     <div className="session-message-column">
-      <div className="message-list" ref={messageListRef} onScroll={onMessageListScroll}>
-        {messages.length > 0 ? (
-          messages.map((message, index) => {
-            const artifactKey = `${sessionId}-${index}`;
+      <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
+        {hasOlderMessages ? (
+          <button
+            type="button"
+            className="message-history-load-more"
+            onClick={() => loadOlderMessages()}
+          >
+            以前のメッセージを読み込む
+          </button>
+        ) : null}
+        {messages.length > 0 || isRunning ? (
+          <div className="session-message-list-window">
+            <div className="session-message-list-window-items">
+          {renderedMessages.map((message, index) => {
+            const absoluteIndex = latestMessageWindowStartIndex + index;
+            const artifactKey = `${sessionId}-${absoluteIndex}`;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
             const artifactHasSnapshotRisk =
@@ -1639,7 +1811,7 @@ export function SessionMessageColumn({
 
             return (
               <article
-                key={`${message.role}-${index}`}
+                key={`${message.role}-${absoluteIndex}`}
                 className={`message-row ${message.role}${message.accent ? " accent" : ""}`}
               >
                 {isAssistant ? (
@@ -1683,7 +1855,13 @@ export function SessionMessageColumn({
                           <div className="artifact-grid">
                             <section className="artifact-section">
                               {message.artifact.changedFiles.length > 0 ? (
-                                  <details className="artifact-fold artifact-files-fold">
+                                  <details
+                                    className="artifact-fold artifact-files-fold"
+                                    open={isArtifactFoldOpen(artifactKey, "files")}
+                                    onToggle={(event) => {
+                                      handleArtifactFoldToggle(artifactKey, "files", event.currentTarget.open);
+                                    }}
+                                  >
                                     <summary className="artifact-fold-summary">
                                       <span className="artifact-fold-summary-copy">
                                         <strong>Changed Files</strong>
@@ -1712,7 +1890,13 @@ export function SessionMessageColumn({
                                     </div>
                                   </details>
                                 ) : (
-                                  <details className="artifact-fold artifact-files-fold">
+                                  <details
+                                    className="artifact-fold artifact-files-fold"
+                                    open={isArtifactFoldOpen(artifactKey, "files")}
+                                    onToggle={(event) => {
+                                      handleArtifactFoldToggle(artifactKey, "files", event.currentTarget.open);
+                                    }}
+                                  >
                                     <summary className="artifact-fold-summary">
                                       <span className="artifact-fold-summary-copy">
                                         <strong>Changed Files</strong>
@@ -1753,7 +1937,13 @@ export function SessionMessageColumn({
                                   const operationSummary = collapseSummaryText(operation.summary) || operationTypeLabel(operation.type);
                                   return (
                                     <li key={`${operation.type}-${operationIndex}`} className={`artifact-operation-item ${operation.type}`}>
-                                      <details className="artifact-operation-fold">
+                                      <details
+                                        className="artifact-operation-fold"
+                                        open={isArtifactFoldOpen(artifactKey, "operation", operationIndex)}
+                                        onToggle={(event) => {
+                                          handleArtifactFoldToggle(artifactKey, "operation", event.currentTarget.open, operationIndex);
+                                        }}
+                                      >
                                         <summary className="artifact-operation-summary" title={operationSummary}>
                                           <div className="artifact-operation-head">
                                             <span className={`artifact-operation-type ${operation.type}`}>{operationTypeLabel(operation.type)}</span>
@@ -1784,88 +1974,80 @@ export function SessionMessageColumn({
                 </div>
               </article>
             );
-          })
-        ) : null}
+          })}
 
-        {isRunning ? (
-          <article className="message-row assistant pending-row">
-            <CharacterAvatar character={character} size="small" className="message-avatar" />
-            <div className="message-card assistant pending-message-card">
-              <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
-                {pendingRunIndicatorAnnouncement}
-              </span>
-              <div className="live-run-shell-status pending-run-indicator" aria-hidden="true">
-                <span className="live-run-shell-status-badge">実行中</span>
-                <span className="live-run-shell-status-text">{pendingRunIndicatorText}</span>
-                <span className="typing-dots pending-run-indicator-dots">
-                  <span />
-                  <span />
-                  <span />
-                </span>
-              </div>
-              {liveApprovalRequest ? (
-                <section className="live-approval-card" role="group" aria-label="承認要求">
-                  <div className="live-approval-head">
-                    <div className="live-approval-copy">
-                      <span className="live-approval-badge">承認待ち</span>
-                      <p className="live-approval-title">{liveApprovalRequest.title}</p>
+              {isRunning ? (
+                <article className="message-row assistant pending-row">
+                  <CharacterAvatar character={character} size="small" className="message-avatar" />
+                  <div className="message-card assistant pending-message-card">
+                    <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+                      {pendingRunIndicatorAnnouncement}
+                    </span>
+                    <div className="live-run-shell-status pending-run-indicator" aria-hidden="true">
+                      <span className="live-run-shell-status-badge">実行中</span>
+                      <span className="live-run-shell-status-text">{pendingRunIndicatorText}</span>
+                      <span className="typing-dots pending-run-indicator-dots">
+                        <span />
+                        <span />
+                        <span />
+                      </span>
                     </div>
-                    <span className="live-approval-kind">{liveApprovalKindLabel(liveApprovalRequest.kind)}</span>
+                    {liveApprovalRequest ? (
+                      <section className="live-approval-card" role="group" aria-label="承認要求">
+                        <div className="live-approval-head">
+                          <div className="live-approval-copy">
+                            <span className="live-approval-badge">承認待ち</span>
+                            <p className="live-approval-title">{liveApprovalRequest.title}</p>
+                          </div>
+                          <span className="live-approval-kind">{liveApprovalKindLabel(liveApprovalRequest.kind)}</span>
+                        </div>
+                        <pre className="live-approval-summary">{liveApprovalRequest.summary}</pre>
+                        {liveApprovalRequest.warning ? (
+                          <p className="live-approval-warning" role="alert">{liveApprovalRequest.warning}</p>
+                        ) : null}
+                        {liveApprovalRequest.details ? (
+                          <details className="live-approval-details">
+                            <summary>Details</summary>
+                            <pre>{liveApprovalRequest.details}</pre>
+                          </details>
+                        ) : null}
+                        <div className="live-approval-actions">
+                          <button
+                            type="button"
+                            onClick={() => onResolveLiveApproval(liveApprovalRequest, "approve")}
+                            disabled={approvalActionRequestId === liveApprovalRequest.requestId}
+                          >
+                            今回だけ許可
+                          </button>
+                          <button
+                            className="drawer-toggle secondary"
+                            type="button"
+                            onClick={() => onResolveLiveApproval(liveApprovalRequest, "deny")}
+                            disabled={approvalActionRequestId === liveApprovalRequest.requestId}
+                          >
+                            拒否
+                          </button>
+                        </div>
+                      </section>
+                    ) : null}
+                    {liveElicitationRequest ? (
+                      <LiveElicitationCard
+                        request={liveElicitationRequest}
+                        elicitationActionRequestId={elicitationActionRequestId}
+                        onResolveLiveElicitation={onResolveLiveElicitation}
+                        onOpenPath={onOpenPath}
+                      />
+                    ) : null}
+                    {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} onOpenPath={onOpenPath} /> : null}
+                    {liveRunErrorMessage ? (
+                      <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
+                    ) : null}
                   </div>
-                  <pre className="live-approval-summary">{liveApprovalRequest.summary}</pre>
-                  {liveApprovalRequest.warning ? (
-                    <p className="live-approval-warning" role="alert">{liveApprovalRequest.warning}</p>
-                  ) : null}
-                  {liveApprovalRequest.details ? (
-                    <details className="live-approval-details">
-                      <summary>Details</summary>
-                      <pre>{liveApprovalRequest.details}</pre>
-                    </details>
-                  ) : null}
-                  <div className="live-approval-actions">
-                    <button
-                      type="button"
-                      onClick={() => onResolveLiveApproval(liveApprovalRequest, "approve")}
-                      disabled={approvalActionRequestId === liveApprovalRequest.requestId}
-                    >
-                      今回だけ許可
-                    </button>
-                    <button
-                      className="drawer-toggle secondary"
-                      type="button"
-                      onClick={() => onResolveLiveApproval(liveApprovalRequest, "deny")}
-                      disabled={approvalActionRequestId === liveApprovalRequest.requestId}
-                    >
-                      拒否
-                    </button>
-                  </div>
-                </section>
+                </article>
               ) : null}
-              {liveElicitationRequest ? (
-                <LiveElicitationCard
-                  request={liveElicitationRequest}
-                  elicitationActionRequestId={elicitationActionRequestId}
-                  onResolveLiveElicitation={onResolveLiveElicitation}
-                  onOpenPath={onOpenPath}
-                />
-              ) : null}
-              {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} onOpenPath={onOpenPath} /> : null}
-              {liveRunErrorMessage ? (
-                <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
-              ) : null}
+              <div className="message-list-bottom-anchor" aria-hidden="true" />
             </div>
-          </article>
-        ) : null}
-        {!isMessageListFollowing ? (
-          <aside className={`message-follow-banner sticky ${hasMessageListUnread ? "has-unread" : "idle"}`}>
-            <div className="message-follow-banner-copy">
-              <span className="message-follow-banner-badge">{hasMessageListUnread ? "新着あり" : "読み返し中"}</span>
-              <p>{hasMessageListUnread ? "追従を止めている間に新しい表示が来たよ。" : "今は読み返し位置を維持しているよ。"}</p>
-            </div>
-            <button type="button" className="message-follow-banner-button" onClick={onJumpToBottom}>
-              末尾へ移動
-            </button>
-          </aside>
+          </div>
         ) : null}
       </div>
     </div>
@@ -1878,8 +2060,10 @@ export type SessionActionDockCompactRowProps = {
   attachmentCount: number;
   isRunning: boolean;
   isSendDisabled: boolean;
+  showJumpToBottom: boolean;
   sendButtonTitle?: string;
   onExpand: () => void;
+  onJumpToBottom: () => void;
   onSendOrCancel: () => void;
 };
 
@@ -1889,8 +2073,10 @@ export function SessionActionDockCompactRow({
   attachmentCount,
   isRunning,
   isSendDisabled,
+  showJumpToBottom,
   sendButtonTitle,
   onExpand,
+  onJumpToBottom,
   onSendOrCancel,
 }: SessionActionDockCompactRowProps) {
   return (
@@ -1915,6 +2101,15 @@ export function SessionActionDockCompactRow({
         ) : null}
       </div>
       <div className="session-action-dock-compact-actions">
+        {showJumpToBottom ? (
+          <button
+            className="drawer-toggle compact secondary message-jump-bottom-button"
+            type="button"
+            onClick={onJumpToBottom}
+          >
+            末尾へ移動
+          </button>
+        ) : null}
         <button
           className={isRunning ? "danger session-send-button" : "session-send-button"}
           type="button"
@@ -2003,6 +2198,7 @@ export type SessionComposerExpandedProps = {
   selectedCustomAgentTitle: string;
   additionalDirectoryCount: number;
   canCollapseActionDock: boolean;
+  showJumpToBottom: boolean;
   isCustomAgentListLoading: boolean;
   isSkillListLoading: boolean;
   customAgentItems: SessionCustomAgentItem[];
@@ -2034,6 +2230,7 @@ export type SessionComposerExpandedProps = {
   onAddAdditionalDirectory: () => void;
   onToggleAdditionalDirectoryList: () => void;
   onCollapse: () => void;
+  onJumpToBottom: () => void;
   onSelectCustomAgent: (value: string | null) => void;
   onSelectSkill: (skillId: string) => void;
   onRemoveAttachment: (targets: string[]) => void;
@@ -2067,6 +2264,7 @@ export function SessionComposerExpanded({
   selectedCustomAgentTitle,
   additionalDirectoryCount,
   canCollapseActionDock,
+  showJumpToBottom,
   isCustomAgentListLoading,
   isSkillListLoading,
   customAgentItems,
@@ -2098,6 +2296,7 @@ export function SessionComposerExpanded({
   onAddAdditionalDirectory,
   onToggleAdditionalDirectoryList,
   onCollapse,
+  onJumpToBottom,
   onSelectCustomAgent,
   onSelectSkill,
   onRemoveAttachment,
@@ -2207,6 +2406,15 @@ export function SessionComposerExpanded({
             {`Dirs ${additionalDirectoryCount}`}
           </button>
         </div>
+        {showJumpToBottom ? (
+          <button
+            className="drawer-toggle compact secondary message-jump-bottom-button"
+            type="button"
+            onClick={onJumpToBottom}
+          >
+            末尾へ移動
+          </button>
+        ) : null}
         {canCollapseActionDock ? (
           <button className="drawer-toggle compact secondary composer-hide-button" type="button" onClick={onCollapse}>
             Hide

@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 
 import {
-  type AuditLogEntry,
+  type AuditLogDetail,
+  type AuditLogSummary,
   type ComposerAttachment,
   type ComposerPreview,
   currentTimestampLabel,
@@ -14,8 +15,6 @@ import {
   type LiveSessionRunState,
   type ProviderQuotaTelemetry,
   type RunSessionTurnRequest,
-  type SessionBackgroundActivityKind,
-  type SessionBackgroundActivityState,
   type SessionContextTelemetry,
 } from "./app-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
@@ -101,7 +100,32 @@ type RetryBannerState = {
 
 type SessionOwnedAuditLogs = {
   ownerSessionId: string | null;
-  entries: AuditLogEntry[];
+  entries: AuditLogSummary[];
+  nextCursor: number | null;
+  hasMore: boolean;
+  total: number;
+  loading: boolean;
+  errorMessage: string | null;
+};
+
+const AUDIT_LOG_PAGE_LIMIT = 50;
+
+function createEmptyAuditLogsState(ownerSessionId: string | null): SessionOwnedAuditLogs {
+  return {
+    ownerSessionId,
+    entries: [],
+    nextCursor: null,
+    hasMore: false,
+    total: 0,
+    loading: false,
+    errorMessage: null,
+  };
+}
+
+type AuditLogDetailLoadState = {
+  detail: AuditLogDetail | null;
+  loading: boolean;
+  errorMessage: string | null;
 };
 
 type SessionOwnedLiveRun = {
@@ -117,12 +141,6 @@ type ProviderOwnedQuotaTelemetry = {
 type SessionOwnedContextTelemetry = {
   ownerSessionId: string | null;
   telemetry: SessionContextTelemetry | null;
-};
-
-type SessionOwnedBackgroundActivity = {
-  ownerSessionId: string | null;
-  kind: SessionBackgroundActivityKind;
-  state: SessionBackgroundActivityState | null;
 };
 
 type CharacterOwnedMemoryExtract = {
@@ -464,7 +482,7 @@ function buildDisplayedMessagesScrollSignature(messages: Message[]): string {
     .join("\u001c");
 }
 
-function isTerminalAuditLogPhase(phase: AuditLogEntry["phase"]): boolean {
+function isTerminalAuditLogPhase(phase: AuditLogSummary["phase"]): boolean {
   return (
     phase === "completed"
     || phase === "failed"
@@ -493,7 +511,7 @@ function displayApprovalValue(value: string): string {
 function buildRetryStopSummary(
   kind: RetryBannerKind,
   liveRun: LiveSessionRunState | null,
-  latestTerminalAuditLog: AuditLogEntry | null,
+  latestTerminalAuditLog: AuditLogSummary | null,
   lastAssistantMessage: Message | null,
 ): string {
   const liveRunSummary = getLastNonEmptyValue((liveRun?.steps ?? []).map((step) => step.summary));
@@ -578,6 +596,32 @@ function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): strin
   ].join("\u001b");
 }
 
+function createPendingLiveSessionRunState(
+  session: Pick<Session, "id" | "threadId">,
+  previousState?: LiveSessionRunState | null,
+): LiveSessionRunState {
+  return {
+    sessionId: session.id,
+    threadId: session.threadId,
+    assistantText: "",
+    steps: [],
+    backgroundTasks: previousState?.backgroundTasks ?? [],
+    usage: null,
+    errorMessage: "",
+    approvalRequest: null,
+    elicitationRequest: null,
+  };
+}
+
+function scrollMessageListElementToBottom(messageListElement: HTMLDivElement): void {
+  const bottomAnchor = messageListElement.querySelector<HTMLElement>(".message-list-bottom-anchor");
+  if (bottomAnchor) {
+    bottomAnchor.scrollIntoView({ block: "end", inline: "nearest" });
+  }
+
+  messageListElement.scrollTop = Math.max(0, messageListElement.scrollHeight - messageListElement.clientHeight);
+}
+
 function hashStringToPositiveInt(value: string): number {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -630,7 +674,9 @@ export default function App() {
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
   const [auditLogsOpen, setAuditLogsOpen] = useState(false);
-  const [auditLogsState, setAuditLogsState] = useState<SessionOwnedAuditLogs>({ ownerSessionId: null, entries: [] });
+  const [auditLogsState, setAuditLogsState] = useState<SessionOwnedAuditLogs>(() => createEmptyAuditLogsState(null));
+  const [auditLogDetails, setAuditLogDetails] = useState<Record<number, AuditLogDetailLoadState>>({});
+  const auditLogDetailOwnerRef = useRef<string | null>(null);
   const [liveRunState, setLiveRunState] = useState<SessionOwnedLiveRun>({ ownerSessionId: null, state: null });
   const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] = useState<ProviderOwnedQuotaTelemetry>({
     ownerProviderId: null,
@@ -639,21 +685,6 @@ export default function App() {
   const [sessionContextTelemetryState, setSessionContextTelemetryState] = useState<SessionOwnedContextTelemetry>({
     ownerSessionId: null,
     telemetry: null,
-  });
-  const [memoryGenerationActivityState, setMemoryGenerationActivityState] = useState<SessionOwnedBackgroundActivity>({
-    ownerSessionId: null,
-    kind: "memory-generation",
-    state: null,
-  });
-  const [characterMemoryGenerationActivityState, setCharacterMemoryGenerationActivityState] = useState<SessionOwnedBackgroundActivity>({
-    ownerSessionId: null,
-    kind: "character-memory-generation",
-    state: null,
-  });
-  const [monologueActivityState, setMonologueActivityState] = useState<SessionOwnedBackgroundActivity>({
-    ownerSessionId: null,
-    kind: "monologue",
-    state: null,
   });
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
   const [activeCharacterUpdatePaneTab, setActiveCharacterUpdatePaneTab] = useState<"latest-command" | "memory-extract">("latest-command");
@@ -781,48 +812,15 @@ export default function App() {
     ),
     [selectedSessionId, sessionContextTelemetryState.ownerSessionId, sessionContextTelemetryState.telemetry],
   );
-  const selectedMemoryGenerationActivity = useMemo(
-    () => (
-      selectedSessionId !== null && memoryGenerationActivityState.ownerSessionId === selectedSessionId
-        ? memoryGenerationActivityState.state
-        : null
-    ),
-    [memoryGenerationActivityState.ownerSessionId, memoryGenerationActivityState.state, selectedSessionId],
-  );
-  const selectedCharacterMemoryGenerationActivity = useMemo(
-    () => (
-      selectedSessionId !== null && characterMemoryGenerationActivityState.ownerSessionId === selectedSessionId
-        ? characterMemoryGenerationActivityState.state
-        : null
-    ),
-    [characterMemoryGenerationActivityState.ownerSessionId, characterMemoryGenerationActivityState.state, selectedSessionId],
-  );
-  const selectedMonologueActivity = useMemo(
-    () => (
-      selectedSessionId !== null && monologueActivityState.ownerSessionId === selectedSessionId
-        ? monologueActivityState.state
-        : null
-    ),
-    [monologueActivityState.ownerSessionId, monologueActivityState.state, selectedSessionId],
-  );
   const auditLogRefreshSignature = useMemo(
     () =>
       buildAuditLogRefreshSignature({
         selectedSession,
         displayedMessagesLength: selectedSession?.messages.length ?? 0,
-        selectedMemoryGenerationActivity,
-        selectedCharacterMemoryGenerationActivity,
-        selectedMonologueActivity,
+        selectedMemoryGenerationActivity: null,
+        selectedCharacterMemoryGenerationActivity: null,
+        selectedMonologueActivity: null,
       }),
-    [
-      selectedCharacterMemoryGenerationActivity,
-      selectedMemoryGenerationActivity,
-      selectedMonologueActivity,
-      selectedSession,
-    ],
-  );
-  const selectedMonologueEntries = useMemo(
-    () => (selectedSession ? selectedSession.stream.slice(-6) : []),
     [selectedSession],
   );
   const activePathReference = useMemo(
@@ -848,7 +846,9 @@ export default function App() {
     () => previewPathReferenceCandidates.join("\u001f"),
     [previewPathReferenceCandidates],
   );
-  const selectedSessionRunState = selectedSession?.runState ?? null;
+  const selectedSessionRunState: Session["runState"] | null = selectedSessionLiveRun
+    ? "running"
+    : selectedSession?.runState ?? null;
 
   const selectedSessionCharacter = useMemo(
     () =>
@@ -1253,7 +1253,7 @@ export default function App() {
     setIsComposerImeComposing(false);
     setIsActivityMonitorFollowing(true);
     setHasActivityMonitorUnread(false);
-    setAuditLogsState({ ownerSessionId: selectedSessionId, entries: [] });
+    setAuditLogsState(createEmptyAuditLogsState(selectedSessionId));
     setLiveRunState({ ownerSessionId: selectedSessionId, state: null });
     setProviderQuotaTelemetryState((current) =>
       current.ownerProviderId === (selectedSession?.provider ?? null)
@@ -1302,7 +1302,7 @@ export default function App() {
       messageListSignatureRef.current = currentSignature;
       setIsMessageListFollowing(true);
       setHasMessageListUnread(false);
-      messageListElement.scrollTop = messageListElement.scrollHeight;
+      scrollMessageListElementToBottom(messageListElement);
       return;
     }
 
@@ -1313,7 +1313,7 @@ export default function App() {
     messageListSignatureRef.current = currentSignature;
 
     if (isMessageListFollowing) {
-      messageListElement.scrollTop = messageListElement.scrollHeight;
+      scrollMessageListElementToBottom(messageListElement);
       return;
     }
 
@@ -1369,7 +1369,9 @@ export default function App() {
 
     if (!withmateApi || !selectedSession) {
       if (active) {
-        setAuditLogsState({ ownerSessionId: null, entries: [] });
+        setAuditLogsState(createEmptyAuditLogsState(null));
+        setAuditLogDetails({});
+        auditLogDetailOwnerRef.current = null;
       }
       return () => {
         active = false;
@@ -1378,14 +1380,41 @@ export default function App() {
 
     setAuditLogsState((current) =>
       current.ownerSessionId === selectedSession.id
-        ? current
-        : { ownerSessionId: selectedSession.id, entries: [] },
+        ? { ...current, loading: true, errorMessage: null }
+        : { ...createEmptyAuditLogsState(selectedSession.id), loading: true },
     );
-    void withmateApi.listSessionAuditLogs(selectedSession.id).then((nextAuditLogs) => {
-      if (active) {
-        setAuditLogsState({ ownerSessionId: selectedSession.id, entries: nextAuditLogs });
-      }
-    });
+    if (auditLogDetailOwnerRef.current !== selectedSession.id) {
+      setAuditLogDetails({});
+      auditLogDetailOwnerRef.current = selectedSession.id;
+    }
+    void withmateApi.listSessionAuditLogSummaryPage(selectedSession.id, {
+      cursor: 0,
+      limit: AUDIT_LOG_PAGE_LIMIT,
+    }).then(
+      (page) => {
+        if (active) {
+          setAuditLogsState({
+            ownerSessionId: selectedSession.id,
+            entries: page.entries,
+            nextCursor: page.nextCursor,
+            hasMore: page.hasMore,
+            total: page.total,
+            loading: false,
+            errorMessage: null,
+          });
+        }
+      },
+      (error: unknown) => {
+        if (active) {
+          setAuditLogsState((current) => ({
+            ...current,
+            ownerSessionId: selectedSession.id,
+            loading: false,
+            errorMessage: error instanceof Error ? error.message : "audit log summary の取得に失敗したよ。",
+          }));
+        }
+      },
+    );
 
     return () => {
       active = false;
@@ -1499,114 +1528,6 @@ export default function App() {
       unsubscribe();
     };
   }, [selectedSession?.id, selectedSession?.provider]);
-
-  useEffect(() => {
-    let active = true;
-    const sessionId = selectedSession?.id ?? null;
-
-    if (!withmateApi || !sessionId) {
-      setMemoryGenerationActivityState({ ownerSessionId: sessionId, kind: "memory-generation", state: null });
-      return () => {
-        active = false;
-      };
-    }
-
-    setMemoryGenerationActivityState({ ownerSessionId: sessionId, kind: "memory-generation", state: null });
-    void withmateApi.getSessionBackgroundActivity(sessionId, "memory-generation").then((state) => {
-      if (active) {
-        setMemoryGenerationActivityState({ ownerSessionId: sessionId, kind: "memory-generation", state });
-      }
-    }).catch(() => {
-      if (active) {
-        setMemoryGenerationActivityState({ ownerSessionId: sessionId, kind: "memory-generation", state: null });
-      }
-    });
-
-    const unsubscribe = withmateApi.subscribeSessionBackgroundActivity((nextSessionId, kind, state) => {
-      if (!active || nextSessionId !== sessionId || kind !== "memory-generation") {
-        return;
-      }
-
-      setMemoryGenerationActivityState({ ownerSessionId: nextSessionId, kind, state });
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [selectedSession?.id]);
-
-  useEffect(() => {
-    let active = true;
-    const sessionId = selectedSession?.id ?? null;
-
-    if (!withmateApi || !sessionId) {
-      setCharacterMemoryGenerationActivityState({ ownerSessionId: sessionId, kind: "character-memory-generation", state: null });
-      return () => {
-        active = false;
-      };
-    }
-
-    setCharacterMemoryGenerationActivityState({ ownerSessionId: sessionId, kind: "character-memory-generation", state: null });
-    void withmateApi.getSessionBackgroundActivity(sessionId, "character-memory-generation").then((state) => {
-      if (active) {
-        setCharacterMemoryGenerationActivityState({ ownerSessionId: sessionId, kind: "character-memory-generation", state });
-      }
-    }).catch(() => {
-      if (active) {
-        setCharacterMemoryGenerationActivityState({ ownerSessionId: sessionId, kind: "character-memory-generation", state: null });
-      }
-    });
-
-    const unsubscribe = withmateApi.subscribeSessionBackgroundActivity((nextSessionId, kind, state) => {
-      if (!active || nextSessionId !== sessionId || kind !== "character-memory-generation") {
-        return;
-      }
-
-      setCharacterMemoryGenerationActivityState({ ownerSessionId: nextSessionId, kind, state });
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [selectedSession?.id]);
-
-  useEffect(() => {
-    let active = true;
-    const sessionId = selectedSession?.id ?? null;
-
-    if (!withmateApi || !sessionId) {
-      setMonologueActivityState({ ownerSessionId: sessionId, kind: "monologue", state: null });
-      return () => {
-        active = false;
-      };
-    }
-
-    setMonologueActivityState({ ownerSessionId: sessionId, kind: "monologue", state: null });
-    void withmateApi.getSessionBackgroundActivity(sessionId, "monologue").then((state) => {
-      if (active) {
-        setMonologueActivityState({ ownerSessionId: sessionId, kind: "monologue", state });
-      }
-    }).catch(() => {
-      if (active) {
-        setMonologueActivityState({ ownerSessionId: sessionId, kind: "monologue", state: null });
-      }
-    });
-
-    const unsubscribe = withmateApi.subscribeSessionBackgroundActivity((nextSessionId, kind, state) => {
-      if (!active || nextSessionId !== sessionId || kind !== "monologue") {
-        return;
-      }
-
-      setMonologueActivityState({ ownerSessionId: nextSessionId, kind, state });
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [selectedSession?.id]);
 
   useEffect(() => {
     let active = true;
@@ -2198,6 +2119,11 @@ export default function App() {
       messages: [...selectedSession.messages, { role: "user", text: nextMessage }],
     };
 
+    setLiveRunState((current) => (
+      current.ownerSessionId === updatedSession.id
+        ? { ownerSessionId: updatedSession.id, state: createPendingLiveSessionRunState(updatedSession, current.state) }
+        : { ownerSessionId: updatedSession.id, state: createPendingLiveSessionRunState(updatedSession) }
+    ));
     setSessions([updatedSession]);
 
     try {
@@ -2208,6 +2134,11 @@ export default function App() {
       setSessions([savedSession]);
     } catch (error) {
       console.error(error);
+      setLiveRunState((current) => (
+        current.ownerSessionId === updatedSession.id
+          ? { ownerSessionId: updatedSession.id, state: null }
+          : current
+      ));
       setSessions([selectedSession]);
     }
   };
@@ -2811,7 +2742,7 @@ export default function App() {
       return;
     }
 
-    messageListElement.scrollTop = messageListElement.scrollHeight;
+    scrollMessageListElementToBottom(messageListElement);
   };
 
   const handleMessageListScroll = () => {
@@ -2833,6 +2764,7 @@ export default function App() {
     setIsMessageListFollowing(true);
     setHasMessageListUnread(false);
     scrollMessageListToBottom();
+    window.requestAnimationFrame(scrollMessageListToBottom);
   };
 
   const scrollActivityMonitorToBottom = () => {
@@ -2916,17 +2848,14 @@ export default function App() {
           `pending:preparing:${selectedSession?.id ?? ""}:${selectedSessionLiveRun?.threadId ?? ""}`,
         );
   const pendingRunIndicatorAnnouncement = pendingRunIndicatorText;
-  const isSelectedSessionRunning = selectedSession?.runState === "running";
+  const isSelectedSessionRunning = selectedSessionRunState === "running";
   const contextPaneProjection = useMemo(
     () => buildContextPaneProjection({
       activeContextPaneTab,
       latestCommandView,
       backgroundTasks: selectedBackgroundTasks,
-      selectedMemoryGenerationActivity,
-      selectedCharacterMemoryGenerationActivity,
-      selectedMonologueActivity,
     }),
-    [activeContextPaneTab, latestCommandView, selectedBackgroundTasks, selectedMemoryGenerationActivity, selectedCharacterMemoryGenerationActivity, selectedMonologueActivity],
+    [activeContextPaneTab, latestCommandView, selectedBackgroundTasks],
   );
 
   useEffect(() => {
@@ -2934,14 +2863,11 @@ export default function App() {
       isSelectedSessionRunning,
       isCopilotSession,
       backgroundTasks: selectedBackgroundTasks,
-      selectedMemoryGenerationActivity,
-      selectedCharacterMemoryGenerationActivity,
-      selectedMonologueActivity,
     });
     if (nextTab) {
       setActiveContextPaneTab(nextTab);
     }
-  }, [isSelectedSessionRunning, isCopilotSession, selectedBackgroundTasks, selectedMemoryGenerationActivity?.status, selectedCharacterMemoryGenerationActivity?.status, selectedMonologueActivity?.status]);
+  }, [isSelectedSessionRunning, isCopilotSession, selectedBackgroundTasks]);
 
   useEffect(() => {
     if (!availableContextPaneTabs.includes(activeContextPaneTab)) {
@@ -2951,15 +2877,6 @@ export default function App() {
 
   const handleCycleContextPaneTab = (direction: -1 | 1) => {
     setActiveContextPaneTab((current) => cycleContextPaneTab(current, direction, availableContextPaneTabs));
-  };
-
-  const handleRunSessionMemoryExtraction = async () => {
-    if (!withmateApi || !selectedSession || isSelectedSessionRunning || selectedMemoryGenerationActivity?.status === "running") {
-      return;
-    }
-
-    setActiveContextPaneTab("memory-generation");
-    await withmateApi.runSessionMemoryExtraction(selectedSession.id);
   };
 
   const handleRefreshCharacterUpdateMemoryExtract = async () => {
@@ -2985,6 +2902,117 @@ export default function App() {
 
     await navigator.clipboard.writeText(selectedCharacterUpdateMemoryExtract.text);
   };
+
+  const handleLoadMoreAuditLogs = () => {
+    if (!withmateApi || !selectedSessionId) {
+      return;
+    }
+
+    const currentState = auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState : null;
+    if (!currentState?.hasMore || currentState.loading || currentState.nextCursor === null) {
+      return;
+    }
+
+    const ownerSessionId = selectedSessionId;
+    const cursor = currentState.nextCursor;
+    setAuditLogsState((current) =>
+      current.ownerSessionId === ownerSessionId
+        ? { ...current, loading: true, errorMessage: null }
+        : current,
+    );
+
+    void withmateApi.listSessionAuditLogSummaryPage(ownerSessionId, {
+      cursor,
+      limit: AUDIT_LOG_PAGE_LIMIT,
+    }).then(
+      (page) => {
+        setAuditLogsState((current) => {
+          if (current.ownerSessionId !== ownerSessionId) {
+            return current;
+          }
+
+          const existingIds = new Set(current.entries.map((entry) => entry.id));
+          const nextEntries = [
+            ...current.entries,
+            ...page.entries.filter((entry) => !existingIds.has(entry.id)),
+          ];
+
+          return {
+            ownerSessionId,
+            entries: nextEntries,
+            nextCursor: page.nextCursor,
+            hasMore: page.hasMore,
+            total: page.total,
+            loading: false,
+            errorMessage: null,
+          };
+        });
+      },
+      (error: unknown) => {
+        setAuditLogsState((current) =>
+          current.ownerSessionId === ownerSessionId
+            ? {
+                ...current,
+                loading: false,
+                errorMessage: error instanceof Error ? error.message : "audit log summary の追加取得に失敗したよ。",
+              }
+            : current,
+        );
+      },
+    );
+  };
+
+  const handleLoadAuditLogDetail = (entry: AuditLogSummary) => {
+    if (!withmateApi || !selectedSessionId || entry.id < 0 || !entry.detailAvailable) {
+      return;
+    }
+
+    let shouldLoad = false;
+    setAuditLogDetails((current) => {
+      const existing = current[entry.id];
+      if (existing?.detail || existing?.loading) {
+        return current;
+      }
+
+      shouldLoad = true;
+      return {
+        ...current,
+        [entry.id]: {
+          detail: null,
+          loading: true,
+          errorMessage: null,
+        },
+      };
+    });
+
+    if (!shouldLoad) {
+      return;
+    }
+
+    void withmateApi.getSessionAuditLogDetail(selectedSessionId, entry.id).then(
+      (detail) => {
+        setAuditLogDetails((current) => ({
+          ...current,
+          [entry.id]: {
+            detail,
+            loading: false,
+            errorMessage: detail ? null : "audit log detail が見つからなかったよ。",
+          },
+        }));
+      },
+      (error: unknown) => {
+        setAuditLogDetails((current) => ({
+          ...current,
+          [entry.id]: {
+            detail: null,
+            loading: false,
+            errorMessage: error instanceof Error ? error.message : "audit log detail の取得に失敗したよ。",
+          },
+        }));
+      },
+    );
+  };
+
   const sessionWorkbenchStyle = useMemo(
     () =>
       ({
@@ -3027,7 +3055,7 @@ export default function App() {
           taskTitle={selectedSession.taskTitle}
           isEditingTitle={isEditingTitle}
           titleDraft={titleDraft}
-          isRunning={selectedSession.runState === "running"}
+          isRunning={isSelectedSessionRunning}
           showTerminalButton={!isCharacterUpdateSession}
           onToggleExpanded={handleToggleHeaderExpanded}
           onOpenAuditLog={() => setAuditLogsOpen(true)}
@@ -3052,7 +3080,7 @@ export default function App() {
                   messages={displayedMessages}
                   expandedArtifacts={expandedArtifacts}
                   messageListRef={messageListRef}
-                  isRunning={selectedSession.runState === "running"}
+                  isRunning={isSelectedSessionRunning}
                   pendingRunIndicatorAnnouncement={pendingRunIndicatorAnnouncement}
                   pendingRunIndicatorText={pendingRunIndicatorText}
                   liveApprovalRequest={liveApprovalRequest}
@@ -3063,7 +3091,6 @@ export default function App() {
                   hasLiveRunAssistantText={hasLiveRunAssistantText}
                   liveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
                   isMessageListFollowing={isMessageListFollowing}
-                  hasMessageListUnread={hasMessageListUnread}
                   onMessageListScroll={handleMessageListScroll}
                   onToggleArtifact={toggleArtifact}
                   onOpenDiff={(title, file) =>
@@ -3074,7 +3101,6 @@ export default function App() {
                     })}
                   onResolveLiveApproval={(request, decision) => void handleResolveLiveApproval(request, decision)}
                   onResolveLiveElicitation={(request, response) => void handleResolveLiveElicitation(request, response)}
-                  onJumpToBottom={handleJumpToMessageListBottom}
                   onOpenPath={handleOpenInlinePath}
                   getChangedFilesEmptyText={(artifactKey, artifactHasSnapshotRisk) =>
                     artifactHasSnapshotRisk
@@ -3117,6 +3143,7 @@ export default function App() {
                         selectedCustomAgentTitle={selectedCustomAgentDisplay.title ?? "Copilot custom agent を選択"}
                         additionalDirectoryCount={selectedSession.allowedAdditionalDirectories.length}
                         canCollapseActionDock={canCollapseActionDock}
+                        showJumpToBottom={!isMessageListFollowing}
                         isCustomAgentListLoading={isCustomAgentListLoading}
                         isSkillListLoading={isSkillListLoading}
                         customAgentItems={customAgentItems}
@@ -3154,6 +3181,7 @@ export default function App() {
                         onAddAdditionalDirectory={() => void handleAddAdditionalDirectory()}
                         onToggleAdditionalDirectoryList={() => setIsAdditionalDirectoryListOpen((current) => !current)}
                         onCollapse={handleCollapseActionDock}
+                        onJumpToBottom={handleJumpToMessageListBottom}
                         onSelectCustomAgent={(value) => void handleSelectCustomAgent(
                           value ? availableCustomAgents.find((agent) => agent.name === value) ?? null : null,
                         )}
@@ -3194,8 +3222,10 @@ export default function App() {
                       attachmentCount={composerPreview.attachments.length}
                       isRunning={selectedSession.runState === "running"}
                       isSendDisabled={isSendDisabled}
+                      showJumpToBottom={!isMessageListFollowing}
                       sendButtonTitle={composerSendButtonTitle}
                       onExpand={() => handleExpandActionDock({ focusComposer: true })}
+                      onJumpToBottom={handleJumpToMessageListBottom}
                       onSendOrCancel={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
                     />
                   )}
@@ -3237,11 +3267,6 @@ export default function App() {
                     backgroundTasks={selectedBackgroundTasks}
                     selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
                     isSelectedSessionRunning={isSelectedSessionRunning}
-                    selectedSessionCharacter={selectedSessionCharacter}
-                    selectedMemoryGenerationActivity={selectedMemoryGenerationActivity}
-                    selectedCharacterMemoryGenerationActivity={selectedCharacterMemoryGenerationActivity}
-                    selectedMonologueActivity={selectedMonologueActivity}
-                    selectedMonologueEntries={selectedMonologueEntries}
                     isCopilotSession={isCopilotSession}
                     selectedCopilotRemainingPercentLabel={selectedCopilotRemainingPercentLabel}
                     selectedCopilotRemainingRequestsLabel={selectedCopilotRemainingRequestsLabel}
@@ -3249,11 +3274,8 @@ export default function App() {
                     selectedSessionContextTelemetry={selectedSessionContextTelemetry}
                     selectedSessionContextTelemetryProjection={selectedSessionContextTelemetryProjection}
                     contextEmptyText={selectedContextEmptyText}
-                    canRunSessionMemoryGeneration={!!withmateApi && !isSelectedSessionRunning}
                     onToggleHeaderExpanded={handleToggleHeaderExpanded}
-                    isSessionMemoryGenerationRunning={selectedMemoryGenerationActivity?.status === "running"}
                     onCycleContextPaneTab={handleCycleContextPaneTab}
-                    onRunSessionMemoryGeneration={() => void handleRunSessionMemoryExtraction()}
                   />
                 )}
               </SessionPaneErrorBoundary>
@@ -3272,6 +3294,15 @@ export default function App() {
       <SessionAuditLogModal
         open={auditLogsOpen}
         entries={displayedSessionAuditLogs}
+        details={auditLogDetails}
+        hasMore={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.hasMore : false}
+        loadingMore={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.loading : false}
+        total={auditLogsState.ownerSessionId === selectedSessionId
+          ? Math.max(auditLogsState.total, displayedSessionAuditLogs.length)
+          : displayedSessionAuditLogs.length}
+        errorMessage={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.errorMessage : null}
+        onLoadMore={handleLoadMoreAuditLogs}
+        onLoadDetail={handleLoadAuditLogDetail}
         onClose={() => setAuditLogsOpen(false)}
       />
     </div>

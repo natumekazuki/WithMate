@@ -2163,66 +2163,6 @@ button:disabled {
   padding-right: 6px;
 }
 
-.message-follow-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  margin-top: 12px;
-  padding: 12px 14px;
-  border: 1px solid rgba(203, 213, 225, 0.12);
-  border-radius: 16px;
-  background: rgba(15, 19, 26, 0.88);
-}
-
-.message-follow-banner.sticky {
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
-  margin-top: 18px;
-  margin-bottom: 0;
-}
-
-.message-follow-banner-copy {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.message-follow-banner-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  width: fit-content;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: rgba(56, 189, 248, 0.16);
-  color: #c8f1ff;
-  font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.message-follow-banner.has-unread .message-follow-banner-badge {
-  background: rgba(251, 191, 36, 0.18);
-  color: #ffe7bf;
-}
-
-.message-follow-banner p {
-  margin: 0;
-  color: var(--ink);
-  line-height: 1.5;
-}
-
-.message-follow-banner-button {
-  flex: 0 0 auto;
-  padding: 10px 14px;
-  border-radius: 999px;
-  background: var(--character-main);
-  color: var(--character-main-ink);
-  box-shadow: 0 10px 22px color-mix(in srgb, var(--character-main) 24%, transparent);
-}
-
 .session-card {
   position: relative;
   display: grid;
@@ -3015,8 +2955,41 @@ button:disabled {
   font-size: 0.8rem;
 }
 
-.session-message-column .message-follow-banner {
-  margin-top: 0;
+.session-message-list {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  align-content: start;
+  padding-right: 6px;
+  overflow-anchor: none;
+}
+
+.session-message-list-window {
+  display: grid;
+  min-height: 0;
+}
+
+.session-message-list-window-items {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+}
+
+.message-history-load-more {
+  justify-self: center;
+  width: fit-content;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--character-main) 26%, rgba(203, 213, 225, 0.24));
+  background: color-mix(in srgb, var(--character-main-soft) 42%, rgba(15, 19, 26, 0.94));
+  color: var(--ink);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
+}
+
+.message-list-bottom-anchor {
+  min-height: 1px;
+  overflow-anchor: auto;
 }
 
 .composer {
@@ -4599,11 +4572,6 @@ button:disabled {
   margin: 0;
 }
 
-.session-page .message-follow-banner {
-  border-color: rgba(203, 213, 225, 0.18);
-  background: rgba(20, 27, 40, 0.96);
-}
-
 .resume-banner button {
   justify-self: start;
   padding: 10px 16px;
@@ -5235,12 +5203,53 @@ button:disabled {
   color: var(--ink);
 }
 
+.audit-log-page-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: -4px 22px 12px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.audit-log-page-error {
+  color: #ff9c9c;
+}
+
 .audit-log-list {
   display: grid;
-  gap: 14px;
   min-height: 0;
   overflow: auto;
   padding: 0 22px 22px;
+}
+
+.audit-log-list-window {
+  min-height: var(--audit-log-total-height, 0);
+}
+
+.audit-log-list-window-items {
+  display: grid;
+  gap: 14px;
+}
+
+.audit-log-list-spacer {
+  min-height: 0;
+}
+
+.audit-log-load-more {
+  justify-self: center;
+  margin: 0 22px 22px;
+  padding: 9px 18px;
+  border: 1px solid rgba(203, 213, 225, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.audit-log-load-more:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 
 .audit-log-card {

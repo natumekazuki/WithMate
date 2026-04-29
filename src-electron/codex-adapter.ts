@@ -96,11 +96,14 @@ type CodexTurnStreamState = {
   items: Map<string, ThreadItem>;
   liveSteps: Map<string, LiveRunStep>;
   threadId: string | null;
-  assistantText: string;
+  streamedAssistantText: string;
+  finalAssistantText: string;
   usage: Usage | null;
   liveUsage: AuditLogUsage | null;
   streamErrorMessage: string;
 };
+
+type CodexEventRecord = Record<string, unknown>;
 
 export type CodexThreadOptions = {
   workingDirectory: string;
@@ -680,14 +683,101 @@ function createCodexTurnStreamState(threadId: string | null): CodexTurnStreamSta
     items: new Map<string, ThreadItem>(),
     liveSteps: new Map<string, LiveRunStep>(),
     threadId,
-    assistantText: "",
+    streamedAssistantText: "",
+    finalAssistantText: "",
     usage: null,
     liveUsage: null,
     streamErrorMessage: "",
   };
 }
 
+function readStringProperty(source: unknown, keys: string[]): string | null {
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+
+  const record = source as CodexEventRecord;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function readStringFromUnknown(source: unknown): string | null {
+  if (typeof source === "string") {
+    return source;
+  }
+
+  if (Array.isArray(source)) {
+    const parts = source
+      .map((item) => readStringFromUnknown(item))
+      .filter((item): item is string => item !== null);
+    return parts.length > 0 ? parts.join("") : null;
+  }
+
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+
+  const record = source as CodexEventRecord;
+  const directValue = readStringProperty(record, [
+    "delta",
+    "text_delta",
+    "message_delta",
+    "content_delta",
+    "deltaContent",
+    "text",
+    "content",
+    "value",
+    "output",
+  ]);
+  if (directValue !== null) {
+    return directValue;
+  }
+
+  for (const key of ["delta", "data", "message", "item", "content", "output", "part"]) {
+    const nestedValue = readStringFromUnknown(record[key]);
+    if (nestedValue !== null) {
+      return nestedValue;
+    }
+  }
+
+  return null;
+}
+
+function readCodexAssistantDelta(event: ThreadEvent): string | null {
+  const record = event as unknown as CodexEventRecord;
+  const eventType = typeof record.type === "string" ? record.type.toLowerCase() : "";
+  if (!eventType.includes("delta")) {
+    return null;
+  }
+
+  const isAssistantTextDelta =
+    eventType.includes("agent_message")
+    || eventType.includes("assistant")
+    || eventType.includes("message")
+    || eventType.includes("output_text");
+  if (!isAssistantTextDelta) {
+    return null;
+  }
+
+  return readStringFromUnknown(record);
+}
+
+function getLiveAssistantText(state: CodexTurnStreamState): string {
+  return state.finalAssistantText || state.streamedAssistantText;
+}
+
 function applyCodexTurnEvent(state: CodexTurnStreamState, event: ThreadEvent): void {
+  const assistantDelta = readCodexAssistantDelta(event);
+  if (assistantDelta !== null) {
+    state.streamedAssistantText += assistantDelta;
+  }
+
   switch (event.type) {
     case "thread.started":
       state.threadId = event.thread_id;
@@ -707,7 +797,10 @@ function applyCodexTurnEvent(state: CodexTurnStreamState, event: ThreadEvent): v
     case "item.completed": {
       state.items.set(event.item.id, event.item);
       if (event.item.type === "agent_message") {
-        state.assistantText = collectAssistantText(state.items.values());
+        const itemAssistantText = collectAssistantText(state.items.values());
+        if (itemAssistantText.trim().length > 0) {
+          state.finalAssistantText = itemAssistantText;
+        }
       }
 
       const liveStep = buildLiveStep(event.item);
@@ -719,6 +812,24 @@ function applyCodexTurnEvent(state: CodexTurnStreamState, event: ThreadEvent): v
     default:
       break;
   }
+}
+
+export function collectCodexAssistantTextFromEventsForTesting(events: ThreadEvent[]): string {
+  const state = createCodexTurnStreamState(null);
+  for (const event of events) {
+    applyCodexTurnEvent(state, event);
+  }
+  return getLiveAssistantText(state);
+}
+
+export function collectCodexAssistantTextSnapshotsFromEventsForTesting(events: ThreadEvent[]): string[] {
+  const state = createCodexTurnStreamState(null);
+  const snapshots: string[] = [];
+  for (const event of events) {
+    applyCodexTurnEvent(state, event);
+    snapshots.push(getLiveAssistantText(state));
+  }
+  return snapshots;
 }
 
 function buildCodexTransportPayload(prompt: ProviderPromptComposition): AuditTransportPayload {
@@ -1051,12 +1162,14 @@ export class CodexAdapter implements ProviderTurnAdapter {
     items: Map<string, ThreadItem>,
     usage: Usage | null,
     threadId: string | null,
+    streamedAssistantText: string,
     selection: ResolvedModelSelection,
     beforeSnapshot: WorkspaceSnapshot,
     beforeSnapshotStats: SnapshotCaptureStats,
   ): Promise<RunSessionTurnResult> {
     const finalItems = Array.from(items.values());
-    const finalAssistantText = collectAssistantText(finalItems);
+    const itemAssistantText = collectAssistantText(finalItems);
+    const finalAssistantText = itemAssistantText.trim().length > 0 ? itemAssistantText : streamedAssistantText;
     const { afterSnapshot, afterSnapshotStats, useSnapshotFallback } =
       await this.captureAfterWorkspaceSnapshot(input, finalItems);
     const artifact = await buildArtifact(
@@ -1104,7 +1217,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       input.session.id,
       streamState.threadId,
       streamState.liveSteps,
-      streamState.assistantText,
+      getLiveAssistantText(streamState),
       streamState.liveUsage,
       streamState.streamErrorMessage,
     );
@@ -1121,7 +1234,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
           input.session.id,
           streamState.threadId,
           streamState.liveSteps,
-          streamState.assistantText,
+          getLiveAssistantText(streamState),
           streamState.liveUsage,
           streamState.streamErrorMessage,
         );
@@ -1134,6 +1247,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
           streamState.items,
           streamState.usage,
           streamState.threadId,
+          streamState.streamedAssistantText,
           selection,
           beforeSnapshot,
           beforeSnapshotStats,
@@ -1151,6 +1265,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         streamState.items,
         streamState.usage,
         streamState.threadId,
+        streamState.streamedAssistantText,
         selection,
         beforeSnapshot,
         beforeSnapshotStats,
@@ -1167,6 +1282,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         streamState.items,
         streamState.usage,
         streamState.threadId,
+        streamState.streamedAssistantText,
         selection,
         beforeSnapshot,
         beforeSnapshotStats,

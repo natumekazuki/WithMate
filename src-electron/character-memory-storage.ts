@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
 import {
   cloneCharacterMemoryEntries,
@@ -7,7 +7,9 @@ import {
   normalizeCharacterMemoryEntry,
   normalizeCharacterScope,
 } from "../src/memory-state.js";
+import type { ManagedCharacterMemoryGroup, MemoryManagementPageRequest } from "../src/memory-management-state.js";
 import type { CharacterMemoryEntry, CharacterScope } from "../src/memory-state.js";
+import { CREATE_CHARACTER_MEMORY_TABLES_SQL } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 type CharacterScopeRow = {
@@ -80,6 +82,89 @@ function rowToCharacterMemoryEntry(row: CharacterMemoryEntryRow): CharacterMemor
   });
 }
 
+type CharacterMemoryPageRow = CharacterMemoryEntryRow & {
+  scope_id: string;
+  scope_character_id: string;
+  scope_display_name: string;
+  scope_created_at: string;
+  scope_updated_at: string;
+};
+
+function normalizePageCursor(cursor: MemoryManagementPageRequest["cursor"]): number {
+  return typeof cursor === "number" && Number.isFinite(cursor) && cursor > 0 ? Math.floor(cursor) : 0;
+}
+
+function normalizePageLimit(limit: MemoryManagementPageRequest["limit"]): number {
+  return typeof limit === "number" && Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 50;
+}
+
+function pushSearchParam(params: SQLInputValue[], searchText: string): void {
+  params.push(searchText);
+}
+
+function buildCharacterMemoryPageWhere(request: MemoryManagementPageRequest): { sql: string; params: SQLInputValue[] } {
+  const clauses: string[] = [];
+  const params: SQLInputValue[] = [];
+  const searchText = typeof request.searchText === "string" ? request.searchText.trim().toLowerCase() : "";
+
+  if (request.characterCategory && request.characterCategory !== "all") {
+    clauses.push("e.category = ?");
+    params.push(request.characterCategory);
+  }
+
+  if (searchText) {
+    clauses.push(`
+      (
+        instr(lower(
+          s.display_name || char(10) ||
+          s.character_id || char(10) ||
+          e.title || char(10) ||
+          e.detail || char(10) ||
+          e.category
+        ), ?) > 0
+        OR EXISTS (SELECT 1 FROM json_each(e.keywords_json) WHERE instr(lower(CAST(value AS TEXT)), ?) > 0)
+        OR EXISTS (SELECT 1 FROM json_each(e.evidence_json) WHERE instr(lower(CAST(value AS TEXT)), ?) > 0)
+      )
+    `);
+    pushSearchParam(params, searchText);
+    pushSearchParam(params, searchText);
+    pushSearchParam(params, searchText);
+  }
+
+  return {
+    sql: clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "",
+    params,
+  };
+}
+
+function groupCharacterMemoryPageRows(rows: CharacterMemoryPageRow[]): ManagedCharacterMemoryGroup[] {
+  const groups = new Map<string, ManagedCharacterMemoryGroup>();
+
+  for (const row of rows) {
+    const scope = rowToCharacterScope({
+      id: row.scope_id,
+      character_id: row.scope_character_id,
+      display_name: row.scope_display_name,
+      created_at: row.scope_created_at,
+      updated_at: row.scope_updated_at,
+    });
+    const entry = rowToCharacterMemoryEntry(row);
+    if (!scope || !entry) {
+      continue;
+    }
+
+    const existing = groups.get(scope.id);
+    if (existing) {
+      existing.entries.push(entry);
+      continue;
+    }
+
+    groups.set(scope.id, { scope, entries: [entry] });
+  }
+
+  return [...groups.values()];
+}
+
 export class CharacterMemoryStorage {
   private readonly db: DatabaseSync;
 
@@ -89,35 +174,7 @@ export class CharacterMemoryStorage {
   }
 
   private ensureSchema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS character_scopes (
-        id TEXT PRIMARY KEY,
-        character_id TEXT NOT NULL UNIQUE,
-        display_name TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS character_memory_entries (
-        id TEXT PRIMARY KEY,
-        character_scope_id TEXT NOT NULL REFERENCES character_scopes(id) ON DELETE CASCADE,
-        source_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-        category TEXT NOT NULL,
-        title TEXT NOT NULL,
-        detail TEXT NOT NULL,
-        keywords_json TEXT NOT NULL DEFAULT '[]',
-        evidence_json TEXT NOT NULL DEFAULT '[]',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        last_used_at TEXT
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_character_memory_entries_scope
-        ON character_memory_entries(character_scope_id, updated_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_character_memory_entries_category
-        ON character_memory_entries(character_scope_id, category, updated_at DESC);
-    `);
+    this.db.exec(CREATE_CHARACTER_MEMORY_TABLES_SQL);
   }
 
   listCharacterScopes(): CharacterScope[] {
@@ -210,6 +267,48 @@ export class CharacterMemoryStorage {
     return cloneCharacterMemoryEntries(
       rows.map(rowToCharacterMemoryEntry).filter((row): row is CharacterMemoryEntry => row !== null),
     );
+  }
+
+  listCharacterMemoryPage(request: MemoryManagementPageRequest = {}): { groups: ManagedCharacterMemoryGroup[]; total: number } {
+    const cursor = normalizePageCursor(request.cursor);
+    const limit = normalizePageLimit(request.limit);
+    const direction = request.sort === "updated-asc" ? "ASC" : "DESC";
+    const where = buildCharacterMemoryPageWhere(request);
+    const totalRow = this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM character_memory_entries AS e
+      INNER JOIN character_scopes AS s ON s.id = e.character_scope_id
+      ${where.sql}
+    `).get(...where.params) as { count: number };
+    const rows = this.db.prepare(`
+      SELECT
+        e.id,
+        e.character_scope_id,
+        e.source_session_id,
+        e.category,
+        e.title,
+        e.detail,
+        e.keywords_json,
+        e.evidence_json,
+        e.created_at,
+        e.updated_at,
+        e.last_used_at,
+        s.id AS scope_id,
+        s.character_id AS scope_character_id,
+        s.display_name AS scope_display_name,
+        s.created_at AS scope_created_at,
+        s.updated_at AS scope_updated_at
+      FROM character_memory_entries AS e
+      INNER JOIN character_scopes AS s ON s.id = e.character_scope_id
+      ${where.sql}
+      ORDER BY e.updated_at ${direction}, e.id ASC
+      LIMIT ? OFFSET ?
+    `).all(...where.params, limit, cursor) as CharacterMemoryPageRow[];
+
+    return {
+      groups: groupCharacterMemoryPageRows(rows),
+      total: totalRow.count,
+    };
   }
 
   deleteCharacterMemoryEntry(entryId: string): void {

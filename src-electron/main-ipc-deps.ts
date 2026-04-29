@@ -1,7 +1,11 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from "electron";
 
 import type {
+  AuditLogDetail,
   AuditLogEntry,
+  AuditLogSummary,
+  AuditLogSummaryPageRequest,
+  AuditLogSummaryPageResult,
   CharacterProfile,
   LiveApprovalDecision,
   LiveElicitationResponse,
@@ -15,7 +19,11 @@ import type {
 } from "../src/app-state.js";
 import type { CreateCharacterInput } from "../src/character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
-import type { MemoryManagementSnapshot } from "../src/memory-management-state.js";
+import type {
+  MemoryManagementPageRequest,
+  MemoryManagementPageResult,
+  MemoryManagementSnapshot,
+} from "../src/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
@@ -60,6 +68,7 @@ export type MainIpcSettingsDepsArgs = {
   updateAppSettings(settings: AppSettings): AppSettings;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
   getMemoryManagementSnapshot(): MemoryManagementSnapshot;
+  getMemoryManagementPage(request: MemoryManagementPageRequest): MemoryManagementPageResult;
   deleteSessionMemory(sessionId: string): void;
   deleteProjectMemoryEntry(entryId: string): void;
   deleteCharacterMemoryEntry(entryId: string): void;
@@ -68,6 +77,12 @@ export type MainIpcSettingsDepsArgs = {
 export type MainIpcSessionQueryDepsArgs = {
   listSessionSummaries(): SessionSummary[];
   listSessionAuditLogs(sessionId: string): AuditLogEntry[];
+  listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[];
+  listSessionAuditLogSummaryPage(
+    sessionId: string,
+    request?: AuditLogSummaryPageRequest | null,
+  ): AuditLogSummaryPageResult;
+  getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listOpenSessionWindowIds(): string[];
@@ -91,7 +106,6 @@ export type MainIpcSessionRuntimeDepsArgs = {
   updateSession(session: Session): Session;
   deleteSession(sessionId: string): void;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
-  runSessionMemoryExtraction(sessionId: string): void;
   cancelSessionRun(sessionId: string): void;
 };
 
@@ -160,11 +174,15 @@ export function createMainIpcRegistrationDeps(
     updateAppSettings: args.settings.updateAppSettings,
     resetAppDatabase: args.settings.resetAppDatabase,
     getMemoryManagementSnapshot: args.settings.getMemoryManagementSnapshot,
+    getMemoryManagementPage: args.settings.getMemoryManagementPage,
     deleteSessionMemory: args.settings.deleteSessionMemory,
     deleteProjectMemoryEntry: args.settings.deleteProjectMemoryEntry,
     deleteCharacterMemoryEntry: args.settings.deleteCharacterMemoryEntry,
     listSessionSummaries: args.sessionQuery.listSessionSummaries,
     listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,
+    listSessionAuditLogSummaries: args.sessionQuery.listSessionAuditLogSummaries,
+    listSessionAuditLogSummaryPage: args.sessionQuery.listSessionAuditLogSummaryPage,
+    getSessionAuditLogDetail: args.sessionQuery.getSessionAuditLogDetail,
     listSessionSkills: args.sessionQuery.listSessionSkills,
     listSessionCustomAgents: args.sessionQuery.listSessionCustomAgents,
     listOpenSessionWindowIds: args.sessionQuery.listOpenSessionWindowIds,
@@ -182,7 +200,6 @@ export function createMainIpcRegistrationDeps(
     updateSession: args.sessionRuntime.updateSession,
     deleteSession: args.sessionRuntime.deleteSession,
     runSessionTurn: args.sessionRuntime.runSessionTurn,
-    runSessionMemoryExtraction: args.sessionRuntime.runSessionMemoryExtraction,
     cancelSessionRun: args.sessionRuntime.cancelSessionRun,
     listCharacters: args.character.listCharacters,
     getCharacter: args.character.getCharacter,

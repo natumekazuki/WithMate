@@ -8,8 +8,10 @@ import {
   type Session,
   type SessionSummary,
 } from "../src/session-state.js";
-import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
-import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
+import {
+  CREATE_SESSIONS_TABLE_SQL,
+  LEGACY_SESSION_COLUMN_DEFINITIONS,
+} from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 type SessionRow = {
@@ -305,47 +307,13 @@ function rowToSessionSummary(row: SessionSummaryRow, mode: SessionRowParseMode =
   return summary;
 }
 
-function sqlStringLiteral(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
-}
-
 export class SessionStorage {
   private readonly db: DatabaseSync;
 
   constructor(dbPath: string) {
     this.db = openAppDatabase(dbPath);
 
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY,
-        task_title TEXT NOT NULL,
-        task_summary TEXT NOT NULL,
-        status TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        catalog_revision INTEGER NOT NULL DEFAULT ${DEFAULT_CATALOG_REVISION},
-        workspace_label TEXT NOT NULL,
-        workspace_path TEXT NOT NULL,
-        branch TEXT NOT NULL,
-        session_kind TEXT NOT NULL DEFAULT 'default',
-        character_id TEXT NOT NULL,
-        character_name TEXT NOT NULL,
-        character_icon_path TEXT NOT NULL,
-        character_theme_main TEXT NOT NULL DEFAULT '#6f8cff',
-        character_theme_sub TEXT NOT NULL DEFAULT '#6fb8c7',
-        run_state TEXT NOT NULL,
-        approval_mode TEXT NOT NULL,
-        codex_sandbox_mode TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_CODEX_SANDBOX_MODE)},
-        model TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_MODEL_ID)},
-        reasoning_effort TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_REASONING_EFFORT)},
-        custom_agent_name TEXT NOT NULL DEFAULT '',
-        allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]',
-        thread_id TEXT NOT NULL DEFAULT '',
-        messages_json TEXT NOT NULL,
-        stream_json TEXT NOT NULL,
-        last_active_at INTEGER NOT NULL
-      );
-    `);
+    this.db.exec(CREATE_SESSIONS_TABLE_SQL);
     this.ensureSchema();
   }
 
@@ -387,41 +355,35 @@ export class SessionStorage {
     );
 
     if (!columns.has("model")) {
-      this.db.exec(
-        `ALTER TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_MODEL_ID)};`,
-      );
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN model ${LEGACY_SESSION_COLUMN_DEFINITIONS.model};`);
     }
 
     if (!columns.has("reasoning_effort")) {
-      this.db.exec(
-        `ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_REASONING_EFFORT)};`,
-      );
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN reasoning_effort ${LEGACY_SESSION_COLUMN_DEFINITIONS.reasoning_effort};`);
     }
 
     if (!columns.has("codex_sandbox_mode")) {
-      this.db.exec(
-        `ALTER TABLE sessions ADD COLUMN codex_sandbox_mode TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_CODEX_SANDBOX_MODE)};`,
-      );
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN codex_sandbox_mode ${LEGACY_SESSION_COLUMN_DEFINITIONS.codex_sandbox_mode};`);
     }
 
     if (!columns.has("catalog_revision")) {
-      this.db.exec(`ALTER TABLE sessions ADD COLUMN catalog_revision INTEGER NOT NULL DEFAULT ${DEFAULT_CATALOG_REVISION};`);
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN catalog_revision ${LEGACY_SESSION_COLUMN_DEFINITIONS.catalog_revision};`);
     }
 
     if (!columns.has("custom_agent_name")) {
-      this.db.exec("ALTER TABLE sessions ADD COLUMN custom_agent_name TEXT NOT NULL DEFAULT '';");
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN custom_agent_name ${LEGACY_SESSION_COLUMN_DEFINITIONS.custom_agent_name};`);
     }
 
     if (!columns.has("allowed_additional_directories_json")) {
-      this.db.exec("ALTER TABLE sessions ADD COLUMN allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]';");
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN allowed_additional_directories_json ${LEGACY_SESSION_COLUMN_DEFINITIONS.allowed_additional_directories_json};`);
     }
 
     if (!columns.has("character_theme_main")) {
-      this.db.exec(`ALTER TABLE sessions ADD COLUMN character_theme_main TEXT NOT NULL DEFAULT '#6f8cff';`);
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN character_theme_main ${LEGACY_SESSION_COLUMN_DEFINITIONS.character_theme_main};`);
     }
 
     if (!columns.has("character_theme_sub")) {
-      this.db.exec(`ALTER TABLE sessions ADD COLUMN character_theme_sub TEXT NOT NULL DEFAULT '#6fb8c7';`);
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN character_theme_sub ${LEGACY_SESSION_COLUMN_DEFINITIONS.character_theme_sub};`);
     }
 
   }

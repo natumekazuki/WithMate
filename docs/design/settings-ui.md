@@ -1,6 +1,7 @@
 # Settings UI
 
 - 作成日: 2026-03-14
+- 更新日: 2026-04-27
 - 対象: 独立した `Settings Window`
 
 ## Goal
@@ -13,8 +14,8 @@
 - 設定は `Home Window` から開く独立 `Settings Window` とする
 - `System Prompt Prefix` は `Settings Window` で定義し、prompt composition に渡す
 - `System Prompt Prefix` は保存時に `# System Prompt` 配下へ組み込まれる
-- `Memory Generation` は global toggle とし、OFF 時は Session Memory extraction / Character Reflection / Monologue の background 実行をまとめて止める
-- current 実装では `System Prompt Prefix`、`Session Window`、`Coding Agent Providers`、`Skill Roots`、`Memory Extraction`、`Character Reflection`、`Model Catalog` を置く
+- `Memory Generation` / `Memory Extraction` / `Character Reflection` は current UI から削除する
+- current 実装では `System Prompt Prefix`、`Session Window`、`Coding Agent Providers`、`Skill Roots`、`Model Catalog` を置く
 - `Settings Window` は縦方向の余白を少し増やしつつ、内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - file picker / save dialog は Main Process 側で開く
 - current 実装では Main Process 側の settings / catalog 更新は `src-electron/settings-catalog-service.ts` に寄せ、renderer 側の provider row 組み立ては `src/home-settings-view-model.ts` に寄せる
@@ -23,7 +24,7 @@
 
 1. ユーザーが Home toolbar の `Settings` を押す
 2. 独立した `Settings Window` が開く
-3. `System Prompt Prefix`、Session 表示設定、coding provider の enable / disable、skill root、memory extraction / character reflection 設定を編集して保存する。window が小さいときは内部スクロールで下端まで移動し、`Import Models` / `Export Models` も実行できる
+3. `System Prompt Prefix`、Session 表示設定、coding provider の enable / disable、skill root を編集して保存する。window が小さいときは内部スクロールで下端まで移動し、`Import Models` / `Export Models` も実行できる
 4. 結果は window 内の短いフィードバックで返す
 
 ## Layout
@@ -43,20 +44,13 @@
     - provider ごとの skill root path
     - `Browse`
 - `Memory Extraction`
-  - `Memory Generation` global toggle
-  - provider ごとの `Model`
-  - provider ごとの `Reasoning Depth`
-  - provider ごとの `Output Tokens Threshold`
-  - provider ごとの `Timeout Seconds`
-  - `Character Reflection`
-    - app-wide の `Cooldown Seconds` / `Min Char Delta` / `Min Message Delta`
-    - provider ごとの `Model`
-    - provider ごとの `Reasoning Depth`
-    - provider ごとの `Timeout Seconds`
-  - `Model Catalog`
-    - import / export
-  - `Save Settings`
-  - 結果フィードバック
+  - current UI では表示しない
+- `Character Reflection`
+  - current UI では表示しない
+- `Model Catalog`
+  - import / export
+- `Save Settings`
+- 結果フィードバック
 
 ## Current Scope
 
@@ -64,19 +58,13 @@
 - `Session Window` の `送信後に Action Dock を自動で閉じる` の保存
 - coding provider ごとの enable / disable
 - coding provider ごとの `Skill Root` 入力保存
-- provider ごとの `Memory Extraction model / reasoning depth / outputTokens threshold / timeout` 入力保存
-- provider ごとの `Character Reflection model / reasoning depth / timeout` 入力保存
-- app-wide の `Character Reflection` trigger 設定の保存
-- `Memory Generation` global toggle の入力保存
 - `model catalog` の import
 - `model catalog` の export
 
 ## Runtime Policy
 
-- `Memory Generation` が OFF の時は、Session Memory extraction / Character Reflection / Monologue の background 実行をまとめて止める
-- Memory extraction 設定は provider ごとに保持し、trigger engine は現在 provider の `model / reasoning depth / outputTokens threshold / timeout` を参照する
-- current 実装では、memory extraction の通常発火は `outputTokens threshold` だけで判定する
-- Character reflection 設定は provider ごとに保持し、current v1 の `character reflection cycle` 実行時に `model / reasoning depth / timeout` を参照する
+- MemoryGeneration / Character Reflection / Monologue の background 実行は current runtime では行わない
+- Memory extraction / Character reflection の既存 settings key は互換用に残る場合があるが、current UI では編集面を出さない
 - Main Process 側の `app settings` 更新、`model catalog` import、rollback、関連 session / telemetry invalidation は `SettingsCatalogService` が担当する
 - `model catalog export` の document 取得も `SettingsCatalogService` が担当する
 - renderer 側では `HomeApp.tsx` が storage 正規化を直接持たず、`home-settings-view-model` の derived data を使って provider row を描画する
@@ -92,9 +80,10 @@
 - 独立 monologue plane 用 API 設定
 - 新規 workspace の root directory 設定
 - provider ごとの既定値
-- Memory extraction の trigger mode 切替
+- MemoryGeneration を再設計する場合の専用設定
 
 ## Non Goals
 
 - Home に設定項目を常設すること
 - 独立 monologue plane 用設定欄を current milestone で追加すること
+- MemoryGeneration / Character Reflection の旧設定 UI を current milestone で維持すること

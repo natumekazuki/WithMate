@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  buildMemoryManagementPageRequest,
   cloneMemoryManagementSnapshot,
+  mergeMemoryManagementSnapshots,
   removeCharacterMemoryEntryFromSnapshot,
   removeProjectMemoryEntryFromSnapshot,
   removeSessionMemoryFromSnapshot,
@@ -160,6 +162,42 @@ function createSnapshot(): MemoryManagementSnapshot {
 }
 
 describe("memory-management-state", () => {
+  it("page request は現在の domain filter と明示 limit を保持する", () => {
+    const request = buildMemoryManagementPageRequest({
+      domain: "project",
+      searchText: "target",
+      sort: "updated-desc",
+      sessionStatus: "all",
+      projectCategory: "decision",
+      characterCategory: "all",
+    }, {
+      limit: 50,
+    });
+
+    assert.equal(request.domain, "project");
+    assert.equal(request.limit, 50);
+    assert.equal(request.cursor, 0);
+  });
+
+  it("page request は追加読み込み時の domain override と cursor を優先する", () => {
+    const request = buildMemoryManagementPageRequest({
+      domain: "all",
+      searchText: "",
+      sort: "updated-desc",
+      sessionStatus: "all",
+      projectCategory: "all",
+      characterCategory: "all",
+    }, {
+      domain: "session",
+      cursor: 50,
+      limit: 25,
+    });
+
+    assert.equal(request.domain, "session");
+    assert.equal(request.cursor, 50);
+    assert.equal(request.limit, 25);
+  });
+
   it("session memory を local snapshot から削除する", () => {
     const snapshot = createSnapshot();
     const original = cloneMemoryManagementSnapshot(snapshot);
@@ -206,5 +244,68 @@ describe("memory-management-state", () => {
     const nextSnapshot = removeCharacterMemoryEntryFromSnapshot(snapshot, "missing-entry");
 
     assert.equal(nextSnapshot, snapshot);
+  });
+
+  it("session page merge は sessionId で重複を落とす", () => {
+    const snapshot = createSnapshot();
+
+    const nextSnapshot = mergeMemoryManagementSnapshots(snapshot, {
+      sessionMemories: [
+        snapshot.sessionMemories[1],
+        {
+          ...snapshot.sessionMemories[1],
+          sessionId: "session-3",
+          taskTitle: "Task C",
+        },
+      ],
+      projectMemories: [],
+      characterMemories: [],
+    }, "session");
+
+    assert.deepEqual(nextSnapshot.sessionMemories.map((item) => item.sessionId), ["session-1", "session-2", "session-3"]);
+  });
+
+  it("project / character page merge は entry id で重複を落とす", () => {
+    const snapshot = createSnapshot();
+
+    const nextProjectSnapshot = mergeMemoryManagementSnapshots(snapshot, {
+      sessionMemories: [],
+      projectMemories: [{
+        scope: snapshot.projectMemories[0].scope,
+        entries: [
+          snapshot.projectMemories[0].entries[0],
+          {
+            ...snapshot.projectMemories[0].entries[0],
+            id: "project-entry-4",
+            title: "entry-4",
+          },
+        ],
+      }],
+      characterMemories: [],
+    }, "project");
+    const nextCharacterSnapshot = mergeMemoryManagementSnapshots(snapshot, {
+      sessionMemories: [],
+      projectMemories: [],
+      characterMemories: [{
+        scope: snapshot.characterMemories[0].scope,
+        entries: [
+          snapshot.characterMemories[0].entries[0],
+          {
+            ...snapshot.characterMemories[0].entries[0],
+            id: "character-entry-2",
+            title: "tone-2",
+          },
+        ],
+      }],
+    }, "character");
+
+    assert.deepEqual(nextProjectSnapshot.projectMemories[0]?.entries.map((entry) => entry.id), [
+      "project-entry-1",
+      "project-entry-4",
+    ]);
+    assert.deepEqual(nextCharacterSnapshot.characterMemories[0]?.entries.map((entry) => entry.id), [
+      "character-entry-1",
+      "character-entry-2",
+    ]);
   });
 });

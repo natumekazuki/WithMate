@@ -161,8 +161,7 @@ coding plane において、Memory が解くべき問いは次の 2 つだけに
 このため、coding plane ではまず `Project Memory` と `Session Memory` の 2 軸で考える。  
 `Character Memory` は monologue や将来の character update で使う別軸とし、main の session prompt には注入しない。
 
-さらに、`Character Memory` の更新と `独り言` 生成は別機能として分離せず、共通の `character reflection cycle` で扱う。  
-current v1 では、`SessionStart` の monologue only path と、文脈増加ベースの通常 reflection を分ける。
+2026-04-27 時点では、`Session Memory` / `Project Memory` の coding plane prompt 注入と、`Character Memory` の background reflection は runtime から外している。再導入する場合は、token 効率と prompt 有用性を評価できる新設計として扱う。
 
 ## Monologue / Character Stream Position
 
@@ -178,7 +177,7 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 
 - 構想は維持する
 - docs では責務を整理する
-- 実装優先度は `Memory` より後ろに置く
+- 実装優先度は下げ、旧 v1 の runtime は削除する
 - Session UI への適用は行わない
 
 ## VTuber Character UI Direction
@@ -209,15 +208,14 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 - `Home Window` は resume / new session / character selection を担う管理面
 - `Session Window` は作業面
 - `Work Chat` は作業結果を読む面
-- `独り言` は `Session Window` 右ペインの `Monologue` host に限定して置く
-- これは本体作業面の主面ではなく、character reflection の補助面として扱う
+- `独り言` は current UI では表示しない
+- 将来再実装する場合も、本体作業面の主面には混ぜない
 
 ### 2. キャラ性は構造で出す
 
 - セッションにキャラクターが紐づいている
 - Session copy や theme が同じ character を感じさせる
-- current 実装では `Session Window` 右ペインに `Monologue` host を置く
-- ただし本体作業面の主面には昇格させない
+- current 実装では `Session Window` 右ペインに `Monologue` host を置かない
 
 色や装飾だけで VTuber 感を作ろうとしない。
 
@@ -226,7 +224,7 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 - 普段見る: chat, status
 - 必要時に開く: artifact summary
 - 深掘り時だけ開く: diff viewer
-- future では Character Stream を独立 plane として強化しうるが、current milestone では right pane host の範囲に留める
+- future では Character Stream を独立 plane として再設計しうるが、current milestone では runtime から外す
 - 役割が自明な面では、見出しや名前ラベルは原則出さない
 - 表示を正当化できるのは、ユーザー操作か直近判断に必要な情報だけ
 
@@ -255,7 +253,7 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 - `Work Chat` の読みやすさ
 - `Artifact Summary` の実務的な有用性
 - キャラクター定義の安定注入前提
-- 独り言 UI を本体作業面より前に出しすぎないこと
+- 独り言 UI を current runtime へ戻さないこと
 - 非互換変更時の回復導線として Settings の DB reset を維持すること
 
 ## What We Are Not Deciding Yet
@@ -263,8 +261,8 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 次の論点は、今すぐ 1 つに決めない。
 
 - Character Memory の保存粒度
-- Session Memory の要約タイミング
-- Monologue の発火契機を送信時にするか完了時にするか
+- MemoryGeneration を再設計する場合の評価指標
+- Monologue を再設計する場合の発火契機
 - Character Stream をどの window / pane に出すか
 - Character が prompt 制御まで担うかどうか
 
@@ -277,7 +275,7 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 - `Recent Sessions` は `Home Window` の resume picker として再設計する
 - `Session Window` の `Work Chat` は TUI 本体寄りに保つ
 - Character は `Session Copy`、theme、icon、assistant 表現で効かせる
-- 独り言 UI は `Session Window` の `独り言` tab に限定して表示する
+- 独り言 UI は current runtime では表示しない
 - Settings は coding plane 用 provider / credential と DB reset を持つ管理面として扱う
 - 見た目はキャラクターに合わせていくが、構造は coding agent 優先で崩さない
 
@@ -286,8 +284,8 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 この doc を起点に、次は次の順で詰める。
 
 1. `Memory` は何を保存するか
-2. `Project / Session Memory` を coding plane へどう入れるか
-3. `Character Memory` を monologue / character update でどう使うか
+2. `Project / Session Memory` を coding plane へ再導入する条件は何か
+3. `Character Memory` を monologue / character update で再利用する価値があるか
 
 関連:
 
