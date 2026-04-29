@@ -616,11 +616,10 @@ function createPendingLiveSessionRunState(
 function scrollMessageListElementToBottom(messageListElement: HTMLDivElement): void {
   const bottomAnchor = messageListElement.querySelector<HTMLElement>(".message-list-bottom-anchor");
   if (bottomAnchor) {
-    bottomAnchor.scrollIntoView({ block: "end" });
-    return;
+    bottomAnchor.scrollIntoView({ block: "end", inline: "nearest" });
   }
 
-  messageListElement.scrollTop = messageListElement.scrollHeight;
+  messageListElement.scrollTop = Math.max(0, messageListElement.scrollHeight - messageListElement.clientHeight);
 }
 
 function hashStringToPositiveInt(value: string): number {
@@ -2765,6 +2764,7 @@ export default function App() {
     setIsMessageListFollowing(true);
     setHasMessageListUnread(false);
     scrollMessageListToBottom();
+    window.requestAnimationFrame(scrollMessageListToBottom);
   };
 
   const scrollActivityMonitorToBottom = () => {
@@ -3091,7 +3091,6 @@ export default function App() {
                   hasLiveRunAssistantText={hasLiveRunAssistantText}
                   liveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
                   isMessageListFollowing={isMessageListFollowing}
-                  hasMessageListUnread={hasMessageListUnread}
                   onMessageListScroll={handleMessageListScroll}
                   onToggleArtifact={toggleArtifact}
                   onOpenDiff={(title, file) =>
@@ -3102,7 +3101,6 @@ export default function App() {
                     })}
                   onResolveLiveApproval={(request, decision) => void handleResolveLiveApproval(request, decision)}
                   onResolveLiveElicitation={(request, response) => void handleResolveLiveElicitation(request, response)}
-                  onJumpToBottom={handleJumpToMessageListBottom}
                   onOpenPath={handleOpenInlinePath}
                   getChangedFilesEmptyText={(artifactKey, artifactHasSnapshotRisk) =>
                     artifactHasSnapshotRisk
@@ -3145,6 +3143,7 @@ export default function App() {
                         selectedCustomAgentTitle={selectedCustomAgentDisplay.title ?? "Copilot custom agent を選択"}
                         additionalDirectoryCount={selectedSession.allowedAdditionalDirectories.length}
                         canCollapseActionDock={canCollapseActionDock}
+                        showJumpToBottom={!isMessageListFollowing}
                         isCustomAgentListLoading={isCustomAgentListLoading}
                         isSkillListLoading={isSkillListLoading}
                         customAgentItems={customAgentItems}
@@ -3182,6 +3181,7 @@ export default function App() {
                         onAddAdditionalDirectory={() => void handleAddAdditionalDirectory()}
                         onToggleAdditionalDirectoryList={() => setIsAdditionalDirectoryListOpen((current) => !current)}
                         onCollapse={handleCollapseActionDock}
+                        onJumpToBottom={handleJumpToMessageListBottom}
                         onSelectCustomAgent={(value) => void handleSelectCustomAgent(
                           value ? availableCustomAgents.find((agent) => agent.name === value) ?? null : null,
                         )}
@@ -3222,8 +3222,10 @@ export default function App() {
                       attachmentCount={composerPreview.attachments.length}
                       isRunning={selectedSession.runState === "running"}
                       isSendDisabled={isSendDisabled}
+                      showJumpToBottom={!isMessageListFollowing}
                       sendButtonTitle={composerSendButtonTitle}
                       onExpand={() => handleExpandActionDock({ focusComposer: true })}
+                      onJumpToBottom={handleJumpToMessageListBottom}
                       onSendOrCancel={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
                     />
                   )}

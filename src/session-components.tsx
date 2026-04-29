@@ -1663,13 +1663,11 @@ export type SessionMessageColumnProps = {
   hasLiveRunAssistantText: boolean;
   liveRunErrorMessage: string;
   isMessageListFollowing: boolean;
-  hasMessageListUnread: boolean;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
   onToggleArtifact: (artifactKey: string) => void;
   onOpenDiff: (title: string, file: ChangedFile) => void;
   onResolveLiveApproval: (request: LiveApprovalRequest, decision: "approve" | "deny") => void;
   onResolveLiveElicitation: (request: LiveElicitationRequest, response: LiveElicitationResponse) => void;
-  onJumpToBottom: () => void;
   onOpenPath?: (target: string) => void;
   getChangedFilesEmptyText: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
 };
@@ -1691,13 +1689,11 @@ export function SessionMessageColumn({
   hasLiveRunAssistantText,
   liveRunErrorMessage,
   isMessageListFollowing,
-  hasMessageListUnread,
   onMessageListScroll,
   onToggleArtifact,
   onOpenDiff,
   onResolveLiveApproval,
   onResolveLiveElicitation,
-  onJumpToBottom,
   onOpenPath,
   getChangedFilesEmptyText,
 }: SessionMessageColumnProps) {
@@ -1794,7 +1790,7 @@ export function SessionMessageColumn({
             以前のメッセージを読み込む
           </button>
         ) : null}
-        {messages.length > 0 ? (
+        {messages.length > 0 || isRunning ? (
           <div className="session-message-list-window">
             <div className="session-message-list-window-items">
           {renderedMessages.map((message, index) => {
@@ -1978,92 +1974,80 @@ export function SessionMessageColumn({
                 </div>
               </article>
             );
-          })
-            }
+          })}
+
+              {isRunning ? (
+                <article className="message-row assistant pending-row">
+                  <CharacterAvatar character={character} size="small" className="message-avatar" />
+                  <div className="message-card assistant pending-message-card">
+                    <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+                      {pendingRunIndicatorAnnouncement}
+                    </span>
+                    <div className="live-run-shell-status pending-run-indicator" aria-hidden="true">
+                      <span className="live-run-shell-status-badge">実行中</span>
+                      <span className="live-run-shell-status-text">{pendingRunIndicatorText}</span>
+                      <span className="typing-dots pending-run-indicator-dots">
+                        <span />
+                        <span />
+                        <span />
+                      </span>
+                    </div>
+                    {liveApprovalRequest ? (
+                      <section className="live-approval-card" role="group" aria-label="承認要求">
+                        <div className="live-approval-head">
+                          <div className="live-approval-copy">
+                            <span className="live-approval-badge">承認待ち</span>
+                            <p className="live-approval-title">{liveApprovalRequest.title}</p>
+                          </div>
+                          <span className="live-approval-kind">{liveApprovalKindLabel(liveApprovalRequest.kind)}</span>
+                        </div>
+                        <pre className="live-approval-summary">{liveApprovalRequest.summary}</pre>
+                        {liveApprovalRequest.warning ? (
+                          <p className="live-approval-warning" role="alert">{liveApprovalRequest.warning}</p>
+                        ) : null}
+                        {liveApprovalRequest.details ? (
+                          <details className="live-approval-details">
+                            <summary>Details</summary>
+                            <pre>{liveApprovalRequest.details}</pre>
+                          </details>
+                        ) : null}
+                        <div className="live-approval-actions">
+                          <button
+                            type="button"
+                            onClick={() => onResolveLiveApproval(liveApprovalRequest, "approve")}
+                            disabled={approvalActionRequestId === liveApprovalRequest.requestId}
+                          >
+                            今回だけ許可
+                          </button>
+                          <button
+                            className="drawer-toggle secondary"
+                            type="button"
+                            onClick={() => onResolveLiveApproval(liveApprovalRequest, "deny")}
+                            disabled={approvalActionRequestId === liveApprovalRequest.requestId}
+                          >
+                            拒否
+                          </button>
+                        </div>
+                      </section>
+                    ) : null}
+                    {liveElicitationRequest ? (
+                      <LiveElicitationCard
+                        request={liveElicitationRequest}
+                        elicitationActionRequestId={elicitationActionRequestId}
+                        onResolveLiveElicitation={onResolveLiveElicitation}
+                        onOpenPath={onOpenPath}
+                      />
+                    ) : null}
+                    {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} onOpenPath={onOpenPath} /> : null}
+                    {liveRunErrorMessage ? (
+                      <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
+                    ) : null}
+                  </div>
+                </article>
+              ) : null}
+              <div className="message-list-bottom-anchor" aria-hidden="true" />
             </div>
           </div>
-        ) : null}
-
-        {isRunning ? (
-          <article className="message-row assistant pending-row">
-            <CharacterAvatar character={character} size="small" className="message-avatar" />
-            <div className="message-card assistant pending-message-card">
-              <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
-                {pendingRunIndicatorAnnouncement}
-              </span>
-              <div className="live-run-shell-status pending-run-indicator" aria-hidden="true">
-                <span className="live-run-shell-status-badge">実行中</span>
-                <span className="live-run-shell-status-text">{pendingRunIndicatorText}</span>
-                <span className="typing-dots pending-run-indicator-dots">
-                  <span />
-                  <span />
-                  <span />
-                </span>
-              </div>
-              {liveApprovalRequest ? (
-                <section className="live-approval-card" role="group" aria-label="承認要求">
-                  <div className="live-approval-head">
-                    <div className="live-approval-copy">
-                      <span className="live-approval-badge">承認待ち</span>
-                      <p className="live-approval-title">{liveApprovalRequest.title}</p>
-                    </div>
-                    <span className="live-approval-kind">{liveApprovalKindLabel(liveApprovalRequest.kind)}</span>
-                  </div>
-                  <pre className="live-approval-summary">{liveApprovalRequest.summary}</pre>
-                  {liveApprovalRequest.warning ? (
-                    <p className="live-approval-warning" role="alert">{liveApprovalRequest.warning}</p>
-                  ) : null}
-                  {liveApprovalRequest.details ? (
-                    <details className="live-approval-details">
-                      <summary>Details</summary>
-                      <pre>{liveApprovalRequest.details}</pre>
-                    </details>
-                  ) : null}
-                  <div className="live-approval-actions">
-                    <button
-                      type="button"
-                      onClick={() => onResolveLiveApproval(liveApprovalRequest, "approve")}
-                      disabled={approvalActionRequestId === liveApprovalRequest.requestId}
-                    >
-                      今回だけ許可
-                    </button>
-                    <button
-                      className="drawer-toggle secondary"
-                      type="button"
-                      onClick={() => onResolveLiveApproval(liveApprovalRequest, "deny")}
-                      disabled={approvalActionRequestId === liveApprovalRequest.requestId}
-                    >
-                      拒否
-                    </button>
-                  </div>
-                </section>
-              ) : null}
-              {liveElicitationRequest ? (
-                <LiveElicitationCard
-                  request={liveElicitationRequest}
-                  elicitationActionRequestId={elicitationActionRequestId}
-                  onResolveLiveElicitation={onResolveLiveElicitation}
-                  onOpenPath={onOpenPath}
-                />
-              ) : null}
-              {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} onOpenPath={onOpenPath} /> : null}
-              {liveRunErrorMessage ? (
-                <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
-              ) : null}
-            </div>
-          </article>
-        ) : null}
-        <div className="message-list-bottom-anchor" aria-hidden="true" />
-        {!isMessageListFollowing ? (
-          <aside className={`message-follow-banner sticky ${hasMessageListUnread ? "has-unread" : "idle"}`}>
-            <div className="message-follow-banner-copy">
-              <span className="message-follow-banner-badge">{hasMessageListUnread ? "新着あり" : "読み返し中"}</span>
-              <p>{hasMessageListUnread ? "追従を止めている間に新しい表示が来たよ。" : "今は読み返し位置を維持しているよ。"}</p>
-            </div>
-            <button type="button" className="message-follow-banner-button" onClick={onJumpToBottom}>
-              末尾へ移動
-            </button>
-          </aside>
         ) : null}
       </div>
     </div>
@@ -2076,8 +2060,10 @@ export type SessionActionDockCompactRowProps = {
   attachmentCount: number;
   isRunning: boolean;
   isSendDisabled: boolean;
+  showJumpToBottom: boolean;
   sendButtonTitle?: string;
   onExpand: () => void;
+  onJumpToBottom: () => void;
   onSendOrCancel: () => void;
 };
 
@@ -2087,8 +2073,10 @@ export function SessionActionDockCompactRow({
   attachmentCount,
   isRunning,
   isSendDisabled,
+  showJumpToBottom,
   sendButtonTitle,
   onExpand,
+  onJumpToBottom,
   onSendOrCancel,
 }: SessionActionDockCompactRowProps) {
   return (
@@ -2113,6 +2101,15 @@ export function SessionActionDockCompactRow({
         ) : null}
       </div>
       <div className="session-action-dock-compact-actions">
+        {showJumpToBottom ? (
+          <button
+            className="drawer-toggle compact secondary message-jump-bottom-button"
+            type="button"
+            onClick={onJumpToBottom}
+          >
+            末尾へ移動
+          </button>
+        ) : null}
         <button
           className={isRunning ? "danger session-send-button" : "session-send-button"}
           type="button"
@@ -2201,6 +2198,7 @@ export type SessionComposerExpandedProps = {
   selectedCustomAgentTitle: string;
   additionalDirectoryCount: number;
   canCollapseActionDock: boolean;
+  showJumpToBottom: boolean;
   isCustomAgentListLoading: boolean;
   isSkillListLoading: boolean;
   customAgentItems: SessionCustomAgentItem[];
@@ -2232,6 +2230,7 @@ export type SessionComposerExpandedProps = {
   onAddAdditionalDirectory: () => void;
   onToggleAdditionalDirectoryList: () => void;
   onCollapse: () => void;
+  onJumpToBottom: () => void;
   onSelectCustomAgent: (value: string | null) => void;
   onSelectSkill: (skillId: string) => void;
   onRemoveAttachment: (targets: string[]) => void;
@@ -2265,6 +2264,7 @@ export function SessionComposerExpanded({
   selectedCustomAgentTitle,
   additionalDirectoryCount,
   canCollapseActionDock,
+  showJumpToBottom,
   isCustomAgentListLoading,
   isSkillListLoading,
   customAgentItems,
@@ -2296,6 +2296,7 @@ export function SessionComposerExpanded({
   onAddAdditionalDirectory,
   onToggleAdditionalDirectoryList,
   onCollapse,
+  onJumpToBottom,
   onSelectCustomAgent,
   onSelectSkill,
   onRemoveAttachment,
@@ -2405,6 +2406,15 @@ export function SessionComposerExpanded({
             {`Dirs ${additionalDirectoryCount}`}
           </button>
         </div>
+        {showJumpToBottom ? (
+          <button
+            className="drawer-toggle compact secondary message-jump-bottom-button"
+            type="button"
+            onClick={onJumpToBottom}
+          >
+            末尾へ移動
+          </button>
+        ) : null}
         {canCollapseActionDock ? (
           <button className="drawer-toggle compact secondary composer-hide-button" type="button" onClick={onCollapse}>
             Hide
