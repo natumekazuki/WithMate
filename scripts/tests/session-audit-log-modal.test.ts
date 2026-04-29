@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { SessionAuditLogModal } from "../../src/session-components.js";
+import { SessionAuditLogModal, shouldLoadAuditLogDetailForFold } from "../../src/session-components.js";
 import type { AuditLogSummary } from "../../src/runtime-state.js";
 
 function createAuditLogSummary(id: number): AuditLogSummary {
@@ -26,6 +26,16 @@ function createAuditLogSummary(id: number): AuditLogSummary {
 }
 
 describe("SessionAuditLogModal", () => {
+  it("Operations fold は paged summary から detail を読み込む対象にする", () => {
+    assert.equal(shouldLoadAuditLogDetailForFold("logical"), true);
+    assert.equal(shouldLoadAuditLogDetailForFold("transport"), true);
+    assert.equal(shouldLoadAuditLogDetailForFold("response"), true);
+    assert.equal(shouldLoadAuditLogDetailForFold("operations"), true);
+    assert.equal(shouldLoadAuditLogDetailForFold("raw"), true);
+    assert.equal(shouldLoadAuditLogDetailForFold("usage"), false);
+    assert.equal(shouldLoadAuditLogDetailForFold("error"), false);
+  });
+
   it("取得済み page の entry を固定高 spacer なしで描画する", () => {
     const entries = Array.from({ length: 50 }, (_, index) => createAuditLogSummary(index + 1));
     const html = renderToStaticMarkup(

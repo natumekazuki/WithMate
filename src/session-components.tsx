@@ -434,10 +434,18 @@ function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFol
   return `${artifactKey}:${section}${index === undefined ? "" : `:${index}`}`;
 }
 
-type AuditLogFoldSection = "logical" | "transport" | "response" | "operations" | "usage" | "error" | "raw";
+export type AuditLogFoldSection = "logical" | "transport" | "response" | "operations" | "usage" | "error" | "raw";
 
 function auditLogFoldKey(entry: Pick<AuditLogSummary, "id" | "sessionId">, section: AuditLogFoldSection): string {
   return `${entry.sessionId}:${entry.id}:${section}`;
+}
+
+export function shouldLoadAuditLogDetailForFold(section: AuditLogFoldSection): boolean {
+  return section === "logical"
+    || section === "transport"
+    || section === "response"
+    || section === "operations"
+    || section === "raw";
 }
 
 export type SessionDiffModalProps = {
@@ -644,7 +652,6 @@ export function SessionAuditLogModal({
   const handleAuditLogFoldToggle = (
     entry: AuditLogSummary,
     section: AuditLogFoldSection,
-    shouldLoadDetail: boolean,
     openFold: boolean,
   ) => {
     setOpenAuditLogFolds((current) => {
@@ -665,7 +672,12 @@ export function SessionAuditLogModal({
       return next;
     });
 
-    if (openFold && shouldLoadDetail && !details[entry.id]?.detail && !details[entry.id]?.loading) {
+    if (
+      openFold
+      && shouldLoadAuditLogDetailForFold(section)
+      && !details[entry.id]?.detail
+      && !details[entry.id]?.loading
+    ) {
       onLoadDetail(entry);
     }
   };
@@ -788,7 +800,7 @@ export function SessionAuditLogModal({
                   className="audit-log-fold"
                   open={isAuditLogFoldOpen(entry, "logical")}
                   onToggle={(event) => {
-                    handleAuditLogFoldToggle(entry, "logical", true, event.currentTarget.open);
+                    handleAuditLogFoldToggle(entry, "logical", event.currentTarget.open);
                   }}
                 >
                   <summary>
@@ -818,7 +830,7 @@ export function SessionAuditLogModal({
                   className="audit-log-fold"
                   open={isAuditLogFoldOpen(entry, "transport")}
                   onToggle={(event) => {
-                    handleAuditLogFoldToggle(entry, "transport", true, event.currentTarget.open);
+                    handleAuditLogFoldToggle(entry, "transport", event.currentTarget.open);
                   }}
                 >
                   <summary>
@@ -855,7 +867,7 @@ export function SessionAuditLogModal({
                   className="audit-log-fold"
                   open={isAuditLogFoldOpen(entry, "response")}
                   onToggle={(event) => {
-                    handleAuditLogFoldToggle(entry, "response", true, event.currentTarget.open);
+                    handleAuditLogFoldToggle(entry, "response", event.currentTarget.open);
                   }}
                 >
                   <summary>
@@ -870,7 +882,7 @@ export function SessionAuditLogModal({
                   className="audit-log-fold"
                   open={isAuditLogFoldOpen(entry, "operations")}
                   onToggle={(event) => {
-                    handleAuditLogFoldToggle(entry, "operations", false, event.currentTarget.open);
+                    handleAuditLogFoldToggle(entry, "operations", event.currentTarget.open);
                   }}
                 >
                   <summary>
@@ -900,7 +912,7 @@ export function SessionAuditLogModal({
                     className="audit-log-fold compact"
                     open={isAuditLogFoldOpen(entry, "usage")}
                     onToggle={(event) => {
-                      handleAuditLogFoldToggle(entry, "usage", false, event.currentTarget.open);
+                      handleAuditLogFoldToggle(entry, "usage", event.currentTarget.open);
                     }}
                   >
                     <summary>
@@ -921,7 +933,7 @@ export function SessionAuditLogModal({
                     className="audit-log-fold compact"
                     open={isAuditLogFoldOpen(entry, "error")}
                     onToggle={(event) => {
-                      handleAuditLogFoldToggle(entry, "error", false, event.currentTarget.open);
+                      handleAuditLogFoldToggle(entry, "error", event.currentTarget.open);
                     }}
                   >
                     <summary>
@@ -937,7 +949,7 @@ export function SessionAuditLogModal({
                   className="audit-log-fold audit-log-raw"
                   open={isAuditLogFoldOpen(entry, "raw")}
                   onToggle={(event) => {
-                    handleAuditLogFoldToggle(entry, "raw", true, event.currentTarget.open);
+                    handleAuditLogFoldToggle(entry, "raw", event.currentTarget.open);
                   }}
                 >
                   <summary>

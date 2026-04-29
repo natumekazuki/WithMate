@@ -10,6 +10,7 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
   buildCodexThreadSettings,
+  collectCodexAssistantTextSnapshotsFromEventsForTesting,
   collectCodexAssistantTextFromEventsForTesting,
   resolveCodexThreadForSettings,
   type CodexThreadOptions,
@@ -103,6 +104,75 @@ describe("CodexAdapter thread settings", () => {
     ]);
 
     assert.equal(finalizedText, "確定メッセージ");
+  });
+
+  it("delta で受けた assistant text を空の agent_message item で消さない", () => {
+    const snapshots = collectCodexAssistantTextSnapshotsFromEventsForTesting([
+      {
+        type: "agent_message.delta",
+        delta: "処理",
+      } as never,
+      {
+        type: "item.started",
+        item: {
+          id: "message-1",
+          type: "agent_message",
+          text: "",
+        },
+      } as never,
+      {
+        type: "item.updated",
+        item: {
+          id: "message-1",
+          type: "agent_message",
+          text: "",
+        },
+      } as never,
+      {
+        type: "agent_message.delta",
+        delta: "中",
+      } as never,
+      {
+        type: "item.completed",
+        item: {
+          id: "message-1",
+          type: "agent_message",
+          text: "処理中です。",
+        },
+      } as never,
+    ]);
+
+    assert.deepEqual(snapshots, ["処理", "処理", "処理", "処理中", "処理中です。"]);
+  });
+
+  it("入れ子や配列の delta payload から assistant text を復元する", () => {
+    const snapshots = collectCodexAssistantTextSnapshotsFromEventsForTesting([
+      {
+        type: "response.output_text.delta",
+        data: {
+          content: [
+            { type: "output_text", text: "こ" },
+            { type: "output_text", text: "ん" },
+          ],
+        },
+      } as never,
+      {
+        type: "assistant.message_delta",
+        data: {
+          deltaContent: "にちは",
+        },
+      } as never,
+      {
+        type: "item.completed",
+        item: {
+          id: "message-1",
+          type: "agent_message",
+          text: "",
+        },
+      } as never,
+    ]);
+
+    assert.deepEqual(snapshots, ["こん", "こんにちは", "こんにちは"]);
   });
 
   it("model / reasoning 変更後の thread settings は新 options と settingsKey を反映する", () => {

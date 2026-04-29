@@ -596,6 +596,23 @@ function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): strin
   ].join("\u001b");
 }
 
+function createPendingLiveSessionRunState(
+  session: Pick<Session, "id" | "threadId">,
+  previousState?: LiveSessionRunState | null,
+): LiveSessionRunState {
+  return {
+    sessionId: session.id,
+    threadId: session.threadId,
+    assistantText: "",
+    steps: [],
+    backgroundTasks: previousState?.backgroundTasks ?? [],
+    usage: null,
+    errorMessage: "",
+    approvalRequest: null,
+    elicitationRequest: null,
+  };
+}
+
 function hashStringToPositiveInt(value: string): number {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -2093,6 +2110,11 @@ export default function App() {
       messages: [...selectedSession.messages, { role: "user", text: nextMessage }],
     };
 
+    setLiveRunState((current) => (
+      current.ownerSessionId === updatedSession.id
+        ? { ownerSessionId: updatedSession.id, state: createPendingLiveSessionRunState(updatedSession, current.state) }
+        : { ownerSessionId: updatedSession.id, state: createPendingLiveSessionRunState(updatedSession) }
+    ));
     setSessions([updatedSession]);
 
     try {
@@ -2103,6 +2125,11 @@ export default function App() {
       setSessions([savedSession]);
     } catch (error) {
       console.error(error);
+      setLiveRunState((current) => (
+        current.ownerSessionId === updatedSession.id
+          ? { ownerSessionId: updatedSession.id, state: null }
+          : current
+      ));
       setSessions([selectedSession]);
     }
   };
