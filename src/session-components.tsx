@@ -477,6 +477,7 @@ export type SessionHeaderProps = {
   showAuditLogButton?: boolean;
   showTerminalButton?: boolean;
   showDeleteButton?: boolean;
+  workspaceActions?: ReactNode;
   actions?: ReactNode;
   onToggleExpanded: () => void;
   onOpenAuditLog: () => void;
@@ -498,6 +499,7 @@ export function SessionHeader({
   showAuditLogButton = true,
   showTerminalButton = true,
   showDeleteButton = true,
+  workspaceActions,
   actions,
   onToggleExpanded,
   onOpenAuditLog,
@@ -511,7 +513,7 @@ export function SessionHeader({
 }: SessionHeaderProps) {
   return (
     <header className="session-window-bar session-top-bar rise-1">
-      <div className="session-top-bar-row">
+      <div className={`session-top-bar-row${isEditingTitle ? " is-editing-title" : ""}`}>
         {!isEditingTitle ? (
           <button className="session-title-shell session-title-shell-toggle" type="button" onClick={onToggleExpanded}>
             <span className="session-window-title session-title-accent">{taskTitle}</span>
@@ -529,29 +531,32 @@ export function SessionHeader({
             </div>
           </label>
         )}
-        <div className="session-window-controls">
-          {!isEditingTitle && showRenameButton ? (
-            <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning}>
-              Rename
-            </button>
-          ) : null}
-          {showAuditLogButton ? (
-            <button className="drawer-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
-              Audit Log
-            </button>
-          ) : null}
-          {showTerminalButton ? (
-            <button className="drawer-toggle compact secondary" type="button" onClick={onOpenTerminal}>
-              Terminal
-            </button>
-          ) : null}
-          {showDeleteButton ? (
-            <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
-              Delete
-            </button>
-          ) : null}
-          {actions}
-        </div>
+        {!isEditingTitle ? (
+          <div className="session-window-controls">
+            {showRenameButton ? (
+              <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning}>
+                Rename
+              </button>
+            ) : null}
+            {workspaceActions}
+            {showTerminalButton ? (
+              <button className="drawer-toggle compact secondary" type="button" onClick={onOpenTerminal}>
+                Terminal
+              </button>
+            ) : null}
+            {showAuditLogButton ? (
+              <button className="drawer-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
+                Audit Log
+              </button>
+            ) : null}
+            {actions}
+            {showDeleteButton ? (
+              <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
+                Delete
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </header>
   );
@@ -852,26 +857,27 @@ export function SessionAuditLogModal({
           </div>
         </div>
 
-        <div className="audit-log-segmented" aria-label="監査ログ表示切り替え">
-          <button
-            type="button"
-            className={`audit-log-segmented-button${activeSection === "main" ? " is-active" : ""}`}
-            onClick={() => setActiveSection("main")}
-          >
-            Main
-          </button>
-          <button
-            type="button"
-            className={`audit-log-segmented-button${activeSection === "background" ? " is-active" : ""}`}
-            onClick={() => setActiveSection("background")}
-          >
-            Background
-          </button>
-        </div>
-
-        <div className="audit-log-page-status">
-          <span>{entries.length} / {total}</span>
-          {errorMessage ? <span className="audit-log-page-error">{errorMessage}</span> : null}
+        <div className="audit-log-toolbar">
+          <div className="audit-log-segmented" aria-label="監査ログ表示切り替え">
+            <button
+              type="button"
+              className={`audit-log-segmented-button${activeSection === "main" ? " is-active" : ""}`}
+              onClick={() => setActiveSection("main")}
+            >
+              Main
+            </button>
+            <button
+              type="button"
+              className={`audit-log-segmented-button${activeSection === "background" ? " is-active" : ""}`}
+              onClick={() => setActiveSection("background")}
+            >
+              Background
+            </button>
+          </div>
+          <div className="audit-log-page-status">
+            <span>{entries.length} / {total}</span>
+            {errorMessage ? <span className="audit-log-page-error">{errorMessage}</span> : null}
+          </div>
         </div>
 
         <div ref={auditLogListRef} className="audit-log-list">

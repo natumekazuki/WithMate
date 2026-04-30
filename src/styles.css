@@ -2146,6 +2146,10 @@ button:disabled {
   min-width: 0;
 }
 
+.session-top-bar-row.is-editing-title {
+  align-items: stretch;
+}
+
 .session-top-bar-drawer {
   display: grid;
   gap: 10px;
@@ -2175,6 +2179,11 @@ button:disabled {
   width: 100%;
 }
 
+.session-page .session-title-editor {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .session-title-editor input {
   min-width: 0;
   border: 1px solid rgba(32, 36, 55, 0.08);
@@ -2182,6 +2191,19 @@ button:disabled {
   padding: 10px 14px;
   background: rgba(255, 255, 255, 0.88);
   color: var(--ink);
+}
+
+.session-page .session-title-editor input {
+  border-color: rgba(203, 213, 225, 0.16);
+  background: rgba(15, 19, 26, 0.92);
+  color: var(--ink);
+  caret-color: var(--character-main);
+}
+
+.session-page .session-title-editor input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--character-main) 38%, rgba(203, 213, 225, 0.18));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--character-main) 16%, transparent);
 }
 
 .session-title-actions {
@@ -5358,7 +5380,7 @@ button:disabled {
   width: min(1160px, 100%);
   height: min(82vh, 920px);
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   overflow: hidden;
   background: rgba(251, 249, 245, 0.97);
   border-radius: var(--radius-lg);
@@ -5379,16 +5401,26 @@ button:disabled {
   color: var(--ink);
 }
 
+.audit-log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 6px 22px 14px;
+}
+
 .audit-log-segmented {
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0;
-  margin: 6px 22px 14px;
   width: fit-content;
   padding: 4px;
   border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.03);
+}
+
+.audit-log-segmented.session-context-segmented {
+  width: 100%;
 }
 
 .audit-log-segmented-button {
@@ -5411,7 +5443,7 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: -4px 22px 12px;
+  min-width: 0;
   color: var(--muted);
   font-size: 0.82rem;
 }

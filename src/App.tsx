@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
-  type AuditLogDetail,
   type AuditLogSummary,
   type ComposerPreview,
   currentTimestampLabel,
@@ -38,7 +37,6 @@ import {
   resolveModelSelection,
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
-import { buildAuditLogRefreshSignature, buildDisplayedAuditLogs } from "./audit-log-refresh.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import {
   approvalModeLabel,
@@ -98,6 +96,7 @@ import {
 } from "./session-chat-layout-hooks.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home-session-projection.js";
+import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import { extractTextReferenceCandidates } from "./path-reference.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import CompanionReviewApp from "./CompanionReviewApp.js";
@@ -111,36 +110,6 @@ type RetryBannerState = {
   title: string;
   stopSummary: string;
   lastRequestText: string;
-};
-
-type SessionOwnedAuditLogs = {
-  ownerSessionId: string | null;
-  entries: AuditLogSummary[];
-  nextCursor: number | null;
-  hasMore: boolean;
-  total: number;
-  loading: boolean;
-  errorMessage: string | null;
-};
-
-const AUDIT_LOG_PAGE_LIMIT = 50;
-
-function createEmptyAuditLogsState(ownerSessionId: string | null): SessionOwnedAuditLogs {
-  return {
-    ownerSessionId,
-    entries: [],
-    nextCursor: null,
-    hasMore: false,
-    total: 0,
-    loading: false,
-    errorMessage: null,
-  };
-}
-
-type AuditLogDetailLoadState = {
-  detail: AuditLogDetail | null;
-  loading: boolean;
-  errorMessage: string | null;
 };
 
 type SessionOwnedLiveRun = {
@@ -451,10 +420,6 @@ function AgentSessionWindowApp() {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
-  const [auditLogsOpen, setAuditLogsOpen] = useState(false);
-  const [auditLogsState, setAuditLogsState] = useState<SessionOwnedAuditLogs>(() => createEmptyAuditLogsState(null));
-  const [auditLogDetails, setAuditLogDetails] = useState<Record<number, AuditLogDetailLoadState>>({});
-  const auditLogDetailOwnerRef = useRef<string | null>(null);
   const [liveRunState, setLiveRunState] = useState<SessionOwnedLiveRun>({ ownerSessionId: null, state: null });
   const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] = useState<ProviderOwnedQuotaTelemetry>({
     ownerProviderId: null,
@@ -614,23 +579,24 @@ function AgentSessionWindowApp() {
     isContextRailResizing,
     handleStartContextRailResize,
   } = useSessionContextRail({ ownerKey: selectedSessionId });
-  const selectedSessionAuditLogs = useMemo(
-    () => (selectedSessionId !== null && auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.entries : []),
-    [auditLogsState.entries, auditLogsState.ownerSessionId, selectedSessionId],
-  );
   const selectedSessionLiveRun = useMemo(
     () => (selectedSessionId !== null && liveRunState.ownerSessionId === selectedSessionId ? liveRunState.state : null),
     [liveRunState.ownerSessionId, liveRunState.state, selectedSessionId],
   );
-  const displayedSessionAuditLogs = useMemo(
-    () =>
-      buildDisplayedAuditLogs({
-        selectedSession,
-        persistedEntries: selectedSessionAuditLogs,
-        liveRun: selectedSessionLiveRun,
-      }),
-    [selectedSession, selectedSessionAuditLogs, selectedSessionLiveRun],
-  );
+  const {
+    auditLogsOpen,
+    setAuditLogsOpen,
+    auditLogsState,
+    auditLogDetails,
+    persistedEntries: selectedSessionAuditLogs,
+    displayedEntries: displayedSessionAuditLogs,
+    handleLoadMoreAuditLogs,
+    handleLoadAuditLogDetail,
+  } = useSessionAuditLogs({
+    withmateApi,
+    selectedSession,
+    liveRun: selectedSessionLiveRun,
+  });
   const selectedProviderQuotaTelemetry = useMemo(
     () => (
       selectedSession?.provider
@@ -647,17 +613,6 @@ function AgentSessionWindowApp() {
         : null
     ),
     [selectedSessionId, sessionContextTelemetryState.ownerSessionId, sessionContextTelemetryState.telemetry],
-  );
-  const auditLogRefreshSignature = useMemo(
-    () =>
-      buildAuditLogRefreshSignature({
-        selectedSession,
-        displayedMessagesLength: selectedSession?.messages.length ?? 0,
-        selectedMemoryGenerationActivity: null,
-        selectedCharacterMemoryGenerationActivity: null,
-        selectedMonologueActivity: null,
-      }),
-    [selectedSession],
   );
   const activePathReference = useMemo(
     () => (selectedSessionId ? getActivePathReference(draft, composerCaret) : null),
@@ -1030,7 +985,6 @@ function AgentSessionWindowApp() {
     setIsComposerImeComposing(false);
     setIsActivityMonitorFollowing(true);
     setHasActivityMonitorUnread(false);
-    setAuditLogsState(createEmptyAuditLogsState(selectedSessionId));
     setLiveRunState({ ownerSessionId: selectedSessionId, state: null });
     setProviderQuotaTelemetryState((current) =>
       current.ownerProviderId === (selectedSession?.provider ?? null)
@@ -1105,63 +1059,6 @@ function AgentSessionWindowApp() {
 
     setHasActivityMonitorUnread(true);
   }, [activityMonitorScrollSignature, isActivityMonitorFollowing, selectedSession?.runState, selectedSessionId]);
-
-  useEffect(() => {
-    let active = true;
-
-    if (!withmateApi || !selectedSession) {
-      if (active) {
-        setAuditLogsState(createEmptyAuditLogsState(null));
-        setAuditLogDetails({});
-        auditLogDetailOwnerRef.current = null;
-      }
-      return () => {
-        active = false;
-      };
-    }
-
-    setAuditLogsState((current) =>
-      current.ownerSessionId === selectedSession.id
-        ? { ...current, loading: true, errorMessage: null }
-        : { ...createEmptyAuditLogsState(selectedSession.id), loading: true },
-    );
-    if (auditLogDetailOwnerRef.current !== selectedSession.id) {
-      setAuditLogDetails({});
-      auditLogDetailOwnerRef.current = selectedSession.id;
-    }
-    void withmateApi.listSessionAuditLogSummaryPage(selectedSession.id, {
-      cursor: 0,
-      limit: AUDIT_LOG_PAGE_LIMIT,
-    }).then(
-      (page) => {
-        if (active) {
-          setAuditLogsState({
-            ownerSessionId: selectedSession.id,
-            entries: page.entries,
-            nextCursor: page.nextCursor,
-            hasMore: page.hasMore,
-            total: page.total,
-            loading: false,
-            errorMessage: null,
-          });
-        }
-      },
-      (error: unknown) => {
-        if (active) {
-          setAuditLogsState((current) => ({
-            ...current,
-            ownerSessionId: selectedSession.id,
-            loading: false,
-            errorMessage: error instanceof Error ? error.message : "audit log summary の取得に失敗したよ。",
-          }));
-        }
-      },
-    );
-
-    return () => {
-      active = false;
-    };
-  }, [auditLogRefreshSignature, selectedSessionId]);
 
   useEffect(() => {
     let active = true;
@@ -2612,116 +2509,6 @@ function AgentSessionWindowApp() {
     await navigator.clipboard.writeText(selectedCharacterUpdateMemoryExtract.text);
   };
 
-  const handleLoadMoreAuditLogs = () => {
-    if (!withmateApi || !selectedSessionId) {
-      return;
-    }
-
-    const currentState = auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState : null;
-    if (!currentState?.hasMore || currentState.loading || currentState.nextCursor === null) {
-      return;
-    }
-
-    const ownerSessionId = selectedSessionId;
-    const cursor = currentState.nextCursor;
-    setAuditLogsState((current) =>
-      current.ownerSessionId === ownerSessionId
-        ? { ...current, loading: true, errorMessage: null }
-        : current,
-    );
-
-    void withmateApi.listSessionAuditLogSummaryPage(ownerSessionId, {
-      cursor,
-      limit: AUDIT_LOG_PAGE_LIMIT,
-    }).then(
-      (page) => {
-        setAuditLogsState((current) => {
-          if (current.ownerSessionId !== ownerSessionId) {
-            return current;
-          }
-
-          const existingIds = new Set(current.entries.map((entry) => entry.id));
-          const nextEntries = [
-            ...current.entries,
-            ...page.entries.filter((entry) => !existingIds.has(entry.id)),
-          ];
-
-          return {
-            ownerSessionId,
-            entries: nextEntries,
-            nextCursor: page.nextCursor,
-            hasMore: page.hasMore,
-            total: page.total,
-            loading: false,
-            errorMessage: null,
-          };
-        });
-      },
-      (error: unknown) => {
-        setAuditLogsState((current) =>
-          current.ownerSessionId === ownerSessionId
-            ? {
-                ...current,
-                loading: false,
-                errorMessage: error instanceof Error ? error.message : "audit log summary の追加取得に失敗したよ。",
-              }
-            : current,
-        );
-      },
-    );
-  };
-
-  const handleLoadAuditLogDetail = (entry: AuditLogSummary) => {
-    if (!withmateApi || !selectedSessionId || entry.id < 0 || !entry.detailAvailable) {
-      return;
-    }
-
-    let shouldLoad = false;
-    setAuditLogDetails((current) => {
-      const existing = current[entry.id];
-      if (existing?.detail || existing?.loading) {
-        return current;
-      }
-
-      shouldLoad = true;
-      return {
-        ...current,
-        [entry.id]: {
-          detail: null,
-          loading: true,
-          errorMessage: null,
-        },
-      };
-    });
-
-    if (!shouldLoad) {
-      return;
-    }
-
-    void withmateApi.getSessionAuditLogDetail(selectedSessionId, entry.id).then(
-      (detail) => {
-        setAuditLogDetails((current) => ({
-          ...current,
-          [entry.id]: {
-            detail,
-            loading: false,
-            errorMessage: detail ? null : "audit log detail が見つからなかったよ。",
-          },
-        }));
-      },
-      (error: unknown) => {
-        setAuditLogDetails((current) => ({
-          ...current,
-          [entry.id]: {
-            detail: null,
-            loading: false,
-            errorMessage: error instanceof Error ? error.message : "audit log detail の取得に失敗したよ。",
-          },
-        }));
-      },
-    );
-  };
-
   if (!desktopRuntime) {
     return (
       <div className="page-shell session-page">
@@ -2769,7 +2556,7 @@ function AgentSessionWindowApp() {
         onCancelTitleEdit: handleCancelTitleEdit,
         onStartTitleEdit: handleStartTitleEdit,
         onDeleteSession: () => void handleDeleteSession(),
-        actions: !isCharacterUpdateSession ? (
+        workspaceActions: !isCharacterUpdateSession ? (
           <button
             className="drawer-toggle compact secondary"
             type="button"

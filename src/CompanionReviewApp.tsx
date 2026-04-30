@@ -40,6 +40,7 @@ import {
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home-session-projection.js";
 import {
+  SessionAuditLogModal,
   SessionContextPane,
   SessionDiffModal,
   SessionChatWindow,
@@ -71,6 +72,7 @@ import {
   useSessionContextRail,
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
+import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   buildContextPaneProjection,
   buildCopilotQuotaProjection,
@@ -120,6 +122,7 @@ function summarizeMergeRunChangedFiles(run: CompanionMergeRun): string {
 
 export default function CompanionReviewApp() {
   const desktopRuntime = isDesktopRuntime();
+  const withmateApi = getWithMateApi();
   const viewMode = getCompanionWindowViewFromSearch(window.location.search);
   const isMergeView = viewMode === "merge";
   const [snapshot, setSnapshot] = useState<CompanionReviewSnapshot | null>(null);
@@ -448,6 +451,20 @@ export default function CompanionReviewApp() {
   const selectedPathSet = useMemo(() => new Set(selectedPaths), [selectedPaths]);
   const selectedSessionLiveRun =
     snapshot && liveRunState.ownerSessionId === snapshot.session.id ? liveRunState.state : null;
+  const {
+    auditLogsOpen,
+    setAuditLogsOpen,
+    auditLogsState,
+    auditLogDetails,
+    displayedEntries: displayedSessionAuditLogs,
+    handleLoadMoreAuditLogs,
+    handleLoadAuditLogDetail,
+  } = useSessionAuditLogs({
+    withmateApi,
+    selectedSession: snapshot?.session ?? null,
+    liveRun: selectedSessionLiveRun,
+    enabled: !isMergeView,
+  });
   const selectedSessionRunState = selectedSessionLiveRun ? "running" : snapshot?.session.runState ?? null;
   const isSelectedSessionRunning = selectedSessionRunState === "running" || turnRunning;
   const activePathReference = useMemo(
@@ -1522,11 +1539,11 @@ export default function CompanionReviewApp() {
           titleDraft,
           isRunning: isSelectedSessionRunning,
           showRenameButton: true,
-          showAuditLogButton: false,
+          showAuditLogButton: true,
           showTerminalButton: true,
           showDeleteButton: false,
           onToggleExpanded: handleToggleHeaderExpanded,
-          onOpenAuditLog: () => {},
+          onOpenAuditLog: () => setAuditLogsOpen(true),
           onOpenTerminal: () => void openCompanionTerminal(),
           onTitleDraftChange: setTitleDraft,
           onTitleInputKeyDown: handleTitleInputKeyDown,
@@ -1534,28 +1551,25 @@ export default function CompanionReviewApp() {
           onCancelTitleEdit: handleCancelTitleEdit,
           onStartTitleEdit: handleStartTitleEdit,
           onDeleteSession: () => {},
+          workspaceActions: (
+            <button
+              className="drawer-toggle compact secondary"
+              type="button"
+              disabled={operationRunning || turnRunning}
+              onClick={() => void openCompanionWorktree()}
+            >
+              Explorer
+            </button>
+          ),
           actions: (
-            <>
-              <button
-                className="drawer-toggle compact secondary"
-                type="button"
-                disabled={operationRunning || turnRunning}
-                onClick={() => void openCompanionWorktree()}
-              >
-                Explorer
-              </button>
-              <button
-                className="drawer-toggle compact secondary"
-                type="button"
-                disabled={operationRunning || turnRunning || snapshot.session.status !== "active"}
-                onClick={() => void openCompanionMergeWindow()}
-              >
-                Merge
-              </button>
-              <button className="drawer-toggle compact" type="button" onClick={() => window.close()}>
-                Close
-              </button>
-            </>
+            <button
+              className="drawer-toggle compact secondary"
+              type="button"
+              disabled={operationRunning || turnRunning || snapshot.session.status !== "active"}
+              onClick={() => void openCompanionMergeWindow()}
+            >
+              Merge
+            </button>
           ),
         }}
         messageColumnProps={{
@@ -1730,6 +1744,20 @@ export default function CompanionReviewApp() {
               themeStyle={selectedDiffThemeStyle}
               onClose={() => setSelectedDiff(null)}
               onOpenDiffWindow={(payload) => void openDiffWindow(payload)}
+            />
+            <SessionAuditLogModal
+              open={auditLogsOpen}
+              entries={displayedSessionAuditLogs}
+              details={auditLogDetails}
+              hasMore={auditLogsState.ownerSessionId === snapshot.session.id ? auditLogsState.hasMore : false}
+              loadingMore={auditLogsState.ownerSessionId === snapshot.session.id ? auditLogsState.loading : false}
+              total={auditLogsState.ownerSessionId === snapshot.session.id
+                ? Math.max(auditLogsState.total, displayedSessionAuditLogs.length)
+                : displayedSessionAuditLogs.length}
+              errorMessage={auditLogsState.ownerSessionId === snapshot.session.id ? auditLogsState.errorMessage : null}
+              onLoadMore={handleLoadMoreAuditLogs}
+              onLoadDetail={handleLoadAuditLogDetail}
+              onClose={() => setAuditLogsOpen(false)}
             />
             {errorMessage || operationMessage ? (
               <div className={`companion-session-toast ${errorMessage ? "error" : "success"}`}>
