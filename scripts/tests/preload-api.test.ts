@@ -62,6 +62,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:list-session-audit-log-summary-page",
     args: ["session-1", { cursor: 50, limit: 25 }],
   });
+  assert.deepEqual(await api.syncCompanionTarget("companion-1"), {
+    channel: "withmate:sync-companion-target",
+    args: ["companion-1"],
+  });
 });
 
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
@@ -153,6 +157,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeSessionSummaries",
     "subscribeSessionBackgroundActivity",
     "subscribeSessionContextTelemetry",
+    "syncCompanionTarget",
     "updateAppSettings",
     "updateCharacter",
     "updateCompanionSession",

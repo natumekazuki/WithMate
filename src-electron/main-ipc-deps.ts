@@ -24,6 +24,7 @@ import type {
   CompanionMergeSelectedFilesRequest,
   CompanionMergeSelectedFilesResult,
   CompanionReviewSnapshot,
+  CompanionSyncTargetResult,
 } from "../src/companion-review-state.js";
 import type {
   MemoryManagementPageRequest,
@@ -110,6 +111,7 @@ export type MainIpcCompanionDepsArgs = {
   getCompanionSession(sessionId: string): CompanionSession | null;
   getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
   mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionMergeSelectedFilesResult>;
+  syncCompanionTarget(sessionId: string): Promise<CompanionSyncTargetResult>;
   discardCompanionSession(sessionId: string): Promise<CompanionSession>;
   updateCompanionSession(session: CompanionSession): Promise<CompanionSession>;
   previewCompanionComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
@@ -232,6 +234,7 @@ export function createMainIpcRegistrationDeps(
     getCompanionSession: args.companion.getCompanionSession,
     getCompanionReviewSnapshot: args.companion.getCompanionReviewSnapshot,
     mergeCompanionSelectedFiles: args.companion.mergeCompanionSelectedFiles,
+    syncCompanionTarget: args.companion.syncCompanionTarget,
     discardCompanionSession: args.companion.discardCompanionSession,
     updateCompanionSession: args.companion.updateCompanionSession,
     previewCompanionComposerInput: args.companion.previewCompanionComposerInput,

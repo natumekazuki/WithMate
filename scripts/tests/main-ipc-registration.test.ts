@@ -76,6 +76,7 @@ import {
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
+  WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
@@ -268,6 +269,9 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     async mergeCompanionSelectedFiles() {
       return {} as never;
     },
+    async syncCompanionTarget() {
+      return {} as never;
+    },
     async discardCompanionSession() {
       return {} as never;
     },
@@ -396,6 +400,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     getCompanionSession: () => null,
     async getCompanionReviewSnapshot() { return null; },
     async mergeCompanionSelectedFiles() { return {} as never; },
+    async syncCompanionTarget() { return {} as never; },
     async discardCompanionSession() { return {} as never; },
     async updateCompanionSession(session) { return session; },
     async previewCompanionComposerInput() { return { attachments: [], errors: [] }; },
@@ -462,6 +467,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_GET_COMPANION_SESSION_CHANNEL,
     WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
     WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
+    WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
     WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
     WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
     WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL,

@@ -93,6 +93,7 @@ import {
   WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SESSIONS_CHANGED_EVENT,
+  WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
   WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,
   WITHMATE_RENDERER_LOG_CHANNEL,
@@ -309,6 +310,9 @@ function createCompanionApi(ipcRenderer: IpcRendererLike): WithMateWindowCompani
     },
     mergeCompanionSelectedFiles(request) {
       return ipcRenderer.invoke(WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL, request);
+    },
+    syncCompanionTarget(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_SYNC_COMPANION_TARGET_CHANNEL, sessionId);
     },
     discardCompanionSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL, sessionId);

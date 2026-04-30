@@ -700,6 +700,26 @@ export class CompanionStorage {
     return this.getSession(session.id) ?? cloneCompanionSessions([session])[0] as CompanionSession;
   }
 
+  updateSessionBaseSnapshot(session: CompanionSession): CompanionSession {
+    this.db.prepare(`
+      UPDATE companion_sessions SET
+        base_snapshot_commit = ?,
+        selected_paths_json = ?,
+        changed_files_json = ?,
+        sibling_warnings_json = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).run(
+      session.baseSnapshotCommit,
+      JSON.stringify(session.selectedPaths),
+      JSON.stringify(session.changedFiles),
+      JSON.stringify(session.siblingWarnings),
+      session.updatedAt,
+      session.id,
+    );
+    return this.getSession(session.id) ?? cloneCompanionSessions([session])[0] as CompanionSession;
+  }
+
   createMergeRun(run: CompanionMergeRun): CompanionMergeRun {
     this.db.prepare(`
       INSERT INTO companion_merge_runs (

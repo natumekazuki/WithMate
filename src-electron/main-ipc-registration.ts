@@ -25,6 +25,7 @@ import type {
   CompanionMergeSelectedFilesRequest,
   CompanionMergeSelectedFilesResult,
   CompanionReviewSnapshot,
+  CompanionSyncTargetResult,
 } from "../src/companion-review-state.js";
 import type {
   MemoryManagementPageRequest,
@@ -107,6 +108,7 @@ import {
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
+  WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
@@ -188,6 +190,7 @@ export type MainIpcRegistrationDeps = {
   getCompanionSession(sessionId: string): CompanionSession | null;
   getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
   mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionMergeSelectedFilesResult>;
+  syncCompanionTarget(sessionId: string): Promise<CompanionSyncTargetResult>;
   discardCompanionSession(sessionId: string): Promise<CompanionSession>;
   updateCompanionSession(session: CompanionSession): Promise<CompanionSession>;
   previewCompanionComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
@@ -287,6 +290,7 @@ type MainIpcCompanionDeps = Pick<
   | "getCompanionSession"
   | "getCompanionReviewSnapshot"
   | "mergeCompanionSelectedFiles"
+  | "syncCompanionTarget"
   | "discardCompanionSession"
   | "updateCompanionSession"
   | "previewCompanionComposerInput"
@@ -481,6 +485,9 @@ function registerCompanionHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCom
   });
   ipcMain.handle(WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL, async (_event, request: CompanionMergeSelectedFilesRequest) =>
     deps.mergeCompanionSelectedFiles(request),
+  );
+  ipcMain.handle(WITHMATE_SYNC_COMPANION_TARGET_CHANNEL, async (_event, sessionId: string) =>
+    deps.syncCompanionTarget(sessionId),
   );
   ipcMain.handle(WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL, async (_event, sessionId: string) =>
     deps.discardCompanionSession(sessionId),

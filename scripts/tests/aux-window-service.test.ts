@@ -84,6 +84,7 @@ test("AuxWindowService は singleton window を再利用する", async () => {
     async loadDiffEntry() {},
     async loadCompanionChatEntry() {},
     async loadCompanionMergeEntry() {},
+    onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "diff-token";
     },
@@ -123,6 +124,7 @@ test("AuxWindowService は diff preview を保持し reset 時に close する",
     },
     async loadCompanionChatEntry() {},
     async loadCompanionMergeEntry() {},
+    onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "diff-token";
     },
@@ -145,6 +147,7 @@ test("AuxWindowService は diff preview を保持し reset 時に close する",
 test("AuxWindowService は companion chat と merge の entry を分けて開く", async () => {
   const companionChatLoads: string[] = [];
   const companionMergeLoads: string[] = [];
+  let companionReviewWindowChangeCount = 0;
   const createdOptions: Array<Record<string, unknown>> = [];
   const service = new AuxWindowService({
     createWindow(options) {
@@ -161,6 +164,9 @@ test("AuxWindowService は companion chat と merge の entry を分けて開く
     async loadCompanionMergeEntry(_window, sessionId) {
       companionMergeLoads.push(sessionId);
     },
+    onCompanionReviewWindowsChanged() {
+      companionReviewWindowChangeCount += 1;
+    },
     generateDiffToken() {
       return "diff-token";
     },
@@ -174,6 +180,8 @@ test("AuxWindowService は companion chat と merge の entry を分けて開く
   assert.equal(chat, chatReopened);
   assert.equal(merge, mergeReopened);
   assert.notEqual(chat, merge);
+  assert.deepEqual(service.listOpenCompanionReviewWindowIds(), ["companion-1"]);
+  assert.equal(companionReviewWindowChangeCount, 1);
   assert.deepEqual(companionChatLoads, ["companion-1"]);
   assert.deepEqual(companionMergeLoads, ["companion-1"]);
   assert.deepEqual(createdOptions, [

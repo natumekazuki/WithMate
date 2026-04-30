@@ -28,6 +28,7 @@ import type {
   CompanionMergeSelectedFilesRequest,
   CompanionMergeSelectedFilesResult,
   CompanionReviewSnapshot,
+  CompanionSyncTargetResult,
 } from "./companion-review-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "./character-update-state.js";
 import type {
@@ -96,6 +97,7 @@ export type WithMateWindowCompanionApi = {
   getCompanionSession(sessionId: string): Promise<CompanionSession | null>;
   getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
   mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionMergeSelectedFilesResult>;
+  syncCompanionTarget(sessionId: string): Promise<CompanionSyncTargetResult>;
   discardCompanionSession(sessionId: string): Promise<CompanionSession>;
   createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
   updateCompanionSession(session: CompanionSession): Promise<CompanionSession>;

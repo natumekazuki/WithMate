@@ -99,6 +99,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         getCompanionSession: () => null,
         getCompanionReviewSnapshot: async () => null,
         mergeCompanionSelectedFiles: async () => ({}) as never,
+        syncCompanionTarget: async () => ({}) as never,
         discardCompanionSession: async () => ({}) as never,
         updateCompanionSession: async (session) => session,
         previewCompanionComposerInput: async () => ({ attachments: [], errors: [] }),

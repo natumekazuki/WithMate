@@ -25,6 +25,10 @@ export type CompanionMergeSelectedFilesResult = {
   siblingWarnings: CompanionSiblingCheckWarning[];
 };
 
+export type CompanionSyncTargetResult = {
+  session: CompanionSession;
+};
+
 export type CompanionReviewSnapshot = {
   session: CompanionSession;
   changedFiles: ChangedFile[];

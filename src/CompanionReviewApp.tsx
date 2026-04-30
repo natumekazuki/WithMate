@@ -629,6 +629,9 @@ export default function CompanionReviewApp() {
   });
   const operationDisabled = operationRunning || isSelectedSessionRunning || !snapshot || snapshot.session.status !== "active";
   const mergeBlocked = (snapshot?.mergeReadiness.blockers.length ?? 0) > 0;
+  const targetBranchDriftBlocked =
+    snapshot?.mergeReadiness.blockers.some((blocker) => blocker.kind === "target-branch-drift") ?? false;
+  const mergeReadinessLabel = targetBranchDriftBlocked ? "target drift" : snapshot?.mergeReadiness.status ?? "unknown";
   const runDisabled = isSelectedSessionRunning || operationRunning || !snapshot || snapshot.session.status !== "active";
   const selectedProviderCatalog = getProviderCatalog(modelCatalog?.providers ?? [], snapshot?.session.provider);
   const selectedModelEntry =
@@ -1243,7 +1246,7 @@ export default function CompanionReviewApp() {
     setIsActionDockPinnedExpanded(false);
   }
 
-  async function reloadSnapshot(preferredPath = selectedPath): Promise<void> {
+  async function reloadSnapshot(preferredPath = selectedPath, options: { preserveSelectionOnly?: boolean } = {}): Promise<void> {
     const withmateApi = getWithMateApi();
     if (!snapshot || !withmateApi) {
       return;
@@ -1278,6 +1281,9 @@ export default function CompanionReviewApp() {
     setSelectedPaths((current) => {
       const changedPathSet = new Set(nextSnapshot.changedFiles.map((file) => file.path));
       const preserved = current.filter((path) => changedPathSet.has(path));
+      if (options.preserveSelectionOnly) {
+        return preserved;
+      }
       return preserved.length > 0 ? preserved : nextSnapshot.changedFiles.map((file) => file.path);
     });
   }
@@ -1310,6 +1316,28 @@ export default function CompanionReviewApp() {
       setOperationMessage("selected files を merge したよ。");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "selected files の merge に失敗したよ。");
+    } finally {
+      setOperationRunning(false);
+    }
+  }
+
+  async function syncCompanionTarget(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!snapshot || !withmateApi || operationDisabled) {
+      return;
+    }
+
+    setOperationRunning(true);
+    setErrorMessage("");
+    setOperationMessage("");
+    setSiblingWarnings([]);
+    try {
+      const result = await withmateApi.syncCompanionTarget(snapshot.session.id);
+      setSnapshot((current) => current ? { ...current, session: result.session } : current);
+      await reloadSnapshot(selectedPath, { preserveSelectionOnly: true });
+      setOperationMessage("target branch を Companion worktree に同期しました。");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Sync Target に失敗しました。");
     } finally {
       setOperationRunning(false);
     }
@@ -1786,8 +1814,27 @@ export default function CompanionReviewApp() {
             </div>
           </div>
           <div className="companion-review-actions">
+            {targetBranchDriftBlocked && (
+              <button
+                className="drawer-toggle compact"
+                type="button"
+                disabled={operationDisabled}
+                onClick={() => void syncCompanionTarget()}
+              >
+                Sync Target
+              </button>
+            )}
             <button
-              className="diff-close"
+              className="drawer-toggle compact"
+              type="button"
+              disabled={operationDisabled || mergeBlocked || selectedPaths.length === 0}
+              title={targetBranchDriftBlocked ? "target branch drift を解消するには先に Sync Target してください。" : undefined}
+              onClick={() => void mergeSelectedFiles()}
+            >
+              {`Merge Selected Files${selectedPaths.length > 0 ? ` (${selectedPaths.length})` : ""}`}
+            </button>
+            <button
+              className="drawer-toggle compact secondary"
               type="button"
               disabled={operationRunning || turnRunning}
               onClick={() => void openCompanionWorktree()}
@@ -1795,23 +1842,12 @@ export default function CompanionReviewApp() {
               Open Worktree
             </button>
             <button
-              className="primary-button"
-              type="button"
-              disabled={operationDisabled || mergeBlocked || selectedPaths.length === 0}
-              onClick={() => void mergeSelectedFiles()}
-            >
-              Merge Selected Files
-            </button>
-            <button
-              className="danger-button"
+              className="drawer-toggle compact danger"
               type="button"
               disabled={operationDisabled}
               onClick={() => void discardCompanion()}
             >
               Discard Companion
-            </button>
-            <button className="diff-close" type="button" onClick={() => window.close()}>
-              Close
             </button>
           </div>
         </header>
@@ -1862,12 +1898,13 @@ export default function CompanionReviewApp() {
             <section className={`companion-review-readiness ${snapshot.mergeReadiness.status}`}>
               <div>
                 <p className="eyebrow">Merge Readiness</p>
-                <strong>{snapshot.mergeReadiness.status}</strong>
+                <strong>{mergeReadinessLabel}</strong>
               </div>
               <div className="companion-review-readiness-details">
-                <span>{`target: ${snapshot.mergeReadiness.targetHead.slice(0, 8) || "unknown"}`}</span>
-                <span>{`base: ${snapshot.mergeReadiness.baseParent.slice(0, 8) || "unknown"}`}</span>
-                <span>{snapshot.mergeReadiness.simulatedAt}</span>
+                <span>{`target HEAD: ${snapshot.mergeReadiness.targetHead.slice(0, 8) || "unknown"}`}</span>
+                <span>{`base parent: ${snapshot.mergeReadiness.baseParent.slice(0, 8) || "unknown"}`}</span>
+                <span>{`selected: ${selectedPaths.length}/${snapshot.changedFiles.length}`}</span>
+                <span>{`checked: ${snapshot.mergeReadiness.simulatedAt}`}</span>
               </div>
               {snapshot.mergeReadiness.blockers.length > 0 && (
                 <ul className="companion-review-issues">
@@ -1914,7 +1951,7 @@ export default function CompanionReviewApp() {
                     </div>
                   ))
                 ) : (
-                  <p className="companion-review-empty">変更ファイルはないよ。</p>
+                  <p className="companion-review-empty">変更ファイルはありません。</p>
                 )}
               </aside>
 
@@ -1929,7 +1966,7 @@ export default function CompanionReviewApp() {
                   </>
                 ) : (
                   <div className="companion-review-empty-state">
-                    <p>表示する差分はないよ。</p>
+                    <p>表示する差分はありません。</p>
                   </div>
                 )}
               </main>

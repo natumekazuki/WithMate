@@ -21,6 +21,7 @@ export const WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL = "withmate:list-
 export const WITHMATE_GET_COMPANION_SESSION_CHANNEL = "withmate:get-companion-session";
 export const WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL = "withmate:get-companion-review-snapshot";
 export const WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL = "withmate:merge-companion-selected-files";
+export const WITHMATE_SYNC_COMPANION_TARGET_CHANNEL = "withmate:sync-companion-target";
 export const WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL = "withmate:discard-companion-session";
 export const WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL = "withmate:run-companion-session-turn";
 export const WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL = "withmate:cancel-companion-session-run";

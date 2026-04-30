@@ -261,4 +261,39 @@ describe("CompanionStorage", () => {
       await removeDirectoryWithRetry(tempDirectory);
     }
   });
+
+  it("汎用 updateSession は base snapshot を変更せず Sync Target 専用更新だけが変更できる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: CompanionStorage | null = null;
+
+    try {
+      storage = new CompanionStorage(dbPath);
+      const group = storage.ensureGroup(createGroup());
+      const session = storage.createSession(createSession(group.id));
+
+      const staleUpdate = storage.updateSession({
+        ...session,
+        taskTitle: "Renamed task",
+        baseSnapshotCommit: "stale-base",
+        updatedAt: "2026-04-26 10:02",
+      });
+      assert.equal(staleUpdate.taskTitle, "Renamed task");
+      assert.equal(staleUpdate.baseSnapshotCommit, "abc123");
+
+      const synced = storage.updateSessionBaseSnapshot({
+        ...staleUpdate,
+        baseSnapshotCommit: "synced-base",
+        selectedPaths: ["README.md"],
+        changedFiles: [{ path: "README.md", kind: "edit" }],
+        updatedAt: "2026-04-26 10:03",
+      });
+      assert.equal(synced.baseSnapshotCommit, "synced-base");
+      assert.deepEqual(synced.selectedPaths, ["README.md"]);
+      assert.deepEqual(synced.changedFiles, [{ path: "README.md", kind: "edit" }]);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
 });

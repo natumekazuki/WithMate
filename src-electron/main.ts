@@ -878,6 +878,11 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   broadcastCompanionSessions();
                   return result;
                 },
+                syncCompanionTarget: async (sessionId) => {
+                  const result = await requireCompanionReviewService().syncTarget(sessionId);
+                  broadcastCompanionSessions();
+                  return result;
+                },
                 updateCompanionSession: async (session) => {
                   const saved = requireCompanionStorage().updateSession(session);
                   broadcastCompanionSessions();
@@ -1357,6 +1362,7 @@ function requireCompanionReviewService(): CompanionReviewService {
       getCompanionSession: (sessionId) => requireCompanionStorage().getSession(sessionId),
       listCompanionSessionSummaries: () => requireCompanionStorage().listSessionSummaries(),
       updateCompanionSession: (session) => requireCompanionStorage().updateSession(session),
+      updateCompanionSessionBaseSnapshot: (session) => requireCompanionStorage().updateSessionBaseSnapshot(session),
       createCompanionMergeRun: (run) => requireCompanionStorage().createMergeRun(run),
       listCompanionMergeRunsForSession: (sessionId) => requireCompanionStorage().listMergeRunsForSession(sessionId),
     });
