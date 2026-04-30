@@ -70,6 +70,7 @@ import {
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
@@ -152,6 +153,7 @@ export type MainIpcRegistrationDeps = {
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
   listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   listOpenSessionWindowIds(): string[];
+  listOpenCompanionReviewWindowIds(): string[];
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): AppSettings;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
@@ -272,6 +274,7 @@ type MainIpcSessionQueryDeps = Pick<
   | "listWorkspaceSkills"
   | "listWorkspaceCustomAgents"
   | "listOpenSessionWindowIds"
+  | "listOpenCompanionReviewWindowIds"
   | "getSession"
   | "getDiffPreview"
   | "previewComposerInput"
@@ -442,6 +445,7 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
       deps.listWorkspaceCustomAgents(providerId, workspacePath),
   );
   ipcMain.handle(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL, () => deps.listOpenSessionWindowIds());
+  ipcMain.handle(WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL, () => deps.listOpenCompanionReviewWindowIds());
   ipcMain.handle(WITHMATE_GET_SESSION_CHANNEL, (_event, sessionId: string) => {
     if (!sessionId) {
       return null;

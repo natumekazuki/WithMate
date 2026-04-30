@@ -50,6 +50,7 @@ import {
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
@@ -74,6 +75,7 @@ import {
   WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
+  WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
   WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
@@ -338,6 +340,7 @@ function createObservabilityApi(ipcRenderer: IpcRendererLike): Pick<
   | "getSessionContextTelemetry"
   | "getSessionBackgroundActivity"
   | "listOpenSessionWindowIds"
+  | "listOpenCompanionReviewWindowIds"
 > {
   return {
     getProviderQuotaTelemetry(providerId) {
@@ -351,6 +354,9 @@ function createObservabilityApi(ipcRenderer: IpcRendererLike): Pick<
     },
     listOpenSessionWindowIds() {
       return ipcRenderer.invoke(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL);
+    },
+    listOpenCompanionReviewWindowIds() {
+      return ipcRenderer.invoke(WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL);
     },
   };
 }
@@ -474,6 +480,9 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
     },
     subscribeOpenSessionWindowIds(listener) {
       return subscribe(ipcRenderer, WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, listener);
+    },
+    subscribeOpenCompanionReviewWindowIds(listener) {
+      return subscribe(ipcRenderer, WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT, listener);
     },
     subscribeCompanionSessionSummaries(listener) {
       return subscribe(ipcRenderer, WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT, listener);

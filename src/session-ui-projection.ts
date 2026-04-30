@@ -7,11 +7,12 @@ import type {
   ProviderQuotaTelemetry,
   SessionContextTelemetry,
 } from "./app-state.js";
+import type { HomeMonitorEntry } from "./home-session-projection.js";
 import { liveRunStepStatusLabel } from "./ui-utils.js";
 
-export type ContextPaneTabKey = "latest-command" | "tasks";
+export type ContextPaneTabKey = "latest-command" | "tasks" | "companion-group";
 
-export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = ["latest-command", "tasks"];
+export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = ["latest-command", "tasks", "companion-group"];
 
 export type LatestCommandView = {
   status: string;
@@ -272,6 +273,8 @@ export function contextPaneTabLabel(tab: ContextPaneTabKey): string {
       return "LatestCommand";
     case "tasks":
       return "Tasks";
+    case "companion-group":
+      return "CompanionGroup";
     default:
       return tab;
   }
@@ -281,10 +284,12 @@ export function resolveAutoContextPaneTab({
   isSelectedSessionRunning,
   isCopilotSession,
   backgroundTasks,
+  hasCompanionGroupMonitor = false,
 }: {
   isSelectedSessionRunning: boolean;
   isCopilotSession: boolean;
   backgroundTasks: LiveBackgroundTask[];
+  hasCompanionGroupMonitor?: boolean;
 }): ContextPaneTabKey | null {
   if (isSelectedSessionRunning) {
     return "latest-command";
@@ -294,15 +299,31 @@ export function resolveAutoContextPaneTab({
     return "tasks";
   }
 
+  if (hasCompanionGroupMonitor) {
+    return "companion-group";
+  }
+
   return null;
 }
 
 export function resolveAvailableContextPaneTabs({
   isCopilotSession,
+  hasCompanionGroupMonitor = false,
 }: {
   isCopilotSession: boolean;
+  hasCompanionGroupMonitor?: boolean;
 }): ContextPaneTabKey[] {
-  return CONTEXT_PANE_TAB_ORDER.filter((tab) => tab !== "tasks" || isCopilotSession);
+  return CONTEXT_PANE_TAB_ORDER.filter((tab) => {
+    if (tab === "tasks") {
+      return isCopilotSession;
+    }
+
+    if (tab === "companion-group") {
+      return hasCompanionGroupMonitor;
+    }
+
+    return true;
+  });
 }
 
 export function cycleContextPaneTab(
@@ -321,15 +342,22 @@ export function buildContextPaneProjection({
   activeContextPaneTab,
   latestCommandView,
   backgroundTasks,
+  companionGroupMonitorEntries = [],
 }: {
   activeContextPaneTab: ContextPaneTabKey;
   latestCommandView: LatestCommandView | null;
   backgroundTasks: LiveBackgroundTask[];
+  companionGroupMonitorEntries?: HomeMonitorEntry[];
 }): ContextPaneProjection {
   const latestCommandToneClassName = latestCommandView ? liveRunStepToneClassName(latestCommandView.status) : "unknown";
   const latestCommandStatusLabel = latestCommandView ? liveRunStepStatusLabel(latestCommandView.status) : "待機";
   const latestCommandSourceCopy = latestCommandView?.sourceLabel === "live" ? "RUN LIVE" : "LAST RUN";
   const tasksToneClassName = summarizeBackgroundTasksStatus(backgroundTasks);
+  const companionGroupToneClassName = companionGroupMonitorEntries.some((entry) => entry.state.kind === "running")
+    ? "running"
+    : companionGroupMonitorEntries.some((entry) => entry.state.kind === "error")
+      ? "error"
+      : "neutral";
 
   let badgeLabel = "";
   switch (activeContextPaneTab) {
@@ -337,6 +365,9 @@ export function buildContextPaneProjection({
       badgeLabel = backgroundTasks.length > 0
         ? sessionBackgroundActivityStatusLabel(tasksToneClassName)
         : "";
+      break;
+    case "companion-group":
+      badgeLabel = companionGroupMonitorEntries.length > 0 ? String(companionGroupMonitorEntries.length) : "";
       break;
     default:
       badgeLabel = "";
@@ -350,6 +381,9 @@ export function buildContextPaneProjection({
       break;
     case "tasks":
       toneClassName = tasksToneClassName;
+      break;
+    case "companion-group":
+      toneClassName = companionGroupToneClassName;
       break;
     default:
       toneClassName = "unknown";

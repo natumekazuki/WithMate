@@ -702,6 +702,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           loadCompanionMergeEntry: (window, sessionId) =>
             requireWindowEntryLoader().loadCompanionMergeEntry(window, sessionId),
           generateDiffToken: () => crypto.randomUUID(),
+          onCompanionReviewWindowsChanged: () => broadcastOpenCompanionReviewWindowIds(),
         }),
       createPersistentStoreLifecycleService: () =>
         new PersistentStoreLifecycleService({
@@ -836,6 +837,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 listWorkspaceCustomAgents: async (providerId, workspacePath) =>
                   requireMainQueryService().listWorkspaceCustomAgents(providerId, workspacePath),
                 listOpenSessionWindowIds: () => listOpenSessionWindowIds(),
+                listOpenCompanionReviewWindowIds: () => listOpenCompanionReviewWindowIds(),
                 getSession: (sessionId) => getSession(sessionId),
                 getDiffPreview: (token) => requireAuxWindowService().getDiffPreview(token),
                 previewComposerInput,
@@ -989,6 +991,7 @@ function requireMainBroadcastFacade(): MainBroadcastFacade<BrowserWindow> {
       getModelCatalog: () => getModelCatalog(),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       listOpenSessionWindowIds: () => listOpenSessionWindowIds(),
+      listOpenCompanionReviewWindowIds: () => listOpenCompanionReviewWindowIds(),
     });
   }
 
@@ -1915,8 +1918,16 @@ function listOpenSessionWindowIds(): string[] {
   return requireMainWindowFacade().listOpenSessionWindowIds();
 }
 
+function listOpenCompanionReviewWindowIds(): string[] {
+  return requireMainWindowFacade().listOpenCompanionReviewWindowIds();
+}
+
 function broadcastOpenSessionWindowIds(): void {
   requireMainBroadcastFacade().broadcastOpenSessionWindowIds();
+}
+
+function broadcastOpenCompanionReviewWindowIds(): void {
+  requireMainBroadcastFacade().broadcastOpenCompanionReviewWindowIds();
 }
 
 function hasRunningSessions(): boolean {

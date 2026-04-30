@@ -160,6 +160,7 @@ export default function HomeApp() {
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [openSessionWindowIds, setOpenSessionWindowIds] = useState<string[]>([]);
+  const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const [sessionSearchText, setSessionSearchText] = useState("");
   const [characterSearchText, setCharacterSearchText] = useState("");
   const [rightPaneView, setRightPaneView] = useState<HomeRightPaneView>("monitor");
@@ -341,9 +342,43 @@ export default function HomeApp() {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
+      return () => {
+        active = false;
+      };
+    }
+
+    const unsubscribeOpenCompanionReviewWindowIds = withmateApi.subscribeOpenCompanionReviewWindowIds((nextSessionIds) => {
+      if (active) {
+        setOpenCompanionReviewWindowIds(nextSessionIds);
+      }
+    });
+
+    void withmateApi.listOpenCompanionReviewWindowIds().then((nextSessionIds) => {
+      if (active) {
+        setOpenCompanionReviewWindowIds(nextSessionIds);
+      }
+    });
+
+    return () => {
+      active = false;
+      unsubscribeOpenCompanionReviewWindowIds();
+    };
+  }, []);
+
   const sessionProjection = useMemo(
-    () => buildHomeSessionProjection(sessions, openSessionWindowIds, sessionSearchText),
-    [openSessionWindowIds, sessionSearchText, sessions],
+    () => buildHomeSessionProjection(
+      sessions,
+      openSessionWindowIds,
+      sessionSearchText,
+      companionSessions,
+      openCompanionReviewWindowIds,
+    ),
+    [companionSessions, openCompanionReviewWindowIds, openSessionWindowIds, sessionSearchText, sessions],
   );
   const {
     filteredSessionEntries,
@@ -1022,6 +1057,7 @@ export default function HomeApp() {
                 runningEmptyMessage={monitorRunningEmptyMessage}
                 completedEmptyMessage={monitorCompletedEmptyMessage}
                 onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
+                onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
               />
             </section>
           </section>
@@ -1063,6 +1099,7 @@ export default function HomeApp() {
           onChangeCharacterSearchText={setCharacterSearchText}
           onOpenCharacterEditor={(characterId) => void openCharacterEditor(characterId)}
           onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
+          onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
         />
       </main>
 

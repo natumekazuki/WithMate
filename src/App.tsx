@@ -18,6 +18,7 @@ import {
 } from "./app-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
 import type { CharacterUpdateMemoryExtract } from "./character-update-state.js";
+import type { CompanionSessionSummary } from "./companion-state.js";
 import {
   createDefaultAppSettings,
   getProviderAppSettings,
@@ -96,6 +97,7 @@ import {
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
+import { buildCompanionGroupMonitorEntries } from "./home-session-projection.js";
 import { extractTextReferenceCandidates } from "./path-reference.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import CompanionReviewApp from "./CompanionReviewApp.js";
@@ -440,6 +442,8 @@ function AgentSessionWindowApp() {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
+  const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [forceComposerBlockedFeedback, setForceComposerBlockedFeedback] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
@@ -538,9 +542,70 @@ function AgentSessionWindowApp() {
     };
   }, [selectedId, withmateApi]);
 
+  useEffect(() => {
+    let active = true;
+
+    if (!withmateApi) {
+      return () => {
+        active = false;
+      };
+    }
+
+    void withmateApi.listCompanionSessionSummaries().then((nextSessions) => {
+      if (active) {
+        setCompanionSessions(nextSessions);
+      }
+    });
+
+    const unsubscribe = withmateApi.subscribeCompanionSessionSummaries((nextSessions) => {
+      if (active) {
+        setCompanionSessions(nextSessions);
+      }
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [withmateApi]);
+
+  useEffect(() => {
+    let active = true;
+
+    if (!withmateApi) {
+      return () => {
+        active = false;
+      };
+    }
+
+    void withmateApi.listOpenCompanionReviewWindowIds().then((nextSessionIds) => {
+      if (active) {
+        setOpenCompanionReviewWindowIds(nextSessionIds);
+      }
+    });
+
+    const unsubscribe = withmateApi.subscribeOpenCompanionReviewWindowIds((nextSessionIds) => {
+      if (active) {
+        setOpenCompanionReviewWindowIds(nextSessionIds);
+      }
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [withmateApi]);
+
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedId) ?? sessions[0] ?? null,
     [selectedId, sessions],
+  );
+  const selectedCompanionGroupMonitorEntries = useMemo(
+    () => buildCompanionGroupMonitorEntries(
+      companionSessions,
+      openCompanionReviewWindowIds,
+    ),
+    [companionSessions, openCompanionReviewWindowIds],
   );
   const selectedSessionId = selectedSession?.id ?? null;
   const {
@@ -1411,8 +1476,11 @@ function AgentSessionWindowApp() {
     [selectedSessionLiveRun?.backgroundTasks],
   );
   const availableContextPaneTabs = useMemo(
-    () => resolveAvailableContextPaneTabs({ isCopilotSession }),
-    [isCopilotSession],
+    () => resolveAvailableContextPaneTabs({
+      isCopilotSession,
+      hasCompanionGroupMonitor: selectedCompanionGroupMonitorEntries.length > 0,
+    }),
+    [isCopilotSession, selectedCompanionGroupMonitorEntries.length],
   );
 
   const hasInProgressLiveRunStep = useMemo(
@@ -2493,8 +2561,9 @@ function AgentSessionWindowApp() {
       activeContextPaneTab,
       latestCommandView,
       backgroundTasks: selectedBackgroundTasks,
+      companionGroupMonitorEntries: selectedCompanionGroupMonitorEntries,
     }),
-    [activeContextPaneTab, latestCommandView, selectedBackgroundTasks],
+    [activeContextPaneTab, latestCommandView, selectedBackgroundTasks, selectedCompanionGroupMonitorEntries],
   );
 
   useEffect(() => {
@@ -2502,11 +2571,12 @@ function AgentSessionWindowApp() {
       isSelectedSessionRunning,
       isCopilotSession,
       backgroundTasks: selectedBackgroundTasks,
+      hasCompanionGroupMonitor: selectedCompanionGroupMonitorEntries.length > 0,
     });
     if (nextTab) {
       setActiveContextPaneTab(nextTab);
     }
-  }, [isSelectedSessionRunning, isCopilotSession, selectedBackgroundTasks]);
+  }, [isSelectedSessionRunning, isCopilotSession, selectedBackgroundTasks, selectedCompanionGroupMonitorEntries.length]);
 
   useEffect(() => {
     if (!availableContextPaneTabs.includes(activeContextPaneTab)) {
@@ -2889,10 +2959,12 @@ function AgentSessionWindowApp() {
               taskTitle={selectedSession.taskTitle}
               isHeaderExpanded={isSessionHeaderExpanded}
               activeContextPaneTab={activeContextPaneTab}
+              availableContextPaneTabs={availableContextPaneTabs}
               contextPaneProjection={contextPaneProjection}
               latestCommandView={latestCommandView}
               runningDetailsEntries={runningDetailsEntries}
               backgroundTasks={selectedBackgroundTasks}
+              companionGroupMonitorEntries={selectedCompanionGroupMonitorEntries}
               selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
               isSelectedSessionRunning={isSelectedSessionRunning}
               isCopilotSession={isCopilotSession}
@@ -2904,6 +2976,7 @@ function AgentSessionWindowApp() {
               contextEmptyText={selectedContextEmptyText}
               onToggleHeaderExpanded={handleToggleHeaderExpanded}
               onCycleContextPaneTab={handleCycleContextPaneTab}
+              onOpenCompanionReview={(sessionId) => void withmateApi?.openCompanionReviewWindow(sessionId)}
             />
           )}
         </SessionPaneErrorBoundary>

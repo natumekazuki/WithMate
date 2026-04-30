@@ -17,6 +17,7 @@ import {
   WITHMATE_LIVE_SESSION_RUN_EVENT,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
+  WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT,
   WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT,
   WITHMATE_SESSIONS_CHANGED_EVENT,
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
@@ -66,6 +67,10 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
 
   public broadcastOpenSessionWindowIds(sessionIds: string[]): void {
     this.broadcast(WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, sessionIds);
+  }
+
+  public broadcastOpenCompanionReviewWindowIds(sessionIds: string[]): void {
+    this.broadcast(WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT, sessionIds);
   }
 
   public broadcastLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void {

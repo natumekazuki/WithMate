@@ -35,6 +35,7 @@ export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
   loadCompanionChatEntry(window: TWindow, sessionId: string): Promise<void>;
   loadCompanionMergeEntry(window: TWindow, sessionId: string): Promise<void>;
   generateDiffToken(): string;
+  onCompanionReviewWindowsChanged(): void;
 };
 
 export class AuxWindowService<TWindow extends BaseWindowLike> {
@@ -65,6 +66,16 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
 
   getDiffPreview(token: string): DiffPreviewPayload | null {
     return this.diffPreviewStore.get(token) ?? null;
+  }
+
+  listOpenCompanionReviewWindowIds(): string[] {
+    const sessionIds: string[] = [];
+    for (const [sessionId, window] of this.companionReviewWindows.entries()) {
+      if (!window.isDestroyed()) {
+        sessionIds.push(sessionId);
+      }
+    }
+    return sessionIds;
   }
 
   async openHomeWindow(): Promise<TWindow> {
@@ -210,9 +221,11 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       title: `Companion - ${sessionId}`,
     });
     this.companionReviewWindows.set(sessionId, window);
+    this.deps.onCompanionReviewWindowsChanged();
     window.once("ready-to-show", () => window.show());
     window.on("closed", () => {
       this.companionReviewWindows.delete(sessionId);
+      this.deps.onCompanionReviewWindowsChanged();
     });
     await this.deps.loadCompanionChatEntry(window, sessionId);
     return window;

@@ -706,6 +706,40 @@ button:disabled {
   background: rgba(255, 255, 255, 0.07);
 }
 
+.home-page .home-monitor-row.companion {
+  box-shadow: inset 3px 0 0 var(--companion-group-accent, rgba(172, 139, 255, 0.72));
+}
+
+.home-page .home-monitor-row.companion-group-0,
+.home-page .home-monitor-group-chip.companion-group-0 {
+  --companion-group-accent: #8bd3ff;
+}
+
+.home-page .home-monitor-row.companion-group-1,
+.home-page .home-monitor-group-chip.companion-group-1 {
+  --companion-group-accent: #ac8bff;
+}
+
+.home-page .home-monitor-row.companion-group-2,
+.home-page .home-monitor-group-chip.companion-group-2 {
+  --companion-group-accent: #7dd3a8;
+}
+
+.home-page .home-monitor-row.companion-group-3,
+.home-page .home-monitor-group-chip.companion-group-3 {
+  --companion-group-accent: #f4bf75;
+}
+
+.home-page .home-monitor-row.companion-group-4,
+.home-page .home-monitor-group-chip.companion-group-4 {
+  --companion-group-accent: #f08faf;
+}
+
+.home-page .home-monitor-row.companion-group-5,
+.home-page .home-monitor-group-chip.companion-group-5 {
+  --companion-group-accent: #93c5fd;
+}
+
 .home-page .home-monitor-row-copy {
   display: grid;
   gap: 3px;
@@ -728,6 +762,25 @@ button:disabled {
 .home-page .home-monitor-row-copy span {
   color: #99a6bb;
   font-size: 0.76rem;
+}
+
+.home-page .home-monitor-row-badges {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.home-page .home-monitor-group-chip {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--companion-group-accent) 76%, #ffffff 24%);
+  border-radius: 999px;
+  background: var(--companion-group-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--companion-group-accent) 18%, transparent);
 }
 
 .home-page .home-monitor-empty {
@@ -2479,7 +2532,10 @@ button:disabled {
 .session-context-pane {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  align-self: stretch;
   gap: 10px;
+  height: 100%;
+  max-height: 100%;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -2623,7 +2679,9 @@ button:disabled {
 .command-monitor-shell {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  align-self: stretch;
   gap: 10px;
+  height: auto;
   min-height: 0;
   min-width: 0;
   padding: 12px 14px;
@@ -2637,10 +2695,15 @@ button:disabled {
 .command-monitor-content {
   display: flex;
   flex-direction: column;
+  height: auto;
   min-height: 0;
   overflow-y: auto;
-  padding-right: 4px;
+  padding: 4px 4px 0 0;
   scrollbar-gutter: stable;
+}
+
+.command-monitor-shell.companion-group .command-monitor-content {
+  padding-bottom: 8px;
 }
 
 .command-monitor-stack {
@@ -2648,6 +2711,12 @@ button:disabled {
   gap: 10px;
   min-width: 0;
   margin-top: auto;
+}
+
+.command-monitor-stack.companion-group {
+  align-content: start;
+  margin-top: auto;
+  padding-top: 0;
 }
 
 .session-page .command-monitor-shell {
@@ -2680,7 +2749,7 @@ button:disabled {
 }
 
 .command-monitor-head {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
 }
 
@@ -2728,6 +2797,16 @@ button:disabled {
 .command-monitor-switcher-button:hover {
   border-color: rgba(203, 213, 225, 0.22);
   background: rgba(255, 255, 255, 0.05);
+}
+
+.command-monitor-switcher-button:disabled {
+  cursor: default;
+  opacity: 0.36;
+}
+
+.command-monitor-switcher-button:disabled:hover {
+  border-color: rgba(203, 213, 225, 0.12);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .command-monitor-switcher-current {
@@ -3847,6 +3926,21 @@ button:disabled {
   color: #ffe7bf;
 }
 
+.session-page .live-run-step-status.running {
+  background: rgba(56, 189, 248, 0.16);
+  color: #c8f1ff;
+}
+
+.session-page .live-run-step-status.error {
+  background: rgba(251, 146, 60, 0.18);
+  color: #ffe2c2;
+}
+
+.session-page .live-run-step-status.neutral {
+  background: rgba(148, 163, 184, 0.14);
+  color: #dbeafe;
+}
+
 .live-run-step-type {
   font-size: 0.76rem;
   letter-spacing: 0.04em;
@@ -4048,6 +4142,83 @@ button:disabled {
 .command-monitor-confirmed-item:first-child {
   padding-top: 0;
   border-top: 0;
+}
+
+.companion-group-monitor-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(203, 213, 225, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  text-align: left;
+  box-shadow: none;
+}
+
+.companion-group-monitor-item:hover {
+  border-color: rgba(111, 140, 255, 0.24);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.companion-group-monitor-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.companion-group-monitor-copy strong,
+.companion-group-monitor-copy span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.companion-group-monitor-copy strong {
+  color: #f8fbff;
+  font-size: 0.9rem;
+}
+
+.companion-group-monitor-copy span {
+  color: #99a6bb;
+  font-size: 0.76rem;
+}
+
+.companion-group-monitor-badges {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.session-page .companion-group-monitor-status {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-color: color-mix(in srgb, var(--ink) 18%, transparent);
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+  color: var(--ink);
+  font-size: 0.76rem;
+}
+
+.session-page .companion-group-monitor-status.running {
+  border-color: rgba(111, 184, 199, 0.34);
+  background: rgba(111, 184, 199, 0.22);
+}
+
+.session-page .companion-group-monitor-status.error {
+  border-color: rgba(255, 124, 124, 0.34);
+  background: rgba(255, 124, 124, 0.2);
+}
+
+.session-page .companion-group-monitor-status.neutral {
+  border-color: color-mix(in srgb, var(--ink) 16%, transparent);
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
 }
 
 .command-monitor-confirmed-summary {
@@ -6596,8 +6767,13 @@ button:disabled {
   }
 
   .session-context-pane {
-    grid-template-rows: auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    height: min(42vh, 460px);
     min-height: min(38vh, 420px);
+  }
+
+  .session-context-pane.session-context-pane-header-expanded {
+    grid-template-rows: minmax(0, 1fr) auto;
   }
 }
 
@@ -6618,6 +6794,7 @@ button:disabled {
   }
 
   .session-context-pane {
+    height: min(42vh, 360px);
     min-height: min(34vh, 300px);
   }
 

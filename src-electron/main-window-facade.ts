@@ -52,6 +52,10 @@ export class MainWindowFacade {
     return this.deps.getSessionWindowBridge().listOpenSessionWindowIds();
   }
 
+  listOpenCompanionReviewWindowIds(): string[] {
+    return this.deps.getAuxWindowService().listOpenCompanionReviewWindowIds();
+  }
+
   closeResetTargetWindows(): void {
     this.deps.getSessionWindowBridge().closeAllSessionWindows();
     this.deps.getAuxWindowService().closeResetTargetWindows();

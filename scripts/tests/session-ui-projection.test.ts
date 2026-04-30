@@ -113,6 +113,17 @@ describe("session-ui-projection", () => {
     assert.equal(tab, "tasks");
   });
 
+  it("CompanionGroup monitor があれば CompanionGroup を自動選択する", () => {
+    const tab = resolveAutoContextPaneTab({
+      isSelectedSessionRunning: false,
+      isCopilotSession: false,
+      backgroundTasks: [],
+      hasCompanionGroupMonitor: true,
+    });
+
+    assert.equal(tab, "companion-group");
+  });
+
   it("ContextPaneProjection は LatestCommand tab の表示情報を作る", () => {
     const projection = buildContextPaneProjection({
       activeContextPaneTab: "latest-command",
@@ -158,6 +169,55 @@ describe("session-ui-projection", () => {
     assert.equal(projection.toneClassName, "failed");
     assert.equal(projection.tasksToneClassName, "failed");
     assert.equal(projection.badgeLabel, "失敗");
+  });
+
+  it("ContextPaneProjection は CompanionGroup tab の件数と tone を作る", () => {
+    const projection = buildContextPaneProjection({
+      activeContextPaneTab: "companion-group",
+      latestCommandView: null,
+      backgroundTasks: [],
+      companionGroupMonitorEntries: [
+        {
+          kind: "companion",
+          groupLabel: "WithMate",
+          state: { kind: "running", label: "実行中" },
+          session: {
+            id: "companion-1",
+            groupId: "group-1",
+            taskTitle: "Companion",
+            status: "active",
+            repoRoot: "F:/workspace/WithMate",
+            focusPath: "",
+            targetBranch: "main",
+            baseSnapshotRef: "refs/withmate/base/1",
+            baseSnapshotCommit: "base-1",
+            selectedPaths: [],
+            changedFiles: [],
+            siblingWarnings: [],
+            allowedAdditionalDirectories: [],
+            runState: "running",
+            threadId: "",
+            provider: "codex",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+            approvalMode: "untrusted",
+            codexSandboxMode: "danger-full-access",
+            character: "Mia",
+            characterRoleMarkdown: "",
+            characterIconPath: "icon.png",
+            characterThemeColors: {
+              main: "#000000",
+              sub: "#ffffff",
+            },
+            updatedAt: "2026-03-28T00:00:00.000Z",
+            latestMergeRun: null,
+          },
+        },
+      ],
+    });
+
+    assert.equal(projection.toneClassName, "running");
+    assert.equal(projection.badgeLabel, "1");
   });
 
   it("running details は確定済み step だけを末尾から拾い、最新 command は重複表示しない", () => {
@@ -283,7 +343,7 @@ describe("session-ui-projection", () => {
 
   it("cycleContextPaneTab は利用可能な command pane を循環する", () => {
     assert.equal(cycleContextPaneTab("latest-command", 1), "tasks");
-    assert.equal(cycleContextPaneTab("latest-command", -1), "tasks");
+    assert.equal(cycleContextPaneTab("latest-command", -1), "companion-group");
   });
 
   it("available tabs は non-Copilot で Tasks を除外する", () => {
@@ -293,6 +353,10 @@ describe("session-ui-projection", () => {
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true }), [
       "latest-command",
       "tasks",
+    ]);
+    assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false, hasCompanionGroupMonitor: true }), [
+      "latest-command",
+      "companion-group",
     ]);
   });
 

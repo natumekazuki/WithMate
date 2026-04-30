@@ -19,7 +19,8 @@ import type {
 } from "./app-state.js";
 import { currentTimestampLabel } from "./app-state.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
-import type { CompanionMergeRun, CompanionSession } from "./companion-state.js";
+import type { CompanionMergeRun, CompanionSession, CompanionSessionSummary } from "./companion-state.js";
+import { createCompanionSessionSummary } from "./companion-state.js";
 import {
   buildCompanionCharacterProfile,
   buildCompanionChatSnapshot,
@@ -37,6 +38,7 @@ import {
   type ModelReasoningEffort,
 } from "./model-catalog.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
+import { buildCompanionGroupMonitorEntries } from "./home-session-projection.js";
 import {
   SessionContextPane,
   SessionDiffModal,
@@ -146,6 +148,7 @@ export default function CompanionReviewApp() {
   const [composerCaret, setComposerCaret] = useState(0);
   const [availableSkills, setAvailableSkills] = useState<DiscoveredSkill[]>([]);
   const [availableCustomAgents, setAvailableCustomAgents] = useState<DiscoveredCustomAgent[]>([]);
+  const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
   const [isSkillListLoading, setIsSkillListLoading] = useState(false);
   const [isCustomAgentListLoading, setIsCustomAgentListLoading] = useState(false);
   const [isAgentPickerOpen, setIsAgentPickerOpen] = useState(false);
@@ -227,6 +230,34 @@ export default function CompanionReviewApp() {
     setActiveWorkspacePathMatchIndex(-1);
     setIsComposerImeComposing(false);
   }, [snapshot?.session.id]);
+
+  useEffect(() => {
+    let active = true;
+    const withmateApi = getWithMateApi();
+
+    if (!withmateApi) {
+      return () => {
+        active = false;
+      };
+    }
+
+    void withmateApi.listCompanionSessionSummaries().then((nextSessions) => {
+      if (active) {
+        setCompanionSessions(nextSessions);
+      }
+    });
+
+    const unsubscribe = withmateApi.subscribeCompanionSessionSummaries((nextSessions) => {
+      if (active) {
+        setCompanionSessions(nextSessions);
+      }
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     if (!snapshot || isEditingTitle) {
@@ -788,32 +819,55 @@ export default function CompanionReviewApp() {
     latestAuditCommandOperation: null,
     latestTerminalAuditPhase: null,
   });
-  const orderedLiveRunSteps = (selectedSessionLiveRun?.steps ?? [])
-    .map((step, index) => ({ step, index }))
-    .sort((left, right) => left.index - right.index)
-    .map(({ step }) => step);
+  const orderedLiveRunSteps = useMemo(
+    () => (selectedSessionLiveRun?.steps ?? [])
+      .map((step, index) => ({ step, index }))
+      .sort((left, right) => left.index - right.index)
+      .map(({ step }) => step),
+    [selectedSessionLiveRun?.steps],
+  );
   const runningDetailsEntries = buildRunningDetailsEntries({
     liveSteps: orderedLiveRunSteps,
     latestLiveCommandStepId: latestLiveCommandStep?.id ?? null,
   });
-  const selectedBackgroundTasks = selectedSessionLiveRun?.backgroundTasks ?? [];
+  const selectedBackgroundTasks = useMemo(
+    () => selectedSessionLiveRun?.backgroundTasks ?? [],
+    [selectedSessionLiveRun?.backgroundTasks],
+  );
+  const companionGroupMonitorEntries = useMemo(() => {
+    if (!snapshot) {
+      return [];
+    }
+
+    const sessionById = new Map(companionSessions.map((session) => [session.id, session]));
+    sessionById.set(snapshot.session.id, createCompanionSessionSummary(snapshot.session));
+    return buildCompanionGroupMonitorEntries([...sessionById.values()], [snapshot.session.id]);
+  }, [companionSessions, snapshot]);
   const contextPaneProjection = buildContextPaneProjection({
     activeContextPaneTab,
     latestCommandView,
     backgroundTasks: selectedBackgroundTasks,
+    companionGroupMonitorEntries,
   });
-  const availableContextPaneTabs = resolveAvailableContextPaneTabs({ isCopilotSession });
+  const availableContextPaneTabs = useMemo(
+    () => resolveAvailableContextPaneTabs({
+      isCopilotSession,
+      hasCompanionGroupMonitor: companionGroupMonitorEntries.length > 0,
+    }),
+    [isCopilotSession, companionGroupMonitorEntries.length],
+  );
 
   useEffect(() => {
     const nextTab = resolveAutoContextPaneTab({
       isSelectedSessionRunning,
       isCopilotSession,
       backgroundTasks: selectedBackgroundTasks,
+      hasCompanionGroupMonitor: companionGroupMonitorEntries.length > 0,
     });
     if (nextTab) {
       setActiveContextPaneTab(nextTab);
     }
-  }, [isSelectedSessionRunning, isCopilotSession, selectedBackgroundTasks]);
+  }, [isSelectedSessionRunning, isCopilotSession, selectedBackgroundTasks, companionGroupMonitorEntries.length]);
 
   useEffect(() => {
     if (!availableContextPaneTabs.includes(activeContextPaneTab)) {
@@ -1648,10 +1702,12 @@ export default function CompanionReviewApp() {
               taskTitle={snapshot.session.taskTitle}
               isHeaderExpanded={isHeaderExpanded}
               activeContextPaneTab={activeContextPaneTab}
+              availableContextPaneTabs={availableContextPaneTabs}
               contextPaneProjection={contextPaneProjection}
               latestCommandView={latestCommandView}
               runningDetailsEntries={runningDetailsEntries}
               backgroundTasks={selectedBackgroundTasks}
+              companionGroupMonitorEntries={companionGroupMonitorEntries}
               selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
               isSelectedSessionRunning={isSelectedSessionRunning}
               isCopilotSession={isCopilotSession}
@@ -1663,6 +1719,7 @@ export default function CompanionReviewApp() {
               contextEmptyText="context usage はまだありません。"
               onToggleHeaderExpanded={() => setIsHeaderExpanded((current) => !current)}
               onCycleContextPaneTab={handleCycleContextPaneTab}
+              onOpenCompanionReview={(sessionId) => void getWithMateApi()?.openCompanionReviewWindow(sessionId)}
             />
           </SessionPaneErrorBoundary>
         )}

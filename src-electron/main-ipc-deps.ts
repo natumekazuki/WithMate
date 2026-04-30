@@ -98,6 +98,7 @@ export type MainIpcSessionQueryDepsArgs = {
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
   listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   listOpenSessionWindowIds(): string[];
+  listOpenCompanionReviewWindowIds(): string[];
   getSession(sessionId: string): Session | null;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
@@ -222,6 +223,7 @@ export function createMainIpcRegistrationDeps(
     listWorkspaceSkills: args.sessionQuery.listWorkspaceSkills,
     listWorkspaceCustomAgents: args.sessionQuery.listWorkspaceCustomAgents,
     listOpenSessionWindowIds: args.sessionQuery.listOpenSessionWindowIds,
+    listOpenCompanionReviewWindowIds: args.sessionQuery.listOpenCompanionReviewWindowIds,
     getSession: args.sessionQuery.getSession,
     getDiffPreview: args.sessionQuery.getDiffPreview,
     previewComposerInput: args.sessionQuery.previewComposerInput,

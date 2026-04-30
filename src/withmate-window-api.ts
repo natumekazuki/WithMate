@@ -113,6 +113,7 @@ export type WithMateWindowObservabilityApi = {
     kind: SessionBackgroundActivityKind,
   ): Promise<SessionBackgroundActivityState | null>;
   listOpenSessionWindowIds(): Promise<string[]>;
+  listOpenCompanionReviewWindowIds(): Promise<string[]>;
 };
 
 export type WithMateWindowSettingsApi = {
@@ -160,6 +161,7 @@ export type WithMateWindowSubscriptionApi = {
     ) => void,
   ): () => void;
   subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
+  subscribeOpenCompanionReviewWindowIds(listener: (sessionIds: string[]) => void): () => void;
   subscribeCompanionSessionSummaries(listener: (sessions: CompanionSessionSummary[]) => void): () => void;
 };
 

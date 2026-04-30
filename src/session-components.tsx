@@ -39,6 +39,7 @@ import {
   type SessionContextTelemetryProjection,
 } from "./session-ui-projection.js";
 import type { CharacterUpdateMemoryExtract } from "./character-update-state.js";
+import type { HomeMonitorEntry } from "./home-session-projection.js";
 
 function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
@@ -1096,10 +1097,12 @@ export type SessionContextPaneProps = {
   taskTitle: string;
   isHeaderExpanded: boolean;
   activeContextPaneTab: ContextPaneTabKey;
+  availableContextPaneTabs: ContextPaneTabKey[];
   contextPaneProjection: ContextPaneProjection;
   latestCommandView: LatestCommandView | null;
   runningDetailsEntries: RunningDetailsEntry[];
   backgroundTasks: LiveBackgroundTask[];
+  companionGroupMonitorEntries: HomeMonitorEntry[];
   selectedSessionLiveRunErrorMessage: string;
   isSelectedSessionRunning: boolean;
   isCopilotSession: boolean;
@@ -1111,6 +1114,7 @@ export type SessionContextPaneProps = {
   contextEmptyText: string;
   onToggleHeaderExpanded: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
+  onOpenCompanionReview: (sessionId: string) => void;
 };
 
 type SessionPaneErrorBoundaryProps = {
@@ -1204,10 +1208,12 @@ export function SessionContextPane({
   taskTitle,
   isHeaderExpanded,
   activeContextPaneTab,
+  availableContextPaneTabs,
   contextPaneProjection,
   latestCommandView,
   runningDetailsEntries,
   backgroundTasks,
+  companionGroupMonitorEntries,
   selectedSessionLiveRunErrorMessage,
   isSelectedSessionRunning,
   isCopilotSession,
@@ -1219,9 +1225,12 @@ export function SessionContextPane({
   contextEmptyText,
   onToggleHeaderExpanded,
   onCycleContextPaneTab,
+  onOpenCompanionReview,
 }: SessionContextPaneProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const taskEntries = backgroundTasks ?? [];
+  const availableTabCount = availableContextPaneTabs.length;
+  const canCycleContextPaneTab = availableTabCount > 1;
   const contentScrollKey = useMemo(() => {
     switch (activeContextPaneTab) {
       case "latest-command":
@@ -1238,16 +1247,42 @@ export function SessionContextPane({
         return taskEntries
           .map((task) => `${task.id}:${task.kind}:${task.status}:${task.title}:${task.details ?? ""}:${task.updatedAt}`)
           .join("|");
+      case "companion-group":
+        return companionGroupMonitorEntries
+          .map((entry) => `${entry.kind}:${entry.session.id}:${entry.session.taskTitle}:${entry.state.kind}:${entry.state.label}:${entry.session.updatedAt}`)
+          .join("|");
       default:
         return "";
     }
   }, [
     activeContextPaneTab,
+    companionGroupMonitorEntries,
     latestCommandView,
     runningDetailsEntries,
     taskEntries,
     selectedSessionLiveRunErrorMessage,
   ]);
+
+  const renderCompanionGroupMonitorEntry = (entry: Extract<HomeMonitorEntry, { kind: "companion" }>) => {
+    const { session, state } = entry;
+    return (
+      <button
+        key={session.id}
+        className="companion-group-monitor-item"
+        type="button"
+        onClick={() => onOpenCompanionReview(session.id)}
+      >
+        <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
+        <div className="companion-group-monitor-copy">
+          <strong>{session.taskTitle}</strong>
+          <span>{session.character}</span>
+        </div>
+        <div className="companion-group-monitor-badges">
+          <span className={`session-status companion-group-monitor-status ${state.kind}`.trim()}>{state.label}</span>
+        </div>
+      </button>
+    );
+  };
 
   useLayoutEffect(() => {
     const contentNode = contentRef.current;
@@ -1255,19 +1290,20 @@ export function SessionContextPane({
       return;
     }
 
-    contentNode.scrollTop = contentNode.scrollHeight;
+    contentNode.scrollTop = activeContextPaneTab === "companion-group" ? 0 : contentNode.scrollHeight;
   }, [contentScrollKey]);
 
   return (
     <aside className={`session-context-pane${isHeaderExpanded ? " session-context-pane-header-expanded" : ""}`}>
       {!isHeaderExpanded ? <SessionHeaderHandle taskTitle={taskTitle} onClick={onToggleHeaderExpanded} /> : null}
-      <section className="command-monitor-shell" aria-label="右ペイン">
+      <section className={`command-monitor-shell ${activeContextPaneTab}`} aria-label="右ペイン">
         <div className="command-monitor-head">
           <div className="command-monitor-switcher" aria-label="右ペイン表示切り替え">
             <button
               type="button"
               className="command-monitor-switcher-button"
               onClick={() => onCycleContextPaneTab(-1)}
+              disabled={!canCycleContextPaneTab}
               aria-label="前の表示へ切り替え"
             >
               ‹
@@ -1281,6 +1317,7 @@ export function SessionContextPane({
               type="button"
               className="command-monitor-switcher-button"
               onClick={() => onCycleContextPaneTab(1)}
+              disabled={!canCycleContextPaneTab}
               aria-label="次の表示へ切り替え"
             >
               ›
@@ -1289,7 +1326,7 @@ export function SessionContextPane({
         </div>
 
         <div ref={contentRef} className="command-monitor-content">
-          <div className="command-monitor-stack">
+          <div className={`command-monitor-stack ${activeContextPaneTab}`}>
             {activeContextPaneTab === "latest-command" && runningDetailsEntries.length > 0 ? (
               <div className="command-monitor-card">
                 <div className="command-monitor-card-head">
@@ -1421,6 +1458,21 @@ export function SessionContextPane({
                 <div className="command-monitor-empty-shell">
                   <p className="command-monitor-empty">まだ background task はないよ。</p>
                   <p className="command-monitor-empty-subtle">Copilot の sub-agent や background shell がある時だけここへ出るよ。</p>
+                </div>
+              )
+            ) : null}
+
+            {activeContextPaneTab === "companion-group" ? (
+              companionGroupMonitorEntries.length > 0 ? (
+                <div className="command-monitor-confirmed-list">
+                  {companionGroupMonitorEntries
+                    .filter((entry): entry is Extract<HomeMonitorEntry, { kind: "companion" }> => entry.kind === "companion")
+                    .map(renderCompanionGroupMonitorEntry)}
+                </div>
+              ) : (
+                <div className="command-monitor-empty-shell">
+                  <p className="command-monitor-empty">同じ CompanionGroup の session はないよ。</p>
+                  <p className="command-monitor-empty-subtle">同じ repository の Companion がある時だけここへ出るよ。</p>
                 </div>
               )
             ) : null}

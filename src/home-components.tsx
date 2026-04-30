@@ -25,7 +25,7 @@ import {
 } from "./memory-management-view.js";
 import type { HomeProviderSettingRow } from "./home-settings-view-model.js";
 import type { LaunchWorkspace } from "./home-launch-projection.js";
-import type { HomeMonitorEntry, HomeSessionState } from "./home-session-projection.js";
+import { getHomeCompanionSessionState, type HomeMonitorEntry, type HomeSessionState } from "./home-session-projection.js";
 import {
   SETTINGS_SKILL_ROOT_LABEL,
   SETTINGS_SKILL_ROOT_PLACEHOLDER,
@@ -1069,6 +1069,7 @@ export function HomeRecentSessionsPanel({
         {visibleSessionEntries.map((item) => {
           if (item.kind === "companion") {
             const { session } = item;
+            const companionState = getHomeCompanionSessionState(session);
             return (
               <button
                 key={`companion-${session.id}`}
@@ -1083,7 +1084,7 @@ export function HomeRecentSessionsPanel({
                     <strong>{session.taskTitle}</strong>
                     <div className="home-session-card-badges">
                       <span className="session-mode-badge companion">Companion</span>
-                      <span className={`session-status home-session-status ${session.status}`.trim()}>{session.status}</span>
+                      <span className={`session-status home-session-status ${companionState.kind}`.trim()}>{companionState.label}</span>
                     </div>
                   </div>
                   <div className="session-card-subline home-session-card-meta">
@@ -1147,6 +1148,7 @@ export type HomeMonitorContentProps = {
   runningEmptyMessage: string;
   completedEmptyMessage: string;
   onOpenSession: (sessionId: string) => void;
+  onOpenCompanionReview: (sessionId: string) => void;
 };
 
 export function HomeMonitorContent({
@@ -1155,7 +1157,64 @@ export function HomeMonitorContent({
   runningEmptyMessage,
   completedEmptyMessage,
   onOpenSession,
+  onOpenCompanionReview,
 }: HomeMonitorContentProps) {
+  const companionGroupMarkerClassName = (groupId: string): string => {
+    let hash = 0;
+    for (let index = 0; index < groupId.length; index += 1) {
+      hash = (hash * 31 + groupId.charCodeAt(index)) >>> 0;
+    }
+    return `companion-group-${hash % 6}`;
+  };
+
+  const renderMonitorEntries = (entries: HomeMonitorEntry[]) => {
+    return entries.map((entry) => {
+      if (entry.kind === "companion") {
+        const { session, state } = entry;
+        const groupClassName = companionGroupMarkerClassName(session.groupId);
+        return (
+          <button
+            key={`companion-${session.id}`}
+            className={`home-monitor-row companion ${groupClassName}`}
+            type="button"
+            onClick={() => onOpenCompanionReview(session.id)}
+          >
+            <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
+            <div className="home-monitor-row-copy">
+              <strong>{session.taskTitle}</strong>
+              <span>{session.character}</span>
+            </div>
+            <div className="home-monitor-row-badges">
+              <span className="session-mode-badge companion">Companion</span>
+              <span className={`home-monitor-group-chip ${groupClassName}`} aria-label="同じ Companion group の目印" />
+              <span className={`session-status home-monitor-status ${state.kind}`.trim()}>{state.label}</span>
+            </div>
+          </button>
+        );
+      }
+
+      const { session, state } = entry;
+      return (
+        <button
+          key={`agent-${session.id}`}
+          className="home-monitor-row"
+          type="button"
+          onClick={() => onOpenSession(session.id)}
+        >
+          <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
+          <div className="home-monitor-row-copy">
+            <strong>{session.taskTitle}</strong>
+            <span>{session.workspaceLabel || session.workspacePath || "workspace 未設定"}</span>
+          </div>
+          <div className="home-monitor-row-badges">
+            <span className="session-mode-badge agent">Agent</span>
+            <span className={`session-status home-monitor-status ${state.kind}`.trim()}>{state.label}</span>
+          </div>
+        </button>
+      );
+    });
+  };
+
   return (
     <div className="home-monitor-body">
       <section className="home-monitor-section" aria-labelledby="home-monitor-running">
@@ -1165,21 +1224,7 @@ export function HomeMonitorContent({
         </div>
         <div className="home-monitor-list">
           {runningEntries.length > 0 ? (
-            runningEntries.map(({ session, state }) => (
-              <button
-                key={session.id}
-                className="home-monitor-row"
-                type="button"
-                onClick={() => onOpenSession(session.id)}
-              >
-                <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
-                <div className="home-monitor-row-copy">
-                  <strong>{session.taskTitle}</strong>
-                  <span>{session.workspaceLabel || session.workspacePath || "workspace 未設定"}</span>
-                </div>
-                <span className={`session-status home-monitor-status ${state.kind}`.trim()}>{state.label}</span>
-              </button>
-            ))
+            renderMonitorEntries(runningEntries)
           ) : (
             <p className="home-monitor-empty">{runningEmptyMessage}</p>
           )}
@@ -1193,21 +1238,7 @@ export function HomeMonitorContent({
         </div>
         <div className="home-monitor-list">
           {nonRunningEntries.length > 0 ? (
-            nonRunningEntries.map(({ session, state }) => (
-              <button
-                key={session.id}
-                className="home-monitor-row"
-                type="button"
-                onClick={() => onOpenSession(session.id)}
-              >
-                <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
-                <div className="home-monitor-row-copy">
-                  <strong>{session.taskTitle}</strong>
-                  <span>{session.workspaceLabel || session.workspacePath || "workspace 未設定"}</span>
-                </div>
-                <span className={`session-status home-monitor-status ${state.kind}`.trim()}>{state.label}</span>
-              </button>
-            ))
+            renderMonitorEntries(nonRunningEntries)
           ) : (
             <p className="home-monitor-empty">{completedEmptyMessage}</p>
           )}
@@ -1235,6 +1266,7 @@ export type HomeRightPaneProps = {
   onChangeCharacterSearchText: (value: string) => void;
   onOpenCharacterEditor: (characterId?: string | null) => void;
   onOpenSession: (sessionId: string) => void;
+  onOpenCompanionReview: (sessionId: string) => void;
 };
 
 export function HomeRightPane({
@@ -1255,6 +1287,7 @@ export function HomeRightPane({
   onChangeCharacterSearchText,
   onOpenCharacterEditor,
   onOpenSession,
+  onOpenCompanionReview,
 }: HomeRightPaneProps) {
   return (
     <section className="panel home-right-pane rise-3">
@@ -1306,6 +1339,7 @@ export function HomeRightPane({
             runningEmptyMessage={monitorRunningEmptyMessage}
             completedEmptyMessage={monitorCompletedEmptyMessage}
             onOpenSession={onOpenSession}
+            onOpenCompanionReview={onOpenCompanionReview}
           />
         </section>
       ) : (
