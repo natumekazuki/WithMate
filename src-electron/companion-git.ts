@@ -218,10 +218,8 @@ export async function createCompanionWorkspace(
       worktreePath: input.worktreePath,
     };
   } catch (error) {
-    if (createdArtifacts.worktree) {
-      await runGit(input.repoRoot, ["worktree", "remove", "--force", input.worktreePath]).catch(() => undefined);
-    } else {
-      await runGit(input.repoRoot, ["worktree", "remove", "--force", input.worktreePath]).catch(() => undefined);
+    await runGit(input.repoRoot, ["worktree", "remove", "--force", input.worktreePath]).catch(() => undefined);
+    if (!createdArtifacts.worktree) {
       await rm(input.worktreePath, { recursive: true, force: true }).catch(() => undefined);
     }
     if (createdArtifacts.branch) {
