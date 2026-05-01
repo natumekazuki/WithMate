@@ -95,11 +95,23 @@ function parseNameStatusZ(output: string): ChangedPath[] {
   const changes: ChangedPath[] = [];
   for (let index = 0; index < tokens.length; index += 1) {
     const status = tokens[index] ?? "";
-    if (status.startsWith("R") || status.startsWith("C")) {
+    if (status.startsWith("R")) {
+      const oldPath = tokens[index + 1];
+      const nextPath = tokens[index + 2];
       index += 2;
-      const nextPath = tokens[index];
+      if (oldPath) {
+        changes.push({ path: normalizeRelativePath(oldPath), kind: "delete" });
+      }
       if (nextPath) {
-        changes.push({ path: normalizeRelativePath(nextPath), kind: "edit" });
+        changes.push({ path: normalizeRelativePath(nextPath), kind: "add" });
+      }
+      continue;
+    }
+    if (status.startsWith("C")) {
+      const nextPath = tokens[index + 2];
+      index += 2;
+      if (nextPath) {
+        changes.push({ path: normalizeRelativePath(nextPath), kind: "add" });
       }
       continue;
     }
@@ -116,6 +128,27 @@ function parseNameStatusZ(output: string): ChangedPath[] {
       statusKind === "D" ? "delete" :
       "edit";
     changes.push({ path: normalizeRelativePath(nextPath), kind });
+  }
+  return changes;
+}
+
+function parsePorcelainStatusZ(output: string): ChangedPath[] {
+  const tokens = output.split("\0").filter((token) => token.length > 0);
+  const changes: ChangedPath[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const entry = tokens[index] ?? "";
+    if (entry.length < 4) {
+      continue;
+    }
+    const status = entry.slice(0, 2);
+    const filePath = entry.slice(3);
+    if (status[0] === "R" || status[0] === "C" || status[1] === "R" || status[1] === "C") {
+      index += 1;
+    }
+    const statusKind = status.includes("A") || status === "??" ? "add" :
+      status.includes("D") ? "delete" :
+      "edit";
+    changes.push({ path: normalizeRelativePath(filePath), kind: statusKind });
   }
   return changes;
 }
@@ -535,15 +568,24 @@ export class CompanionReviewService {
       });
     }
 
-    const targetTree = await this.captureTargetWorktreeTree(session);
-    const targetHeadTree = targetHead ? await this.resolveCommitTree(session.repoRoot, targetHead) : "";
-    if (targetTree && targetHeadTree && targetTree !== targetHeadTree) {
-      const dirtyPaths = await this.resolveTreeDiffPaths(session.repoRoot, targetHeadTree, targetTree);
+    const statusPaths = await this.resolveTargetWorkspaceStatusPaths(session);
+    if (statusPaths.length > 0) {
       blockers.push({
         kind: "target-worktree-dirty",
         message: "target workspace が target branch の HEAD から変わっているため merge できません。",
-        paths: toIssuePaths(dirtyPaths),
+        paths: toIssuePaths(statusPaths),
       });
+    } else {
+      const targetTree = await this.captureTargetWorktreeTree(session);
+      const targetHeadTree = targetHead ? await this.resolveCommitTree(session.repoRoot, targetHead) : "";
+      if (targetTree && targetHeadTree && targetTree !== targetHeadTree) {
+        const dirtyPaths = await this.resolveTreeDiffPaths(session.repoRoot, targetHeadTree, targetTree);
+        blockers.push({
+          kind: "target-worktree-dirty",
+          message: "target workspace が target branch の HEAD から変わっているため merge できません。",
+          paths: toIssuePaths(dirtyPaths),
+        });
+      }
     }
 
     if (selectedPaths.length > 0) {
@@ -698,7 +740,16 @@ export class CompanionReviewService {
     }
   }
 
+  private async resolveTargetWorkspaceStatusPaths(session: CompanionSession): Promise<ChangedPath[]> {
+    const status = (await runGit(session.repoRoot, ["status", "--porcelain=v1", "-z"])).stdout;
+    return parsePorcelainStatusZ(status);
+  }
+
   private async assertTargetWorkspaceClean(session: CompanionSession, targetHead: string): Promise<void> {
+    const statusPaths = await this.resolveTargetWorkspaceStatusPaths(session);
+    if (statusPaths.length > 0) {
+      throw new Error("target workspace が target branch の HEAD と一致していません。target branch を checkout してから Sync Target してください。");
+    }
     const targetTree = await this.resolveCommitTree(session.repoRoot, targetHead);
     const currentTargetTree = await this.captureTargetWorktreeTree(session);
     if (targetTree && currentTargetTree && targetTree !== currentTargetTree) {
