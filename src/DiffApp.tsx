@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { getDiffTokenFromLocation, type DiffPreviewPayload } from "./session-state.js";
-import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
+import { DiffViewer } from "./DiffViewer.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 
@@ -66,7 +66,6 @@ export default function DiffApp() {
             Close
           </button>
         </div>
-        <DiffViewerSubbar file={diffPreview.file} />
         <DiffViewer file={diffPreview.file} />
       </section>
     </div>

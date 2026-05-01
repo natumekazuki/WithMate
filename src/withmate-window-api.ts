@@ -29,6 +29,7 @@ import type {
   CompanionMergeSelectedFilesResult,
   CompanionReviewSnapshot,
   CompanionSyncTargetResult,
+  CompanionTargetWorkspaceStashResult,
 } from "./companion-review-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "./character-update-state.js";
 import type {
@@ -98,6 +99,9 @@ export type WithMateWindowCompanionApi = {
   getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
   mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionMergeSelectedFilesResult>;
   syncCompanionTarget(sessionId: string): Promise<CompanionSyncTargetResult>;
+  stashCompanionTargetChanges(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
+  restoreCompanionTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
+  dropCompanionTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
   discardCompanionSession(sessionId: string): Promise<CompanionSession>;
   createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
   updateCompanionSession(session: CompanionSession): Promise<CompanionSession>;

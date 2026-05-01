@@ -613,6 +613,7 @@ export class CompanionStorage {
     const rows = this.db.prepare(`
       SELECT ${COMPANION_SESSION_COLUMNS}
       FROM companion_sessions
+      WHERE status NOT IN ('merged', 'discarded')
       ORDER BY updated_at DESC, id DESC
     `).all() as CompanionSessionRow[];
     return cloneCompanionSessionSummaries(rows.map(rowToSession).map((session) =>
@@ -698,6 +699,10 @@ export class CompanionStorage {
     );
     this.replaceMessages(session.id, sessionToStoredMessages(session), session.updatedAt);
     return this.getSession(session.id) ?? cloneCompanionSessions([session])[0] as CompanionSession;
+  }
+
+  deleteSession(sessionId: string): void {
+    this.db.prepare("DELETE FROM companion_sessions WHERE id = ?").run(sessionId);
   }
 
   updateSessionBaseSnapshot(session: CompanionSession): CompanionSession {

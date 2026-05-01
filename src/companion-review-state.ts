@@ -29,11 +29,23 @@ export type CompanionSyncTargetResult = {
   session: CompanionSession;
 };
 
+export type CompanionTargetWorkspaceStash = {
+  id: string;
+  ref: string;
+  hash: string;
+  message: string;
+};
+
+export type CompanionTargetWorkspaceStashResult = {
+  stash: CompanionTargetWorkspaceStash | null;
+};
+
 export type CompanionReviewSnapshot = {
   session: CompanionSession;
   changedFiles: ChangedFile[];
   mergeRuns: CompanionMergeRun[];
   mergeReadiness: CompanionMergeReadiness;
+  targetStash: CompanionTargetWorkspaceStash | null;
   generatedAt: string;
   warnings: string[];
 };

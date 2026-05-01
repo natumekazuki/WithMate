@@ -151,7 +151,7 @@ describe("CompanionStorage", () => {
     }
   });
 
-  it("merged / discarded session は全 summary に残し active summary からは除外する", async () => {
+  it("merged / discarded session は summary から除外する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
     let storage: CompanionStorage | null = null;
@@ -186,29 +186,14 @@ describe("CompanionStorage", () => {
       }));
 
       assert.deepEqual(storage.listActiveSessionSummaries(), []);
-      assert.deepEqual(storage.listSessionSummaries().map((session) => [session.id, session.status]), [
-        ["session-merged", "merged"],
-        ["session-discarded", "discarded"],
-      ]);
+      assert.deepEqual(storage.listSessionSummaries(), []);
       assert.deepEqual(storage.getSession("session-merged")?.selectedPaths, ["README.md", "src/app.ts"]);
-      assert.deepEqual(storage.listSessionSummaries()[0]?.selectedPaths, ["README.md", "src/app.ts"]);
+      assert.equal(storage.getSession("session-discarded")?.status, "discarded");
       assert.deepEqual(storage.getSession("session-merged")?.changedFiles, [
         { path: "README.md", kind: "edit" },
         { path: "src/app.ts", kind: "add" },
       ]);
-      assert.deepEqual(storage.listSessionSummaries()[0]?.changedFiles, [
-        { path: "README.md", kind: "edit" },
-        { path: "src/app.ts", kind: "add" },
-      ]);
       assert.deepEqual(storage.getSession("session-merged")?.siblingWarnings, [
-        {
-          sessionId: "session-sibling",
-          taskTitle: "Sibling task",
-          paths: ["README.md"],
-          message: "Sibling task と 1 file が重なっているよ。",
-        },
-      ]);
-      assert.deepEqual(storage.listSessionSummaries()[0]?.siblingWarnings, [
         {
           sessionId: "session-sibling",
           taskTitle: "Sibling task",
@@ -238,24 +223,42 @@ describe("CompanionStorage", () => {
           createdAt: "2026-04-26 10:04",
         },
       ]);
-      assert.deepEqual(storage.listSessionSummaries()[0]?.latestMergeRun, {
-        id: "merge-run-1",
-        sessionId: "session-merged",
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("deleteSession は CompanionSession と関連履歴を削除する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: CompanionStorage | null = null;
+
+    try {
+      storage = new CompanionStorage(dbPath);
+      const group = storage.ensureGroup(createGroup());
+      const session = storage.createSession(createSession(group.id, {
+        id: "session-discard-target",
+        taskTitle: "Discard target",
+        updatedAt: "2026-04-26 10:04",
+      }));
+      storage.createMergeRun({
+        id: "run-discard-target",
+        sessionId: session.id,
         groupId: group.id,
-        operation: "merge",
-        selectedPaths: ["README.md"],
-        changedFiles: [{ path: "README.md", kind: "edit" }],
-        diffSnapshot: [
-          {
-            kind: "edit",
-            path: "README.md",
-            summary: "README.md を更新",
-            diffRows: [{ kind: "add", rightNumber: 1, rightText: "merged" }],
-          },
-        ],
+        operation: "discard",
+        selectedPaths: [],
+        changedFiles: [],
+        diffSnapshot: [],
         siblingWarnings: [],
-        createdAt: "2026-04-26 10:04",
+        createdAt: "2026-04-26 10:05",
       });
+
+      storage.deleteSession(session.id);
+
+      assert.equal(storage.getSession(session.id), null);
+      assert.deepEqual(storage.listSessionSummaries(), []);
+      assert.deepEqual(storage.listMergeRunsForSession(session.id), []);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

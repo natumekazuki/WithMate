@@ -3,7 +3,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
+  type KeyboardEvent,
   type KeyboardEventHandler,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 
 import type { ApprovalMode } from "./approval-mode.js";
@@ -27,9 +30,13 @@ import {
   getCompanionWindowViewFromSearch,
 } from "./companion-session-mode-adapter.js";
 import type { ChangedFile, DiscoveredCustomAgent, DiscoveredSkill } from "./runtime-state.js";
-import type { CompanionReviewSnapshot, CompanionSiblingCheckWarning } from "./companion-review-state.js";
+import type {
+  CompanionMergeReadinessIssue,
+  CompanionReviewSnapshot,
+  CompanionSiblingCheckWarning,
+} from "./companion-review-state.js";
 import { getCompanionSessionIdFromLocation } from "./companion-review-state.js";
-import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
+import { DiffViewer } from "./DiffViewer.js";
 import {
   getProviderCatalog,
   resolveModelChangeSelection,
@@ -44,6 +51,8 @@ import {
   SessionContextPane,
   SessionDiffModal,
   SessionChatWindow,
+  SessionHeader,
+  SessionHeaderHandle,
   SessionPaneErrorBoundary,
 } from "./session-components.js";
 import {
@@ -101,6 +110,96 @@ const EMPTY_COMPOSER_PREVIEW: ComposerPreview = { attachments: [], errors: [] };
 const COMPOSER_PREVIEW_DEBOUNCE_MS = 120;
 const COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS = 280;
 const WORKSPACE_PATH_QUERY_MIN_LENGTH = 2;
+const MERGE_FILE_LIST_DEFAULT_PERCENT = 32;
+const MERGE_STAGE_DEFAULT_PERCENT = 50;
+const MERGE_PANE_MIN_PERCENT = 30;
+const MERGE_PANE_MAX_PERCENT = 70;
+
+type ChangedFileTreeAction = "stage" | "unstage";
+
+type ChangedFileTreeNode =
+  | {
+    kind: "directory";
+    name: string;
+    path: string;
+    children: ChangedFileTreeNode[];
+  }
+  | {
+    kind: "file";
+    name: string;
+    path: string;
+    file: ChangedFile;
+  };
+
+type MutableChangedFileDirectory = {
+  name: string;
+  path: string;
+  directories: Map<string, MutableChangedFileDirectory>;
+  files: ChangedFile[];
+};
+
+function clampMergePanePercent(value: number): number {
+  return Math.min(MERGE_PANE_MAX_PERCENT, Math.max(MERGE_PANE_MIN_PERCENT, value));
+}
+
+function createMutableChangedFileDirectory(name = "", pathValue = ""): MutableChangedFileDirectory {
+  return {
+    name,
+    path: pathValue,
+    directories: new Map(),
+    files: [],
+  };
+}
+
+function basenameFromPath(pathValue: string): string {
+  const normalized = pathValue.replace(/\\/g, "/");
+  return normalized.split("/").filter(Boolean).at(-1) ?? pathValue;
+}
+
+function mutableDirectoryToTree(directory: MutableChangedFileDirectory): ChangedFileTreeNode[] {
+  const directoryNodes = [...directory.directories.values()]
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((child): ChangedFileTreeNode => ({
+      kind: "directory",
+      name: child.name,
+      path: child.path,
+      children: mutableDirectoryToTree(child),
+    }));
+  const fileNodes = directory.files
+    .sort((left, right) => basenameFromPath(left.path).localeCompare(basenameFromPath(right.path)))
+    .map((file): ChangedFileTreeNode => ({
+      kind: "file",
+      name: basenameFromPath(file.path),
+      path: file.path,
+      file,
+    }));
+  return [...directoryNodes, ...fileNodes];
+}
+
+function buildChangedFileTree(files: ChangedFile[]): ChangedFileTreeNode[] {
+  const root = createMutableChangedFileDirectory();
+  for (const file of files) {
+    const parts = file.path.replace(/\\/g, "/").split("/").filter(Boolean);
+    if (parts.length <= 1) {
+      root.files.push(file);
+      continue;
+    }
+
+    let current = root;
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      const part = parts[index] as string;
+      const childPath = current.path ? `${current.path}/${part}` : part;
+      let child = current.directories.get(part);
+      if (!child) {
+        child = createMutableChangedFileDirectory(part, childPath);
+        current.directories.set(part, child);
+      }
+      current = child;
+    }
+    current.files.push(file);
+  }
+  return mutableDirectoryToTree(root);
+}
 
 function summarizeMergeRunPaths(paths: string[]): string {
   if (paths.length === 0) {
@@ -118,6 +217,31 @@ function summarizeMergeRunChangedFiles(run: CompanionMergeRun): string {
   const visibleFiles = run.changedFiles.slice(0, 2).map((file) => `${file.kind}: ${file.path}`);
   const suffix = run.changedFiles.length > visibleFiles.length ? ` / +${run.changedFiles.length - visibleFiles.length}` : "";
   return `${visibleFiles.join(", ")}${suffix}`;
+}
+
+function summarizeMergeReadinessIssue(issue: CompanionMergeReadinessIssue): string {
+  switch (issue.kind) {
+    case "lifecycle":
+      return "Session inactive";
+    case "target-branch-drift":
+      return "Sync Target required";
+    case "target-worktree-dirty":
+      return "Target changed";
+    case "merge-simulation":
+      return "No files selected";
+    default:
+      return issue.message;
+  }
+}
+
+function summarizeIssuePaths(paths: string[] | undefined): string | null {
+  if (!paths || paths.length === 0) {
+    return null;
+  }
+  if (paths.length === 1) {
+    return paths[0];
+  }
+  return `${paths.length} files`;
 }
 
 export default function CompanionReviewApp() {
@@ -146,7 +270,12 @@ export default function CompanionReviewApp() {
   const [selectedCodexSandboxMode, setSelectedCodexSandboxMode] = useState<CodexSandboxMode>("workspace-write");
   const [titleDraft, setTitleDraft] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
+  const [isHeaderExpanded, setIsHeaderExpanded] = useState(isMergeView);
+  const [mergeFileListPercent, setMergeFileListPercent] = useState(MERGE_FILE_LIST_DEFAULT_PERCENT);
+  const [mergeStagePanePercent, setMergeStagePanePercent] = useState(MERGE_STAGE_DEFAULT_PERCENT);
+  const [isMergePaneResizing, setIsMergePaneResizing] = useState(false);
+  const [isMergeStagePaneResizing, setIsMergeStagePaneResizing] = useState(false);
+  const [collapsedMergeTreeDirectories, setCollapsedMergeTreeDirectories] = useState<Set<string>>(() => new Set());
   const [isActionDockPinnedExpanded, setIsActionDockPinnedExpanded] = useState(false);
   const [composerCaret, setComposerCaret] = useState(0);
   const [availableSkills, setAvailableSkills] = useState<DiscoveredSkill[]>([]);
@@ -176,6 +305,8 @@ export default function CompanionReviewApp() {
   }>({ ownerSessionId: null, telemetry: null });
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const mergeDiffLayoutRef = useRef<HTMLDivElement | null>(null);
+  const mergeFileSelectionRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -209,7 +340,7 @@ export default function CompanionReviewApp() {
           setPickerBaseDirectory(payload.session.worktreePath);
         }
         setSelectedPath(pickInitialFile(payload?.changedFiles ?? [])?.path ?? "");
-        setSelectedPaths(payload?.changedFiles.map((file) => file.path) ?? []);
+        setSelectedPaths([]);
         setErrorMessage(payload ? "" : "対象 CompanionSession が見つからないよ。");
       })
       .catch((error) => {
@@ -307,6 +438,80 @@ export default function CompanionReviewApp() {
       unsubscribe();
     };
   }, [isMergeView, snapshot?.session.id]);
+
+  useEffect(() => {
+    if (!isMergePaneResizing) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const layout = mergeDiffLayoutRef.current;
+      if (!layout) {
+        return;
+      }
+      const bounds = layout.getBoundingClientRect();
+      if (bounds.width <= 0) {
+        return;
+      }
+      const nextPercent = ((event.clientX - bounds.left) / bounds.width) * 100;
+      setMergeFileListPercent(clampMergePanePercent(nextPercent));
+    };
+    const handlePointerUp = () => {
+      setIsMergePaneResizing(false);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+  }, [isMergePaneResizing]);
+
+  useEffect(() => {
+    if (!snapshot || (!errorMessage && !operationMessage)) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setErrorMessage("");
+      setOperationMessage("");
+    }, errorMessage ? 8000 : 4200);
+    return () => window.clearTimeout(timeoutId);
+  }, [errorMessage, operationMessage, snapshot?.session.id]);
+
+  useEffect(() => {
+    if (!isMergeStagePaneResizing) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const layout = mergeFileSelectionRef.current;
+      if (!layout) {
+        return;
+      }
+      const bounds = layout.getBoundingClientRect();
+      if (bounds.height <= 0) {
+        return;
+      }
+      const nextPercent = ((event.clientY - bounds.top) / bounds.height) * 100;
+      setMergeStagePanePercent(clampMergePanePercent(nextPercent));
+    };
+    const handlePointerUp = () => {
+      setIsMergeStagePaneResizing(false);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+  }, [isMergeStagePaneResizing]);
 
   useEffect(() => {
     let active = true;
@@ -449,6 +654,16 @@ export default function CompanionReviewApp() {
     [selectedPath, snapshot],
   );
   const selectedPathSet = useMemo(() => new Set(selectedPaths), [selectedPaths]);
+  const unstagedChangedFiles = useMemo(
+    () => snapshot?.changedFiles.filter((file) => !selectedPathSet.has(file.path)) ?? [],
+    [selectedPathSet, snapshot?.changedFiles],
+  );
+  const stagedChangedFiles = useMemo(
+    () => snapshot?.changedFiles.filter((file) => selectedPathSet.has(file.path)) ?? [],
+    [selectedPathSet, snapshot?.changedFiles],
+  );
+  const unstagedFileTree = useMemo(() => buildChangedFileTree(unstagedChangedFiles), [unstagedChangedFiles]);
+  const stagedFileTree = useMemo(() => buildChangedFileTree(stagedChangedFiles), [stagedChangedFiles]);
   const selectedSessionLiveRun =
     snapshot && liveRunState.ownerSessionId === snapshot.session.id ? liveRunState.state : null;
   const {
@@ -628,10 +843,16 @@ export default function CompanionReviewApp() {
     enabled: !isMergeView,
   });
   const operationDisabled = operationRunning || isSelectedSessionRunning || !snapshot || snapshot.session.status !== "active";
-  const mergeBlocked = (snapshot?.mergeReadiness.blockers.length ?? 0) > 0;
+  const targetStashBlocked = Boolean(snapshot?.targetStash);
+  const mergeBlocked = (snapshot?.mergeReadiness.blockers.length ?? 0) > 0 || targetStashBlocked;
   const targetBranchDriftBlocked =
     snapshot?.mergeReadiness.blockers.some((blocker) => blocker.kind === "target-branch-drift") ?? false;
-  const mergeReadinessLabel = targetBranchDriftBlocked ? "target drift" : snapshot?.mergeReadiness.status ?? "unknown";
+  const targetWorkspaceDirtyBlocked =
+    snapshot?.mergeReadiness.blockers.some((blocker) => blocker.kind === "target-worktree-dirty") ?? false;
+  const visibleMergeBlockers =
+    snapshot?.mergeReadiness.blockers.filter((blocker) => blocker.kind !== "target-branch-drift") ?? [];
+  const visibleMergeWarnings =
+    snapshot?.mergeReadiness.warnings.filter((warning) => warning.kind !== "merge-simulation") ?? [];
   const runDisabled = isSelectedSessionRunning || operationRunning || !snapshot || snapshot.session.status !== "active";
   const selectedProviderCatalog = getProviderCatalog(modelCatalog?.providers ?? [], snapshot?.session.provider);
   const selectedModelEntry =
@@ -1284,16 +1505,172 @@ export default function CompanionReviewApp() {
       if (options.preserveSelectionOnly) {
         return preserved;
       }
-      return preserved.length > 0 ? preserved : nextSnapshot.changedFiles.map((file) => file.path);
+      return preserved;
     });
   }
 
-  function toggleSelectedPath(filePath: string): void {
-    setSelectedPaths((current) =>
-      current.includes(filePath)
-        ? current.filter((candidate) => candidate !== filePath)
-        : [...current, filePath],
-    );
+  useEffect(() => {
+    if (!isMergeView || !snapshot || snapshot.session.status !== "active") {
+      return;
+    }
+
+    let disposed = false;
+    const refreshMergeSnapshot = () => {
+      if (disposed || operationRunning || turnRunning || isMergePaneResizing || isMergeStagePaneResizing) {
+        return;
+      }
+      void reloadSnapshot(selectedPath, { preserveSelectionOnly: true }).catch((error) => {
+        if (!disposed) {
+          setErrorMessage(error instanceof Error ? error.message : "Companion merge の更新に失敗したよ。");
+        }
+      });
+    };
+    const handleFocus = () => refreshMergeSnapshot();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshMergeSnapshot();
+      }
+    };
+
+    const intervalId = window.setInterval(refreshMergeSnapshot, 2000);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      disposed = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [
+    isMergePaneResizing,
+    isMergeStagePaneResizing,
+    isMergeView,
+    operationRunning,
+    selectedPath,
+    snapshot?.session.id,
+    snapshot?.session.status,
+    turnRunning,
+  ]);
+
+  function stageChangedFile(filePath: string): void {
+    setSelectedPaths((current) => current.includes(filePath) ? current : [...current, filePath]);
+  }
+
+  function unstageChangedFile(filePath: string): void {
+    setSelectedPaths((current) => current.filter((candidate) => candidate !== filePath));
+  }
+
+  function stageAllChangedFiles(): void {
+    setSelectedPaths(snapshot?.changedFiles.map((file) => file.path) ?? []);
+  }
+
+  function unstageAllChangedFiles(): void {
+    setSelectedPaths([]);
+  }
+
+  function treeDirectoryKey(action: ChangedFileTreeAction, pathValue: string): string {
+    return `${action}:${pathValue}`;
+  }
+
+  function toggleMergeTreeDirectory(action: ChangedFileTreeAction, pathValue: string): void {
+    const key = treeDirectoryKey(action, pathValue);
+    setCollapsedMergeTreeDirectories((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
+
+  function handleStartMergePaneResize(event: ReactPointerEvent<HTMLDivElement>): void {
+    event.preventDefault();
+    setIsMergePaneResizing(true);
+  }
+
+  function handleStartMergeStagePaneResize(event: ReactPointerEvent<HTMLDivElement>): void {
+    event.preventDefault();
+    setIsMergeStagePaneResizing(true);
+  }
+
+  function handleMergePaneResizeKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+      return;
+    }
+    event.preventDefault();
+    const direction = event.key === "ArrowLeft" ? -1 : 1;
+    setMergeFileListPercent((current) => clampMergePanePercent(current + direction * 2));
+  }
+
+  function handleMergeStagePaneResizeKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") {
+      return;
+    }
+    event.preventDefault();
+    const direction = event.key === "ArrowUp" ? -1 : 1;
+    setMergeStagePanePercent((current) => clampMergePanePercent(current + direction * 2));
+  }
+
+  function renderChangedFileTree(nodes: ChangedFileTreeNode[], action: ChangedFileTreeAction, depth = 0): JSX.Element[] {
+    return nodes.map((node) => {
+      const depthStyle = { "--tree-indent": `${depth * 14}px` } as CSSProperties;
+      if (node.kind === "directory") {
+        const directoryKey = treeDirectoryKey(action, node.path);
+        const isCollapsed = collapsedMergeTreeDirectories.has(directoryKey);
+        return (
+          <div className="companion-review-tree-directory" key={`dir:${node.path}`}>
+            <button
+              className={`companion-review-tree-directory-label${isCollapsed ? " collapsed" : ""}`}
+              type="button"
+              style={depthStyle}
+              title={node.path}
+              aria-expanded={!isCollapsed}
+              onClick={() => toggleMergeTreeDirectory(action, node.path)}
+            >
+              {node.name}
+            </button>
+            {isCollapsed ? null : renderChangedFileTree(node.children, action, depth + 1)}
+          </div>
+        );
+      }
+
+      const isStageAction = action === "stage";
+      return (
+        <div
+          key={node.file.path}
+          className={`companion-review-file${selectedFile?.path === node.file.path ? " active" : ""}`}
+          style={depthStyle}
+        >
+          <span className={`file-kind ${node.file.kind}`}>{fileKindLabel(node.file.kind)}</span>
+          <button
+            className="companion-review-file-path"
+            type="button"
+            title={node.file.path}
+            onClick={() => setSelectedPath(node.file.path)}
+          >
+            {node.name}
+          </button>
+          <button
+            className="companion-review-file-stage-action"
+            type="button"
+            aria-label={`${isStageAction ? "stage" : "unstage"} ${node.file.path}`}
+            disabled={snapshot?.session.status !== "active"}
+            title={isStageAction ? "Stage" : "Unstage"}
+            onClick={() => {
+              if (isStageAction) {
+                stageChangedFile(node.file.path);
+              } else {
+                unstageChangedFile(node.file.path);
+              }
+            }}
+          >
+            {isStageAction ? "+" : "-"}
+          </button>
+        </div>
+      );
+    });
   }
 
   async function mergeSelectedFiles(): Promise<void> {
@@ -1307,13 +1684,11 @@ export default function CompanionReviewApp() {
     setOperationMessage("");
     setSiblingWarnings([]);
     try {
-      const result = await withmateApi.mergeCompanionSelectedFiles({
+      await withmateApi.mergeCompanionSelectedFiles({
         sessionId: snapshot.session.id,
         selectedPaths,
       });
-      setSnapshot((current) => current ? { ...current, session: result.session } : current);
-      setSiblingWarnings(result.siblingWarnings);
-      setOperationMessage("selected files を merge したよ。");
+      window.close();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "selected files の merge に失敗したよ。");
     } finally {
@@ -1333,11 +1708,77 @@ export default function CompanionReviewApp() {
     setSiblingWarnings([]);
     try {
       const result = await withmateApi.syncCompanionTarget(snapshot.session.id);
+      const baseSnapshotChanged = result.session.baseSnapshotCommit !== snapshot.session.baseSnapshotCommit;
       setSnapshot((current) => current ? { ...current, session: result.session } : current);
       await reloadSnapshot(selectedPath, { preserveSelectionOnly: true });
-      setOperationMessage("target branch を Companion worktree に同期しました。");
+      setOperationMessage(baseSnapshotChanged
+        ? "target branch を Companion worktree に同期しました。"
+        : "target branch は最新です。");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Sync Target に失敗しました。");
+    } finally {
+      setOperationRunning(false);
+    }
+  }
+
+  async function stashCompanionTargetChanges(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!snapshot || !withmateApi || operationDisabled) {
+      return;
+    }
+
+    setOperationRunning(true);
+    setErrorMessage("");
+    setOperationMessage("");
+    setSiblingWarnings([]);
+    try {
+      await withmateApi.stashCompanionTargetChanges(snapshot.session.id);
+      await reloadSnapshot(selectedPath, { preserveSelectionOnly: true });
+      setOperationMessage("target workspace の変更を stash しました。");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "target changes の stash に失敗しました。");
+    } finally {
+      setOperationRunning(false);
+    }
+  }
+
+  async function restoreCompanionTargetStash(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!snapshot || !withmateApi || operationDisabled) {
+      return;
+    }
+
+    setOperationRunning(true);
+    setErrorMessage("");
+    setOperationMessage("");
+    setSiblingWarnings([]);
+    try {
+      await withmateApi.restoreCompanionTargetStash(snapshot.session.id);
+      await reloadSnapshot(selectedPath, { preserveSelectionOnly: true });
+      setOperationMessage("target stash を workspace に戻しました。");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "target stash の復元に失敗しました。");
+    } finally {
+      setOperationRunning(false);
+    }
+  }
+
+  async function dropCompanionTargetStash(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!snapshot || !withmateApi || operationDisabled) {
+      return;
+    }
+
+    setOperationRunning(true);
+    setErrorMessage("");
+    setOperationMessage("");
+    setSiblingWarnings([]);
+    try {
+      await withmateApi.dropCompanionTargetStash(snapshot.session.id);
+      await reloadSnapshot(selectedPath, { preserveSelectionOnly: true });
+      setOperationMessage("target stash を破棄しました。");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "target stash の破棄に失敗しました。");
     } finally {
       setOperationRunning(false);
     }
@@ -1521,9 +1962,8 @@ export default function CompanionReviewApp() {
     setOperationMessage("");
     setSiblingWarnings([]);
     try {
-      const session = await withmateApi.discardCompanionSession(snapshot.session.id);
-      setSnapshot((current) => current ? { ...current, session } : current);
-      setOperationMessage("Companion を discard したよ。");
+      await withmateApi.discardCompanionSession(snapshot.session.id);
+      window.close();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Companion の discard に失敗したよ。");
     } finally {
@@ -1799,60 +2239,82 @@ export default function CompanionReviewApp() {
   }
 
   return (
-    <div className="page-shell companion-review-page theme-accent" style={themeStyle}>
+    <div
+      className={`page-shell companion-review-page theme-accent${isHeaderExpanded ? "" : " companion-review-page-header-collapsed"}`}
+      style={themeStyle}
+    >
       <section className="companion-review-shell panel rise-1">
-        <header className="companion-review-header">
-          <div>
-            <p className="eyebrow">Companion Merge</p>
-            <h1>{snapshot.session.taskTitle}</h1>
-            <div className="companion-review-meta">
-              <span>{`target: ${snapshot.session.targetBranch}`}</span>
-              <span>{`changed: ${snapshot.changedFiles.length}`}</span>
-              <span>{`selected: ${selectedPaths.length}`}</span>
-              <span>{`status: ${snapshot.session.status}`}</span>
-              <span>{snapshot.generatedAt}</span>
-            </div>
-          </div>
-          <div className="companion-review-actions">
-            {targetBranchDriftBlocked && (
+        {isHeaderExpanded ? (
+          <SessionHeader
+            taskTitle={snapshot.session.taskTitle}
+            isEditingTitle={isEditingTitle}
+            titleDraft={titleDraft}
+            isRunning={turnRunning}
+            showRenameButton={false}
+            showAuditLogButton={false}
+            showTerminalButton
+            showDeleteButton={false}
+            onToggleExpanded={handleToggleHeaderExpanded}
+            onOpenAuditLog={() => setAuditLogsOpen(true)}
+            onOpenTerminal={() => void openCompanionTerminal()}
+            onTitleDraftChange={setTitleDraft}
+            onTitleInputKeyDown={handleTitleInputKeyDown}
+            onSaveTitle={() => void handleSaveTitle()}
+            onCancelTitleEdit={handleCancelTitleEdit}
+            onStartTitleEdit={handleStartTitleEdit}
+            onDeleteSession={() => {}}
+            workspaceActions={(
+              <>
+                <button
+                  className="drawer-toggle compact secondary"
+                  type="button"
+                  disabled={operationDisabled || targetWorkspaceDirtyBlocked}
+                  title={targetWorkspaceDirtyBlocked
+                    ? "target workspace の変更を stash してから Sync Target してください。"
+                    : targetBranchDriftBlocked
+                      ? "target branch の変更を Companion worktree に取り込みます。"
+                      : "target branch の変更を確認します。"}
+                  onClick={() => void syncCompanionTarget()}
+                >
+                  Sync Target
+                </button>
+                <button
+                  className="drawer-toggle compact"
+                  type="button"
+                  disabled={operationDisabled || mergeBlocked || selectedPaths.length === 0}
+                  title={targetStashBlocked
+                    ? "target stash を Restore または Drop してから merge してください。"
+                    : targetBranchDriftBlocked
+                      ? "target branch drift を解消するには先に Sync Target してください。"
+                      : undefined}
+                  onClick={() => void mergeSelectedFiles()}
+                >
+                  {`Merge Selected Files${selectedPaths.length > 0 ? ` (${selectedPaths.length})` : ""}`}
+                </button>
+                <button
+                  className="drawer-toggle compact secondary"
+                  type="button"
+                  disabled={operationRunning || turnRunning}
+                  onClick={() => void openCompanionWorktree()}
+                >
+                  Open Worktree
+                </button>
+              </>
+            )}
+            actions={(
               <button
-                className="drawer-toggle compact"
+                className="drawer-toggle compact danger"
                 type="button"
                 disabled={operationDisabled}
-                onClick={() => void syncCompanionTarget()}
+                onClick={() => void discardCompanion()}
               >
-                Sync Target
+                Discard Companion
               </button>
             )}
-            <button
-              className="drawer-toggle compact"
-              type="button"
-              disabled={operationDisabled || mergeBlocked || selectedPaths.length === 0}
-              title={targetBranchDriftBlocked ? "target branch drift を解消するには先に Sync Target してください。" : undefined}
-              onClick={() => void mergeSelectedFiles()}
-            >
-              {`Merge Selected Files${selectedPaths.length > 0 ? ` (${selectedPaths.length})` : ""}`}
-            </button>
-            <button
-              className="drawer-toggle compact secondary"
-              type="button"
-              disabled={operationRunning || turnRunning}
-              onClick={() => void openCompanionWorktree()}
-            >
-              Open Worktree
-            </button>
-            <button
-              className="drawer-toggle compact danger"
-              type="button"
-              disabled={operationDisabled}
-              onClick={() => void discardCompanion()}
-            >
-              Discard Companion
-            </button>
-          </div>
-        </header>
+          />
+        ) : null}
         {(errorMessage || operationMessage) && (
-          <div className={`companion-review-operation ${errorMessage ? "error" : "success"}`}>
+          <div className={`companion-session-toast companion-review-toast ${errorMessage ? "error" : "success"}`}>
             {errorMessage || operationMessage}
           </div>
         )}
@@ -1895,65 +2357,169 @@ export default function CompanionReviewApp() {
         )}
         <div className="companion-review-layout merge-only">
           <section className="companion-review-workspace" aria-label="Companion review workspace">
-            <section className={`companion-review-readiness ${snapshot.mergeReadiness.status}`}>
-              <div>
-                <p className="eyebrow">Merge Readiness</p>
-                <strong>{mergeReadinessLabel}</strong>
-              </div>
-              <div className="companion-review-readiness-details">
-                <span>{`target HEAD: ${snapshot.mergeReadiness.targetHead.slice(0, 8) || "unknown"}`}</span>
-                <span>{`base parent: ${snapshot.mergeReadiness.baseParent.slice(0, 8) || "unknown"}`}</span>
-                <span>{`selected: ${selectedPaths.length}/${snapshot.changedFiles.length}`}</span>
-                <span>{`checked: ${snapshot.mergeReadiness.simulatedAt}`}</span>
-              </div>
-              {snapshot.mergeReadiness.blockers.length > 0 && (
-                <ul className="companion-review-issues">
-                  {snapshot.mergeReadiness.blockers.map((issue) => (
-                    <li key={`${issue.kind}:${issue.message}`}>
-                      <span>{issue.message}</span>
-                      {issue.paths && <small>{issue.paths.join(", ")}</small>}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {snapshot.mergeReadiness.warnings.length > 0 && (
-                <ul className="companion-review-issues warning">
-                  {snapshot.mergeReadiness.warnings.map((issue) => (
-                    <li key={`${issue.kind}:${issue.message}`}>{issue.message}</li>
-                  ))}
-                </ul>
-              )}
-            </section>
-
-            <div className="companion-review-diff-layout">
+            <div
+              className={`companion-review-diff-layout${isMergePaneResizing ? " is-resizing" : ""}`}
+              ref={mergeDiffLayoutRef}
+              style={{ "--merge-file-list-percent": `${mergeFileListPercent}%` } as CSSProperties}
+            >
               <aside className="companion-review-file-list" aria-label="Changed files">
-                {snapshot.changedFiles.length > 0 ? (
-                  snapshot.changedFiles.map((file) => (
-                    <div
-                      key={file.path}
-                      className={`companion-review-file${selectedFile?.path === file.path ? " active" : ""}`}
-                    >
-                      <input
-                        aria-label={`merge ${file.path}`}
-                        checked={selectedPathSet.has(file.path)}
-                        disabled={snapshot.session.status !== "active"}
-                        type="checkbox"
-                        onChange={() => toggleSelectedPath(file.path)}
-                      />
-                      <span className={`file-kind ${file.kind}`}>{fileKindLabel(file.kind)}</span>
-                      <button
-                        className="companion-review-file-path"
-                        type="button"
-                        onClick={() => setSelectedPath(file.path)}
-                      >
-                        {file.path}
-                      </button>
-                    </div>
-                  ))
-                ) : (
-                  <p className="companion-review-empty">変更ファイルはありません。</p>
+                {!isHeaderExpanded ? (
+                  <SessionHeaderHandle taskTitle={snapshot.session.taskTitle} onClick={handleToggleHeaderExpanded} />
+                ) : null}
+                {(visibleMergeBlockers.length > 0 || visibleMergeWarnings.length > 0) && (
+                  <section className="companion-review-readiness compact">
+                    {visibleMergeBlockers.length > 0 && (
+                      <div className="companion-review-issues" aria-label="Merge blockers">
+                        {visibleMergeBlockers.map((issue) => {
+                          const pathSummary = summarizeIssuePaths(issue.paths);
+                          return (
+                            <span
+                              className="companion-review-issue"
+                              key={`${issue.kind}:${issue.message}`}
+                              title={issue.paths ? `${issue.message}\n${issue.paths.join("\n")}` : issue.message}
+                            >
+                              {summarizeMergeReadinessIssue(issue)}
+                              {pathSummary && <small>{pathSummary}</small>}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {visibleMergeWarnings.length > 0 && (
+                      <div className="companion-review-issues warning" aria-label="Merge warnings">
+                        {visibleMergeWarnings.map((issue) => (
+                          <span className="companion-review-issue" key={`${issue.kind}:${issue.message}`} title={issue.message}>
+                            {summarizeMergeReadinessIssue(issue)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </section>
                 )}
+                {(targetWorkspaceDirtyBlocked || snapshot.targetStash) && (
+                  <section className="companion-review-target-actions">
+                    <div>
+                      <strong>{snapshot.targetStash && targetWorkspaceDirtyBlocked
+                        ? "Target stash still exists"
+                        : snapshot.targetStash
+                          ? "Target changes stashed"
+                          : "Target has local changes"}</strong>
+                      <span>{snapshot.targetStash && targetWorkspaceDirtyBlocked
+                        ? "Drop it if you already applied it outside WithMate."
+                        : snapshot.targetStash
+                          ? `${snapshot.targetStash.ref} · ${snapshot.targetStash.id.slice(0, 8)}`
+                          : "Stash them before syncing or merging."}</span>
+                    </div>
+                    {snapshot.targetStash && targetWorkspaceDirtyBlocked ? (
+                      <button
+                        type="button"
+                        disabled={operationDisabled}
+                        onClick={() => void dropCompanionTargetStash()}
+                      >
+                        Drop Stash
+                      </button>
+                    ) : snapshot.targetStash ? (
+                      <button
+                        type="button"
+                        disabled={operationDisabled}
+                        onClick={() => void restoreCompanionTargetStash()}
+                      >
+                        Restore Stash
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={operationDisabled}
+                        onClick={() => void stashCompanionTargetChanges()}
+                      >
+                        Stash Target Changes
+                      </button>
+                    )}
+                  </section>
+                )}
+                <div
+                  className={`companion-review-file-selection${isMergeStagePaneResizing ? " is-resizing" : ""}`}
+                  ref={mergeFileSelectionRef}
+                  style={{ "--merge-stage-pane-percent": `${mergeStagePanePercent}%` } as CSSProperties}
+                >
+                  <section className="companion-review-file-section" aria-label="Staged changes">
+                    <div className="companion-review-file-section-head">
+                      <span>Stage</span>
+                      <div className="companion-review-file-section-actions">
+                        <span>{stagedChangedFiles.length}</span>
+                        {stagedChangedFiles.length > 0 && (
+                          <button
+                            type="button"
+                            aria-label="unstage all changes"
+                            disabled={snapshot.session.status !== "active"}
+                            title="Unstage All"
+                            onClick={unstageAllChangedFiles}
+                          >
+                            -
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    {stagedFileTree.length > 0 ? (
+                      <div className="companion-review-file-tree">
+                        {renderChangedFileTree(stagedFileTree, "unstage")}
+                      </div>
+                    ) : (
+                      <span className="companion-review-tree-empty">Empty</span>
+                    )}
+                  </section>
+                  <div
+                    className="companion-review-stage-resizer"
+                    role="separator"
+                    aria-label="Resize stage and changes"
+                    aria-orientation="horizontal"
+                    aria-valuemin={MERGE_PANE_MIN_PERCENT}
+                    aria-valuemax={MERGE_PANE_MAX_PERCENT}
+                    aria-valuenow={Math.round(mergeStagePanePercent)}
+                    tabIndex={0}
+                    onKeyDown={handleMergeStagePaneResizeKeyDown}
+                    onPointerDown={handleStartMergeStagePaneResize}
+                  />
+                  <section className="companion-review-file-section" aria-label="Changes">
+                    <div className="companion-review-file-section-head">
+                      <span>Changes</span>
+                      <div className="companion-review-file-section-actions">
+                        <span>{unstagedChangedFiles.length}</span>
+                        {unstagedChangedFiles.length > 0 && (
+                          <button
+                            type="button"
+                            aria-label="stage all changes"
+                            disabled={snapshot.session.status !== "active"}
+                            title="Stage All"
+                            onClick={stageAllChangedFiles}
+                          >
+                            +
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    {unstagedFileTree.length > 0 ? (
+                      <div className="companion-review-file-tree">
+                        {renderChangedFileTree(unstagedFileTree, "stage")}
+                      </div>
+                    ) : (
+                      <span className="companion-review-tree-empty">Clean</span>
+                    )}
+                  </section>
+                </div>
               </aside>
+              <div
+                className="companion-review-pane-resizer"
+                role="separator"
+                aria-label="Resize file list"
+                aria-orientation="vertical"
+                aria-valuemin={MERGE_PANE_MIN_PERCENT}
+                aria-valuemax={MERGE_PANE_MAX_PERCENT}
+                aria-valuenow={Math.round(mergeFileListPercent)}
+                tabIndex={0}
+                onKeyDown={handleMergePaneResizeKeyDown}
+                onPointerDown={handleStartMergePaneResize}
+              />
 
               <main className="companion-review-diff" aria-label="Selected file diff">
                 {selectedFile ? (
@@ -1961,12 +2527,12 @@ export default function CompanionReviewApp() {
                     <div className="diff-titlebar companion-review-diff-title">
                       <h2>{selectedFile.path}</h2>
                     </div>
-                    <DiffViewerSubbar file={selectedFile} />
                     <DiffViewer file={selectedFile} />
                   </>
                 ) : (
-                  <div className="companion-review-empty-state">
-                    <p>表示する差分はありません。</p>
+                  <div className="companion-review-empty-state clean">
+                    <span className="companion-review-empty-mark" aria-hidden="true" />
+                    <strong>Clean</strong>
                   </div>
                 )}
               </main>

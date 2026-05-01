@@ -94,6 +94,9 @@ import {
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SESSIONS_CHANGED_EVENT,
   WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
+  WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL,
+  WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
+  WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
   WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,
   WITHMATE_RENDERER_LOG_CHANNEL,
@@ -313,6 +316,15 @@ function createCompanionApi(ipcRenderer: IpcRendererLike): WithMateWindowCompani
     },
     syncCompanionTarget(sessionId) {
       return ipcRenderer.invoke(WITHMATE_SYNC_COMPANION_TARGET_CHANNEL, sessionId);
+    },
+    stashCompanionTargetChanges(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL, sessionId);
+    },
+    restoreCompanionTargetStash(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL, sessionId);
+    },
+    dropCompanionTargetStash(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL, sessionId);
     },
     discardCompanionSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL, sessionId);

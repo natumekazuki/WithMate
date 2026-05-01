@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -12,6 +12,8 @@ import type {
   CompanionMergeSelectedFilesResult,
   CompanionReviewSnapshot,
   CompanionSyncTargetResult,
+  CompanionTargetWorkspaceStash,
+  CompanionTargetWorkspaceStashResult,
   CompanionSiblingCheckWarning,
 } from "../src/companion-review-state.js";
 import type { CompanionSession, CompanionSessionSummary } from "../src/companion-state.js";
@@ -40,6 +42,7 @@ export type CompanionReviewServiceDeps = {
   getCompanionSession(sessionId: string): CompanionSession | null;
   listCompanionSessionSummaries(): CompanionSessionSummary[];
   updateCompanionSession(session: CompanionSession): CompanionSession;
+  deleteCompanionSession?(sessionId: string): void;
   updateCompanionSessionBaseSnapshot?(session: CompanionSession): CompanionSession;
   createCompanionMergeRun?(run: CompanionMergeRun): CompanionMergeRun;
   listCompanionMergeRunsForSession?(sessionId: string): CompanionMergeRun[];
@@ -81,6 +84,10 @@ function normalizeSelectedPath(filePath: string): string {
     throw new Error("merge 対象の file path が不正だよ。");
   }
   return normalized;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function parseNameStatusZ(output: string): ChangedPath[] {
@@ -138,6 +145,10 @@ function toIssuePaths(changes: ChangedPath[]): string[] | undefined {
   return paths.length > 0 ? paths : undefined;
 }
 
+function hasUnmergedStatus(status: string): boolean {
+  return status.includes("\0U") || status.startsWith("U") || status.includes("\0AA ") || status.includes("\0DD ");
+}
+
 export class CompanionReviewService {
   constructor(private readonly deps: CompanionReviewServiceDeps) {}
 
@@ -162,6 +173,7 @@ export class CompanionReviewService {
       changedFiles,
       mergeRuns: this.deps.listCompanionMergeRunsForSession?.(session.id) ?? [],
       mergeReadiness,
+      targetStash: await this.resolveTargetWorkspaceStash(session),
       generatedAt: currentTimestampLabel(),
       warnings: [],
     };
@@ -196,6 +208,7 @@ export class CompanionReviewService {
         baseParent: "",
         simulatedAt: latestRun?.createdAt ?? session.updatedAt,
       },
+      targetStash: null,
       generatedAt: currentTimestampLabel(),
       warnings: latestRun
         ? [`operation: ${latestRun.operation}`]
@@ -212,6 +225,9 @@ export class CompanionReviewService {
     const normalizedSelectedPaths = [...new Set(selectedPaths.map(normalizeSelectedPath))];
     if (normalizedSelectedPaths.length === 0) {
       throw new Error("merge する file を選んでね。");
+    }
+    if (await this.resolveTargetWorkspaceStash(session)) {
+      throw new Error("WithMate が退避した target stash が残っています。Restore Stash または Drop Stash してから merge してください。");
     }
 
     const changedPaths = await this.resolveChangedPaths(session);
@@ -231,9 +247,7 @@ export class CompanionReviewService {
 
     const diffSnapshot = await Promise.all(changedPaths.map((change) => this.buildChangedFile(session, change)));
 
-    for (const change of selectedChanges) {
-      await this.applySelectedChange(session, change);
-    }
+    await this.applySelectedChangesWithGit(session, selectedChanges);
     const siblingWarnings = await this.checkSiblingImpact(session, selectedChanges);
 
     await cleanupCompanionWorkspaceArtifacts({
@@ -245,7 +259,7 @@ export class CompanionReviewService {
     });
 
     const completedAt = currentTimestampLabel();
-    const storedSession = this.deps.updateCompanionSession({
+    const mergedSession: CompanionSession = {
       ...session,
       status: "merged",
       selectedPaths: normalizedSelectedPaths,
@@ -253,7 +267,16 @@ export class CompanionReviewService {
       siblingWarnings,
       runState: "idle",
       updatedAt: completedAt,
-    });
+    };
+    if (this.deps.deleteCompanionSession) {
+      this.deps.deleteCompanionSession(session.id);
+      return {
+        session: mergedSession,
+        siblingWarnings,
+      };
+    }
+
+    const storedSession = this.deps.updateCompanionSession(mergedSession);
     this.deps.createCompanionMergeRun?.({
       id: randomUUID(),
       sessionId: storedSession.id,
@@ -289,7 +312,7 @@ export class CompanionReviewService {
     });
 
     const completedAt = currentTimestampLabel();
-    const storedSession = this.deps.updateCompanionSession({
+    const discardedSession: CompanionSession = {
       ...session,
       status: "discarded",
       selectedPaths: [],
@@ -297,7 +320,13 @@ export class CompanionReviewService {
       siblingWarnings: [],
       runState: "idle",
       updatedAt: completedAt,
-    });
+    };
+    if (this.deps.deleteCompanionSession) {
+      this.deps.deleteCompanionSession(session.id);
+      return discardedSession;
+    }
+
+    const storedSession = this.deps.updateCompanionSession(discardedSession);
     this.deps.createCompanionMergeRun?.({
       id: randomUUID(),
       sessionId: storedSession.id,
@@ -323,14 +352,13 @@ export class CompanionReviewService {
     if (!baseParent || !targetHead) {
       throw new Error("target branch または base snapshot を解決できません。");
     }
-    if (baseParent === targetHead) {
+    await this.assertTargetWorkspaceClean(session, targetHead);
+    if (baseParent === targetHead && await this.isBaseSnapshotSyncedToTarget(session, targetHead)) {
       return { session };
     }
     if (!(await this.isAncestor(session.repoRoot, baseParent, targetHead))) {
       throw new Error("target branch の履歴が base snapshot から分岐しています。Companion の再作成を検討してください。");
     }
-
-    await this.assertTargetWorkspaceClean(session, targetHead);
 
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-sync-target-"));
     const patchPath = path.join(tempDirectory, "companion.patch");
@@ -381,6 +409,59 @@ export class CompanionReviewService {
     } finally {
       await rm(tempDirectory, { recursive: true, force: true }).catch(() => undefined);
     }
+  }
+
+  async stashTargetChanges(sessionId: string): Promise<CompanionTargetWorkspaceStashResult> {
+    const session = this.requireActiveSession(sessionId);
+    if (session.runState === "running") {
+      throw new Error("Companion が実行中のため target changes を stash できません。");
+    }
+
+    const status = (await runGit(session.repoRoot, ["status", "--porcelain=v1", "-z"])).stdout;
+    if (status.length === 0) {
+      return { stash: await this.resolveTargetWorkspaceStash(session) };
+    }
+
+    await runGit(session.repoRoot, [
+      "stash",
+      "push",
+      "--include-untracked",
+      "-m",
+      this.buildTargetWorkspaceStashMessage(session, randomUUID()),
+    ]);
+    return { stash: await this.requireTargetWorkspaceStash(session) };
+  }
+
+  async restoreTargetChanges(sessionId: string): Promise<CompanionTargetWorkspaceStashResult> {
+    const session = this.requireActiveSession(sessionId);
+    if (session.runState === "running") {
+      throw new Error("Companion が実行中のため target stash を戻せません。");
+    }
+
+    const stash = await this.requireTargetWorkspaceStash(session);
+    const status = (await runGit(session.repoRoot, ["status", "--porcelain=v1", "-z"])).stdout;
+    if (status.length > 0) {
+      throw new Error("target workspace に変更があります。stash を戻す前に commit または stash してください。");
+    }
+
+    try {
+      await runGit(session.repoRoot, ["stash", "apply", "--index", stash.ref]);
+      await runGit(session.repoRoot, ["stash", "drop", stash.ref]);
+    } catch (error) {
+      throw new Error(`target stash を戻せませんでした。stash は残しています: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return { stash: await this.resolveTargetWorkspaceStash(session) };
+  }
+
+  async dropTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult> {
+    const session = this.requireActiveSession(sessionId);
+    if (session.runState === "running") {
+      throw new Error("Companion が実行中のため target stash を破棄できません。");
+    }
+
+    const stash = await this.requireTargetWorkspaceStash(session);
+    await runGit(session.repoRoot, ["stash", "drop", stash.ref]);
+    return { stash: await this.resolveTargetWorkspaceStash(session) };
   }
 
   private requireActiveSession(sessionId: string): CompanionSession {
@@ -437,15 +518,20 @@ export class CompanionReviewService {
         kind: "target-branch-drift",
         message: "target branch が Companion 作成時点から進んでいるため merge できません。",
       });
+    } else if (targetHead && !(await this.isBaseSnapshotSyncedToTarget(session, targetHead))) {
+      blockers.push({
+        kind: "target-branch-drift",
+        message: "base snapshot が target branch の HEAD と一致していないため merge できません。",
+      });
     }
 
     const targetTree = await this.captureTargetWorktreeTree(session);
-    const baseTree = await this.resolveCommitTree(session.repoRoot, session.baseSnapshotCommit);
-    if (targetTree && baseTree && targetTree !== baseTree) {
-      const dirtyPaths = await this.resolveTreeDiffPaths(session.repoRoot, baseTree, targetTree);
+    const targetHeadTree = targetHead ? await this.resolveCommitTree(session.repoRoot, targetHead) : "";
+    if (targetTree && targetHeadTree && targetTree !== targetHeadTree) {
+      const dirtyPaths = await this.resolveTreeDiffPaths(session.repoRoot, targetHeadTree, targetTree);
       blockers.push({
         kind: "target-worktree-dirty",
-        message: "target workspace が base snapshot から変わっているため merge できません。",
+        message: "target workspace が target branch の HEAD から変わっているため merge できません。",
         paths: toIssuePaths(dirtyPaths),
       });
     }
@@ -556,6 +642,12 @@ export class CompanionReviewService {
     }
   }
 
+  private async isBaseSnapshotSyncedToTarget(session: CompanionSession, targetHead: string): Promise<boolean> {
+    const baseTree = await this.resolveCommitTree(session.repoRoot, session.baseSnapshotCommit);
+    const targetTree = await this.resolveCommitTree(session.repoRoot, targetHead);
+    return Boolean(baseTree && targetTree && baseTree === targetTree);
+  }
+
   private async captureTargetWorktreeTree(session: CompanionSession): Promise<string> {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-target-index-"));
     const tempIndexPath = path.join(tempDirectory, "index");
@@ -577,8 +669,40 @@ export class CompanionReviewService {
     const targetTree = await this.resolveCommitTree(session.repoRoot, targetHead);
     const currentTargetTree = await this.captureTargetWorktreeTree(session);
     if (targetTree && currentTargetTree && targetTree !== currentTargetTree) {
-      throw new Error("target workspace に未反映の変更があります。commit または stash してから Sync Target してください。");
+      throw new Error("target workspace が target branch の HEAD と一致していません。target branch を checkout してから Sync Target してください。");
     }
+  }
+
+  private buildTargetWorkspaceStashMessage(session: CompanionSession, stashId: string): string {
+    return `WithMate Target Changes session=${session.id} stash=${stashId}`;
+  }
+
+  private async resolveTargetWorkspaceStash(session: CompanionSession): Promise<CompanionTargetWorkspaceStash | null> {
+    const output = (await runGit(session.repoRoot, ["stash", "list", "--format=%gd%x1f%H%x1f%s"])).stdout;
+    const currentStashPattern = new RegExp(`WithMate Target Changes session=${escapeRegExp(session.id)} stash=([^\\s]+)`);
+    const legacyStashMessage = `WithMate Target Changes ${session.id}`;
+    for (const line of output.split(/\r?\n/)) {
+      if (!line.trim()) {
+        continue;
+      }
+      const [ref, hash, message] = line.split("\x1f");
+      const currentMatch = message?.match(currentStashPattern);
+      if (ref && hash && message && currentMatch?.[1]) {
+        return { id: currentMatch[1], ref, hash, message };
+      }
+      if (ref && hash && message?.includes(legacyStashMessage)) {
+        return { id: hash, ref, hash, message };
+      }
+    }
+    return null;
+  }
+
+  private async requireTargetWorkspaceStash(session: CompanionSession): Promise<CompanionTargetWorkspaceStash> {
+    const stash = await this.resolveTargetWorkspaceStash(session);
+    if (!stash) {
+      throw new Error("WithMate が退避した target stash が見つかりません。");
+    }
+    return stash;
   }
 
   private async resolveTreeDiffPaths(repoRoot: string, baseTree: string, targetTree: string): Promise<ChangedPath[]> {
@@ -645,12 +769,14 @@ export class CompanionReviewService {
       await runGit(session.repoRoot, ["worktree", "add", "--detach", checkWorktreePath, baseSnapshotCommit]);
       await runGit(checkWorktreePath, ["apply", "--3way", "--whitespace=nowarn", patchPath]);
       const status = (await runGit(checkWorktreePath, ["status", "--porcelain=v1", "-z"])).stdout;
-      if (status.includes("\0U") || status.startsWith("U") || status.includes("\0AA ") || status.includes("\0DD ")) {
+      if (hasUnmergedStatus(status)) {
         throw new Error("patch leaves unmerged paths");
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "patch apply check failed";
-      throw new Error(`Sync Target conflict: ${message}`);
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error("patch apply check failed");
     } finally {
       await runGit(session.repoRoot, ["worktree", "remove", "--force", checkWorktreePath]).catch(() => undefined);
       await rm(tempDirectory, { recursive: true, force: true }).catch(() => undefined);
@@ -678,11 +804,7 @@ export class CompanionReviewService {
         if (!change) {
           throw new Error(`changed files にない file は merge できません: ${selectedPath}`);
         }
-        if (change.kind === "delete") {
-          await runGit(session.repoRoot, ["update-index", "--force-remove", "--", selectedPath], { env: gitEnv });
-        } else {
-          await runGit(session.repoRoot, ["add", "--", selectedPath], { env: worktreeGitEnv });
-        }
+        await this.applyChangeToIndex(session, change, gitEnv, worktreeGitEnv);
       }
       await runGit(session.repoRoot, ["write-tree"], { env: gitEnv });
     } finally {
@@ -706,14 +828,119 @@ export class CompanionReviewService {
     };
   }
 
-  private async applySelectedChange(session: CompanionSession, change: ChangedPath): Promise<void> {
-    const targetPath = path.join(session.repoRoot, change.path);
+  private async applyChangeToIndex(
+    session: CompanionSession,
+    change: ChangedPath,
+    gitEnv: NodeJS.ProcessEnv,
+    worktreeGitEnv: NodeJS.ProcessEnv,
+  ): Promise<void> {
     if (change.kind === "delete") {
-      await rm(targetPath, { force: true });
+      await runGit(session.repoRoot, ["update-index", "--force-remove", "--", change.path], { env: gitEnv });
       return;
     }
 
-    await mkdir(path.dirname(targetPath), { recursive: true });
-    await copyFile(path.join(session.worktreePath, change.path), targetPath);
+    await runGit(session.repoRoot, ["add", "--", change.path], { env: worktreeGitEnv });
+  }
+
+  private async createSelectedChangesPatch(session: CompanionSession, selectedChanges: ChangedPath[]): Promise<string> {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-selected-patch-"));
+    const tempIndexPath = path.join(tempDirectory, "index");
+    const gitEnv = {
+      ...process.env,
+      GIT_INDEX_FILE: tempIndexPath,
+    };
+    const worktreeGitEnv = {
+      ...gitEnv,
+      GIT_WORK_TREE: session.worktreePath,
+    };
+
+    try {
+      await runGit(session.repoRoot, ["read-tree", session.baseSnapshotCommit], { env: gitEnv });
+      for (const change of selectedChanges) {
+        await this.applyChangeToIndex(session, change, gitEnv, worktreeGitEnv);
+      }
+      const selectedTree = (await runGit(session.repoRoot, ["write-tree"], { env: gitEnv })).stdout.trim();
+      return (await runGit(
+        session.repoRoot,
+        [
+          "diff-tree",
+          "--binary",
+          "--full-index",
+          "-p",
+          session.baseSnapshotCommit,
+          selectedTree,
+          "--",
+          ...selectedChanges.map((change) => change.path),
+        ],
+      )).stdout;
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private async applySelectedChangesWithGit(session: CompanionSession, selectedChanges: ChangedPath[]): Promise<void> {
+    const patchText = await this.createSelectedChangesPatch(session, selectedChanges);
+    if (patchText.trim().length === 0) {
+      return;
+    }
+
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-selected-apply-"));
+    const patchPath = path.join(tempDirectory, "selected.patch");
+    const targetHead = await this.resolveTargetHead(session);
+    try {
+      await writeFile(patchPath, patchText, "utf8");
+      if (!targetHead) {
+        throw new Error("target branch を解決できません。");
+      }
+      await this.assertTargetWorkspaceClean(session, targetHead);
+      await this.assertBaseSnapshotMatchesTarget(session, targetHead);
+      await this.checkSelectedPatchApplies(session, targetHead, patchPath);
+      try {
+        await runGit(session.repoRoot, ["apply", "--check", "--whitespace=nowarn", patchPath]);
+        await runGit(session.repoRoot, ["apply", "--whitespace=nowarn", patchPath]);
+      } catch (error) {
+        await runGit(session.repoRoot, ["reset", "--hard", "HEAD"]).catch(() => undefined);
+        await runGit(session.repoRoot, ["clean", "-fd"]).catch(() => undefined);
+        throw error;
+      }
+      const status = (await runGit(session.repoRoot, ["status", "--porcelain=v1", "-z"])).stdout;
+      if (hasUnmergedStatus(status)) {
+        await runGit(session.repoRoot, ["reset", "--hard", "HEAD"]).catch(() => undefined);
+        await runGit(session.repoRoot, ["clean", "-fd"]).catch(() => undefined);
+        throw new Error("selected patch leaves unmerged paths");
+      }
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private async checkSelectedPatchApplies(session: CompanionSession, targetHead: string, patchPath: string): Promise<void> {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-selected-check-"));
+    const checkWorktreePath = path.join(tempDirectory, "worktree");
+
+    try {
+      await runGit(session.repoRoot, ["worktree", "add", "--detach", checkWorktreePath, targetHead]);
+      await runGit(checkWorktreePath, ["apply", "--check", "--whitespace=nowarn", patchPath]);
+      const status = (await runGit(checkWorktreePath, ["status", "--porcelain=v1", "-z"])).stdout;
+      if (hasUnmergedStatus(status)) {
+        throw new Error("selected patch leaves unmerged paths");
+      }
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error("selected patch apply check failed");
+    } finally {
+      await runGit(session.repoRoot, ["worktree", "remove", "--force", checkWorktreePath]).catch(() => undefined);
+      await rm(tempDirectory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private async assertBaseSnapshotMatchesTarget(session: CompanionSession, targetHead: string): Promise<void> {
+    const baseTree = await this.resolveCommitTree(session.repoRoot, session.baseSnapshotCommit);
+    const targetTree = await this.resolveCommitTree(session.repoRoot, targetHead);
+    if (baseTree && targetTree && baseTree !== targetTree) {
+      throw new Error("base snapshot が target branch の HEAD と一致していません。Sync Target してください。");
+    }
   }
 }

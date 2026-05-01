@@ -26,6 +26,7 @@ import type {
   CompanionMergeSelectedFilesResult,
   CompanionReviewSnapshot,
   CompanionSyncTargetResult,
+  CompanionTargetWorkspaceStashResult,
 } from "../src/companion-review-state.js";
 import type {
   MemoryManagementPageRequest,
@@ -109,6 +110,9 @@ import {
   WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
+  WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL,
+  WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
+  WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
@@ -191,6 +195,9 @@ export type MainIpcRegistrationDeps = {
   getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
   mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionMergeSelectedFilesResult>;
   syncCompanionTarget(sessionId: string): Promise<CompanionSyncTargetResult>;
+  stashCompanionTargetChanges(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
+  restoreCompanionTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
+  dropCompanionTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
   discardCompanionSession(sessionId: string): Promise<CompanionSession>;
   updateCompanionSession(session: CompanionSession): Promise<CompanionSession>;
   previewCompanionComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
@@ -291,6 +298,9 @@ type MainIpcCompanionDeps = Pick<
   | "getCompanionReviewSnapshot"
   | "mergeCompanionSelectedFiles"
   | "syncCompanionTarget"
+  | "stashCompanionTargetChanges"
+  | "restoreCompanionTargetStash"
+  | "dropCompanionTargetStash"
   | "discardCompanionSession"
   | "updateCompanionSession"
   | "previewCompanionComposerInput"
@@ -488,6 +498,15 @@ function registerCompanionHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCom
   );
   ipcMain.handle(WITHMATE_SYNC_COMPANION_TARGET_CHANNEL, async (_event, sessionId: string) =>
     deps.syncCompanionTarget(sessionId),
+  );
+  ipcMain.handle(WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL, async (_event, sessionId: string) =>
+    deps.stashCompanionTargetChanges(sessionId),
+  );
+  ipcMain.handle(WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL, async (_event, sessionId: string) =>
+    deps.restoreCompanionTargetStash(sessionId),
+  );
+  ipcMain.handle(WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL, async (_event, sessionId: string) =>
+    deps.dropCompanionTargetStash(sessionId),
   );
   ipcMain.handle(WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL, async (_event, sessionId: string) =>
     deps.discardCompanionSession(sessionId),

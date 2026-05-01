@@ -14,7 +14,7 @@ import type {
   SessionContextTelemetry,
   AuditLogSummary,
 } from "./app-state.js";
-import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
+import { DiffViewer } from "./DiffViewer.js";
 import { MessageRichText } from "./MessageRichText.js";
 import {
   approvalModeLabel,
@@ -711,7 +711,6 @@ export function SessionDiffModal({
           </div>
         </div>
 
-        <DiffViewerSubbar file={selectedDiff.file} />
         <DiffViewer file={selectedDiff.file} />
       </section>
     </div>

@@ -25,6 +25,7 @@ import type {
   CompanionMergeSelectedFilesResult,
   CompanionReviewSnapshot,
   CompanionSyncTargetResult,
+  CompanionTargetWorkspaceStashResult,
 } from "../src/companion-review-state.js";
 import type {
   MemoryManagementPageRequest,
@@ -112,6 +113,9 @@ export type MainIpcCompanionDepsArgs = {
   getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
   mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionMergeSelectedFilesResult>;
   syncCompanionTarget(sessionId: string): Promise<CompanionSyncTargetResult>;
+  stashCompanionTargetChanges(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
+  restoreCompanionTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
+  dropCompanionTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
   discardCompanionSession(sessionId: string): Promise<CompanionSession>;
   updateCompanionSession(session: CompanionSession): Promise<CompanionSession>;
   previewCompanionComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
@@ -235,6 +239,9 @@ export function createMainIpcRegistrationDeps(
     getCompanionReviewSnapshot: args.companion.getCompanionReviewSnapshot,
     mergeCompanionSelectedFiles: args.companion.mergeCompanionSelectedFiles,
     syncCompanionTarget: args.companion.syncCompanionTarget,
+    stashCompanionTargetChanges: args.companion.stashCompanionTargetChanges,
+    restoreCompanionTargetStash: args.companion.restoreCompanionTargetStash,
+    dropCompanionTargetStash: args.companion.dropCompanionTargetStash,
     discardCompanionSession: args.companion.discardCompanionSession,
     updateCompanionSession: args.companion.updateCompanionSession,
     previewCompanionComposerInput: args.companion.previewCompanionComposerInput,

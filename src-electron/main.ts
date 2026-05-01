@@ -883,6 +883,21 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   broadcastCompanionSessions();
                   return result;
                 },
+                stashCompanionTargetChanges: async (sessionId) => {
+                  const result = await requireCompanionReviewService().stashTargetChanges(sessionId);
+                  broadcastCompanionSessions();
+                  return result;
+                },
+                restoreCompanionTargetStash: async (sessionId) => {
+                  const result = await requireCompanionReviewService().restoreTargetChanges(sessionId);
+                  broadcastCompanionSessions();
+                  return result;
+                },
+                dropCompanionTargetStash: async (sessionId) => {
+                  const result = await requireCompanionReviewService().dropTargetStash(sessionId);
+                  broadcastCompanionSessions();
+                  return result;
+                },
                 updateCompanionSession: async (session) => {
                   const saved = requireCompanionStorage().updateSession(session);
                   broadcastCompanionSessions();
@@ -1362,6 +1377,7 @@ function requireCompanionReviewService(): CompanionReviewService {
       getCompanionSession: (sessionId) => requireCompanionStorage().getSession(sessionId),
       listCompanionSessionSummaries: () => requireCompanionStorage().listSessionSummaries(),
       updateCompanionSession: (session) => requireCompanionStorage().updateSession(session),
+      deleteCompanionSession: (sessionId) => requireCompanionStorage().deleteSession(sessionId),
       updateCompanionSessionBaseSnapshot: (session) => requireCompanionStorage().updateSessionBaseSnapshot(session),
       createCompanionMergeRun: (run) => requireCompanionStorage().createMergeRun(run),
       listCompanionMergeRunsForSession: (sessionId) => requireCompanionStorage().listMergeRunsForSession(sessionId),
