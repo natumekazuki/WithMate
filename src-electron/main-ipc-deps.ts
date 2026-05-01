@@ -19,6 +19,14 @@ import type {
 } from "../src/app-state.js";
 import type { CreateCharacterInput } from "../src/character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
+import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
+import type {
+  CompanionMergeSelectedFilesRequest,
+  CompanionMergeSelectedFilesResult,
+  CompanionReviewSnapshot,
+  CompanionSyncTargetResult,
+  CompanionTargetWorkspaceStashResult,
+} from "../src/companion-review-state.js";
 import type {
   MemoryManagementPageRequest,
   MemoryManagementPageResult,
@@ -44,6 +52,8 @@ export type MainIpcWindowDepsArgs = {
   openMemoryManagementWindow(): Promise<BrowserWindow>;
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
+  openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow>;
+  openCompanionMergeWindow(sessionId: string): Promise<BrowserWindow>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickImageFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
@@ -51,6 +61,7 @@ export type MainIpcWindowDepsArgs = {
   openAppLogFolder(): Promise<void>;
   openCrashDumpFolder(): Promise<void>;
   openSessionTerminal(sessionId: string): Promise<void>;
+  openTerminalAtPath(target: string): Promise<void>;
   logIpcError?: MainIpcRegistrationDeps["logIpcError"];
   reportRendererLog?: MainIpcRegistrationDeps["reportRendererLog"];
 };
@@ -76,6 +87,7 @@ export type MainIpcSettingsDepsArgs = {
 
 export type MainIpcSessionQueryDepsArgs = {
   listSessionSummaries(): SessionSummary[];
+  listCompanionSessionSummaries(): CompanionSessionSummary[];
   listSessionAuditLogs(sessionId: string): AuditLogEntry[];
   listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[];
   listSessionAuditLogSummaryPage(
@@ -85,11 +97,31 @@ export type MainIpcSessionQueryDepsArgs = {
   getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
+  listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
+  listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   listOpenSessionWindowIds(): string[];
+  listOpenCompanionReviewWindowIds(): string[];
   getSession(sessionId: string): Session | null;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
   searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
+};
+
+export type MainIpcCompanionDepsArgs = {
+  createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
+  getCompanionSession(sessionId: string): CompanionSession | null;
+  getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
+  mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionMergeSelectedFilesResult>;
+  syncCompanionTarget(sessionId: string): Promise<CompanionSyncTargetResult>;
+  stashCompanionTargetChanges(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
+  restoreCompanionTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
+  dropCompanionTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
+  discardCompanionSession(sessionId: string): Promise<CompanionSession>;
+  updateCompanionSession(session: CompanionSession): Promise<CompanionSession>;
+  previewCompanionComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
+  searchCompanionWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
+  runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
+  cancelCompanionSessionRun(sessionId: string): void;
 };
 
 export type MainIpcSessionRuntimeDepsArgs = {
@@ -125,6 +157,7 @@ export type CreateMainIpcRegistrationDepsArgs = {
   catalog: MainIpcCatalogDepsArgs;
   settings: MainIpcSettingsDepsArgs;
   sessionQuery: MainIpcSessionQueryDepsArgs;
+  companion: MainIpcCompanionDepsArgs;
   sessionRuntime: MainIpcSessionRuntimeDepsArgs;
   character: MainIpcCharacterDepsArgs;
 };
@@ -156,6 +189,12 @@ export function createMainIpcRegistrationDeps(
     openDiffWindow: async (diffPreview) => {
       await args.window.openDiffWindow(diffPreview);
     },
+    openCompanionReviewWindow: async (sessionId) => {
+      await args.window.openCompanionReviewWindow(sessionId);
+    },
+    openCompanionMergeWindow: async (sessionId) => {
+      await args.window.openCompanionMergeWindow(sessionId);
+    },
     pickDirectory: args.window.pickDirectory,
     pickFile: args.window.pickFile,
     pickImageFile: args.window.pickImageFile,
@@ -163,6 +202,7 @@ export function createMainIpcRegistrationDeps(
     openAppLogFolder: args.window.openAppLogFolder,
     openCrashDumpFolder: args.window.openCrashDumpFolder,
     openSessionTerminal: args.window.openSessionTerminal,
+    openTerminalAtPath: args.window.openTerminalAtPath,
     logIpcError: args.window.logIpcError,
     reportRendererLog: args.window.reportRendererLog,
     getModelCatalog: args.catalog.getModelCatalog,
@@ -179,17 +219,35 @@ export function createMainIpcRegistrationDeps(
     deleteProjectMemoryEntry: args.settings.deleteProjectMemoryEntry,
     deleteCharacterMemoryEntry: args.settings.deleteCharacterMemoryEntry,
     listSessionSummaries: args.sessionQuery.listSessionSummaries,
+    listCompanionSessionSummaries: args.sessionQuery.listCompanionSessionSummaries,
     listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,
     listSessionAuditLogSummaries: args.sessionQuery.listSessionAuditLogSummaries,
     listSessionAuditLogSummaryPage: args.sessionQuery.listSessionAuditLogSummaryPage,
     getSessionAuditLogDetail: args.sessionQuery.getSessionAuditLogDetail,
     listSessionSkills: args.sessionQuery.listSessionSkills,
     listSessionCustomAgents: args.sessionQuery.listSessionCustomAgents,
+    listWorkspaceSkills: args.sessionQuery.listWorkspaceSkills,
+    listWorkspaceCustomAgents: args.sessionQuery.listWorkspaceCustomAgents,
     listOpenSessionWindowIds: args.sessionQuery.listOpenSessionWindowIds,
+    listOpenCompanionReviewWindowIds: args.sessionQuery.listOpenCompanionReviewWindowIds,
     getSession: args.sessionQuery.getSession,
     getDiffPreview: args.sessionQuery.getDiffPreview,
     previewComposerInput: args.sessionQuery.previewComposerInput,
     searchWorkspaceFiles: args.sessionQuery.searchWorkspaceFiles,
+    createCompanionSession: args.companion.createCompanionSession,
+    getCompanionSession: args.companion.getCompanionSession,
+    getCompanionReviewSnapshot: args.companion.getCompanionReviewSnapshot,
+    mergeCompanionSelectedFiles: args.companion.mergeCompanionSelectedFiles,
+    syncCompanionTarget: args.companion.syncCompanionTarget,
+    stashCompanionTargetChanges: args.companion.stashCompanionTargetChanges,
+    restoreCompanionTargetStash: args.companion.restoreCompanionTargetStash,
+    dropCompanionTargetStash: args.companion.dropCompanionTargetStash,
+    discardCompanionSession: args.companion.discardCompanionSession,
+    updateCompanionSession: args.companion.updateCompanionSession,
+    previewCompanionComposerInput: args.companion.previewCompanionComposerInput,
+    searchCompanionWorkspaceFiles: args.companion.searchCompanionWorkspaceFiles,
+    runCompanionSessionTurn: args.companion.runCompanionSessionTurn,
+    cancelCompanionSessionRun: args.companion.cancelCompanionSessionRun,
     getLiveSessionRun: args.sessionRuntime.getLiveSessionRun,
     getProviderQuotaTelemetry: args.sessionRuntime.getProviderQuotaTelemetry,
     getSessionContextTelemetry: args.sessionRuntime.getSessionContextTelemetry,

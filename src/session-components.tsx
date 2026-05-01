@@ -14,7 +14,7 @@ import type {
   SessionContextTelemetry,
   AuditLogSummary,
 } from "./app-state.js";
-import { DiffViewer, DiffViewerSubbar } from "./DiffViewer.js";
+import { DiffViewer } from "./DiffViewer.js";
 import { MessageRichText } from "./MessageRichText.js";
 import {
   approvalModeLabel,
@@ -27,6 +27,7 @@ import {
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
+import type { SessionWindowModeKind } from "./session-window-mode.js";
 import {
   contextPaneTabLabel,
   liveRunStepToneClassName,
@@ -38,6 +39,7 @@ import {
   type SessionContextTelemetryProjection,
 } from "./session-ui-projection.js";
 import type { CharacterUpdateMemoryExtract } from "./character-update-state.js";
+import type { HomeMonitorEntry } from "./home-session-projection.js";
 
 function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
@@ -74,7 +76,10 @@ function liveElicitationModeLabel(mode: LiveElicitationRequest["mode"]): string 
   return mode === "url" ? "URL" : "Form";
 }
 
-function createLiveElicitationFieldValue(field: LiveElicitationField): string | number | boolean | string[] {
+type LiveElicitationFieldValue = string | number | boolean | string[];
+type LiveElicitationContentEntry = readonly [string, LiveElicitationFieldValue];
+
+function createLiveElicitationFieldValue(field: LiveElicitationField): LiveElicitationFieldValue {
   switch (field.type) {
     case "boolean":
       return field.defaultValue ?? false;
@@ -91,13 +96,13 @@ function createLiveElicitationFieldValue(field: LiveElicitationField): string | 
   }
 }
 
-function createLiveElicitationFormState(request: LiveElicitationRequest): Record<string, string | number | boolean | string[]> {
+function createLiveElicitationFormState(request: LiveElicitationRequest): Record<string, LiveElicitationFieldValue> {
   return Object.fromEntries(request.fields.map((field) => [field.name, createLiveElicitationFieldValue(field)]));
 }
 
 function validateLiveElicitationField(
   field: LiveElicitationField,
-  value: string | number | boolean | string[],
+  value: LiveElicitationFieldValue,
 ): string | null {
   switch (field.type) {
     case "text": {
@@ -160,9 +165,9 @@ function validateLiveElicitationField(
 
 function buildLiveElicitationResponseContent(
   request: LiveElicitationRequest,
-  fieldValues: Record<string, string | number | boolean | string[]>,
-): Record<string, string | number | boolean | string[]> {
-  const entries = request.fields.flatMap((field) => {
+  fieldValues: Record<string, LiveElicitationFieldValue>,
+): Record<string, LiveElicitationFieldValue> {
+  const entries = request.fields.flatMap<LiveElicitationContentEntry>((field) => {
     const value = fieldValues[field.name];
     if (field.type === "text" || field.type === "select") {
       if (typeof value !== "string") {
@@ -201,6 +206,14 @@ function buildLiveElicitationResponseContent(
   return Object.fromEntries(entries);
 }
 
+function liveElicitationTextValue(value: LiveElicitationFieldValue | undefined): string {
+  return typeof value === "string" ? value : "";
+}
+
+function liveElicitationMultiSelectValue(value: LiveElicitationFieldValue | undefined): string[] {
+  return Array.isArray(value) ? value : [];
+}
+
 type LiveElicitationCardProps = {
   request: LiveElicitationRequest;
   elicitationActionRequestId: string | null;
@@ -214,7 +227,7 @@ function LiveElicitationCard({
   onResolveLiveElicitation,
   onOpenPath,
 }: LiveElicitationCardProps) {
-  const [fieldValues, setFieldValues] = useState<Record<string, string | number | boolean | string[]>>(
+  const [fieldValues, setFieldValues] = useState<Record<string, LiveElicitationFieldValue>>(
     () => createLiveElicitationFormState(request),
   );
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
@@ -286,14 +299,14 @@ function LiveElicitationCard({
               {field.type === "text" ? (
                 field.maxLength !== undefined && field.maxLength > 120 ? (
                   <textarea
-                    value={typeof fieldValues[field.name] === "string" ? fieldValues[field.name] : ""}
+                    value={liveElicitationTextValue(fieldValues[field.name])}
                     onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
                     disabled={isSubmitting}
                   />
                 ) : (
                   <input
                     type={field.format === "email" ? "email" : field.format === "uri" ? "url" : field.format === "date" ? "date" : "text"}
-                    value={typeof fieldValues[field.name] === "string" ? fieldValues[field.name] : ""}
+                    value={liveElicitationTextValue(fieldValues[field.name])}
                     onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
                     disabled={isSubmitting}
                   />
@@ -325,7 +338,7 @@ function LiveElicitationCard({
               ) : null}
               {field.type === "select" ? (
                 <select
-                  value={typeof fieldValues[field.name] === "string" ? fieldValues[field.name] : ""}
+                  value={liveElicitationTextValue(fieldValues[field.name])}
                   onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
                   disabled={isSubmitting}
                 >
@@ -340,7 +353,7 @@ function LiveElicitationCard({
               {field.type === "multi-select" ? (
                 <div className="live-elicitation-options">
                   {field.options.map((option) => {
-                    const selectedValues = Array.isArray(fieldValues[field.name]) ? fieldValues[field.name] : [];
+                    const selectedValues = liveElicitationMultiSelectValue(fieldValues[field.name]);
                     const checked = selectedValues.includes(option.value);
                     return (
                       <label key={option.value} className="live-elicitation-option">
@@ -349,7 +362,7 @@ function LiveElicitationCard({
                           checked={checked}
                           onChange={(event) => {
                             setFieldValues((current) => {
-                              const currentValues = Array.isArray(current[field.name]) ? current[field.name] : [];
+                              const currentValues = liveElicitationMultiSelectValue(current[field.name]);
                               return {
                                 ...current,
                                 [field.name]: event.target.checked
@@ -460,7 +473,12 @@ export type SessionHeaderProps = {
   isEditingTitle: boolean;
   titleDraft: string;
   isRunning: boolean;
+  showRenameButton?: boolean;
+  showAuditLogButton?: boolean;
   showTerminalButton?: boolean;
+  showDeleteButton?: boolean;
+  workspaceActions?: ReactNode;
+  actions?: ReactNode;
   onToggleExpanded: () => void;
   onOpenAuditLog: () => void;
   onOpenTerminal: () => void;
@@ -477,7 +495,12 @@ export function SessionHeader({
   isEditingTitle,
   titleDraft,
   isRunning,
+  showRenameButton = true,
+  showAuditLogButton = true,
   showTerminalButton = true,
+  showDeleteButton = true,
+  workspaceActions,
+  actions,
   onToggleExpanded,
   onOpenAuditLog,
   onOpenTerminal,
@@ -490,7 +513,7 @@ export function SessionHeader({
 }: SessionHeaderProps) {
   return (
     <header className="session-window-bar session-top-bar rise-1">
-      <div className="session-top-bar-row">
+      <div className={`session-top-bar-row${isEditingTitle ? " is-editing-title" : ""}`}>
         {!isEditingTitle ? (
           <button className="session-title-shell session-title-shell-toggle" type="button" onClick={onToggleExpanded}>
             <span className="session-window-title session-title-accent">{taskTitle}</span>
@@ -508,24 +531,32 @@ export function SessionHeader({
             </div>
           </label>
         )}
-        <div className="session-window-controls">
-          {!isEditingTitle ? (
-            <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning}>
-              Rename
-            </button>
-          ) : null}
-          <button className="drawer-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
-            Audit Log
-          </button>
-          {showTerminalButton ? (
-            <button className="drawer-toggle compact secondary" type="button" onClick={onOpenTerminal}>
-              Terminal
-            </button>
-          ) : null}
-          <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
-            Delete
-          </button>
-        </div>
+        {!isEditingTitle ? (
+          <div className="session-window-controls">
+            {showRenameButton ? (
+              <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning}>
+                Rename
+              </button>
+            ) : null}
+            {workspaceActions}
+            {showTerminalButton ? (
+              <button className="drawer-toggle compact secondary" type="button" onClick={onOpenTerminal}>
+                Terminal
+              </button>
+            ) : null}
+            {showAuditLogButton ? (
+              <button className="drawer-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
+                Audit Log
+              </button>
+            ) : null}
+            {actions}
+            {showDeleteButton ? (
+              <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
+                Delete
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </header>
   );
@@ -553,6 +584,94 @@ export function SessionHeaderHandle({ taskTitle, onClick }: SessionHeaderHandleP
     <button className="session-header-handle" type="button" onClick={onClick}>
       <span className="session-window-title session-title-accent">{taskTitle}</span>
     </button>
+  );
+}
+
+export type SessionChatScreenProps = {
+  mode: SessionWindowModeKind;
+  className?: string;
+  style?: CSSProperties;
+  header: ReactNode;
+  messageColumn: ReactNode;
+  actionDock: ReactNode;
+  rightPane: ReactNode;
+  splitter: ReactNode;
+  workbenchRef?: RefObject<HTMLDivElement | null>;
+  workbenchStyle?: CSSProperties;
+  modals?: ReactNode;
+};
+
+export function SessionChatScreen({
+  mode,
+  className = "",
+  style,
+  header,
+  messageColumn,
+  actionDock,
+  rightPane,
+  splitter,
+  workbenchRef,
+  workbenchStyle,
+  modals,
+}: SessionChatScreenProps) {
+  return (
+    <div className={`page-shell session-page${className ? ` ${className}` : ""}`} style={style} data-session-mode={mode}>
+      {header}
+
+      <section className="content-grid session-content-grid">
+        <section className="chat-panel session-work-surface rise-3">
+          <div className="session-workbench" ref={workbenchRef} style={workbenchStyle}>
+            <div className="session-main-grid">
+              <div className="session-message-stack">
+                {messageColumn}
+                {actionDock}
+              </div>
+
+              {splitter}
+              {rightPane}
+            </div>
+          </div>
+        </section>
+      </section>
+
+      {modals}
+    </div>
+  );
+}
+
+export type SessionChatWindowProps = Omit<SessionChatScreenProps, "header" | "messageColumn" | "actionDock"> & {
+  isHeaderExpanded: boolean;
+  headerProps: SessionHeaderProps;
+  messageColumnProps: SessionMessageColumnProps;
+  isActionDockExpanded: boolean;
+  composerProps: SessionComposerExpandedProps;
+  compactActionDockProps: SessionActionDockCompactRowProps;
+};
+
+export function SessionChatWindow({
+  isHeaderExpanded,
+  headerProps,
+  messageColumnProps,
+  isActionDockExpanded,
+  composerProps,
+  compactActionDockProps,
+  ...screenProps
+}: SessionChatWindowProps) {
+  return (
+    <SessionChatScreen
+      {...screenProps}
+      header={isHeaderExpanded ? <SessionHeader {...headerProps} /> : null}
+      messageColumn={<SessionMessageColumn {...messageColumnProps} />}
+      actionDock={(
+        <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
+          {isActionDockExpanded ? (
+            <SessionComposerExpanded {...composerProps} />
+          ) : (
+            <SessionActionDockCompactRow {...compactActionDockProps} />
+          )}
+        </div>
+      )}
+    />
   );
 }
 
@@ -592,7 +711,6 @@ export function SessionDiffModal({
           </div>
         </div>
 
-        <DiffViewerSubbar file={selectedDiff.file} />
         <DiffViewer file={selectedDiff.file} />
       </section>
     </div>
@@ -738,26 +856,27 @@ export function SessionAuditLogModal({
           </div>
         </div>
 
-        <div className="audit-log-segmented" aria-label="監査ログ表示切り替え">
-          <button
-            type="button"
-            className={`audit-log-segmented-button${activeSection === "main" ? " is-active" : ""}`}
-            onClick={() => setActiveSection("main")}
-          >
-            Main
-          </button>
-          <button
-            type="button"
-            className={`audit-log-segmented-button${activeSection === "background" ? " is-active" : ""}`}
-            onClick={() => setActiveSection("background")}
-          >
-            Background
-          </button>
-        </div>
-
-        <div className="audit-log-page-status">
-          <span>{entries.length} / {total}</span>
-          {errorMessage ? <span className="audit-log-page-error">{errorMessage}</span> : null}
+        <div className="audit-log-toolbar">
+          <div className="audit-log-segmented" aria-label="監査ログ表示切り替え">
+            <button
+              type="button"
+              className={`audit-log-segmented-button${activeSection === "main" ? " is-active" : ""}`}
+              onClick={() => setActiveSection("main")}
+            >
+              Main
+            </button>
+            <button
+              type="button"
+              className={`audit-log-segmented-button${activeSection === "background" ? " is-active" : ""}`}
+              onClick={() => setActiveSection("background")}
+            >
+              Background
+            </button>
+          </div>
+          <div className="audit-log-page-status">
+            <span>{entries.length} / {total}</span>
+            {errorMessage ? <span className="audit-log-page-error">{errorMessage}</span> : null}
+          </div>
         </div>
 
         <div ref={auditLogListRef} className="audit-log-list">
@@ -983,10 +1102,12 @@ export type SessionContextPaneProps = {
   taskTitle: string;
   isHeaderExpanded: boolean;
   activeContextPaneTab: ContextPaneTabKey;
+  availableContextPaneTabs: ContextPaneTabKey[];
   contextPaneProjection: ContextPaneProjection;
   latestCommandView: LatestCommandView | null;
   runningDetailsEntries: RunningDetailsEntry[];
   backgroundTasks: LiveBackgroundTask[];
+  companionGroupMonitorEntries: HomeMonitorEntry[];
   selectedSessionLiveRunErrorMessage: string;
   isSelectedSessionRunning: boolean;
   isCopilotSession: boolean;
@@ -998,6 +1119,7 @@ export type SessionContextPaneProps = {
   contextEmptyText: string;
   onToggleHeaderExpanded: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
+  onOpenCompanionReview: (sessionId: string) => void;
 };
 
 type SessionPaneErrorBoundaryProps = {
@@ -1021,6 +1143,7 @@ export class SessionPaneErrorBoundary extends Component<
   static getDerivedStateFromError(error: Error): SessionPaneErrorBoundaryState {
     return {
       errorMessage: error.message || "右ペインの描画に失敗したよ。",
+      resetNonce: 0,
     };
   }
 
@@ -1090,10 +1213,12 @@ export function SessionContextPane({
   taskTitle,
   isHeaderExpanded,
   activeContextPaneTab,
+  availableContextPaneTabs,
   contextPaneProjection,
   latestCommandView,
   runningDetailsEntries,
   backgroundTasks,
+  companionGroupMonitorEntries,
   selectedSessionLiveRunErrorMessage,
   isSelectedSessionRunning,
   isCopilotSession,
@@ -1105,9 +1230,12 @@ export function SessionContextPane({
   contextEmptyText,
   onToggleHeaderExpanded,
   onCycleContextPaneTab,
+  onOpenCompanionReview,
 }: SessionContextPaneProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const taskEntries = backgroundTasks ?? [];
+  const availableTabCount = availableContextPaneTabs.length;
+  const canCycleContextPaneTab = availableTabCount > 1;
   const contentScrollKey = useMemo(() => {
     switch (activeContextPaneTab) {
       case "latest-command":
@@ -1124,16 +1252,42 @@ export function SessionContextPane({
         return taskEntries
           .map((task) => `${task.id}:${task.kind}:${task.status}:${task.title}:${task.details ?? ""}:${task.updatedAt}`)
           .join("|");
+      case "companion-group":
+        return companionGroupMonitorEntries
+          .map((entry) => `${entry.kind}:${entry.session.id}:${entry.session.taskTitle}:${entry.state.kind}:${entry.state.label}:${entry.session.updatedAt}`)
+          .join("|");
       default:
         return "";
     }
   }, [
     activeContextPaneTab,
+    companionGroupMonitorEntries,
     latestCommandView,
     runningDetailsEntries,
     taskEntries,
     selectedSessionLiveRunErrorMessage,
   ]);
+
+  const renderCompanionGroupMonitorEntry = (entry: Extract<HomeMonitorEntry, { kind: "companion" }>) => {
+    const { session, state } = entry;
+    return (
+      <button
+        key={session.id}
+        className="companion-group-monitor-item"
+        type="button"
+        onClick={() => onOpenCompanionReview(session.id)}
+      >
+        <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
+        <div className="companion-group-monitor-copy">
+          <strong>{session.taskTitle}</strong>
+          <span>{session.character}</span>
+        </div>
+        <div className="companion-group-monitor-badges">
+          <span className={`session-status companion-group-monitor-status ${state.kind}`.trim()}>{state.label}</span>
+        </div>
+      </button>
+    );
+  };
 
   useLayoutEffect(() => {
     const contentNode = contentRef.current;
@@ -1141,19 +1295,20 @@ export function SessionContextPane({
       return;
     }
 
-    contentNode.scrollTop = contentNode.scrollHeight;
+    contentNode.scrollTop = activeContextPaneTab === "companion-group" ? 0 : contentNode.scrollHeight;
   }, [contentScrollKey]);
 
   return (
     <aside className={`session-context-pane${isHeaderExpanded ? " session-context-pane-header-expanded" : ""}`}>
       {!isHeaderExpanded ? <SessionHeaderHandle taskTitle={taskTitle} onClick={onToggleHeaderExpanded} /> : null}
-      <section className="command-monitor-shell" aria-label="右ペイン">
+      <section className={`command-monitor-shell ${activeContextPaneTab}`} aria-label="右ペイン">
         <div className="command-monitor-head">
           <div className="command-monitor-switcher" aria-label="右ペイン表示切り替え">
             <button
               type="button"
               className="command-monitor-switcher-button"
               onClick={() => onCycleContextPaneTab(-1)}
+              disabled={!canCycleContextPaneTab}
               aria-label="前の表示へ切り替え"
             >
               ‹
@@ -1167,6 +1322,7 @@ export function SessionContextPane({
               type="button"
               className="command-monitor-switcher-button"
               onClick={() => onCycleContextPaneTab(1)}
+              disabled={!canCycleContextPaneTab}
               aria-label="次の表示へ切り替え"
             >
               ›
@@ -1175,7 +1331,7 @@ export function SessionContextPane({
         </div>
 
         <div ref={contentRef} className="command-monitor-content">
-          <div className="command-monitor-stack">
+          <div className={`command-monitor-stack ${activeContextPaneTab}`}>
             {activeContextPaneTab === "latest-command" && runningDetailsEntries.length > 0 ? (
               <div className="command-monitor-card">
                 <div className="command-monitor-card-head">
@@ -1307,6 +1463,21 @@ export function SessionContextPane({
                 <div className="command-monitor-empty-shell">
                   <p className="command-monitor-empty">まだ background task はないよ。</p>
                   <p className="command-monitor-empty-subtle">Copilot の sub-agent や background shell がある時だけここへ出るよ。</p>
+                </div>
+              )
+            ) : null}
+
+            {activeContextPaneTab === "companion-group" ? (
+              companionGroupMonitorEntries.length > 0 ? (
+                <div className="command-monitor-confirmed-list">
+                  {companionGroupMonitorEntries
+                    .filter((entry): entry is Extract<HomeMonitorEntry, { kind: "companion" }> => entry.kind === "companion")
+                    .map(renderCompanionGroupMonitorEntry)}
+                </div>
+              ) : (
+                <div className="command-monitor-empty-shell">
+                  <p className="command-monitor-empty">同じ CompanionGroup の session はないよ。</p>
+                  <p className="command-monitor-empty-subtle">同じ repository の Companion がある時だけここへ出るよ。</p>
                 </div>
               )
             ) : null}
@@ -2191,6 +2362,7 @@ export type SessionComposerExpandedProps = {
   canSelectCustomAgent: boolean;
   showCustomAgentPicker?: boolean;
   showSkillPicker?: boolean;
+  showAdditionalDirectoryControls?: boolean;
   isAgentPickerOpen: boolean;
   isSkillPickerOpen: boolean;
   isAdditionalDirectoryListOpen: boolean;
@@ -2257,6 +2429,7 @@ export function SessionComposerExpanded({
   canSelectCustomAgent,
   showCustomAgentPicker = true,
   showSkillPicker = true,
+  showAdditionalDirectoryControls = true,
   isAgentPickerOpen,
   isSkillPickerOpen,
   isAdditionalDirectoryListOpen,
@@ -2387,25 +2560,27 @@ export function SessionComposerExpanded({
             Skill
           </button>
         ) : null}
-        <div className="composer-additional-directory-toolbar">
-          <button
-            className="drawer-toggle compact secondary composer-skill-button"
-            type="button"
-            onClick={onAddAdditionalDirectory}
-            disabled={isRunning || composerBlocked}
-          >
-            Add Directory
-          </button>
-          <button
-            className={`drawer-toggle compact secondary composer-skill-button${isAdditionalDirectoryListOpen ? " is-open" : ""}`}
-            type="button"
-            onClick={onToggleAdditionalDirectoryList}
-            disabled={additionalDirectoryCount === 0}
-            aria-expanded={isAdditionalDirectoryListOpen}
-          >
-            {`Dirs ${additionalDirectoryCount}`}
-          </button>
-        </div>
+        {showAdditionalDirectoryControls ? (
+          <div className="composer-additional-directory-toolbar">
+            <button
+              className="drawer-toggle compact secondary composer-skill-button"
+              type="button"
+              onClick={onAddAdditionalDirectory}
+              disabled={isRunning || composerBlocked}
+            >
+              Add Directory
+            </button>
+            <button
+              className={`drawer-toggle compact secondary composer-skill-button${isAdditionalDirectoryListOpen ? " is-open" : ""}`}
+              type="button"
+              onClick={onToggleAdditionalDirectoryList}
+              disabled={additionalDirectoryCount === 0}
+              aria-expanded={isAdditionalDirectoryListOpen}
+            >
+              {`Dirs ${additionalDirectoryCount}`}
+            </button>
+          </div>
+        ) : null}
         {showJumpToBottom ? (
           <button
             className="drawer-toggle compact secondary message-jump-bottom-button"

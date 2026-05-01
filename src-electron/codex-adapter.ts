@@ -42,6 +42,7 @@ import { normalizeAllowedAdditionalDirectories } from "./additional-directories.
 import { composeProviderPrompt, isCanceledProviderMessage } from "./provider-prompt.js";
 import {
   ProviderTurnError,
+  resolveRunWorkspacePath,
   type ExtractSessionMemoryResult,
   type ExtractSessionMemoryInput,
   type ProviderPromptComposition,
@@ -68,9 +69,9 @@ function summarizeChangedFile(kind: ChangedFile["kind"], filePath: string): stri
   }
 }
 
-function normalizeWorkspaceRelativePath(session: Session, filePath: string): string {
-  const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(session.workspacePath, filePath);
-  const relativePath = path.relative(session.workspacePath, resolvedPath);
+function normalizeWorkspaceRelativePath(workspacePath: string, filePath: string): string {
+  const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(workspacePath, filePath);
+  const relativePath = path.relative(workspacePath, resolvedPath);
 
   if (relativePath && !relativePath.startsWith("..") && !path.isAbsolute(relativePath)) {
     return relativePath.replace(/\\/g, "/");
@@ -358,12 +359,12 @@ function collectCompletedFileChangeItems(items: ThreadItem[]): Array<Extract<Thr
   );
 }
 
-function collectCompletedFileChangePaths(session: Session, items: ThreadItem[]): string[] {
+function collectCompletedFileChangePaths(workspacePath: string, items: ThreadItem[]): string[] {
   const paths = new Set<string>();
 
   for (const item of collectCompletedFileChangeItems(items)) {
     for (const change of item.changes) {
-      paths.add(normalizeWorkspaceRelativePath(session, change.path));
+      paths.add(normalizeWorkspaceRelativePath(workspacePath, change.path));
     }
   }
 
@@ -381,7 +382,7 @@ function hasBroadFilesystemChangeSource(items: ThreadItem[]): boolean {
 }
 
 function buildChangedFilesFromSources(
-  session: Session,
+  workspacePath: string,
   items: ThreadItem[],
   beforeSnapshot: WorkspaceSnapshot,
   afterSnapshot: WorkspaceSnapshot,
@@ -391,7 +392,7 @@ function buildChangedFilesFromSources(
     .flatMap((item) => item.changes)
     .map((change) => {
       const kind: ChangedFile["kind"] = change.kind === "update" ? "edit" : change.kind;
-      const displayPath = normalizeWorkspaceRelativePath(session, change.path);
+      const displayPath = normalizeWorkspaceRelativePath(workspacePath, change.path);
 
       return {
         kind,
@@ -917,6 +918,7 @@ function summarizeSnapshotWarning(stats: SnapshotCaptureStats): string {
 
 async function buildArtifact(
   session: Session,
+  workspacePath: string,
   items: ThreadItem[],
   usage: Usage | null,
   threadId: string | null,
@@ -929,7 +931,7 @@ async function buildArtifact(
   selection: ResolvedModelSelection,
 ): Promise<MessageArtifact | undefined> {
   const changedFiles = buildChangedFilesFromSources(
-    session,
+    workspacePath,
     items,
     beforeSnapshot,
     afterSnapshot,
@@ -1069,7 +1071,12 @@ export class CodexAdapter implements ProviderTurnAdapter {
 
   private getThread(input: RunSessionTurnInput): { thread: Thread; selection: ResolvedModelSelection } {
     const { client, clientKey } = this.getClient(input.providerCatalog.id, input.appSettings);
-    const nextSettings = buildCodexThreadSettings(input.session, input.providerCatalog, clientKey);
+    const nextSettings = buildCodexThreadSettings(
+      input.session,
+      input.providerCatalog,
+      clientKey,
+      resolveRunWorkspacePath(input),
+    );
     const resolved = resolveCodexThreadForSettings({
       cached: this.threads.get(input.session.id),
       nextSettingsKey: nextSettings.settingsKey,
@@ -1089,9 +1096,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
   }
 
   private buildSnapshotRoots(input: RunSessionTurnInput): string[] {
+    const workspacePath = resolveRunWorkspacePath(input);
     return [
-      input.session.workspacePath,
-      ...normalizeAllowedAdditionalDirectories(input.session.workspacePath, input.session.allowedAdditionalDirectories),
+      workspacePath,
+      ...normalizeAllowedAdditionalDirectories(workspacePath, input.session.allowedAdditionalDirectories),
     ];
   }
 
@@ -1141,7 +1149,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     const indexKey = this.buildSnapshotIndexKey(snapshotRoots);
     const cachedIndex = this.workspaceSnapshotIndexes.get(indexKey)
       ?? await createWorkspaceSnapshotIndex(snapshotRoots);
-    const candidatePaths = collectCompletedFileChangePaths(input.session, finalItems);
+    const candidatePaths = collectCompletedFileChangePaths(resolveRunWorkspacePath(input), finalItems);
     const canUseTargetedSnapshot = candidatePaths.length > 0 && !hasBroadFilesystemChangeSource(finalItems);
     const refreshed = await refreshWorkspaceSnapshotIndex(cachedIndex, {
       candidatePaths: canUseTargetedSnapshot ? candidatePaths : undefined,
@@ -1174,6 +1182,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       await this.captureAfterWorkspaceSnapshot(input, finalItems);
     const artifact = await buildArtifact(
       input.session,
+      resolveRunWorkspacePath(input),
       finalItems,
       usage,
       threadId,
@@ -1300,15 +1309,17 @@ export function buildCodexThreadSettings(
   session: Session,
   providerCatalog: ModelCatalogProvider,
   clientKey: string,
+  executionWorkspacePath?: string,
 ): CodexThreadSettings {
   const selection = resolveModelSelection(providerCatalog, session.model, session.reasoningEffort);
+  const workspacePath = executionWorkspacePath?.trim() || session.workspacePath;
   const additionalDirectories = normalizeAllowedAdditionalDirectories(
-    session.workspacePath,
+    workspacePath,
     session.allowedAdditionalDirectories,
   );
   const sandboxOptions = resolveCodexSandboxThreadOptions(session.codexSandboxMode);
   const options: CodexThreadOptions = {
-    workingDirectory: session.workspacePath,
+    workingDirectory: workspacePath,
     skipGitRepoCheck: true,
     sandboxMode: sandboxOptions.sandboxMode,
     approvalPolicy: mapApprovalModeToCodexPolicy(session.approvalMode),

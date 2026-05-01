@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src/character-state.js";
 import type { DiffPreviewPayload } from "../../src/session-state.js";
 import { AuxWindowService } from "../../src-electron/aux-window-service.js";
-import { DIFF_WINDOW_DEFAULT_BOUNDS } from "../../src-electron/window-defaults.js";
+import {
+  COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
+  COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
+  DIFF_WINDOW_DEFAULT_BOUNDS,
+} from "../../src-electron/window-defaults.js";
 
 function createWindowStub() {
   let destroyed = false;
@@ -47,11 +52,16 @@ function createWindowStub() {
 function createDiffPreview(): DiffPreviewPayload {
   return {
     file: {
+      kind: "edit",
       path: "src/file.ts",
-      oldContent: "old",
-      newContent: "new",
+      summary: "diff",
+      diffRows: [
+        { kind: "delete", leftNumber: 1, leftText: "old" },
+        { kind: "add", rightNumber: 1, rightText: "new" },
+      ],
     },
     title: "diff",
+    themeColors: DEFAULT_CHARACTER_THEME_COLORS,
   };
 }
 
@@ -72,6 +82,9 @@ test("AuxWindowService は singleton window を再利用する", async () => {
       characterLoads.push(characterId);
     },
     async loadDiffEntry() {},
+    async loadCompanionChatEntry() {},
+    async loadCompanionMergeEntry() {},
+    onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "diff-token";
     },
@@ -109,6 +122,9 @@ test("AuxWindowService は diff preview を保持し reset 時に close する",
     async loadDiffEntry(_window, token) {
       diffLoads.push(token);
     },
+    async loadCompanionChatEntry() {},
+    async loadCompanionMergeEntry() {},
+    onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "diff-token";
     },
@@ -126,4 +142,56 @@ test("AuxWindowService は diff preview を保持し reset 時に close する",
 
   service.closeResetTargetWindows();
   assert.equal(service.getDiffPreview("diff-token"), null);
+});
+
+test("AuxWindowService は companion chat と merge の entry を分けて開く", async () => {
+  const companionChatLoads: string[] = [];
+  const companionMergeLoads: string[] = [];
+  let companionReviewWindowChangeCount = 0;
+  const createdOptions: Array<Record<string, unknown>> = [];
+  const service = new AuxWindowService({
+    createWindow(options) {
+      const stub = createWindowStub();
+      createdOptions.push(options);
+      return stub.window;
+    },
+    async loadHomeEntry() {},
+    async loadCharacterEntry() {},
+    async loadDiffEntry() {},
+    async loadCompanionChatEntry(_window, sessionId) {
+      companionChatLoads.push(sessionId);
+    },
+    async loadCompanionMergeEntry(_window, sessionId) {
+      companionMergeLoads.push(sessionId);
+    },
+    onCompanionReviewWindowsChanged() {
+      companionReviewWindowChangeCount += 1;
+    },
+    generateDiffToken() {
+      return "diff-token";
+    },
+  });
+
+  const chat = await service.openCompanionReviewWindow("companion-1");
+  const chatReopened = await service.openCompanionReviewWindow("companion-1");
+  const merge = await service.openCompanionMergeWindow("companion-1");
+  const mergeReopened = await service.openCompanionMergeWindow("companion-1");
+
+  assert.equal(chat, chatReopened);
+  assert.equal(merge, mergeReopened);
+  assert.notEqual(chat, merge);
+  assert.deepEqual(service.listOpenCompanionReviewWindowIds(), ["companion-1"]);
+  assert.equal(companionReviewWindowChangeCount, 1);
+  assert.deepEqual(companionChatLoads, ["companion-1"]);
+  assert.deepEqual(companionMergeLoads, ["companion-1"]);
+  assert.deepEqual(createdOptions, [
+    {
+      ...COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
+      title: "Companion - companion-1",
+    },
+    {
+      ...COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
+      title: "Companion Merge - companion-1",
+    },
+  ]);
 });

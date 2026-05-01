@@ -22,7 +22,15 @@ import type {
     RunSessionTurnRequest,
     Session,
     SessionSummary,
-  } from "./app-state.js";
+} from "./app-state.js";
+import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "./companion-state.js";
+import type {
+  CompanionMergeSelectedFilesRequest,
+  CompanionMergeSelectedFilesResult,
+  CompanionReviewSnapshot,
+  CompanionSyncTargetResult,
+  CompanionTargetWorkspaceStashResult,
+} from "./companion-review-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "./character-update-state.js";
 import type {
   MemoryManagementPageRequest,
@@ -41,10 +49,13 @@ export type WithMateWindowNavigationApi = {
   openMemoryManagementWindow(): Promise<void>;
   openCharacterEditor(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
+  openCompanionReviewWindow(sessionId: string): Promise<void>;
+  openCompanionMergeWindow(sessionId: string): Promise<void>;
   openPath(target: string, options?: OpenPathOptions): Promise<void>;
   openAppLogFolder(): Promise<void>;
   openCrashDumpFolder(): Promise<void>;
   openSessionTerminal(sessionId: string): Promise<void>;
+  openTerminalAtPath(target: string): Promise<void>;
 };
 
 export type WithMateWindowCatalogApi = {
@@ -66,6 +77,8 @@ export type WithMateWindowSessionApi = {
   searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
+  listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
+  listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   cancelSessionRun(sessionId: string): Promise<void>;
   listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
@@ -80,6 +93,24 @@ export type WithMateWindowSessionApi = {
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): Promise<void>;
 };
 
+export type WithMateWindowCompanionApi = {
+  listCompanionSessionSummaries(): Promise<CompanionSessionSummary[]>;
+  getCompanionSession(sessionId: string): Promise<CompanionSession | null>;
+  getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
+  mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionMergeSelectedFilesResult>;
+  syncCompanionTarget(sessionId: string): Promise<CompanionSyncTargetResult>;
+  stashCompanionTargetChanges(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
+  restoreCompanionTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
+  dropCompanionTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult>;
+  discardCompanionSession(sessionId: string): Promise<CompanionSession>;
+  createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
+  updateCompanionSession(session: CompanionSession): Promise<CompanionSession>;
+  previewCompanionComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview>;
+  searchCompanionWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
+  runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
+  cancelCompanionSessionRun(sessionId: string): Promise<void>;
+};
+
 export type WithMateWindowObservabilityApi = {
   getProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
   getSessionContextTelemetry(sessionId: string): Promise<SessionContextTelemetry | null>;
@@ -88,6 +119,7 @@ export type WithMateWindowObservabilityApi = {
     kind: SessionBackgroundActivityKind,
   ): Promise<SessionBackgroundActivityState | null>;
   listOpenSessionWindowIds(): Promise<string[]>;
+  listOpenCompanionReviewWindowIds(): Promise<string[]>;
 };
 
 export type WithMateWindowSettingsApi = {
@@ -135,12 +167,15 @@ export type WithMateWindowSubscriptionApi = {
     ) => void,
   ): () => void;
   subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
+  subscribeOpenCompanionReviewWindowIds(listener: (sessionIds: string[]) => void): () => void;
+  subscribeCompanionSessionSummaries(listener: (sessions: CompanionSessionSummary[]) => void): () => void;
 };
 
 export type WithMateWindowApi =
   & WithMateWindowNavigationApi
   & WithMateWindowCatalogApi
   & WithMateWindowSessionApi
+  & WithMateWindowCompanionApi
   & WithMateWindowObservabilityApi
   & WithMateWindowSettingsApi
   & WithMateWindowCharacterApi

@@ -1,4 +1,5 @@
 import { type ApprovalMode } from "./approval-mode.js";
+import { type CodexSandboxMode } from "./codex-sandbox-mode.js";
 import { type ModelReasoningEffort } from "./model-catalog.js";
 
 export type DiffRow = {
@@ -305,6 +306,10 @@ export type ComposerPreview = {
 
 export type RunSessionTurnRequest = {
   userMessage: string;
+  model?: string;
+  reasoningEffort?: ModelReasoningEffort;
+  approvalMode?: ApprovalMode;
+  codexSandboxMode?: CodexSandboxMode;
 };
 
 export function makeDiffRows(

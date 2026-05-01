@@ -8,9 +8,7 @@ import {
 } from "./provider-settings-state.js";
 import { type SessionSummary } from "./session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "./approval-mode.js";
-import {
-  type ModelCatalogSnapshot,
-} from "./model-catalog.js";
+import { type ModelCatalogSnapshot } from "./model-catalog.js";
 import {
   DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
   type MemoryManagementViewFilters,
@@ -32,6 +30,7 @@ import {
   buildHomeCharacterProjection,
 } from "./home-character-projection.js";
 import {
+  buildCreateCompanionSessionInputFromLaunchDraft,
   buildCreateSessionInputFromLaunchDraft,
   closeLaunchDraft,
   createClosedLaunchDraft,
@@ -41,6 +40,7 @@ import {
   syncLaunchDraftCharacter,
   type HomeLaunchDraft,
 } from "./home-launch-state.js";
+import { createCompanionSessionSummary, type CompanionSessionSummary } from "./companion-state.js";
 import {
   buildHomeSessionProjection,
 } from "./home-session-projection.js";
@@ -157,8 +157,10 @@ export default function HomeApp() {
   const isMemoryWindowMode = homeWindowMode === "memory";
   const usesMemoryManagementWindow = isSettingsWindowMode || isMemoryWindowMode;
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [openSessionWindowIds, setOpenSessionWindowIds] = useState<string[]>([]);
+  const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const [sessionSearchText, setSessionSearchText] = useState("");
   const [characterSearchText, setCharacterSearchText] = useState("");
   const [rightPaneView, setRightPaneView] = useState<HomeRightPaneView>("monitor");
@@ -177,6 +179,8 @@ export default function HomeApp() {
   const [memoryManagementBusyTarget, setMemoryManagementBusyTarget] = useState<string | null>(null);
   const [memoryManagementFeedback, setMemoryManagementFeedback] = useState("");
   const [launchDraft, setLaunchDraft] = useState<HomeLaunchDraft>(() => createClosedLaunchDraft());
+  const [launchFeedback, setLaunchFeedback] = useState("");
+  const [launchStarting, setLaunchStarting] = useState(false);
   const settingsDirtyRef = useRef(false);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const memoryManagementRequestIdRef = useRef(0);
@@ -215,6 +219,11 @@ export default function HomeApp() {
     void withmateApi.listSessionSummaries().then((nextSessions) => {
       if (active) {
         setSessions(nextSessions);
+      }
+    });
+    void withmateApi.listCompanionSessionSummaries().then((nextSessions) => {
+      if (active) {
+        setCompanionSessions(nextSessions);
       }
     });
     void Promise.all([withmateApi.getAppSettings(), withmateApi.getModelCatalog(null)]).then(([settings, snapshot]) => {
@@ -263,6 +272,11 @@ export default function HomeApp() {
         setSessions(nextSessions);
       }
     });
+    const unsubscribeCompanionSessions = withmateApi.subscribeCompanionSessionSummaries((nextSessions) => {
+      if (active) {
+        setCompanionSessions(nextSessions);
+      }
+    });
 
     const unsubscribeCharacters = withmateApi.subscribeCharacters((nextCharacters) => {
       if (!active) {
@@ -287,6 +301,7 @@ export default function HomeApp() {
     return () => {
       active = false;
       unsubscribeSessions();
+      unsubscribeCompanionSessions();
       unsubscribeCharacters();
       unsubscribeModelCatalog();
       unsubscribeAppSettings();
@@ -327,9 +342,43 @@ export default function HomeApp() {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
+      return () => {
+        active = false;
+      };
+    }
+
+    const unsubscribeOpenCompanionReviewWindowIds = withmateApi.subscribeOpenCompanionReviewWindowIds((nextSessionIds) => {
+      if (active) {
+        setOpenCompanionReviewWindowIds(nextSessionIds);
+      }
+    });
+
+    void withmateApi.listOpenCompanionReviewWindowIds().then((nextSessionIds) => {
+      if (active) {
+        setOpenCompanionReviewWindowIds(nextSessionIds);
+      }
+    });
+
+    return () => {
+      active = false;
+      unsubscribeOpenCompanionReviewWindowIds();
+    };
+  }, []);
+
   const sessionProjection = useMemo(
-    () => buildHomeSessionProjection(sessions, openSessionWindowIds, sessionSearchText),
-    [openSessionWindowIds, sessionSearchText, sessions],
+    () => buildHomeSessionProjection(
+      sessions,
+      openSessionWindowIds,
+      sessionSearchText,
+      companionSessions,
+      openCompanionReviewWindowIds,
+    ),
+    [companionSessions, openCompanionReviewWindowIds, openSessionWindowIds, sessionSearchText, sessions],
   );
   const {
     filteredSessionEntries,
@@ -409,36 +458,103 @@ export default function HomeApp() {
       return;
     }
 
+    setLaunchFeedback("");
     setLaunchDraft((current) => setLaunchWorkspaceFromPath(current, selectedPath));
   };
 
   const openLaunchDialog = () => {
+    setLaunchFeedback("");
     setLaunchDraft((current) => openLaunchDraft(current, enabledLaunchProviders[0]?.id ?? ""));
   };
 
   const closeLaunchDialog = () => {
+    setLaunchFeedback("");
+    setLaunchStarting(false);
     setLaunchDraft((current) => closeLaunchDraft(current));
   };
 
-  const handleStartSession = async () => {
-    const lastUsedSelection = resolveLastUsedSessionSelection(sessions, selectedLaunchProvider?.id ?? null);
-    const sessionInput = buildCreateSessionInputFromLaunchDraft({
-      draft: launchDraft,
-      selectedCharacter,
-      selectedProviderId: selectedLaunchProvider?.id ?? null,
-      approvalMode: DEFAULT_APPROVAL_MODE,
-      lastUsedSelection,
-    });
-    if (!sessionInput) {
+  const resolveLaunchValidationMessage = () => {
+    if (!launchDraft.title.trim()) {
+      return "タイトルを入力してね。";
+    }
+    if (!launchDraft.workspace) {
+      return "workspace を選んでね。";
+    }
+    if (!selectedCharacter) {
+      return "キャラを選んでね。";
+    }
+    if (!selectedLaunchProvider) {
+      return "有効な Coding Provider を選んでね。";
+    }
+    return "";
+  };
+
+  const handleStartSession = async (requestedMode: HomeLaunchDraft["mode"] = launchDraft.mode) => {
+    if (launchStarting) {
       return;
     }
 
-    const createdSession = await withWithMateApi((api) => api.createSession(sessionInput));
-    if (!createdSession) {
+    const validationMessage = resolveLaunchValidationMessage();
+    if (validationMessage) {
+      setLaunchFeedback(validationMessage);
       return;
     }
-    closeLaunchDialog();
-    await openSessionWindow(createdSession.id);
+
+    setLaunchFeedback(requestedMode === "companion" ? "Companion を開始してるよ..." : "Session を開始してるよ...");
+    setLaunchStarting(true);
+    const lastUsedSelection = resolveLastUsedSessionSelection(sessions, selectedLaunchProvider?.id ?? null);
+    try {
+      if (requestedMode === "companion") {
+        const companionInput = buildCreateCompanionSessionInputFromLaunchDraft({
+          draft: launchDraft,
+          selectedCharacter,
+          selectedProviderId: selectedLaunchProvider?.id ?? null,
+          lastUsedSelection,
+        });
+        if (!companionInput) {
+          setLaunchFeedback("Companion の開始条件が揃ってないよ。");
+          return;
+        }
+
+        const createdSession = await withWithMateApi((api) => api.createCompanionSession(companionInput));
+        if (!createdSession) {
+          setLaunchFeedback("Companion を開始できなかったよ。");
+          return;
+        }
+
+        setCompanionSessions((current) => [
+          createCompanionSessionSummary(createdSession),
+          ...current.filter((session) => session.id !== createdSession.id),
+        ]);
+        closeLaunchDialog();
+        await withWithMateApi((api) => api.openCompanionReviewWindow(createdSession.id));
+        return;
+      }
+
+      const sessionInput = buildCreateSessionInputFromLaunchDraft({
+        draft: launchDraft,
+        selectedCharacter,
+        selectedProviderId: selectedLaunchProvider?.id ?? null,
+        approvalMode: DEFAULT_APPROVAL_MODE,
+        lastUsedSelection,
+      });
+      if (!sessionInput) {
+        setLaunchFeedback("Session の開始条件が揃ってないよ。");
+        return;
+      }
+
+      const createdSession = await withWithMateApi((api) => api.createSession(sessionInput));
+      if (!createdSession) {
+        setLaunchFeedback("Session を開始できなかったよ。");
+        return;
+      }
+      closeLaunchDialog();
+      await openSessionWindow(createdSession.id);
+    } catch (error) {
+      setLaunchFeedback(error instanceof Error ? error.message : "開始に失敗したよ。");
+    } finally {
+      setLaunchStarting(false);
+    }
   };
 
   const handleImportModelCatalog = async () => {
@@ -941,6 +1057,7 @@ export default function HomeApp() {
                 runningEmptyMessage={monitorRunningEmptyMessage}
                 completedEmptyMessage={monitorCompletedEmptyMessage}
                 onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
+                onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
               />
             </section>
           </section>
@@ -954,12 +1071,14 @@ export default function HomeApp() {
       <main className="home-layout rise-2">
         <HomeRecentSessionsPanel
           filteredSessionEntries={filteredSessionEntries}
+          companionSessions={companionSessions}
           normalizedSessionSearch={normalizedSessionSearch}
           searchText={sessionSearchText}
           searchIcon={renderSearchIcon()}
           onChangeSearchText={setSessionSearchText}
           onOpenLaunchDialog={openLaunchDialog}
           onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
+          onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
         />
 
         <HomeRightPane
@@ -980,11 +1099,13 @@ export default function HomeApp() {
           onChangeCharacterSearchText={setCharacterSearchText}
           onOpenCharacterEditor={(characterId) => void openCharacterEditor(characterId)}
           onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
+          onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
         />
       </main>
 
       <HomeLaunchDialog
         open={launchDraft.open}
+        mode={launchDraft.mode}
         title={launchDraft.title}
         workspace={launchDraft.workspace}
         launchWorkspacePathLabel={launchWorkspacePathLabel}
@@ -995,15 +1116,40 @@ export default function HomeApp() {
         selectedCharacterId={selectedCharacter?.id ?? null}
         launchCharacterSearchText={launchDraft.characterSearchText}
         canStartSession={canStartSession}
+        launchFeedback={launchFeedback}
+        launchStarting={launchStarting}
         searchIcon={renderSearchIcon()}
         onClose={closeLaunchDialog}
-        onChangeTitle={(value) => setLaunchDraft((current) => ({ ...current, title: value }))}
+        onSelectMode={(mode) => {
+          setLaunchFeedback("");
+          setLaunchDraft((current) => ({ ...current, mode }));
+        }}
+        onChangeTitle={(value) => {
+          setLaunchFeedback("");
+          setLaunchDraft((current) => ({ ...current, title: value }));
+        }}
         onBrowseWorkspace={() => void handleBrowseWorkspace()}
-        onSelectProvider={(providerId) => setLaunchDraft((current) => ({ ...current, providerId }))}
+        onSelectProvider={(providerId) => {
+          setLaunchFeedback("");
+          const provider = enabledLaunchProviders.find((candidate) => candidate.id === providerId) ?? null;
+          const model =
+            provider?.models.find((candidate) => candidate.id === provider.defaultModelId) ??
+            provider?.models[0] ??
+            null;
+          setLaunchDraft((current) => ({
+            ...current,
+            providerId,
+            model: model?.id ?? current.model,
+            reasoningEffort: model?.reasoningEfforts[0] ?? provider?.defaultReasoningEffort ?? current.reasoningEffort,
+          }));
+        }}
         onChangeCharacterSearch={(value) => setLaunchDraft((current) => ({ ...current, characterSearchText: value }))}
-        onSelectCharacter={(characterId) => setLaunchDraft((current) => ({ ...current, characterId }))}
+        onSelectCharacter={(characterId) => {
+          setLaunchFeedback("");
+          setLaunchDraft((current) => ({ ...current, characterId }));
+        }}
         onOpenCharacterEditor={() => void openCharacterEditor()}
-        onStartSession={() => void handleStartSession()}
+        onStartSession={(mode) => void handleStartSession(mode)}
       />
 
     </div>

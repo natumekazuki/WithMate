@@ -6,20 +6,26 @@ import type { IpcMain } from "electron";
 import { registerMainIpcHandlers } from "../../src-electron/main-ipc-registration.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
+  WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
+  WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
+  WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
+  WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
+  WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
+  WITHMATE_GET_COMPANION_SESSION_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
@@ -33,6 +39,8 @@ import {
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
+  WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
@@ -40,8 +48,13 @@ import {
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
+  WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
+  WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
+  WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL,
+  WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
@@ -51,17 +64,25 @@ import {
   WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
+  WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
   WITHMATE_PICK_FILE_CHANNEL,
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
+  WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL,
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
+  WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
+  WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
+  WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
+  WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL,
+  WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
+  WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
 } from "../../src/withmate-ipc-channels.js";
 
@@ -110,7 +131,14 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     async openDiffWindow() {
       calls.push("openDiff");
     },
+    async openCompanionReviewWindow(sessionId) {
+      calls.push(`openCompanionReview:${sessionId}`);
+    },
+    async openCompanionMergeWindow(sessionId) {
+      calls.push(`openCompanionMerge:${sessionId}`);
+    },
     listSessionSummaries: () => [],
+    listCompanionSessionSummaries: () => [],
     listSessionAuditLogs: () => [],
     listSessionAuditLogSummaries: () => [],
     listSessionAuditLogSummaryPage: (sessionId, request) => {
@@ -120,6 +148,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     getSessionAuditLogDetail: () => null,
     async listSessionSkills() { return []; },
     async listSessionCustomAgents() { return []; },
+    async listWorkspaceSkills() { return []; },
+    async listWorkspaceCustomAgents() { return []; },
     listOpenSessionWindowIds: () => ["session-1"],
     getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
@@ -229,6 +259,40 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     async openSessionTerminal() {
       calls.push("openTerminal");
     },
+    async openTerminalAtPath() {
+      calls.push("openTerminalAtPath");
+    },
+    async createCompanionSession() {
+      return {} as never;
+    },
+    getCompanionSession: () => null,
+    async getCompanionReviewSnapshot() {
+      return null;
+    },
+    async mergeCompanionSelectedFiles() {
+      return {} as never;
+    },
+    async syncCompanionTarget() {
+      return {} as never;
+    },
+    async discardCompanionSession() {
+      return {} as never;
+    },
+    async updateCompanionSession(session) {
+      return session;
+    },
+    async previewCompanionComposerInput() {
+      return { attachments: [], errors: [] };
+    },
+    async searchCompanionWorkspaceFiles() {
+      return [];
+    },
+    async runCompanionSessionTurn() {
+      return {} as never;
+    },
+    cancelCompanionSessionRun: () => {
+      calls.push("cancelCompanionRun");
+    },
   });
 
     assert.ok(handlers.has("withmate:open-session"));
@@ -271,13 +335,18 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async openMemoryManagementWindow() {},
     async openCharacterEditorWindow() {},
     async openDiffWindow() {},
+    async openCompanionReviewWindow() {},
+    async openCompanionMergeWindow() {},
     listSessionSummaries: () => [],
+    listCompanionSessionSummaries: () => [],
     listSessionAuditLogs: () => [],
     listSessionAuditLogSummaries: () => [],
     listSessionAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
     getSessionAuditLogDetail: () => null,
     async listSessionSkills() { return []; },
     async listSessionCustomAgents() { return []; },
+    async listWorkspaceSkills() { return []; },
+    async listWorkspaceCustomAgents() { return []; },
     listOpenSessionWindowIds: () => [],
     getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
@@ -329,6 +398,18 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async openAppLogFolder() {},
     async openCrashDumpFolder() {},
     async openSessionTerminal() {},
+    async openTerminalAtPath() {},
+    async createCompanionSession() { return {} as never; },
+    getCompanionSession: () => null,
+    async getCompanionReviewSnapshot() { return null; },
+    async mergeCompanionSelectedFiles() { return {} as never; },
+    async syncCompanionTarget() { return {} as never; },
+    async discardCompanionSession() { return {} as never; },
+    async updateCompanionSession(session) { return session; },
+    async previewCompanionComposerInput() { return { attachments: [], errors: [] }; },
+    async searchCompanionWorkspaceFiles() { return []; },
+    async runCompanionSessionTurn() { return {} as never; },
+    cancelCompanionSessionRun() {},
   });
 
   const expectedChannels = [
@@ -339,6 +420,8 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
     WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
     WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
+    WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
+    WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL,
     WITHMATE_PICK_DIRECTORY_CHANNEL,
     WITHMATE_PICK_FILE_CHANNEL,
     WITHMATE_PICK_IMAGE_FILE_CHANNEL,
@@ -346,6 +429,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
     WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
     WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
+    WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL,
     WITHMATE_GET_MODEL_CATALOG_CHANNEL,
     WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
     WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
@@ -366,7 +450,11 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
     WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
     WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
+    WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
+    WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
+    WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL,
     WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
+    WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
     WITHMATE_GET_SESSION_CHANNEL,
     WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
     WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
@@ -378,6 +466,20 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
     WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
     WITHMATE_CREATE_SESSION_CHANNEL,
+    WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
+    WITHMATE_GET_COMPANION_SESSION_CHANNEL,
+    WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
+    WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
+    WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
+    WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL,
+    WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
+    WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
+    WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
+    WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
+    WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL,
+    WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
+    WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
+    WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
     WITHMATE_UPDATE_SESSION_CHANNEL,
     WITHMATE_DELETE_SESSION_CHANNEL,
     WITHMATE_RUN_SESSION_TURN_CHANNEL,

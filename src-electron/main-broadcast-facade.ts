@@ -17,6 +17,7 @@ type MainBroadcastFacadeDeps<TWindow extends BroadcastWindowLike> = {
   getModelCatalog(): ModelCatalogSnapshot | null;
   getAppSettings(): AppSettings;
   listOpenSessionWindowIds(): string[];
+  listOpenCompanionReviewWindowIds(): string[];
 };
 
 export class MainBroadcastFacade<TWindow extends BroadcastWindowLike> {
@@ -52,5 +53,11 @@ export class MainBroadcastFacade<TWindow extends BroadcastWindowLike> {
     this.deps
       .getWindowBroadcastService()
       .broadcastOpenSessionWindowIds(this.deps.listOpenSessionWindowIds());
+  }
+
+  broadcastOpenCompanionReviewWindowIds(): void {
+    this.deps
+      .getWindowBroadcastService()
+      .broadcastOpenCompanionReviewWindowIds(this.deps.listOpenCompanionReviewWindowIds());
   }
 }

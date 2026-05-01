@@ -35,6 +35,16 @@ export class WindowEntryLoader {
     await this.load(window, "diff.html", search);
   }
 
+  async loadCompanionChatEntry(window: WindowLike, sessionId: string): Promise<void> {
+    const search = `?companionSessionId=${encodeURIComponent(sessionId)}&mode=companion`;
+    await this.load(window, "session.html", search);
+  }
+
+  async loadCompanionMergeEntry(window: WindowLike, sessionId: string): Promise<void> {
+    const search = `?companionSessionId=${encodeURIComponent(sessionId)}&view=merge`;
+    await this.load(window, "review.html", search);
+  }
+
   private async load(window: WindowLike, entryFileName: string, search: string): Promise<void> {
     const { devServerUrl } = this.deps;
     if (devServerUrl) {

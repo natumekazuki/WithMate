@@ -1,6 +1,10 @@
 import type { DiffPreviewPayload } from "../src/session-state.js";
 import type { HomeEntryMode, WindowLike } from "./window-entry-loader.js";
-import { DIFF_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
+import {
+  COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
+  COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
+  DIFF_WINDOW_DEFAULT_BOUNDS,
+} from "./window-defaults.js";
 
 type BaseWindowLike = WindowLike & {
   isDestroyed(): boolean;
@@ -28,7 +32,10 @@ export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
   loadHomeEntry(window: TWindow, mode: HomeEntryMode): Promise<void>;
   loadCharacterEntry(window: TWindow, characterId?: string | null): Promise<void>;
   loadDiffEntry(window: TWindow, token: string): Promise<void>;
+  loadCompanionChatEntry(window: TWindow, sessionId: string): Promise<void>;
+  loadCompanionMergeEntry(window: TWindow, sessionId: string): Promise<void>;
   generateDiffToken(): string;
+  onCompanionReviewWindowsChanged(): void;
 };
 
 export class AuxWindowService<TWindow extends BaseWindowLike> {
@@ -38,6 +45,8 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   private memoryManagementWindow: TWindow | null = null;
   private readonly characterEditorWindows = new Map<string, TWindow>();
   private readonly diffWindows = new Map<string, TWindow>();
+  private readonly companionReviewWindows = new Map<string, TWindow>();
+  private readonly companionMergeWindows = new Map<string, TWindow>();
   private readonly diffPreviewStore = new Map<string, DiffPreviewPayload>();
 
   constructor(private readonly deps: AuxWindowServiceDeps<TWindow>) {}
@@ -57,6 +66,16 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
 
   getDiffPreview(token: string): DiffPreviewPayload | null {
     return this.diffPreviewStore.get(token) ?? null;
+  }
+
+  listOpenCompanionReviewWindowIds(): string[] {
+    const sessionIds: string[] = [];
+    for (const [sessionId, window] of this.companionReviewWindows.entries()) {
+      if (!window.isDestroyed()) {
+        sessionIds.push(sessionId);
+      }
+    }
+    return sessionIds;
   }
 
   async openHomeWindow(): Promise<TWindow> {
@@ -191,6 +210,46 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return window;
   }
 
+  async openCompanionReviewWindow(sessionId: string): Promise<TWindow> {
+    const existing = this.reuseWindow(this.companionReviewWindows.get(sessionId) ?? null);
+    if (existing) {
+      return existing;
+    }
+
+    const window = this.deps.createWindow({
+      ...COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
+      title: `Companion - ${sessionId}`,
+    });
+    this.companionReviewWindows.set(sessionId, window);
+    this.deps.onCompanionReviewWindowsChanged();
+    window.once("ready-to-show", () => window.show());
+    window.on("closed", () => {
+      this.companionReviewWindows.delete(sessionId);
+      this.deps.onCompanionReviewWindowsChanged();
+    });
+    await this.deps.loadCompanionChatEntry(window, sessionId);
+    return window;
+  }
+
+  async openCompanionMergeWindow(sessionId: string): Promise<TWindow> {
+    const existing = this.reuseWindow(this.companionMergeWindows.get(sessionId) ?? null);
+    if (existing) {
+      return existing;
+    }
+
+    const window = this.deps.createWindow({
+      ...COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
+      title: `Companion Merge - ${sessionId}`,
+    });
+    this.companionMergeWindows.set(sessionId, window);
+    window.once("ready-to-show", () => window.show());
+    window.on("closed", () => {
+      this.companionMergeWindows.delete(sessionId);
+    });
+    await this.deps.loadCompanionMergeEntry(window, sessionId);
+    return window;
+  }
+
   closeCharacterEditor(characterId: string): void {
     const window = this.characterEditorWindows.get(characterId);
     if (!window || window.isDestroyed()) {
@@ -208,6 +267,18 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       this.diffPreviewStore.delete(token);
     }
     this.diffWindows.clear();
+    for (const window of this.companionReviewWindows.values()) {
+      if (!window.isDestroyed()) {
+        window.close();
+      }
+    }
+    this.companionReviewWindows.clear();
+    for (const window of this.companionMergeWindows.values()) {
+      if (!window.isDestroyed()) {
+        window.close();
+      }
+    }
+    this.companionMergeWindows.clear();
   }
 
   private reuseWindow(window: TWindow | null): TWindow | null {

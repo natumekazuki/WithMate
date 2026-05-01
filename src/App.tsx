@@ -1,9 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
-  type AuditLogDetail,
   type AuditLogSummary,
-  type ComposerAttachment,
   type ComposerPreview,
   currentTimestampLabel,
   type DiscoveredCustomAgent,
@@ -19,6 +17,7 @@ import {
 } from "./app-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
 import type { CharacterUpdateMemoryExtract } from "./character-update-state.js";
+import type { CompanionSessionSummary } from "./companion-state.js";
 import {
   createDefaultAppSettings,
   getProviderAppSettings,
@@ -38,7 +37,6 @@ import {
   resolveModelSelection,
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
-import { buildAuditLogRefreshSignature, buildDisplayedAuditLogs } from "./audit-log-refresh.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import {
   approvalModeLabel,
@@ -61,15 +59,12 @@ import {
   resolveAutoContextPaneTab,
 } from "./session-ui-projection.js";
 import {
-  SessionComposerExpanded,
-  SessionActionDockCompactRow,
   SessionAuditLogModal,
   CharacterUpdateContextPane,
   SessionPaneErrorBoundary,
   SessionContextPane,
   SessionDiffModal,
-  SessionHeader,
-  SessionMessageColumn,
+  SessionChatWindow,
   SessionRetryBanner,
 } from "./session-components.js";
 import {
@@ -78,15 +73,34 @@ import {
   withForcedComposerBlockedFeedback,
   type ComposerSendabilityState,
 } from "./session-composer-feedback.js";
+import {
+  buildCustomAgentMatchDisplay,
+  buildSelectedCustomAgentDisplay,
+  buildSkillMatchDisplay,
+  buildSkillPromptSnippet,
+} from "./session-composer-selection.js";
+import {
+  buildAdditionalDirectoryDisplay,
+  buildComposerAttachmentDisplay,
+  buildWorkspacePathMatchDisplay,
+  formatPathReference,
+  getActivePathReference,
+  normalizePathForReference,
+  removeActivePathReference,
+  toDirectoryPath,
+  toWorkspaceRelativeReference,
+} from "./session-composer-paths.js";
+import {
+  useSessionContextRail,
+  useSessionMessageListFollowing,
+} from "./session-chat-layout-hooks.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
+import { buildCompanionGroupMonitorEntries } from "./home-session-projection.js";
+import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import { extractTextReferenceCandidates } from "./path-reference.js";
-import type { WorkspacePathCandidate, WorkspacePathCandidateKind } from "./workspace-path-candidate.js";
-
-type ActivePathReference = {
-  query: string;
-  start: number;
-  end: number;
-};
+import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
+import CompanionReviewApp from "./CompanionReviewApp.js";
+import { resolveSessionWindowModeFromSearch } from "./session-window-mode.js";
 
 type RetryBannerKind = "interrupted" | "failed" | "canceled";
 
@@ -96,36 +110,6 @@ type RetryBannerState = {
   title: string;
   stopSummary: string;
   lastRequestText: string;
-};
-
-type SessionOwnedAuditLogs = {
-  ownerSessionId: string | null;
-  entries: AuditLogSummary[];
-  nextCursor: number | null;
-  hasMore: boolean;
-  total: number;
-  loading: boolean;
-  errorMessage: string | null;
-};
-
-const AUDIT_LOG_PAGE_LIMIT = 50;
-
-function createEmptyAuditLogsState(ownerSessionId: string | null): SessionOwnedAuditLogs {
-  return {
-    ownerSessionId,
-    entries: [],
-    nextCursor: null,
-    hasMore: false,
-    total: 0,
-    loading: false,
-    errorMessage: null,
-  };
-}
-
-type AuditLogDetailLoadState = {
-  detail: AuditLogDetail | null;
-  loading: boolean;
-  errorMessage: string | null;
 };
 
 type SessionOwnedLiveRun = {
@@ -148,44 +132,6 @@ type CharacterOwnedMemoryExtract = {
   extract: CharacterUpdateMemoryExtract | null;
 };
 
-type ComposerAttachmentDisplay = {
-  kindLabel: string;
-  locationLabel: string;
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-};
-
-type WorkspacePathMatchDisplay = {
-  kindLabel: string;
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-};
-
-type AdditionalDirectoryDisplay = {
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-};
-
-type SkillMatchDisplay = {
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-};
-
-type CustomAgentMatchDisplay = {
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-};
-
-type SelectedCustomAgentDisplay = {
-  label: string;
-  title?: string;
-};
-
 const EMPTY_COMPOSER_PREVIEW: ComposerPreview = { attachments: [], errors: [] };
 const COMPOSER_PREVIEW_DEBOUNCE_MS = 120;
 const COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS = 280;
@@ -193,192 +139,6 @@ const WORKSPACE_PATH_QUERY_MIN_LENGTH = 2;
 
 function defaultRetryBannerDetailsOpen(kind: RetryBannerKind): boolean {
   return kind !== "canceled";
-}
-
-function getActivePathReference(value: string, caret: number): ActivePathReference | null {
-  const prefix = value.slice(0, caret);
-  const match = /(^|[\s(])@(?:"([^"\r\n]*)|([^\s@"\r\n]*))$/.exec(prefix);
-  if (!match) {
-    return null;
-  }
-
-  const query = (match[2] ?? match[3] ?? "").replace(/\\/g, "/");
-  const start = (match.index ?? 0) + match[1].length;
-
-  return {
-    query,
-    start,
-    end: caret,
-  };
-}
-
-function removeActivePathReference(value: string, activeReference: ActivePathReference | null): string {
-  if (!activeReference) {
-    return value;
-  }
-
-  return `${value.slice(0, activeReference.start)}${value.slice(activeReference.end)}`;
-}
-
-function buildSkillPromptSnippet(providerId: string, skillName: string): string {
-  return providerId === "codex"
-    ? `$${skillName}`
-    : `Use the skill "${skillName}" for this task.`;
-}
-
-function formatPathReference(path: string): string {
-  return /\s/.test(path) ? `@"${path}"` : `@${path}`;
-}
-
-function normalizePathForReference(filePath: string): string {
-  return filePath.replace(/\\/g, "/");
-}
-
-function splitPathForDisplay(filePath: string): { basename: string; parentPath: string } {
-  const normalized = normalizePathForReference(filePath).replace(/\/+$/, "");
-  if (!normalized) {
-    return { basename: "", parentPath: "" };
-  }
-
-  const lastSlashIndex = normalized.lastIndexOf("/");
-  if (lastSlashIndex < 0) {
-    return {
-      basename: normalized,
-      parentPath: "",
-    };
-  }
-
-  return {
-    basename: normalized.slice(lastSlashIndex + 1),
-    parentPath: normalized.slice(0, lastSlashIndex),
-  };
-}
-
-function compactPathForDisplay(filePath: string, maxLength = 40): string {
-  if (filePath.length <= maxLength) {
-    return filePath;
-  }
-
-  const headLength = Math.max(10, Math.floor((maxLength - 1) * 0.4));
-  const tailLength = Math.max(14, maxLength - headLength - 1);
-  return `${filePath.slice(0, headLength)}…${filePath.slice(-tailLength)}`;
-}
-
-function attachmentKindLabel(kind: ComposerAttachment["kind"]): string {
-  switch (kind) {
-    case "folder":
-      return "フォルダ";
-    case "image":
-      return "画像";
-    case "file":
-    default:
-      return "ファイル";
-  }
-}
-
-function buildComposerAttachmentDisplay(attachment: ComposerAttachment): ComposerAttachmentDisplay {
-  const preferredPath = attachment.workspaceRelativePath ?? attachment.displayPath ?? normalizePathForReference(attachment.absolutePath);
-  const title = attachment.isOutsideWorkspace
-    ? normalizePathForReference(attachment.absolutePath)
-    : preferredPath;
-  const { basename, parentPath } = splitPathForDisplay(title);
-  const secondaryPath = attachment.isOutsideWorkspace
-    ? parentPath
-      ? compactPathForDisplay(parentPath, 48)
-      : compactPathForDisplay(title, 48)
-    : parentPath
-      ? compactPathForDisplay(parentPath, 42)
-      : "ワークスペース直下";
-
-  return {
-    kindLabel: attachmentKindLabel(attachment.kind),
-    locationLabel: attachment.isOutsideWorkspace ? "ワークスペース外" : "ワークスペース内",
-    primaryLabel: basename || title,
-    secondaryLabel: secondaryPath,
-    title,
-  };
-}
-
-function workspacePathCandidateKindLabel(kind: WorkspacePathCandidateKind): string {
-  return kind === "folder" ? "Dir" : "File";
-}
-
-function buildWorkspacePathMatchDisplay(pathMatch: WorkspacePathCandidate): WorkspacePathMatchDisplay {
-  const normalizedPath = normalizePathForReference(pathMatch.path);
-  const { basename, parentPath } = splitPathForDisplay(normalizedPath);
-  return {
-    kindLabel: workspacePathCandidateKindLabel(pathMatch.kind),
-    primaryLabel: basename || normalizedPath,
-    secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 42) : "ワークスペース直下",
-    title: normalizedPath,
-  };
-}
-
-function buildAdditionalDirectoryDisplay(directoryPath: string): AdditionalDirectoryDisplay {
-  const normalizedPath = normalizePathForReference(directoryPath).replace(/\/+$/, "");
-  const { basename, parentPath } = splitPathForDisplay(normalizedPath);
-  return {
-    primaryLabel: basename || normalizedPath,
-    secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 52) : "ルート",
-    title: normalizedPath,
-  };
-}
-
-function buildSkillMatchDisplay(skill: DiscoveredSkill): SkillMatchDisplay {
-  return {
-    primaryLabel: skill.name,
-    secondaryLabel: `${skill.sourceLabel}${skill.description ? ` · ${skill.description}` : ""}`,
-    title: `${skill.name}\n${skill.sourcePath}`,
-  };
-}
-
-function buildCustomAgentMatchDisplay(agent: DiscoveredCustomAgent): CustomAgentMatchDisplay {
-  return {
-    primaryLabel: agent.displayName || agent.name,
-    secondaryLabel: `${agent.sourceLabel}${agent.description ? ` · ${agent.description}` : ""}`,
-    title: `${agent.displayName || agent.name}\n${agent.sourcePath}`,
-  };
-}
-
-function buildSelectedCustomAgentDisplay(
-  session: Session | null,
-  selectedAgent: DiscoveredCustomAgent | null,
-): SelectedCustomAgentDisplay {
-  if (!session || session.provider !== "copilot") {
-    return {
-      label: "",
-    };
-  }
-
-  if (!session.customAgentName.trim()) {
-    return {
-      label: "Default Agent",
-      title: "Copilot の標準 agent を使う",
-    };
-  }
-
-  if (selectedAgent) {
-    return {
-      label: selectedAgent.displayName || selectedAgent.name,
-      title: `${selectedAgent.displayName || selectedAgent.name}\n${selectedAgent.sourcePath}`,
-    };
-  }
-
-  return {
-    label: session.customAgentName.trim(),
-    title: session.customAgentName.trim(),
-  };
-}
-
-function toWorkspaceRelativeReference(workspacePath: string, selectedPath: string): string | null {
-  const normalizedWorkspacePath = normalizePathForReference(workspacePath).replace(/\/+$/, "");
-  const normalizedSelectedPath = normalizePathForReference(selectedPath);
-  const workspacePrefix = `${normalizedWorkspacePath}/`;
-  if (!normalizedSelectedPath.toLocaleLowerCase().startsWith(workspacePrefix.toLocaleLowerCase())) {
-    return null;
-  }
-
-  return normalizedSelectedPath.slice(workspacePrefix.length);
 }
 
 function liveRunStepBucketPriority(status: string): number {
@@ -613,15 +373,6 @@ function createPendingLiveSessionRunState(
   };
 }
 
-function scrollMessageListElementToBottom(messageListElement: HTMLDivElement): void {
-  const bottomAnchor = messageListElement.querySelector<HTMLElement>(".message-list-bottom-anchor");
-  if (bottomAnchor) {
-    bottomAnchor.scrollIntoView({ block: "end", inline: "nearest" });
-  }
-
-  messageListElement.scrollTop = Math.max(0, messageListElement.scrollHeight - messageListElement.clientHeight);
-}
-
 function hashStringToPositiveInt(value: string): number {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -647,25 +398,21 @@ function renderCharacterSessionCopy(
   return selectedTemplate.replaceAll("{name}", characterName?.trim() || "キャラクター");
 }
 
-const SESSION_CONTEXT_RAIL_DEFAULT_WIDTH = 420;
-const SESSION_CONTEXT_RAIL_MIN_WIDTH = 360;
-const SESSION_CONTEXT_RAIL_MAX_WIDTH = 620;
-const SESSION_CONVERSATION_MIN_WIDTH = 760;
-const SESSION_LAYOUT_BREAKPOINT = 1400;
+export default function App() {
+  const sessionWindowMode = useMemo(() => resolveSessionWindowModeFromSearch(window.location.search), []);
+  if (sessionWindowMode.kind === "companion") {
+    return <CompanionReviewApp />;
+  }
 
-function clampContextRailWidth(requestedWidth: number, workbenchWidth: number): number {
-  const maxWidth = Math.min(
-    SESSION_CONTEXT_RAIL_MAX_WIDTH,
-    Math.max(SESSION_CONTEXT_RAIL_MIN_WIDTH, workbenchWidth - SESSION_CONVERSATION_MIN_WIDTH),
-  );
-
-  return Math.min(maxWidth, Math.max(SESSION_CONTEXT_RAIL_MIN_WIDTH, requestedWidth));
+  return <AgentSessionWindowApp />;
 }
 
-export default function App() {
+function AgentSessionWindowApp() {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
+  const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [forceComposerBlockedFeedback, setForceComposerBlockedFeedback] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
@@ -673,10 +420,6 @@ export default function App() {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
-  const [auditLogsOpen, setAuditLogsOpen] = useState(false);
-  const [auditLogsState, setAuditLogsState] = useState<SessionOwnedAuditLogs>(() => createEmptyAuditLogsState(null));
-  const [auditLogDetails, setAuditLogDetails] = useState<Record<number, AuditLogDetailLoadState>>({});
-  const auditLogDetailOwnerRef = useRef<string | null>(null);
   const [liveRunState, setLiveRunState] = useState<SessionOwnedLiveRun>({ ownerSessionId: null, state: null });
   const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] = useState<ProviderOwnedQuotaTelemetry>({
     ownerProviderId: null,
@@ -708,27 +451,18 @@ export default function App() {
   const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
   const [isSkillListLoading, setIsSkillListLoading] = useState(false);
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
-  const [isMessageListFollowing, setIsMessageListFollowing] = useState(true);
-  const [hasMessageListUnread, setHasMessageListUnread] = useState(false);
   const [isActivityMonitorFollowing, setIsActivityMonitorFollowing] = useState(true);
   const [hasActivityMonitorUnread, setHasActivityMonitorUnread] = useState(false);
-  const [contextRailWidth, setContextRailWidth] = useState(SESSION_CONTEXT_RAIL_DEFAULT_WIDTH);
-  const [isContextRailResizing, setIsContextRailResizing] = useState(false);
   const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
   const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
   const [elicitationActionRequestId, setElicitationActionRequestId] = useState<string | null>(null);
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
   const [isActionDockPinnedExpanded, setIsActionDockPinnedExpanded] = useState(false);
-  const messageListRef = useRef<HTMLDivElement | null>(null);
   const activityMonitorRef = useRef<HTMLDivElement | null>(null);
-  const sessionWorkbenchRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const messageListSignatureRef = useRef("");
-  const messageListSessionIdRef = useRef<string | null>(null);
   const activityMonitorSignatureRef = useRef("");
   const activityMonitorSessionIdRef = useRef<string | null>(null);
-  const contextRailWidthRef = useRef(SESSION_CONTEXT_RAIL_DEFAULT_WIDTH);
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
 
   useEffect(() => {
@@ -773,28 +507,96 @@ export default function App() {
     };
   }, [selectedId, withmateApi]);
 
+  useEffect(() => {
+    let active = true;
+
+    if (!withmateApi) {
+      return () => {
+        active = false;
+      };
+    }
+
+    void withmateApi.listCompanionSessionSummaries().then((nextSessions) => {
+      if (active) {
+        setCompanionSessions(nextSessions);
+      }
+    });
+
+    const unsubscribe = withmateApi.subscribeCompanionSessionSummaries((nextSessions) => {
+      if (active) {
+        setCompanionSessions(nextSessions);
+      }
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [withmateApi]);
+
+  useEffect(() => {
+    let active = true;
+
+    if (!withmateApi) {
+      return () => {
+        active = false;
+      };
+    }
+
+    void withmateApi.listOpenCompanionReviewWindowIds().then((nextSessionIds) => {
+      if (active) {
+        setOpenCompanionReviewWindowIds(nextSessionIds);
+      }
+    });
+
+    const unsubscribe = withmateApi.subscribeOpenCompanionReviewWindowIds((nextSessionIds) => {
+      if (active) {
+        setOpenCompanionReviewWindowIds(nextSessionIds);
+      }
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [withmateApi]);
+
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedId) ?? sessions[0] ?? null,
     [selectedId, sessions],
   );
-  const selectedSessionId = selectedSession?.id ?? null;
-  const selectedSessionAuditLogs = useMemo(
-    () => (selectedSessionId !== null && auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.entries : []),
-    [auditLogsState.entries, auditLogsState.ownerSessionId, selectedSessionId],
+  const selectedCompanionGroupMonitorEntries = useMemo(
+    () => buildCompanionGroupMonitorEntries(
+      companionSessions,
+      openCompanionReviewWindowIds,
+    ),
+    [companionSessions, openCompanionReviewWindowIds],
   );
+  const selectedSessionId = selectedSession?.id ?? null;
+  const {
+    sessionWorkbenchRef,
+    sessionWorkbenchStyle,
+    isContextRailResizing,
+    handleStartContextRailResize,
+  } = useSessionContextRail({ ownerKey: selectedSessionId });
   const selectedSessionLiveRun = useMemo(
     () => (selectedSessionId !== null && liveRunState.ownerSessionId === selectedSessionId ? liveRunState.state : null),
     [liveRunState.ownerSessionId, liveRunState.state, selectedSessionId],
   );
-  const displayedSessionAuditLogs = useMemo(
-    () =>
-      buildDisplayedAuditLogs({
-        selectedSession,
-        persistedEntries: selectedSessionAuditLogs,
-        liveRun: selectedSessionLiveRun,
-      }),
-    [selectedSession, selectedSessionAuditLogs, selectedSessionLiveRun],
-  );
+  const {
+    auditLogsOpen,
+    setAuditLogsOpen,
+    auditLogsState,
+    auditLogDetails,
+    persistedEntries: selectedSessionAuditLogs,
+    displayedEntries: displayedSessionAuditLogs,
+    handleLoadMoreAuditLogs,
+    handleLoadAuditLogDetail,
+  } = useSessionAuditLogs({
+    withmateApi,
+    selectedSession,
+    liveRun: selectedSessionLiveRun,
+  });
   const selectedProviderQuotaTelemetry = useMemo(
     () => (
       selectedSession?.provider
@@ -811,17 +613,6 @@ export default function App() {
         : null
     ),
     [selectedSessionId, sessionContextTelemetryState.ownerSessionId, sessionContextTelemetryState.telemetry],
-  );
-  const auditLogRefreshSignature = useMemo(
-    () =>
-      buildAuditLogRefreshSignature({
-        selectedSession,
-        displayedMessagesLength: selectedSession?.messages.length ?? 0,
-        selectedMemoryGenerationActivity: null,
-        selectedCharacterMemoryGenerationActivity: null,
-        selectedMonologueActivity: null,
-      }),
-    [selectedSession],
   );
   const activePathReference = useMemo(
     () => (selectedSessionId ? getActivePathReference(draft, composerCaret) : null),
@@ -1044,74 +835,6 @@ export default function App() {
   }, [isCharacterUpdateSession, selectedSession?.runState]);
 
   useEffect(() => {
-    contextRailWidthRef.current = contextRailWidth;
-  }, [contextRailWidth]);
-
-  useLayoutEffect(() => {
-    const syncContextRailWidth = () => {
-      const workbenchElement = sessionWorkbenchRef.current;
-      if (!workbenchElement) {
-        return;
-      }
-
-      const nextWidth = clampContextRailWidth(
-        contextRailWidthRef.current,
-        workbenchElement.getBoundingClientRect().width,
-      );
-      contextRailWidthRef.current = nextWidth;
-      setContextRailWidth((current) => (current === nextWidth ? current : nextWidth));
-    };
-
-    syncContextRailWidth();
-    window.addEventListener("resize", syncContextRailWidth);
-    return () => window.removeEventListener("resize", syncContextRailWidth);
-  }, [selectedSessionId]);
-
-  useEffect(() => {
-    if (!isContextRailResizing) {
-      return;
-    }
-
-    const handlePointerMove = (event: PointerEvent) => {
-      const workbenchElement = sessionWorkbenchRef.current;
-      if (!workbenchElement) {
-        return;
-      }
-
-      const bounds = workbenchElement.getBoundingClientRect();
-      if (bounds.width < SESSION_LAYOUT_BREAKPOINT) {
-        return;
-      }
-
-      const requestedWidth = bounds.right - event.clientX;
-      const nextWidth = clampContextRailWidth(requestedWidth, bounds.width);
-      contextRailWidthRef.current = nextWidth;
-      setContextRailWidth(nextWidth);
-    };
-
-    const handlePointerEnd = () => {
-      setIsContextRailResizing(false);
-    };
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerEnd);
-    window.addEventListener("pointercancel", handlePointerEnd);
-
-    const previousCursor = document.body.style.cursor;
-    const previousUserSelect = document.body.style.userSelect;
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerEnd);
-      window.removeEventListener("pointercancel", handlePointerEnd);
-      document.body.style.cursor = previousCursor;
-      document.body.style.userSelect = previousUserSelect;
-    };
-  }, [isContextRailResizing]);
-
-  useEffect(() => {
     let active = true;
 
     if (!withmateApi) {
@@ -1242,6 +965,15 @@ export default function App() {
       ].join("\u001a"),
     [displayedMessagesScrollSignature, pendingBubbleScrollSignature, selectedSession?.id, selectedSession?.runState],
   );
+  const {
+    messageListRef,
+    isMessageListFollowing,
+    handleMessageListScroll,
+    handleJumpToMessageListBottom,
+  } = useSessionMessageListFollowing({
+    ownerKey: selectedSessionId,
+    scrollSignature: messageListScrollSignature,
+  });
 
   useEffect(() => {
     setDraft("");
@@ -1253,7 +985,6 @@ export default function App() {
     setIsComposerImeComposing(false);
     setIsActivityMonitorFollowing(true);
     setHasActivityMonitorUnread(false);
-    setAuditLogsState(createEmptyAuditLogsState(selectedSessionId));
     setLiveRunState({ ownerSessionId: selectedSessionId, state: null });
     setProviderQuotaTelemetryState((current) =>
       current.ownerProviderId === (selectedSession?.provider ?? null)
@@ -1284,41 +1015,6 @@ export default function App() {
       setIsRetryDraftReplacePending(false);
     }
   }, [draft]);
-
-  useLayoutEffect(() => {
-    const messageListElement = messageListRef.current;
-    const currentSignature = messageListScrollSignature;
-    const wasSameSession = messageListSessionIdRef.current === selectedSessionId;
-    const hasSignatureChanged = messageListSignatureRef.current !== currentSignature;
-
-    if (!messageListElement) {
-      messageListSessionIdRef.current = selectedSessionId;
-      messageListSignatureRef.current = currentSignature;
-      return;
-    }
-
-    if (!wasSameSession) {
-      messageListSessionIdRef.current = selectedSessionId;
-      messageListSignatureRef.current = currentSignature;
-      setIsMessageListFollowing(true);
-      setHasMessageListUnread(false);
-      scrollMessageListElementToBottom(messageListElement);
-      return;
-    }
-
-    if (!hasSignatureChanged) {
-      return;
-    }
-
-    messageListSignatureRef.current = currentSignature;
-
-    if (isMessageListFollowing) {
-      scrollMessageListElementToBottom(messageListElement);
-      return;
-    }
-
-    setHasMessageListUnread(true);
-  }, [isMessageListFollowing, messageListScrollSignature, selectedSessionId]);
 
   useLayoutEffect(() => {
     const isActivityMonitorVisible = selectedSession?.runState === "running";
@@ -1363,63 +1059,6 @@ export default function App() {
 
     setHasActivityMonitorUnread(true);
   }, [activityMonitorScrollSignature, isActivityMonitorFollowing, selectedSession?.runState, selectedSessionId]);
-
-  useEffect(() => {
-    let active = true;
-
-    if (!withmateApi || !selectedSession) {
-      if (active) {
-        setAuditLogsState(createEmptyAuditLogsState(null));
-        setAuditLogDetails({});
-        auditLogDetailOwnerRef.current = null;
-      }
-      return () => {
-        active = false;
-      };
-    }
-
-    setAuditLogsState((current) =>
-      current.ownerSessionId === selectedSession.id
-        ? { ...current, loading: true, errorMessage: null }
-        : { ...createEmptyAuditLogsState(selectedSession.id), loading: true },
-    );
-    if (auditLogDetailOwnerRef.current !== selectedSession.id) {
-      setAuditLogDetails({});
-      auditLogDetailOwnerRef.current = selectedSession.id;
-    }
-    void withmateApi.listSessionAuditLogSummaryPage(selectedSession.id, {
-      cursor: 0,
-      limit: AUDIT_LOG_PAGE_LIMIT,
-    }).then(
-      (page) => {
-        if (active) {
-          setAuditLogsState({
-            ownerSessionId: selectedSession.id,
-            entries: page.entries,
-            nextCursor: page.nextCursor,
-            hasMore: page.hasMore,
-            total: page.total,
-            loading: false,
-            errorMessage: null,
-          });
-        }
-      },
-      (error: unknown) => {
-        if (active) {
-          setAuditLogsState((current) => ({
-            ...current,
-            ownerSessionId: selectedSession.id,
-            loading: false,
-            errorMessage: error instanceof Error ? error.message : "audit log summary の取得に失敗したよ。",
-          }));
-        }
-      },
-    );
-
-    return () => {
-      active = false;
-    };
-  }, [auditLogRefreshSignature, selectedSessionId]);
 
   useEffect(() => {
     let active = true;
@@ -1734,8 +1373,11 @@ export default function App() {
     [selectedSessionLiveRun?.backgroundTasks],
   );
   const availableContextPaneTabs = useMemo(
-    () => resolveAvailableContextPaneTabs({ isCopilotSession }),
-    [isCopilotSession],
+    () => resolveAvailableContextPaneTabs({
+      isCopilotSession,
+      hasCompanionGroupMonitor: selectedCompanionGroupMonitorEntries.length > 0,
+    }),
+    [isCopilotSession, selectedCompanionGroupMonitorEntries.length],
   );
 
   const hasInProgressLiveRunStep = useMemo(
@@ -2574,16 +2216,6 @@ export default function App() {
     }
   };
 
-  const toDirectoryPath = (selectedPath: string) => {
-    const normalized = selectedPath.replace(/[\\/]+$/, "");
-    const lastSlashIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
-    if (lastSlashIndex < 0) {
-      return normalized;
-    }
-
-    return normalized.slice(0, lastSlashIndex);
-  };
-
   const insertReferencePath = (selectedPath: string) => {
     const textarea = composerTextareaRef.current;
     const referencePath = selectedSession
@@ -2736,37 +2368,6 @@ export default function App() {
     }));
   };
 
-  const scrollMessageListToBottom = () => {
-    const messageListElement = messageListRef.current;
-    if (!messageListElement) {
-      return;
-    }
-
-    scrollMessageListElementToBottom(messageListElement);
-  };
-
-  const handleMessageListScroll = () => {
-    const messageListElement = messageListRef.current;
-    if (!messageListElement) {
-      return;
-    }
-
-    const bottomGap = Math.max(0, messageListElement.scrollHeight - messageListElement.clientHeight - messageListElement.scrollTop);
-    const nextFollowing = bottomGap <= 80;
-
-    setIsMessageListFollowing((current) => (current === nextFollowing ? current : nextFollowing));
-    if (nextFollowing) {
-      setHasMessageListUnread(false);
-    }
-  };
-
-  const handleJumpToMessageListBottom = () => {
-    setIsMessageListFollowing(true);
-    setHasMessageListUnread(false);
-    scrollMessageListToBottom();
-    window.requestAnimationFrame(scrollMessageListToBottom);
-  };
-
   const scrollActivityMonitorToBottom = () => {
     const activityMonitorElement = activityMonitorRef.current;
     if (!activityMonitorElement) {
@@ -2806,19 +2407,22 @@ export default function App() {
     }
   };
 
+  const handleOpenSessionExplorer = async () => {
+    if (!withmateApi || !selectedSession) {
+      return;
+    }
+
+    try {
+      await withmateApi.openPath(selectedSession.workspacePath);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Explorer を開けなかったよ。");
+    }
+  };
+
   const handleJumpToActivityMonitorBottom = () => {
     setIsActivityMonitorFollowing(true);
     setHasActivityMonitorUnread(false);
     scrollActivityMonitorToBottom();
-  };
-
-  const handleStartContextRailResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0) {
-      return;
-    }
-
-    event.preventDefault();
-    setIsContextRailResizing(true);
   };
 
   const pendingRunIndicatorText = isApprovalRequestPending || isElicitationRequestPending
@@ -2854,8 +2458,9 @@ export default function App() {
       activeContextPaneTab,
       latestCommandView,
       backgroundTasks: selectedBackgroundTasks,
+      companionGroupMonitorEntries: selectedCompanionGroupMonitorEntries,
     }),
-    [activeContextPaneTab, latestCommandView, selectedBackgroundTasks],
+    [activeContextPaneTab, latestCommandView, selectedBackgroundTasks, selectedCompanionGroupMonitorEntries],
   );
 
   useEffect(() => {
@@ -2863,11 +2468,12 @@ export default function App() {
       isSelectedSessionRunning,
       isCopilotSession,
       backgroundTasks: selectedBackgroundTasks,
+      hasCompanionGroupMonitor: selectedCompanionGroupMonitorEntries.length > 0,
     });
     if (nextTab) {
       setActiveContextPaneTab(nextTab);
     }
-  }, [isSelectedSessionRunning, isCopilotSession, selectedBackgroundTasks]);
+  }, [isSelectedSessionRunning, isCopilotSession, selectedBackgroundTasks, selectedCompanionGroupMonitorEntries.length]);
 
   useEffect(() => {
     if (!availableContextPaneTabs.includes(activeContextPaneTab)) {
@@ -2903,124 +2509,6 @@ export default function App() {
     await navigator.clipboard.writeText(selectedCharacterUpdateMemoryExtract.text);
   };
 
-  const handleLoadMoreAuditLogs = () => {
-    if (!withmateApi || !selectedSessionId) {
-      return;
-    }
-
-    const currentState = auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState : null;
-    if (!currentState?.hasMore || currentState.loading || currentState.nextCursor === null) {
-      return;
-    }
-
-    const ownerSessionId = selectedSessionId;
-    const cursor = currentState.nextCursor;
-    setAuditLogsState((current) =>
-      current.ownerSessionId === ownerSessionId
-        ? { ...current, loading: true, errorMessage: null }
-        : current,
-    );
-
-    void withmateApi.listSessionAuditLogSummaryPage(ownerSessionId, {
-      cursor,
-      limit: AUDIT_LOG_PAGE_LIMIT,
-    }).then(
-      (page) => {
-        setAuditLogsState((current) => {
-          if (current.ownerSessionId !== ownerSessionId) {
-            return current;
-          }
-
-          const existingIds = new Set(current.entries.map((entry) => entry.id));
-          const nextEntries = [
-            ...current.entries,
-            ...page.entries.filter((entry) => !existingIds.has(entry.id)),
-          ];
-
-          return {
-            ownerSessionId,
-            entries: nextEntries,
-            nextCursor: page.nextCursor,
-            hasMore: page.hasMore,
-            total: page.total,
-            loading: false,
-            errorMessage: null,
-          };
-        });
-      },
-      (error: unknown) => {
-        setAuditLogsState((current) =>
-          current.ownerSessionId === ownerSessionId
-            ? {
-                ...current,
-                loading: false,
-                errorMessage: error instanceof Error ? error.message : "audit log summary の追加取得に失敗したよ。",
-              }
-            : current,
-        );
-      },
-    );
-  };
-
-  const handleLoadAuditLogDetail = (entry: AuditLogSummary) => {
-    if (!withmateApi || !selectedSessionId || entry.id < 0 || !entry.detailAvailable) {
-      return;
-    }
-
-    let shouldLoad = false;
-    setAuditLogDetails((current) => {
-      const existing = current[entry.id];
-      if (existing?.detail || existing?.loading) {
-        return current;
-      }
-
-      shouldLoad = true;
-      return {
-        ...current,
-        [entry.id]: {
-          detail: null,
-          loading: true,
-          errorMessage: null,
-        },
-      };
-    });
-
-    if (!shouldLoad) {
-      return;
-    }
-
-    void withmateApi.getSessionAuditLogDetail(selectedSessionId, entry.id).then(
-      (detail) => {
-        setAuditLogDetails((current) => ({
-          ...current,
-          [entry.id]: {
-            detail,
-            loading: false,
-            errorMessage: detail ? null : "audit log detail が見つからなかったよ。",
-          },
-        }));
-      },
-      (error: unknown) => {
-        setAuditLogDetails((current) => ({
-          ...current,
-          [entry.id]: {
-            detail: null,
-            loading: false,
-            errorMessage: error instanceof Error ? error.message : "audit log detail の取得に失敗したよ。",
-          },
-        }));
-      },
-    );
-  };
-
-  const sessionWorkbenchStyle = useMemo(
-    () =>
-      ({
-        ["--session-context-rail-width" as string]: `${contextRailWidth}px`,
-      }) as CSSProperties,
-    [contextRailWidth],
-  );
-
   if (!desktopRuntime) {
     return (
       <div className="page-shell session-page">
@@ -3046,266 +2534,266 @@ export default function App() {
   }
 
   return (
-    <div
-      className={`page-shell session-page${isSessionHeaderExpanded ? "" : " session-page-header-collapsed"}`}
+    <SessionChatWindow
+      mode="agent"
+      className={isSessionHeaderExpanded ? "" : "session-page-header-collapsed"}
       style={sessionThemeStyle}
-    >
-      {isSessionHeaderExpanded ? (
-        <SessionHeader
-          taskTitle={selectedSession.taskTitle}
-          isEditingTitle={isEditingTitle}
-          titleDraft={titleDraft}
-          isRunning={isSelectedSessionRunning}
-          showTerminalButton={!isCharacterUpdateSession}
-          onToggleExpanded={handleToggleHeaderExpanded}
-          onOpenAuditLog={() => setAuditLogsOpen(true)}
-          onOpenTerminal={() => void handleOpenSessionTerminal()}
-          onTitleDraftChange={setTitleDraft}
-          onTitleInputKeyDown={handleTitleInputKeyDown}
-          onSaveTitle={() => void handleSaveTitle()}
-          onCancelTitleEdit={handleCancelTitleEdit}
-          onStartTitleEdit={handleStartTitleEdit}
-          onDeleteSession={() => void handleDeleteSession()}
+      workbenchRef={sessionWorkbenchRef}
+      workbenchStyle={sessionWorkbenchStyle}
+      isHeaderExpanded={isSessionHeaderExpanded}
+      headerProps={{
+        taskTitle: selectedSession.taskTitle,
+        isEditingTitle,
+        titleDraft,
+        isRunning: isSelectedSessionRunning,
+        showTerminalButton: !isCharacterUpdateSession,
+        onToggleExpanded: handleToggleHeaderExpanded,
+        onOpenAuditLog: () => setAuditLogsOpen(true),
+        onOpenTerminal: () => void handleOpenSessionTerminal(),
+        onTitleDraftChange: setTitleDraft,
+        onTitleInputKeyDown: handleTitleInputKeyDown,
+        onSaveTitle: () => void handleSaveTitle(),
+        onCancelTitleEdit: handleCancelTitleEdit,
+        onStartTitleEdit: handleStartTitleEdit,
+        onDeleteSession: () => void handleDeleteSession(),
+        workspaceActions: !isCharacterUpdateSession ? (
+          <button
+            className="drawer-toggle compact secondary"
+            type="button"
+            onClick={() => void handleOpenSessionExplorer()}
+          >
+            Explorer
+          </button>
+        ) : null,
+      }}
+      messageColumnProps={{
+        sessionId: selectedSession.id,
+        character: selectedSessionCharacter,
+        messages: displayedMessages,
+        expandedArtifacts,
+        messageListRef,
+        isRunning: isSelectedSessionRunning,
+        pendingRunIndicatorAnnouncement,
+        pendingRunIndicatorText,
+        liveApprovalRequest,
+        approvalActionRequestId,
+        liveElicitationRequest,
+        elicitationActionRequestId,
+        liveRunAssistantText,
+        hasLiveRunAssistantText,
+        liveRunErrorMessage: selectedSessionLiveRun?.errorMessage ?? "",
+        isMessageListFollowing,
+        onMessageListScroll: handleMessageListScroll,
+        onToggleArtifact: toggleArtifact,
+        onOpenDiff: (title, file) =>
+          setSelectedDiff({
+            title,
+            file,
+            themeColors: selectedSession.characterThemeColors,
+          }),
+        onResolveLiveApproval: (request, decision) => void handleResolveLiveApproval(request, decision),
+        onResolveLiveElicitation: (request, response) => void handleResolveLiveElicitation(request, response),
+        onOpenPath: handleOpenInlinePath,
+        getChangedFilesEmptyText: (artifactKey, artifactHasSnapshotRisk) =>
+          artifactHasSnapshotRisk
+            ? "差分は見つからなかったけど、snapshot の上限や省略で取りこぼしがあるかもしれないよ。"
+            : renderCharacterSessionCopy(
+              selectedSessionCopy.changedFilesEmpty,
+              pendingIndicatorCharacterName,
+              `changed-files-empty:${artifactKey}`,
+            ),
+      }}
+      isActionDockExpanded={isActionDockExpanded}
+      composerProps={{
+        retryBanner: (
+          <SessionRetryBanner
+            retryBanner={retryBanner}
+            isRetryDetailsOpen={isRetryDetailsOpen}
+            isRetryActionDisabled={isRetryActionDisabled}
+            isRetryEditDisabled={isRetryEditDisabled}
+            isRetryDraftReplacePending={isRetryDraftReplacePending}
+            onToggleDetails={() => setIsRetryDetailsOpen((current) => !current)}
+            onResendLastMessage={() => void handleResendLastMessage()}
+            onEditLastMessage={handleEditLastMessage}
+            onConfirmRetryDraftReplace={handleConfirmRetryDraftReplace}
+            onCancelRetryDraftReplace={handleCancelRetryDraftReplace}
+            onOpenPath={handleOpenInlinePath}
+          />
+        ),
+        isRunning: selectedSession.runState === "running",
+        composerBlocked: !!composerBlockedReason,
+        canSelectCustomAgent: !isCharacterUpdateSession && selectedSession.provider === "copilot",
+        showCustomAgentPicker: !isCharacterUpdateSession,
+        showSkillPicker: !isCharacterUpdateSession,
+        isAgentPickerOpen,
+        isSkillPickerOpen,
+        isAdditionalDirectoryListOpen,
+        selectedCustomAgentLabel: selectedSession.provider === "copilot" ? selectedCustomAgentDisplay.label : "Agent",
+        selectedCustomAgentTitle: selectedCustomAgentDisplay.title ?? "Copilot custom agent を選択",
+        additionalDirectoryCount: selectedSession.allowedAdditionalDirectories.length,
+        canCollapseActionDock,
+        showJumpToBottom: !isMessageListFollowing,
+        isCustomAgentListLoading,
+        isSkillListLoading,
+        customAgentItems,
+        skillItems,
+        attachmentItems: composerAttachmentItems,
+        additionalDirectoryItems,
+        workspacePathMatchItems,
+        draft,
+        composerTextareaRef,
+        isComposerDisabled,
+        isSendDisabled,
+        composerSendability,
+        sendButtonTitle: composerSendButtonTitle,
+        isComposerBlockedFeedbackActive: forceComposerBlockedFeedback && composerSendability.shouldShowFeedback,
+        approvalOptions: approvalChoiceOptions,
+        selectedApprovalMode: selectedSession.approvalMode,
+        sandboxOptions: sandboxChoiceOptions,
+        selectedCodexSandboxMode: selectedSession.codexSandboxMode,
+        modelOptions: modelSelectOptions,
+        selectedModel: selectedSession.model,
+        selectedModelFallbackLabel,
+        reasoningOptions: reasoningSelectOptions,
+        selectedReasoningEffort: selectedSession.reasoningEffort,
+        onPickFile: () => void handlePickFile(),
+        onPickFolder: () => void handlePickFolder(),
+        onPickImage: () => void handlePickImage(),
+        onToggleAgentPicker: () => {
+          setIsSkillPickerOpen(false);
+          setIsAgentPickerOpen((current) => !current);
+        },
+        onToggleSkillPicker: () => {
+          setIsAgentPickerOpen(false);
+          setIsSkillPickerOpen((current) => !current);
+        },
+        onAddAdditionalDirectory: () => void handleAddAdditionalDirectory(),
+        onToggleAdditionalDirectoryList: () => setIsAdditionalDirectoryListOpen((current) => !current),
+        onCollapse: handleCollapseActionDock,
+        onJumpToBottom: handleJumpToMessageListBottom,
+        onSelectCustomAgent: (value) => void handleSelectCustomAgent(
+          value ? availableCustomAgents.find((agent) => agent.name === value) ?? null : null,
+        ),
+        onSelectSkill: (skillId) => {
+          const skill = availableSkills.find((entry) => entry.id === skillId);
+          if (skill) {
+            handleSelectSkill(skill);
+          }
+        },
+        onRemoveAttachment: handleRemoveAttachmentReference,
+        onRemoveAdditionalDirectory: (path) => void handleRemoveAdditionalDirectory(path),
+        onDraftChange: (value, selectionStart) => {
+          setForceComposerBlockedFeedback(false);
+          setDraft(value);
+          setComposerCaret(selectionStart);
+        },
+        onDraftFocus: () => setIsActionDockPinnedExpanded(true),
+        onDraftKeyDown: handleComposerKeyDown,
+        onDraftSelect: setComposerCaret,
+        onDraftCompositionStart: () => setIsComposerImeComposing(true),
+        onDraftCompositionEnd: () => {
+          setIsComposerImeComposing(false);
+          setComposerCaret(composerTextareaRef.current?.selectionStart ?? draft.length);
+        },
+        onSendOrCancel: () => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend()),
+        onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
+        onActivateWorkspacePathMatch: setActiveWorkspacePathMatchIndex,
+        onChangeApprovalMode: (value) => void handleChangeApproval(value),
+        onChangeCodexSandboxMode: (value) => void handleChangeCodexSandboxMode(value),
+        onChangeModel: (value) => void handleChangeModel(value),
+        onChangeReasoningEffort: (value) => void handleChangeReasoningEffort(value as Session["reasoningEffort"]),
+      }}
+      compactActionDockProps={{
+        draft,
+        actionDockCompactPreview,
+        attachmentCount: composerPreview.attachments.length,
+        isRunning: selectedSession.runState === "running",
+        isSendDisabled,
+        showJumpToBottom: !isMessageListFollowing,
+        sendButtonTitle: composerSendButtonTitle,
+        onExpand: () => handleExpandActionDock({ focusComposer: true }),
+        onJumpToBottom: handleJumpToMessageListBottom,
+        onSendOrCancel: () => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend()),
+      }}
+      splitter={(
+        <button
+          className={`session-workbench-splitter${isContextRailResizing ? " is-active" : ""}`}
+          type="button"
+          onPointerDown={handleStartContextRailResize}
+          aria-label="会話と command pane の幅を調整"
+          title="左右の幅をドラッグで調整"
         />
-      ) : null}
+      )}
+      rightPane={(
+        <SessionPaneErrorBoundary>
+          {isCharacterUpdateSession ? (
+            <CharacterUpdateContextPane
+              taskTitle={selectedSession.taskTitle}
+              isHeaderExpanded={isSessionHeaderExpanded}
+              activePaneTab={activeCharacterUpdatePaneTab}
+              latestCommandView={latestCommandView}
+              runningDetailsEntries={runningDetailsEntries}
+              selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
+              memoryExtract={selectedCharacterUpdateMemoryExtract}
+              isLoadingMemoryExtract={isCharacterUpdateMemoryExtractLoading}
+              onToggleHeaderExpanded={handleToggleHeaderExpanded}
+              onSelectPaneTab={setActiveCharacterUpdatePaneTab}
+              onRefreshMemoryExtract={() => void handleRefreshCharacterUpdateMemoryExtract()}
+              onCopyMemoryExtract={() => void handleCopyCharacterUpdateMemoryExtract()}
+            />
+          ) : (
+            <SessionContextPane
+              taskTitle={selectedSession.taskTitle}
+              isHeaderExpanded={isSessionHeaderExpanded}
+              activeContextPaneTab={activeContextPaneTab}
+              availableContextPaneTabs={availableContextPaneTabs}
+              contextPaneProjection={contextPaneProjection}
+              latestCommandView={latestCommandView}
+              runningDetailsEntries={runningDetailsEntries}
+              backgroundTasks={selectedBackgroundTasks}
+              companionGroupMonitorEntries={selectedCompanionGroupMonitorEntries}
+              selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
+              isSelectedSessionRunning={isSelectedSessionRunning}
+              isCopilotSession={isCopilotSession}
+              selectedCopilotRemainingPercentLabel={selectedCopilotRemainingPercentLabel}
+              selectedCopilotRemainingRequestsLabel={selectedCopilotRemainingRequestsLabel}
+              selectedCopilotQuotaResetLabel={selectedCopilotQuotaResetLabel}
+              selectedSessionContextTelemetry={selectedSessionContextTelemetry}
+              selectedSessionContextTelemetryProjection={selectedSessionContextTelemetryProjection}
+              contextEmptyText={selectedContextEmptyText}
+              onToggleHeaderExpanded={handleToggleHeaderExpanded}
+              onCycleContextPaneTab={handleCycleContextPaneTab}
+              onOpenCompanionReview={(sessionId) => void withmateApi?.openCompanionReviewWindow(sessionId)}
+            />
+          )}
+        </SessionPaneErrorBoundary>
+      )}
+      modals={(
+        <>
+          <SessionDiffModal
+            selectedDiff={selectedDiff}
+            themeStyle={selectedDiffThemeStyle}
+            onClose={() => setSelectedDiff(null)}
+            onOpenDiffWindow={(payload) => void handleOpenDiffWindow(payload)}
+          />
 
-      <section className="content-grid session-content-grid">
-        <section className="chat-panel session-work-surface rise-3">
-          <div className="session-workbench" ref={sessionWorkbenchRef} style={sessionWorkbenchStyle}>
-            <div className="session-main-grid">
-              <div className="session-message-stack">
-                <SessionMessageColumn
-                  sessionId={selectedSession.id}
-                  character={selectedSessionCharacter}
-                  messages={displayedMessages}
-                  expandedArtifacts={expandedArtifacts}
-                  messageListRef={messageListRef}
-                  isRunning={isSelectedSessionRunning}
-                  pendingRunIndicatorAnnouncement={pendingRunIndicatorAnnouncement}
-                  pendingRunIndicatorText={pendingRunIndicatorText}
-                  liveApprovalRequest={liveApprovalRequest}
-                  approvalActionRequestId={approvalActionRequestId}
-                  liveElicitationRequest={liveElicitationRequest}
-                  elicitationActionRequestId={elicitationActionRequestId}
-                  liveRunAssistantText={liveRunAssistantText}
-                  hasLiveRunAssistantText={hasLiveRunAssistantText}
-                  liveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
-                  isMessageListFollowing={isMessageListFollowing}
-                  onMessageListScroll={handleMessageListScroll}
-                  onToggleArtifact={toggleArtifact}
-                  onOpenDiff={(title, file) =>
-                    setSelectedDiff({
-                      title,
-                      file,
-                      themeColors: selectedSession.characterThemeColors,
-                    })}
-                  onResolveLiveApproval={(request, decision) => void handleResolveLiveApproval(request, decision)}
-                  onResolveLiveElicitation={(request, response) => void handleResolveLiveElicitation(request, response)}
-                  onOpenPath={handleOpenInlinePath}
-                  getChangedFilesEmptyText={(artifactKey, artifactHasSnapshotRisk) =>
-                    artifactHasSnapshotRisk
-                      ? "差分は見つからなかったけど、snapshot の上限や省略で取りこぼしがあるかもしれないよ。"
-                      : renderCharacterSessionCopy(
-                        selectedSessionCopy.changedFilesEmpty,
-                        pendingIndicatorCharacterName,
-                        `changed-files-empty:${artifactKey}`,
-                      )}
-                />
-
-                <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
-                  {isActionDockExpanded ? (
-                    <>
-                      <SessionComposerExpanded
-                        retryBanner={(
-                          <SessionRetryBanner
-                            retryBanner={retryBanner}
-                            isRetryDetailsOpen={isRetryDetailsOpen}
-                            isRetryActionDisabled={isRetryActionDisabled}
-                            isRetryEditDisabled={isRetryEditDisabled}
-                            isRetryDraftReplacePending={isRetryDraftReplacePending}
-                            onToggleDetails={() => setIsRetryDetailsOpen((current) => !current)}
-                            onResendLastMessage={() => void handleResendLastMessage()}
-                            onEditLastMessage={handleEditLastMessage}
-                            onConfirmRetryDraftReplace={handleConfirmRetryDraftReplace}
-                            onCancelRetryDraftReplace={handleCancelRetryDraftReplace}
-                            onOpenPath={handleOpenInlinePath}
-                          />
-                        )}
-                        isRunning={selectedSession.runState === "running"}
-                        composerBlocked={!!composerBlockedReason}
-                        canSelectCustomAgent={!isCharacterUpdateSession && selectedSession.provider === "copilot"}
-                        showCustomAgentPicker={!isCharacterUpdateSession}
-                        showSkillPicker={!isCharacterUpdateSession}
-                        isAgentPickerOpen={isAgentPickerOpen}
-                        isSkillPickerOpen={isSkillPickerOpen}
-                        isAdditionalDirectoryListOpen={isAdditionalDirectoryListOpen}
-                        selectedCustomAgentLabel={selectedSession.provider === "copilot" ? selectedCustomAgentDisplay.label : "Agent"}
-                        selectedCustomAgentTitle={selectedCustomAgentDisplay.title ?? "Copilot custom agent を選択"}
-                        additionalDirectoryCount={selectedSession.allowedAdditionalDirectories.length}
-                        canCollapseActionDock={canCollapseActionDock}
-                        showJumpToBottom={!isMessageListFollowing}
-                        isCustomAgentListLoading={isCustomAgentListLoading}
-                        isSkillListLoading={isSkillListLoading}
-                        customAgentItems={customAgentItems}
-                        skillItems={skillItems}
-                        attachmentItems={composerAttachmentItems}
-                        additionalDirectoryItems={additionalDirectoryItems}
-                        workspacePathMatchItems={workspacePathMatchItems}
-                        draft={draft}
-                        composerTextareaRef={composerTextareaRef}
-                        isComposerDisabled={isComposerDisabled}
-                        isSendDisabled={isSendDisabled}
-                        composerSendability={composerSendability}
-                        sendButtonTitle={composerSendButtonTitle}
-                        isComposerBlockedFeedbackActive={forceComposerBlockedFeedback && composerSendability.shouldShowFeedback}
-                        approvalOptions={approvalChoiceOptions}
-                        selectedApprovalMode={selectedSession.approvalMode}
-                        sandboxOptions={sandboxChoiceOptions}
-                        selectedCodexSandboxMode={selectedSession.codexSandboxMode}
-                        modelOptions={modelSelectOptions}
-                        selectedModel={selectedSession.model}
-                        selectedModelFallbackLabel={selectedModelFallbackLabel}
-                        reasoningOptions={reasoningSelectOptions}
-                        selectedReasoningEffort={selectedSession.reasoningEffort}
-                        onPickFile={() => void handlePickFile()}
-                        onPickFolder={() => void handlePickFolder()}
-                        onPickImage={() => void handlePickImage()}
-                        onToggleAgentPicker={() => {
-                          setIsSkillPickerOpen(false);
-                          setIsAgentPickerOpen((current) => !current);
-                        }}
-                        onToggleSkillPicker={() => {
-                          setIsAgentPickerOpen(false);
-                          setIsSkillPickerOpen((current) => !current);
-                        }}
-                        onAddAdditionalDirectory={() => void handleAddAdditionalDirectory()}
-                        onToggleAdditionalDirectoryList={() => setIsAdditionalDirectoryListOpen((current) => !current)}
-                        onCollapse={handleCollapseActionDock}
-                        onJumpToBottom={handleJumpToMessageListBottom}
-                        onSelectCustomAgent={(value) => void handleSelectCustomAgent(
-                          value ? availableCustomAgents.find((agent) => agent.name === value) ?? null : null,
-                        )}
-                        onSelectSkill={(skillId) => {
-                          const skill = availableSkills.find((entry) => entry.id === skillId);
-                          if (skill) {
-                            handleSelectSkill(skill);
-                          }
-                        }}
-                        onRemoveAttachment={handleRemoveAttachmentReference}
-                        onRemoveAdditionalDirectory={(path) => void handleRemoveAdditionalDirectory(path)}
-                        onDraftChange={(value, selectionStart) => {
-                          setForceComposerBlockedFeedback(false);
-                          setDraft(value);
-                          setComposerCaret(selectionStart);
-                        }}
-                        onDraftFocus={() => setIsActionDockPinnedExpanded(true)}
-                        onDraftKeyDown={handleComposerKeyDown}
-                        onDraftSelect={setComposerCaret}
-                        onDraftCompositionStart={() => setIsComposerImeComposing(true)}
-                        onDraftCompositionEnd={() => {
-                          setIsComposerImeComposing(false);
-                          setComposerCaret(composerTextareaRef.current?.selectionStart ?? draft.length);
-                        }}
-                        onSendOrCancel={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
-                        onSelectWorkspacePathMatch={handleSelectWorkspacePathMatch}
-                        onActivateWorkspacePathMatch={setActiveWorkspacePathMatchIndex}
-                        onChangeApprovalMode={(value) => void handleChangeApproval(value)}
-                        onChangeCodexSandboxMode={(value) => void handleChangeCodexSandboxMode(value)}
-                        onChangeModel={(value) => void handleChangeModel(value)}
-                        onChangeReasoningEffort={(value) => void handleChangeReasoningEffort(value as Session["reasoningEffort"])}
-                      />
-                    </>
-                  ) : (
-                    <SessionActionDockCompactRow
-                      draft={draft}
-                      actionDockCompactPreview={actionDockCompactPreview}
-                      attachmentCount={composerPreview.attachments.length}
-                      isRunning={selectedSession.runState === "running"}
-                      isSendDisabled={isSendDisabled}
-                      showJumpToBottom={!isMessageListFollowing}
-                      sendButtonTitle={composerSendButtonTitle}
-                      onExpand={() => handleExpandActionDock({ focusComposer: true })}
-                      onJumpToBottom={handleJumpToMessageListBottom}
-                      onSendOrCancel={() => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend())}
-                    />
-                  )}
-                </div>
-              </div>
-
-              <button
-                className={`session-workbench-splitter${isContextRailResizing ? " is-active" : ""}`}
-                type="button"
-                onPointerDown={handleStartContextRailResize}
-                aria-label="会話と command pane の幅を調整"
-                title="左右の幅をドラッグで調整"
-              />
-
-              <SessionPaneErrorBoundary>
-                {isCharacterUpdateSession ? (
-                  <CharacterUpdateContextPane
-                    taskTitle={selectedSession.taskTitle}
-                    isHeaderExpanded={isSessionHeaderExpanded}
-                    activePaneTab={activeCharacterUpdatePaneTab}
-                    latestCommandView={latestCommandView}
-                    runningDetailsEntries={runningDetailsEntries}
-                    selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
-                    memoryExtract={selectedCharacterUpdateMemoryExtract}
-                    isLoadingMemoryExtract={isCharacterUpdateMemoryExtractLoading}
-                    onToggleHeaderExpanded={handleToggleHeaderExpanded}
-                    onSelectPaneTab={setActiveCharacterUpdatePaneTab}
-                    onRefreshMemoryExtract={() => void handleRefreshCharacterUpdateMemoryExtract()}
-                    onCopyMemoryExtract={() => void handleCopyCharacterUpdateMemoryExtract()}
-                  />
-                ) : (
-                  <SessionContextPane
-                    taskTitle={selectedSession.taskTitle}
-                    isHeaderExpanded={isSessionHeaderExpanded}
-                    activeContextPaneTab={activeContextPaneTab}
-                    contextPaneProjection={contextPaneProjection}
-                    latestCommandView={latestCommandView}
-                    runningDetailsEntries={runningDetailsEntries}
-                    backgroundTasks={selectedBackgroundTasks}
-                    selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
-                    isSelectedSessionRunning={isSelectedSessionRunning}
-                    isCopilotSession={isCopilotSession}
-                    selectedCopilotRemainingPercentLabel={selectedCopilotRemainingPercentLabel}
-                    selectedCopilotRemainingRequestsLabel={selectedCopilotRemainingRequestsLabel}
-                    selectedCopilotQuotaResetLabel={selectedCopilotQuotaResetLabel}
-                    selectedSessionContextTelemetry={selectedSessionContextTelemetry}
-                    selectedSessionContextTelemetryProjection={selectedSessionContextTelemetryProjection}
-                    contextEmptyText={selectedContextEmptyText}
-                    onToggleHeaderExpanded={handleToggleHeaderExpanded}
-                    onCycleContextPaneTab={handleCycleContextPaneTab}
-                  />
-                )}
-              </SessionPaneErrorBoundary>
-            </div>
-          </div>
-        </section>
-      </section>
-
-      <SessionDiffModal
-        selectedDiff={selectedDiff}
-        themeStyle={selectedDiffThemeStyle}
-        onClose={() => setSelectedDiff(null)}
-        onOpenDiffWindow={(payload) => void handleOpenDiffWindow(payload)}
-      />
-
-      <SessionAuditLogModal
-        open={auditLogsOpen}
-        entries={displayedSessionAuditLogs}
-        details={auditLogDetails}
-        hasMore={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.hasMore : false}
-        loadingMore={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.loading : false}
-        total={auditLogsState.ownerSessionId === selectedSessionId
-          ? Math.max(auditLogsState.total, displayedSessionAuditLogs.length)
-          : displayedSessionAuditLogs.length}
-        errorMessage={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.errorMessage : null}
-        onLoadMore={handleLoadMoreAuditLogs}
-        onLoadDetail={handleLoadAuditLogDetail}
-        onClose={() => setAuditLogsOpen(false)}
-      />
-    </div>
+          <SessionAuditLogModal
+            open={auditLogsOpen}
+            entries={displayedSessionAuditLogs}
+            details={auditLogDetails}
+            hasMore={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.hasMore : false}
+            loadingMore={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.loading : false}
+            total={auditLogsState.ownerSessionId === selectedSessionId
+              ? Math.max(auditLogsState.total, displayedSessionAuditLogs.length)
+              : displayedSessionAuditLogs.length}
+            errorMessage={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.errorMessage : null}
+            onLoadMore={handleLoadMoreAuditLogs}
+            onLoadDetail={handleLoadAuditLogDetail}
+            onClose={() => setAuditLogsOpen(false)}
+          />
+        </>
+      )}
+    />
   );
 }
 

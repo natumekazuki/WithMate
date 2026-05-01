@@ -85,9 +85,13 @@ export class MainQueryService {
       throw new Error("対象セッションが見つからないよ。");
     }
 
+    return this.listWorkspaceSkills(session.provider, session.workspacePath);
+  }
+
+  async listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]> {
     const appSettings = this.deps.getAppSettings();
-    const providerSettings = getProviderAppSettings(appSettings, session.provider);
-    return this.deps.discoverSessionSkills(session.workspacePath, providerSettings.skillRootPath);
+    const providerSettings = getProviderAppSettings(appSettings, providerId);
+    return this.deps.discoverSessionSkills(workspacePath, providerSettings.skillRootPath);
   }
 
   async listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]> {
@@ -96,11 +100,15 @@ export class MainQueryService {
       throw new Error("対象セッションが見つからないよ。");
     }
 
-    if (session.provider !== "copilot") {
+    return this.listWorkspaceCustomAgents(session.provider, session.workspacePath);
+  }
+
+  async listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]> {
+    if (providerId !== "copilot") {
       return [];
     }
 
-    return this.deps.discoverSessionCustomAgents(session.workspacePath);
+    return this.deps.discoverSessionCustomAgents(workspacePath);
   }
 
   getSession(sessionId: string): Session | null {
@@ -144,6 +152,10 @@ export class MainQueryService {
       throw new Error("対象セッションが見つからないよ。");
     }
 
-    await this.deps.launchTerminalAtPath(session.workspacePath);
+    await this.openTerminalAtPath(session.workspacePath);
+  }
+
+  async openTerminalAtPath(workspacePath: string): Promise<void> {
+    await this.deps.launchTerminalAtPath(workspacePath);
   }
 }

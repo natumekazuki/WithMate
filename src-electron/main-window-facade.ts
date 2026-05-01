@@ -40,8 +40,20 @@ export class MainWindowFacade {
     return this.deps.getAuxWindowService().openDiffWindow(diffPreview);
   }
 
+  async openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow> {
+    return this.deps.getAuxWindowService().openCompanionReviewWindow(sessionId);
+  }
+
+  async openCompanionMergeWindow(sessionId: string): Promise<BrowserWindow> {
+    return this.deps.getAuxWindowService().openCompanionMergeWindow(sessionId);
+  }
+
   listOpenSessionWindowIds(): string[] {
     return this.deps.getSessionWindowBridge().listOpenSessionWindowIds();
+  }
+
+  listOpenCompanionReviewWindowIds(): string[] {
+    return this.deps.getAuxWindowService().listOpenCompanionReviewWindowIds();
   }
 
   closeResetTargetWindows(): void {
