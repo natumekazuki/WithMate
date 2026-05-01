@@ -4,7 +4,7 @@ import type { CompanionMergeRun, CompanionSession, CompanionSiblingWarningSummar
 export type CompanionMergeReadinessStatus = "ready" | "blocked" | "warning";
 
 export type CompanionMergeReadinessIssue = {
-  kind: "lifecycle" | "target-branch-drift" | "target-worktree-dirty" | "merge-simulation";
+  kind: "lifecycle" | "target-branch-drift" | "target-branch-mismatch" | "target-worktree-dirty" | "merge-simulation";
   message: string;
   paths?: string[];
 };

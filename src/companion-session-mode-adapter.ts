@@ -23,6 +23,7 @@ export function buildCompanionChatSnapshot(session: CompanionSession): Companion
       baseParent: "",
       simulatedAt: "",
     },
+    targetStash: null,
     generatedAt: session.updatedAt,
     warnings: [],
   };

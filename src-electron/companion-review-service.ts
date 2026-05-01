@@ -352,6 +352,7 @@ export class CompanionReviewService {
     if (!baseParent || !targetHead) {
       throw new Error("target branch または base snapshot を解決できません。");
     }
+    await this.assertTargetBranchCheckedOut(session);
     await this.assertTargetWorkspaceClean(session, targetHead);
     if (baseParent === targetHead && await this.isBaseSnapshotSyncedToTarget(session, targetHead)) {
       return { session };
@@ -416,6 +417,7 @@ export class CompanionReviewService {
     if (session.runState === "running") {
       throw new Error("Companion が実行中のため target changes を stash できません。");
     }
+    await this.assertTargetBranchCheckedOut(session);
 
     const status = (await runGit(session.repoRoot, ["status", "--porcelain=v1", "-z"])).stdout;
     if (status.length === 0) {
@@ -437,6 +439,7 @@ export class CompanionReviewService {
     if (session.runState === "running") {
       throw new Error("Companion が実行中のため target stash を戻せません。");
     }
+    await this.assertTargetBranchCheckedOut(session);
 
     const stash = await this.requireTargetWorkspaceStash(session);
     const status = (await runGit(session.repoRoot, ["status", "--porcelain=v1", "-z"])).stdout;
@@ -513,6 +516,13 @@ export class CompanionReviewService {
 
     const baseParent = await this.resolveBaseSnapshotParent(session);
     const targetHead = await this.resolveTargetHead(session);
+    const currentBranch = await this.resolveCurrentBranch(session.repoRoot);
+    if (!this.isTargetBranchCheckedOut(currentBranch, session.targetBranch)) {
+      blockers.push({
+        kind: "target-branch-mismatch",
+        message: `target workspace は ${session.targetBranch} を checkout してください。現在: ${currentBranch || "detached HEAD"}`,
+      });
+    }
     if (baseParent && targetHead && baseParent !== targetHead) {
       blockers.push({
         kind: "target-branch-drift",
@@ -622,6 +632,29 @@ export class CompanionReviewService {
       return (await runGit(session.repoRoot, ["rev-parse", session.targetBranch])).stdout.trim();
     } catch {
       return "";
+    }
+  }
+
+  private async resolveCurrentBranch(repoRoot: string): Promise<string> {
+    try {
+      return (await runGit(repoRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"])).stdout.trim();
+    } catch {
+      return "";
+    }
+  }
+
+  private normalizeLocalBranchName(branchName: string): string {
+    return branchName.replace(/^refs\/heads\//, "");
+  }
+
+  private isTargetBranchCheckedOut(currentBranch: string, targetBranch: string): boolean {
+    return Boolean(currentBranch) && this.normalizeLocalBranchName(currentBranch) === this.normalizeLocalBranchName(targetBranch);
+  }
+
+  private async assertTargetBranchCheckedOut(session: CompanionSession): Promise<void> {
+    const currentBranch = await this.resolveCurrentBranch(session.repoRoot);
+    if (!this.isTargetBranchCheckedOut(currentBranch, session.targetBranch)) {
+      throw new Error(`target workspace は ${session.targetBranch} を checkout してください。現在: ${currentBranch || "detached HEAD"}`);
     }
   }
 
@@ -892,6 +925,7 @@ export class CompanionReviewService {
       if (!targetHead) {
         throw new Error("target branch を解決できません。");
       }
+      await this.assertTargetBranchCheckedOut(session);
       await this.assertTargetWorkspaceClean(session, targetHead);
       await this.assertBaseSnapshotMatchesTarget(session, targetHead);
       await this.checkSelectedPatchApplies(session, targetHead, patchPath);

@@ -225,6 +225,8 @@ function summarizeMergeReadinessIssue(issue: CompanionMergeReadinessIssue): stri
       return "Session inactive";
     case "target-branch-drift":
       return "Sync Target required";
+    case "target-branch-mismatch":
+      return "Wrong branch";
     case "target-worktree-dirty":
       return "Target changed";
     case "merge-simulation":
@@ -1613,7 +1615,7 @@ export default function CompanionReviewApp() {
     setMergeStagePanePercent((current) => clampMergePanePercent(current + direction * 2));
   }
 
-  function renderChangedFileTree(nodes: ChangedFileTreeNode[], action: ChangedFileTreeAction, depth = 0): JSX.Element[] {
+  function renderChangedFileTree(nodes: ChangedFileTreeNode[], action: ChangedFileTreeAction, depth = 0) {
     return nodes.map((node) => {
       const depthStyle = { "--tree-indent": `${depth * 14}px` } as CSSProperties;
       if (node.kind === "directory") {
