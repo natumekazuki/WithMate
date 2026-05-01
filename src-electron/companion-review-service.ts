@@ -42,7 +42,6 @@ export type CompanionReviewServiceDeps = {
   getCompanionSession(sessionId: string): CompanionSession | null;
   listCompanionSessionSummaries(): CompanionSessionSummary[];
   updateCompanionSession(session: CompanionSession): CompanionSession;
-  deleteCompanionSession?(sessionId: string): void;
   updateCompanionSessionBaseSnapshot?(session: CompanionSession): CompanionSession;
   createCompanionMergeRun?(run: CompanionMergeRun): CompanionMergeRun;
   listCompanionMergeRunsForSession?(sessionId: string): CompanionMergeRun[];
@@ -283,14 +282,6 @@ export class CompanionReviewService {
     await this.applySelectedChangesWithGit(session, selectedChanges);
     const siblingWarnings = await this.checkSiblingImpact(session, selectedChanges);
 
-    await cleanupCompanionWorkspaceArtifacts({
-      repoRoot: session.repoRoot,
-      baseSnapshotRef: session.baseSnapshotRef,
-      baseSnapshotCommit: session.baseSnapshotCommit,
-      companionBranch: session.companionBranch,
-      worktreePath: session.worktreePath,
-    });
-
     const completedAt = currentTimestampLabel();
     const mergedSession: CompanionSession = {
       ...session,
@@ -301,14 +292,6 @@ export class CompanionReviewService {
       runState: "idle",
       updatedAt: completedAt,
     };
-    if (this.deps.deleteCompanionSession) {
-      this.deps.deleteCompanionSession(session.id);
-      return {
-        session: mergedSession,
-        siblingWarnings,
-      };
-    }
-
     const storedSession = this.deps.updateCompanionSession(mergedSession);
     this.deps.createCompanionMergeRun?.({
       id: randomUUID(),
@@ -320,6 +303,13 @@ export class CompanionReviewService {
       diffSnapshot,
       siblingWarnings,
       createdAt: completedAt,
+    });
+    await cleanupCompanionWorkspaceArtifacts({
+      repoRoot: session.repoRoot,
+      baseSnapshotRef: session.baseSnapshotRef,
+      baseSnapshotCommit: session.baseSnapshotCommit,
+      companionBranch: session.companionBranch,
+      worktreePath: session.worktreePath,
     });
     return {
       session: storedSession,
@@ -336,14 +326,6 @@ export class CompanionReviewService {
     const changedPaths = await this.resolveChangedPaths(session);
     const diffSnapshot = await Promise.all(changedPaths.map((change) => this.buildChangedFile(session, change)));
 
-    await cleanupCompanionWorkspaceArtifacts({
-      repoRoot: session.repoRoot,
-      baseSnapshotRef: session.baseSnapshotRef,
-      baseSnapshotCommit: session.baseSnapshotCommit,
-      companionBranch: session.companionBranch,
-      worktreePath: session.worktreePath,
-    });
-
     const completedAt = currentTimestampLabel();
     const discardedSession: CompanionSession = {
       ...session,
@@ -354,11 +336,6 @@ export class CompanionReviewService {
       runState: "idle",
       updatedAt: completedAt,
     };
-    if (this.deps.deleteCompanionSession) {
-      this.deps.deleteCompanionSession(session.id);
-      return discardedSession;
-    }
-
     const storedSession = this.deps.updateCompanionSession(discardedSession);
     this.deps.createCompanionMergeRun?.({
       id: randomUUID(),
@@ -370,6 +347,13 @@ export class CompanionReviewService {
       diffSnapshot,
       siblingWarnings: [],
       createdAt: completedAt,
+    });
+    await cleanupCompanionWorkspaceArtifacts({
+      repoRoot: session.repoRoot,
+      baseSnapshotRef: session.baseSnapshotRef,
+      baseSnapshotCommit: session.baseSnapshotCommit,
+      companionBranch: session.companionBranch,
+      worktreePath: session.worktreePath,
     });
     return storedSession;
   }
@@ -386,8 +370,8 @@ export class CompanionReviewService {
       throw new Error("target branch または base snapshot を解決できません。");
     }
     await this.assertTargetBranchCheckedOut(session);
-    await this.assertTargetWorkspaceClean(session, targetHead);
-    if (baseParent === targetHead && await this.isBaseSnapshotSyncedToTarget(session, targetHead)) {
+    await this.assertTargetWorkspaceMatchesHead(session, targetHead);
+    if (baseParent === targetHead) {
       return { session };
     }
     if (!(await this.isAncestor(session.repoRoot, baseParent, targetHead))) {
@@ -550,39 +534,36 @@ export class CompanionReviewService {
     const baseParent = await this.resolveBaseSnapshotParent(session);
     const targetHead = await this.resolveTargetHead(session);
     const currentBranch = await this.resolveCurrentBranch(session.repoRoot);
-    if (!this.isTargetBranchCheckedOut(currentBranch, session.targetBranch)) {
+    const isTargetBranchCheckedOut = this.isTargetBranchCheckedOut(currentBranch, session.targetBranch);
+    const hasTargetBranchDrift = Boolean(baseParent && targetHead && baseParent !== targetHead);
+    if (!isTargetBranchCheckedOut) {
       blockers.push({
         kind: "target-branch-mismatch",
         message: `target workspace は ${session.targetBranch} を checkout してください。現在: ${currentBranch || "detached HEAD"}`,
       });
     }
-    if (baseParent && targetHead && baseParent !== targetHead) {
+    if (hasTargetBranchDrift) {
       blockers.push({
         kind: "target-branch-drift",
         message: "target branch が Companion 作成時点から進んでいるため merge できません。",
       });
-    } else if (targetHead && !(await this.isBaseSnapshotSyncedToTarget(session, targetHead))) {
-      blockers.push({
-        kind: "target-branch-drift",
-        message: "base snapshot が target branch の HEAD と一致していないため merge できません。",
-      });
     }
 
-    const statusPaths = await this.resolveTargetWorkspaceStatusPaths(session);
-    if (statusPaths.length > 0) {
+    const indexDirtyPaths = await this.resolveTargetIndexDirtyPaths(session);
+    if (indexDirtyPaths.length > 0) {
       blockers.push({
         kind: "target-worktree-dirty",
-        message: "target workspace が target branch の HEAD から変わっているため merge できません。",
-        paths: toIssuePaths(statusPaths),
+        message: "target index が dirty のため merge できません。",
+        paths: toIssuePaths(indexDirtyPaths),
       });
-    } else {
+    } else if (isTargetBranchCheckedOut && !hasTargetBranchDrift) {
       const targetTree = await this.captureTargetWorktreeTree(session);
-      const targetHeadTree = targetHead ? await this.resolveCommitTree(session.repoRoot, targetHead) : "";
-      if (targetTree && targetHeadTree && targetTree !== targetHeadTree) {
-        const dirtyPaths = await this.resolveTreeDiffPaths(session.repoRoot, targetHeadTree, targetTree);
+      const baseSnapshotTree = await this.resolveCommitTree(session.repoRoot, session.baseSnapshotCommit);
+      if (targetTree && baseSnapshotTree && targetTree !== baseSnapshotTree) {
+        const dirtyPaths = await this.resolveTreeDiffPaths(session.repoRoot, baseSnapshotTree, targetTree);
         blockers.push({
           kind: "target-worktree-dirty",
-          message: "target workspace が target branch の HEAD から変わっているため merge できません。",
+          message: "target workspace が Companion 作成時点の snapshot から変わっているため merge できません。",
           paths: toIssuePaths(dirtyPaths),
         });
       }
@@ -717,12 +698,6 @@ export class CompanionReviewService {
     }
   }
 
-  private async isBaseSnapshotSyncedToTarget(session: CompanionSession, targetHead: string): Promise<boolean> {
-    const baseTree = await this.resolveCommitTree(session.repoRoot, session.baseSnapshotCommit);
-    const targetTree = await this.resolveCommitTree(session.repoRoot, targetHead);
-    return Boolean(baseTree && targetTree && baseTree === targetTree);
-  }
-
   private async captureTargetWorktreeTree(session: CompanionSession): Promise<string> {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-target-index-"));
     const tempIndexPath = path.join(tempDirectory, "index");
@@ -740,20 +715,32 @@ export class CompanionReviewService {
     }
   }
 
-  private async resolveTargetWorkspaceStatusPaths(session: CompanionSession): Promise<ChangedPath[]> {
-    const status = (await runGit(session.repoRoot, ["status", "--porcelain=v1", "-z"])).stdout;
-    return parsePorcelainStatusZ(status);
+  private async resolveTargetIndexDirtyPaths(session: CompanionSession): Promise<ChangedPath[]> {
+    const diffOutput = (await runGit(session.repoRoot, ["diff", "--cached", "--name-status", "-z", "HEAD", "--"])).stdout;
+    return parseNameStatusZ(diffOutput);
   }
 
-  private async assertTargetWorkspaceClean(session: CompanionSession, targetHead: string): Promise<void> {
-    const statusPaths = await this.resolveTargetWorkspaceStatusPaths(session);
-    if (statusPaths.length > 0) {
+  private async assertTargetWorkspaceMatchesHead(session: CompanionSession, targetHead: string): Promise<void> {
+    const status = (await runGit(session.repoRoot, ["status", "--porcelain=v1", "-z"])).stdout;
+    if (status.length > 0) {
       throw new Error("target workspace が target branch の HEAD と一致していません。target branch を checkout してから Sync Target してください。");
     }
     const targetTree = await this.resolveCommitTree(session.repoRoot, targetHead);
     const currentTargetTree = await this.captureTargetWorktreeTree(session);
     if (targetTree && currentTargetTree && targetTree !== currentTargetTree) {
       throw new Error("target workspace が target branch の HEAD と一致していません。target branch を checkout してから Sync Target してください。");
+    }
+  }
+
+  private async assertTargetWorkspaceMatchesBaseSnapshot(session: CompanionSession): Promise<void> {
+    const indexDirtyPaths = await this.resolveTargetIndexDirtyPaths(session);
+    if (indexDirtyPaths.length > 0) {
+      throw new Error("target index が dirty のため merge できません。");
+    }
+    const baseSnapshotTree = await this.resolveCommitTree(session.repoRoot, session.baseSnapshotCommit);
+    const currentTargetTree = await this.captureTargetWorktreeTree(session);
+    if (baseSnapshotTree && currentTargetTree && baseSnapshotTree !== currentTargetTree) {
+      throw new Error("target workspace が Companion 作成時点の snapshot と一致していません。");
     }
   }
 
@@ -977,9 +964,9 @@ export class CompanionReviewService {
         throw new Error("target branch を解決できません。");
       }
       await this.assertTargetBranchCheckedOut(session);
-      await this.assertTargetWorkspaceClean(session, targetHead);
-      await this.assertBaseSnapshotMatchesTarget(session, targetHead);
-      await this.checkSelectedPatchApplies(session, targetHead, patchPath);
+      await this.assertTargetWorkspaceMatchesBaseSnapshot(session);
+      await this.assertBaseSnapshotParentMatchesTarget(session, targetHead);
+      await this.checkSelectedPatchApplies(session, session.baseSnapshotCommit, patchPath);
       try {
         await runGit(session.repoRoot, ["apply", "--check", "--whitespace=nowarn", patchPath]);
         await runGit(session.repoRoot, ["apply", "--whitespace=nowarn", patchPath]);
@@ -999,12 +986,12 @@ export class CompanionReviewService {
     }
   }
 
-  private async checkSelectedPatchApplies(session: CompanionSession, targetHead: string, patchPath: string): Promise<void> {
+  private async checkSelectedPatchApplies(session: CompanionSession, baseSnapshotCommit: string, patchPath: string): Promise<void> {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-selected-check-"));
     const checkWorktreePath = path.join(tempDirectory, "worktree");
 
     try {
-      await runGit(session.repoRoot, ["worktree", "add", "--detach", checkWorktreePath, targetHead]);
+      await runGit(session.repoRoot, ["worktree", "add", "--detach", checkWorktreePath, baseSnapshotCommit]);
       await runGit(checkWorktreePath, ["apply", "--check", "--whitespace=nowarn", patchPath]);
       const status = (await runGit(checkWorktreePath, ["status", "--porcelain=v1", "-z"])).stdout;
       if (hasUnmergedStatus(status)) {
@@ -1021,10 +1008,9 @@ export class CompanionReviewService {
     }
   }
 
-  private async assertBaseSnapshotMatchesTarget(session: CompanionSession, targetHead: string): Promise<void> {
-    const baseTree = await this.resolveCommitTree(session.repoRoot, session.baseSnapshotCommit);
-    const targetTree = await this.resolveCommitTree(session.repoRoot, targetHead);
-    if (baseTree && targetTree && baseTree !== targetTree) {
+  private async assertBaseSnapshotParentMatchesTarget(session: CompanionSession, targetHead: string): Promise<void> {
+    const baseParent = await this.resolveBaseSnapshotParent(session);
+    if (baseParent && targetHead && baseParent !== targetHead) {
       throw new Error("base snapshot が target branch の HEAD と一致していません。Sync Target してください。");
     }
   }

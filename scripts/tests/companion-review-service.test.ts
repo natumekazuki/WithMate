@@ -247,7 +247,6 @@ describe("CompanionReviewService", () => {
 
       let session = createCompanionSession({ repoRoot, worktreePath, baseSnapshotCommit });
       const mergeRuns: CompanionMergeRun[] = [];
-      let deletedSessionId: string | null = null;
       const service = new CompanionReviewService({
         getCompanionSession(sessionId) {
           return sessionId === session.id ? session : null;
@@ -258,9 +257,6 @@ describe("CompanionReviewService", () => {
         updateCompanionSession(updatedSession) {
           session = updatedSession;
           return session;
-        },
-        deleteCompanionSession(sessionId) {
-          deletedSessionId = sessionId;
         },
         createCompanionMergeRun(run) {
           mergeRuns.push(run);
@@ -277,8 +273,10 @@ describe("CompanionReviewService", () => {
         { path: "README.md", kind: "edit" },
       ]);
       assert.deepEqual(merged.siblingWarnings, []);
-      assert.equal(deletedSessionId, session.id);
-      assert.equal(mergeRuns.length, 0);
+      assert.equal(session.status, "merged");
+      assert.equal(mergeRuns.length, 1);
+      assert.equal(mergeRuns[0]?.operation, "merge");
+      assert.equal(mergeRuns[0]?.diffSnapshot.length, 2);
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\nmerged\n");
       await assert.rejects(() => stat(path.join(repoRoot, "new-file.txt")));
       await assert.rejects(() => stat(worktreePath));
@@ -341,6 +339,59 @@ describe("CompanionReviewService", () => {
     }
   });
 
+  it("dirty workspace から作った base snapshot を baseline として selected merge する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-review-"));
+    const repoRoot = path.join(tempDirectory, "repo");
+    const worktreePath = path.join(tempDirectory, "worktree");
+
+    try {
+      await mkdir(repoRoot, { recursive: true });
+      await git(repoRoot, ["init", "-b", "main"]);
+      await git(repoRoot, ["config", "user.name", "WithMate Test"]);
+      await git(repoRoot, ["config", "user.email", "withmate@example.invalid"]);
+      await writeFile(path.join(repoRoot, "README.md"), "hello\n", "utf8");
+      await git(repoRoot, ["add", "README.md"]);
+      await git(repoRoot, ["commit", "-m", "initial"]);
+      const headCommit = await git(repoRoot, ["rev-parse", "HEAD"]);
+      await writeFile(path.join(repoRoot, "README.md"), "dirty baseline\n", "utf8");
+      await writeFile(path.join(repoRoot, "memo.txt"), "draft\n", "utf8");
+      await git(repoRoot, ["add", "-A"]);
+      const dirtyTree = await git(repoRoot, ["write-tree"]);
+      await git(repoRoot, ["reset"]);
+      const baseSnapshotCommit = await git(repoRoot, ["commit-tree", dirtyTree, "-p", headCommit, "-m", "snapshot"]);
+      await git(repoRoot, ["branch", "withmate/companion/session-1", baseSnapshotCommit]);
+      await git(repoRoot, ["worktree", "add", worktreePath, "withmate/companion/session-1"]);
+      await writeFile(path.join(worktreePath, "README.md"), "dirty baseline\nreviewed\n", "utf8");
+      await writeFile(path.join(worktreePath, "memo.txt"), "draft\nreviewed\n", "utf8");
+
+      let session = createCompanionSession({ repoRoot, worktreePath, baseSnapshotCommit });
+      const service = new CompanionReviewService({
+        getCompanionSession(sessionId) {
+          return sessionId === session.id ? session : null;
+        },
+        listCompanionSessionSummaries() {
+          return [];
+        },
+        updateCompanionSession(updatedSession) {
+          session = updatedSession;
+          return session;
+        },
+      });
+
+      const snapshot = await service.getReviewSnapshot(session.id);
+      assert.equal(snapshot?.mergeReadiness.status, "ready");
+      await service.mergeSelectedFiles(session.id, ["README.md", "memo.txt"]);
+
+      assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "dirty baseline\nreviewed\n");
+      assert.equal((await readFile(path.join(repoRoot, "memo.txt"), "utf8")).replace(/\r\n/g, "\n"), "draft\nreviewed\n");
+    } finally {
+      await git(repoRoot, ["reset", "--hard", "HEAD"]).catch(() => undefined);
+      await git(repoRoot, ["clean", "-fd"]).catch(() => undefined);
+      await git(repoRoot, ["worktree", "remove", "--force", worktreePath]).catch(() => undefined);
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("target workspace の selected file が base から変わっている場合は merge を止める", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-review-"));
     const repoRoot = path.join(tempDirectory, "repo");
@@ -378,7 +429,7 @@ describe("CompanionReviewService", () => {
 
       await assert.rejects(
         () => service.mergeSelectedFiles(session.id, ["README.md"]),
-        /target workspace が target branch の HEAD から変わっている/,
+        /Companion 作成時点の snapshot/,
       );
       await assert.rejects(
         () => service.syncTarget(session.id),
@@ -457,7 +508,7 @@ describe("CompanionReviewService", () => {
       assert.equal(snapshot?.mergeReadiness.blockers.some((blocker) => blocker.kind === "target-worktree-dirty"), true);
       await assert.rejects(
         () => service.mergeSelectedFiles(session.id, ["README.md"]),
-        /target workspace が target branch の HEAD から変わっている/,
+        /target index が dirty/,
       );
       assert.equal(await git(repoRoot, ["diff", "--cached", "--name-only"]), "README.md");
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\n");
@@ -538,7 +589,6 @@ describe("CompanionReviewService", () => {
       await writeFile(path.join(worktreePath, "README.md"), "discarded\n", "utf8");
 
       let session = createCompanionSession({ repoRoot, worktreePath, baseSnapshotCommit });
-      let deletedSessionId = "";
       const mergeRuns: CompanionMergeRun[] = [];
       const service = new CompanionReviewService({
         getCompanionSession(sessionId) {
@@ -551,9 +601,6 @@ describe("CompanionReviewService", () => {
           session = updatedSession;
           return session;
         },
-        deleteCompanionSession(sessionId) {
-          deletedSessionId = sessionId;
-        },
         createCompanionMergeRun(run) {
           mergeRuns.push(run);
           return run;
@@ -565,8 +612,10 @@ describe("CompanionReviewService", () => {
       assert.equal(discarded.status, "discarded");
       assert.deepEqual(discarded.selectedPaths, []);
       assert.deepEqual(discarded.changedFiles, [{ path: "README.md", kind: "edit" }]);
-      assert.equal(deletedSessionId, session.id);
-      assert.equal(mergeRuns.length, 0);
+      assert.equal(session.status, "discarded");
+      assert.equal(mergeRuns.length, 1);
+      assert.equal(mergeRuns[0]?.operation, "discard");
+      assert.equal(mergeRuns[0]?.diffSnapshot.length, 1);
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\n");
       await assert.rejects(() => stat(worktreePath));
     } finally {
@@ -700,7 +749,7 @@ describe("CompanionReviewService", () => {
     }
   });
 
-  it("Sync Target は parent が同じでも tree がずれた base snapshot を作り直す", async () => {
+  it("Sync Target は target parent が同じ dirty snapshot を作り直さない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-review-"));
     const repoRoot = path.join(tempDirectory, "repo");
     const worktreePath = path.join(tempDirectory, "worktree");
@@ -744,16 +793,11 @@ describe("CompanionReviewService", () => {
 
       const blockedSnapshot = await service.getReviewSnapshot(session.id);
       assert.equal(blockedSnapshot?.mergeReadiness.status, "blocked");
-      assert.ok(blockedSnapshot?.mergeReadiness.blockers.some((blocker) => blocker.kind === "target-branch-drift"));
+      assert.ok(blockedSnapshot?.mergeReadiness.blockers.some((blocker) => blocker.kind === "target-worktree-dirty"));
 
       const result = await service.syncTarget(session.id);
-      const targetHead = await git(repoRoot, ["rev-parse", "main"]);
-      assert.equal(await git(repoRoot, ["rev-parse", `${result.session.baseSnapshotCommit}^`]), targetHead);
-      assert.equal(
-        await git(repoRoot, ["rev-parse", `${result.session.baseSnapshotCommit}^{tree}`]),
-        await git(repoRoot, ["rev-parse", "main^{tree}"]),
-      );
-      await assert.rejects(() => stat(path.join(worktreePath, "ghost.txt")));
+      assert.equal(result.session.baseSnapshotCommit, baseSnapshotCommit);
+      await stat(path.join(worktreePath, "ghost.txt"));
       assert.equal((await readFile(path.join(worktreePath, "companion.txt"), "utf8")).replace(/\r\n/g, "\n"), "companion\n");
     } finally {
       await git(repoRoot, ["worktree", "remove", "--force", worktreePath]).catch(() => undefined);
@@ -857,7 +901,7 @@ describe("CompanionReviewService", () => {
       assert.ok(snapshot?.mergeReadiness.blockers.some((blocker) => blocker.paths?.includes("other.txt")));
       await assert.rejects(
         () => service.mergeSelectedFiles(session.id, ["README.md"]),
-        /target workspace が target branch の HEAD から変わっている/,
+        /Companion 作成時点の snapshot/,
       );
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\n");
     } finally {
@@ -911,7 +955,6 @@ describe("CompanionReviewService", () => {
         [siblingSession.id, siblingSession],
       ]);
       const mergeRuns: CompanionMergeRun[] = [];
-      let deletedSessionId: string | null = null;
       const service = new CompanionReviewService({
         getCompanionSession(sessionId) {
           return sessions.get(sessionId) ?? null;
@@ -922,10 +965,6 @@ describe("CompanionReviewService", () => {
         updateCompanionSession(updatedSession) {
           sessions.set(updatedSession.id, updatedSession);
           return updatedSession;
-        },
-        deleteCompanionSession(sessionId) {
-          deletedSessionId = sessionId;
-          sessions.delete(sessionId);
         },
         createCompanionMergeRun(run) {
           mergeRuns.push(run);
@@ -954,9 +993,9 @@ describe("CompanionReviewService", () => {
           message: "Sibling task と 1 file が重なっているよ。",
         },
       ]);
-      assert.equal(deletedSessionId, session.id);
-      assert.equal(sessions.has(session.id), false);
-      assert.equal(mergeRuns.length, 0);
+      assert.equal(sessions.get(session.id)?.status, "merged");
+      assert.equal(mergeRuns.length, 1);
+      assert.equal(mergeRuns[0]?.siblingWarnings.length, 1);
       assert.equal((await readFile(path.join(repoRoot, "README.md"), "utf8")).replace(/\r\n/g, "\n"), "hello\nselected\n");
       await stat(siblingWorktreePath);
     } finally {

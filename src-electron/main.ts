@@ -1377,7 +1377,6 @@ function requireCompanionReviewService(): CompanionReviewService {
       getCompanionSession: (sessionId) => requireCompanionStorage().getSession(sessionId),
       listCompanionSessionSummaries: () => requireCompanionStorage().listSessionSummaries(),
       updateCompanionSession: (session) => requireCompanionStorage().updateSession(session),
-      deleteCompanionSession: (sessionId) => requireCompanionStorage().deleteSession(sessionId),
       updateCompanionSessionBaseSnapshot: (session) => requireCompanionStorage().updateSessionBaseSnapshot(session),
       createCompanionMergeRun: (run) => requireCompanionStorage().createMergeRun(run),
       listCompanionMergeRunsForSession: (sessionId) => requireCompanionStorage().listMergeRunsForSession(sessionId),
