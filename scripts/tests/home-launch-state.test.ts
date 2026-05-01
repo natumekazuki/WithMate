@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
+import { DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../../src/model-catalog.js";
 import type { CharacterProfile, SessionSummary } from "../../src/app-state.js";
 import {
+  buildCreateCompanionSessionInputFromLaunchDraft,
   buildCreateSessionInputFromLaunchDraft,
   closeLaunchDraft,
   createClosedLaunchDraft,
@@ -44,11 +47,11 @@ describe("home-launch-state", () => {
   it("open と close で launch draft を reset する", () => {
     const opened = openLaunchDraft(
       {
+        ...createClosedLaunchDraft("char-1"),
         open: false,
         title: "keep",
         workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
         providerId: "old",
-        characterId: "char-1",
         characterSearchText: "mi",
       },
       "codex",
@@ -56,18 +59,28 @@ describe("home-launch-state", () => {
 
     assert.deepEqual(opened, {
       open: true,
+      mode: "session",
       title: "",
       workspace: null,
       providerId: "codex",
+      model: DEFAULT_MODEL_ID,
+      reasoningEffort: DEFAULT_REASONING_EFFORT,
+      approvalMode: DEFAULT_APPROVAL_MODE,
+      codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
       characterId: "char-1",
       characterSearchText: "",
     });
 
     assert.deepEqual(closeLaunchDraft(opened), {
       open: false,
+      mode: "session",
       title: "",
       workspace: null,
       providerId: "",
+      model: DEFAULT_MODEL_ID,
+      reasoningEffort: DEFAULT_REASONING_EFFORT,
+      approvalMode: DEFAULT_APPROVAL_MODE,
+      codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
       characterId: "char-1",
       characterSearchText: "",
     });
@@ -131,6 +144,30 @@ describe("home-launch-state", () => {
       reasoningEffort: "medium",
       customAgentName: "reviewer",
     });
+  });
+
+  it("Companion launch は provider の last-used model を優先する", () => {
+    const input = buildCreateCompanionSessionInputFromLaunchDraft({
+      draft: {
+        ...createClosedLaunchDraft("a"),
+        open: true,
+        mode: "companion",
+        title: "  task  ",
+        workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
+        providerId: "codex",
+      },
+      selectedCharacter: createCharacter({ id: "a", name: "Mia" }),
+      selectedProviderId: "codex",
+      lastUsedSelection: {
+        model: "gpt-5.4-mini",
+        reasoningEffort: "medium",
+        customAgentName: "reviewer",
+      },
+    });
+
+    assert.equal(input?.model, "gpt-5.4-mini");
+    assert.equal(input?.reasoningEffort, "medium");
+    assert.equal(input?.customAgentName, "reviewer");
   });
 
   it("selected provider の直近 session から last-used selection を引く", () => {

@@ -1335,6 +1335,7 @@ function requireCompanionRuntimeService(): CompanionRuntimeService {
   if (!companionRuntimeService) {
     companionRuntimeService = new CompanionRuntimeService({
       getCompanionSession: (sessionId) => requireCompanionStorage().getSession(sessionId),
+      listCompanionSessionSummaries: () => requireCompanionStorage().listSessionSummaries(),
       updateCompanionSession: (session) => requireCompanionStorage().updateSession(session),
       resolveComposerPreview,
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
@@ -2030,6 +2031,7 @@ function replaceAllSessions(
 
 function recoverInterruptedSessions(): void {
   requireMainSessionPersistenceFacade().recoverInterruptedSessions();
+  requireCompanionRuntimeService().recoverInterruptedSessions();
 }
 
 async function createCharacter(input: CreateCharacterInput): Promise<CharacterProfile> {

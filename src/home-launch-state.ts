@@ -90,6 +90,13 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
     return null;
   }
 
+  const companionModel = draft.mode === "companion"
+    ? lastUsedSelection?.model ?? draft.model
+    : draft.model || lastUsedSelection?.model;
+  const companionReasoningEffort = draft.mode === "companion"
+    ? lastUsedSelection?.reasoningEffort ?? draft.reasoningEffort
+    : draft.reasoningEffort || lastUsedSelection?.reasoningEffort;
+
   return {
     taskTitle: normalizedTitle,
     workspacePath: draft.workspace.path,
@@ -101,8 +108,8 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
     characterThemeColors: selectedCharacter.themeColors,
     approvalMode: draft.approvalMode,
     codexSandboxMode: draft.codexSandboxMode,
-    model: draft.model || lastUsedSelection?.model,
-    reasoningEffort: draft.reasoningEffort || lastUsedSelection?.reasoningEffort,
+    model: companionModel,
+    reasoningEffort: companionReasoningEffort,
     customAgentName: lastUsedSelection?.customAgentName,
   };
 }

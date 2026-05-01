@@ -12,7 +12,7 @@ import {
   type RunSessionTurnRequest,
 } from "../src/app-state.js";
 import type { CharacterProfile } from "../src/character-state.js";
-import type { CompanionSession } from "../src/companion-state.js";
+import type { CompanionSession, CompanionSessionSummary } from "../src/companion-state.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { Session } from "../src/session-state.js";
@@ -21,6 +21,7 @@ import { isCanceledRunError } from "./session-runtime-service.js";
 
 export type CompanionRuntimeServiceDeps = {
   getCompanionSession(sessionId: string): CompanionSession | null;
+  listCompanionSessionSummaries?: () => CompanionSessionSummary[];
   updateCompanionSession(session: CompanionSession): CompanionSession;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
   getAppSettings: () => AppSettings;
@@ -164,6 +165,52 @@ export class CompanionRuntimeService {
 
   hasInFlightRuns(): boolean {
     return this.inFlightRuns.size > 0;
+  }
+
+  recoverInterruptedSessions(): void {
+    const summaries = this.deps.listCompanionSessionSummaries?.() ?? [];
+    const runningSummaries = summaries.filter((session) =>
+      session.status === "active" && session.runState === "running"
+    );
+    if (runningSummaries.length === 0) {
+      return;
+    }
+
+    const currentTimestampLabel = this.deps.currentTimestampLabel ?? defaultCurrentTimestampLabel;
+    const interruptedMessage = "前回の Companion 実行はアプリ終了で中断された可能性があるよ。必要ならもう一度送ってね。";
+    let recovered = false;
+    for (const summary of runningSummaries) {
+      const session = this.deps.getCompanionSession(summary.id);
+      if (!session || session.status !== "active" || session.runState !== "running") {
+        continue;
+      }
+
+      const lastMessage = session.messages.at(-1);
+      const messages =
+        lastMessage?.role === "assistant" && lastMessage.text === interruptedMessage
+          ? session.messages
+          : [
+              ...session.messages,
+              {
+                role: "assistant" as const,
+                text: interruptedMessage,
+                accent: true,
+              },
+            ];
+
+      this.deps.updateCompanionSession({
+        ...session,
+        runState: "error",
+        updatedAt: currentTimestampLabel(),
+        messages,
+      });
+      this.deps.setLiveSessionRun(session.id, null);
+      recovered = true;
+    }
+
+    if (recovered) {
+      this.deps.broadcastCompanionSessions();
+    }
   }
 
   isRunInFlight(sessionId: string): boolean {

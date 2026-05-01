@@ -166,4 +166,73 @@ describe("CompanionRuntimeService", () => {
     assert.equal(storedSessions[0]?.codexSandboxMode, "read-only");
     assert.equal(storedSessions[1]?.runState, "idle");
   });
+
+  it("起動時に running の CompanionSession を error に戻して操作可能にする", () => {
+    let storedSession = createCompanionSession({
+      runState: "running",
+      messages: [{ role: "user", text: "続けて" }],
+    });
+    let broadcastCount = 0;
+    const liveCleared: string[] = [];
+
+    const service = new CompanionRuntimeService({
+      getCompanionSession(sessionId) {
+        return sessionId === storedSession.id ? storedSession : null;
+      },
+      listCompanionSessionSummaries() {
+        return [storedSession];
+      },
+      updateCompanionSession(nextSession) {
+        storedSession = nextSession;
+        return nextSession;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        const provider = createProviderCatalog();
+        return { snapshot: { revision: 1, providers: [provider] }, provider };
+      },
+      getProviderCodingAdapter() {
+        throw new Error("unexpected provider access");
+      },
+      setLiveSessionRun(sessionId, state) {
+        if (state === null) {
+          liveCleared.push(sessionId);
+        }
+      },
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry(_telemetry: ProviderQuotaTelemetry) {},
+      setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      clearWorkspaceFileIndex() {},
+      broadcastCompanionSessions() {
+        broadcastCount += 1;
+      },
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel: () => "2026-04-26 10:02",
+    });
+
+    service.recoverInterruptedSessions();
+
+    assert.equal(storedSession.runState, "error");
+    assert.equal(storedSession.updatedAt, "2026-04-26 10:02");
+    assert.equal(storedSession.messages.at(-1)?.role, "assistant");
+    assert.match(storedSession.messages.at(-1)?.text ?? "", /中断/);
+    assert.deepEqual(liveCleared, [storedSession.id]);
+    assert.equal(broadcastCount, 1);
+  });
 });
