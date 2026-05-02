@@ -189,7 +189,7 @@ test("SessionMemorySupportService は削除済み session memory を起動同期
   ]);
 });
 
-test("SessionMemorySupportService は project promotion と monologue append を扱う", () => {
+test("SessionMemorySupportService は project promotion と monologue append を扱う", async () => {
   const promoted: Array<string> = [];
   const marked: string[][] = [];
   let updatedSession: Session | null = null;
@@ -241,7 +241,7 @@ test("SessionMemorySupportService は project promotion と monologue append を
     "Memory は段階的に入れる方針を確認したい",
     createSessionMemory({ goal: "Memory 設計を整理する" }),
   );
-  const appended = service.appendMonologueToSession(createSession(), {
+  const appended = await service.appendMonologueToSession(createSession(), {
     mood: "calm",
     text: "今日は少し整理が進んだ。",
   });

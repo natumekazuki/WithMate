@@ -93,6 +93,7 @@ type PersistentStoreLifecycleDeps = {
   onBeforeClose(): void;
   truncateWal(dbPath: string): void;
   removeFile(filePath: string): Promise<void>;
+  removeDirectory?(directoryPath: string): Promise<void>;
 };
 
 export class PersistentStoreLifecycleService {
@@ -182,6 +183,9 @@ export class PersistentStoreLifecycleService {
       this.deps.removeFile(`${dbPath}-wal`),
       this.deps.removeFile(`${dbPath}-shm`),
       this.deps.removeFile(dbPath),
+      this.isV3DatabasePath(dbPath)
+        ? this.deps.removeDirectory?.(this.v3BlobRootPath(dbPath)) ?? Promise.resolve()
+        : Promise.resolve(),
     ]);
 
     if (this.isV3DatabasePath(dbPath)) {
@@ -240,6 +244,9 @@ export function createPersistentStoreLifecycleService(): PersistentStoreLifecycl
     truncateWal: truncateAppDatabaseWal,
     removeFile: async (filePath) => {
       await rm(filePath, { force: true });
+    },
+    removeDirectory: async (directoryPath) => {
+      await rm(directoryPath, { recursive: true, force: true });
     },
   });
 }

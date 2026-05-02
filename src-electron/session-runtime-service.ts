@@ -436,9 +436,39 @@ export class SessionRuntimeService {
     let runningAuditProgressSignature = buildRunningAuditProgressSignature(runningAuditEntry);
     let terminalAuditSettled = false;
     let liveProgressGeneration = 0;
+    let auditWriteQueue: Promise<void> = Promise.resolve();
+    let auditWriteError: unknown = null;
 
     let activeRunningSession = runningSession;
+    const enqueueAuditWrite = (
+      nextRunningAuditEntry: CreateAuditLogInput,
+      nextSignature: string,
+    ): Promise<void> => {
+      auditWriteQueue = auditWriteQueue
+        .then(async () => {
+          await this.deps.updateAuditLog(runningAuditLog.id, nextRunningAuditEntry);
+          runningAuditEntry = nextRunningAuditEntry;
+          runningAuditProgressSignature = nextSignature;
+        })
+        .catch((error) => {
+          auditWriteError = auditWriteError ?? error;
+        });
+      return auditWriteQueue;
+    };
+    const flushAuditWrites = async () => {
+      let observedQueue: Promise<void>;
+      do {
+        observedQueue = auditWriteQueue;
+        await observedQueue;
+      } while (observedQueue !== auditWriteQueue);
+      if (auditWriteError) {
+        throw auditWriteError;
+      }
+    };
     const syncRunningAuditFromLiveState = async (nextLiveState: LiveSessionRunState) => {
+      if (terminalAuditSettled) {
+        return;
+      }
       this.deps.setLiveSessionRun(sessionId, nextLiveState);
       if (!hasMeaningfulLiveRunAuditState(nextLiveState)) {
         return;
@@ -465,9 +495,7 @@ export class SessionRuntimeService {
         return;
       }
 
-      await this.deps.updateAuditLog(runningAuditLog.id, nextRunningAuditEntry);
-      runningAuditEntry = nextRunningAuditEntry;
-      runningAuditProgressSignature = nextSignature;
+      await enqueueAuditWrite(nextRunningAuditEntry, nextSignature);
     };
     await syncRunningAuditFromLiveState(initialLiveState);
     const runProviderTurn = (turnSession: Session) => {
@@ -489,6 +517,8 @@ export class SessionRuntimeService {
             ...(currentLiveState ?? buildEmptyLiveSessionRunState(sessionId, activeRunningSession.threadId)),
             approvalRequest,
             elicitationRequest: currentLiveState?.elicitationRequest ?? null,
+          }).catch((error) => {
+            console.warn("Audit progress update failed", error);
           });
           return decision;
         },
@@ -499,6 +529,8 @@ export class SessionRuntimeService {
             ...(currentLiveState ?? buildEmptyLiveSessionRunState(sessionId, activeRunningSession.threadId)),
             approvalRequest: currentLiveState?.approvalRequest ?? null,
             elicitationRequest,
+          }).catch((error) => {
+            console.warn("Audit progress update failed", error);
           });
           return response;
         },
@@ -518,7 +550,9 @@ export class SessionRuntimeService {
           approvalRequest: this.deps.getLiveSessionRun(sessionId)?.approvalRequest ?? null,
           elicitationRequest: this.deps.getLiveSessionRun(sessionId)?.elicitationRequest ?? null,
         };
-        void syncRunningAuditFromLiveState(nextLiveState);
+        void syncRunningAuditFromLiveState(nextLiveState).catch((error) => {
+          console.warn("Audit progress update failed", error);
+        });
       });
     };
 
@@ -554,14 +588,17 @@ export class SessionRuntimeService {
             ...buildEmptyLiveSessionRunState(sessionId, ""),
             backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
           });
-          runningAuditEntry = buildRunningAuditEntry({
+          const resetAuditEntry = buildRunningAuditEntry({
             sessionId,
             createdAt: runningAuditLog.createdAt,
             session: activeRunningSession,
             logicalPrompt: promptForAudit.logicalPrompt,
             threadId: "",
           });
-          runningAuditProgressSignature = buildRunningAuditProgressSignature(runningAuditEntry);
+          const resetAuditSignature = buildRunningAuditProgressSignature(resetAuditEntry);
+          await flushAuditWrites();
+          runningAuditEntry = resetAuditEntry;
+          runningAuditProgressSignature = resetAuditSignature;
           await this.deps.updateAuditLog(runningAuditLog.id, runningAuditEntry);
         }
       }
@@ -572,6 +609,7 @@ export class SessionRuntimeService {
       const completedAt = new Date().toISOString();
       const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
 
+      await flushAuditWrites();
       terminalAuditSettled = true;
       const completedAuditEntry = buildTerminalAuditEntry({
         baseEntry: runningAuditEntry,
@@ -642,6 +680,7 @@ export class SessionRuntimeService {
         this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId);
       }
 
+      await flushAuditWrites();
       terminalAuditSettled = true;
       const failedAuditEntry = buildTerminalAuditEntry({
         baseEntry: runningAuditEntry,

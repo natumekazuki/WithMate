@@ -12,11 +12,13 @@ import type {
   AuditTransportPayload,
   Session,
 } from "../src/app-state.js";
+import type { CompanionGroup, CompanionMergeRun, CompanionSession } from "../src/companion-state.js";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE, normalizeCodexSandboxMode } from "../src/codex-sandbox-mode.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_PROVIDER_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
 import { normalizeSession } from "../src/session-state.js";
 import { AuditLogStorageV3 } from "../src-electron/audit-log-storage-v3.js";
+import { CompanionStorageV3 } from "../src-electron/companion-storage-v3.js";
 import { CREATE_V3_SCHEMA_SQL } from "../src-electron/database-schema-v3.js";
 import { SessionStorageV3 } from "../src-electron/session-storage-v3.js";
 
@@ -32,6 +34,11 @@ export type V2ToV3MigrationDryRunReport = {
     auditLogs: number;
     auditLogDetails: number;
     auditLogOperations: number;
+    companionGroups: number;
+    companionSessions: number;
+    companionMessages: number;
+    companionMessageArtifacts: number;
+    companionMergeRuns: number;
     appSettings: number;
     modelCatalogRevisions: number;
     modelCatalogProviders: number;
@@ -58,6 +65,10 @@ export type V2ToV3MigrationDryRunReport = {
     auditRawItemsJson: number;
     auditUsageJson: number;
     auditOperationDetails: number;
+    companionCharacterRoleMarkdown: number;
+    companionMessageText: number;
+    companionMessageArtifactsJson: number;
+    companionMergeDiffSnapshotJson: number;
   };
 };
 
@@ -179,6 +190,68 @@ type ModelCatalogModelRow = {
   sort_order: number;
 };
 
+type CompanionGroupRow = {
+  id: string;
+  repo_root: string;
+  display_name: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type CompanionSessionRow = {
+  id: string;
+  group_id: string;
+  task_title: string;
+  status: string;
+  repo_root: string;
+  focus_path: string;
+  target_branch: string;
+  base_snapshot_ref: string;
+  base_snapshot_commit: string;
+  companion_branch: string;
+  worktree_path: string;
+  selected_paths_json: string;
+  changed_files_json: string;
+  sibling_warnings_json: string;
+  allowed_additional_directories_json: string;
+  run_state: string;
+  thread_id: string;
+  provider: string;
+  catalog_revision: number;
+  model: string;
+  reasoning_effort: string;
+  custom_agent_name: string;
+  approval_mode: string;
+  codex_sandbox_mode: string;
+  character_id: string;
+  character_name: string;
+  character_role_markdown: string;
+  character_icon_path: string;
+  character_theme_main: string;
+  character_theme_sub: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type CompanionMessageRow = {
+  role: string;
+  text: string;
+  accent: number;
+  artifact_json: string;
+};
+
+type CompanionMergeRunRow = {
+  id: string;
+  session_id: string;
+  group_id: string;
+  operation: string;
+  selected_paths_json: string;
+  changed_files_json: string;
+  diff_snapshot_json: string;
+  sibling_warnings_json: string;
+  created_at: string;
+};
+
 const SESSION_HEADER_COLUMNS = `
   id,
   task_title,
@@ -207,6 +280,53 @@ const SESSION_HEADER_COLUMNS = `
   last_active_at
 `;
 
+const COMPANION_SESSION_COLUMNS = `
+  id,
+  group_id,
+  task_title,
+  status,
+  repo_root,
+  focus_path,
+  target_branch,
+  base_snapshot_ref,
+  base_snapshot_commit,
+  companion_branch,
+  worktree_path,
+  selected_paths_json,
+  changed_files_json,
+  sibling_warnings_json,
+  allowed_additional_directories_json,
+  run_state,
+  thread_id,
+  provider,
+  catalog_revision,
+  model,
+  reasoning_effort,
+  custom_agent_name,
+  approval_mode,
+  codex_sandbox_mode,
+  character_id,
+  character_name,
+  character_role_markdown,
+  character_icon_path,
+  character_theme_main,
+  character_theme_sub,
+  created_at,
+  updated_at
+`;
+
+const COMPANION_MERGE_RUN_COLUMNS = `
+  id,
+  session_id,
+  group_id,
+  operation,
+  selected_paths_json,
+  changed_files_json,
+  diff_snapshot_json,
+  sibling_warnings_json,
+  created_at
+`;
+
 function tableExists(db: DatabaseSync, tableName: string): boolean {
   const row = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?").get(tableName);
   return row !== undefined;
@@ -217,6 +337,14 @@ function countRows(db: DatabaseSync, tableName: string): number {
     return 0;
   }
   const row = db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get() as CountRow;
+  return row.count;
+}
+
+function countNonEmptyRows(db: DatabaseSync, tableName: string, columnName: string): number {
+  if (!tableExists(db, tableName)) {
+    return 0;
+  }
+  const row = db.prepare(`SELECT COUNT(*) AS count FROM ${tableName} WHERE ${columnName} IS NOT NULL AND length(trim(${columnName})) > 0`).get() as CountRow;
   return row.count;
 }
 
@@ -346,6 +474,10 @@ function parseAllowedAdditionalDirectories(value: string): string[] {
   }
 }
 
+function parseStringArray(value: string | null | undefined): string[] {
+  return parseJsonArray(value).filter((entry): entry is string => typeof entry === "string");
+}
+
 function normalizeAuditLogPhase(value: string): AuditLogPhase {
   if (
     value === "running"
@@ -370,6 +502,92 @@ function normalizeReasoningEffort(value: string): typeof DEFAULT_REASONING_EFFOR
   }
 
   return DEFAULT_REASONING_EFFORT;
+}
+
+function normalizeCompanionStatus(value: string): CompanionSession["status"] {
+  if (value === "merged" || value === "discarded" || value === "recovery-required") {
+    return value;
+  }
+  return "active";
+}
+
+function normalizeCompanionRunState(value: string): CompanionSession["runState"] {
+  return value === "running" || value === "error" ? value : "idle";
+}
+
+function rowToCompanionGroup(row: CompanionGroupRow): CompanionGroup {
+  return {
+    id: row.id,
+    repoRoot: row.repo_root,
+    displayName: row.display_name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function rowToCompanionMessage(row: CompanionMessageRow): CompanionSession["messages"][number] {
+  return {
+    role: row.role === "assistant" ? "assistant" : "user",
+    text: row.text,
+    accent: row.accent === 1 ? true : undefined,
+    artifact: row.artifact_json.trim()
+      ? parseJsonObject(row.artifact_json, {}) as CompanionSession["messages"][number]["artifact"]
+      : undefined,
+  };
+}
+
+function rowToCompanionSession(row: CompanionSessionRow, messages: CompanionMessageRow[]): CompanionSession {
+  return {
+    id: row.id,
+    groupId: row.group_id,
+    taskTitle: row.task_title,
+    status: normalizeCompanionStatus(row.status),
+    repoRoot: row.repo_root,
+    focusPath: row.focus_path,
+    targetBranch: row.target_branch,
+    baseSnapshotRef: row.base_snapshot_ref,
+    baseSnapshotCommit: row.base_snapshot_commit,
+    companionBranch: row.companion_branch,
+    worktreePath: row.worktree_path,
+    selectedPaths: parseStringArray(row.selected_paths_json),
+    changedFiles: parseJsonArray(row.changed_files_json) as CompanionSession["changedFiles"],
+    siblingWarnings: parseJsonArray(row.sibling_warnings_json) as CompanionSession["siblingWarnings"],
+    allowedAdditionalDirectories: parseStringArray(row.allowed_additional_directories_json),
+    runState: normalizeCompanionRunState(row.run_state),
+    threadId: row.thread_id,
+    provider: row.provider || DEFAULT_PROVIDER_ID,
+    catalogRevision: row.catalog_revision || DEFAULT_CATALOG_REVISION,
+    model: row.model || DEFAULT_MODEL_ID,
+    reasoningEffort: normalizeReasoningEffort(row.reasoning_effort),
+    customAgentName: row.custom_agent_name,
+    approvalMode: normalizeApprovalMode(row.approval_mode),
+    codexSandboxMode: normalizeCodexSandboxMode(row.codex_sandbox_mode),
+    characterId: row.character_id,
+    character: row.character_name,
+    characterRoleMarkdown: row.character_role_markdown,
+    characterIconPath: row.character_icon_path,
+    characterThemeColors: {
+      main: row.character_theme_main,
+      sub: row.character_theme_sub,
+    },
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    messages: messages.map(rowToCompanionMessage),
+  };
+}
+
+function rowToCompanionMergeRun(row: CompanionMergeRunRow): CompanionMergeRun {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    groupId: row.group_id,
+    operation: row.operation === "discard" ? "discard" : "merge",
+    selectedPaths: parseStringArray(row.selected_paths_json),
+    changedFiles: parseJsonArray(row.changed_files_json) as CompanionMergeRun["changedFiles"],
+    diffSnapshot: parseJsonArray(row.diff_snapshot_json) as CompanionMergeRun["diffSnapshot"],
+    siblingWarnings: parseJsonArray(row.sibling_warnings_json) as CompanionMergeRun["siblingWarnings"],
+    createdAt: row.created_at,
+  };
 }
 
 function rowToSession(row: SessionHeaderRow, messages: SessionMessageRow[]): Session {
@@ -465,6 +683,11 @@ function readV2Counts(db: DatabaseSync): V2ToV3MigrationDryRunReport["v2Counts"]
     auditLogs: countRows(db, "audit_logs"),
     auditLogDetails: countRows(db, "audit_log_details"),
     auditLogOperations: countRows(db, "audit_log_operations"),
+    companionGroups: countRows(db, "companion_groups"),
+    companionSessions: countRows(db, "companion_sessions"),
+    companionMessages: countRows(db, "companion_messages"),
+    companionMessageArtifacts: countNonEmptyRows(db, "companion_messages", "artifact_json"),
+    companionMergeRuns: countRows(db, "companion_merge_runs"),
     appSettings: countRows(db, "app_settings"),
     modelCatalogRevisions: countRows(db, "model_catalog_revisions"),
     modelCatalogProviders: countRows(db, "model_catalog_providers"),
@@ -502,6 +725,18 @@ function createEstimatedSourceBytes(db: DatabaseSync): V2ToV3MigrationDryRunRepo
       : 0,
     auditOperationDetails: tableExists(db, "audit_log_operations")
       ? sumTextBytes(db, "SELECT details AS value FROM audit_log_operations")
+      : 0,
+    companionCharacterRoleMarkdown: tableExists(db, "companion_sessions")
+      ? sumTextBytes(db, "SELECT character_role_markdown AS value FROM companion_sessions")
+      : 0,
+    companionMessageText: tableExists(db, "companion_messages")
+      ? sumTextBytes(db, "SELECT text AS value FROM companion_messages")
+      : 0,
+    companionMessageArtifactsJson: tableExists(db, "companion_messages")
+      ? sumTextBytes(db, "SELECT artifact_json AS value FROM companion_messages")
+      : 0,
+    companionMergeDiffSnapshotJson: tableExists(db, "companion_merge_runs")
+      ? sumTextBytes(db, "SELECT diff_snapshot_json AS value FROM companion_merge_runs")
       : 0,
   };
 }
@@ -605,6 +840,54 @@ function readAuditOperations(db: DatabaseSync, auditLogId: number): AuditLogOper
   `).all(auditLogId) as AuditLogOperationRow[];
 }
 
+function readCompanionGroups(db: DatabaseSync): CompanionGroup[] {
+  if (!tableExists(db, "companion_groups")) {
+    return [];
+  }
+  const rows = db.prepare(`
+    SELECT id, repo_root, display_name, created_at, updated_at
+    FROM companion_groups
+    ORDER BY created_at ASC, id ASC
+  `).all() as CompanionGroupRow[];
+  return rows.map(rowToCompanionGroup);
+}
+
+function readCompanionMessages(db: DatabaseSync, sessionId: string): CompanionMessageRow[] {
+  if (!tableExists(db, "companion_messages")) {
+    return [];
+  }
+  return db.prepare(`
+    SELECT role, text, accent, artifact_json
+    FROM companion_messages
+    WHERE session_id = ?
+    ORDER BY position ASC
+  `).all(sessionId) as CompanionMessageRow[];
+}
+
+function readCompanionSessions(db: DatabaseSync): CompanionSession[] {
+  if (!tableExists(db, "companion_sessions")) {
+    return [];
+  }
+  const rows = db.prepare(`
+    SELECT ${COMPANION_SESSION_COLUMNS}
+    FROM companion_sessions
+    ORDER BY updated_at ASC, id ASC
+  `).all() as CompanionSessionRow[];
+  return rows.map((row) => rowToCompanionSession(row, readCompanionMessages(db, row.id)));
+}
+
+function readCompanionMergeRuns(db: DatabaseSync): CompanionMergeRun[] {
+  if (!tableExists(db, "companion_merge_runs")) {
+    return [];
+  }
+  const rows = db.prepare(`
+    SELECT ${COMPANION_MERGE_RUN_COLUMNS}
+    FROM companion_merge_runs
+    ORDER BY created_at ASC, id ASC
+  `).all() as CompanionMergeRunRow[];
+  return rows.map(rowToCompanionMergeRun);
+}
+
 export function createMigrationDryRunReport(v2DbPath: string): V2ToV3MigrationDryRunReport {
   const v2Db = openReadOnlySource(v2DbPath);
   try {
@@ -650,6 +933,7 @@ export async function createMigrationWriteReport(input: {
   const sourceDb = openReadOnlySource(input.sourceDatabaseFile);
   let sessionStorage: SessionStorageV3 | null = null;
   let auditLogStorage: AuditLogStorageV3 | null = null;
+  let companionStorage: CompanionStorageV3 | null = null;
 
   try {
     dbBackups = overwrite ? backupExistingSqliteDatabaseFiles(input.targetDatabaseFile) : [];
@@ -684,6 +968,7 @@ export async function createMigrationWriteReport(input: {
 
     sessionStorage = new SessionStorageV3(input.targetDatabaseFile, input.blobRootPath);
     auditLogStorage = new AuditLogStorageV3(input.targetDatabaseFile, input.blobRootPath);
+    companionStorage = new CompanionStorageV3(input.targetDatabaseFile, input.blobRootPath);
 
     const sessionRows = tableExists(sourceDb, "sessions")
       ? sourceDb.prepare(`SELECT ${SESSION_HEADER_COLUMNS} FROM sessions ORDER BY last_active_at DESC, id DESC`).all() as SessionHeaderRow[]
@@ -720,6 +1005,21 @@ export async function createMigrationWriteReport(input: {
       await auditLogStorage.createAuditLog(rowToAuditLogEntry(row, readAuditOperations(sourceDb, row.id)));
     }
 
+    const companionGroups = readCompanionGroups(sourceDb);
+    for (const group of companionGroups) {
+      await companionStorage.ensureGroup(group);
+    }
+
+    const companionSessions = readCompanionSessions(sourceDb);
+    for (const session of companionSessions) {
+      await companionStorage.createSession(session);
+    }
+
+    const companionMergeRuns = readCompanionMergeRuns(sourceDb);
+    for (const run of companionMergeRuns) {
+      await companionStorage.createMergeRun(run);
+    }
+
     const reportDb = new DatabaseSync(input.targetDatabaseFile, { readOnly: true });
     let blobObjects = 0;
     try {
@@ -745,6 +1045,11 @@ export async function createMigrationWriteReport(input: {
         auditLogs: auditRows.length,
         auditLogDetails: v2Counts.auditLogDetails,
         auditLogOperations: v2Counts.auditLogOperations,
+        companionGroups: companionGroups.length,
+        companionSessions: companionSessions.length,
+        companionMessages: v2Counts.companionMessages,
+        companionMessageArtifacts: v2Counts.companionMessageArtifacts,
+        companionMergeRuns: companionMergeRuns.length,
         appSettings: copiedAppSettings,
         ...copiedModelCatalogCounts,
         blobObjects,
@@ -753,6 +1058,7 @@ export async function createMigrationWriteReport(input: {
   } finally {
     sessionStorage?.close();
     auditLogStorage?.close();
+    companionStorage?.close();
     sourceDb.close();
     if (migrationSucceeded) {
       discardSqliteDatabaseBackups(dbBackups);

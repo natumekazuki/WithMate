@@ -1328,7 +1328,7 @@ function requireAuxWindowService(): AuxWindowService<BrowserWindow> {
 function requireSessionRuntimeService(): SessionRuntimeService {
   if (!sessionRuntimeService) {
     sessionRuntimeService = new SessionRuntimeService({
-      getSession,
+      getSession: getDisplaySession,
         upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSession(session),
       resolveComposerPreview,
       resolveSessionCharacter,

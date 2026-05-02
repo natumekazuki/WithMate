@@ -176,6 +176,8 @@ describe("SessionRuntimeService", () => {
     const liveStates: Array<LiveSessionRunState | null> = [];
     const memoryTriggers: Array<{ sessionId: string; triggerReason: string }> = [];
     const reflectionTriggers: Array<{ sessionId: string; triggerReason: string }> = [];
+    let emitQueuedProgressDuringWrite: (() => void) | null = null;
+    let queuedProgressEmitted = false;
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
@@ -192,6 +194,21 @@ describe("SessionRuntimeService", () => {
       invalidateSessionThread() {},
       invalidateAllSessionThreads() {},
       async runSessionTurn(input, onProgress) {
+        emitQueuedProgressDuringWrite = () => {
+          void onProgress?.(createLiveRunState({
+            sessionId: input.session.id,
+            threadId: "thread-late",
+            assistantText: "late progress",
+            steps: [
+              {
+                id: "step-late",
+                type: "command_execution",
+                summary: "late step",
+                status: "in_progress",
+              },
+            ],
+          }));
+        };
         await onProgress?.(createLiveRunState({
           sessionId: input.session.id,
         }));
@@ -210,21 +227,6 @@ describe("SessionRuntimeService", () => {
           ],
           usage: { inputTokens: 4, cachedInputTokens: 0, outputTokens: 1 },
         }));
-        setTimeout(() => {
-          void onProgress?.(createLiveRunState({
-            sessionId: input.session.id,
-            threadId: "thread-late",
-            assistantText: "late progress",
-            steps: [
-              {
-                id: "step-late",
-                type: "command_execution",
-                summary: "late step",
-                status: "in_progress",
-              },
-            ],
-          }));
-        }, 0);
         return {
           threadId: "thread-1",
           assistantText: "完了したよ。",
@@ -285,6 +287,10 @@ describe("SessionRuntimeService", () => {
         return createAuditLogBase(input);
       },
       updateAuditLog(_id, entry) {
+        if (entry.phase === "running" && !queuedProgressEmitted && emitQueuedProgressDuringWrite) {
+          queuedProgressEmitted = true;
+          emitQueuedProgressDuringWrite();
+        }
         auditUpdates.push(entry);
       },
       setLiveSessionRun(_sessionId, state) {
@@ -317,18 +323,21 @@ describe("SessionRuntimeService", () => {
     });
 
     const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(result.runState, "idle");
     assert.equal(storedSessions.length, 2);
     assert.equal(storedSessions[0]?.runState, "running");
     assert.equal(storedSessions[1]?.runState, "idle");
     assert.equal(storedSessions[1]?.messages.at(-1)?.text, "完了したよ。");
-    assert.equal(auditUpdates.length, 2);
+    assert.equal(auditUpdates.length, 3);
     assert.equal(auditUpdates[0]?.phase, "running");
     assert.equal(auditUpdates[0]?.assistantText, "途中経過だよ。");
     assert.equal(auditUpdates[0]?.threadId, "thread-progress");
     assert.equal(auditUpdates[0]?.operations[0]?.summary, "npm test");
+    assert.equal(auditUpdates[1]?.phase, "running");
+    assert.equal(auditUpdates[1]?.assistantText, "late progress");
+    assert.equal(auditUpdates[1]?.threadId, "thread-late");
+    assert.equal(auditUpdates[1]?.operations[0]?.summary, "late step");
     assert.equal(auditUpdates.at(-1)?.phase, "completed");
     assert.equal(auditUpdates.at(-1)?.assistantText, "完了したよ。");
     assert.equal(

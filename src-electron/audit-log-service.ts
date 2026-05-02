@@ -13,19 +13,19 @@ type AuditLogServiceStorage = {
 export class AuditLogService {
   public constructor(private readonly storage: AuditLogServiceStorage) {}
 
-  public async listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]> {
-    return await this.storage.listSessionAuditLogs(sessionId);
+  public listSessionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]> {
+    return this.storage.listSessionAuditLogs(sessionId);
   }
 
-  public async createAuditLog(input: CreateAuditLogInput): Promise<AuditLogEntry> {
-    return await this.storage.createAuditLog(input);
+  public createAuditLog(input: CreateAuditLogInput): Awaitable<AuditLogEntry> {
+    return this.storage.createAuditLog(input);
   }
 
-  public async updateAuditLog(id: number, input: CreateAuditLogInput): Promise<AuditLogEntry> {
-    return await this.storage.updateAuditLog(id, input);
+  public updateAuditLog(id: number, input: CreateAuditLogInput): Awaitable<AuditLogEntry> {
+    return this.storage.updateAuditLog(id, input);
   }
 
-  public async clearAuditLogs(): Promise<void> {
-    await this.storage.clearAuditLogs();
+  public clearAuditLogs(): Awaitable<void> {
+    return this.storage.clearAuditLogs();
   }
 }

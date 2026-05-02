@@ -440,6 +440,62 @@ test("PersistentStoreLifecycleService は V2 DB 再生成後に V2 schema を作
   }
 });
 
+test("PersistentStoreLifecycleService は V3 DB 再生成時に blob root も削除する", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "withmate-v3-recreate-"));
+  const dbPath = path.join(dir, APP_DATABASE_V3_FILENAME);
+  const removedDirectories: string[] = [];
+
+  try {
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => ({ revision: 7, providers: [] }),
+          close() {},
+        }) as never,
+      createSessionStorage: () =>
+        ({
+          listSessions: () => [],
+          listSessionSummaries: () => [],
+          close() {},
+        }) as never,
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => ({ close() {} }) as never,
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      ensureV3Schema(pathToDb) {
+        const db = new DatabaseSync(pathToDb);
+        try {
+          db.exec("PRAGMA foreign_keys = ON;");
+          for (const statement of CREATE_V3_SCHEMA_SQL) {
+            db.exec(statement);
+          }
+        } finally {
+          db.close();
+        }
+      },
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile(filePath) {
+        await rm(filePath, { force: true });
+      },
+      async removeDirectory(directoryPath) {
+        removedDirectories.push(directoryPath);
+        await rm(directoryPath, { recursive: true, force: true });
+      },
+    });
+
+    const bundle = await service.recreate(dbPath, "model-catalog.json", {});
+
+    assert.equal(bundle.activeModelCatalog.revision, 7);
+    assert.deepEqual(removedDirectories, [path.join(dir, "blobs", "v3")]);
+    assert.equal(bundle.sessionStorage instanceof SessionStorageV3, true);
+    service.close(bundle, dbPath);
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
 test("PersistentStoreLifecycleService は required V2 tables がない withmate-v2.db では V1-compatible injected storages を使う", async () => {
   const activeModelCatalog = { revision: 5, providers: [] } as ModelCatalogSnapshot;
   let createSessionStorageCallCount = 0;

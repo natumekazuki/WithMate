@@ -9,6 +9,8 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { buildNewSession, type MessageArtifact } from "../../src/app-state.js";
 import { AuditLogStorageV2 } from "../../src-electron/audit-log-storage-v2.js";
 import { AuditLogStorageV3 } from "../../src-electron/audit-log-storage-v3.js";
+import { CompanionStorage } from "../../src-electron/companion-storage.js";
+import { CompanionStorageV3 } from "../../src-electron/companion-storage-v3.js";
 import { CREATE_V2_SCHEMA_SQL } from "../../src-electron/database-schema-v2.js";
 import {
   CREATE_V3_SCHEMA_SQL,
@@ -153,6 +155,7 @@ function checkpointAndRemoveSqliteSidecars(dbPath: string): void {
 function seedV2Storage(dbPath: string, sentinel = "SENTINEL_V2_TO_V3_BLOB_ONLY"): void {
   const sessionStorage = new SessionStorageV2(dbPath);
   const auditStorage = new AuditLogStorageV2(dbPath);
+  const companionStorage = new CompanionStorage(dbPath);
   const longMessage = `${"m".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:message-tail`;
   const session = buildNewSession({
     taskTitle: "V2 migration fixture",
@@ -211,9 +214,76 @@ function seedV2Storage(dbPath: string, sentinel = "SENTINEL_V2_TO_V3_BLOB_ONLY")
       usage: { inputTokens: 11, cachedInputTokens: 2, outputTokens: 7 },
       errorMessage: "",
     });
+
+    const companionGroup = companionStorage.ensureGroup({
+      id: "companion-group-1",
+      repoRoot: "/workspace",
+      displayName: "workspace",
+      createdAt: "2026-04-28T02:00:00.000Z",
+      updatedAt: "2026-04-28T02:00:00.000Z",
+    });
+    const companionSession = companionStorage.createSession({
+      id: "companion-session-1",
+      groupId: companionGroup.id,
+      taskTitle: "V2 companion fixture",
+      status: "active",
+      repoRoot: "/workspace",
+      focusPath: "src",
+      targetBranch: "main",
+      baseSnapshotRef: "refs/withmate/base",
+      baseSnapshotCommit: "abc123",
+      companionBranch: "withmate/companion/session-1",
+      worktreePath: "/workspace/.withmate/companion/session-1",
+      selectedPaths: ["src/index.ts"],
+      changedFiles: [{ path: "src/index.ts", kind: "edit" }],
+      siblingWarnings: [],
+      allowedAdditionalDirectories: [],
+      runState: "idle",
+      threadId: "companion-thread-1",
+      provider: "codex",
+      catalogRevision: 1,
+      model: "gpt-5.4-mini",
+      reasoningEffort: "medium",
+      customAgentName: "",
+      approvalMode: DEFAULT_APPROVAL_MODE,
+      codexSandboxMode: "workspace-write",
+      characterId: "companion-char",
+      character: "Companion",
+      characterRoleMarkdown: `${"role ".repeat(160)}${sentinel}:companion-role-tail`,
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      createdAt: "2026-04-28T02:01:00.000Z",
+      updatedAt: "2026-04-28T02:01:00.000Z",
+      messages: [
+        {
+          role: "assistant",
+          text: `${"c".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:companion-message-tail`,
+          artifact: createArtifact(`${sentinel}:companion`),
+        },
+      ],
+    });
+    companionStorage.createMergeRun({
+      id: "companion-merge-1",
+      sessionId: companionSession.id,
+      groupId: companionGroup.id,
+      operation: "merge",
+      selectedPaths: ["src/index.ts"],
+      changedFiles: [{ path: "src/index.ts", kind: "edit" }],
+      diffSnapshot: [
+        {
+          kind: "edit",
+          path: "src/index.ts",
+          summary: "companion diff",
+          diffRows: [{ kind: "add", rightNumber: 1, rightText: `${sentinel}:companion-diff-tail` }],
+        },
+      ],
+      siblingWarnings: [],
+      createdAt: "2026-04-28T02:02:00.000Z",
+    });
   } finally {
     sessionStorage.close();
     auditStorage.close();
+    companionStorage.close();
   }
 
   insertAppSettingsAndModelCatalog(dbPath);
@@ -244,6 +314,11 @@ describe("V2 to V3 database migration dry-run", () => {
         auditLogs: 1,
         auditLogDetails: 1,
         auditLogOperations: 1,
+        companionGroups: 1,
+        companionSessions: 1,
+        companionMessages: 1,
+        companionMessageArtifacts: 1,
+        companionMergeRuns: 1,
         appSettings: 1,
         modelCatalogRevisions: 1,
         modelCatalogProviders: 1,
@@ -287,6 +362,11 @@ describe("V2 to V3 database migration write mode", () => {
       assert.equal(report.migratedV3Counts.sessionMessageArtifacts, 1);
       assert.equal(report.migratedV3Counts.auditLogs, 1);
       assert.equal(report.migratedV3Counts.auditLogOperations, 1);
+      assert.equal(report.migratedV3Counts.companionGroups, 1);
+      assert.equal(report.migratedV3Counts.companionSessions, 1);
+      assert.equal(report.migratedV3Counts.companionMessages, 1);
+      assert.equal(report.migratedV3Counts.companionMessageArtifacts, 1);
+      assert.equal(report.migratedV3Counts.companionMergeRuns, 1);
       assert.equal(report.migratedV3Counts.appSettings, 1);
       assert.equal(report.migratedV3Counts.modelCatalogModels, 1);
       assert.equal(report.migratedV3Counts.blobObjects > 0, true);
@@ -297,7 +377,11 @@ describe("V2 to V3 database migration write mode", () => {
           assert.equal(typeof statement, "string");
         }
         assert.equal(tableExists(db, "companion_sessions"), true);
-        assert.equal(readCount(db, "companion_sessions"), 0);
+        assert.equal(readCount(db, "companion_groups"), 1);
+        assert.equal(readCount(db, "companion_sessions"), 1);
+        assert.equal(readCount(db, "companion_messages"), 1);
+        assert.equal(readCount(db, "companion_message_artifacts"), 1);
+        assert.equal(readCount(db, "companion_merge_runs"), 1);
         assert.equal(readCount(db, "sessions"), 1);
         assert.equal(readCount(db, "session_messages"), 2);
         assert.equal(readCount(db, "audit_logs"), 1);
@@ -310,6 +394,7 @@ describe("V2 to V3 database migration write mode", () => {
 
       const sessionStorage = new SessionStorageV3(v3DbPath, blobRootPath);
       const auditStorage = new AuditLogStorageV3(v3DbPath, blobRootPath);
+      const companionStorage = new CompanionStorageV3(v3DbPath, blobRootPath);
       try {
         const migratedSession = await sessionStorage.getSession("session-1");
         assert.ok(migratedSession);
@@ -329,9 +414,20 @@ describe("V2 to V3 database migration write mode", () => {
         assert.equal(detail.assistantText.includes("SENTINEL_V2_TO_V3_BLOB_ONLY:assistant-tail"), true);
         assert.equal(detail.rawItemsJson.includes("SENTINEL_V2_TO_V3_BLOB_ONLY:raw-item-tail"), true);
         assert.equal(detail.operations[0]?.details?.includes("SENTINEL_V2_TO_V3_BLOB_ONLY:operation-details-tail"), true);
+
+        const migratedCompanion = await companionStorage.getSession("companion-session-1");
+        assert.ok(migratedCompanion);
+        assert.equal(migratedCompanion.messages[0]?.text.includes("SENTINEL_V2_TO_V3_BLOB_ONLY:companion-message-tail"), true);
+        assert.equal(
+          (await companionStorage.getMessageArtifact("companion-session-1", 0))?.changedFiles[0]?.diffRows[0]?.rightText,
+          "SENTINEL_V2_TO_V3_BLOB_ONLY:companion:artifact-diff-tail",
+        );
+        const mergeRuns = await companionStorage.listMergeRunsForSession("companion-session-1");
+        assert.equal(mergeRuns[0]?.diffSnapshot[0]?.diffRows[0]?.rightText, "SENTINEL_V2_TO_V3_BLOB_ONLY:companion-diff-tail");
       } finally {
         sessionStorage.close();
         auditStorage.close();
+        companionStorage.close();
       }
     } finally {
       fixture.cleanup();
@@ -366,6 +462,7 @@ describe("V2 to V3 database migration write mode", () => {
 
       const sessionStorage = new SessionStorageV3(v3DbPath, blobRootPath);
       const auditStorage = new AuditLogStorageV3(v3DbPath, blobRootPath);
+      const companionStorage = new CompanionStorageV3(v3DbPath, blobRootPath);
       try {
         const session = await sessionStorage.getSession("session-1");
         assert.ok(session);
@@ -382,9 +479,23 @@ describe("V2 to V3 database migration write mode", () => {
         assert.equal(detail.assistantText.includes(`${sentinel}:assistant-tail`), true);
         assert.equal(detail.rawItemsJson.includes(`${sentinel}:raw-item-tail`), true);
         assert.equal(detail.operations[0]?.details?.includes(`${sentinel}:operation-details-tail`), true);
+
+        const companion = await companionStorage.getSession("companion-session-1");
+        assert.ok(companion);
+        assert.equal(companion.characterRoleMarkdown.endsWith(`${sentinel}:companion-role-tail`), true);
+        assert.equal(companion.messages[0]?.text.includes(`${sentinel}:companion-message-tail`), true);
+        assert.equal(
+          (await companionStorage.getMessageArtifact("companion-session-1", 0))?.changedFiles[0]?.diffRows[0]?.rightText,
+          `${sentinel}:companion:artifact-diff-tail`,
+        );
+        assert.equal(
+          (await companionStorage.listMergeRunsForSession("companion-session-1"))[0]?.diffSnapshot[0]?.diffRows[0]?.rightText,
+          `${sentinel}:companion-diff-tail`,
+        );
       } finally {
         sessionStorage.close();
         auditStorage.close();
+        companionStorage.close();
       }
     } finally {
       fixture.cleanup();
