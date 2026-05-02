@@ -472,8 +472,20 @@ function parseMetadata(metadata: string): BlobRef | null {
 
 async function writeAtomic(destinationPath: string, bytes: Buffer): Promise<void> {
   const tempPath = `${destinationPath}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(tempPath, bytes, { flag: "wx" });
-  await rename(tempPath, destinationPath);
+  try {
+    await writeFile(tempPath, bytes, { flag: "wx" });
+    try {
+      await rename(tempPath, destinationPath);
+    } catch (error) {
+      const writeError = error as NodeJS.ErrnoException;
+      if ((writeError.code === "EEXIST" || writeError.code === "EPERM") && await fileExists(destinationPath)) {
+        return;
+      }
+      throw error;
+    }
+  } finally {
+    await rm(tempPath, { force: true });
+  }
 }
 
 async function writeAtomicIfMissing(destinationPath: string, bytes: Buffer): Promise<void> {
@@ -487,8 +499,20 @@ async function writeAtomicIfMissing(destinationPath: string, bytes: Buffer): Pro
 
 function writeAtomicSync(destinationPath: string, bytes: Buffer): void {
   const tempPath = `${destinationPath}.${process.pid}.${randomUUID()}.tmp`;
-  writeFileSync(tempPath, bytes, { flag: "wx" });
-  renameSync(tempPath, destinationPath);
+  try {
+    writeFileSync(tempPath, bytes, { flag: "wx" });
+    try {
+      renameSync(tempPath, destinationPath);
+    } catch (error) {
+      const writeError = error as NodeJS.ErrnoException;
+      if ((writeError.code === "EEXIST" || writeError.code === "EPERM") && fileExistsSync(destinationPath)) {
+        return;
+      }
+      throw error;
+    }
+  } finally {
+    rmSync(tempPath, { force: true });
+  }
 }
 
 function writeAtomicIfMissingSync(destinationPath: string, bytes: Buffer): void {
@@ -497,6 +521,24 @@ function writeAtomicIfMissingSync(destinationPath: string, bytes: Buffer): void 
     return;
   } catch {
     writeAtomicSync(destinationPath, bytes);
+  }
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await fsStat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function fileExistsSync(path: string): boolean {
+  try {
+    statSync(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 

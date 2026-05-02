@@ -109,6 +109,21 @@ describe("TextBlobStore", () => {
       assert.equal(await store.stat(blobId), null);
     });
   });
+
+  it("同一 blob を並行 putText しても競合で失敗しない", async () => {
+    await withStore(async (store) => {
+      const text = "same text content";
+      const refs = await Promise.all(
+        Array.from({ length: 20 }, () => store.putText({ contentType: "text/plain", text })),
+      );
+
+      assert.deepEqual(
+        refs.map((ref) => ref.blobId),
+        new Array(20).fill(refs[0]?.blobId),
+      );
+      assert.equal(await store.getText(refs[0]?.blobId ?? ""), text);
+    });
+  });
 });
 
 describe("SyncTextBlobStore", () => {
