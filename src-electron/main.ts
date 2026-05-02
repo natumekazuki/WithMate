@@ -8,6 +8,8 @@ import { app, BrowserWindow, crashReporter, dialog, ipcMain, screen, shell } fro
 import type { RendererLogInput } from "../src/app-log-types.js";
 import {
   type AuditLogDetail,
+  type AuditLogDetailFragment,
+  type AuditLogDetailSection,
   type AuditLogEntry,
   type AuditLogSummary,
   type AuditLogSummaryPageRequest,
@@ -31,6 +33,8 @@ import {
 } from "../src/character-state.js";
 import {
   type DiffPreviewPayload,
+  type MessageArtifact,
+  projectSessionSummary,
   type Session,
   type SessionSummary,
 } from "../src/session-state.js";
@@ -66,7 +70,9 @@ import { CharacterMemoryStorage } from "./character-memory-storage.js";
 import { CompanionReviewService } from "./companion-review-service.js";
 import { CompanionRuntimeService } from "./companion-runtime-service.js";
 import { CompanionSessionService } from "./companion-session-service.js";
+import { CompanionAuditLogStorageV3 } from "./companion-audit-log-storage-v3.js";
 import { CompanionStorage } from "./companion-storage.js";
+import { CompanionStorageV3 } from "./companion-storage-v3.js";
 import { SessionRuntimeService } from "./session-runtime-service.js";
 import { SessionPersistenceService } from "./session-persistence-service.js";
 import { SessionWindowBridge } from "./session-window-bridge.js";
@@ -121,6 +127,7 @@ import { clearWorkspaceFileIndex, searchWorkspacePathCandidates } from "./worksp
 import { AppLogService } from "./app-log-service.js";
 import { resolveAppDatabasePath } from "./app-database-path.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
+import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
 import {
   openAppDatabase,
   SQLITE_MAINTENANCE_BUSY_TIMEOUT_MS,
@@ -166,7 +173,9 @@ let characterMemoryStorage: CharacterMemoryStorageAccess | null = null;
 let modelCatalogStorage: ModelCatalogStorage | null = null;
 let auditLogStorage: AuditLogStorageRead | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
-let companionStorage: CompanionStorage | null = null;
+type CompanionStorageHandle = CompanionStorage | CompanionStorageV3;
+
+let companionStorage: CompanionStorageHandle | null = null;
 let allowQuitWithInFlightRuns = false;
 let dbPath = "";
 const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
@@ -184,6 +193,8 @@ let memoryManagementService: MemoryManagementService | null = null;
 let characterRuntimeService: CharacterRuntimeService | null = null;
 let characterUpdateWorkspaceService: CharacterUpdateWorkspaceService | null = null;
 let companionSessionService: CompanionSessionService | null = null;
+let companionAuditLogStorage: CompanionAuditLogStorageV3 | null = null;
+let companionAuditLogService: AuditLogService | null = null;
 let companionRuntimeService: CompanionRuntimeService | null = null;
 let companionReviewService: CompanionReviewService | null = null;
 let mainBroadcastFacade: MainBroadcastFacade<BrowserWindow> | null = null;
@@ -599,15 +610,18 @@ function listSessions(): Session[] {
 }
 
 function listSessionSummaries(): SessionSummary[] {
-  return requireMainQueryService().listSessionSummaries();
+  return sessions.map(projectSessionSummary);
 }
 
-function listCompanionSessionSummaries() {
-  return requireCompanionStorage().listSessionSummaries();
+async function listCompanionSessionSummaries() {
+  return await requireCompanionStorage().listSessionSummaries();
 }
 
-function listFullStoredSessions(): Session[] {
-  return hydrateSessionsFromSummaries(requireSessionStorage());
+async function listFullStoredSessions(): Promise<Session[]> {
+  const storage = requireSessionStorage();
+  const summaries = await storage.listSessionSummaries();
+  const hydrated = await Promise.all(summaries.map((summary) => storage.getSession(summary.id)));
+  return hydrated.filter((session): session is Session => session !== null);
 }
 
 function isRunningSession(session: Session): boolean {
@@ -724,6 +738,16 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               db.close();
             }
           },
+          ensureV3Schema: (nextDbPath) => {
+            const db = openAppDatabase(nextDbPath);
+            try {
+              for (const statement of CREATE_V3_SCHEMA_SQL) {
+                db.exec(statement);
+              }
+            } finally {
+              db.close();
+            }
+          },
           onBeforeClose: () => {
             sessionApprovalService?.reset();
             sessionElicitationService?.reset();
@@ -830,6 +854,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 listSessionAuditLogSummaryPage: (sessionId, request) =>
                   listSessionAuditLogSummaryPage(sessionId, request),
                 getSessionAuditLogDetail: (sessionId, auditLogId) => getSessionAuditLogDetail(sessionId, auditLogId),
+                getSessionAuditLogDetailSection: (sessionId, auditLogId, section) =>
+                  getSessionAuditLogDetailSection(sessionId, auditLogId, section),
                 listSessionSkills: async (sessionId) => listSessionSkills(sessionId),
                 listSessionCustomAgents: async (sessionId) => listSessionCustomAgents(sessionId),
                 listWorkspaceSkills: async (providerId, workspacePath) =>
@@ -839,6 +865,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 listOpenSessionWindowIds: () => listOpenSessionWindowIds(),
                 listOpenCompanionReviewWindowIds: () => listOpenCompanionReviewWindowIds(),
                 getSession: (sessionId) => getSession(sessionId),
+                getSessionMessageArtifact,
                 getDiffPreview: (token) => requireAuxWindowService().getDiffPreview(token),
                 previewComposerInput,
                 searchWorkspaceFiles,
@@ -872,6 +899,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   return session;
                 },
                 getCompanionSession: (sessionId) => requireCompanionStorage().getSession(sessionId),
+                getCompanionMessageArtifact,
                 getCompanionReviewSnapshot: (sessionId) => requireCompanionReviewService().getReviewSnapshot(sessionId),
                 mergeCompanionSelectedFiles: async (request) => {
                   const result = await requireCompanionReviewService().mergeSelectedFiles(request.sessionId, request.selectedPaths);
@@ -899,8 +927,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   return result;
                 },
                 updateCompanionSession: async (session) => {
-                  const saved = requireCompanionStorage().updateSession(session);
-                  broadcastCompanionSessions();
+                  const saved = await requireCompanionStorage().updateSession(session);
+                  void broadcastCompanionSessions();
                   return saved;
                 },
                 previewCompanionComposerInput: (sessionId, userMessage) =>
@@ -982,12 +1010,16 @@ function requireMainQueryService(): MainQueryService {
     mainQueryService = new MainQueryService({
       getSessionSummaries: () => requireSessionStorage().listSessionSummaries(),
       getSession: (sessionId) => requireSessionStorage().getSession(sessionId),
+      getSessionMessageArtifact: (sessionId, messageIndex) =>
+        requireSessionStorage().getSessionMessageArtifact(sessionId, messageIndex),
       getCharacters: () => characters,
       getAuditLogs: (sessionId) => requireAuditLogStorage().listSessionAuditLogs(sessionId),
       getAuditLogSummaries: (sessionId) => requireAuditLogStorage().listSessionAuditLogSummaries(sessionId),
       getAuditLogSummaryPage: (sessionId, request) =>
         requireAuditLogStorage().listSessionAuditLogSummaryPage(sessionId, request),
       getAuditLogDetail: (sessionId, auditLogId) => requireAuditLogStorage().getSessionAuditLogDetail(sessionId, auditLogId),
+      getAuditLogDetailSection: (sessionId, auditLogId, section) =>
+        requireAuditLogStorage().getSessionAuditLogDetailSection(sessionId, auditLogId, section),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       discoverSessionSkills,
       discoverSessionCustomAgents,
@@ -1155,15 +1187,40 @@ function requireAppSettingsStorage(): AppSettingsStorage {
   return appSettingsStorage;
 }
 
-function requireCompanionStorage(): CompanionStorage {
+function requireCompanionStorage(): CompanionStorageHandle {
   if (!companionStorage) {
     if (!dbPath) {
       throw new Error("DB path が初期化されていないよ。");
     }
-    companionStorage = new CompanionStorage(dbPath);
+    companionStorage = isValidV3Database(dbPath)
+      ? new CompanionStorageV3(dbPath, path.join(path.dirname(dbPath), "blobs", "v3"))
+      : new CompanionStorage(dbPath);
   }
 
   return companionStorage;
+}
+
+function canUseCompanionAuditLogStorage(): boolean {
+  return dbPath.length > 0 && isValidV3Database(dbPath);
+}
+
+function requireCompanionAuditLogStorage(): CompanionAuditLogStorageV3 {
+  if (!companionAuditLogStorage) {
+    if (!canUseCompanionAuditLogStorage()) {
+      throw new Error("companion audit log storage は V3 DB でだけ利用できます。");
+    }
+    companionAuditLogStorage = new CompanionAuditLogStorageV3(dbPath, path.join(path.dirname(dbPath), "blobs", "v3"));
+  }
+
+  return companionAuditLogStorage;
+}
+
+function requireCompanionAuditLogService(): AuditLogService {
+  if (!companionAuditLogService) {
+    companionAuditLogService = new AuditLogService(requireCompanionAuditLogStorage());
+  }
+
+  return companionAuditLogService;
 }
 
 function requireSessionMemorySupportService(): SessionMemorySupportService {
@@ -1341,6 +1398,12 @@ function requireCompanionRuntimeService(): CompanionRuntimeService {
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
+      ...(canUseCompanionAuditLogStorage()
+        ? {
+            createAuditLog: (entry) => requireCompanionAuditLogService().createAuditLog(entry),
+            updateAuditLog: (id, entry) => requireCompanionAuditLogService().updateAuditLog(id, entry),
+          }
+        : {}),
       setLiveSessionRun,
       getLiveSessionRun,
       waitForApprovalDecision: (sessionId, request, signal) => waitForLiveApprovalDecision(sessionId, request, signal),
@@ -1381,6 +1444,8 @@ function requireCompanionReviewService(): CompanionReviewService {
       updateCompanionSessionBaseSnapshot: (session) => requireCompanionStorage().updateSessionBaseSnapshot(session),
       createCompanionMergeRun: (run) => requireCompanionStorage().createMergeRun(run),
       listCompanionMergeRunsForSession: (sessionId) => requireCompanionStorage().listMergeRunsForSession(sessionId),
+      listCompanionMergeRunSummariesForSession: (sessionId) =>
+        requireCompanionStorage().listMergeRunSummariesForSession(sessionId),
     });
   }
 
@@ -1690,6 +1755,7 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
 function closePersistentStores(): void {
   stopWalMaintenance();
   companionStorage?.close();
+  companionAuditLogStorage?.close();
   requirePersistentStoreLifecycleService().close({
     modelCatalogStorage,
     sessionStorage,
@@ -1708,6 +1774,8 @@ function closePersistentStores(): void {
   auditLogService = null;
   appSettingsStorage = null;
   companionStorage = null;
+  companionAuditLogStorage = null;
+  companionAuditLogService = null;
   companionSessionService = null;
   companionRuntimeService = null;
   companionReviewService = null;
@@ -1736,6 +1804,8 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   }
 
   stopWalMaintenance();
+  companionStorage?.close();
+  companionAuditLogStorage?.close();
   const bundle = await requirePersistentStoreLifecycleService().recreate(dbPath, bundledModelCatalogPath, {
     modelCatalogStorage,
     sessionStorage,
@@ -1747,6 +1817,12 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   });
 
   auditLogService = null;
+  companionStorage = null;
+  companionAuditLogService = null;
+  companionAuditLogStorage = null;
+  companionSessionService = null;
+  companionRuntimeService = null;
+  companionReviewService = null;
   settingsCatalogService = null;
   sessionObservabilityService = null;
   sessionApprovalService = null;
@@ -1802,23 +1878,31 @@ function listCharacters(): CharacterProfile[] {
   return requireMainCharacterFacade().listCharacters();
 }
 
-function listSessionAuditLogs(sessionId: string): AuditLogEntry[] {
+async function listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]> {
   return requireMainQueryService().listSessionAuditLogs(sessionId);
 }
 
-function listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[] {
+async function listSessionAuditLogSummaries(sessionId: string): Promise<AuditLogSummary[]> {
   return requireMainQueryService().listSessionAuditLogSummaries(sessionId);
 }
 
-function listSessionAuditLogSummaryPage(
+async function listSessionAuditLogSummaryPage(
   sessionId: string,
   request?: AuditLogSummaryPageRequest | null,
-): AuditLogSummaryPageResult {
+): Promise<AuditLogSummaryPageResult> {
   return requireMainQueryService().listSessionAuditLogSummaryPage(sessionId, request);
 }
 
-function getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null {
+async function getSessionAuditLogDetail(sessionId: string, auditLogId: number): Promise<AuditLogDetail | null> {
   return requireMainQueryService().getSessionAuditLogDetail(sessionId, auditLogId);
+}
+
+async function getSessionAuditLogDetailSection(
+  sessionId: string,
+  auditLogId: number,
+  section: AuditLogDetailSection,
+): Promise<AuditLogDetailFragment | null> {
+  return requireMainQueryService().getSessionAuditLogDetailSection(sessionId, auditLogId, section);
 }
 
 async function listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]> {
@@ -1830,7 +1914,21 @@ async function listSessionCustomAgents(sessionId: string): Promise<DiscoveredCus
 }
 
 function getSession(sessionId: string): Session | null {
-  return requireMainQueryService().getSession(sessionId);
+  return sessions.find((session) => session.id === sessionId) ?? null;
+}
+
+async function getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null> {
+  const liveArtifact = getSession(sessionId)?.messages[messageIndex]?.artifact;
+  if (liveArtifact && liveArtifact.detailAvailable !== true) {
+    return liveArtifact;
+  }
+
+  return requireMainQueryService().getSessionMessageArtifact(sessionId, messageIndex);
+}
+
+async function getCompanionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null> {
+  const artifact = await requireCompanionStorage().getMessageArtifact(sessionId, messageIndex);
+  return artifact ?? null;
 }
 
 async function openSessionTerminal(sessionId: string): Promise<void> {
@@ -1849,8 +1947,8 @@ function broadcastSessions(sessionIds?: Iterable<string>): void {
   requireMainBroadcastFacade().broadcastSessions(sessionIds);
 }
 
-function broadcastCompanionSessions(): void {
-  requireWindowBroadcastService().broadcastCompanionSessionSummaries(listCompanionSessionSummaries());
+async function broadcastCompanionSessions(): Promise<void> {
+  requireWindowBroadcastService().broadcastCompanionSessionSummaries(await listCompanionSessionSummaries());
 }
 
 function broadcastCharacters(): void {
@@ -2015,23 +2113,23 @@ async function exportModelCatalogToFile(revision: number | null | undefined, tar
   return requireWindowDialogService().exportModelCatalogToFile(revision, targetWindow);
 }
 
-function upsertSession(nextSession: Session): Session {
+async function upsertSession(nextSession: Session): Promise<Session> {
   return requireMainSessionPersistenceFacade().upsertSession(nextSession);
 }
 
-function replaceAllSessions(
+async function replaceAllSessions(
   nextSessions: Session[],
   options?: {
     broadcast?: boolean;
     invalidateSessionIds?: Iterable<string>;
   },
-): Session[] {
+): Promise<Session[]> {
   return requireMainSessionPersistenceFacade().replaceAllSessions(nextSessions, options);
 }
 
-function recoverInterruptedSessions(): void {
-  requireMainSessionPersistenceFacade().recoverInterruptedSessions();
-  requireCompanionRuntimeService().recoverInterruptedSessions();
+async function recoverInterruptedSessions(): Promise<void> {
+  await requireMainSessionPersistenceFacade().recoverInterruptedSessions();
+  await requireCompanionRuntimeService().recoverInterruptedSessions();
 }
 
 async function createCharacter(input: CreateCharacterInput): Promise<CharacterProfile> {
@@ -2062,7 +2160,7 @@ async function searchWorkspaceFiles(sessionId: string, query: string): Promise<W
 }
 
 async function searchCompanionWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]> {
-  const session = requireCompanionStorage().getSession(sessionId);
+  const session = await requireCompanionStorage().getSession(sessionId);
   if (!session) {
     throw new Error("対象 CompanionSession が見つからないよ。");
   }

@@ -23,12 +23,13 @@ import type {
   ResetAppDatabaseResult,
   ResetAppDatabaseTarget,
 } from "../src/withmate-window-types.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 export type SettingsCatalogServiceDeps = {
   hasInFlightSessionRuns(): boolean;
   isSessionRunInFlight(sessionId: string): boolean;
   isRunningSession(session: Session): boolean;
-  listSessions(): Session[];
+  listSessions(): Awaitable<Session[]>;
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): AppSettings;
   getModelCatalog(revision?: number | null): ModelCatalogSnapshot | null;
@@ -44,11 +45,11 @@ export type SettingsCatalogServiceDeps = {
       broadcast?: boolean;
       invalidateSessionIds?: Iterable<string>;
     },
-  ): Session[];
+  ): Awaitable<Session[]>;
   clearProviderQuotaTelemetry(providerId: string): void;
   clearSessionContextTelemetry(sessionId: string): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
-  clearAuditLogs(): void;
+  clearAuditLogs(): Awaitable<void>;
   resetAppSettings(): AppSettings;
   resetModelCatalogToBundled(): ModelCatalogSnapshot;
   clearProjectMemories(): void;
@@ -117,13 +118,13 @@ export class SettingsCatalogService {
     return this.deps.exportModelCatalogDocument(revision);
   }
 
-  updateAppSettings(nextSettingsInput: AppSettings): AppSettings {
+  async updateAppSettings(nextSettingsInput: AppSettings): Promise<AppSettings> {
     const previousSettings = this.deps.getAppSettings();
     const nextSettings = normalizeAppSettings(nextSettingsInput);
     const providersWithApiKeyChange = getProvidersWithApiKeyChange(previousSettings, nextSettings);
 
     if (providersWithApiKeyChange.length > 0) {
-      const blockedSessions = this.deps.listSessions().filter(
+      const blockedSessions = (await this.deps.listSessions()).filter(
         (session) =>
           providersWithApiKeyChange.includes(session.provider) &&
           (this.deps.isSessionRunInFlight(session.id) || this.deps.isRunningSession(session)),
@@ -133,7 +134,7 @@ export class SettingsCatalogService {
       }
     }
 
-    const previousSessions = this.deps.listSessions();
+    const previousSessions = await this.deps.listSessions();
     const providersWithApiKeyChangeSet = new Set(providersWithApiKeyChange);
     const nextSessions = previousSessions.map((session) => {
       if (!providersWithApiKeyChangeSet.has(session.provider) || !session.threadId) {
@@ -166,7 +167,7 @@ export class SettingsCatalogService {
         }
       }
       if (hasSessionThreadReset) {
-        this.deps.replaceAllSessions(nextSessions, {
+        await this.deps.replaceAllSessions(nextSessions, {
           broadcast: false,
           invalidateSessionIds: providerInvalidatedSessionIds,
         });
@@ -186,7 +187,7 @@ export class SettingsCatalogService {
 
       try {
         this.deps.updateAppSettings(previousSettings);
-        this.deps.replaceAllSessions(previousSessions, { broadcast: false });
+        await this.deps.replaceAllSessions(previousSessions, { broadcast: false });
       } catch (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],
@@ -198,7 +199,7 @@ export class SettingsCatalogService {
     }
   }
 
-  importModelCatalogDocument(document: ModelCatalogDocument): ModelCatalogSnapshot {
+  async importModelCatalogDocument(document: ModelCatalogDocument): Promise<ModelCatalogSnapshot> {
     if (this.deps.hasInFlightSessionRuns()) {
       throw new Error("session 実行中は model catalog を読み込めないよ。");
     }
@@ -209,7 +210,7 @@ export class SettingsCatalogService {
       throw new Error("rollback 用の model catalog を取得できなかったよ。");
     }
 
-    const previousSessions = this.deps.listSessions();
+    const previousSessions = await this.deps.listSessions();
     const normalizedDocument = parseModelCatalogDocument(document);
     for (const session of previousSessions) {
       migrateSessionToCatalog(session, { revision: previousSnapshot.revision, providers: normalizedDocument.providers });
@@ -223,7 +224,7 @@ export class SettingsCatalogService {
       const invalidatedSessionIds = migratedSessions
         .filter((session) => !session.threadId)
         .map((session) => session.id);
-      this.deps.replaceAllSessions(migratedSessions, {
+      await this.deps.replaceAllSessions(migratedSessions, {
         broadcast: false,
         invalidateSessionIds: invalidatedSessionIds,
       });
@@ -237,7 +238,7 @@ export class SettingsCatalogService {
 
       try {
         this.deps.importModelCatalogDocument(previousCatalogDocument, "rollback");
-        this.deps.replaceAllSessions(previousSessions, { broadcast: false });
+        await this.deps.replaceAllSessions(previousSessions, { broadcast: false });
       } catch (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],
@@ -250,11 +251,12 @@ export class SettingsCatalogService {
   }
 
   async resetAppDatabase(request?: ResetAppDatabaseRequest | null): Promise<ResetAppDatabaseResult> {
-    if (this.deps.hasInFlightSessionRuns() || this.deps.listSessions().some((session) => this.deps.isRunningSession(session))) {
+    const sessions = await this.deps.listSessions();
+    if (this.deps.hasInFlightSessionRuns() || sessions.some((session) => this.deps.isRunningSession(session))) {
       throw new Error("実行中の session があるため、DB を初期化できないよ。完了またはキャンセル後に試してね。");
     }
 
-    const previousSessionIds = this.deps.listSessions().map((session) => session.id);
+    const previousSessionIds = sessions.map((session) => session.id);
     const resetTargets = normalizeResetAppDatabaseTargets(request?.targets);
     if (resetTargets.length === 0) {
       throw new Error("初期化対象が選ばれていないよ。");
@@ -276,10 +278,10 @@ export class SettingsCatalogService {
       const appliedTargets = new Set<ResetAppDatabaseTarget>(resetTargets);
 
       if (appliedTargets.has("auditLogs")) {
-        this.deps.clearAuditLogs();
+        await this.deps.clearAuditLogs();
       }
       if (appliedTargets.has("sessions")) {
-        this.deps.replaceAllSessions([], { broadcast: false });
+        await this.deps.replaceAllSessions([], { broadcast: false });
         this.deps.resetMemoryOrchestration();
         this.deps.resetSessionRuntime();
         this.deps.clearAllSessionBackgroundActivities();
@@ -309,7 +311,7 @@ export class SettingsCatalogService {
 
     return {
       resetTargets,
-      sessions: this.deps.listSessions(),
+      sessions: await this.deps.listSessions(),
       appSettings,
       modelCatalog,
     };

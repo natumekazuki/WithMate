@@ -1,4 +1,5 @@
 import {
+  type AuditLogEntry,
   currentTimestampLabel as defaultCurrentTimestampLabel,
   type ComposerPreview,
   type LiveApprovalDecision,
@@ -16,13 +17,21 @@ import type { CompanionSession, CompanionSessionSummary } from "../src/companion
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { Session } from "../src/session-state.js";
-import { ProviderTurnError, type ProviderCodingAdapter, type RunSessionTurnResult } from "./provider-runtime.js";
+import {
+  ProviderTurnError,
+  type ProviderCodingAdapter,
+  type RunSessionTurnInput,
+  type RunSessionTurnResult,
+} from "./provider-runtime.js";
 import { isCanceledRunError } from "./session-runtime-service.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
+
+type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
 export type CompanionRuntimeServiceDeps = {
-  getCompanionSession(sessionId: string): CompanionSession | null;
-  listCompanionSessionSummaries?: () => CompanionSessionSummary[];
-  updateCompanionSession(session: CompanionSession): CompanionSession;
+  getCompanionSession(sessionId: string): Awaitable<CompanionSession | null>;
+  listCompanionSessionSummaries?: () => Awaitable<CompanionSessionSummary[]>;
+  updateCompanionSession(session: CompanionSession): Awaitable<CompanionSession>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
   getAppSettings: () => AppSettings;
   resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): {
@@ -30,6 +39,8 @@ export type CompanionRuntimeServiceDeps = {
     provider: ModelCatalogProvider;
   };
   getProviderCodingAdapter(providerId: string | null | undefined): ProviderCodingAdapter;
+  createAuditLog?: (input: CreateAuditLogInput) => Awaitable<AuditLogEntry>;
+  updateAuditLog?: (id: number, entry: CreateAuditLogInput) => Awaitable<void | AuditLogEntry>;
   setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void;
   getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
   waitForApprovalDecision(
@@ -148,6 +159,57 @@ function pickPreferredThreadId(...candidates: Array<string | null | undefined>):
   return "";
 }
 
+function buildRunningCompanionAuditEntry(params: {
+  sessionId: string;
+  createdAt: string;
+  session: Pick<CompanionSession, "provider" | "model" | "reasoningEffort" | "approvalMode" | "threadId">;
+  logicalPrompt: CreateAuditLogInput["logicalPrompt"];
+}): CreateAuditLogInput {
+  return {
+    sessionId: params.sessionId,
+    createdAt: params.createdAt,
+    phase: "running",
+    provider: params.session.provider,
+    model: params.session.model,
+    reasoningEffort: params.session.reasoningEffort,
+    approvalMode: params.session.approvalMode,
+    threadId: params.session.threadId,
+    logicalPrompt: params.logicalPrompt,
+    transportPayload: null,
+    assistantText: "",
+    operations: [],
+    rawItemsJson: "[]",
+    usage: null,
+    errorMessage: "",
+  };
+}
+
+function buildTerminalCompanionAuditEntry(params: {
+  baseEntry: CreateAuditLogInput;
+  phase: CreateAuditLogInput["phase"];
+  session: Pick<CompanionSession, "provider" | "model" | "reasoningEffort" | "approvalMode" | "threadId">;
+  result?: RunSessionTurnResult | null;
+  errorMessage: string;
+}): CreateAuditLogInput {
+  const result = params.result;
+  return {
+    ...params.baseEntry,
+    phase: params.phase,
+    provider: params.session.provider,
+    model: params.session.model,
+    reasoningEffort: params.session.reasoningEffort,
+    approvalMode: params.session.approvalMode,
+    threadId: pickPreferredThreadId(result?.threadId, params.session.threadId, params.baseEntry.threadId),
+    logicalPrompt: result?.logicalPrompt ?? params.baseEntry.logicalPrompt,
+    transportPayload: result?.transportPayload ?? params.baseEntry.transportPayload,
+    assistantText: result?.assistantText ?? params.baseEntry.assistantText,
+    operations: result?.operations ?? params.baseEntry.operations,
+    rawItemsJson: result?.rawItemsJson ?? params.baseEntry.rawItemsJson,
+    usage: result?.usage ?? params.baseEntry.usage,
+    errorMessage: params.errorMessage,
+  };
+}
+
 export class CompanionRuntimeService {
   private readonly inFlightRuns = new Set<string>();
   private readonly runControllers = new Map<string, AbortController>();
@@ -155,7 +217,7 @@ export class CompanionRuntimeService {
   constructor(private readonly deps: CompanionRuntimeServiceDeps) {}
 
   async previewComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview> {
-    const session = this.deps.getCompanionSession(sessionId);
+    const session = await this.deps.getCompanionSession(sessionId);
     if (!session) {
       throw new Error("対象 CompanionSession が見つからないよ。");
     }
@@ -167,8 +229,8 @@ export class CompanionRuntimeService {
     return this.inFlightRuns.size > 0;
   }
 
-  recoverInterruptedSessions(): void {
-    const summaries = this.deps.listCompanionSessionSummaries?.() ?? [];
+  async recoverInterruptedSessions(): Promise<void> {
+    const summaries = await this.deps.listCompanionSessionSummaries?.() ?? [];
     const runningSummaries = summaries.filter((session) =>
       session.status === "active" && session.runState === "running"
     );
@@ -180,7 +242,7 @@ export class CompanionRuntimeService {
     const interruptedMessage = "前回の Companion 実行はアプリ終了で中断された可能性があるよ。必要ならもう一度送ってね。";
     let recovered = false;
     for (const summary of runningSummaries) {
-      const session = this.deps.getCompanionSession(summary.id);
+      const session = await this.deps.getCompanionSession(summary.id);
       if (!session || session.status !== "active" || session.runState !== "running") {
         continue;
       }
@@ -198,7 +260,7 @@ export class CompanionRuntimeService {
               },
             ];
 
-      this.deps.updateCompanionSession({
+      await this.deps.updateCompanionSession({
         ...session,
         runState: "error",
         updatedAt: currentTimestampLabel(),
@@ -224,7 +286,7 @@ export class CompanionRuntimeService {
   }
 
   async runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession> {
-    const session = this.deps.getCompanionSession(sessionId);
+    const session = await this.deps.getCompanionSession(sessionId);
     if (!session) {
       throw new Error("対象 CompanionSession が見つからないよ。");
     }
@@ -259,7 +321,7 @@ export class CompanionRuntimeService {
     const providerAdapter = this.deps.getProviderCodingAdapter(provider.id);
     const character = buildCompanionCharacter(requestedSession);
     const sessionMemory = buildSessionMemory(requestedSession);
-    const runningSession = this.deps.updateCompanionSession({
+    const runningSession = await this.deps.updateCompanionSession({
       ...requestedSession,
       runState: "running",
       updatedAt: currentTimestampLabel(),
@@ -271,9 +333,9 @@ export class CompanionRuntimeService {
     this.runControllers.set(sessionId, controller);
     this.deps.setLiveSessionRun(sessionId, buildEmptyLiveSessionRunState(sessionId, runningSession.threadId));
 
-    const runProviderTurn = (turnSession: CompanionSession) => {
+    const buildProviderInput = (turnSession: CompanionSession): RunSessionTurnInput => {
       const turnProviderSession = buildProviderSession(turnSession);
-      return providerAdapter.runSessionTurn({
+      return {
         session: turnProviderSession,
         executionWorkspacePath: turnSession.worktreePath,
         sessionMemory,
@@ -310,7 +372,30 @@ export class CompanionRuntimeService {
         onSessionContextTelemetry: (telemetry) => {
           this.deps.setSessionContextTelemetry(telemetry);
         },
-      }, (state) => {
+      };
+    };
+
+    const promptForAudit = providerAdapter.composePrompt(buildProviderInput(runningSession));
+    let runningAuditEntry = buildRunningCompanionAuditEntry({
+      sessionId,
+      createdAt: new Date().toISOString(),
+      session: runningSession,
+      logicalPrompt: promptForAudit.logicalPrompt,
+    });
+    const runningAuditLog = this.deps.createAuditLog
+      ? await this.deps.createAuditLog(runningAuditEntry)
+      : null;
+
+    const updateRunningAudit = async (entry: CreateAuditLogInput): Promise<void> => {
+      if (!runningAuditLog || !this.deps.updateAuditLog) {
+        return;
+      }
+      await this.deps.updateAuditLog(runningAuditLog.id, entry);
+      runningAuditEntry = entry;
+    };
+
+    const runProviderTurn = (turnSession: CompanionSession) => {
+      return providerAdapter.runSessionTurn(buildProviderInput(turnSession), (state) => {
         const currentLiveState = this.deps.getLiveSessionRun(sessionId);
         this.deps.setLiveSessionRun(sessionId, {
           ...state,
@@ -323,11 +408,28 @@ export class CompanionRuntimeService {
     let activeSession = runningSession;
     try {
       const result = await runProviderTurn(activeSession);
-      const completed = this.storeCompletedSession(activeSession, result, currentTimestampLabel());
+      await updateRunningAudit(buildTerminalCompanionAuditEntry({
+        baseEntry: runningAuditEntry,
+        phase: "completed",
+        session: activeSession,
+        result,
+        errorMessage: "",
+      }));
+      const completed = await this.storeCompletedSession(activeSession, result, currentTimestampLabel());
       activeSession = completed;
       return completed;
     } catch (error) {
-      const failed = this.storeFailedSession(activeSession, error, currentTimestampLabel());
+      const providerTurnError = error instanceof ProviderTurnError ? error : null;
+      const canceled = providerTurnError ? providerTurnError.canceled : isCanceledRunError(error);
+      const message = error instanceof Error ? error.message : String(error);
+      await updateRunningAudit(buildTerminalCompanionAuditEntry({
+        baseEntry: runningAuditEntry,
+        phase: canceled ? "canceled" : "failed",
+        session: activeSession,
+        result: providerTurnError?.partialResult ?? null,
+        errorMessage: canceled ? "ユーザーがキャンセルしたよ。" : message,
+      }));
+      const failed = await this.storeFailedSession(activeSession, error, currentTimestampLabel());
       activeSession = failed;
       return failed;
     } finally {
@@ -344,12 +446,12 @@ export class CompanionRuntimeService {
     }
   }
 
-  private storeCompletedSession(
+  private async storeCompletedSession(
     session: CompanionSession,
     result: RunSessionTurnResult,
     updatedAt: string,
-  ): CompanionSession {
-    return this.deps.updateCompanionSession({
+  ): Promise<CompanionSession> {
+    return await this.deps.updateCompanionSession({
       ...session,
       runState: "idle",
       threadId: pickPreferredThreadId(result.threadId, session.threadId),
@@ -365,7 +467,7 @@ export class CompanionRuntimeService {
     });
   }
 
-  private storeFailedSession(session: CompanionSession, error: unknown, updatedAt: string): CompanionSession {
+  private async storeFailedSession(session: CompanionSession, error: unknown, updatedAt: string): Promise<CompanionSession> {
     const providerTurnError = error instanceof ProviderTurnError ? error : null;
     const canceled = providerTurnError ? providerTurnError.canceled : isCanceledRunError(error);
     const partialResult = providerTurnError?.partialResult;
@@ -377,7 +479,7 @@ export class CompanionRuntimeService {
     const assistantText = partialResult?.assistantText.trim()
       ? `${partialResult.assistantText}\n\n${fallbackNotice}`
       : fallbackNotice;
-    return this.deps.updateCompanionSession({
+    return await this.deps.updateCompanionSession({
       ...session,
       runState: canceled ? "idle" : "error",
       threadId: pickPreferredThreadId(partialResult?.threadId, session.threadId),

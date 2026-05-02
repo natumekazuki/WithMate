@@ -18,7 +18,7 @@ export type WindowDialogServiceDeps = {
   ): Promise<SaveDialogReturnValue>;
   readTextFile(filePath: string): Promise<string>;
   writeTextFile(filePath: string, content: string): Promise<void>;
-  importModelCatalogDocument(document: ModelCatalogDocument): ModelCatalogSnapshot;
+  importModelCatalogDocument(document: ModelCatalogDocument): Promise<ModelCatalogSnapshot>;
   exportModelCatalogDocument(revision?: number | null): ModelCatalogDocument | null;
 };
 
@@ -77,7 +77,7 @@ export class WindowDialogService {
     }
     const raw = await this.deps.readTextFile(result.filePaths[0]);
     const document = JSON.parse(raw) as ModelCatalogDocument;
-    return this.deps.importModelCatalogDocument(document);
+    return await this.deps.importModelCatalogDocument(document);
   }
 
   async exportModelCatalogToFile(

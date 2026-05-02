@@ -677,8 +677,10 @@ V2 では Home 一覧と audit log modal 初期表示で巨大 JSON を読まな
 
 - `project_memory_entry_links`
 - FTS / embedding 系 index
+- `withmate-v3.db` と compressed blob store による raw/detail payload 外出し
 
 詳細は `docs/design/project-memory-storage.md` を参照する。
+V3 の DB 外 blob store 方針は `docs/design/database-v3-blob-storage.md` を参照する。
 
 ## Reading Order
 

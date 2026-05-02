@@ -1,5 +1,6 @@
 import { cloneCharacterProfiles, type CharacterProfile, type CreateCharacterInput } from "../src/character-state.js";
 import type { Session } from "../src/session-state.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 export type CharacterRuntimeServiceDeps = {
   getCharacters(): CharacterProfile[];
@@ -9,9 +10,9 @@ export type CharacterRuntimeServiceDeps = {
   createStoredCharacter(input: CreateCharacterInput): Promise<CharacterProfile>;
   updateStoredCharacter(character: CharacterProfile): Promise<CharacterProfile>;
   deleteStoredCharacter(characterId: string): Promise<void>;
-  listSessions(): Session[];
-  upsertStoredSession(session: Session): Session;
-  reloadStoredSessions(): Session[];
+  listSessions(): Awaitable<Session[]>;
+  upsertStoredSession(session: Session): Awaitable<Session>;
+  reloadStoredSessions(): Awaitable<Session[]>;
   setSessions(nextSessions: Session[]): void;
   closeCharacterEditor(characterId: string): void;
   broadcastCharacters(): void;
@@ -51,7 +52,7 @@ export class CharacterRuntimeService {
   async updateCharacter(character: CharacterProfile): Promise<CharacterProfile> {
     const updated = await this.deps.updateStoredCharacter(character);
     await this.refreshCharactersFromStorage();
-    this.syncSessionsForCharacter(updated);
+    await this.syncSessionsForCharacter(updated);
     this.deps.broadcastCharacters();
     return cloneCharacterProfiles([updated])[0];
   }
@@ -71,14 +72,14 @@ export class CharacterRuntimeService {
     return this.getCharacter(session.characterId);
   }
 
-  private syncSessionsForCharacter(character: CharacterProfile): void {
-    const touched = this.deps.listSessions().filter((session) => session.characterId === character.id);
+  private async syncSessionsForCharacter(character: CharacterProfile): Promise<void> {
+    const touched = (await this.deps.listSessions()).filter((session) => session.characterId === character.id);
     if (touched.length === 0) {
       return;
     }
 
     for (const session of touched) {
-      this.deps.upsertStoredSession({
+      await this.deps.upsertStoredSession({
         ...session,
         character: character.name,
         characterIconPath: character.iconPath,
@@ -86,7 +87,7 @@ export class CharacterRuntimeService {
       });
     }
 
-    this.deps.setSessions(this.deps.reloadStoredSessions());
+    this.deps.setSessions(await this.deps.reloadStoredSessions());
     this.deps.broadcastSessions(touched.map((session) => session.id));
   }
 }

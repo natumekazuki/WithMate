@@ -47,15 +47,15 @@ function buildInterruptedSession(session: Session): Session {
 export class MainSessionPersistenceFacade {
   constructor(private readonly deps: MainSessionPersistenceFacadeDeps) {}
 
-  upsertSession(session: Session): Session {
+  async upsertSession(session: Session): Promise<Session> {
     return this.deps.getSessionPersistenceService().upsertSession(session);
   }
 
-  replaceAllSessions(nextSessions: Session[], options?: ReplaceAllSessionsOptions): Session[] {
+  async replaceAllSessions(nextSessions: Session[], options?: ReplaceAllSessionsOptions): Promise<Session[]> {
     return this.deps.getSessionPersistenceService().replaceAllSessions(nextSessions, options);
   }
 
-  recoverInterruptedSessions(): void {
+  async recoverInterruptedSessions(): Promise<void> {
     const runningSessions = this.deps.getSessions().filter(isRunningSession);
     if (runningSessions.length === 0) {
       return;
@@ -63,14 +63,14 @@ export class MainSessionPersistenceFacade {
 
     const storage = this.deps.getSessionStorage();
     for (const session of runningSessions) {
-      const hydratedSession = storage.getSession(session.id);
+      const hydratedSession = await storage.getSession(session.id);
       if (!hydratedSession) {
         continue;
       }
 
-      this.upsertSession(buildInterruptedSession(hydratedSession));
+      await this.upsertSession(buildInterruptedSession(hydratedSession));
     }
 
-    this.deps.setSessions(sessionSummariesToSessions(storage.listSessionSummaries()));
+    this.deps.setSessions(sessionSummariesToSessions(await storage.listSessionSummaries()));
   }
 }

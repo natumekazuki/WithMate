@@ -39,11 +39,12 @@ import {
 import { isCanceledRunError } from "./session-runtime-service.js";
 import { appendQuotaTelemetryToTransportPayload } from "./audit-log-quota.js";
 import { appendTransportPayloadFields, calculateAuditDurationMs } from "./audit-log-metadata.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
 export type MemoryOrchestrationServiceDeps = {
-  getSession(sessionId: string): Session | null;
+  getSession(sessionId: string): Awaitable<Session | null>;
   isSessionRunInFlight(sessionId: string): boolean;
   isRunningSession(session: Session): boolean;
   resolveSessionCharacter(session: Session): Promise<CharacterProfile | null>;
@@ -55,9 +56,9 @@ export type MemoryOrchestrationServiceDeps = {
   resolveCharacterMemoryEntriesForReflection(session: Session): CharacterMemoryEntry[];
   markCharacterMemoryEntriesUsed(entryIds: string[]): void;
   saveCharacterMemoryDelta(session: Session, entries: CharacterMemoryDelta["entries"]): number;
-  appendMonologueToSession(session: Session, monologue: CharacterReflectionMonologue): Session;
-  createAuditLog(input: CreateAuditLogInput): AuditLogEntry;
-  updateAuditLog(id: number, entry: CreateAuditLogInput): void;
+  appendMonologueToSession(session: Session, monologue: CharacterReflectionMonologue): Awaitable<Session>;
+  createAuditLog(input: CreateAuditLogInput): Awaitable<AuditLogEntry>;
+  updateAuditLog(id: number, entry: CreateAuditLogInput): Awaitable<void | AuditLogEntry>;
   setSessionBackgroundActivity(
     sessionId: string,
     kind: SessionBackgroundActivityKind,
@@ -187,7 +188,7 @@ export class MemoryOrchestrationService {
       return;
     }
 
-    const latestSession = this.deps.getSession(session.id) ?? session;
+    const latestSession = (await this.deps.getSession(session.id)) ?? session;
     if (this.deps.isSessionRunInFlight(latestSession.id) || this.deps.isRunningSession(latestSession)) {
       return;
     }
@@ -229,7 +230,7 @@ export class MemoryOrchestrationService {
       reflectionSettings,
       options.triggerReason,
     );
-    const runningAuditLog = this.deps.createAuditLog({
+    const runningAuditLog = await this.deps.createAuditLog({
       sessionId: latestSession.id,
       createdAt: new Date().toISOString(),
       phase: "background-running",
@@ -306,7 +307,7 @@ export class MemoryOrchestrationService {
       const monologue = reflectionResult.output.monologue;
       const completedAt = new Date().toISOString();
       const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
-      this.deps.updateAuditLog(runningAuditLog.id, {
+      await this.deps.updateAuditLog(runningAuditLog.id, {
         sessionId: latestSession.id,
         createdAt: runningAuditLog.createdAt,
         phase: "background-completed",
@@ -340,7 +341,7 @@ export class MemoryOrchestrationService {
         ? 0
         : this.deps.saveCharacterMemoryDelta(latestSession, memoryEntries);
       if (monologue) {
-        this.deps.appendMonologueToSession(this.deps.getSession(latestSession.id) ?? latestSession, monologue);
+        await this.deps.appendMonologueToSession((await this.deps.getSession(latestSession.id)) ?? latestSession, monologue);
       }
 
       this.characterReflectionCheckpoints.set(latestSession.id, {
@@ -405,7 +406,7 @@ export class MemoryOrchestrationService {
           updatedAt: new Date().toISOString(),
         });
       }
-      this.deps.updateAuditLog(runningAuditLog.id, {
+      await this.deps.updateAuditLog(runningAuditLog.id, {
         sessionId: latestSession.id,
         createdAt: runningAuditLog.createdAt,
         phase: isCanceledRunError(error) ? "background-canceled" : "background-failed",
@@ -473,7 +474,7 @@ export class MemoryOrchestrationService {
       return;
     }
 
-    const latestSession = this.deps.getSession(session.id) ?? session;
+    const latestSession = (await this.deps.getSession(session.id)) ?? session;
     const currentMemory = this.deps.ensureSessionMemory(latestSession);
     const prompt = buildSessionMemoryExtractionPrompt(latestSession, currentMemory);
     const logicalPrompt = buildSessionMemoryExtractionLogicalPrompt(prompt);
@@ -484,7 +485,7 @@ export class MemoryOrchestrationService {
       triggerReason,
     );
     const providerAdapter = this.deps.getProviderBackgroundAdapter(latestSession.provider);
-    const runningAuditLog = this.deps.createAuditLog({
+    const runningAuditLog = await this.deps.createAuditLog({
       sessionId: latestSession.id,
       createdAt: new Date().toISOString(),
       phase: "background-running",
@@ -541,9 +542,9 @@ export class MemoryOrchestrationService {
         ].filter((value): value is string => !!value)
         : [];
       const promotedCount = delta
-        ? this.deps.promoteSessionMemoryDeltaToProjectMemory(this.deps.getSession(session.id) ?? latestSession, delta)
+          ? this.deps.promoteSessionMemoryDeltaToProjectMemory((await this.deps.getSession(session.id)) ?? latestSession, delta)
         : 0;
-      this.deps.updateAuditLog(runningAuditLog.id, {
+      await this.deps.updateAuditLog(runningAuditLog.id, {
         sessionId: latestSession.id,
         createdAt: runningAuditLog.createdAt,
         phase: "background-completed",
@@ -590,7 +591,7 @@ export class MemoryOrchestrationService {
         return;
       }
 
-      const sessionForSave = this.deps.getSession(session.id) ?? latestSession;
+      const sessionForSave = (await this.deps.getSession(session.id)) ?? latestSession;
       const currentForSave = this.deps.ensureSessionMemory(sessionForSave);
       this.deps.upsertSessionMemory(
         mergeSessionMemory(
@@ -605,7 +606,7 @@ export class MemoryOrchestrationService {
     } catch (error) {
       const completedAt = new Date().toISOString();
       const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
-      this.deps.updateAuditLog(runningAuditLog.id, {
+      await this.deps.updateAuditLog(runningAuditLog.id, {
         sessionId: latestSession.id,
         createdAt: runningAuditLog.createdAt,
         phase: "background-failed",

@@ -2,6 +2,8 @@ import type { DatabaseSync } from "node:sqlite";
 
 import {
   type AuditLogDetail,
+  type AuditLogDetailFragment,
+  type AuditLogDetailSection,
   type AuditLogEntry,
   type AuditLogicalPrompt,
   type AuditLogOperation,
@@ -615,6 +617,37 @@ function entryToAuditLogDetail(entry: AuditLogEntry): AuditLogDetail {
   };
 }
 
+function detailToAuditLogDetailFragment(detail: AuditLogDetail, section: AuditLogDetailSection): AuditLogDetailFragment {
+  const fragment: AuditLogDetailFragment = {
+    id: detail.id,
+    sessionId: detail.sessionId,
+  };
+
+  switch (section) {
+    case "logical":
+      fragment.logicalPrompt = detail.logicalPrompt;
+      break;
+    case "transport":
+      fragment.transportPayload = detail.transportPayload;
+      break;
+    case "response":
+      fragment.assistantText = detail.assistantText;
+      break;
+    case "operations":
+      fragment.operations = detail.operations;
+      break;
+    case "raw":
+      fragment.rawItemsJson = detail.rawItemsJson;
+      break;
+    default: {
+      const exhaustive: never = section;
+      throw new Error(`unsupported audit log detail section: ${exhaustive}`);
+    }
+  }
+
+  return fragment;
+}
+
 export class AuditLogStorageV2 {
   private readonly dbPath: string;
 
@@ -684,6 +717,15 @@ export class AuditLogStorageV2 {
   getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null {
     const entry = this.getSessionAuditLogEntry(sessionId, auditLogId);
     return entry ? entryToAuditLogDetail(entry) : null;
+  }
+
+  getSessionAuditLogDetailSection(
+    sessionId: string,
+    auditLogId: number,
+    section: AuditLogDetailSection,
+  ): AuditLogDetailFragment | null {
+    const detail = this.getSessionAuditLogDetail(sessionId, auditLogId);
+    return detail ? detailToAuditLogDetailFragment(detail, section) : null;
   }
 
   createAuditLog(input: CreateAuditLogInput): AuditLogEntry {

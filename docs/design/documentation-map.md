@@ -55,6 +55,15 @@ current 実装の正本として維持する文書。
 | `distribution-packaging.md` | installer / app bundle の packaging 方針 |
 | `refactor-roadmap.md` | current リファクタの進行管理 |
 
+### B2. Future Design / Migration Candidate
+
+current 実装の正本ではないが、次の保存構造や migration の採否判断に使う文書。
+
+| Doc | Role |
+| --- | --- |
+| `database-v2-migration.md` | V1 -> V2 migration と V2 schema 方針 |
+| `database-v3-blob-storage.md` | V3 DB と compressed blob store の方針 |
+
 ### C. Archived Design Notes
 
 latest 実装とは一致しないが、設計経緯や調査記録として archive に退避した文書。  

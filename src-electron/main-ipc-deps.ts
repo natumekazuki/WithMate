@@ -2,6 +2,8 @@ import type { BrowserWindow, IpcMainInvokeEvent } from "electron";
 
 import type {
   AuditLogDetail,
+  AuditLogDetailFragment,
+  AuditLogDetailSection,
   AuditLogEntry,
   AuditLogSummary,
   AuditLogSummaryPageRequest,
@@ -35,9 +37,10 @@ import type {
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
-import type { CreateSessionInput, DiffPreviewPayload, Session } from "../src/session-state.js";
+import type { CreateSessionInput, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
 import type { OpenPathOptions, ResetAppDatabaseRequest } from "../src/withmate-window-types.js";
 import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import type { MainIpcRegistrationDeps } from "./main-ipc-registration.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
@@ -68,7 +71,7 @@ export type MainIpcWindowDepsArgs = {
 
 export type MainIpcCatalogDepsArgs = {
   getModelCatalog(revision: number | null): ModelCatalogSnapshot | null;
-  importModelCatalogDocument(document: ModelCatalogDocument): ModelCatalogSnapshot;
+  importModelCatalogDocument(document: ModelCatalogDocument): Awaitable<ModelCatalogSnapshot>;
   importModelCatalogFromFile(targetWindow?: MaybeWindow): Promise<ModelCatalogSnapshot | null>;
   exportModelCatalogDocument(revision: number | null): ModelCatalogDocument | null;
   exportModelCatalogToFile(revision: number | null, targetWindow?: MaybeWindow): Promise<string | null>;
@@ -76,7 +79,7 @@ export type MainIpcCatalogDepsArgs = {
 
 export type MainIpcSettingsDepsArgs = {
   getAppSettings(): AppSettings;
-  updateAppSettings(settings: AppSettings): AppSettings;
+  updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
   getMemoryManagementSnapshot(): MemoryManagementSnapshot;
   getMemoryManagementPage(request: MemoryManagementPageRequest): MemoryManagementPageResult;
@@ -86,22 +89,28 @@ export type MainIpcSettingsDepsArgs = {
 };
 
 export type MainIpcSessionQueryDepsArgs = {
-  listSessionSummaries(): SessionSummary[];
-  listCompanionSessionSummaries(): CompanionSessionSummary[];
-  listSessionAuditLogs(sessionId: string): AuditLogEntry[];
-  listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[];
+  listSessionSummaries(): Awaitable<SessionSummary[]>;
+  listCompanionSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
+  listSessionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
+  listSessionAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
   listSessionAuditLogSummaryPage(
     sessionId: string,
     request?: AuditLogSummaryPageRequest | null,
-  ): AuditLogSummaryPageResult;
-  getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null;
+  ): Awaitable<AuditLogSummaryPageResult>;
+  getSessionAuditLogDetail(sessionId: string, auditLogId: number): Awaitable<AuditLogDetail | null>;
+  getSessionAuditLogDetailSection(
+    sessionId: string,
+    auditLogId: number,
+    section: AuditLogDetailSection,
+  ): Awaitable<AuditLogDetailFragment | null>;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
   listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   listOpenSessionWindowIds(): string[];
   listOpenCompanionReviewWindowIds(): string[];
-  getSession(sessionId: string): Session | null;
+  getSession(sessionId: string): Awaitable<Session | null>;
+  getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
   searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
@@ -109,7 +118,8 @@ export type MainIpcSessionQueryDepsArgs = {
 
 export type MainIpcCompanionDepsArgs = {
   createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
-  getCompanionSession(sessionId: string): CompanionSession | null;
+  getCompanionSession(sessionId: string): Awaitable<CompanionSession | null>;
+  getCompanionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
   mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionMergeSelectedFilesResult>;
   syncCompanionTarget(sessionId: string): Promise<CompanionSyncTargetResult>;
@@ -134,9 +144,9 @@ export type MainIpcSessionRuntimeDepsArgs = {
   ): SessionBackgroundActivityState | null;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void;
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): void;
-  createSession(input: CreateSessionInput): Session;
-  updateSession(session: Session): Session;
-  deleteSession(sessionId: string): void;
+  createSession(input: CreateSessionInput): Awaitable<Session>;
+  updateSession(session: Session): Awaitable<Session>;
+  deleteSession(sessionId: string): Awaitable<void>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   cancelSessionRun(sessionId: string): void;
 };
@@ -224,6 +234,7 @@ export function createMainIpcRegistrationDeps(
     listSessionAuditLogSummaries: args.sessionQuery.listSessionAuditLogSummaries,
     listSessionAuditLogSummaryPage: args.sessionQuery.listSessionAuditLogSummaryPage,
     getSessionAuditLogDetail: args.sessionQuery.getSessionAuditLogDetail,
+    getSessionAuditLogDetailSection: args.sessionQuery.getSessionAuditLogDetailSection,
     listSessionSkills: args.sessionQuery.listSessionSkills,
     listSessionCustomAgents: args.sessionQuery.listSessionCustomAgents,
     listWorkspaceSkills: args.sessionQuery.listWorkspaceSkills,
@@ -231,11 +242,13 @@ export function createMainIpcRegistrationDeps(
     listOpenSessionWindowIds: args.sessionQuery.listOpenSessionWindowIds,
     listOpenCompanionReviewWindowIds: args.sessionQuery.listOpenCompanionReviewWindowIds,
     getSession: args.sessionQuery.getSession,
+    getSessionMessageArtifact: args.sessionQuery.getSessionMessageArtifact,
     getDiffPreview: args.sessionQuery.getDiffPreview,
     previewComposerInput: args.sessionQuery.previewComposerInput,
     searchWorkspaceFiles: args.sessionQuery.searchWorkspaceFiles,
     createCompanionSession: args.companion.createCompanionSession,
     getCompanionSession: args.companion.getCompanionSession,
+    getCompanionMessageArtifact: args.companion.getCompanionMessageArtifact,
     getCompanionReviewSnapshot: args.companion.getCompanionReviewSnapshot,
     mergeCompanionSelectedFiles: args.companion.mergeCompanionSelectedFiles,
     syncCompanionTarget: args.companion.syncCompanionTarget,

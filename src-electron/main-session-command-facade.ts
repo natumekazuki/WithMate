@@ -15,16 +15,16 @@ type MainSessionCommandFacadeDeps = {
 export class MainSessionCommandFacade {
   constructor(private readonly deps: MainSessionCommandFacadeDeps) {}
 
-  createSession(input: CreateSessionInput): Session {
+  async createSession(input: CreateSessionInput): Promise<Session> {
     return this.deps.getSessionPersistenceService().createSession(input);
   }
 
-  updateSession(session: Session): Session {
+  async updateSession(session: Session): Promise<Session> {
     return this.deps.getSessionPersistenceService().updateSession(session);
   }
 
-  deleteSession(sessionId: string): void {
-    this.deps.getSessionPersistenceService().deleteSession(sessionId);
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.deps.getSessionPersistenceService().deleteSession(sessionId);
   }
 
   cancelSessionRun(sessionId: string): void {

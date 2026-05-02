@@ -32,6 +32,10 @@ export type CompanionMergeRun = {
   createdAt: string;
 };
 
+export type CompanionMergeRunSummary = Omit<CompanionMergeRun, "diffSnapshot"> & {
+  diffSnapshotAvailable: boolean;
+};
+
 export type CreateCompanionSessionInput = {
   taskTitle: string;
   workspacePath: string;
@@ -126,7 +130,7 @@ export type CompanionSessionSummary = Pick<
   | "characterThemeColors"
   | "updatedAt"
 > & {
-  latestMergeRun: CompanionMergeRun | null;
+  latestMergeRun: CompanionMergeRunSummary | null;
 };
 
 export function cloneCompanionSession(session: CompanionSession): CompanionSession {
@@ -180,13 +184,48 @@ export function cloneCompanionMergeRuns(runs: readonly CompanionMergeRun[]): Com
   return runs.map(cloneCompanionMergeRun);
 }
 
+export function companionMergeRunToSummary(run: CompanionMergeRun): CompanionMergeRunSummary {
+  return {
+    id: run.id,
+    sessionId: run.sessionId,
+    groupId: run.groupId,
+    operation: run.operation,
+    selectedPaths: [...run.selectedPaths],
+    changedFiles: run.changedFiles.map((file) => ({ ...file })),
+    siblingWarnings: run.siblingWarnings.map((warning) => ({
+      ...warning,
+      paths: [...warning.paths],
+    })),
+    diffSnapshotAvailable: run.diffSnapshot.length > 0,
+    createdAt: run.createdAt,
+  };
+}
+
+export function cloneCompanionMergeRunSummary(run: CompanionMergeRunSummary): CompanionMergeRunSummary {
+  return {
+    ...run,
+    selectedPaths: [...run.selectedPaths],
+    changedFiles: run.changedFiles.map((file) => ({ ...file })),
+    siblingWarnings: run.siblingWarnings.map((warning) => ({
+      ...warning,
+      paths: [...warning.paths],
+    })),
+  };
+}
+
+export function cloneCompanionMergeRunSummaries(
+  runs: readonly CompanionMergeRunSummary[],
+): CompanionMergeRunSummary[] {
+  return runs.map(cloneCompanionMergeRunSummary);
+}
+
 export function cloneCompanionSessions(sessions: readonly CompanionSession[]): CompanionSession[] {
   return sessions.map(cloneCompanionSession);
 }
 
 export function createCompanionSessionSummary(
   session: CompanionSession,
-  latestMergeRun: CompanionMergeRun | null = null,
+  latestMergeRun: CompanionMergeRun | CompanionMergeRunSummary | null = null,
 ): CompanionSessionSummary {
   return {
     id: session.id,
@@ -217,7 +256,11 @@ export function createCompanionSessionSummary(
     characterIconPath: session.characterIconPath,
     characterThemeColors: { ...session.characterThemeColors },
     updatedAt: session.updatedAt,
-    latestMergeRun,
+    latestMergeRun: latestMergeRun
+      ? "diffSnapshot" in latestMergeRun
+        ? companionMergeRunToSummary(latestMergeRun)
+        : cloneCompanionMergeRunSummary(latestMergeRun)
+      : null,
   };
 }
 
@@ -231,7 +274,7 @@ export function cloneCompanionSessionSummary(summary: CompanionSessionSummary): 
       paths: [...warning.paths],
     })),
     allowedAdditionalDirectories: [...(summary.allowedAdditionalDirectories ?? [])],
-    latestMergeRun: summary.latestMergeRun ? cloneCompanionMergeRun(summary.latestMergeRun) : null,
+    latestMergeRun: summary.latestMergeRun ? cloneCompanionMergeRunSummary(summary.latestMergeRun) : null,
     characterThemeColors: { ...summary.characterThemeColors },
   };
 }

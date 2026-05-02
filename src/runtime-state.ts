@@ -105,6 +105,12 @@ export type AuditLogDetail = Pick<
   "id" | "sessionId" | "logicalPrompt" | "transportPayload" | "assistantText" | "operations" | "rawItemsJson" | "usage" | "errorMessage"
 >;
 
+export type AuditLogDetailSection = "logical" | "transport" | "response" | "operations" | "raw";
+
+export type AuditLogDetailFragment = Pick<AuditLogDetail, "id" | "sessionId"> & Partial<
+  Pick<AuditLogDetail, "logicalPrompt" | "transportPayload" | "assistantText" | "operations" | "rawItemsJson">
+>;
+
 export type LiveRunStepStatus = "in_progress" | "completed" | "failed" | "canceled" | "pending" | (string & {});
 
 export type LiveRunStep = {

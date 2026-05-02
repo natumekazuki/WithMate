@@ -5,6 +5,7 @@ import {
   cloneSessions,
   normalizeSession,
   normalizeSessionSummary,
+  type MessageArtifact,
   type Session,
   type SessionSummary,
 } from "../src/session-state.js";
@@ -408,6 +409,11 @@ export class SessionStorage {
 
     const session = rowToSession(row, "throw");
     return session ? cloneSessions([session])[0] : null;
+  }
+
+  getSessionMessageArtifact(sessionId: string, messageIndex: number): MessageArtifact | null {
+    const session = this.getSession(sessionId);
+    return session?.messages[messageIndex]?.artifact ?? null;
   }
 
   upsertSession(session: Session): Session {

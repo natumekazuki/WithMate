@@ -1,19 +1,26 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
+import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { Session } from "../../src/session-state.js";
 import {
   APP_DATABASE_V2_FILENAME,
   CREATE_V2_SCHEMA_SQL,
 } from "../../src-electron/database-schema-v2.js";
+import {
+  APP_DATABASE_V3_FILENAME,
+  CREATE_V3_SCHEMA_SQL,
+} from "../../src-electron/database-schema-v3.js";
 import { AuditLogStorageV2 } from "../../src-electron/audit-log-storage-v2.js";
+import { AuditLogStorageV3 } from "../../src-electron/audit-log-storage-v3.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";
 import { SessionStorageV2 } from "../../src-electron/session-storage-v2.js";
+import { SessionStorageV3 } from "../../src-electron/session-storage-v3.js";
 import {
   PersistentStoreLifecycleService,
   type PersistentStoreBundleLike,
@@ -28,6 +35,73 @@ function createClosableStore(name: string, closeCalls: string[]) {
   };
 }
 
+function insertV3SessionHeader(dbPath: string, sessionId: string): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.prepare(`
+      INSERT INTO sessions (
+        id,
+        task_title,
+        task_summary,
+        status,
+        updated_at,
+        provider,
+        catalog_revision,
+        workspace_label,
+        workspace_path,
+        branch,
+        session_kind,
+        character_id,
+        character_name,
+        character_icon_path,
+        character_theme_main,
+        character_theme_sub,
+        run_state,
+        approval_mode,
+        codex_sandbox_mode,
+        model,
+        reasoning_effort,
+        custom_agent_name,
+        allowed_additional_directories_json,
+        thread_id,
+        message_count,
+        audit_log_count,
+        last_active_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      sessionId,
+      "Runtime task",
+      "runtime summary",
+      "idle",
+      "2026-04-27T00:00:00.000Z",
+      "codex",
+      1,
+      "Workspace A",
+      "workspace-a",
+      "main",
+      "default",
+      "char-a",
+      "A",
+      "",
+      "#6f8cff",
+      "#6fb8c7",
+      "idle",
+      "untrusted",
+      "workspace-write",
+      "gpt-5.4-mini",
+      "medium",
+      "",
+      "[]",
+      "thread-v3",
+      0,
+      0,
+      1,
+    );
+  } finally {
+    db.close();
+  }
+}
+
 async function withTempV2Database<T>(fn: (dbPath: string) => T | Promise<T>): Promise<T> {
   const dir = await mkdtemp(path.join(tmpdir(), "withmate-v2-lifecycle-"));
   const dbPath = path.join(dir, APP_DATABASE_V2_FILENAME);
@@ -35,6 +109,26 @@ async function withTempV2Database<T>(fn: (dbPath: string) => T | Promise<T>): Pr
   try {
     db.exec("PRAGMA foreign_keys = ON;");
     for (const statement of CREATE_V2_SCHEMA_SQL) {
+      db.exec(statement);
+    }
+  } finally {
+    db.close();
+  }
+
+  try {
+    return await fn(dbPath);
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+}
+
+async function withTempV3Database<T>(fn: (dbPath: string) => T | Promise<T>): Promise<T> {
+  const dir = await mkdtemp(path.join(tmpdir(), "withmate-v3-lifecycle-"));
+  const dbPath = path.join(dir, APP_DATABASE_V3_FILENAME);
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec("PRAGMA foreign_keys = ON;");
+    for (const statement of CREATE_V3_SCHEMA_SQL) {
       db.exec(statement);
     }
   } finally {
@@ -538,6 +632,96 @@ test("PersistentStoreLifecycleService は V2 DB に legacy memory table を作�
         db.close();
       }
 
+      assert.equal(createSessionMemoryStorageCallCount, 0);
+      assert.equal(createProjectMemoryStorageCallCount, 0);
+      assert.equal(createCharacterMemoryStorageCallCount, 0);
+    } finally {
+      service.close(bundle, dbPath);
+    }
+  });
+});
+
+test("PersistentStoreLifecycleService は V3 DB では V1 storages を生成せず V3 storages を返して schema hook を呼ぶ", async () => {
+  const activeModelCatalog = { revision: 6, providers: [] } as ModelCatalogSnapshot;
+  let ensureV3SchemaCallCount = 0;
+  let createSessionStorageCallCount = 0;
+  let createAuditLogStorageCallCount = 0;
+  let createSessionMemoryStorageCallCount = 0;
+  let createProjectMemoryStorageCallCount = 0;
+  let createCharacterMemoryStorageCallCount = 0;
+
+  await withTempV3Database(async (dbPath) => {
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => activeModelCatalog,
+          close() {},
+        }) as never,
+      createSessionStorage: () => {
+        createSessionStorageCallCount += 1;
+        throw new Error("V3 DB では V1 session storage を生成しない");
+      },
+      createSessionMemoryStorage: () => {
+        createSessionMemoryStorageCallCount += 1;
+        return { close() {} } as never;
+      },
+      createProjectMemoryStorage: () => {
+        createProjectMemoryStorageCallCount += 1;
+        return { close() {} } as never;
+      },
+      createCharacterMemoryStorage: () => {
+        createCharacterMemoryStorageCallCount += 1;
+        return { close() {} } as never;
+      },
+      createAuditLogStorage: () => {
+        createAuditLogStorageCallCount += 1;
+        throw new Error("V3 DB では V1 audit log storage を生成しない");
+      },
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      ensureV3Schema(pathToDb) {
+        assert.equal(pathToDb, dbPath);
+        ensureV3SchemaCallCount += 1;
+      },
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile() {},
+    });
+
+    const bundle = await service.initialize(dbPath, "model-catalog.json");
+    try {
+      assert.equal(bundle.activeModelCatalog, activeModelCatalog);
+      assert.equal(bundle.sessionStorage instanceof SessionStorageV3, true);
+      assert.equal(bundle.auditLogStorage instanceof AuditLogStorageV3, true);
+      assert.deepEqual(bundle.sessions, []);
+      insertV3SessionHeader(dbPath, "session-v3-lifecycle");
+      const createdAuditLog = await bundle.auditLogStorage.createAuditLog({
+        sessionId: "session-v3-lifecycle",
+        createdAt: "2026-04-27T10:00:00.000Z",
+        phase: "completed",
+        provider: "codex",
+        model: "gpt-5.4-mini",
+        reasoningEffort: "medium",
+        approvalMode: DEFAULT_APPROVAL_MODE,
+        threadId: "thread-v3",
+        logicalPrompt: {
+          systemText: "system",
+          inputText: "input",
+          composedText: "system\ninput",
+        },
+        transportPayload: null,
+        assistantText: "assistant",
+        operations: [],
+        rawItemsJson: "[]",
+        usage: null,
+        errorMessage: "",
+      });
+      const expectedBlobRoot = path.join(path.dirname(dbPath), "blobs", "v3");
+      const blobEntries = await readdir(expectedBlobRoot, { recursive: true });
+      assert.equal(createdAuditLog.sessionId, "session-v3-lifecycle");
+      assert.equal(blobEntries.some((entry) => entry.toString().endsWith(".br")), true);
+      assert.equal(ensureV3SchemaCallCount, 1);
+      assert.equal(createSessionStorageCallCount, 0);
+      assert.equal(createAuditLogStorageCallCount, 0);
       assert.equal(createSessionMemoryStorageCallCount, 0);
       assert.equal(createProjectMemoryStorageCallCount, 0);
       assert.equal(createCharacterMemoryStorageCallCount, 0);

@@ -16,11 +16,17 @@ import type {
   CompanionTargetWorkspaceStashResult,
   CompanionSiblingCheckWarning,
 } from "../src/companion-review-state.js";
-import type { CompanionSession, CompanionSessionSummary } from "../src/companion-state.js";
-import type { CompanionMergeRun } from "../src/companion-state.js";
+import {
+  companionMergeRunToSummary,
+  type CompanionMergeRun,
+  type CompanionMergeRunSummary,
+  type CompanionSession,
+  type CompanionSessionSummary,
+} from "../src/companion-state.js";
 import { currentTimestampLabel } from "../src/time-state.js";
 import { cleanupCompanionWorkspaceArtifacts } from "./companion-git.js";
 import { buildDiffRows, summarizeChangedFile } from "./provider-artifact.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -39,12 +45,13 @@ type ChangedPath = {
 };
 
 export type CompanionReviewServiceDeps = {
-  getCompanionSession(sessionId: string): CompanionSession | null;
-  listCompanionSessionSummaries(): CompanionSessionSummary[];
-  updateCompanionSession(session: CompanionSession): CompanionSession;
-  updateCompanionSessionBaseSnapshot?(session: CompanionSession): CompanionSession;
-  createCompanionMergeRun?(run: CompanionMergeRun): CompanionMergeRun;
-  listCompanionMergeRunsForSession?(sessionId: string): CompanionMergeRun[];
+  getCompanionSession(sessionId: string): Awaitable<CompanionSession | null>;
+  listCompanionSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
+  updateCompanionSession(session: CompanionSession): Awaitable<CompanionSession>;
+  updateCompanionSessionBaseSnapshot?(session: CompanionSession): Awaitable<CompanionSession>;
+  createCompanionMergeRun?(run: CompanionMergeRun): Awaitable<CompanionMergeRun>;
+  listCompanionMergeRunsForSession?(sessionId: string): Awaitable<CompanionMergeRun[]>;
+  listCompanionMergeRunSummariesForSession?(sessionId: string): Awaitable<CompanionMergeRunSummary[]>;
 };
 
 async function runGit(cwd: string, args: string[], options: GitCommandOptions = {}): Promise<GitCommandResult> {
@@ -185,12 +192,12 @@ export class CompanionReviewService {
   constructor(private readonly deps: CompanionReviewServiceDeps) {}
 
   async getReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null> {
-    const session = this.deps.getCompanionSession(sessionId);
+    const session = await this.deps.getCompanionSession(sessionId);
     if (!session) {
       return null;
     }
     if (session.status !== "active") {
-      return this.buildTerminalReviewSnapshot(session);
+      return await this.buildTerminalReviewSnapshot(session);
     }
 
     const changedPaths = await this.resolveChangedPaths(session);
@@ -203,7 +210,7 @@ export class CompanionReviewService {
     return {
       session,
       changedFiles,
-      mergeRuns: this.deps.listCompanionMergeRunsForSession?.(session.id) ?? [],
+      mergeRuns: await this.listMergeRunSummaries(session.id),
       mergeReadiness,
       targetStash: await this.resolveTargetWorkspaceStash(session),
       generatedAt: currentTimestampLabel(),
@@ -211,8 +218,8 @@ export class CompanionReviewService {
     };
   }
 
-  private buildTerminalReviewSnapshot(session: CompanionSession): CompanionReviewSnapshot {
-    const mergeRuns = this.deps.listCompanionMergeRunsForSession?.(session.id) ?? [];
+  private async buildTerminalReviewSnapshot(session: CompanionSession): Promise<CompanionReviewSnapshot> {
+    const mergeRuns = await this.deps.listCompanionMergeRunsForSession?.(session.id) ?? [];
     const latestRun = mergeRuns[0] ?? null;
     const changedFiles = latestRun && latestRun.diffSnapshot.length > 0
       ? latestRun.diffSnapshot
@@ -226,7 +233,7 @@ export class CompanionReviewService {
     return {
       session,
       changedFiles,
-      mergeRuns,
+      mergeRuns: mergeRuns.map(companionMergeRunToSummary),
       mergeReadiness: {
         status: "warning",
         blockers: [],
@@ -248,8 +255,17 @@ export class CompanionReviewService {
     };
   }
 
+  private async listMergeRunSummaries(sessionId: string): Promise<CompanionMergeRunSummary[]> {
+    if (this.deps.listCompanionMergeRunSummariesForSession) {
+      return this.deps.listCompanionMergeRunSummariesForSession(sessionId);
+    }
+
+    const runs = await this.deps.listCompanionMergeRunsForSession?.(sessionId) ?? [];
+    return runs.map(companionMergeRunToSummary);
+  }
+
   async mergeSelectedFiles(sessionId: string, selectedPaths: string[]): Promise<CompanionMergeSelectedFilesResult> {
-    const session = this.requireActiveSession(sessionId);
+    const session = await this.requireActiveSession(sessionId);
     if (session.runState === "running") {
       throw new Error("Companion が実行中のため merge できません。");
     }
@@ -292,8 +308,8 @@ export class CompanionReviewService {
       runState: "idle",
       updatedAt: completedAt,
     };
-    const storedSession = this.deps.updateCompanionSession(mergedSession);
-    this.deps.createCompanionMergeRun?.({
+    const storedSession = await this.deps.updateCompanionSession(mergedSession);
+    await this.deps.createCompanionMergeRun?.({
       id: randomUUID(),
       sessionId: storedSession.id,
       groupId: storedSession.groupId,
@@ -318,7 +334,7 @@ export class CompanionReviewService {
   }
 
   async discardSession(sessionId: string): Promise<CompanionSession> {
-    const session = this.requireActiveSession(sessionId);
+    const session = await this.requireActiveSession(sessionId);
     if (session.runState === "running") {
       throw new Error("Companion が実行中のため discard できません。");
     }
@@ -336,8 +352,8 @@ export class CompanionReviewService {
       runState: "idle",
       updatedAt: completedAt,
     };
-    const storedSession = this.deps.updateCompanionSession(discardedSession);
-    this.deps.createCompanionMergeRun?.({
+    const storedSession = await this.deps.updateCompanionSession(discardedSession);
+    await this.deps.createCompanionMergeRun?.({
       id: randomUUID(),
       sessionId: storedSession.id,
       groupId: storedSession.groupId,
@@ -359,7 +375,7 @@ export class CompanionReviewService {
   }
 
   async syncTarget(sessionId: string): Promise<CompanionSyncTargetResult> {
-    const session = this.requireActiveSession(sessionId);
+    const session = await this.requireActiveSession(sessionId);
     if (session.runState === "running") {
       throw new Error("Companion が実行中のため Sync Target できません。");
     }
@@ -412,7 +428,7 @@ export class CompanionReviewService {
       if (!this.deps.updateCompanionSessionBaseSnapshot) {
         throw new Error("Sync Target 用の CompanionSession 保存 API が設定されていません。");
       }
-      const updated = this.deps.updateCompanionSessionBaseSnapshot(updatedSession);
+      const updated = await this.deps.updateCompanionSessionBaseSnapshot(updatedSession);
       return { session: updated };
     } catch (error) {
       await runGit(session.repoRoot, ["update-ref", session.baseSnapshotRef, session.baseSnapshotCommit]).catch(() => undefined);
@@ -430,7 +446,7 @@ export class CompanionReviewService {
   }
 
   async stashTargetChanges(sessionId: string): Promise<CompanionTargetWorkspaceStashResult> {
-    const session = this.requireActiveSession(sessionId);
+    const session = await this.requireActiveSession(sessionId);
     if (session.runState === "running") {
       throw new Error("Companion が実行中のため target changes を stash できません。");
     }
@@ -452,7 +468,7 @@ export class CompanionReviewService {
   }
 
   async restoreTargetChanges(sessionId: string): Promise<CompanionTargetWorkspaceStashResult> {
-    const session = this.requireActiveSession(sessionId);
+    const session = await this.requireActiveSession(sessionId);
     if (session.runState === "running") {
       throw new Error("Companion が実行中のため target stash を戻せません。");
     }
@@ -474,7 +490,7 @@ export class CompanionReviewService {
   }
 
   async dropTargetStash(sessionId: string): Promise<CompanionTargetWorkspaceStashResult> {
-    const session = this.requireActiveSession(sessionId);
+    const session = await this.requireActiveSession(sessionId);
     if (session.runState === "running") {
       throw new Error("Companion が実行中のため target stash を破棄できません。");
     }
@@ -484,8 +500,8 @@ export class CompanionReviewService {
     return { stash: await this.resolveTargetWorkspaceStash(session) };
   }
 
-  private requireActiveSession(sessionId: string): CompanionSession {
-    const session = this.deps.getCompanionSession(sessionId);
+  private async requireActiveSession(sessionId: string): Promise<CompanionSession> {
+    const session = await this.deps.getCompanionSession(sessionId);
     if (!session) {
       throw new Error("対象 CompanionSession が見つかりません。");
     }
@@ -600,7 +616,7 @@ export class CompanionReviewService {
     selectedChanges: ChangedPath[],
   ): Promise<CompanionSiblingCheckWarning[]> {
     const selectedPathSet = new Set(selectedChanges.map((change) => change.path));
-    const siblingSummaries = this.deps.listCompanionSessionSummaries()
+    const siblingSummaries = (await this.deps.listCompanionSessionSummaries())
       .filter((summary) =>
         summary.groupId === session.groupId &&
         summary.id !== session.id &&
@@ -609,7 +625,7 @@ export class CompanionReviewService {
     const warnings: CompanionSiblingCheckWarning[] = [];
 
     for (const summary of siblingSummaries) {
-      const sibling = this.deps.getCompanionSession(summary.id);
+      const sibling = await this.deps.getCompanionSession(summary.id);
       if (!sibling) {
         continue;
       }

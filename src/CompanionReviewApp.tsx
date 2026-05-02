@@ -22,7 +22,7 @@ import type {
 } from "./app-state.js";
 import { currentTimestampLabel } from "./app-state.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
-import type { CompanionMergeRun, CompanionSession, CompanionSessionSummary } from "./companion-state.js";
+import type { CompanionMergeRunSummary, CompanionSession, CompanionSessionSummary } from "./companion-state.js";
 import { createCompanionSessionSummary } from "./companion-state.js";
 import {
   buildCompanionCharacterProfile,
@@ -210,7 +210,7 @@ function summarizeMergeRunPaths(paths: string[]): string {
   return `${visiblePaths.join(", ")}${suffix}`;
 }
 
-function summarizeMergeRunChangedFiles(run: CompanionMergeRun): string {
+function summarizeMergeRunChangedFiles(run: CompanionMergeRunSummary): string {
   if (run.changedFiles.length === 0) {
     return "none";
   }
@@ -2061,6 +2061,8 @@ export default function CompanionReviewApp() {
           isMessageListFollowing,
           onMessageListScroll: handleMessageListScroll,
           onToggleArtifact: toggleArtifact,
+          onLoadArtifactDetail: (messageIndex) =>
+            withmateApi?.getCompanionMessageArtifact(snapshot.session.id, messageIndex) ?? Promise.resolve(null),
           onOpenDiff: (title, file) =>
             setSelectedDiff({
               title,

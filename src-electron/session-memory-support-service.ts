@@ -13,6 +13,7 @@ import { buildProjectMemoryPromotionEntries } from "./project-memory-promotion.j
 import { retrieveProjectMemoryEntries } from "./project-memory-retrieval.js";
 import { retrieveCharacterMemoryEntries } from "./character-memory-retrieval.js";
 import { resolveProjectScope, type ResolvedProjectScopeInput } from "./project-scope.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 export type SessionMemorySupportServiceDeps = {
   getSessionMemory(sessionId: string): SessionMemory | null;
@@ -30,7 +31,7 @@ export type SessionMemorySupportServiceDeps = {
     entry: Omit<CharacterMemoryEntry, "id" | "createdAt" | "updatedAt" | "lastUsedAt"> & { id?: string },
   ): CharacterMemoryEntry;
   markCharacterMemoryEntriesUsed(entryIds: string[]): void;
-  upsertSession(session: Session): Session;
+  upsertSession(session: Session): Awaitable<Session>;
 };
 
 export class SessionMemorySupportService {
@@ -101,7 +102,7 @@ export class SessionMemorySupportService {
     this.deps.markCharacterMemoryEntriesUsed(entryIds);
   }
 
-  appendMonologueToSession(session: Session, monologue: CharacterReflectionMonologue): Session {
+  async appendMonologueToSession(session: Session, monologue: CharacterReflectionMonologue): Promise<Session> {
     const nextStream = [
       ...session.stream,
       {
@@ -111,7 +112,7 @@ export class SessionMemorySupportService {
       },
     ].slice(-30);
 
-    return this.deps.upsertSession({
+    return await this.deps.upsertSession({
       ...session,
       updatedAt: currentTimestampLabel(),
       stream: nextStream,

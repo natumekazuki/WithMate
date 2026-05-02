@@ -6,7 +6,13 @@ import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
 import type { CompanionSession } from "../../src/companion-state.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT, type ModelCatalogProvider } from "../../src/model-catalog.js";
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
-import type { ComposerPreview, LiveApprovalDecision, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src/runtime-state.js";
+import type {
+  AuditLogEntry,
+  ComposerPreview,
+  LiveApprovalDecision,
+  ProviderQuotaTelemetry,
+  SessionContextTelemetry,
+} from "../../src/runtime-state.js";
 import type { ProviderCodingAdapter, RunSessionTurnInput } from "../../src-electron/provider-runtime.js";
 import { CompanionRuntimeService } from "../../src-electron/companion-runtime-service.js";
 
@@ -62,6 +68,8 @@ describe("CompanionRuntimeService", () => {
     let storedSession = createCompanionSession();
     const storedSessions: CompanionSession[] = [];
     const runInputRef: { current: RunSessionTurnInput | null } = { current: null };
+    const createdAuditLogs: Array<Omit<AuditLogEntry, "id">> = [];
+    const updatedAuditLogs: Array<{ id: number; entry: Omit<AuditLogEntry, "id"> }> = [];
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
@@ -112,6 +120,14 @@ describe("CompanionRuntimeService", () => {
       },
       getProviderCodingAdapter() {
         return adapter;
+      },
+      createAuditLog(input) {
+        createdAuditLogs.push(input);
+        return { ...input, id: 7 };
+      },
+      updateAuditLog(id, entry) {
+        updatedAuditLogs.push({ id, entry });
+        return { ...entry, id };
       },
       setLiveSessionRun() {},
       getLiveSessionRun() {
@@ -165,9 +181,18 @@ describe("CompanionRuntimeService", () => {
     assert.equal(storedSessions[0]?.approvalMode, "on-request");
     assert.equal(storedSessions[0]?.codexSandboxMode, "read-only");
     assert.equal(storedSessions[1]?.runState, "idle");
+    assert.equal(createdAuditLogs.length, 1);
+    assert.equal(createdAuditLogs[0]?.phase, "running");
+    assert.equal(createdAuditLogs[0]?.sessionId, storedSession.id);
+    assert.equal(createdAuditLogs[0]?.logicalPrompt.composedText, "system\ninput");
+    assert.equal(updatedAuditLogs.length, 1);
+    assert.equal(updatedAuditLogs[0]?.id, 7);
+    assert.equal(updatedAuditLogs[0]?.entry.phase, "completed");
+    assert.equal(updatedAuditLogs[0]?.entry.assistantText, "完了したよ。");
+    assert.equal(updatedAuditLogs[0]?.entry.threadId, "thread-1");
   });
 
-  it("起動時に running の CompanionSession を error に戻して操作可能にする", () => {
+  it("起動時に running の CompanionSession を error に戻して操作可能にする", async () => {
     let storedSession = createCompanionSession({
       runState: "running",
       messages: [{ role: "user", text: "続けて" }],
@@ -226,7 +251,7 @@ describe("CompanionRuntimeService", () => {
       currentTimestampLabel: () => "2026-04-26 10:02",
     });
 
-    service.recoverInterruptedSessions();
+    await service.recoverInterruptedSessions();
 
     assert.equal(storedSession.runState, "error");
     assert.equal(storedSession.updatedAt, "2026-04-26 10:02");
