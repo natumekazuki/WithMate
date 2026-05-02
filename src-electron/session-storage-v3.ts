@@ -156,6 +156,7 @@ const DELETE_SESSION_SQL = "DELETE FROM sessions WHERE id = ?";
 const DELETE_ALL_SESSIONS_SQL = "DELETE FROM sessions";
 const LIST_SESSION_IDS_SQL = "SELECT id FROM sessions";
 const DELETE_BLOB_OBJECT_SQL = "DELETE FROM blob_objects WHERE blob_id = ?";
+const IS_BLOB_OBJECT_PERSISTED_SQL = "SELECT 1 FROM blob_objects WHERE blob_id = ? LIMIT 1";
 
 const INSERT_SESSION_MESSAGE_SQL = `
   INSERT INTO session_messages (
@@ -522,6 +523,13 @@ function insertBlobObjects(db: DatabaseSync, payloads: readonly StoredMessagePay
   }
 }
 
+function payloadBlobIds(payloads: readonly StoredMessagePayload[]): string[] {
+  return payloads.flatMap((payload) => [
+    payload.text.blobId,
+    ...(payload.artifact ? [payload.artifact.blobId] : []),
+  ]);
+}
+
 function parseArtifactSummary(value: string | null): MessageArtifact | undefined {
   if (!value) {
     return undefined;
@@ -701,14 +709,9 @@ export class SessionStorageV3 {
   }
 
   async listSessions(): Promise<Session[]> {
-    return this.withDb((db) => {
-      const rows = db.prepare(LIST_SESSION_SUMMARIES_SQL).all() as SessionHeaderRow[];
-      return cloneSessions(
-        rows
-          .map((row) => rowToSession(row, []))
-          .filter((session): session is Session => session !== null),
-      );
-    });
+    const summaries = await this.listSessionSummaries();
+    const sessions = await Promise.all(summaries.map((summary) => this.getSession(summary.id)));
+    return cloneSessions(sessions.filter((session): session is Session => session !== null));
   }
 
   async listSessionSummaries(): Promise<SessionSummary[]> {
@@ -764,31 +767,37 @@ export class SessionStorageV3 {
 
     const payloads = await storeMessagePayloads(this.blobStore, normalized);
 
-    const blobIdsToDelete = this.withDb((db) => {
-      const auditLogCount = getAuditLogCountFromDb(db, normalized.id);
-      const upsertSessionStatement = db.prepare(UPSERT_SESSION_SQL);
-      const deleteMessagesStatement = db.prepare(DELETE_SESSION_MESSAGES_SQL);
-      const insertMessageStatement = db.prepare(INSERT_SESSION_MESSAGE_SQL);
-      const insertArtifactStatement = db.prepare(INSERT_MESSAGE_ARTIFACT_SQL);
-      const createdAt = new Date().toISOString();
-      let blobIdsToDelete: string[] = [];
+    let blobIdsToDelete: string[];
+    try {
+      blobIdsToDelete = this.withDb((db) => {
+        const auditLogCount = getAuditLogCountFromDb(db, normalized.id);
+        const upsertSessionStatement = db.prepare(UPSERT_SESSION_SQL);
+        const deleteMessagesStatement = db.prepare(DELETE_SESSION_MESSAGES_SQL);
+        const insertMessageStatement = db.prepare(INSERT_SESSION_MESSAGE_SQL);
+        const insertArtifactStatement = db.prepare(INSERT_MESSAGE_ARTIFACT_SQL);
+        const createdAt = new Date().toISOString();
+        let blobIdsToDelete: string[] = [];
 
-      db.exec("BEGIN IMMEDIATE TRANSACTION");
-      try {
-        const previousBlobIds = collectSessionBlobIds(db, normalized.id);
-        insertBlobObjects(db, payloads, createdAt);
-        writeSessionHeader(upsertSessionStatement, normalized, Date.now(), auditLogCount);
-        deleteMessagesStatement.run(normalized.id);
-        writeSessionMessages(insertMessageStatement, insertArtifactStatement, normalized, payloads);
-        blobIdsToDelete = deleteUnreferencedBlobObjectRows(db, previousBlobIds);
-        db.exec("COMMIT");
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
+        db.exec("BEGIN IMMEDIATE TRANSACTION");
+        try {
+          const previousBlobIds = collectSessionBlobIds(db, normalized.id);
+          insertBlobObjects(db, payloads, createdAt);
+          writeSessionHeader(upsertSessionStatement, normalized, Date.now(), auditLogCount);
+          deleteMessagesStatement.run(normalized.id);
+          writeSessionMessages(insertMessageStatement, insertArtifactStatement, normalized, payloads);
+          blobIdsToDelete = deleteUnreferencedBlobObjectRows(db, previousBlobIds);
+          db.exec("COMMIT");
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
+        }
 
-      return blobIdsToDelete;
-    });
+        return blobIdsToDelete;
+      });
+    } catch (error) {
+      await this.deleteUnpersistedBlobs(payloadBlobIds(payloads));
+      throw error;
+    }
     await this.blobStore.deleteUnreferenced(blobIdsToDelete);
     return cloneSessions([normalized])[0];
   }
@@ -806,50 +815,57 @@ export class SessionStorageV3 {
       normalizedSessions.map(async (session) => [session.id, await storeMessagePayloads(this.blobStore, session)] as const),
     ));
 
-    const blobIdsToDelete = this.withDb((db) => {
-      const existingAuditLogCounts = readAuditLogCountRows(db);
-      const existingSessionIds = readSessionIds(db);
-      const nextSessionIds = new Set(normalizedSessions.map((session) => session.id));
-      const upsertSessionStatement = db.prepare(UPSERT_SESSION_SQL);
-      const deleteSessionStatement = db.prepare(DELETE_SESSION_SQL);
-      const deleteMessagesStatement = db.prepare(DELETE_SESSION_MESSAGES_SQL);
-      const insertMessageStatement = db.prepare(INSERT_SESSION_MESSAGE_SQL);
-      const insertArtifactStatement = db.prepare(INSERT_MESSAGE_ARTIFACT_SQL);
-      const baseLastActiveAt = Date.now() + normalizedSessions.length;
-      const createdAt = new Date().toISOString();
-      let blobIdsToDelete: string[] = [];
+    const stagedBlobIds = [...payloadsBySessionId.values()].flatMap((payloads) => payloadBlobIds(payloads));
+    let blobIdsToDelete: string[];
+    try {
+      blobIdsToDelete = this.withDb((db) => {
+        const existingAuditLogCounts = readAuditLogCountRows(db);
+        const existingSessionIds = readSessionIds(db);
+        const nextSessionIds = new Set(normalizedSessions.map((session) => session.id));
+        const upsertSessionStatement = db.prepare(UPSERT_SESSION_SQL);
+        const deleteSessionStatement = db.prepare(DELETE_SESSION_SQL);
+        const deleteMessagesStatement = db.prepare(DELETE_SESSION_MESSAGES_SQL);
+        const insertMessageStatement = db.prepare(INSERT_SESSION_MESSAGE_SQL);
+        const insertArtifactStatement = db.prepare(INSERT_MESSAGE_ARTIFACT_SQL);
+        const baseLastActiveAt = Date.now() + normalizedSessions.length;
+        const createdAt = new Date().toISOString();
+        let blobIdsToDelete: string[] = [];
 
-      db.exec("BEGIN IMMEDIATE TRANSACTION");
-      try {
-        const previousBlobIds: string[] = [];
-        for (const existingSessionId of existingSessionIds) {
-          if (!nextSessionIds.has(existingSessionId)) {
-            previousBlobIds.push(...collectSessionBlobIds(db, existingSessionId));
-            deleteSessionStatement.run(existingSessionId);
+        db.exec("BEGIN IMMEDIATE TRANSACTION");
+        try {
+          const previousBlobIds: string[] = [];
+          for (const existingSessionId of existingSessionIds) {
+            if (!nextSessionIds.has(existingSessionId)) {
+              previousBlobIds.push(...collectSessionBlobIds(db, existingSessionId));
+              deleteSessionStatement.run(existingSessionId);
+            }
           }
+          normalizedSessions.forEach((session, index) => {
+            previousBlobIds.push(...collectSessionBlobIds(db, session.id));
+            const payloads = payloadsBySessionId.get(session.id) ?? [];
+            insertBlobObjects(db, payloads, createdAt);
+            writeSessionHeader(
+              upsertSessionStatement,
+              session,
+              baseLastActiveAt - index,
+              existingAuditLogCounts.get(session.id) ?? 0,
+            );
+            deleteMessagesStatement.run(session.id);
+            writeSessionMessages(insertMessageStatement, insertArtifactStatement, session, payloads);
+          });
+          blobIdsToDelete = deleteUnreferencedBlobObjectRows(db, previousBlobIds);
+          db.exec("COMMIT");
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
         }
-        normalizedSessions.forEach((session, index) => {
-          previousBlobIds.push(...collectSessionBlobIds(db, session.id));
-          const payloads = payloadsBySessionId.get(session.id) ?? [];
-          insertBlobObjects(db, payloads, createdAt);
-          writeSessionHeader(
-            upsertSessionStatement,
-            session,
-            baseLastActiveAt - index,
-            existingAuditLogCounts.get(session.id) ?? 0,
-          );
-          deleteMessagesStatement.run(session.id);
-          writeSessionMessages(insertMessageStatement, insertArtifactStatement, session, payloads);
-        });
-        blobIdsToDelete = deleteUnreferencedBlobObjectRows(db, previousBlobIds);
-        db.exec("COMMIT");
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
 
-      return blobIdsToDelete;
-    });
+        return blobIdsToDelete;
+      });
+    } catch (error) {
+      await this.deleteUnpersistedBlobs(stagedBlobIds);
+      throw error;
+    }
     await this.blobStore.deleteUnreferenced(blobIdsToDelete);
     return cloneSessions(normalizedSessions);
   }
@@ -886,6 +902,14 @@ export class SessionStorageV3 {
       }
     });
     await this.blobStore.deleteUnreferenced(blobIdsToDelete);
+  }
+
+  private async deleteUnpersistedBlobs(blobIds: readonly string[]): Promise<void> {
+    const unpersistedBlobIds = this.withDb((db) => {
+      const statement = db.prepare(IS_BLOB_OBJECT_PERSISTED_SQL);
+      return [...new Set(blobIds)].filter((blobId) => !statement.get(blobId));
+    });
+    await this.blobStore.deleteUnreferenced(unpersistedBlobIds);
   }
 
   close(): void {

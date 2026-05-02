@@ -454,4 +454,56 @@ describe("AuditLogStorageV3", () => {
       }
     });
   });
+
+  it("DB transaction が失敗した場合は永続化されなかった audit blob file を cleanup する", async () => {
+    await withTempV3Database(async ({ dbPath, blobRootPath }) => {
+      const storage = new AuditLogStorageV3(dbPath, blobRootPath);
+
+      try {
+        await assert.rejects(() => storage.createAuditLog({
+          sessionId: "missing-session",
+          createdAt: "2026-04-27T10:00:00.000Z",
+          phase: "completed",
+          provider: "codex",
+          model: "gpt-5.4-mini",
+          reasoningEffort: "medium",
+          approvalMode: DEFAULT_APPROVAL_MODE,
+          threadId: "thread-v3",
+          logicalPrompt: {
+            systemText: "system",
+            inputText: "input",
+            composedText: "system\n\ninput",
+          },
+          transportPayload: {
+            summary: "transport",
+            fields: [],
+          },
+          assistantText: "assistant text",
+          operations: [
+            {
+              type: "analysis",
+              summary: "operation",
+              details: "operation details",
+            },
+          ],
+          rawItemsJson: JSON.stringify([{ kind: "assistant", text: "raw" }]),
+          usage: null,
+          errorMessage: "",
+        }));
+
+        const blobStore = new TextBlobStore(blobRootPath);
+        const report = await blobStore.collectGarbage({ referencedBlobIds: [], dryRun: true });
+        assert.deepEqual(report.orphanBlobIds, []);
+
+        const db = new DatabaseSync(dbPath);
+        try {
+          assert.equal(readCount(db, "SELECT COUNT(*) AS count FROM blob_objects"), 0);
+        } finally {
+          db.close();
+        }
+      } finally {
+        storage.close();
+      }
+    });
+  });
 });

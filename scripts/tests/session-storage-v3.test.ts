@@ -176,7 +176,7 @@ describe("SessionStorageV3", () => {
         });
 
         assert.equal(saved.messages[0]?.text, longText);
-        assert.equal((await storage.listSessions())[0]?.messages.length, 0);
+        assert.equal((await storage.listSessions())[0]?.messages[0]?.text, longText);
 
         const summaries = await storage.listSessionSummaries();
         assert.equal(summaries.length, 1);
@@ -289,6 +289,49 @@ describe("SessionStorageV3", () => {
         assert.equal(readCount(db, "SELECT COUNT(*) AS count FROM blob_objects"), 2);
       } finally {
         db.close();
+      }
+    });
+  });
+
+  it("DB transaction が失敗した場合は永続化されなかった blob file を cleanup する", async () => {
+    await withTempV3Database(async ({ dbPath, blobRootPath }) => {
+      const storage = new SessionStorageV3(dbPath, blobRootPath);
+      const session = createSession({
+        id: "session-v3-rollback",
+        taskTitle: "V3 rollback",
+        workspaceLabel: "workspace-rollback",
+      });
+      const oversizedArtifact = createArtifact("SENTINEL_SESSION_V3_ROLLBACK");
+      oversizedArtifact.changedFiles = Array.from({ length: 700 }, (_, index) => ({
+        kind: "edit",
+        path: `src/file-${index}.ts`,
+        summary: `summary-${index}`,
+        diffRows: [],
+      }));
+
+      try {
+        await assert.rejects(() => storage.upsertSession({
+          ...session,
+          messages: [
+            {
+              role: "assistant",
+              text: "message that writes a blob before DB insert fails",
+              artifact: oversizedArtifact,
+            },
+          ],
+        }));
+
+        const blobStore = new TextBlobStore(blobRootPath);
+        const report = await blobStore.collectGarbage({ referencedBlobIds: [], dryRun: true });
+        assert.deepEqual(report.orphanBlobIds, []);
+        const db = new DatabaseSync(dbPath);
+        try {
+          assert.equal(readCount(db, "SELECT COUNT(*) AS count FROM blob_objects"), 0);
+        } finally {
+          db.close();
+        }
+      } finally {
+        storage.close();
       }
     });
   });

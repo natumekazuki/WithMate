@@ -11,6 +11,7 @@ import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } 
 import { CompanionStorageV3 } from "../../src-electron/companion-storage-v3.js";
 import { CREATE_V3_SCHEMA_SQL } from "../../src-electron/database-schema-v3.js";
 import { openAppDatabase } from "../../src-electron/sqlite-connection.js";
+import { TextBlobStore } from "../../src-electron/text-blob-store.js";
 
 async function removeDirectoryWithRetry(targetPath: string, attempts = 5): Promise<void> {
   for (let index = 0; index < attempts; index += 1) {
@@ -288,6 +289,29 @@ describe("CompanionStorageV3", () => {
 
       await storage.deleteSession(session.id);
       assert.equal(await storage.getSession(session.id), null);
+      assert.equal(countBlobObjects(dbPath), 0);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("DB transaction が失敗した場合は永続化されなかった companion blob file を cleanup する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-v3-"));
+    const dbPath = path.join(tempDirectory, "withmate-v3.db");
+    const blobPath = path.join(tempDirectory, "blobs");
+    let storage: CompanionStorageV3 | null = null;
+
+    try {
+      createV3Database(dbPath);
+      storage = new CompanionStorageV3(dbPath, blobPath);
+
+      await assert.rejects(() => storage!.createSession(createSession("missing-group", {
+        messages: [{ role: "assistant", text: "message before FK failure" }],
+      })));
+
+      const report = await new TextBlobStore(blobPath).collectGarbage({ referencedBlobIds: [], dryRun: true });
+      assert.deepEqual(report.orphanBlobIds, []);
       assert.equal(countBlobObjects(dbPath), 0);
     } finally {
       storage?.close();

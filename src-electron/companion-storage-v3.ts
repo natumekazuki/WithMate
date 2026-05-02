@@ -122,6 +122,7 @@ const INSERT_BLOB_OBJECT_SQL = `
 `;
 
 const DELETE_BLOB_OBJECT_SQL = "DELETE FROM blob_objects WHERE blob_id = ?";
+const IS_BLOB_OBJECT_PERSISTED_SQL = "SELECT 1 FROM blob_objects WHERE blob_id = ? LIMIT 1";
 
 const COMPANION_SESSION_COLUMNS = `
   id,
@@ -568,6 +569,13 @@ function compactBlobIds(values: ReadonlyArray<string | null | undefined>): strin
   return [...new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))];
 }
 
+function sessionPayloadBlobIds(payload: StoredCompanionSessionPayload): string[] {
+  return compactBlobIds([
+    payload.characterRole?.blobId,
+    ...payload.messages.flatMap((message) => [message.text.blobId, message.artifact?.blobId]),
+  ]);
+}
+
 function blobRows(db: DatabaseSync, query: string, ...args: Array<string | number | null>): string[] {
   const rows = db.prepare(query).all(...args) as BlobIdRow[];
   return compactBlobIds(rows.map((row) => row.blob_id));
@@ -772,27 +780,32 @@ export class CompanionStorageV3 {
 
   async createMergeRun(run: CompanionMergeRun): Promise<CompanionMergeRun> {
     const diffSnapshot = await this.blobStore.putJson({ value: run.diffSnapshot });
-    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      insertBlobObject(this.db, diffSnapshot, run.createdAt);
-      this.db.prepare(`
-        INSERT INTO companion_merge_runs (
-          ${COMPANION_MERGE_RUN_COLUMNS}
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        run.id,
-        run.sessionId,
-        run.groupId,
-        run.operation,
-        JSON.stringify(run.selectedPaths),
-        summaryJson(run.changedFiles),
-        summaryJson(run.siblingWarnings),
-        diffSnapshot.blobId,
-        run.createdAt,
-      );
-      this.db.exec("COMMIT");
+      this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+      try {
+        insertBlobObject(this.db, diffSnapshot, run.createdAt);
+        this.db.prepare(`
+          INSERT INTO companion_merge_runs (
+            ${COMPANION_MERGE_RUN_COLUMNS}
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          run.id,
+          run.sessionId,
+          run.groupId,
+          run.operation,
+          JSON.stringify(run.selectedPaths),
+          summaryJson(run.changedFiles),
+          summaryJson(run.siblingWarnings),
+          diffSnapshot.blobId,
+          run.createdAt,
+        );
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
     } catch (error) {
-      this.db.exec("ROLLBACK");
+      await this.deleteUnpersistedBlobs([diffSnapshot.blobId]);
       throw error;
     }
     return cloneCompanionMergeRun(run);
@@ -828,6 +841,12 @@ export class CompanionStorageV3 {
     await this.blobStore.deleteUnreferenced(blobIdsToDelete);
   }
 
+  private async deleteUnpersistedBlobs(blobIds: readonly string[]): Promise<void> {
+    const statement = this.db.prepare(IS_BLOB_OBJECT_PERSISTED_SQL);
+    const unpersistedBlobIds = compactBlobIds(blobIds).filter((blobId) => !statement.get(blobId));
+    await this.blobStore.deleteUnreferenced(unpersistedBlobIds);
+  }
+
   close(): void {
     this.db.close();
   }
@@ -836,23 +855,28 @@ export class CompanionStorageV3 {
     const payload = await storeSessionPayload(this.blobStore, session);
     const previousBlobIds = collectCompanionSessionBlobIds(this.db, session.id);
 
-    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     let blobIdsToDelete: string[] = [];
     try {
-      insertBlobObjects(this.db, [
-        payload.characterRole,
-        ...payload.messages.flatMap((message) => [message.text, message.artifact]),
-      ], session.updatedAt);
-      if (updateOnly) {
-        this.updateSessionRow(session, payload);
-      } else {
-        this.insertSessionRow(session, payload);
+      this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+      try {
+        insertBlobObjects(this.db, [
+          payload.characterRole,
+          ...payload.messages.flatMap((message) => [message.text, message.artifact]),
+        ], session.updatedAt);
+        if (updateOnly) {
+          this.updateSessionRow(session, payload);
+        } else {
+          this.insertSessionRow(session, payload);
+        }
+        this.replaceMessages(session.id, session.messages, payload.messages, session.updatedAt);
+        blobIdsToDelete = deleteUnreferencedBlobObjectRows(this.db, previousBlobIds);
+        this.db.exec("COMMIT");
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
       }
-      this.replaceMessages(session.id, session.messages, payload.messages, session.updatedAt);
-      blobIdsToDelete = deleteUnreferencedBlobObjectRows(this.db, previousBlobIds);
-      this.db.exec("COMMIT");
     } catch (error) {
-      this.db.exec("ROLLBACK");
+      await this.deleteUnpersistedBlobs(sessionPayloadBlobIds(payload));
       throw error;
     }
     await this.blobStore.deleteUnreferenced(blobIdsToDelete);

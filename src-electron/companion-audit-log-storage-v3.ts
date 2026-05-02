@@ -197,6 +197,7 @@ const RESET_SESSION_AUDIT_LOG_COUNTS_SQL = `
   SET audit_log_count = 0
 `;
 const DELETE_BLOB_OBJECT_SQL = "DELETE FROM blob_objects WHERE blob_id = ?";
+const IS_BLOB_OBJECT_PERSISTED_SQL = "SELECT 1 FROM blob_objects WHERE blob_id = ? LIMIT 1";
 
 const GET_AUDIT_LOG_BLOB_IDS_SQL = `
   SELECT
@@ -597,6 +598,16 @@ function compactBlobIds(values: ReadonlyArray<string | null | undefined>): strin
   return [...new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))];
 }
 
+function auditPayloadBlobIds(payload: StoredAuditPayload): string[] {
+  return compactBlobIds([
+    payload.logicalPrompt.blobId,
+    payload.transportPayload?.blobId,
+    payload.assistantText.blobId,
+    payload.rawItems.blobId,
+    ...payload.operationDetails.map((ref) => ref?.blobId),
+  ]);
+}
+
 function collectBlobIdsFromDetailRows(rows: AuditLogBlobIdRow[]): string[] {
   return compactBlobIds(rows.flatMap((row) => [
     row.logical_prompt_blob_id,
@@ -809,66 +820,72 @@ export class CompanionAuditLogStorageV3 {
   async createAuditLog(input: CreateAuditLogInput): Promise<AuditLogEntry> {
     const payload = await storeAuditPayload(this.blobStore, input);
     const usageColumns = toAuditLogUsageColumns(input.usage);
-    const auditLogId = this.withDb((db) => {
-      const allBlobRefs = [
-        payload.logicalPrompt,
-        payload.transportPayload,
-        payload.assistantText,
-        payload.rawItems,
-        ...payload.operationDetails,
-      ];
+    let auditLogId: number;
+    try {
+      auditLogId = this.withDb((db) => {
+        const allBlobRefs = [
+          payload.logicalPrompt,
+          payload.transportPayload,
+          payload.assistantText,
+          payload.rawItems,
+          ...payload.operationDetails,
+        ];
 
-      db.exec("BEGIN IMMEDIATE TRANSACTION");
-      try {
-        insertBlobObjects(db, allBlobRefs, input.createdAt);
-        const result = db.prepare(INSERT_AUDIT_LOG_SQL).run(
-          input.sessionId,
-          input.createdAt,
-          input.phase,
-          input.provider,
-          input.model,
-          input.reasoningEffort,
-          input.approvalMode,
-          input.threadId,
-          preview(input.assistantText, V3_TEXT_PREVIEW_MAX_LENGTH),
-          input.operations.length,
-          calculateRawItemCount(input.rawItemsJson),
-          usageColumns.inputTokens,
-          usageColumns.cachedInputTokens,
-          usageColumns.outputTokens,
-          input.errorMessage ? 1 : 0,
-          preview(input.errorMessage, V3_TEXT_PREVIEW_MAX_LENGTH),
-          1,
-        );
-        const id = Number(result.lastInsertRowid);
-
-        db.prepare(INSERT_AUDIT_LOG_DETAIL_SQL).run(
-          id,
-          payload.logicalPrompt.blobId,
-          payload.transportPayload?.blobId ?? null,
-          payload.assistantText.blobId,
-          payload.rawItems.blobId,
-          input.usage ? JSON.stringify(input.usage) : "",
-        );
-        input.operations.forEach((operation, index) => {
-          db.prepare(INSERT_AUDIT_LOG_OPERATION_SQL).run(
-            id,
-            index,
-            operation.type,
-            preview(operation.summary, V3_OPERATION_SUMMARY_MAX_LENGTH),
-            preview(operation.details ?? "", V3_DETAILS_PREVIEW_MAX_LENGTH),
-            payload.operationDetails[index]?.blobId ?? null,
+        db.exec("BEGIN IMMEDIATE TRANSACTION");
+        try {
+          insertBlobObjects(db, allBlobRefs, input.createdAt);
+          const result = db.prepare(INSERT_AUDIT_LOG_SQL).run(
+            input.sessionId,
+            input.createdAt,
+            input.phase,
+            input.provider,
+            input.model,
+            input.reasoningEffort,
+            input.approvalMode,
+            input.threadId,
+            preview(input.assistantText, V3_TEXT_PREVIEW_MAX_LENGTH),
+            input.operations.length,
+            calculateRawItemCount(input.rawItemsJson),
+            usageColumns.inputTokens,
+            usageColumns.cachedInputTokens,
+            usageColumns.outputTokens,
+            input.errorMessage ? 1 : 0,
+            preview(input.errorMessage, V3_TEXT_PREVIEW_MAX_LENGTH),
+            1,
           );
-        });
-        db.prepare(INCREMENT_SESSION_AUDIT_LOG_COUNT_SQL).run(input.sessionId);
+          const id = Number(result.lastInsertRowid);
 
-        db.exec("COMMIT");
-        return id;
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
-    });
+          db.prepare(INSERT_AUDIT_LOG_DETAIL_SQL).run(
+            id,
+            payload.logicalPrompt.blobId,
+            payload.transportPayload?.blobId ?? null,
+            payload.assistantText.blobId,
+            payload.rawItems.blobId,
+            input.usage ? JSON.stringify(input.usage) : "",
+          );
+          input.operations.forEach((operation, index) => {
+            db.prepare(INSERT_AUDIT_LOG_OPERATION_SQL).run(
+              id,
+              index,
+              operation.type,
+              preview(operation.summary, V3_OPERATION_SUMMARY_MAX_LENGTH),
+              preview(operation.details ?? "", V3_DETAILS_PREVIEW_MAX_LENGTH),
+              payload.operationDetails[index]?.blobId ?? null,
+            );
+          });
+          db.prepare(INCREMENT_SESSION_AUDIT_LOG_COUNT_SQL).run(input.sessionId);
+
+          db.exec("COMMIT");
+          return id;
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
+        }
+      });
+    } catch (error) {
+      await this.deleteUnpersistedBlobs(auditPayloadBlobIds(payload));
+      throw error;
+    }
 
     const created = await this.getSessionAuditLogEntry(input.sessionId, auditLogId);
     if (!created) {
@@ -880,76 +897,82 @@ export class CompanionAuditLogStorageV3 {
   async updateAuditLog(id: number, input: CreateAuditLogInput): Promise<AuditLogEntry> {
     const payload = await storeAuditPayload(this.blobStore, input);
     const usageColumns = toAuditLogUsageColumns(input.usage);
-    const blobIdsToDelete = this.withDb((db) => {
-      const allBlobRefs = [
-        payload.logicalPrompt,
-        payload.transportPayload,
-        payload.assistantText,
-        payload.rawItems,
-        ...payload.operationDetails,
-      ];
+    let blobIdsToDelete: string[];
+    try {
+      blobIdsToDelete = this.withDb((db) => {
+        const allBlobRefs = [
+          payload.logicalPrompt,
+          payload.transportPayload,
+          payload.assistantText,
+          payload.rawItems,
+          ...payload.operationDetails,
+        ];
 
-      db.exec("BEGIN IMMEDIATE TRANSACTION");
-      try {
-        const currentSessionId = getAuditLogSessionId(db, id);
-        if (!currentSessionId || currentSessionId !== input.sessionId) {
-          throw new Error(`audit log ${id} の更新に失敗したよ。`);
-        }
+        db.exec("BEGIN IMMEDIATE TRANSACTION");
+        try {
+          const currentSessionId = getAuditLogSessionId(db, id);
+          if (!currentSessionId || currentSessionId !== input.sessionId) {
+            throw new Error(`audit log ${id} の更新に失敗したよ。`);
+          }
 
-        const previousBlobIds = collectAuditLogBlobIds(db, id);
-        insertBlobObjects(db, allBlobRefs, input.createdAt);
-        const result = db.prepare(UPDATE_AUDIT_LOG_SQL).run(
-          input.phase,
-          input.provider,
-          input.model,
-          input.reasoningEffort,
-          input.approvalMode,
-          input.threadId,
-          preview(input.assistantText, V3_TEXT_PREVIEW_MAX_LENGTH),
-          input.operations.length,
-          calculateRawItemCount(input.rawItemsJson),
-          usageColumns.inputTokens,
-          usageColumns.cachedInputTokens,
-          usageColumns.outputTokens,
-          input.errorMessage ? 1 : 0,
-          preview(input.errorMessage, V3_TEXT_PREVIEW_MAX_LENGTH),
-          1,
-          id,
-        );
-
-        if (result.changes === 0) {
-          throw new Error(`audit log ${id} の更新に失敗したよ。`);
-        }
-
-        db.prepare(DELETE_AUDIT_LOG_DETAIL_SQL).run(id);
-        db.prepare(DELETE_AUDIT_LOG_OPERATION_SQL).run(id);
-        db.prepare(INSERT_AUDIT_LOG_DETAIL_SQL).run(
-          id,
-          payload.logicalPrompt.blobId,
-          payload.transportPayload?.blobId ?? null,
-          payload.assistantText.blobId,
-          payload.rawItems.blobId,
-          input.usage ? JSON.stringify(input.usage) : "",
-        );
-        input.operations.forEach((operation, index) => {
-          db.prepare(INSERT_AUDIT_LOG_OPERATION_SQL).run(
+          const previousBlobIds = collectAuditLogBlobIds(db, id);
+          insertBlobObjects(db, allBlobRefs, input.createdAt);
+          const result = db.prepare(UPDATE_AUDIT_LOG_SQL).run(
+            input.phase,
+            input.provider,
+            input.model,
+            input.reasoningEffort,
+            input.approvalMode,
+            input.threadId,
+            preview(input.assistantText, V3_TEXT_PREVIEW_MAX_LENGTH),
+            input.operations.length,
+            calculateRawItemCount(input.rawItemsJson),
+            usageColumns.inputTokens,
+            usageColumns.cachedInputTokens,
+            usageColumns.outputTokens,
+            input.errorMessage ? 1 : 0,
+            preview(input.errorMessage, V3_TEXT_PREVIEW_MAX_LENGTH),
+            1,
             id,
-            index,
-            operation.type,
-            preview(operation.summary, V3_OPERATION_SUMMARY_MAX_LENGTH),
-            preview(operation.details ?? "", V3_DETAILS_PREVIEW_MAX_LENGTH),
-            payload.operationDetails[index]?.blobId ?? null,
           );
-        });
 
-        const blobIdsToDelete = deleteUnreferencedBlobObjectRows(db, previousBlobIds);
-        db.exec("COMMIT");
-        return blobIdsToDelete;
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
-    });
+          if (result.changes === 0) {
+            throw new Error(`audit log ${id} の更新に失敗したよ。`);
+          }
+
+          db.prepare(DELETE_AUDIT_LOG_DETAIL_SQL).run(id);
+          db.prepare(DELETE_AUDIT_LOG_OPERATION_SQL).run(id);
+          db.prepare(INSERT_AUDIT_LOG_DETAIL_SQL).run(
+            id,
+            payload.logicalPrompt.blobId,
+            payload.transportPayload?.blobId ?? null,
+            payload.assistantText.blobId,
+            payload.rawItems.blobId,
+            input.usage ? JSON.stringify(input.usage) : "",
+          );
+          input.operations.forEach((operation, index) => {
+            db.prepare(INSERT_AUDIT_LOG_OPERATION_SQL).run(
+              id,
+              index,
+              operation.type,
+              preview(operation.summary, V3_OPERATION_SUMMARY_MAX_LENGTH),
+              preview(operation.details ?? "", V3_DETAILS_PREVIEW_MAX_LENGTH),
+              payload.operationDetails[index]?.blobId ?? null,
+            );
+          });
+
+          const blobIdsToDelete = deleteUnreferencedBlobObjectRows(db, previousBlobIds);
+          db.exec("COMMIT");
+          return blobIdsToDelete;
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
+        }
+      });
+    } catch (error) {
+      await this.deleteUnpersistedBlobs(auditPayloadBlobIds(payload));
+      throw error;
+    }
     await this.blobStore.deleteUnreferenced(blobIdsToDelete);
 
     const updated = await this.getSessionAuditLogEntry(input.sessionId, id);
@@ -975,6 +998,14 @@ export class CompanionAuditLogStorageV3 {
       }
     });
     await this.blobStore.deleteUnreferenced(blobIdsToDelete);
+  }
+
+  private async deleteUnpersistedBlobs(blobIds: readonly string[]): Promise<void> {
+    const unpersistedBlobIds = this.withDb((db) => {
+      const statement = db.prepare(IS_BLOB_OBJECT_PERSISTED_SQL);
+      return compactBlobIds(blobIds).filter((blobId) => !statement.get(blobId));
+    });
+    await this.blobStore.deleteUnreferenced(unpersistedBlobIds);
   }
 
   close(): void {

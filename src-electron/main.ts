@@ -864,7 +864,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireMainQueryService().listWorkspaceCustomAgents(providerId, workspacePath),
                 listOpenSessionWindowIds: () => listOpenSessionWindowIds(),
                 listOpenCompanionReviewWindowIds: () => listOpenCompanionReviewWindowIds(),
-                getSession: (sessionId) => getSession(sessionId),
+                getSession: (sessionId) => getDisplaySession(sessionId),
                 getSessionMessageArtifact,
                 getDiffPreview: (token) => requireAuxWindowService().getDiffPreview(token),
                 previewComposerInput,
@@ -1915,6 +1915,18 @@ async function listSessionCustomAgents(sessionId: string): Promise<DiscoveredCus
 
 function getSession(sessionId: string): Session | null {
   return sessions.find((session) => session.id === sessionId) ?? null;
+}
+
+async function getDisplaySession(sessionId: string): Promise<Session | null> {
+  const liveSession = getSession(sessionId);
+  if (
+    liveSession
+    && (liveSession.messages.length > 0 || liveSession.stream.length > 0 || isSessionRunInFlight(sessionId))
+  ) {
+    return liveSession;
+  }
+
+  return await requireMainQueryService().getSession(sessionId) ?? liveSession ?? null;
 }
 
 async function getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null> {
