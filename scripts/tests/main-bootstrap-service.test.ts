@@ -13,8 +13,10 @@ test("MainBootstrapService は起動シーケンスを順に実行する", async
       calls.push("initializePersistentStores");
       return activeModelCatalog;
     },
-    recoverInterruptedSessions() {
-      calls.push("recoverInterruptedSessions");
+    async recoverInterruptedSessions() {
+      calls.push("recoverInterruptedSessions:start");
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      calls.push("recoverInterruptedSessions:end");
     },
     async refreshCharactersFromStorage() {
       calls.push("refreshCharactersFromStorage");
@@ -34,7 +36,8 @@ test("MainBootstrapService は起動シーケンスを順に実行する", async
 
   assert.deepEqual(calls, [
     "initializePersistentStores",
-    "recoverInterruptedSessions",
+    "recoverInterruptedSessions:start",
+    "recoverInterruptedSessions:end",
     "refreshCharactersFromStorage",
     "registerIpcHandlers",
     "createHomeWindow",

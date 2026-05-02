@@ -547,12 +547,14 @@ describe("SessionPersistenceService", () => {
     const clearedInflight: string[] = [];
     const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
     const broadcastedSessionIds: string[][] = [];
+    const replaceOrder: string[] = [];
 
     const service = new SessionPersistenceService({
       getSessions() {
         return storedSessions;
       },
       setSessions(nextSessions) {
+        replaceOrder.push("setSessions");
         storedSessions.splice(0, storedSessions.length, ...nextSessions);
       },
       getSession(sessionId) {
@@ -565,7 +567,10 @@ describe("SessionPersistenceService", () => {
         storedSessions.splice(0, storedSessions.length, next);
         return next;
       },
-      replaceStoredSessions(nextSessions) {
+      async replaceStoredSessions(nextSessions) {
+        replaceOrder.push("replaceStoredSessions:start");
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        replaceOrder.push("replaceStoredSessions:end");
         storedSessions.splice(0, storedSessions.length, ...nextSessions);
       },
       listStoredSessions() {
@@ -611,5 +616,6 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(clearedInflight, ["session-b"]);
     assert.deepEqual(invalidated, [{ providerId: "copilot", sessionId: "session-a" }]);
     assert.deepEqual(broadcastedSessionIds, [["session-a", "session-b"]]);
+    assert.deepEqual(replaceOrder, ["replaceStoredSessions:start", "replaceStoredSessions:end", "setSessions"]);
   });
 });

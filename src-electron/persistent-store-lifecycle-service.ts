@@ -184,7 +184,7 @@ export class PersistentStoreLifecycleService {
       this.deps.removeFile(`${dbPath}-shm`),
       this.deps.removeFile(dbPath),
       this.isV3DatabasePath(dbPath)
-        ? this.deps.removeDirectory?.(this.v3BlobRootPath(dbPath)) ?? Promise.resolve()
+        ? this.removeV3BlobRoot(dbPath)
         : Promise.resolve(),
     ]);
 
@@ -203,6 +203,14 @@ export class PersistentStoreLifecycleService {
 
   private isV3DatabasePath(dbPath: string): boolean {
     return basename(dbPath) === APP_DATABASE_V3_FILENAME;
+  }
+
+  private removeV3BlobRoot(dbPath: string): Promise<void> {
+    if (!this.deps.removeDirectory) {
+      throw new Error("V3 DB 再生成には blob root 削除 dependency が必要です。");
+    }
+
+    return this.deps.removeDirectory(this.v3BlobRootPath(dbPath));
   }
 
   private v3BlobRootPath(dbPath: string): string {

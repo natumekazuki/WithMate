@@ -17,7 +17,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
       calls.push("initialize");
       return { revision: 1, providers: [] };
     },
-    recoverInterruptedSessions() {
+    async recoverInterruptedSessions() {
       calls.push("recover");
     },
     async refreshCharactersFromStorage() {

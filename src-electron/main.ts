@@ -757,6 +757,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           async removeFile(filePath) {
             await rm(filePath, { force: true });
           },
+          async removeDirectory(directoryPath) {
+            await rm(directoryPath, { recursive: true, force: true });
+          },
         }),
       createAppLifecycleService: () =>
         new AppLifecycleService(
@@ -795,7 +798,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             ipcMain,
             registerMainIpcHandlers,
             initializePersistentStores,
-            recoverInterruptedSessions: () => requireMainSessionPersistenceFacade().recoverInterruptedSessions(),
+            recoverInterruptedSessions,
             refreshCharactersFromStorage: async () => {
               await refreshCharactersFromStorage();
             },
@@ -1463,8 +1466,8 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       getStoredSession: (sessionId) => requireSessionStorage().getSession(sessionId),
       isSessionRunInFlight,
       upsertStoredSession: (session) => requireSessionStorageForWrite().upsertSession(session),
-      replaceStoredSessions: (nextSessions) => {
-        requireSessionStorageForWrite().replaceSessions(nextSessions);
+      replaceStoredSessions: async (nextSessions) => {
+        await requireSessionStorageForWrite().replaceSessions(nextSessions);
       },
       listStoredSessions: () => requireSessionStorage().listSessions(),
       deleteStoredSession: (sessionId) => requireSessionStorageForWrite().deleteSession(sessionId),

@@ -2,7 +2,7 @@ import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 
 type MainBootstrapServiceDeps = {
   initializePersistentStores(): Promise<ModelCatalogSnapshot>;
-  recoverInterruptedSessions(): void;
+  recoverInterruptedSessions(): Promise<void>;
   refreshCharactersFromStorage(): Promise<void>;
   registerIpcHandlers(): void;
   createHomeWindow(): Promise<void>;
@@ -14,7 +14,7 @@ export class MainBootstrapService {
 
   async handleReady(): Promise<void> {
     const activeModelCatalog = await this.deps.initializePersistentStores();
-    this.deps.recoverInterruptedSessions();
+    await this.deps.recoverInterruptedSessions();
     await this.deps.refreshCharactersFromStorage();
     this.deps.registerIpcHandlers();
     await this.deps.createHomeWindow();
