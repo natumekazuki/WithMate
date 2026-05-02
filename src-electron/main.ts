@@ -859,6 +859,13 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getSessionAuditLogDetail: (sessionId, auditLogId) => getSessionAuditLogDetail(sessionId, auditLogId),
                 getSessionAuditLogDetailSection: (sessionId, auditLogId, section) =>
                   getSessionAuditLogDetailSection(sessionId, auditLogId, section),
+                listCompanionAuditLogs: (sessionId) => listCompanionAuditLogs(sessionId),
+                listCompanionAuditLogSummaries: (sessionId) => listCompanionAuditLogSummaries(sessionId),
+                listCompanionAuditLogSummaryPage: (sessionId, request) =>
+                  listCompanionAuditLogSummaryPage(sessionId, request),
+                getCompanionAuditLogDetail: (sessionId, auditLogId) => getCompanionAuditLogDetail(sessionId, auditLogId),
+                getCompanionAuditLogDetailSection: (sessionId, auditLogId, section) =>
+                  getCompanionAuditLogDetailSection(sessionId, auditLogId, section),
                 listSessionSkills: async (sessionId) => listSessionSkills(sessionId),
                 listSessionCustomAgents: async (sessionId) => listSessionCustomAgents(sessionId),
                 listWorkspaceSkills: async (providerId, workspacePath) =>
@@ -1573,7 +1580,12 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       clearProviderQuotaTelemetry,
       clearSessionContextTelemetry,
       invalidateProviderSessionThread,
-      clearAuditLogs: () => requireAuditLogService().clearAuditLogs(),
+      clearAuditLogs: async () => {
+        await requireAuditLogService().clearAuditLogs();
+        if (canUseCompanionAuditLogStorage()) {
+          await requireCompanionAuditLogService().clearAuditLogs();
+        }
+      },
       resetAppSettings: () => requireAppSettingsStorage().resetSettings(),
       resetModelCatalogToBundled: () => requireModelCatalogStorage().resetToBundled(),
       clearProjectMemories: () => requireProjectMemoryStorage().clearProjectMemories(),
@@ -1906,6 +1918,33 @@ async function getSessionAuditLogDetailSection(
   section: AuditLogDetailSection,
 ): Promise<AuditLogDetailFragment | null> {
   return requireMainQueryService().getSessionAuditLogDetailSection(sessionId, auditLogId, section);
+}
+
+async function listCompanionAuditLogs(sessionId: string): Promise<AuditLogEntry[]> {
+  return requireCompanionAuditLogStorage().listSessionAuditLogs(sessionId);
+}
+
+async function listCompanionAuditLogSummaries(sessionId: string): Promise<AuditLogSummary[]> {
+  return requireCompanionAuditLogStorage().listSessionAuditLogSummaries(sessionId);
+}
+
+async function listCompanionAuditLogSummaryPage(
+  sessionId: string,
+  request?: AuditLogSummaryPageRequest | null,
+): Promise<AuditLogSummaryPageResult> {
+  return requireCompanionAuditLogStorage().listSessionAuditLogSummaryPage(sessionId, request);
+}
+
+async function getCompanionAuditLogDetail(sessionId: string, auditLogId: number): Promise<AuditLogDetail | null> {
+  return requireCompanionAuditLogStorage().getSessionAuditLogDetail(sessionId, auditLogId);
+}
+
+async function getCompanionAuditLogDetailSection(
+  sessionId: string,
+  auditLogId: number,
+  section: AuditLogDetailSection,
+): Promise<AuditLogDetailFragment | null> {
+  return requireCompanionAuditLogStorage().getSessionAuditLogDetailSection(sessionId, auditLogId, section);
 }
 
 async function listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]> {

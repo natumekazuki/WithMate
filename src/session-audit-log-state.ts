@@ -45,6 +45,10 @@ type UseSessionAuditLogsInput = {
   selectedSession: AuditLogSessionLike | null;
   liveRun: LiveSessionRunState | null;
   enabled?: boolean;
+  auditLogApi?: Pick<
+    WithMateWindowApi,
+    "listSessionAuditLogSummaryPage" | "getSessionAuditLogDetailSection"
+  > | null;
 };
 
 const AUDIT_LOG_PAGE_LIMIT = 50;
@@ -66,6 +70,7 @@ export function useSessionAuditLogs({
   selectedSession,
   liveRun,
   enabled = true,
+  auditLogApi = withmateApi,
 }: UseSessionAuditLogsInput) {
   const [auditLogsOpen, setAuditLogsOpen] = useState(false);
   const [auditLogsState, setAuditLogsState] = useState<SessionOwnedAuditLogs>(() => createEmptyAuditLogsState(null));
@@ -107,7 +112,7 @@ export function useSessionAuditLogs({
   useEffect(() => {
     let active = true;
 
-    if (!enabled || !withmateApi || !selectedSession) {
+    if (!enabled || !auditLogApi || !selectedSession) {
       setAuditLogsState(createEmptyAuditLogsState(null));
       setAuditLogDetails({});
       auditLogDetailOwnerRef.current = null;
@@ -125,7 +130,7 @@ export function useSessionAuditLogs({
       setAuditLogDetails({});
       auditLogDetailOwnerRef.current = selectedSession.id;
     }
-    void withmateApi.listSessionAuditLogSummaryPage(selectedSession.id, {
+    void auditLogApi.listSessionAuditLogSummaryPage(selectedSession.id, {
       cursor: 0,
       limit: AUDIT_LOG_PAGE_LIMIT,
     }).then(
@@ -157,10 +162,10 @@ export function useSessionAuditLogs({
     return () => {
       active = false;
     };
-  }, [enabled, refreshSignature, selectedSessionId, withmateApi]);
+  }, [auditLogApi, enabled, refreshSignature, selectedSessionId]);
 
   const handleLoadMoreAuditLogs = () => {
-    if (!enabled || !withmateApi || !selectedSessionId) {
+    if (!enabled || !auditLogApi || !selectedSessionId) {
       return;
     }
 
@@ -177,7 +182,7 @@ export function useSessionAuditLogs({
         : current,
     );
 
-    void withmateApi.listSessionAuditLogSummaryPage(ownerSessionId, {
+    void auditLogApi.listSessionAuditLogSummaryPage(ownerSessionId, {
       cursor,
       limit: AUDIT_LOG_PAGE_LIMIT,
     }).then(
@@ -219,7 +224,7 @@ export function useSessionAuditLogs({
   };
 
   const handleLoadAuditLogDetail = (entry: AuditLogSummary, section: AuditLogDetailSection) => {
-    if (!enabled || !withmateApi || !selectedSessionId || entry.id < 0 || !entry.detailAvailable) {
+    if (!enabled || !auditLogApi || !selectedSessionId || entry.id < 0 || !entry.detailAvailable) {
       return;
     }
 
@@ -253,7 +258,7 @@ export function useSessionAuditLogs({
     }
 
     try {
-      void withmateApi.getSessionAuditLogDetailSection(entry.sessionId, entry.id, section).then(
+      void auditLogApi.getSessionAuditLogDetailSection(entry.sessionId, entry.id, section).then(
         (fragment) => {
           setAuditLogDetails((current) => ({
             ...current,

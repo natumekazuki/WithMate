@@ -103,6 +103,18 @@ export type MainIpcSessionQueryDepsArgs = {
     auditLogId: number,
     section: AuditLogDetailSection,
   ): Awaitable<AuditLogDetailFragment | null>;
+  listCompanionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
+  listCompanionAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
+  listCompanionAuditLogSummaryPage(
+    sessionId: string,
+    request?: AuditLogSummaryPageRequest | null,
+  ): Awaitable<AuditLogSummaryPageResult>;
+  getCompanionAuditLogDetail(sessionId: string, auditLogId: number): Awaitable<AuditLogDetail | null>;
+  getCompanionAuditLogDetailSection(
+    sessionId: string,
+    auditLogId: number,
+    section: AuditLogDetailSection,
+  ): Awaitable<AuditLogDetailFragment | null>;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
@@ -235,6 +247,11 @@ export function createMainIpcRegistrationDeps(
     listSessionAuditLogSummaryPage: args.sessionQuery.listSessionAuditLogSummaryPage,
     getSessionAuditLogDetail: args.sessionQuery.getSessionAuditLogDetail,
     getSessionAuditLogDetailSection: args.sessionQuery.getSessionAuditLogDetailSection,
+    listCompanionAuditLogs: args.sessionQuery.listCompanionAuditLogs,
+    listCompanionAuditLogSummaries: args.sessionQuery.listCompanionAuditLogSummaries,
+    listCompanionAuditLogSummaryPage: args.sessionQuery.listCompanionAuditLogSummaryPage,
+    getCompanionAuditLogDetail: args.sessionQuery.getCompanionAuditLogDetail,
+    getCompanionAuditLogDetailSection: args.sessionQuery.getCompanionAuditLogDetailSection,
     listSessionSkills: args.sessionQuery.listSessionSkills,
     listSessionCustomAgents: args.sessionQuery.listSessionCustomAgents,
     listWorkspaceSkills: args.sessionQuery.listWorkspaceSkills,

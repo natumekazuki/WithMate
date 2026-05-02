@@ -502,6 +502,71 @@ describe("V2 to V3 database migration write mode", () => {
     }
   });
 
+  it("V2 の last_active_at と session ordering を V3 に保持する", async () => {
+    const fixture = createV2FixtureDatabase();
+    try {
+      const sessionStorage = new SessionStorageV2(fixture.dbPath);
+      try {
+        for (const [id, title] of [["session-old", "Old"], ["session-new", "New"]] as const) {
+          sessionStorage.upsertSession({
+            ...buildNewSession({
+              taskTitle: title,
+              workspaceLabel: "workspace",
+              workspacePath: "/workspace",
+              branch: "main",
+              characterId: "char",
+              character: "Character",
+              characterIconPath: "",
+              characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+              approvalMode: DEFAULT_APPROVAL_MODE,
+            }),
+            id,
+          });
+        }
+      } finally {
+        sessionStorage.close();
+      }
+      const sourceDb = new DatabaseSync(fixture.dbPath);
+      try {
+        sourceDb.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(100, "session-old");
+        sourceDb.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(200, "session-new");
+      } finally {
+        sourceDb.close();
+      }
+
+      const v3DbPath = join(fixture.dirPath, "withmate-v3.db");
+      const blobRootPath = join(fixture.dirPath, "blobs");
+      await createMigrationWriteReport({
+        sourceDatabaseFile: fixture.dbPath,
+        targetDatabaseFile: v3DbPath,
+        blobRootPath,
+      });
+
+      const storage = new SessionStorageV3(v3DbPath, blobRootPath);
+      try {
+        assert.deepEqual((await storage.listSessionSummaries()).map((session) => session.id), ["session-new", "session-old"]);
+      } finally {
+        storage.close();
+      }
+
+      const targetDb = new DatabaseSync(v3DbPath, { readOnly: true });
+      try {
+        assert.equal(
+          readRequiredRow<{ last_active_at: number }>(targetDb, "SELECT last_active_at FROM sessions WHERE id = ?", "session-old").last_active_at,
+          100,
+        );
+        assert.equal(
+          readRequiredRow<{ last_active_at: number }>(targetDb, "SELECT last_active_at FROM sessions WHERE id = ?", "session-new").last_active_at,
+          200,
+        );
+      } finally {
+        targetDb.close();
+      }
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
   it("overwrite=false で既存 target があると失敗し、overwrite=true で置き換える", async () => {
     const fixture = createV2FixtureDatabase();
     try {

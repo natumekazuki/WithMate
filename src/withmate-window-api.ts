@@ -119,6 +119,18 @@ export type WithMateWindowCompanionApi = {
   searchCompanionWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
   cancelCompanionSessionRun(sessionId: string): Promise<void>;
+  listCompanionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
+  listCompanionAuditLogSummaries(sessionId: string): Promise<AuditLogSummary[]>;
+  listCompanionAuditLogSummaryPage(
+    sessionId: string,
+    request?: AuditLogSummaryPageRequest | null,
+  ): Promise<AuditLogSummaryPageResult>;
+  getCompanionAuditLogDetail(sessionId: string, auditLogId: number): Promise<AuditLogDetail | null>;
+  getCompanionAuditLogDetailSection(
+    sessionId: string,
+    auditLogId: number,
+    section: AuditLogDetailSection,
+  ): Promise<AuditLogDetailFragment | null>;
 };
 
 export type WithMateWindowObservabilityApi = {

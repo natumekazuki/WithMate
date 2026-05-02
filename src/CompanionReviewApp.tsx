@@ -668,6 +668,10 @@ export default function CompanionReviewApp() {
   const stagedFileTree = useMemo(() => buildChangedFileTree(stagedChangedFiles), [stagedChangedFiles]);
   const selectedSessionLiveRun =
     snapshot && liveRunState.ownerSessionId === snapshot.session.id ? liveRunState.state : null;
+  const companionAuditLogApi = useMemo(() => withmateApi ? ({
+    listSessionAuditLogSummaryPage: withmateApi.listCompanionAuditLogSummaryPage,
+    getSessionAuditLogDetailSection: withmateApi.getCompanionAuditLogDetailSection,
+  }) : null, [withmateApi]);
   const {
     auditLogsOpen,
     setAuditLogsOpen,
@@ -678,6 +682,7 @@ export default function CompanionReviewApp() {
     handleLoadAuditLogDetail,
   } = useSessionAuditLogs({
     withmateApi,
+    auditLogApi: companionAuditLogApi,
     selectedSession: snapshot?.session ?? null,
     liveRun: selectedSessionLiveRun,
     enabled: !isMergeView,

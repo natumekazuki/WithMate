@@ -2,6 +2,8 @@ import type { DatabaseSync } from "node:sqlite";
 
 import {
   type AuditLogDetail,
+  type AuditLogDetailFragment,
+  type AuditLogDetailSection,
   type AuditLogEntry,
   type AuditLogicalPrompt,
   type AuditLogOperation,
@@ -815,6 +817,72 @@ export class CompanionAuditLogStorageV3 {
           errorMessage: entry.errorMessage,
         }
       : null;
+  }
+
+  async getSessionAuditLogDetailSection(
+    sessionId: string,
+    auditLogId: number,
+    section: AuditLogDetailSection,
+  ): Promise<AuditLogDetailFragment | null> {
+    const result = this.withDb((db) => {
+      const row = db.prepare(GET_SESSION_AUDIT_LOG_DETAIL_SQL).get(sessionId, auditLogId) as AuditLogDetailRow | undefined;
+      if (!row) {
+        return null;
+      }
+
+      const operationRows = section === "operations"
+        ? db.prepare(LIST_companion_audit_log_operations_SQL).all(auditLogId) as AuditLogOperationRow[]
+        : [];
+      return { row, operationRows };
+    });
+
+    if (!result) {
+      return null;
+    }
+
+    const { row, operationRows } = result;
+    const fragment: AuditLogDetailFragment = {
+      id: row.id,
+      sessionId: row.session_id,
+    };
+
+    switch (section) {
+      case "logical":
+        fragment.logicalPrompt = row.logical_prompt_blob_id
+          ? await this.blobStore.getJson<AuditLogicalPrompt>(row.logical_prompt_blob_id)
+          : DEFAULT_LOGICAL_PROMPT;
+        break;
+      case "transport":
+        fragment.transportPayload = row.transport_payload_blob_id
+          ? await this.blobStore.getJson<AuditTransportPayload>(row.transport_payload_blob_id)
+          : null;
+        break;
+      case "response":
+        fragment.assistantText = row.assistant_text_blob_id
+          ? await this.blobStore.getText(row.assistant_text_blob_id)
+          : "";
+        break;
+      case "operations":
+        fragment.operations = await Promise.all(operationRows.map(async (operationRow) => ({
+          type: operationRow.operation_type,
+          summary: operationRow.summary,
+          details: operationRow.details_blob_id
+            ? await this.blobStore.getText(operationRow.details_blob_id)
+            : operationRow.details_preview || undefined,
+        })));
+        break;
+      case "raw":
+        fragment.rawItemsJson = row.raw_items_blob_id
+          ? await this.blobStore.getText(row.raw_items_blob_id)
+          : "[]";
+        break;
+      default: {
+        const exhaustive: never = section;
+        throw new Error(`unsupported companion audit log detail section: ${exhaustive}`);
+      }
+    }
+
+    return fragment;
   }
 
   async createAuditLog(input: CreateAuditLogInput): Promise<AuditLogEntry> {

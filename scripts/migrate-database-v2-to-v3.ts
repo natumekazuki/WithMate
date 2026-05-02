@@ -979,7 +979,7 @@ export async function createMigrationWriteReport(input: {
       ? sourceDb.prepare(`SELECT ${SESSION_HEADER_COLUMNS} FROM sessions ORDER BY last_active_at DESC, id DESC`).all() as SessionHeaderRow[]
       : [];
     for (const row of sessionRows) {
-      await sessionStorage.upsertSession(rowToSession(row, readSessionMessages(sourceDb, row.id)));
+      await sessionStorage.upsertSessionWithLastActiveAt(rowToSession(row, readSessionMessages(sourceDb, row.id)), row.last_active_at);
     }
 
     const auditRows = tableExists(sourceDb, "audit_logs")

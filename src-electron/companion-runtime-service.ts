@@ -382,9 +382,14 @@ export class CompanionRuntimeService {
       session: runningSession,
       logicalPrompt: promptForAudit.logicalPrompt,
     });
-    const runningAuditLog = this.deps.createAuditLog
-      ? await this.deps.createAuditLog(runningAuditEntry)
-      : null;
+    let runningAuditLog: AuditLogEntry | null = null;
+    if (this.deps.createAuditLog) {
+      try {
+        runningAuditLog = await this.deps.createAuditLog(runningAuditEntry);
+      } catch (error) {
+        console.warn("[companion] failed to create audit log", error);
+      }
+    }
 
     const updateRunningAudit = async (entry: CreateAuditLogInput): Promise<void> => {
       if (!runningAuditLog || !this.deps.updateAuditLog) {

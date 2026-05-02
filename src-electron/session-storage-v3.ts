@@ -12,7 +12,7 @@ import {
   type SessionSummary,
 } from "../src/session-state.js";
 import type { AuditLogOperation, ChangedFile, RunCheck } from "../src/runtime-state.js";
-import { V3_TEXT_PREVIEW_MAX_LENGTH } from "./database-schema-v3.js";
+import { V3_SUMMARY_JSON_MAX_LENGTH, V3_TEXT_PREVIEW_MAX_LENGTH } from "./database-schema-v3.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import { type BlobRef, TextBlobStore } from "./text-blob-store.js";
 
@@ -614,7 +614,41 @@ function parseArtifactSummary(value: string | null): MessageArtifact | undefined
 }
 
 function buildArtifactSummary(artifact: MessageArtifact): string {
-  return JSON.stringify(summarizeMessageArtifact(artifact));
+  return JSON.stringify(limitArtifactSummary(summarizeMessageArtifact(artifact)));
+}
+
+function limitArtifactSummary(summary: MessageArtifact): MessageArtifact {
+  const limited: MessageArtifact = {
+    ...summary,
+    activitySummary: [...summary.activitySummary],
+    operationTimeline: summary.operationTimeline ? [...summary.operationTimeline] : undefined,
+    changedFiles: [...summary.changedFiles],
+    runChecks: [...summary.runChecks],
+    detailAvailable: true,
+  };
+  const arrayKeys = ["changedFiles", "runChecks", "activitySummary", "operationTimeline"] as const;
+  while (JSON.stringify(limited).length > V3_SUMMARY_JSON_MAX_LENGTH) {
+    const targetKey = arrayKeys.find((key) => {
+      const value = limited[key];
+      return Array.isArray(value) && value.length > 0;
+    });
+    if (!targetKey) {
+      return {
+        ...limited,
+        title: "",
+        activitySummary: [],
+        operationTimeline: undefined,
+        changedFiles: [],
+        runChecks: [],
+        detailAvailable: true,
+      };
+    }
+    const value = limited[targetKey];
+    if (Array.isArray(value)) {
+      value.pop();
+    }
+  }
+  return limited;
 }
 
 function isArtifactSummaryOnly(artifact: MessageArtifact): boolean {
@@ -842,6 +876,10 @@ export class SessionStorageV3 {
   }
 
   async upsertSession(session: Session): Promise<Session> {
+    return this.upsertSessionWithLastActiveAt(session, Date.now());
+  }
+
+  async upsertSessionWithLastActiveAt(session: Session, lastActiveAt: number): Promise<Session> {
     const normalized = normalizeSession(session);
     if (!normalized) {
       throw new Error("保存するセッション形式が不正だよ。");
@@ -865,7 +903,7 @@ export class SessionStorageV3 {
         try {
           const previousBlobIds = collectSessionBlobIds(db, normalized.id);
           insertBlobObjects(db, payloads, createdAt);
-          writeSessionHeader(upsertSessionStatement, normalized, Date.now(), auditLogCount);
+          writeSessionHeader(upsertSessionStatement, normalized, lastActiveAt, auditLogCount);
           deleteMessagesStatement.run(normalized.id);
           writeSessionMessages(insertMessageStatement, insertArtifactStatement, normalized, payloads);
           blobIdsToDelete = deleteUnreferencedBlobObjectRows(db, previousBlobIds);

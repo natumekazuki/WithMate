@@ -9,6 +9,7 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { buildNewSession, type MessageArtifact, type Session } from "../../src/app-state.js";
 import {
   CREATE_V3_SCHEMA_SQL,
+  V3_SUMMARY_JSON_MAX_LENGTH,
   V3_TEXT_PREVIEW_MAX_LENGTH,
 } from "../../src-electron/database-schema-v3.js";
 import { SessionStorageV3 } from "../../src-electron/session-storage-v3.js";
@@ -86,6 +87,29 @@ function createArtifact(sentinel: string): MessageArtifact {
         value: "pass",
       },
     ],
+  };
+}
+
+function createLargeArtifact(sentinel: string): MessageArtifact {
+  return {
+    title: "Large V3 artifact",
+    activitySummary: Array.from({ length: 120 }, (_, index) => `activity-${index}-${sentinel}`),
+    changedFiles: Array.from({ length: 140 }, (_, index) => ({
+      kind: "edit",
+      path: `src/generated/file-${index}.ts`,
+      summary: `large changed file ${index} ${sentinel}`,
+      diffRows: [
+        {
+          kind: "add",
+          rightNumber: index + 1,
+          rightText: `${sentinel}:diff-${index}`,
+        },
+      ],
+    })),
+    runChecks: Array.from({ length: 120 }, (_, index) => ({
+      label: `check-${index}`,
+      value: `${sentinel}:check-${index}`,
+    })),
   };
 }
 
@@ -293,6 +317,48 @@ describe("SessionStorageV3", () => {
     });
   });
 
+  it("large artifact summary は DB 上限内に丸めつつ full artifact blob を保持する", async () => {
+    await withTempV3Database(async ({ dbPath, blobRootPath }) => {
+      const storage = new SessionStorageV3(dbPath, blobRootPath);
+      const sentinel = "SENTINEL_LARGE_ARTIFACT";
+      const artifact = createLargeArtifact(sentinel);
+      const session = createSession({
+        id: "session-v3-large-artifact",
+        taskTitle: "V3 large artifact",
+        workspaceLabel: "workspace-large-artifact",
+      });
+
+      try {
+        await storage.upsertSession({
+          ...session,
+          messages: [{ role: "assistant", text: "large artifact", artifact }],
+        });
+
+        const loaded = await storage.getSession(session.id);
+        assert.ok(loaded);
+        assert.equal(loaded.messages[0]?.artifact?.detailAvailable, true);
+        assert.equal((loaded.messages[0]?.artifact?.changedFiles.length ?? 0) < artifact.changedFiles.length, true);
+        assert.equal(
+          (await storage.getSessionMessageArtifact(session.id, 0))?.changedFiles.at(-1)?.diffRows[0]?.rightText,
+          `${sentinel}:diff-139`,
+        );
+      } finally {
+        storage.close();
+      }
+
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const row = readRequiredRow<{ artifact_summary_json: string }>(
+          db,
+          `SELECT artifact_summary_json FROM session_message_artifacts`,
+        );
+        assert.equal(row.artifact_summary_json.length <= V3_SUMMARY_JSON_MAX_LENGTH, true);
+      } finally {
+        db.close();
+      }
+    });
+  });
+
   it("summary artifact を含む session rewrite でも既存 full artifact blob を保持する", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);
@@ -351,13 +417,18 @@ describe("SessionStorageV3", () => {
         taskTitle: "V3 rollback",
         workspaceLabel: "workspace-rollback",
       });
-      const oversizedArtifact = createArtifact("SENTINEL_SESSION_V3_ROLLBACK");
-      oversizedArtifact.changedFiles = Array.from({ length: 700 }, (_, index) => ({
-        kind: "edit",
-        path: `src/file-${index}.ts`,
-        summary: `summary-${index}`,
-        diffRows: [],
-      }));
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.exec(`
+          CREATE TRIGGER fail_session_artifact_insert
+          BEFORE INSERT ON session_message_artifacts
+          BEGIN
+            SELECT RAISE(FAIL, 'forced artifact insert failure');
+          END;
+        `);
+      } finally {
+        db.close();
+      }
 
       try {
         await assert.rejects(() => storage.upsertSession({
@@ -366,7 +437,7 @@ describe("SessionStorageV3", () => {
             {
               role: "assistant",
               text: "message that writes a blob before DB insert fails",
-              artifact: oversizedArtifact,
+              artifact: createArtifact("SENTINEL_SESSION_V3_ROLLBACK"),
             },
           ],
         }));
