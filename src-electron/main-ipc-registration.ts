@@ -3,6 +3,8 @@ import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import type { RendererLogInput } from "../src/app-log-types.js";
 import type {
   AuditLogDetail,
+  AuditLogDetailFragment,
+  AuditLogDetailSection,
   AuditLogEntry,
   AuditLogSummary,
   AuditLogSummaryPageRequest,
@@ -36,7 +38,8 @@ import type {
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
-import type { CreateSessionInput, DiffPreviewPayload, Session } from "../src/session-state.js";
+import type { CreateSessionInput, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
@@ -56,6 +59,7 @@ import {
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
+  WITHMATE_GET_COMPANION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
   WITHMATE_GET_COMPANION_SESSION_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
@@ -64,16 +68,23 @@ import {
   WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
+  WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
+  WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
   WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
+  WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
+  WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
+  WITHMATE_LIST_COMPANION_AUDIT_LOGS_CHANNEL,
+  WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
@@ -145,15 +156,32 @@ export type MainIpcRegistrationDeps = {
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
-  listSessionSummaries(): SessionSummary[];
-  listCompanionSessionSummaries(): CompanionSessionSummary[];
-  listSessionAuditLogs(sessionId: string): AuditLogEntry[];
-  listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[];
+  listSessionSummaries(): Awaitable<SessionSummary[]>;
+  listCompanionSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
+  listSessionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
+  listSessionAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
   listSessionAuditLogSummaryPage(
     sessionId: string,
     request?: AuditLogSummaryPageRequest | null,
-  ): AuditLogSummaryPageResult;
-  getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null;
+  ): Awaitable<AuditLogSummaryPageResult>;
+  getSessionAuditLogDetail(sessionId: string, auditLogId: number): Awaitable<AuditLogDetail | null>;
+  getSessionAuditLogDetailSection(
+    sessionId: string,
+    auditLogId: number,
+    section: AuditLogDetailSection,
+  ): Awaitable<AuditLogDetailFragment | null>;
+  listCompanionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
+  listCompanionAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
+  listCompanionAuditLogSummaryPage(
+    sessionId: string,
+    request?: AuditLogSummaryPageRequest | null,
+  ): Awaitable<AuditLogSummaryPageResult>;
+  getCompanionAuditLogDetail(sessionId: string, auditLogId: number): Awaitable<AuditLogDetail | null>;
+  getCompanionAuditLogDetailSection(
+    sessionId: string,
+    auditLogId: number,
+    section: AuditLogDetailSection,
+  ): Awaitable<AuditLogDetailFragment | null>;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
@@ -161,7 +189,7 @@ export type MainIpcRegistrationDeps = {
   listOpenSessionWindowIds(): string[];
   listOpenCompanionReviewWindowIds(): string[];
   getAppSettings(): AppSettings;
-  updateAppSettings(settings: AppSettings): AppSettings;
+  updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
   getMemoryManagementSnapshot(): MemoryManagementSnapshot;
   getMemoryManagementPage(request: MemoryManagementPageRequest): MemoryManagementPageResult;
@@ -170,11 +198,12 @@ export type MainIpcRegistrationDeps = {
   deleteCharacterMemoryEntry(entryId: string): void;
   listCharacters(): Promise<CharacterProfile[]>;
   getModelCatalog(revision: number | null): ModelCatalogSnapshot | null;
-  importModelCatalogDocument(document: ModelCatalogDocument): ModelCatalogSnapshot;
+  importModelCatalogDocument(document: ModelCatalogDocument): Awaitable<ModelCatalogSnapshot>;
   importModelCatalogFromFile(targetWindow?: MaybeWindow): Promise<ModelCatalogSnapshot | null>;
   exportModelCatalogDocument(revision: number | null): ModelCatalogDocument | null;
   exportModelCatalogToFile(revision: number | null, targetWindow?: MaybeWindow): Promise<string | null>;
-  getSession(sessionId: string): Session | null;
+  getSession(sessionId: string): Awaitable<Session | null>;
+  getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
   getProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
@@ -189,9 +218,10 @@ export type MainIpcRegistrationDeps = {
   getCharacterUpdateWorkspace(characterId: string): Promise<CharacterUpdateWorkspace | null>;
   extractCharacterUpdateMemory(characterId: string): Promise<CharacterUpdateMemoryExtract>;
   createCharacterUpdateSession(characterId: string, providerId: string): Promise<Session>;
-  createSession(input: CreateSessionInput): Session;
+  createSession(input: CreateSessionInput): Awaitable<Session>;
   createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
-  getCompanionSession(sessionId: string): CompanionSession | null;
+  getCompanionSession(sessionId: string): Awaitable<CompanionSession | null>;
+  getCompanionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
   mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionMergeSelectedFilesResult>;
   syncCompanionTarget(sessionId: string): Promise<CompanionSyncTargetResult>;
@@ -204,8 +234,8 @@ export type MainIpcRegistrationDeps = {
   searchCompanionWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
   cancelCompanionSessionRun(sessionId: string): void;
-  updateSession(session: Session): Session;
-  deleteSession(sessionId: string): void;
+  updateSession(session: Session): Awaitable<Session>;
+  deleteSession(sessionId: string): Awaitable<void>;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
   searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
@@ -279,6 +309,12 @@ type MainIpcSessionQueryDeps = Pick<
   | "listSessionAuditLogSummaries"
   | "listSessionAuditLogSummaryPage"
   | "getSessionAuditLogDetail"
+  | "getSessionAuditLogDetailSection"
+  | "listCompanionAuditLogs"
+  | "listCompanionAuditLogSummaries"
+  | "listCompanionAuditLogSummaryPage"
+  | "getCompanionAuditLogDetail"
+  | "getCompanionAuditLogDetailSection"
   | "listSessionSkills"
   | "listSessionCustomAgents"
   | "listWorkspaceSkills"
@@ -286,6 +322,7 @@ type MainIpcSessionQueryDeps = Pick<
   | "listOpenSessionWindowIds"
   | "listOpenCompanionReviewWindowIds"
   | "getSession"
+  | "getSessionMessageArtifact"
   | "getDiffPreview"
   | "previewComposerInput"
   | "searchWorkspaceFiles"
@@ -295,6 +332,7 @@ type MainIpcCompanionDeps = Pick<
   MainIpcRegistrationDeps,
   | "createCompanionSession"
   | "getCompanionSession"
+  | "getCompanionMessageArtifact"
   | "getCompanionReviewSnapshot"
   | "mergeCompanionSelectedFiles"
   | "syncCompanionTarget"
@@ -446,6 +484,28 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
   ipcMain.handle(WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL, (_event, sessionId: string, auditLogId: number) =>
     deps.getSessionAuditLogDetail(sessionId, auditLogId),
   );
+  ipcMain.handle(
+    WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
+    (_event, sessionId: string, auditLogId: number, section: AuditLogDetailSection) =>
+      deps.getSessionAuditLogDetailSection(sessionId, auditLogId, section),
+  );
+  ipcMain.handle(WITHMATE_LIST_COMPANION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => deps.listCompanionAuditLogs(sessionId));
+  ipcMain.handle(WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARIES_CHANNEL, (_event, sessionId: string) =>
+    deps.listCompanionAuditLogSummaries(sessionId),
+  );
+  ipcMain.handle(
+    WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
+    (_event, sessionId: string, request: AuditLogSummaryPageRequest | null | undefined) =>
+      deps.listCompanionAuditLogSummaryPage(sessionId, request),
+  );
+  ipcMain.handle(WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL, (_event, sessionId: string, auditLogId: number) =>
+    deps.getCompanionAuditLogDetail(sessionId, auditLogId),
+  );
+  ipcMain.handle(
+    WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
+    (_event, sessionId: string, auditLogId: number, section: AuditLogDetailSection) =>
+      deps.getCompanionAuditLogDetailSection(sessionId, auditLogId, section),
+  );
   ipcMain.handle(WITHMATE_LIST_SESSION_SKILLS_CHANNEL, async (_event, sessionId: string) => deps.listSessionSkills(sessionId));
   ipcMain.handle(WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL, async (_event, sessionId: string) =>
     deps.listSessionCustomAgents(sessionId),
@@ -465,6 +525,12 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
       return null;
     }
     return deps.getSession(sessionId);
+  });
+  ipcMain.handle(WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL, (_event, sessionId: string, messageIndex: number) => {
+    if (!sessionId || !Number.isInteger(messageIndex) || messageIndex < 0) {
+      return null;
+    }
+    return deps.getSessionMessageArtifact(sessionId, messageIndex);
   });
   ipcMain.handle(WITHMATE_GET_DIFF_PREVIEW_CHANNEL, (_event, token: string) => {
     if (!token) {
@@ -486,6 +552,12 @@ function registerCompanionHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCom
       return null;
     }
     return deps.getCompanionSession(sessionId);
+  });
+  ipcMain.handle(WITHMATE_GET_COMPANION_MESSAGE_ARTIFACT_CHANNEL, (_event, sessionId: string, messageIndex: number) => {
+    if (!sessionId || !Number.isInteger(messageIndex) || messageIndex < 0) {
+      return null;
+    }
+    return deps.getCompanionMessageArtifact(sessionId, messageIndex);
   });
   ipcMain.handle(WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL, async (_event, sessionId: string) => {
     if (!sessionId) {

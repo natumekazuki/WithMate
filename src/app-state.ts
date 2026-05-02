@@ -25,6 +25,8 @@ export {
 export type {
   AuditLogEntry,
   AuditLogDetail,
+  AuditLogDetailFragment,
+  AuditLogDetailSection,
   AuditLogOperation,
   AuditLogPhase,
   AuditLogSummary,

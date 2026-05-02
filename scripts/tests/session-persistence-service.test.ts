@@ -56,7 +56,7 @@ function createSnapshot(): ModelCatalogSnapshot {
 }
 
 describe("SessionPersistenceService", () => {
-  it("createSession は有効な provider と model を解決して保存する", () => {
+  it("createSession は有効な provider と model を解決して保存する", async () => {
     const storedSessions: Session[] = [];
     const syncedSessionIds: string[] = [];
     const broadcastedSessionIds: string[][] = [];
@@ -111,7 +111,7 @@ describe("SessionPersistenceService", () => {
       },
     });
 
-    const created = service.createSession({
+    const created = await service.createSession({
       taskTitle: "New Session",
       workspaceLabel: "workspace",
       workspacePath: "C:/workspace",
@@ -138,7 +138,7 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(broadcastedSessionIds, [[created.id]]);
   });
 
-  it("upsertSession は summary-only session 更新でも既存 messages を保持する", () => {
+  it("upsertSession は summary-only session 更新でも既存 messages を保持する", async () => {
     const fullSession = createSession({
       id: "session-with-messages",
       taskTitle: "Before",
@@ -197,7 +197,7 @@ describe("SessionPersistenceService", () => {
       broadcastSessions() {},
     });
 
-    const updated = service.upsertSession(summaryOnlySession);
+    const updated = await service.upsertSession(summaryOnlySession);
 
     assert.deepEqual(
       storedSession?.messages.map((message) => message.text),
@@ -206,7 +206,7 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(updated.messages.map((message) => message.text), ["残すメッセージ", "残す返答"]);
   });
 
-  it("createSession は last-used model / reasoning / customAgentName を正規化して保存する", () => {
+  it("createSession は last-used model / reasoning / customAgentName を正規化して保存する", async () => {
     const storedSessions: Session[] = [];
 
     const service = new SessionPersistenceService({
@@ -254,7 +254,7 @@ describe("SessionPersistenceService", () => {
       broadcastSessions() {},
     });
 
-    const created = service.createSession({
+    const created = await service.createSession({
       taskTitle: "New Session",
       workspaceLabel: "workspace",
       workspacePath: "C:/workspace",
@@ -276,7 +276,7 @@ describe("SessionPersistenceService", () => {
     assert.equal(created.customAgentName, "planner");
   });
 
-  it("updateSession は provider 変更時に telemetry をクリアし、thread reset 時は provider cache を invalidate する", () => {
+  it("updateSession は provider 変更時に telemetry をクリアし、thread reset 時は provider cache を invalidate する", async () => {
     const baseSession = createSession({ provider: "codex", model: "codex-default", threadId: "thread-1" });
     const storedSessions: Session[] = [baseSession];
     const clearedTelemetry: string[] = [];
@@ -325,20 +325,20 @@ describe("SessionPersistenceService", () => {
       broadcastSessions() {},
     });
 
-    const updated = service.updateSession({ ...baseSession, provider: "copilot", model: "copilot-default" });
+    const updated = await service.updateSession({ ...baseSession, provider: "copilot", model: "copilot-default" });
     assert.equal(updated.provider, "copilot");
     assert.equal(updated.threadId, "");
     assert.deepEqual(clearedTelemetry, [baseSession.id]);
     assert.deepEqual(invalidatedThreads, [{ providerId: "codex", sessionId: baseSession.id }]);
 
     storedSessions.splice(0, storedSessions.length, createSession({ id: baseSession.id, runState: "running", status: "running" }));
-    assert.throws(
+    await assert.rejects(
       () => service.updateSession({ ...storedSessions[0], taskTitle: "blocked" }),
       /実行中のセッションは更新できない/,
     );
   });
 
-  it("updateSession は model / reasoning 変更時に threadId を維持する", () => {
+  it("updateSession は model / reasoning 変更時に threadId を維持する", async () => {
     const baseSession = createSession({
       provider: "copilot",
       model: "copilot-default",
@@ -390,7 +390,7 @@ describe("SessionPersistenceService", () => {
       broadcastSessions() {},
     });
 
-    const updated = service.updateSession({
+    const updated = await service.updateSession({
       ...baseSession,
       model: "copilot-default",
       reasoningEffort: "high",
@@ -401,7 +401,7 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(invalidatedThreads, []);
   });
 
-  it("updateSession は runtime parameter 変更時に threadId を維持する", () => {
+  it("updateSession は runtime parameter 変更時に threadId を維持する", async () => {
     const baseSession = createSession({
       provider: "codex",
       model: "codex-default",
@@ -456,7 +456,7 @@ describe("SessionPersistenceService", () => {
       broadcastSessions() {},
     });
 
-    const updated = service.updateSession({
+    const updated = await service.updateSession({
       ...baseSession,
       approvalMode: "never",
       codexSandboxMode: "danger-full-access",
@@ -469,7 +469,7 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(invalidatedThreads, []);
   });
 
-  it("deleteSession は関連状態を片付けて window close を呼ぶ", () => {
+  it("deleteSession は関連状態を片付けて window close を呼ぶ", async () => {
     const session = createSession();
     const storedSessions: Session[] = [session];
     const deleted: string[] = [];
@@ -527,7 +527,7 @@ describe("SessionPersistenceService", () => {
       },
     });
 
-    service.deleteSession(session.id);
+    await service.deleteSession(session.id);
 
     assert.deepEqual(deleted, [session.id]);
     assert.deepEqual(clearedBackground, [session.id]);
@@ -536,7 +536,7 @@ describe("SessionPersistenceService", () => {
     assert.equal(storedSessions.length, 0);
   });
 
-  it("replaceAllSessions は removed/provider change の副作用と invalidation を処理する", () => {
+  it("replaceAllSessions は removed/provider change の副作用と invalidation を処理する", async () => {
     const sessionA = createSession({ id: "session-a", provider: "codex", model: "codex-default" });
     const sessionB = createSession({ id: "session-b", provider: "copilot", model: "copilot-default" });
     const nextSessionA = { ...sessionA, provider: "copilot", model: "copilot-default", threadId: "" };
@@ -547,12 +547,14 @@ describe("SessionPersistenceService", () => {
     const clearedInflight: string[] = [];
     const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
     const broadcastedSessionIds: string[][] = [];
+    const replaceOrder: string[] = [];
 
     const service = new SessionPersistenceService({
       getSessions() {
         return storedSessions;
       },
       setSessions(nextSessions) {
+        replaceOrder.push("setSessions");
         storedSessions.splice(0, storedSessions.length, ...nextSessions);
       },
       getSession(sessionId) {
@@ -565,7 +567,10 @@ describe("SessionPersistenceService", () => {
         storedSessions.splice(0, storedSessions.length, next);
         return next;
       },
-      replaceStoredSessions(nextSessions) {
+      async replaceStoredSessions(nextSessions) {
+        replaceOrder.push("replaceStoredSessions:start");
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        replaceOrder.push("replaceStoredSessions:end");
         storedSessions.splice(0, storedSessions.length, ...nextSessions);
       },
       listStoredSessions() {
@@ -600,7 +605,7 @@ describe("SessionPersistenceService", () => {
       },
     });
 
-    const replaced = service.replaceAllSessions([nextSessionA], {
+    const replaced = await service.replaceAllSessions([nextSessionA], {
       invalidateSessionIds: ["session-a"],
     });
 
@@ -611,5 +616,6 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(clearedInflight, ["session-b"]);
     assert.deepEqual(invalidated, [{ providerId: "copilot", sessionId: "session-a" }]);
     assert.deepEqual(broadcastedSessionIds, [["session-a", "session-b"]]);
+    assert.deepEqual(replaceOrder, ["replaceStoredSessions:start", "replaceStoredSessions:end", "setSessions"]);
   });
 });

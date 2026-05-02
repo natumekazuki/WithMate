@@ -34,6 +34,9 @@ import {
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
+  WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
+  WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
+  WITHMATE_GET_COMPANION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
   WITHMATE_GET_COMPANION_SESSION_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
@@ -43,12 +46,17 @@ import {
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
+  WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
+  WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
+  WITHMATE_LIST_COMPANION_AUDIT_LOGS_CHANNEL,
+  WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
@@ -243,6 +251,9 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     getSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_CHANNEL, sessionId);
     },
+    getSessionMessageArtifact(sessionId, messageIndex) {
+      return ipcRenderer.invoke(WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL, sessionId, messageIndex);
+    },
     createSession(input) {
       return ipcRenderer.invoke(WITHMATE_CREATE_SESSION_CHANNEL, input);
     },
@@ -288,6 +299,9 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     getSessionAuditLogDetail(sessionId, auditLogId) {
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL, sessionId, auditLogId);
     },
+    getSessionAuditLogDetailSection(sessionId, auditLogId, section) {
+      return ipcRenderer.invoke(WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_SECTION_CHANNEL, sessionId, auditLogId, section);
+    },
     getLiveSessionRun(sessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL, sessionId);
     },
@@ -307,6 +321,9 @@ function createCompanionApi(ipcRenderer: IpcRendererLike): WithMateWindowCompani
     },
     getCompanionSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_COMPANION_SESSION_CHANNEL, sessionId);
+    },
+    getCompanionMessageArtifact(sessionId, messageIndex) {
+      return ipcRenderer.invoke(WITHMATE_GET_COMPANION_MESSAGE_ARTIFACT_CHANNEL, sessionId, messageIndex);
     },
     getCompanionReviewSnapshot(sessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL, sessionId);
@@ -346,6 +363,21 @@ function createCompanionApi(ipcRenderer: IpcRendererLike): WithMateWindowCompani
     },
     cancelCompanionSessionRun(sessionId) {
       return ipcRenderer.invoke(WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL, sessionId);
+    },
+    listCompanionAuditLogs(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_LIST_COMPANION_AUDIT_LOGS_CHANNEL, sessionId);
+    },
+    listCompanionAuditLogSummaries(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARIES_CHANNEL, sessionId);
+    },
+    listCompanionAuditLogSummaryPage(sessionId, request) {
+      return ipcRenderer.invoke(WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL, sessionId, request ?? null);
+    },
+    getCompanionAuditLogDetail(sessionId, auditLogId) {
+      return ipcRenderer.invoke(WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL, sessionId, auditLogId);
+    },
+    getCompanionAuditLogDetailSection(sessionId, auditLogId, section) {
+      return ipcRenderer.invoke(WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL, sessionId, auditLogId, section);
     },
   };
 }

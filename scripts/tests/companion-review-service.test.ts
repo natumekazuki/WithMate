@@ -167,6 +167,8 @@ describe("CompanionReviewService", () => {
         ["merge-run-0", "discard", "2026-04-26 10:03"],
       ],
     );
+    assert.equal("diffSnapshot" in (snapshot?.mergeRuns[0] ?? {}), false);
+    assert.equal(snapshot?.mergeRuns[0]?.diffSnapshotAvailable, true);
   });
 
   it("base snapshot と shadow worktree から tracked / untracked の changed files を作る", async () => {

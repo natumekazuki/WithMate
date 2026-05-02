@@ -1,5 +1,5 @@
 import type { ChangedFile } from "./runtime-state.js";
-import type { CompanionMergeRun, CompanionSession, CompanionSiblingWarningSummary } from "./companion-state.js";
+import type { CompanionMergeRunSummary, CompanionSession, CompanionSiblingWarningSummary } from "./companion-state.js";
 
 export type CompanionMergeReadinessStatus = "ready" | "blocked" | "warning";
 
@@ -43,7 +43,7 @@ export type CompanionTargetWorkspaceStashResult = {
 export type CompanionReviewSnapshot = {
   session: CompanionSession;
   changedFiles: ChangedFile[];
-  mergeRuns: CompanionMergeRun[];
+  mergeRuns: CompanionMergeRunSummary[];
   mergeReadiness: CompanionMergeReadiness;
   targetStash: CompanionTargetWorkspaceStash | null;
   generatedAt: string;

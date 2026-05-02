@@ -2585,6 +2585,8 @@ function AgentSessionWindowApp() {
         isMessageListFollowing,
         onMessageListScroll: handleMessageListScroll,
         onToggleArtifact: toggleArtifact,
+        onLoadArtifactDetail: (messageIndex) =>
+          withmateApi?.getSessionMessageArtifact(selectedSession.id, messageIndex) ?? Promise.resolve(null),
         onOpenDiff: (title, file) =>
           setSelectedDiff({
             title,

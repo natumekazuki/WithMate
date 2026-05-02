@@ -1,6 +1,8 @@
 import type {
   AuditLogEntry,
   AuditLogDetail,
+  AuditLogDetailFragment,
+  AuditLogDetailSection,
   AuditLogSummary,
   AuditLogSummaryPageRequest,
   AuditLogSummaryPageResult,
@@ -19,6 +21,7 @@ import type {
   SessionBackgroundActivityKind,
   SessionBackgroundActivityState,
   SessionContextTelemetry,
+  MessageArtifact,
     RunSessionTurnRequest,
     Session,
     SessionSummary,
@@ -70,6 +73,7 @@ export type WithMateWindowCatalogApi = {
 export type WithMateWindowSessionApi = {
   listSessionSummaries(): Promise<SessionSummary[]>;
   getSession(sessionId: string): Promise<Session | null>;
+  getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null>;
   createSession(input: CreateSessionInput): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
   deleteSession(sessionId: string): Promise<void>;
@@ -88,6 +92,11 @@ export type WithMateWindowSessionApi = {
     request?: AuditLogSummaryPageRequest | null,
   ): Promise<AuditLogSummaryPageResult>;
   getSessionAuditLogDetail(sessionId: string, auditLogId: number): Promise<AuditLogDetail | null>;
+  getSessionAuditLogDetailSection(
+    sessionId: string,
+    auditLogId: number,
+    section: AuditLogDetailSection,
+  ): Promise<AuditLogDetailFragment | null>;
   getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): Promise<void>;
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): Promise<void>;
@@ -96,6 +105,7 @@ export type WithMateWindowSessionApi = {
 export type WithMateWindowCompanionApi = {
   listCompanionSessionSummaries(): Promise<CompanionSessionSummary[]>;
   getCompanionSession(sessionId: string): Promise<CompanionSession | null>;
+  getCompanionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null>;
   getCompanionReviewSnapshot(sessionId: string): Promise<CompanionReviewSnapshot | null>;
   mergeCompanionSelectedFiles(request: CompanionMergeSelectedFilesRequest): Promise<CompanionMergeSelectedFilesResult>;
   syncCompanionTarget(sessionId: string): Promise<CompanionSyncTargetResult>;
@@ -109,6 +119,18 @@ export type WithMateWindowCompanionApi = {
   searchCompanionWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
   cancelCompanionSessionRun(sessionId: string): Promise<void>;
+  listCompanionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
+  listCompanionAuditLogSummaries(sessionId: string): Promise<AuditLogSummary[]>;
+  listCompanionAuditLogSummaryPage(
+    sessionId: string,
+    request?: AuditLogSummaryPageRequest | null,
+  ): Promise<AuditLogSummaryPageResult>;
+  getCompanionAuditLogDetail(sessionId: string, auditLogId: number): Promise<AuditLogDetail | null>;
+  getCompanionAuditLogDetailSection(
+    sessionId: string,
+    auditLogId: number,
+    section: AuditLogDetailSection,
+  ): Promise<AuditLogDetailFragment | null>;
 };
 
 export type WithMateWindowObservabilityApi = {

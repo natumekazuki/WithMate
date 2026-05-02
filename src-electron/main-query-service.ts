@@ -4,8 +4,11 @@ import {
   type ComposerPreview,
   type DiscoveredCustomAgent,
   type DiscoveredSkill,
+  type MessageArtifact,
   type Session,
   type AuditLogDetail,
+  type AuditLogDetailFragment,
+  type AuditLogDetailSection,
   type AuditLogEntry,
   type AuditLogSummary,
   type AuditLogSummaryPageRequest,
@@ -17,21 +20,28 @@ import {
 import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
 import { extractTextReferenceCandidates } from "../src/path-reference.js";
 import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type MainQueryServiceDeps = {
-  getSessionSummaries(): SessionSummary[];
-  getSession(sessionId: string): Session | null;
+  getSessionSummaries(): Awaitable<SessionSummary[]>;
+  getSession(sessionId: string): Awaitable<Session | null>;
+  getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getCharacters(): CharacterProfile[];
-  getAuditLogs(sessionId: string): AuditLogEntry[];
-  getAuditLogSummaries(sessionId: string): AuditLogSummary[];
-  getAuditLogSummaryPage(sessionId: string, request?: AuditLogSummaryPageRequest | null): AuditLogSummaryPageResult;
-  getAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null;
+  getAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
+  getAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
+  getAuditLogSummaryPage(sessionId: string, request?: AuditLogSummaryPageRequest | null): Awaitable<AuditLogSummaryPageResult>;
+  getAuditLogDetail(sessionId: string, auditLogId: number): Awaitable<AuditLogDetail | null>;
+  getAuditLogDetailSection(
+    sessionId: string,
+    auditLogId: number,
+    section: AuditLogDetailSection,
+  ): Awaitable<AuditLogDetailFragment | null>;
   getAppSettings(): AppSettings;
   discoverSessionSkills(workspacePath: string, skillRootPath: string | null): Promise<DiscoveredSkill[]>;
   discoverSessionCustomAgents(workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   getStoredCharacter(characterId: string): Promise<CharacterProfile | null>;
   refreshCharactersFromStorage(): Promise<CharacterProfile[]>;
-  resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
+  resolveComposerPreview(session: SessionSummary, userMessage: string): Promise<ComposerPreview>;
   searchWorkspaceFiles(workspacePath: string, query: string): Promise<WorkspacePathCandidate[]>;
   launchTerminalAtPath(workspacePath: string): Promise<void>;
 };
@@ -47,40 +57,48 @@ export class MainQueryService {
     return cloneSessionSummaries([session])[0] as SessionSummary;
   }
 
-  private getSessionSummary(sessionId: string): SessionSummary | null {
-    const session = this.deps.getSessionSummaries().find((entry) => entry.id === sessionId);
+  private async getSessionSummary(sessionId: string): Promise<SessionSummary | null> {
+    const session = (await this.deps.getSessionSummaries()).find((entry) => entry.id === sessionId);
     return session ? this.cloneSessionSummary(session) : null;
   }
 
-  listSessionSummaries(): SessionSummary[] {
-    return cloneSessionSummaries(this.deps.getSessionSummaries());
+  async listSessionSummaries(): Promise<SessionSummary[]> {
+    return cloneSessionSummaries(await this.deps.getSessionSummaries());
   }
 
   listCharacters(): CharacterProfile[] {
     return cloneCharacterProfiles(this.deps.getCharacters());
   }
 
-  listSessionAuditLogs(sessionId: string): AuditLogEntry[] {
+  async listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]> {
     return this.deps.getAuditLogs(sessionId);
   }
 
-  listSessionAuditLogSummaries(sessionId: string): AuditLogSummary[] {
+  async listSessionAuditLogSummaries(sessionId: string): Promise<AuditLogSummary[]> {
     return this.deps.getAuditLogSummaries(sessionId);
   }
 
-  listSessionAuditLogSummaryPage(
+  async listSessionAuditLogSummaryPage(
     sessionId: string,
     request?: AuditLogSummaryPageRequest | null,
-  ): AuditLogSummaryPageResult {
+  ): Promise<AuditLogSummaryPageResult> {
     return this.deps.getAuditLogSummaryPage(sessionId, request);
   }
 
-  getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null {
+  async getSessionAuditLogDetail(sessionId: string, auditLogId: number): Promise<AuditLogDetail | null> {
     return this.deps.getAuditLogDetail(sessionId, auditLogId);
   }
 
+  async getSessionAuditLogDetailSection(
+    sessionId: string,
+    auditLogId: number,
+    section: AuditLogDetailSection,
+  ): Promise<AuditLogDetailFragment | null> {
+    return this.deps.getAuditLogDetailSection(sessionId, auditLogId, section);
+  }
+
   async listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]> {
-    const session = this.getSession(sessionId);
+    const session = await this.getSessionSummary(sessionId);
     if (!session) {
       throw new Error("対象セッションが見つからないよ。");
     }
@@ -95,7 +113,7 @@ export class MainQueryService {
   }
 
   async listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]> {
-    const session = this.getSession(sessionId);
+    const session = await this.getSessionSummary(sessionId);
     if (!session) {
       throw new Error("対象セッションが見つからないよ。");
     }
@@ -111,9 +129,18 @@ export class MainQueryService {
     return this.deps.discoverSessionCustomAgents(workspacePath);
   }
 
-  getSession(sessionId: string): Session | null {
-    const session = this.deps.getSession(sessionId);
+  async getSession(sessionId: string): Promise<Session | null> {
+    const session = await this.deps.getSession(sessionId);
     return session ? this.cloneSession(session) : null;
+  }
+
+  async getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null> {
+    if (!Number.isInteger(messageIndex) || messageIndex < 0) {
+      return null;
+    }
+
+    const artifact = await this.deps.getSessionMessageArtifact(sessionId, messageIndex);
+    return artifact ? JSON.parse(JSON.stringify(artifact)) as MessageArtifact : null;
   }
 
   async getCharacter(characterId: string): Promise<CharacterProfile | null> {
@@ -129,7 +156,7 @@ export class MainQueryService {
       return { attachments: [], errors: [] };
     }
 
-    const session = this.getSession(sessionId);
+    const session = await this.getSessionSummary(sessionId);
     if (!session) {
       throw new Error("対象セッションが見つからないよ。");
     }
@@ -138,7 +165,7 @@ export class MainQueryService {
   }
 
   async searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]> {
-    const session = this.getSessionSummary(sessionId);
+    const session = await this.getSessionSummary(sessionId);
     if (!session) {
       throw new Error("対象セッションが見つからないよ。");
     }
@@ -147,7 +174,7 @@ export class MainQueryService {
   }
 
   async openSessionTerminal(sessionId: string): Promise<void> {
-    const session = this.getSessionSummary(sessionId);
+    const session = await this.getSessionSummary(sessionId);
     if (!session) {
       throw new Error("対象セッションが見つからないよ。");
     }

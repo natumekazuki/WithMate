@@ -93,12 +93,15 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
       listSessionAuditLogSummaries: () => [],
       listSessionAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
       getSessionAuditLogDetail: () => null,
+      getSessionAuditLogDetailSection: () => null,
       async listSessionSkills() { return []; },
       async listSessionCustomAgents() { return []; },
       async listWorkspaceSkills() { return []; },
       async listWorkspaceCustomAgents() { return []; },
       listOpenSessionWindowIds: () => [],
+      listOpenCompanionReviewWindowIds: () => [],
       getSession: () => null,
+      getSessionMessageArtifact: () => null,
       getDiffPreview: () => null,
       async previewComposerInput() {
         return null;
@@ -112,6 +115,7 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
         return {} as never;
       },
       getCompanionSession: () => null,
+      getCompanionMessageArtifact: () => null,
       async getCompanionReviewSnapshot() {
         return null;
       },
@@ -119,6 +123,15 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
         return {} as never;
       },
       async syncCompanionTarget() {
+        return {} as never;
+      },
+      async stashCompanionTargetChanges() {
+        return {} as never;
+      },
+      async restoreCompanionTargetStash() {
+        return {} as never;
+      },
+      async dropCompanionTargetStash() {
         return {} as never;
       },
       async discardCompanionSession() {

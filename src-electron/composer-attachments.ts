@@ -8,6 +8,8 @@ import { isPathWithinAnyDirectory, normalizeAllowedAdditionalDirectories } from 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"]);
 const TRAILING_PATH_PUNCTUATION = /[),.;:!?]+$/;
 
+type ComposerPreviewSessionContext = Pick<Session, "workspacePath" | "allowedAdditionalDirectories">;
+
 function normalizeSlash(filePath: string): string {
   return filePath.replace(/\\/g, "/");
 }
@@ -43,7 +45,7 @@ function toDisplayPath(workspacePath: string, absolutePath: string): string {
 }
 
 async function resolveAttachmentCandidate(
-  session: Session,
+  session: ComposerPreviewSessionContext,
   candidate: ComposerAttachmentInput,
 ): Promise<ComposerAttachment> {
   const absolutePath = resolveCandidatePath(session.workspacePath, candidate.path);
@@ -92,7 +94,7 @@ async function resolveAttachmentCandidate(
 }
 
 export async function resolveComposerPreview(
-  session: Session,
+  session: ComposerPreviewSessionContext,
   userMessage: string,
 ): Promise<ComposerPreview> {
   const textCandidates = extractTextReferenceCandidates(userMessage).map<ComposerAttachmentInput>((entry) => ({

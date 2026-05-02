@@ -1,7 +1,8 @@
 import { Component, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type UIEventHandler } from "react";
 
 import type {
-  AuditLogDetail,
+  AuditLogDetailFragment,
+  AuditLogDetailSection,
   ChangedFile,
   CharacterProfile,
   LiveApprovalRequest,
@@ -10,6 +11,7 @@ import type {
   LiveElicitationRequest,
   LiveElicitationResponse,
   Message,
+  MessageArtifact,
   DiffPreviewPayload,
   SessionContextTelemetry,
   AuditLogSummary,
@@ -448,12 +450,13 @@ function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFol
 }
 
 export type AuditLogFoldSection = "logical" | "transport" | "response" | "operations" | "usage" | "error" | "raw";
+type AuditLogLazyFoldSection = Extract<AuditLogFoldSection, AuditLogDetailSection>;
 
 function auditLogFoldKey(entry: Pick<AuditLogSummary, "id" | "sessionId">, section: AuditLogFoldSection): string {
   return `${entry.sessionId}:${entry.id}:${section}`;
 }
 
-export function shouldLoadAuditLogDetailForFold(section: AuditLogFoldSection): boolean {
+export function shouldLoadAuditLogDetailForFold(section: AuditLogFoldSection): section is AuditLogLazyFoldSection {
   return section === "logical"
     || section === "transport"
     || section === "response"
@@ -721,16 +724,17 @@ export type SessionAuditLogModalProps = {
   open: boolean;
   entries: AuditLogSummary[];
   details: Record<number, {
-    detail: AuditLogDetail | null;
-    loading: boolean;
-    errorMessage: string | null;
+    detail: AuditLogDetailFragment | null;
+    loadedSections: Partial<Record<AuditLogDetailSection, boolean>>;
+    loadingSections: Partial<Record<AuditLogDetailSection, boolean>>;
+    errorMessages: Partial<Record<AuditLogDetailSection, string>>;
   }>;
   hasMore: boolean;
   loadingMore: boolean;
   total: number;
   errorMessage: string | null;
   onLoadMore: () => void;
-  onLoadDetail: (entry: AuditLogSummary) => void;
+  onLoadDetail: (entry: AuditLogSummary, section: AuditLogDetailSection) => void;
   onClose: () => void;
 };
 
@@ -793,10 +797,10 @@ export function SessionAuditLogModal({
     if (
       openFold
       && shouldLoadAuditLogDetailForFold(section)
-      && !details[entry.id]?.detail
-      && !details[entry.id]?.loading
+      && !details[entry.id]?.loadedSections[section]
+      && !details[entry.id]?.loadingSections[section]
     ) {
-      onLoadDetail(entry);
+      onLoadDetail(entry, section);
     }
   };
 
@@ -888,8 +892,10 @@ export function SessionAuditLogModal({
               const detail = detailState?.detail ?? null;
               const operations = detail?.operations ?? entry.operations;
               const assistantText = detail?.assistantText ?? entry.assistantTextPreview;
-              const usage = detail?.usage ?? entry.usage;
-              const errorMessage = detail?.errorMessage ?? entry.errorMessage;
+              const usage = entry.usage;
+              const errorMessage = entry.errorMessage;
+              const sectionLoading = (section: AuditLogDetailSection) => Boolean(detailState?.loadingSections[section]);
+              const sectionError = (section: AuditLogDetailSection) => detailState?.errorMessages[section] ?? null;
 
               return (
                 <article key={entry.id} className={`audit-log-card ${entry.phase}`}>
@@ -926,7 +932,7 @@ export function SessionAuditLogModal({
                     <strong>Logical Prompt</strong>
                   </summary>
                   <section className="audit-log-section">
-                    {detail ? (
+                    {detail?.logicalPrompt ? (
                       <>
                         <p><strong>System</strong></p>
                         <pre>{detail.logicalPrompt.systemText || "-"}</pre>
@@ -937,9 +943,9 @@ export function SessionAuditLogModal({
                       </>
                     ) : (
                       <p className="audit-log-empty">
-                        {detailState?.loading
+                        {sectionLoading("logical")
                           ? "audit log detail を読み込んでるよ。"
-                          : detailState?.errorMessage ?? "開くと audit log detail を読み込むよ。"}
+                          : sectionError("logical") ?? "開くと audit log detail を読み込むよ。"}
                       </p>
                     )}
                   </section>
@@ -974,9 +980,9 @@ export function SessionAuditLogModal({
                       </>
                     ) : (
                       <p className="audit-log-empty">
-                        {detailState?.loading
+                        {sectionLoading("transport")
                           ? "audit log detail を読み込んでるよ。"
-                          : detailState?.errorMessage ?? "記録された transport payload はまだないよ。"}
+                          : sectionError("transport") ?? "記録された transport payload はまだないよ。"}
                       </p>
                     )}
                   </section>
@@ -993,7 +999,13 @@ export function SessionAuditLogModal({
                     <strong>Response</strong>
                   </summary>
                   <section className="audit-log-section">
-                    <pre>{assistantText || "-"}</pre>
+                    {sectionLoading("response") ? (
+                      <p className="audit-log-empty">audit log detail を読み込んでるよ。</p>
+                    ) : sectionError("response") ? (
+                      <p className="audit-log-empty">{sectionError("response")}</p>
+                    ) : (
+                      <pre>{assistantText || "-"}</pre>
+                    )}
                   </section>
                 </details>
 
@@ -1008,7 +1020,11 @@ export function SessionAuditLogModal({
                     <strong>Operations</strong>
                   </summary>
                   <section className="audit-log-section">
-                    {operations.length > 0 ? (
+                    {sectionLoading("operations") ? (
+                      <p className="audit-log-empty">audit log detail を読み込んでるよ。</p>
+                    ) : sectionError("operations") ? (
+                      <p className="audit-log-empty">{sectionError("operations")}</p>
+                    ) : operations.length > 0 ? (
                       <ul className="audit-log-operations">
                         {operations.map((operation, index) => (
                           <li key={`${entry.id}-${operation.type}-${index}`}>
@@ -1074,7 +1090,7 @@ export function SessionAuditLogModal({
                   <summary>
                     <strong>Raw Items</strong>
                   </summary>
-                  <pre>{detail?.rawItemsJson ?? (detailState?.loading ? "loading..." : "[]")}</pre>
+                  <pre>{detail?.rawItemsJson ?? (sectionLoading("raw") ? "loading..." : sectionError("raw") ?? "[]")}</pre>
                 </details>
                 </article>
               );
@@ -1836,6 +1852,7 @@ export type SessionMessageColumnProps = {
   isMessageListFollowing: boolean;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
   onToggleArtifact: (artifactKey: string) => void;
+  onLoadArtifactDetail?: (messageIndex: number) => Promise<MessageArtifact | null>;
   onOpenDiff: (title: string, file: ChangedFile) => void;
   onResolveLiveApproval: (request: LiveApprovalRequest, decision: "approve" | "deny") => void;
   onResolveLiveElicitation: (request: LiveElicitationRequest, response: LiveElicitationResponse) => void;
@@ -1862,6 +1879,7 @@ export function SessionMessageColumn({
   isMessageListFollowing,
   onMessageListScroll,
   onToggleArtifact,
+  onLoadArtifactDetail,
   onOpenDiff,
   onResolveLiveApproval,
   onResolveLiveElicitation,
@@ -1869,6 +1887,8 @@ export function SessionMessageColumn({
   getChangedFilesEmptyText,
 }: SessionMessageColumnProps) {
   const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
+  const [loadedArtifactDetails, setLoadedArtifactDetails] = useState<Record<string, MessageArtifact>>({});
+  const [loadingArtifactDetails, setLoadingArtifactDetails] = useState<Record<string, boolean>>({});
   const [messageWindowStartIndex, setMessageWindowStartIndex] = useState(() =>
     Math.max(0, messages.length - SESSION_MESSAGE_INITIAL_RENDER_COUNT),
   );
@@ -1927,6 +1947,31 @@ export function SessionMessageColumn({
   const isArtifactFoldOpen = (artifactKey: string, section: MessageArtifactFoldSection, index?: number) =>
     Boolean(openArtifactFolds[messageArtifactFoldKey(artifactKey, section, index)]);
 
+  const loadArtifactDetail = useCallback((artifactKey: string, messageIndex: number, artifact: MessageArtifact | undefined) => {
+    if (!artifact?.detailAvailable || !onLoadArtifactDetail || loadedArtifactDetails[artifactKey] || loadingArtifactDetails[artifactKey]) {
+      return;
+    }
+
+    setLoadingArtifactDetails((current) => ({ ...current, [artifactKey]: true }));
+    void onLoadArtifactDetail(messageIndex)
+      .then((detail) => {
+        if (!detail) {
+          return;
+        }
+        setLoadedArtifactDetails((current) => ({ ...current, [artifactKey]: detail }));
+      })
+      .finally(() => {
+        setLoadingArtifactDetails((current) => {
+          if (!current[artifactKey]) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[artifactKey];
+          return next;
+        });
+      });
+  }, [loadedArtifactDetails, loadingArtifactDetails, onLoadArtifactDetail]);
+
   const handleArtifactFoldToggle = (
     artifactKey: string,
     section: MessageArtifactFoldSection,
@@ -1969,11 +2014,13 @@ export function SessionMessageColumn({
             const artifactKey = `${sessionId}-${absoluteIndex}`;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
+            const artifact = loadedArtifactDetails[artifactKey] ?? message.artifact;
+            const artifactLoading = loadingArtifactDetails[artifactKey] ?? false;
             const artifactHasSnapshotRisk =
-              message.artifact?.runChecks.some((check) => check.label.startsWith("snapshot ")) ?? false;
+              artifact?.runChecks.some((check) => check.label.startsWith("snapshot ")) ?? false;
             const artifactOperations =
-              message.artifact?.operationTimeline ??
-              message.artifact?.activitySummary.map((item) => ({
+              artifact?.operationTimeline ??
+              artifact?.activitySummary.map((item) => ({
                 type: "summary",
                 summary: item,
                 details: undefined,
@@ -1988,11 +2035,16 @@ export function SessionMessageColumn({
                 {isAssistant ? (
                   <div className="message-avatar-stack">
                     <CharacterAvatar character={character} size="small" className="message-avatar" />
-                    {message.artifact ? (
+                    {artifact ? (
                       <button
                         className="artifact-toggle artifact-toggle-icon"
                         type="button"
-                        onClick={() => onToggleArtifact(artifactKey)}
+                        onClick={() => {
+                          if (!artifactExpanded) {
+                            loadArtifactDetail(artifactKey, absoluteIndex, artifact);
+                          }
+                          onToggleArtifact(artifactKey);
+                        }}
                         aria-expanded={artifactExpanded}
                         aria-controls={`artifact-panel-${artifactKey}`}
                         aria-label={artifactExpanded ? "Details を閉じる" : "Details を開く"}
@@ -2003,12 +2055,17 @@ export function SessionMessageColumn({
                     ) : null}
                   </div>
                 ) : null}
-                <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${message.artifact ? " has-artifact" : ""}`}>
-                  {message.artifact && !isAssistant ? (
+                <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}`}>
+                  {artifact && !isAssistant ? (
                     <button
                       className="artifact-toggle artifact-toggle-icon"
                       type="button"
-                      onClick={() => onToggleArtifact(artifactKey)}
+                      onClick={() => {
+                        if (!artifactExpanded) {
+                          loadArtifactDetail(artifactKey, absoluteIndex, artifact);
+                        }
+                        onToggleArtifact(artifactKey);
+                      }}
                       aria-expanded={artifactExpanded}
                       aria-controls={`artifact-panel-${artifactKey}`}
                       aria-label={artifactExpanded ? "Details を閉じる" : "Details を開く"}
@@ -2019,13 +2076,17 @@ export function SessionMessageColumn({
                   ) : null}
                   <MessageRichText text={message.text} onOpenPath={onOpenPath} />
 
-                  {message.artifact ? (
+                  {artifact ? (
                     <section className="artifact-shell">
                       {artifactExpanded ? (
                         <div id={`artifact-panel-${artifactKey}`} className="artifact-block">
                           <div className="artifact-grid">
                             <section className="artifact-section">
-                              {message.artifact.changedFiles.length > 0 ? (
+                              {artifactLoading ? (
+                                  <div className="artifact-file-item empty-state-card">
+                                    <p>Details を読み込んでいます...</p>
+                                  </div>
+                                ) : artifact.changedFiles.length > 0 ? (
                                   <details
                                     className="artifact-fold artifact-files-fold"
                                     open={isArtifactFoldOpen(artifactKey, "files")}
@@ -2036,11 +2097,11 @@ export function SessionMessageColumn({
                                     <summary className="artifact-fold-summary">
                                       <span className="artifact-fold-summary-copy">
                                         <strong>Changed Files</strong>
-                                        <span>{message.artifact.changedFiles.length} files</span>
+                                        <span>{artifact.changedFiles.length} files</span>
                                       </span>
                                     </summary>
                                     <div className="artifact-fold-body artifact-file-list">
-                                      {message.artifact.changedFiles.map((file) => (
+                                      {artifact.changedFiles.map((file) => (
                                         <article key={`${file.kind}-${file.path}`} className="artifact-file-item">
                                           <div className="artifact-file-meta">
                                             <span className={`file-kind ${file.kind}`}>{fileKindLabel(file.kind)}</span>
@@ -2051,7 +2112,7 @@ export function SessionMessageColumn({
                                             <button
                                               className="diff-button"
                                               type="button"
-                                              onClick={() => onOpenDiff(message.artifact!.title, file)}
+                                              onClick={() => onOpenDiff(artifact.title, file)}
                                             >
                                               Open Diff
                                             </button>
@@ -2088,7 +2149,7 @@ export function SessionMessageColumn({
                                 <strong>Run Checks</strong>
                               </div>
                               <div className="check-list">
-                                {message.artifact.runChecks.map((check) => (
+                                {artifact.runChecks.map((check) => (
                                   <div key={check.label} className="check-item">
                                     <span>{check.label}</span>
                                     <strong>{displayRunCheckValue(check)}</strong>

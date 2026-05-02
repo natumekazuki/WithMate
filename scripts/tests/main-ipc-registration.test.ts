@@ -24,6 +24,9 @@ import {
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
+  WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
+  WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
+  WITHMATE_GET_COMPANION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
   WITHMATE_GET_COMPANION_SESSION_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
@@ -33,12 +36,17 @@ import {
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
+  WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
+  WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
+  WITHMATE_LIST_COMPANION_AUDIT_LOGS_CHANNEL,
+  WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
@@ -146,11 +154,18 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
       return { entries: [], nextCursor: null, hasMore: false, total: 0 };
     },
     getSessionAuditLogDetail: () => null,
+    getSessionAuditLogDetailSection: () => null,
+    listCompanionAuditLogs: () => [],
+    listCompanionAuditLogSummaries: () => [],
+    listCompanionAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
+    getCompanionAuditLogDetail: () => null,
+    getCompanionAuditLogDetailSection: () => null,
     async listSessionSkills() { return []; },
     async listSessionCustomAgents() { return []; },
     async listWorkspaceSkills() { return []; },
     async listWorkspaceCustomAgents() { return []; },
     listOpenSessionWindowIds: () => ["session-1"],
+    listOpenCompanionReviewWindowIds: () => [],
     getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
     async resetAppDatabase() {
@@ -187,6 +202,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
       return null;
     },
     getSession: () => null,
+    getSessionMessageArtifact: () => null,
     getDiffPreview: () => null,
     getLiveSessionRun: () => null,
     async getProviderQuotaTelemetry() {
@@ -266,6 +282,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
       return {} as never;
     },
     getCompanionSession: () => null,
+    getCompanionMessageArtifact: () => null,
     async getCompanionReviewSnapshot() {
       return null;
     },
@@ -273,6 +290,15 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
       return {} as never;
     },
     async syncCompanionTarget() {
+      return {} as never;
+    },
+    async stashCompanionTargetChanges() {
+      return {} as never;
+    },
+    async restoreCompanionTargetStash() {
+      return {} as never;
+    },
+    async dropCompanionTargetStash() {
       return {} as never;
     },
     async discardCompanionSession() {
@@ -343,11 +369,18 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     listSessionAuditLogSummaries: () => [],
     listSessionAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
     getSessionAuditLogDetail: () => null,
+    getSessionAuditLogDetailSection: () => null,
+    listCompanionAuditLogs: () => [],
+    listCompanionAuditLogSummaries: () => [],
+    listCompanionAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
+    getCompanionAuditLogDetail: () => null,
+    getCompanionAuditLogDetailSection: () => null,
     async listSessionSkills() { return []; },
     async listSessionCustomAgents() { return []; },
     async listWorkspaceSkills() { return []; },
     async listWorkspaceCustomAgents() { return []; },
     listOpenSessionWindowIds: () => [],
+    listOpenCompanionReviewWindowIds: () => [],
     getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
     async resetAppDatabase() { return null; },
@@ -370,6 +403,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     exportModelCatalogDocument: () => null,
     async exportModelCatalogToFile() { return null; },
     getSession: () => null,
+    getSessionMessageArtifact: () => null,
     getDiffPreview: () => null,
     getLiveSessionRun: () => null,
     async getProviderQuotaTelemetry() { return null; },
@@ -401,9 +435,13 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async openTerminalAtPath() {},
     async createCompanionSession() { return {} as never; },
     getCompanionSession: () => null,
+    getCompanionMessageArtifact: () => null,
     async getCompanionReviewSnapshot() { return null; },
     async mergeCompanionSelectedFiles() { return {} as never; },
     async syncCompanionTarget() { return {} as never; },
+    async stashCompanionTargetChanges() { return {} as never; },
+    async restoreCompanionTargetStash() { return {} as never; },
+    async dropCompanionTargetStash() { return {} as never; },
     async discardCompanionSession() { return {} as never; },
     async updateCompanionSession(session) { return session; },
     async previewCompanionComposerInput() { return { attachments: [], errors: [] }; },
@@ -448,6 +486,12 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
     WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
     WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
+    WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
+    WITHMATE_LIST_COMPANION_AUDIT_LOGS_CHANNEL,
+    WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARIES_CHANNEL,
+    WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
+    WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
+    WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
     WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
     WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
     WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
@@ -456,6 +500,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
     WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
     WITHMATE_GET_SESSION_CHANNEL,
+    WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
     WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
     WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
     WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
@@ -468,6 +513,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_CREATE_SESSION_CHANNEL,
     WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
     WITHMATE_GET_COMPANION_SESSION_CHANNEL,
+    WITHMATE_GET_COMPANION_MESSAGE_ARTIFACT_CHANNEL,
     WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
     WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
     WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,

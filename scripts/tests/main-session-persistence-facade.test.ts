@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { MainSessionPersistenceFacade } from "../../src-electron/main-session-persistence-facade.js";
 
-test("MainSessionPersistenceFacade は upsert/replaceAll を SessionPersistenceService へ委譲する", () => {
+test("MainSessionPersistenceFacade は upsert/replaceAll を SessionPersistenceService へ委譲する", async () => {
   const calls: string[] = [];
   const facade = new MainSessionPersistenceFacade({
     getSessions: () => [],
@@ -22,13 +22,13 @@ test("MainSessionPersistenceFacade は upsert/replaceAll を SessionPersistenceS
     getSessionStorage: () => ({ listSessionSummaries: () => [], getSession: () => null }) as never,
   });
 
-  facade.upsertSession({ id: "s-1" } as never);
-  facade.replaceAllSessions([{ id: "s-1" }] as never);
+  await facade.upsertSession({ id: "s-1" } as never);
+  await facade.replaceAllSessions([{ id: "s-1" }] as never);
 
   assert.deepEqual(calls, ["upsert:s-1", "replace:1"]);
 });
 
-test("MainSessionPersistenceFacade は running session を詳細 hydrate して interrupted に変換する", () => {
+test("MainSessionPersistenceFacade は running session を詳細 hydrate して interrupted に変換する", async () => {
   const storedSessionSummaries = [
     {
       id: "s-1",
@@ -94,13 +94,13 @@ test("MainSessionPersistenceFacade は running session を詳細 hydrate して 
       }) as never,
   });
 
-  facade.recoverInterruptedSessions();
+  await facade.recoverInterruptedSessions();
 
   assert.deepEqual(upserted, [`s-1:interrupted:2:${expectedInterruptedMessage}`]);
   assert.deepEqual(setSessionsPayload, expectedSetSessionsPayload);
 });
 
-test("MainSessionPersistenceFacade は既存 interrupted message を重複追加しない", () => {
+test("MainSessionPersistenceFacade は既存 interrupted message を重複追加しない", async () => {
   const interruptedMessage = "前回の実行はアプリ終了で中断された可能性があるよ。必要ならもう一度送ってね。";
   const hydratedSession = {
     id: "s-1",
@@ -144,12 +144,12 @@ test("MainSessionPersistenceFacade は既存 interrupted message を重複追加
       }) as never,
   });
 
-  facade.recoverInterruptedSessions();
+  await facade.recoverInterruptedSessions();
 
   assert.deepEqual(upserted, ["s-1:interrupted:2"]);
 });
 
-test("MainSessionPersistenceFacade は hydrate できない running session を skip する", () => {
+test("MainSessionPersistenceFacade は hydrate できない running session を skip する", async () => {
   const upserted: string[] = [];
   const facade = new MainSessionPersistenceFacade({
     getSessions: () =>
@@ -181,12 +181,12 @@ test("MainSessionPersistenceFacade は hydrate できない running session を 
       }) as never,
   });
 
-  facade.recoverInterruptedSessions();
+  await facade.recoverInterruptedSessions();
 
   assert.deepEqual(upserted, []);
 });
 
-test("MainSessionPersistenceFacade は running session がなければ storage を読まない", () => {
+test("MainSessionPersistenceFacade は running session がなければ storage を読まない", async () => {
   const facade = new MainSessionPersistenceFacade({
     getSessions: () =>
       [
@@ -205,5 +205,5 @@ test("MainSessionPersistenceFacade は running session がなければ storage �
     },
   });
 
-  facade.recoverInterruptedSessions();
+  await facade.recoverInterruptedSessions();
 });

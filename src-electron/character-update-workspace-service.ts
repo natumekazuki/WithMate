@@ -6,6 +6,7 @@ import { type CharacterUpdateMemoryExtract, type CharacterUpdateWorkspace } from
 import type { CharacterMemoryEntry, CharacterScope } from "../src/memory-state.js";
 import type { Session } from "../src/session-state.js";
 import { buildCharacterUpdateMemoryExtract } from "./character-update-memory-extract.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import {
   CHARACTER_UPDATE_SKILL_FILE_PATH,
   buildCharacterUpdateSkillMarkdown,
@@ -31,7 +32,7 @@ export type CharacterUpdateWorkspaceServiceDeps = {
     characterIconPath: string;
     characterThemeColors: CharacterProfile["themeColors"];
     approvalMode: Session["approvalMode"];
-  }): Session;
+  }): Awaitable<Session>;
 };
 
 export class CharacterUpdateWorkspaceService {
@@ -89,7 +90,7 @@ export class CharacterUpdateWorkspaceService {
       buildCharacterUpdateSkillMarkdown(),
     );
 
-    return this.deps.createSession({
+    return await this.deps.createSession({
       provider: providerId,
       taskTitle: `${character.name} の更新`,
       workspaceLabel: `${character.name} workspace`,

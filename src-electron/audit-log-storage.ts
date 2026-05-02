@@ -2,6 +2,8 @@ import type { DatabaseSync, StatementSync } from "node:sqlite";
 
 import {
   type AuditLogDetail,
+  type AuditLogDetailFragment,
+  type AuditLogDetailSection,
   type AuditLogEntry,
   type AuditLogicalPrompt,
   type AuditLogOperation,
@@ -270,6 +272,22 @@ function entryToAuditLogDetail(entry: AuditLogEntry): AuditLogDetail {
   };
 }
 
+function entryToAuditLogDetailFragment(entry: AuditLogEntry, section: AuditLogDetailSection): AuditLogDetailFragment {
+  const base = { id: entry.id, sessionId: entry.sessionId };
+  switch (section) {
+    case "logical":
+      return { ...base, logicalPrompt: entry.logicalPrompt };
+    case "transport":
+      return { ...base, transportPayload: entry.transportPayload };
+    case "response":
+      return { ...base, assistantText: entry.assistantText };
+    case "operations":
+      return { ...base, operations: entry.operations };
+    case "raw":
+      return { ...base, rawItemsJson: entry.rawItemsJson };
+  }
+}
+
 export class AuditLogStorage {
   private readonly db: DatabaseSync;
   private readonly listStatement: StatementSync;
@@ -505,6 +523,15 @@ export class AuditLogStorage {
   getSessionAuditLogDetail(sessionId: string, auditLogId: number): AuditLogDetail | null {
     const row = this.getStatement.get(sessionId, auditLogId) as AuditLogRow | undefined;
     return row ? entryToAuditLogDetail(rowToAuditLogEntry(row)) : null;
+  }
+
+  getSessionAuditLogDetailSection(
+    sessionId: string,
+    auditLogId: number,
+    section: AuditLogDetailSection,
+  ): AuditLogDetailFragment | null {
+    const row = this.getStatement.get(sessionId, auditLogId) as AuditLogRow | undefined;
+    return row ? entryToAuditLogDetailFragment(rowToAuditLogEntry(row), section) : null;
   }
 
   createAuditLog(input: CreateAuditLogInput): AuditLogEntry {

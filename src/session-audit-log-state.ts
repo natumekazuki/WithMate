@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
-  AuditLogDetail,
+  AuditLogDetailFragment,
+  AuditLogDetailSection,
   AuditLogSummary,
   LiveSessionRunState,
 } from "./app-state.js";
@@ -20,9 +21,10 @@ type SessionOwnedAuditLogs = {
 };
 
 type AuditLogDetailLoadState = {
-  detail: AuditLogDetail | null;
-  loading: boolean;
-  errorMessage: string | null;
+  detail: AuditLogDetailFragment | null;
+  loadedSections: Partial<Record<AuditLogDetailSection, boolean>>;
+  loadingSections: Partial<Record<AuditLogDetailSection, boolean>>;
+  errorMessages: Partial<Record<AuditLogDetailSection, string>>;
 };
 
 type AuditLogSessionLike = Pick<
@@ -43,6 +45,10 @@ type UseSessionAuditLogsInput = {
   selectedSession: AuditLogSessionLike | null;
   liveRun: LiveSessionRunState | null;
   enabled?: boolean;
+  auditLogApi?: Pick<
+    WithMateWindowApi,
+    "listSessionAuditLogSummaryPage" | "getSessionAuditLogDetailSection"
+  > | null;
 };
 
 const AUDIT_LOG_PAGE_LIMIT = 50;
@@ -64,6 +70,7 @@ export function useSessionAuditLogs({
   selectedSession,
   liveRun,
   enabled = true,
+  auditLogApi = withmateApi,
 }: UseSessionAuditLogsInput) {
   const [auditLogsOpen, setAuditLogsOpen] = useState(false);
   const [auditLogsState, setAuditLogsState] = useState<SessionOwnedAuditLogs>(() => createEmptyAuditLogsState(null));
@@ -105,7 +112,7 @@ export function useSessionAuditLogs({
   useEffect(() => {
     let active = true;
 
-    if (!enabled || !withmateApi || !selectedSession) {
+    if (!enabled || !auditLogApi || !selectedSession) {
       setAuditLogsState(createEmptyAuditLogsState(null));
       setAuditLogDetails({});
       auditLogDetailOwnerRef.current = null;
@@ -123,7 +130,7 @@ export function useSessionAuditLogs({
       setAuditLogDetails({});
       auditLogDetailOwnerRef.current = selectedSession.id;
     }
-    void withmateApi.listSessionAuditLogSummaryPage(selectedSession.id, {
+    void auditLogApi.listSessionAuditLogSummaryPage(selectedSession.id, {
       cursor: 0,
       limit: AUDIT_LOG_PAGE_LIMIT,
     }).then(
@@ -155,10 +162,10 @@ export function useSessionAuditLogs({
     return () => {
       active = false;
     };
-  }, [enabled, refreshSignature, selectedSessionId, withmateApi]);
+  }, [auditLogApi, enabled, refreshSignature, selectedSessionId]);
 
   const handleLoadMoreAuditLogs = () => {
-    if (!enabled || !withmateApi || !selectedSessionId) {
+    if (!enabled || !auditLogApi || !selectedSessionId) {
       return;
     }
 
@@ -175,7 +182,7 @@ export function useSessionAuditLogs({
         : current,
     );
 
-    void withmateApi.listSessionAuditLogSummaryPage(ownerSessionId, {
+    void auditLogApi.listSessionAuditLogSummaryPage(ownerSessionId, {
       cursor,
       limit: AUDIT_LOG_PAGE_LIMIT,
     }).then(
@@ -216,15 +223,15 @@ export function useSessionAuditLogs({
     );
   };
 
-  const handleLoadAuditLogDetail = (entry: AuditLogSummary) => {
-    if (!enabled || !withmateApi || !selectedSessionId || entry.id < 0 || !entry.detailAvailable) {
+  const handleLoadAuditLogDetail = (entry: AuditLogSummary, section: AuditLogDetailSection) => {
+    if (!enabled || !auditLogApi || !selectedSessionId || entry.id < 0 || !entry.detailAvailable) {
       return;
     }
 
     let shouldLoad = false;
     setAuditLogDetails((current) => {
       const existing = current[entry.id];
-      if (existing?.detail || existing?.loading) {
+      if (existing?.loadingSections[section] || existing?.loadedSections[section]) {
         return current;
       }
 
@@ -232,9 +239,16 @@ export function useSessionAuditLogs({
       return {
         ...current,
         [entry.id]: {
-          detail: null,
-          loading: true,
-          errorMessage: null,
+          detail: existing?.detail ?? null,
+          loadedSections: existing?.loadedSections ?? {},
+          loadingSections: {
+            ...existing?.loadingSections,
+            [section]: true,
+          },
+          errorMessages: {
+            ...existing?.errorMessages,
+            [section]: undefined,
+          },
         },
       };
     });
@@ -244,14 +258,24 @@ export function useSessionAuditLogs({
     }
 
     try {
-      void withmateApi.getSessionAuditLogDetail(entry.sessionId, entry.id).then(
-        (detail) => {
+      void auditLogApi.getSessionAuditLogDetailSection(entry.sessionId, entry.id, section).then(
+        (fragment) => {
           setAuditLogDetails((current) => ({
             ...current,
             [entry.id]: {
-              detail,
-              loading: false,
-              errorMessage: detail ? null : "audit log detail が見つからなかったよ。",
+              detail: fragment ? { ...(current[entry.id]?.detail ?? {}), ...fragment } : current[entry.id]?.detail ?? null,
+              loadedSections: {
+                ...current[entry.id]?.loadedSections,
+                [section]: fragment !== null,
+              },
+              loadingSections: {
+                ...current[entry.id]?.loadingSections,
+                [section]: false,
+              },
+              errorMessages: {
+                ...current[entry.id]?.errorMessages,
+                [section]: fragment ? undefined : "audit log detail が見つからなかったよ。",
+              },
             },
           }));
         },
@@ -259,9 +283,16 @@ export function useSessionAuditLogs({
           setAuditLogDetails((current) => ({
             ...current,
             [entry.id]: {
-              detail: null,
-              loading: false,
-              errorMessage: error instanceof Error ? error.message : "audit log detail の取得に失敗したよ。",
+              detail: current[entry.id]?.detail ?? null,
+              loadedSections: current[entry.id]?.loadedSections ?? {},
+              loadingSections: {
+                ...current[entry.id]?.loadingSections,
+                [section]: false,
+              },
+              errorMessages: {
+                ...current[entry.id]?.errorMessages,
+                [section]: error instanceof Error ? error.message : "audit log detail の取得に失敗したよ。",
+              },
             },
           }));
         },
@@ -270,9 +301,16 @@ export function useSessionAuditLogs({
       setAuditLogDetails((current) => ({
         ...current,
         [entry.id]: {
-          detail: null,
-          loading: false,
-          errorMessage: error instanceof Error ? error.message : "audit log detail の取得に失敗したよ。",
+          detail: current[entry.id]?.detail ?? null,
+          loadedSections: current[entry.id]?.loadedSections ?? {},
+          loadingSections: {
+            ...current[entry.id]?.loadingSections,
+            [section]: false,
+          },
+          errorMessages: {
+            ...current[entry.id]?.errorMessages,
+            [section]: error instanceof Error ? error.message : "audit log detail の取得に失敗したよ。",
+          },
         },
       }));
     }

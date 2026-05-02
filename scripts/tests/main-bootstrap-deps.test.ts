@@ -17,7 +17,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
       calls.push("initialize");
       return { revision: 1, providers: [] };
     },
-    recoverInterruptedSessions() {
+    async recoverInterruptedSessions() {
       calls.push("recover");
     },
     async refreshCharactersFromStorage() {
@@ -84,12 +84,20 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         listSessionAuditLogSummaries: () => [],
         listSessionAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
         getSessionAuditLogDetail: () => null,
+        getSessionAuditLogDetailSection: () => null,
+        listCompanionAuditLogs: () => [],
+        listCompanionAuditLogSummaries: () => [],
+        listCompanionAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
+        getCompanionAuditLogDetail: () => null,
+        getCompanionAuditLogDetailSection: () => null,
         async listSessionSkills() { return []; },
         async listSessionCustomAgents() { return []; },
         async listWorkspaceSkills() { return []; },
         async listWorkspaceCustomAgents() { return []; },
         listOpenSessionWindowIds: () => [],
+        listOpenCompanionReviewWindowIds: () => [],
         getSession: () => null,
+        getSessionMessageArtifact: () => null,
         getDiffPreview: () => null,
         previewComposerInput: async () => null,
         searchWorkspaceFiles: async () => [],
@@ -97,9 +105,13 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
       companion: {
         createCompanionSession: async () => ({}) as never,
         getCompanionSession: () => null,
+        getCompanionMessageArtifact: () => null,
         getCompanionReviewSnapshot: async () => null,
         mergeCompanionSelectedFiles: async () => ({}) as never,
         syncCompanionTarget: async () => ({}) as never,
+        stashCompanionTargetChanges: async () => ({}) as never,
+        restoreCompanionTargetStash: async () => ({}) as never,
+        dropCompanionTargetStash: async () => ({}) as never,
         discardCompanionSession: async () => ({}) as never,
         updateCompanionSession: async (session) => session,
         previewCompanionComposerInput: async () => ({ attachments: [], errors: [] }),

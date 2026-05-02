@@ -2,18 +2,20 @@ import type { DatabaseSync } from "node:sqlite";
 
 import {
   cloneCompanionMergeRun,
+  cloneCompanionMergeRunSummaries,
   cloneCompanionMergeRuns,
   cloneCompanionSessions,
   cloneCompanionSessionSummaries,
   type CompanionChangedFileSummary,
   type CompanionGroup,
   type CompanionMergeRun,
+  type CompanionMergeRunSummary,
   type CompanionSession,
   type CompanionSessionSummary,
   type CompanionSiblingWarningSummary,
 } from "../src/companion-state.js";
 import type { ChangedFile, DiffRow } from "../src/runtime-state.js";
-import type { Message } from "../src/session-state.js";
+import type { Message, MessageArtifact } from "../src/session-state.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
 import { DEFAULT_APPROVAL_MODE } from "../src/approval-mode.js";
@@ -233,6 +235,20 @@ function rowToMergeRun(row: CompanionMergeRunRow): CompanionMergeRun {
   };
 }
 
+function rowToMergeRunSummary(row: CompanionMergeRunRow): CompanionMergeRunSummary {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    groupId: row.group_id,
+    operation: row.operation === "discard" ? "discard" : "merge",
+    selectedPaths: parseSelectedPaths(row.selected_paths_json),
+    changedFiles: parseChangedFiles(row.changed_files_json),
+    siblingWarnings: parseSiblingWarnings(row.sibling_warnings_json),
+    diffSnapshotAvailable: Boolean(row.diff_snapshot_json.trim()),
+    createdAt: row.created_at,
+  };
+}
+
 function parseSelectedPaths(value: string): string[] {
   if (!value.trim()) {
     return [];
@@ -375,7 +391,10 @@ function parseDiffSnapshot(value: string): ChangedFile[] {
   }
 }
 
-function sessionToSummary(session: CompanionSession, latestMergeRun: CompanionMergeRun | null = null): CompanionSessionSummary {
+function sessionToSummary(
+  session: CompanionSession,
+  latestMergeRun: CompanionMergeRunSummary | null = null,
+): CompanionSessionSummary {
   return {
     id: session.id,
     groupId: session.groupId,
@@ -617,7 +636,7 @@ export class CompanionStorage {
       ORDER BY updated_at DESC, id DESC
     `).all() as CompanionSessionRow[];
     return cloneCompanionSessionSummaries(rows.map(rowToSession).map((session) =>
-      sessionToSummary(session, this.getLatestMergeRunForSession(session.id))
+      sessionToSummary(session, this.getLatestMergeRunSummaryForSession(session.id))
     ));
   }
 
@@ -644,6 +663,23 @@ export class CompanionStorage {
     const session = rowToSession(row);
     session.messages = this.listMessages(session.id);
     return cloneCompanionSessions([session])[0] ?? null;
+  }
+
+  getMessageArtifact(sessionId: string, messageIndex: number): MessageArtifact | null {
+    const row = this.db.prepare(`
+      SELECT artifact_json
+      FROM companion_messages
+      WHERE session_id = ?
+        AND position = ?
+    `).get(sessionId, messageIndex) as { artifact_json: string | null } | undefined;
+    if (!row?.artifact_json?.trim()) {
+      return null;
+    }
+    try {
+      return JSON.parse(row.artifact_json) as MessageArtifact;
+    } catch {
+      return null;
+    }
   }
 
   updateSession(session: CompanionSession): CompanionSession {
@@ -755,7 +791,17 @@ export class CompanionStorage {
     return cloneCompanionMergeRuns(rows.map(rowToMergeRun));
   }
 
-  private getLatestMergeRunForSession(sessionId: string): CompanionMergeRun | null {
+  listMergeRunSummariesForSession(sessionId: string): CompanionMergeRunSummary[] {
+    const rows = this.db.prepare(`
+      SELECT ${COMPANION_MERGE_RUN_COLUMNS}
+      FROM companion_merge_runs
+      WHERE session_id = ?
+      ORDER BY created_at DESC, id DESC
+    `).all(sessionId) as CompanionMergeRunRow[];
+    return cloneCompanionMergeRunSummaries(rows.map(rowToMergeRunSummary));
+  }
+
+  private getLatestMergeRunSummaryForSession(sessionId: string): CompanionMergeRunSummary | null {
     const row = this.db.prepare(`
       SELECT ${COMPANION_MERGE_RUN_COLUMNS}
       FROM companion_merge_runs
@@ -763,7 +809,7 @@ export class CompanionStorage {
       ORDER BY created_at DESC, id DESC
       LIMIT 1
     `).get(sessionId) as CompanionMergeRunRow | undefined;
-    return row ? cloneCompanionMergeRun(rowToMergeRun(row)) : null;
+    return row ? rowToMergeRunSummary(row) : null;
   }
 
   private listMessages(sessionId: string): Message[] {

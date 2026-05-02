@@ -223,6 +223,15 @@ const LIST_SESSION_MESSAGES_SQL = `
   ORDER BY m.seq ASC
 `;
 
+const GET_SESSION_MESSAGE_ARTIFACT_SQL = `
+  SELECT a.artifact_json
+  FROM session_messages AS m
+  INNER JOIN session_message_artifacts AS a
+    ON a.message_id = m.id
+  WHERE m.session_id = ?
+    AND m.seq = ?
+`;
+
 function parseAllowedAdditionalDirectories(row: SessionHeaderRow, mode: SessionRowParseMode): string[] | null {
   try {
     const parsed = JSON.parse(row.allowed_additional_directories_json);
@@ -443,6 +452,22 @@ export class SessionStorageV2 {
         .filter((message): message is Message => message !== null);
       const session = rowToSession(row, messages, "throw");
       return session ? cloneSessions([session])[0] : null;
+    });
+  }
+
+  getSessionMessageArtifact(sessionId: string, messageIndex: number): MessageArtifact | null {
+    return this.withDb((db) => {
+      const row = db.prepare(GET_SESSION_MESSAGE_ARTIFACT_SQL).get(sessionId, messageIndex) as
+        | { artifact_json: string | null }
+        | undefined;
+      if (!row?.artifact_json) {
+        return null;
+      }
+      try {
+        return JSON.parse(row.artifact_json) as MessageArtifact;
+      } catch {
+        return null;
+      }
     });
   }
 

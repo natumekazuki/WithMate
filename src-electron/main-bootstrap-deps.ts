@@ -12,7 +12,7 @@ type CreateMainBootstrapDepsArgs = {
   ipcMain: IpcMain;
   registerMainIpcHandlers: typeof registerMainIpcHandlers;
   initializePersistentStores(): Promise<ModelCatalogSnapshot>;
-  recoverInterruptedSessions(): void;
+  recoverInterruptedSessions(): Promise<void>;
   refreshCharactersFromStorage(): Promise<void>;
   createHomeWindow(): Promise<BrowserWindow>;
   broadcastModelCatalog(snapshot: ModelCatalogSnapshot): void;

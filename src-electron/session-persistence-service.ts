@@ -13,17 +13,18 @@ import {
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 export type SessionPersistenceServiceDeps = {
   getSessions(): Session[];
   setSessions(nextSessions: Session[]): void;
   getSession(sessionId: string): Session | null;
-  getStoredSession?(sessionId: string): Session | null;
+  getStoredSession?(sessionId: string): Awaitable<Session | null>;
   isSessionRunInFlight(sessionId: string): boolean;
-  upsertStoredSession(session: Session): Session;
-  replaceStoredSessions(sessions: Session[]): void;
-  listStoredSessions(): Session[];
-  deleteStoredSession(sessionId: string): void;
+  upsertStoredSession(session: Session): Awaitable<Session>;
+  replaceStoredSessions(sessions: Session[]): Awaitable<void>;
+  listStoredSessions(): Awaitable<Session[]>;
+  deleteStoredSession(sessionId: string): Awaitable<void>;
   getAppSettings: () => AppSettings;
   getModelCatalogSnapshot(): ModelCatalogSnapshot;
   syncSessionDependencies(session: Session): void;
@@ -47,7 +48,7 @@ function upsertSessionInList(sessions: Session[], stored: Session): Session[] {
 export class SessionPersistenceService {
   constructor(private readonly deps: SessionPersistenceServiceDeps) {}
 
-  createSession(input: CreateSessionInput): Session {
+  async createSession(input: CreateSessionInput): Promise<Session> {
     const appSettings = this.deps.getAppSettings();
     const snapshot = this.deps.getModelCatalogSnapshot();
     const provider = this.resolveEnabledProviderCatalog(snapshot, appSettings, input.provider);
@@ -76,7 +77,7 @@ export class SessionPersistenceService {
     return this.upsertSession(created);
   }
 
-  updateSession(nextSession: Session): Session {
+  async updateSession(nextSession: Session): Promise<Session> {
     const currentSession = this.deps.getSession(nextSession.id);
     if (!currentSession) {
       throw new Error("対象セッションが見つからないよ。");
@@ -90,7 +91,7 @@ export class SessionPersistenceService {
       Boolean(currentSession.threadId) &&
       currentSession.provider !== nextSession.provider;
 
-    const updatedSession = this.upsertSession({
+    const updatedSession = await this.upsertSession({
       ...nextSession,
       threadId: shouldResetThreadId ? "" : nextSession.threadId,
       allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
@@ -110,7 +111,7 @@ export class SessionPersistenceService {
     return updatedSession;
   }
 
-  deleteSession(sessionId: string): void {
+  async deleteSession(sessionId: string): Promise<void> {
     const session = this.deps.getSession(sessionId);
     if (!session) {
       return;
@@ -120,7 +121,7 @@ export class SessionPersistenceService {
       throw new Error("実行中のセッションは削除できないよ。");
     }
 
-    this.deps.deleteStoredSession(sessionId);
+    await this.deps.deleteStoredSession(sessionId);
     this.deps.setSessions(this.deps.getSessions().filter((entry) => entry.id !== sessionId));
     this.deps.clearSessionContextTelemetry(sessionId);
     this.deps.clearSessionBackgroundActivities(sessionId);
@@ -130,9 +131,9 @@ export class SessionPersistenceService {
     this.deps.broadcastSessions([sessionId]);
   }
 
-  upsertSession(nextSession: Session): Session {
-    const sessionToStore = this.mergeStoredMessagesForSummaryOnlySession(nextSession);
-    const stored = this.deps.upsertStoredSession({
+  async upsertSession(nextSession: Session): Promise<Session> {
+    const sessionToStore = await this.mergeStoredMessagesForSummaryOnlySession(nextSession);
+    const stored = await this.deps.upsertStoredSession({
       ...sessionToStore,
       allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
         sessionToStore.workspacePath,
@@ -145,13 +146,13 @@ export class SessionPersistenceService {
     return cloneSessions([stored])[0];
   }
 
-  replaceAllSessions(
+  async replaceAllSessions(
     nextSessions: Session[],
     options?: {
       broadcast?: boolean;
       invalidateSessionIds?: Iterable<string>;
     },
-  ): Session[] {
+  ): Promise<Session[]> {
     const previousSessions = cloneSessions(this.deps.getSessions());
     const normalizedSessions = nextSessions.map((session) => ({
       ...session,
@@ -161,7 +162,7 @@ export class SessionPersistenceService {
       ),
     }));
 
-    this.deps.replaceStoredSessions(normalizedSessions);
+    await this.deps.replaceStoredSessions(normalizedSessions);
     this.deps.setSessions(normalizedSessions);
     const storedSessions = normalizedSessions;
     for (const session of storedSessions) {
@@ -200,7 +201,7 @@ export class SessionPersistenceService {
     return cloneSessions(storedSessions);
   }
 
-  private mergeStoredMessagesForSummaryOnlySession(nextSession: Session): Session {
+  private async mergeStoredMessagesForSummaryOnlySession(nextSession: Session): Promise<Session> {
     if (nextSession.messages.length > 0) {
       return nextSession;
     }
@@ -213,7 +214,7 @@ export class SessionPersistenceService {
     const sourceSession =
       currentSession.messages.length > 0
         ? currentSession
-        : this.deps.getStoredSession?.(nextSession.id) ?? null;
+        : await this.deps.getStoredSession?.(nextSession.id) ?? null;
 
     if (!sourceSession || sourceSession.messages.length === 0) {
       return nextSession;

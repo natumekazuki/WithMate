@@ -60,7 +60,7 @@ function createCatalogSnapshot(revision = 1): ModelCatalogSnapshot {
 }
 
 describe("SettingsCatalogService", () => {
-  it("API key 変更対象 provider に実行中 session があると settings 更新を拒否する", () => {
+  it("API key 変更対象 provider に実行中 session があると settings 更新を拒否する", async () => {
     const previousSettings = createDefaultAppSettings();
     const service = new SettingsCatalogService({
       hasInFlightSessionRuns() {
@@ -104,7 +104,7 @@ describe("SettingsCatalogService", () => {
       broadcastModelCatalog() {},
     });
 
-    assert.throws(
+    await assert.rejects(
       () =>
         service.updateAppSettings({
           ...previousSettings,
@@ -120,7 +120,7 @@ describe("SettingsCatalogService", () => {
     );
   });
 
-  it("settings 更新時に API key 変更 provider の thread と telemetry を無効化する", () => {
+  it("settings 更新時に API key 変更 provider の thread と telemetry を無効化する", async () => {
     const previousSettings = createDefaultAppSettings();
     const previousSessions = [createSession()];
     const clearQuotaCalls: string[] = [];
@@ -179,7 +179,7 @@ describe("SettingsCatalogService", () => {
       broadcastModelCatalog() {},
     });
 
-    const next = service.updateAppSettings({
+    const next = await service.updateAppSettings({
       ...previousSettings,
       codingProviderSettings: {
         ...previousSettings.codingProviderSettings,
@@ -199,7 +199,7 @@ describe("SettingsCatalogService", () => {
     assert.deepEqual(invalidated, []);
   });
 
-  it("model catalog import で session を新 revision に移行して broadcast する", () => {
+  it("model catalog import で session を新 revision に移行して broadcast する", async () => {
     const previousSessions = [
       createSession({
         provider: "legacy",
@@ -265,7 +265,7 @@ describe("SettingsCatalogService", () => {
       },
     });
 
-    const imported = service.importModelCatalogDocument(importedDocument);
+    const imported = await service.importModelCatalogDocument(importedDocument);
 
     assert.equal(imported.revision, 2);
     assert.equal(importedSource, "imported");

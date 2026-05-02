@@ -17,10 +17,16 @@ import {
   type CompanionWorkspaceArtifacts,
   resolveCompanionGitEligibility,
 } from "./companion-git.js";
+import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 export type CompanionSessionServiceDeps = {
   appDataPath: string;
-  storage: CompanionStorage;
+  storage: {
+    listSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
+    listActiveSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
+    ensureGroup(group: CompanionGroup): Awaitable<CompanionGroup>;
+    createSession(session: CompanionSession): Awaitable<CompanionSession>;
+  };
 };
 
 function safeId(id: string): string {
@@ -30,12 +36,12 @@ function safeId(id: string): string {
 export class CompanionSessionService {
   constructor(private readonly deps: CompanionSessionServiceDeps) {}
 
-  listSessionSummaries(): CompanionSessionSummary[] {
-    return this.deps.storage.listSessionSummaries();
+  async listSessionSummaries(): Promise<CompanionSessionSummary[]> {
+    return await this.deps.storage.listSessionSummaries();
   }
 
-  listActiveSessionSummaries(): CompanionSessionSummary[] {
-    return this.deps.storage.listActiveSessionSummaries();
+  async listActiveSessionSummaries(): Promise<CompanionSessionSummary[]> {
+    return await this.deps.storage.listActiveSessionSummaries();
   }
 
   async createSession(input: CreateCompanionSessionInput): Promise<CompanionSession> {
@@ -60,7 +66,7 @@ export class CompanionSessionService {
       createdAt: now,
       updatedAt: now,
     };
-    const storedGroup = this.deps.storage.ensureGroup(group);
+    const storedGroup = await this.deps.storage.ensureGroup(group);
     const worktreePath = path.join(
       this.deps.appDataPath,
       "cw",
@@ -115,7 +121,7 @@ export class CompanionSessionService {
     };
 
     try {
-      return this.deps.storage.createSession(session);
+      return await this.deps.storage.createSession(session);
     } catch (error) {
       await cleanupCompanionWorkspaceArtifacts(artifacts);
       throw error;

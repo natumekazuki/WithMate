@@ -28,6 +28,7 @@ export type MessageArtifact = {
   operationTimeline?: AuditLogOperation[];
   changedFiles: ChangedFile[];
   runChecks: RunCheck[];
+  detailAvailable?: boolean;
 };
 
 export type Message = {
@@ -220,6 +221,7 @@ function normalizeMessageArtifact(value: unknown): MessageArtifact | undefined {
           .map((check) => normalizeRunCheck(check))
           .filter((check): check is RunCheck => check !== null)
       : [],
+    detailAvailable: typeof candidate.detailAvailable === "boolean" ? candidate.detailAvailable : undefined,
   };
 }
 
@@ -360,6 +362,29 @@ export function cloneSessions(sessions: Session[]): Session[] {
 
 export function cloneSessionSummaries(sessions: SessionSummary[]): SessionSummary[] {
   return JSON.parse(JSON.stringify(sessions)) as SessionSummary[];
+}
+
+function artifactSummaryText(value: string): string {
+  return value.length > 500 ? value.slice(0, 500) : value;
+}
+
+export function summarizeMessageArtifact(artifact: MessageArtifact): MessageArtifact {
+  return {
+    title: artifactSummaryText(artifact.title),
+    activitySummary: artifact.activitySummary.map(artifactSummaryText),
+    operationTimeline: artifact.operationTimeline?.map((operation) => ({
+      type: operation.type,
+      summary: artifactSummaryText(operation.summary),
+    })),
+    changedFiles: artifact.changedFiles.map((file) => ({
+      kind: file.kind,
+      path: artifactSummaryText(file.path),
+      summary: artifactSummaryText(file.summary),
+      diffRows: [],
+    })),
+    runChecks: artifact.runChecks.map((check) => ({ ...check })),
+    detailAvailable: true,
+  };
 }
 
 export function buildNewSession(input: CreateSessionInput): Session {
