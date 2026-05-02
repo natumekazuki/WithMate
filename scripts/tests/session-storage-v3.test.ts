@@ -293,6 +293,56 @@ describe("SessionStorageV3", () => {
     });
   });
 
+  it("summary artifact を含む session rewrite でも既存 full artifact blob を保持する", async () => {
+    await withTempV3Database(async ({ dbPath, blobRootPath }) => {
+      const storage = new SessionStorageV3(dbPath, blobRootPath);
+      const session = createSession({
+        id: "session-v3-preserve-artifact",
+        taskTitle: "Preserve artifact",
+        workspaceLabel: "workspace-preserve",
+      });
+      const sentinel = "SENTINEL_SESSION_V3_PRESERVE_ARTIFACT";
+
+      try {
+        await storage.upsertSession({
+          ...session,
+          messages: [
+            {
+              role: "assistant",
+              text: "artifact summary rewrite target",
+              artifact: createArtifact(sentinel),
+            },
+          ],
+        });
+        const loaded = await storage.getSession(session.id);
+        assert.ok(loaded);
+        assert.equal(loaded.messages[0]?.artifact?.detailAvailable, true);
+        assert.equal(loaded.messages[0]?.artifact?.changedFiles[0]?.diffRows.length, 0);
+
+        await storage.upsertSession({
+          ...loaded,
+          taskTitle: "Preserve artifact updated",
+          updatedAt: "2026-04-27 10:00",
+        });
+
+        assert.equal(
+          (await storage.getSessionMessageArtifact(session.id, 0))?.changedFiles[0]?.diffRows[0]?.rightText,
+          `${sentinel}:diff-row`,
+        );
+
+        const db = new DatabaseSync(dbPath, { readOnly: true });
+        try {
+          assert.equal(readCount(db, "SELECT COUNT(*) AS count FROM session_message_artifacts"), 1);
+          assert.equal(readCount(db, "SELECT COUNT(*) AS count FROM blob_objects"), 2);
+        } finally {
+          db.close();
+        }
+      } finally {
+        storage.close();
+      }
+    });
+  });
+
   it("DB transaction が失敗した場合は永続化されなかった blob file を cleanup する", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);

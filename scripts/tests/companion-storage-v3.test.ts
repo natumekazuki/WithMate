@@ -9,7 +9,7 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../../src/model-catalog.js";
 import { CompanionStorageV3 } from "../../src-electron/companion-storage-v3.js";
-import { CREATE_V3_SCHEMA_SQL } from "../../src-electron/database-schema-v3.js";
+import { CREATE_V3_SCHEMA_SQL, V3_TEXT_PREVIEW_MAX_LENGTH } from "../../src-electron/database-schema-v3.js";
 import { openAppDatabase } from "../../src-electron/sqlite-connection.js";
 import { TextBlobStore } from "../../src-electron/text-blob-store.js";
 
@@ -251,10 +251,75 @@ describe("CompanionStorageV3", () => {
       assert.equal(dbText.includes("DIFF_TAIL_RAW"), false);
 
       assert.equal((await storage.getSession(session.id))?.characterRoleMarkdown.endsWith("CHARACTER_ROLE_TAIL_RAW"), true);
+      const activeSummary = (await storage.listActiveSessionSummaries())[0];
+      assert.ok(activeSummary);
+      assert.equal(activeSummary.characterRoleMarkdown.length, V3_TEXT_PREVIEW_MAX_LENGTH);
+      assert.equal(activeSummary.characterRoleMarkdown.includes("CHARACTER_ROLE_TAIL_RAW"), false);
+
+      await storage.updateSession({
+        ...(await storage.getSession(session.id))!,
+        status: "recovery-required",
+        updatedAt: "2026-04-26 10:30",
+      });
+      assert.equal((await storage.listSessionSummaries())[0]?.status, "recovery-required");
+      assert.equal((await storage.listActiveSessionSummaries()).length, 0);
       assert.equal((await storage.getSession(session.id))?.messages[0]?.text.endsWith("MESSAGE_TAIL_RAW"), true);
       assert.equal((await storage.getMessageArtifact(session.id, 0))?.activitySummary[0]?.endsWith("ARTIFACT_TAIL_RAW"), true);
       assert.equal("diffSnapshot" in ((await storage.listMergeRunSummariesForSession(session.id))[0] ?? {}), false);
       assert.equal((await storage.listMergeRunsForSession(session.id))[0]?.diffSnapshot[0]?.diffRows[0]?.rightText?.endsWith("DIFF_TAIL_RAW"), true);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  it("summary artifact を含む companion rewrite でも既存 full artifact blob を保持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-storage-v3-"));
+    const dbPath = path.join(tempDirectory, "withmate-v3.db");
+    const blobPath = path.join(tempDirectory, "blobs");
+    let storage: CompanionStorageV3 | null = null;
+
+    try {
+      createV3Database(dbPath);
+      storage = new CompanionStorageV3(dbPath, blobPath);
+      const group = await storage.ensureGroup(createGroup());
+      const session = await storage.createSession(createSession(group.id, {
+        messages: [
+          {
+            role: "assistant",
+            text: "Companion artifact summary rewrite target",
+            artifact: {
+              title: "artifact",
+              activitySummary: ["done"],
+              changedFiles: [
+                {
+                  kind: "edit",
+                  path: "README.md",
+                  summary: "README.md",
+                  diffRows: [{ kind: "add", rightNumber: 1, rightText: "preserved companion diff" }],
+                },
+              ],
+              runChecks: [{ label: "test", value: "pass" }],
+            },
+          },
+        ],
+      }));
+      const loaded = await storage.getSession(session.id);
+      assert.ok(loaded);
+      assert.equal(loaded.messages[0]?.artifact?.detailAvailable, true);
+      assert.equal(loaded.messages[0]?.artifact?.changedFiles[0]?.diffRows.length, 0);
+
+      await storage.updateSession({
+        ...loaded,
+        taskTitle: "Companion artifact summary rewrite target updated",
+        updatedAt: "2026-04-26 10:20",
+      });
+
+      assert.equal(
+        (await storage.getMessageArtifact(session.id, 0))?.changedFiles[0]?.diffRows[0]?.rightText,
+        "preserved companion diff",
+      );
+      assert.equal(countBlobObjects(dbPath), 3);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

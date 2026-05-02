@@ -96,9 +96,20 @@ type BlobIdRow = {
   blob_id: string | null;
 };
 
+type ExistingMessageArtifactRef = {
+  summaryJson: string;
+  blobId: string;
+  originalBytes: number;
+  storedBytes: number;
+};
+
+type StoredArtifactPayload =
+  | { kind: "new"; ref: BlobRef }
+  | { kind: "preserved"; ref: ExistingMessageArtifactRef };
+
 type StoredMessagePayload = {
   text: BlobRef;
-  artifact: BlobRef | null;
+  artifact: StoredArtifactPayload | null;
 };
 
 type StoredCompanionSessionPayload = {
@@ -537,11 +548,86 @@ function sessionToSummary(
   };
 }
 
+function rowToSessionSummary(
+  row: CompanionSessionRow,
+  latestMergeRun: CompanionMergeRunSummary | null = null,
+): CompanionSessionSummary {
+  return {
+    id: row.id,
+    groupId: row.group_id,
+    taskTitle: row.task_title,
+    status: row.status === "merged" || row.status === "discarded" || row.status === "recovery-required"
+      ? row.status
+      : "active",
+    repoRoot: row.repo_root,
+    focusPath: row.focus_path,
+    targetBranch: row.target_branch,
+    baseSnapshotRef: row.base_snapshot_ref,
+    baseSnapshotCommit: row.base_snapshot_commit,
+    selectedPaths: parseSelectedPaths(row.selected_paths_json),
+    changedFiles: parseChangedFiles(row.changed_files_summary_json),
+    siblingWarnings: parseSiblingWarnings(row.sibling_warnings_summary_json),
+    allowedAdditionalDirectories: parseSelectedPaths(row.allowed_additional_directories_json),
+    runState: row.run_state === "running" || row.run_state === "error" ? row.run_state : "idle",
+    threadId: row.thread_id,
+    provider: row.provider,
+    model: row.model || DEFAULT_MODEL_ID,
+    reasoningEffort: row.reasoning_effort === "minimal" ||
+      row.reasoning_effort === "low" ||
+      row.reasoning_effort === "medium" ||
+      row.reasoning_effort === "high" ||
+      row.reasoning_effort === "xhigh"
+      ? row.reasoning_effort
+      : DEFAULT_REASONING_EFFORT,
+    approvalMode:
+      row.approval_mode === "untrusted" || row.approval_mode === "on-failure" || row.approval_mode === "on-request"
+        ? row.approval_mode
+        : DEFAULT_APPROVAL_MODE,
+    codexSandboxMode: row.codex_sandbox_mode === "read-only" ||
+      row.codex_sandbox_mode === "workspace-write" ||
+      row.codex_sandbox_mode === "workspace-write-network" ||
+      row.codex_sandbox_mode === "danger-full-access"
+      ? row.codex_sandbox_mode
+      : DEFAULT_CODEX_SANDBOX_MODE,
+    character: row.character_name,
+    characterRoleMarkdown: row.character_role_preview,
+    characterIconPath: row.character_icon_path,
+    characterThemeColors: {
+      main: row.character_theme_main,
+      sub: row.character_theme_sub,
+    },
+    updatedAt: row.updated_at,
+    latestMergeRun,
+  };
+}
+
 function buildArtifactSummary(artifact: MessageArtifact | undefined): string {
   if (!artifact) {
     return "{}";
   }
   return summaryJson(summarizeMessageArtifact(artifact));
+}
+
+function isArtifactSummaryOnly(artifact: MessageArtifact): boolean {
+  return artifact.detailAvailable === true && artifact.changedFiles.every((file) => file.diffRows.length === 0);
+}
+
+function artifactBlobMetadata(payload: StoredArtifactPayload): {
+  blobId: string;
+  originalBytes: number;
+  storedBytes: number;
+} {
+  return payload.kind === "new"
+    ? {
+      blobId: payload.ref.blobId,
+      originalBytes: payload.ref.originalBytes,
+      storedBytes: payload.ref.storedBytes,
+    }
+    : {
+      blobId: payload.ref.blobId,
+      originalBytes: payload.ref.originalBytes,
+      storedBytes: payload.ref.storedBytes,
+    };
 }
 
 function insertBlobObject(db: DatabaseSync, ref: BlobRef, createdAt: string): void {
@@ -572,7 +658,10 @@ function compactBlobIds(values: ReadonlyArray<string | null | undefined>): strin
 function sessionPayloadBlobIds(payload: StoredCompanionSessionPayload): string[] {
   return compactBlobIds([
     payload.characterRole?.blobId,
-    ...payload.messages.flatMap((message) => [message.text.blobId, message.artifact?.blobId]),
+    ...payload.messages.flatMap((message) => [
+      message.text.blobId,
+      message.artifact?.kind === "new" ? message.artifact.ref.blobId : null,
+    ]),
   ]);
 }
 
@@ -647,14 +736,59 @@ function deleteUnreferencedBlobObjectRows(db: DatabaseSync, blobIds: readonly st
   return deletedBlobIds;
 }
 
-async function storeSessionPayload(blobStore: TextBlobStore, session: CompanionSession): Promise<StoredCompanionSessionPayload> {
+function readCompanionArtifactRefs(db: DatabaseSync, sessionId: string): Map<number, ExistingMessageArtifactRef> {
+  const rows = db.prepare(`
+    SELECT
+      m.position,
+      a.artifact_summary_json,
+      a.artifact_blob_id,
+      a.artifact_original_bytes,
+      a.artifact_stored_bytes
+    FROM companion_message_artifacts AS a
+    INNER JOIN companion_messages AS m ON m.id = a.message_id
+    WHERE m.session_id = ?
+      AND a.artifact_blob_id IS NOT NULL
+  `).all(sessionId) as Array<{
+    position: number;
+    artifact_summary_json: string;
+    artifact_blob_id: string | null;
+    artifact_original_bytes: number;
+    artifact_stored_bytes: number;
+  }>;
+  return new Map(rows.flatMap((row) => row.artifact_blob_id
+    ? [[row.position, {
+      summaryJson: row.artifact_summary_json,
+      blobId: row.artifact_blob_id,
+      originalBytes: row.artifact_original_bytes,
+      storedBytes: row.artifact_stored_bytes,
+    }] as const]
+    : []));
+}
+
+async function storeSessionPayload(
+  blobStore: TextBlobStore,
+  session: CompanionSession,
+  existingArtifactRefs: ReadonlyMap<number, ExistingMessageArtifactRef> = new Map(),
+): Promise<StoredCompanionSessionPayload> {
   return {
     characterRole: session.characterRoleMarkdown
       ? await blobStore.putText({ contentType: "text/plain", text: session.characterRoleMarkdown })
       : null,
-    messages: await Promise.all(session.messages.map(async (message) => ({
+    messages: await Promise.all(session.messages.map(async (message, index) => ({
       text: await blobStore.putText({ contentType: "text/plain", text: message.text }),
-      artifact: message.artifact ? await blobStore.putJson({ value: message.artifact }) : null,
+      artifact: message.artifact
+        ? (() => {
+          const existing = existingArtifactRefs.get(index);
+          if (
+            existing &&
+            isArtifactSummaryOnly(message.artifact) &&
+            buildArtifactSummary(message.artifact) === existing.summaryJson
+          ) {
+            return { kind: "preserved", ref: existing } satisfies StoredArtifactPayload;
+          }
+          return null;
+        })() ?? { kind: "new", ref: await blobStore.putJson({ value: message.artifact }) }
+        : null,
     }))),
   };
 }
@@ -852,7 +986,8 @@ export class CompanionStorageV3 {
   }
 
   private async writeSession(session: CompanionSession, updateOnly: boolean): Promise<CompanionSession> {
-    const payload = await storeSessionPayload(this.blobStore, session);
+    const existingArtifactRefs = readCompanionArtifactRefs(this.db, session.id);
+    const payload = await storeSessionPayload(this.blobStore, session, existingArtifactRefs);
     const previousBlobIds = collectCompanionSessionBlobIds(this.db, session.id);
 
     let blobIdsToDelete: string[] = [];
@@ -861,7 +996,10 @@ export class CompanionStorageV3 {
       try {
         insertBlobObjects(this.db, [
           payload.characterRole,
-          ...payload.messages.flatMap((message) => [message.text, message.artifact]),
+          ...payload.messages.flatMap((message) => [
+            message.text,
+            message.artifact?.kind === "new" ? message.artifact.ref : null,
+          ]),
         ], session.updatedAt);
         if (updateOnly) {
           this.updateSessionRow(session, payload);
@@ -1033,12 +1171,13 @@ export class CompanionStorageV3 {
         createdAt,
       );
       if (message.artifact && payload.artifact) {
+        const artifactBlob = artifactBlobMetadata(payload.artifact);
         artifactStatement.run(
           Number(result.lastInsertRowid),
           buildArtifactSummary(message.artifact),
-          payload.artifact.blobId,
-          payload.artifact.originalBytes,
-          payload.artifact.storedBytes,
+          artifactBlob.blobId,
+          artifactBlob.originalBytes,
+          artifactBlob.storedBytes,
         );
       }
     });
@@ -1065,10 +1204,9 @@ export class CompanionStorageV3 {
   private async rowsToSummaries(rows: CompanionSessionRow[], includeLatestMergeRun: boolean): Promise<CompanionSessionSummary[]> {
     const summaries: CompanionSessionSummary[] = [];
     for (const row of rows) {
-      const session = await rowToSession(row, this.blobStore);
-      summaries.push(sessionToSummary(
-        session,
-        includeLatestMergeRun ? this.getLatestMergeRunSummaryForSession(session.id) : null,
+      summaries.push(rowToSessionSummary(
+        row,
+        includeLatestMergeRun ? this.getLatestMergeRunSummaryForSession(row.id) : null,
       ));
     }
     return summaries;

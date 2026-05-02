@@ -72,9 +72,20 @@ type BlobIdRow = {
 
 type SessionRowParseMode = "skip" | "throw";
 
+type ExistingMessageArtifactRef = {
+  summaryJson: string;
+  blobId: string;
+  originalBytes: number;
+  storedBytes: number;
+};
+
+type StoredArtifactPayload =
+  | { kind: "new"; ref: BlobRef }
+  | { kind: "preserved"; ref: ExistingMessageArtifactRef };
+
 type StoredMessagePayload = {
   text: BlobRef;
-  artifact: BlobRef | null;
+  artifact: StoredArtifactPayload | null;
 };
 
 const UPSERT_SESSION_SQL = `
@@ -262,6 +273,20 @@ const LIST_SESSION_MESSAGE_BLOB_IDS_SQL = `
 
 const LIST_SESSION_ARTIFACT_BLOB_IDS_SQL = `
   SELECT a.artifact_blob_id AS blob_id
+  FROM session_message_artifacts AS a
+  INNER JOIN session_messages AS m
+    ON m.id = a.message_id
+  WHERE m.session_id = ?
+    AND a.artifact_blob_id IS NOT NULL
+`;
+
+const LIST_SESSION_ARTIFACT_REFS_SQL = `
+  SELECT
+    m.seq,
+    a.artifact_summary_json,
+    a.artifact_blob_id,
+    a.artifact_original_bytes,
+    a.artifact_stored_bytes
   FROM session_message_artifacts AS a
   INNER JOIN session_messages AS m
     ON m.id = a.message_id
@@ -517,8 +542,8 @@ function insertBlobObject(db: DatabaseSync, ref: BlobRef, createdAt: string): vo
 function insertBlobObjects(db: DatabaseSync, payloads: readonly StoredMessagePayload[], createdAt: string): void {
   for (const payload of payloads) {
     insertBlobObject(db, payload.text, createdAt);
-    if (payload.artifact) {
-      insertBlobObject(db, payload.artifact, createdAt);
+    if (payload.artifact?.kind === "new") {
+      insertBlobObject(db, payload.artifact.ref, createdAt);
     }
   }
 }
@@ -526,7 +551,7 @@ function insertBlobObjects(db: DatabaseSync, payloads: readonly StoredMessagePay
 function payloadBlobIds(payloads: readonly StoredMessagePayload[]): string[] {
   return payloads.flatMap((payload) => [
     payload.text.blobId,
-    ...(payload.artifact ? [payload.artifact.blobId] : []),
+    ...(payload.artifact?.kind === "new" ? [payload.artifact.ref.blobId] : []),
   ]);
 }
 
@@ -592,6 +617,28 @@ function buildArtifactSummary(artifact: MessageArtifact): string {
   return JSON.stringify(summarizeMessageArtifact(artifact));
 }
 
+function isArtifactSummaryOnly(artifact: MessageArtifact): boolean {
+  return artifact.detailAvailable === true && artifact.changedFiles.every((file) => file.diffRows.length === 0);
+}
+
+function artifactBlobMetadata(payload: StoredArtifactPayload): {
+  blobId: string;
+  originalBytes: number;
+  storedBytes: number;
+} {
+  return payload.kind === "new"
+    ? {
+      blobId: payload.ref.blobId,
+      originalBytes: payload.ref.originalBytes,
+      storedBytes: payload.ref.storedBytes,
+    }
+    : {
+      blobId: payload.ref.blobId,
+      originalBytes: payload.ref.originalBytes,
+      storedBytes: payload.ref.storedBytes,
+    };
+}
+
 function writeSessionMessages(
   insertMessageStatement: ReturnType<DatabaseSync["prepare"]>,
   insertArtifactStatement: ReturnType<DatabaseSync["prepare"]>,
@@ -614,12 +661,13 @@ function writeSessionMessages(
     );
 
     if (message.artifact && payload.artifact) {
+      const artifactBlob = artifactBlobMetadata(payload.artifact);
       insertArtifactStatement.run(
         Number(result.lastInsertRowid),
         buildArtifactSummary(message.artifact),
-        payload.artifact.blobId,
-        payload.artifact.originalBytes,
-        payload.artifact.storedBytes,
+        artifactBlob.blobId,
+        artifactBlob.originalBytes,
+        artifactBlob.storedBytes,
       );
     }
   });
@@ -671,10 +719,44 @@ function deleteUnreferencedBlobObjectRows(db: DatabaseSync, blobIds: readonly st
   return deletedBlobIds;
 }
 
-async function storeMessagePayloads(blobStore: TextBlobStore, session: Session): Promise<StoredMessagePayload[]> {
-  return Promise.all(session.messages.map(async (message) => ({
+function readSessionArtifactRefs(db: DatabaseSync, sessionId: string): Map<number, ExistingMessageArtifactRef> {
+  const rows = db.prepare(LIST_SESSION_ARTIFACT_REFS_SQL).all(sessionId) as Array<{
+    seq: number;
+    artifact_summary_json: string;
+    artifact_blob_id: string | null;
+    artifact_original_bytes: number;
+    artifact_stored_bytes: number;
+  }>;
+  return new Map(rows.flatMap((row) => row.artifact_blob_id
+    ? [[row.seq, {
+      summaryJson: row.artifact_summary_json,
+      blobId: row.artifact_blob_id,
+      originalBytes: row.artifact_original_bytes,
+      storedBytes: row.artifact_stored_bytes,
+    }] as const]
+    : []));
+}
+
+async function storeMessagePayloads(
+  blobStore: TextBlobStore,
+  session: Session,
+  existingArtifactRefs: ReadonlyMap<number, ExistingMessageArtifactRef> = new Map(),
+): Promise<StoredMessagePayload[]> {
+  return Promise.all(session.messages.map(async (message, index) => ({
     text: await blobStore.putText({ contentType: "text/plain", text: message.text }),
-    artifact: message.artifact ? await blobStore.putJson({ value: message.artifact }) : null,
+    artifact: message.artifact
+      ? (() => {
+        const existing = existingArtifactRefs.get(index);
+        if (
+          existing &&
+          isArtifactSummaryOnly(message.artifact) &&
+          buildArtifactSummary(message.artifact) === existing.summaryJson
+        ) {
+          return { kind: "preserved", ref: existing } satisfies StoredArtifactPayload;
+        }
+        return null;
+      })() ?? { kind: "new", ref: await blobStore.putJson({ value: message.artifact }) }
+      : null,
   })));
 }
 
@@ -765,7 +847,8 @@ export class SessionStorageV3 {
       throw new Error("保存するセッション形式が不正だよ。");
     }
 
-    const payloads = await storeMessagePayloads(this.blobStore, normalized);
+    const existingArtifactRefs = this.withDb((db) => readSessionArtifactRefs(db, normalized.id));
+    const payloads = await storeMessagePayloads(this.blobStore, normalized, existingArtifactRefs);
 
     let blobIdsToDelete: string[];
     try {
@@ -811,8 +894,14 @@ export class SessionStorageV3 {
 
       return normalized;
     });
+    const existingArtifactRefsBySessionId = this.withDb((db) => new Map(
+      normalizedSessions.map((session) => [session.id, readSessionArtifactRefs(db, session.id)] as const),
+    ));
     const payloadsBySessionId = new Map(await Promise.all(
-      normalizedSessions.map(async (session) => [session.id, await storeMessagePayloads(this.blobStore, session)] as const),
+      normalizedSessions.map(async (session) => [
+        session.id,
+        await storeMessagePayloads(this.blobStore, session, existingArtifactRefsBySessionId.get(session.id)),
+      ] as const),
     ));
 
     const stagedBlobIds = [...payloadsBySessionId.values()].flatMap((payloads) => payloadBlobIds(payloads));

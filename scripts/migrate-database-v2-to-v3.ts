@@ -51,6 +51,11 @@ export type V2ToV3MigrationDryRunReport = {
     auditLogs: number;
     auditLogDetails: number;
     auditLogOperations: number;
+    companionGroups: number;
+    companionSessions: number;
+    companionMessages: number;
+    companionMessageArtifacts: number;
+    companionMergeRuns: number;
     appSettings: number;
     modelCatalogRevisions: number;
     modelCatalogProviders: number;
