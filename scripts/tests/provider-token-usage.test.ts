@@ -65,4 +65,21 @@ describe("provider token usage", () => {
       },
     );
   });
+
+  it("Copilot の reasoningTokens を共通 reasoningOutputTokens に正規化する", () => {
+    assert.deepEqual(
+      normalizeCopilotTokenUsage({
+        inputTokens: 30,
+        outputTokens: 7,
+        reasoningTokens: 4,
+      }),
+      {
+        inputTokens: 30,
+        cachedInputTokens: 0,
+        outputTokens: 7,
+        reasoningOutputTokens: 4,
+        totalTokens: 37,
+      },
+    );
+  });
 });

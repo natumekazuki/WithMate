@@ -13,6 +13,7 @@ export type CopilotTokenUsageLike = {
   cacheReadTokens?: unknown;
   cachedInputTokens?: unknown;
   outputTokens?: unknown;
+  reasoningTokens?: unknown;
   reasoningOutputTokens?: unknown;
   totalTokens?: unknown;
 };
@@ -76,7 +77,7 @@ export function normalizeCopilotTokenUsage(usage: CopilotTokenUsageLike | null |
     inputTokens: usage.inputTokens,
     cachedInputTokens: usage.cachedInputTokens ?? usage.cacheReadTokens,
     outputTokens: usage.outputTokens,
-    reasoningOutputTokens: usage.reasoningOutputTokens,
+    reasoningOutputTokens: usage.reasoningOutputTokens ?? usage.reasoningTokens,
     totalTokens: usage.totalTokens,
   });
 }
