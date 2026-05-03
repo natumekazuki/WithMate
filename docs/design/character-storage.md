@@ -1,5 +1,10 @@
 # Character Storage
 
+> 4.0.0 note:
+> WithMate 4.0.0 は完全 SingleMate とし、runtime の正本は `docs/design/single-mate-architecture.md` の Mate Profile へ移す。
+> この文書は 3.x の character catalog と character update workspace の supporting / legacy detail として扱う。
+> 4.0.0 では既存 character catalog から Mate への自動 migration は行わず、初回利用時に新しい Mate 作成から開始する。
+
 ## Goal
 WithMate 専用ディレクトリ配下でキャラクターデータを永続化し、Home / Character Editor / Session / Character Stream が共通で参照できる character catalog を提供する。
 

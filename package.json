@@ -28,8 +28,8 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@github/copilot-sdk": "^0.2.2",
-    "@openai/codex-sdk": "^0.124.0",
+    "@github/copilot-sdk": "^0.3.0",
+    "@openai/codex-sdk": "^0.128.0",
     "ignore": "^7.0.5",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"

@@ -40,6 +40,7 @@ import {
 } from "./snapshot-ignore.js";
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 import { composeProviderPrompt, isCanceledProviderMessage } from "./provider-prompt.js";
+import { normalizeCodexTokenUsage } from "./provider-token-usage.js";
 import {
   ProviderTurnError,
   resolveRunWorkspacePath,
@@ -568,18 +569,6 @@ function toAuditOperations(items: ThreadItem[]): AuditLogOperation[] {
   return operations;
 }
 
-function toAuditUsage(usage: Usage | null): AuditLogUsage | null {
-  if (!usage) {
-    return null;
-  }
-
-  return {
-    inputTokens: usage.input_tokens,
-    cachedInputTokens: usage.cached_input_tokens,
-    outputTokens: usage.output_tokens,
-  };
-}
-
 function toLiveStepStatus(value: string | undefined): LiveRunStep["status"] {
   if (value === "completed") {
     return "completed";
@@ -785,7 +774,7 @@ function applyCodexTurnEvent(state: CodexTurnStreamState, event: ThreadEvent): v
       break;
     case "turn.completed":
       state.usage = event.usage;
-      state.liveUsage = toAuditUsage(event.usage);
+      state.liveUsage = normalizeCodexTokenUsage(event.usage);
       break;
     case "turn.failed":
       state.streamErrorMessage = event.error.message;
@@ -1047,7 +1036,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         threadId: thread.id,
         finalResponse: result.finalResponse,
       }, null, 2),
-      usage: result.usage ? toAuditUsage(result.usage) : null,
+      usage: normalizeCodexTokenUsage(result.usage),
     };
   }
 
@@ -1203,7 +1192,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       transportPayload: buildCodexTransportPayload(prompt),
       operations: toAuditOperations(finalItems),
       rawItemsJson: JSON.stringify(finalItems, null, 2),
-      usage: toAuditUsage(usage),
+      usage: normalizeCodexTokenUsage(usage),
       providerQuotaTelemetry: null,
     };
   }

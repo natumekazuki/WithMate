@@ -1,7 +1,7 @@
 # Database Schema
 
 - 作成日: 2026-03-27
-- 更新日: 2026-04-27
+- 更新日: 2026-05-03
 - 対象: WithMate の current 保存構造
 
 ## Goal
@@ -19,6 +19,9 @@ WithMate が現在どこに何を保存しているかを、1 枚で把握でき
 ## Scope
 
 この文書は current 実装を対象にする。
+
+2026-05-03 時点で、WithMate 4.0.0 の完全 SingleMate 化が design target として決定している。current 実装の `<userData>/characters/` は 3.x の current storage として記載し、4.0.0 の Mate Profile storage は `Current / Future Boundary` に分けて記載する。詳細は `docs/design/single-mate-architecture.md` を参照する。
+Mate 関連の SQLite schema 詳細は `docs/design/mate-storage-schema.md` を参照する。
 
 2026-04-27 時点では、V1 `withmate.db` と V2 `withmate-v2.db` を分ける方針で進める。V1 schema の SQL 正本は `src-electron/database-schema-v1.ts` に切り出し済みで、V2 schema の SQL 正本は `src-electron/database-schema-v2.ts` に置く。V2 migration 方針は `docs/design/database-v2-migration.md` を正本にする。
 
@@ -675,12 +678,65 @@ V2 では Home 一覧と audit log modal 初期表示で巨大 JSON を読まな
 
 まだ未実装だが design があるもの:
 
+- SingleMate 4.0.0 の Mate Profile storage
 - `project_memory_entry_links`
 - FTS / embedding 系 index
 - `withmate-v3.db` と compressed blob store による raw/detail payload 外出し
 
 詳細は `docs/design/project-memory-storage.md` を参照する。
 V3 の DB 外 blob store 方針は `docs/design/database-v3-blob-storage.md` を参照する。
+SingleMate の保存方針は `docs/design/single-mate-architecture.md` を参照する。
+Mate 関連 SQLite schema は `docs/design/mate-storage-schema.md` を正本にする。
+
+4.0.0 では DB file を `withmate-v4.db`、schema version を `4` とする。V1 / V2 / V3 からの暗黙 migration は行わない。
+
+SingleMate 4.0.0 の候補 storage:
+
+```text
+<userData>/
+  mate/
+    core.md
+    bond.md
+    work-style.md
+    notes.md
+    avatar.png
+    revisions/
+    project-digests/
+```
+
+4.0.0 では既存 character catalog から Mate への自動 migration を行わない。初回 4.0.0 利用時は、新しい Mate 作成から開始する。
+Mate Profile storage / API は完全に単一化し、runtime write path では character catalog API を維持しない。
+Mate Profile の metadata は SQLite に保存し、`profile.json` は作らない。
+
+候補 table:
+
+| Table | Purpose |
+| --- | --- |
+| `mate_profile` | SingleMate の metadata、theme、avatar file、active revision |
+| `mate_profile_sections` | `core` / `bond` / `work_style` / `notes` file metadata と hash |
+| `mate_profile_revisions` | Mate Profile の変更履歴 |
+| `mate_profile_revision_sections` | revision ごとの section snapshot / diff metadata |
+| `mate_growth_settings` | Growth Engine の有効化、auto apply、cooldown、timeout |
+| `mate_growth_model_preferences` | Memory / Profile apply / Project Digest purpose ごとの provider / model / depth 優先順位 |
+| `mate_growth_runs` | Growth background 実行単位の summary |
+| `mate_growth_cursors` | session / companion / project ごとの Growth 処理済み位置 |
+| `mate_growth_events` | Growth Candidate / Growth Event の抽出結果、反映状態、根拠 |
+| `mate_growth_event_links` | Growth Event 間の relation |
+| `mate_growth_event_profile_item_links` | Growth Event と参照 Profile Item の relation |
+| `mate_memory_tags` | Growth Event / Profile Item / tag catalog に付与する tag relation |
+| `mate_memory_tag_catalog` | tag の正規化、再利用、alias、active / disabled 管理 |
+| `mate_embedding_settings` | local embedding backend / model download / cache 状態 |
+| `mate_semantic_embeddings` | Growth Event / Profile Item / tag catalog の semantic retrieval 用 embedding |
+| `mate_growth_event_actions` | Growth Event の状態変更履歴 |
+| `mate_growth_event_evidence` | Growth Event の根拠参照 |
+| `mate_profile_items` | Growth から生成された現在 Profile item |
+| `mate_profile_item_tags` | Profile item に付与する tag relation |
+| `mate_profile_item_sources` | Profile item と source Growth Event の link |
+| `mate_profile_item_relations` | Profile item 間の reinforce / update / contradict / supersede relation |
+| `mate_forgotten_tombstones` | 忘却済み内容の HMAC fingerprint |
+| `mate_project_digests` | project 単位 digest file metadata |
+| `provider_instruction_targets` | provider root と instruction file path の設定 |
+| `provider_instruction_sync_runs` | provider instruction sync の実行履歴 |
 
 ## Reading Order
 
@@ -690,6 +746,9 @@ V3 の DB 外 blob store 方針は `docs/design/database-v3-blob-storage.md` を
 2. `docs/design/electron-session-store.md`
 3. `docs/design/audit-log.md`
 4. `docs/design/model-catalog.md`
-5. `docs/design/character-storage.md`
-6. `docs/design/project-memory-storage.md`
-7. `docs/design/character-memory-storage.md`
+5. `docs/design/single-mate-architecture.md`
+6. `docs/design/mate-storage-schema.md`
+7. `docs/design/provider-instruction-sync.md`
+8. `docs/design/character-storage.md`
+9. `docs/design/project-memory-storage.md`
+10. `docs/design/character-memory-storage.md`

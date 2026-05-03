@@ -10,6 +10,7 @@ import {
   type PermissionRequestResult,
   type SessionConfig,
   type SessionEvent,
+  type Tool,
 } from "@github/copilot-sdk";
 
 import type {
@@ -56,6 +57,7 @@ import {
 } from "./snapshot-ignore.js";
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 import { resolveSessionCustomAgentConfigs } from "./custom-agent-discovery.js";
+import { normalizeCopilotTokenUsage } from "./provider-token-usage.js";
 import {
   resolveDevelopmentProviderBinaryPath,
   resolvePackagedProviderBinaryPath,
@@ -237,22 +239,6 @@ function stringifyUnknown(value: unknown): string | undefined {
   }
 }
 
-function toAuditUsageFromCopilot(data: { inputTokens?: number; cacheReadTokens?: number; outputTokens?: number }): AuditLogUsage | null {
-  if (
-    typeof data.inputTokens !== "number"
-    && typeof data.cacheReadTokens !== "number"
-    && typeof data.outputTokens !== "number"
-  ) {
-    return null;
-  }
-
-  return {
-    inputTokens: data.inputTokens ?? 0,
-    cachedInputTokens: data.cacheReadTokens ?? 0,
-    outputTokens: data.outputTokens ?? 0,
-  };
-}
-
 function createCopilotTurnStreamState(): CopilotTurnStreamState {
   return {
     liveSteps: new Map<string, LiveRunStep>(),
@@ -315,7 +301,7 @@ function applyCopilotTurnEvent(args: {
       break;
     }
     case "assistant.usage":
-      state.usage = toAuditUsageFromCopilot(event.data);
+      state.usage = normalizeCopilotTokenUsage(event.data);
       if (args.onProviderQuotaTelemetry) {
         const telemetry = buildCopilotProviderQuotaTelemetry(
           providerId,
@@ -1065,7 +1051,7 @@ function isReadOnlyPermissionRequest(request: PermissionRequest): boolean {
     case "read":
       return true;
     case "mcp":
-      return request.readOnly === true;
+      return isRecord(request) && request.readOnly === true;
     default:
       return false;
   }
@@ -1723,13 +1709,19 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     return client;
   }
 
-  private buildBackgroundSessionConfig(input: ExtractSessionMemoryInput | RunCharacterReflectionInput): SessionConfig {
-    const denyAllPermissions: PermissionHandler = () => ({ kind: "denied-interactively-by-user" });
+  private buildBackgroundSessionConfig(
+    input: ExtractSessionMemoryInput | RunCharacterReflectionInput,
+    tools?: Tool[],
+  ): SessionConfig {
+    const denyAllPermissions: PermissionHandler = () =>
+      toPermissionDecision("denied-no-approval-rule-and-could-not-request-from-user");
     return {
       model: input.model,
       reasoningEffort: input.reasoningEffort === "minimal" ? "low" : input.reasoningEffort,
       workingDirectory: input.session.workspacePath,
       streaming: false,
+      tools,
+      availableTools: tools?.map((tool) => tool.name),
       onPermissionRequest: denyAllPermissions,
       systemMessage: {
         mode: "append",
@@ -1752,15 +1744,37 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     const client = this.getOrCreateClientByAppSettings(input.session.provider, input.appSettings);
     await client.start();
     let usage: AuditLogUsage | null = null;
+    let structuredOutput: unknown = null;
+    let hasStructuredOutput = false;
+    const submitToolName = "withmate_submit_structured_output";
+    const submitTool: Tool = {
+      name: submitToolName,
+      description: "Submit the structured JSON output requested by WithMate.",
+      parameters: input.prompt.outputSchema,
+      skipPermission: true,
+      handler: (args) => {
+        structuredOutput = args;
+        hasStructuredOutput = true;
+        return "structured output accepted";
+      },
+    };
 
-    const extractionSession = await client.createSession(this.buildBackgroundSessionConfig(input));
+    const extractionSession = await client.createSession(this.buildBackgroundSessionConfig(input, [submitTool]));
     const unsubscribeUsage = extractionSession.on("assistant.usage", (event) => {
-      usage = toAuditUsageFromCopilot(event.data);
+      usage = normalizeCopilotTokenUsage(event.data);
     });
 
     try {
-      const response = await extractionSession.sendAndWait({ prompt: input.prompt.userText }, input.timeoutMs);
-      const rawText = response?.data.content ?? "";
+      const response = await extractionSession.sendAndWait({
+        prompt: [
+          input.prompt.userText,
+          "",
+          "# Structured Output",
+          `Call the \`${submitToolName}\` tool exactly once with the requested JSON object.`,
+          "Do not answer in natural language.",
+        ].join("\n"),
+      }, input.timeoutMs);
+      const rawText = hasStructuredOutput ? JSON.stringify(structuredOutput) : response?.data.content ?? "";
       const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.session.provider, input.appSettings)
         .catch(() => null);
       return {
@@ -1771,6 +1785,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           type: "copilot-background-response",
           sessionId: extractionSession.sessionId,
           content: rawText,
+          structuredOutputSource: hasStructuredOutput ? "tool" : "assistant-message",
           quotaSnapshots: providerQuotaTelemetry?.snapshots ?? [],
         }, null, 2),
         usage,

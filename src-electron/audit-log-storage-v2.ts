@@ -440,6 +440,8 @@ function parseUsageFromJson(value: string | null): AuditLogUsage | null {
         inputTokens: parsed.inputTokens,
         cachedInputTokens: parsed.cachedInputTokens,
         outputTokens: parsed.outputTokens,
+        ...(typeof parsed.reasoningOutputTokens === "number" ? { reasoningOutputTokens: parsed.reasoningOutputTokens } : {}),
+        ...(typeof parsed.totalTokens === "number" ? { totalTokens: parsed.totalTokens } : {}),
       };
     }
   } catch {

@@ -50,6 +50,8 @@ export type AuditLogUsage = {
   inputTokens: number;
   cachedInputTokens: number;
   outputTokens: number;
+  reasoningOutputTokens?: number;
+  totalTokens?: number;
 };
 
 export type AuditLogicalPrompt = {

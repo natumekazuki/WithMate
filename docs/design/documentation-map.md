@@ -18,6 +18,11 @@ current 実装の正本として維持する文書。
 | Doc | Role |
 | --- | --- |
 | `product-direction.md` | プロダクトの優先順位と current milestone の判断基準 |
+| `single-mate-architecture.md` | 4.0.0 SingleMate / Mate Profile / Growth 方針の正本 |
+| `mate-storage-schema.md` | 4.0.0 Mate Profile / Growth / provider instruction sync の SQLite schema 正本 |
+| `mate-growth-engine.md` | 4.0.0 Growth Candidate / Mate Memory Engine の責務と policy gate の正本 |
+| `mate-memory-summary.md` | Memory / Growth 周りを外部検討に渡すための単一 summary |
+| `provider-instruction-sync.md` | Mate Profile と provider instruction file 同期方針の正本 |
 | `window-architecture.md` | Window 構成と mode 切り替えの正本 |
 | `desktop-ui.md` | current UI の全体像 |
 | `provider-adapter.md` | provider 差分と adapter 責務 |
