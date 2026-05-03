@@ -11,6 +11,7 @@ export type AppSettings = {
   memoryGenerationEnabled: boolean;
   autoCollapseActionDockOnSend: boolean;
   characterReflectionTriggerSettings: CharacterReflectionTriggerSettings;
+  mateMemoryGenerationSettings: MateMemoryGenerationSettings;
   codingProviderSettings: Record<string, ProviderAppSettings>;
   memoryExtractionProviderSettings: Record<string, MemoryExtractionProviderSettings>;
   characterReflectionProviderSettings: Record<string, CharacterReflectionProviderSettings>;
@@ -33,6 +34,18 @@ export type CharacterReflectionProviderSettings = {
   model: string;
   reasoningEffort: ModelReasoningEffort;
   timeoutSeconds: number;
+};
+
+export type MateMemoryGenerationProviderSettings = {
+  provider: string;
+  model: string;
+  reasoningEffort: ModelReasoningEffort;
+  timeoutSeconds: number;
+};
+
+export type MateMemoryGenerationSettings = {
+  priorityList: MateMemoryGenerationProviderSettings[];
+  triggerIntervalMinutes: number;
 };
 
 export type CharacterReflectionTriggerSettings = {
@@ -69,6 +82,18 @@ export const DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS: CharacterReflection
   timeoutSeconds: DEFAULT_BACKGROUND_TIMEOUT_SECONDS,
 };
 
+export const DEFAULT_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_MINUTES = 60;
+export const DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS: MateMemoryGenerationProviderSettings = {
+  provider: DEFAULT_PROVIDER_ID,
+  model: DEFAULT_MODEL_ID,
+  reasoningEffort: DEFAULT_REASONING_EFFORT,
+  timeoutSeconds: DEFAULT_BACKGROUND_TIMEOUT_SECONDS,
+};
+export const DEFAULT_MATE_MEMORY_GENERATION_SETTINGS: MateMemoryGenerationSettings = {
+  priorityList: [{ ...DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS }],
+  triggerIntervalMinutes: DEFAULT_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_MINUTES,
+};
+
 export const DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS: CharacterReflectionTriggerSettings = {
   cooldownSeconds: 120,
   charDeltaThreshold: 400,
@@ -81,6 +106,10 @@ export function createDefaultAppSettings(): AppSettings {
     memoryGenerationEnabled: true,
     autoCollapseActionDockOnSend: true,
     characterReflectionTriggerSettings: { ...DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS },
+    mateMemoryGenerationSettings: {
+      ...DEFAULT_MATE_MEMORY_GENERATION_SETTINGS,
+      priorityList: [{ ...DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS }],
+    },
     codingProviderSettings: {
       [DEFAULT_PROVIDER_ID]: {
         enabled: true,
@@ -148,6 +177,20 @@ function normalizeCharacterReflectionMessageDeltaThreshold(value: unknown): numb
   return normalized;
 }
 
+function normalizeReasoningEffort(value: unknown, fallback: ModelReasoningEffort): ModelReasoningEffort {
+  if (
+    value === "minimal" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh"
+  ) {
+    return value;
+  }
+
+  return fallback;
+}
+
 function normalizeProviderAppSettings(value: unknown, defaultEnabled: boolean): ProviderAppSettings {
   if (!value || typeof value !== "object") {
     return {
@@ -207,14 +250,7 @@ function normalizeMemoryExtractionProviderSettings(value: unknown): MemoryExtrac
   const candidate = value as Partial<MemoryExtractionProviderSettings>;
   return {
     model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
-    reasoningEffort:
-      candidate.reasoningEffort === "minimal" ||
-      candidate.reasoningEffort === "low" ||
-      candidate.reasoningEffort === "medium" ||
-      candidate.reasoningEffort === "high" ||
-      candidate.reasoningEffort === "xhigh"
-        ? candidate.reasoningEffort
-        : DEFAULT_REASONING_EFFORT,
+    reasoningEffort: normalizeReasoningEffort(candidate.reasoningEffort, DEFAULT_REASONING_EFFORT),
     outputTokensThreshold: normalizeOutputTokensThreshold(candidate.outputTokensThreshold),
     timeoutSeconds: normalizeBackgroundTimeoutSeconds(candidate.timeoutSeconds),
   };
@@ -228,15 +264,61 @@ function normalizeCharacterReflectionProviderSettings(value: unknown): Character
   const candidate = value as Partial<CharacterReflectionProviderSettings>;
   return {
     model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
-    reasoningEffort:
-      candidate.reasoningEffort === "minimal" ||
-      candidate.reasoningEffort === "low" ||
-      candidate.reasoningEffort === "medium" ||
-      candidate.reasoningEffort === "high" ||
-      candidate.reasoningEffort === "xhigh"
-        ? candidate.reasoningEffort
-        : DEFAULT_REASONING_EFFORT,
+    reasoningEffort: normalizeReasoningEffort(candidate.reasoningEffort, DEFAULT_REASONING_EFFORT),
     timeoutSeconds: normalizeBackgroundTimeoutSeconds(candidate.timeoutSeconds),
+  };
+}
+
+function normalizeMateMemoryGenerationTriggerIntervalMinutes(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_MINUTES;
+  }
+
+  const normalized = Math.trunc(value);
+  if (normalized < 1) {
+    return 1;
+  }
+
+  if (normalized > 14_400) {
+    return 14_400;
+  }
+
+  return normalized;
+}
+
+function normalizeMateMemoryGenerationProviderSettings(value: unknown): MateMemoryGenerationProviderSettings {
+  if (!value || typeof value !== "object") {
+    return { ...DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS };
+  }
+
+  const candidate = value as Partial<MateMemoryGenerationProviderSettings>;
+  return {
+    provider: normalizeProviderId(typeof candidate.provider === "string" ? candidate.provider : DEFAULT_PROVIDER_ID),
+    model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
+    reasoningEffort: normalizeReasoningEffort(candidate.reasoningEffort, DEFAULT_REASONING_EFFORT),
+    timeoutSeconds: normalizeBackgroundTimeoutSeconds(candidate.timeoutSeconds),
+  };
+}
+
+function normalizeMateMemoryGenerationSettings(value: unknown): MateMemoryGenerationSettings {
+  if (!value || typeof value !== "object") {
+    return {
+      ...DEFAULT_MATE_MEMORY_GENERATION_SETTINGS,
+      priorityList: [{ ...DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS }],
+    };
+  }
+
+  const candidate = value as Partial<MateMemoryGenerationSettings>;
+  const normalizedPriorityList = Array.isArray(candidate.priorityList)
+    ? candidate.priorityList.map((entry) => normalizeMateMemoryGenerationProviderSettings(entry))
+    : null;
+
+  return {
+    priorityList:
+      normalizedPriorityList && normalizedPriorityList.length > 0
+        ? normalizedPriorityList
+        : [{ ...DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS }],
+    triggerIntervalMinutes: normalizeMateMemoryGenerationTriggerIntervalMinutes(candidate.triggerIntervalMinutes),
   };
 }
 
@@ -314,6 +396,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     autoCollapseActionDockOnSend:
       typeof candidate.autoCollapseActionDockOnSend === "boolean" ? candidate.autoCollapseActionDockOnSend : true,
     characterReflectionTriggerSettings: normalizeCharacterReflectionTriggerSettings(candidate.characterReflectionTriggerSettings),
+    mateMemoryGenerationSettings: normalizeMateMemoryGenerationSettings(candidate.mateMemoryGenerationSettings),
     codingProviderSettings,
     memoryExtractionProviderSettings,
     characterReflectionProviderSettings,
@@ -354,6 +437,11 @@ export function getCharacterReflectionProviderSettings(
 export function getCharacterReflectionTriggerSettings(settings: AppSettings): CharacterReflectionTriggerSettings {
   const resolvedSettings = normalizeAppSettings(settings);
   return normalizeCharacterReflectionTriggerSettings(resolvedSettings.characterReflectionTriggerSettings);
+}
+
+export function getMateMemoryGenerationSettings(settings: AppSettings): MateMemoryGenerationSettings {
+  const resolvedSettings = normalizeAppSettings(settings);
+  return normalizeMateMemoryGenerationSettings(resolvedSettings.mateMemoryGenerationSettings);
 }
 
 export function getResolvedProviderSettingsBundle(

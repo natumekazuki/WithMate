@@ -73,6 +73,8 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
             character: { nextCursor: null, hasMore: false, total: 0 },
           },
         }),
+        getMateEmbeddingSettings: () => null,
+        startMateEmbeddingDownload: async () => {},
         deleteSessionMemory: () => {},
         deleteProjectMemoryEntry: () => {},
         deleteCharacterMemoryEntry: () => {},
@@ -143,6 +145,13 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         createCharacter: async () => ({}) as never,
         updateCharacter: async () => ({}) as never,
         deleteCharacter: async () => {},
+      },
+      mate: {
+        getMateState: () => "not_created",
+        getMateProfile: () => null,
+        createMate: async () => ({}) as never,
+        runMateTalkTurn: async () => ({}) as never,
+        resetMate: async () => {},
       },
     },
   });

@@ -65,6 +65,16 @@ export type SessionRuntimeServiceDeps = {
   broadcastLiveSessionRun(sessionId: string): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
   resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
+  scheduleMateMemoryGeneration?: (params: {
+    session: Session;
+    userMessage: string;
+    assistantText: string;
+    auditLogId: number;
+    phase: "completed" | "failed" | "canceled";
+    provider: Session["provider"];
+    threadId: Session["threadId"];
+    logicalPrompt: CreateAuditLogInput["logicalPrompt"];
+  }) => Awaitable<void>;
   currentTimestampLabel?: () => string;
 };
 
@@ -497,6 +507,29 @@ export class SessionRuntimeService {
 
       await enqueueAuditWrite(nextRunningAuditEntry, nextSignature);
     };
+    const scheduleMateMemoryGeneration = async (params: {
+      session: Session;
+      userMessage: string;
+      assistantText: string;
+      phase: "completed" | "failed" | "canceled";
+      threadId: Session["threadId"];
+      auditLogId: number;
+    }) => {
+      const { scheduleMateMemoryGeneration: schedule } = this.deps;
+      if (!schedule) {
+        return;
+      }
+
+      try {
+        await Promise.resolve(schedule({
+          ...params,
+          logicalPrompt: promptForAudit.logicalPrompt,
+          provider: params.session.provider,
+        }));
+      } catch {
+        console.warn("Failed to schedule Mate Memory generation", params.session.id);
+      }
+    };
     await syncRunningAuditFromLiveState(initialLiveState);
     const runProviderTurn = (turnSession: Session) => {
       const progressGeneration = ++liveProgressGeneration;
@@ -654,6 +687,14 @@ export class SessionRuntimeService {
       };
 
       const storedCompletedSession = await this.deps.upsertSession(completedSession);
+      void scheduleMateMemoryGeneration({
+        session: storedCompletedSession,
+        userMessage: nextMessage,
+        assistantText: completedSession.messages.at(-1)?.text ?? "",
+        phase: "completed",
+        threadId: storedCompletedSession.threadId,
+        auditLogId: runningAuditLog.id,
+      });
       activeRunningSession = storedCompletedSession;
       return storedCompletedSession;
     } catch (error: unknown) {
@@ -730,6 +771,16 @@ export class SessionRuntimeService {
       };
 
       const storedFailedSession = await this.deps.upsertSession(failedSession);
+      if (!canceled || partialResult?.assistantText.trim()) {
+        void scheduleMateMemoryGeneration({
+          session: storedFailedSession,
+          userMessage: nextMessage,
+          assistantText: failedSession.messages.at(-1)?.text ?? "",
+          phase: canceled ? "canceled" : "failed",
+          threadId: storedFailedSession.threadId,
+          auditLogId: runningAuditLog.id,
+        });
+      }
       activeRunningSession = storedFailedSession;
       return storedFailedSession;
     } finally {

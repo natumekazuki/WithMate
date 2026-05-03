@@ -773,6 +773,7 @@ describe("V1 to V2 database migration write mode", () => {
           throw new Error("V2 lifecycle では V1 audit log storage を生成しない");
         },
         createAppSettingsStorage: () => ({ close() {} }) as never,
+        createMateStorage: () => ({ close() {} }) as never,
         ensureV2Schema(dbPath) {
           const db = new DatabaseSync(dbPath);
           try {

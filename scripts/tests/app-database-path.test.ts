@@ -9,6 +9,7 @@ import { describe, it } from "node:test";
 import { APP_DATABASE_V1_FILENAME } from "../../src-electron/database-schema-v1.js";
 import { APP_DATABASE_V2_FILENAME, CREATE_V2_SCHEMA_SQL } from "../../src-electron/database-schema-v2.js";
 import { APP_DATABASE_V3_FILENAME, CREATE_V3_SCHEMA_SQL } from "../../src-electron/database-schema-v3.js";
+import { APP_DATABASE_V4_FILENAME, CREATE_V4_SCHEMA_SQL } from "../../src-electron/database-schema-v4.js";
 import { resolveAppDatabasePath } from "../../src-electron/app-database-path.js";
 
 function createV2Database(dbPath: string): void {
@@ -33,7 +34,38 @@ function createV3Database(dbPath: string): void {
   }
 }
 
+function createV4Database(dbPath: string): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    for (const statement of CREATE_V4_SCHEMA_SQL) {
+      db.exec(statement);
+    }
+  } finally {
+    db.close();
+  }
+}
+
 describe("resolveAppDatabasePath", () => {
+  it("有効な V4/V3/V2/V1 がある場合は withmate-v4.db を最優先する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+
+    try {
+      const v1Path = path.join(userDataPath, APP_DATABASE_V1_FILENAME);
+      const v2Path = path.join(userDataPath, APP_DATABASE_V2_FILENAME);
+      const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      await writeFile(v1Path, "");
+      createV2Database(v2Path);
+      createV3Database(v3Path);
+      createV4Database(v4Path);
+
+      const selectedPath = resolveAppDatabasePath(userDataPath);
+      assert.equal(selectedPath, v4Path);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
   it("有効な V3/V2/V1 がある場合は withmate-v3.db を最優先する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
 
@@ -151,6 +183,22 @@ describe("resolveAppDatabasePath", () => {
 
       const selectedPath = resolveAppDatabasePath(userDataPath);
       assert.equal(selectedPath, v2Path);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("空の withmate-v4.db が V3 を shadow しない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+
+    try {
+      const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      createV3Database(v3Path);
+      await writeFile(v4Path, "");
+
+      const selectedPath = resolveAppDatabasePath(userDataPath);
+      assert.equal(selectedPath, v3Path);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }

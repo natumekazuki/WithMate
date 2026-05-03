@@ -10,6 +10,7 @@ import type {
   ChangedFile,
   CharacterReflectionOutput,
   CharacterProfile,
+  ProviderQuotaTelemetry,
   DiffRow,
   LiveRunStep,
   LiveSessionRunState,
@@ -47,6 +48,8 @@ import {
   type ExtractSessionMemoryResult,
   type ExtractSessionMemoryInput,
   type ProviderPromptComposition,
+  type RunBackgroundStructuredPromptInput,
+  type RunBackgroundStructuredPromptResult,
   type ProviderTurnAdapter,
   type RunSessionTurnInput,
   type RunSessionTurnProgressHandler,
@@ -496,6 +499,22 @@ function stringifyUnknown(value: unknown): string | undefined {
     return JSON.stringify(value, null, 2);
   } catch {
     return String(value);
+  }
+}
+
+function parseStructuredPromptJson(rawText: string): unknown | null {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const fencedMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const jsonText = fencedMatch ? fencedMatch[1] ?? "" : trimmed;
+
+  try {
+    return JSON.parse(jsonText);
+  } catch {
+    return null;
   }
 }
 
@@ -964,8 +983,39 @@ export class CodexAdapter implements ProviderTurnAdapter {
     return null;
   }
 
+  async runBackgroundStructuredPrompt<TOutput = unknown>(
+    input: RunBackgroundStructuredPromptInput,
+  ): Promise<RunBackgroundStructuredPromptResult<TOutput>> {
+    const result = await this.runBackgroundStructuredPromptFromInput(
+      input,
+      (rawText) => parseStructuredPromptJson(rawText) as TOutput | null,
+    );
+
+    return {
+      threadId: result.threadId,
+      rawText: result.rawText,
+      output: result.output,
+      parsedJson: result.parsedJson,
+      structuredOutput: result.structuredOutput,
+      rawItemsJson: result.rawItemsJson,
+      usage: result.usage,
+      providerQuotaTelemetry: result.providerQuotaTelemetry,
+    };
+  }
+
   async extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult> {
-    const result = await this.runBackgroundStructuredPrompt(input, parseSessionMemoryDeltaText);
+    const result = await this.runBackgroundStructuredPromptFromInput(
+      {
+        providerId: input.session.provider,
+        workspacePath: input.session.workspacePath,
+        appSettings: input.appSettings,
+        model: input.model,
+        reasoningEffort: input.reasoningEffort,
+        timeoutMs: input.timeoutMs,
+        prompt: input.prompt,
+      },
+      parseSessionMemoryDeltaText,
+    );
     return {
       threadId: result.threadId,
       rawText: result.rawText,
@@ -977,7 +1027,18 @@ export class CodexAdapter implements ProviderTurnAdapter {
   }
 
   async runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult> {
-    const result = await this.runBackgroundStructuredPrompt(input, parseCharacterReflectionOutputText);
+    const result = await this.runBackgroundStructuredPromptFromInput(
+      {
+        providerId: input.session.provider,
+        workspacePath: input.session.workspacePath,
+        appSettings: input.appSettings,
+        model: input.model,
+        reasoningEffort: input.reasoningEffort,
+        timeoutMs: input.timeoutMs,
+        prompt: input.prompt,
+      },
+      parseCharacterReflectionOutputText,
+    );
     return {
       threadId: result.threadId,
       rawText: result.rawText,
@@ -997,9 +1058,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
     this.workspaceSnapshotIndexes.clear();
   }
 
-  private buildBackgroundThreadOptions(input: ExtractSessionMemoryInput | RunCharacterReflectionInput) {
+  private buildBackgroundThreadOptions(input: RunBackgroundStructuredPromptInput) {
     return {
-      workingDirectory: input.session.workspacePath,
+      workingDirectory: input.workspacePath,
       skipGitRepoCheck: true as const,
       sandboxMode: "read-only" as const,
       approvalPolicy: "never" as const,
@@ -1008,35 +1069,43 @@ export class CodexAdapter implements ProviderTurnAdapter {
     };
   }
 
-  private async runBackgroundStructuredPrompt<TOutput>(
-    input: ExtractSessionMemoryInput | RunCharacterReflectionInput,
+  private async runBackgroundStructuredPromptFromInput<TOutput>(
+    input: RunBackgroundStructuredPromptInput,
     parse: (rawText: string) => TOutput | null,
   ): Promise<{
     threadId: string | null;
     rawText: string;
     output: TOutput | null;
+    parsedJson: unknown | null;
+    structuredOutput: undefined;
     rawItemsJson: string;
     usage: AuditLogUsage | null;
+    providerQuotaTelemetry: ProviderQuotaTelemetry | null;
   }> {
-    const { client } = this.getClient(input.session.provider, input.appSettings);
+    const signal = input.signal ?? AbortSignal.timeout(input.timeoutMs);
+    const { client } = this.getClient(input.providerId, input.appSettings);
     const thread = client.startThread(this.buildBackgroundThreadOptions(input));
 
     const backgroundInput = `${input.prompt.systemText}\n\n${input.prompt.userText}`.trim();
     const result = await thread.run(backgroundInput, {
       outputSchema: input.prompt.outputSchema,
-      signal: AbortSignal.timeout(input.timeoutMs),
+      signal,
     });
+    const parsedJson = parseStructuredPromptJson(result.finalResponse);
 
     return {
       threadId: thread.id,
       rawText: result.finalResponse,
       output: parse(result.finalResponse),
+      parsedJson,
+      structuredOutput: undefined,
       rawItemsJson: JSON.stringify({
         type: "codex-background-response",
         threadId: thread.id,
         finalResponse: result.finalResponse,
       }, null, 2),
       usage: normalizeCodexTokenUsage(result.usage),
+      providerQuotaTelemetry: null,
     };
   }
 

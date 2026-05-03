@@ -55,6 +55,8 @@ import {
   HomeRecentSessionsPanel,
   HomeRightPane,
   HomeSettingsContent,
+  HomeMateSetupPanel,
+  HomeMateTalkPanel,
 } from "./home-components.js";
 import {
   exportHomeModelCatalog,
@@ -79,6 +81,8 @@ import {
   updateSystemPromptPrefix,
 } from "./home-settings-draft.js";
 import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-withmate-api.js";
+import { type MateProfile, type MateStorageState } from "./mate-state.js";
+import { type MateEmbeddingSettings } from "./mate-embedding-settings.js";
 
 async function openSessionWindow(sessionId: string) {
   await withWithMateApi((api) => api.openSession(sessionId));
@@ -128,6 +132,12 @@ type MemoryManagementPageState = {
   character: MemoryManagementDomainPageInfo;
 };
 
+type MateTalkMessage = {
+  id: string;
+  role: "user" | "mate";
+  text: string;
+};
+
 const EMPTY_MEMORY_MANAGEMENT_PAGE_INFO: MemoryManagementDomainPageInfo = {
   nextCursor: null,
   hasMore: false,
@@ -167,6 +177,9 @@ export default function HomeApp() {
   const [settingsFeedback, setSettingsFeedback] = useState("");
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(createDefaultAppSettings());
+  const [mateEmbeddingSettings, setMateEmbeddingSettings] = useState<MateEmbeddingSettings | null>(null);
+  const [mateEmbeddingFeedback, setMateEmbeddingFeedback] = useState("");
+  const [mateEmbeddingBusy, setMateEmbeddingBusy] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [settingsDraftLoaded, setSettingsDraftLoaded] = useState(!isSettingsWindowMode);
   const [modelCatalogLoaded, setModelCatalogLoaded] = useState(!isSettingsWindowMode);
@@ -181,6 +194,15 @@ export default function HomeApp() {
   const [launchDraft, setLaunchDraft] = useState<HomeLaunchDraft>(() => createClosedLaunchDraft());
   const [launchFeedback, setLaunchFeedback] = useState("");
   const [launchStarting, setLaunchStarting] = useState(false);
+  const [mateState, setMateState] = useState<MateStorageState | null>(null);
+  const [mateProfile, setMateProfile] = useState<MateProfile | null>(null);
+  const [mateDisplayName, setMateDisplayName] = useState("");
+  const [mateCreating, setMateCreating] = useState(false);
+  const [mateCreationFeedback, setMateCreationFeedback] = useState("");
+  const [mateTalkOpen, setMateTalkOpen] = useState(false);
+  const [mateTalkInput, setMateTalkInput] = useState("");
+  const [mateTalkMessages, setMateTalkMessages] = useState<MateTalkMessage[]>([]);
+  const [mateTalkSending, setMateTalkSending] = useState(false);
   const settingsDirtyRef = useRef(false);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const memoryManagementRequestIdRef = useRef(0);
@@ -206,6 +228,34 @@ export default function HomeApp() {
     }
   };
 
+  const refreshMateStatus = async (
+    withmateApi: NonNullable<ReturnType<typeof getWithMateApi>>,
+    options?: { isActive?: () => boolean },
+  ): Promise<MateStorageState> => {
+    const isActive = options?.isActive ?? (() => true);
+    const nextMateState = await withmateApi.getMateState();
+    if (!isActive()) {
+      return nextMateState;
+    }
+
+    if (nextMateState === "not_created") {
+      setMateState("not_created");
+      setMateProfile(null);
+      return nextMateState;
+    }
+
+    setMateState(nextMateState);
+    if (!isActive()) {
+      return nextMateState;
+    }
+    const nextMateProfile = await withmateApi.getMateProfile();
+    if (!isActive()) {
+      return nextMateState;
+    }
+    setMateProfile(nextMateProfile);
+    return nextMateState;
+  };
+
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
@@ -216,30 +266,30 @@ export default function HomeApp() {
       };
     }
 
-    void withmateApi.listSessionSummaries().then((nextSessions) => {
-      if (active) {
-        setSessions(nextSessions);
-      }
-    });
-    void withmateApi.listCompanionSessionSummaries().then((nextSessions) => {
-      if (active) {
-        setCompanionSessions(nextSessions);
-      }
-    });
-    void Promise.all([withmateApi.getAppSettings(), withmateApi.getModelCatalog(null)]).then(([settings, snapshot]) => {
+    let unsubscribeSessions: (() => void) | null = null;
+    let unsubscribeCompanionSessions: (() => void) | null = null;
+    let unsubscribeCharacters: (() => void) | null = null;
+
+    const hydrateOperationalHomeData = async () => {
+      const [nextSessions, nextCompanionSessions, nextCharacters] = await Promise.all([
+        withmateApi.listSessionSummaries(),
+        withmateApi.listCompanionSessionSummaries(),
+        withmateApi.listCharacters(),
+      ]);
       if (!active) {
         return;
       }
 
-      applyIncomingAppSettings(settings, { force: isSettingsWindowMode });
-      setModelCatalog(snapshot);
-      setModelCatalogLoaded(true);
-    });
-    if (usesMemoryManagementWindow) {
-      void withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
-        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-      }))
-        .then((page) => {
+      setSessions(nextSessions);
+      setCompanionSessions(nextCompanionSessions);
+      setCharacters(nextCharacters);
+      setLaunchDraft((current) => syncLaunchDraftCharacter(current, nextCharacters));
+
+      if (usesMemoryManagementWindow) {
+        try {
+          const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
+            limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
+          }));
           if (!active) {
             return;
           }
@@ -247,45 +297,73 @@ export default function HomeApp() {
           setMemoryManagementSnapshot(page.snapshot);
           setMemoryManagementPages(page.pages);
           setMemoryManagementLoaded(true);
-        })
-        .catch((error) => {
+        } catch (error) {
           if (!active) {
             return;
           }
 
           setMemoryManagementFeedback(error instanceof Error ? error.message : "Memory 一覧の読み込みに失敗したよ。");
           setMemoryManagementLoaded(true);
+        }
+      }
+
+      unsubscribeSessions = withmateApi.subscribeSessionSummaries((nextSessions) => {
+        if (active) {
+          setSessions(nextSessions);
+        }
+      });
+      unsubscribeCompanionSessions = withmateApi.subscribeCompanionSessionSummaries((nextSessions) => {
+        if (active) {
+          setCompanionSessions(nextSessions);
+        }
+      });
+
+      unsubscribeCharacters = withmateApi.subscribeCharacters((nextCharacters) => {
+        if (!active) {
+          return;
+        }
+
+        setCharacters(nextCharacters);
+        setLaunchDraft((current) => syncLaunchDraftCharacter(current, nextCharacters));
+      });
+    };
+
+    void Promise.all([
+      refreshMateStatus(withmateApi, { isActive: () => active }),
+      Promise.all([
+        withmateApi.getAppSettings(),
+        withmateApi.getModelCatalog(null),
+        withmateApi.getMateEmbeddingSettings(),
+      ]),
+    ]).then(([nextMateState, [settings, snapshot, embeddingSettings]]) => {
+      if (!active) {
+        return;
+      }
+
+      applyIncomingAppSettings(settings, { force: isSettingsWindowMode });
+      setModelCatalog(snapshot);
+      setMateEmbeddingSettings(embeddingSettings);
+      setModelCatalogLoaded(true);
+
+      if (nextMateState !== "not_created") {
+        void hydrateOperationalHomeData().catch((error) => {
+          if (!active) {
+            return;
+          }
+
+          setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
         });
-    }
-
-    void withmateApi.listCharacters().then((nextCharacters) => {
+      }
+    }).catch((error) => {
       if (!active) {
         return;
       }
 
-      setCharacters(nextCharacters);
-      setLaunchDraft((current) => syncLaunchDraftCharacter(current, nextCharacters));
+      setMateState("not_created");
+      setMateProfile(null);
+      setMateCreationFeedback(error instanceof Error ? error.message : "Mate 状態の取得に失敗したよ。");
     });
 
-    const unsubscribeSessions = withmateApi.subscribeSessionSummaries((nextSessions) => {
-      if (active) {
-        setSessions(nextSessions);
-      }
-    });
-    const unsubscribeCompanionSessions = withmateApi.subscribeCompanionSessionSummaries((nextSessions) => {
-      if (active) {
-        setCompanionSessions(nextSessions);
-      }
-    });
-
-    const unsubscribeCharacters = withmateApi.subscribeCharacters((nextCharacters) => {
-      if (!active) {
-        return;
-      }
-
-      setCharacters(nextCharacters);
-      setLaunchDraft((current) => syncLaunchDraftCharacter(current, nextCharacters));
-    });
     const unsubscribeModelCatalog = withmateApi.subscribeModelCatalog((snapshot) => {
       if (active) {
         setModelCatalog(snapshot);
@@ -300,9 +378,9 @@ export default function HomeApp() {
 
     return () => {
       active = false;
-      unsubscribeSessions();
-      unsubscribeCompanionSessions();
-      unsubscribeCharacters();
+      unsubscribeSessions?.();
+      unsubscribeCompanionSessions?.();
+      unsubscribeCharacters?.();
       unsubscribeModelCatalog();
       unsubscribeAppSettings();
     };
@@ -452,6 +530,61 @@ export default function HomeApp() {
   );
   const homePageClassName = `page-shell home-page${isMonitorWindowMode ? " home-page-monitor-window" : ""}`;
 
+  const resetMateTalkState = () => {
+    setMateTalkOpen(false);
+    setMateTalkInput("");
+    setMateTalkMessages([]);
+    setMateTalkSending(false);
+  };
+
+  const openMateTalk = () => {
+    setMateTalkOpen(true);
+  };
+
+  const closeMateTalk = () => {
+    resetMateTalkState();
+  };
+
+  const handleSubmitMateTalk = async () => {
+    const normalizedText = mateTalkInput.trim();
+    if (!normalizedText || mateTalkSending) {
+      return;
+    }
+
+    setMateTalkSending(true);
+    try {
+      const result = await withWithMateApi((api) => api.runMateTalkTurn({ message: normalizedText }));
+      const messageId = Date.parse(result.createdAt) || Date.now();
+      setMateTalkMessages((current) => [
+        ...current,
+        {
+          id: `user-${messageId}`,
+          role: "user",
+          text: result.userMessage,
+        },
+        {
+          id: `mate-${messageId}`,
+          role: "mate",
+          text: result.assistantMessage,
+        },
+      ]);
+      setMateTalkInput("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "メイトークの送信に失敗しました。";
+      const now = Date.now();
+      setMateTalkMessages((current) => [
+        ...current,
+        {
+          id: `mate-error-${now}`,
+          role: "mate",
+          text: message,
+        },
+      ]);
+    } finally {
+      setMateTalkSending(false);
+    }
+  };
+
   const handleBrowseWorkspace = async () => {
     const selectedPath = await withWithMateApi((api) => api.pickDirectory());
     if (!selectedPath) {
@@ -471,6 +604,65 @@ export default function HomeApp() {
     setLaunchFeedback("");
     setLaunchStarting(false);
     setLaunchDraft((current) => closeLaunchDraft(current));
+  };
+
+  const handleCreateMate = async () => {
+    const displayName = mateDisplayName.trim();
+    if (!displayName) {
+      setMateCreationFeedback("displayName を入力してね。");
+      return;
+    }
+
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
+      setMateCreationFeedback("Mate API が利用できないよ。");
+      return;
+    }
+
+    setMateCreationFeedback("Mate 作成中...");
+    setMateCreating(true);
+    try {
+      const createdProfile = await withmateApi.createMate({ displayName });
+      let nextMateState: MateStorageState = "active";
+      let nextMateProfile = createdProfile as MateProfile | null;
+
+      try {
+        nextMateState = await withmateApi.getMateState();
+        if (nextMateState !== "not_created") {
+          const loadedProfile = await withmateApi.getMateProfile();
+          if (loadedProfile) {
+            nextMateProfile = loadedProfile;
+          }
+        }
+      } catch {
+      }
+
+      setMateState(nextMateState);
+      setMateProfile(nextMateProfile);
+      setMateDisplayName("");
+      setMateCreationFeedback("");
+      if (nextMateState !== "not_created") {
+        try {
+          const [nextSessions, nextCompanionSessions, nextCharacters, nextEmbeddingSettings] = await Promise.all([
+            withmateApi.listSessionSummaries(),
+            withmateApi.listCompanionSessionSummaries(),
+            withmateApi.listCharacters(),
+            withmateApi.getMateEmbeddingSettings(),
+          ]);
+          setSessions(nextSessions);
+          setCompanionSessions(nextCompanionSessions);
+          setCharacters(nextCharacters);
+          setMateEmbeddingSettings(nextEmbeddingSettings);
+          setLaunchDraft((current) => syncLaunchDraftCharacter(current, nextCharacters));
+        } catch (error) {
+          setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
+        }
+      }
+    } catch (error) {
+      setMateCreationFeedback(error instanceof Error ? error.message : "Mate の作成に失敗したよ。");
+    } finally {
+      setMateCreating(false);
+    }
   };
 
   const resolveLaunchValidationMessage = () => {
@@ -904,6 +1096,26 @@ export default function HomeApp() {
     }
   };
 
+  const handleStartMateEmbeddingDownload = async () => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
+      setMateEmbeddingFeedback("Mate Embedding API が利用できないよ。");
+      return;
+    }
+
+    setMateEmbeddingBusy(true);
+    setMateEmbeddingFeedback("");
+    try {
+      await withmateApi.startMateEmbeddingDownload();
+      setMateEmbeddingSettings(await withmateApi.getMateEmbeddingSettings());
+      setMateEmbeddingFeedback("モデルの準備を開始したよ。");
+    } catch (error) {
+      setMateEmbeddingFeedback(error instanceof Error ? error.message : "モデルの準備に失敗したよ。");
+    } finally {
+      setMateEmbeddingBusy(false);
+    }
+  };
+
   const settingsContent = (
     <HomeSettingsContent
       settingsDraft={settingsDraft}
@@ -916,6 +1128,9 @@ export default function HomeApp() {
       memoryManagementLoading={!memoryManagementLoaded}
       memoryManagementBusyTarget={memoryManagementBusyTarget}
       memoryManagementFeedback={memoryManagementFeedback}
+      mateEmbeddingSettings={mateEmbeddingSettings}
+      mateEmbeddingFeedback={mateEmbeddingFeedback}
+      mateEmbeddingBusy={mateEmbeddingBusy}
       onChangeSystemPromptPrefix={(value) => setSettingsDraft((current) => updateSystemPromptPrefix(current, value))}
       onChangeMemoryGenerationEnabled={(enabled) =>
         setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled))
@@ -946,6 +1161,7 @@ export default function HomeApp() {
       onDeleteSessionMemory={(sessionId) => void handleDeleteSessionMemory(sessionId)}
       onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}
       onDeleteCharacterMemoryEntry={(entryId) => void handleDeleteCharacterMemoryEntry(entryId)}
+      onStartMateEmbeddingDownload={() => void handleStartMateEmbeddingDownload()}
       onSaveSettings={() => void handleSaveSettings()}
     />
   );
@@ -962,6 +1178,9 @@ export default function HomeApp() {
       memoryManagementLoading={!memoryManagementLoaded}
       memoryManagementBusyTarget={memoryManagementBusyTarget}
       memoryManagementFeedback={memoryManagementFeedback}
+      mateEmbeddingSettings={mateEmbeddingSettings}
+      mateEmbeddingFeedback={mateEmbeddingFeedback}
+      mateEmbeddingBusy={mateEmbeddingBusy}
       memoryManagementOnly
       onChangeSystemPromptPrefix={(value) => setSettingsDraft((current) => updateSystemPromptPrefix(current, value))}
       onChangeMemoryGenerationEnabled={(enabled) =>
@@ -993,9 +1212,38 @@ export default function HomeApp() {
       onDeleteSessionMemory={(sessionId) => void handleDeleteSessionMemory(sessionId)}
       onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}
       onDeleteCharacterMemoryEntry={(entryId) => void handleDeleteCharacterMemoryEntry(entryId)}
+      onStartMateEmbeddingDownload={() => void handleStartMateEmbeddingDownload()}
       onSaveSettings={() => void handleSaveSettings()}
     />
   );
+
+  const mateTalkContent = (
+    <HomeMateTalkPanel
+      mateName={mateProfile?.displayName ?? "Mate"}
+      messages={mateTalkMessages}
+      input={mateTalkInput}
+      onChangeInput={setMateTalkInput}
+      onSubmit={() => void handleSubmitMateTalk()}
+      onClose={() => void closeMateTalk()}
+    />
+  );
+
+  const mateSetupContent = (
+    <HomeMateSetupPanel
+      displayName={mateDisplayName}
+      creating={mateCreating}
+      feedback={mateCreationFeedback}
+      onChangeDisplayName={(value) => {
+        setMateDisplayName(value);
+        setMateCreationFeedback("");
+      }}
+      onSubmit={handleCreateMate}
+      onOpenSettings={() => void openSettingsWindow()}
+      mateDisplayName={mateProfile?.displayName ?? null}
+    />
+  );
+  const isMateStateLoading = mateState === null;
+  const isMateNotCreated = mateState === "not_created";
 
   if (!desktopRuntime) {
     return (
@@ -1027,6 +1275,30 @@ export default function HomeApp() {
     );
   }
 
+  if (isMateStateLoading) {
+    return (
+      <div className={homePageClassName}>
+        <main className="home-layout home-layout-minimal">
+          <section className="panel empty-list-card rise-1">
+            <p>Mate 状態を読み込んでるよ...</p>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
+  if (isMateNotCreated) {
+    return (
+      <div className={`${homePageClassName} home-page-settings-window`.trim()}>
+        <main className="home-layout home-layout-settings-window">
+          <section className="launch-dialog settings-dialog home-mate-setup-shell">
+            {mateSetupContent}
+          </section>
+        </main>
+      </div>
+    );
+  }
+
   if (isMemoryWindowMode) {
     return (
       <div className={`${homePageClassName} home-page-settings-window`.trim()}>
@@ -1039,6 +1311,18 @@ export default function HomeApp() {
                 <p>Memory 管理を読み込み中...</p>
               </div>
             )}
+          </section>
+        </main>
+      </div>
+    );
+  }
+
+  if (mateTalkOpen) {
+    return (
+      <div className={`${homePageClassName} home-page-mate-talk`.trim()}>
+        <main className="home-layout home-layout-minimal">
+          <section className="launch-dialog settings-dialog panel home-mate-talk-shell">
+            {mateTalkContent}
           </section>
         </main>
       </div>
@@ -1096,6 +1380,7 @@ export default function HomeApp() {
           onOpenSessionMonitorWindow={() => void openSessionMonitorWindow()}
           onOpenMemoryManagementWindow={() => void openMemoryManagementWindow()}
           onOpenSettingsWindow={() => void openSettingsWindow()}
+          onOpenMateTalk={() => void openMateTalk()}
           onChangeCharacterSearchText={setCharacterSearchText}
           onOpenCharacterEditor={(characterId) => void openCharacterEditor(characterId)}
           onOpenSession={(sessionId) => void openSessionWindow(sessionId)}

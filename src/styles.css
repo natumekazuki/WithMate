@@ -593,6 +593,47 @@ button:disabled {
   background: transparent;
 }
 
+.home-mate-setup-shell {
+  width: min(540px, 100%);
+  margin: 0 auto;
+}
+
+.home-mate-setup-panel {
+  padding: 22px;
+  display: grid;
+  gap: 12px;
+  min-height: auto;
+}
+
+.home-mate-setup-head {
+  margin: 0;
+  color: #f4f7fb;
+  font-size: 1.06rem;
+}
+
+.home-mate-setup-description,
+.home-mate-current-name {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.home-mate-setup-form {
+  display: grid;
+  gap: 12px;
+}
+
+.home-mate-setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.home-mate-feedback {
+  margin: 0;
+}
+
 .home-page .home-pane-toggle {
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -7692,4 +7733,61 @@ button:disabled {
   }
 }
 
+
+
+.home-page .home-mate-talk-shell {
+  width: min(760px, 100%);
+}
+
+.home-mate-talk-head {
+  margin: 0;
+  color: #f4f7fb;
+  font-size: 1.06rem;
+}
+
+.home-mate-talk-description,
+.home-mate-talk-empty {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.home-mate-talk-panel {
+  display: grid;
+  gap: 12px;
+  min-height: auto;
+}
+
+.home-mate-talk-messages {
+  display: grid;
+  gap: 10px;
+  min-height: 220px;
+  max-height: min(46vh, 480px);
+  overflow: auto;
+  padding: 8px;
+  border-radius: 14px;
+  border: 1px solid rgba(203, 213, 225, 0.16);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.home-mate-talk-message {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.home-mate-talk-message-user {
+  margin-left: 14px;
+  background: rgba(111, 140, 255, 0.14);
+}
+
+.home-mate-talk-message-mate {
+  margin-right: 14px;
+}
+
+.home-mate-talk-form {
+  display: grid;
+  gap: 12px;
+}
 

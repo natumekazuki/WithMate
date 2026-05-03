@@ -10,6 +10,7 @@ import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogStorageV2 } from "./audit-log-storage-v2.js";
 import { AuditLogStorageV3 } from "./audit-log-storage-v3.js";
 import { CharacterMemoryStorage } from "./character-memory-storage.js";
+import { MateStorage } from "./mate-storage.js";
 import {
   CharacterMemoryStorageV2Read,
   ProjectMemoryStorageV2Read,
@@ -70,6 +71,7 @@ export type PersistentStoreBundle = {
   characterMemoryStorage: CharacterMemoryStorageAccess;
   auditLogStorage: AuditLogStorageRead;
   appSettingsStorage: AppSettingsStorage;
+  mateStorage: MateStorage;
   activeModelCatalog: ModelCatalogSnapshot;
   sessions: Session[];
 };
@@ -89,6 +91,7 @@ type PersistentStoreLifecycleDeps = {
   createCharacterMemoryStorage(dbPath: string): CharacterMemoryStorage;
   createAuditLogStorage(dbPath: string): AuditLogStorage;
   createAppSettingsStorage(dbPath: string): AppSettingsStorage;
+  createMateStorage(dbPath: string, userDataPath: string): MateStorage;
   ensureV2Schema?(dbPath: string): void;
   ensureV3Schema?(dbPath: string): void;
   onBeforeClose(): void;
@@ -100,9 +103,10 @@ type PersistentStoreLifecycleDeps = {
 export class PersistentStoreLifecycleService {
   constructor(private readonly deps: PersistentStoreLifecycleDeps) {}
 
-  async initialize(dbPath: string, bundledModelCatalogPath: string): Promise<PersistentStoreBundle> {
+  async initialize(dbPath: string, bundledModelCatalogPath: string, userDataPath?: string): Promise<PersistentStoreBundle> {
     const isV3Database = isValidV3Database(dbPath);
     const isV2Database = isValidV2Database(dbPath);
+    const resolvedUserDataPath = userDataPath ?? dirname(dbPath);
     if (isV3Database) {
       this.deps.ensureV3Schema?.(dbPath);
     } else if (isV2Database) {
@@ -131,6 +135,7 @@ export class PersistentStoreLifecycleService {
       ? new AuditLogStorageV2(dbPath)
       : this.deps.createAuditLogStorage(dbPath);
     const appSettingsStorage = this.deps.createAppSettingsStorage(dbPath);
+    const mateStorage = this.deps.createMateStorage(dbPath, resolvedUserDataPath);
     const loadedSessionSummaries = await sessionStorage.listSessionSummaries();
     const sessions = loadedSessionSummaries.length === 0 ? [] : sessionSummariesToSessions(loadedSessionSummaries);
 
@@ -142,6 +147,7 @@ export class PersistentStoreLifecycleService {
       characterMemoryStorage,
       auditLogStorage,
       appSettingsStorage,
+      mateStorage,
       activeModelCatalog,
       sessions,
     };
@@ -158,6 +164,7 @@ export class PersistentStoreLifecycleService {
       bundle.characterMemoryStorage,
       bundle.auditLogStorage,
       bundle.appSettingsStorage,
+      bundle.mateStorage,
     ];
 
     for (const store of stores) {
@@ -177,6 +184,7 @@ export class PersistentStoreLifecycleService {
     dbPath: string,
     bundledModelCatalogPath: string,
     bundle: PersistentStoreBundleLike,
+    userDataPath?: string,
   ): Promise<PersistentStoreBundle> {
     this.close(bundle, dbPath);
 
@@ -195,7 +203,7 @@ export class PersistentStoreLifecycleService {
       this.deps.ensureV2Schema?.(dbPath);
     }
 
-    return this.initialize(dbPath, bundledModelCatalogPath);
+    return this.initialize(dbPath, bundledModelCatalogPath, userDataPath);
   }
 
   private isV2DatabasePath(dbPath: string): boolean {
@@ -229,6 +237,7 @@ export function createPersistentStoreLifecycleService(): PersistentStoreLifecycl
     createCharacterMemoryStorage: (dbPath) => new CharacterMemoryStorage(dbPath),
     createAuditLogStorage: (dbPath) => new AuditLogStorage(dbPath),
     createAppSettingsStorage: (dbPath) => new AppSettingsStorage(dbPath),
+    createMateStorage: (dbPath, userDataPath) => new MateStorage(dbPath, userDataPath),
     ensureV2Schema: (dbPath) => {
       const db = openAppDatabase(dbPath);
       try {

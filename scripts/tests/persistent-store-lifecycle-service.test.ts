@@ -16,6 +16,7 @@ import {
   APP_DATABASE_V3_FILENAME,
   CREATE_V3_SCHEMA_SQL,
 } from "../../src-electron/database-schema-v3.js";
+import { MateStorage } from "../../src-electron/mate-storage.js";
 import { AuditLogStorageV2 } from "../../src-electron/audit-log-storage-v2.js";
 import { AuditLogStorageV3 } from "../../src-electron/audit-log-storage-v3.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";
@@ -155,6 +156,18 @@ async function withTempEmptyV2NamedDatabase<T>(fn: (dbPath: string) => T | Promi
   }
 }
 
+async function withTempDatabaseAndUserData<T>(fn: (dbPath: string, userDataPath: string) => T | Promise<T>): Promise<T> {
+  const dir = await mkdtemp(path.join(tmpdir(), "withmate-v4-lifecycle-"));
+  const dbPath = path.join(dir, "withmate-v4.db");
+  const userDataPath = path.join(dir, "user-data");
+
+  try {
+    return await fn(dbPath, userDataPath);
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+}
+
 test("PersistentStoreLifecycleService は store を初期化して session dependency を同期する", async () => {
   const closeCalls: string[] = [];
   const sessionSummaries = [
@@ -198,6 +211,7 @@ test("PersistentStoreLifecycleService は store を初期化して session depen
     createCharacterMemoryStorage: () => createClosableStore("character-memory", closeCalls) as never,
     createAuditLogStorage: () => createClosableStore("audit", closeCalls) as never,
     createAppSettingsStorage: () => createClosableStore("settings", closeCalls) as never,
+    createMateStorage: () => createClosableStore("mate", closeCalls) as never,
     onBeforeClose: () => {
       closeCalls.push("before-close");
     },
@@ -219,6 +233,48 @@ test("PersistentStoreLifecycleService は store を初期化して session depen
   ]);
   assert.equal(listSessionsCallCount, 0);
 });
+test("PersistentStoreLifecycleService は v4 DB 起動時に Mate schema を初期化する", async () => {
+  await withTempDatabaseAndUserData(async (dbPath, userDataPath) => {
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => ({ revision: 1, providers: [] }),
+          close() {},
+        }) as never,
+      createSessionStorage: () =>
+        ({
+          listSessions: () => [],
+          listSessionSummaries: () => [],
+          close() {},
+        }) as never,
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => ({ close() {} }) as never,
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile() {},
+    });
+
+    const bundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+
+    assert.equal(bundle.mateStorage.getMateState(), "not_created");
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      const mateProfileTable = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'mate_profile'")
+        .get();
+      assert.ok(mateProfileTable);
+    } finally {
+      db.close();
+    }
+
+    service.close(bundle, dbPath);
+  });
+});
 
 test("PersistentStoreLifecycleService は close 時に hook と各 store close を呼ぶ", () => {
   const closeCalls: string[] = [];
@@ -230,6 +286,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     createCharacterMemoryStorage: () => null as never,
     createAuditLogStorage: () => null as never,
     createAppSettingsStorage: () => null as never,
+    createMateStorage: () => null as never,
     onBeforeClose: () => {
       closeCalls.push("before-close");
     },
@@ -247,6 +304,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     characterMemoryStorage: createClosableStore("character-memory", closeCalls) as never,
     auditLogStorage: createClosableStore("audit", closeCalls) as never,
     appSettingsStorage: createClosableStore("settings", closeCalls) as never,
+    mateStorage: createClosableStore("mate", closeCalls) as never,
   };
 
   service.close(bundle, "withmate.db");
@@ -260,6 +318,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     "character-memory",
     "audit",
     "settings",
+    "mate",
     "truncate-wal",
   ]);
 });
@@ -281,6 +340,7 @@ test("PersistentStoreLifecycleService は WAL truncate 失敗を close 呼び出
       createCharacterMemoryStorage: () => null as never,
       createAuditLogStorage: () => null as never,
       createAppSettingsStorage: () => null as never,
+      createMateStorage: () => null as never,
       onBeforeClose: () => {
         closeCalls.push("before-close");
       },
@@ -318,6 +378,7 @@ test("PersistentStoreLifecycleService は WAL truncate 失敗後も DB 再生成
     createCharacterMemoryStorage: () => ({ close() {} }) as never,
     createAuditLogStorage: () => ({ close() {} }) as never,
     createAppSettingsStorage: () => ({ close() {} }) as never,
+    createMateStorage: () => ({ close() {} }) as never,
     onBeforeClose: () => {},
     truncateWal: () => {
       throw new Error("checkpoint failed");
@@ -362,6 +423,7 @@ test("PersistentStoreLifecycleService は DB を再生成して再初期化す�
     createCharacterMemoryStorage: () => ({ close() {} }) as never,
     createAuditLogStorage: () => ({ close() {} }) as never,
     createAppSettingsStorage: () => ({ close() {} }) as never,
+    createMateStorage: () => ({ close() {} }) as never,
     onBeforeClose: () => {},
     truncateWal(dbPath) {
       truncateWalCalls.push(dbPath);
@@ -403,6 +465,7 @@ test("PersistentStoreLifecycleService は V2 DB 再生成後に V2 schema を作
         throw new Error("V2 DB では V1 audit log storage を生成しない");
       },
       createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () => ({ close() {} }) as never,
       ensureV2Schema(pathToDb) {
         const db = new DatabaseSync(pathToDb);
         try {
@@ -463,6 +526,7 @@ test("PersistentStoreLifecycleService は V3 DB 再生成時に blob root も削
       createCharacterMemoryStorage: () => ({ close() {} }) as never,
       createAuditLogStorage: () => ({ close() {} }) as never,
       createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () => ({ close() {} }) as never,
       ensureV3Schema(pathToDb) {
         const db = new DatabaseSync(pathToDb);
         try {
@@ -526,6 +590,7 @@ test("PersistentStoreLifecycleService は required V2 tables がない withmate-
         } as never;
       },
       createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () => ({ close() {} }) as never,
       onBeforeClose: () => {},
       truncateWal() {},
       async removeFile() {},
@@ -563,6 +628,7 @@ test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2 を使�
       createCharacterMemoryStorage: () => ({ close() {} }) as never,
       createAuditLogStorage: () => ({ close() {} }) as never,
       createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () => ({ close() {} }) as never,
       onBeforeClose: () => {},
       truncateWal() {},
       async removeFile() {},
@@ -612,6 +678,7 @@ test("PersistentStoreLifecycleService は V2 DB では V1 write-capable storages
         } as never;
       },
       createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () => ({ close() {} }) as never,
       onBeforeClose: () => {},
       truncateWal() {},
       async removeFile() {},
@@ -661,6 +728,7 @@ test("PersistentStoreLifecycleService は V2 DB に legacy memory table を作�
         throw new Error("V2 DB では V1 audit log storage を生成しない");
       },
       createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () => ({ close() {} }) as never,
       onBeforeClose: () => {},
       truncateWal() {},
       async removeFile() {},
@@ -734,6 +802,7 @@ test("PersistentStoreLifecycleService は V3 DB では V1 storages を生成せ�
         throw new Error("V3 DB では V1 audit log storage を生成しない");
       },
       createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () => ({ close() {} }) as never,
       ensureV3Schema(pathToDb) {
         assert.equal(pathToDb, dbPath);
         ensureV3SchemaCallCount += 1;

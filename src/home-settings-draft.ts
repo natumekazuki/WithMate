@@ -2,10 +2,12 @@ import {
   getCharacterReflectionProviderSettings,
   getCharacterReflectionTriggerSettings,
   getMemoryExtractionProviderSettings,
+  getMateMemoryGenerationSettings,
   getProviderAppSettings,
   type AppSettings,
   type CharacterReflectionProviderSettings,
   type MemoryExtractionProviderSettings,
+  type MateMemoryGenerationProviderSettings,
   type ProviderAppSettings,
 } from "./provider-settings-state.js";
 import { coerceModelSelection, type ModelCatalogProvider } from "./model-catalog.js";
@@ -275,6 +277,7 @@ export function updateCharacterReflectionModel(
   return {
     ...draft.characterReflectionProviderSettings,
     [providerId]: {
+      ...currentSettings,
       model: selection.resolvedModel,
       reasoningEffort: selection.resolvedReasoningEffort,
     },
@@ -341,5 +344,114 @@ export function updateCharacterReflectionTimeoutSecondsDraft(
   return {
     ...draft,
     characterReflectionProviderSettings: updateCharacterReflectionTimeoutSeconds(draft, providerId, rawValue),
+  };
+}
+
+function getResolvedMateMemoryGenerationPriority(draft: AppSettings): MateMemoryGenerationProviderSettings {
+  return getMateMemoryGenerationSettings(draft).priorityList[0] ?? {
+    provider: "",
+    model: "",
+    reasoningEffort: "high",
+    timeoutSeconds: 30,
+  };
+}
+
+export function updateMateMemoryGenerationTriggerIntervalMinutesDraft(
+  draft: AppSettings,
+  rawValue: string,
+): AppSettings {
+  const normalized = Number.parseInt(rawValue, 10);
+  return {
+    ...draft,
+    mateMemoryGenerationSettings: {
+      ...getMateMemoryGenerationSettings(draft),
+      triggerIntervalMinutes: Number.isFinite(normalized) && normalized > 0 ? normalized : 1,
+    },
+  };
+}
+
+export function updateMateMemoryGenerationPriorityProviderDraft(
+  draft: AppSettings,
+  providerId: string,
+): AppSettings {
+  const current = getMateMemoryGenerationSettings(draft);
+  const currentPriority = getResolvedMateMemoryGenerationPriority(draft);
+  const nextPriority: MateMemoryGenerationProviderSettings = {
+    ...currentPriority,
+    provider: providerId,
+  };
+
+  return {
+    ...draft,
+    mateMemoryGenerationSettings: {
+      ...current,
+      priorityList: [nextPriority],
+    },
+  };
+}
+
+export function updateMateMemoryGenerationPriorityModelDraft(
+  draft: AppSettings,
+  providerCatalog: ModelCatalogProvider,
+  providerId: string,
+  model: string,
+): AppSettings {
+  const current = getMateMemoryGenerationSettings(draft);
+  const currentPriority = getResolvedMateMemoryGenerationPriority(draft);
+  const selection = coerceModelSelection(providerCatalog, model, currentPriority.reasoningEffort);
+  return {
+    ...draft,
+    mateMemoryGenerationSettings: {
+      ...current,
+      priorityList: [
+        {
+          ...currentPriority,
+          provider: providerId,
+          model: selection.resolvedModel,
+          reasoningEffort: selection.resolvedReasoningEffort,
+        },
+      ],
+    },
+  };
+}
+
+export function updateMateMemoryGenerationPriorityReasoningEffortDraft(
+  draft: AppSettings,
+  reasoningEffort: MateMemoryGenerationProviderSettings["reasoningEffort"],
+): AppSettings {
+  const current = getMateMemoryGenerationSettings(draft);
+  const currentPriority = getResolvedMateMemoryGenerationPriority(draft);
+  return {
+    ...draft,
+    mateMemoryGenerationSettings: {
+      ...current,
+      priorityList: [
+        {
+          ...currentPriority,
+          reasoningEffort,
+        },
+      ],
+    },
+  };
+}
+
+export function updateMateMemoryGenerationPriorityTimeoutSecondsDraft(
+  draft: AppSettings,
+  rawValue: string,
+): AppSettings {
+  const current = getMateMemoryGenerationSettings(draft);
+  const currentPriority = getResolvedMateMemoryGenerationPriority(draft);
+  const normalized = Number.parseInt(rawValue, 10);
+  return {
+    ...draft,
+    mateMemoryGenerationSettings: {
+      ...current,
+      priorityList: [
+        {
+          ...currentPriority,
+          timeoutSeconds: Number.isFinite(normalized) && normalized > 0 ? normalized : 30,
+        },
+      ],
+    },
   };
 }

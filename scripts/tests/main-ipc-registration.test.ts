@@ -3,7 +3,10 @@ import test from "node:test";
 
 import type { IpcMain } from "electron";
 
-import { registerMainIpcHandlers } from "../../src-electron/main-ipc-registration.js";
+import {
+  MATE_NOT_CREATED_ERROR_MESSAGE,
+  registerMainIpcHandlers,
+} from "../../src-electron/main-ipc-registration.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
@@ -11,6 +14,7 @@ import {
   WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
+  WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
@@ -34,6 +38,9 @@ import {
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
+  WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
+  WITHMATE_GET_MATE_PROFILE_CHANNEL,
+  WITHMATE_GET_MATE_STATE_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
@@ -81,14 +88,17 @@ import {
   WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL,
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
+  WITHMATE_RESET_MATE_CHANNEL,
   WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
+  WITHMATE_RUN_MATE_TALK_TURN_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL,
+  WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
   WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
@@ -116,6 +126,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   const { ipcMain, handlers } = createIpcMainStub();
   const calls: string[] = [];
   const auditPageRequests: unknown[] = [];
+  let mateState: "active" | "not_created" = "active";
 
   registerMainIpcHandlers(ipcMain, {
     resolveEventWindow: () => null,
@@ -172,6 +183,10 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     listOpenCompanionReviewWindowIds: () => [],
     getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
+    getMateEmbeddingSettings: () => null,
+    startMateEmbeddingDownload: () => {
+      calls.push("startMateEmbeddingDownload");
+    },
     async resetAppDatabase() {
       return null;
     },
@@ -323,18 +338,54 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     cancelCompanionSessionRun: () => {
       calls.push("cancelCompanionRun");
     },
+    getMateState() {
+      calls.push("getMateState");
+      return mateState;
+    },
+    getMateProfile() {
+      calls.push("getMateProfile");
+      return null;
+    },
+    async createMate(input) {
+      calls.push(`createMate:${input.displayName}`);
+      return {} as never;
+    },
+    async runMateTalkTurn(input) {
+      calls.push(`runMateTalk:${input.message}`);
+      return {
+        mateId: "mate-1",
+        userMessage: input.message,
+        assistantMessage: "受け取ったよ。",
+        createdAt: "2026-05-04T00:00:00.000Z",
+      };
+    },
+    async resetMate() {
+      calls.push("resetMate");
+    },
   });
 
-    assert.ok(handlers.has("withmate:open-session"));
-    assert.ok(handlers.has("withmate:list-session-summaries"));
-    assert.ok(handlers.has("withmate:get-app-settings"));
+  assert.ok(handlers.has("withmate:open-session"));
+  assert.ok(handlers.has("withmate:list-session-summaries"));
+  assert.ok(handlers.has("withmate:get-app-settings"));
+  assert.ok(handlers.has(WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL));
   assert.ok(handlers.has("withmate:run-session-turn"));
+  assert.ok(handlers.has(WITHMATE_GET_MATE_STATE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_MATE_PROFILE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_CREATE_MATE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_RUN_MATE_TALK_TURN_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_RESET_MATE_CHANNEL));
 
   await handlers.get("withmate:open-session")?.({}, "session-1");
   await handlers.get("withmate:open-memory-management-window")?.({});
-  handlers.get("withmate:cancel-session-run")?.({}, "session-1");
+  await handlers.get("withmate:cancel-session-run")?.({}, "session-1");
   await handlers.get("withmate:open-path")?.({}, "target", null);
   await handlers.get(WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL)?.({});
+  await handlers.get(WITHMATE_GET_MATE_STATE_CHANNEL)?.();
+  await handlers.get(WITHMATE_GET_MATE_PROFILE_CHANNEL)?.();
+  await handlers.get(WITHMATE_CREATE_MATE_CHANNEL)?.({}, { displayName: "Buddy" });
+  await handlers.get(WITHMATE_RUN_MATE_TALK_TURN_CHANNEL)?.({}, { message: "hello" });
+  await handlers.get(WITHMATE_RESET_MATE_CHANNEL)?.();
   const auditPageResult = await handlers.get(WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL)?.(
     {},
     "session-1",
@@ -342,11 +393,54 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   );
 
   assert.deepEqual(calls, [
+    "getMateState",
     "openSession:session-1",
+    "getMateState",
     "openMemory",
+    "getMateState",
     "cancelRun",
+    "getMateState",
     "openPath",
     "openLogs",
+    "getMateState",
+    "getMateProfile",
+    "createMate:Buddy",
+    "getMateState",
+    "runMateTalk:hello",
+    "resetMate",
+    "getMateState",
+  ]);
+  mateState = "not_created";
+  await assert.rejects(
+    async () => handlers.get("withmate:open-session")?.({}, "session-1"),
+    { message: MATE_NOT_CREATED_ERROR_MESSAGE },
+  );
+  await handlers.get(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL)?.({});
+  await handlers.get(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL)?.();
+  await handlers.get(WITHMATE_GET_APP_SETTINGS_CHANNEL)?.();
+  await handlers.get(WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL)?.();
+  await handlers.get(WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL)?.();
+
+  assert.deepEqual(calls, [
+    "getMateState",
+    "openSession:session-1",
+    "getMateState",
+    "openMemory",
+    "getMateState",
+    "cancelRun",
+    "getMateState",
+    "openPath",
+    "openLogs",
+    "getMateState",
+    "getMateProfile",
+    "createMate:Buddy",
+    "getMateState",
+    "runMateTalk:hello",
+    "resetMate",
+    "getMateState",
+    "getMateState",
+    "openSettings",
+    "startMateEmbeddingDownload",
   ]);
   assert.deepEqual(auditPageRequests, [{ sessionId: "session-1", request: { cursor: 50, limit: 25 } }]);
   assert.deepEqual(auditPageResult, { entries: [], nextCursor: null, hasMore: false, total: 0 });
@@ -389,6 +483,8 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     listOpenCompanionReviewWindowIds: () => [],
     getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
+    getMateEmbeddingSettings: () => null,
+    startMateEmbeddingDownload: () => {},
     async resetAppDatabase() { return null; },
     getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], characterMemories: [] }),
     getMemoryManagementPage: () => ({
@@ -454,6 +550,21 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async searchCompanionWorkspaceFiles() { return []; },
     async runCompanionSessionTurn() { return {} as never; },
     cancelCompanionSessionRun() {},
+    getMateState() {
+      return "not_created";
+    },
+    getMateProfile() {
+      return null;
+    },
+    async createMate() {
+      return {} as never;
+    },
+    async runMateTalkTurn() {
+      return {} as never;
+    },
+    async resetMate() {
+      return;
+    },
   });
 
   const expectedChannels = [
@@ -546,6 +657,13 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_CREATE_CHARACTER_CHANNEL,
     WITHMATE_UPDATE_CHARACTER_CHANNEL,
     WITHMATE_DELETE_CHARACTER_CHANNEL,
+    WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
+    WITHMATE_GET_MATE_STATE_CHANNEL,
+    WITHMATE_GET_MATE_PROFILE_CHANNEL,
+    WITHMATE_CREATE_MATE_CHANNEL,
+    WITHMATE_RUN_MATE_TALK_TURN_CHANNEL,
+    WITHMATE_RESET_MATE_CHANNEL,
+    WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
   ];
 
   assert.deepEqual([...handlers.keys()].sort(), [...expectedChannels].sort());

@@ -1,0 +1,51 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { MateTalkService } from "../../src-electron/mate-talk-service.js";
+import type { MateProfile } from "../../src/mate-state.js";
+
+const PROFILE: MateProfile = {
+  id: "mate-1",
+  state: "active",
+  displayName: "Buddy",
+  description: "",
+  themeMain: "",
+  themeSub: "",
+  avatarFilePath: "",
+  avatarSha256: "",
+  avatarByteSize: 0,
+  activeRevisionId: null,
+  profileGeneration: 1,
+  createdAt: "2026-05-04T00:00:00.000Z",
+  updatedAt: "2026-05-04T00:00:00.000Z",
+  deletedAt: null,
+  sections: [],
+};
+
+test("MateTalkService は入力を正規化して応答と Memory 生成入力を返す", () => {
+  const scheduled: unknown[] = [];
+  const service = new MateTalkService({
+    getMateProfile: () => PROFILE,
+    now: () => new Date("2026-05-04T01:02:03.000Z"),
+    scheduleMemoryGeneration: (input) => scheduled.push(input),
+  });
+
+  const result = service.runTurn({ message: "  hello  " });
+
+  assert.deepEqual(result, {
+    mateId: "mate-1",
+    userMessage: "hello",
+    assistantMessage: "受け取ったよ。",
+    createdAt: "2026-05-04T01:02:03.000Z",
+  });
+  assert.deepEqual(scheduled, [{ userMessage: "hello", assistantText: "受け取ったよ。" }]);
+});
+
+test("MateTalkService は空入力と Mate 未作成を拒否する", () => {
+  const service = new MateTalkService({
+    getMateProfile: () => null,
+  });
+
+  assert.throws(() => service.runTurn({ message: " " }), { message: "メッセージを入力してね。" });
+  assert.throws(() => service.runTurn({ message: "hello" }), { message: "Mate が見つかりません。" });
+});

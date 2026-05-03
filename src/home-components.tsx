@@ -7,6 +7,7 @@ import type {
   MemoryExtractionProviderSettings,
   SessionSummary,
 } from "./app-state.js";
+import type { MateEmbeddingSettings } from "./mate-embedding-settings.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
 import type {
   MemoryManagementDomain,
@@ -41,6 +42,11 @@ import {
   SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL,
   SETTINGS_MEMORY_EXTRACTION_TIMEOUT_LABEL,
   SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL,
+  SETTINGS_MATE_EMBEDDING_CACHE_STATE_LABEL,
+  SETTINGS_MATE_EMBEDDING_DIMENSION_LABEL,
+  SETTINGS_MATE_EMBEDDING_DOWNLOAD_LABEL,
+  SETTINGS_MATE_EMBEDDING_LABEL,
+  SETTINGS_MATE_EMBEDDING_MODEL_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
   SETTINGS_OPEN_LOG_FOLDER_LABEL,
   SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
@@ -63,6 +69,9 @@ export type HomeSettingsContentProps = {
   memoryManagementLoading: boolean;
   memoryManagementBusyTarget: string | null;
   memoryManagementFeedback: string;
+  mateEmbeddingSettings: MateEmbeddingSettings | null;
+  mateEmbeddingFeedback: string;
+  mateEmbeddingBusy: boolean;
   memoryManagementOnly?: boolean;
   onChangeSystemPromptPrefix: (value: string) => void;
   onChangeMemoryGenerationEnabled: (enabled: boolean) => void;
@@ -96,6 +105,7 @@ export type HomeSettingsContentProps = {
   onDeleteSessionMemory: (sessionId: string) => void;
   onDeleteProjectMemoryEntry: (entryId: string) => void;
   onDeleteCharacterMemoryEntry: (entryId: string) => void;
+  onStartMateEmbeddingDownload: () => void;
   onSaveSettings: () => void;
 };
 
@@ -110,6 +120,9 @@ export function HomeSettingsContent({
   memoryManagementLoading,
   memoryManagementBusyTarget,
   memoryManagementFeedback,
+  mateEmbeddingSettings,
+  mateEmbeddingFeedback,
+  mateEmbeddingBusy,
   memoryManagementOnly = false,
   onChangeSystemPromptPrefix,
   onChangeMemoryGenerationEnabled,
@@ -137,6 +150,7 @@ export function HomeSettingsContent({
   onDeleteSessionMemory,
   onDeleteProjectMemoryEntry,
   onDeleteCharacterMemoryEntry,
+  onStartMateEmbeddingDownload,
   onSaveSettings,
 }: HomeSettingsContentProps) {
   if (memoryManagementOnly) {
@@ -251,6 +265,13 @@ export function HomeSettingsContent({
             </>
           ) : null}
 
+          <SettingsMateEmbeddingSection
+            settings={mateEmbeddingSettings}
+            feedback={mateEmbeddingFeedback}
+            busy={mateEmbeddingBusy}
+            onDownload={onStartMateEmbeddingDownload}
+          />
+
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>{SETTINGS_DIAGNOSTICS_LABEL}</strong>
@@ -290,6 +311,66 @@ export function HomeSettingsContent({
         </button>
       </div>
     </>
+  );
+}
+
+type SettingsMateEmbeddingSectionProps = {
+  settings: MateEmbeddingSettings | null;
+  feedback: string;
+  busy: boolean;
+  onDownload: () => void;
+};
+
+const MATE_EMBEDDING_CACHE_STATE_LABELS: Record<MateEmbeddingSettings["cacheState"], string> = {
+  missing: "未取得",
+  downloading: "取得中",
+  ready: "準備済み",
+  failed: "失敗",
+  stale: "更新あり",
+};
+
+function SettingsMateEmbeddingSection({
+  settings,
+  feedback,
+  busy,
+  onDownload,
+}: SettingsMateEmbeddingSectionProps) {
+  const disabled = !settings || busy || settings.cacheState === "downloading";
+  return (
+    <section className="settings-section-card">
+      <div className="settings-field">
+        <strong>{SETTINGS_MATE_EMBEDDING_LABEL}</strong>
+        {settings ? (
+          <>
+            <dl className="settings-memory-meta">
+              <div>
+                <dt>{SETTINGS_MATE_EMBEDDING_MODEL_LABEL}</dt>
+                <dd>{settings.sourceModelId}</dd>
+              </div>
+              <div>
+                <dt>{SETTINGS_MATE_EMBEDDING_DIMENSION_LABEL}</dt>
+                <dd>{settings.dimension}</dd>
+              </div>
+              <div>
+                <dt>{SETTINGS_MATE_EMBEDDING_CACHE_STATE_LABEL}</dt>
+                <dd>{MATE_EMBEDDING_CACHE_STATE_LABELS[settings.cacheState]}</dd>
+              </div>
+            </dl>
+            {settings.lastErrorPreview ? (
+              <p className="settings-feedback settings-memory-feedback">{settings.lastErrorPreview}</p>
+            ) : null}
+          </>
+        ) : (
+          <p className="settings-help">Mate 作成後に使えるよ。</p>
+        )}
+        {feedback ? <p className="settings-feedback settings-memory-feedback">{feedback}</p> : null}
+        <div className="settings-actions">
+          <button className="launch-toggle" type="button" onClick={onDownload} disabled={disabled}>
+            {busy ? "Downloading..." : SETTINGS_MATE_EMBEDDING_DOWNLOAD_LABEL}
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1002,6 +1083,138 @@ export type HomeRecentSessionsPanelProps = {
   onOpenCompanionReview: (sessionId: string) => void;
 };
 
+export type HomeMateSetupPanelProps = {
+  displayName: string;
+  creating: boolean;
+  feedback: string;
+  mateDisplayName: string | null;
+  onChangeDisplayName: (value: string) => void;
+  onSubmit: () => void;
+  onOpenSettings: () => void;
+};
+
+export type HomeMateTalkPanelProps = {
+  mateName: string;
+  messages: Array<{ id: string; role: "user" | "mate"; text: string }>;
+  input: string;
+  onChangeInput: (value: string) => void;
+  onSubmit: () => void;
+  onClose: () => void;
+};
+
+export function HomeMateSetupPanel({
+  displayName,
+  creating,
+  feedback,
+  mateDisplayName,
+  onChangeDisplayName,
+  onSubmit,
+  onOpenSettings,
+}: HomeMateSetupPanelProps) {
+  return (
+    <section className="home-mate-setup-panel">
+      <h2 className="home-mate-setup-head">Mate 作成</h2>
+      <p className="home-mate-setup-description">
+        Home を使う前に Mate を 1 つ作成してね。設定は利用できるよ。
+      </p>
+      <form
+        className="home-mate-setup-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit();
+        }}
+      >
+        <label className="settings-field" htmlFor="mate-display-name">
+          <span>表示名</span>
+          <input
+            id="mate-display-name"
+            type="text"
+            value={displayName}
+            onChange={(event) => onChangeDisplayName(event.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="あなたの Mate"
+            disabled={creating}
+          />
+        </label>
+        {mateDisplayName ? <p className="home-mate-current-name">現在の Mate: {mateDisplayName}</p> : null}
+        {feedback ? <p className="settings-feedback home-mate-feedback">{feedback}</p> : null}
+        <div className="home-mate-setup-actions">
+          <button className="start-session-button" type="submit" disabled={creating}>
+            {creating ? "作成中..." : "Mate を作成"}
+          </button>
+          <button className="launch-toggle" type="button" onClick={onOpenSettings}>
+            設定
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+export function HomeMateTalkPanel({
+  mateName,
+  messages,
+  input,
+  onChangeInput,
+  onSubmit,
+  onClose,
+}: HomeMateTalkPanelProps) {
+  return (
+    <section className="home-mate-talk-panel">
+      <h2 className="home-mate-talk-head">メイトーク</h2>
+      <p className="home-mate-talk-description">{mateName} と話す</p>
+
+      <section className="home-mate-talk-messages" aria-label="メイトーク会話履歴">
+        {messages.length > 0 ? (
+          messages.map((message) => (
+            <article
+              key={message.id}
+              className={`home-mate-talk-message ${message.role === "user" ? "home-mate-talk-message-user" : "home-mate-talk-message-mate"}`}
+            >
+              <p>
+                <strong>{message.role === "user" ? "あなた" : mateName}:</strong>
+                {` ${message.text}`}
+              </p>
+            </article>
+          ))
+        ) : (
+          <p className="home-mate-talk-empty">まだ会話は開始してないよ。まずは入力してね。</p>
+        )}
+      </section>
+
+      <form
+        className="home-mate-talk-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit();
+        }}
+      >
+        <label className="settings-field home-mate-talk-input-field" htmlFor="home-mate-talk-input">
+          <span>入力</span>
+          <textarea
+            id="home-mate-talk-input"
+            value={input}
+            onChange={(event) => onChangeInput(event.target.value)}
+            rows={4}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="今日はどうする？"
+          />
+        </label>
+        <div className="launch-dialog-foot settings-dialog-foot">
+          <button className="launch-toggle" type="button" onClick={onClose}>
+            ホームに戻る
+          </button>
+          <button className="start-session-button" type="submit">
+            送信
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
 export function HomeRecentSessionsPanel({
   filteredSessionEntries,
   companionSessions,
@@ -1263,6 +1476,7 @@ export type HomeRightPaneProps = {
   onOpenSessionMonitorWindow: () => void;
   onOpenMemoryManagementWindow: () => void;
   onOpenSettingsWindow: () => void;
+  onOpenMateTalk: () => void;
   onChangeCharacterSearchText: (value: string) => void;
   onOpenCharacterEditor: (characterId?: string | null) => void;
   onOpenSession: (sessionId: string) => void;
@@ -1284,6 +1498,7 @@ export function HomeRightPane({
   onOpenSessionMonitorWindow,
   onOpenMemoryManagementWindow,
   onOpenSettingsWindow,
+  onOpenMateTalk,
   onChangeCharacterSearchText,
   onOpenCharacterEditor,
   onOpenSession,
@@ -1307,6 +1522,9 @@ export function HomeRightPane({
           </button>
           <button className="launch-toggle home-settings-button" type="button" onClick={onOpenSettingsWindow}>
             Settings
+          </button>
+          <button className="launch-toggle home-settings-button" type="button" onClick={onOpenMateTalk}>
+            メイトーク
           </button>
         </div>
         <div className="home-pane-toggle" role="tablist" aria-label="Home right pane">

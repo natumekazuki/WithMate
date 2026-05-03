@@ -82,6 +82,10 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
           character: { nextCursor: null, hasMore: false, total: 0 },
         },
       }),
+      getMateEmbeddingSettings: () => null,
+      startMateEmbeddingDownload: () => {
+        calls.push("startMateEmbeddingDownload");
+      },
       deleteSessionMemory: () => {},
       deleteProjectMemoryEntry: () => {},
       deleteCharacterMemoryEntry: () => {},
@@ -199,10 +203,52 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
       },
       async deleteCharacter() {},
     },
+    mate: {
+      getMateState() {
+        calls.push("getMateState");
+        return "not_created";
+      },
+      getMateProfile() {
+        calls.push("getMateProfile");
+        return null;
+      },
+      async createMate(input) {
+        calls.push(`createMate:${input.displayName}`);
+        return {} as never;
+      },
+      async runMateTalkTurn(input) {
+        calls.push(`runMateTalk:${input.message}`);
+        return {
+          mateId: "mate-1",
+          userMessage: input.message,
+          assistantMessage: "受け取ったよ。",
+          createdAt: "2026-05-04T00:00:00.000Z",
+        };
+      },
+      async resetMate() {
+        calls.push("resetMate");
+      },
+    },
   });
 
   assert.equal(await deps.openHomeWindow(), undefined);
   assert.equal(await deps.openMemoryManagementWindow(), undefined);
   assert.equal(await deps.openSessionWindow("session-1"), undefined);
-  assert.deepEqual(calls, ["openHome", "openMemory", "openSession:session-1"]);
+  await deps.getMateState();
+  await deps.getMateProfile();
+  await deps.createMate({ displayName: "Buddy" });
+  await deps.runMateTalkTurn({ message: "hello" });
+  await deps.resetMate();
+  deps.startMateEmbeddingDownload();
+  assert.deepEqual(calls, [
+    "openHome",
+    "openMemory",
+    "openSession:session-1",
+    "getMateState",
+    "getMateProfile",
+    "createMate:Buddy",
+    "runMateTalk:hello",
+    "resetMate",
+    "startMateEmbeddingDownload",
+  ]);
 });

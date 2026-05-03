@@ -41,6 +41,8 @@ import {
   type ExtractSessionMemoryResult,
   type ExtractSessionMemoryInput,
   type ProviderPromptComposition,
+  type RunBackgroundStructuredPromptInput,
+  type RunBackgroundStructuredPromptResult,
   type ProviderTurnAdapter,
   type RunSessionTurnInput,
   type RunSessionTurnProgressHandler,
@@ -514,6 +516,22 @@ function appendDetail(current: string | undefined, next: string | undefined): st
   }
 
   return `${current}\n${next}`;
+}
+
+function parseStructuredPromptJson(rawText: string): unknown | null {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const fencedMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const jsonText = fencedMatch ? fencedMatch[1] ?? "" : trimmed;
+
+  try {
+    return JSON.parse(jsonText);
+  } catch {
+    return null;
+  }
 }
 
 function appendUniqueMessage(messages: string[], nextMessage: string): string[] {
@@ -1650,8 +1668,47 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     return this.fetchProviderQuotaTelemetry(providerId, appSettings);
   }
 
+  async runBackgroundStructuredPrompt<TOutput = unknown>(
+    input: RunBackgroundStructuredPromptInput,
+  ): Promise<RunBackgroundStructuredPromptResult<TOutput>> {
+    const result = await this.runBackgroundPromptFromInput(
+      {
+        providerId: input.providerId,
+        workspacePath: input.workspacePath,
+        appSettings: input.appSettings,
+        model: input.model,
+        reasoningEffort: input.reasoningEffort,
+        timeoutMs: input.timeoutMs,
+        prompt: input.prompt,
+      },
+      (rawText) => parseStructuredPromptJson(rawText) as TOutput | null,
+      input.signal,
+    );
+    return {
+      threadId: result.threadId,
+      rawText: result.rawText,
+      output: result.output,
+      parsedJson: result.parsedJson,
+      structuredOutput: result.structuredOutput,
+      rawItemsJson: result.rawItemsJson,
+      usage: result.usage,
+      providerQuotaTelemetry: result.providerQuotaTelemetry,
+    };
+  }
+
   async extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult> {
-    const result = await this.runBackgroundPrompt(input, parseSessionMemoryDeltaText);
+    const result = await this.runBackgroundPromptFromInput(
+      {
+        providerId: input.session.provider,
+        workspacePath: input.session.workspacePath,
+        appSettings: input.appSettings,
+        model: input.model,
+        reasoningEffort: input.reasoningEffort,
+        timeoutMs: input.timeoutMs,
+        prompt: input.prompt,
+      },
+      parseSessionMemoryDeltaText,
+    );
     return {
       threadId: result.threadId,
       rawText: result.rawText,
@@ -1663,7 +1720,18 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   }
 
   async runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult> {
-    const result = await this.runBackgroundPrompt(input, parseCharacterReflectionOutputText);
+    const result = await this.runBackgroundPromptFromInput(
+      {
+        providerId: input.session.provider,
+        workspacePath: input.session.workspacePath,
+        appSettings: input.appSettings,
+        model: input.model,
+        reasoningEffort: input.reasoningEffort,
+        timeoutMs: input.timeoutMs,
+        prompt: input.prompt,
+      },
+      parseCharacterReflectionOutputText,
+    );
     return {
       threadId: result.threadId,
       rawText: result.rawText,
@@ -1710,7 +1778,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   }
 
   private buildBackgroundSessionConfig(
-    input: ExtractSessionMemoryInput | RunCharacterReflectionInput,
+    input: RunBackgroundStructuredPromptInput,
     tools?: Tool[],
   ): SessionConfig {
     const denyAllPermissions: PermissionHandler = () =>
@@ -1718,7 +1786,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     return {
       model: input.model,
       reasoningEffort: input.reasoningEffort === "minimal" ? "low" : input.reasoningEffort,
-      workingDirectory: input.session.workspacePath,
+      workingDirectory: input.workspacePath,
       streaming: false,
       tools,
       availableTools: tools?.map((tool) => tool.name),
@@ -1730,18 +1798,21 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     };
   }
 
-  private async runBackgroundPrompt<TOutput>(
-    input: ExtractSessionMemoryInput | RunCharacterReflectionInput,
+  private async runBackgroundPromptFromInput<TOutput>(
+    input: RunBackgroundStructuredPromptInput,
     parse: (rawText: string) => TOutput | null,
+    signal?: AbortSignal,
   ): Promise<{
     threadId: string | null;
     rawText: string;
     output: TOutput | null;
+    parsedJson: unknown | null;
+    structuredOutput: unknown | null;
     rawItemsJson: string;
     usage: AuditLogUsage | null;
     providerQuotaTelemetry: ProviderQuotaTelemetry | null;
   }> {
-    const client = this.getOrCreateClientByAppSettings(input.session.provider, input.appSettings);
+    const client = this.getOrCreateClientByAppSettings(input.providerId, input.appSettings);
     await client.start();
     let usage: AuditLogUsage | null = null;
     let structuredOutput: unknown = null;
@@ -1750,7 +1821,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     const submitTool: Tool = {
       name: submitToolName,
       description: "Submit the structured JSON output requested by WithMate.",
-      parameters: input.prompt.outputSchema,
+      parameters: input.prompt.outputSchema as Tool["parameters"],
       skipPermission: true,
       handler: (args) => {
         structuredOutput = args;
@@ -1763,6 +1834,13 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     const unsubscribeUsage = extractionSession.on("assistant.usage", (event) => {
       usage = normalizeCopilotTokenUsage(event.data);
     });
+    const aborting = signal ?? null;
+    const handleAbort = () => {
+      void extractionSession.abort().catch(() => undefined);
+    };
+    if (aborting) {
+      aborting.addEventListener("abort", handleAbort, { once: true });
+    }
 
     try {
       const response = await extractionSession.sendAndWait({
@@ -1775,12 +1853,15 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         ].join("\n"),
       }, input.timeoutMs);
       const rawText = hasStructuredOutput ? JSON.stringify(structuredOutput) : response?.data.content ?? "";
-      const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.session.provider, input.appSettings)
+      const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.providerId, input.appSettings)
         .catch(() => null);
+      const parsedJson = hasStructuredOutput ? structuredOutput : parseStructuredPromptJson(rawText);
       return {
         threadId: extractionSession.sessionId,
         rawText,
         output: parse(rawText),
+        parsedJson,
+        structuredOutput: hasStructuredOutput ? structuredOutput : null,
         rawItemsJson: JSON.stringify({
           type: "copilot-background-response",
           sessionId: extractionSession.sessionId,
@@ -1794,6 +1875,9 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     } finally {
       unsubscribeUsage();
       await extractionSession.disconnect().catch(() => undefined);
+      if (aborting) {
+        aborting.removeEventListener("abort", handleAbort);
+      }
     }
   }
 

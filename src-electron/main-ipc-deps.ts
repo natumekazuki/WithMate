@@ -41,6 +41,14 @@ import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-stat
 import type { CreateSessionInput, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
 import type { OpenPathOptions, ResetAppDatabaseRequest } from "../src/withmate-window-types.js";
 import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
+import type {
+  CreateMateInput,
+  MateProfile,
+  MateStorageState,
+  MateTalkTurnInput,
+  MateTalkTurnResult,
+} from "../src/mate-state.js";
+import type { MateEmbeddingSettings } from "../src/mate-embedding-settings.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import type { MainIpcRegistrationDeps } from "./main-ipc-registration.js";
 
@@ -84,6 +92,8 @@ export type MainIpcSettingsDepsArgs = {
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
   getMemoryManagementSnapshot(): MemoryManagementSnapshot;
   getMemoryManagementPage(request: MemoryManagementPageRequest): MemoryManagementPageResult;
+  getMateEmbeddingSettings(): MateEmbeddingSettings | null;
+  startMateEmbeddingDownload(): Awaitable<void>;
   deleteSessionMemory(sessionId: string): void;
   deleteProjectMemoryEntry(entryId: string): void;
   deleteCharacterMemoryEntry(entryId: string): void;
@@ -185,6 +195,14 @@ export type MainIpcCharacterDepsArgs = {
   deleteCharacter(characterId: string): Promise<void>;
 };
 
+export type MainIpcMateDepsArgs = {
+  getMateState(): Awaitable<MateStorageState>;
+  getMateProfile(): Awaitable<MateProfile | null>;
+  createMate(input: CreateMateInput): Promise<MateProfile>;
+  runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
+  resetMate(): Promise<void>;
+};
+
 export type CreateMainIpcRegistrationDepsArgs = {
   window: MainIpcWindowDepsArgs;
   catalog: MainIpcCatalogDepsArgs;
@@ -193,6 +211,7 @@ export type CreateMainIpcRegistrationDepsArgs = {
   companion: MainIpcCompanionDepsArgs;
   sessionRuntime: MainIpcSessionRuntimeDepsArgs;
   character: MainIpcCharacterDepsArgs;
+  mate: MainIpcMateDepsArgs;
 };
 
 export function createMainIpcRegistrationDeps(
@@ -248,6 +267,8 @@ export function createMainIpcRegistrationDeps(
     resetAppDatabase: args.settings.resetAppDatabase,
     getMemoryManagementSnapshot: args.settings.getMemoryManagementSnapshot,
     getMemoryManagementPage: args.settings.getMemoryManagementPage,
+    getMateEmbeddingSettings: args.settings.getMateEmbeddingSettings,
+    startMateEmbeddingDownload: args.settings.startMateEmbeddingDownload,
     deleteSessionMemory: args.settings.deleteSessionMemory,
     deleteProjectMemoryEntry: args.settings.deleteProjectMemoryEntry,
     deleteCharacterMemoryEntry: args.settings.deleteCharacterMemoryEntry,
@@ -310,5 +331,10 @@ export function createMainIpcRegistrationDeps(
     createCharacter: args.character.createCharacter,
     updateCharacter: args.character.updateCharacter,
     deleteCharacter: args.character.deleteCharacter,
+    getMateState: args.mate.getMateState,
+    getMateProfile: args.mate.getMateProfile,
+    createMate: args.mate.createMate,
+    runMateTalkTurn: args.mate.runMateTalkTurn,
+    resetMate: args.mate.resetMate,
   };
 }

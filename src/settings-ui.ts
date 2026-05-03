@@ -19,6 +19,16 @@ export const SETTINGS_MEMORY_EXTRACTION_MODEL_LABEL = "Model";
 export const SETTINGS_MEMORY_EXTRACTION_REASONING_LABEL = "Reasoning Depth";
 export const SETTINGS_MEMORY_EXTRACTION_THRESHOLD_LABEL = "Output Tokens Threshold";
 export const SETTINGS_MEMORY_EXTRACTION_TIMEOUT_LABEL = "Timeout Seconds";
+export const SETTINGS_MATE_MEMORY_GENERATION_LABEL = "Mate Memory Generation";
+export const SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL = "Trigger Interval (Minutes)";
+export const SETTINGS_MATE_MEMORY_GENERATION_MODEL_LABEL = "Model";
+export const SETTINGS_MATE_MEMORY_GENERATION_REASONING_LABEL = "Reasoning Depth";
+export const SETTINGS_MATE_MEMORY_GENERATION_TIMEOUT_LABEL = "Timeout Seconds";
+export const SETTINGS_MATE_EMBEDDING_LABEL = "Mate Embedding";
+export const SETTINGS_MATE_EMBEDDING_DOWNLOAD_LABEL = "Download Model";
+export const SETTINGS_MATE_EMBEDDING_MODEL_LABEL = "Model";
+export const SETTINGS_MATE_EMBEDDING_DIMENSION_LABEL = "Dimension";
+export const SETTINGS_MATE_EMBEDDING_CACHE_STATE_LABEL = "Cache";
 export const SETTINGS_MEMORY_GENERATION_LABEL = "Memory Generation";
 export const SETTINGS_MEMORY_GENERATION_HELP =
   "OFF にすると、turn 完了後の Generate Memory を実行しない。";

@@ -22,6 +22,13 @@ import type {
   SessionSummary,
 } from "../src/app-state.js";
 import type { CreateCharacterInput } from "../src/character-state.js";
+import type {
+  CreateMateInput,
+  MateProfile,
+  MateStorageState,
+  MateTalkTurnInput,
+  MateTalkTurnResult,
+} from "../src/mate-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
 import type {
@@ -40,6 +47,7 @@ import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-ca
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionInput, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
+import type { MateEmbeddingSettings } from "../src/mate-embedding-settings.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
@@ -48,6 +56,7 @@ import {
   WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
+  WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
@@ -64,9 +73,12 @@ import {
   WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
   WITHMATE_GET_COMPANION_SESSION_CHANNEL,
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
+  WITHMATE_GET_MATE_STATE_CHANNEL,
+  WITHMATE_GET_MATE_PROFILE_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
+  WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
@@ -117,8 +129,10 @@ import {
   WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL,
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
+  WITHMATE_RESET_MATE_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
+  WITHMATE_RUN_MATE_TALK_TURN_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
@@ -132,6 +146,7 @@ import {
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
+  WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
 } from "../src/withmate-ipc-channels.js";
 import type { OpenPathOptions, ResetAppDatabaseRequest } from "../src/withmate-window-types.js";
 import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
@@ -143,6 +158,51 @@ type LogIpcErrorInput = {
   durationMs: number;
   error: unknown;
 };
+
+export const MATE_NOT_CREATED_ERROR_MESSAGE = "Mate が作成されるまでは本機能を実行できません。";
+
+const MATE_CREATED_REQUIRED_CHANNEL_WHITELIST = new Set<string>([
+  WITHMATE_GET_MATE_STATE_CHANNEL,
+  WITHMATE_GET_MATE_PROFILE_CHANNEL,
+  WITHMATE_CREATE_MATE_CHANNEL,
+  WITHMATE_RESET_MATE_CHANNEL,
+  WITHMATE_GET_APP_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
+  WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
+  WITHMATE_RESET_APP_DATABASE_CHANNEL,
+  WITHMATE_GET_MODEL_CATALOG_CHANNEL,
+  WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
+  WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
+  WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
+  WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
+  WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
+  WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
+  WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
+  WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
+  WITHMATE_PICK_DIRECTORY_CHANNEL,
+  WITHMATE_PICK_FILE_CHANNEL,
+  WITHMATE_PICK_IMAGE_FILE_CHANNEL,
+  WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
+  WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL,
+  WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
+  WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
+  WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
+  WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
+  WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
+]);
+
+async function ensureMateCreated(deps: Pick<MainIpcRegistrationDeps, "getMateState">, channel: string): Promise<void> {
+  if (MATE_CREATED_REQUIRED_CHANNEL_WHITELIST.has(channel)) {
+    return;
+  }
+
+  const mateState = await deps.getMateState();
+  if (mateState === "not_created") {
+    throw new Error(MATE_NOT_CREATED_ERROR_MESSAGE);
+  }
+}
+
 type IpcHandleRegistrar = {
   handle: IpcMain["handle"];
 };
@@ -203,6 +263,8 @@ export type MainIpcRegistrationDeps = {
   listOpenCompanionReviewWindowIds(): string[];
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
+  getMateEmbeddingSettings(): MateEmbeddingSettings | null;
+  startMateEmbeddingDownload(): Awaitable<void>;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
   getMemoryManagementSnapshot(): MemoryManagementSnapshot;
   getMemoryManagementPage(request: MemoryManagementPageRequest): MemoryManagementPageResult;
@@ -256,6 +318,11 @@ export type MainIpcRegistrationDeps = {
   createCharacter(input: CreateCharacterInput): Promise<CharacterProfile>;
   updateCharacter(character: CharacterProfile): Promise<CharacterProfile>;
   deleteCharacter(characterId: string): Promise<void>;
+  getMateState(): Awaitable<MateStorageState>;
+  getMateProfile(): Awaitable<MateProfile | null>;
+  createMate(input: CreateMateInput): Promise<MateProfile>;
+  runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
+  resetMate(): Promise<void>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickImageFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
@@ -306,6 +373,8 @@ type MainIpcSettingsDeps = Pick<
   MainIpcRegistrationDeps,
   | "getAppSettings"
   | "updateAppSettings"
+  | "getMateEmbeddingSettings"
+  | "startMateEmbeddingDownload"
   | "resetAppDatabase"
   | "getMemoryManagementSnapshot"
   | "getMemoryManagementPage"
@@ -389,6 +458,15 @@ type MainIpcCharacterDeps = Pick<
   | "deleteCharacter"
 >;
 
+type MainIpcMateDeps = Pick<
+  MainIpcRegistrationDeps,
+  | "getMateState"
+  | "getMateProfile"
+  | "createMate"
+  | "runMateTalkTurn"
+  | "resetMate"
+>;
+
 function resolveTargetWindow(
   event: IpcMainInvokeEvent,
   deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveHomeWindow">,
@@ -468,6 +546,8 @@ function registerCatalogHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCatal
 function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSettingsDeps): void {
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => deps.getAppSettings());
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => deps.updateAppSettings(settings));
+  ipcMain.handle(WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL, () => deps.getMateEmbeddingSettings());
+  ipcMain.handle(WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL, () => deps.startMateEmbeddingDownload());
   ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, (_event, request: ResetAppDatabaseRequest | null | undefined) =>
     deps.resetAppDatabase(request),
   );
@@ -705,6 +785,16 @@ function registerCharacterHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCha
   ipcMain.handle(WITHMATE_DELETE_CHARACTER_CHANNEL, async (_event, characterId: string) => deps.deleteCharacter(characterId));
 }
 
+function registerMateHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcMateDeps): void {
+  ipcMain.handle(WITHMATE_GET_MATE_STATE_CHANNEL, () => deps.getMateState());
+  ipcMain.handle(WITHMATE_GET_MATE_PROFILE_CHANNEL, () => deps.getMateProfile());
+  ipcMain.handle(WITHMATE_CREATE_MATE_CHANNEL, (_event, input: CreateMateInput) => deps.createMate(input));
+  ipcMain.handle(WITHMATE_RUN_MATE_TALK_TURN_CHANNEL, (_event, input: MateTalkTurnInput) =>
+    deps.runMateTalkTurn(input),
+  );
+  ipcMain.handle(WITHMATE_RESET_MATE_CHANNEL, () => deps.resetMate());
+}
+
 export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrationDeps): void {
   const wrappedIpcMain = createErrorLoggingIpcMain(ipcMain, deps);
   registerWindowHandlers(wrappedIpcMain, deps);
@@ -714,6 +804,7 @@ export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrat
   registerCompanionHandlers(wrappedIpcMain, deps);
   registerSessionRuntimeHandlers(wrappedIpcMain, deps);
   registerCharacterHandlers(wrappedIpcMain, deps);
+  registerMateHandlers(wrappedIpcMain, deps);
   ipcMain.on(WITHMATE_RENDERER_LOG_CHANNEL, (event, input: RendererLogInput) => {
     const windowId = deps.resolveEventWindow(event)?.id;
     deps.reportRendererLog?.(input, windowId);
@@ -724,6 +815,7 @@ function createErrorLoggingIpcMain(ipcMain: IpcMain, deps: MainIpcRegistrationDe
   return {
     handle(channel, handler) {
       ipcMain.handle(channel, async (event, ...args) => {
+        await ensureMateCreated(deps, channel);
         const startedAt = Date.now();
         try {
           return await handler(event, ...args);

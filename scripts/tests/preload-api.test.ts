@@ -42,6 +42,26 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:reset-app-database",
     args: [{ targets: ["appSettings"] }],
   });
+  assert.deepEqual(await api.getMateState(), {
+    channel: "withmate:get-mate-state",
+    args: [],
+  });
+  assert.deepEqual(await api.getMateProfile(), {
+    channel: "withmate:get-mate-profile",
+    args: [],
+  });
+  assert.deepEqual(await api.createMate({ displayName: "Buddy" }), {
+    channel: "withmate:create-mate",
+    args: [{ displayName: "Buddy" }],
+  });
+  assert.deepEqual(await api.runMateTalkTurn({ message: "hello" }), {
+    channel: "withmate:run-mate-talk-turn",
+    args: [{ message: "hello" }],
+  });
+  assert.deepEqual(await api.resetMate(), {
+    channel: "withmate:reset-mate",
+    args: [],
+  });
   assert.deepEqual(await api.getMemoryManagementSnapshot(), {
     channel: "withmate:get-memory-management-snapshot",
     args: [],
@@ -78,6 +98,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "cancelSessionRun",
     "createCharacter",
     "createCharacterUpdateSession",
+    "createMate",
     "createCompanionSession",
     "createSession",
     "deleteCharacter",
@@ -101,6 +122,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getCompanionSession",
     "getDiffPreview",
     "getLiveSessionRun",
+    "getMateEmbeddingSettings",
     "getMemoryManagementPage",
     "getMemoryManagementSnapshot",
     "getModelCatalog",
@@ -109,6 +131,8 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getSessionAuditLogDetail",
     "getSessionAuditLogDetailSection",
     "getSessionAuditLogOperationDetail",
+    "getMateProfile",
+    "getMateState",
     "getSessionBackgroundActivity",
     "getSessionContextTelemetry",
     "getSessionMessageArtifact",
@@ -147,6 +171,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "pickDirectory",
     "pickFile",
     "pickImageFile",
+    "resetMate",
     "previewCompanionComposerInput",
     "previewComposerInput",
     "reportRendererLog",
@@ -155,9 +180,11 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "resolveLiveApproval",
     "resolveLiveElicitation",
     "runCompanionSessionTurn",
+    "runMateTalkTurn",
     "runSessionTurn",
     "searchCompanionWorkspaceFiles",
     "searchWorkspaceFiles",
+    "startMateEmbeddingDownload",
     "stashCompanionTargetChanges",
     "subscribeAppSettings",
     "subscribeCharacters",

@@ -45,6 +45,14 @@ import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog
 import type { RendererLogInput } from "./app-log-types.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import type { OpenPathOptions, ResetAppDatabaseRequest, ResetAppDatabaseResult } from "./withmate-window-types.js";
+import type {
+  CreateMateInput,
+  MateProfile,
+  MateStorageState,
+  MateTalkTurnInput,
+  MateTalkTurnResult,
+} from "./mate-state.js";
+import type { MateEmbeddingSettings } from "./mate-embedding-settings.js";
 
 export type WithMateWindowNavigationApi = {
   openSession(sessionId: string): Promise<void>;
@@ -163,6 +171,8 @@ export type WithMateWindowSettingsApi = {
   resetAppDatabase(request: ResetAppDatabaseRequest): Promise<ResetAppDatabaseResult>;
   getMemoryManagementSnapshot(): Promise<MemoryManagementSnapshot>;
   getMemoryManagementPage(request: MemoryManagementPageRequest): Promise<MemoryManagementPageResult>;
+  getMateEmbeddingSettings(): Promise<MateEmbeddingSettings | null>;
+  startMateEmbeddingDownload(): Promise<void>;
   deleteSessionMemory(sessionId: string): Promise<void>;
   deleteProjectMemoryEntry(entryId: string): Promise<void>;
   deleteCharacterMemoryEntry(entryId: string): Promise<void>;
@@ -206,6 +216,14 @@ export type WithMateWindowSubscriptionApi = {
   subscribeCompanionSessionSummaries(listener: (sessions: CompanionSessionSummary[]) => void): () => void;
 };
 
+export type WithMateWindowMateApi = {
+  getMateState(): Promise<MateStorageState>;
+  getMateProfile(): Promise<MateProfile | null>;
+  createMate(input: CreateMateInput): Promise<MateProfile>;
+  runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
+  resetMate(): Promise<void>;
+};
+
 export type WithMateWindowApi =
   & WithMateWindowNavigationApi
   & WithMateWindowCatalogApi
@@ -215,4 +233,5 @@ export type WithMateWindowApi =
   & WithMateWindowSettingsApi
   & WithMateWindowCharacterApi
   & WithMateWindowPickerApi
-  & WithMateWindowSubscriptionApi;
+  & WithMateWindowSubscriptionApi
+  & WithMateWindowMateApi;

@@ -118,6 +118,32 @@ export type RunCharacterReflectionResult = {
   providerQuotaTelemetry?: ProviderQuotaTelemetry | null;
 };
 
+export type RunBackgroundStructuredPromptInput = {
+  providerId: string;
+  workspacePath: string;
+  appSettings: AppSettings;
+  model: string;
+  reasoningEffort: ModelReasoningEffort;
+  timeoutMs: number;
+  prompt: {
+    systemText: string;
+    userText: string;
+    outputSchema: unknown;
+  };
+  signal?: AbortSignal;
+};
+
+export type RunBackgroundStructuredPromptResult<TOutput = unknown> = {
+  threadId: string | null;
+  rawText: string;
+  output: TOutput | null;
+  parsedJson?: unknown;
+  structuredOutput?: unknown;
+  rawItemsJson: string;
+  usage: AuditLogUsage | null;
+  providerQuotaTelemetry?: ProviderQuotaTelemetry | null;
+};
+
 export type RunSessionTurnResult = {
   threadId: string | null;
   assistantText: string;
@@ -156,6 +182,9 @@ export type ProviderCodingAdapter = {
 export type ProviderBackgroundAdapter = {
   extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult>;
   runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult>;
+  runBackgroundStructuredPrompt<TOutput = unknown>(
+    input: RunBackgroundStructuredPromptInput,
+  ): Promise<RunBackgroundStructuredPromptResult<TOutput>>;
 };
 
 export type ProviderTurnAdapter = ProviderCodingAdapter & ProviderBackgroundAdapter;
