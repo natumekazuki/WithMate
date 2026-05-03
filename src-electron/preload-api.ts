@@ -36,6 +36,7 @@ import {
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
+  WITHMATE_GET_COMPANION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
   WITHMATE_GET_COMPANION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
   WITHMATE_GET_COMPANION_SESSION_CHANNEL,
@@ -47,6 +48,7 @@ import {
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
+  WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
@@ -302,6 +304,9 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     getSessionAuditLogDetailSection(sessionId, auditLogId, section) {
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_SECTION_CHANNEL, sessionId, auditLogId, section);
     },
+    getSessionAuditLogOperationDetail(sessionId, auditLogId, operationIndex) {
+      return ipcRenderer.invoke(WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL, sessionId, auditLogId, operationIndex);
+    },
     getLiveSessionRun(sessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL, sessionId);
     },
@@ -379,11 +384,15 @@ function createCompanionApi(ipcRenderer: IpcRendererLike): WithMateWindowCompani
     getCompanionAuditLogDetailSection(sessionId, auditLogId, section) {
       return ipcRenderer.invoke(WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL, sessionId, auditLogId, section);
     },
+    getCompanionAuditLogOperationDetail(sessionId, auditLogId, operationIndex) {
+      return ipcRenderer.invoke(WITHMATE_GET_COMPANION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL, sessionId, auditLogId, operationIndex);
+    },
   };
 }
 
 function createObservabilityApi(ipcRenderer: IpcRendererLike): Pick<
   WithMateWindowObservabilityApi,
+  | "reportRendererLog"
   | "getProviderQuotaTelemetry"
   | "getSessionContextTelemetry"
   | "getSessionBackgroundActivity"
@@ -391,6 +400,9 @@ function createObservabilityApi(ipcRenderer: IpcRendererLike): Pick<
   | "listOpenCompanionReviewWindowIds"
 > {
   return {
+    reportRendererLog(input) {
+      reportRendererLog(ipcRenderer, input);
+    },
     getProviderQuotaTelemetry(providerId) {
       return ipcRenderer.invoke(WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL, providerId);
     },

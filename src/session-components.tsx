@@ -1,4 +1,4 @@
-import { Component, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type UIEventHandler } from "react";
+import { Component, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type SetStateAction, type UIEventHandler } from "react";
 
 import type {
   AuditLogDetailFragment,
@@ -42,6 +42,7 @@ import {
 } from "./session-ui-projection.js";
 import type { CharacterUpdateMemoryExtract } from "./character-update-state.js";
 import type { HomeMonitorEntry } from "./home-session-projection.js";
+import { getWithMateApi } from "./renderer-withmate-api.js";
 
 function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
@@ -451,9 +452,97 @@ function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFol
 
 export type AuditLogFoldSection = "logical" | "transport" | "response" | "operations" | "usage" | "error" | "raw";
 type AuditLogLazyFoldSection = Extract<AuditLogFoldSection, AuditLogDetailSection>;
+type AuditLogLogicalPromptField = "system" | "input" | "composed";
+const AUDIT_LOG_OPERATION_RENDER_LIMIT = 30;
+const AUDIT_LOG_AUTO_LOAD_SECTIONS: AuditLogDetailSection[] = ["logical", "transport", "response", "operations", "raw"];
+const AUDIT_LOG_TEXT_PREVIEW_HEAD_CHARS = 60000;
+const AUDIT_LOG_TEXT_PREVIEW_TAIL_CHARS = 60000;
+const AUDIT_LOG_TEXT_PREVIEW_MAX_CHARS = AUDIT_LOG_TEXT_PREVIEW_HEAD_CHARS + AUDIT_LOG_TEXT_PREVIEW_TAIL_CHARS;
+const AUDIT_LOG_LOGICAL_FIELD_PREVIEW_MAX_CHARS = 20000;
+
+function previewAuditLogText(value: string, maxChars = AUDIT_LOG_TEXT_PREVIEW_MAX_CHARS): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  const headChars = Math.floor(maxChars / 2);
+  const tailChars = maxChars - headChars;
+  return [
+    value.slice(0, headChars),
+    "",
+    `... truncated ${value.length - maxChars} chars ...`,
+    "",
+    value.slice(-tailChars),
+  ].join("\n");
+}
+
+function AuditLogTextPreview({ value, maxChars }: { value: string; maxChars?: number }) {
+  const preview = useMemo(() => previewAuditLogText(value, maxChars), [maxChars, value]);
+  return <pre>{preview}</pre>;
+}
+
+function AuditLogLogicalPromptFieldFold({
+  entry,
+  field,
+  label,
+  value,
+  open,
+  setOpenAuditLogFolds,
+}: {
+  entry: Pick<AuditLogSummary, "id" | "sessionId">;
+  field: AuditLogLogicalPromptField;
+  label: string;
+  value: string;
+  open: boolean;
+  setOpenAuditLogFolds: Dispatch<SetStateAction<Record<string, boolean>>>;
+}) {
+  return (
+    <details
+      className="audit-log-raw"
+      open={open}
+      onToggle={(event) => {
+        const openFold = event.currentTarget.open;
+        setOpenAuditLogFolds((current) => {
+          const key = auditLogLogicalPromptFieldFoldKey(entry, field);
+          if (openFold) {
+            return current[key] ? current : { ...current, [key]: true };
+          }
+          if (!current[key]) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[key];
+          return next;
+        });
+      }}
+    >
+      <summary>{label} ({value.length.toLocaleString()} chars)</summary>
+      {open ? (
+        <AuditLogTextPreview
+          value={value || "-"}
+          maxChars={AUDIT_LOG_LOGICAL_FIELD_PREVIEW_MAX_CHARS}
+        />
+      ) : null}
+    </details>
+  );
+}
 
 function auditLogFoldKey(entry: Pick<AuditLogSummary, "id" | "sessionId">, section: AuditLogFoldSection): string {
   return `${entry.sessionId}:${entry.id}:${section}`;
+}
+
+function auditLogLogicalPromptFieldFoldKey(
+  entry: Pick<AuditLogSummary, "id" | "sessionId">,
+  field: AuditLogLogicalPromptField,
+): string {
+  return `${entry.sessionId}:${entry.id}:logical:${field}`;
+}
+
+function auditLogOperationDetailFoldKey(
+  entry: Pick<AuditLogSummary, "id" | "sessionId">,
+  operationIndex: number,
+): string {
+  return `${entry.sessionId}:${entry.id}:operations:${operationIndex}`;
 }
 
 export function shouldLoadAuditLogDetailForFold(section: AuditLogFoldSection): section is AuditLogLazyFoldSection {
@@ -727,7 +816,13 @@ export type SessionAuditLogModalProps = {
     detail: AuditLogDetailFragment | null;
     loadedSections: Partial<Record<AuditLogDetailSection, boolean>>;
     loadingSections: Partial<Record<AuditLogDetailSection, boolean>>;
+    loadingStartedAtMs?: Partial<Record<AuditLogDetailSection, number>>;
     errorMessages: Partial<Record<AuditLogDetailSection, string>>;
+  }>;
+  operationDetails: Record<string, {
+    detail: { details: string } | null;
+    loading: boolean;
+    errorMessage: string | null;
   }>;
   hasMore: boolean;
   loadingMore: boolean;
@@ -735,6 +830,7 @@ export type SessionAuditLogModalProps = {
   errorMessage: string | null;
   onLoadMore: () => void;
   onLoadDetail: (entry: AuditLogSummary, section: AuditLogDetailSection) => void;
+  onLoadOperationDetail: (entry: AuditLogSummary, operationIndex: number) => void;
   onClose: () => void;
 };
 
@@ -742,12 +838,14 @@ export function SessionAuditLogModal({
   open,
   entries,
   details,
+  operationDetails,
   hasMore,
   loadingMore,
   total,
   errorMessage,
   onLoadMore,
   onLoadDetail,
+  onLoadOperationDetail,
   onClose,
 }: SessionAuditLogModalProps) {
   const [activeSection, setActiveSection] = useState<"main" | "background">("main");
@@ -839,6 +937,29 @@ export function SessionAuditLogModal({
     });
   }, [auditLogFoldKeyPrefixes]);
 
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    for (const entry of visibleEntries) {
+      if (!entry.detailAvailable) {
+        continue;
+      }
+
+      const detailState = details[entry.id];
+      for (const section of AUDIT_LOG_AUTO_LOAD_SECTIONS) {
+        if (
+          openAuditLogFolds[auditLogFoldKey(entry, section)]
+          && !detailState?.loadedSections[section]
+          && !detailState?.loadingSections[section]
+        ) {
+          onLoadDetail(entry, section);
+        }
+      }
+    }
+  }, [details, onLoadDetail, open, openAuditLogFolds, visibleEntries]);
+
   if (!open) {
     return null;
   }
@@ -896,6 +1017,22 @@ export function SessionAuditLogModal({
               const errorMessage = entry.errorMessage;
               const sectionLoading = (section: AuditLogDetailSection) => Boolean(detailState?.loadingSections[section]);
               const sectionError = (section: AuditLogDetailSection) => detailState?.errorMessages[section] ?? null;
+              const operationDetailState = (operationIndex: number) =>
+                operationDetails[auditLogOperationDetailFoldKey(entry, operationIndex)] ?? null;
+              const logicalOpen = isAuditLogFoldOpen(entry, "logical");
+              const transportOpen = isAuditLogFoldOpen(entry, "transport");
+              const responseOpen = isAuditLogFoldOpen(entry, "response");
+              const operationsOpen = isAuditLogFoldOpen(entry, "operations");
+              const usageOpen = isAuditLogFoldOpen(entry, "usage");
+              const errorOpen = isAuditLogFoldOpen(entry, "error");
+              const rawOpen = isAuditLogFoldOpen(entry, "raw");
+              const logicalSystemOpen = Boolean(openAuditLogFolds[auditLogLogicalPromptFieldFoldKey(entry, "system")]);
+              const logicalInputOpen = Boolean(openAuditLogFolds[auditLogLogicalPromptFieldFoldKey(entry, "input")]);
+              const logicalComposedOpen = Boolean(openAuditLogFolds[auditLogLogicalPromptFieldFoldKey(entry, "composed")]);
+              const displayedOperations = operationsOpen
+                ? operations.slice(0, AUDIT_LOG_OPERATION_RENDER_LIMIT)
+                : [];
+              const hiddenOperationCount = Math.max(0, operations.length - displayedOperations.length);
 
               return (
                 <article key={entry.id} className={`audit-log-card ${entry.phase}`}>
@@ -923,7 +1060,7 @@ export function SessionAuditLogModal({
 
                 <details
                   className="audit-log-fold"
-                  open={isAuditLogFoldOpen(entry, "logical")}
+                  open={logicalOpen}
                   onToggle={(event) => {
                     handleAuditLogFoldToggle(entry, "logical", event.currentTarget.open);
                   }}
@@ -931,16 +1068,34 @@ export function SessionAuditLogModal({
                   <summary>
                     <strong>Logical Prompt</strong>
                   </summary>
-                  <section className="audit-log-section">
+                  {logicalOpen ? <section className="audit-log-section">
                     {detail?.logicalPrompt ? (
-                      <>
-                        <p><strong>System</strong></p>
-                        <pre>{detail.logicalPrompt.systemText || "-"}</pre>
-                        <p><strong>Input</strong></p>
-                        <pre>{detail.logicalPrompt.inputText || "-"}</pre>
-                        <p><strong>Composed</strong></p>
-                        <pre>{detail.logicalPrompt.composedText || "-"}</pre>
-                      </>
+                      <div className="audit-log-logical-fields">
+                        <AuditLogLogicalPromptFieldFold
+                          entry={entry}
+                          field="system"
+                          label="System"
+                          value={detail.logicalPrompt.systemText}
+                          open={logicalSystemOpen}
+                          setOpenAuditLogFolds={setOpenAuditLogFolds}
+                        />
+                        <AuditLogLogicalPromptFieldFold
+                          entry={entry}
+                          field="input"
+                          label="Input"
+                          value={detail.logicalPrompt.inputText}
+                          open={logicalInputOpen}
+                          setOpenAuditLogFolds={setOpenAuditLogFolds}
+                        />
+                        <AuditLogLogicalPromptFieldFold
+                          entry={entry}
+                          field="composed"
+                          label="Composed"
+                          value={detail.logicalPrompt.composedText}
+                          open={logicalComposedOpen}
+                          setOpenAuditLogFolds={setOpenAuditLogFolds}
+                        />
+                      </div>
                     ) : (
                       <p className="audit-log-empty">
                         {sectionLoading("logical")
@@ -948,12 +1103,12 @@ export function SessionAuditLogModal({
                           : sectionError("logical") ?? "開くと audit log detail を読み込むよ。"}
                       </p>
                     )}
-                  </section>
+                  </section> : null}
                 </details>
 
                 <details
                   className="audit-log-fold"
-                  open={isAuditLogFoldOpen(entry, "transport")}
+                  open={transportOpen}
                   onToggle={(event) => {
                     handleAuditLogFoldToggle(entry, "transport", event.currentTarget.open);
                   }}
@@ -961,7 +1116,7 @@ export function SessionAuditLogModal({
                   <summary>
                     <strong>Transport Payload</strong>
                   </summary>
-                  <section className="audit-log-section">
+                  {transportOpen ? <section className="audit-log-section">
                     {detail?.transportPayload ? (
                       <>
                         <p><strong>{detail.transportPayload.summary || "transport payload"}</strong></p>
@@ -970,7 +1125,7 @@ export function SessionAuditLogModal({
                             {detail.transportPayload.fields.map((field, index) => (
                               <div key={`${entry.id}-${field.label}-${index}`} className="audit-log-transport-field">
                                 <p><strong>{field.label}</strong></p>
-                                <pre>{field.value || "-"}</pre>
+                                <pre>{previewAuditLogText(field.value || "-")}</pre>
                               </div>
                             ))}
                           </div>
@@ -985,12 +1140,12 @@ export function SessionAuditLogModal({
                           : sectionError("transport") ?? "記録された transport payload はまだないよ。"}
                       </p>
                     )}
-                  </section>
+                  </section> : null}
                 </details>
 
                 <details
                   className="audit-log-fold"
-                  open={isAuditLogFoldOpen(entry, "response")}
+                  open={responseOpen}
                   onToggle={(event) => {
                     handleAuditLogFoldToggle(entry, "response", event.currentTarget.open);
                   }}
@@ -998,20 +1153,20 @@ export function SessionAuditLogModal({
                   <summary>
                     <strong>Response</strong>
                   </summary>
-                  <section className="audit-log-section">
+                  {responseOpen ? <section className="audit-log-section">
                     {sectionLoading("response") ? (
                       <p className="audit-log-empty">audit log detail を読み込んでるよ。</p>
                     ) : sectionError("response") ? (
                       <p className="audit-log-empty">{sectionError("response")}</p>
                     ) : (
-                      <pre>{assistantText || "-"}</pre>
+                      <pre>{previewAuditLogText(assistantText || "-")}</pre>
                     )}
-                  </section>
+                  </section> : null}
                 </details>
 
                 <details
                   className="audit-log-fold"
-                  open={isAuditLogFoldOpen(entry, "operations")}
+                  open={operationsOpen}
                   onToggle={(event) => {
                     handleAuditLogFoldToggle(entry, "operations", event.currentTarget.open);
                   }}
@@ -1019,33 +1174,72 @@ export function SessionAuditLogModal({
                   <summary>
                     <strong>Operations</strong>
                   </summary>
-                  <section className="audit-log-section">
+                  {operationsOpen ? <section className="audit-log-section">
                     {sectionLoading("operations") ? (
                       <p className="audit-log-empty">audit log detail を読み込んでるよ。</p>
                     ) : sectionError("operations") ? (
                       <p className="audit-log-empty">{sectionError("operations")}</p>
                     ) : operations.length > 0 ? (
                       <ul className="audit-log-operations">
-                        {operations.map((operation, index) => (
+                        {displayedOperations.map((operation, index) => (
                           <li key={`${entry.id}-${operation.type}-${index}`}>
                             <div className="audit-log-operation-head">
                               <span>{operation.type}</span>
                               <strong>{operation.summary}</strong>
                             </div>
-                            {operation.details ? <pre>{operation.details}</pre> : null}
+                            {operation.details ? (
+                              <details
+                                className="audit-log-operation-detail"
+                                open={Boolean(openAuditLogFolds[auditLogOperationDetailFoldKey(entry, index)])}
+                                onToggle={(event) => {
+                                  const key = auditLogOperationDetailFoldKey(entry, index);
+                                  const openFold = event.currentTarget.open;
+                                  setOpenAuditLogFolds((current) => {
+                                    if (openFold) {
+                                      return current[key] ? current : { ...current, [key]: true };
+                                    }
+                                    if (!current[key]) {
+                                      return current;
+                                    }
+                                    const next = { ...current };
+                                    delete next[key];
+                                    return next;
+                                  });
+                                  if (openFold && !operationDetailState(index)?.detail && !operationDetailState(index)?.loading) {
+                                    onLoadOperationDetail(entry, index);
+                                  }
+                                }}
+                              >
+                                <summary>Details</summary>
+                                {openAuditLogFolds[auditLogOperationDetailFoldKey(entry, index)] ? (
+                                  operationDetailState(index)?.loading ? (
+                                    <p className="audit-log-empty">operation detail を読み込んでるよ。</p>
+                                  ) : operationDetailState(index)?.errorMessage ? (
+                                    <p className="audit-log-empty">{operationDetailState(index)?.errorMessage}</p>
+                                  ) : (
+                                    <pre>{previewAuditLogText(operationDetailState(index)?.detail?.details ?? operation.details)}</pre>
+                                  )
+                                ) : null}
+                              </details>
+                            ) : null}
                           </li>
                         ))}
+                        {hiddenOperationCount > 0 ? (
+                          <li className="audit-log-operation-more">
+                            {hiddenOperationCount} more operations hidden for performance
+                          </li>
+                        ) : null}
                       </ul>
                     ) : (
                       <p className="audit-log-empty">記録された操作はまだないよ。</p>
                     )}
-                  </section>
+                  </section> : null}
                 </details>
 
                 {usage ? (
                   <details
                     className="audit-log-fold compact"
-                    open={isAuditLogFoldOpen(entry, "usage")}
+                    open={usageOpen}
                     onToggle={(event) => {
                       handleAuditLogFoldToggle(entry, "usage", event.currentTarget.open);
                     }}
@@ -1053,20 +1247,20 @@ export function SessionAuditLogModal({
                     <summary>
                       <strong>Usage</strong>
                     </summary>
-                    <section className="audit-log-section compact">
+                    {usageOpen ? <section className="audit-log-section compact">
                       <div className="audit-log-meta">
                         <span>input {usage.inputTokens}</span>
                         <span>cached {usage.cachedInputTokens}</span>
                         <span>output {usage.outputTokens}</span>
                       </div>
-                    </section>
+                    </section> : null}
                   </details>
                 ) : null}
 
                 {errorMessage ? (
                   <details
                     className="audit-log-fold compact"
-                    open={isAuditLogFoldOpen(entry, "error")}
+                    open={errorOpen}
                     onToggle={(event) => {
                       handleAuditLogFoldToggle(entry, "error", event.currentTarget.open);
                     }}
@@ -1074,15 +1268,15 @@ export function SessionAuditLogModal({
                     <summary>
                       <strong>Error</strong>
                     </summary>
-                    <section className="audit-log-section compact">
-                      <pre>{errorMessage}</pre>
-                    </section>
+                    {errorOpen ? <section className="audit-log-section compact">
+                      <pre>{previewAuditLogText(errorMessage)}</pre>
+                    </section> : null}
                   </details>
                 ) : null}
 
                 <details
                   className="audit-log-fold audit-log-raw"
-                  open={isAuditLogFoldOpen(entry, "raw")}
+                  open={rawOpen}
                   onToggle={(event) => {
                     handleAuditLogFoldToggle(entry, "raw", event.currentTarget.open);
                   }}
@@ -1090,7 +1284,9 @@ export function SessionAuditLogModal({
                   <summary>
                     <strong>Raw Items</strong>
                   </summary>
-                  <pre>{detail?.rawItemsJson ?? (sectionLoading("raw") ? "loading..." : sectionError("raw") ?? "[]")}</pre>
+                  {rawOpen ? (
+                    <pre>{previewAuditLogText(detail?.rawItemsJson ?? (sectionLoading("raw") ? "loading..." : sectionError("raw") ?? "[]"))}</pre>
+                  ) : null}
                 </details>
                 </article>
               );
@@ -1165,6 +1361,21 @@ export class SessionPaneErrorBoundary extends Component<
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
     console.error("Session pane render failed", error, errorInfo);
+    getWithMateApi()?.reportRendererLog({
+      level: "error",
+      kind: "renderer.render-failed",
+      message: "Session pane render failed",
+      url: window.location.href,
+      data: {
+        boundary: "session-pane",
+        componentStack: errorInfo.componentStack,
+      },
+      error: {
+        name: error.name,
+        message: error.message || "Session pane render failed",
+        stack: error.stack,
+      },
+    });
   }
 
   private handleRetry = () => {
@@ -1258,15 +1469,15 @@ export function SessionContextPane({
         return [
           latestCommandView?.status ?? "",
           latestCommandView?.summary ?? "",
-          latestCommandView?.details ?? "",
+          latestCommandView?.details?.length ?? 0,
           runningDetailsEntries
-            .map((entry) => `${entry.id}:${entry.type}:${entry.status}:${entry.summary}:${entry.details ?? ""}`)
+            .map((entry) => `${entry.id}:${entry.type}:${entry.status}:${entry.summary}:${entry.details?.length ?? 0}`)
             .join("\u001f"),
           selectedSessionLiveRunErrorMessage,
         ].join("|");
       case "tasks":
         return taskEntries
-          .map((task) => `${task.id}:${task.kind}:${task.status}:${task.title}:${task.details ?? ""}:${task.updatedAt}`)
+          .map((task) => `${task.id}:${task.kind}:${task.status}:${task.title}:${task.details?.length ?? 0}:${task.updatedAt}`)
           .join("|");
       case "companion-group":
         return companionGroupMonitorEntries
@@ -1578,9 +1789,9 @@ export function CharacterUpdateContextPane({
       return [
         latestCommandView?.status ?? "",
         latestCommandView?.summary ?? "",
-        latestCommandView?.details ?? "",
+        latestCommandView?.details?.length ?? 0,
         runningDetailsEntries
-          .map((entry) => `${entry.id}:${entry.type}:${entry.status}:${entry.summary}:${entry.details ?? ""}`)
+          .map((entry) => `${entry.id}:${entry.type}:${entry.status}:${entry.summary}:${entry.details?.length ?? 0}`)
           .join("\u001f"),
         selectedSessionLiveRunErrorMessage,
       ].join("|");

@@ -671,15 +671,18 @@ export default function CompanionReviewApp() {
   const companionAuditLogApi = useMemo(() => withmateApi ? ({
     listSessionAuditLogSummaryPage: withmateApi.listCompanionAuditLogSummaryPage,
     getSessionAuditLogDetailSection: withmateApi.getCompanionAuditLogDetailSection,
+    getSessionAuditLogOperationDetail: withmateApi.getCompanionAuditLogOperationDetail,
   }) : null, [withmateApi]);
   const {
     auditLogsOpen,
     setAuditLogsOpen,
     auditLogsState,
     auditLogDetails,
+    auditLogOperationDetails,
     displayedEntries: displayedSessionAuditLogs,
     handleLoadMoreAuditLogs,
     handleLoadAuditLogDetail,
+    handleLoadAuditLogOperationDetail,
   } = useSessionAuditLogs({
     withmateApi,
     auditLogApi: companionAuditLogApi,
@@ -2226,6 +2229,7 @@ export default function CompanionReviewApp() {
               open={auditLogsOpen}
               entries={displayedSessionAuditLogs}
               details={auditLogDetails}
+              operationDetails={auditLogOperationDetails}
               hasMore={auditLogsState.ownerSessionId === snapshot.session.id ? auditLogsState.hasMore : false}
               loadingMore={auditLogsState.ownerSessionId === snapshot.session.id ? auditLogsState.loading : false}
               total={auditLogsState.ownerSessionId === snapshot.session.id
@@ -2234,6 +2238,7 @@ export default function CompanionReviewApp() {
               errorMessage={auditLogsState.ownerSessionId === snapshot.session.id ? auditLogsState.errorMessage : null}
               onLoadMore={handleLoadMoreAuditLogs}
               onLoadDetail={handleLoadAuditLogDetail}
+              onLoadOperationDetail={handleLoadAuditLogOperationDetail}
               onClose={() => setAuditLogsOpen(false)}
             />
             {errorMessage || operationMessage ? (

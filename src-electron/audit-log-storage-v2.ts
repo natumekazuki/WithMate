@@ -6,6 +6,7 @@ import {
   type AuditLogDetailSection,
   type AuditLogEntry,
   type AuditLogicalPrompt,
+  type AuditLogOperationDetailFragment,
   type AuditLogOperation,
   type AuditLogPhase,
   type AuditLogSummary,
@@ -16,6 +17,7 @@ import {
 } from "../src/app-state.js";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
 import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
+import { previewAuditLogicalPrompt } from "./audit-log-detail-preview.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 type AuditLogSummaryRow = {
@@ -625,7 +627,7 @@ function detailToAuditLogDetailFragment(detail: AuditLogDetail, section: AuditLo
 
   switch (section) {
     case "logical":
-      fragment.logicalPrompt = detail.logicalPrompt;
+      fragment.logicalPrompt = previewAuditLogicalPrompt(detail.logicalPrompt);
       break;
     case "transport":
       fragment.transportPayload = detail.transportPayload;
@@ -726,6 +728,27 @@ export class AuditLogStorageV2 {
   ): AuditLogDetailFragment | null {
     const detail = this.getSessionAuditLogDetail(sessionId, auditLogId);
     return detail ? detailToAuditLogDetailFragment(detail, section) : null;
+  }
+
+  getSessionAuditLogOperationDetail(
+    sessionId: string,
+    auditLogId: number,
+    operationIndex: number,
+  ): AuditLogOperationDetailFragment | null {
+    if (!Number.isInteger(operationIndex) || operationIndex < 0) {
+      return null;
+    }
+
+    const detail = this.getSessionAuditLogDetail(sessionId, auditLogId);
+    const operation = detail?.operations[operationIndex];
+    return operation
+      ? {
+          id: auditLogId,
+          sessionId,
+          operationIndex,
+          details: operation.details ?? "",
+        }
+      : null;
   }
 
   createAuditLog(input: CreateAuditLogInput): AuditLogEntry {

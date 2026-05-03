@@ -4,6 +4,7 @@ import type {
   AuditLogDetailFragment,
   AuditLogDetailSection,
   AuditLogSummary,
+  AuditLogOperationDetailFragment,
   AuditLogSummaryPageRequest,
   AuditLogSummaryPageResult,
   AppSettings,
@@ -41,6 +42,7 @@ import type {
   MemoryManagementSnapshot,
 } from "./memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
+import type { RendererLogInput } from "./app-log-types.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import type { OpenPathOptions, ResetAppDatabaseRequest, ResetAppDatabaseResult } from "./withmate-window-types.js";
 
@@ -97,6 +99,11 @@ export type WithMateWindowSessionApi = {
     auditLogId: number,
     section: AuditLogDetailSection,
   ): Promise<AuditLogDetailFragment | null>;
+  getSessionAuditLogOperationDetail(
+    sessionId: string,
+    auditLogId: number,
+    operationIndex: number,
+  ): Promise<AuditLogOperationDetailFragment | null>;
   getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): Promise<void>;
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): Promise<void>;
@@ -131,9 +138,15 @@ export type WithMateWindowCompanionApi = {
     auditLogId: number,
     section: AuditLogDetailSection,
   ): Promise<AuditLogDetailFragment | null>;
+  getCompanionAuditLogOperationDetail(
+    sessionId: string,
+    auditLogId: number,
+    operationIndex: number,
+  ): Promise<AuditLogOperationDetailFragment | null>;
 };
 
 export type WithMateWindowObservabilityApi = {
+  reportRendererLog(input: RendererLogInput): void;
   getProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
   getSessionContextTelemetry(sessionId: string): Promise<SessionContextTelemetry | null>;
   getSessionBackgroundActivity(

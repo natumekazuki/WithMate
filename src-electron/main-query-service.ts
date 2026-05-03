@@ -10,6 +10,7 @@ import {
   type AuditLogDetailFragment,
   type AuditLogDetailSection,
   type AuditLogEntry,
+  type AuditLogOperationDetailFragment,
   type AuditLogSummary,
   type AuditLogSummaryPageRequest,
   type AuditLogSummaryPageResult,
@@ -36,6 +37,11 @@ type MainQueryServiceDeps = {
     auditLogId: number,
     section: AuditLogDetailSection,
   ): Awaitable<AuditLogDetailFragment | null>;
+  getAuditLogOperationDetail(
+    sessionId: string,
+    auditLogId: number,
+    operationIndex: number,
+  ): Awaitable<AuditLogOperationDetailFragment | null>;
   getAppSettings(): AppSettings;
   discoverSessionSkills(workspacePath: string, skillRootPath: string | null): Promise<DiscoveredSkill[]>;
   discoverSessionCustomAgents(workspacePath: string): Promise<DiscoveredCustomAgent[]>;
@@ -95,6 +101,14 @@ export class MainQueryService {
     section: AuditLogDetailSection,
   ): Promise<AuditLogDetailFragment | null> {
     return this.deps.getAuditLogDetailSection(sessionId, auditLogId, section);
+  }
+
+  async getSessionAuditLogOperationDetail(
+    sessionId: string,
+    auditLogId: number,
+    operationIndex: number,
+  ): Promise<AuditLogOperationDetailFragment | null> {
+    return this.deps.getAuditLogOperationDetail(sessionId, auditLogId, operationIndex);
   }
 
   async listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]> {

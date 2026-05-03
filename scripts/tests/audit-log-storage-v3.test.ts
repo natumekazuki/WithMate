@@ -6,6 +6,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { AUDIT_LOG_LOGICAL_PROMPT_PREVIEW_MAX_CHARS } from "../../src-electron/audit-log-detail-preview.js";
 import { AuditLogStorageV3 } from "../../src-electron/audit-log-storage-v3.js";
 import {
   CREATE_V3_SCHEMA_SQL,
@@ -192,6 +193,9 @@ describe("AuditLogStorageV3", () => {
       const assistantText = `${"a".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:assistant`;
       const operationDetails = `${"d".repeat(V3_DETAILS_PREVIEW_MAX_LENGTH + 20)}${sentinel}:operation`;
       const longSummary = "s".repeat(V3_OPERATION_SUMMARY_MAX_LENGTH + 20);
+      const logicalSystemText = `${"p".repeat(AUDIT_LOG_LOGICAL_PROMPT_PREVIEW_MAX_CHARS + 20)}${sentinel}:system`;
+      const logicalInputText = `${sentinel}:input`;
+      const logicalComposedText = `${logicalSystemText}\n\n${logicalInputText}`;
       const storage = new AuditLogStorageV3(dbPath, blobRootPath);
 
       try {
@@ -205,9 +209,9 @@ describe("AuditLogStorageV3", () => {
           approvalMode: DEFAULT_APPROVAL_MODE,
           threadId: "thread-v3",
           logicalPrompt: {
-            systemText: `${sentinel}:system`,
-            inputText: `${sentinel}:input`,
-            composedText: `${sentinel}:system\n\n${sentinel}:input`,
+            systemText: logicalSystemText,
+            inputText: logicalInputText,
+            composedText: logicalComposedText,
           },
           transportPayload: {
             summary: `${sentinel}:transport`,
@@ -236,7 +240,7 @@ describe("AuditLogStorageV3", () => {
         });
 
         assert.equal(created.assistantText, assistantText);
-        assert.equal(created.logicalPrompt.systemText, `${sentinel}:system`);
+        assert.equal(created.logicalPrompt.systemText, logicalSystemText);
         assert.equal(created.transportPayload?.fields[0]?.value, `${sentinel}:field`);
         assert.equal(created.rawItemsJson, JSON.stringify([{ kind: "assistant", text: `${sentinel}:raw-item` }]));
         assert.equal(created.operations[0]?.details, operationDetails);
@@ -258,7 +262,7 @@ describe("AuditLogStorageV3", () => {
         const detail = await storage.getSessionAuditLogDetail(sessionId, created.id);
         assert.ok(detail);
         assert.equal(detail.assistantText, assistantText);
-        assert.equal(detail.logicalPrompt.composedText, `${sentinel}:system\n\n${sentinel}:input`);
+        assert.equal(detail.logicalPrompt.composedText, logicalComposedText);
         assert.equal(detail.transportPayload?.summary, `${sentinel}:transport`);
         assert.equal(detail.rawItemsJson, JSON.stringify([{ kind: "assistant", text: `${sentinel}:raw-item` }]));
         assert.deepEqual(detail.usage, {
@@ -271,7 +275,10 @@ describe("AuditLogStorageV3", () => {
 
         const logicalFragment = await storage.getSessionAuditLogDetailSection(sessionId, created.id, "logical");
         assert.deepEqual(Object.keys(logicalFragment ?? {}).sort(), ["id", "logicalPrompt", "sessionId"]);
-        assert.equal(logicalFragment?.logicalPrompt?.inputText, `${sentinel}:input`);
+        assert.equal(logicalFragment?.logicalPrompt?.inputText, logicalInputText);
+        assert.equal(logicalFragment?.logicalPrompt?.systemText.length, AUDIT_LOG_LOGICAL_PROMPT_PREVIEW_MAX_CHARS + 30);
+        assert.match(logicalFragment?.logicalPrompt?.systemText ?? "", /truncated \d+ chars/);
+        assert.ok((logicalFragment?.logicalPrompt?.composedText.length ?? 0) <= AUDIT_LOG_LOGICAL_PROMPT_PREVIEW_MAX_CHARS + 64);
 
         const responseFragment = await storage.getSessionAuditLogDetailSection(sessionId, created.id, "response");
         assert.deepEqual(Object.keys(responseFragment ?? {}).sort(), ["assistantText", "id", "sessionId"]);
@@ -279,7 +286,11 @@ describe("AuditLogStorageV3", () => {
 
         const operationsFragment = await storage.getSessionAuditLogDetailSection(sessionId, created.id, "operations");
         assert.deepEqual(Object.keys(operationsFragment ?? {}).sort(), ["id", "operations", "sessionId"]);
-        assert.equal(operationsFragment?.operations?.[0]?.details, operationDetails);
+        assert.equal(operationsFragment?.operations?.[0]?.details, operationDetails.slice(0, V3_DETAILS_PREVIEW_MAX_LENGTH));
+
+        const operationDetail = await storage.getSessionAuditLogOperationDetail(sessionId, created.id, 0);
+        assert.equal(operationDetail?.details, operationDetails);
+        assert.equal(await storage.getSessionAuditLogOperationDetail("other-session", created.id, 0), null);
       } finally {
         storage.close();
       }
@@ -349,7 +360,7 @@ describe("AuditLogStorageV3", () => {
         }
 
         const blobStore = new TextBlobStore(blobRootPath);
-        assert.equal((await blobStore.getJson<{ systemText: string }>(detailBlobRow.logical_prompt_blob_id)).systemText, `${sentinel}:system`);
+        assert.equal((await blobStore.getJson<{ systemText: string }>(detailBlobRow.logical_prompt_blob_id)).systemText, logicalSystemText);
         assert.equal(await blobStore.getText(detailBlobRow.assistant_text_blob_id), assistantText);
         assert.equal(await blobStore.getText(operationRow.details_blob_id), operationDetails);
       } finally {

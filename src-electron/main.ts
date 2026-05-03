@@ -6,11 +6,13 @@ import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, crashReporter, dialog, ipcMain, screen, shell } from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
+import { summarizeAuditLogDetailFragment } from "../src/audit-log-detail-metrics.js";
 import {
   type AuditLogDetail,
   type AuditLogDetailFragment,
   type AuditLogDetailSection,
   type AuditLogEntry,
+  type AuditLogOperationDetailFragment,
   type AuditLogSummary,
   type AuditLogSummaryPageRequest,
   type AuditLogSummaryPageResult,
@@ -859,6 +861,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getSessionAuditLogDetail: (sessionId, auditLogId) => getSessionAuditLogDetail(sessionId, auditLogId),
                 getSessionAuditLogDetailSection: (sessionId, auditLogId, section) =>
                   getSessionAuditLogDetailSection(sessionId, auditLogId, section),
+                getSessionAuditLogOperationDetail: (sessionId, auditLogId, operationIndex) =>
+                  getSessionAuditLogOperationDetail(sessionId, auditLogId, operationIndex),
                 listCompanionAuditLogs: (sessionId) => listCompanionAuditLogs(sessionId),
                 listCompanionAuditLogSummaries: (sessionId) => listCompanionAuditLogSummaries(sessionId),
                 listCompanionAuditLogSummaryPage: (sessionId, request) =>
@@ -866,6 +870,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getCompanionAuditLogDetail: (sessionId, auditLogId) => getCompanionAuditLogDetail(sessionId, auditLogId),
                 getCompanionAuditLogDetailSection: (sessionId, auditLogId, section) =>
                   getCompanionAuditLogDetailSection(sessionId, auditLogId, section),
+                getCompanionAuditLogOperationDetail: (sessionId, auditLogId, operationIndex) =>
+                  getCompanionAuditLogOperationDetail(sessionId, auditLogId, operationIndex),
                 listSessionSkills: async (sessionId) => listSessionSkills(sessionId),
                 listSessionCustomAgents: async (sessionId) => listSessionCustomAgents(sessionId),
                 listWorkspaceSkills: async (providerId, workspacePath) =>
@@ -1030,6 +1036,8 @@ function requireMainQueryService(): MainQueryService {
       getAuditLogDetail: (sessionId, auditLogId) => requireAuditLogStorage().getSessionAuditLogDetail(sessionId, auditLogId),
       getAuditLogDetailSection: (sessionId, auditLogId, section) =>
         requireAuditLogStorage().getSessionAuditLogDetailSection(sessionId, auditLogId, section),
+      getAuditLogOperationDetail: (sessionId, auditLogId, operationIndex) =>
+        requireAuditLogStorage().getSessionAuditLogOperationDetail(sessionId, auditLogId, operationIndex),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       discoverSessionSkills,
       discoverSessionCustomAgents,
@@ -1917,7 +1925,109 @@ async function getSessionAuditLogDetailSection(
   auditLogId: number,
   section: AuditLogDetailSection,
 ): Promise<AuditLogDetailFragment | null> {
-  return requireMainQueryService().getSessionAuditLogDetailSection(sessionId, auditLogId, section);
+  const startedAt = Date.now();
+  writeAppLog({
+    level: "debug",
+    kind: "audit-log.detail.main-load-started",
+    process: "main",
+    message: "Audit log detail section main load started",
+    data: {
+      sessionId,
+      auditLogId,
+      section,
+      source: "session",
+    },
+  });
+
+  try {
+    const fragment = await requireMainQueryService().getSessionAuditLogDetailSection(sessionId, auditLogId, section);
+    writeAppLog({
+      level: "debug",
+      kind: "audit-log.detail.main-load-completed",
+      process: "main",
+      message: "Audit log detail section main load completed",
+      data: {
+        sessionId,
+        auditLogId,
+        section,
+        source: "session",
+        durationMs: Date.now() - startedAt,
+        metrics: summarizeAuditLogDetailFragment(fragment),
+      },
+    });
+    return fragment;
+  } catch (error) {
+    writeAppLog({
+      level: "error",
+      kind: "audit-log.detail.main-load-failed",
+      process: "main",
+      message: "Audit log detail section main load failed",
+      data: {
+        sessionId,
+        auditLogId,
+        section,
+        source: "session",
+        durationMs: Date.now() - startedAt,
+      },
+      error: appLogService.errorToLogError(error),
+    });
+    throw error;
+  }
+}
+
+async function getSessionAuditLogOperationDetail(
+  sessionId: string,
+  auditLogId: number,
+  operationIndex: number,
+): Promise<AuditLogOperationDetailFragment | null> {
+  const startedAt = Date.now();
+  writeAppLog({
+    level: "debug",
+    kind: "audit-log.operation-detail.main-load-started",
+    process: "main",
+    message: "Audit log operation detail main load started",
+    data: {
+      sessionId,
+      auditLogId,
+      operationIndex,
+      source: "session",
+    },
+  });
+
+  try {
+    const fragment = await requireMainQueryService().getSessionAuditLogOperationDetail(sessionId, auditLogId, operationIndex);
+    writeAppLog({
+      level: "debug",
+      kind: "audit-log.operation-detail.main-load-completed",
+      process: "main",
+      message: "Audit log operation detail main load completed",
+      data: {
+        sessionId,
+        auditLogId,
+        operationIndex,
+        source: "session",
+        durationMs: Date.now() - startedAt,
+        detailsChars: fragment?.details.length ?? 0,
+      },
+    });
+    return fragment;
+  } catch (error) {
+    writeAppLog({
+      level: "error",
+      kind: "audit-log.operation-detail.main-load-failed",
+      process: "main",
+      message: "Audit log operation detail main load failed",
+      data: {
+        sessionId,
+        auditLogId,
+        operationIndex,
+        source: "session",
+        durationMs: Date.now() - startedAt,
+      },
+      error: appLogService.errorToLogError(error),
+    });
+    throw error;
+  }
 }
 
 async function listCompanionAuditLogs(sessionId: string): Promise<AuditLogEntry[]> {
@@ -1944,7 +2054,109 @@ async function getCompanionAuditLogDetailSection(
   auditLogId: number,
   section: AuditLogDetailSection,
 ): Promise<AuditLogDetailFragment | null> {
-  return requireCompanionAuditLogStorage().getSessionAuditLogDetailSection(sessionId, auditLogId, section);
+  const startedAt = Date.now();
+  writeAppLog({
+    level: "debug",
+    kind: "audit-log.detail.main-load-started",
+    process: "main",
+    message: "Audit log detail section main load started",
+    data: {
+      sessionId,
+      auditLogId,
+      section,
+      source: "companion",
+    },
+  });
+
+  try {
+    const fragment = await requireCompanionAuditLogStorage().getSessionAuditLogDetailSection(sessionId, auditLogId, section);
+    writeAppLog({
+      level: "debug",
+      kind: "audit-log.detail.main-load-completed",
+      process: "main",
+      message: "Audit log detail section main load completed",
+      data: {
+        sessionId,
+        auditLogId,
+        section,
+        source: "companion",
+        durationMs: Date.now() - startedAt,
+        metrics: summarizeAuditLogDetailFragment(fragment),
+      },
+    });
+    return fragment;
+  } catch (error) {
+    writeAppLog({
+      level: "error",
+      kind: "audit-log.detail.main-load-failed",
+      process: "main",
+      message: "Audit log detail section main load failed",
+      data: {
+        sessionId,
+        auditLogId,
+        section,
+        source: "companion",
+        durationMs: Date.now() - startedAt,
+      },
+      error: appLogService.errorToLogError(error),
+    });
+    throw error;
+  }
+}
+
+async function getCompanionAuditLogOperationDetail(
+  sessionId: string,
+  auditLogId: number,
+  operationIndex: number,
+): Promise<AuditLogOperationDetailFragment | null> {
+  const startedAt = Date.now();
+  writeAppLog({
+    level: "debug",
+    kind: "audit-log.operation-detail.main-load-started",
+    process: "main",
+    message: "Audit log operation detail main load started",
+    data: {
+      sessionId,
+      auditLogId,
+      operationIndex,
+      source: "companion",
+    },
+  });
+
+  try {
+    const fragment = await requireCompanionAuditLogStorage().getSessionAuditLogOperationDetail(sessionId, auditLogId, operationIndex);
+    writeAppLog({
+      level: "debug",
+      kind: "audit-log.operation-detail.main-load-completed",
+      process: "main",
+      message: "Audit log operation detail main load completed",
+      data: {
+        sessionId,
+        auditLogId,
+        operationIndex,
+        source: "companion",
+        durationMs: Date.now() - startedAt,
+        detailsChars: fragment?.details.length ?? 0,
+      },
+    });
+    return fragment;
+  } catch (error) {
+    writeAppLog({
+      level: "error",
+      kind: "audit-log.operation-detail.main-load-failed",
+      process: "main",
+      message: "Audit log operation detail main load failed",
+      data: {
+        sessionId,
+        auditLogId,
+        operationIndex,
+        source: "companion",
+        durationMs: Date.now() - startedAt,
+      },
+      error: appLogService.errorToLogError(error),
+    });
+    throw error;
+  }
 }
 
 async function listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]> {

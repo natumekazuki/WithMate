@@ -74,6 +74,7 @@ test("MainQueryService は session skills/custom agents と preview/search/termi
     getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
     getAuditLogDetail: () => null,
     getAuditLogDetailSection: () => null,
+    getAuditLogOperationDetail: () => null,
     getAppSettings: () =>
       ({
         providers: {},
@@ -147,6 +148,7 @@ test("MainQueryService は path 参照なし draft の preview を早期 return 
     getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
     getAuditLogDetail: () => null,
     getAuditLogDetailSection: () => null,
+    getAuditLogOperationDetail: () => null,
     getAppSettings: () =>
       ({
         providers: {},
@@ -187,6 +189,7 @@ test("MainQueryService は一覧を summary に射影して detail payload を�
     getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
     getAuditLogDetail: () => null,
     getAuditLogDetailSection: () => null,
+    getAuditLogOperationDetail: () => null,
     getAppSettings: () =>
       ({
         providers: {},
@@ -232,6 +235,7 @@ test("MainQueryService は対象 session detail だけを clone して返す", a
     getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
     getAuditLogDetail: () => null,
     getAuditLogDetailSection: () => null,
+    getAuditLogOperationDetail: () => null,
     getAppSettings: () =>
       ({
         providers: {},
