@@ -30,6 +30,20 @@ export type RunningDetailsEntry = {
   details?: string;
 };
 
+const COMMAND_DETAILS_PREVIEW_MAX_CHARS = 4000;
+
+function previewCommandDetails(details: string | undefined): string | undefined {
+  if (!details) {
+    return undefined;
+  }
+
+  if (details.length <= COMMAND_DETAILS_PREVIEW_MAX_CHARS) {
+    return details;
+  }
+
+  return `${details.slice(0, COMMAND_DETAILS_PREVIEW_MAX_CHARS)}\n\n... truncated ${details.length - COMMAND_DETAILS_PREVIEW_MAX_CHARS} chars`;
+}
+
 export type CopilotQuotaProjection = {
   snapshot: ProviderQuotaSnapshot | null;
   remainingPercentLabel: string;
@@ -112,7 +126,7 @@ export function buildLatestCommandView({
     return {
       status: latestLiveCommandStep.status,
       summary: latestLiveCommandStep.summary,
-      details: latestLiveCommandStep.details,
+      details: previewCommandDetails(latestLiveCommandStep.details),
       sourceLabel: "live",
       riskLabels: buildCommandRiskLabels(latestLiveCommandStep.summary),
     };
@@ -126,7 +140,7 @@ export function buildLatestCommandView({
           ? "canceled"
           : "completed",
       summary: latestAuditCommandOperation.summary,
-      details: latestAuditCommandOperation.details,
+      details: previewCommandDetails(latestAuditCommandOperation.details),
       sourceLabel: "latest run",
       riskLabels: buildCommandRiskLabels(latestAuditCommandOperation.summary),
     };
@@ -154,7 +168,7 @@ export function buildRunningDetailsEntries({
       type: step.type,
       status: step.status,
       summary: step.summary,
-      details: step.details,
+      details: previewCommandDetails(step.details),
     }));
 }
 

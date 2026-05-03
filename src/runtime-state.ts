@@ -39,6 +39,13 @@ export type AuditLogOperation = {
   details?: string;
 };
 
+export type AuditLogOperationDetailFragment = {
+  id: number;
+  sessionId: string;
+  operationIndex: number;
+  details: string;
+};
+
 export type AuditLogUsage = {
   inputTokens: number;
   cachedInputTokens: number;

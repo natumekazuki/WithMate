@@ -6,6 +6,7 @@ import {
   type AuditLogDetailSection,
   type AuditLogEntry,
   type AuditLogicalPrompt,
+  type AuditLogOperationDetailFragment,
   type AuditLogOperation,
   type AuditLogPhase,
   type AuditLogSummary,
@@ -16,6 +17,7 @@ import {
 } from "../src/app-state.js";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
 import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
+import { previewAuditLogicalPrompt } from "./audit-log-detail-preview.js";
 import {
   V3_DETAILS_PREVIEW_MAX_LENGTH,
   V3_OPERATION_SUMMARY_MAX_LENGTH,
@@ -368,6 +370,22 @@ const LIST_AUDIT_LOG_OPERATIONS_SQL = `
   FROM audit_log_operations AS o
   WHERE o.audit_log_id = ?
   ORDER BY o.seq ASC
+`;
+
+const GET_AUDIT_LOG_OPERATION_SQL = `
+  SELECT
+    o.audit_log_id,
+    o.seq,
+    o.operation_type,
+    o.summary,
+    o.details_preview,
+    o.details_blob_id
+  FROM audit_log_operations AS o
+  INNER JOIN audit_logs AS a
+    ON a.id = o.audit_log_id
+  WHERE a.session_id = ?
+    AND o.audit_log_id = ?
+    AND o.seq = ?
 `;
 
 const COUNT_SESSION_AUDIT_LOGS_SQL = `
@@ -848,9 +866,11 @@ export class AuditLogStorageV3 {
 
     switch (section) {
       case "logical":
-        fragment.logicalPrompt = row.logical_prompt_blob_id
-          ? await this.blobStore.getJson<AuditLogicalPrompt>(row.logical_prompt_blob_id)
-          : DEFAULT_LOGICAL_PROMPT;
+        fragment.logicalPrompt = previewAuditLogicalPrompt(
+          row.logical_prompt_blob_id
+            ? await this.blobStore.getJson<AuditLogicalPrompt>(row.logical_prompt_blob_id)
+            : DEFAULT_LOGICAL_PROMPT,
+        );
         break;
       case "transport":
         fragment.transportPayload = row.transport_payload_blob_id
@@ -866,9 +886,7 @@ export class AuditLogStorageV3 {
         fragment.operations = await Promise.all(operationRows.map(async (operationRow) => ({
           type: operationRow.operation_type,
           summary: operationRow.summary,
-          details: operationRow.details_blob_id
-            ? await this.blobStore.getText(operationRow.details_blob_id)
-            : operationRow.details_preview || undefined,
+          details: operationRow.details_preview || undefined,
         })));
         break;
       case "raw":
@@ -883,6 +901,32 @@ export class AuditLogStorageV3 {
     }
 
     return fragment;
+  }
+
+  async getSessionAuditLogOperationDetail(
+    sessionId: string,
+    auditLogId: number,
+    operationIndex: number,
+  ): Promise<AuditLogOperationDetailFragment | null> {
+    if (!Number.isInteger(operationIndex) || operationIndex < 0) {
+      return null;
+    }
+
+    const operationRow = this.withDb((db) =>
+      db.prepare(GET_AUDIT_LOG_OPERATION_SQL).get(sessionId, auditLogId, operationIndex) as AuditLogOperationRow | undefined
+    );
+    if (!operationRow) {
+      return null;
+    }
+
+    return {
+      id: auditLogId,
+      sessionId,
+      operationIndex,
+      details: operationRow.details_blob_id
+        ? await this.blobStore.getText(operationRow.details_blob_id)
+        : operationRow.details_preview,
+    };
   }
 
   async createAuditLog(input: CreateAuditLogInput): Promise<AuditLogEntry> {

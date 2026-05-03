@@ -6,6 +6,7 @@ import {
   type AuditLogDetailSection,
   type AuditLogEntry,
   type AuditLogicalPrompt,
+  type AuditLogOperationDetailFragment,
   type AuditLogOperation,
   type AuditLogPhase,
   type AuditLogSummary,
@@ -20,6 +21,7 @@ import {
   CREATE_AUDIT_LOGS_TABLE_SQL,
   LEGACY_AUDIT_LOG_COLUMN_DEFINITIONS,
 } from "./database-schema-v1.js";
+import { previewAuditLogicalPrompt } from "./audit-log-detail-preview.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 type AuditLogRow = {
@@ -273,10 +275,10 @@ function entryToAuditLogDetail(entry: AuditLogEntry): AuditLogDetail {
 }
 
 function entryToAuditLogDetailFragment(entry: AuditLogEntry, section: AuditLogDetailSection): AuditLogDetailFragment {
-  const base = { id: entry.id, sessionId: entry.sessionId };
+    const base = { id: entry.id, sessionId: entry.sessionId };
   switch (section) {
     case "logical":
-      return { ...base, logicalPrompt: entry.logicalPrompt };
+      return { ...base, logicalPrompt: previewAuditLogicalPrompt(entry.logicalPrompt) };
     case "transport":
       return { ...base, transportPayload: entry.transportPayload };
     case "response":
@@ -532,6 +534,31 @@ export class AuditLogStorage {
   ): AuditLogDetailFragment | null {
     const row = this.getStatement.get(sessionId, auditLogId) as AuditLogRow | undefined;
     return row ? entryToAuditLogDetailFragment(rowToAuditLogEntry(row), section) : null;
+  }
+
+  getSessionAuditLogOperationDetail(
+    sessionId: string,
+    auditLogId: number,
+    operationIndex: number,
+  ): AuditLogOperationDetailFragment | null {
+    if (!Number.isInteger(operationIndex) || operationIndex < 0) {
+      return null;
+    }
+
+    const row = this.getStatement.get(sessionId, auditLogId) as AuditLogRow | undefined;
+    if (!row) {
+      return null;
+    }
+
+    const operation = rowToAuditLogEntry(row).operations[operationIndex];
+    return operation
+      ? {
+          id: auditLogId,
+          sessionId,
+          operationIndex,
+          details: operation.details ?? "",
+        }
+      : null;
   }
 
   createAuditLog(input: CreateAuditLogInput): AuditLogEntry {

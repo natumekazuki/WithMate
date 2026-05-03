@@ -52,6 +52,7 @@ export type AuditLogStorageRead = AwaitableStorageMethods<
   | "listSessionAuditLogSummaryPage"
   | "getSessionAuditLogDetail"
   | "getSessionAuditLogDetailSection"
+  | "getSessionAuditLogOperationDetail"
 > & Pick<AuditLogStorage, "close">;
 export type AuditLogStorageWrite = AwaitableStorageMethods<
   AuditLogStorage,

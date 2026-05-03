@@ -6,6 +6,7 @@ import type {
   AuditLogDetailFragment,
   AuditLogDetailSection,
   AuditLogEntry,
+  AuditLogOperationDetailFragment,
   AuditLogSummary,
   AuditLogSummaryPageRequest,
   AuditLogSummaryPageResult,
@@ -70,8 +71,10 @@ import {
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
+  WITHMATE_GET_COMPANION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
+  WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
@@ -170,6 +173,11 @@ export type MainIpcRegistrationDeps = {
     auditLogId: number,
     section: AuditLogDetailSection,
   ): Awaitable<AuditLogDetailFragment | null>;
+  getSessionAuditLogOperationDetail(
+    sessionId: string,
+    auditLogId: number,
+    operationIndex: number,
+  ): Awaitable<AuditLogOperationDetailFragment | null>;
   listCompanionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
   listCompanionAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
   listCompanionAuditLogSummaryPage(
@@ -182,6 +190,11 @@ export type MainIpcRegistrationDeps = {
     auditLogId: number,
     section: AuditLogDetailSection,
   ): Awaitable<AuditLogDetailFragment | null>;
+  getCompanionAuditLogOperationDetail(
+    sessionId: string,
+    auditLogId: number,
+    operationIndex: number,
+  ): Awaitable<AuditLogOperationDetailFragment | null>;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
@@ -310,11 +323,13 @@ type MainIpcSessionQueryDeps = Pick<
   | "listSessionAuditLogSummaryPage"
   | "getSessionAuditLogDetail"
   | "getSessionAuditLogDetailSection"
+  | "getSessionAuditLogOperationDetail"
   | "listCompanionAuditLogs"
   | "listCompanionAuditLogSummaries"
   | "listCompanionAuditLogSummaryPage"
   | "getCompanionAuditLogDetail"
   | "getCompanionAuditLogDetailSection"
+  | "getCompanionAuditLogOperationDetail"
   | "listSessionSkills"
   | "listSessionCustomAgents"
   | "listWorkspaceSkills"
@@ -489,6 +504,11 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     (_event, sessionId: string, auditLogId: number, section: AuditLogDetailSection) =>
       deps.getSessionAuditLogDetailSection(sessionId, auditLogId, section),
   );
+  ipcMain.handle(
+    WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
+    (_event, sessionId: string, auditLogId: number, operationIndex: number) =>
+      deps.getSessionAuditLogOperationDetail(sessionId, auditLogId, operationIndex),
+  );
   ipcMain.handle(WITHMATE_LIST_COMPANION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => deps.listCompanionAuditLogs(sessionId));
   ipcMain.handle(WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARIES_CHANNEL, (_event, sessionId: string) =>
     deps.listCompanionAuditLogSummaries(sessionId),
@@ -505,6 +525,11 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
     (_event, sessionId: string, auditLogId: number, section: AuditLogDetailSection) =>
       deps.getCompanionAuditLogDetailSection(sessionId, auditLogId, section),
+  );
+  ipcMain.handle(
+    WITHMATE_GET_COMPANION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
+    (_event, sessionId: string, auditLogId: number, operationIndex: number) =>
+      deps.getCompanionAuditLogOperationDetail(sessionId, auditLogId, operationIndex),
   );
   ipcMain.handle(WITHMATE_LIST_SESSION_SKILLS_CHANNEL, async (_event, sessionId: string) => deps.listSessionSkills(sessionId));
   ipcMain.handle(WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL, async (_event, sessionId: string) =>

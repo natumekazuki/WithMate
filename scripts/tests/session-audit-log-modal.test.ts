@@ -43,6 +43,7 @@ describe("SessionAuditLogModal", () => {
         open: true,
         entries,
         details: {},
+        operationDetails: {},
         hasMore: true,
         loadingMore: false,
         total: 100,
@@ -55,8 +56,45 @@ describe("SessionAuditLogModal", () => {
 
     const renderedCardCount = (html.match(/audit-log-card/g) ?? []).length;
     assert.equal(renderedCardCount, 50);
-    assert.match(html, /operation 1/);
     assert.doesNotMatch(html, /audit-log-list-spacer/);
     assert.match(html, /Load More/);
+  });
+
+  it("Operations detail は operation ごとの fold を開くまで本文を描画しない", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SessionAuditLogModal, {
+        open: true,
+        entries: [createAuditLogSummary(1)],
+        details: {
+          1: {
+            detail: {
+              id: 1,
+              sessionId: "session-1",
+              operations: [{
+                type: "analysis",
+                summary: "operation 1",
+                details: "OPERATION_DETAIL_SENTINEL",
+              }],
+            },
+            loadedSections: { operations: true },
+            loadingSections: {},
+            errorMessages: {},
+          },
+        },
+        operationDetails: {},
+        hasMore: false,
+        loadingMore: false,
+        total: 1,
+        errorMessage: null,
+        onLoadMore() {},
+        onLoadDetail() {},
+        onLoadOperationDetail() {},
+        onLoadOperationDetail() {},
+        onClose() {},
+      }),
+    );
+
+    assert.doesNotMatch(html, /Details/);
+    assert.doesNotMatch(html, /OPERATION_DETAIL_SENTINEL/);
   });
 });

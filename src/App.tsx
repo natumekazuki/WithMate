@@ -231,7 +231,7 @@ function buildDisplayedMessagesScrollSignature(messages: Message[]): string {
               .join("\u001f"),
             message.artifact.operationTimeline
               ? message.artifact.operationTimeline
-                  .map((operation) => `${operation.type}:${operation.summary}:${operation.details ?? ""}`)
+                  .map((operation) => `${operation.type}:${operation.summary}:${operation.details?.length ?? 0}`)
                   .join("\u001f")
               : "",
           ].join("\u001e")
@@ -588,10 +588,12 @@ function AgentSessionWindowApp() {
     setAuditLogsOpen,
     auditLogsState,
     auditLogDetails,
+    auditLogOperationDetails,
     persistedEntries: selectedSessionAuditLogs,
     displayedEntries: displayedSessionAuditLogs,
     handleLoadMoreAuditLogs,
     handleLoadAuditLogDetail,
+    handleLoadAuditLogOperationDetail,
   } = useSessionAuditLogs({
     withmateApi,
     selectedSession,
@@ -2783,6 +2785,7 @@ function AgentSessionWindowApp() {
             open={auditLogsOpen}
             entries={displayedSessionAuditLogs}
             details={auditLogDetails}
+            operationDetails={auditLogOperationDetails}
             hasMore={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.hasMore : false}
             loadingMore={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.loading : false}
             total={auditLogsState.ownerSessionId === selectedSessionId
@@ -2791,6 +2794,7 @@ function AgentSessionWindowApp() {
             errorMessage={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.errorMessage : null}
             onLoadMore={handleLoadMoreAuditLogs}
             onLoadDetail={handleLoadAuditLogDetail}
+            onLoadOperationDetail={handleLoadAuditLogOperationDetail}
             onClose={() => setAuditLogsOpen(false)}
           />
         </>

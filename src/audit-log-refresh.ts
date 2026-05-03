@@ -99,6 +99,17 @@ function buildSyntheticRunningAuditLog(
   } as AuditLogSummary;
 }
 
+function suppressIncompleteRunningDetail(entry: AuditLogSummary): AuditLogSummary {
+  if (entry.phase !== "running") {
+    return entry;
+  }
+
+  return {
+    ...entry,
+    detailAvailable: false,
+  };
+}
+
 export function buildAuditLogRefreshSignature(input: BuildAuditLogRefreshSignatureInput): string {
   if (!input.selectedSession) {
     return "no-session";
@@ -123,8 +134,12 @@ export function buildAuditLogRefreshSignature(input: BuildAuditLogRefreshSignatu
 export function buildDisplayedAuditLogs(input: BuildDisplayedAuditLogsInput): AuditLogSummary[] {
   // live run が無い、または session 自体が running でない場合は persisted をそのまま返す
   const liveRun = input.liveRun;
-  if (!liveRun || input.selectedSession?.runState !== "running") {
-    return input.persistedEntries;
+  if (!liveRun) {
+    return input.persistedEntries.map(suppressIncompleteRunningDetail);
+  }
+
+  if (input.selectedSession?.runState !== "running") {
+    return input.persistedEntries.map(suppressIncompleteRunningDetail);
   }
 
   // persisted に running row がある場合は live state でマージ

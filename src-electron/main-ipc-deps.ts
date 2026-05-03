@@ -5,6 +5,7 @@ import type {
   AuditLogDetailFragment,
   AuditLogDetailSection,
   AuditLogEntry,
+  AuditLogOperationDetailFragment,
   AuditLogSummary,
   AuditLogSummaryPageRequest,
   AuditLogSummaryPageResult,
@@ -103,6 +104,11 @@ export type MainIpcSessionQueryDepsArgs = {
     auditLogId: number,
     section: AuditLogDetailSection,
   ): Awaitable<AuditLogDetailFragment | null>;
+  getSessionAuditLogOperationDetail(
+    sessionId: string,
+    auditLogId: number,
+    operationIndex: number,
+  ): Awaitable<AuditLogOperationDetailFragment | null>;
   listCompanionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
   listCompanionAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
   listCompanionAuditLogSummaryPage(
@@ -115,6 +121,11 @@ export type MainIpcSessionQueryDepsArgs = {
     auditLogId: number,
     section: AuditLogDetailSection,
   ): Awaitable<AuditLogDetailFragment | null>;
+  getCompanionAuditLogOperationDetail(
+    sessionId: string,
+    auditLogId: number,
+    operationIndex: number,
+  ): Awaitable<AuditLogOperationDetailFragment | null>;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
@@ -247,11 +258,13 @@ export function createMainIpcRegistrationDeps(
     listSessionAuditLogSummaryPage: args.sessionQuery.listSessionAuditLogSummaryPage,
     getSessionAuditLogDetail: args.sessionQuery.getSessionAuditLogDetail,
     getSessionAuditLogDetailSection: args.sessionQuery.getSessionAuditLogDetailSection,
+    getSessionAuditLogOperationDetail: args.sessionQuery.getSessionAuditLogOperationDetail,
     listCompanionAuditLogs: args.sessionQuery.listCompanionAuditLogs,
     listCompanionAuditLogSummaries: args.sessionQuery.listCompanionAuditLogSummaries,
     listCompanionAuditLogSummaryPage: args.sessionQuery.listCompanionAuditLogSummaryPage,
     getCompanionAuditLogDetail: args.sessionQuery.getCompanionAuditLogDetail,
     getCompanionAuditLogDetailSection: args.sessionQuery.getCompanionAuditLogDetailSection,
+    getCompanionAuditLogOperationDetail: args.sessionQuery.getCompanionAuditLogOperationDetail,
     listSessionSkills: args.sessionQuery.listSessionSkills,
     listSessionCustomAgents: args.sessionQuery.listSessionCustomAgents,
     listWorkspaceSkills: args.sessionQuery.listWorkspaceSkills,
