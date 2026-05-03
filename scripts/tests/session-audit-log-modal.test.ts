@@ -50,6 +50,7 @@ describe("SessionAuditLogModal", () => {
         errorMessage: null,
         onLoadMore() {},
         onLoadDetail() {},
+        onLoadOperationDetail() {},
         onClose() {},
       }),
     );
@@ -88,7 +89,6 @@ describe("SessionAuditLogModal", () => {
         errorMessage: null,
         onLoadMore() {},
         onLoadDetail() {},
-        onLoadOperationDetail() {},
         onLoadOperationDetail() {},
         onClose() {},
       }),

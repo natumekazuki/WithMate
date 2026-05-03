@@ -27,22 +27,26 @@ export class WindowErrorBoundary extends Component<WindowErrorBoundaryProps, Win
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
     console.error(`[${this.props.windowLabel}] render failed`, error, errorInfo);
-    getWithMateApi()?.reportRendererLog({
-      level: "error",
-      kind: "renderer.render-failed",
-      message: `${this.props.windowLabel} render failed`,
-      url: window.location.href,
-      data: {
-        boundary: "window",
-        windowLabel: this.props.windowLabel,
-        componentStack: errorInfo.componentStack,
-      },
-      error: {
-        name: error.name,
-        message: error.message || "render failed",
-        stack: error.stack,
-      },
-    });
+    try {
+      getWithMateApi()?.reportRendererLog({
+        level: "error",
+        kind: "renderer.render-failed",
+        message: `${this.props.windowLabel} render failed`,
+        url: window.location.href,
+        data: {
+          boundary: "window",
+          windowLabel: this.props.windowLabel,
+          componentStack: errorInfo.componentStack,
+        },
+        error: {
+          name: error.name,
+          message: error.message || "render failed",
+          stack: error.stack,
+        },
+      });
+    } catch (reportError) {
+      console.error(`[${this.props.windowLabel}] render failure logging failed`, reportError);
+    }
   }
 
   private handleRetry = () => {

@@ -1,4 +1,4 @@
-import { Component, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type UIEventHandler } from "react";
+import { Component, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type SetStateAction, type UIEventHandler } from "react";
 
 import type {
   AuditLogDetailFragment,
@@ -479,6 +479,52 @@ function previewAuditLogText(value: string, maxChars = AUDIT_LOG_TEXT_PREVIEW_MA
 function AuditLogTextPreview({ value, maxChars }: { value: string; maxChars?: number }) {
   const preview = useMemo(() => previewAuditLogText(value, maxChars), [maxChars, value]);
   return <pre>{preview}</pre>;
+}
+
+function AuditLogLogicalPromptFieldFold({
+  entry,
+  field,
+  label,
+  value,
+  open,
+  setOpenAuditLogFolds,
+}: {
+  entry: Pick<AuditLogSummary, "id" | "sessionId">;
+  field: AuditLogLogicalPromptField;
+  label: string;
+  value: string;
+  open: boolean;
+  setOpenAuditLogFolds: Dispatch<SetStateAction<Record<string, boolean>>>;
+}) {
+  return (
+    <details
+      className="audit-log-raw"
+      open={open}
+      onToggle={(event) => {
+        const openFold = event.currentTarget.open;
+        setOpenAuditLogFolds((current) => {
+          const key = auditLogLogicalPromptFieldFoldKey(entry, field);
+          if (openFold) {
+            return current[key] ? current : { ...current, [key]: true };
+          }
+          if (!current[key]) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[key];
+          return next;
+        });
+      }}
+    >
+      <summary>{label} ({value.length.toLocaleString()} chars)</summary>
+      {open ? (
+        <AuditLogTextPreview
+          value={value || "-"}
+          maxChars={AUDIT_LOG_LOGICAL_FIELD_PREVIEW_MAX_CHARS}
+        />
+      ) : null}
+    </details>
+  );
 }
 
 function auditLogFoldKey(entry: Pick<AuditLogSummary, "id" | "sessionId">, section: AuditLogFoldSection): string {
@@ -1025,87 +1071,30 @@ export function SessionAuditLogModal({
                   {logicalOpen ? <section className="audit-log-section">
                     {detail?.logicalPrompt ? (
                       <div className="audit-log-logical-fields">
-                        <details
-                          className="audit-log-raw"
+                        <AuditLogLogicalPromptFieldFold
+                          entry={entry}
+                          field="system"
+                          label="System"
+                          value={detail.logicalPrompt.systemText}
                           open={logicalSystemOpen}
-                          onToggle={(event) => {
-                            const openFold = event.currentTarget.open;
-                            setOpenAuditLogFolds((current) => {
-                              const key = auditLogLogicalPromptFieldFoldKey(entry, "system");
-                              if (openFold) {
-                                return current[key] ? current : { ...current, [key]: true };
-                              }
-                              if (!current[key]) {
-                                return current;
-                              }
-                              const next = { ...current };
-                              delete next[key];
-                              return next;
-                            });
-                          }}
-                        >
-                          <summary>System ({detail.logicalPrompt.systemText.length.toLocaleString()} chars)</summary>
-                          {logicalSystemOpen ? (
-                            <AuditLogTextPreview
-                              value={detail.logicalPrompt.systemText || "-"}
-                              maxChars={AUDIT_LOG_LOGICAL_FIELD_PREVIEW_MAX_CHARS}
-                            />
-                          ) : null}
-                        </details>
-                        <details
-                          className="audit-log-raw"
+                          setOpenAuditLogFolds={setOpenAuditLogFolds}
+                        />
+                        <AuditLogLogicalPromptFieldFold
+                          entry={entry}
+                          field="input"
+                          label="Input"
+                          value={detail.logicalPrompt.inputText}
                           open={logicalInputOpen}
-                          onToggle={(event) => {
-                            const openFold = event.currentTarget.open;
-                            setOpenAuditLogFolds((current) => {
-                              const key = auditLogLogicalPromptFieldFoldKey(entry, "input");
-                              if (openFold) {
-                                return current[key] ? current : { ...current, [key]: true };
-                              }
-                              if (!current[key]) {
-                                return current;
-                              }
-                              const next = { ...current };
-                              delete next[key];
-                              return next;
-                            });
-                          }}
-                        >
-                          <summary>Input ({detail.logicalPrompt.inputText.length.toLocaleString()} chars)</summary>
-                          {logicalInputOpen ? (
-                            <AuditLogTextPreview
-                              value={detail.logicalPrompt.inputText || "-"}
-                              maxChars={AUDIT_LOG_LOGICAL_FIELD_PREVIEW_MAX_CHARS}
-                            />
-                          ) : null}
-                        </details>
-                        <details
-                          className="audit-log-raw"
+                          setOpenAuditLogFolds={setOpenAuditLogFolds}
+                        />
+                        <AuditLogLogicalPromptFieldFold
+                          entry={entry}
+                          field="composed"
+                          label="Composed"
+                          value={detail.logicalPrompt.composedText}
                           open={logicalComposedOpen}
-                          onToggle={(event) => {
-                            const openFold = event.currentTarget.open;
-                            setOpenAuditLogFolds((current) => {
-                              const key = auditLogLogicalPromptFieldFoldKey(entry, "composed");
-                              if (openFold) {
-                                return current[key] ? current : { ...current, [key]: true };
-                              }
-                              if (!current[key]) {
-                                return current;
-                              }
-                              const next = { ...current };
-                              delete next[key];
-                              return next;
-                            });
-                          }}
-                        >
-                          <summary>Composed ({detail.logicalPrompt.composedText.length.toLocaleString()} chars)</summary>
-                          {logicalComposedOpen ? (
-                            <AuditLogTextPreview
-                              value={detail.logicalPrompt.composedText || "-"}
-                              maxChars={AUDIT_LOG_LOGICAL_FIELD_PREVIEW_MAX_CHARS}
-                            />
-                          ) : null}
-                        </details>
+                          setOpenAuditLogFolds={setOpenAuditLogFolds}
+                        />
                       </div>
                     ) : (
                       <p className="audit-log-empty">

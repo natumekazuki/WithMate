@@ -28,12 +28,15 @@ type AuditLogDetailLoadState = {
   loadedSections: Partial<Record<AuditLogDetailSection, boolean>>;
   loadingSections: Partial<Record<AuditLogDetailSection, boolean>>;
   loadingStartedAtMs: Partial<Record<AuditLogDetailSection, number>>;
+  loadingRequestIds: Partial<Record<AuditLogDetailSection, string>>;
   errorMessages: Partial<Record<AuditLogDetailSection, string>>;
 };
 
 type AuditLogOperationDetailLoadState = {
   detail: AuditLogOperationDetailFragment | null;
   loading: boolean;
+  loadingStartedAtMs: number | null;
+  requestId: string | null;
   errorMessage: string | null;
 };
 
@@ -75,6 +78,14 @@ function isAuditLogDetailLoadingStale(
 ): boolean {
   const startedAtMs = state.loadingStartedAtMs[section];
   return typeof startedAtMs !== "number" || currentTimeMs - startedAtMs > AUDIT_LOG_DETAIL_STALE_LOADING_MS;
+}
+
+function isAuditLogOperationDetailLoadingStale(
+  state: AuditLogOperationDetailLoadState,
+  currentTimeMs = nowMs(),
+): boolean {
+  return typeof state.loadingStartedAtMs !== "number"
+    || currentTimeMs - state.loadingStartedAtMs > AUDIT_LOG_DETAIL_STALE_LOADING_MS;
 }
 
 function reportAuditLogDetailLog(
@@ -261,17 +272,51 @@ export function useSessionAuditLogs({
 
           const loadingSections = { ...state.loadingSections };
           const loadingStartedAtMs = { ...state.loadingStartedAtMs };
+          const loadingRequestIds = { ...state.loadingRequestIds };
+          let entryChanged = false;
           for (const section of Object.keys(loadingSections) as AuditLogDetailSection[]) {
             if (loadingSections[section] && isAuditLogDetailLoadingStale(state, section, currentTimeMs)) {
               loadingSections[section] = false;
               delete loadingStartedAtMs[section];
+              delete loadingRequestIds[section];
+              entryChanged = true;
               changed = true;
             }
           }
 
-          next[auditLogId] = changed
-            ? { ...state, loadingSections, loadingStartedAtMs }
+          next[auditLogId] = entryChanged
+            ? { ...state, loadingSections, loadingStartedAtMs, loadingRequestIds }
             : state;
+        }
+
+        return changed ? next : current;
+      });
+
+      setAuditLogOperationDetails((current) => {
+        let changed = false;
+        const next: Record<string, AuditLogOperationDetailLoadState> = {};
+
+        for (const [key, state] of Object.entries(current)) {
+          const [, auditLogIdText] = key.split(":");
+          const auditLogId = Number(auditLogIdText);
+          if (!visibleIds.has(auditLogId)) {
+            changed = true;
+            continue;
+          }
+
+          if (state.loading && isAuditLogOperationDetailLoadingStale(state, currentTimeMs)) {
+            changed = true;
+            next[key] = {
+              ...state,
+              loading: false,
+              loadingStartedAtMs: null,
+              requestId: null,
+              errorMessage: "operation detail の取得がタイムアウトしたよ。もう一度開いてね。",
+            };
+            continue;
+          }
+
+          next[key] = state;
         }
 
         return changed ? next : current;
@@ -375,6 +420,10 @@ export function useSessionAuditLogs({
             ...existing?.loadingStartedAtMs,
             [section]: startedAtMs,
           },
+          loadingRequestIds: {
+            ...existing?.loadingRequestIds,
+            [section]: requestId,
+          },
           errorMessages: {
             ...existing?.errorMessages,
             [section]: undefined,
@@ -406,7 +455,6 @@ export function useSessionAuditLogs({
     try {
       void auditLogApi.getSessionAuditLogDetailSection(entry.sessionId, entry.id, section).then(
         (fragment) => {
-          const existingState = auditLogDetails[entry.id];
           reportAuditLogDetailLog(withmateApi, {
             kind: "audit-log.detail.ipc-completed",
             message: "Audit log detail IPC completed",
@@ -421,12 +469,18 @@ export function useSessionAuditLogs({
             },
           });
           setAuditLogDetails((current) => {
+            if (current[entry.id]?.loadingRequestIds[section] !== requestId) {
+              return current;
+            }
+
             const loadingStartedAtMs = { ...current[entry.id]?.loadingStartedAtMs };
+            const loadingRequestIds = { ...current[entry.id]?.loadingRequestIds };
             delete loadingStartedAtMs[section];
+            delete loadingRequestIds[section];
             return {
               ...current,
               [entry.id]: {
-                detail: fragment ? { ...(current[entry.id]?.detail ?? existingState?.detail ?? {}), ...fragment } : current[entry.id]?.detail ?? existingState?.detail ?? null,
+                detail: fragment ? { ...(current[entry.id]?.detail ?? {}), ...fragment } : current[entry.id]?.detail ?? null,
                 loadedSections: {
                   ...current[entry.id]?.loadedSections,
                   [section]: fragment !== null,
@@ -436,6 +490,7 @@ export function useSessionAuditLogs({
                   [section]: false,
                 },
                 loadingStartedAtMs,
+                loadingRequestIds,
                 errorMessages: {
                   ...current[entry.id]?.errorMessages,
                   [section]: fragment ? undefined : "audit log detail が見つからなかったよ。",
@@ -469,8 +524,14 @@ export function useSessionAuditLogs({
               : { message: "audit log detail IPC failed" },
           });
           setAuditLogDetails((current) => {
+            if (current[entry.id]?.loadingRequestIds[section] !== requestId) {
+              return current;
+            }
+
             const loadingStartedAtMs = { ...current[entry.id]?.loadingStartedAtMs };
+            const loadingRequestIds = { ...current[entry.id]?.loadingRequestIds };
             delete loadingStartedAtMs[section];
+            delete loadingRequestIds[section];
             return {
               ...current,
               [entry.id]: {
@@ -481,6 +542,7 @@ export function useSessionAuditLogs({
                   [section]: false,
                 },
                 loadingStartedAtMs,
+                loadingRequestIds,
                 errorMessages: {
                   ...current[entry.id]?.errorMessages,
                   [section]: error instanceof Error ? error.message : "audit log detail の取得に失敗したよ。",
@@ -508,8 +570,14 @@ export function useSessionAuditLogs({
           : { message: "audit log detail load threw" },
       });
       setAuditLogDetails((current) => {
+        if (current[entry.id]?.loadingRequestIds[section] !== requestId) {
+          return current;
+        }
+
         const loadingStartedAtMs = { ...current[entry.id]?.loadingStartedAtMs };
+        const loadingRequestIds = { ...current[entry.id]?.loadingRequestIds };
         delete loadingStartedAtMs[section];
+        delete loadingRequestIds[section];
         return {
           ...current,
           [entry.id]: {
@@ -520,6 +588,7 @@ export function useSessionAuditLogs({
               [section]: false,
             },
             loadingStartedAtMs,
+            loadingRequestIds,
             errorMessages: {
               ...current[entry.id]?.errorMessages,
               [section]: error instanceof Error ? error.message : "audit log detail の取得に失敗したよ。",
@@ -536,10 +605,12 @@ export function useSessionAuditLogs({
     }
 
     const operationKey = `${entry.sessionId}:${entry.id}:operations:${operationIndex}`;
+    const requestId = `${entry.sessionId}:${entry.id}:operation:${operationIndex}:${Date.now()}`;
+    const startedAtMs = nowMs();
     let shouldLoad = false;
     setAuditLogOperationDetails((current) => {
       const existing = current[operationKey];
-      if (existing?.loading || existing?.detail) {
+      if (existing?.detail || (existing?.loading && !isAuditLogOperationDetailLoadingStale(existing, startedAtMs))) {
         return current;
       }
 
@@ -547,8 +618,10 @@ export function useSessionAuditLogs({
       return {
         ...current,
         [operationKey]: {
-          detail: null,
+          detail: existing?.detail ?? null,
           loading: true,
+          loadingStartedAtMs: startedAtMs,
+          requestId,
           errorMessage: null,
         },
       };
@@ -558,8 +631,6 @@ export function useSessionAuditLogs({
       return;
     }
 
-    const requestId = `${entry.sessionId}:${entry.id}:operation:${operationIndex}:${Date.now()}`;
-    const startedAtMs = nowMs();
     reportAuditLogDetailLog(withmateApi, {
       kind: "audit-log.operation-detail.load-started",
       message: "Audit log operation detail load started",
@@ -588,14 +659,22 @@ export function useSessionAuditLogs({
               detailsChars: fragment?.details.length ?? 0,
             },
           });
-          setAuditLogOperationDetails((current) => ({
-            ...current,
-            [operationKey]: {
-              detail: fragment,
-              loading: false,
-              errorMessage: fragment ? null : "operation detail が見つからなかったよ。",
-            },
-          }));
+          setAuditLogOperationDetails((current) => {
+            if (current[operationKey]?.requestId !== requestId) {
+              return current;
+            }
+
+            return {
+              ...current,
+              [operationKey]: {
+                detail: fragment,
+                loading: false,
+                loadingStartedAtMs: null,
+                requestId: null,
+                errorMessage: fragment ? null : "operation detail が見つからなかったよ。",
+              },
+            };
+          });
         },
         (error: unknown) => {
           reportAuditLogDetailLog(withmateApi, {
@@ -614,14 +693,22 @@ export function useSessionAuditLogs({
               ? { name: error.name, message: error.message, stack: error.stack }
               : { message: "audit log operation detail IPC failed" },
           });
-          setAuditLogOperationDetails((current) => ({
-            ...current,
-            [operationKey]: {
-              detail: null,
-              loading: false,
-              errorMessage: error instanceof Error ? error.message : "operation detail の取得に失敗したよ。",
-            },
-          }));
+          setAuditLogOperationDetails((current) => {
+            if (current[operationKey]?.requestId !== requestId) {
+              return current;
+            }
+
+            return {
+              ...current,
+              [operationKey]: {
+                detail: null,
+                loading: false,
+                loadingStartedAtMs: null,
+                requestId: null,
+                errorMessage: error instanceof Error ? error.message : "operation detail の取得に失敗したよ。",
+              },
+            };
+          });
         },
       );
     } catch (error) {
@@ -641,14 +728,22 @@ export function useSessionAuditLogs({
           ? { name: error.name, message: error.message, stack: error.stack }
           : { message: "audit log operation detail load threw" },
       });
-      setAuditLogOperationDetails((current) => ({
-        ...current,
-        [operationKey]: {
-          detail: null,
-          loading: false,
-          errorMessage: error instanceof Error ? error.message : "operation detail の取得に失敗したよ。",
-        },
-      }));
+      setAuditLogOperationDetails((current) => {
+        if (current[operationKey]?.requestId !== requestId) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [operationKey]: {
+            detail: null,
+            loading: false,
+            loadingStartedAtMs: null,
+            requestId: null,
+            errorMessage: error instanceof Error ? error.message : "operation detail の取得に失敗したよ。",
+          },
+        };
+      });
     }
   };
 
