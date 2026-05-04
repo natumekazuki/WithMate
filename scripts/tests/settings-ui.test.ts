@@ -13,6 +13,10 @@ import {
   SETTINGS_CHARACTER_REFLECTION_TIMEOUT_LABEL,
   SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE,
   SETTINGS_CODING_CREDENTIALS_HELP,
+  SETTINGS_MATE_GROWTH_LABEL,
+  SETTINGS_MATE_GROWTH_HELP,
+  SETTINGS_MATE_RESET_LABEL,
+  SETTINGS_MATE_RESET_HELP,
   SETTINGS_MEMORY_EXTRACTION_HELP,
   SETTINGS_MEMORY_GENERATION_HELP,
   SETTINGS_MEMORY_GENERATION_LABEL,
@@ -23,6 +27,7 @@ import {
   SETTINGS_RELEASE_COMPATIBILITY_NOTE,
   SETTINGS_RESET_DATABASE_HELP,
   SETTINGS_RESET_DATABASE_LABEL,
+  buildResetMateConfirmMessage,
   buildResetDatabaseConfirmMessage,
   buildResetDatabaseSuccessMessage,
 } from "../../src/settings-ui.js";
@@ -70,6 +75,18 @@ describe("Settings UI constants", () => {
     assert.match(SETTINGS_CHARACTER_REFLECTION_HELP, /app-wide/);
     assert.match(SETTINGS_CHARACTER_REFLECTION_HELP, /SessionStart/);
     assert.match(SETTINGS_CHARACTER_REFLECTION_HELP, /timeout/);
+  });
+
+  it("Mate Growth は未適用成長を手動で適用する導線を示す", () => {
+    assert.equal(SETTINGS_MATE_GROWTH_LABEL, "Mate Growth を手動適用");
+    assert.match(SETTINGS_MATE_GROWTH_HELP, /手動で適用する/);
+  });
+
+  it("Mate Reset は破壊的操作として意図と再確認文言が含まれる", () => {
+    assert.equal(SETTINGS_MATE_RESET_LABEL, "Mate を初期化");
+    assert.match(SETTINGS_MATE_RESET_HELP, /Danger Zone/);
+    assert.match(SETTINGS_MATE_RESET_HELP, /破壊的/);
+    assert.match(buildResetMateConfirmMessage(), /本当に続ける/);
   });
 
   it("Home Window は Settings overlay の余裕を確保する既定サイズを使う", () => {
