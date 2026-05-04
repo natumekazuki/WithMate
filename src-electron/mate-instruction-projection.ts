@@ -37,8 +37,12 @@ function buildOptionalDescription(description: string): string[] {
 
 function buildProfileFileLines(sections: MateProfile["sections"]): string[] {
   return sections
-    .filter((section) => String(section.sectionKey) !== "project_digest")
+    .filter((section) => isProviderInstructionProfileSection(section.sectionKey))
     .map((section) => `- **${section.sectionKey}:** \`${relativeProfilePath(section.filePath)}\``);
+}
+
+function isProviderInstructionProfileSection(sectionKey: string): boolean {
+  return sectionKey === "core" || sectionKey === "bond" || sectionKey === "work_style";
 }
 
 function relativeProfilePath(filePath: string): string {

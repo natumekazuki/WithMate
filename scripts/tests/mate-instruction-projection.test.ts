@@ -101,12 +101,11 @@ test("buildMateInstructionContent は MateProfile から安定した Markdown �
       "- **core:** `mate/core.md`",
       "- **bond:** `mate/bond.md`",
       "- **work_style:** `mate/work-style.md`",
-      "- **notes:** `mate/notes.md`",
     ].join("\n"),
   );
 });
 
-test("buildMateInstructionContent は Project Digest 情報を含めない", () => {
+test("buildMateInstructionContent は動的な補助情報を含めない", () => {
   const profile = createProfile({
     displayName: "Tessa",
     description: "Core style and notes",
@@ -116,6 +115,8 @@ test("buildMateInstructionContent は Project Digest 情報を含めない", () 
   assert.equal(content.includes("### Project Digest"), false);
   assert.equal(content.includes("- **project_digest:**"), false);
   assert.equal(content.includes("project-digest.md"), false);
+  assert.equal(content.includes("- **notes:**"), false);
+  assert.equal(content.includes("mate/notes.md"), false);
 });
 
 test("description が空なら description 行を出さない", () => {
