@@ -24,6 +24,13 @@ function createLogicalPrompt() {
 
 function createAdapter(onCall: () => void, result?: { parsedJson?: unknown; rawText: string; threadId?: string | null }): ProviderBackgroundAdapter {
   return {
+    getBackgroundStructuredPromptPolicy() {
+      return {
+        allowsFileWrite: false,
+        allowsToolPermissionRequests: false,
+        structuredOutputOnly: true,
+      };
+    },
     extractSessionMemoryDelta() {
       throw new Error("not used");
     },
@@ -51,6 +58,13 @@ function createAdapter(onCall: () => void, result?: { parsedJson?: unknown; rawT
 
 function createErrorAdapter(onCall: () => void, _result?: never, error = new Error("provider failed")): ProviderBackgroundAdapter {
   return {
+    getBackgroundStructuredPromptPolicy() {
+      return {
+        allowsFileWrite: false,
+        allowsToolPermissionRequests: false,
+        structuredOutputOnly: true,
+      };
+    },
     extractSessionMemoryDelta() {
       throw new Error("not used");
     },

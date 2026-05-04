@@ -90,6 +90,13 @@ describe("MemoryOrchestrationService", () => {
     let auditCreated = 0;
 
     const providerAdapter: ProviderBackgroundAdapter = {
+      getBackgroundStructuredPromptPolicy() {
+        return {
+          allowsFileWrite: false,
+          allowsToolPermissionRequests: false,
+          structuredOutputOnly: true,
+        };
+      },
       async extractSessionMemoryDelta() {
         extractionCalled += 1;
         throw new Error("should not run");
@@ -166,6 +173,13 @@ describe("MemoryOrchestrationService", () => {
     let observedTimeoutMs = 0;
 
     const providerAdapter: ProviderBackgroundAdapter = {
+      getBackgroundStructuredPromptPolicy() {
+        return {
+          allowsFileWrite: false,
+          allowsToolPermissionRequests: false,
+          structuredOutputOnly: true,
+        };
+      },
       async extractSessionMemoryDelta(input) {
         observedTimeoutMs = input.timeoutMs;
         return {
@@ -286,6 +300,13 @@ describe("MemoryOrchestrationService", () => {
     let observedTimeoutMs = 0;
 
     const providerAdapter: ProviderBackgroundAdapter = {
+      getBackgroundStructuredPromptPolicy() {
+        return {
+          allowsFileWrite: false,
+          allowsToolPermissionRequests: false,
+          structuredOutputOnly: true,
+        };
+      },
       async extractSessionMemoryDelta() {
         throw new Error("not used");
       },
@@ -373,6 +394,13 @@ describe("MemoryOrchestrationService", () => {
     let observedTimeoutMs = 0;
 
     const providerAdapter: ProviderBackgroundAdapter = {
+      getBackgroundStructuredPromptPolicy() {
+        return {
+          allowsFileWrite: false,
+          allowsToolPermissionRequests: false,
+          structuredOutputOnly: true,
+        };
+      },
       async extractSessionMemoryDelta() {
         throw new Error("not used");
       },

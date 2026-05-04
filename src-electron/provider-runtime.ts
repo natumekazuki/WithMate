@@ -181,11 +181,36 @@ export type ProviderCodingAdapter = {
 };
 
 export type ProviderBackgroundAdapter = {
+  getBackgroundStructuredPromptPolicy(): ProviderBackgroundStructuredPromptPolicy;
   extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult>;
   runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult>;
   runBackgroundStructuredPrompt<TOutput = unknown>(
     input: RunBackgroundStructuredPromptInput,
   ): Promise<RunBackgroundStructuredPromptResult<TOutput>>;
 };
+
+export type ProviderBackgroundStructuredPromptPolicy = {
+  allowsFileWrite: boolean;
+  allowsToolPermissionRequests: boolean;
+  structuredOutputOnly: boolean;
+};
+
+export const MATE_TALK_BACKGROUND_STRUCTURED_PROMPT_POLICY: ProviderBackgroundStructuredPromptPolicy = {
+  allowsFileWrite: false,
+  allowsToolPermissionRequests: false,
+  structuredOutputOnly: true,
+};
+
+export function isMateTalkBackgroundStructuredPromptPolicyCompatible(
+  policy: ProviderBackgroundStructuredPromptPolicy,
+): boolean {
+  return !policy.allowsFileWrite
+    && !policy.allowsToolPermissionRequests
+    && policy.structuredOutputOnly;
+}
+
+export function canUseProviderForMateTalkBackgroundPrompt(adapter: ProviderBackgroundAdapter): boolean {
+  return isMateTalkBackgroundStructuredPromptPolicyCompatible(adapter.getBackgroundStructuredPromptPolicy());
+}
 
 export type ProviderTurnAdapter = ProviderCodingAdapter & ProviderBackgroundAdapter;
