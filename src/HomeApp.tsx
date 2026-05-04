@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { type CharacterProfile } from "./character-state.js";
 import {
   createDefaultAppSettings,
   getProviderAppSettings,
@@ -31,9 +30,6 @@ import {
 import {
   buildHomeLaunchProjection,
 } from "./home-launch-projection.js";
-import {
-  buildHomeCharacterProjection,
-} from "./home-character-projection.js";
 import {
   buildCreateCompanionSessionInputFromLaunchDraft,
   buildCreateSessionInputFromLaunchDraft,
@@ -151,10 +147,6 @@ async function openMemoryManagementWindow() {
   await withWithMateApi((api) => api.openMemoryManagementWindow());
 }
 
-async function openCharacterEditor(characterId?: string | null) {
-  await withWithMateApi((api) => api.openCharacterEditor(characterId));
-}
-
 function getMemoryManagementCursor(pages: MemoryManagementPageState, domain: MemoryManagementDomain): number | null {
   if (domain === "session") {
     return pages.session.nextCursor;
@@ -168,7 +160,7 @@ function getMemoryManagementCursor(pages: MemoryManagementPageState, domain: Mem
   return null;
 }
 
-type HomeRightPaneView = "monitor" | "characters";
+type HomeRightPaneView = "monitor" | "mate";
 type HomeWindowMode = "home" | "monitor" | "settings" | "memory";
 
 const MEMORY_MANAGEMENT_PAGE_LIMIT = 50;
@@ -248,11 +240,9 @@ export default function HomeApp() {
   const usesMemoryManagementWindow = isSettingsWindowMode || isMemoryWindowMode;
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
-  const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [openSessionWindowIds, setOpenSessionWindowIds] = useState<string[]>([]);
   const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const [sessionSearchText, setSessionSearchText] = useState("");
-  const [characterSearchText, setCharacterSearchText] = useState("");
   const [rightPaneView, setRightPaneView] = useState<HomeRightPaneView>("monitor");
   const [settingsFeedback, setSettingsFeedback] = useState("");
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
@@ -353,13 +343,11 @@ export default function HomeApp() {
 
     let unsubscribeSessions: (() => void) | null = null;
     let unsubscribeCompanionSessions: (() => void) | null = null;
-    let unsubscribeCharacters: (() => void) | null = null;
 
     const hydrateOperationalHomeData = async () => {
-      const [nextSessions, nextCompanionSessions, nextCharacters] = await Promise.all([
+      const [nextSessions, nextCompanionSessions] = await Promise.all([
         withmateApi.listSessionSummaries(),
         withmateApi.listCompanionSessionSummaries(),
-        withmateApi.listCharacters(),
       ]);
       if (!active) {
         return;
@@ -367,7 +355,6 @@ export default function HomeApp() {
 
       setSessions(nextSessions);
       setCompanionSessions(nextCompanionSessions);
-      setCharacters(nextCharacters);
 
       if (usesMemoryManagementWindow) {
         try {
@@ -402,13 +389,6 @@ export default function HomeApp() {
         }
       });
 
-      unsubscribeCharacters = withmateApi.subscribeCharacters((nextCharacters) => {
-        if (!active) {
-          return;
-        }
-
-        setCharacters(nextCharacters);
-      });
     };
 
     void Promise.all([
@@ -463,7 +443,6 @@ export default function HomeApp() {
       active = false;
       unsubscribeSessions?.();
       unsubscribeCompanionSessions?.();
-      unsubscribeCharacters?.();
       unsubscribeModelCatalog();
       unsubscribeAppSettings();
     };
@@ -591,12 +570,6 @@ export default function HomeApp() {
     [appSettings, launchDraft, modelCatalog],
   );
   const { enabledLaunchProviders, selectedLaunchProvider, launchWorkspacePathLabel, canStartSession } = launchProjection;
-  const characterProjection = useMemo(
-    () => buildHomeCharacterProjection(characters, characterSearchText),
-    [characterSearchText, characters],
-  );
-  const { filteredCharacters, emptyState: characterEmptyState } = characterProjection;
-
   useEffect(() => {
     setLaunchDraft((current) => {
       if (enabledLaunchProviders.find((provider) => provider.id === current.providerId)) {
@@ -751,15 +724,13 @@ export default function HomeApp() {
       setMateCreationFeedback("");
       if (nextMateState !== "not_created") {
         try {
-          const [nextSessions, nextCompanionSessions, nextCharacters, nextEmbeddingSettings] = await Promise.all([
+          const [nextSessions, nextCompanionSessions, nextEmbeddingSettings] = await Promise.all([
             withmateApi.listSessionSummaries(),
             withmateApi.listCompanionSessionSummaries(),
-            withmateApi.listCharacters(),
             withmateApi.getMateEmbeddingSettings(),
           ]);
           setSessions(nextSessions);
           setCompanionSessions(nextCompanionSessions);
-          setCharacters(nextCharacters);
           setMateEmbeddingSettings(nextEmbeddingSettings);
         } catch (error) {
           setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
@@ -1652,18 +1623,13 @@ export default function HomeApp() {
           nonRunningMonitorEntries={nonRunningMonitorEntries}
           monitorRunningEmptyMessage={monitorRunningEmptyMessage}
           monitorCompletedEmptyMessage={monitorCompletedEmptyMessage}
-          filteredCharacters={filteredCharacters}
-          characterEmptyState={characterEmptyState}
-          characterSearchText={characterSearchText}
-          searchIcon={renderSearchIcon()}
+          mateProfile={mateProfile}
           monitorWindowIcon={renderMonitorWindowIcon()}
           onChangeRightPaneView={setRightPaneView}
           onOpenSessionMonitorWindow={() => void openSessionMonitorWindow()}
           onOpenMemoryManagementWindow={() => void openMemoryManagementWindow()}
           onOpenSettingsWindow={() => void openSettingsWindow()}
           onOpenMateTalk={() => void openMateTalk()}
-          onChangeCharacterSearchText={setCharacterSearchText}
-          onOpenCharacterEditor={(characterId) => void openCharacterEditor(characterId)}
           onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
           onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
         />

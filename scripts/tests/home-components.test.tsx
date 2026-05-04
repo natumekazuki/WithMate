@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { HomeLaunchDialog, HomeSettingsContent } from "../../src/home-components.js";
+import { HomeLaunchDialog, HomeRightPane, HomeSettingsContent } from "../../src/home-components.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { buildHomeProviderSettingRows } from "../../src/home-settings-view-model.js";
@@ -135,5 +135,82 @@ describe("HomeLaunchDialog", () => {
     assert.ok(!html.includes("キャラクターを選ぶ"));
     assert.ok(!html.includes("キャラを選んでね"));
     assert.ok(!html.includes("Add Character"));
+  });
+});
+
+describe("HomeRightPane", () => {
+  const noOp = (..._args: unknown[]) => undefined;
+
+  const renderHomeRightPane = (rightPaneView: "monitor" | "mate", mateProfile: null | {
+    id: string;
+    state: "draft" | "active" | "deleted";
+    displayName: string;
+    description: string;
+    themeMain: string;
+    themeSub: string;
+    avatarFilePath: string;
+    avatarSha256: string;
+    avatarByteSize: number;
+    activeRevisionId: string | null;
+    profileGeneration: number;
+    createdAt: string;
+    updatedAt: string;
+    deletedAt: string | null;
+    sections: {
+      sectionKey: "core" | "bond" | "work_style" | "notes";
+      filePath: string;
+      sha256: string;
+      byteSize: number;
+      updatedByRevisionId: string;
+    }[];
+  }) => renderToStaticMarkup(
+    <HomeRightPane
+      rightPaneView={rightPaneView}
+      runningMonitorEntries={[]}
+      nonRunningMonitorEntries={[]}
+      monitorRunningEmptyMessage="running"
+      monitorCompletedEmptyMessage="completed"
+      mateProfile={mateProfile}
+      monitorWindowIcon={<span>Monitor</span>}
+      onChangeRightPaneView={noOp}
+      onOpenSessionMonitorWindow={noOp}
+      onOpenMemoryManagementWindow={noOp}
+      onOpenSettingsWindow={noOp}
+      onOpenMateTalk={noOp}
+      onOpenSession={noOp}
+      onOpenCompanionReview={noOp}
+    />,
+  );
+
+  it("Your Mate タブは Characters / Add Character を含まない", () => {
+    const html = renderHomeRightPane("mate", {
+      id: "mate-1",
+      state: "active",
+      displayName: "Your Mate",
+      description: "説明文",
+      themeMain: "#3b82f6",
+      themeSub: "#1d4ed8",
+      avatarFilePath: "",
+      avatarSha256: "",
+      avatarByteSize: 0,
+      activeRevisionId: null,
+      profileGeneration: 1,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      deletedAt: null,
+      sections: [],
+    });
+
+    assert.ok(html.includes("Your Mate"));
+    assert.ok(html.includes("説明文"));
+    assert.ok(!html.includes("Characters"));
+    assert.ok(!html.includes("Add Character"));
+    assert.ok(html.includes("メイトーク"));
+  });
+
+  it("mateProfile が null でも fallback で Mate 表示できる", () => {
+    const html = renderHomeRightPane("mate", null);
+    assert.ok(html.includes("Your Mate"));
+    assert.ok(html.includes("Mate の説明は未設定だよ。"));
   });
 });

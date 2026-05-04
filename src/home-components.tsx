@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   AppSettings,
   CharacterReflectionProviderSettings,
-  CharacterProfile,
   MemoryExtractionProviderSettings,
   SessionSummary,
 } from "./app-state.js";
@@ -65,6 +64,7 @@ import {
 } from "./settings-ui.js";
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import { buildCardThemeStyle, CharacterAvatar } from "./ui-utils.js";
+import type { MateProfile } from "./mate-state.js";
 
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
@@ -1611,23 +1611,18 @@ export function HomeMonitorContent({
 }
 
 export type HomeRightPaneProps = {
-  rightPaneView: "monitor" | "characters";
+  rightPaneView: "monitor" | "mate";
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
   monitorRunningEmptyMessage: string;
   monitorCompletedEmptyMessage: string;
-  filteredCharacters: CharacterProfile[];
-  characterEmptyState: "no-match" | "empty" | null;
-  characterSearchText: string;
-  searchIcon: ReactNode;
   monitorWindowIcon: ReactNode;
-  onChangeRightPaneView: (view: "monitor" | "characters") => void;
+  mateProfile: MateProfile | null;
+  onChangeRightPaneView: (view: "monitor" | "mate") => void;
   onOpenSessionMonitorWindow: () => void;
   onOpenMemoryManagementWindow: () => void;
   onOpenSettingsWindow: () => void;
   onOpenMateTalk: () => void;
-  onChangeCharacterSearchText: (value: string) => void;
-  onOpenCharacterEditor: (characterId?: string | null) => void;
   onOpenSession: (sessionId: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
 };
@@ -1638,21 +1633,23 @@ export function HomeRightPane({
   nonRunningMonitorEntries,
   monitorRunningEmptyMessage,
   monitorCompletedEmptyMessage,
-  filteredCharacters,
-  characterEmptyState,
-  characterSearchText,
-  searchIcon,
   monitorWindowIcon,
+  mateProfile,
   onChangeRightPaneView,
   onOpenSessionMonitorWindow,
   onOpenMemoryManagementWindow,
   onOpenSettingsWindow,
   onOpenMateTalk,
-  onChangeCharacterSearchText,
-  onOpenCharacterEditor,
   onOpenSession,
   onOpenCompanionReview,
 }: HomeRightPaneProps) {
+  const mateDisplayName = mateProfile?.displayName ?? "Your Mate";
+  const mateDescription = mateProfile?.description?.trim() ?? "";
+  const mateThemeStyle = buildCardThemeStyle({
+    main: mateProfile?.themeMain ?? "#3e4b65",
+    sub: mateProfile?.themeSub ?? "#7b8fb0",
+  });
+
   return (
     <section className="panel home-right-pane rise-3">
       <div className="home-settings-rail">
@@ -1687,13 +1684,13 @@ export function HomeRightPane({
             Monitor
           </button>
           <button
-            className={`home-pane-toggle-button ${rightPaneView === "characters" ? "active" : ""}`.trim()}
+            className={`home-pane-toggle-button ${rightPaneView === "mate" ? "active" : ""}`.trim()}
             type="button"
             role="tab"
-            aria-selected={rightPaneView === "characters"}
-            onClick={() => onChangeRightPaneView("characters")}
+            aria-selected={rightPaneView === "mate"}
+            onClick={() => onChangeRightPaneView("mate")}
           >
-            Characters
+            Your Mate
           </button>
         </div>
       </div>
@@ -1710,53 +1707,23 @@ export function HomeRightPane({
           />
         </section>
       ) : (
-        <section className="characters-panel home-characters-panel" role="tabpanel" aria-label="Characters">
-          <div className="toolbar-search-row home-character-toolbar">
-            <label className="toolbar-search-field" aria-label="キャラクター検索">
-              <span className="toolbar-search-icon" aria-hidden="true">
-                {searchIcon}
-              </span>
-              <input
-                className="toolbar-search-input"
-                type="text"
-                aria-label="キャラクター検索"
-                value={characterSearchText}
-                onChange={(event) => onChangeCharacterSearchText(event.target.value)}
+        <section className="home-monitor-panel" role="tabpanel" aria-label="Your Mate" style={mateThemeStyle}>
+          <div className="home-monitor-section">
+            <div className="home-monitor-section-head">
+              <h3>Your Mate</h3>
+              <span>{mateDisplayName}</span>
+            </div>
+            <div className="home-monitor-section">
+              <CharacterAvatar
+                character={{ name: mateDisplayName, iconPath: mateProfile?.avatarFilePath ?? "" }}
+                size="large"
               />
-            </label>
-            <button className="launch-toggle" type="button" onClick={() => onOpenCharacterEditor()}>
-              Add Character
-            </button>
-          </div>
-
-          <div className="character-list">
-            {filteredCharacters.length > 0 ? (
-              filteredCharacters.map((character) => (
-                <button
-                  key={character.id}
-                  className="character-card"
-                  type="button"
-                  style={buildCardThemeStyle(character.themeColors)}
-                  onClick={() => onOpenCharacterEditor(character.id)}
-                >
-                  <CharacterAvatar character={character} size="small" className="character-card-avatar" />
-                  <div className="character-card-copy">
-                    <strong>{character.name}</strong>
-                  </div>
-                </button>
-              ))
-            ) : characterEmptyState === "no-match" ? (
-              <article className="empty-list-card">
-                <p>一致するキャラはないよ。</p>
-              </article>
-            ) : (
-              <article className="empty-list-card">
-                <p>まだキャラはないよ。</p>
-                <button className="launch-toggle" type="button" onClick={() => onOpenCharacterEditor()}>
-                  Add Character
-                </button>
-              </article>
-            )}
+              {mateDescription ? (
+                <p>{mateDescription}</p>
+              ) : (
+                <p>Mate の説明は未設定だよ。</p>
+              )}
+            </div>
           </div>
         </section>
       )}
