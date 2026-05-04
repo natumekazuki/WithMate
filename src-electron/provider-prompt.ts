@@ -10,8 +10,14 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
     : "# Character\n\nキャラクター定義は未設定。";
   const systemSections = [systemPromptPrefixText, characterText].filter((section) => section.trim().length > 0);
   const systemPromptBody = systemSections.join("\n\n");
+  const projectContextText = input.projectContextText?.trim();
+  const projectContextSection = projectContextText ? `# Project Context\n\n${projectContextText}` : "";
   const referencedImages = input.attachments.filter((attachment) => attachment.kind === "image");
   const inputSections: string[] = [];
+
+  if (projectContextSection) {
+    inputSections.push(projectContextSection);
+  }
 
   inputSections.push(`# User Input\n\n${input.userMessage.trim()}`);
   const inputPromptBody = inputSections.join("\n\n");

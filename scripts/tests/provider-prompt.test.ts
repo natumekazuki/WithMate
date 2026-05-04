@@ -127,6 +127,113 @@ describe("composeProviderPrompt", () => {
     ]);
   });
 
+  it("projectContextText がある場合、User Input より前に Project Context を注入する", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      characterId: character.id,
+      character: character.name,
+      characterIconPath: "",
+      characterThemeColors: character.themeColors,
+      approvalMode: "untrusted",
+    });
+    const sessionMemory = createDefaultSessionMemory(session);
+
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory,
+      projectMemoryEntries: [],
+      projectContextText: "  # Digest\n- item 1\n- item 2  ",
+      character,
+      providerCatalog,
+      userMessage: "次の実装を進めて",
+      appSettings: {
+        ...createDefaultAppSettings(),
+        systemPromptPrefix: "安全第一で進める。",
+      },
+      attachments: [],
+    });
+
+    assert.match(prompt.inputBodyText, /# Project Context/);
+    assert.match(prompt.inputBodyText, /# Digest/);
+    assert.match(prompt.inputBodyText, /- item 1/);
+    assert.match(prompt.inputBodyText, /- item 2/);
+    assertSectionOrder(prompt.inputBodyText, ["# Project Context", "# User Input"]);
+    assertSectionOrder(prompt.logicalPrompt.composedText, [
+      "# System Prompt",
+      "# Character",
+      "# Project Context",
+      "# User Input",
+    ]);
+  });
+
+  it("空文字/null/undefined の projectContextText は注入しない", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      characterId: character.id,
+      character: character.name,
+      characterIconPath: "",
+      characterThemeColors: character.themeColors,
+      approvalMode: "untrusted",
+    });
+    const sessionMemory = createDefaultSessionMemory(session);
+
+    const promptWithoutContext = composeProviderPrompt({
+      session,
+      sessionMemory,
+      projectMemoryEntries: [],
+      projectContextText: "",
+      character,
+      providerCatalog,
+      userMessage: "次の実装を進めて",
+      appSettings: {
+        ...createDefaultAppSettings(),
+        systemPromptPrefix: "安全第一で進める。",
+      },
+      attachments: [],
+    });
+
+    assert.doesNotMatch(promptWithoutContext.inputBodyText, /# Project Context/);
+    assert.match(promptWithoutContext.inputBodyText, /# User Input/);
+    assertSectionOrder(promptWithoutContext.logicalPrompt.composedText, ["# System Prompt", "# Character", "# User Input"]);
+
+    const promptWithNullContext = composeProviderPrompt({
+      session,
+      sessionMemory,
+      projectMemoryEntries: [],
+      projectContextText: null,
+      character,
+      providerCatalog,
+      userMessage: "次の実装を進めて",
+      appSettings: {
+        ...createDefaultAppSettings(),
+        systemPromptPrefix: "安全第一で進める。",
+      },
+      attachments: [],
+    });
+    assert.doesNotMatch(promptWithNullContext.inputBodyText, /# Project Context/);
+
+    const promptWithUndefinedContext = composeProviderPrompt({
+      session,
+      sessionMemory,
+      projectMemoryEntries: [],
+      character,
+      providerCatalog,
+      userMessage: "次の実装を進めて",
+      appSettings: {
+        ...createDefaultAppSettings(),
+        systemPromptPrefix: "安全第一で進める。",
+      },
+      attachments: [],
+    });
+    assert.doesNotMatch(promptWithUndefinedContext.inputBodyText, /# Project Context/);
+  });
+
   it("system prompt prefix が空でも character を Codex 用 logical prompt から落とさない", () => {
     const session = buildNewSession({
       taskTitle: "task",

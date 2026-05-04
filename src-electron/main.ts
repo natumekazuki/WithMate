@@ -96,6 +96,8 @@ import { MateEmbeddingDownloadService } from "./mate-embedding-download-service.
 import { buildMateMemoryRuntimeInstructionFiles } from "./mate-memory-runtime-instructions.js";
 import { MateGrowthApplyService } from "./mate-growth-apply-service.js";
 import { MateGrowthStorage } from "./mate-growth-storage.js";
+import { MateProjectContextService } from "./mate-project-context-service.js";
+import { type MateProjectDigest, MateProjectDigestStorage } from "./mate-project-digest-storage.js";
 import { MateProfileItemStorage } from "./mate-profile-item-storage.js";
 import { createMateMemoryGenerationRunner } from "./mate-memory-generation-runner.js";
 import { MateMemoryGenerationService } from "./mate-memory-generation-service.js";
@@ -203,6 +205,8 @@ let mateMemoryStorage: MateMemoryStorage | null = null;
 let mateEmbeddingCacheService: MateEmbeddingCacheService | null = null;
 let mateGrowthStorage: MateGrowthStorage | null = null;
 let mateProfileItemStorage: MateProfileItemStorage | null = null;
+let mateProjectDigestStorage: MateProjectDigestStorage | null = null;
+let mateProjectContextService: MateProjectContextService | null = null;
 let mateGrowthApplyService: MateGrowthApplyService | null = null;
 let memoryRuntimeWorkspaceService: MemoryRuntimeWorkspaceService | null = null;
 let mateMemoryGenerationService: MateMemoryGenerationService | null = null;
@@ -1439,6 +1443,54 @@ function requireMateProfileItemStorage(): MateProfileItemStorage {
   return mateProfileItemStorage;
 }
 
+function requireMateProjectDigestStorage(): MateProjectDigestStorage {
+  if (!dbPath) {
+    throw new Error("DB path が初期化されていないよ。");
+  }
+
+  if (!mateProjectDigestStorage) {
+    mateProjectDigestStorage = new MateProjectDigestStorage(dbPath);
+  }
+
+  return mateProjectDigestStorage;
+}
+
+function requireMateProjectContextService(): MateProjectContextService {
+  if (!mateProjectContextService) {
+    mateProjectContextService = new MateProjectContextService(requireMateProfileItemStorage());
+  }
+
+  return mateProjectContextService;
+}
+
+function resolveMateProjectDigestForSession(session: Session): MateProjectDigest | null {
+  const activeMateStorage = requireMateStorage();
+  if (activeMateStorage.getMateState() === "not_created") {
+    return null;
+  }
+
+  try {
+    return requireMateProjectDigestStorage().resolveProjectDigestForWorkspace(session.workspacePath);
+  } catch (error) {
+    console.warn("Failed to resolve Mate Project Digest", session.id, error);
+    return null;
+  }
+}
+
+function resolveMateProjectContextTextForPrompt(session: Session): string | null {
+  const digest = resolveMateProjectDigestForSession(session);
+  if (!digest) {
+    return null;
+  }
+
+  try {
+    return requireMateProjectContextService().getProjectDigestContextText(digest.id);
+  } catch (error) {
+    console.warn("Failed to resolve Mate Project Context", session.id, error);
+    return null;
+  }
+}
+
 function requireMateGrowthApplyService(): MateGrowthApplyService {
   if (!mateGrowthApplyService) {
     mateGrowthApplyService = new MateGrowthApplyService(
@@ -1660,6 +1712,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       getSessionMemory: (session) => requireSessionMemoryStorage().ensureSessionMemory(session),
       resolveProjectMemoryEntriesForPrompt: (session, userMessage, sessionMemory) =>
         requireSessionMemorySupportService().resolveProjectMemoryEntriesForPrompt(session, userMessage, sessionMemory),
+      resolveProjectContextTextForPrompt: (session) => resolveMateProjectContextTextForPrompt(session),
       createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
       updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
       setLiveSessionRun,
@@ -1699,7 +1752,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
             sourceType: "session",
             sourceSessionId: params.session.id,
             sourceAuditLogId: params.auditLogId,
-            projectDigestId: null,
+            projectDigestId: resolveMateProjectDigestForSession(params.session)?.id ?? null,
           },
           mateName: mateProfile?.displayName,
           mateSummary: mateProfile?.description,
@@ -2132,6 +2185,7 @@ function closePersistentStores(): void {
   mateMemoryStorage?.close();
   mateGrowthStorage?.close();
   mateProfileItemStorage?.close();
+  mateProjectDigestStorage?.close();
   mateEmbeddingCacheService?.close();
   requirePersistentStoreLifecycleService().close({
     modelCatalogStorage,
@@ -2155,6 +2209,8 @@ function closePersistentStores(): void {
   mateMemoryStorage = null;
   mateGrowthStorage = null;
   mateProfileItemStorage = null;
+  mateProjectDigestStorage = null;
+  mateProjectContextService = null;
   mateGrowthApplyService = null;
   mateEmbeddingCacheService = null;
   memoryRuntimeWorkspaceService = null;
@@ -2197,6 +2253,9 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   mateGrowthStorage = null;
   mateProfileItemStorage?.close();
   mateProfileItemStorage = null;
+  mateProjectDigestStorage?.close();
+  mateProjectDigestStorage = null;
+  mateProjectContextService = null;
   mateGrowthApplyService = null;
   mateEmbeddingCacheService?.close();
   mateEmbeddingCacheService = null;
