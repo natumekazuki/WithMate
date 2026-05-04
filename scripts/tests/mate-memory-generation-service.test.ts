@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { MemoryRuntimeWorkspaceService, type MemoryRuntimeInstructionFile } from "../../src-electron/memory-runtime-workspace.js";
-import { MateMemoryGenerationService } from "../../src-electron/mate-memory-generation-service.js";
+import { MateMemoryGenerationService, type GetInstructionFilesInput } from "../../src-electron/mate-memory-generation-service.js";
 import { MateMemoryStorage } from "../../src-electron/mate-memory-storage.js";
 
 function createTempDbPath(): Promise<{ dbPath: string; cleanup: () => Promise<void> }> {
@@ -56,6 +56,13 @@ describe("MateMemoryGenerationService", () => {
     const { dbPath, cleanup: cleanupDb } = await createTempDbPath();
     const userDataPath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-memory-workspace-"));
     let storage: MateMemoryStorage | null = null;
+    let capturedInstructionInput: GetInstructionFilesInput | null = null;
+    const sourceDefaults = {
+      sourceType: "session",
+      sourceSessionId: "session-1",
+      sourceAuditLogId: 101,
+      projectDigestId: "project-1",
+    };
 
     try {
       storage = new MateMemoryStorage(dbPath);
@@ -95,7 +102,8 @@ describe("MateMemoryGenerationService", () => {
         async getTagCatalog() {
           return [{ tagType: "Topic", tagValue: "work" }];
         },
-        async getInstructionFiles(_input) {
+        async getInstructionFiles(input) {
+          capturedInstructionInput = input;
           return buildInstructionFiles();
         },
         async getRecentConversationText() {
@@ -104,12 +112,8 @@ describe("MateMemoryGenerationService", () => {
       });
 
       const result = await service.runOnce({
-        sourceDefaults: {
-          sourceType: "session",
-          sourceSessionId: "session-1",
-          sourceAuditLogId: 101,
-          projectDigestId: "project-1",
-        },
+        sourceDefaults,
+        providerIds: ["copilot"],
         mateName: "Mate",
         mateSummary: "テストMate",
       });
@@ -137,6 +141,11 @@ describe("MateMemoryGenerationService", () => {
       assert.equal(agentsContent, "# AGENTS\n");
       assert.equal(copilotContent, "# COPILOT\n");
       assert.equal(lockReleased, false);
+      assert.equal(Array.isArray(capturedInstructionInput?.providerIds), true);
+      assert.deepEqual(capturedInstructionInput?.providerIds, ["copilot"]);
+      assert.equal(capturedInstructionInput?.recentConversationText, "ユーザー: 最近の会話テキスト");
+      assert.deepEqual(capturedInstructionInput?.existingTagCatalog, [{ tagType: "Topic", tagValue: "work" }]);
+      assert.deepEqual(capturedInstructionInput?.sourceDefaults, sourceDefaults);
     } finally {
       storage?.close();
       await cleanupDb();
