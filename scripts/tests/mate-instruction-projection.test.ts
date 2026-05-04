@@ -58,6 +58,14 @@ function createProfile(partial: Partial<MateProfile>): MateProfile {
         updatedByRevisionId: null,
         updatedAt: "2026-01-01T00:00:00.000Z",
       },
+      {
+        sectionKey: "project_digest",
+        filePath: "mate/project-digest.md",
+        sha256: "",
+        byteSize: 0,
+        updatedByRevisionId: null,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
     ],
     ...partial,
   };
@@ -98,7 +106,7 @@ test("buildMateInstructionContent は MateProfile から安定した Markdown �
   );
 });
 
-test("buildMateInstructionContent は Profile Item 由来の Project Digest 情報を含めない", () => {
+test("buildMateInstructionContent は Project Digest 情報を含めない", () => {
   const profile = createProfile({
     displayName: "Tessa",
     description: "Core style and notes",
@@ -107,6 +115,7 @@ test("buildMateInstructionContent は Profile Item 由来の Project Digest 情�
 
   assert.equal(content.includes("### Project Digest"), false);
   assert.equal(content.includes("- **project_digest:**"), false);
+  assert.equal(content.includes("project-digest.md"), false);
 });
 
 test("description が空なら description 行を出さない", () => {
