@@ -77,7 +77,7 @@ export function removeManagedBlockWithMarkerAttributes(
   const range = findManagedBlockRangeWithMarkerAttributes(existingText, blockId, markerAttributes);
 
   if (!range) {
-    return existingText;
+    return hasMarkerAttributes(markerAttributes) ? existingText : normalizeTrailingNewline(existingText);
   }
 
   return normalizeTrailingNewline(existingText.slice(0, range.start) + existingText.slice(range.end));
@@ -108,15 +108,13 @@ function findManagedBlockRangeWithMarkerAttributes(
   blockId: string,
   markerAttributes?: ManagedInstructionBlockMarkerAttributes,
 ): { start: number; end: number } | null {
-  if (markerAttributes === undefined) {
+  if (!hasMarkerAttributes(markerAttributes)) {
     const beginMarker = buildBlockMarker("BEGIN", blockId);
     const endMarker = buildBlockMarker("END", blockId);
     return findManagedBlockRange(existingText, beginMarker, endMarker);
   }
 
-  const targetBeginMarker = buildBlockMarker("BEGIN", blockId, markerAttributes);
-  const targetEndMarker = buildBlockMarker("END", blockId, markerAttributes);
-  const range = findManagedBlockRange(existingText, targetBeginMarker, targetEndMarker);
+  const range = findManagedBlockRangeByParsedMarkers(existingText, blockId, markerAttributes);
   if (range) {
     return range;
   }
@@ -131,11 +129,14 @@ function buildBlockMarker(
   blockId: string,
   markerAttributes?: ManagedInstructionBlockMarkerAttributes,
 ): string {
-  if (!markerAttributes) {
+  if (!hasMarkerAttributes(markerAttributes)) {
     return `${MARKER_PREFIX}${kind} ${blockId}${MARKER_SUFFIX}`;
   }
 
   const attributes = buildBlockMarkerAttributes(markerAttributes);
+  if (!attributes) {
+    return `${MARKER_PREFIX}${kind} ${blockId}${MARKER_SUFFIX}`;
+  }
   return `${MARKER_PREFIX}${kind} ${attributes} block=${blockId}${MARKER_SUFFIX}`;
 }
 
@@ -147,6 +148,90 @@ function buildBlockMarkerAttributes(attributes: ManagedInstructionBlockMarkerAtt
 
   const normalizedEntries = keys.map((key) => `${key}=${attributes[key]}`).join(" ");
   return normalizedEntries;
+}
+
+function hasMarkerAttributes(
+  markerAttributes: ManagedInstructionBlockMarkerAttributes | undefined,
+): markerAttributes is ManagedInstructionBlockMarkerAttributes {
+  return markerAttributes !== undefined && Object.keys(markerAttributes).length > 0;
+}
+
+function findManagedBlockRangeByParsedMarkers(
+  existingText: string,
+  blockId: string,
+  markerAttributes: ManagedInstructionBlockMarkerAttributes,
+): { start: number; end: number } | null {
+  const markerPattern = /<!-- WITHMATE:(BEGIN|END) ([^>]*?) -->/g;
+  let markerMatch: RegExpExecArray | null;
+
+  while ((markerMatch = markerPattern.exec(existingText)) !== null) {
+    if (markerMatch[1] !== "BEGIN") {
+      continue;
+    }
+
+    const beginMarker = parseManagedBlockMarkerBody(markerMatch[2] ?? "");
+    if (!beginMarker || !isManagedBlockMarkerMatch(beginMarker, blockId, markerAttributes)) {
+      continue;
+    }
+
+    const endPattern = new RegExp(markerPattern.source, "g");
+    endPattern.lastIndex = markerMatch.index + markerMatch[0].length;
+    let endMarkerMatch: RegExpExecArray | null;
+    while ((endMarkerMatch = endPattern.exec(existingText)) !== null) {
+      if (endMarkerMatch[1] !== "END") {
+        continue;
+      }
+
+      const endMarker = parseManagedBlockMarkerBody(endMarkerMatch[2] ?? "");
+      if (!endMarker || !isManagedBlockMarkerMatch(endMarker, blockId, markerAttributes)) {
+        continue;
+      }
+
+      return {
+        start: markerMatch.index,
+        end: endMarkerMatch.index + endMarkerMatch[0].length,
+      };
+    }
+
+    return null;
+  }
+
+  return null;
+}
+
+function parseManagedBlockMarkerBody(body: string): { blockId: string; attributes: Record<string, string> } | null {
+  const tokens = body.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 1 && !tokens[0].includes("=")) {
+    return { blockId: tokens[0], attributes: {} };
+  }
+
+  const attributes: Record<string, string> = {};
+  for (const token of tokens) {
+    const separatorIndex = token.indexOf("=");
+    if (separatorIndex <= 0 || separatorIndex === token.length - 1) {
+      return null;
+    }
+    attributes[token.slice(0, separatorIndex)] = token.slice(separatorIndex + 1);
+  }
+
+  const parsedBlockId = attributes.block;
+  if (!parsedBlockId) {
+    return null;
+  }
+  delete attributes.block;
+  return { blockId: parsedBlockId, attributes };
+}
+
+function isManagedBlockMarkerMatch(
+  marker: { blockId: string; attributes: Record<string, string> },
+  blockId: string,
+  expectedAttributes: ManagedInstructionBlockMarkerAttributes,
+): boolean {
+  if (marker.blockId !== blockId) {
+    return false;
+  }
+
+  return Object.entries(expectedAttributes).every(([key, value]) => marker.attributes[key] === value);
 }
 
 function normalizeTrailingNewline(text: string): string {
