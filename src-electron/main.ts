@@ -108,6 +108,11 @@ import {
 import { createMateMemoryGenerationRunner } from "./mate-memory-generation-runner.js";
 import { MateMemoryGenerationService } from "./mate-memory-generation-service.js";
 import { MemoryRuntimeWorkspaceService } from "./memory-runtime-workspace.js";
+import {
+  buildMateTalkRuntimeInstructionFiles,
+  MateTalkRuntimeWorkspaceService,
+  sanitizeMateTalkProfileContextText,
+} from "./mate-talk-runtime-workspace.js";
 import { MateTalkService } from "./mate-talk-service.js";
 import { buildMateTalkProfileContextText } from "./mate-talk-profile-context.js";
 import { WindowEntryLoader } from "./window-entry-loader.js";
@@ -217,6 +222,7 @@ let providerInstructionTargetStorage: ProviderInstructionTargetStorage | null = 
 let mateProjectContextService: MateProjectContextService | null = null;
 let mateGrowthApplyService: MateGrowthApplyService | null = null;
 let memoryRuntimeWorkspaceService: MemoryRuntimeWorkspaceService | null = null;
+let mateTalkRuntimeWorkspaceService: MateTalkRuntimeWorkspaceService | null = null;
 let mateMemoryGenerationService: MateMemoryGenerationService | null = null;
 type CompanionStorageHandle = CompanionStorage | CompanionStorageV3;
 
@@ -1287,6 +1293,16 @@ function requireMemoryRuntimeWorkspaceService(): MemoryRuntimeWorkspaceService {
   return memoryRuntimeWorkspaceService;
 }
 
+function requireMateTalkRuntimeWorkspaceService(): MateTalkRuntimeWorkspaceService {
+  if (!mateTalkRuntimeWorkspaceService) {
+    mateTalkRuntimeWorkspaceService = new MateTalkRuntimeWorkspaceService({
+      userDataPath: app.getPath("userData"),
+    });
+  }
+
+  return mateTalkRuntimeWorkspaceService;
+}
+
 function requireMateMemoryGenerationService(): MateMemoryGenerationService {
   if (!mateMemoryGenerationService) {
     const workspaceService = requireMemoryRuntimeWorkspaceService();
@@ -1460,61 +1476,73 @@ async function generateMateTalkAssistantMessage(input: {
   const appSettings = requireAppSettingsStorage().getSettings();
   const settings = getMateMemoryGenerationSettings(appSettings);
   let lastFailure: Error | null = null;
+  const workspaceService = requireMateTalkRuntimeWorkspaceService();
+  let preparedRun: { workspacePath: string; lockPath: string } | null = null;
 
-  for (const candidate of settings.priorityList) {
-    const providerSettings = getProviderAppSettings(appSettings, candidate.provider);
-    if (!providerSettings.enabled) {
-      continue;
-    }
+  try {
+    preparedRun = await workspaceService.prepareRun();
+    await workspaceService.regenerateInstructionFiles(buildMateTalkRuntimeInstructionFiles(input.mateProfile));
+    const profileContextText = sanitizeMateTalkProfileContextText(input.mateProfile.contextText);
 
-    try {
-      const result = await getProviderBackgroundAdapter(candidate.provider).runBackgroundStructuredPrompt({
-        providerId: candidate.provider,
-        workspacePath: path.join(app.getPath("userData"), "mate"),
-        appSettings,
-        model: candidate.model,
-        reasoningEffort: candidate.reasoningEffort,
-        timeoutMs: candidate.timeoutSeconds * 1000,
-        prompt: {
-          systemText: [
-            "あなたは WithMate の Mate として、ユーザーと自然に会話します。",
-            "Mate の現在の定義を尊重し、まだ未確定な性格や口調は決めつけすぎないでください。",
-            "ファイル操作や外部操作は行わず、会話文だけを返してください。",
-            "返答は JSON object のみを返してください。",
-          ].join("\n"),
-          userText: [
-            "# Mate",
-            `id: ${input.mateProfile.id}`,
-            `name: ${input.mateProfile.displayName}`,
-            `description: ${input.mateProfile.description || "(未設定)"}`,
-            ...(input.mateProfile.contextText ? [``, "# Profile context", input.mateProfile.contextText] : []),
-            "",
-            "# User message",
-            input.userMessage,
-            "",
-            "# Output JSON shape",
-            '{"assistantMessage":"..."}',
-          ].join("\n"),
-          outputSchema: MATE_TALK_OUTPUT_SCHEMA,
-        },
-      });
-
-      const output = result.structuredOutput ?? result.parsedJson ?? result.output;
-      const assistantMessage = extractMateTalkAssistantMessage(output);
-      if (assistantMessage) {
-        return assistantMessage;
+    for (const candidate of settings.priorityList) {
+      const providerSettings = getProviderAppSettings(appSettings, candidate.provider);
+      if (!providerSettings.enabled) {
+        continue;
       }
-    } catch (error) {
-      lastFailure = error instanceof Error ? error : new Error(String(error));
-      console.warn("Failed to generate MateTalk response", candidate.provider, lastFailure);
+
+      try {
+        const result = await getProviderBackgroundAdapter(candidate.provider).runBackgroundStructuredPrompt({
+          providerId: candidate.provider,
+          workspacePath: preparedRun.workspacePath,
+          appSettings,
+          model: candidate.model,
+          reasoningEffort: candidate.reasoningEffort,
+          timeoutMs: candidate.timeoutSeconds * 1000,
+          prompt: {
+            systemText: [
+              "あなたは WithMate の Mate として、ユーザーと自然に会話します。",
+              "Mate の現在の定義を尊重し、まだ未確定な性格や口調は決めつけすぎないでください。",
+              "ファイル操作や外部操作は行わず、会話文だけを返してください。",
+              "返答は JSON object のみを返してください。",
+            ].join("\n"),
+            userText: [
+              "# Mate",
+              `id: ${input.mateProfile.id}`,
+              `name: ${input.mateProfile.displayName}`,
+              `description: ${input.mateProfile.description || "(未設定)"}`,
+              ...(profileContextText ? [``, "# Profile context", profileContextText] : []),
+              "",
+              "# User message",
+              input.userMessage,
+              "",
+              "# Output JSON shape",
+              '{"assistantMessage":"..."}',
+            ].join("\n"),
+            outputSchema: MATE_TALK_OUTPUT_SCHEMA,
+          },
+        });
+
+        const output = result.structuredOutput ?? result.parsedJson ?? result.output;
+        const assistantMessage = extractMateTalkAssistantMessage(output);
+        if (assistantMessage) {
+          return assistantMessage;
+        }
+      } catch (error) {
+        lastFailure = error instanceof Error ? error : new Error(String(error));
+        console.warn("Failed to generate MateTalk response", candidate.provider, lastFailure);
+      }
+    }
+
+    if (lastFailure) {
+      throw lastFailure;
+    }
+
+    throw new Error("有効な MateTalk provider が見つかりませんでした。");
+  } finally {
+    if (preparedRun) {
+      await workspaceService.completeRun();
     }
   }
-
-  if (lastFailure) {
-    throw lastFailure;
-  }
-
-  throw new Error("有効な MateTalk provider が見つかりませんでした。");
 }
 
 function requireMateGrowthStorage(): MateGrowthStorage {
@@ -2335,6 +2363,7 @@ function closePersistentStores(): void {
   mateGrowthApplyService = null;
   mateEmbeddingCacheService = null;
   memoryRuntimeWorkspaceService = null;
+  mateTalkRuntimeWorkspaceService = null;
   mateMemoryGenerationService = null;
   companionStorage = null;
   companionAuditLogStorage = null;
@@ -2418,6 +2447,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   mainWindowFacade = null;
   mainQueryService = null;
   memoryRuntimeWorkspaceService = null;
+  mateTalkRuntimeWorkspaceService = null;
   mateMemoryGenerationService = null;
   mateEmbeddingCacheService = null;
   mainInfrastructureRegistry?.reset();
