@@ -70,6 +70,7 @@ import {
   importHomeModelCatalog,
   saveHomeSettings,
 } from "./home-settings-actions.js";
+import { buildResetMateConfirmMessage } from "./settings-ui.js";
 import {
   updateCharacterReflectionCharDeltaThreshold,
   updateCharacterReflectionCooldownSeconds,
@@ -276,6 +277,7 @@ export default function HomeApp() {
   const [mateDisplayName, setMateDisplayName] = useState("");
   const [mateCreating, setMateCreating] = useState(false);
   const [mateGrowthApplying, setMateGrowthApplying] = useState(false);
+  const [mateResetting, setMateResetting] = useState(false);
   const [mateCreationFeedback, setMateCreationFeedback] = useState("");
   const [mateTalkOpen, setMateTalkOpen] = useState(false);
   const [mateTalkInput, setMateTalkInput] = useState("");
@@ -919,6 +921,40 @@ export default function HomeApp() {
     }
   };
 
+  const handleResetMate = async () => {
+    if (mateResetting) {
+      return;
+    }
+
+    if (mateState === "not_created") {
+      return;
+    }
+
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
+      setSettingsFeedback("Mate API が利用できないよ。");
+      return;
+    }
+
+    const confirmed = window.confirm(buildResetMateConfirmMessage());
+    if (!confirmed) {
+      return;
+    }
+
+    setMateResetting(true);
+    setSettingsFeedback("Mate を初期化中...");
+    try {
+      await withmateApi.resetMate();
+      await refreshMateStatus(withmateApi);
+      resetMateTalkState();
+      setSettingsFeedback("Mate を初期化したよ。");
+    } catch (error) {
+      setSettingsFeedback(error instanceof Error ? error.message : "Mate の初期化に失敗したよ。");
+    } finally {
+      setMateResetting(false);
+    }
+  };
+
   const upsertProviderInstructionTarget = async (target: HomeProviderInstructionTargetDraft): Promise<void> => {
     const withmateApi = getWithMateApi();
     if (!withmateApi) {
@@ -1370,6 +1406,9 @@ export default function HomeApp() {
       onApplyPendingGrowth={() => void handleApplyPendingGrowth()}
       applyPendingGrowthBusy={mateGrowthApplying}
       canApplyPendingGrowth={mateState === "active"}
+      onResetMate={() => void handleResetMate()}
+      mateResetBusy={mateResetting}
+      canResetMate={mateState !== "not_created"}
       onSaveSettings={() => void handleSaveSettings()}
     />
   );

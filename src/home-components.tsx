@@ -52,6 +52,8 @@ import {
   SETTINGS_MATE_EMBEDDING_MODEL_LABEL,
   SETTINGS_MATE_GROWTH_HELP,
   SETTINGS_MATE_GROWTH_LABEL,
+  SETTINGS_MATE_RESET_HELP,
+  SETTINGS_MATE_RESET_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
   SETTINGS_OPEN_LOG_FOLDER_LABEL,
   SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
@@ -117,6 +119,9 @@ export type HomeSettingsContentProps = {
   onApplyPendingGrowth?: () => void;
   applyPendingGrowthBusy?: boolean;
   canApplyPendingGrowth?: boolean;
+  onResetMate?: () => void;
+  mateResetBusy?: boolean;
+  canResetMate?: boolean;
   onSaveSettings: () => void;
 };
 
@@ -168,6 +173,9 @@ export function HomeSettingsContent({
   onApplyPendingGrowth,
   applyPendingGrowthBusy = false,
   canApplyPendingGrowth = false,
+  onResetMate,
+  mateResetBusy = false,
+  canResetMate = false,
   onSaveSettings,
 }: HomeSettingsContentProps) {
   if (memoryManagementOnly) {
@@ -363,6 +371,23 @@ export function HomeSettingsContent({
               </div>
             </section>
           ) : null}
+
+          <section className="settings-section-card danger-zone">
+            <div className="settings-field">
+              <strong>{SETTINGS_MATE_RESET_LABEL}</strong>
+              <p className="settings-help">{SETTINGS_MATE_RESET_HELP}</p>
+              <div className="settings-actions">
+                <button
+                  className="launch-toggle danger-button"
+                  type="button"
+                  onClick={() => onResetMate?.()}
+                  disabled={!canResetMate || mateResetBusy}
+                >
+                  {mateResetBusy ? "リセット中..." : SETTINGS_MATE_RESET_LABEL}
+                </button>
+              </div>
+            </div>
+          </section>
 
           <section className="settings-section-card">
             <div className="settings-field">

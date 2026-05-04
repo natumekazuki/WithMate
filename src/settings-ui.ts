@@ -33,6 +33,9 @@ export const SETTINGS_MATE_EMBEDDING_MODEL_LABEL = "Model";
 export const SETTINGS_MATE_EMBEDDING_DIMENSION_LABEL = "Dimension";
 export const SETTINGS_MATE_GROWTH_LABEL = "Mate Growth を手動適用";
 export const SETTINGS_MATE_GROWTH_HELP = "保留中の Mate Growth を手動で適用する。";
+export const SETTINGS_MATE_RESET_LABEL = "Mate を初期化";
+export const SETTINGS_MATE_RESET_HELP =
+  "Danger Zone: 保存済みの Mate の状態を破壊的に初期化する。";
 export const SETTINGS_MATE_EMBEDDING_CACHE_STATE_LABEL = "Cache";
 export const SETTINGS_MEMORY_GENERATION_LABEL = "Memory Generation";
 export const SETTINGS_MEMORY_GENERATION_HELP =
@@ -54,6 +57,14 @@ export const SETTINGS_RESET_DATABASE_HELP =
 export const SETTINGS_DIAGNOSTICS_LABEL = "Diagnostics";
 export const SETTINGS_OPEN_LOG_FOLDER_LABEL = "Open Logs";
 export const SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL = "Open Crash Dumps";
+
+export function buildResetMateConfirmMessage(): string {
+  return [
+    "Mate を初期化すると、保存済みのプロフィールと状態が削除され、復元できなくなるよ。",
+    "進行中のメッセージや将来の学習に使う状態も初期化されるため、取り消せない破壊的な操作だよ。",
+    "本当に続ける？",
+  ].join("\n\n");
+}
 
 export const SETTINGS_RESET_DATABASE_TARGET_LABELS: Record<ResetAppDatabaseTarget, string> = {
   sessions: "sessions",
