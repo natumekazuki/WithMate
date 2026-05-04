@@ -214,7 +214,7 @@ export const CREATE_V4_MATE_GROWTH_RUNS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_growth_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     mate_id TEXT NOT NULL,
-    source_type TEXT NOT NULL CHECK (source_type IN ('session', 'companion', 'manual', 'system')),
+    source_type TEXT NOT NULL CHECK (source_type IN ('session', 'companion', 'manual', 'system', 'mate_talk')),
     source_session_id TEXT,
     source_audit_log_id INTEGER,
     project_digest_id TEXT,
@@ -288,7 +288,7 @@ export const CREATE_V4_MATE_GROWTH_EVENTS_TABLE_SQL = `
     id TEXT PRIMARY KEY,
     mate_id TEXT NOT NULL,
     source_growth_run_id INTEGER,
-    source_type TEXT NOT NULL CHECK (source_type IN ('session', 'companion', 'manual', 'system')),
+    source_type TEXT NOT NULL CHECK (source_type IN ('session', 'companion', 'manual', 'system', 'mate_talk')),
     source_session_id TEXT,
     source_audit_log_id INTEGER,
     project_digest_id TEXT,

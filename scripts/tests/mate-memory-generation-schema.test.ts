@@ -80,6 +80,23 @@ describe("parseMateMemoryGenerationResponse", () => {
     assert.equal(withMemorySource.memories[0].sourceType, "manual");
   });
 
+  it("mate_talk sourceType を defaults で補完できる", () => {
+    const withMateTalk = parseMateMemoryGenerationResponse({
+      memories: [{
+        statement: "MateTalk 経由の文脈を識別できる",
+        growthSourceType: "assistant_inference",
+        kind: "observation",
+        targetSection: "core",
+        confidence: 42,
+        salienceScore: 55,
+      }],
+    }, {
+      sourceType: "mate_talk",
+    });
+
+    assert.equal(withMateTalk.memories[0].sourceType, "mate_talk");
+  });
+
   it("remember/forceRemember は retention='force' に変換する", () => {
     const result = parseMateMemoryGenerationResponse({
       memories: [{

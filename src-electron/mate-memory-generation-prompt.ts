@@ -65,7 +65,7 @@ export const MATE_MEMORY_GENERATION_OUTPUT_SCHEMA = {
           remember: { type: "boolean" },
           sourceType: {
             type: "string",
-            enum: ["session", "companion", "manual", "system"],
+            enum: ["session", "companion", "manual", "system", "mate_talk"],
           },
           sourceSessionId: { anyOf: [{ type: "string" }, { type: "null" }] },
           sourceAuditLogId: { anyOf: [{ type: "integer" }, { type: "null" }] },
@@ -193,7 +193,7 @@ export function buildMateMemoryGenerationPrompt(input: MateMemoryGenerationPromp
     "- 余計な前置き・結論や注釈は返さない",
     "",
     "# Output JSON shape",
-    '{"memories":[{"statement":"...","growthSourceType":"assistant_inference","kind":"observation","targetSection":"core","confidence":80,"salienceScore":70,"tags":[{"type":"Topic","value":"focus"}],"remember":false,"sourceType":"session","sourceSessionId":null,"sourceAuditLogId":null,"projectDigestId":null}]}',
+    '{"memories":[{"statement":"...","growthSourceType":"assistant_inference","kind":"observation","targetSection":"core","confidence":80,"salienceScore":70,"tags":[{"type":"Topic","value":"focus"}],"remember":false,"sourceType":"mate_talk","sourceSessionId":null,"sourceAuditLogId":null,"projectDigestId":null}]}',
   ].join("\n");
 
   return {

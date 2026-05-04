@@ -2,12 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { CREATE_V4_SCHEMA_SQL } from "./database-schema-v4.js";
+import { ensureSourceTypeCheckSupportsMateTalk } from "./mate-source-type-migration.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 const MATE_ID = "current";
 
 type MateGrowthEventState = "candidate" | "applied" | "corrected" | "superseded" | "disabled" | "forgotten" | "failed";
-type MateSourceType = "session" | "companion" | "manual" | "system";
+type MateSourceType = "session" | "companion" | "manual" | "system" | "mate_talk";
 type MateGrowthSourceType = "explicit_user_instruction" | "user_correction" | "repeated_user_behavior" | "assistant_inference" | "tool_or_file_observation";
 type MateMemoryKind = "conversation" | "preference" | "relationship" | "work_style" | "boundary" | "project_context" | "curiosity" | "observation" | "correction";
 type MateTargetSection = "bond" | "work_style" | "project_digest" | "core" | "none";
@@ -16,7 +17,7 @@ type MateRelation = "new" | "reinforces" | "updates" | "contradicts";
 type MateMemoryTagCatalogState = "active" | "disabled";
 type MateMemoryTagCatalogCreatedBy = "app" | "llm" | "user";
 
-const SOURCE_TYPES = ["session", "companion", "manual", "system"] as const;
+const SOURCE_TYPES = ["session", "companion", "manual", "system", "mate_talk"] as const;
 const GROWTH_SOURCE_TYPES = [
   "explicit_user_instruction",
   "user_correction",
@@ -430,6 +431,10 @@ export class MateMemoryStorage {
   }
 
   private initializeSchema(): void {
+    const growthEventsSql = CREATE_V4_SCHEMA_SQL.find((statement) => statement.includes("CREATE TABLE IF NOT EXISTS mate_growth_events"));
+    if (growthEventsSql) {
+      ensureSourceTypeCheckSupportsMateTalk(this.db, "mate_growth_events", growthEventsSql);
+    }
     for (const statement of CREATE_V4_SCHEMA_SQL) {
       this.db.exec(statement);
     }

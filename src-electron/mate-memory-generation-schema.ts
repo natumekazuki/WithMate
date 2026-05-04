@@ -11,7 +11,7 @@ export type MateMemoryGenerationParseDefaults = {
   projectDigestId?: string | null;
 };
 
-const SOURCE_TYPES = ["session", "companion", "manual", "system"] as const;
+const SOURCE_TYPES = ["session", "companion", "manual", "system", "mate_talk"] as const;
 const GROWTH_SOURCE_TYPES = [
   "explicit_user_instruction",
   "user_correction",

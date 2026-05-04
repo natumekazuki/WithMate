@@ -1608,7 +1608,7 @@ async function runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnRe
         recentConversationText,
         providerIds,
         sourceDefaults: {
-          sourceType: "manual",
+          sourceType: "mate_talk",
           sourceSessionId: null,
           sourceAuditLogId: null,
           projectDigestId: null,
