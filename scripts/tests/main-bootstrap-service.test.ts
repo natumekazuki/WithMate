@@ -9,6 +9,11 @@ test("MainBootstrapService は起動シーケンスを順に実行する", async
   const activeModelCatalog = { revision: 1, providers: [] } as ModelCatalogSnapshot;
 
   const service = new MainBootstrapService({
+    getMateState() {
+      calls.push("getMateState");
+      return "not_created";
+    },
+    async applyPendingGrowth() {},
     async initializePersistentStores() {
       calls.push("initializePersistentStores");
       return activeModelCatalog;
@@ -42,5 +47,6 @@ test("MainBootstrapService は起動シーケンスを順に実行する", async
     "registerIpcHandlers",
     "createHomeWindow",
     "broadcastModelCatalog:1",
+    "getMateState",
   ]);
 });

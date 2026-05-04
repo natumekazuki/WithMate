@@ -83,6 +83,7 @@ export const WITHMATE_RESET_APP_DATABASE_CHANNEL = "withmate:reset-app-database"
 export const WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL = "withmate:get-memory-management-snapshot";
 export const WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL = "withmate:get-memory-management-page";
 export const WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL = "withmate:get-mate-embedding-settings";
+export const WITHMATE_APPLY_MATE_GROWTH_CHANNEL = "withmate:apply-mate-growth";
 export const WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL = "withmate:start-mate-embedding-download";
 export const WITHMATE_DELETE_SESSION_MEMORY_CHANNEL = "withmate:delete-session-memory";
 export const WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL = "withmate:delete-project-memory-entry";

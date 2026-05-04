@@ -1,5 +1,6 @@
 import type { BrowserWindow, IpcMain } from "electron";
 
+import type { MateStorageState } from "../src/mate-state.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import {
   createMainIpcRegistrationDeps,
@@ -16,6 +17,11 @@ type CreateMainBootstrapDepsArgs = {
   refreshCharactersFromStorage(): Promise<void>;
   createHomeWindow(): Promise<BrowserWindow>;
   broadcastModelCatalog(snapshot: ModelCatalogSnapshot): void;
+  getMateState(): MateStorageState | Promise<MateStorageState>;
+  applyPendingGrowth(): Promise<unknown>;
+  growthApplyIntervalMs?: number;
+  createGrowthApplyTimer?: (handler: () => void, intervalMs: number) => unknown;
+  clearGrowthApplyTimer?: (timer: unknown) => void;
   ipcRegistration: CreateMainIpcRegistrationDepsArgs;
 };
 
@@ -26,6 +32,11 @@ export function createMainBootstrapDeps(
     initializePersistentStores: args.initializePersistentStores,
     recoverInterruptedSessions: args.recoverInterruptedSessions,
     refreshCharactersFromStorage: args.refreshCharactersFromStorage,
+    getMateState: args.getMateState,
+    applyPendingGrowth: args.applyPendingGrowth,
+    growthApplyIntervalMs: args.growthApplyIntervalMs,
+    createGrowthApplyTimer: args.createGrowthApplyTimer,
+    clearGrowthApplyTimer: args.clearGrowthApplyTimer,
     registerIpcHandlers: () => {
       args.registerMainIpcHandlers(args.ipcMain, createMainIpcRegistrationDeps(args.ipcRegistration));
     },

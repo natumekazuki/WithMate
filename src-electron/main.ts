@@ -94,6 +94,9 @@ import { MateMemoryStorage } from "./mate-memory-storage.js";
 import { MateEmbeddingCacheService } from "./mate-embedding-cache.js";
 import { MateEmbeddingDownloadService } from "./mate-embedding-download-service.js";
 import { buildMateMemoryRuntimeInstructionFiles } from "./mate-memory-runtime-instructions.js";
+import { MateGrowthApplyService } from "./mate-growth-apply-service.js";
+import { MateGrowthStorage } from "./mate-growth-storage.js";
+import { MateProfileItemStorage } from "./mate-profile-item-storage.js";
 import { createMateMemoryGenerationRunner } from "./mate-memory-generation-runner.js";
 import { MateMemoryGenerationService } from "./mate-memory-generation-service.js";
 import { MemoryRuntimeWorkspaceService } from "./memory-runtime-workspace.js";
@@ -124,7 +127,7 @@ import { MainSessionPersistenceFacade } from "./main-session-persistence-facade.
 import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
-import { getMateMemoryGenerationSettings } from "../src/provider-settings-state.js";
+import { getMateMemoryGenerationSettings, getProviderAppSettings } from "../src/provider-settings-state.js";
 import type { MateTalkTurnInput, MateTalkTurnResult } from "../src/mate-state.js";
 import {
   type CharacterReflectionTriggerReason,
@@ -156,6 +159,15 @@ const fixedUserDataPath = path.join(appDataPath, "WithMate");
 app.setAppUserModelId("com.natumekazuki.withmate");
 app.setPath("userData", fixedUserDataPath);
 const appLogsPath = path.join(fixedUserDataPath, "logs");
+const MATE_GROWTH_APPLY_INTERVAL_MS = 60 * 60 * 1000;
+const MATE_TALK_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    assistantMessage: { type: "string" },
+  },
+  required: ["assistantMessage"],
+} as const;
 const appLogService = new AppLogService({
   logsPath: appLogsPath,
   runtimeInfo: {
@@ -189,6 +201,9 @@ let appSettingsStorage: AppSettingsStorage | null = null;
 let mateStorage: MateStorage | null = null;
 let mateMemoryStorage: MateMemoryStorage | null = null;
 let mateEmbeddingCacheService: MateEmbeddingCacheService | null = null;
+let mateGrowthStorage: MateGrowthStorage | null = null;
+let mateProfileItemStorage: MateProfileItemStorage | null = null;
+let mateGrowthApplyService: MateGrowthApplyService | null = null;
 let memoryRuntimeWorkspaceService: MemoryRuntimeWorkspaceService | null = null;
 let mateMemoryGenerationService: MateMemoryGenerationService | null = null;
 type CompanionStorageHandle = CompanionStorage | CompanionStorageV3;
@@ -1007,10 +1022,18 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               mate: {
                 getMateState: () => requireMateStorage().getMateState(),
                 getMateProfile: () => requireMateStorage().getMateProfile(),
-                createMate: (input) => requireMateStorage().createMate(input),
+                createMate,
+                applyPendingGrowth,
                 runMateTalkTurn,
-                resetMate: () => requireMateStorage().resetMate(),
+                resetMate,
               },
+            },
+            getMateState: () => requireMateStorage().getMateState(),
+            applyPendingGrowth,
+            growthApplyIntervalMs: MATE_GROWTH_APPLY_INTERVAL_MS,
+            createGrowthApplyTimer: (handler, intervalMs) => setInterval(handler, intervalMs),
+            clearGrowthApplyTimer: (timer) => {
+              clearInterval(timer as ReturnType<typeof setInterval>);
             },
           }),
         ),
@@ -1261,6 +1284,7 @@ function requireMateMemoryGenerationService(): MateMemoryGenerationService {
     mateMemoryGenerationService = new MateMemoryGenerationService({
       workspace: workspaceService,
       storage: memoryStorage,
+      growthStorage: requireMateGrowthStorage(),
       runStructuredGeneration: createMateMemoryGenerationRunner({
         getAppSettings: () => requireAppSettingsStorage().getSettings(),
         getProviderBackgroundAdapter,
@@ -1285,6 +1309,146 @@ function requireMateStorage(): MateStorage {
   }
 
   return mateStorage;
+}
+
+async function createMate(input: Parameters<MateStorage["createMate"]>[0]): ReturnType<MateStorage["createMate"]> {
+  const profile = await requireMateStorage().createMate(input);
+  await requireMainBootstrapService().ensureGrowthApplyTimer();
+  return profile;
+}
+
+async function resetMate(): Promise<void> {
+  requireMainBootstrapService().clearGrowthApplyTimer();
+  await requireMateStorage().resetMate();
+}
+
+async function applyPendingGrowth(): ReturnType<MateGrowthApplyService["applyPendingGrowth"]> {
+  if (requireMateStorage().getMateState() === "not_created") {
+    return {
+      candidateCount: 0,
+      appliedCount: 0,
+      skippedCount: 0,
+      revisionId: null,
+    };
+  }
+
+  return requireMateGrowthApplyService().applyPendingGrowth();
+}
+
+function extractMateTalkAssistantMessage(value: unknown): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const assistantMessage = (value as { assistantMessage?: unknown }).assistantMessage;
+  return typeof assistantMessage === "string" && assistantMessage.trim()
+    ? assistantMessage.trim()
+    : null;
+}
+
+async function generateMateTalkAssistantMessage(input: {
+  userMessage: string;
+  mateProfile: {
+    id: string;
+    displayName: string;
+    description: string;
+    themeMain: string;
+    themeSub: string;
+  };
+}): Promise<string> {
+  const appSettings = requireAppSettingsStorage().getSettings();
+  const settings = getMateMemoryGenerationSettings(appSettings);
+  let lastFailure: Error | null = null;
+
+  for (const candidate of settings.priorityList) {
+    const providerSettings = getProviderAppSettings(appSettings, candidate.provider);
+    if (!providerSettings.enabled) {
+      continue;
+    }
+
+    try {
+      const result = await getProviderBackgroundAdapter(candidate.provider).runBackgroundStructuredPrompt({
+        providerId: candidate.provider,
+        workspacePath: path.join(app.getPath("userData"), "mate"),
+        appSettings,
+        model: candidate.model,
+        reasoningEffort: candidate.reasoningEffort,
+        timeoutMs: candidate.timeoutSeconds * 1000,
+        prompt: {
+          systemText: [
+            "あなたは WithMate の Mate として、ユーザーと自然に会話します。",
+            "Mate の現在の定義を尊重し、まだ未確定な性格や口調は決めつけすぎないでください。",
+            "ファイル操作や外部操作は行わず、会話文だけを返してください。",
+            "返答は JSON object のみを返してください。",
+          ].join("\n"),
+          userText: [
+            "# Mate",
+            `id: ${input.mateProfile.id}`,
+            `name: ${input.mateProfile.displayName}`,
+            `description: ${input.mateProfile.description || "(未設定)"}`,
+            "",
+            "# User message",
+            input.userMessage,
+            "",
+            "# Output JSON shape",
+            '{"assistantMessage":"..."}',
+          ].join("\n"),
+          outputSchema: MATE_TALK_OUTPUT_SCHEMA,
+        },
+      });
+
+      const output = result.structuredOutput ?? result.parsedJson ?? result.output;
+      const assistantMessage = extractMateTalkAssistantMessage(output);
+      if (assistantMessage) {
+        return assistantMessage;
+      }
+    } catch (error) {
+      lastFailure = error instanceof Error ? error : new Error(String(error));
+      console.warn("Failed to generate MateTalk response", candidate.provider, lastFailure);
+    }
+  }
+
+  if (lastFailure) {
+    throw lastFailure;
+  }
+
+  throw new Error("有効な MateTalk provider が見つかりませんでした。");
+}
+
+function requireMateGrowthStorage(): MateGrowthStorage {
+  if (!dbPath) {
+    throw new Error("DB path が初期化されていないよ。");
+  }
+
+  if (!mateGrowthStorage) {
+    mateGrowthStorage = new MateGrowthStorage(dbPath);
+  }
+
+  return mateGrowthStorage;
+}
+
+function requireMateProfileItemStorage(): MateProfileItemStorage {
+  if (!dbPath) {
+    throw new Error("DB path が初期化されていないよ。");
+  }
+
+  if (!mateProfileItemStorage) {
+    mateProfileItemStorage = new MateProfileItemStorage(dbPath);
+  }
+
+  return mateProfileItemStorage;
+}
+
+function requireMateGrowthApplyService(): MateGrowthApplyService {
+  if (!mateGrowthApplyService) {
+    mateGrowthApplyService = new MateGrowthApplyService(
+      requireMateGrowthStorage(),
+      requireMateProfileItemStorage(),
+      requireMateStorage(),
+    );
+  }
+
+  return mateGrowthApplyService;
 }
 
 function requireMateEmbeddingCacheService(): MateEmbeddingCacheService {
@@ -1313,6 +1477,7 @@ async function startMateEmbeddingDownload(): Promise<void> {
 async function runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult> {
   const service = new MateTalkService({
     getMateProfile: () => requireMateStorage().getMateProfile(),
+    generateAssistantMessage: generateMateTalkAssistantMessage,
     scheduleMemoryGeneration: ({ userMessage, assistantText }) => {
       const mateProfile = requireMateStorage().getMateProfile();
       const recentConversationText = [
@@ -1961,9 +2126,12 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
 
 function closePersistentStores(): void {
   stopWalMaintenance();
+  mainInfrastructureRegistry?.getMainBootstrapService().clearGrowthApplyTimer();
   companionStorage?.close();
   companionAuditLogStorage?.close();
   mateMemoryStorage?.close();
+  mateGrowthStorage?.close();
+  mateProfileItemStorage?.close();
   mateEmbeddingCacheService?.close();
   requirePersistentStoreLifecycleService().close({
     modelCatalogStorage,
@@ -1985,6 +2153,9 @@ function closePersistentStores(): void {
   appSettingsStorage = null;
   mateStorage = null;
   mateMemoryStorage = null;
+  mateGrowthStorage = null;
+  mateProfileItemStorage = null;
+  mateGrowthApplyService = null;
   mateEmbeddingCacheService = null;
   memoryRuntimeWorkspaceService = null;
   mateMemoryGenerationService = null;
@@ -2019,8 +2190,14 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   }
 
   stopWalMaintenance();
+  mainInfrastructureRegistry?.getMainBootstrapService().clearGrowthApplyTimer();
   mateMemoryStorage?.close();
   mateMemoryStorage = null;
+  mateGrowthStorage?.close();
+  mateGrowthStorage = null;
+  mateProfileItemStorage?.close();
+  mateProfileItemStorage = null;
+  mateGrowthApplyService = null;
   mateEmbeddingCacheService?.close();
   mateEmbeddingCacheService = null;
   companionStorage?.close();

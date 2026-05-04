@@ -8,6 +8,7 @@ import {
 } from "./mate-memory-generation-prompt.js";
 import type { MemoryRuntimeInstructionFile, MemoryRuntimeWorkspaceService } from "./memory-runtime-workspace.js";
 import { MateMemoryStorage } from "./mate-memory-storage.js";
+import type { MateGrowthEventInput, MateGrowthStorage } from "./mate-growth-storage.js";
 
 type TagCatalogEntry = MateMemoryGenerationPromptInput["existingTagCatalog"][number];
 
@@ -38,6 +39,7 @@ export type GetInstructionFilesInput = {
 export type MateMemoryGenerationServiceDeps = {
   workspace: MemoryRuntimeWorkspaceService;
   storage: MateMemoryStorage;
+  growthStorage?: Pick<MateGrowthStorage, "createRun" | "upsertEvent" | "finishRun" | "failRun">;
   runStructuredGeneration(input: RunStructuredGenerationInput): Promise<StructuredGenerationResult>;
   getTagCatalog(): Promise<readonly TagCatalogEntry[]>;
   getInstructionFiles(input: GetInstructionFilesInput): Promise<readonly MemoryRuntimeInstructionFile[]>;
@@ -62,6 +64,58 @@ export type MateMemoryGenerationRunResult = {
   rawText?: string;
   rawItemsJson?: string;
 };
+
+const MATE_GROWTH_TRIGGER_REASON = "mate-memory-generation";
+type GrowthTargetSection = MateGrowthEventInput["targetSection"];
+type GrowthCandidateSeed = {
+  sourceType: MateGrowthEventInput["sourceType"];
+  sourceSessionId?: MateGrowthEventInput["sourceSessionId"];
+  sourceAuditLogId?: MateGrowthEventInput["sourceAuditLogId"];
+  projectDigestId?: MateGrowthEventInput["projectDigestId"];
+  growthSourceType: MateGrowthEventInput["growthSourceType"];
+  kind: MateGrowthEventInput["kind"];
+  targetSection: MateGrowthEventInput["targetSection"];
+  statement: MateGrowthEventInput["statement"];
+  confidence: number;
+  salienceScore: number;
+  projectionAllowed?: MateGrowthEventInput["projectionAllowed"];
+  sourceGrowthRunId?: MateGrowthEventInput["sourceGrowthRunId"];
+};
+
+const GROWTH_TARGET_SECTIONS: readonly GrowthTargetSection[] = ["bond", "work_style", "project_digest", "core", "none"];
+
+function isGrowthTargetSection(value: unknown): value is GrowthTargetSection {
+  return typeof value === "string" && GROWTH_TARGET_SECTIONS.includes(value as GrowthTargetSection);
+}
+
+function buildGrowthRunInput(seed: GrowthCandidateSeed, runCount: number, provider?: string, model?: string) {
+  return {
+    sourceType: seed.sourceType,
+    sourceSessionId: seed.sourceSessionId,
+    sourceAuditLogId: seed.sourceAuditLogId,
+    projectDigestId: seed.projectDigestId,
+    triggerReason: MATE_GROWTH_TRIGGER_REASON,
+    providerId: provider,
+    model,
+    candidateCount: runCount,
+  };
+}
+
+function resolveGrowthTarget(memory: GrowthCandidateSeed): {
+  targetSection: GrowthTargetSection;
+  projectionAllowed: boolean;
+} {
+  const targetSection = isGrowthTargetSection(memory.targetSection) ? memory.targetSection : "none";
+  const projectionAllowed = targetSection === "none" ? false : (memory.projectionAllowed ?? true);
+  return { targetSection, projectionAllowed };
+}
+
+function normalizeErrorPreview(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message || String(error);
+  }
+  return String(error);
+}
 
 export class MateMemoryGenerationService {
   constructor(private readonly deps: MateMemoryGenerationServiceDeps) {}
@@ -109,6 +163,28 @@ export class MateMemoryGenerationService {
       const parsedJson = generationResult.parsedJson ?? JSON.parse(generationResult.rawText);
       const normalized = parseMateMemoryGenerationResponse(parsedJson, sourceDefaults);
       const savedMemories = this.deps.storage.saveGeneratedMemories(normalized);
+      if (this.deps.growthStorage && normalized.memories.length > 0) {
+        const runInput = buildGrowthRunInput(normalized.memories[0], normalized.memories.length, generationResult.provider, generationResult.model);
+        const runId = this.deps.growthStorage.createRun(runInput);
+
+        try {
+          for (const memory of normalized.memories) {
+            const target = resolveGrowthTarget(memory);
+            this.deps.growthStorage.upsertEvent({
+              ...memory,
+              sourceGrowthRunId: runId,
+              sourceSessionId: memory.sourceSessionId ?? null,
+              targetSection: target.targetSection,
+              projectionAllowed: target.projectionAllowed,
+            });
+          }
+
+          this.deps.growthStorage.finishRun(runId);
+        } catch (error) {
+          this.deps.growthStorage.failRun(runId, normalizeErrorPreview(error));
+          throw error;
+        }
+      }
 
       return {
         skipped: false,

@@ -15,6 +15,7 @@ import {
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
+  WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
@@ -350,6 +351,9 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
       calls.push(`createMate:${input.displayName}`);
       return {} as never;
     },
+    async applyPendingGrowth() {
+      calls.push("applyPendingGrowth");
+    },
     async runMateTalkTurn(input) {
       calls.push(`runMateTalk:${input.message}`);
       return {
@@ -373,6 +377,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   assert.ok(handlers.has(WITHMATE_GET_MATE_STATE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_MATE_PROFILE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_CREATE_MATE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_APPLY_MATE_GROWTH_CHANNEL));
   assert.ok(handlers.has(WITHMATE_RUN_MATE_TALK_TURN_CHANNEL));
   assert.ok(handlers.has(WITHMATE_RESET_MATE_CHANNEL));
 
@@ -385,6 +390,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   await handlers.get(WITHMATE_GET_MATE_PROFILE_CHANNEL)?.();
   await handlers.get(WITHMATE_CREATE_MATE_CHANNEL)?.({}, { displayName: "Buddy" });
   await handlers.get(WITHMATE_RUN_MATE_TALK_TURN_CHANNEL)?.({}, { message: "hello" });
+  await handlers.get(WITHMATE_APPLY_MATE_GROWTH_CHANNEL)?.();
   await handlers.get(WITHMATE_RESET_MATE_CHANNEL)?.();
   const auditPageResult = await handlers.get(WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL)?.(
     {},
@@ -407,6 +413,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     "createMate:Buddy",
     "getMateState",
     "runMateTalk:hello",
+    "getMateState",
+    "applyPendingGrowth",
     "resetMate",
     "getMateState",
   ]);
@@ -436,6 +444,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     "createMate:Buddy",
     "getMateState",
     "runMateTalk:hello",
+    "getMateState",
+    "applyPendingGrowth",
     "resetMate",
     "getMateState",
     "getMateState",
@@ -556,6 +566,9 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     getMateProfile() {
       return null;
     },
+    applyPendingGrowth() {
+      return null;
+    },
     async createMate() {
       return {} as never;
     },
@@ -661,6 +674,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_GET_MATE_STATE_CHANNEL,
     WITHMATE_GET_MATE_PROFILE_CHANNEL,
     WITHMATE_CREATE_MATE_CHANNEL,
+    WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
     WITHMATE_RUN_MATE_TALK_TURN_CHANNEL,
     WITHMATE_RESET_MATE_CHANNEL,
     WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,

@@ -130,6 +130,7 @@ import {
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESET_MATE_CHANNEL,
+  WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_MATE_TALK_TURN_CHANNEL,
@@ -321,6 +322,7 @@ export type MainIpcRegistrationDeps = {
   getMateState(): Awaitable<MateStorageState>;
   getMateProfile(): Awaitable<MateProfile | null>;
   createMate(input: CreateMateInput): Promise<MateProfile>;
+  applyPendingGrowth(): Promise<unknown>;
   runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
   resetMate(): Promise<void>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
@@ -463,6 +465,7 @@ type MainIpcMateDeps = Pick<
   | "getMateState"
   | "getMateProfile"
   | "createMate"
+  | "applyPendingGrowth"
   | "runMateTalkTurn"
   | "resetMate"
 >;
@@ -789,6 +792,7 @@ function registerMateHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcMateDeps
   ipcMain.handle(WITHMATE_GET_MATE_STATE_CHANNEL, () => deps.getMateState());
   ipcMain.handle(WITHMATE_GET_MATE_PROFILE_CHANNEL, () => deps.getMateProfile());
   ipcMain.handle(WITHMATE_CREATE_MATE_CHANNEL, (_event, input: CreateMateInput) => deps.createMate(input));
+  ipcMain.handle(WITHMATE_APPLY_MATE_GROWTH_CHANNEL, () => deps.applyPendingGrowth());
   ipcMain.handle(WITHMATE_RUN_MATE_TALK_TURN_CHANNEL, (_event, input: MateTalkTurnInput) =>
     deps.runMateTalkTurn(input),
   );

@@ -220,6 +220,7 @@ export type WithMateWindowMateApi = {
   getMateState(): Promise<MateStorageState>;
   getMateProfile(): Promise<MateProfile | null>;
   createMate(input: CreateMateInput): Promise<MateProfile>;
+  applyPendingGrowth(): Promise<unknown>;
   runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
   resetMate(): Promise<void>;
 };

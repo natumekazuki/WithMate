@@ -45,6 +45,11 @@ export class MateGrowthApplyService {
       };
     }
 
+    const profile = this.mateStorage.getMateProfile();
+    if (!profile) {
+      throw new Error("Mate が作成されていないよ。");
+    }
+
     const applicableEvents = events.filter(isApplicableProfileEvent);
     const skippedEvents = events.filter((event) => !isApplicableProfileEvent(event));
 
@@ -79,11 +84,6 @@ export class MateGrowthApplyService {
           { type: "growth_source_type", value: event.growthSourceType },
         ],
       });
-    }
-
-    const profile = this.mateStorage.getMateProfile();
-    if (!profile) {
-      throw new Error("Mate が作成されていないよ。");
     }
 
     const profileItems = this.profileItemStorage.listProfileItems({ state: "active" });

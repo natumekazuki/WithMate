@@ -58,6 +58,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:run-mate-talk-turn",
     args: [{ message: "hello" }],
   });
+  assert.deepEqual(await api.applyPendingGrowth(), {
+    channel: "withmate:apply-mate-growth",
+    args: [],
+  });
   assert.deepEqual(await api.resetMate(), {
     channel: "withmate:reset-mate",
     args: [],
@@ -175,6 +179,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "previewCompanionComposerInput",
     "previewComposerInput",
     "reportRendererLog",
+    "applyPendingGrowth",
     "resetAppDatabase",
     "restoreCompanionTargetStash",
     "resolveLiveApproval",

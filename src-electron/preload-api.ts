@@ -21,6 +21,7 @@ import {
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
+  WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
   WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
@@ -439,6 +440,9 @@ function createMateApi(ipcRenderer: IpcRendererLike): WithMateWindowMateApi {
     },
     createMate(input) {
       return ipcRenderer.invoke(WITHMATE_CREATE_MATE_CHANNEL, input);
+    },
+    applyPendingGrowth() {
+      return ipcRenderer.invoke(WITHMATE_APPLY_MATE_GROWTH_CHANNEL);
     },
     runMateTalkTurn(input) {
       return ipcRenderer.invoke(WITHMATE_RUN_MATE_TALK_TURN_CHANNEL, input);

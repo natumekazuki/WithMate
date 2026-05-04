@@ -199,6 +199,7 @@ export type MainIpcMateDepsArgs = {
   getMateState(): Awaitable<MateStorageState>;
   getMateProfile(): Awaitable<MateProfile | null>;
   createMate(input: CreateMateInput): Promise<MateProfile>;
+  applyPendingGrowth(): Promise<unknown>;
   runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
   resetMate(): Promise<void>;
 };
@@ -334,6 +335,7 @@ export function createMainIpcRegistrationDeps(
     getMateState: args.mate.getMateState,
     getMateProfile: args.mate.getMateProfile,
     createMate: args.mate.createMate,
+    applyPendingGrowth: args.mate.applyPendingGrowth,
     runMateTalkTurn: args.mate.runMateTalkTurn,
     resetMate: args.mate.resetMate,
   };

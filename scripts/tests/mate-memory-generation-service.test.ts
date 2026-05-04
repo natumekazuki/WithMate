@@ -144,6 +144,130 @@ describe("MateMemoryGenerationService", () => {
     }
   });
 
+  it("growthStorage を指定すると growth run と event が呼ばれる", async () => {
+    const { dbPath, cleanup: cleanupDb } = await createTempDbPath();
+    const userDataPath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-memory-workspace-"));
+    let storage: MateMemoryStorage | null = null;
+
+    const growthRuns: unknown[] = [];
+    const growthUpserts: unknown[] = [];
+    const growthFinishes: unknown[] = [];
+    const growthFails: unknown[] = [];
+
+    const growthStorage = {
+      createRun(input: unknown) {
+        growthRuns.push(input);
+        return 77;
+      },
+      upsertEvent(input: unknown) {
+        growthUpserts.push(input);
+        return { id: "growth-event", created: true, state: "candidate" };
+      },
+      finishRun(runId: unknown, input: unknown) {
+        growthFinishes.push({ runId, input });
+      },
+      failRun(runId: unknown, errorPreview: unknown) {
+        growthFails.push({ runId, errorPreview });
+      },
+    };
+
+    try {
+      storage = new MateMemoryStorage(dbPath);
+      seedCurrentMateProfile(dbPath);
+      const workspace = new MemoryRuntimeWorkspaceService({ userDataPath });
+
+      const service = new MateMemoryGenerationService({
+        workspace,
+        storage,
+        growthStorage,
+        async runStructuredGeneration() {
+          return {
+            parsedJson: {
+              memories: [{
+                statement: "ユーザーは丁寧語をよく使う。",
+                growthSourceType: "assistant_inference",
+                kind: "conversation",
+                targetSection: "core",
+                confidence: 90,
+                salienceScore: 72,
+                tags: [{ type: "Topic", value: "language" }],
+              }, {
+                statement: "投影対象が不明な知見",
+                growthSourceType: "assistant_inference",
+                kind: "observation",
+                targetSection: "none",
+                confidence: 40,
+                salienceScore: 20,
+              }],
+            },
+            rawText: "{\"invalid\"",
+            usage: null,
+            provider: "copilot",
+            model: "mock-2",
+            threadId: "thread-2",
+            rawItemsJson: "{\"type\":\"mock\"}",
+          };
+        },
+        async getTagCatalog() {
+          return [];
+        },
+        async getInstructionFiles(_input) {
+          return [];
+        },
+        async getRecentConversationText() {
+          return "ユーザー: 最近の会話テキスト";
+        },
+      });
+
+      const result = await service.runOnce({
+        sourceDefaults: {
+          sourceType: "session",
+          sourceSessionId: "session-77",
+          sourceAuditLogId: 333,
+          projectDigestId: "project-77",
+        },
+      });
+
+      assert.equal(result.savedCount, 2);
+      assert.equal(growthRuns.length, 1);
+      assert.equal(growthUpserts.length, 2);
+      assert.equal(growthFinishes.length, 1);
+      assert.equal(growthFails.length, 0);
+
+      const run = growthRuns[0] as {
+        triggerReason: string;
+        sourceType: string;
+        sourceSessionId: string | null;
+        sourceAuditLogId: number | null;
+        projectDigestId: string | null;
+        providerId: string | null;
+        model: string | null;
+        candidateCount: number;
+      };
+      assert.equal(run.triggerReason, "mate-memory-generation");
+      assert.equal(run.sourceType, "session");
+      assert.equal(run.sourceSessionId, "session-77");
+      assert.equal(run.sourceAuditLogId, 333);
+      assert.equal(run.projectDigestId, "project-77");
+      assert.equal(run.providerId, "copilot");
+      assert.equal(run.model, "mock-2");
+      assert.equal(run.candidateCount, 2);
+
+      const firstEvent = growthUpserts[0] as { targetSection: string; projectionAllowed: boolean; sourceGrowthRunId: number };
+      const secondEvent = growthUpserts[1] as { targetSection: string; projectionAllowed: boolean; sourceGrowthRunId: number };
+      assert.equal(firstEvent.sourceGrowthRunId, 77);
+      assert.equal(firstEvent.targetSection, "core");
+      assert.equal(firstEvent.projectionAllowed, true);
+      assert.equal(secondEvent.sourceGrowthRunId, 77);
+      assert.equal(secondEvent.targetSection, "none");
+      assert.equal(secondEvent.projectionAllowed, false);
+    } finally {
+      storage?.close();
+      await cleanupDb();
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
   it("invalid な schema は保存しない", async () => {
     const { dbPath, cleanup: cleanupDb } = await createTempDbPath();
     const userDataPath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-memory-workspace-"));
