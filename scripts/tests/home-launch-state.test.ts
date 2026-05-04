@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
 import { DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../../src/model-catalog.js";
-import type { CharacterProfile, SessionSummary } from "../../src/app-state.js";
+import type { SessionSummary } from "../../src/app-state.js";
 import {
   buildCreateCompanionSessionInputFromLaunchDraft,
   buildCreateSessionInputFromLaunchDraft,
@@ -13,32 +13,26 @@ import {
   openLaunchDraft,
   resolveLastUsedSessionSelection,
   setLaunchWorkspaceFromPath,
-  syncLaunchDraftCharacter,
 } from "../../src/home-launch-state.js";
+import type { MateProfile } from "../../src/mate-state.js";
 
-function createCharacter(partial: Partial<CharacterProfile> & Pick<CharacterProfile, "id" | "name">): CharacterProfile {
+function createMateProfile(partial: Partial<MateProfile> & Pick<MateProfile, "id" | "displayName">): MateProfile {
   return {
+    id: "mate-1",
+    state: "active",
+    displayName: "Default Mate",
     description: "",
-    iconPath: "icon.png",
-    roleMarkdown: "",
-    notesMarkdown: "",
-    themeColors: {
-      main: "#000000",
-      sub: "#ffffff",
-    },
-    sessionCopy: {
-      pendingApproval: [],
-      pendingWorking: [],
-      pendingResponding: [],
-      pendingPreparing: [],
-      retryInterruptedTitle: [],
-      retryFailedTitle: [],
-      retryCanceledTitle: [],
-      latestCommandWaiting: [],
-      latestCommandEmpty: [],
-      changedFilesEmpty: [],
-      contextEmpty: [],
-    },
+    themeMain: "#000000",
+    themeSub: "#ffffff",
+    avatarFilePath: "avatar.png",
+    avatarSha256: "",
+    avatarByteSize: 0,
+    activeRevisionId: null,
+    profileGeneration: 1,
+    createdAt: "",
+    updatedAt: "",
+    deletedAt: null,
+    sections: [],
     ...partial,
   };
 }
@@ -47,12 +41,11 @@ describe("home-launch-state", () => {
   it("open と close で launch draft を reset する", () => {
     const opened = openLaunchDraft(
       {
-        ...createClosedLaunchDraft("char-1"),
+        ...createClosedLaunchDraft(),
         open: false,
         title: "keep",
         workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
         providerId: "old",
-        characterSearchText: "mi",
       },
       "codex",
     );
@@ -67,8 +60,6 @@ describe("home-launch-state", () => {
       reasoningEffort: DEFAULT_REASONING_EFFORT,
       approvalMode: DEFAULT_APPROVAL_MODE,
       codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
-      characterId: "char-1",
-      characterSearchText: "",
     });
 
     assert.deepEqual(closeLaunchDraft(opened), {
@@ -81,23 +72,11 @@ describe("home-launch-state", () => {
       reasoningEffort: DEFAULT_REASONING_EFFORT,
       approvalMode: DEFAULT_APPROVAL_MODE,
       codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
-      characterId: "char-1",
-      characterSearchText: "",
     });
   });
 
-  it("character 一覧から launch draft の characterId を同期する", () => {
-    const draft = createClosedLaunchDraft("missing");
-    const synced = syncLaunchDraftCharacter(draft, [
-      createCharacter({ id: "a", name: "Mia" }),
-      createCharacter({ id: "b", name: "Luna" }),
-    ]);
-
-    assert.equal(synced.characterId, "a");
-  });
-
   it("workspace path から launch draft の workspace を更新する", () => {
-    const draft = setLaunchWorkspaceFromPath(createClosedLaunchDraft("a"), "F:/work/demo");
+    const draft = setLaunchWorkspaceFromPath(createClosedLaunchDraft(), "F:/work/demo");
 
     assert.deepEqual(draft.workspace, {
       label: "demo",
@@ -113,10 +92,14 @@ describe("home-launch-state", () => {
         title: "  task  ",
         workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
         providerId: "codex",
-        characterId: "a",
-        characterSearchText: "",
       },
-      selectedCharacter: createCharacter({ id: "a", name: "Mia" }),
+      mateProfile: createMateProfile({
+        id: "mate-a",
+        displayName: "Mia",
+        avatarFilePath: "icon.png",
+        themeMain: "#000000",
+        themeSub: "#ffffff",
+      }),
       selectedProviderId: "codex",
       approvalMode: DEFAULT_APPROVAL_MODE,
       lastUsedSelection: {
@@ -132,7 +115,7 @@ describe("home-launch-state", () => {
       workspaceLabel: "demo",
       workspacePath: "F:/work/demo",
       branch: "main",
-      characterId: "a",
+      characterId: "mate-a",
       character: "Mia",
       characterIconPath: "icon.png",
       characterThemeColors: {
@@ -149,14 +132,18 @@ describe("home-launch-state", () => {
   it("Companion launch は provider の last-used model を優先する", () => {
     const input = buildCreateCompanionSessionInputFromLaunchDraft({
       draft: {
-        ...createClosedLaunchDraft("a"),
+        ...createClosedLaunchDraft(),
         open: true,
         mode: "companion",
         title: "  task  ",
         workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
         providerId: "codex",
       },
-      selectedCharacter: createCharacter({ id: "a", name: "Mia" }),
+      mateProfile: createMateProfile({
+        id: "mate-a",
+        displayName: "Mia",
+        description: "assistant profile",
+      }),
       selectedProviderId: "codex",
       lastUsedSelection: {
         model: "gpt-5.4-mini",
@@ -216,8 +203,8 @@ describe("home-launch-state", () => {
 
   it("launch 条件が欠けている時は session input を返さない", () => {
     const input = buildCreateSessionInputFromLaunchDraft({
-      draft: createClosedLaunchDraft("a"),
-      selectedCharacter: createCharacter({ id: "a", name: "Mia" }),
+      draft: createClosedLaunchDraft(),
+      mateProfile: null,
       selectedProviderId: "codex",
       approvalMode: DEFAULT_APPROVAL_MODE,
     });

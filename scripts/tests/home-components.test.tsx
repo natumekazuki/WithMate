@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { HomeSettingsContent } from "../../src/home-components.js";
+import { HomeLaunchDialog, HomeSettingsContent } from "../../src/home-components.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { buildHomeProviderSettingRows } from "../../src/home-settings-view-model.js";
@@ -103,5 +103,37 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_REASONING_LABEL}</span>`));
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_TIMEOUT_LABEL}</span>`));
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL}</span>`));
+  });
+});
+
+describe("HomeLaunchDialog", () => {
+  const noOp = (..._args: unknown[]) => undefined;
+
+  it("セッション起動ダイアログにキャラ選択 UI が含まれない", () => {
+    const html = renderToStaticMarkup(
+      <HomeLaunchDialog
+        open={true}
+        mode="session"
+        title="demo"
+        workspace={null}
+        launchWorkspacePathLabel="workspace"
+        enabledLaunchProviders={[{ id: "codex", label: "Codex" }]}
+        selectedLaunchProviderId="codex"
+        canStartSession={true}
+        launchFeedback=""
+        launchStarting={false}
+        onClose={noOp}
+        onSelectMode={noOp}
+        onChangeTitle={noOp}
+        onBrowseWorkspace={noOp}
+        onSelectProvider={noOp}
+        onStartSession={noOp}
+      />,
+    );
+
+    assert.ok(!html.includes("launch-search-row"));
+    assert.ok(!html.includes("キャラクターを選ぶ"));
+    assert.ok(!html.includes("キャラを選んでね"));
+    assert.ok(!html.includes("Add Character"));
   });
 });

@@ -1,37 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { CharacterProfile } from "../../src/app-state.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { buildHomeLaunchProjection, inferWorkspaceFromPath } from "../../src/home-launch-projection.js";
-
-function createCharacter(partial: Partial<CharacterProfile> & Pick<CharacterProfile, "id" | "name">): CharacterProfile {
-  return {
-    description: "",
-    iconPath: "icon.png",
-    roleMarkdown: "",
-    notesMarkdown: "",
-    themeColors: {
-      main: "#000000",
-      sub: "#ffffff",
-    },
-    sessionCopy: {
-      pendingApproval: [],
-      pendingWorking: [],
-      pendingResponding: [],
-      pendingPreparing: [],
-      retryInterruptedTitle: [],
-      retryFailedTitle: [],
-      retryCanceledTitle: [],
-      latestCommandWaiting: [],
-      latestCommandEmpty: [],
-      changedFilesEmpty: [],
-      contextEmpty: [],
-    },
-    ...partial,
-  };
-}
 
 function createCatalog(): ModelCatalogSnapshot {
   return {
@@ -64,26 +36,28 @@ describe("home-launch-projection", () => {
     });
   });
 
-  it("launch search と selected character を投影する", () => {
+  it("provider と start 可否を返す", () => {
+    const settings = createDefaultAppSettings();
+    settings.codingProviderSettings.codex = {
+      enabled: false,
+      apiKey: "",
+      skillRootPath: "",
+    };
+
     const projection = buildHomeLaunchProjection({
-      characters: [
-        createCharacter({ id: "a", name: "Mia", description: "azure" }),
-        createCharacter({ id: "b", name: "Luna", description: "moon" }),
-      ],
-      launchCharacterSearchText: "lu",
-      launchCharacterId: "b",
       launchProviderId: "",
       launchTitle: "",
       launchWorkspace: null,
-      appSettings: createDefaultAppSettings(),
+      appSettings: settings,
       modelCatalog: createCatalog(),
     });
 
-    assert.deepEqual(projection.filteredLaunchCharacters.map((character) => character.id), ["b"]);
-    assert.equal(projection.selectedCharacter?.id, "b");
+    assert.deepEqual(projection.enabledLaunchProviders.map((provider) => provider.id), []);
+    assert.equal(projection.selectedLaunchProvider, null);
+    assert.equal(projection.canStartSession, false);
   });
 
-  it("enabled provider と start 可否を返す", () => {
+  it("有効な provider を選択でき、タイトル/ワークスペースで開始可否が変わる", () => {
     const settings = createDefaultAppSettings();
     settings.codingProviderSettings.copilot = {
       enabled: false,
@@ -91,10 +65,7 @@ describe("home-launch-projection", () => {
       skillRootPath: "",
     };
 
-    const projection = buildHomeLaunchProjection({
-      characters: [createCharacter({ id: "a", name: "Mia" })],
-      launchCharacterSearchText: "",
-      launchCharacterId: "a",
+    const enabledOnlyCodex = buildHomeLaunchProjection({
       launchProviderId: "",
       launchTitle: "task",
       launchWorkspace: { label: "demo", path: "F:/work/demo", branch: "" },
@@ -102,9 +73,9 @@ describe("home-launch-projection", () => {
       modelCatalog: createCatalog(),
     });
 
-    assert.deepEqual(projection.enabledLaunchProviders.map((provider) => provider.id), ["codex"]);
-    assert.equal(projection.selectedLaunchProvider?.id, "codex");
-    assert.equal(projection.launchWorkspacePathLabel, "F:/work/demo");
-    assert.equal(projection.canStartSession, true);
+    assert.deepEqual(enabledOnlyCodex.enabledLaunchProviders.map((provider) => provider.id), ["codex"]);
+    assert.equal(enabledOnlyCodex.selectedLaunchProvider?.id, "codex");
+    assert.equal(enabledOnlyCodex.launchWorkspacePathLabel, "F:/work/demo");
+    assert.equal(enabledOnlyCodex.canStartSession, true);
   });
 });

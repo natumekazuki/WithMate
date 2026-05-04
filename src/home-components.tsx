@@ -1053,22 +1053,14 @@ export type HomeLaunchDialogProps = {
   launchWorkspacePathLabel: string;
   enabledLaunchProviders: Array<{ id: string; label: string }>;
   selectedLaunchProviderId: string | null;
-  characters: CharacterProfile[];
-  filteredLaunchCharacters: CharacterProfile[];
-  selectedCharacterId: string | null;
-  launchCharacterSearchText: string;
   canStartSession: boolean;
   launchFeedback: string;
   launchStarting: boolean;
-  searchIcon: ReactNode;
   onClose: () => void;
   onSelectMode: (mode: "session" | "companion") => void;
   onChangeTitle: (value: string) => void;
   onBrowseWorkspace: () => void;
   onSelectProvider: (providerId: string) => void;
-  onChangeCharacterSearch: (value: string) => void;
-  onSelectCharacter: (characterId: string) => void;
-  onOpenCharacterEditor: () => void;
   onStartSession: (mode: "session" | "companion") => void;
 };
 
@@ -1080,22 +1072,14 @@ export function HomeLaunchDialog({
   launchWorkspacePathLabel,
   enabledLaunchProviders,
   selectedLaunchProviderId,
-  characters,
-  filteredLaunchCharacters,
-  selectedCharacterId,
-  launchCharacterSearchText,
   canStartSession,
   launchFeedback,
   launchStarting,
-  searchIcon,
   onClose,
   onSelectMode,
   onChangeTitle,
   onBrowseWorkspace,
   onSelectProvider,
-  onChangeCharacterSearch,
-  onSelectCharacter,
-  onOpenCharacterEditor,
   onStartSession,
 }: HomeLaunchDialogProps) {
   const titleInputRef = useRef<HTMLInputElement | null>(null);
@@ -1214,55 +1198,6 @@ export function HomeLaunchDialog({
               )}
             </div>
           </section>
-
-          <section className="launch-section profile-panel minimal">
-            {characters.length > 0 ? (
-              <>
-                <div className="launch-search-row">
-                  <label className="toolbar-search-field" aria-label="キャラ検索">
-                    <span className="toolbar-search-icon">{searchIcon}</span>
-                    <input
-                      className="toolbar-search-input"
-                      type="text"
-                      value={launchCharacterSearchText}
-                      onChange={(event) => onChangeCharacterSearch(event.target.value)}
-                    />
-                  </label>
-                </div>
-
-                {filteredLaunchCharacters.length > 0 ? (
-                  <div className="choice-card-list">
-                    {filteredLaunchCharacters.map((character) => (
-                      <button
-                        key={character.id}
-                        className={`choice-card${character.id === selectedCharacterId ? " active" : ""}`}
-                        style={buildCardThemeStyle(character.themeColors)}
-                        type="button"
-                        onClick={() => onSelectCharacter(character.id)}
-                      >
-                        <CharacterAvatar character={character} size="small" className="choice-avatar" />
-                        <div className="choice-card-copy">
-                          <strong>{character.name}</strong>
-                          <span>{character.description || "キャラクターを選ぶ"}</span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <article className="empty-list-card compact">
-                    <p>一致するキャラはないよ。</p>
-                  </article>
-                )}
-              </>
-            ) : (
-              <article className="empty-list-card compact">
-                <p>セッションを始める前にキャラを作ってね。</p>
-                <button className="launch-toggle" type="button" onClick={onOpenCharacterEditor}>
-                  Add Character
-                </button>
-              </article>
-            )}
-          </section>
         </div>
 
         <div className="launch-dialog-foot minimal">
@@ -1271,7 +1206,7 @@ export function HomeLaunchDialog({
             className="start-session-button"
             type="button"
             aria-disabled={!canStartSession || launchStarting}
-            disabled={launchStarting}
+            disabled={!canStartSession || launchStarting}
             onClick={() => onStartSession(mode)}
           >
             {launchStarting ? "Starting..." : mode === "companion" ? "Start Companion" : "Start New Session"}

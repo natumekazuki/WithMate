@@ -42,7 +42,6 @@ import {
   openLaunchDraft,
   resolveLastUsedSessionSelection,
   setLaunchWorkspaceFromPath,
-  syncLaunchDraftCharacter,
   type HomeLaunchDraft,
 } from "./home-launch-state.js";
 import { createCompanionSessionSummary, type CompanionSessionSummary } from "./companion-state.js";
@@ -369,7 +368,6 @@ export default function HomeApp() {
       setSessions(nextSessions);
       setCompanionSessions(nextCompanionSessions);
       setCharacters(nextCharacters);
-      setLaunchDraft((current) => syncLaunchDraftCharacter(current, nextCharacters));
 
       if (usesMemoryManagementWindow) {
         try {
@@ -410,7 +408,6 @@ export default function HomeApp() {
         }
 
         setCharacters(nextCharacters);
-        setLaunchDraft((current) => syncLaunchDraftCharacter(current, nextCharacters));
       });
     };
 
@@ -585,31 +582,15 @@ export default function HomeApp() {
   } = sessionProjection;
   const launchProjection = useMemo(
     () => buildHomeLaunchProjection({
-      characters,
-      launchCharacterSearchText: launchDraft.characterSearchText,
-      launchCharacterId: launchDraft.characterId,
       launchProviderId: launchDraft.providerId,
       launchTitle: launchDraft.title,
       launchWorkspace: launchDraft.workspace,
       appSettings,
       modelCatalog,
     }),
-    [
-      appSettings,
-      characterSearchText,
-      characters,
-      launchDraft,
-      modelCatalog,
-    ],
+    [appSettings, launchDraft, modelCatalog],
   );
-  const {
-    filteredLaunchCharacters,
-    selectedCharacter,
-    enabledLaunchProviders,
-    selectedLaunchProvider,
-    launchWorkspacePathLabel,
-    canStartSession,
-  } = launchProjection;
+  const { enabledLaunchProviders, selectedLaunchProvider, launchWorkspacePathLabel, canStartSession } = launchProjection;
   const characterProjection = useMemo(
     () => buildHomeCharacterProjection(characters, characterSearchText),
     [characterSearchText, characters],
@@ -780,7 +761,6 @@ export default function HomeApp() {
           setCompanionSessions(nextCompanionSessions);
           setCharacters(nextCharacters);
           setMateEmbeddingSettings(nextEmbeddingSettings);
-          setLaunchDraft((current) => syncLaunchDraftCharacter(current, nextCharacters));
         } catch (error) {
           setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
         }
@@ -799,8 +779,8 @@ export default function HomeApp() {
     if (!launchDraft.workspace) {
       return "workspace を選んでね。";
     }
-    if (!selectedCharacter) {
-      return "キャラを選んでね。";
+    if (!mateProfile) {
+      return "Mate を確認してから開始してね。";
     }
     if (!selectedLaunchProvider) {
       return "有効な Coding Provider を選んでね。";
@@ -826,7 +806,7 @@ export default function HomeApp() {
       if (requestedMode === "companion") {
         const companionInput = buildCreateCompanionSessionInputFromLaunchDraft({
           draft: launchDraft,
-          selectedCharacter,
+          mateProfile,
           selectedProviderId: selectedLaunchProvider?.id ?? null,
           lastUsedSelection,
         });
@@ -852,7 +832,7 @@ export default function HomeApp() {
 
       const sessionInput = buildCreateSessionInputFromLaunchDraft({
         draft: launchDraft,
-        selectedCharacter,
+        mateProfile,
         selectedProviderId: selectedLaunchProvider?.id ?? null,
         approvalMode: DEFAULT_APPROVAL_MODE,
         lastUsedSelection,
@@ -1697,14 +1677,9 @@ export default function HomeApp() {
         launchWorkspacePathLabel={launchWorkspacePathLabel}
         enabledLaunchProviders={enabledLaunchProviders}
         selectedLaunchProviderId={selectedLaunchProvider?.id ?? null}
-        characters={characters}
-        filteredLaunchCharacters={filteredLaunchCharacters}
-        selectedCharacterId={selectedCharacter?.id ?? null}
-        launchCharacterSearchText={launchDraft.characterSearchText}
         canStartSession={canStartSession}
         launchFeedback={launchFeedback}
         launchStarting={launchStarting}
-        searchIcon={renderSearchIcon()}
         onClose={closeLaunchDialog}
         onSelectMode={(mode) => {
           setLaunchFeedback("");
@@ -1729,12 +1704,6 @@ export default function HomeApp() {
             reasoningEffort: model?.reasoningEfforts[0] ?? provider?.defaultReasoningEffort ?? current.reasoningEffort,
           }));
         }}
-        onChangeCharacterSearch={(value) => setLaunchDraft((current) => ({ ...current, characterSearchText: value }))}
-        onSelectCharacter={(characterId) => {
-          setLaunchFeedback("");
-          setLaunchDraft((current) => ({ ...current, characterId }));
-        }}
-        onOpenCharacterEditor={() => void openCharacterEditor()}
         onStartSession={(mode) => void handleStartSession(mode)}
       />
 
