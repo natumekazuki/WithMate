@@ -82,4 +82,40 @@ describe("provider token usage", () => {
       },
     );
   });
+
+  it("Copilot の cacheReadTokens と reasoningTokens を同時に受け取っても reasoningTokens を正規化する", () => {
+    assert.deepEqual(
+      normalizeCopilotTokenUsage({
+        inputTokens: 30,
+        cacheReadTokens: 12,
+        outputTokens: 7,
+        reasoningTokens: 4,
+      }),
+      {
+        inputTokens: 30,
+        cachedInputTokens: 12,
+        outputTokens: 7,
+        reasoningOutputTokens: 4,
+        totalTokens: 37,
+      },
+    );
+  });
+
+  it("Copilot の reasoningOutputTokens がある場合は reasoningTokens より優先する", () => {
+    assert.deepEqual(
+      normalizeCopilotTokenUsage({
+        inputTokens: 30,
+        outputTokens: 7,
+        reasoningTokens: 4,
+        reasoningOutputTokens: 9,
+      }),
+      {
+        inputTokens: 30,
+        cachedInputTokens: 0,
+        outputTokens: 7,
+        reasoningOutputTokens: 9,
+        totalTokens: 37,
+      },
+    );
+  });
 });
