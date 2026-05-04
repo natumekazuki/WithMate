@@ -105,6 +105,7 @@ import { createMateMemoryGenerationRunner } from "./mate-memory-generation-runne
 import { MateMemoryGenerationService } from "./mate-memory-generation-service.js";
 import { MemoryRuntimeWorkspaceService } from "./memory-runtime-workspace.js";
 import { MateTalkService } from "./mate-talk-service.js";
+import { buildMateTalkProfileContextText } from "./mate-talk-profile-context.js";
 import { WindowEntryLoader } from "./window-entry-loader.js";
 import { AuxWindowService } from "./aux-window-service.js";
 import { registerMainIpcHandlers } from "./main-ipc-registration.js";
@@ -172,14 +173,6 @@ const MATE_TALK_OUTPUT_SCHEMA = {
   },
   required: ["assistantMessage"],
 } as const;
-const MATE_TALK_PROFILE_SECTION_ORDER = ["core", "bond", "work_style", "notes"] as const;
-const MATE_TALK_PROFILE_SECTION_PRIORITY = MATE_TALK_PROFILE_SECTION_ORDER.reduce(
-  (accumulator, sectionKey, index) => {
-    accumulator.set(sectionKey, index);
-    return accumulator;
-  },
-  new Map<string, number>(),
-);
 const appLogService = new AppLogService({
   logsPath: appLogsPath,
   runtimeInfo: {
@@ -1603,7 +1596,7 @@ async function runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnRe
   const service = new MateTalkService({
     getMateProfile: () => requireMateStorage().getMateProfile(),
     getMateProfileContextText: (profile) => {
-      return resolveMateProfileContextText(profile);
+      return buildMateTalkProfileContextText(profile);
     },
     generateAssistantMessage: generateMateTalkAssistantMessage,
     scheduleMemoryGeneration: ({ userMessage, assistantText }) => {
@@ -1635,49 +1628,6 @@ async function runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnRe
   });
 
   return service.runTurn(input);
-}
-
-async function resolveMateProfileContextText(profile: NonNullable<ReturnType<MateStorage["getMateProfile"]>>): Promise<string | null> {
-  const sectionTexts = await Promise.all(
-    [...profile.sections]
-      .sort(compareMateProfileSectionForMateTalk)
-      .map(async (section) => {
-        const content = await readMateProfileSectionTextForMateTalk(section.filePath, section.sectionKey);
-        if (!content) {
-          return null;
-        }
-        return `# ${section.sectionKey}\n${content}`;
-      }),
-  );
-
-  const availableSections = sectionTexts.filter((entry): entry is string => Boolean(entry));
-  return availableSections.length > 0 ? availableSections.join("\n\n") : null;
-}
-
-function compareMateProfileSectionForMateTalk(
-  left: { sectionKey: string },
-  right: { sectionKey: string },
-): number {
-  const leftPriority = MATE_TALK_PROFILE_SECTION_PRIORITY.get(left.sectionKey);
-  const rightPriority = MATE_TALK_PROFILE_SECTION_PRIORITY.get(right.sectionKey);
-  if (leftPriority === rightPriority) {
-    return left.sectionKey.localeCompare(right.sectionKey);
-  }
-  return (leftPriority ?? Number.MAX_SAFE_INTEGER) - (rightPriority ?? Number.MAX_SAFE_INTEGER);
-}
-
-async function readMateProfileSectionTextForMateTalk(filePath: string, sectionKey: string): Promise<string | null> {
-  try {
-    const content = await readFile(filePath, "utf8");
-    const trimmed = content.trim();
-    return trimmed || null;
-  } catch (error) {
-    const errnoError = error as NodeJS.ErrnoException | undefined;
-    if (errnoError?.code !== "ENOENT") {
-      console.warn("Failed to read Mate profile section for MateTalk", sectionKey, filePath, error);
-    }
-    return null;
-  }
 }
 
 function requireCompanionStorage(): CompanionStorageHandle {
