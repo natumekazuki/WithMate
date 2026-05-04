@@ -1259,6 +1259,7 @@ export type HomeRecentSessionsPanelProps = {
   onOpenLaunchDialog: () => void;
   onOpenSession: (sessionId: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
+  canUsePrimaryFeatures?: boolean;
 };
 
 export type HomeMateSetupPanelProps = {
@@ -1406,7 +1407,26 @@ export function HomeRecentSessionsPanel({
   onOpenLaunchDialog,
   onOpenSession,
   onOpenCompanionReview,
+  canUsePrimaryFeatures = true,
 }: HomeRecentSessionsPanelProps) {
+  const openLaunchDialog = () => {
+    if (!canUsePrimaryFeatures) {
+      return;
+    }
+    onOpenLaunchDialog();
+  };
+  const openSession = (sessionId: string) => {
+    if (!canUsePrimaryFeatures) {
+      return;
+    }
+    onOpenSession(sessionId);
+  };
+  const openCompanionReview = (sessionId: string) => {
+    if (!canUsePrimaryFeatures) {
+      return;
+    }
+    onOpenCompanionReview(sessionId);
+  };
   const visibleCompanionSessions = companionSessions.filter((session) => {
     if (!normalizedSessionSearch) {
       return true;
@@ -1454,7 +1474,13 @@ export function HomeRecentSessionsPanel({
             onChange={(event) => onChangeSearchText(event.target.value)}
           />
         </label>
-        <button className="start-session-button" type="button" onClick={onOpenLaunchDialog}>
+        <button
+          className="start-session-button"
+          type="button"
+          onClick={openLaunchDialog}
+          aria-disabled={!canUsePrimaryFeatures}
+          disabled={!canUsePrimaryFeatures}
+        >
           New Session
         </button>
       </div>
@@ -1470,7 +1496,9 @@ export function HomeRecentSessionsPanel({
                 className="session-card home-session-card"
                 type="button"
                 style={buildCardThemeStyle(session.characterThemeColors)}
-                onClick={() => onOpenCompanionReview(session.id)}
+                onClick={() => openCompanionReview(session.id)}
+                aria-disabled={!canUsePrimaryFeatures}
+                disabled={!canUsePrimaryFeatures}
               >
                 <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="small" className="session-card-avatar" />
                 <div className="session-card-copy">
@@ -1497,7 +1525,9 @@ export function HomeRecentSessionsPanel({
               className="session-card home-session-card"
               type="button"
               style={buildCardThemeStyle(session.characterThemeColors)}
-              onClick={() => onOpenSession(session.id)}
+              onClick={() => openSession(session.id)}
+              aria-disabled={!canUsePrimaryFeatures}
+              disabled={!canUsePrimaryFeatures}
             >
               <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="small" className="session-card-avatar" />
               <div className="session-card-copy">
@@ -1525,7 +1555,13 @@ export function HomeRecentSessionsPanel({
           ) : (
             <article className="empty-list-card">
               <p>まだセッションはないよ。</p>
-              <button className="start-session-button" type="button" onClick={onOpenLaunchDialog}>
+              <button
+                className="start-session-button"
+                type="button"
+                onClick={openLaunchDialog}
+                aria-disabled={!canUsePrimaryFeatures}
+                disabled={!canUsePrimaryFeatures}
+              >
                 New Session
               </button>
             </article>
@@ -1657,6 +1693,7 @@ export type HomeRightPaneProps = {
   onOpenMateTalk: () => void;
   onOpenSession: (sessionId: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
+  canUsePrimaryFeatures?: boolean;
 };
 
 export function HomeRightPane({
@@ -1674,6 +1711,7 @@ export function HomeRightPane({
   onOpenMateTalk,
   onOpenSession,
   onOpenCompanionReview,
+  canUsePrimaryFeatures = true,
 }: HomeRightPaneProps) {
   const mateDisplayName = mateProfile?.displayName ?? "Your Mate";
   const mateDescription = mateProfile?.description?.trim() ?? "";
@@ -1681,6 +1719,36 @@ export function HomeRightPane({
     main: mateProfile?.themeMain ?? "#3e4b65",
     sub: mateProfile?.themeSub ?? "#7b8fb0",
   });
+  const openSessionMonitorWindow = () => {
+    if (!canUsePrimaryFeatures) {
+      return;
+    }
+    onOpenSessionMonitorWindow();
+  };
+  const openMemoryManagementWindow = () => {
+    if (!canUsePrimaryFeatures) {
+      return;
+    }
+    onOpenMemoryManagementWindow();
+  };
+  const openMateTalk = () => {
+    if (!canUsePrimaryFeatures) {
+      return;
+    }
+    onOpenMateTalk();
+  };
+  const openSession = (sessionId: string) => {
+    if (!canUsePrimaryFeatures) {
+      return;
+    }
+    onOpenSession(sessionId);
+  };
+  const openCompanionReview = (sessionId: string) => {
+    if (!canUsePrimaryFeatures) {
+      return;
+    }
+    onOpenCompanionReview(sessionId);
+  };
 
   return (
     <section className="panel home-right-pane rise-3">
@@ -1691,17 +1759,31 @@ export function HomeRightPane({
             type="button"
             aria-label="Session Monitor Window を開く"
             title="Session Monitor Window"
-            onClick={onOpenSessionMonitorWindow}
+            onClick={openSessionMonitorWindow}
+            aria-disabled={!canUsePrimaryFeatures}
+            disabled={!canUsePrimaryFeatures}
           >
             {monitorWindowIcon}
           </button>
-          <button className="launch-toggle home-settings-button" type="button" onClick={onOpenMemoryManagementWindow}>
+          <button
+            className="launch-toggle home-settings-button"
+            type="button"
+            onClick={openMemoryManagementWindow}
+            aria-disabled={!canUsePrimaryFeatures}
+            disabled={!canUsePrimaryFeatures}
+          >
             Memory
           </button>
           <button className="launch-toggle home-settings-button" type="button" onClick={onOpenSettingsWindow}>
             Settings
           </button>
-          <button className="launch-toggle home-settings-button" type="button" onClick={onOpenMateTalk}>
+          <button
+            className="launch-toggle home-settings-button"
+            type="button"
+            onClick={openMateTalk}
+            aria-disabled={!canUsePrimaryFeatures}
+            disabled={!canUsePrimaryFeatures}
+          >
             メイトーク
           </button>
         </div>
@@ -1734,8 +1816,8 @@ export function HomeRightPane({
             nonRunningEntries={nonRunningMonitorEntries}
             runningEmptyMessage={monitorRunningEmptyMessage}
             completedEmptyMessage={monitorCompletedEmptyMessage}
-            onOpenSession={onOpenSession}
-            onOpenCompanionReview={onOpenCompanionReview}
+            onOpenSession={openSession}
+            onOpenCompanionReview={openCompanionReview}
           />
         </section>
       ) : (

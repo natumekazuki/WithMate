@@ -677,6 +677,10 @@ export default function HomeApp() {
   };
 
   const openLaunchDialog = () => {
+    if (mateState === "not_created") {
+      setLaunchFeedback("Mate を作成してから開始してね。");
+      return;
+    }
     setLaunchFeedback("");
     setLaunchDraft((current) => openLaunchDraft(current, enabledLaunchProviders[0]?.id ?? ""));
   };
@@ -744,6 +748,9 @@ export default function HomeApp() {
   };
 
   const resolveLaunchValidationMessage = () => {
+    if (mateState === "not_created") {
+      return "Mate を作成してから開始してね。";
+    }
     if (!launchDraft.title.trim()) {
       return "タイトルを入力してね。";
     }
@@ -1508,6 +1515,7 @@ export default function HomeApp() {
   );
   const isMateStateLoading = mateState === null;
   const isMateNotCreated = mateState === "not_created";
+  const canUsePrimaryFeatures = mateState !== "not_created" && mateProfile !== null;
 
   if (!desktopRuntime) {
     return (
@@ -1627,6 +1635,7 @@ export default function HomeApp() {
           onOpenLaunchDialog={openLaunchDialog}
           onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
           onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
+          canUsePrimaryFeatures={canUsePrimaryFeatures}
         />
 
         <HomeRightPane
@@ -1644,6 +1653,7 @@ export default function HomeApp() {
           onOpenMateTalk={() => void openMateTalk()}
           onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
           onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
+          canUsePrimaryFeatures={canUsePrimaryFeatures}
         />
       </main>
 
@@ -1655,7 +1665,7 @@ export default function HomeApp() {
         launchWorkspacePathLabel={launchWorkspacePathLabel}
         enabledLaunchProviders={enabledLaunchProviders}
         selectedLaunchProviderId={selectedLaunchProvider?.id ?? null}
-        canStartSession={canStartSession}
+        canStartSession={canStartSession && canUsePrimaryFeatures}
         launchFeedback={launchFeedback}
         launchStarting={launchStarting}
         onClose={closeLaunchDialog}

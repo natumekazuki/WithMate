@@ -3,7 +3,12 @@ import { describe, it } from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { HomeLaunchDialog, HomeRightPane, HomeSettingsContent } from "../../src/home-components.js";
+import {
+  HomeLaunchDialog,
+  HomeRecentSessionsPanel,
+  HomeRightPane,
+  HomeSettingsContent,
+} from "../../src/home-components.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { buildHomeProviderSettingRows } from "../../src/home-settings-view-model.js";
@@ -230,6 +235,31 @@ describe("HomeLaunchDialog", () => {
   });
 });
 
+describe("HomeRecentSessionsPanel", () => {
+  const noOp = (..._args: unknown[]) => undefined;
+
+  const renderHomeRecentSessions = (canUsePrimaryFeatures = true) => renderToStaticMarkup(
+    <HomeRecentSessionsPanel
+      filteredSessionEntries={[]}
+      companionSessions={[]}
+      normalizedSessionSearch=""
+      searchText=""
+      searchIcon={<span />}
+      onChangeSearchText={noOp}
+      onOpenLaunchDialog={noOp}
+      onOpenSession={noOp}
+      onOpenCompanionReview={noOp}
+      canUsePrimaryFeatures={canUsePrimaryFeatures}
+    />,
+  );
+
+  it("canUsePrimaryFeatures false の時は New Session が無効化される", () => {
+    const html = renderHomeRecentSessions(false);
+    const disabledButtons = html.match(/<button class="start-session-button"[^>]*disabled=""/g);
+    assert.ok(disabledButtons && disabledButtons.length >= 2);
+  });
+});
+
 describe("HomeRightPane", () => {
   const noOp = (..._args: unknown[]) => undefined;
 
@@ -255,7 +285,9 @@ describe("HomeRightPane", () => {
       byteSize: number;
       updatedByRevisionId: string;
     }[];
-  }) => renderToStaticMarkup(
+    },
+    canUsePrimaryFeatures = true,
+  ) => renderToStaticMarkup(
     <HomeRightPane
       rightPaneView={rightPaneView}
       runningMonitorEntries={[]}
@@ -271,6 +303,7 @@ describe("HomeRightPane", () => {
       onOpenMateTalk={noOp}
       onOpenSession={noOp}
       onOpenCompanionReview={noOp}
+      canUsePrimaryFeatures={canUsePrimaryFeatures}
     />,
   );
 
@@ -304,5 +337,11 @@ describe("HomeRightPane", () => {
     const html = renderHomeRightPane("mate", null);
     assert.ok(html.includes("Your Mate"));
     assert.ok(html.includes("Mate の説明は未設定だよ。"));
+  });
+
+  it("canUsePrimaryFeatures false の時は主要アクションを無効化する", () => {
+    const html = renderHomeRightPane("monitor", null, false);
+    assert.match(html, /<button class="launch-toggle home-monitor-window-button"[^>]*disabled=""/);
+    assert.match(html, /<button class="launch-toggle home-settings-button"[^>]*aria-disabled="true"[^>]*disabled=""/);
   });
 });
