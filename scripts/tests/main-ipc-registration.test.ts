@@ -439,6 +439,26 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     applyPendingGrowthCallCountBefore,
     "applyPendingGrowth should not be executed when mate is not_created",
   );
+  const openMemoryCallCountBefore = calls.filter((call) => call === "openMemory").length;
+  await assert.rejects(
+    async () => handlers.get("withmate:open-memory-management-window")?.({}),
+    { message: MATE_NOT_CREATED_ERROR_MESSAGE },
+  );
+  assert.strictEqual(
+    calls.filter((call) => call === "openMemory").length,
+    openMemoryCallCountBefore,
+    "openMemoryManagementWindow should not be executed when mate is not_created",
+  );
+  const deleteSessionMemoryCallCountBefore = calls.filter((call) => call === "deleteSessionMemory").length;
+  await assert.rejects(
+    async () => handlers.get(WITHMATE_DELETE_SESSION_MEMORY_CHANNEL)?.({}, "memory-1"),
+    { message: MATE_NOT_CREATED_ERROR_MESSAGE },
+  );
+  assert.strictEqual(
+    calls.filter((call) => call === "deleteSessionMemory").length,
+    deleteSessionMemoryCallCountBefore,
+    "deleteSessionMemory should not be executed when mate is not_created",
+  );
   await handlers.get(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL)?.({});
   await handlers.get(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL)?.();
   await handlers.get(WITHMATE_GET_APP_SETTINGS_CHANNEL)?.();
@@ -463,6 +483,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     "getMateState",
     "applyPendingGrowth",
     "resetMate",
+    "getMateState",
+    "getMateState",
     "getMateState",
     "getMateState",
     "getMateState",
