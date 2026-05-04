@@ -91,6 +91,41 @@ import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-wi
 import { type MateProfile, type MateStorageState } from "./mate-state.js";
 import { type MateEmbeddingSettings } from "./mate-embedding-settings.js";
 
+type ApplyPendingGrowthResult = {
+  candidateCount?: unknown;
+  appliedCount?: unknown;
+  skippedCount?: unknown;
+  revisionId?: unknown;
+};
+
+function buildApplyPendingGrowthFeedback(result: unknown): string {
+  if (result === null || typeof result !== "object") {
+    return "Mate 成長の手動適用が完了したよ。";
+  }
+
+  const typedResult = result as ApplyPendingGrowthResult;
+  const parts: string[] = [];
+
+  if (typeof typedResult.candidateCount === "number") {
+    parts.push(`候補 ${typedResult.candidateCount} 件`);
+  }
+  if (typeof typedResult.appliedCount === "number") {
+    parts.push(`適用 ${typedResult.appliedCount} 件`);
+  }
+  if (typeof typedResult.skippedCount === "number") {
+    parts.push(`スキップ ${typedResult.skippedCount} 件`);
+  }
+  if (typeof typedResult.revisionId === "string") {
+    parts.push(`revisionId ${typedResult.revisionId}`);
+  }
+
+  if (parts.length === 0) {
+    return "Mate 成長の手動適用が完了したよ。";
+  }
+
+  return `Mate 成長を手動適用したよ（${parts.join(" / ")}）。`;
+}
+
 async function openSessionWindow(sessionId: string) {
   await withWithMateApi((api) => api.openSession(sessionId));
 }
@@ -240,6 +275,7 @@ export default function HomeApp() {
   const [mateProfile, setMateProfile] = useState<MateProfile | null>(null);
   const [mateDisplayName, setMateDisplayName] = useState("");
   const [mateCreating, setMateCreating] = useState(false);
+  const [mateGrowthApplying, setMateGrowthApplying] = useState(false);
   const [mateCreationFeedback, setMateCreationFeedback] = useState("");
   const [mateTalkOpen, setMateTalkOpen] = useState(false);
   const [mateTalkInput, setMateTalkInput] = useState("");
@@ -853,6 +889,36 @@ export default function HomeApp() {
       setSettingsFeedback(error instanceof Error ? error.message : "設定の保存に失敗したよ。");
     }
   };
+
+  const handleApplyPendingGrowth = async () => {
+    if (mateGrowthApplying) {
+      return;
+    }
+
+    if (mateState !== "active") {
+      setSettingsFeedback("Mate がアクティブなときのみ手動適用できるよ。");
+      return;
+    }
+
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
+      setSettingsFeedback("Mate API が利用できないよ。");
+      return;
+    }
+
+    setMateGrowthApplying(true);
+    setSettingsFeedback("Mate 成長を適用中...");
+    try {
+      const result = await withmateApi.applyPendingGrowth();
+      setSettingsFeedback(buildApplyPendingGrowthFeedback(result));
+      await refreshMateStatus(withmateApi);
+    } catch (error) {
+      setSettingsFeedback(error instanceof Error ? error.message : "Mate 成長の適用に失敗したよ。");
+    } finally {
+      setMateGrowthApplying(false);
+    }
+  };
+
   const upsertProviderInstructionTarget = async (target: HomeProviderInstructionTargetDraft): Promise<void> => {
     const withmateApi = getWithMateApi();
     if (!withmateApi) {
@@ -1301,6 +1367,9 @@ export default function HomeApp() {
       onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}
       onDeleteCharacterMemoryEntry={(entryId) => void handleDeleteCharacterMemoryEntry(entryId)}
       onStartMateEmbeddingDownload={() => void handleStartMateEmbeddingDownload()}
+      onApplyPendingGrowth={() => void handleApplyPendingGrowth()}
+      applyPendingGrowthBusy={mateGrowthApplying}
+      canApplyPendingGrowth={mateState === "active"}
       onSaveSettings={() => void handleSaveSettings()}
     />
   );

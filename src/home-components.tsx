@@ -50,6 +50,8 @@ import {
   SETTINGS_MATE_EMBEDDING_DOWNLOAD_LABEL,
   SETTINGS_MATE_EMBEDDING_LABEL,
   SETTINGS_MATE_EMBEDDING_MODEL_LABEL,
+  SETTINGS_MATE_GROWTH_HELP,
+  SETTINGS_MATE_GROWTH_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
   SETTINGS_OPEN_LOG_FOLDER_LABEL,
   SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
@@ -112,6 +114,9 @@ export type HomeSettingsContentProps = {
   onDeleteProjectMemoryEntry: (entryId: string) => void;
   onDeleteCharacterMemoryEntry: (entryId: string) => void;
   onStartMateEmbeddingDownload: () => void;
+  onApplyPendingGrowth?: () => void;
+  applyPendingGrowthBusy?: boolean;
+  canApplyPendingGrowth?: boolean;
   onSaveSettings: () => void;
 };
 
@@ -160,6 +165,9 @@ export function HomeSettingsContent({
   onDeleteProjectMemoryEntry,
   onDeleteCharacterMemoryEntry,
   onStartMateEmbeddingDownload,
+  onApplyPendingGrowth,
+  applyPendingGrowthBusy = false,
+  canApplyPendingGrowth = false,
   onSaveSettings,
 }: HomeSettingsContentProps) {
   if (memoryManagementOnly) {
@@ -336,6 +344,25 @@ export function HomeSettingsContent({
               </div>
             </div>
           </section>
+
+          {onApplyPendingGrowth ? (
+            <section className="settings-section-card">
+              <div className="settings-field">
+                <strong>{SETTINGS_MATE_GROWTH_LABEL}</strong>
+                <p className="settings-help">{SETTINGS_MATE_GROWTH_HELP}</p>
+                <div className="settings-actions">
+                  <button
+                    className="launch-toggle"
+                    type="button"
+                    onClick={onApplyPendingGrowth}
+                    disabled={!canApplyPendingGrowth || applyPendingGrowthBusy}
+                  >
+                    {applyPendingGrowthBusy ? "適用中..." : SETTINGS_MATE_GROWTH_LABEL}
+                  </button>
+                </div>
+              </div>
+            </section>
+          ) : null}
 
           <section className="settings-section-card">
             <div className="settings-field">
