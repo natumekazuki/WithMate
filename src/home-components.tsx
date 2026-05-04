@@ -1203,6 +1203,7 @@ export type HomeMateTalkPanelProps = {
   onChangeInput: (value: string) => void;
   onSubmit: () => void;
   onClose: () => void;
+  sending?: boolean;
 };
 
 export function HomeMateSetupPanel({
@@ -1262,6 +1263,7 @@ export function HomeMateTalkPanel({
   onChangeInput,
   onSubmit,
   onClose,
+  sending = false,
 }: HomeMateTalkPanelProps) {
   return (
     <section className="home-mate-talk-panel">
@@ -1300,6 +1302,7 @@ export function HomeMateTalkPanel({
             value={input}
             onChange={(event) => onChangeInput(event.target.value)}
             rows={4}
+            disabled={sending}
             autoComplete="off"
             spellCheck={false}
             placeholder="今日はどうする？"
@@ -1309,8 +1312,8 @@ export function HomeMateTalkPanel({
           <button className="launch-toggle" type="button" onClick={onClose}>
             ホームに戻る
           </button>
-          <button className="start-session-button" type="submit">
-            送信
+          <button className="start-session-button" type="submit" disabled={sending}>
+            {sending ? "送信中..." : "送信"}
           </button>
         </div>
       </form>

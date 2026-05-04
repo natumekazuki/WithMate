@@ -1475,6 +1475,7 @@ export default function HomeApp() {
       onChangeInput={setMateTalkInput}
       onSubmit={() => void handleSubmitMateTalk()}
       onClose={() => void closeMateTalk()}
+      sending={mateTalkSending}
     />
   );
 
