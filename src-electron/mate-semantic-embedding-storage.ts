@@ -6,11 +6,11 @@ import { openAppDatabase } from "./sqlite-connection.js";
 
 const MATE_ID = "current";
 
-type OwnerType = "growth_event" | "profile_item" | "tag_catalog";
+export type MateSemanticEmbeddingOwnerType = "growth_event" | "profile_item" | "tag_catalog";
 
 type EmbeddingRow = {
   id: number;
-  owner_type: OwnerType;
+  owner_type: MateSemanticEmbeddingOwnerType;
   owner_id: string;
   text_hash: string;
   embedding_backend_type: string;
@@ -23,7 +23,7 @@ type EmbeddingRow = {
 
 export type MateSemanticEmbedding = {
   id: number;
-  ownerType: OwnerType;
+  ownerType: MateSemanticEmbeddingOwnerType;
   ownerId: string;
   textHash: string;
   embeddingBackendType: string;
@@ -35,7 +35,7 @@ export type MateSemanticEmbedding = {
 };
 
 export type UpsertMateSemanticEmbeddingInput = {
-  ownerType: OwnerType;
+  ownerType: MateSemanticEmbeddingOwnerType;
   ownerId: string;
   text: string;
   embeddingBackendType: string;
@@ -44,7 +44,7 @@ export type UpsertMateSemanticEmbeddingInput = {
 };
 
 export type GetMateSemanticEmbeddingInput = {
-  ownerType: OwnerType;
+  ownerType: MateSemanticEmbeddingOwnerType;
   ownerId: string;
   text: string;
   embeddingBackendType: string;
@@ -54,7 +54,7 @@ export type GetMateSemanticEmbeddingInput = {
 export type ListMateSemanticEmbeddingsForModelRequest = {
   embeddingBackendType: string;
   embeddingModelId: string;
-  ownerType?: OwnerType;
+  ownerType?: MateSemanticEmbeddingOwnerType;
   dimension?: number;
   limit?: number;
 };
@@ -155,7 +155,7 @@ function sha256Hex(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
-function normalizeOwnerType(value: unknown): OwnerType {
+function normalizeOwnerType(value: unknown): MateSemanticEmbeddingOwnerType {
   if (
     value === "growth_event" ||
     value === "profile_item" ||
@@ -306,7 +306,7 @@ export class MateSemanticEmbeddingStorage {
     return row ? rowToEmbedding(row) : null;
   }
 
-  listEmbeddingsForOwner(ownerType: OwnerType, ownerId: string): MateSemanticEmbedding[] {
+  listEmbeddingsForOwner(ownerType: MateSemanticEmbeddingOwnerType, ownerId: string): MateSemanticEmbedding[] {
     const normalizedOwnerType = normalizeOwnerType(ownerType);
     const normalizedOwnerId = normalizeText(ownerId, "ownerId");
     const rows = this.db
@@ -352,7 +352,7 @@ export class MateSemanticEmbeddingStorage {
     return rows.map(rowToEmbedding);
   }
 
-  deleteEmbeddingsForOwner(ownerType: OwnerType, ownerId: string): number {
+  deleteEmbeddingsForOwner(ownerType: MateSemanticEmbeddingOwnerType, ownerId: string): number {
     const normalizedOwnerType = normalizeOwnerType(ownerType);
     const normalizedOwnerId = normalizeText(ownerId, "ownerId");
     const result = this.db.prepare(DELETE_EMBEDDINGS_FOR_OWNER_SQL).run(
