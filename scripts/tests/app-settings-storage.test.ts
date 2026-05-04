@@ -56,6 +56,23 @@ describe("AppSettingsStorage", () => {
             timeoutSeconds: 420,
           },
         },
+        mateMemoryGenerationSettings: {
+          priorityList: [
+            {
+              provider: "copilot",
+              model: "gpt-5.4",
+              reasoningEffort: "high",
+              timeoutSeconds: 300,
+            },
+            {
+              provider: "codex",
+              model: "gpt-5.4-mini",
+              reasoningEffort: "medium",
+              timeoutSeconds: 180,
+            },
+          ],
+          triggerIntervalMinutes: 90,
+        },
       });
       storage.close();
 
@@ -116,6 +133,17 @@ describe("AppSettingsStorage", () => {
             reasoningEffort: "low",
             timeoutSeconds: 420,
           },
+        },
+        mateMemoryGenerationSettings: {
+          priorityList: [
+            {
+              provider: "copilot",
+              model: "gpt-5.4",
+              reasoningEffort: "high",
+              timeoutSeconds: 300,
+            },
+          ],
+          triggerIntervalMinutes: 90,
         },
       });
 

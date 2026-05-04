@@ -12,6 +12,7 @@ const CHARACTER_REFLECTION_TRIGGER_SETTINGS_KEY = "character_reflection_trigger_
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
 const CHARACTER_REFLECTION_PROVIDER_SETTINGS_KEY = "character_reflection_provider_settings_json";
+const MATE_MEMORY_GENERATION_SETTINGS_KEY = "mate_memory_generation_settings_json";
 
 type AppSettingRow = {
   setting_key: string;
@@ -94,6 +95,17 @@ export class AppSettingsStorage {
         JSON.stringify(DEFAULT_APP_SETTINGS.characterReflectionProviderSettings),
         updatedAt,
       );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        MATE_MEMORY_GENERATION_SETTINGS_KEY,
+        JSON.stringify(DEFAULT_APP_SETTINGS.mateMemoryGenerationSettings),
+        updatedAt,
+      );
   }
 
   getSettings(): AppSettings {
@@ -171,6 +183,20 @@ export class AppSettingsStorage {
         }).characterReflectionProviderSettings;
       } catch {
         settings.characterReflectionProviderSettings = createDefaultAppSettings().characterReflectionProviderSettings;
+      }
+    }
+
+    const mateMemoryGenerationSettingsJson = rows.find(
+      (row) => row.setting_key === MATE_MEMORY_GENERATION_SETTINGS_KEY,
+    )?.setting_value;
+    if (mateMemoryGenerationSettingsJson) {
+      try {
+        settings.mateMemoryGenerationSettings = normalizeAppSettings({
+          ...settings,
+          mateMemoryGenerationSettings: JSON.parse(mateMemoryGenerationSettingsJson),
+        }).mateMemoryGenerationSettings;
+      } catch {
+        settings.mateMemoryGenerationSettings = createDefaultAppSettings().mateMemoryGenerationSettings;
       }
     }
 
@@ -260,6 +286,19 @@ export class AppSettingsStorage {
         .run(
           CHARACTER_REFLECTION_PROVIDER_SETTINGS_KEY,
           JSON.stringify(normalized.characterReflectionProviderSettings),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          MATE_MEMORY_GENERATION_SETTINGS_KEY,
+          JSON.stringify(normalized.mateMemoryGenerationSettings),
           updatedAt,
         );
       this.db.exec("COMMIT");
