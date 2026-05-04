@@ -69,6 +69,15 @@ function seedProjectDigest(dbPath: string): string {
   return projectDigestId;
 }
 
+function updateProfileItemUpdatedAt(dbPath: string, itemId: string, updatedAt: string): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.prepare("UPDATE mate_profile_items SET updated_at = ? WHERE id = ?").run(updatedAt, itemId);
+  } finally {
+    db.close();
+  }
+}
+
 describe("MateProjectContextService", () => {
   it("active かつ projectionAllowed の project_digest Profile Item だけを Markdown にして返す", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-context-service-"));
@@ -160,6 +169,66 @@ describe("MateProjectContextService", () => {
     }
   });
 
+  it("queryText でスコアリングして関連度順に並び替える", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-context-service-"));
+    const dbPath = path.join(tempDirectory, "withmate-v4.db");
+    let storage: MateProfileItemStorage | null = null;
+    let service: MateProjectContextService | null = null;
+
+    try {
+      storage = new MateProfileItemStorage(dbPath);
+      service = new MateProjectContextService(storage);
+      seedCurrentMate(dbPath);
+      const digestId = seedProjectDigest(dbPath);
+
+      storage.upsertProfileItem({
+        sectionKey: "project_digest",
+        projectDigestId: digestId,
+        category: "note",
+        claimKey: "api-tag",
+        claimValue: "authentication",
+        renderedText: "auth notes",
+        confidence: 50,
+        salienceScore: 10,
+        projectionAllowed: true,
+        tags: [{ type: "topic", value: "api token" }],
+      });
+      storage.upsertProfileItem({
+        sectionKey: "project_digest",
+        projectDigestId: digestId,
+        category: "note",
+        claimKey: "token",
+        claimValue: "api token",
+        renderedText: "endpoint notes",
+        confidence: 50,
+        salienceScore: 20,
+        projectionAllowed: true,
+      });
+      storage.upsertProfileItem({
+        sectionKey: "project_digest",
+        projectDigestId: digestId,
+        category: "note",
+        claimKey: "other",
+        claimValue: "random",
+        renderedText: "no match",
+        confidence: 50,
+        salienceScore: 80,
+        projectionAllowed: true,
+      });
+
+      const text = service.getProjectDigestContextText(digestId, { queryText: "api token" });
+      const itemLines = (text?.split("\n") ?? []).filter((line) => line.startsWith("- "));
+      assert.deepEqual(itemLines, [
+        "- **token:** endpoint notes",
+        "- **api-tag:** auth notes",
+        "- **other:** no match",
+      ]);
+    } finally {
+      storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("limit を適用して件数を絞る", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-context-service-"));
     const dbPath = path.join(tempDirectory, "withmate-v4.db");
@@ -209,6 +278,53 @@ describe("MateProjectContextService", () => {
       const text = service.getProjectDigestContextText(digestId, { limit: 2 });
       const itemLines = (text?.split("\n") ?? []).filter((line) => line.startsWith("- "));
       assert.equal(itemLines.length, 2);
+    } finally {
+      storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("queryText 指定時は limit 適用前に関連度で選別する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-context-service-"));
+    const dbPath = path.join(tempDirectory, "withmate-v4.db");
+    let storage: MateProfileItemStorage | null = null;
+    let service: MateProjectContextService | null = null;
+
+    try {
+      storage = new MateProfileItemStorage(dbPath);
+      service = new MateProjectContextService(storage);
+      seedCurrentMate(dbPath);
+      const digestId = seedProjectDigest(dbPath);
+
+      const oldRelevant = storage.upsertProfileItem({
+        sectionKey: "project_digest",
+        projectDigestId: digestId,
+        category: "note",
+        claimKey: "old-relevant",
+        claimValue: "Needle detail",
+        renderedText: "Needle detail",
+        confidence: 50,
+        salienceScore: 50,
+        projectionAllowed: true,
+      });
+      const newUnrelated = storage.upsertProfileItem({
+        sectionKey: "project_digest",
+        projectDigestId: digestId,
+        category: "note",
+        claimKey: "new-unrelated",
+        claimValue: "random",
+        renderedText: "New unrelated",
+        confidence: 50,
+        salienceScore: 50,
+        projectionAllowed: true,
+      });
+
+      updateProfileItemUpdatedAt(dbPath, oldRelevant.id, "2026-01-01T00:00:00.000Z");
+      updateProfileItemUpdatedAt(dbPath, newUnrelated.id, "2026-01-01T01:00:00.000Z");
+
+      const text = service.getProjectDigestContextText(digestId, { queryText: "needle", limit: 1 });
+      const itemLines = (text?.split("\n") ?? []).filter((line) => line.startsWith("- "));
+      assert.deepEqual(itemLines, ["- **old-relevant:** Needle detail"]);
     } finally {
       storage?.close();
       await rm(tempDirectory, { recursive: true, force: true });

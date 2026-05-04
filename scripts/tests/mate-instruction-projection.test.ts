@@ -98,6 +98,17 @@ test("buildMateInstructionContent は MateProfile から安定した Markdown �
   );
 });
 
+test("buildMateInstructionContent は Profile Item 由来の Project Digest 情報を含めない", () => {
+  const profile = createProfile({
+    displayName: "Tessa",
+    description: "Core style and notes",
+  });
+  const content = buildMateInstructionContent(profile);
+
+  assert.equal(content.includes("### Project Digest"), false);
+  assert.equal(content.includes("- **project_digest:**"), false);
+});
+
 test("description が空なら description 行を出さない", () => {
   const profile = createProfile({ description: "" });
   const content = buildMateInstructionContent(profile);

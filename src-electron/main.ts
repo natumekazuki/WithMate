@@ -1543,14 +1543,19 @@ function resolveMateProjectDigestForSession(session: Session): MateProjectDigest
   }
 }
 
-function resolveMateProjectContextTextForPrompt(session: Session): string | null {
+function resolveMateProjectContextTextForPrompt(
+  session: Session,
+  userMessage: string,
+): string | null {
   const digest = resolveMateProjectDigestForSession(session);
   if (!digest) {
     return null;
   }
 
   try {
-    return requireMateProjectContextService().getProjectDigestContextText(digest.id);
+    return requireMateProjectContextService().getProjectDigestContextText(digest.id, {
+      queryText: userMessage,
+    });
   } catch (error) {
     console.warn("Failed to resolve Mate Project Context", session.id, error);
     return null;
@@ -1781,7 +1786,8 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       getSessionMemory: (session) => requireSessionMemoryStorage().ensureSessionMemory(session),
       resolveProjectMemoryEntriesForPrompt: (session, userMessage, sessionMemory) =>
         requireSessionMemorySupportService().resolveProjectMemoryEntriesForPrompt(session, userMessage, sessionMemory),
-      resolveProjectContextTextForPrompt: (session) => resolveMateProjectContextTextForPrompt(session),
+      resolveProjectContextTextForPrompt: (session, userMessage) =>
+        resolveMateProjectContextTextForPrompt(session, userMessage),
       createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
       updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
       setLiveSessionRun,

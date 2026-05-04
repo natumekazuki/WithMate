@@ -2,35 +2,112 @@ import type { MateProfileItem, MateProfileItemStorage } from "./mate-profile-ite
 
 const DEFAULT_PROJECT_CONTEXT_LIMIT = 20;
 const PROJECT_CONTEXT_MARKDOWN_HEADER = "### Project Digest";
+const DEFAULT_QUERY_TEXT_SCORE_WEIGHT = 2;
+const DEFAULT_QUERY_TOKEN_SCORE_WEIGHT = 1;
 
 export class MateProjectContextService {
   constructor(private readonly profileItemStorage: MateProfileItemStorage) {}
 
   getProjectDigestContextText(
     projectDigestId: string,
-    options: { limit?: number } = {},
+    options: { limit?: number; queryText?: string } = {},
   ): string | null {
     const limit =
       typeof options.limit === "number" && Number.isFinite(options.limit)
         ? Math.max(1, Math.floor(options.limit))
         : DEFAULT_PROJECT_CONTEXT_LIMIT;
+    const queryText = this.normalizeQueryText(options.queryText);
 
     const items = this.profileItemStorage.listProfileItems({
       sectionKey: "project_digest",
       projectDigestId,
       state: "active",
       projectionAllowed: true,
-      limit,
+      limit: queryText ? undefined : limit,
     });
 
     if (items.length === 0) {
       return null;
     }
 
+    const selectedItems = (queryText
+      ? this.rankProfileItemsByQuery(items, queryText)
+      : items
+    ).slice(0, limit);
+
     return [
       PROJECT_CONTEXT_MARKDOWN_HEADER,
-      ...items.map((item) => this.formatItem(item)),
+      ...selectedItems.map((item) => this.formatItem(item)),
     ].join("\n");
+  }
+
+  private rankProfileItemsByQuery(items: MateProfileItem[], queryText: string): MateProfileItem[] {
+    const tokens = this.normalizeQueryTokens(queryText);
+    const rankedItems = items.map((item, index) => ({
+      item,
+      index,
+      score: this.resolveQueryScore(item, queryText, tokens),
+    }));
+
+    return rankedItems
+      .sort((left, right) => {
+        if (left.score !== right.score) {
+          return right.score - left.score;
+        }
+        if (left.item.salienceScore !== right.item.salienceScore) {
+          return right.item.salienceScore - left.item.salienceScore;
+        }
+        if (left.item.updatedAt !== right.item.updatedAt) {
+          return left.item.updatedAt < right.item.updatedAt ? 1 : -1;
+        }
+        return left.index - right.index;
+      })
+      .map(({ item }) => item);
+  }
+
+  private resolveQueryScore(item: MateProfileItem, queryText: string, tokens: string[]): number {
+    let score = 0;
+
+    const searchableValues = [
+      item.claimKey,
+      item.claimValue,
+      item.renderedText,
+      ...item.tags.map((tag) => tag.value),
+    ].map((value) => this.normalizeSearchValue(value));
+
+    const normalizedQuery = this.normalizeSearchValue(queryText);
+
+    for (const searchableValue of searchableValues) {
+      if (!searchableValue) {
+        continue;
+      }
+      if (searchableValue.includes(normalizedQuery)) {
+        score += DEFAULT_QUERY_TEXT_SCORE_WEIGHT;
+      }
+
+      for (const token of tokens) {
+        if (token && searchableValue.includes(token)) {
+          score += DEFAULT_QUERY_TOKEN_SCORE_WEIGHT;
+        }
+      }
+    }
+
+    return score;
+  }
+
+  private normalizeQueryText(queryText?: string | null): string {
+    return (queryText ?? "").trim().toLowerCase();
+  }
+
+  private normalizeQueryTokens(queryText: string): string[] {
+    return this.normalizeQueryText(queryText)
+      .split(/[\s,、]+/)
+      .map((token) => token.trim().toLowerCase())
+      .filter((token) => Boolean(token));
+  }
+
+  private normalizeSearchValue(value: string): string {
+    return value.trim().toLowerCase();
   }
 
   private formatItem(item: MateProfileItem): string {
