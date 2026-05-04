@@ -311,6 +311,57 @@ describe("syncEnabledProviderInstructionTargets", () => {
     }
   });
 
+  it("block_session が有効な失敗 target は reject し、失敗 target は failed として記録する", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+
+    try {
+      storage.upsertTarget({
+        providerId: "codex",
+        enabled: true,
+        rootDirectory: "relative/root",
+        instructionRelativePath: path.join("AGENTS.md"),
+        writeMode: "managed_block",
+        failPolicy: "block_session",
+      });
+
+      storage.upsertTarget({
+        providerId: "copilot",
+        enabled: true,
+        targetId: "valid",
+        rootDirectory: workspacePath,
+        instructionRelativePath: path.join("AGENTS.md"),
+        writeMode: "managed_block",
+        failPolicy: "warn_continue",
+      });
+
+      const profile = createProfile({ displayName: "Mia", description: "blocking fail" });
+      await assert.rejects(
+        () => syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES),
+        /providerId=codex, targetId=main/,
+      );
+
+      const failed = storage.getTarget("codex", "main");
+      if (!failed) {
+        throw new Error("失敗 target がありません");
+      }
+      const skipped = storage.getTarget("copilot", "valid");
+      if (!skipped) {
+        throw new Error("次 target がありません");
+      }
+
+      assert.equal(failed.lastSyncState, "failed");
+      assert.equal(skipped.lastSyncState, "never");
+      assert.match(failed.lastErrorPreview, /rootDirectory/);
+    } finally {
+      storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("target path が空の場合は failed として記録する", async () => {
     const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
     const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");

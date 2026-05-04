@@ -138,6 +138,7 @@ export async function syncEnabledProviderInstructionTargets(
       result.skippedCount += 1;
       result.runIds.push(run.id);
     } catch (error) {
+      const errorPreview = errorToMessage(error);
       const run = storage.recordSyncRun({
         providerId: target.providerId,
         targetId: target.targetId,
@@ -146,11 +147,15 @@ export async function syncEnabledProviderInstructionTargets(
         projectionScope: target.projectionScope,
         projectionSha256: "not-applicable",
         status: "failed",
-        errorPreview: errorToMessage(error),
+        errorPreview,
         requiresRestart: target.requiresRestart,
       });
       result.failedCount += 1;
       result.runIds.push(run.id);
+
+      if (target.failPolicy === "block_session") {
+        throw new Error(`providerId=${target.providerId}, targetId=${target.targetId}, errorPreview=${errorPreview}`);
+      }
     }
   }
 
