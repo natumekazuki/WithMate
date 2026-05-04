@@ -87,6 +87,8 @@ export type ListProfileItemsRequest = {
   category?: MateProfileItemCategory;
   state?: MateProfileItemState;
   projectDigestId?: string | null;
+  projectionAllowed?: boolean;
+  limit?: number;
 };
 
 type ProfileItemRow = {
@@ -484,7 +486,7 @@ export class MateProfileItemStorage {
 
   listProfileItems(request: ListProfileItemsRequest = {}): MateProfileItem[] {
     const clauses: string[] = ["mate_id = ?"];
-    const params: Array<string | null> = [MATE_ID];
+    const params: Array<string | number | null> = [MATE_ID];
 
     if (request.sectionKey !== undefined) {
       const sectionKey = assertOneOf(request.sectionKey, SECTION_KEYS, "sectionKey");
@@ -514,7 +516,18 @@ export class MateProfileItemStorage {
       }
     }
 
+    if (request.projectionAllowed !== undefined) {
+      clauses.push("projection_allowed = ?");
+      params.push(request.projectionAllowed ? 1 : 0);
+    }
+
+    const normalizedLimit =
+      typeof request.limit === "number" && Number.isFinite(request.limit)
+        ? Math.max(1, Math.floor(request.limit))
+        : null;
+
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const limitClause = normalizedLimit !== null ? "LIMIT ?" : "";
 
     const rows = this.db.prepare(`
       SELECT
@@ -545,7 +558,8 @@ export class MateProfileItemStorage {
       FROM mate_profile_items
       ${where}
       ORDER BY updated_at DESC, id DESC
-    `).all(...params) as ProfileItemRow[];
+      ${limitClause}
+    `).all(...params, ...(normalizedLimit !== null ? [normalizedLimit] : [])) as ProfileItemRow[];
 
     return this.withTags(rows);
   }
