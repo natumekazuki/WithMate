@@ -12,9 +12,11 @@ import {
 import {
   createDefaultProviderInstructionTargets,
   resolveProviderInstructionFilePath,
+  syncEnabledProviderInstructionTargets,
   syncMateInstructionFile,
   syncMateInstructionFiles,
 } from "../../src-electron/mate-provider-instruction-sync.js";
+import { ProviderInstructionTargetStorage } from "../../src-electron/provider-instruction-target-storage.js";
 
 const FILE_DEPENDENCIES = {
   async readTextFile(filePath: string): Promise<string> {
@@ -163,6 +165,180 @@ describe("syncMateInstructionFiles", () => {
       }
     } finally {
       await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("syncEnabledProviderInstructionTargets", () => {
+  it("有効な target のみ managed_block 同期でき、結果に run id が含まれる", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+
+    try {
+      storage.upsertTarget({
+        providerId: "codex",
+        enabled: true,
+        rootDirectory: workspacePath,
+        instructionRelativePath: path.join(".github", "copilot-instructions.md"),
+        writeMode: "managed_block",
+        failPolicy: "warn_continue",
+      });
+
+      storage.upsertTarget({
+        providerId: "codex",
+        targetId: "disabled",
+        enabled: false,
+        rootDirectory: workspacePath,
+        instructionRelativePath: path.join(".github", "skip.md"),
+        writeMode: "managed_block",
+        failPolicy: "warn_continue",
+      });
+
+      const profile = createProfile({ displayName: "Mia", description: "sync all" });
+      const result = await syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES);
+
+      const target = storage.getTarget("codex", "main");
+      if (!target) {
+        throw new Error("target がありません");
+      }
+
+      const updated = await readFile(path.join(workspacePath, ".github", "copilot-instructions.md"), "utf8");
+
+      assert.equal(result.targetCount, 1);
+      assert.equal(result.syncedCount, 1);
+      assert.equal(result.failedCount, 0);
+      assert.equal(result.skippedCount, 0);
+      assert.equal(result.runIds.length, 1);
+      assert.equal(result.runIds[0], target.lastSyncRunId);
+      assert.equal(target.lastSyncState, "synced");
+      assert.ok(updated.includes(`<!-- WITHMATE:BEGIN ${MATE_PROFILE_BLOCK_ID} -->`));
+    } finally {
+      storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("managed_file は skipped として記録する", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+
+    try {
+      storage.upsertTarget({
+        providerId: "copilot",
+        enabled: true,
+        rootDirectory: workspacePath,
+        instructionRelativePath: path.join(".github", "copilot-instructions.md"),
+        writeMode: "managed_file",
+        failPolicy: "warn_continue",
+      });
+
+      const profile = createProfile({ displayName: "Mia", description: "managed file" });
+      const result = await syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES);
+      const target = storage.getTarget("copilot", "main");
+      if (!target) {
+        throw new Error("target がありません");
+      }
+
+      assert.equal(result.targetCount, 1);
+      assert.equal(result.syncedCount, 0);
+      assert.equal(result.failedCount, 0);
+      assert.equal(result.skippedCount, 1);
+      assert.equal(result.runIds.length, 1);
+      assert.equal(target.lastSyncState, "skipped");
+    } finally {
+      storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("失敗しても他 target の同期を続行する", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+
+    try {
+      storage.upsertTarget({
+        providerId: "codex",
+        enabled: true,
+        rootDirectory: "relative/root",
+        instructionRelativePath: path.join("AGENTS.md"),
+        writeMode: "managed_block",
+        failPolicy: "warn_continue",
+      });
+
+      storage.upsertTarget({
+        providerId: "copilot",
+        enabled: true,
+        targetId: "valid",
+        rootDirectory: workspacePath,
+        instructionRelativePath: path.join("AGENTS.md"),
+        writeMode: "managed_block",
+        failPolicy: "warn_continue",
+      });
+
+      const profile = createProfile({ displayName: "Mia", description: "partial" });
+      const result = await syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES);
+
+      const failed = storage.getTarget("codex", "main");
+      if (!failed) {
+        throw new Error("失敗 target がありません");
+      }
+      const success = storage.getTarget("copilot", "valid");
+      if (!success) {
+        throw new Error("成功 target がありません");
+      }
+      const successContent = await readFile(path.join(workspacePath, "AGENTS.md"), "utf8");
+
+      assert.equal(result.targetCount, 2);
+      assert.equal(result.syncedCount, 1);
+      assert.equal(result.failedCount, 1);
+      assert.equal(result.skippedCount, 0);
+      assert.equal(result.runIds.length, 2);
+      assert.equal(failed.lastSyncState, "failed");
+      assert.equal(success.lastSyncState, "synced");
+      assert.ok(successContent.includes(`<!-- WITHMATE:BEGIN ${MATE_PROFILE_BLOCK_ID} -->`));
+    } finally {
+      storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("target path が空の場合は failed として記録する", async () => {
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+
+    try {
+      storage.upsertTarget({
+        providerId: "codex",
+        enabled: true,
+        rootDirectory: "",
+        instructionRelativePath: path.join("AGENTS.md"),
+        writeMode: "managed_block",
+        failPolicy: "warn_continue",
+      });
+
+      const profile = createProfile({ displayName: "Mia", description: "invalid root" });
+      const result = await syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES);
+      const target = storage.getTarget("codex", "main");
+      if (!target) {
+        throw new Error("target がありません");
+      }
+
+      assert.equal(result.failedCount, 1);
+      assert.equal(target.lastSyncState, "failed");
+      assert.match(target.lastErrorPreview, /rootDirectory/);
+    } finally {
+      storage.close();
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
     }
   });
 });
