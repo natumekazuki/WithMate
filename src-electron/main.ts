@@ -103,6 +103,9 @@ import { MateProjectContextService } from "./mate-project-context-service.js";
 import { type MateProjectDigest, MateProjectDigestStorage } from "./mate-project-digest-storage.js";
 import { MateProfileItemStorage } from "./mate-profile-item-storage.js";
 import { ProviderInstructionTargetStorage } from "./provider-instruction-target-storage.js";
+import { MateEmbeddingVectorizer } from "./mate-embedding-vectorizer.js";
+import { MateSemanticEmbeddingStorage } from "./mate-semantic-embedding-storage.js";
+import { MateSemanticEmbeddingIndexService } from "./mate-semantic-embedding-index-service.js";
 import {
   MateProviderInstructionSyncBlockedError,
   syncDisabledProviderInstructionTargets,
@@ -218,6 +221,9 @@ let appSettingsStorage: AppSettingsStorage | null = null;
 let mateStorage: MateStorage | null = null;
 let mateMemoryStorage: MateMemoryStorage | null = null;
 let mateEmbeddingCacheService: MateEmbeddingCacheService | null = null;
+let mateEmbeddingVectorizer: MateEmbeddingVectorizer | null = null;
+let mateSemanticEmbeddingStorage: MateSemanticEmbeddingStorage | null = null;
+let mateSemanticEmbeddingIndexService: MateSemanticEmbeddingIndexService | null = null;
 let mateGrowthStorage: MateGrowthStorage | null = null;
 let mateProfileItemStorage: MateProfileItemStorage | null = null;
 let mateProjectDigestStorage: MateProjectDigestStorage | null = null;
@@ -1649,10 +1655,43 @@ function requireMateGrowthApplyService(): MateGrowthApplyService {
       requireMateGrowthStorage(),
       requireMateProfileItemStorage(),
       requireMateStorage(),
+      requireMateSemanticEmbeddingIndexService(),
     );
   }
 
   return mateGrowthApplyService;
+}
+
+function requireMateEmbeddingVectorizer(): MateEmbeddingVectorizer {
+  if (!mateEmbeddingVectorizer) {
+    mateEmbeddingVectorizer = new MateEmbeddingVectorizer(requireMateEmbeddingCacheService());
+  }
+
+  return mateEmbeddingVectorizer;
+}
+
+function requireMateSemanticEmbeddingStorage(): MateSemanticEmbeddingStorage {
+  if (!dbPath) {
+    throw new Error("DB path が初期化されていないよ。");
+  }
+
+  if (!mateSemanticEmbeddingStorage) {
+    mateSemanticEmbeddingStorage = new MateSemanticEmbeddingStorage(dbPath);
+  }
+
+  return mateSemanticEmbeddingStorage;
+}
+
+function requireMateSemanticEmbeddingIndexService(): MateSemanticEmbeddingIndexService {
+  if (!mateSemanticEmbeddingIndexService) {
+    mateSemanticEmbeddingIndexService = new MateSemanticEmbeddingIndexService(
+      requireMateEmbeddingCacheService(),
+      requireMateEmbeddingVectorizer(),
+      requireMateSemanticEmbeddingStorage(),
+    );
+  }
+
+  return mateSemanticEmbeddingIndexService;
 }
 
 function requireMateEmbeddingCacheService(): MateEmbeddingCacheService {
@@ -2344,6 +2383,7 @@ function closePersistentStores(): void {
   mateProjectDigestStorage?.close();
   providerInstructionTargetStorage?.close();
   mateEmbeddingCacheService?.close();
+  mateSemanticEmbeddingStorage?.close();
   requirePersistentStoreLifecycleService().close({
     modelCatalogStorage,
     sessionStorage,
@@ -2370,6 +2410,9 @@ function closePersistentStores(): void {
   providerInstructionTargetStorage = null;
   mateProjectContextService = null;
   mateGrowthApplyService = null;
+  mateEmbeddingVectorizer = null;
+  mateSemanticEmbeddingStorage = null;
+  mateSemanticEmbeddingIndexService = null;
   mateEmbeddingCacheService = null;
   memoryRuntimeWorkspaceService = null;
   mateTalkRuntimeWorkspaceService = null;
@@ -2416,8 +2459,12 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   mateProjectDigestStorage = null;
   providerInstructionTargetStorage?.close();
   providerInstructionTargetStorage = null;
+  mateSemanticEmbeddingStorage?.close();
+  mateSemanticEmbeddingStorage = null;
   mateProjectContextService = null;
   mateGrowthApplyService = null;
+  mateEmbeddingVectorizer = null;
+  mateSemanticEmbeddingIndexService = null;
   mateEmbeddingCacheService?.close();
   mateEmbeddingCacheService = null;
   companionStorage?.close();
