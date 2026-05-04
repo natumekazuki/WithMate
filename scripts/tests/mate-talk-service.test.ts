@@ -27,6 +27,10 @@ test("MateTalkService は入力を正規化して provider 応答を返し Memor
   const assistantInputs: unknown[] = [];
   const service = new MateTalkService({
     getMateProfile: () => PROFILE,
+    getMateProfileContextText: async (profile) => {
+      assert.equal(profile.id, "mate-1");
+      return "core context\n- friendly";
+    },
     now: () => new Date("2026-05-04T01:02:03.000Z"),
     scheduleMemoryGeneration: (input) => scheduled.push(input),
     generateAssistantMessage: async (input) => {
@@ -52,6 +56,7 @@ test("MateTalkService は入力を正規化して provider 応答を返し Memor
       description: "",
       themeMain: "",
       themeSub: "",
+      contextText: "core context\n- friendly",
     },
   }]);
 });
@@ -83,4 +88,3 @@ test("MateTalkService は空入力と Mate 未作成を拒否する", async () =
   await assert.rejects(() => service.runTurn({ message: " " }), { message: "メッセージを入力してね。" });
   await assert.rejects(() => service.runTurn({ message: "hello" }), { message: "Mate が見つかりません。" });
 });
-

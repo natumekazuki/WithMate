@@ -7,6 +7,7 @@ export type ScheduleMateTalkMemoryGenerationInput = {
 
 export type MateTalkServiceDeps = {
   getMateProfile(): MateProfile | null;
+  getMateProfileContextText?(profile: MateProfile): string | null | Promise<string | null>;
   generateAssistantMessage?: (input: {
     userMessage: string;
     mateProfile: {
@@ -15,6 +16,7 @@ export type MateTalkServiceDeps = {
       description: string;
       themeMain: string;
       themeSub: string;
+      contextText?: string;
     };
   }) => Promise<string>;
   scheduleMemoryGeneration?(input: ScheduleMateTalkMemoryGenerationInput): void;
@@ -32,21 +34,30 @@ export class MateTalkService {
       throw new Error("メッセージを入力してね。");
     }
 
-    const mateProfile = this.deps.getMateProfile();
-    if (!mateProfile) {
+    const profile = this.deps.getMateProfile();
+    if (!profile) {
       throw new Error("Mate が見つかりません。");
     }
 
     const createdAt = (this.deps.now?.() ?? new Date()).toISOString();
+    const mateProfileContextText = this.deps.getMateProfileContextText
+      ? await this.deps.getMateProfileContextText(profile)
+      : null;
+    const normalizedContextText = mateProfileContextText?.trim();
+    const includeContextText = normalizedContextText ? normalizedContextText : null;
+
+    const mateProfile = {
+      id: profile.id,
+      displayName: profile.displayName,
+      description: profile.description,
+      themeMain: profile.themeMain,
+      themeSub: profile.themeSub,
+      ...(includeContextText ? { contextText: includeContextText } : {}),
+    };
+
     const assistantMessage = await (this.deps.generateAssistantMessage?.({
       userMessage,
-      mateProfile: {
-        id: mateProfile.id,
-        displayName: mateProfile.displayName,
-        description: mateProfile.description,
-        themeMain: mateProfile.themeMain,
-        themeSub: mateProfile.themeSub,
-      },
+      mateProfile,
     }) ?? Promise.resolve(MateTalkService.fallbackMessage));
 
     this.deps.scheduleMemoryGeneration?.({
@@ -55,7 +66,7 @@ export class MateTalkService {
     });
 
     return {
-      mateId: mateProfile.id,
+      mateId: profile.id,
       userMessage,
       assistantMessage,
       createdAt,
