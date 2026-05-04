@@ -23,6 +23,9 @@ export type ApplyPendingGrowthResult = {
 };
 
 const APPLY_TARGET_SECTIONS = ["core", "bond", "work_style"] as const;
+const APPLYABLE_CORE_GROWTH_SOURCE_TYPES = ["explicit_user_instruction", "user_correction"] as const;
+
+const APPLYABLE_CORE_SOURCE_TYPES = ["mate_talk"] as const;
 
 export class MateGrowthApplyService {
   constructor(
@@ -112,7 +115,15 @@ function isApplicableProfileEvent(event: MateGrowthEvent): event is MateGrowthEv
 } {
   return event.projectionAllowed &&
     event.state === "candidate" &&
-    (APPLY_TARGET_SECTIONS as readonly string[]).includes(event.targetSection);
+    (APPLY_TARGET_SECTIONS as readonly string[]).includes(event.targetSection) &&
+    (event.targetSection !== "core" || isManualCoreGrowthEvent(event));
+}
+
+function isManualCoreGrowthEvent(event: MateGrowthEvent): boolean {
+  return (
+    (APPLYABLE_CORE_SOURCE_TYPES as readonly string[]).includes(event.sourceType) &&
+    (APPLYABLE_CORE_GROWTH_SOURCE_TYPES as readonly string[]).includes(event.growthSourceType)
+  );
 }
 
 function growthEventCategory(event: MateGrowthEvent): MateProfileItemCategory {
