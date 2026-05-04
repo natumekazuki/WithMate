@@ -50,7 +50,7 @@ export type SettingsCatalogServiceDeps = {
   clearSessionContextTelemetry(sessionId: string): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
   clearAuditLogs(): Awaitable<void>;
-  resetAppSettings(): AppSettings;
+  resetAppSettings(): Awaitable<AppSettings>;
   resetModelCatalogToBundled(): ModelCatalogSnapshot;
   clearProjectMemories(): void;
   clearCharacterMemories(): void;
@@ -288,7 +288,7 @@ export class SettingsCatalogService {
         this.deps.invalidateAllProviderSessionThreads();
       }
       if (appliedTargets.has("appSettings")) {
-        this.deps.resetAppSettings();
+        await this.deps.resetAppSettings();
         this.deps.clearAllProviderQuotaTelemetry();
       }
       if (appliedTargets.has("modelCatalog")) {

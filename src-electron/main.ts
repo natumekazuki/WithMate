@@ -1320,6 +1320,13 @@ async function updateAppSettingsAndSyncMateGrowth(settings: AppSettings): Promis
   return savedSettings;
 }
 
+async function resetAppSettingsAndSyncMateGrowth(): Promise<AppSettings> {
+  const savedSettings = requireAppSettingsStorage().resetSettings();
+  syncMateGrowthApplyIntervalFromAppSettings(savedSettings);
+  await restartMateGrowthApplyTimerIfMateActive();
+  return savedSettings;
+}
+
 function requireMemoryRuntimeWorkspaceService(): MemoryRuntimeWorkspaceService {
   if (!memoryRuntimeWorkspaceService) {
     memoryRuntimeWorkspaceService = new MemoryRuntimeWorkspaceService({
@@ -2241,7 +2248,7 @@ function requireSettingsCatalogService(): SettingsCatalogService {
           await requireCompanionAuditLogService().clearAuditLogs();
         }
       },
-      resetAppSettings: () => requireAppSettingsStorage().resetSettings(),
+      resetAppSettings: resetAppSettingsAndSyncMateGrowth,
       resetModelCatalogToBundled: () => requireModelCatalogStorage().resetToBundled(),
       clearProjectMemories: () => requireProjectMemoryStorage().clearProjectMemories(),
       clearCharacterMemories: () => requireCharacterMemoryStorage().clearCharacterMemories(),
