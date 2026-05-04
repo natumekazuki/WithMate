@@ -100,6 +100,7 @@ import { MateProjectContextService } from "./mate-project-context-service.js";
 import { type MateProjectDigest, MateProjectDigestStorage } from "./mate-project-digest-storage.js";
 import { MateProfileItemStorage } from "./mate-profile-item-storage.js";
 import { ProviderInstructionTargetStorage } from "./provider-instruction-target-storage.js";
+import { syncEnabledProviderInstructionTargets } from "./mate-provider-instruction-sync.js";
 import { createMateMemoryGenerationRunner } from "./mate-memory-generation-runner.js";
 import { MateMemoryGenerationService } from "./mate-memory-generation-service.js";
 import { MemoryRuntimeWorkspaceService } from "./memory-runtime-workspace.js";
@@ -1322,7 +1323,35 @@ function requireMateStorage(): MateStorage {
 async function createMate(input: Parameters<MateStorage["createMate"]>[0]): ReturnType<MateStorage["createMate"]> {
   const profile = await requireMateStorage().createMate(input);
   await requireMainBootstrapService().ensureGrowthApplyTimer();
+  await syncEnabledProviderInstructionTargetsForMateProfile(profile);
   return profile;
+}
+
+async function syncEnabledProviderInstructionTargetsForMateProfile(
+  profile: NonNullable<ReturnType<MateStorage["getMateProfile"]>>,
+): Promise<void> {
+  try {
+    await syncEnabledProviderInstructionTargets(
+      requireProviderInstructionTargetStorage(),
+      profile,
+      {
+        readTextFile: async (filePath) => readFile(filePath, "utf8"),
+        writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
+      },
+    );
+  } catch (error) {
+    writeAppLog({
+      level: "warn",
+      kind: "mate.provider-instruction-sync.failed",
+      process: "main",
+      message: "有効な Provider Instruction Target の同期に失敗しました",
+      data: {
+        mateId: profile.id,
+        revisionId: profile.activeRevisionId,
+      },
+      error: appLogService.errorToLogError(error),
+    });
+  }
 }
 
 async function resetMate(): Promise<void> {
@@ -1340,7 +1369,25 @@ async function applyPendingGrowth(): ReturnType<MateGrowthApplyService["applyPen
     };
   }
 
-  return requireMateGrowthApplyService().applyPendingGrowth();
+  const result = await requireMateGrowthApplyService().applyPendingGrowth();
+  if (result.revisionId && requireMateStorage().getMateState() === "active") {
+    const profile = requireMateStorage().getMateProfile();
+    if (profile) {
+      await syncEnabledProviderInstructionTargetsForMateProfile(profile);
+    } else {
+      writeAppLog({
+        level: "warn",
+        kind: "mate.provider-instruction-sync.skipped",
+        process: "main",
+        message: "Provider Instruction Target の同期対象プロファイルが見つかりませんでした",
+        data: {
+          revisionId: result.revisionId,
+        },
+      });
+    }
+  }
+
+  return result;
 }
 
 function extractMateTalkAssistantMessage(value: unknown): string | null {
