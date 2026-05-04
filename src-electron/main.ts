@@ -148,7 +148,7 @@ import { MainSessionPersistenceFacade } from "./main-session-persistence-facade.
 import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
-import { getMateMemoryGenerationSettings, getProviderAppSettings } from "../src/provider-settings-state.js";
+import { getMateMemoryGenerationSettings, getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
 import type { MateTalkTurnInput, MateTalkTurnResult } from "../src/mate-state.js";
 import {
   type CharacterReflectionTriggerReason,
@@ -1298,6 +1298,28 @@ function getMateMemoryGenerationProviderIds(): string[] {
   return [...new Set(providerIds)];
 }
 
+function syncMateGrowthApplyIntervalFromAppSettings(settings: AppSettings = requireAppSettingsStorage().getSettings()): void {
+  const mateMemoryGenerationSettings = getMateMemoryGenerationSettings(settings);
+  requireMateStorage().updateMateGrowthApplyIntervalMinutes(mateMemoryGenerationSettings.triggerIntervalMinutes);
+}
+
+async function restartMateGrowthApplyTimerIfMateActive(): Promise<void> {
+  if (requireMateStorage().getMateState() !== "active") {
+    return;
+  }
+
+  const bootstrapService = requireMainBootstrapService();
+  bootstrapService.clearGrowthApplyTimer();
+  await bootstrapService.ensureGrowthApplyTimer();
+}
+
+async function updateAppSettingsAndSyncMateGrowth(settings: AppSettings): Promise<AppSettings> {
+  const savedSettings = requireAppSettingsStorage().updateSettings(settings);
+  syncMateGrowthApplyIntervalFromAppSettings(savedSettings);
+  await restartMateGrowthApplyTimerIfMateActive();
+  return savedSettings;
+}
+
 function requireMemoryRuntimeWorkspaceService(): MemoryRuntimeWorkspaceService {
   if (!memoryRuntimeWorkspaceService) {
     memoryRuntimeWorkspaceService = new MemoryRuntimeWorkspaceService({
@@ -1358,6 +1380,7 @@ function requireMateStorage(): MateStorage {
 
 async function createMate(input: Parameters<MateStorage["createMate"]>[0]): ReturnType<MateStorage["createMate"]> {
   const profile = await requireMateStorage().createMate(input);
+  syncMateGrowthApplyIntervalFromAppSettings();
   await requireMainBootstrapService().ensureGrowthApplyTimer();
   await syncEnabledProviderInstructionTargetsForMateProfile(profile);
   return profile;
@@ -2202,7 +2225,7 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       isRunningSession,
       listSessions: listFullStoredSessions,
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
-      updateAppSettings: (settings) => requireAppSettingsStorage().updateSettings(settings),
+      updateAppSettings: updateAppSettingsAndSyncMateGrowth,
       getModelCatalog,
       ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
       importModelCatalogDocument: (document, source) => requireModelCatalogStorage().importCatalogDocument(document, source),

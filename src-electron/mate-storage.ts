@@ -284,6 +284,27 @@ export class MateStorage {
     });
   }
 
+  updateMateGrowthApplyIntervalMinutes(applyIntervalMinutes: number): MateGrowthSettings | null {
+    if (!Number.isFinite(applyIntervalMinutes)) {
+      throw new Error("applyIntervalMinutes は有限の数値で指定してね。");
+    }
+
+    const normalizedApplyIntervalMinutes = Math.min(14_400, Math.max(1, Math.trunc(applyIntervalMinutes)));
+    this.withDb((db) => {
+      db.prepare(`
+        UPDATE mate_growth_settings
+        SET apply_interval_minutes = ?, updated_at = ?
+        WHERE mate_id = ?
+      `).run(
+        normalizedApplyIntervalMinutes,
+        nowIso(),
+        MATE_ID,
+      );
+    });
+
+    return this.getMateGrowthSettings();
+  }
+
   async createMate(input: CreateMateInput): Promise<MateProfile> {
     const normalized = withDefaults(input);
 

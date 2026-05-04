@@ -31,7 +31,7 @@ export type SettingsCatalogServiceDeps = {
   isRunningSession(session: Session): boolean;
   listSessions(): Awaitable<Session[]>;
   getAppSettings(): AppSettings;
-  updateAppSettings(settings: AppSettings): AppSettings;
+  updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   getModelCatalog(revision?: number | null): ModelCatalogSnapshot | null;
   ensureModelCatalogSeeded(): ModelCatalogSnapshot;
   importModelCatalogDocument(
@@ -157,7 +157,7 @@ export class SettingsCatalogService {
 
     let savedSettings: AppSettings | null = null;
     try {
-      savedSettings = this.deps.updateAppSettings(nextSettings);
+      savedSettings = await this.deps.updateAppSettings(nextSettings);
       for (const providerId of providersWithApiKeyChange) {
         this.deps.clearProviderQuotaTelemetry(providerId);
       }
@@ -186,7 +186,7 @@ export class SettingsCatalogService {
       }
 
       try {
-        this.deps.updateAppSettings(previousSettings);
+        await this.deps.updateAppSettings(previousSettings);
         await this.deps.replaceAllSessions(previousSessions, { broadcast: false });
       } catch (rollbackError) {
         throw new AggregateError(

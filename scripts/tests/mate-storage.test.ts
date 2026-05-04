@@ -103,6 +103,27 @@ describe("MateStorage", () => {
     }
   });
 
+  it("updateMateGrowthApplyIntervalMinutes は Growth 実行間隔だけを更新する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+
+      const updated = storage.updateMateGrowthApplyIntervalMinutes(90);
+      const reopened = storage.getMateGrowthSettings();
+
+      assert.equal(updated?.applyIntervalMinutes, 90);
+      assert.equal(updated?.enabled, true);
+      assert.equal(updated?.autoApplyEnabled, true);
+      assert.equal(reopened?.applyIntervalMinutes, 90);
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
   it("createMate は既存 Mate を上書きしない", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: MateStorage | null = null;
