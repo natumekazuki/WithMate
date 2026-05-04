@@ -13,6 +13,9 @@ import {
   SETTINGS_MATE_MEMORY_GENERATION_MODEL_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_REASONING_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_TIMEOUT_LABEL,
+  SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL,
+  SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL,
+  SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL,
 } from "../../src/settings-ui.js";
 
 describe("HomeSettingsContent", () => {
@@ -67,6 +70,8 @@ describe("HomeSettingsContent", () => {
       onChangeProviderInstructionEnabled={noOp}
       onChangeProviderInstructionWriteMode={noOp}
       onChangeProviderInstructionFailPolicy={noOp}
+      onChangeProviderInstructionRootDirectory={noOp}
+      onChangeProviderInstructionInstructionRelativePath={noOp}
       onChangeProviderSkillRootPath={noOp}
       onBrowseProviderSkillRootPath={noOp}
       onChangeMemoryExtractionModel={noOp}
@@ -103,6 +108,93 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_REASONING_LABEL}</span>`));
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_TIMEOUT_LABEL}</span>`));
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL}</span>`));
+  });
+
+  it("Provider Instruction Sync に rootDirectory / instructionRelativePath の入力が表示される", () => {
+    const customRows = buildHomeProviderSettingRows(modelCatalog, settingsDraft, [
+      {
+        providerId: "codex",
+        targetId: "main",
+        enabled: true,
+        rootDirectory: "/repo-root",
+        instructionRelativePath: "docs/instructions.md",
+        writeMode: "managed_block",
+        projectionScope: "mate_only",
+        failPolicy: "warn_continue",
+        requiresRestart: false,
+        lastSyncState: "never",
+        lastSyncRunId: null,
+        lastSyncedRevisionId: null,
+        lastErrorPreview: "",
+        lastSyncedAt: null,
+      },
+    ]);
+
+    const html = renderToStaticMarkup(
+      <HomeSettingsContent
+        settingsDraft={settingsDraft}
+        providerSettingRows={customRows}
+        modelCatalogRevisionLabel={String(modelCatalog.revision)}
+        settingsDirty={false}
+        settingsFeedback=""
+        memoryManagementSnapshot={null}
+        memoryManagementPages={{
+          session: { nextCursor: null, hasMore: false, total: 0 },
+          project: { nextCursor: null, hasMore: false, total: 0 },
+          character: { nextCursor: null, hasMore: false, total: 0 },
+        }}
+        memoryManagementLoading={false}
+        memoryManagementBusyTarget={null}
+        memoryManagementFeedback=""
+        mateEmbeddingSettings={null}
+        mateEmbeddingFeedback=""
+        mateEmbeddingBusy={false}
+        onChangeSystemPromptPrefix={noOp}
+        onChangeMemoryGenerationEnabled={noOp}
+        onChangeMateMemoryGenerationPriorityProvider={noOp}
+        onChangeMateMemoryGenerationPriorityModel={noOp}
+        onChangeMateMemoryGenerationPriorityReasoningEffort={noOp}
+        onChangeMateMemoryGenerationPriorityTimeoutSeconds={noOp}
+        onChangeMateMemoryGenerationTriggerIntervalMinutes={noOp}
+        onChangeAutoCollapseActionDockOnSend={noOp}
+        onChangeProviderEnabled={noOp}
+        onChangeProviderInstructionEnabled={noOp}
+        onChangeProviderInstructionWriteMode={noOp}
+        onChangeProviderInstructionFailPolicy={noOp}
+        onChangeProviderInstructionRootDirectory={noOp}
+        onChangeProviderInstructionInstructionRelativePath={noOp}
+        onChangeProviderSkillRootPath={noOp}
+        onBrowseProviderSkillRootPath={noOp}
+        onChangeMemoryExtractionModel={noOp}
+        onChangeMemoryExtractionReasoningEffort={noOp}
+        onChangeMemoryExtractionThreshold={noOp}
+        onChangeMemoryExtractionTimeoutSeconds={noOp}
+        onChangeCharacterReflectionModel={noOp}
+        onChangeCharacterReflectionReasoningEffort={noOp}
+        onChangeCharacterReflectionTimeoutSeconds={noOp}
+        onChangeCharacterReflectionCooldownSeconds={noOp}
+        onChangeCharacterReflectionCharDeltaThreshold={noOp}
+        onChangeCharacterReflectionMessageDeltaThreshold={noOp}
+        onImportModelCatalog={noOp}
+        onExportModelCatalog={noOp}
+        onOpenAppLogFolder={noOp}
+        onOpenCrashDumpFolder={noOp}
+        onReloadMemoryManagement={noOp}
+        onChangeMemoryManagementViewFilters={noOp}
+        onLoadMoreMemoryManagement={noOp}
+        onDeleteSessionMemory={noOp}
+        onDeleteProjectMemoryEntry={noOp}
+        onDeleteCharacterMemoryEntry={noOp}
+        onStartMateEmbeddingDownload={noOp}
+        onSaveSettings={noOp}
+      />,
+    );
+
+    assert.ok(html.includes(`<strong>${SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL}</strong>`));
+    assert.ok(html.includes(`<span>${SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL}</span>`));
+    assert.ok(html.includes(`<span>${SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>`));
+    assert.ok(html.includes(`value=\"/repo-root\"`));
+    assert.ok(html.includes("value=\"docs/instructions.md\""));
   });
 });
 

@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import {
+  buildHomeProviderInstructionTargetUpsertInput,
   buildPersistedAppSettingsFromRows,
   buildHomeProviderSettingRows,
   buildNormalizedCharacterReflectionProviderSettings,
@@ -71,6 +72,53 @@ describe("home-settings-view-model", () => {
         timeoutSeconds: 180,
       },
     });
+  });
+
+  it("buildHomeProviderSettingRows は instruction target の rootDirectory / instructionRelativePath を保持する", () => {
+    const rows = buildHomeProviderSettingRows(createSnapshot(), createDefaultAppSettings(), [
+      {
+        providerId: "codex",
+        targetId: "main",
+        enabled: true,
+        rootDirectory: "/workspace",
+        instructionRelativePath: ".github/copilot-custom.md",
+        writeMode: "managed_block",
+        projectionScope: "mate_only",
+        failPolicy: "warn_continue",
+        requiresRestart: false,
+        lastSyncState: "never",
+        lastSyncRunId: null,
+        lastSyncedRevisionId: null,
+        lastErrorPreview: "",
+        lastSyncedAt: null,
+      },
+    ]);
+
+    const instructionTarget = rows[0]?.instructionTarget;
+    assert.equal(instructionTarget?.rootDirectory, "/workspace");
+    assert.equal(instructionTarget?.instructionRelativePath, ".github/copilot-custom.md");
+  });
+
+  it("buildHomeProviderInstructionTargetUpsertInput に編集値を含める", () => {
+    const upsertInput = buildHomeProviderInstructionTargetUpsertInput({
+      providerId: "codex",
+      targetId: "main",
+      enabled: true,
+      rootDirectory: "/workspace",
+      instructionRelativePath: "docs/rules.md",
+      writeMode: "managed_file",
+      projectionScope: "mate_only",
+      failPolicy: "block_session",
+      requiresRestart: false,
+      lastSyncState: "never",
+      lastSyncRunId: null,
+      lastSyncedRevisionId: null,
+      lastErrorPreview: "",
+      lastSyncedAt: null,
+    });
+
+    assert.equal(upsertInput.rootDirectory, "/workspace");
+    assert.equal(upsertInput.instructionRelativePath, "docs/rules.md");
   });
 
   it("persisted settings は draft の system prompt を維持したまま resolved provider settings を埋め込む", () => {

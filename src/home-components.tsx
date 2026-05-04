@@ -31,6 +31,10 @@ import {
   SETTINGS_SKILL_ROOT_PLACEHOLDER,
   SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_LABEL,
+  SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL,
+  SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_PLACEHOLDER,
+  SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL,
+  SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER,
   SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL,
   SETTINGS_CHARACTER_REFLECTION_CHAR_DELTA_LABEL,
   SETTINGS_CHARACTER_REFLECTION_COOLDOWN_LABEL,
@@ -99,6 +103,8 @@ export type HomeSettingsContentProps = {
   onChangeProviderInstructionEnabled: (providerId: string, enabled: boolean) => void;
   onChangeProviderInstructionWriteMode: (providerId: string, value: string) => void;
   onChangeProviderInstructionFailPolicy: (providerId: string, value: string) => void;
+  onChangeProviderInstructionRootDirectory: (providerId: string, rootDirectory: string) => void;
+  onChangeProviderInstructionInstructionRelativePath: (providerId: string, instructionRelativePath: string) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
   onBrowseProviderSkillRootPath: (providerId: string) => void;
   onChangeMemoryExtractionModel: (providerId: string, model: string) => void;
@@ -164,6 +170,8 @@ export function HomeSettingsContent({
   onChangeProviderInstructionEnabled,
   onChangeProviderInstructionWriteMode,
   onChangeProviderInstructionFailPolicy,
+  onChangeProviderInstructionRootDirectory,
+  onChangeProviderInstructionInstructionRelativePath,
   onChangeProviderSkillRootPath,
   onBrowseProviderSkillRootPath,
   onChangeMemoryExtractionModel,
@@ -326,6 +334,30 @@ export function HomeSettingsContent({
                             <option value="warn_continue">warn_continue</option>
                             <option value="block_session">block_session</option>
                           </select>
+                        </label>
+                        <label className="settings-provider-input">
+                          <span>{SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL}</span>
+                          <input
+                            type="text"
+                            value={instructionTarget.rootDirectory}
+                            onChange={(event) =>
+                              onChangeProviderInstructionRootDirectory(provider.id, event.target.value)}
+                            placeholder={SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_PLACEHOLDER}
+                            autoComplete="off"
+                            spellCheck={false}
+                          />
+                        </label>
+                        <label className="settings-provider-input">
+                          <span>{SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>
+                          <input
+                            type="text"
+                            value={instructionTarget.instructionRelativePath}
+                            onChange={(event) =>
+                              onChangeProviderInstructionInstructionRelativePath(provider.id, event.target.value)}
+                            placeholder={SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER}
+                            autoComplete="off"
+                            spellCheck={false}
+                          />
                         </label>
                       </section>
                     ))}

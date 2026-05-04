@@ -978,6 +978,14 @@ export default function HomeApp() {
     updateProviderInstructionTarget(providerId, { failPolicy });
   };
 
+  const handleChangeProviderInstructionRootDirectory = (providerId: string, rootDirectory: string) => {
+    updateProviderInstructionTarget(providerId, { rootDirectory });
+  };
+
+  const handleChangeProviderInstructionInstructionRelativePath = (providerId: string, instructionRelativePath: string) => {
+    updateProviderInstructionTarget(providerId, { instructionRelativePath });
+  };
+
   const handleChangeProviderEnabled = (providerId: string, enabled: boolean) => {
     setSettingsDraft((current) => updateCodingProviderEnabledDraft(current, providerId, enabled));
   };
@@ -1376,6 +1384,8 @@ export default function HomeApp() {
       onChangeProviderInstructionEnabled={handleChangeProviderInstructionEnabled}
       onChangeProviderInstructionWriteMode={handleChangeProviderInstructionWriteMode}
       onChangeProviderInstructionFailPolicy={handleChangeProviderInstructionFailPolicy}
+      onChangeProviderInstructionRootDirectory={handleChangeProviderInstructionRootDirectory}
+      onChangeProviderInstructionInstructionRelativePath={handleChangeProviderInstructionInstructionRelativePath}
       onChangeProviderSkillRootPath={handleChangeProviderSkillRootPath}
       onBrowseProviderSkillRootPath={(providerId) => void handleBrowseProviderSkillRootPath(providerId)}
       onChangeMemoryExtractionModel={handleChangeMemoryExtractionModel}
@@ -1441,6 +1451,8 @@ export default function HomeApp() {
       onChangeProviderInstructionEnabled={handleChangeProviderInstructionEnabled}
       onChangeProviderInstructionWriteMode={handleChangeProviderInstructionWriteMode}
       onChangeProviderInstructionFailPolicy={handleChangeProviderInstructionFailPolicy}
+      onChangeProviderInstructionRootDirectory={handleChangeProviderInstructionRootDirectory}
+      onChangeProviderInstructionInstructionRelativePath={handleChangeProviderInstructionInstructionRelativePath}
       onChangeProviderSkillRootPath={handleChangeProviderSkillRootPath}
       onBrowseProviderSkillRootPath={(providerId) => void handleBrowseProviderSkillRootPath(providerId)}
       onChangeMemoryExtractionModel={handleChangeMemoryExtractionModel}
