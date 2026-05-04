@@ -204,6 +204,30 @@ describe("buildMateTalkProfileContextText", () => {
     assert.equal(contextText?.includes("- **valid**"), true);
   });
 
+  it("project_digest section file は context から除外される", async () => {
+    const contextText = await buildMateTalkProfileContextText(
+      {
+        sections: [
+          { sectionKey: "core", filePath: "core.md" },
+          { sectionKey: "project_digest", filePath: "project-digest.md" },
+        ],
+      },
+      {
+        readSectionText: async (filePath) => {
+          const map = new Map([
+            ["core.md", "  本体  "],
+            ["project-digest.md", "  プロジェクト情報  "],
+          ]);
+          return map.get(filePath) ?? "";
+        },
+      },
+    );
+
+    assert.equal(contextText, "# core\n本体");
+    assert.equal(contextText?.includes("project_digest"), false);
+    assert.equal(contextText?.includes("プロジェクト情報"), false);
+  });
+
   it("file section と Profile Item が両方ある場合は両方含まれる", async () => {
     const contextText = await buildMateTalkProfileContextText(
       {

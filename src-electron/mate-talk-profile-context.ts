@@ -42,17 +42,19 @@ export async function buildMateTalkProfileContextText(
   const profileItemLimit = resolveProfileItemLimit(deps.profileItemLimit);
 
   const sectionFileEntries = await Promise.all(
-    [...profile.sections].map(async (section) => {
-      const content = await readMateProfileSectionTextForMateTalk(
-        section.filePath,
-        section.sectionKey,
-        readSectionText,
-      );
-      if (!content) {
-        return null;
-      }
-      return { sectionKey: section.sectionKey, content };
-    }),
+    [...profile.sections]
+      .filter((section) => isMateTalkProfileSectionAllowed(section.sectionKey))
+      .map(async (section) => {
+        const content = await readMateProfileSectionTextForMateTalk(
+          section.filePath,
+          section.sectionKey,
+          readSectionText,
+        );
+        if (!content) {
+          return null;
+        }
+        return { sectionKey: section.sectionKey, content };
+      }),
   );
   const filteredProfileItems = [...(profile.profileItems ?? [])]
     .filter((item) => isMateTalkProfileItemAllowed(item))
@@ -149,6 +151,10 @@ function isMateTalkProfileItemAllowed(item: ProfileItem): boolean {
     return false;
   }
   return item.claimKey.trim().length > 0 && item.renderedText.trim().length > 0;
+}
+
+function isMateTalkProfileSectionAllowed(sectionKey: string): boolean {
+  return sectionKey !== "project_digest";
 }
 
 function renderMateProfileItemForMateTalk(item: ProfileItem): string | null {
