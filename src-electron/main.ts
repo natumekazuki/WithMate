@@ -1900,6 +1900,22 @@ function requireMemoryManagementService(): MemoryManagementService {
         requireCharacterMemoryStorage().listCharacterMemoryEntries(characterScopeId),
       listCharacterMemoryPage: (request) => requireCharacterMemoryStorage().listCharacterMemoryPage(request),
       deleteCharacterMemoryEntry: (entryId) => requireCharacterMemoryStorage().deleteCharacterMemoryEntry(entryId),
+      listMateProfileItems: () => requireMateProfileItemStorage().listProfileItems({ state: "active" }).map((item) => ({
+        id: item.id,
+        sectionKey: item.sectionKey,
+        projectDigestId: item.projectDigestId,
+        category: item.category,
+        claimKey: item.claimKey,
+        claimValue: item.claimValue,
+        renderedText: item.renderedText,
+        normalizedClaim: item.normalizedClaim,
+        confidence: item.confidence,
+        salienceScore: item.salienceScore,
+        state: item.state,
+        tags: item.tags.map((tag) => `${tag.type}:${tag.value}`),
+        updatedAt: item.updatedAt,
+      })),
+      forgetMateProfileItem: (itemId) => requireMateProfileItemStorage().forgetProfileItem(itemId),
     });
   }
 

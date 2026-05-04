@@ -6,6 +6,7 @@ import {
   cloneMemoryManagementSnapshot,
   mergeMemoryManagementSnapshots,
   removeCharacterMemoryEntryFromSnapshot,
+  removeMateProfileItemFromSnapshot,
   removeProjectMemoryEntryFromSnapshot,
   removeSessionMemoryFromSnapshot,
   type MemoryManagementSnapshot,
@@ -158,6 +159,38 @@ function createSnapshot(): MemoryManagementSnapshot {
         ],
       },
     ],
+    mateProfileItems: [
+      {
+        id: "profile-item-1",
+        sectionKey: "core",
+        projectDigestId: null,
+        category: "persona",
+        claimKey: "name",
+        claimValue: "Alice",
+        renderedText: "Alice",
+        normalizedClaim: "alice",
+        confidence: 80,
+        salienceScore: 90,
+        state: "active",
+        tags: ["note:friend"],
+        updatedAt: "2026-04-02T10:00:00.000Z",
+      },
+      {
+        id: "profile-item-2",
+        sectionKey: "core",
+        projectDigestId: null,
+        category: "persona",
+        claimKey: "nickname",
+        claimValue: "A",
+        renderedText: "nickname",
+        normalizedClaim: "nickname",
+        confidence: 70,
+        salienceScore: 80,
+        state: "active",
+        tags: ["note:tag"],
+        updatedAt: "2026-04-01T10:00:00.000Z",
+      },
+    ],
   };
 }
 
@@ -246,6 +279,15 @@ describe("memory-management-state", () => {
     assert.equal(nextSnapshot, snapshot);
   });
 
+  it("mate profile item を削除する", () => {
+    const snapshot = createSnapshot();
+
+    const nextSnapshot = removeMateProfileItemFromSnapshot(snapshot, "profile-item-1");
+
+    assert.equal(nextSnapshot.mateProfileItems?.length, 1);
+    assert.equal(nextSnapshot.mateProfileItems?.[0]?.id, "profile-item-2");
+  });
+
   it("session page merge は sessionId で重複を落とす", () => {
     const snapshot = createSnapshot();
 
@@ -297,7 +339,24 @@ describe("memory-management-state", () => {
           },
         ],
       }],
+      mateProfileItems: [],
     }, "character");
+
+    const nextProfileItemSnapshot = mergeMemoryManagementSnapshots(snapshot, {
+      sessionMemories: [],
+      projectMemories: [],
+      characterMemories: [],
+      mateProfileItems: [
+        {
+          ...snapshot.mateProfileItems?.[1],
+          id: "profile-item-1",
+        },
+        {
+          ...snapshot.mateProfileItems?.[1],
+          id: "profile-item-3",
+        },
+      ],
+    }, "mate_profile");
 
     assert.deepEqual(nextProjectSnapshot.projectMemories[0]?.entries.map((entry) => entry.id), [
       "project-entry-1",
@@ -306,6 +365,11 @@ describe("memory-management-state", () => {
     assert.deepEqual(nextCharacterSnapshot.characterMemories[0]?.entries.map((entry) => entry.id), [
       "character-entry-1",
       "character-entry-2",
+    ]);
+    assert.deepEqual(nextProfileItemSnapshot.mateProfileItems?.map((item) => item.id), [
+      "profile-item-1",
+      "profile-item-2",
+      "profile-item-3",
     ]);
   });
 });

@@ -1,6 +1,7 @@
 import type { SessionSummary } from "../src/app-state.js";
 import {
   cloneMemoryManagementSnapshot,
+  type ManagedMateProfileItem,
   type ManagedCharacterMemoryGroup,
   type ManagedProjectMemoryGroup,
   type ManagedSessionMemoryItem,
@@ -28,6 +29,10 @@ type MemoryManagementServiceDeps = {
   listCharacterMemoryEntries(characterScopeId: string): CharacterMemoryEntry[];
   listCharacterMemoryPage?(request: MemoryManagementPageRequest): { groups: ManagedCharacterMemoryGroup[]; total: number };
   deleteCharacterMemoryEntry(entryId: string): void;
+  listMateProfileItems?: () => ManagedMateProfileItem[];
+  listMateProfileItemPage?:
+    (request: MemoryManagementPageRequest) => { items: ManagedMateProfileItem[]; total: number };
+  forgetMateProfileItem?: (itemId: string) => void;
 };
 
 export class MemoryManagementService {
@@ -66,11 +71,13 @@ export class MemoryManagementService {
         entries: this.deps.listCharacterMemoryEntries(scope.id),
       }))
       .filter((group) => group.entries.length > 0);
+    const mateProfileItems = this.deps.listMateProfileItems?.() ?? [];
 
     return cloneMemoryManagementSnapshot({
       sessionMemories,
       projectMemories,
       characterMemories,
+      mateProfileItems,
     });
   }
 
@@ -81,21 +88,25 @@ export class MemoryManagementService {
     const includeSession = domain === "all" || domain === "session";
     const includeProject = domain === "all" || domain === "project";
     const includeCharacter = domain === "all" || domain === "character";
+    const includeMateProfile = domain === "all" || domain === "mate_profile";
 
     const sessionPage = includeSession ? this.getSessionPage(request, cursor, limit) : emptyPage(0);
     const projectPage = includeProject ? this.getProjectPage(request, cursor, limit) : emptyGroupedPage([]);
     const characterPage = includeCharacter ? this.getCharacterPage(request, cursor, limit) : emptyGroupedPage([]);
+    const mateProfilePage = includeMateProfile ? this.getMateProfilePage(request, cursor, limit) : emptyPage(0);
 
     return {
       snapshot: cloneMemoryManagementSnapshot({
         sessionMemories: sessionPage.items,
         projectMemories: projectPage.groups,
         characterMemories: characterPage.groups,
+        mateProfileItems: mateProfilePage.items,
       }),
       pages: {
         session: sessionPage.page,
         project: projectPage.page,
         character: characterPage.page,
+        mate_profile: mateProfilePage.page,
       },
     };
   }
@@ -151,6 +162,23 @@ export class MemoryManagementService {
     return sliceGroupedEntries(groups, cursor, limit, request);
   }
 
+  private getMateProfilePage(
+    request: MemoryManagementPageRequest,
+    cursor: number,
+    limit: number,
+  ): { items: ManagedMateProfileItem[]; page: MemoryManagementDomainPageInfo } {
+    const storagePage = this.deps.listMateProfileItemPage?.({ ...request, cursor, limit });
+    if (storagePage) {
+      return {
+        items: storagePage.items,
+        page: buildPageInfo(cursor, limit, storagePage.total),
+      };
+    }
+
+    const items = filterMateProfileItems(this.getSnapshot().mateProfileItems ?? [], request);
+    return sliceItems(items, cursor, limit);
+  }
+
   deleteSessionMemory(sessionId: string): void {
     this.deps.deleteSessionMemory(sessionId);
   }
@@ -162,10 +190,16 @@ export class MemoryManagementService {
   deleteCharacterMemoryEntry(entryId: string): void {
     this.deps.deleteCharacterMemoryEntry(entryId);
   }
+
+  forgetMateProfileItem(itemId: string): void {
+    this.deps.forgetMateProfileItem?.(itemId);
+  }
 }
 
 function normalizeDomain(domain: MemoryManagementPageRequest["domain"]): MemoryManagementDomain {
-  return domain === "session" || domain === "project" || domain === "character" ? domain : "all";
+  return domain === "session" || domain === "project" || domain === "character" || domain === "mate_profile"
+    ? domain
+    : "all";
 }
 
 function normalizeCursor(cursor: MemoryManagementPageRequest["cursor"]): number {
@@ -305,8 +339,30 @@ function filterCharacterMemories(
           ...entry.evidence,
         ], searchText);
       }),
-    }))
+  }))
     .filter((group) => group.entries.length > 0);
+}
+
+function filterMateProfileItems(
+  items: ManagedMateProfileItem[],
+  request: MemoryManagementPageRequest,
+): ManagedMateProfileItem[] {
+  const searchText = normalizeSearchText(request.searchText);
+  return items
+    .filter((item) => matchesSearch([
+      item.id,
+      item.sectionKey,
+      item.projectDigestId,
+      item.category,
+      item.claimKey,
+      item.claimValue,
+      item.renderedText,
+      item.normalizedClaim,
+      item.state,
+      ...item.tags,
+    ], searchText))
+    .sort((left, right) => compareUpdatedAt(left.updatedAt, right.updatedAt, request.sort)
+      || left.id.localeCompare(right.id));
 }
 
 function emptyPage(total: number): { items: []; page: MemoryManagementDomainPageInfo } {

@@ -25,13 +25,30 @@ export type ManagedCharacterMemoryGroup = {
   entries: CharacterMemoryEntry[];
 };
 
+export type ManagedMateProfileItem = {
+  id: string;
+  sectionKey: string;
+  projectDigestId: string | null;
+  category: string;
+  claimKey: string;
+  claimValue: string;
+  renderedText: string;
+  normalizedClaim: string;
+  confidence: number;
+  salienceScore: number;
+  state: string;
+  tags: string[];
+  updatedAt: string;
+};
+
 export type MemoryManagementSnapshot = {
   sessionMemories: ManagedSessionMemoryItem[];
   projectMemories: ManagedProjectMemoryGroup[];
   characterMemories: ManagedCharacterMemoryGroup[];
+  mateProfileItems?: ManagedMateProfileItem[];
 };
 
-export type MemoryManagementDomain = "all" | "session" | "project" | "character";
+export type MemoryManagementDomain = "all" | "session" | "project" | "character" | "mate_profile";
 
 export type MemoryManagementPageRequest = {
   domain?: MemoryManagementDomain;
@@ -56,6 +73,7 @@ export type MemoryManagementPageResult = {
     session: MemoryManagementDomainPageInfo;
     project: MemoryManagementDomainPageInfo;
     character: MemoryManagementDomainPageInfo;
+    mate_profile?: MemoryManagementDomainPageInfo;
   };
 };
 
@@ -101,7 +119,28 @@ export function mergeMemoryManagementSnapshots(
     characterMemories: domain === "character"
       ? mergeGroupedMemories(current.characterMemories, next.characterMemories)
       : current.characterMemories,
+    mateProfileItems: domain === "mate_profile"
+      ? mergeMateProfileItems(current.mateProfileItems ?? [], next.mateProfileItems ?? [])
+      : (current.mateProfileItems ?? []),
   });
+}
+
+function mergeMateProfileItems(
+  currentItems: ManagedMateProfileItem[],
+  nextItems: ManagedMateProfileItem[],
+): ManagedMateProfileItem[] {
+  const seen = new Set(currentItems.map((item) => item.id));
+  const merged = [...currentItems];
+
+  for (const item of nextItems) {
+    if (seen.has(item.id)) {
+      continue;
+    }
+    seen.add(item.id);
+    merged.push(item);
+  }
+
+  return merged;
 }
 
 function mergeSessionMemories(
@@ -225,5 +264,21 @@ export function removeCharacterMemoryEntryFromSnapshot(
   return {
     ...snapshot,
     characterMemories: nextCharacterMemories,
+  };
+}
+
+export function removeMateProfileItemFromSnapshot(
+  snapshot: MemoryManagementSnapshot,
+  itemId: string,
+): MemoryManagementSnapshot {
+  const currentItems = snapshot.mateProfileItems ?? [];
+  const nextItems = currentItems.filter((item) => item.id !== itemId);
+  if (nextItems.length === currentItems.length) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    mateProfileItems: nextItems,
   };
 }

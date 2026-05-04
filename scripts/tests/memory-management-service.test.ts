@@ -94,6 +94,8 @@ describe("MemoryManagementService", () => {
       deleteCharacterMemoryEntry: (entryId) => {
         deleted.push(`character:${entryId}`);
       },
+      listMateProfileItems: () => [],
+      forgetMateProfileItem: () => {},
     });
 
     const snapshot = service.getSnapshot();
@@ -269,5 +271,80 @@ describe("MemoryManagementService", () => {
     assert.deepEqual(characterPage.snapshot.characterMemories.flatMap((group) => group.entries.map((entry) => entry.id)), [
       "character-entry-new",
     ]);
+  });
+
+  it("mate profile page を domain 指定で取得する", () => {
+    const service = new MemoryManagementService({
+      listSessionSummaries: () => [],
+      listSessionMemories: () => [],
+      deleteSessionMemory: () => {},
+      listProjectScopes: () => [],
+      listProjectMemoryEntries: () => [],
+      deleteProjectMemoryEntry: () => {},
+      listCharacterScopes: () => [],
+      listCharacterMemoryEntries: () => [],
+      deleteCharacterMemoryEntry: () => {},
+      listMateProfileItems: () => [
+        {
+          id: "mate-profile-item-1",
+          sectionKey: "core",
+          projectDigestId: null,
+          category: "persona",
+          claimKey: "name",
+          claimValue: "Alice",
+          renderedText: "Alice",
+          normalizedClaim: "alice",
+          confidence: 80,
+          salienceScore: 90,
+          state: "active",
+          tags: ["tag:friend"],
+          updatedAt: "2026-04-02T10:00:00.000Z",
+        },
+        {
+          id: "mate-profile-item-2",
+          sectionKey: "core",
+          projectDigestId: null,
+          category: "persona",
+          claimKey: "nickname",
+          claimValue: "A",
+          renderedText: "A",
+          normalizedClaim: "a",
+          confidence: 70,
+          salienceScore: 80,
+          state: "active",
+          tags: ["tag:short"],
+          updatedAt: "2026-04-01T10:00:00.000Z",
+        },
+      ],
+    });
+
+    const page = service.getPage({ domain: "mate_profile", limit: 1 });
+
+    assert.deepEqual(page.snapshot.mateProfileItems?.map((item) => item.id), ["mate-profile-item-1"]);
+    assert.equal(page.pages.mate_profile?.hasMore, true);
+    assert.equal(page.pages.mate_profile?.total, 2);
+  });
+
+  it("forgetMateProfileItem は deps の忘却を呼ぶ", () => {
+    const deleted: string[] = [];
+    const service = new MemoryManagementService({
+      listSessionSummaries: () => [],
+      listSessionMemories: () => [],
+      deleteSessionMemory: () => {},
+      listProjectScopes: () => [],
+      listProjectMemoryEntries: () => [],
+      deleteProjectMemoryEntry: () => {},
+      listCharacterScopes: () => [],
+      listCharacterMemoryEntries: () => [],
+      deleteCharacterMemoryEntry: () => {},
+      listMateProfileItems: () => [],
+      forgetMateProfileItem: (itemId) => {
+        deleted.push(itemId);
+      },
+    });
+
+    service.forgetMateProfileItem("mate-profile-item-1");
+
+    assert.deepEqual(deleted, ["mate-profile-item-1"]);
   });
 });
