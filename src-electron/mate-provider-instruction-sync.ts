@@ -4,8 +4,12 @@ import { mkdir } from "node:fs/promises";
 
 import type { MateProfile } from "../src/mate-state.js";
 import type { ProviderInstructionTarget as ProviderInstructionTargetState } from "../src/provider-instruction-target-state.js";
-import { upsertMateInstructionBlock } from "./mate-instruction-projection.js";
+import {
+  MATE_PROFILE_BLOCK_ID,
+  upsertMateInstructionBlock,
+} from "./mate-instruction-projection.js";
 import { ProviderInstructionTargetStorage } from "./provider-instruction-target-storage.js";
+import { removeManagedBlock } from "./managed-instruction-block.js";
 
 export type ProviderInstructionTarget = {
   providerId: string;
@@ -180,6 +184,90 @@ export async function syncEnabledProviderInstructionTargets(
   return result;
 }
 
+export async function syncDisabledProviderInstructionTargets(
+  storage: ProviderInstructionTargetStorage,
+  deps: MateProviderInstructionSyncDeps,
+): Promise<SyncEnabledProviderInstructionTargetsResult> {
+  const result: SyncEnabledProviderInstructionTargetsResult = {
+    targetCount: 0,
+    syncedCount: 0,
+    failedCount: 0,
+    skippedCount: 0,
+    runIds: [],
+  };
+
+  const targets = storage.listTargets({ enabledOnly: true });
+
+  for (const target of targets) {
+    result.targetCount += 1;
+
+    try {
+      const instructionFilePath = resolveTargetInstructionFilePath(target);
+
+      const syncResult = await syncDisabledProviderInstructionTarget({
+        ...target,
+        filePath: instructionFilePath,
+      }, deps);
+
+      if (syncResult.status === "skipped") {
+        const run = storage.recordSyncRun({
+          providerId: target.providerId,
+          targetId: target.targetId,
+          mateRevisionId: undefined,
+          writeMode: target.writeMode,
+          projectionScope: target.projectionScope,
+          projectionSha256: "not-applicable",
+          status: "skipped",
+          requiresRestart: target.requiresRestart,
+        });
+
+        result.skippedCount += 1;
+        result.runIds.push(run.id);
+        continue;
+      }
+
+      const run = storage.recordSyncRun({
+        providerId: target.providerId,
+        targetId: target.targetId,
+        mateRevisionId: undefined,
+        writeMode: target.writeMode,
+        projectionScope: target.projectionScope,
+        projectionSha256: sha256Hex(syncResult.text),
+        status: "synced",
+        requiresRestart: target.requiresRestart,
+      });
+
+      result.syncedCount += 1;
+      result.runIds.push(run.id);
+    } catch (error) {
+      const errorPreview = errorToMessage(error);
+      const run = storage.recordSyncRun({
+        providerId: target.providerId,
+        targetId: target.targetId,
+        mateRevisionId: undefined,
+        writeMode: target.writeMode,
+        projectionScope: target.projectionScope,
+        projectionSha256: "not-applicable",
+        status: "failed",
+        errorPreview,
+        requiresRestart: target.requiresRestart,
+      });
+      result.failedCount += 1;
+      result.runIds.push(run.id);
+
+      if (target.failPolicy === "block_session") {
+        throw new MateProviderInstructionSyncBlockedError({
+          providerId: target.providerId,
+          targetId: target.targetId,
+          errorPreview,
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
 async function readProviderInstructionText(
   filePath: string,
   readTextFile: (filePath: string) => Promise<string>,
@@ -193,6 +281,51 @@ async function readProviderInstructionText(
     }
     throw error;
   }
+}
+
+async function readExistingProviderInstructionText(
+  filePath: string,
+  readTextFile: (filePath: string) => Promise<string>,
+): Promise<string | null> {
+  try {
+    return await readTextFile(filePath);
+  } catch (error) {
+    const errnoError = error as NodeJS.ErrnoException | undefined;
+    if (errnoError?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function syncDisabledProviderInstructionTarget(
+  target: { writeMode: ProviderInstructionTargetState["writeMode"]; filePath: string; requiresRestart: boolean },
+  deps: MateProviderInstructionSyncDeps,
+): Promise<{ status: "synced"; text: string } | { status: "skipped" }> {
+  const normalizedFilePath = path.normalize(target.filePath);
+  const existingText = await readExistingProviderInstructionText(normalizedFilePath, deps.readTextFile);
+  if (existingText === null) {
+    return { status: "skipped" };
+  }
+
+  if (target.writeMode === "managed_block") {
+    const beginMarker = `<!-- WITHMATE:BEGIN ${MATE_PROFILE_BLOCK_ID} -->`;
+    if (!existingText.includes(beginMarker)) {
+      return { status: "skipped" };
+    }
+
+    const nextText = removeManagedBlock(existingText, MATE_PROFILE_BLOCK_ID);
+    await deps.writeTextFile(normalizedFilePath, nextText);
+    return { status: "synced", text: nextText };
+  }
+
+  if (target.writeMode === "managed_file") {
+    const nextText = "";
+    await deps.writeTextFile(normalizedFilePath, nextText);
+    return { status: "synced", text: nextText };
+  }
+
+  throw new Error(`unsupported writeMode: ${target.writeMode}`);
 }
 
 function normalizeProviderInstructionProviderId(providerId: string): string {

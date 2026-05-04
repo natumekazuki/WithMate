@@ -102,6 +102,7 @@ import { MateProfileItemStorage } from "./mate-profile-item-storage.js";
 import { ProviderInstructionTargetStorage } from "./provider-instruction-target-storage.js";
 import {
   MateProviderInstructionSyncBlockedError,
+  syncDisabledProviderInstructionTargets,
   syncEnabledProviderInstructionTargets,
 } from "./mate-provider-instruction-sync.js";
 import { createMateMemoryGenerationRunner } from "./mate-memory-generation-runner.js";
@@ -1365,6 +1366,42 @@ async function syncEnabledProviderInstructionTargetsForMateProfile(
 async function resetMate(): Promise<void> {
   requireMainBootstrapService().clearGrowthApplyTimer();
   await requireMateStorage().resetMate();
+  await syncProviderInstructionTargetsForDisabledMateProfile();
+}
+
+async function syncProviderInstructionTargetsForDisabledMateProfile(): Promise<void> {
+  try {
+    await syncDisabledProviderInstructionTargets(
+      requireProviderInstructionTargetStorage(),
+      {
+        readTextFile: async (filePath) => readFile(filePath, "utf8"),
+        writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
+      },
+    );
+  } catch (error) {
+    if (error instanceof MateProviderInstructionSyncBlockedError) {
+      writeAppLog({
+        level: "warn",
+        kind: "mate.provider-instruction-sync.disabled-projection.failed",
+        process: "main",
+        message: "Mate reset 後の Provider Instruction cleanup が完了しませんでした。再同期を実行してください。",
+        data: {
+          providerId: error.providerId,
+          targetId: error.targetId,
+        },
+        error: appLogService.errorToLogError(error),
+      });
+      return;
+    }
+
+    writeAppLog({
+      level: "warn",
+      kind: "mate.provider-instruction-sync.disabled-projection.failed",
+      process: "main",
+      message: "Mate reset 後の Provider Instruction cleanup が完了しませんでした。再同期を実行してください。",
+      error: appLogService.errorToLogError(error),
+    });
+  }
 }
 
 async function applyPendingGrowth(): ReturnType<MateGrowthApplyService["applyPendingGrowth"]> {
