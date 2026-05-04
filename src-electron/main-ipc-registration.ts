@@ -44,6 +44,10 @@ import type {
   MemoryManagementSnapshot,
 } from "../src/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
+import type {
+  ProviderInstructionTarget,
+  ProviderInstructionTargetInput,
+} from "../src/provider-instruction-target-state.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionInput, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
@@ -97,6 +101,7 @@ import {
   WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
+  WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
   WITHMATE_LIST_COMPANION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARIES_CHANNEL,
   WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
@@ -144,6 +149,7 @@ import {
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
@@ -170,6 +176,8 @@ const MATE_CREATED_REQUIRED_CHANNEL_WHITELIST = new Set<string>([
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
+  WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
+  WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
   WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
@@ -265,6 +273,8 @@ export type MainIpcRegistrationDeps = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   getMateEmbeddingSettings(): MateEmbeddingSettings | null;
+  listProviderInstructionTargets(): Awaitable<ProviderInstructionTarget[]>;
+  upsertProviderInstructionTarget(input: ProviderInstructionTargetInput): Awaitable<ProviderInstructionTarget>;
   startMateEmbeddingDownload(): Awaitable<void>;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
   getMemoryManagementSnapshot(): MemoryManagementSnapshot;
@@ -376,6 +386,8 @@ type MainIpcSettingsDeps = Pick<
   | "getAppSettings"
   | "updateAppSettings"
   | "getMateEmbeddingSettings"
+  | "listProviderInstructionTargets"
+  | "upsertProviderInstructionTarget"
   | "startMateEmbeddingDownload"
   | "resetAppDatabase"
   | "getMemoryManagementSnapshot"
@@ -550,6 +562,10 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => deps.getAppSettings());
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => deps.updateAppSettings(settings));
   ipcMain.handle(WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL, () => deps.getMateEmbeddingSettings());
+  ipcMain.handle(WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL, () => deps.listProviderInstructionTargets());
+  ipcMain.handle(WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL, (_event, input: ProviderInstructionTargetInput) =>
+    deps.upsertProviderInstructionTarget(input),
+  );
   ipcMain.handle(WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL, () => deps.startMateEmbeddingDownload());
   ipcMain.handle(WITHMATE_RESET_APP_DATABASE_CHANNEL, (_event, request: ResetAppDatabaseRequest | null | undefined) =>
     deps.resetAppDatabase(request),

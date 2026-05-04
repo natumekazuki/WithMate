@@ -27,6 +27,8 @@ import {
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
+  WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
+  WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
@@ -185,6 +187,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
     getMateEmbeddingSettings: () => null,
+    listProviderInstructionTargets: () => [],
+    upsertProviderInstructionTarget: (input) => input as never,
     startMateEmbeddingDownload: () => {
       calls.push("startMateEmbeddingDownload");
     },
@@ -372,7 +376,9 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   assert.ok(handlers.has("withmate:list-session-summaries"));
   assert.ok(handlers.has("withmate:get-app-settings"));
   assert.ok(handlers.has(WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL));
   assert.ok(handlers.has("withmate:run-session-turn"));
   assert.ok(handlers.has(WITHMATE_GET_MATE_STATE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_MATE_PROFILE_CHANNEL));
@@ -494,6 +500,8 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
     getMateEmbeddingSettings: () => null,
+    listProviderInstructionTargets: () => [],
+    upsertProviderInstructionTarget: (input) => input as never,
     startMateEmbeddingDownload: () => {},
     async resetAppDatabase() { return null; },
     getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], characterMemories: [] }),
@@ -604,7 +612,9 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
     WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
     WITHMATE_GET_APP_SETTINGS_CHANNEL,
+    WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
     WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+    WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
     WITHMATE_RESET_APP_DATABASE_CHANNEL,
     WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
     WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,

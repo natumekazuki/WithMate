@@ -99,6 +99,7 @@ import { MateGrowthStorage } from "./mate-growth-storage.js";
 import { MateProjectContextService } from "./mate-project-context-service.js";
 import { type MateProjectDigest, MateProjectDigestStorage } from "./mate-project-digest-storage.js";
 import { MateProfileItemStorage } from "./mate-profile-item-storage.js";
+import { ProviderInstructionTargetStorage } from "./provider-instruction-target-storage.js";
 import { createMateMemoryGenerationRunner } from "./mate-memory-generation-runner.js";
 import { MateMemoryGenerationService } from "./mate-memory-generation-service.js";
 import { MemoryRuntimeWorkspaceService } from "./memory-runtime-workspace.js";
@@ -206,6 +207,7 @@ let mateEmbeddingCacheService: MateEmbeddingCacheService | null = null;
 let mateGrowthStorage: MateGrowthStorage | null = null;
 let mateProfileItemStorage: MateProfileItemStorage | null = null;
 let mateProjectDigestStorage: MateProjectDigestStorage | null = null;
+let providerInstructionTargetStorage: ProviderInstructionTargetStorage | null = null;
 let mateProjectContextService: MateProjectContextService | null = null;
 let mateGrowthApplyService: MateGrowthApplyService | null = null;
 let memoryRuntimeWorkspaceService: MemoryRuntimeWorkspaceService | null = null;
@@ -883,6 +885,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getMemoryManagementSnapshot: () => requireMemoryManagementService().getSnapshot(),
                 getMemoryManagementPage: (request) => requireMemoryManagementService().getPage(request),
                 getMateEmbeddingSettings: () => requireMateEmbeddingCacheService().getEmbeddingSettings(),
+                listProviderInstructionTargets: () => requireProviderInstructionTargetStorage().listTargets(),
+                upsertProviderInstructionTarget: (input) => requireProviderInstructionTargetStorage().upsertTarget(input),
                 startMateEmbeddingDownload: () => startMateEmbeddingDownload(),
                 deleteSessionMemory: (sessionId) => requireMemoryManagementService().deleteSessionMemory(sessionId),
                 deleteProjectMemoryEntry: (entryId) => requireMemoryManagementService().deleteProjectMemoryEntry(entryId),
@@ -1453,6 +1457,18 @@ function requireMateProjectDigestStorage(): MateProjectDigestStorage {
   }
 
   return mateProjectDigestStorage;
+}
+
+function requireProviderInstructionTargetStorage(): ProviderInstructionTargetStorage {
+  if (!dbPath) {
+    throw new Error("DB path が初期化されていないよ。");
+  }
+
+  if (!providerInstructionTargetStorage) {
+    providerInstructionTargetStorage = new ProviderInstructionTargetStorage(dbPath);
+  }
+
+  return providerInstructionTargetStorage;
 }
 
 function requireMateProjectContextService(): MateProjectContextService {
@@ -2186,6 +2202,7 @@ function closePersistentStores(): void {
   mateGrowthStorage?.close();
   mateProfileItemStorage?.close();
   mateProjectDigestStorage?.close();
+  providerInstructionTargetStorage?.close();
   mateEmbeddingCacheService?.close();
   requirePersistentStoreLifecycleService().close({
     modelCatalogStorage,
@@ -2210,6 +2227,7 @@ function closePersistentStores(): void {
   mateGrowthStorage = null;
   mateProfileItemStorage = null;
   mateProjectDigestStorage = null;
+  providerInstructionTargetStorage = null;
   mateProjectContextService = null;
   mateGrowthApplyService = null;
   mateEmbeddingCacheService = null;
@@ -2255,6 +2273,8 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   mateProfileItemStorage = null;
   mateProjectDigestStorage?.close();
   mateProjectDigestStorage = null;
+  providerInstructionTargetStorage?.close();
+  providerInstructionTargetStorage = null;
   mateProjectContextService = null;
   mateGrowthApplyService = null;
   mateEmbeddingCacheService?.close();

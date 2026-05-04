@@ -36,6 +36,10 @@ import type {
   MemoryManagementSnapshot,
 } from "../src/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
+import type {
+  ProviderInstructionTarget,
+  ProviderInstructionTargetInput,
+} from "../src/provider-instruction-target-state.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionInput, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
@@ -93,6 +97,8 @@ export type MainIpcSettingsDepsArgs = {
   getMemoryManagementSnapshot(): MemoryManagementSnapshot;
   getMemoryManagementPage(request: MemoryManagementPageRequest): MemoryManagementPageResult;
   getMateEmbeddingSettings(): MateEmbeddingSettings | null;
+  listProviderInstructionTargets(): Awaitable<ProviderInstructionTarget[]>;
+  upsertProviderInstructionTarget(input: ProviderInstructionTargetInput): Awaitable<ProviderInstructionTarget>;
   startMateEmbeddingDownload(): Awaitable<void>;
   deleteSessionMemory(sessionId: string): void;
   deleteProjectMemoryEntry(entryId: string): void;
@@ -269,6 +275,8 @@ export function createMainIpcRegistrationDeps(
     getMemoryManagementSnapshot: args.settings.getMemoryManagementSnapshot,
     getMemoryManagementPage: args.settings.getMemoryManagementPage,
     getMateEmbeddingSettings: args.settings.getMateEmbeddingSettings,
+    listProviderInstructionTargets: args.settings.listProviderInstructionTargets,
+    upsertProviderInstructionTarget: args.settings.upsertProviderInstructionTarget,
     startMateEmbeddingDownload: args.settings.startMateEmbeddingDownload,
     deleteSessionMemory: args.settings.deleteSessionMemory,
     deleteProjectMemoryEntry: args.settings.deleteProjectMemoryEntry,

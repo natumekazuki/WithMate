@@ -30,6 +30,9 @@ import { getHomeCompanionSessionState, type HomeMonitorEntry, type HomeSessionSt
 import {
   SETTINGS_SKILL_ROOT_LABEL,
   SETTINGS_SKILL_ROOT_PLACEHOLDER,
+  SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL,
+  SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_LABEL,
+  SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL,
   SETTINGS_CHARACTER_REFLECTION_CHAR_DELTA_LABEL,
   SETTINGS_CHARACTER_REFLECTION_COOLDOWN_LABEL,
   SETTINGS_CHARACTER_REFLECTION_MESSAGE_DELTA_LABEL,
@@ -77,6 +80,9 @@ export type HomeSettingsContentProps = {
   onChangeMemoryGenerationEnabled: (enabled: boolean) => void;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
+  onChangeProviderInstructionEnabled: (providerId: string, enabled: boolean) => void;
+  onChangeProviderInstructionWriteMode: (providerId: string, value: string) => void;
+  onChangeProviderInstructionFailPolicy: (providerId: string, value: string) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
   onBrowseProviderSkillRootPath: (providerId: string) => void;
   onChangeMemoryExtractionModel: (providerId: string, model: string) => void;
@@ -128,6 +134,9 @@ export function HomeSettingsContent({
   onChangeMemoryGenerationEnabled,
   onChangeAutoCollapseActionDockOnSend,
   onChangeProviderEnabled,
+  onChangeProviderInstructionEnabled,
+  onChangeProviderInstructionWriteMode,
+  onChangeProviderInstructionFailPolicy,
   onChangeProviderSkillRootPath,
   onBrowseProviderSkillRootPath,
   onChangeMemoryExtractionModel,
@@ -222,6 +231,48 @@ export function HomeSettingsContent({
                             checked={settings.enabled}
                             onChange={(event) => onChangeProviderEnabled(provider.id, event.target.checked)}
                           />
+                        </label>
+                      </section>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              <section className="settings-section-card">
+                <div className="settings-field">
+                  <strong>{SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL}</strong>
+                  <div className="settings-provider-list">
+                    {providerSettingRows.map(({ provider, instructionTarget }) => (
+                      <section key={`provider-instruction-${provider.id}`} className="settings-provider-card">
+                        <label className="settings-provider-toggle-row">
+                          <span className="settings-provider-name">{provider.label}</span>
+                          <input
+                            type="checkbox"
+                            checked={instructionTarget.enabled}
+                            onChange={(event) => onChangeProviderInstructionEnabled(provider.id, event.target.checked)}
+                          />
+                        </label>
+                        <label className="settings-provider-input">
+                          <span>{SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL}</span>
+                          <select
+                            value={instructionTarget.writeMode}
+                            onChange={(event) =>
+                              onChangeProviderInstructionWriteMode(provider.id, event.target.value)}
+                          >
+                            <option value="managed_block">managed_block</option>
+                            <option value="managed_file">managed_file</option>
+                          </select>
+                        </label>
+                        <label className="settings-provider-input">
+                          <span>{SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_LABEL}</span>
+                          <select
+                            value={instructionTarget.failPolicy}
+                            onChange={(event) =>
+                              onChangeProviderInstructionFailPolicy(provider.id, event.target.value)}
+                          >
+                            <option value="warn_continue">warn_continue</option>
+                            <option value="block_session">block_session</option>
+                          </select>
                         </label>
                       </section>
                     ))}

@@ -53,6 +53,10 @@ import type {
   MateTalkTurnResult,
 } from "./mate-state.js";
 import type { MateEmbeddingSettings } from "./mate-embedding-settings.js";
+import type {
+  ProviderInstructionTarget,
+  ProviderInstructionTargetInput,
+} from "./provider-instruction-target-state.js";
 
 export type WithMateWindowNavigationApi = {
   openSession(sessionId: string): Promise<void>;
@@ -172,6 +176,8 @@ export type WithMateWindowSettingsApi = {
   getMemoryManagementSnapshot(): Promise<MemoryManagementSnapshot>;
   getMemoryManagementPage(request: MemoryManagementPageRequest): Promise<MemoryManagementPageResult>;
   getMateEmbeddingSettings(): Promise<MateEmbeddingSettings | null>;
+  listProviderInstructionTargets(): Promise<ProviderInstructionTarget[]>;
+  upsertProviderInstructionTarget(input: ProviderInstructionTargetInput): Promise<ProviderInstructionTarget>;
   startMateEmbeddingDownload(): Promise<void>;
   deleteSessionMemory(sessionId: string): Promise<void>;
   deleteProjectMemoryEntry(entryId: string): Promise<void>;

@@ -74,6 +74,14 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-memory-management-page",
     args: [{ domain: "session", limit: 50 }],
   });
+  assert.deepEqual(await api.listProviderInstructionTargets(), {
+    channel: "withmate:list-provider-instruction-targets",
+    args: [],
+  });
+  assert.deepEqual(await api.upsertProviderInstructionTarget({} as never), {
+    channel: "withmate:upsert-provider-instruction-target",
+    args: [{} as never],
+  });
   assert.deepEqual(await api.getSessionBackgroundActivity("session-1", "memory-generation"), {
     channel: "withmate:get-session-background-activity",
     args: ["session-1", "memory-generation"],
@@ -131,6 +139,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getMemoryManagementSnapshot",
     "getModelCatalog",
     "getProviderQuotaTelemetry",
+    "listProviderInstructionTargets",
     "getSession",
     "getSessionAuditLogDetail",
     "getSessionAuditLogDetailSection",
@@ -205,6 +214,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeSessionContextTelemetry",
     "syncCompanionTarget",
     "updateAppSettings",
+    "upsertProviderInstructionTarget",
     "updateCharacter",
     "updateCompanionSession",
     "updateSession",

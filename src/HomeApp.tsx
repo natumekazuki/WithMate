@@ -5,6 +5,11 @@ import {
   createDefaultAppSettings,
   getProviderAppSettings,
   type AppSettings,
+  type ProviderInstructionTargetSettings,
+  type ProviderInstructionFailPolicy,
+  type ProviderInstructionWriteMode,
+  DEFAULT_PROVIDER_INSTRUCTION_TARGET_ID,
+  getDefaultProviderInstructionRelativePath,
 } from "./provider-settings-state.js";
 import { type SessionSummary } from "./session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "./approval-mode.js";
@@ -47,6 +52,8 @@ import {
 import {
   buildHomeProviderSettingRows,
   buildPersistedAppSettingsFromRows,
+  type HomeProviderInstructionTargetSettings,
+  buildHomeProviderInstructionTargetUpsertInput,
   type HomeProviderSettingRow,
 } from "./home-settings-view-model.js";
 import {
@@ -138,6 +145,8 @@ type MateTalkMessage = {
   text: string;
 };
 
+type HomeProviderInstructionTargetDraft = HomeProviderInstructionTargetSettings;
+
 const EMPTY_MEMORY_MANAGEMENT_PAGE_INFO: MemoryManagementDomainPageInfo = {
   nextCursor: null,
   hasMore: false,
@@ -157,6 +166,37 @@ function getHomeWindowMode(): HomeWindowMode {
 
   const mode = new URLSearchParams(window.location.search).get("mode");
   return mode === "monitor" || mode === "settings" || mode === "memory" ? mode : "home";
+}
+
+function normalizeProviderInstructionTarget(target: ProviderInstructionTargetSettings): HomeProviderInstructionTargetDraft {
+  return target;
+}
+
+function buildFallbackProviderInstructionTarget(providerId: string): HomeProviderInstructionTargetDraft {
+  return {
+    providerId,
+    targetId: DEFAULT_PROVIDER_INSTRUCTION_TARGET_ID,
+    enabled: false,
+    rootDirectory: "",
+    instructionRelativePath: getDefaultProviderInstructionRelativePath(providerId),
+    lastSyncState: "never",
+    lastSyncRunId: null,
+    lastSyncedRevisionId: null,
+    lastErrorPreview: "",
+    lastSyncedAt: null,
+    writeMode: "managed_block",
+    projectionScope: "mate_only",
+    failPolicy: "warn_continue",
+    requiresRestart: false,
+  };
+}
+
+function isProviderInstructionWriteMode(value: string): value is ProviderInstructionWriteMode {
+  return value === "managed_file" || value === "managed_block";
+}
+
+function isProviderInstructionFailPolicy(value: string): value is ProviderInstructionFailPolicy {
+  return value === "block_session" || value === "warn_continue";
 }
 
 export default function HomeApp() {
@@ -191,6 +231,8 @@ export default function HomeApp() {
   const [memoryManagementLoaded, setMemoryManagementLoaded] = useState(!usesMemoryManagementWindow);
   const [memoryManagementBusyTarget, setMemoryManagementBusyTarget] = useState<string | null>(null);
   const [memoryManagementFeedback, setMemoryManagementFeedback] = useState("");
+  const [providerInstructionTargets, setProviderInstructionTargets] = useState<HomeProviderInstructionTargetDraft[]>([]);
+  const [providerInstructionTargetsLoaded, setProviderInstructionTargetsLoaded] = useState(!isSettingsWindowMode);
   const [launchDraft, setLaunchDraft] = useState<HomeLaunchDraft>(() => createClosedLaunchDraft());
   const [launchFeedback, setLaunchFeedback] = useState("");
   const [launchStarting, setLaunchStarting] = useState(false);
@@ -388,6 +430,37 @@ export default function HomeApp() {
 
   useEffect(() => {
     let active = true;
+    const withmateApi = getWithMateApi();
+
+    if (!withmateApi) {
+      setProviderInstructionTargetsLoaded(true);
+      return () => {
+        active = false;
+      };
+    }
+
+    void withmateApi.listProviderInstructionTargets().then((nextTargets) => {
+      if (!active) {
+        return;
+      }
+
+      setProviderInstructionTargets(nextTargets.map((target) => normalizeProviderInstructionTarget(target)));
+      setProviderInstructionTargetsLoaded(true);
+    }).catch((error) => {
+      if (!active) {
+        return;
+      }
+      setSettingsFeedback(error instanceof Error ? error.message : "Provider Instruction Sync の一覧取得に失敗したよ。");
+      setProviderInstructionTargetsLoaded(true);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
     let receivedSubscriptionUpdate = false;
     const withmateApi = getWithMateApi();
 
@@ -554,6 +627,9 @@ export default function HomeApp() {
     setMateTalkSending(true);
     try {
       const result = await withWithMateApi((api) => api.runMateTalkTurn({ message: normalizedText }));
+      if (!result) {
+        throw new Error("メイトークの応答を取得できませんでした。");
+      }
       const messageId = Date.parse(result.createdAt) || Date.now();
       setMateTalkMessages((current) => [
         ...current,
@@ -776,6 +852,64 @@ export default function HomeApp() {
     } catch (error) {
       setSettingsFeedback(error instanceof Error ? error.message : "設定の保存に失敗したよ。");
     }
+  };
+  const upsertProviderInstructionTarget = async (target: HomeProviderInstructionTargetDraft): Promise<void> => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
+      return;
+    }
+
+    try {
+      await withmateApi.upsertProviderInstructionTarget(buildHomeProviderInstructionTargetUpsertInput(target));
+    } catch (error) {
+      setSettingsFeedback(
+        error instanceof Error
+          ? error.message
+          : "Provider Instruction Sync の保存に失敗したよ。",
+      );
+    }
+  };
+
+  const updateProviderInstructionTarget = (
+    providerId: string,
+    patch: Partial<HomeProviderInstructionTargetDraft>,
+  ) => {
+    const current = providerInstructionTargets.find((next) => next.providerId === providerId);
+    const fallback = buildFallbackProviderInstructionTarget(providerId);
+    const nextTarget = {
+      ...(current ?? fallback),
+      ...patch,
+      providerId,
+    };
+    setProviderInstructionTargets((previous) => {
+      const index = previous.findIndex((candidate) => candidate.providerId === providerId);
+      if (index === -1) {
+        return [...previous, nextTarget];
+      }
+
+      const updated = [...previous];
+      updated[index] = nextTarget;
+      return updated;
+    });
+    void upsertProviderInstructionTarget(nextTarget);
+  };
+
+  const handleChangeProviderInstructionEnabled = (providerId: string, enabled: boolean) => {
+    updateProviderInstructionTarget(providerId, { enabled });
+  };
+
+  const handleChangeProviderInstructionWriteMode = (providerId: string, writeMode: string) => {
+    if (!isProviderInstructionWriteMode(writeMode)) {
+      return;
+    }
+    updateProviderInstructionTarget(providerId, { writeMode });
+  };
+
+  const handleChangeProviderInstructionFailPolicy = (providerId: string, failPolicy: string) => {
+    if (!isProviderInstructionFailPolicy(failPolicy)) {
+      return;
+    }
+    updateProviderInstructionTarget(providerId, { failPolicy });
   };
 
   const handleChangeProviderEnabled = (providerId: string, enabled: boolean) => {
@@ -1036,17 +1170,19 @@ export default function HomeApp() {
   };
 
   const providerSettingRows = useMemo<HomeProviderSettingRow[]>(
-    () => buildHomeProviderSettingRows(modelCatalog, settingsDraft),
+    () => buildHomeProviderSettingRows(modelCatalog, settingsDraft, providerInstructionTargets),
     [
       modelCatalog,
       settingsDraft,
+      providerInstructionTargets,
     ],
   );
   const persistedSettingsDraft = useMemo(
     () => buildPersistedAppSettingsFromRows(settingsDraft, providerSettingRows),
     [providerSettingRows, settingsDraft],
   );
-  const settingsWindowReady = settingsDraftLoaded && modelCatalogLoaded && memoryManagementLoaded;
+  const settingsWindowReady =
+    settingsDraftLoaded && modelCatalogLoaded && memoryManagementLoaded && providerInstructionTargetsLoaded;
   const settingsDirty = useMemo(() => {
     return JSON.stringify(persistedSettingsDraft) !== JSON.stringify(appSettings);
   }, [appSettings, persistedSettingsDraft]);
@@ -1139,6 +1275,9 @@ export default function HomeApp() {
         setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, enabled))
       }
       onChangeProviderEnabled={handleChangeProviderEnabled}
+      onChangeProviderInstructionEnabled={handleChangeProviderInstructionEnabled}
+      onChangeProviderInstructionWriteMode={handleChangeProviderInstructionWriteMode}
+      onChangeProviderInstructionFailPolicy={handleChangeProviderInstructionFailPolicy}
       onChangeProviderSkillRootPath={handleChangeProviderSkillRootPath}
       onBrowseProviderSkillRootPath={(providerId) => void handleBrowseProviderSkillRootPath(providerId)}
       onChangeMemoryExtractionModel={handleChangeMemoryExtractionModel}
@@ -1190,6 +1329,9 @@ export default function HomeApp() {
         setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, enabled))
       }
       onChangeProviderEnabled={handleChangeProviderEnabled}
+      onChangeProviderInstructionEnabled={handleChangeProviderInstructionEnabled}
+      onChangeProviderInstructionWriteMode={handleChangeProviderInstructionWriteMode}
+      onChangeProviderInstructionFailPolicy={handleChangeProviderInstructionFailPolicy}
       onChangeProviderSkillRootPath={handleChangeProviderSkillRootPath}
       onBrowseProviderSkillRootPath={(providerId) => void handleBrowseProviderSkillRootPath(providerId)}
       onChangeMemoryExtractionModel={handleChangeMemoryExtractionModel}

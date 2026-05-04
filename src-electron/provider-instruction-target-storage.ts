@@ -1,7 +1,24 @@
 import type { DatabaseSync } from "node:sqlite";
 
+import type {
+  ProviderInstructionFailPolicy,
+  ProviderInstructionLastSyncState,
+  ProviderInstructionSyncStatus,
+  ProviderInstructionTarget,
+  ProviderInstructionTargetInput,
+  ProviderInstructionWriteMode,
+} from "../src/provider-instruction-target-state.js";
 import { CREATE_V4_SCHEMA_SQL } from "./database-schema-v4.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+
+export type {
+  ProviderInstructionFailPolicy,
+  ProviderInstructionLastSyncState,
+  ProviderInstructionSyncStatus,
+  ProviderInstructionTarget,
+  ProviderInstructionTargetInput,
+  ProviderInstructionWriteMode,
+} from "../src/provider-instruction-target-state.js";
 
 const DEFAULT_TARGET_ID = "main";
 const MAX_ERROR_PREVIEW_LENGTH = 512;
@@ -22,45 +39,6 @@ type ProviderInstructionTargetRow = {
   last_synced_revision_id: string | null;
   last_error_preview: string;
   last_synced_at: string | null;
-};
-
-export type ProviderInstructionWriteMode = "managed_file" | "managed_block";
-export type ProviderInstructionFailPolicy = "block_session" | "warn_continue";
-export type ProviderInstructionLastSyncState =
-  | "never"
-  | "stale"
-  | "redaction_required"
-  | "synced"
-  | "skipped"
-  | "failed";
-export type ProviderInstructionSyncStatus = "synced" | "skipped" | "failed";
-
-export type ProviderInstructionTarget = {
-  providerId: string;
-  targetId: string;
-  enabled: boolean;
-  rootDirectory: string;
-  instructionRelativePath: string;
-  writeMode: ProviderInstructionWriteMode;
-  projectionScope: "mate_only";
-  failPolicy: ProviderInstructionFailPolicy;
-  requiresRestart: boolean;
-  lastSyncState: ProviderInstructionLastSyncState;
-  lastSyncRunId: number | null;
-  lastSyncedRevisionId: string | null;
-  lastErrorPreview: string;
-  lastSyncedAt: string | null;
-};
-
-export type ProviderInstructionTargetInput = {
-  providerId: string;
-  targetId?: string;
-  enabled: boolean;
-  rootDirectory: string;
-  instructionRelativePath: string;
-  writeMode: ProviderInstructionWriteMode;
-  failPolicy: ProviderInstructionFailPolicy;
-  requiresRestart?: boolean;
 };
 
 export type ProviderInstructionTargetSyncRunInput = {

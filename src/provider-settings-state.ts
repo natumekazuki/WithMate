@@ -5,6 +5,13 @@ import {
   normalizeProviderId,
   type ModelReasoningEffort,
 } from "./model-catalog.js";
+import type {
+  ProviderInstructionFailPolicy,
+  ProviderInstructionLastSyncState,
+  ProviderInstructionTarget,
+  ProviderInstructionTargetInput,
+  ProviderInstructionWriteMode,
+} from "./provider-instruction-target-state.js";
 
 export type AppSettings = {
   systemPromptPrefix: string;
@@ -16,6 +23,28 @@ export type AppSettings = {
   memoryExtractionProviderSettings: Record<string, MemoryExtractionProviderSettings>;
   characterReflectionProviderSettings: Record<string, CharacterReflectionProviderSettings>;
 };
+
+export const DEFAULT_PROVIDER_INSTRUCTION_TARGET_ID = "main";
+export const DEFAULT_PROVIDER_INSTRUCTION_RELATIVE_PATH_BY_PROVIDER: Record<string, string> = {
+  codex: "AGENTS.md",
+  copilot: ".github/copilot-instructions.md",
+};
+
+export type ProviderInstructionTargetSyncState = ProviderInstructionLastSyncState;
+export type ProviderInstructionTargetSettings = ProviderInstructionTarget;
+export type ProviderInstructionTargetUpsertInput = ProviderInstructionTargetInput;
+export type {
+  ProviderInstructionFailPolicy,
+  ProviderInstructionWriteMode,
+};
+
+export function getDefaultProviderInstructionRelativePath(providerId: string): string {
+  const normalizedProviderId = providerId.trim().toLowerCase();
+  return (
+    DEFAULT_PROVIDER_INSTRUCTION_RELATIVE_PATH_BY_PROVIDER[normalizedProviderId] ??
+    `.github/${normalizedProviderId || "provider"}-instructions.md`
+  );
+}
 
 export type ProviderAppSettings = {
   enabled: boolean;
