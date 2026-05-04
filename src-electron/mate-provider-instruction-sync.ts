@@ -6,14 +6,20 @@ import type { MateProfile } from "../src/mate-state.js";
 import type { ProviderInstructionTarget as ProviderInstructionTargetState } from "../src/provider-instruction-target-state.js";
 import {
   MATE_PROFILE_BLOCK_ID,
-  upsertMateInstructionBlock,
+  MATE_PROFILE_BLOCK_TITLE,
+  buildMateInstructionContent,
 } from "./mate-instruction-projection.js";
 import { ProviderInstructionTargetStorage } from "./provider-instruction-target-storage.js";
-import { removeManagedBlock } from "./managed-instruction-block.js";
+import {
+  removeManagedBlockWithMarkerAttributes,
+  upsertManagedBlockWithMarkerAttributes,
+} from "./managed-instruction-block.js";
 
 export type ProviderInstructionTarget = {
   providerId: string;
   filePath: string;
+  targetId?: string;
+  writeMode?: ProviderInstructionTargetState["writeMode"];
 };
 
 export type MateProviderInstructionSyncDeps = {
@@ -75,7 +81,12 @@ export async function syncMateInstructionFile(
   deps: MateProviderInstructionSyncDeps,
 ): Promise<void> {
   const existingText = await readProviderInstructionText(target.filePath, deps.readTextFile);
-  const nextText = upsertMateInstructionBlock(existingText, profile);
+  const nextText = upsertManagedBlockWithMarkerAttributes(existingText, {
+    blockId: MATE_PROFILE_BLOCK_ID,
+    title: MATE_PROFILE_BLOCK_TITLE,
+    content: buildMateInstructionContent(profile),
+    markerAttributes: buildManagedBlockMarkerAttributes(target),
+  });
 
   const directoryPath = path.dirname(target.filePath);
   if (directoryPath && directoryPath !== "." && directoryPath !== path.sep) {
@@ -121,6 +132,8 @@ export async function syncEnabledProviderInstructionTargets(
         await syncMateInstructionFile(
           {
             providerId: target.providerId,
+            targetId: target.targetId,
+            writeMode: target.writeMode,
             filePath: instructionFilePath,
           },
           profile,
@@ -299,7 +312,13 @@ async function readExistingProviderInstructionText(
 }
 
 async function syncDisabledProviderInstructionTarget(
-  target: { writeMode: ProviderInstructionTargetState["writeMode"]; filePath: string; requiresRestart: boolean },
+  target: {
+    providerId: string;
+    targetId?: string;
+    writeMode: ProviderInstructionTargetState["writeMode"];
+    filePath: string;
+    requiresRestart: boolean;
+  },
   deps: MateProviderInstructionSyncDeps,
 ): Promise<{ status: "synced"; text: string } | { status: "skipped" }> {
   const normalizedFilePath = path.normalize(target.filePath);
@@ -309,12 +328,13 @@ async function syncDisabledProviderInstructionTarget(
   }
 
   if (target.writeMode === "managed_block") {
-    const beginMarker = `<!-- WITHMATE:BEGIN ${MATE_PROFILE_BLOCK_ID} -->`;
-    if (!existingText.includes(beginMarker)) {
+    const nextText = removeManagedBlockWithMarkerAttributes(existingText, {
+      blockId: MATE_PROFILE_BLOCK_ID,
+      markerAttributes: buildManagedBlockMarkerAttributes(target),
+    });
+    if (nextText === existingText) {
       return { status: "skipped" };
     }
-
-    const nextText = removeManagedBlock(existingText, MATE_PROFILE_BLOCK_ID);
     await deps.writeTextFile(normalizedFilePath, nextText);
     return { status: "synced", text: nextText };
   }
@@ -335,6 +355,16 @@ function normalizeProviderInstructionProviderId(providerId: string): string {
   }
 
   return normalizedProviderId;
+}
+
+function buildManagedBlockMarkerAttributes(
+  target: Pick<ProviderInstructionTarget, "providerId" | "targetId" | "writeMode">,
+): { provider: string; target: string; mode: string } {
+  return {
+    provider: target.providerId,
+    target: target.targetId ?? "main",
+    mode: (target.writeMode ?? "managed_block") === "managed_block" ? "managed-block" : "managed-file",
+  };
 }
 
 function sha256Hex(text: string): string {

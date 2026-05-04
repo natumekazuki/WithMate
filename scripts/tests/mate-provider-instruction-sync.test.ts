@@ -7,7 +7,6 @@ import { describe, it } from "node:test";
 import type { MateProfile } from "../../src/mate-state.js";
 import {
   MATE_PROFILE_BLOCK_ID,
-  upsertMateInstructionBlock,
 } from "../../src-electron/mate-instruction-projection.js";
 import {
   createDefaultProviderInstructionTargets,
@@ -28,6 +27,24 @@ const FILE_DEPENDENCIES = {
     await writeFile(filePath, content, "utf8");
   },
 };
+
+const DEFAULT_TARGET_ID = "main";
+
+function buildManagedProfileBeginMarker(
+  providerId: string,
+  targetId = DEFAULT_TARGET_ID,
+  mode = "managed-block",
+): string {
+  return `<!-- WITHMATE:BEGIN provider=${providerId} target=${targetId} mode=${mode} block=${MATE_PROFILE_BLOCK_ID} -->`;
+}
+
+function buildManagedProfileEndMarker(
+  providerId: string,
+  targetId = DEFAULT_TARGET_ID,
+  mode = "managed-block",
+): string {
+  return `<!-- WITHMATE:END provider=${providerId} target=${targetId} mode=${mode} block=${MATE_PROFILE_BLOCK_ID} -->`;
+}
 
 function createProfile(partial: Partial<MateProfile> = {}): MateProfile {
   return {
@@ -51,8 +68,7 @@ function createProfile(partial: Partial<MateProfile> = {}): MateProfile {
 }
 
 function countProfileBlocks(content: string): number {
-  const marker = `<!-- WITHMATE:BEGIN ${MATE_PROFILE_BLOCK_ID} -->`;
-  const matches = content.match(new RegExp(marker, "g"));
+  const matches = content.match(new RegExp(`<!--\\s*WITHMATE:BEGIN[^>]*\\b${MATE_PROFILE_BLOCK_ID}\\b`, "g"));
   return matches ? matches.length : 0;
 }
 
@@ -82,9 +98,9 @@ describe("syncMateInstructionFile", () => {
 
       await syncMateInstructionFile(target, profile, FILE_DEPENDENCIES);
       const updated = await readFile(target.filePath, "utf8");
-      const expectedContent = upsertMateInstructionBlock("", profile);
-
-      assert.equal(updated, expectedContent);
+      assert.equal(countProfileBlocks(updated), 1);
+      assert.ok(updated.includes(buildManagedProfileBeginMarker("codex")));
+      assert.ok(updated.includes(`- **displayName:** ${profile.displayName}`));
     } finally {
       await rm(workspacePath, { recursive: true, force: true });
     }
@@ -101,7 +117,7 @@ describe("syncMateInstructionFile", () => {
       const updated = await readFile(target.filePath, "utf8");
 
       assert.match(updated, /^User note\n/);
-      assert.ok(updated.includes(`<!-- WITHMATE:BEGIN ${MATE_PROFILE_BLOCK_ID} -->`));
+      assert.ok(updated.includes(buildManagedProfileBeginMarker("codex")));
       assert.ok(updated.includes("## WithMate Mate Profile"));
     } finally {
       await rm(workspacePath, { recursive: true, force: true });
@@ -115,10 +131,10 @@ describe("syncMateInstructionFile", () => {
       const profile = createProfile({ displayName: "Mia", description: "new profile" });
       const baseContent =
         "Header\n"
-        + `<!-- WITHMATE:BEGIN ${MATE_PROFILE_BLOCK_ID} -->\n`
+        + `${buildManagedProfileBeginMarker("codex")}\n`
         + "## WithMate Mate Profile\n"
         + "old body\n"
-        + `<!-- WITHMATE:END ${MATE_PROFILE_BLOCK_ID} -->\n`
+        + `${buildManagedProfileEndMarker("codex")}\n`
         + "Footer\n";
       await writeFile(target.filePath, baseContent, "utf8");
 
@@ -145,7 +161,7 @@ describe("syncMateInstructionFile", () => {
       await syncMateInstructionFile(target, profile, FILE_DEPENDENCIES);
       const updated = await readFile(target.filePath, "utf8");
 
-      assert.ok(updated.includes(`<!-- WITHMATE:BEGIN ${MATE_PROFILE_BLOCK_ID} -->`));
+      assert.ok(updated.includes(buildManagedProfileBeginMarker("copilot")));
     } finally {
       await rm(workspacePath, { recursive: true, force: true });
     }
@@ -215,7 +231,73 @@ describe("syncEnabledProviderInstructionTargets", () => {
       assert.equal(result.runIds.length, 1);
       assert.equal(result.runIds[0], target.lastSyncRunId);
       assert.equal(target.lastSyncState, "synced");
-      assert.ok(updated.includes(`<!-- WITHMATE:BEGIN ${MATE_PROFILE_BLOCK_ID} -->`));
+      assert.ok(updated.includes(buildManagedProfileBeginMarker("codex")));
+    } finally {
+      storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("同一 provider/target/mode の block は置換され、他の provider/target block は保持される", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+    const targetPath = path.join(workspacePath, ".github", "copilot-instructions.md");
+    const existingContent =
+      "User note\n"
+      + `${buildManagedProfileBeginMarker("codex", "main")}\n`
+      + "## WithMate Mate Profile\n"
+      + "main body\n"
+      + `${buildManagedProfileEndMarker("codex", "main")}\n`
+      + `${buildManagedProfileBeginMarker("codex", "feature")}\n`
+      + "## WithMate Mate Profile\n"
+      + "old body\n"
+      + `${buildManagedProfileEndMarker("codex", "feature")}\n`
+      + `${buildManagedProfileBeginMarker("copilot", "main")}\n`
+      + "## WithMate Mate Profile\n"
+      + "copilot body\n"
+      + `${buildManagedProfileEndMarker("copilot", "main")}\n`;
+
+    try {
+      await mkdir(path.dirname(targetPath), { recursive: true });
+      await writeFile(targetPath, existingContent, "utf8");
+
+      storage.upsertTarget({
+        providerId: "codex",
+        targetId: "feature",
+        enabled: true,
+        rootDirectory: workspacePath,
+        instructionRelativePath: path.join(".github", "copilot-instructions.md"),
+        writeMode: "managed_block",
+        failPolicy: "warn_continue",
+      });
+
+      const profile = createProfile({ displayName: "Mia", description: "sync target", sections: [] });
+      const result = await syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES);
+
+      const updated = await readFile(targetPath, "utf8");
+      const target = storage.getTarget("codex", "feature");
+      if (!target) {
+        throw new Error("target がありません");
+      }
+
+      assert.equal(result.targetCount, 1);
+      assert.equal(result.syncedCount, 1);
+      assert.equal(result.failedCount, 0);
+      assert.equal(result.skippedCount, 0);
+      assert.equal(result.runIds.length, 1);
+      assert.equal(result.runIds[0], target.lastSyncRunId);
+      assert.equal(target.lastSyncState, "synced");
+      assert.equal(countProfileBlocks(updated), 3);
+      assert.equal(updated.includes("old body"), false);
+      assert.equal(updated.includes("main body"), true);
+      assert.equal(updated.includes("copilot body"), true);
+      assert.equal(updated.includes(buildManagedProfileBeginMarker("codex", "main")), true);
+      assert.equal(updated.includes(buildManagedProfileBeginMarker("codex", "feature")), true);
+      assert.equal(updated.includes(buildManagedProfileBeginMarker("copilot", "main")), true);
+      assert.equal(updated.includes("- **displayName:** Mia"), true);
     } finally {
       storage.close();
       await rm(workspacePath, { recursive: true, force: true });
@@ -305,7 +387,7 @@ describe("syncEnabledProviderInstructionTargets", () => {
       assert.equal(result.runIds.length, 2);
       assert.equal(failed.lastSyncState, "failed");
       assert.equal(success.lastSyncState, "synced");
-      assert.ok(successContent.includes(`<!-- WITHMATE:BEGIN ${MATE_PROFILE_BLOCK_ID} -->`));
+      assert.ok(successContent.includes(buildManagedProfileBeginMarker("copilot", "valid")));
     } finally {
       storage.close();
       await rm(workspacePath, { recursive: true, force: true });
@@ -413,10 +495,18 @@ describe("syncDisabledProviderInstructionTargets", () => {
     const storage = new ProviderInstructionTargetStorage(storagePath);
     const targetPath = path.join(workspacePath, ".github", "copilot-instructions.md");
     const existingContent = "User note\n"
-      + `<!-- WITHMATE:BEGIN ${MATE_PROFILE_BLOCK_ID} -->\n`
+      + `${buildManagedProfileBeginMarker("codex", "feature")}\n`
+      + "## WithMate Mate Profile\n"
+      + "other target\n"
+      + `${buildManagedProfileEndMarker("codex", "feature")}\n`
+      + `${buildManagedProfileBeginMarker("copilot")}\n`
+      + "## WithMate Mate Profile\n"
+      + "other provider\n"
+      + `${buildManagedProfileEndMarker("copilot")}\n`
+      + `${buildManagedProfileBeginMarker("codex", "main")}\n`
       + "## WithMate Mate Profile\n"
       + "old body\n"
-      + `<!-- WITHMATE:END ${MATE_PROFILE_BLOCK_ID} -->\n`
+      + `${buildManagedProfileEndMarker("codex", "main")}\n`
       + "Footer\n";
 
     try {
@@ -445,10 +535,12 @@ describe("syncDisabledProviderInstructionTargets", () => {
       assert.equal(result.runIds.length, 1);
       assert.equal(result.runIds[0], target.lastSyncRunId);
       assert.equal(target.lastSyncState, "synced");
-      assert.equal(countProfileBlocks(updated), 0);
+      assert.equal(countProfileBlocks(updated), 2);
       assert.equal(updated.includes("User note"), true);
       assert.equal(updated.includes("Footer"), true);
-      assert.equal(updated.includes("## WithMate Mate Profile"), false);
+      assert.equal(updated.includes("other target"), true);
+      assert.equal(updated.includes("other provider"), true);
+      assert.equal(updated.includes("old body"), false);
     } finally {
       storage.close();
       await rm(workspacePath, { recursive: true, force: true });
