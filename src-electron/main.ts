@@ -1738,7 +1738,25 @@ async function runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnRe
   const service = new MateTalkService({
     getMateProfile: () => requireMateStorage().getMateProfile(),
     getMateProfileContextText: (profile) => {
-      return buildMateTalkProfileContextText(profile);
+      try {
+        const profileItems = requireMateProfileItemStorage().listProfileItems({
+          state: "active",
+          projectionAllowed: true,
+          projectDigestId: null,
+          limit: 40,
+        }).map(({ sectionKey, claimKey, renderedText }) => ({
+          sectionKey,
+          claimKey,
+          renderedText,
+        }));
+        return buildMateTalkProfileContextText({
+          ...profile,
+          profileItems,
+        });
+      } catch (error) {
+        console.warn("Failed to load Mate profile items for MateTalk", error);
+        return buildMateTalkProfileContextText(profile);
+      }
     },
     generateAssistantMessage: generateMateTalkAssistantMessage,
     scheduleMemoryGeneration: ({ userMessage, assistantText }) => {
