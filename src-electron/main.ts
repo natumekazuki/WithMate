@@ -180,7 +180,6 @@ const fixedUserDataPath = path.join(appDataPath, "WithMate");
 app.setAppUserModelId("com.natumekazuki.withmate");
 app.setPath("userData", fixedUserDataPath);
 const appLogsPath = path.join(fixedUserDataPath, "logs");
-const MATE_GROWTH_APPLY_INTERVAL_MS = 60 * 60 * 1000;
 const MATE_TALK_OUTPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -1061,7 +1060,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             },
             getMateState: () => requireMateStorage().getMateState(),
             applyPendingGrowth,
-            growthApplyIntervalMs: MATE_GROWTH_APPLY_INTERVAL_MS,
+            getGrowthApplyIntervalMs: () => resolveMateGrowthApplyIntervalMs(),
             createGrowthApplyTimer: (handler, intervalMs) => setInterval(handler, intervalMs),
             clearGrowthApplyTimer: (timer) => {
               clearInterval(timer as ReturnType<typeof setInterval>);
@@ -1072,6 +1071,11 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
   }
 
   return mainInfrastructureRegistry;
+}
+
+function resolveMateGrowthApplyIntervalMs(): number {
+  const settings = requireMateStorage().getMateGrowthSettings();
+  return (settings?.applyIntervalMinutes ?? 60) * 60 * 1000;
 }
 
 function requireSessionStorage(): SessionStorageRead {

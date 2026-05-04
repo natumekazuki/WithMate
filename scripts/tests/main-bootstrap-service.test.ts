@@ -105,6 +105,35 @@ test("handleReady で Mate が active の場合は Growth timer が作成され�
   assert.equal(timerSpies.createdTimers[0]!.intervalMs, 1234);
 });
 
+test("handleReady で Mate が active の場合は Growth 設定由来の interval を使う", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "active";
+    },
+    async applyPendingGrowth() {},
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+    growthApplyIntervalMs: 1234,
+    getGrowthApplyIntervalMs() {
+      return 2 * 60 * 1000;
+    },
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.handleReady();
+
+  assert.equal(timerSpies.createdTimers.length, 1);
+  assert.equal(timerSpies.createdTimers[0]!.intervalMs, 2 * 60 * 1000);
+});
+
 test("handleReady で Mate が not_created の場合は Growth timer が作成されない", async () => {
   const timerSpies = createGrowthTimerSpies();
   const service = new MainBootstrapService({

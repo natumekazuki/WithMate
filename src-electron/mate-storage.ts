@@ -50,6 +50,14 @@ type MateProfileSectionRow = {
   updated_at: string;
 };
 
+type MateGrowthSettingsRow = {
+  enabled: number;
+  auto_apply_enabled: number;
+  memory_candidate_mode: "every_turn" | "threshold" | "manual";
+  apply_interval_minutes: number;
+  updated_at: string;
+};
+
 export type MateProfileSectionState = {
   sectionKey: MateSectionKey;
   filePath: string;
@@ -75,6 +83,14 @@ export type MateProfile = {
   updatedAt: string;
   deletedAt: string | null;
   sections: MateProfileSectionState[];
+};
+
+export type MateGrowthSettings = {
+  enabled: boolean;
+  autoApplyEnabled: boolean;
+  memoryCandidateMode: "every_turn" | "threshold" | "manual";
+  applyIntervalMinutes: number;
+  updatedAt: string;
 };
 
 export type CreateMateInput = {
@@ -237,6 +253,33 @@ export class MateStorage {
           updatedByRevisionId: sectionRow.updated_by_revision_id,
           updatedAt: sectionRow.updated_at,
         })),
+      };
+    });
+  }
+
+  getMateGrowthSettings(): MateGrowthSettings | null {
+    return this.withDb((db) => {
+      const row = db.prepare(`
+        SELECT
+          enabled,
+          auto_apply_enabled,
+          memory_candidate_mode,
+          apply_interval_minutes,
+          updated_at
+        FROM mate_growth_settings
+        WHERE mate_id = ?
+      `).get(MATE_ID) as MateGrowthSettingsRow | undefined;
+
+      if (!row) {
+        return null;
+      }
+
+      return {
+        enabled: row.enabled === 1,
+        autoApplyEnabled: row.auto_apply_enabled === 1,
+        memoryCandidateMode: row.memory_candidate_mode,
+        applyIntervalMinutes: row.apply_interval_minutes,
+        updatedAt: row.updated_at,
       };
     });
   }

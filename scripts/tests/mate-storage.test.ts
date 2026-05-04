@@ -43,11 +43,16 @@ describe("MateStorage", () => {
     try {
       storage = new MateStorage(dbPath, userDataPath);
       const profile = await storage.createMate({ displayName: "Mika" });
+      const growthSettings = storage.getMateGrowthSettings();
 
       assert.equal(profile.state, "active");
       assert.equal(profile.displayName, "Mika");
       assert.equal(profile.sections.length, 4);
       assert.equal(profile.activeRevisionId === null, false);
+      assert.equal(growthSettings?.enabled, true);
+      assert.equal(growthSettings?.autoApplyEnabled, true);
+      assert.equal(growthSettings?.memoryCandidateMode, "every_turn");
+      assert.equal(growthSettings?.applyIntervalMinutes, 60);
 
       const files = [
         path.join(userDataPath, "mate/core.md"),

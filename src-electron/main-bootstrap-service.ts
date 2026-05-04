@@ -11,6 +11,7 @@ type MainBootstrapServiceDeps = {
   getMateState: () => MateStorageState | Promise<MateStorageState>;
   applyPendingGrowth(): Promise<unknown>;
   growthApplyIntervalMs?: number;
+  getGrowthApplyIntervalMs?: () => number | Promise<number>;
   createGrowthApplyTimer?: (handler: () => void, intervalMs: number) => unknown;
   clearGrowthApplyTimer?: (timer: unknown) => void;
 };
@@ -20,12 +21,14 @@ type GrowthApplyTimerHandle = unknown;
 
 export class MainBootstrapService {
   private readonly growthApplyIntervalMs: number;
+  private readonly getGrowthApplyIntervalMs?: () => number | Promise<number>;
   private readonly createGrowthApplyTimer: (handler: () => void, intervalMs: number) => unknown;
   private readonly clearGrowthApplyTimerHandle: (timer: unknown) => void;
   private growthApplyTimer: GrowthApplyTimerHandle | null = null;
 
   constructor(private readonly deps: MainBootstrapServiceDeps) {
     this.growthApplyIntervalMs = deps.growthApplyIntervalMs ?? DEFAULT_GROWTH_APPLY_INTERVAL_MS;
+    this.getGrowthApplyIntervalMs = deps.getGrowthApplyIntervalMs;
     this.createGrowthApplyTimer = deps.createGrowthApplyTimer ?? ((handler, intervalMs) => {
       return setInterval(handler, intervalMs);
     });
@@ -44,11 +47,12 @@ export class MainBootstrapService {
       return;
     }
 
+    const intervalMs = await this.resolveGrowthApplyIntervalMs();
     this.growthApplyTimer = this.createGrowthApplyTimer(() => {
       void this.deps.applyPendingGrowth().catch((error) => {
         console.warn("Failed to apply pending growth", error);
       });
-    }, this.growthApplyIntervalMs);
+    }, intervalMs);
   }
 
   clearGrowthApplyTimer(): void {
@@ -72,5 +76,15 @@ export class MainBootstrapService {
 
   clearGrowthApplyTimerForTest(): void {
     this.clearGrowthApplyTimer();
+  }
+
+  private async resolveGrowthApplyIntervalMs(): Promise<number> {
+    const intervalMs = this.getGrowthApplyIntervalMs
+      ? await this.getGrowthApplyIntervalMs()
+      : this.growthApplyIntervalMs;
+    if (Number.isFinite(intervalMs) && intervalMs > 0) {
+      return Math.floor(intervalMs);
+    }
+    return DEFAULT_GROWTH_APPLY_INTERVAL_MS;
   }
 }

@@ -20,6 +20,7 @@ type CreateMainBootstrapDepsArgs = {
   getMateState(): MateStorageState | Promise<MateStorageState>;
   applyPendingGrowth(): Promise<unknown>;
   growthApplyIntervalMs?: number;
+  getGrowthApplyIntervalMs?: () => number | Promise<number>;
   createGrowthApplyTimer?: (handler: () => void, intervalMs: number) => unknown;
   clearGrowthApplyTimer?: (timer: unknown) => void;
   ipcRegistration: CreateMainIpcRegistrationDepsArgs;
@@ -35,6 +36,7 @@ export function createMainBootstrapDeps(
     getMateState: args.getMateState,
     applyPendingGrowth: args.applyPendingGrowth,
     growthApplyIntervalMs: args.growthApplyIntervalMs,
+    getGrowthApplyIntervalMs: args.getGrowthApplyIntervalMs,
     createGrowthApplyTimer: args.createGrowthApplyTimer,
     clearGrowthApplyTimer: args.clearGrowthApplyTimer,
     registerIpcHandlers: () => {
