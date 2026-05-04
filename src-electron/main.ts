@@ -105,6 +105,7 @@ import { MateProfileItemStorage } from "./mate-profile-item-storage.js";
 import { ProviderInstructionTargetStorage } from "./provider-instruction-target-storage.js";
 import { MateEmbeddingVectorizer } from "./mate-embedding-vectorizer.js";
 import { MateSemanticEmbeddingStorage } from "./mate-semantic-embedding-storage.js";
+import { MateSemanticEmbeddingRetrievalService } from "./mate-semantic-embedding-retrieval-service.js";
 import { MateSemanticEmbeddingIndexService } from "./mate-semantic-embedding-index-service.js";
 import {
   MateProviderInstructionSyncBlockedError,
@@ -223,6 +224,7 @@ let mateMemoryStorage: MateMemoryStorage | null = null;
 let mateEmbeddingCacheService: MateEmbeddingCacheService | null = null;
 let mateEmbeddingVectorizer: MateEmbeddingVectorizer | null = null;
 let mateSemanticEmbeddingStorage: MateSemanticEmbeddingStorage | null = null;
+let mateSemanticEmbeddingRetrievalService: MateSemanticEmbeddingRetrievalService | null = null;
 let mateSemanticEmbeddingIndexService: MateSemanticEmbeddingIndexService | null = null;
 let mateGrowthStorage: MateGrowthStorage | null = null;
 let mateProfileItemStorage: MateProfileItemStorage | null = null;
@@ -1610,7 +1612,10 @@ function requireProviderInstructionTargetStorage(): ProviderInstructionTargetSto
 
 function requireMateProjectContextService(): MateProjectContextService {
   if (!mateProjectContextService) {
-    mateProjectContextService = new MateProjectContextService(requireMateProfileItemStorage());
+    mateProjectContextService = new MateProjectContextService(
+      requireMateProfileItemStorage(),
+      requireMateSemanticEmbeddingRetrievalService(),
+    );
   }
 
   return mateProjectContextService;
@@ -1630,17 +1635,17 @@ function resolveMateProjectDigestForSession(session: Session): MateProjectDigest
   }
 }
 
-function resolveMateProjectContextTextForPrompt(
+async function resolveMateProjectContextTextForPrompt(
   session: Session,
   userMessage: string,
-): string | null {
+): Promise<string | null> {
   const digest = resolveMateProjectDigestForSession(session);
   if (!digest) {
     return null;
   }
 
   try {
-    return requireMateProjectContextService().getProjectDigestContextText(digest.id, {
+    return await requireMateProjectContextService().getProjectDigestContextText(digest.id, {
       queryText: userMessage,
     });
   } catch (error) {
@@ -1680,6 +1685,18 @@ function requireMateSemanticEmbeddingStorage(): MateSemanticEmbeddingStorage {
   }
 
   return mateSemanticEmbeddingStorage;
+}
+
+function requireMateSemanticEmbeddingRetrievalService(): MateSemanticEmbeddingRetrievalService {
+  if (!mateSemanticEmbeddingRetrievalService) {
+    mateSemanticEmbeddingRetrievalService = new MateSemanticEmbeddingRetrievalService(
+      requireMateEmbeddingCacheService(),
+      requireMateEmbeddingVectorizer(),
+      requireMateSemanticEmbeddingStorage(),
+    );
+  }
+
+  return mateSemanticEmbeddingRetrievalService;
 }
 
 function requireMateSemanticEmbeddingIndexService(): MateSemanticEmbeddingIndexService {
@@ -2409,6 +2426,7 @@ function closePersistentStores(): void {
   mateProjectDigestStorage = null;
   providerInstructionTargetStorage = null;
   mateProjectContextService = null;
+  mateSemanticEmbeddingRetrievalService = null;
   mateGrowthApplyService = null;
   mateEmbeddingVectorizer = null;
   mateSemanticEmbeddingStorage = null;
@@ -2462,6 +2480,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   mateSemanticEmbeddingStorage?.close();
   mateSemanticEmbeddingStorage = null;
   mateProjectContextService = null;
+  mateSemanticEmbeddingRetrievalService = null;
   mateGrowthApplyService = null;
   mateEmbeddingVectorizer = null;
   mateSemanticEmbeddingIndexService = null;

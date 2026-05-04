@@ -47,7 +47,7 @@ export type SessionRuntimeServiceDeps = {
     session: Session,
     userMessage: string,
     sessionMemory: SessionMemory,
-  ): string | null;
+  ): Awaitable<string | null>;
   createAuditLog(input: CreateAuditLogInput): Awaitable<AuditLogEntry>;
   updateAuditLog(id: number, entry: CreateAuditLogInput): Awaitable<void | AuditLogEntry>;
   setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void;
@@ -411,8 +411,9 @@ export class SessionRuntimeService {
     const providerAdapter = this.deps.getProviderCodingAdapter(provider.id);
     const sessionMemory = this.deps.getSessionMemory(session);
     const projectMemoryEntries = this.deps.resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
-    const projectContextText =
-      this.deps.resolveProjectContextTextForPrompt?.(session, nextMessage, sessionMemory) ?? null;
+    const projectContextText = await Promise.resolve(
+      this.deps.resolveProjectContextTextForPrompt?.(session, nextMessage, sessionMemory) ?? null,
+    );
     const promptForAudit = providerAdapter.composePrompt({
       session,
       sessionMemory,
