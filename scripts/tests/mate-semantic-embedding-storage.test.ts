@@ -205,6 +205,237 @@ describe("MateSemanticEmbeddingStorage", () => {
     }
   });
 
+  it("backend/model 指定で owner を跨いだ候補を取得できる", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    let storage: MateSemanticEmbeddingStorage | null = null;
+
+    try {
+      storage = new MateSemanticEmbeddingStorage(dbPath);
+      seedCurrentMate(dbPath);
+
+      storage.upsertEmbedding({
+        ...getBaseEmbedding(),
+        ownerType: "growth_event",
+        ownerId: "growth-1",
+        text: "growth text",
+        vector: [1, 2, 3],
+      });
+      storage.upsertEmbedding({
+        ...getBaseEmbedding(),
+        ownerType: "profile_item",
+        ownerId: "profile-1",
+        text: "profile text",
+        vector: [4, 5, 6],
+      });
+      storage.upsertEmbedding({
+        ...getBaseEmbedding(),
+        ownerType: "tag_catalog",
+        ownerId: "tag-1",
+        text: "different model",
+        embeddingModelId: "another/model",
+        vector: [7, 8, 9],
+      });
+
+      const rows = storage.listEmbeddingsForModel({
+        embeddingBackendType: getBaseEmbedding().embeddingBackendType,
+        embeddingModelId: getBaseEmbedding().embeddingModelId,
+      });
+
+      assert.equal(rows.length, 2);
+      assert.equal(
+        rows.some((row) => row.ownerType === "growth_event" && row.ownerId === "growth-1"),
+        true,
+      );
+      assert.equal(
+        rows.some((row) => row.ownerType === "profile_item" && row.ownerId === "profile-1"),
+        true,
+      );
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("ownerType filter が効く", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    let storage: MateSemanticEmbeddingStorage | null = null;
+
+    try {
+      storage = new MateSemanticEmbeddingStorage(dbPath);
+      seedCurrentMate(dbPath);
+
+      storage.upsertEmbedding({
+        ...getBaseEmbedding(),
+        ownerType: "growth_event",
+        ownerId: "growth-1",
+        text: "growth text",
+        vector: [1, 2, 3],
+      });
+      storage.upsertEmbedding({
+        ...getBaseEmbedding(),
+        ownerType: "profile_item",
+        ownerId: "profile-1",
+        text: "profile text",
+        vector: [4, 5, 6],
+      });
+      const rows = storage.listEmbeddingsForModel({
+        embeddingBackendType: getBaseEmbedding().embeddingBackendType,
+        embeddingModelId: getBaseEmbedding().embeddingModelId,
+        ownerType: "growth_event",
+      });
+
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].ownerType, "growth_event");
+      assert.equal(rows[0].ownerId, "growth-1");
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("dimension filter が効く", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    let storage: MateSemanticEmbeddingStorage | null = null;
+
+    try {
+      storage = new MateSemanticEmbeddingStorage(dbPath);
+      seedCurrentMate(dbPath);
+
+      storage.upsertEmbedding({
+        ...getBaseEmbedding(),
+        ownerType: "growth_event",
+        ownerId: "growth-1",
+        text: "small",
+        vector: [1, 2],
+      });
+      storage.upsertEmbedding({
+        ...getBaseEmbedding(),
+        ownerType: "growth_event",
+        ownerId: "growth-2",
+        text: "large",
+        vector: [3, 4, 5, 6],
+      });
+
+      const rows = storage.listEmbeddingsForModel({
+        embeddingBackendType: getBaseEmbedding().embeddingBackendType,
+        embeddingModelId: getBaseEmbedding().embeddingModelId,
+        dimension: 4,
+      });
+
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].dimension, 4);
+      assert.equal(rows[0].ownerId, "growth-2");
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("limit と並び順が反映される", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    let storage: MateSemanticEmbeddingStorage | null = null;
+
+    try {
+      storage = new MateSemanticEmbeddingStorage(dbPath);
+      seedCurrentMate(dbPath);
+
+      storage.upsertEmbedding({
+        ...getBaseEmbedding(),
+        ownerType: "growth_event",
+        ownerId: "growth-1",
+        text: "oldest",
+        vector: [1, 2, 3],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      storage.upsertEmbedding({
+        ...getBaseEmbedding(),
+        ownerType: "profile_item",
+        ownerId: "profile-1",
+        text: "middle",
+        vector: [4, 5, 6],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      storage.upsertEmbedding({
+        ...getBaseEmbedding(),
+        ownerType: "tag_catalog",
+        ownerId: "tag-1",
+        text: "newest",
+        vector: [7, 8, 9, 10],
+      });
+
+      const rows = storage.listEmbeddingsForModel({
+        embeddingBackendType: getBaseEmbedding().embeddingBackendType,
+        embeddingModelId: getBaseEmbedding().embeddingModelId,
+        limit: 2,
+      });
+
+      assert.equal(rows.length, 2);
+      assert.equal(rows[0].textHash, storage.getEmbedding({
+        ...getBaseEmbedding(),
+        ownerType: "tag_catalog",
+        ownerId: "tag-1",
+        text: "newest",
+        embeddingModelId: getBaseEmbedding().embeddingModelId,
+      })?.textHash);
+      assert.equal(rows[1].textHash, storage.getEmbedding({
+        ...getBaseEmbedding(),
+        ownerType: "profile_item",
+        ownerId: "profile-1",
+        text: "middle",
+        embeddingModelId: getBaseEmbedding().embeddingModelId,
+      })?.textHash);
+      assert.ok(new Date(rows[0].updatedAt) > new Date(rows[1].updatedAt));
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("dimension / limit の不正値は reject する", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    let storage: MateSemanticEmbeddingStorage | null = null;
+
+    try {
+      storage = new MateSemanticEmbeddingStorage(dbPath);
+      seedCurrentMate(dbPath);
+
+      assert.throws(() => {
+        storage!.listEmbeddingsForModel({
+          embeddingBackendType: "backend",
+          embeddingModelId: "model",
+          dimension: 0,
+        });
+      }, /dimension/);
+
+      assert.throws(() => {
+        storage!.listEmbeddingsForModel({
+          embeddingBackendType: "backend",
+          embeddingModelId: "model",
+          limit: 0,
+        });
+      }, /limit/);
+
+      assert.throws(() => {
+        storage!.listEmbeddingsForModel({
+          embeddingBackendType: "backend",
+          embeddingModelId: "model",
+          dimension: 1.5,
+        });
+      }, /dimension/);
+
+      assert.throws(() => {
+        storage!.listEmbeddingsForModel({
+          embeddingBackendType: "backend",
+          embeddingModelId: "model",
+          limit: -10,
+        });
+      }, /limit/);
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
   it("invalid input は reject される", async () => {
     const { dbPath, cleanup } = await createTempDbPath();
     let storage: MateSemanticEmbeddingStorage | null = null;

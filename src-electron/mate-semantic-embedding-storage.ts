@@ -51,6 +51,14 @@ export type GetMateSemanticEmbeddingInput = {
   embeddingModelId: string;
 };
 
+export type ListMateSemanticEmbeddingsForModelRequest = {
+  embeddingBackendType: string;
+  embeddingModelId: string;
+  ownerType?: OwnerType;
+  dimension?: number;
+  limit?: number;
+};
+
 const UPSERT_EMBEDDING_SQL = `
   INSERT INTO mate_semantic_embeddings (
     mate_id,
@@ -108,6 +116,23 @@ const SELECT_EMBEDDINGS_FOR_OWNER_SQL = `
   WHERE owner_type = ?
     AND owner_id = ?
   ORDER BY id ASC
+`;
+
+const SELECT_EMBEDDINGS_FOR_MODEL_SQL = `
+  SELECT
+    id,
+    owner_type,
+    owner_id,
+    text_hash,
+    embedding_backend_type,
+    embedding_model_id,
+    dimension,
+    vector_blob,
+    created_at,
+    updated_at
+  FROM mate_semantic_embeddings
+  WHERE embedding_backend_type = ?
+    AND embedding_model_id = ?
 `;
 
 const DELETE_EMBEDDINGS_FOR_OWNER_SQL = `
@@ -171,6 +196,14 @@ function normalizeVector(input: number[] | Float32Array): { blob: Buffer; dimens
     blob,
     dimension: values.length,
   };
+}
+
+function normalizePositiveInteger(value: number, field: string): number {
+  if (!Number.isInteger(value) || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`${field} は1以上の整数のみ許可されています。`);
+  }
+
+  return value;
 }
 
 function readFloat32Vector(blob: Buffer | Uint8Array): number[] {
@@ -280,6 +313,42 @@ export class MateSemanticEmbeddingStorage {
       .prepare(SELECT_EMBEDDINGS_FOR_OWNER_SQL)
       .all(normalizedOwnerType, normalizedOwnerId) as EmbeddingRow[];
 
+    return rows.map(rowToEmbedding);
+  }
+
+  listEmbeddingsForModel(request: ListMateSemanticEmbeddingsForModelRequest): MateSemanticEmbedding[] {
+    const embeddingBackendType = normalizeText(request.embeddingBackendType, "embeddingBackendType");
+    const embeddingModelId = normalizeText(request.embeddingModelId, "embeddingModelId");
+    const ownerType = request.ownerType === undefined
+      ? undefined
+      : normalizeOwnerType(request.ownerType);
+    const dimension = request.dimension === undefined
+      ? undefined
+      : normalizePositiveInteger(request.dimension, "dimension");
+    const limit = request.limit === undefined
+      ? undefined
+      : normalizePositiveInteger(request.limit, "limit");
+
+    let sql = SELECT_EMBEDDINGS_FOR_MODEL_SQL;
+    const params: Array<string | number> = [embeddingBackendType, embeddingModelId];
+    if (ownerType !== undefined) {
+      sql += "    AND owner_type = ?\n";
+      params.push(ownerType);
+    }
+
+    if (dimension !== undefined) {
+      sql += "    AND dimension = ?\n";
+      params.push(dimension);
+    }
+
+    sql += "  ORDER BY updated_at DESC, id DESC\n";
+
+    if (limit !== undefined) {
+      sql += "  LIMIT ?\n";
+      params.push(limit);
+    }
+
+    const rows = this.db.prepare(sql).all(...params) as EmbeddingRow[];
     return rows.map(rowToEmbedding);
   }
 
