@@ -286,6 +286,7 @@ export default function HomeApp() {
   const settingsDirtyRef = useRef(false);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const memoryManagementRequestIdRef = useRef(0);
+  const mateTalkMessageSequenceRef = useRef(0);
 
   const beginMemoryManagementRequest = () => {
     memoryManagementRequestIdRef.current += 1;
@@ -662,34 +663,41 @@ export default function HomeApp() {
       return;
     }
 
+    const messageSequence = mateTalkMessageSequenceRef.current + 1;
+    mateTalkMessageSequenceRef.current = messageSequence;
+    const userMessageId = `user-${messageSequence}`;
+    const now = Date.now();
+
     setMateTalkSending(true);
+    setMateTalkMessages((current) => [
+      ...current,
+      {
+        id: userMessageId,
+        role: "user",
+        text: normalizedText,
+      },
+    ]);
+    setMateTalkInput("");
+
     try {
       const result = await withWithMateApi((api) => api.runMateTalkTurn({ message: normalizedText }));
       if (!result) {
         throw new Error("メイトークの応答を取得できませんでした。");
       }
-      const messageId = Date.parse(result.createdAt) || Date.now();
       setMateTalkMessages((current) => [
         ...current,
         {
-          id: `user-${messageId}`,
-          role: "user",
-          text: result.userMessage,
-        },
-        {
-          id: `mate-${messageId}`,
+          id: `mate-${messageSequence}-${Date.parse(result.createdAt) || now}`,
           role: "mate",
           text: result.assistantMessage,
         },
       ]);
-      setMateTalkInput("");
     } catch (error) {
       const message = error instanceof Error ? error.message : "メイトークの送信に失敗しました。";
-      const now = Date.now();
       setMateTalkMessages((current) => [
         ...current,
         {
-          id: `mate-error-${now}`,
+          id: `mate-error-${messageSequence}-${now}`,
           role: "mate",
           text: message,
         },
