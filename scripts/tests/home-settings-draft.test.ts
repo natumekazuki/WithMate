@@ -30,6 +30,11 @@ import {
   updateMemoryExtractionTimeoutSecondsDraft,
   updateMemoryGenerationEnabled,
   updateSystemPromptPrefix,
+  updateMateMemoryGenerationTriggerIntervalMinutesDraft,
+  updateMateMemoryGenerationPriorityProviderDraft,
+  updateMateMemoryGenerationPriorityModelDraft,
+  updateMateMemoryGenerationPriorityReasoningEffortDraft,
+  updateMateMemoryGenerationPriorityTimeoutSecondsDraft,
 } from "../../src/home-settings-draft.js";
 
 const providerCatalog: ModelCatalogProvider = {
@@ -236,5 +241,21 @@ describe("home-settings-draft", () => {
     const next = updateAutoCollapseActionDockOnSend(draft, false);
 
     assert.equal(next.autoCollapseActionDockOnSend, false);
+  });
+
+  it("mate memory generation の priority 1 を provider / model / reasoning / timeout / interval で更新できる", () => {
+    const draft = createDefaultAppSettings();
+
+    const withProvider = updateMateMemoryGenerationPriorityProviderDraft(draft, "codex");
+    const withModel = updateMateMemoryGenerationPriorityModelDraft(withProvider, providerCatalog, "codex", "gpt-5.4-mini");
+    const withReasoning = updateMateMemoryGenerationPriorityReasoningEffortDraft(withModel, "low");
+    const withTimeout = updateMateMemoryGenerationPriorityTimeoutSecondsDraft(withReasoning, "42");
+    const withInterval = updateMateMemoryGenerationTriggerIntervalMinutesDraft(withTimeout, "90");
+
+    assert.equal(withInterval.mateMemoryGenerationSettings.priorityList[0].provider, "codex");
+    assert.equal(withInterval.mateMemoryGenerationSettings.priorityList[0].model, "gpt-5.4-mini");
+    assert.equal(withInterval.mateMemoryGenerationSettings.priorityList[0].reasoningEffort, "low");
+    assert.equal(withInterval.mateMemoryGenerationSettings.priorityList[0].timeoutSeconds, 42);
+    assert.equal(withInterval.mateMemoryGenerationSettings.triggerIntervalMinutes, 90);
   });
 });
