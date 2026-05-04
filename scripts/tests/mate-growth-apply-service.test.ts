@@ -127,4 +127,171 @@ describe("MateGrowthApplyService", () => {
       await cleanup();
     }
   });
+
+  it("適用対象イベントと profile item に対してのみ embedding index が呼ばれる", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const mateStorage = new MateStorage(dbPath, userDataPath);
+    const growthStorage = new MateGrowthStorage(dbPath);
+    const profileItemStorage = new MateProfileItemStorage(dbPath);
+    const indexedGrowthEventIds: string[] = [];
+    const indexedProfileItemIds: string[] = [];
+
+    const embeddingIndexService = {
+      indexGrowthEvent: async (event) => {
+        indexedGrowthEventIds.push(event.id);
+      },
+      indexProfileItem: async (item) => {
+        indexedProfileItemIds.push(item.id);
+      },
+    };
+
+    try {
+      await mateStorage.createMate({ displayName: "Mika" });
+      const runId = growthStorage.createRun({
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        triggerReason: "test",
+      });
+      const skippedCore = growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "explicit_user_instruction",
+        kind: "conversation",
+        targetSection: "core",
+        statement: "一人称は「ぼく」を使う",
+        statementFingerprint: "first-person-boku",
+        targetClaimKey: "first_person",
+        confidence: 90,
+        salienceScore: 80,
+        projectionAllowed: true,
+      });
+      const applicableBond = growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "repeated_user_behavior",
+        kind: "relationship",
+        targetSection: "bond",
+        statement: "ユーザーは短文を好む",
+        statementFingerprint: "short-message-preference",
+        targetClaimKey: "reply_length",
+        confidence: 82,
+        salienceScore: 68,
+        projectionAllowed: true,
+      });
+      const applicableWorkStyle = growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "assistant_inference",
+        kind: "work_style",
+        targetSection: "work_style",
+        statement: "最初に方針を簡潔に共有する",
+        statementFingerprint: "share-plan-first",
+        targetClaimKey: "plan_first",
+        confidence: 88,
+        salienceScore: 76,
+        projectionAllowed: true,
+      });
+
+      const service = new MateGrowthApplyService(
+        growthStorage,
+        profileItemStorage,
+        mateStorage,
+        embeddingIndexService,
+      );
+      const result = await service.applyPendingGrowth({ runId });
+
+      assert.equal(result.appliedCount, 2);
+      assert.deepEqual(
+        indexedGrowthEventIds.sort(),
+        [applicableBond.id, applicableWorkStyle.id].sort(),
+      );
+
+      const activeProfileItems = profileItemStorage.listProfileItems({ state: "active" });
+      const indexedProfileItems = profileItemStorage.listProfileItems({ state: "active" })
+        .filter((item) => indexedProfileItemIds.includes(item.id));
+      assert.equal(indexedProfileItemIds.length, 2);
+      assert.equal(indexedProfileItemIds.length, result.appliedCount);
+      assert.equal(indexedProfileItems.length, 2);
+      const indexedClaimKeys = new Set(indexedProfileItems.map((item) => item.claimKey));
+      assert.equal(indexedClaimKeys.has("reply_length"), true);
+      assert.equal(indexedClaimKeys.has("plan_first"), true);
+      assert.equal(indexedProfileItems.every((item) => activeProfileItems.some((active) => active.id === item.id)), true);
+      assert.equal(indexedGrowthEventIds.includes(skippedCore.id), false);
+    } finally {
+      profileItemStorage.close();
+      growthStorage.close();
+      mateStorage.close();
+      await cleanup();
+    }
+  });
+
+  it("embedding index が例外を投げても growth apply は成功しつつ状態更新が完了する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const mateStorage = new MateStorage(dbPath, userDataPath);
+    const growthStorage = new MateGrowthStorage(dbPath);
+    const profileItemStorage = new MateProfileItemStorage(dbPath);
+    const embeddingIndexService = {
+      indexGrowthEvent: async () => {
+        throw new Error("index service unavailable");
+      },
+      indexProfileItem: async () => {
+        throw new Error("index service unavailable");
+      },
+    };
+
+    try {
+      await mateStorage.createMate({ displayName: "Mika" });
+      const runId = growthStorage.createRun({
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        triggerReason: "test",
+      });
+      const event = growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "repeated_user_behavior",
+        kind: "relationship",
+        targetSection: "bond",
+        statement: "ユーザーは短文を好む",
+        statementFingerprint: "short-message-preference",
+        targetClaimKey: "reply_length",
+        confidence: 82,
+        salienceScore: 68,
+        projectionAllowed: true,
+      });
+
+      const service = new MateGrowthApplyService(
+        growthStorage,
+        profileItemStorage,
+        mateStorage,
+        embeddingIndexService,
+      );
+      const result = await service.applyPendingGrowth({ runId });
+
+      const bondContent = await readFile(path.join(userDataPath, "mate/bond.md"), "utf8");
+      assert.equal(result.appliedCount, 1);
+      assert.equal(typeof result.revisionId, "string");
+      assert.equal(bondContent.includes("- ユーザーは短文を好む"), true);
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const row = db
+          .prepare(`SELECT state, applied_revision_id FROM mate_growth_events WHERE id = ?`)
+          .get(event.id) as { state: string; applied_revision_id: string | null };
+        assert.equal(row.state, "applied");
+        assert.equal(row.applied_revision_id, result.revisionId);
+      } finally {
+        db.close();
+      }
+    } finally {
+      profileItemStorage.close();
+      growthStorage.close();
+      mateStorage.close();
+      await cleanup();
+    }
+  });
 });

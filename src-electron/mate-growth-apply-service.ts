@@ -3,6 +3,7 @@ import type {
   MateGrowthStorage,
 } from "./mate-growth-storage.js";
 import type {
+  MateProfileItem,
   MateProfileItemCategory,
   MateProfileItemSectionKey,
   MateProfileItemStorage,
@@ -27,11 +28,17 @@ const APPLYABLE_CORE_GROWTH_SOURCE_TYPES = ["explicit_user_instruction", "user_c
 
 const APPLYABLE_CORE_SOURCE_TYPES = ["mate_talk"] as const;
 
+type SemanticEmbeddingIndexService = {
+  indexGrowthEvent: (event: MateGrowthEvent) => Promise<unknown>;
+  indexProfileItem: (item: MateProfileItem) => Promise<unknown>;
+};
+
 export class MateGrowthApplyService {
   constructor(
     private readonly growthStorage: MateGrowthStorage,
     private readonly profileItemStorage: MateProfileItemStorage,
     private readonly mateStorage: MateStorage,
+    private readonly semanticEmbeddingIndexService?: SemanticEmbeddingIndexService,
   ) {}
 
   async applyPendingGrowth(options: ApplyPendingGrowthOptions = {}): Promise<ApplyPendingGrowthResult> {
@@ -69,8 +76,13 @@ export class MateGrowthApplyService {
       };
     }
 
+    const appliedIndexTargets: Array<{
+      event: MateGrowthEvent;
+      profileItem: MateProfileItem;
+    }> = [];
+
     for (const event of applicableEvents) {
-      this.profileItemStorage.upsertProfileItem({
+      const upsertedItem = this.profileItemStorage.upsertProfileItem({
         sectionKey: event.targetSection,
         category: growthEventCategory(event),
         claimKey: growthEventClaimKey(event),
@@ -87,6 +99,8 @@ export class MateGrowthApplyService {
           { type: "growth_source_type", value: event.growthSourceType },
         ],
       });
+
+      appliedIndexTargets.push({ event, profileItem: upsertedItem });
     }
 
     const profileItems = this.profileItemStorage.listProfileItems({ state: "active" });
@@ -101,12 +115,30 @@ export class MateGrowthApplyService {
       this.growthStorage.markEventApplied(event.id, updatedProfile.activeRevisionId ?? undefined);
     }
 
+    await this.indexAppliedGrowthBestEffort(appliedIndexTargets);
+
     return {
       candidateCount: events.length,
       appliedCount: applicableEvents.length,
       skippedCount: skippedEvents.length,
       revisionId: updatedProfile.activeRevisionId,
     };
+  }
+
+  private async indexAppliedGrowthBestEffort(
+    targets: Array<{
+      event: MateGrowthEvent;
+      profileItem: MateProfileItem;
+    }>,
+  ): Promise<void> {
+    if (!this.semanticEmbeddingIndexService || targets.length === 0) {
+      return;
+    }
+
+    await Promise.allSettled(targets.flatMap(({ event, profileItem }) => [
+      this.semanticEmbeddingIndexService!.indexGrowthEvent(event),
+      this.semanticEmbeddingIndexService!.indexProfileItem(profileItem),
+    ]));
   }
 }
 
