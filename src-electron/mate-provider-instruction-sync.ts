@@ -32,6 +32,20 @@ export const PROVIDER_INSTRUCTION_FILE_BY_PROVIDER: Readonly<Record<string, stri
 
 const PROVIDER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9_-]{0,63})$/;
 
+export class MateProviderInstructionSyncBlockedError extends Error {
+  public readonly providerId: string;
+  public readonly targetId: string;
+  public readonly errorPreview: string;
+
+  constructor(input: { providerId: string; targetId: string; errorPreview: string }) {
+    super(`providerId=${input.providerId}, targetId=${input.targetId}, errorPreview=${input.errorPreview}`);
+    this.name = "MateProviderInstructionSyncBlockedError";
+    this.providerId = input.providerId;
+    this.targetId = input.targetId;
+    this.errorPreview = input.errorPreview;
+  }
+}
+
 export function resolveProviderInstructionFilePath(providerId: string): string {
   const normalizedProviderId = normalizeProviderInstructionProviderId(providerId);
   return PROVIDER_INSTRUCTION_FILE_BY_PROVIDER[normalizedProviderId] ??
@@ -154,7 +168,11 @@ export async function syncEnabledProviderInstructionTargets(
       result.runIds.push(run.id);
 
       if (target.failPolicy === "block_session") {
-        throw new Error(`providerId=${target.providerId}, targetId=${target.targetId}, errorPreview=${errorPreview}`);
+        throw new MateProviderInstructionSyncBlockedError({
+          providerId: target.providerId,
+          targetId: target.targetId,
+          errorPreview,
+        });
       }
     }
   }

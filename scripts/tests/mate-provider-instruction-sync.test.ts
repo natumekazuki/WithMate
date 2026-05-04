@@ -11,6 +11,7 @@ import {
 } from "../../src-electron/mate-instruction-projection.js";
 import {
   createDefaultProviderInstructionTargets,
+  MateProviderInstructionSyncBlockedError,
   resolveProviderInstructionFilePath,
   syncEnabledProviderInstructionTargets,
   syncMateInstructionFile,
@@ -338,10 +339,19 @@ describe("syncEnabledProviderInstructionTargets", () => {
       });
 
       const profile = createProfile({ displayName: "Mia", description: "blocking fail" });
-      await assert.rejects(
-        () => syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES),
-        /providerId=codex, targetId=main/,
-      );
+      await assert.rejects(async () => {
+        try {
+          await syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES);
+        } catch (error) {
+          if (!(error instanceof MateProviderInstructionSyncBlockedError)) {
+            throw error;
+          }
+          assert.equal(error.providerId, "codex");
+          assert.equal(error.targetId, "main");
+          assert.match(error.errorPreview, /rootDirectory/);
+          throw error;
+        }
+      });
 
       const failed = storage.getTarget("codex", "main");
       if (!failed) {

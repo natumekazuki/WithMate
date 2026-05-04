@@ -100,7 +100,10 @@ import { MateProjectContextService } from "./mate-project-context-service.js";
 import { type MateProjectDigest, MateProjectDigestStorage } from "./mate-project-digest-storage.js";
 import { MateProfileItemStorage } from "./mate-profile-item-storage.js";
 import { ProviderInstructionTargetStorage } from "./provider-instruction-target-storage.js";
-import { syncEnabledProviderInstructionTargets } from "./mate-provider-instruction-sync.js";
+import {
+  MateProviderInstructionSyncBlockedError,
+  syncEnabledProviderInstructionTargets,
+} from "./mate-provider-instruction-sync.js";
 import { createMateMemoryGenerationRunner } from "./mate-memory-generation-runner.js";
 import { MateMemoryGenerationService } from "./mate-memory-generation-service.js";
 import { MemoryRuntimeWorkspaceService } from "./memory-runtime-workspace.js";
@@ -1341,6 +1344,10 @@ async function syncEnabledProviderInstructionTargetsForMateProfile(
       },
     );
   } catch (error) {
+    if (error instanceof MateProviderInstructionSyncBlockedError) {
+      throw error;
+    }
+
     writeAppLog({
       level: "warn",
       kind: "mate.provider-instruction-sync.failed",
