@@ -80,6 +80,14 @@ export async function syncMateInstructionFile(
   profile: MateProfile,
   deps: MateProviderInstructionSyncDeps,
 ): Promise<void> {
+  const writeMode = target.writeMode ?? "managed_block";
+  if (writeMode === "managed_file") {
+    throw new Error(`syncMateInstructionFile は managed_file をサポートしていません: providerId=${target.providerId}, targetId=${target.targetId ?? "main"}`);
+  }
+  if (writeMode !== "managed_block") {
+    throw new Error(`unsupported writeMode: ${writeMode}`);
+  }
+
   const existingText = await readProviderInstructionText(target.filePath, deps.readTextFile);
   const nextText = upsertManagedBlockWithMarkerAttributes(existingText, {
     blockId: MATE_PROFILE_BLOCK_ID,

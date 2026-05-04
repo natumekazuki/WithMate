@@ -106,6 +106,31 @@ describe("syncMateInstructionFile", () => {
     }
   });
 
+  it("managed_file は reject され、既存ファイルは変更されない", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-sync-"));
+    try {
+      const existingTarget = { providerId: "codex", writeMode: "managed_file" as const, filePath: path.join(workspacePath, "AGENTS.md") };
+      const absentTarget = { providerId: "codex", writeMode: "managed_file" as const, filePath: path.join(workspacePath, "new-instruction.md") };
+      const profile = createProfile({ displayName: "Mia" });
+      await writeFile(existingTarget.filePath, "existing note", "utf8");
+
+      await assert.rejects(
+        async () => syncMateInstructionFile(existingTarget, profile, FILE_DEPENDENCIES),
+        /managed_file/i,
+      );
+      const unchanged = await readFile(existingTarget.filePath, "utf8");
+      assert.equal(unchanged, "existing note");
+
+      await assert.rejects(
+        async () => syncMateInstructionFile(absentTarget, profile, FILE_DEPENDENCIES),
+        /managed_file/i,
+      );
+      await assert.rejects(() => readFile(absentTarget.filePath, "utf8"), /ENOENT/);
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("既存ユーザー文を保持して managed block を追記する", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-sync-"));
     try {
