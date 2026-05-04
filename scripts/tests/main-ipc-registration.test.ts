@@ -429,6 +429,16 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     async () => handlers.get("withmate:open-session")?.({}, "session-1"),
     { message: MATE_NOT_CREATED_ERROR_MESSAGE },
   );
+  const applyPendingGrowthCallCountBefore = calls.filter((call) => call === "applyPendingGrowth").length;
+  await assert.rejects(
+    async () => handlers.get(WITHMATE_APPLY_MATE_GROWTH_CHANNEL)?.(),
+    { message: MATE_NOT_CREATED_ERROR_MESSAGE },
+  );
+  assert.strictEqual(
+    calls.filter((call) => call === "applyPendingGrowth").length,
+    applyPendingGrowthCallCountBefore,
+    "applyPendingGrowth should not be executed when mate is not_created",
+  );
   await handlers.get(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL)?.({});
   await handlers.get(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL)?.();
   await handlers.get(WITHMATE_GET_APP_SETTINGS_CHANNEL)?.();
@@ -453,6 +463,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     "getMateState",
     "applyPendingGrowth",
     "resetMate",
+    "getMateState",
     "getMateState",
     "getMateState",
     "openSettings",
