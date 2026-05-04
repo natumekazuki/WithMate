@@ -136,6 +136,7 @@ import {
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESET_MATE_CHANNEL,
   WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
+  WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_MATE_TALK_TURN_CHANNEL,
@@ -277,6 +278,7 @@ export type MainIpcRegistrationDeps = {
   deleteSessionMemory(sessionId: string): void;
   deleteProjectMemoryEntry(entryId: string): void;
   deleteCharacterMemoryEntry(entryId: string): void;
+  forgetMateProfileItem(itemId: string): void;
   listCharacters(): Promise<CharacterProfile[]>;
   getModelCatalog(revision: number | null): ModelCatalogSnapshot | null;
   importModelCatalogDocument(document: ModelCatalogDocument): Awaitable<ModelCatalogSnapshot>;
@@ -390,6 +392,7 @@ type MainIpcSettingsDeps = Pick<
   | "deleteSessionMemory"
   | "deleteProjectMemoryEntry"
   | "deleteCharacterMemoryEntry"
+  | "forgetMateProfileItem"
 >;
 
 type MainIpcSessionQueryDeps = Pick<
@@ -575,6 +578,9 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
   );
   ipcMain.handle(WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL, (_event, entryId: string) =>
     deps.deleteCharacterMemoryEntry(entryId),
+  );
+  ipcMain.handle(WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL, (_event, itemId: string) =>
+    deps.forgetMateProfileItem(itemId),
   );
 }
 

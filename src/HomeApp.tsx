@@ -20,6 +20,7 @@ import {
 import {
   buildMemoryManagementPageRequest,
   mergeMemoryManagementSnapshots,
+  removeMateProfileItemFromSnapshot,
   removeCharacterMemoryEntryFromSnapshot,
   removeProjectMemoryEntryFromSnapshot,
   removeSessionMemoryFromSnapshot,
@@ -157,6 +158,9 @@ function getMemoryManagementCursor(pages: MemoryManagementPageState, domain: Mem
   if (domain === "character") {
     return pages.character.nextCursor;
   }
+  if (domain === "mate_profile") {
+    return pages.mate_profile.nextCursor;
+  }
   return null;
 }
 
@@ -169,6 +173,7 @@ type MemoryManagementPageState = {
   session: MemoryManagementDomainPageInfo;
   project: MemoryManagementDomainPageInfo;
   character: MemoryManagementDomainPageInfo;
+  mate_profile: MemoryManagementDomainPageInfo;
 };
 
 type MateTalkMessage = {
@@ -189,6 +194,7 @@ const EMPTY_MEMORY_MANAGEMENT_PAGE_STATE: MemoryManagementPageState = {
   session: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
   project: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
   character: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
+  mate_profile: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
 };
 
 function getHomeWindowMode(): HomeWindowMode {
@@ -1340,6 +1346,33 @@ export default function HomeApp() {
     }
   };
 
+  const handleDeleteMateProfileItem = async (itemId: string) => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !usesMemoryManagementWindow) {
+      return;
+    }
+
+    try {
+      setMemoryManagementBusyTarget(`mate_profile:${itemId}`);
+      await withmateApi.forgetMateProfileItem(itemId);
+      const requestId = beginMemoryManagementRequest();
+      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
+        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
+      }));
+      if (!isLatestMemoryManagementRequest(requestId)) {
+        return;
+      }
+      setMemoryManagementSnapshot(removeMateProfileItemFromSnapshot(page.snapshot, itemId));
+      setMemoryManagementPages(page.pages);
+      setMemoryManagementFeedback("Mate Profile Item を忘却したよ。");
+    } catch (error) {
+      setMemoryManagementFeedback(error instanceof Error ? error.message : "Mate Profile Item の忘却に失敗したよ。");
+    } finally {
+      setMemoryManagementBusyTarget(null);
+      setMemoryManagementLoaded(true);
+    }
+  };
+
   const handleStartMateEmbeddingDownload = async () => {
     const withmateApi = getWithMateApi();
     if (!withmateApi) {
@@ -1415,6 +1448,7 @@ export default function HomeApp() {
       onDeleteSessionMemory={(sessionId) => void handleDeleteSessionMemory(sessionId)}
       onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}
       onDeleteCharacterMemoryEntry={(entryId) => void handleDeleteCharacterMemoryEntry(entryId)}
+      onDeleteMateProfileItem={(itemId) => void handleDeleteMateProfileItem(itemId)}
       onStartMateEmbeddingDownload={() => void handleStartMateEmbeddingDownload()}
       onApplyPendingGrowth={() => void handleApplyPendingGrowth()}
       applyPendingGrowthBusy={mateGrowthApplying}
@@ -1482,6 +1516,7 @@ export default function HomeApp() {
       onDeleteSessionMemory={(sessionId) => void handleDeleteSessionMemory(sessionId)}
       onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}
       onDeleteCharacterMemoryEntry={(entryId) => void handleDeleteCharacterMemoryEntry(entryId)}
+      onDeleteMateProfileItem={(itemId) => void handleDeleteMateProfileItem(itemId)}
       onStartMateEmbeddingDownload={() => void handleStartMateEmbeddingDownload()}
       onSaveSettings={() => void handleSaveSettings()}
     />

@@ -182,6 +182,7 @@ export type WithMateWindowSettingsApi = {
   deleteSessionMemory(sessionId: string): Promise<void>;
   deleteProjectMemoryEntry(entryId: string): Promise<void>;
   deleteCharacterMemoryEntry(entryId: string): Promise<void>;
+  forgetMateProfileItem(itemId: string): Promise<void>;
 };
 
 export type WithMateWindowCharacterApi = {

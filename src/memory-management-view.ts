@@ -7,11 +7,12 @@ import type {
 import type {
   ManagedCharacterMemoryGroup,
   ManagedProjectMemoryGroup,
+  ManagedMateProfileItem,
   ManagedSessionMemoryItem,
   MemoryManagementSnapshot,
 } from "./memory-management-state.js";
 
-export type MemoryManagementDomainFilter = "all" | "session" | "project" | "character";
+export type MemoryManagementDomainFilter = "all" | "session" | "project" | "character" | "mate_profile";
 export type MemoryManagementSort = "updated-desc" | "updated-asc";
 export type SessionMemoryStatusFilter = "all" | "running" | "idle" | "saved";
 export type ProjectMemoryCategoryFilter = "all" | ProjectMemoryCategory;
@@ -77,6 +78,12 @@ type PreparedGroup<TScope, TEntry extends { category: TCategory }, TCategory ext
   entriesByCategory: Map<TCategory, SortedItems<PreparedGroupEntry<TEntry>>>;
 };
 
+type PreparedMateProfileItem = {
+  item: ManagedMateProfileItem;
+  searchKey: string;
+  updatedAtMs: number;
+};
+
 type MaterializedGroup<TScope, TEntry> = {
   scope: TScope;
   entries: TEntry[];
@@ -92,6 +99,7 @@ type PreparedMemoryManagementSnapshot = {
   sessionMemoriesByStatus: Record<SessionMemoryStatusFilter, SortedItems<PreparedSessionMemoryItem>>;
   projectMemories: PreparedGroupCollection<ManagedProjectMemoryGroup["scope"], ProjectMemoryEntry, ProjectMemoryCategory>;
   characterMemories: PreparedGroupCollection<ManagedCharacterMemoryGroup["scope"], CharacterMemoryEntry, CharacterMemoryCategory>;
+  mateProfileItems: SortedItems<PreparedMateProfileItem>;
 };
 
 const preparedSnapshotCache = new WeakMap<MemoryManagementSnapshot, PreparedMemoryManagementSnapshot>();
@@ -276,6 +284,26 @@ function getPreparedSnapshot(snapshot: MemoryManagementSnapshot): PreparedMemory
         ...entry.keywords,
         ...entry.evidence,
       ])),
+    mateProfileItems: buildSortedItems(
+      (snapshot.mateProfileItems ?? []).map((item) => ({
+        item,
+        searchKey: buildSearchKey([
+          item.id,
+          item.sectionKey,
+          item.projectDigestId,
+          item.category,
+          item.claimKey,
+          item.claimValue,
+          item.renderedText,
+          item.normalizedClaim,
+          String(item.confidence),
+          String(item.salienceScore),
+          item.state,
+          ...item.tags,
+        ]),
+        updatedAtMs: getUpdatedAtMs(item.updatedAt),
+      })),
+    ),
   };
 
   preparedSnapshotCache.set(snapshot, preparedSnapshot);
@@ -360,6 +388,20 @@ function filterCharacterMemories(
   });
 }
 
+function filterMateProfileItems(
+  items: SortedItems<PreparedMateProfileItem>,
+  { searchText, sort }: Pick<MemoryManagementViewFilters, "searchText" | "sort">,
+): ManagedMateProfileItem[] {
+  const candidates = items[sort];
+  if (!searchText) {
+    return candidates.map(({ item }) => item);
+  }
+
+  return candidates
+    .filter((item) => matchesSearch(item.searchKey, searchText))
+    .map((item) => item.item);
+}
+
 export function buildFilteredMemoryManagementSnapshot(
   snapshot: MemoryManagementSnapshot | null,
   filters: MemoryManagementViewFilters,
@@ -373,6 +415,7 @@ export function buildFilteredMemoryManagementSnapshot(
   const includeSession = filters.domain === "all" || filters.domain === "session";
   const includeProject = filters.domain === "all" || filters.domain === "project";
   const includeCharacter = filters.domain === "all" || filters.domain === "character";
+  const includeMateProfile = filters.domain === "all" || filters.domain === "mate_profile";
 
   return {
     sessionMemories: includeSession
@@ -393,6 +436,12 @@ export function buildFilteredMemoryManagementSnapshot(
       ? filterCharacterMemories(preparedSnapshot.characterMemories, {
           searchText,
           characterCategory: filters.characterCategory,
+          sort: filters.sort,
+        })
+      : [],
+    mateProfileItems: includeMateProfile
+      ? filterMateProfileItems(preparedSnapshot.mateProfileItems, {
+          searchText,
           sort: filters.sort,
         })
       : [],

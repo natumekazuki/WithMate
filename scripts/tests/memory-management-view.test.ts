@@ -126,6 +126,23 @@ function createSnapshot(): MemoryManagementSnapshot {
         ],
       },
     ],
+    mateProfileItems: [
+      {
+        id: "mate-profile-item-1",
+        sectionKey: "voice",
+        projectDigestId: null,
+        category: "speech",
+        claimKey: "first_person",
+        claimValue: "ぼく",
+        renderedText: "一人称はぼく",
+        normalizedClaim: "first_person=ぼく",
+        confidence: 0.9,
+        salienceScore: 0.8,
+        state: "active",
+        tags: ["voice", "profile"],
+        updatedAt: "2026-04-03T10:00:00.000Z",
+      },
+    ],
   };
 }
 
@@ -139,6 +156,19 @@ describe("memory-management-view", () => {
     assert.equal(filtered?.sessionMemories.length, 0);
     assert.equal(filtered?.projectMemories.length, 1);
     assert.equal(filtered?.characterMemories.length, 0);
+    assert.equal(filtered?.mateProfileItems?.length ?? 0, 0);
+  });
+
+  it("mate_profile domain filter で Profile Item だけ残す", () => {
+    const filtered = buildFilteredMemoryManagementSnapshot(createSnapshot(), {
+      ...DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
+      domain: "mate_profile",
+    });
+
+    assert.equal(filtered?.sessionMemories.length, 0);
+    assert.equal(filtered?.projectMemories.length, 0);
+    assert.equal(filtered?.characterMemories.length, 0);
+    assert.equal(filtered?.mateProfileItems?.[0]?.id, "mate-profile-item-1");
   });
 
   it("searchText で横断検索できる", () => {
@@ -174,6 +204,7 @@ describe("memory-management-view", () => {
 
     assert.equal(filtered?.sessionMemories[0]?.sessionId, "session-2");
     assert.equal(filtered?.projectMemories[0]?.entries[0]?.id, "project-entry-2");
+    assert.equal(filtered?.mateProfileItems?.[0]?.id, "mate-profile-item-1");
   });
 
   it("project category selector でも group 順序を visible entry 基準で保つ", () => {

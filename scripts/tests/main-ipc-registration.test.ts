@@ -26,6 +26,7 @@ import {
   WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
+  WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
   WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
@@ -202,6 +203,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
         session: { nextCursor: null, hasMore: false, total: 0 },
         project: { nextCursor: null, hasMore: false, total: 0 },
         character: { nextCursor: null, hasMore: false, total: 0 },
+        mate_profile: { nextCursor: null, hasMore: false, total: 0 },
       },
     }),
     deleteSessionMemory: () => {
@@ -212,6 +214,9 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     },
     deleteCharacterMemoryEntry: () => {
       calls.push("deleteCharacterMemoryEntry");
+    },
+    forgetMateProfileItem: () => {
+      calls.push("forgetMateProfileItem");
     },
     async listCharacters() {
       return [];
@@ -459,6 +464,16 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     deleteSessionMemoryCallCountBefore,
     "deleteSessionMemory should not be executed when mate is not_created",
   );
+  const forgetMateProfileItemCallCountBefore = calls.filter((call) => call === "forgetMateProfileItem").length;
+  await assert.rejects(
+    async () => handlers.get(WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL)?.({}, "mate-profile-item-1"),
+    { message: MATE_NOT_CREATED_ERROR_MESSAGE },
+  );
+  assert.strictEqual(
+    calls.filter((call) => call === "forgetMateProfileItem").length,
+    forgetMateProfileItemCallCountBefore,
+    "forgetMateProfileItem should not be executed when mate is not_created",
+  );
   await handlers.get(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL)?.({});
   await handlers.get(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL)?.();
   await handlers.get(WITHMATE_GET_APP_SETTINGS_CHANNEL)?.();
@@ -483,6 +498,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     "getMateState",
     "applyPendingGrowth",
     "resetMate",
+    "getMateState",
     "getMateState",
     "getMateState",
     "getMateState",
@@ -544,11 +560,13 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
         session: { nextCursor: null, hasMore: false, total: 0 },
         project: { nextCursor: null, hasMore: false, total: 0 },
         character: { nextCursor: null, hasMore: false, total: 0 },
+        mate_profile: { nextCursor: null, hasMore: false, total: 0 },
       },
     }),
     deleteSessionMemory() {},
     deleteProjectMemoryEntry() {},
     deleteCharacterMemoryEntry() {},
+    forgetMateProfileItem() {},
     async listCharacters() { return []; },
     getModelCatalog: () => null,
     importModelCatalogDocument: () => ({ revision: 1, providers: [] }),
@@ -654,6 +672,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
     WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
     WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
+    WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL,
     WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
     WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
     WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,

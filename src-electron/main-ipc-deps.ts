@@ -103,6 +103,7 @@ export type MainIpcSettingsDepsArgs = {
   deleteSessionMemory(sessionId: string): void;
   deleteProjectMemoryEntry(entryId: string): void;
   deleteCharacterMemoryEntry(entryId: string): void;
+  forgetMateProfileItem(itemId: string): void;
 };
 
 export type MainIpcSessionQueryDepsArgs = {
@@ -281,6 +282,7 @@ export function createMainIpcRegistrationDeps(
     deleteSessionMemory: args.settings.deleteSessionMemory,
     deleteProjectMemoryEntry: args.settings.deleteProjectMemoryEntry,
     deleteCharacterMemoryEntry: args.settings.deleteCharacterMemoryEntry,
+    forgetMateProfileItem: args.settings.forgetMateProfileItem,
     listSessionSummaries: args.sessionQuery.listSessionSummaries,
     listCompanionSessionSummaries: args.sessionQuery.listCompanionSessionSummaries,
     listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,

@@ -90,6 +90,7 @@ export const WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL = "withmate:start-ma
 export const WITHMATE_DELETE_SESSION_MEMORY_CHANNEL = "withmate:delete-session-memory";
 export const WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL = "withmate:delete-project-memory-entry";
 export const WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL = "withmate:delete-character-memory-entry";
+export const WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL = "withmate:forget-mate-profile-item";
 export const WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL = "withmate:get-live-session-run";
 export const WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL = "withmate:get-provider-quota-telemetry";
 export const WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL = "withmate:get-session-context-telemetry";

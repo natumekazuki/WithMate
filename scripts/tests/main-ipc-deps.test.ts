@@ -82,6 +82,7 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
           session: { nextCursor: null, hasMore: false, total: 0 },
           project: { nextCursor: null, hasMore: false, total: 0 },
           character: { nextCursor: null, hasMore: false, total: 0 },
+          mate_profile: { nextCursor: null, hasMore: false, total: 0 },
         },
       }),
       getMateEmbeddingSettings: () => null,
@@ -91,6 +92,7 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
       deleteSessionMemory: () => {},
       deleteProjectMemoryEntry: () => {},
       deleteCharacterMemoryEntry: () => {},
+      forgetMateProfileItem: () => {},
     },
     sessionQuery: {
       listSessionSummaries: () => [],

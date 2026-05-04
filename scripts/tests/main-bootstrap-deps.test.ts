@@ -73,6 +73,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
             session: { nextCursor: null, hasMore: false, total: 0 },
             project: { nextCursor: null, hasMore: false, total: 0 },
             character: { nextCursor: null, hasMore: false, total: 0 },
+            mate_profile: { nextCursor: null, hasMore: false, total: 0 },
           },
         }),
         getMateEmbeddingSettings: () => null,
@@ -80,6 +81,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         deleteSessionMemory: () => {},
         deleteProjectMemoryEntry: () => {},
         deleteCharacterMemoryEntry: () => {},
+        forgetMateProfileItem: () => {},
       },
       sessionQuery: {
         listSessionSummaries: () => [],

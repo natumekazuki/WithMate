@@ -74,6 +74,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-memory-management-page",
     args: [{ domain: "session", limit: 50 }],
   });
+  assert.deepEqual(await api.forgetMateProfileItem("mate-profile-item-1"), {
+    channel: "withmate:forget-mate-profile-item",
+    args: ["mate-profile-item-1"],
+  });
   assert.deepEqual(await api.listProviderInstructionTargets(), {
     channel: "withmate:list-provider-instruction-targets",
     args: [],
@@ -123,6 +127,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "exportModelCatalog",
     "exportModelCatalogFile",
     "extractCharacterUpdateMemory",
+    "forgetMateProfileItem",
     "getAppSettings",
     "getCharacter",
     "getCharacterUpdateWorkspace",

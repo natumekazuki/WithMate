@@ -81,6 +81,7 @@ export type HomeSettingsContentProps = {
     session: MemoryManagementDomainPageInfo;
     project: MemoryManagementDomainPageInfo;
     character: MemoryManagementDomainPageInfo;
+    mate_profile: MemoryManagementDomainPageInfo;
   };
   memoryManagementLoading: boolean;
   memoryManagementBusyTarget: string | null;
@@ -133,6 +134,7 @@ export type HomeSettingsContentProps = {
   onDeleteSessionMemory: (sessionId: string) => void;
   onDeleteProjectMemoryEntry: (entryId: string) => void;
   onDeleteCharacterMemoryEntry: (entryId: string) => void;
+  onDeleteMateProfileItem: (itemId: string) => void;
   onStartMateEmbeddingDownload: () => void;
   onApplyPendingGrowth?: () => void;
   applyPendingGrowthBusy?: boolean;
@@ -194,6 +196,7 @@ export function HomeSettingsContent({
   onDeleteSessionMemory,
   onDeleteProjectMemoryEntry,
   onDeleteCharacterMemoryEntry,
+  onDeleteMateProfileItem,
   onStartMateEmbeddingDownload,
   onApplyPendingGrowth,
   applyPendingGrowthBusy = false,
@@ -219,6 +222,7 @@ export function HomeSettingsContent({
             onDeleteSessionMemory={onDeleteSessionMemory}
             onDeleteProjectMemoryEntry={onDeleteProjectMemoryEntry}
             onDeleteCharacterMemoryEntry={onDeleteCharacterMemoryEntry}
+            onDeleteMateProfileItem={onDeleteMateProfileItem}
             standalone
           />
         </div>
@@ -623,6 +627,7 @@ type SettingsMemoryManagementSectionProps = {
     session: MemoryManagementDomainPageInfo;
     project: MemoryManagementDomainPageInfo;
     character: MemoryManagementDomainPageInfo;
+    mate_profile: MemoryManagementDomainPageInfo;
   };
   loading: boolean;
   busyTarget: string | null;
@@ -634,6 +639,7 @@ type SettingsMemoryManagementSectionProps = {
   onDeleteSessionMemory: (sessionId: string) => void;
   onDeleteProjectMemoryEntry: (entryId: string) => void;
   onDeleteCharacterMemoryEntry: (entryId: string) => void;
+  onDeleteMateProfileItem: (itemId: string) => void;
 };
 
 const MEMORY_DOMAIN_OPTIONS: Array<{ value: MemoryManagementDomainFilter; label: string }> = [
@@ -641,6 +647,7 @@ const MEMORY_DOMAIN_OPTIONS: Array<{ value: MemoryManagementDomainFilter; label:
   { value: "session", label: "Session" },
   { value: "project", label: "Project" },
   { value: "character", label: "Character" },
+  { value: "mate_profile", label: "Mate Profile" },
 ];
 
 const MEMORY_SORT_OPTIONS: Array<{ value: MemoryManagementSort; label: string }> = [
@@ -686,6 +693,7 @@ function SettingsMemoryManagementSection({
   onDeleteSessionMemory,
   onDeleteProjectMemoryEntry,
   onDeleteCharacterMemoryEntry,
+  onDeleteMateProfileItem,
 }: SettingsMemoryManagementSectionProps) {
   const [searchText, setSearchText] = useState(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.searchText);
   const [domain, setDomain] = useState<MemoryManagementDomainFilter>(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.domain);
@@ -722,6 +730,7 @@ function SettingsMemoryManagementSection({
   const projectEntryCount = filteredSnapshot?.projectMemories.reduce((count, group) => count + group.entries.length, 0) ?? 0;
   const characterEntryCount =
     filteredSnapshot?.characterMemories.reduce((count, group) => count + group.entries.length, 0) ?? 0;
+  const mateProfileItemCount = filteredSnapshot?.mateProfileItems?.length ?? 0;
   const hasActiveFilters =
     searchText.trim().length > 0 ||
     domain !== DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.domain ||
@@ -732,6 +741,7 @@ function SettingsMemoryManagementSection({
   const showSessionDomain = domain === "all" || domain === "session";
   const showProjectDomain = domain === "all" || domain === "project";
   const showCharacterDomain = domain === "all" || domain === "character";
+  const showMateProfileDomain = domain === "all" || domain === "mate_profile";
 
   const clearFilters = () => {
     setSearchText(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.searchText);
@@ -748,7 +758,7 @@ function SettingsMemoryManagementSection({
         <strong>Memory 管理</strong>
         <div className="settings-actions settings-memory-actions">
           <span className="settings-memory-summary">
-            {`Session ${sessionCount} / Project ${projectEntryCount} / Character ${characterEntryCount}`}
+            {`Session ${sessionCount} / Project ${projectEntryCount} / Character ${characterEntryCount} / Mate Profile ${mateProfileItemCount}`}
           </span>
           <div className="settings-actions">
             {hasActiveFilters ? (
@@ -809,7 +819,7 @@ function SettingsMemoryManagementSection({
               <span>Session Status</span>
               <select
                 value={sessionStatus}
-                disabled={domain === "project" || domain === "character"}
+                disabled={domain === "project" || domain === "character" || domain === "mate_profile"}
                 onChange={(event) => setSessionStatus(event.target.value as SessionMemoryStatusFilter)}
               >
                 {SESSION_STATUS_OPTIONS.map((option) => (
@@ -823,7 +833,7 @@ function SettingsMemoryManagementSection({
               <span>Project Category</span>
               <select
                 value={projectCategory}
-                disabled={domain === "session" || domain === "character"}
+                disabled={domain === "session" || domain === "character" || domain === "mate_profile"}
                 onChange={(event) => setProjectCategory(event.target.value as ProjectMemoryCategoryFilter)}
               >
                 {PROJECT_CATEGORY_OPTIONS.map((option) => (
@@ -837,7 +847,7 @@ function SettingsMemoryManagementSection({
               <span>Character Category</span>
               <select
                 value={characterCategory}
-                disabled={domain === "session" || domain === "project"}
+                disabled={domain === "session" || domain === "project" || domain === "mate_profile"}
                 onChange={(event) => setCharacterCategory(event.target.value as CharacterMemoryCategoryFilter)}
               >
                 {CHARACTER_CATEGORY_OPTIONS.map((option) => (
@@ -1041,6 +1051,71 @@ function SettingsMemoryManagementSection({
                 onClick={() => onLoadMore("character")}
               >
                 {loading ? "追加読み込み中..." : `Load More (${pages.character.total - (pages.character.nextCursor ?? pages.character.total)} left)`}
+              </button>
+            ) : null}
+            </section>
+          ) : null}
+
+          {showMateProfileDomain ? (
+            <section className="settings-memory-domain">
+            <div className="settings-memory-domain-head">
+              <h3>Mate Profile</h3>
+              <span>{mateProfileItemCount}</span>
+            </div>
+            {filteredSnapshot && (filteredSnapshot.mateProfileItems?.length ?? 0) > 0 ? (
+              <div className="settings-memory-card-list">
+                {(filteredSnapshot.mateProfileItems ?? []).map((item) => {
+                  const targetKey = `mate_profile:${item.id}`;
+                  const deleting = busyTarget === targetKey;
+                  return (
+                    <article key={item.id} className="settings-memory-card compact">
+                      <div className="settings-memory-card-head">
+                        <div className="settings-memory-card-copy">
+                          <strong>{item.renderedText || item.claimValue || item.claimKey}</strong>
+                          <span>{`${item.sectionKey} / ${item.category}`}</span>
+                        </div>
+                        <button
+                          className="danger-button"
+                          type="button"
+                          disabled={loading || deleting}
+                          onClick={() => onDeleteMateProfileItem(item.id)}
+                        >
+                          {deleting ? "忘却中..." : "Forget"}
+                        </button>
+                      </div>
+                      <dl className="settings-memory-meta">
+                        <div>
+                          <dt>Claim</dt>
+                          <dd>{item.claimKey}</dd>
+                        </div>
+                        <div>
+                          <dt>状態</dt>
+                          <dd>{`${item.state} / confidence ${item.confidence.toFixed(2)}`}</dd>
+                        </div>
+                        <div>
+                          <dt>updatedAt</dt>
+                          <dd>{item.updatedAt}</dd>
+                        </div>
+                      </dl>
+                      <p className="settings-memory-detail">{item.claimValue || item.normalizedClaim || "value なし"}</p>
+                      <SettingsMemoryTagLine label="Tags" items={item.tags} />
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <article className="empty-list-card compact">
+                <p>{loading ? "Mate Profile を読み込み中..." : "一致する Mate Profile はないよ。"}</p>
+              </article>
+            )}
+            {pages.mate_profile.hasMore ? (
+              <button
+                className="launch-toggle compact"
+                type="button"
+                disabled={loading}
+                onClick={() => onLoadMore("mate_profile")}
+              >
+                {loading ? "追加読み込み中..." : `Load More (${pages.mate_profile.total - (pages.mate_profile.nextCursor ?? pages.mate_profile.total)} left)`}
               </button>
             ) : null}
             </section>

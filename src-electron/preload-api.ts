@@ -28,6 +28,7 @@ import {
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
+  WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL,
   WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
@@ -492,6 +493,9 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
     },
     deleteCharacterMemoryEntry(entryId) {
       return ipcRenderer.invoke(WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL, entryId);
+    },
+    forgetMateProfileItem(itemId) {
+      return ipcRenderer.invoke(WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL, itemId);
     },
   };
 }

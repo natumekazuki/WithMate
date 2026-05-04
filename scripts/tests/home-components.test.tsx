@@ -56,6 +56,7 @@ describe("HomeSettingsContent", () => {
         session: { nextCursor: null, hasMore: false, total: 0 },
         project: { nextCursor: null, hasMore: false, total: 0 },
         character: { nextCursor: null, hasMore: false, total: 0 },
+        mate_profile: { nextCursor: null, hasMore: false, total: 0 },
       }}
       memoryManagementLoading={false}
       memoryManagementBusyTarget={null}
@@ -99,6 +100,7 @@ describe("HomeSettingsContent", () => {
       onDeleteSessionMemory={noOp}
       onDeleteProjectMemoryEntry={noOp}
       onDeleteCharacterMemoryEntry={noOp}
+      onDeleteMateProfileItem={noOp}
       onStartMateEmbeddingDownload={noOp}
       onSaveSettings={noOp}
     />
@@ -147,6 +149,7 @@ describe("HomeSettingsContent", () => {
           session: { nextCursor: null, hasMore: false, total: 0 },
           project: { nextCursor: null, hasMore: false, total: 0 },
           character: { nextCursor: null, hasMore: false, total: 0 },
+          mate_profile: { nextCursor: null, hasMore: false, total: 0 },
         }}
         memoryManagementLoading={false}
         memoryManagementBusyTarget={null}
@@ -190,6 +193,7 @@ describe("HomeSettingsContent", () => {
         onDeleteSessionMemory={noOp}
         onDeleteProjectMemoryEntry={noOp}
         onDeleteCharacterMemoryEntry={noOp}
+        onDeleteMateProfileItem={noOp}
         onStartMateEmbeddingDownload={noOp}
         onSaveSettings={noOp}
       />,

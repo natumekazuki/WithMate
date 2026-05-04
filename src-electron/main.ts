@@ -914,6 +914,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 deleteProjectMemoryEntry: (entryId) => requireMemoryManagementService().deleteProjectMemoryEntry(entryId),
                 deleteCharacterMemoryEntry: (entryId) =>
                   requireMemoryManagementService().deleteCharacterMemoryEntry(entryId),
+                forgetMateProfileItem: (itemId) => requireMemoryManagementService().forgetMateProfileItem(itemId),
               },
               sessionQuery: {
                 listSessionSummaries: () => listSessionSummaries(),
