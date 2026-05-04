@@ -31,6 +31,7 @@ const MATE_TALK_RUNTIME_AGENTS = [
 ].join("\n");
 
 const ABSOLUTE_PATH_TOKEN_PATTERN = /(?:[A-Za-z]:\\[^\s"'\`]+|[A-Za-z]:\/[^\s"'\`]+|\/[^\s"'\`]+(?:\/[^\s"'\`]+)+)/g;
+const DEFAULT_STALE_LOCK_MS = 10 * 60_000;
 
 function removeAbsolutePaths(value: string): string {
   return value.replace(ABSOLUTE_PATH_TOKEN_PATTERN, "[path omitted]");
@@ -97,8 +98,13 @@ export class MateTalkRuntimeWorkspaceService {
     return this.workspacePath;
   }
 
-  async prepareRun(): Promise<{ workspacePath: string; lockPath: string }> {
-    await this.acquireLock();
+  async prepareRun(
+    options: MateTalkRuntimeWorkspaceLockOptions = {},
+  ): Promise<{ workspacePath: string; lockPath: string }> {
+    await this.acquireLock({
+      ...options,
+      staleLockMs: options.staleLockMs ?? DEFAULT_STALE_LOCK_MS,
+    });
     try {
       await this.resetWorkspace();
     } catch (error) {
@@ -112,8 +118,10 @@ export class MateTalkRuntimeWorkspaceService {
     };
   }
 
-  prepareCurrentRun(): Promise<{ workspacePath: string; lockPath: string }> {
-    return this.prepareRun();
+  prepareCurrentRun(
+    options: MateTalkRuntimeWorkspaceLockOptions = {},
+  ): Promise<{ workspacePath: string; lockPath: string }> {
+    return this.prepareRun(options);
   }
 
   async acquireLock(options: MateTalkRuntimeWorkspaceLockOptions = {}): Promise<void> {

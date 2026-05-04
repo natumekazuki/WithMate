@@ -45,7 +45,58 @@ describe("MateTalkRuntimeWorkspaceService", () => {
     }
   });
 
-  it("prepareRun は lock があるときに上書きしない", async () => {
+  it("prepareRun は非stale lock の場合は上書きしない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-mate-talk-runtime-"));
+    const workspacePath = path.join(userDataPath, "mate-talk-runtime", "current");
+    const lockPath = path.join(userDataPath, "mate-talk-runtime", ".lock");
+    const existingLockTimestamp = Date.now();
+
+    try {
+      await mkdir(workspacePath, { recursive: true });
+      await writeFile(lockPath, String(existingLockTimestamp), "utf8");
+      await writeFile(path.join(workspacePath, "keep.txt"), "keep", "utf8");
+
+      const service = new MateTalkRuntimeWorkspaceService({ userDataPath });
+
+      await assert.rejects(
+        () => service.prepareRun({ staleLockMs: 1_000 }),
+        /already in use/i,
+      );
+      assert.equal(await readFile(lockPath, "utf8"), String(existingLockTimestamp));
+      assert.equal(await readFile(path.join(workspacePath, "keep.txt"), "utf8"), "keep");
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("prepareRun は lock が stale なら回復して続行する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-mate-talk-runtime-"));
+    const workspacePath = path.join(userDataPath, "mate-talk-runtime", "current");
+    const lockPath = path.join(userDataPath, "mate-talk-runtime", ".lock");
+
+    try {
+      await mkdir(workspacePath, { recursive: true });
+      const staleTimestamp = Date.now() - 11 * 60_000;
+      await writeFile(lockPath, String(staleTimestamp), "utf8");
+      await writeFile(path.join(workspacePath, "keep.txt"), "keep", "utf8");
+
+      const service = new MateTalkRuntimeWorkspaceService({ userDataPath });
+      const result = await service.prepareRun({ staleLockMs: 1_000 });
+      const newTimestamp = Number(await readFile(result.lockPath, "utf8"));
+
+      assert.equal(result.workspacePath, workspacePath);
+      assert.ok(Number.isFinite(newTimestamp));
+      assert.ok(newTimestamp > staleTimestamp + 1_000);
+      assert.equal(await exists(workspacePath), true);
+      assert.equal(await exists(lockPath), true);
+      assert.equal(await exists(path.join(workspacePath, "keep.txt")), false);
+      await service.completeRun();
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("prepareRun は malformed lock でも上書きしない", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-mate-talk-runtime-"));
     const workspacePath = path.join(userDataPath, "mate-talk-runtime", "current");
     const lockPath = path.join(userDataPath, "mate-talk-runtime", ".lock");
