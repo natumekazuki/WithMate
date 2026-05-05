@@ -2,7 +2,7 @@ import type {
   MateGrowthEvent,
   MateGrowthStorage,
 } from "./mate-growth-storage.js";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
 import type {
   MateProfileItem,
@@ -119,42 +119,36 @@ export class MateGrowthApplyService {
         return result;
       }
 
-      for (const event of applicableEvents) {
-        const upsertInput: UpsertMateProfileItemInput = {
-          sectionKey: event.targetSection,
-          category: growthEventCategory(event),
-          claimKey: growthEventClaimKey(event),
-          claimValue: event.statement,
-          renderedText: event.statement,
-          normalizedClaim: event.statementFingerprint || event.statement,
-          confidence: event.confidence,
-          salienceScore: event.salienceScore,
-          recurrenceCount: event.recurrenceCount,
-          projectionAllowed: event.projectionAllowed,
-          sourceGrowthEventId: event.id,
-          tags: [
-            { type: "growth_kind", value: event.kind },
-            { type: "growth_source_type", value: event.growthSourceType },
-          ],
-        };
-
-        if (event.targetSection === "project_digest") {
-          upsertInput.projectDigestId = event.projectDigestId;
-        }
-
-        const upsertedItem = this.profileItemStorage.upsertProfileItem(upsertInput);
-
-        appliedIndexTargets.push({ event, profileItem: upsertedItem });
-      }
-
       const profileItems = this.profileItemStorage.listProfileItems({ state: "active" });
-      const renderedFiles = renderMateProfileFiles(profile, profileItems);
+      const upsertInputs = applicableEvents.map(buildUpsertInputFromGrowthEvent);
+      const projectedProfileItems = buildProjectedProfileItems(profileItems, upsertInputs);
+      const renderedFiles = renderMateProfileFiles(profile, projectedProfileItems);
       const updatedProfile = await this.mateStorage.applyProfileFiles({
         sourceGrowthEventId: applicableEvents[0].id,
         summary: `growth apply: ${applicableEvents.length} item(s)`,
         files: renderedFiles,
       });
       updatedProfileRevisionId = updatedProfile.activeRevisionId;
+
+      const profileItemsByClaimKey = new Map(
+        profileItems
+          .map((item) => [buildProjectedProfileItemLookupKey(item), item.id] as const),
+      );
+      for (let i = 0; i < applicableEvents.length; i += 1) {
+        const upsertInput = {
+          ...upsertInputs[i],
+          sourceGrowthEventId: applicableEvents[i].id,
+          ...(profileItemsByClaimKey.has(buildProjectedProfileItemLookupKey(upsertInputs[i])) ? {
+            updatedRevisionId: updatedProfileRevisionId ?? undefined,
+          } : {
+            createdRevisionId: updatedProfileRevisionId ?? undefined,
+          }),
+        };
+
+        const upsertedItem = this.profileItemStorage.upsertProfileItem(upsertInput);
+        profileItemsByClaimKey.set(buildProjectedProfileItemLookupKey(upsertedItem), upsertedItem.id);
+        appliedIndexTargets.push({ event: applicableEvents[i], profileItem: upsertedItem });
+      }
 
       for (const event of applicableEvents) {
         this.growthStorage.markEventApplied(event.id, updatedProfileRevisionId ?? undefined);
@@ -242,6 +236,119 @@ export class MateGrowthApplyService {
       // Provider instruction sync state は後続通知なので、profile apply の成功は維持する。
     }
   }
+}
+
+function buildProjectedProfileItemLookupKey(input: UpsertMateProfileItemInput | MateProfileItem): string {
+  const claimKey = input.claimKey;
+  const projectDigestId = input.sectionKey === "project_digest" ? input.projectDigestId ?? "" : "";
+  return `${input.sectionKey}:${projectDigestId}:${claimKey}`;
+}
+
+function buildProjectedProfileItems(
+  activeProfileItems: readonly MateProfileItem[],
+  upsertInputs: readonly UpsertMateProfileItemInput[],
+): MateProfileItem[] {
+  const now = new Date().toISOString();
+  const profileItemsByKey = new Map(
+    activeProfileItems.map((item) => [buildProjectedProfileItemLookupKey(item), item] as const),
+  );
+  const updatedItems = activeProfileItems.map((item) => ({ ...item, tags: [...item.tags] }));
+
+  for (const upsertInput of upsertInputs) {
+    const key = buildProjectedProfileItemLookupKey(upsertInput);
+    const existingItem = profileItemsByKey.get(key);
+
+    const claimValue = upsertInput.claimValue ?? "";
+    const claimValueNormalized = claimValue.trim().toLowerCase();
+    const normalizedClaim = upsertInput.normalizedClaim ?? (claimValueNormalized || upsertInput.claimKey);
+    const projectionAllowed = upsertInput.projectionAllowed === true;
+    const recurrenceCount = upsertInput.recurrenceCount ?? 1;
+
+    const projectedItem: MateProfileItem = existingItem ? {
+      ...existingItem,
+      claimValue,
+      claimValueNormalized,
+      renderedText: upsertInput.renderedText,
+      category: upsertInput.category,
+      normalizedClaim,
+      confidence: upsertInput.confidence,
+      salienceScore: upsertInput.salienceScore,
+      recurrenceCount,
+      projectionAllowed,
+      sectionKey: upsertInput.sectionKey,
+      projectDigestId: upsertInput.projectDigestId ?? existingItem.projectDigestId,
+      lastSeenAt: now,
+      updatedAt: now,
+    } : {
+      id: randomUUID(),
+      sectionKey: upsertInput.sectionKey,
+      projectDigestId: upsertInput.projectDigestId ?? null,
+      category: upsertInput.category,
+      claimKey: upsertInput.claimKey,
+      claimValue,
+      claimValueNormalized,
+      renderedText: upsertInput.renderedText,
+      normalizedClaim,
+      confidence: upsertInput.confidence,
+      salienceScore: upsertInput.salienceScore,
+      recurrenceCount,
+      projectionAllowed,
+      state: "active",
+      firstSeenAt: now,
+      lastSeenAt: now,
+      createdRevisionId: null,
+      updatedRevisionId: null,
+      disabledRevisionId: null,
+      forgottenRevisionId: null,
+      disabledAt: null,
+      forgottenAt: null,
+      createdAt: now,
+      updatedAt: now,
+      tags: [],
+    };
+
+    if (existingItem) {
+      const index = updatedItems.findIndex((item) => item.id === existingItem.id);
+      if (index >= 0) {
+        updatedItems.splice(index, 1, projectedItem);
+      } else {
+        updatedItems.push(projectedItem);
+      }
+      profileItemsByKey.set(key, projectedItem);
+    } else {
+      updatedItems.push(projectedItem);
+      profileItemsByKey.set(key, projectedItem);
+    }
+  }
+
+  return updatedItems;
+}
+
+function buildUpsertInputFromGrowthEvent(
+  event: MateGrowthEvent & { targetSection: MateProfileItemSectionKey },
+): UpsertMateProfileItemInput {
+  const baseInput: UpsertMateProfileItemInput = {
+    sectionKey: event.targetSection,
+    category: growthEventCategory(event),
+    claimKey: growthEventClaimKey(event),
+    claimValue: event.statement,
+    renderedText: event.statement,
+    normalizedClaim: event.statementFingerprint || event.statement,
+    confidence: event.confidence,
+    salienceScore: event.salienceScore,
+    recurrenceCount: event.recurrenceCount,
+    projectionAllowed: event.projectionAllowed,
+    tags: [
+      { type: "growth_kind", value: event.kind },
+      { type: "growth_source_type", value: event.growthSourceType },
+    ],
+  };
+
+  if (event.targetSection === "project_digest" && event.projectDigestId) {
+    baseInput.projectDigestId = event.projectDigestId;
+  }
+
+  return baseInput;
 }
 
 function buildGrowthApplyInputFingerprint(options: ApplyPendingGrowthOptions, events: MateGrowthEvent[]): string {
