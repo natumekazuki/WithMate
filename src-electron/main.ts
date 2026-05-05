@@ -2157,6 +2157,16 @@ function requireCompanionRuntimeService(): CompanionRuntimeService {
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
+      resolveProjectContextTextForPrompt: (session, userMessage) =>
+        resolveMateProjectContextTextForPrompt({
+          session,
+          userMessage,
+          getMateState: () => requireMateStorage().getMateState(),
+          resolveProjectDigestForWorkspace: (workspacePath) =>
+            requireMateProjectDigestStorage().resolveProjectDigestForWorkspace(workspacePath),
+          getProjectDigestContextText: (projectDigestId, options) =>
+            requireMateProjectContextService().getProjectDigestContextText(projectDigestId, options),
+        }),
       ...(canUseCompanionAuditLogStorage()
         ? {
             createAuditLog: (entry) => requireCompanionAuditLogService().createAuditLog(entry),

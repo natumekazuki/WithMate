@@ -192,6 +192,103 @@ describe("CompanionRuntimeService", () => {
     assert.equal(updatedAuditLogs[0]?.entry.threadId, "thread-1");
   });
 
+  it("project digest context resolver を runSessionTurn の composePrompt と runSessionTurn に渡す", async () => {
+    let storedSession = createCompanionSession();
+    const composeInputRef: { current: RunSessionTurnInput | null } = { current: null };
+    const runInputRef: { current: RunSessionTurnInput | null } = { current: null };
+    let resolveCallCount = 0;
+    let resolvedWorkspacePath = "";
+    let resolvedUserMessage = "";
+    let resolvedMemoryWorkspacePath = "";
+    const adapter: ProviderCodingAdapter = {
+      composePrompt(input) {
+        composeInputRef.current = input;
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn(input) {
+        runInputRef.current = input;
+        return {
+          threadId: "thread-1",
+          assistantText: "完了したよ。",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          transportPayload: null,
+          operations: [],
+          rawItemsJson: "[]",
+          usage: null,
+        };
+      },
+    };
+
+    const service = new CompanionRuntimeService({
+      getCompanionSession(sessionId) {
+        return sessionId === storedSession.id ? storedSession : null;
+      },
+      updateCompanionSession(nextSession) {
+        storedSession = nextSession;
+        return nextSession;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      resolveProjectContextTextForPrompt(session, userMessage, sessionMemory) {
+        resolveCallCount += 1;
+        resolvedWorkspacePath = session.workspacePath;
+        resolvedUserMessage = userMessage;
+        resolvedMemoryWorkspacePath = sessionMemory.workspacePath;
+        return "project digest context";
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        const provider = createProviderCatalog();
+        return { snapshot: { revision: 1, providers: [provider] }, provider };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry(_telemetry: ProviderQuotaTelemetry) {},
+      setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      clearWorkspaceFileIndex() {},
+      broadcastCompanionSessions() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel: () => "2026-04-26 10:01",
+    });
+
+    await service.runSessionTurn(storedSession.id, { userMessage: "お願いします" });
+
+    assert.equal(resolveCallCount, 1);
+    assert.equal(resolvedWorkspacePath, "F:/repo");
+    assert.equal(resolvedUserMessage, "お願いします");
+    assert.equal(resolvedMemoryWorkspacePath, "F:/repo");
+    assert.equal(composeInputRef.current?.projectContextText, "project digest context");
+    assert.equal(runInputRef.current?.projectContextText, "project digest context");
+  });
+
   it("起動時に running の CompanionSession を error に戻して操作可能にする", async () => {
     let storedSession = createCompanionSession({
       runState: "running",

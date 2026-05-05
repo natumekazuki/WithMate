@@ -33,6 +33,11 @@ export type CompanionRuntimeServiceDeps = {
   listCompanionSessionSummaries?: () => Awaitable<CompanionSessionSummary[]>;
   updateCompanionSession(session: CompanionSession): Awaitable<CompanionSession>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
+  resolveProjectContextTextForPrompt?: (
+    session: Session,
+    userMessage: string,
+    sessionMemory: SessionMemory,
+  ) => Awaitable<string | null>;
   getAppSettings: () => AppSettings;
   resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): {
     snapshot: ModelCatalogSnapshot;
@@ -321,18 +326,20 @@ export class CompanionRuntimeService {
     const providerAdapter = this.deps.getProviderCodingAdapter(provider.id);
     const character = buildCompanionCharacter(requestedSession);
     const sessionMemory = buildSessionMemory(requestedSession);
-    const runningSession = await this.deps.updateCompanionSession({
+    const projectContextSession: Session = {
+      ...providerSession,
+      workspacePath: sessionMemory.workspacePath,
+    };
+    const projectContextText = await Promise.resolve(
+      this.deps.resolveProjectContextTextForPrompt?.(projectContextSession, nextMessage, sessionMemory) ?? null,
+    );
+    const runningSessionCandidate: CompanionSession = {
       ...requestedSession,
       runState: "running",
       updatedAt: currentTimestampLabel(),
       messages: [...requestedSession.messages, { role: "user", text: nextMessage }],
-    });
-
-    this.inFlightRuns.add(sessionId);
+    };
     const controller = new AbortController();
-    this.runControllers.set(sessionId, controller);
-    this.deps.setLiveSessionRun(sessionId, buildEmptyLiveSessionRunState(sessionId, runningSession.threadId));
-
     const buildProviderInput = (turnSession: CompanionSession): RunSessionTurnInput => {
       const turnProviderSession = buildProviderSession(turnSession);
       return {
@@ -340,6 +347,7 @@ export class CompanionRuntimeService {
         executionWorkspacePath: turnSession.worktreePath,
         sessionMemory,
         projectMemoryEntries: [],
+        projectContextText,
         character,
         providerCatalog: provider,
         userMessage: nextMessage,
@@ -374,8 +382,13 @@ export class CompanionRuntimeService {
         },
       };
     };
+    const promptForAudit = providerAdapter.composePrompt(buildProviderInput(runningSessionCandidate));
+    const runningSession = await this.deps.updateCompanionSession(runningSessionCandidate);
 
-    const promptForAudit = providerAdapter.composePrompt(buildProviderInput(runningSession));
+    this.inFlightRuns.add(sessionId);
+    this.runControllers.set(sessionId, controller);
+    this.deps.setLiveSessionRun(sessionId, buildEmptyLiveSessionRunState(sessionId, runningSession.threadId));
+
     let runningAuditEntry = buildRunningCompanionAuditEntry({
       sessionId,
       createdAt: new Date().toISOString(),
