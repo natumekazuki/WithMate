@@ -657,6 +657,196 @@ describe("MateGrowthStorage", () => {
     }
   });
 
+  it("cleanupStaleGrowthApplyRuns は古い queued / applying の growth-apply run を failed 化する", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+
+      const oldQueuedRunId = storage.createRun({
+        ...buildRun(),
+        operationId: "growth-apply:queued",
+        inputHash: "old-queued",
+        candidateCount: 1,
+      });
+      const oldApplyingRunId = storage.createRun({
+        ...buildRun(),
+        operationId: "growth-apply:applying",
+        inputHash: "old-applying",
+        candidateCount: 2,
+      });
+      storage.markGrowthApplyRunApplying(oldApplyingRunId);
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare("UPDATE mate_growth_runs SET started_at = ? WHERE id IN (?, ?)").run(
+          "2026-01-01T00:00:00.000Z",
+          oldQueuedRunId,
+          oldApplyingRunId,
+        );
+      } finally {
+        db.close();
+      }
+
+      const updated = storage.cleanupStaleGrowthApplyRuns({
+        staleBeforeIso: "2026-01-02T00:00:00.000Z",
+        errorPreview: "stale",
+      });
+      assert.equal(updated, 2);
+
+      const dbAfter = new DatabaseSync(dbPath);
+      try {
+        const rows = dbAfter.prepare(`
+          SELECT id, status, error_preview, finished_at
+          FROM mate_growth_runs
+          WHERE id IN (?, ?)
+          ORDER BY id
+        `).all(oldQueuedRunId, oldApplyingRunId) as Array<{
+          id: number;
+          status: string;
+          error_preview: string;
+          finished_at: string | null;
+        }>;
+
+        const sorted = rows.sort((a, b) => a.id - b.id);
+        assert.equal(sorted[0].status, "failed");
+        assert.equal(sorted[0].error_preview, "stale");
+        assert.equal(typeof sorted[0].finished_at, "string");
+        assert.equal(sorted[1].status, "failed");
+        assert.equal(sorted[1].error_preview, "stale");
+        assert.equal(typeof sorted[1].finished_at, "string");
+      } finally {
+        dbAfter.close();
+      }
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("cleanupStaleGrowthApplyRuns は新しい growth-apply active run を対象外にする", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+
+      const activeRunId = storage.createRun({
+        ...buildRun(),
+        operationId: "growth-apply:active",
+        inputHash: "active",
+        candidateCount: 1,
+      });
+      storage.markGrowthApplyRunApplying(activeRunId);
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare("UPDATE mate_growth_runs SET started_at = ? WHERE id = ?").run("2026-01-04T00:00:00.000Z", activeRunId);
+      } finally {
+        db.close();
+      }
+
+      const updated = storage.cleanupStaleGrowthApplyRuns({
+        staleBeforeIso: "2026-01-03T00:00:00.000Z",
+        errorPreview: "ignored",
+      });
+      assert.equal(updated, 0);
+
+      const dbAfter = new DatabaseSync(dbPath);
+      try {
+        const row = dbAfter.prepare("SELECT status FROM mate_growth_runs WHERE id = ?").get(activeRunId) as {
+          status: string;
+        };
+        assert.equal(row.status, "applying");
+      } finally {
+        dbAfter.close();
+      }
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("cleanupStaleGrowthApplyRuns は非 growth-apply active run を対象外にする", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+
+      const nonGrowthApplyRunId = storage.createRun({
+        ...buildRun(),
+        operationId: "analysis-run:active",
+        inputHash: "analysis-active",
+        candidateCount: 1,
+      });
+      storage.markGrowthApplyRunApplying(nonGrowthApplyRunId);
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare("UPDATE mate_growth_runs SET started_at = ? WHERE id = ?").run("2026-01-01T00:00:00.000Z", nonGrowthApplyRunId);
+      } finally {
+        db.close();
+      }
+
+      const updated = storage.cleanupStaleGrowthApplyRuns({
+        staleBeforeIso: "2026-01-03T00:00:00.000Z",
+      });
+      assert.equal(updated, 0);
+
+      const dbAfter = new DatabaseSync(dbPath);
+      try {
+        const row = dbAfter.prepare("SELECT status, operation_id FROM mate_growth_runs WHERE id = ?").get(
+          nonGrowthApplyRunId,
+        ) as {
+          status: string;
+          operation_id: string;
+        };
+        assert.equal(row.operation_id, "analysis-run:active");
+        assert.equal(row.status, "applying");
+      } finally {
+        dbAfter.close();
+      }
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("cleanupStaleGrowthApplyRuns 後、同一 operationId が owner として再取得できる", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      const staleRunId = storage.createRun({
+        ...buildRun(),
+        operationId: "growth-apply:reacquire",
+        inputHash: "reacquire-old",
+        candidateCount: 1,
+      });
+      storage.markGrowthApplyRunApplying(staleRunId);
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare("UPDATE mate_growth_runs SET started_at = ? WHERE id = ?").run("2026-01-01T00:00:00.000Z", staleRunId);
+      } finally {
+        db.close();
+      }
+
+      const cleaned = storage.cleanupStaleGrowthApplyRuns({
+        staleBeforeIso: "2026-01-03T00:00:00.000Z",
+        errorPreview: "stale-run-cleaned",
+      });
+      assert.equal(cleaned, 1);
+
+      const reacquired = storage.acquireGrowthApplyRun({
+        operationId: "growth-apply:reacquire",
+        inputHash: "reacquire-new",
+        candidateCount: 5,
+      });
+      assert.equal(reacquired.isOwner, true);
+      assert.equal(reacquired.runId, staleRunId);
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
   it("failRun は run を failed 化し error_preview を保存する", async () => {
     const { dbPath, cleanup } = await createTempDbPath();
     const storage = new MateGrowthStorage(dbPath);

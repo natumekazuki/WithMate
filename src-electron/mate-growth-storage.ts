@@ -119,6 +119,11 @@ export type MateGrowthRunUpdateInput = {
   errorPreview?: string;
 };
 
+export type CleanupStaleGrowthApplyRunsOptions = {
+  staleBeforeIso: string;
+  errorPreview?: string;
+};
+
 export type MateGrowthEventInput = {
   id?: string;
   sourceGrowthRunId?: number | null;
@@ -357,6 +362,18 @@ const RESET_FAILED_GROWTH_APPLY_RUN_SQL = `
     started_at = ?,
     finished_at = NULL
   WHERE id = ? AND status = 'failed'
+`;
+
+const CLEANUP_STALE_GROWTH_APPLY_RUNS_SQL = `
+  UPDATE mate_growth_runs
+  SET
+    status = 'failed',
+    error_preview = ?,
+    finished_at = ?
+  WHERE mate_id = ?
+    AND operation_id LIKE 'growth-apply:%'
+    AND status IN ('queued', 'applying')
+    AND started_at < ?
 `;
 
 const INSERT_EVENT_SQL = `
@@ -1144,6 +1161,23 @@ export class MateGrowthStorage {
       now,
       runId,
     );
+  }
+
+  cleanupStaleGrowthApplyRuns(options: CleanupStaleGrowthApplyRunsOptions): number {
+    const staleBeforeIso = normalizeText(options.staleBeforeIso, "staleBeforeIso");
+    if (Number.isNaN(Date.parse(staleBeforeIso))) {
+      throw new Error("staleBeforeIso が不正です。");
+    }
+
+    const errorPreview = normalizeOptionalText(options.errorPreview) ?? "";
+    const now = nowIso();
+    const result = this.db.prepare(CLEANUP_STALE_GROWTH_APPLY_RUNS_SQL).run(
+      errorPreview,
+      now,
+      MATE_ID,
+      staleBeforeIso,
+    );
+    return Number(result.changes);
   }
 
   acquireGrowthApplyRun(input: {
