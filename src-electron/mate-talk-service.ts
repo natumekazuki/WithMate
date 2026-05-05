@@ -19,7 +19,7 @@ export type MateTalkServiceDeps = {
       contextText?: string;
     };
   }) => Promise<string>;
-  scheduleMemoryGeneration?(input: ScheduleMateTalkMemoryGenerationInput): void | Promise<void>;
+  scheduleMemoryGeneration?(input: ScheduleMateTalkMemoryGenerationInput): unknown;
   onMemoryGenerationScheduleError?(error: unknown): void | Promise<void>;
   now?(): Date;
 };

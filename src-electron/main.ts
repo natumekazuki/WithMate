@@ -1817,6 +1817,16 @@ async function startMateEmbeddingDownload(): Promise<void> {
 }
 
 async function runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult> {
+  const writeMemoryGenerationErrorLog = (error: unknown): void => {
+    writeAppLog({
+      level: "warn",
+      kind: "mate-talk.memory-generation.schedule-failed",
+      process: "main",
+      message: "MateTalk の Memory 生成スケジュールに失敗しました",
+      error: appLogService.errorToLogError(error),
+    });
+  };
+
   const service = new MateTalkService({
     getMateProfile: () => requireMateStorage().getMateProfile(),
     getMateProfileContextText: (profile) => {
@@ -1852,7 +1862,7 @@ async function runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnRe
         return;
       }
 
-      void requireMateMemoryGenerationService().runOnce({
+      return requireMateMemoryGenerationService().runOnce({
         recentConversationText,
         providerIds,
         sourceDefaults: {
@@ -1863,10 +1873,9 @@ async function runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnRe
         },
         mateName: mateProfile?.displayName,
         mateSummary: mateProfile?.description,
-      }).catch((error) => {
-        console.warn("Failed to run MateTalk Memory generation", error);
       });
     },
+    onMemoryGenerationScheduleError: writeMemoryGenerationErrorLog,
   });
 
   return service.runTurn(input);
