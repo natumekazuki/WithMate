@@ -108,6 +108,7 @@ import { MateEmbeddingVectorizer } from "./mate-embedding-vectorizer.js";
 import { MateSemanticEmbeddingStorage } from "./mate-semantic-embedding-storage.js";
 import { MateSemanticEmbeddingRetrievalService } from "./mate-semantic-embedding-retrieval-service.js";
 import { MateSemanticEmbeddingIndexService } from "./mate-semantic-embedding-index-service.js";
+import { upsertProviderInstructionTargetCommand } from "./provider-instruction-target-command-service.js";
 import {
   MateProviderInstructionSyncBlockedError,
   syncDisabledProviderInstructionTargets,
@@ -917,23 +918,19 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getMateEmbeddingSettings: () => requireMateEmbeddingCacheService().getEmbeddingSettings(),
                 listProviderInstructionTargets: () => requireProviderInstructionTargetStorage().listTargets(),
                 upsertProviderInstructionTarget: async (input) => {
-                  assertProviderInstructionTargetRootNotProtected(input, PROVIDER_INSTRUCTION_TARGET_PROTECTED_ROOTS);
-                  const storage = requireProviderInstructionTargetStorage();
-                  const previousTarget = storage.getTarget(input.providerId, input.targetId);
-                  const target = storage.upsertTarget(input);
-
-                  if (!target.enabled && previousTarget && previousTarget.enabled) {
-                    try {
-                      await syncDisabledProviderInstructionTarget(
-                        storage,
-                        previousTarget,
-                        {
-                          readTextFile: async (filePath) => readFile(filePath, "utf8"),
-                          writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
-                        },
-                        { protectedRoots: PROVIDER_INSTRUCTION_TARGET_PROTECTED_ROOTS },
-                      );
-                    } catch (error) {
+                  return upsertProviderInstructionTargetCommand(input, {
+                    storage: requireProviderInstructionTargetStorage(),
+                    getMateProfile: () => requireMateStorage().getMateProfile(),
+                    syncEnabledProviderInstructionTargetsForMateProfile,
+                    syncDisabledProviderInstructionTarget,
+                    protectedRoots: PROVIDER_INSTRUCTION_TARGET_PROTECTED_ROOTS,
+                    syncDeps: {
+                      readTextFile: async (filePath) => readFile(filePath, "utf8"),
+                      writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
+                    },
+                    assertProviderInstructionTargetRootNotProtected: (upsertInput) =>
+                      assertProviderInstructionTargetRootNotProtected(upsertInput, PROVIDER_INSTRUCTION_TARGET_PROTECTED_ROOTS),
+                    logDisabledCleanupFailure(error, previousTarget) {
                       writeAppLog({
                         level: "warn",
                         kind: "mate.provider-instruction-sync.disabled-projection.failed",
@@ -946,17 +943,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                         },
                         error: appLogService.errorToLogError(error),
                       });
-                    }
-                  }
-
-                  if (target.enabled) {
-                    const profile = requireMateStorage().getMateProfile();
-                    if (profile) {
-                      await syncEnabledProviderInstructionTargetsForMateProfile(profile);
-                      return storage.getTarget(target.providerId, target.targetId) ?? target;
-                    }
-                  }
-                  return storage.getTarget(target.providerId, target.targetId) ?? target;
+                    },
+                  });
                 },
                 startMateEmbeddingDownload: () => startMateEmbeddingDownload(),
                 deleteSessionMemory: (sessionId) => requireMemoryManagementService().deleteSessionMemory(sessionId),
