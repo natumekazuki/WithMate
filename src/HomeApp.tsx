@@ -344,6 +344,10 @@ export default function HomeApp() {
     if (nextMateState === "not_created") {
       setMateState("not_created");
       setMateProfile(null);
+      setMateEmbeddingSettings(null);
+      setMateEmbeddingFeedback("");
+      setMateEmbeddingBusy(false);
+      stopMateEmbeddingSettingsPolling();
       return nextMateState;
     }
 
