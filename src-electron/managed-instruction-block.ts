@@ -170,6 +170,25 @@ function findManagedBlockRangeByParsedMarkers(
     throw new Error(`marker mismatch: blockId=${blockId} の legacy marker と属性付き marker が混在しています。対象 managed block を特定できません`);
   }
 
+  const expectedProvider = markerAttributes.provider;
+  const expectedTarget = markerAttributes.target;
+  const expectedMode = markerAttributes.mode;
+  const hasProviderTargetMode = expectedProvider !== undefined && expectedTarget !== undefined && expectedMode !== undefined;
+  const mismatchedModeMarker = hasProviderTargetMode
+    ? matchedBlockIdMarkers.find((markerMatch) =>
+      markerMatch.marker.attributes.provider === expectedProvider
+      && markerMatch.marker.attributes.target === expectedTarget
+      && markerMatch.marker.attributes.mode !== undefined
+      && markerMatch.marker.attributes.mode !== expectedMode
+    )
+    : undefined;
+  if (mismatchedModeMarker) {
+    throw new Error(
+      `marker mismatch: blockId=${blockId} の managed block が provider=${expectedProvider} target=${expectedTarget} `
+      + `で既存 mode=${mismatchedModeMarker.marker.attributes.mode} と期待 mode=${expectedMode} が一致しません`,
+    );
+  }
+
   const matchingRanges: { start: number; end: number }[] = [];
   let activeStart = -1;
 

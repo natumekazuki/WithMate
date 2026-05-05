@@ -214,6 +214,31 @@ test("属性付き managed block が重複すると例外になる", () => {
   }, /duplicate managed block|重複 managed block/);
 });
 
+test("provider/target が一致する marker の mode mismatch は marker mismatch 例外になる", () => {
+  const existing = [
+    "Header",
+    "<!-- WITHMATE:BEGIN provider=codex target=main mode=managed-file block=mate-profile -->",
+    "## Main",
+    "old body",
+    "<!-- WITHMATE:END provider=codex target=main mode=managed-file block=mate-profile -->",
+    "Footer",
+    "",
+  ].join("\n");
+
+  assert.throws(() => {
+    upsertManagedBlockWithMarkerAttributes(existing, {
+      blockId: "mate-profile",
+      title: "New Profile",
+      content: "new body",
+      markerAttributes: {
+        provider: "codex",
+        target: "main",
+        mode: "managed-block",
+      },
+    });
+  }, /marker mismatch|mode/);
+});
+
 test("属性付き managed block の BEGIN/END 不整合は例外になる", () => {
   const existing = [
     "Header",
