@@ -222,6 +222,29 @@ function tableExists(db: DatabaseSync, tableName: string): boolean {
   return row !== undefined;
 }
 
+function tableColumnNames(db: DatabaseSync, tableName: string): Set<string> {
+  if (!tableExists(db, tableName)) {
+    return new Set();
+  }
+
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  return new Set(rows.map((row) => row.name));
+}
+
+function sqlStringLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function selectColumnOrDefault(columnNames: Set<string>, columnName: string, defaultValue: string | number): string {
+  if (columnNames.has(columnName)) {
+    return columnName;
+  }
+
+  return typeof defaultValue === "number"
+    ? `${defaultValue} AS ${columnName}`
+    : `${sqlStringLiteral(defaultValue)} AS ${columnName}`;
+}
+
 function countRows(db: DatabaseSync, tableName: string): number {
   if (!tableExists(db, tableName)) {
     return 0;
@@ -656,9 +679,10 @@ export function createMigrationWriteReport(input: {
     v1Db = new DatabaseSync(input.v1DbPath, { readOnly: true });
     v2Db = new DatabaseSync(input.v2DbPath);
 
+    const sessionColumnNames = tableColumnNames(v1Db, "sessions");
     const sessionRows = tableExists(v1Db, "sessions")
       ? (v1Db.prepare(
-          "SELECT id, task_title, task_summary, status, updated_at, provider, catalog_revision, workspace_label, workspace_path, branch, session_kind, character_id, character_name, character_icon_path, character_theme_main, character_theme_sub, run_state, approval_mode, codex_sandbox_mode, model, reasoning_effort, custom_agent_name, allowed_additional_directories_json, thread_id, last_active_at FROM sessions ORDER BY id",
+          `SELECT id, task_title, task_summary, status, updated_at, provider, ${selectColumnOrDefault(sessionColumnNames, "catalog_revision", 1)}, workspace_label, workspace_path, branch, ${selectColumnOrDefault(sessionColumnNames, "session_kind", "default")}, character_id, character_name, character_icon_path, ${selectColumnOrDefault(sessionColumnNames, "character_theme_main", "#6f8cff")}, ${selectColumnOrDefault(sessionColumnNames, "character_theme_sub", "#6fb8c7")}, run_state, approval_mode, ${selectColumnOrDefault(sessionColumnNames, "codex_sandbox_mode", "workspace-write")}, ${selectColumnOrDefault(sessionColumnNames, "model", "gpt-5.4")}, ${selectColumnOrDefault(sessionColumnNames, "reasoning_effort", "high")}, ${selectColumnOrDefault(sessionColumnNames, "custom_agent_name", "")}, ${selectColumnOrDefault(sessionColumnNames, "allowed_additional_directories_json", "[]")}, ${selectColumnOrDefault(sessionColumnNames, "thread_id", "")}, last_active_at FROM sessions ORDER BY id`,
         ).all() as SessionHeaderSourceRow[])
       : [];
 
