@@ -228,6 +228,186 @@ describe("MateGrowthApplyService", () => {
     }
   });
 
+  it("適用イベントがある場合は provider instruction target の stale 無効化が呼ばれる", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const mateStorage = new MateStorage(dbPath, userDataPath);
+    const growthStorage = new MateGrowthStorage(dbPath);
+    const profileItemStorage = new MateProfileItemStorage(dbPath);
+    let staleCallCount = 0;
+    const targetInvalidator = {
+      markEnabledTargetsStale: () => {
+        staleCallCount += 1;
+        return 1;
+      },
+    };
+
+    try {
+      await mateStorage.createMate({ displayName: "Mika" });
+      const runId = growthStorage.createRun({
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        triggerReason: "test",
+      });
+      growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "repeated_user_behavior",
+        kind: "relationship",
+        targetSection: "bond",
+        statement: "ユーザーは短文を好む",
+        statementFingerprint: "short-message-preference",
+        targetClaimKey: "reply_length",
+        confidence: 82,
+        salienceScore: 68,
+        projectionAllowed: true,
+      });
+
+      const service = new MateGrowthApplyService(
+        growthStorage,
+        profileItemStorage,
+        mateStorage,
+        undefined,
+        targetInvalidator,
+      );
+      const result = await service.applyPendingGrowth({ runId });
+
+      assert.equal(result.appliedCount, 1);
+      assert.equal(staleCallCount, 1);
+    } finally {
+      profileItemStorage.close();
+      growthStorage.close();
+      mateStorage.close();
+      await cleanup();
+    }
+  });
+
+  it("適用イベントがない場合は provider instruction target の stale 無効化を呼ばない", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const mateStorage = new MateStorage(dbPath, userDataPath);
+    const growthStorage = new MateGrowthStorage(dbPath);
+    const profileItemStorage = new MateProfileItemStorage(dbPath);
+    let staleCallCount = 0;
+    const targetInvalidator = {
+      markEnabledTargetsStale: () => {
+        staleCallCount += 1;
+        return 1;
+      },
+    };
+
+    try {
+      await mateStorage.createMate({ displayName: "Mika" });
+      const runId = growthStorage.createRun({
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        triggerReason: "test",
+      });
+      growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "assistant_inference",
+        kind: "conversation",
+        targetSection: "core",
+        statement: "一人称は「ぼく」を使う",
+        statementFingerprint: "first-person-boku",
+        targetClaimKey: "first_person",
+        confidence: 90,
+        salienceScore: 80,
+        projectionAllowed: true,
+      });
+
+      const service = new MateGrowthApplyService(
+        growthStorage,
+        profileItemStorage,
+        mateStorage,
+        undefined,
+        targetInvalidator,
+      );
+      const result = await service.applyPendingGrowth({ runId });
+
+      assert.equal(result.appliedCount, 0);
+      assert.equal(staleCallCount, 0);
+    } finally {
+      profileItemStorage.close();
+      growthStorage.close();
+      mateStorage.close();
+      await cleanup();
+    }
+  });
+
+  it("provider instruction target の stale 無効化が失敗しても growth apply は成功する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const mateStorage = new MateStorage(dbPath, userDataPath);
+    const growthStorage = new MateGrowthStorage(dbPath);
+    const profileItemStorage = new MateProfileItemStorage(dbPath);
+    const originalWarn = console.warn;
+    const warnings: unknown[][] = [];
+    const targetInvalidator = {
+      markEnabledTargetsStale: () => {
+        throw new Error("provider instruction storage unavailable");
+      },
+    };
+
+    try {
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args);
+      };
+      await mateStorage.createMate({ displayName: "Mika" });
+      const runId = growthStorage.createRun({
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        triggerReason: "test",
+      });
+      const event = growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "repeated_user_behavior",
+        kind: "relationship",
+        targetSection: "bond",
+        statement: "ユーザーは短文を好む",
+        statementFingerprint: "short-message-preference",
+        targetClaimKey: "reply_length",
+        confidence: 82,
+        salienceScore: 68,
+        projectionAllowed: true,
+      });
+
+      const service = new MateGrowthApplyService(
+        growthStorage,
+        profileItemStorage,
+        mateStorage,
+        undefined,
+        targetInvalidator,
+      );
+      const result = await service.applyPendingGrowth({ runId });
+
+      assert.equal(result.appliedCount, 1);
+      assert.equal(typeof result.revisionId, "string");
+      assert.equal(warnings.length, 1);
+      assert.match(String(warnings[0]?.[0] ?? ""), /provider instruction targets stale/i);
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const row = db.prepare("SELECT state, applied_revision_id FROM mate_growth_events WHERE id = ?").get(event.id) as {
+          state: string;
+          applied_revision_id: string | null;
+        };
+        assert.equal(row.state, "applied");
+        assert.equal(row.applied_revision_id, result.revisionId);
+      } finally {
+        db.close();
+      }
+    } finally {
+      profileItemStorage.close();
+      growthStorage.close();
+      mateStorage.close();
+      console.warn = originalWarn;
+      await cleanup();
+    }
+  });
+
   it("embedding index が例外を投げても growth apply は成功しつつ状態更新が完了する", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     const mateStorage = new MateStorage(dbPath, userDataPath);

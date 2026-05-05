@@ -143,6 +143,11 @@ export async function syncEnabledProviderInstructionTargets(
   for (const target of targets) {
     result.targetCount += 1;
 
+    if (target.lastSyncState === "redaction_required") {
+      result.skippedCount += 1;
+      continue;
+    }
+
     try {
       const instructionFilePath = resolveTargetInstructionFilePath(target);
       assertProviderInstructionTargetRootNotProtected(target, protectedRoots, instructionFilePath);
@@ -234,6 +239,11 @@ export async function syncDisabledProviderInstructionTargets(
 
   for (const target of targets) {
     result.targetCount += 1;
+
+    if (target.lastSyncState === "redaction_required") {
+      result.skippedCount += 1;
+      continue;
+    }
 
     try {
       const instructionFilePath = resolveTargetInstructionFilePath(target);

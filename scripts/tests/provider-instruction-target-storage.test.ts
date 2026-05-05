@@ -128,6 +128,50 @@ describe("ProviderInstructionTargetStorage", () => {
     }
   });
 
+  it("markEnabledTargetsStale は有効な target のうち redaction_required 以外を stale にする", async () => {
+    const { storage, tempDirectory, dbPath } = await createStorage();
+
+    try {
+      storage.upsertTarget(targetInput());
+      storage.upsertTarget({
+        ...targetInput(),
+        providerId: "disabled",
+        enabled: false,
+      });
+      storage.upsertTarget({
+        ...targetInput(),
+        providerId: "redaction",
+        enabled: true,
+        instructionRelativePath: "AGENTS.md",
+      });
+
+      const db = new DatabaseSync(dbPath);
+      db.prepare(`
+        UPDATE provider_instruction_targets
+        SET last_sync_state = 'redaction_required'
+        WHERE provider_id = 'redaction'
+          AND target_id = 'main'
+      `).run();
+      db.close();
+
+      const updatedCount = storage.markEnabledTargetsStale();
+      const enabledTarget = storage.getTarget("codex", "main");
+      const disabledTarget = storage.getTarget("disabled", "main");
+      const redactionTarget = storage.getTarget("redaction", "main");
+      if (!enabledTarget || !disabledTarget || !redactionTarget) {
+        throw new Error("target がありません");
+      }
+
+      assert.equal(updatedCount, 1);
+      assert.equal(enabledTarget.lastSyncState, "stale");
+      assert.equal(disabledTarget.lastSyncState, "never");
+      assert.equal(redactionTarget.lastSyncState, "redaction_required");
+    } finally {
+      storage.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("recordSyncRun で run を記録し、target の同期情報を更新する", async () => {
     const { storage, dbPath, tempDirectory } = await createStorage();
 

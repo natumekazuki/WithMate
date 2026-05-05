@@ -36,12 +36,17 @@ type SemanticEmbeddingIndexService = {
   indexProfileItem: (item: MateProfileItem) => Promise<unknown>;
 };
 
+type ProviderInstructionTargetInvalidator = {
+  markEnabledTargetsStale(): number;
+};
+
 export class MateGrowthApplyService {
   constructor(
     private readonly growthStorage: MateGrowthStorage,
     private readonly profileItemStorage: MateProfileItemStorage,
     private readonly mateStorage: MateStorage,
     private readonly semanticEmbeddingIndexService?: SemanticEmbeddingIndexService,
+    private readonly providerInstructionTargetInvalidator?: ProviderInstructionTargetInvalidator,
   ) {}
 
   async applyPendingGrowth(options: ApplyPendingGrowthOptions = {}): Promise<ApplyPendingGrowthResult> {
@@ -144,6 +149,7 @@ export class MateGrowthApplyService {
       for (const event of applicableEvents) {
         this.growthStorage.markEventApplied(event.id, updatedProfileRevisionId ?? undefined);
       }
+      this.markProviderInstructionTargetsStaleBestEffort();
       await this.indexAppliedGrowthBestEffort(appliedIndexTargets);
 
       result = {
@@ -216,6 +222,15 @@ export class MateGrowthApplyService {
       this.semanticEmbeddingIndexService!.indexGrowthEvent(event),
       this.semanticEmbeddingIndexService!.indexProfileItem(profileItem),
     ]));
+  }
+
+  private markProviderInstructionTargetsStaleBestEffort(): void {
+    try {
+      this.providerInstructionTargetInvalidator?.markEnabledTargetsStale();
+    } catch (error) {
+      console.warn("Failed to mark provider instruction targets stale after growth apply", error);
+      // Provider instruction sync state は後続通知なので、profile apply の成功は維持する。
+    }
   }
 }
 

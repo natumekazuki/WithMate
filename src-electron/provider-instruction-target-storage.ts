@@ -355,6 +355,29 @@ export class ProviderInstructionTargetStorage {
     `).run(now, normalizedProviderId, normalizedTargetId);
   }
 
+  markEnabledTargetsStale(): number {
+    const candidates = this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM provider_instruction_targets
+      WHERE enabled = 1
+        AND last_sync_state != 'redaction_required'
+    `).get() as { count: number };
+
+    if (candidates.count > 0) {
+      const now = nowIso();
+      this.db.prepare(`
+        UPDATE provider_instruction_targets
+        SET
+          last_sync_state = 'stale',
+          updated_at = ?
+        WHERE enabled = 1
+          AND last_sync_state != 'redaction_required'
+      `).run(now);
+    }
+
+    return candidates.count;
+  }
+
   recordSyncRun(input: ProviderInstructionTargetSyncRunInput): ProviderInstructionSyncRun {
     const providerId = normalizeProviderId(input.providerId);
     const targetId = input.targetId === undefined ? DEFAULT_TARGET_ID : normalizeTargetId(input.targetId);

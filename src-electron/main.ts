@@ -1744,6 +1744,7 @@ function requireMateGrowthApplyService(): MateGrowthApplyService {
       requireMateProfileItemStorage(),
       requireMateStorage(),
       requireMateSemanticEmbeddingIndexService(),
+      requireProviderInstructionTargetStorage(),
     );
   }
 
