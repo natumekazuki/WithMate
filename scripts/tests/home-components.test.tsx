@@ -16,6 +16,8 @@ import type { MateEmbeddingSettings } from "../../src/mate-embedding-settings.js
 import { formatTimestampLabel } from "../../src/time-state.js";
 import {
   SETTINGS_MATE_EMBEDDING_LABEL,
+  SETTINGS_MATE_RESET_HELP,
+  SETTINGS_MATE_RESET_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_MODEL_LABEL,
@@ -47,7 +49,10 @@ describe("HomeSettingsContent", () => {
   const providerSettingRows = buildHomeProviderSettingRows(modelCatalog, settingsDraft);
   const noOp = (..._args: unknown[]) => undefined;
 
-  const renderSettings = () => renderToStaticMarkup(
+  const renderSettings = (params?: {
+    canResetMate?: boolean;
+    mateResetBusy?: boolean;
+  }) => renderToStaticMarkup(
     <HomeSettingsContent
       settingsDraft={settingsDraft}
       providerSettingRows={providerSettingRows}
@@ -105,9 +110,20 @@ describe("HomeSettingsContent", () => {
       onDeleteCharacterMemoryEntry={noOp}
       onDeleteMateProfileItem={noOp}
       onStartMateEmbeddingDownload={noOp}
+      onResetMate={noOp}
+      canResetMate={params?.canResetMate ?? false}
+      mateResetBusy={params?.mateResetBusy ?? false}
       onSaveSettings={noOp}
     />
   );
+
+  const extractResetButton = (html: string) => {
+    const resetLabelIndex = html.indexOf(`<strong>${SETTINGS_MATE_RESET_LABEL}</strong>`);
+    const resetButtonIndex = html.indexOf('<button class="launch-toggle danger-button"', resetLabelIndex);
+    const resetButtonEndIndex = html.indexOf("</button>", resetButtonIndex);
+    assert.ok(resetLabelIndex >= 0 && resetButtonIndex >= 0 && resetButtonEndIndex >= 0);
+    return html.slice(resetButtonIndex, resetButtonEndIndex + 9);
+  };
 
   it("Mate Memory Generation のセクションが表示される", () => {
     const html = renderSettings();
@@ -118,6 +134,32 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_REASONING_LABEL}</span>`));
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_TIMEOUT_LABEL}</span>`));
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL}</span>`));
+  });
+
+  it("Mate Reset のラベルとヘルプが表示される", () => {
+    const html = renderSettings();
+    assert.ok(html.includes(`<strong>${SETTINGS_MATE_RESET_LABEL}</strong>`));
+    assert.ok(html.includes(`<p class="settings-help">${SETTINGS_MATE_RESET_HELP}</p>`));
+  });
+
+  it("canResetMate=false のときリセットボタンは無効化される", () => {
+    const html = renderSettings({ canResetMate: false });
+    const buttonHtml = extractResetButton(html);
+    assert.ok(buttonHtml.includes('disabled=""'));
+    assert.ok(buttonHtml.includes(SETTINGS_MATE_RESET_LABEL));
+  });
+
+  it("canResetMate=true のときリセットボタンは有効", () => {
+    const html = renderSettings({ canResetMate: true });
+    const buttonHtml = extractResetButton(html);
+    assert.ok(!buttonHtml.includes('disabled=""'));
+  });
+
+  it("mateResetBusy=true のときリセットボタンは無効化され「リセット中...」が表示される", () => {
+    const html = renderSettings({ canResetMate: true, mateResetBusy: true });
+    const buttonHtml = extractResetButton(html);
+    assert.ok(buttonHtml.includes('disabled=""'));
+    assert.ok(buttonHtml.includes("リセット中..."));
   });
 
   it("Mate Embedding のキャッシュ状態が拡張表示される", () => {
