@@ -10,6 +10,7 @@ type MainBootstrapServiceDeps = {
   broadcastModelCatalog(snapshot: ModelCatalogSnapshot): void;
   getMateState: () => MateStorageState | Promise<MateStorageState>;
   applyPendingGrowth(): Promise<unknown>;
+  cleanupStaleGrowthApplyRuns?: () => Promise<number>;
   growthApplyIntervalMs?: number;
   getGrowthApplyIntervalMs?: () => number | Promise<number>;
   createGrowthApplyTimer?: (handler: () => void, intervalMs: number) => unknown;
@@ -83,6 +84,13 @@ export class MainBootstrapService {
 
   async handleReady(): Promise<void> {
     const activeModelCatalog = await this.deps.initializePersistentStores();
+    if (this.deps.cleanupStaleGrowthApplyRuns) {
+      try {
+        await this.deps.cleanupStaleGrowthApplyRuns();
+      } catch (error) {
+        console.warn("Failed to cleanup stale growth apply runs", error);
+      }
+    }
     await this.deps.recoverInterruptedSessions();
     await this.deps.refreshCharactersFromStorage();
     this.deps.registerIpcHandlers();

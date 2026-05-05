@@ -46,6 +46,10 @@ test("MainBootstrapService は起動シーケンスを順に実行する", async
       calls.push("initializePersistentStores");
       return activeModelCatalog;
     },
+    async cleanupStaleGrowthApplyRuns() {
+      calls.push("cleanupStaleGrowthApplyRuns");
+      return 1;
+    },
     async recoverInterruptedSessions() {
       calls.push("recoverInterruptedSessions:start");
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -69,6 +73,7 @@ test("MainBootstrapService は起動シーケンスを順に実行する", async
 
   assert.deepEqual(calls, [
     "initializePersistentStores",
+    "cleanupStaleGrowthApplyRuns",
     "recoverInterruptedSessions:start",
     "recoverInterruptedSessions:end",
     "refreshCharactersFromStorage",
@@ -77,6 +82,49 @@ test("MainBootstrapService は起動シーケンスを順に実行する", async
     "broadcastModelCatalog:1",
     "getMateState",
   ]);
+});
+
+test("handleReady で stale growth apply cleanup が失敗しても bootstrap が続行される", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  const calls: string[] = [];
+
+  const service = new MainBootstrapService({
+    getMateState() {
+      calls.push("getMateState");
+      return "active";
+    },
+    async applyPendingGrowth() {},
+    async initializePersistentStores() {
+      calls.push("initializePersistentStores");
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    cleanupStaleGrowthApplyRuns() {
+      calls.push("cleanupStaleGrowthApplyRuns");
+      return Promise.reject(new Error("cleanup failed"));
+    },
+    async recoverInterruptedSessions() {
+      calls.push("recoverInterruptedSessions");
+    },
+    async refreshCharactersFromStorage() {
+      calls.push("refreshCharactersFromStorage");
+    },
+    registerIpcHandlers() {
+      calls.push("registerIpcHandlers");
+    },
+    async createHomeWindow() {
+      calls.push("createHomeWindow");
+    },
+    broadcastModelCatalog() {},
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.handleReady();
+
+  assert.equal(calls[0], "initializePersistentStores");
+  assert.equal(calls[1], "cleanupStaleGrowthApplyRuns");
+  assert.equal(calls.includes("recoverInterruptedSessions"), true);
+  assert.equal(timerSpies.createdTimers.length, 1);
 });
 
 test("handleReady で Mate が active の場合は Growth timer が作成される", async () => {

@@ -1098,6 +1098,12 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             },
             getMateState: () => requireMateStorage().getMateState(),
             applyPendingGrowth: applyPendingGrowthCore,
+            cleanupStaleGrowthApplyRuns: async () => {
+              return requireMateGrowthStorage().cleanupStaleGrowthApplyRuns({
+                staleBeforeIso: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+                errorPreview: "アプリ起動時のGrowth apply 走行中ジョブ cleanup",
+              });
+            },
             getGrowthApplyIntervalMs: () => resolveMateGrowthApplyIntervalMs(),
             createGrowthApplyTimer: (handler, intervalMs) => setInterval(handler, intervalMs),
             clearGrowthApplyTimer: (timer) => {

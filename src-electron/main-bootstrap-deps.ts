@@ -19,6 +19,7 @@ type CreateMainBootstrapDepsArgs = {
   broadcastModelCatalog(snapshot: ModelCatalogSnapshot): void;
   getMateState(): MateStorageState | Promise<MateStorageState>;
   applyPendingGrowth(): Promise<unknown>;
+  cleanupStaleGrowthApplyRuns?: () => Promise<number>;
   growthApplyIntervalMs?: number;
   getGrowthApplyIntervalMs?: () => number | Promise<number>;
   createGrowthApplyTimer?: (handler: () => void, intervalMs: number) => unknown;
@@ -35,6 +36,7 @@ export function createMainBootstrapDeps(
     refreshCharactersFromStorage: args.refreshCharactersFromStorage,
     getMateState: args.getMateState,
     applyPendingGrowth: args.applyPendingGrowth,
+    cleanupStaleGrowthApplyRuns: args.cleanupStaleGrowthApplyRuns,
     growthApplyIntervalMs: args.growthApplyIntervalMs,
     getGrowthApplyIntervalMs: args.getGrowthApplyIntervalMs,
     createGrowthApplyTimer: args.createGrowthApplyTimer,
