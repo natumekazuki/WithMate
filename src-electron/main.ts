@@ -915,9 +915,18 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getMemoryManagementPage: (request) => requireMemoryManagementService().getPage(request),
                 getMateEmbeddingSettings: () => requireMateEmbeddingCacheService().getEmbeddingSettings(),
                 listProviderInstructionTargets: () => requireProviderInstructionTargetStorage().listTargets(),
-                upsertProviderInstructionTarget: (input) => {
+                upsertProviderInstructionTarget: async (input) => {
                   assertProviderInstructionTargetRootNotProtected(input, PROVIDER_INSTRUCTION_TARGET_PROTECTED_ROOTS);
-                  return requireProviderInstructionTargetStorage().upsertTarget(input);
+                  const storage = requireProviderInstructionTargetStorage();
+                  const target = storage.upsertTarget(input);
+                  if (target.enabled) {
+                    const profile = requireMateStorage().getMateProfile();
+                    if (profile) {
+                      await syncEnabledProviderInstructionTargetsForMateProfile(profile);
+                      return storage.getTarget(target.providerId, target.targetId) ?? target;
+                    }
+                  }
+                  return target;
                 },
                 startMateEmbeddingDownload: () => startMateEmbeddingDownload(),
                 deleteSessionMemory: (sessionId) => requireMemoryManagementService().deleteSessionMemory(sessionId),
