@@ -143,11 +143,13 @@ describe("MateMemoryGenerationService", () => {
       const workspace = new MemoryRuntimeWorkspaceService({ userDataPath });
       const workspacePath = workspace.getWorkspacePath();
       const lockPath = path.join(workspacePath, ".lock");
+      let runWorkspacePath: string | null = null;
 
       const service = new MateMemoryGenerationService({
         workspace,
         storage,
         async runStructuredGeneration() {
+          runWorkspacePath = workspace.getWorkspacePath();
           return {
             parsedJson: {
               memories: [{
@@ -213,6 +215,8 @@ describe("MateMemoryGenerationService", () => {
       const agentsContent = await readFile(path.join(workspacePath, "AGENTS.md"), "utf8");
       const copilotContent = await readFile(path.join(workspacePath, "provider", "copilot", "COPILOT.md"), "utf8");
       const lockReleased = await exists(lockPath);
+      assert.equal(runWorkspacePath !== null, true);
+      const runStatus = await readRunMetadata(path.join(runWorkspacePath!, ".status"));
 
       assert.equal(result.skipped, false);
       assert.equal(result.savedCount, 1);
@@ -220,6 +224,8 @@ describe("MateMemoryGenerationService", () => {
       assert.equal(result.model, "mock-1");
       assert.equal(result.threadId, "thread-1");
       assert.equal(result.usage?.inputTokens, 45);
+      assert.equal(runWorkspacePath?.startsWith(path.join(userDataPath, "memory-runtime", "runs")), true);
+      assert.equal(runStatus?.status, "completed");
       assert.equal(agentsContent, "# AGENTS\n");
       assert.equal(copilotContent, "# COPILOT\n");
       assert.equal(lockReleased, false);
@@ -668,6 +674,7 @@ describe("MateMemoryGenerationService", () => {
     const { dbPath, cleanup: cleanupDb } = await createTempDbPath();
     const userDataPath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-memory-workspace-"));
     let storage: MateMemoryStorage | null = null;
+    let runWorkspacePath: string | null = null;
     const growthRuns: unknown[] = [];
     const growthUpserts: unknown[] = [];
     const growthFinishes: unknown[] = [];
@@ -701,6 +708,7 @@ describe("MateMemoryGenerationService", () => {
         storage,
         growthStorage,
         async runStructuredGeneration() {
+          runWorkspacePath = workspace.getWorkspacePath();
           return {
             rawText: JSON.stringify({
               memories: [{
@@ -747,6 +755,9 @@ describe("MateMemoryGenerationService", () => {
       } finally {
         db.close();
       }
+      assert.equal(runWorkspacePath !== null, true);
+      const runStatus = await readRunMetadata(path.join(runWorkspacePath!, ".status"));
+      assert.equal(runStatus?.status, "failed");
 
       const lockReleased = await exists(lockPath);
       assert.equal(lockReleased, false);
@@ -787,6 +798,7 @@ describe("MateMemoryGenerationService", () => {
     const { dbPath, cleanup: cleanupDb } = await createTempDbPath();
     const userDataPath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-memory-workspace-"));
     let storage: MateMemoryStorage | null = null;
+    let runWorkspacePath: string | null = null;
     const growthRuns: unknown[] = [];
     const growthFails: unknown[] = [];
 
@@ -816,6 +828,7 @@ describe("MateMemoryGenerationService", () => {
         storage,
         growthStorage,
         async runStructuredGeneration() {
+          runWorkspacePath = workspace.getWorkspacePath();
           return {
             rawText: "{\"memories\":[",
             usage: null,
@@ -850,6 +863,9 @@ describe("MateMemoryGenerationService", () => {
       } finally {
         db.close();
       }
+      assert.equal(runWorkspacePath !== null, true);
+      const runStatus = await readRunMetadata(path.join(runWorkspacePath!, ".status"));
+      assert.equal(runStatus?.status, "failed");
 
       assert.equal(growthRuns.length, 1);
       assert.equal(growthFails.length, 1);
@@ -962,6 +978,7 @@ describe("MateMemoryGenerationService", () => {
     const { dbPath, cleanup: cleanupDb } = await createTempDbPath();
     const userDataPath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-memory-workspace-"));
     let storage: MateMemoryStorage | null = null;
+    let runWorkspacePath: string | null = null;
 
     try {
       storage = new MateMemoryStorage(dbPath);
@@ -973,8 +990,9 @@ describe("MateMemoryGenerationService", () => {
       const service = new MateMemoryGenerationService({
         workspace,
         storage,
-        async runStructuredGeneration() {
-          return {
+        runStructuredGeneration() {
+          runWorkspacePath = workspace.getWorkspacePath();
+          return Promise.resolve({
             rawText: JSON.stringify({
               memories: [{
                 statement: "不正な kind",
@@ -990,7 +1008,7 @@ describe("MateMemoryGenerationService", () => {
             model: "mock-1",
             threadId: null,
             rawItemsJson: "{\"type\":\"mock\"}",
-          };
+          });
         },
         async getTagCatalog() {
           return [{ tagType: "Topic", tagValue: "work" }];
@@ -1017,6 +1035,59 @@ describe("MateMemoryGenerationService", () => {
         db.close();
       }
 
+      assert.equal(runWorkspacePath !== null, true);
+      const runStatus = await readRunMetadata(path.join(runWorkspacePath!, ".status"));
+      assert.equal(runStatus?.status, "failed");
+
+      const lockReleased = await exists(lockPath);
+      assert.equal(lockReleased, false);
+    } finally {
+      storage?.close();
+      await cleanupDb();
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("実行中の provider が例外で終了すると run workspace の status は failed", async () => {
+    const { dbPath, cleanup: cleanupDb } = await createTempDbPath();
+    const userDataPath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-memory-workspace-"));
+    let storage: MateMemoryStorage | null = null;
+    let runWorkspacePath: string | null = null;
+
+    try {
+      storage = new MateMemoryStorage(dbPath);
+      seedCurrentMateProfile(dbPath);
+      const workspace = new MemoryRuntimeWorkspaceService({ userDataPath });
+      const workspacePath = workspace.getWorkspacePath();
+      const lockPath = path.join(workspacePath, ".lock");
+
+      const service = new MateMemoryGenerationService({
+        workspace,
+        storage,
+        runStructuredGeneration() {
+          runWorkspacePath = workspace.getWorkspacePath();
+          throw new Error("provider boom");
+        },
+        async getTagCatalog() {
+          return [];
+        },
+        async getInstructionFiles(_input) {
+          return [];
+        },
+        async getRecentConversationText() {
+          return "ユーザー: 最近の会話テキスト";
+        },
+      });
+
+      await assert.rejects(() => service.runOnce({
+        sourceDefaults: {
+          sourceType: "session",
+        },
+      }), /provider boom/);
+
+      assert.equal(runWorkspacePath !== null, true);
+      const status = await readRunMetadata(path.join(runWorkspacePath!, ".status"));
+      assert.equal(status?.status, "failed");
       const lockReleased = await exists(lockPath);
       assert.equal(lockReleased, false);
     } finally {
@@ -1079,5 +1150,24 @@ async function exists(filePath: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function readRunMetadata(filePath: string): Promise<{
+  runId: string;
+  createdAt: number;
+  heartbeatAt: number;
+  status: "running" | "completed" | "failed";
+} | null> {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    return JSON.parse(raw) as {
+      runId: string;
+      createdAt: number;
+      heartbeatAt: number;
+      status: "running" | "completed" | "failed";
+    };
+  } catch {
+    return null;
   }
 }

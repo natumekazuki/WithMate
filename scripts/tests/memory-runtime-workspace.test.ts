@@ -205,6 +205,95 @@ describe("MemoryRuntimeWorkspaceService", () => {
     }
   });
 
+  it("failRun で status が failed になり lock を削除し active state が current に戻る", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-runtime-"));
+
+    try {
+      const service = new MemoryRuntimeWorkspaceService({ userDataPath });
+      const result = await service.prepareRun();
+
+      await service.failRun("failure detected");
+
+      const status = await readRunMetadata(path.join(result.workspacePath, ".status"));
+      assert.equal(status?.status, "failed");
+      assert.equal(await exists(result.lockPath), false);
+      assert.equal(service.getWorkspacePath(), path.join(userDataPath, "memory-runtime", "current"));
+      assert.equal(await exists(path.join(service.getWorkspacePath(), ".lock")), false);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("startHeartbeat が heartbeat を更新し、stop 後は更新を止める", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-runtime-"));
+
+    try {
+      const service = new MemoryRuntimeWorkspaceService({ userDataPath });
+      const result = await service.prepareRun();
+      const statusPath = path.join(result.workspacePath, ".status");
+      const initial = await readRunMetadata(statusPath);
+
+      const stopHeartbeat = service.startHeartbeat(5);
+      const afterStart = await waitForHeartbeatAfter(statusPath, initial?.heartbeatAt ?? 0);
+      assert.ok(afterStart != null);
+      assert.equal(afterStart.heartbeatAt > (initial?.heartbeatAt ?? 0), true);
+
+      await stopHeartbeat();
+      const afterStop = await waitForRunMetadata(statusPath);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      const later = await waitForRunMetadata(statusPath);
+      assert.equal(afterStop?.heartbeatAt, later?.heartbeatAt);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("completeRun は in-flight heartbeat 後でも completed status と lock release を維持する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-runtime-"));
+
+    try {
+      const service = new MemoryRuntimeWorkspaceService({ userDataPath });
+      const result = await service.prepareRun();
+      const statusPath = path.join(result.workspacePath, ".status");
+
+      const stopHeartbeat = service.startHeartbeat(1);
+      await waitForHeartbeatAfter(statusPath, 0);
+      await service.completeRun();
+      await stopHeartbeat();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const metadata = await waitForRunMetadata(statusPath);
+      assert.equal(metadata?.status, "completed");
+      assert.equal(await exists(result.lockPath), false);
+      assert.equal(await exists(path.join(userDataPath, "memory-runtime", "current", ".lock")), false);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("failRun は in-flight heartbeat 後でも failed status と lock release を維持する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-runtime-"));
+
+    try {
+      const service = new MemoryRuntimeWorkspaceService({ userDataPath });
+      const result = await service.prepareRun();
+      const statusPath = path.join(result.workspacePath, ".status");
+
+      const stopHeartbeat = service.startHeartbeat(1);
+      await waitForHeartbeatAfter(statusPath, 0);
+      await service.failRun("failed after heartbeat");
+      await stopHeartbeat();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const metadata = await waitForRunMetadata(statusPath);
+      assert.equal(metadata?.status, "failed");
+      assert.equal(await exists(result.lockPath), false);
+      assert.equal(await exists(path.join(userDataPath, "memory-runtime", "current", ".lock")), false);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
   it("touchHeartbeat で heartbeat が更新される", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-runtime-"));
 
@@ -439,6 +528,38 @@ async function readRunMetadata(filePath: string): Promise<{
   } catch {
     return null;
   }
+}
+
+async function waitForHeartbeatAfter(filePath: string, heartbeatAt: number): Promise<{
+  runId: string;
+  createdAt: number;
+  heartbeatAt: number;
+  status: "running" | "completed" | "failed";
+} | null> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const metadata = await readRunMetadata(filePath);
+    if (metadata && metadata.heartbeatAt > heartbeatAt) {
+      return metadata;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return readRunMetadata(filePath);
+}
+
+async function waitForRunMetadata(filePath: string): Promise<{
+  runId: string;
+  createdAt: number;
+  heartbeatAt: number;
+  status: "running" | "completed" | "failed";
+} | null> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const metadata = await readRunMetadata(filePath);
+    if (metadata) {
+      return metadata;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return readRunMetadata(filePath);
 }
 
 async function exists(filePath: string): Promise<boolean> {

@@ -47,6 +47,9 @@ export class MemoryRuntimeWorkspaceService {
   private readonly templateRootPath: string | undefined;
   private activeWorkspacePath: string | null = null;
   private activeRunId: string | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatGeneration = 0;
+  private heartbeatInFlight: Promise<void> | null = null;
 
   constructor(deps: MemoryRuntimeWorkspaceServiceDeps) {
     const userDataRoot = path.resolve(deps.userDataPath);
@@ -129,6 +132,7 @@ export class MemoryRuntimeWorkspaceService {
   }
 
   async completeRun(): Promise<void> {
+    await this.stopHeartbeatTimer();
     if (this.activeWorkspacePath && this.activeRunId) {
       const currentMetadata = await this.readWorkspaceStatus(this.activeWorkspacePath);
       await this.writeWorkspaceStatus(
@@ -144,6 +148,54 @@ export class MemoryRuntimeWorkspaceService {
     await this.releaseLock();
     this.activeWorkspacePath = null;
     this.activeRunId = null;
+  }
+
+  async failRun(_errorPreview?: string): Promise<void> {
+    await this.stopHeartbeatTimer();
+
+    if (!this.activeWorkspacePath || !this.activeRunId) {
+      this.activeWorkspacePath = null;
+      this.activeRunId = null;
+      return;
+    }
+
+    const currentMetadata = await this.readWorkspaceStatus(this.activeWorkspacePath);
+    const metadata = this.buildRunMetadata(
+      this.activeRunId,
+      currentMetadata?.createdAt ?? Date.now(),
+      Date.now(),
+      "failed",
+    );
+    await this.writeWorkspaceStatus(this.activeWorkspacePath, metadata);
+    await this.releaseLock();
+  }
+
+  startHeartbeat(intervalMs: number = 30_000): () => Promise<void> {
+    if (!this.activeWorkspacePath || !this.activeRunId) {
+      return () => Promise.resolve();
+    }
+
+    const interval = Number.isFinite(intervalMs) ? intervalMs : 30_000;
+    this.stopHeartbeatTimerWithoutDrain();
+    const heartbeatGeneration = this.heartbeatGeneration;
+
+    const heartbeatTimer = setInterval(() => {
+      if (this.heartbeatGeneration !== heartbeatGeneration || this.heartbeatInFlight) {
+        return;
+      }
+      const heartbeat = this.touchHeartbeat().catch(() => {}).finally(() => {
+        if (this.heartbeatInFlight === heartbeat) {
+          this.heartbeatInFlight = null;
+        }
+      });
+      this.heartbeatInFlight = heartbeat;
+    }, interval);
+    if (typeof heartbeatTimer.unref === "function") {
+      heartbeatTimer.unref();
+    }
+    this.heartbeatTimer = heartbeatTimer;
+
+    return () => this.stopHeartbeatTimer();
   }
 
   async touchHeartbeat(): Promise<void> {
@@ -234,6 +286,7 @@ export class MemoryRuntimeWorkspaceService {
   }
 
   async releaseLock(): Promise<void> {
+    await this.stopHeartbeatTimer();
     if (this.activeWorkspacePath) {
       await this.forceReleaseLock(this.getLockPath(this.activeWorkspacePath));
     }
@@ -265,6 +318,22 @@ export class MemoryRuntimeWorkspaceService {
         }
       }),
     );
+  }
+
+  private stopHeartbeatTimerWithoutDrain(): void {
+    this.heartbeatGeneration += 1;
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  private async stopHeartbeatTimer(): Promise<void> {
+    this.stopHeartbeatTimerWithoutDrain();
+    const heartbeatInFlight = this.heartbeatInFlight;
+    if (heartbeatInFlight) {
+      await heartbeatInFlight;
+    }
   }
 
   private async acquireLockForPath(

@@ -165,6 +165,9 @@ export class MateMemoryGenerationService {
       throw error;
     }
 
+    const stopHeartbeat = this.deps.workspace.startHeartbeat();
+    let completed = false;
+
     try {
       const sourceDefaults = input.sourceDefaults ?? {};
       const recentConversationText = input.recentConversationText ?? await this.deps.getRecentConversationText();
@@ -227,7 +230,12 @@ export class MateMemoryGenerationService {
       }
       const savedMemories = this.deps.storage.saveGeneratedMemories(normalized);
       if (this.deps.growthStorage && normalized.memories.length > 0) {
-        const runInput = buildGrowthRunInput(normalized.memories[0], normalized.memories.length, generationResult.provider, generationResult.model);
+        const runInput = buildGrowthRunInput(
+          normalized.memories[0],
+          normalized.memories.length,
+          generationResult.provider,
+          generationResult.model,
+        );
         const runId = this.deps.growthStorage.createRun(runInput);
 
         try {
@@ -249,6 +257,7 @@ export class MateMemoryGenerationService {
         }
       }
 
+      completed = true;
       return {
         skipped: false,
         savedCount: savedMemories.length,
@@ -259,8 +268,18 @@ export class MateMemoryGenerationService {
         rawText: generationResult.rawText,
         rawItemsJson: generationResult.rawItemsJson,
       };
+    } catch (error) {
+      try {
+        await this.deps.workspace.failRun(normalizeErrorPreview(error));
+      } catch {
+        // failRun 自体の失敗は元の例外を隠さない
+      }
+      throw error;
     } finally {
-      await this.deps.workspace.completeRun();
+      await stopHeartbeat();
+      if (completed) {
+        await this.deps.workspace.completeRun();
+      }
     }
   }
 }
