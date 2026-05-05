@@ -294,4 +294,167 @@ describe("MateGrowthApplyService", () => {
       await cleanup();
     }
   });
+
+  it("同時実行時に writer lock で二重 revision / applied 更新を避ける", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const mateStorage = new MateStorage(dbPath, userDataPath);
+    const growthStorage = new MateGrowthStorage(dbPath);
+    const profileItemStorage = new MateProfileItemStorage(dbPath);
+
+    try {
+      await mateStorage.createMate({ displayName: "Mika" });
+      const runId = growthStorage.createRun({
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        triggerReason: "test",
+      });
+      const event = growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "repeated_user_behavior",
+        kind: "relationship",
+        targetSection: "bond",
+        statement: "ユーザーは短文を好む",
+        statementFingerprint: "short-message-preference",
+        targetClaimKey: "reply_length",
+        confidence: 82,
+        salienceScore: 68,
+        projectionAllowed: true,
+      });
+
+      const service = new MateGrowthApplyService(growthStorage, profileItemStorage, mateStorage);
+      const beforeDb = new DatabaseSync(dbPath);
+      const beforeRevisionCount = beforeDb.prepare(`
+        SELECT COUNT(*) AS count
+        FROM mate_profile_revisions
+        WHERE kind = 'growth_apply'
+      `).get() as { count: number };
+      beforeDb.close();
+
+      const [first, second] = await Promise.all([
+        service.applyPendingGrowth({ runId }),
+        service.applyPendingGrowth({ runId }),
+      ]);
+
+      assert.equal(first.appliedCount, 1);
+      assert.equal(second.appliedCount, 1);
+      assert.equal(first.revisionId, second.revisionId);
+      assert.equal(typeof first.revisionId, "string");
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const revisionCount = db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM mate_profile_revisions
+          WHERE kind = 'growth_apply'
+        `).get() as { count: number };
+        const row = db.prepare("SELECT state, applied_revision_id FROM mate_growth_events WHERE id = ?").get(event.id) as {
+          state: string;
+          applied_revision_id: string | null;
+        };
+        assert.equal(revisionCount.count, beforeRevisionCount.count + 1);
+        assert.equal(row.state, "applied");
+        assert.equal(row.applied_revision_id, first.revisionId);
+      } finally {
+        db.close();
+      }
+    } finally {
+      profileItemStorage.close();
+      growthStorage.close();
+      mateStorage.close();
+      await cleanup();
+    }
+  });
+
+  it("event を更新すると operation fingerprint が変わり、別 run で適用される", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const mateStorage = new MateStorage(dbPath, userDataPath);
+    const growthStorage = new MateGrowthStorage(dbPath);
+    const profileItemStorage = new MateProfileItemStorage(dbPath);
+    const eventId = "fingerprint-event-1";
+
+    try {
+      await mateStorage.createMate({ displayName: "Mika" });
+      const runId = growthStorage.createRun({
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        triggerReason: "test",
+      });
+
+      growthStorage.upsertEvent({
+        id: eventId,
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "repeated_user_behavior",
+        kind: "relationship",
+        targetSection: "bond",
+        statement: "ユーザーは短文を好む",
+        statementFingerprint: "short-message-preference",
+        targetClaimKey: "reply_length",
+        confidence: 82,
+        salienceScore: 68,
+        projectionAllowed: true,
+      });
+
+      const service = new MateGrowthApplyService(
+        growthStorage,
+        profileItemStorage,
+        mateStorage,
+      );
+      const first = await service.applyPendingGrowth({ runId });
+      assert.equal(typeof first.revisionId, "string");
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const firstRun = db.prepare(`
+          SELECT id, operation_id
+          FROM mate_growth_runs
+          WHERE output_revision_id = ?
+        `).get(first.revisionId) as {
+          id: number;
+          operation_id: string;
+        };
+
+        growthStorage.upsertEvent({
+          id: eventId,
+          sourceGrowthRunId: runId,
+          sourceType: "session",
+          sourceSessionId: "session-1",
+          growthSourceType: "repeated_user_behavior",
+          kind: "relationship",
+          targetSection: "bond",
+          statement: "ユーザーは短文を好む（さらに短く）",
+          statementFingerprint: "short-message-preference",
+          targetClaimKey: "reply_length",
+          confidence: 84,
+          salienceScore: 69,
+          projectionAllowed: true,
+        });
+
+        const second = await service.applyPendingGrowth({ runId });
+        assert.equal(typeof second.revisionId, "string");
+
+        const secondRun = db.prepare(`
+          SELECT id, operation_id
+          FROM mate_growth_runs
+          WHERE output_revision_id = ?
+        `).get(second.revisionId) as {
+          id: number;
+          operation_id: string;
+        };
+
+        assert.notEqual(firstRun.id, secondRun.id);
+        assert.notEqual(firstRun.operation_id, secondRun.operation_id);
+      } finally {
+        db.close();
+      }
+    } finally {
+      profileItemStorage.close();
+      growthStorage.close();
+      mateStorage.close();
+      await cleanup();
+    }
+  });
 });

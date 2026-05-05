@@ -186,6 +186,16 @@ type SavedEventRow = {
   state: MateGrowthEventState;
 };
 
+export type MateGrowthApplyRun = {
+  id: number;
+  operationId: string;
+  status: string;
+  candidateCount: number;
+  appliedCount: number;
+  invalidCount: number;
+  outputRevisionId: string | null;
+};
+
 type EventRow = {
   id: string;
   mate_id: string;
@@ -295,6 +305,58 @@ const UPDATE_RUN_SQL = `
     error_preview = ?,
     finished_at = ?
   WHERE id = ?
+`;
+
+const SELECT_GROWTH_RUN_BY_OPERATION_SQL = `
+  SELECT
+    id,
+    operation_id,
+    status,
+    candidate_count,
+    applied_count,
+    invalid_count,
+    output_revision_id
+  FROM mate_growth_runs
+  WHERE mate_id = ? AND operation_id = ?
+`;
+
+const SELECT_ACTIVE_GROWTH_APPLY_RUN_SQL = `
+  SELECT
+    id,
+    operation_id,
+    status,
+    candidate_count,
+    applied_count,
+    invalid_count,
+    output_revision_id
+  FROM mate_growth_runs
+  WHERE mate_id = ?
+    AND operation_id LIKE 'growth-apply:%'
+    AND status IN ('queued', 'applying')
+  ORDER BY id DESC
+  LIMIT 1
+`;
+
+const SET_GROWTH_APPLY_RUN_APPLYING_SQL = `
+  UPDATE mate_growth_runs
+  SET status = 'applying'
+  WHERE id = ?
+`;
+
+const RESET_FAILED_GROWTH_APPLY_RUN_SQL = `
+  UPDATE mate_growth_runs
+  SET
+    status = 'queued',
+    input_hash = ?,
+    output_revision_id = NULL,
+    output_hash = '',
+    candidate_count = ?,
+    applied_count = 0,
+    invalid_count = 0,
+    error_preview = '',
+    started_at = ?,
+    finished_at = NULL
+  WHERE id = ? AND status = 'failed'
 `;
 
 const INSERT_EVENT_SQL = `
@@ -700,6 +762,30 @@ function rowToCursor(row: CursorRow): MateGrowthCursor {
   };
 }
 
+function rowToGrowthApplyRun(row: {
+  id: number;
+  operation_id: string;
+  status: string;
+  candidate_count: number;
+  applied_count: number | null;
+  invalid_count: number | null;
+  output_revision_id: string | null;
+} | undefined): MateGrowthApplyRun | null {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    operationId: row.operation_id,
+    status: row.status,
+    candidateCount: row.candidate_count,
+    appliedCount: row.applied_count ?? 0,
+    invalidCount: row.invalid_count ?? 0,
+    outputRevisionId: row.output_revision_id,
+  };
+}
+
 function normalizeCursorLookup(input: MateGrowthCursorLookupInput): {
   cursorKey: MateGrowthCursorKey;
   scopeType: MateGrowthCursorScopeType;
@@ -1058,6 +1144,91 @@ export class MateGrowthStorage {
       now,
       runId,
     );
+  }
+
+  acquireGrowthApplyRun(input: {
+    operationId: string;
+    inputHash: string;
+    candidateCount: number;
+  }): { runId: number; operationId: string; isOwner: boolean } {
+    const operationId = normalizeText(input.operationId, "operationId");
+    const inputHash = normalizeText(input.inputHash, "inputHash");
+    const candidateCount = normalizeInteger(input.candidateCount, 0, "candidateCount");
+
+    return this.withTransaction(() => {
+      const existingRun = this.getGrowthApplyRunByOperationId(operationId);
+      if (existingRun) {
+        if (existingRun.status === "failed") {
+          const activeRun = this.getActiveGrowthApplyRun();
+          if (activeRun) {
+            throw new Error("Growth apply はすでに実行中です。");
+          }
+
+          this.db.prepare(RESET_FAILED_GROWTH_APPLY_RUN_SQL).run(
+            inputHash,
+            candidateCount,
+            nowIso(),
+            existingRun.id,
+          );
+          return { runId: existingRun.id, operationId, isOwner: true };
+        }
+
+        return { runId: existingRun.id, operationId, isOwner: false };
+      }
+
+      const activeRun = this.getActiveGrowthApplyRun();
+      if (activeRun) {
+        throw new Error("Growth apply はすでに実行中です。");
+      }
+
+      const runId = this.createRun({
+        sourceType: "system",
+        triggerReason: "apply pending growth",
+        operationId,
+        inputHash,
+        candidateCount,
+      });
+      return { runId, operationId, isOwner: true };
+    });
+  }
+
+  getGrowthApplyRunByOperationId(operationId: string): MateGrowthApplyRun | null {
+    const normalizedOperationId = normalizeText(operationId, "operationId");
+    const row = this.db.prepare(SELECT_GROWTH_RUN_BY_OPERATION_SQL).get(
+      MATE_ID,
+      normalizedOperationId,
+    ) as {
+      id: number;
+      operation_id: string;
+      status: string;
+      candidate_count: number;
+      applied_count: number;
+      invalid_count: number;
+      output_revision_id: string | null;
+    } | undefined;
+
+    return rowToGrowthApplyRun(row);
+  }
+
+  private getActiveGrowthApplyRun(): MateGrowthApplyRun | null {
+    const row = this.db.prepare(SELECT_ACTIVE_GROWTH_APPLY_RUN_SQL).get(
+      MATE_ID,
+    ) as {
+      id: number;
+      operation_id: string;
+      status: string;
+      candidate_count: number;
+      applied_count: number;
+      invalid_count: number;
+      output_revision_id: string | null;
+    } | undefined;
+
+    return rowToGrowthApplyRun(row);
+  }
+
+  markGrowthApplyRunApplying(runId: number): void {
+    const targetRunId = normalizeInteger(runId, 0, "runId");
+    this.db.prepare(SET_GROWTH_APPLY_RUN_APPLYING_SQL).run(targetRunId);
   }
 
   upsertEvent(input: MateGrowthEventInput): SavedMateGrowthEvent {

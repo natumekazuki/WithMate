@@ -2,6 +2,7 @@ import type {
   MateGrowthEvent,
   MateGrowthStorage,
 } from "./mate-growth-storage.js";
+import { createHash } from "node:crypto";
 import type {
   MateProfileItem,
   MateProfileItemCategory,
@@ -27,6 +28,8 @@ const APPLY_TARGET_SECTIONS = ["core", "bond", "work_style"] as const;
 const APPLYABLE_CORE_GROWTH_SOURCE_TYPES = ["explicit_user_instruction", "user_correction"] as const;
 
 const APPLYABLE_CORE_SOURCE_TYPES = ["mate_talk"] as const;
+const APPLY_PENDING_GROWTH_WAIT_MS = 50;
+const APPLY_PENDING_GROWTH_MAX_ATTEMPTS = 30;
 
 type SemanticEmbeddingIndexService = {
   indexGrowthEvent: (event: MateGrowthEvent) => Promise<unknown>;
@@ -62,67 +65,141 @@ export class MateGrowthApplyService {
 
     const applicableEvents = events.filter(isApplicableProfileEvent);
     const skippedEvents = events.filter((event) => !isApplicableProfileEvent(event));
+    const runFingerprint = buildGrowthApplyInputFingerprint(options, events);
+    const operationId = `growth-apply:${runFingerprint}`;
+    const lock = this.growthStorage.acquireGrowthApplyRun({
+      operationId,
+      inputHash: runFingerprint,
+      candidateCount: events.length,
+    });
 
-    for (const event of skippedEvents) {
-      this.growthStorage.markEventSkipped(event.id);
-    }
+    if (!lock.isOwner) {
+      const completedRunResult = await this.waitForExistingGrowthApplyRunResult(operationId);
+      if (completedRunResult) {
+        return completedRunResult;
+      }
 
-    if (applicableEvents.length === 0) {
-      return {
-        candidateCount: events.length,
-        appliedCount: 0,
-        skippedCount: skippedEvents.length,
-        revisionId: null,
-      };
+      throw new Error("Growth apply の完了待ちがタイムアウトしました。");
     }
 
     const appliedIndexTargets: Array<{
       event: MateGrowthEvent;
       profileItem: MateProfileItem;
     }> = [];
+    let updatedProfileRevisionId: string | null = null;
+    let result: ApplyPendingGrowthResult;
 
-    for (const event of applicableEvents) {
-      const upsertedItem = this.profileItemStorage.upsertProfileItem({
-        sectionKey: event.targetSection,
-        category: growthEventCategory(event),
-        claimKey: growthEventClaimKey(event),
-        claimValue: event.statement,
-        renderedText: event.statement,
-        normalizedClaim: event.statementFingerprint || event.statement,
-        confidence: event.confidence,
-        salienceScore: event.salienceScore,
-        recurrenceCount: event.recurrenceCount,
-        projectionAllowed: event.projectionAllowed,
-        sourceGrowthEventId: event.id,
-        tags: [
-          { type: "growth_kind", value: event.kind },
-          { type: "growth_source_type", value: event.growthSourceType },
-        ],
+    try {
+      this.growthStorage.markGrowthApplyRunApplying(lock.runId);
+
+      for (const event of skippedEvents) {
+        this.growthStorage.markEventSkipped(event.id);
+      }
+
+      if (applicableEvents.length === 0) {
+        result = {
+          candidateCount: events.length,
+          appliedCount: 0,
+          skippedCount: skippedEvents.length,
+          revisionId: null,
+        };
+        this.growthStorage.finishRun(lock.runId, {
+          appliedCount: result.appliedCount,
+          invalidCount: result.skippedCount,
+        });
+        return result;
+      }
+
+      for (const event of applicableEvents) {
+        const upsertedItem = this.profileItemStorage.upsertProfileItem({
+          sectionKey: event.targetSection,
+          category: growthEventCategory(event),
+          claimKey: growthEventClaimKey(event),
+          claimValue: event.statement,
+          renderedText: event.statement,
+          normalizedClaim: event.statementFingerprint || event.statement,
+          confidence: event.confidence,
+          salienceScore: event.salienceScore,
+          recurrenceCount: event.recurrenceCount,
+          projectionAllowed: event.projectionAllowed,
+          sourceGrowthEventId: event.id,
+          tags: [
+            { type: "growth_kind", value: event.kind },
+            { type: "growth_source_type", value: event.growthSourceType },
+          ],
+        });
+
+        appliedIndexTargets.push({ event, profileItem: upsertedItem });
+      }
+
+      const profileItems = this.profileItemStorage.listProfileItems({ state: "active" });
+      const renderedFiles = renderMateProfileFiles(profile, profileItems);
+      const updatedProfile = await this.mateStorage.applyProfileFiles({
+        sourceGrowthEventId: applicableEvents[0].id,
+        summary: `growth apply: ${applicableEvents.length} item(s)`,
+        files: renderedFiles,
       });
+      updatedProfileRevisionId = updatedProfile.activeRevisionId;
 
-      appliedIndexTargets.push({ event, profileItem: upsertedItem });
+      for (const event of applicableEvents) {
+        this.growthStorage.markEventApplied(event.id, updatedProfileRevisionId ?? undefined);
+      }
+      await this.indexAppliedGrowthBestEffort(appliedIndexTargets);
+
+      result = {
+        candidateCount: events.length,
+        appliedCount: applicableEvents.length,
+        skippedCount: skippedEvents.length,
+        revisionId: updatedProfileRevisionId,
+      };
+    } catch (error) {
+      this.growthStorage.failRun(lock.runId, error instanceof Error ? error.message : String(error));
+      throw error;
     }
 
-    const profileItems = this.profileItemStorage.listProfileItems({ state: "active" });
-    const renderedFiles = renderMateProfileFiles(profile, profileItems);
-    const updatedProfile = await this.mateStorage.applyProfileFiles({
-      sourceGrowthEventId: applicableEvents[0].id,
-      summary: `growth apply: ${applicableEvents.length} item(s)`,
-      files: renderedFiles,
+    this.growthStorage.finishRun(lock.runId, {
+      outputRevisionId: result.revisionId ?? undefined,
+      appliedCount: result.appliedCount,
+      invalidCount: result.skippedCount,
     });
 
-    for (const event of applicableEvents) {
-      this.growthStorage.markEventApplied(event.id, updatedProfile.activeRevisionId ?? undefined);
-    }
+    return result;
+  }
 
-    await this.indexAppliedGrowthBestEffort(appliedIndexTargets);
-
+  private buildApplyResultFromRun(run: {
+    candidateCount: number;
+    appliedCount: number;
+    invalidCount: number;
+    outputRevisionId: string | null;
+  }): ApplyPendingGrowthResult {
+    const candidateCount = Math.max(run.candidateCount, 0);
+    const appliedCount = Math.max(run.appliedCount, 0);
+    const skippedCount = Math.max(run.invalidCount, 0);
     return {
-      candidateCount: events.length,
-      appliedCount: applicableEvents.length,
-      skippedCount: skippedEvents.length,
-      revisionId: updatedProfile.activeRevisionId,
+      candidateCount,
+      appliedCount,
+      skippedCount,
+      revisionId: run.outputRevisionId,
     };
+  }
+
+  private async waitForExistingGrowthApplyRunResult(operationId: string): Promise<ApplyPendingGrowthResult | null> {
+    for (let attempt = 0; attempt < APPLY_PENDING_GROWTH_MAX_ATTEMPTS; attempt += 1) {
+      const run = this.growthStorage.getGrowthApplyRunByOperationId(operationId);
+      if (!run) {
+        return null;
+      }
+      if (run.status === "failed") {
+        throw new Error("Growth apply failed before completion.");
+      }
+      if (run.status !== "queued" && run.status !== "applying") {
+        return this.buildApplyResultFromRun(run);
+      }
+      if (attempt > 0) {
+        await new Promise((resolve) => setTimeout(resolve, APPLY_PENDING_GROWTH_WAIT_MS));
+      }
+    }
+    return null;
   }
 
   private async indexAppliedGrowthBestEffort(
@@ -140,6 +217,27 @@ export class MateGrowthApplyService {
       this.semanticEmbeddingIndexService!.indexProfileItem(profileItem),
     ]));
   }
+}
+
+function buildGrowthApplyInputFingerprint(options: ApplyPendingGrowthOptions, events: MateGrowthEvent[]): string {
+  const runId = options.runId === undefined ? null : options.runId;
+  const limit = options.limit === undefined ? null : options.limit;
+  const payload = {
+    runId,
+    limit,
+    events: events.map((event) => ({
+      id: event.id,
+      statementFingerprint: event.statementFingerprint,
+      statement: event.statement,
+      targetSection: event.targetSection,
+      targetClaimKey: event.targetClaimKey,
+      confidence: event.confidence,
+      salienceScore: event.salienceScore,
+      projectionAllowed: event.projectionAllowed,
+      updatedAt: event.updatedAt,
+    })),
+  };
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
 function isApplicableProfileEvent(event: MateGrowthEvent): event is MateGrowthEvent & {

@@ -551,6 +551,112 @@ describe("MateGrowthStorage", () => {
     }
   });
 
+  it("acquireGrowthApplyRun は同一 operation_id を同時利用時に lock を共有し、既存 run を再利用できる", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      const first = storage.acquireGrowthApplyRun({
+        operationId: "growth-apply:fingerprint-1",
+        inputHash: "fingerprint-1",
+        candidateCount: 3,
+      });
+      const second = storage.acquireGrowthApplyRun({
+        operationId: "growth-apply:fingerprint-1",
+        inputHash: "fingerprint-1",
+        candidateCount: 3,
+      });
+
+      assert.equal(first.isOwner, true);
+      assert.equal(second.isOwner, false);
+      assert.equal(second.runId, first.runId);
+
+      storage.markGrowthApplyRunApplying(first.runId);
+      storage.finishRun(first.runId, {
+        appliedCount: 2,
+        invalidCount: 1,
+      });
+
+      const run = storage.getGrowthApplyRunByOperationId("growth-apply:fingerprint-1");
+      assert.equal(run?.id, first.runId);
+      assert.equal(run?.status, "completed");
+      assert.equal(run?.candidateCount, 3);
+      assert.equal(run?.appliedCount, 2);
+      assert.equal(run?.outputRevisionId, null);
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("acquireGrowthApplyRun は failed の同一 operationId を owner として再取得する", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      const operationId = "growth-apply:reset-failed";
+      const first = storage.acquireGrowthApplyRun({
+        operationId,
+        inputHash: "input-fingerprint-1",
+        candidateCount: 1,
+      });
+
+      storage.failRun(first.runId, "temporary failure");
+
+      const second = storage.acquireGrowthApplyRun({
+        operationId,
+        inputHash: "input-fingerprint-2",
+        candidateCount: 3,
+      });
+      assert.equal(second.isOwner, true);
+      assert.equal(second.runId, first.runId);
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const runRow = db.prepare("SELECT input_hash, status, candidate_count FROM mate_growth_runs WHERE id = ?")
+          .get(second.runId) as {
+            input_hash: string;
+            status: string;
+            candidate_count: number;
+          };
+
+        assert.equal(runRow.input_hash, "input-fingerprint-2");
+        assert.equal(runRow.status, "queued");
+        assert.equal(runRow.candidate_count, 3);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("acquireGrowthApplyRun は別 operation の active growth-apply があるときエラーで拒否する", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      const active = storage.acquireGrowthApplyRun({
+        operationId: "growth-apply:active-a",
+        inputHash: "fingerprint-active-a",
+        candidateCount: 1,
+      });
+      storage.markGrowthApplyRunApplying(active.runId);
+
+      assert.throws(() => {
+        storage.acquireGrowthApplyRun({
+          operationId: "growth-apply:active-b",
+          inputHash: "fingerprint-active-b",
+          candidateCount: 2,
+        });
+      }, /Growth apply はすでに実行中です。/);
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
   it("failRun は run を failed 化し error_preview を保存する", async () => {
     const { dbPath, cleanup } = await createTempDbPath();
     const storage = new MateGrowthStorage(dbPath);
