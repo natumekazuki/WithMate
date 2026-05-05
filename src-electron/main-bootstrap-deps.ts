@@ -23,6 +23,7 @@ type CreateMainBootstrapDepsArgs = {
   cleanupStaleGrowthApplyRuns?: () => Promise<number>;
   growthApplyIntervalMs?: number;
   getGrowthApplyIntervalMs?: () => number | Promise<number>;
+  shouldRunGrowthApplyTimer?: () => boolean | Promise<boolean>;
   createGrowthApplyTimer?: (handler: () => void, intervalMs: number) => unknown;
   clearGrowthApplyTimer?: (timer: unknown) => void;
   ipcRegistration: CreateMainIpcRegistrationDepsArgs;
@@ -40,6 +41,7 @@ export function createMainBootstrapDeps(
     cleanupStaleGrowthApplyRuns: args.cleanupStaleGrowthApplyRuns,
     growthApplyIntervalMs: args.growthApplyIntervalMs,
     getGrowthApplyIntervalMs: args.getGrowthApplyIntervalMs,
+    shouldRunGrowthApplyTimer: args.shouldRunGrowthApplyTimer,
     createGrowthApplyTimer: args.createGrowthApplyTimer,
     clearGrowthApplyTimer: args.clearGrowthApplyTimer,
     registerIpcHandlers: () => {

@@ -1115,6 +1115,13 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               });
             },
             getGrowthApplyIntervalMs: () => resolveMateGrowthApplyIntervalMs(),
+            shouldRunGrowthApplyTimer: () => {
+              const settings = requireMateStorage().getMateGrowthSettings();
+              if (!settings) {
+                return true;
+              }
+              return settings.enabled !== false && settings.autoApplyEnabled !== false;
+            },
             createGrowthApplyTimer: (handler, intervalMs) => setInterval(handler, intervalMs),
             clearGrowthApplyTimer: (timer) => {
               clearInterval(timer as ReturnType<typeof setInterval>);

@@ -16,6 +16,7 @@ type MainBootstrapServiceDeps = {
   getGrowthApplyIntervalMs?: () => number | Promise<number>;
   createGrowthApplyTimer?: (handler: () => void, intervalMs: number) => unknown;
   clearGrowthApplyTimer?: (timer: unknown) => void;
+  shouldRunGrowthApplyTimer?: () => boolean | Promise<boolean>;
 };
 
 const DEFAULT_GROWTH_APPLY_INTERVAL_MS = 60 * 60 * 1000;
@@ -24,6 +25,7 @@ type GrowthApplyTimerHandle = unknown;
 export class MainBootstrapService {
   private readonly growthApplyIntervalMs: number;
   private readonly getGrowthApplyIntervalMs?: () => number | Promise<number>;
+  private readonly shouldRunGrowthApplyTimer?: () => boolean | Promise<boolean>;
   private readonly createGrowthApplyTimer: (handler: () => void, intervalMs: number) => unknown;
   private readonly clearGrowthApplyTimerHandle: (timer: unknown) => void;
   private growthApplyInFlight: ReturnType<MainBootstrapServiceDeps["applyPendingGrowth"]> | null = null;
@@ -32,6 +34,7 @@ export class MainBootstrapService {
   constructor(private readonly deps: MainBootstrapServiceDeps) {
     this.growthApplyIntervalMs = deps.growthApplyIntervalMs ?? DEFAULT_GROWTH_APPLY_INTERVAL_MS;
     this.getGrowthApplyIntervalMs = deps.getGrowthApplyIntervalMs;
+    this.shouldRunGrowthApplyTimer = deps.shouldRunGrowthApplyTimer;
     this.createGrowthApplyTimer = deps.createGrowthApplyTimer ?? ((handler, intervalMs) => {
       return setInterval(handler, intervalMs);
     });
@@ -47,6 +50,13 @@ export class MainBootstrapService {
 
     const mateState = await this.deps.getMateState();
     if (mateState === "not_created") {
+      return;
+    }
+
+    const shouldRun = this.shouldRunGrowthApplyTimer
+      ? await this.shouldRunGrowthApplyTimer()
+      : true;
+    if (!shouldRun) {
       return;
     }
 

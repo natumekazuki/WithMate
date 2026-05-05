@@ -198,6 +198,42 @@ test("handleReady で Mate が active の場合は Growth 設定由来の interv
   assert.equal(timerSpies.createdTimers[0]!.intervalMs, 2 * 60 * 1000);
 });
 
+test("shouldRunGrowthApplyTimer が false の場合、Mate active でも growth timer は作られない", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  let getGrowthApplyIntervalMsCalls = 0;
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "active";
+    },
+    async applyPendingGrowth() {
+      return zeroGrowthResult;
+    },
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+    shouldRunGrowthApplyTimer() {
+      return false;
+    },
+    getGrowthApplyIntervalMs() {
+      getGrowthApplyIntervalMsCalls += 1;
+      return 2 * 60 * 1000;
+    },
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.ensureGrowthApplyTimer();
+
+  assert.equal(timerSpies.createdTimers.length, 0);
+  assert.equal(timerSpies.events.includes("create"), false);
+  assert.equal(getGrowthApplyIntervalMsCalls, 0);
+});
+
 test("getGrowthApplyIntervalMs が無効値の場合は 1h fallback の timer を作り、usage/token 情報なしでも apply を実行できる", async () => {
   const timerSpies = createGrowthTimerSpies();
   let applied = 0;
