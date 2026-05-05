@@ -1365,11 +1365,6 @@ function getMateMemoryGenerationProviderIds(): string[] {
   return [...new Set(providerIds)];
 }
 
-function syncMateGrowthApplyIntervalFromAppSettings(settings: AppSettings = requireAppSettingsStorage().getSettings()): void {
-  const mateMemoryGenerationSettings = getMateMemoryGenerationSettings(settings);
-  requireMateStorage().updateMateGrowthApplyIntervalMinutes(mateMemoryGenerationSettings.triggerIntervalMinutes);
-}
-
 function getMateGrowthSettings(): ReturnType<MateStorage["getMateGrowthSettings"]> {
   return requireMateStorage().getMateGrowthSettings();
 }
@@ -1392,14 +1387,12 @@ async function restartMateGrowthApplyTimerIfMateActive(): Promise<void> {
 
 async function updateAppSettingsAndSyncMateGrowth(settings: AppSettings): Promise<AppSettings> {
   const savedSettings = requireAppSettingsStorage().updateSettings(settings);
-  syncMateGrowthApplyIntervalFromAppSettings(savedSettings);
   await restartMateGrowthApplyTimerIfMateActive();
   return savedSettings;
 }
 
 async function resetAppSettingsAndSyncMateGrowth(): Promise<AppSettings> {
   const savedSettings = requireAppSettingsStorage().resetSettings();
-  syncMateGrowthApplyIntervalFromAppSettings(savedSettings);
   await restartMateGrowthApplyTimerIfMateActive();
   return savedSettings;
 }
@@ -1497,7 +1490,6 @@ function requireMateStorage(): MateStorage {
 
 async function createMate(input: Parameters<MateStorage["createMate"]>[0]): ReturnType<MateStorage["createMate"]> {
   const profile = await requireMateStorage().createMate(input);
-  syncMateGrowthApplyIntervalFromAppSettings();
   await requireMainBootstrapService().ensureGrowthApplyTimer();
   await syncEnabledProviderInstructionTargetsForMateProfile(profile);
   return profile;

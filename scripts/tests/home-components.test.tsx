@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import React from "react";
+import React, { isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
@@ -12,9 +12,18 @@ import {
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { buildHomeProviderSettingRows } from "../../src/home-settings-view-model.js";
+import type { MateGrowthSettings } from "../../src/mate-state.js";
 import type { MateEmbeddingSettings } from "../../src/mate-embedding-settings.js";
 import { formatTimestampLabel } from "../../src/time-state.js";
 import {
+  SETTINGS_MATE_GROWTH_APPLY_INTERVAL_MINUTES_LABEL,
+  SETTINGS_MATE_GROWTH_AUTO_APPLY_ENABLED_LABEL,
+  SETTINGS_MATE_GROWTH_EVERY_TURN_LABEL,
+  SETTINGS_MATE_GROWTH_ENABLED_LABEL,
+  SETTINGS_MATE_GROWTH_MANUAL_LABEL,
+  SETTINGS_MATE_GROWTH_MEMORY_CANDIDATE_MODE_LABEL,
+  SETTINGS_MATE_GROWTH_SETTINGS_LABEL,
+  SETTINGS_MATE_GROWTH_THRESHOLD_LABEL,
   SETTINGS_MATE_EMBEDDING_LABEL,
   SETTINGS_MATE_RESET_HELP,
   SETTINGS_MATE_RESET_LABEL,
@@ -50,80 +59,129 @@ describe("HomeSettingsContent", () => {
   const settingsDraft = createDefaultAppSettings();
   const providerSettingRows = buildHomeProviderSettingRows(modelCatalog, settingsDraft);
   const noOp = (..._args: unknown[]) => undefined;
+  const nextMateGrowthSettings: MateGrowthSettings = {
+    enabled: true,
+    autoApplyEnabled: true,
+    memoryCandidateMode: "every_turn",
+    applyIntervalMinutes: 5,
+    updatedAt: "2026-05-01T09:00:00.000Z",
+  };
+  const disabledMateGrowthSettings: MateGrowthSettings = {
+    ...nextMateGrowthSettings,
+    enabled: false,
+  };
 
-  const renderSettings = (params?: {
+  type RenderSettingsParams = {
     applyPendingGrowth?: boolean;
     canApplyPendingGrowth?: boolean;
     applyPendingGrowthBusy?: boolean;
     canResetMate?: boolean;
     mateResetBusy?: boolean;
-  }) => renderToStaticMarkup(
-    <HomeSettingsContent
-      settingsDraft={settingsDraft}
-      providerSettingRows={providerSettingRows}
-      modelCatalogRevisionLabel={String(modelCatalog.revision)}
-      settingsDirty={false}
-      settingsFeedback=""
-      memoryManagementSnapshot={null}
-      memoryManagementPages={{
-        session: { nextCursor: null, hasMore: false, total: 0 },
-        project: { nextCursor: null, hasMore: false, total: 0 },
-        character: { nextCursor: null, hasMore: false, total: 0 },
-        mate_profile: { nextCursor: null, hasMore: false, total: 0 },
-      }}
-      memoryManagementLoading={false}
-      memoryManagementBusyTarget={null}
-      memoryManagementFeedback=""
-      mateEmbeddingSettings={null}
-      mateEmbeddingFeedback=""
-      mateEmbeddingBusy={false}
-      onChangeSystemPromptPrefix={noOp}
-      onChangeMemoryGenerationEnabled={noOp}
-      onChangeMateMemoryGenerationPriorityProvider={noOp}
-      onChangeMateMemoryGenerationPriorityModel={noOp}
-      onChangeMateMemoryGenerationPriorityReasoningEffort={noOp}
-      onChangeMateMemoryGenerationPriorityTimeoutSeconds={noOp}
-      onChangeMateMemoryGenerationTriggerIntervalMinutes={noOp}
-      onChangeAutoCollapseActionDockOnSend={noOp}
-      onChangeProviderEnabled={noOp}
-      onChangeProviderInstructionEnabled={noOp}
-      onChangeProviderInstructionWriteMode={noOp}
-      onChangeProviderInstructionFailPolicy={noOp}
-      onChangeProviderInstructionRootDirectory={noOp}
-      onChangeProviderInstructionInstructionRelativePath={noOp}
-      onChangeProviderSkillRootPath={noOp}
-      onBrowseProviderSkillRootPath={noOp}
-      onChangeMemoryExtractionModel={noOp}
-      onChangeMemoryExtractionReasoningEffort={noOp}
-      onChangeMemoryExtractionThreshold={noOp}
-      onChangeMemoryExtractionTimeoutSeconds={noOp}
-      onChangeCharacterReflectionModel={noOp}
-      onChangeCharacterReflectionReasoningEffort={noOp}
-      onChangeCharacterReflectionTimeoutSeconds={noOp}
-      onChangeCharacterReflectionCooldownSeconds={noOp}
-      onChangeCharacterReflectionCharDeltaThreshold={noOp}
-      onChangeCharacterReflectionMessageDeltaThreshold={noOp}
-      onImportModelCatalog={noOp}
-      onExportModelCatalog={noOp}
-      onOpenAppLogFolder={noOp}
-      onOpenCrashDumpFolder={noOp}
-      onReloadMemoryManagement={noOp}
-      onChangeMemoryManagementViewFilters={noOp}
-      onLoadMoreMemoryManagement={noOp}
-      onDeleteSessionMemory={noOp}
-      onDeleteProjectMemoryEntry={noOp}
-      onDeleteCharacterMemoryEntry={noOp}
-      onDeleteMateProfileItem={noOp}
-      onStartMateEmbeddingDownload={noOp}
-      onApplyPendingGrowth={params?.applyPendingGrowth ? noOp : undefined}
-      canApplyPendingGrowth={params?.canApplyPendingGrowth}
-      applyPendingGrowthBusy={params?.applyPendingGrowthBusy}
-      onResetMate={noOp}
-      canResetMate={params?.canResetMate ?? false}
-      mateResetBusy={params?.mateResetBusy ?? false}
-      onSaveSettings={noOp}
-    />
-  );
+    mateGrowthSettings?: MateGrowthSettings | null;
+    mateGrowthBusy?: boolean;
+    mateGrowthFeedback?: string;
+    onUpdateMateGrowthSettings?: (input: unknown) => void;
+  };
+
+  const collectElementsById = (node: ReactNode, predicate: (element: React.ReactElement) => boolean): React.ReactElement[] => {
+    const result: React.ReactElement[] = [];
+    const visitNode = (currentNode: ReactNode) => {
+      if (!isValidElement(currentNode)) {
+        return;
+      }
+
+      if (predicate(currentNode)) {
+        result.push(currentNode);
+      }
+
+      const children = currentNode.props.children;
+      if (Array.isArray(children)) {
+        children.forEach((child) => visitNode(child as ReactNode));
+        return;
+      }
+
+      if (children === null || children === undefined || typeof children === "boolean") {
+        return;
+      }
+
+      visitNode(children as ReactNode);
+    };
+
+    visitNode(node);
+    return result;
+  };
+
+  const buildSettingsContent = (params?: RenderSettingsParams) => HomeSettingsContent({
+    settingsDraft,
+    providerSettingRows,
+    modelCatalogRevisionLabel: String(modelCatalog.revision),
+    settingsDirty: false,
+    settingsFeedback: "",
+    memoryManagementSnapshot: null,
+    memoryManagementPages: {
+      session: { nextCursor: null, hasMore: false, total: 0 },
+      project: { nextCursor: null, hasMore: false, total: 0 },
+      character: { nextCursor: null, hasMore: false, total: 0 },
+      mate_profile: { nextCursor: null, hasMore: false, total: 0 },
+    },
+    memoryManagementLoading: false,
+    memoryManagementBusyTarget: null,
+    memoryManagementFeedback: "",
+    mateGrowthSettings: params && "mateGrowthSettings" in params ? params.mateGrowthSettings ?? null : nextMateGrowthSettings,
+    mateGrowthFeedback: params?.mateGrowthFeedback ?? "",
+    mateGrowthBusy: params?.mateGrowthBusy ?? false,
+    mateEmbeddingSettings: null,
+    mateEmbeddingFeedback: "",
+    mateEmbeddingBusy: false,
+    onChangeSystemPromptPrefix: noOp,
+    onChangeMemoryGenerationEnabled: noOp,
+    onChangeMateMemoryGenerationPriorityProvider: noOp,
+    onChangeMateMemoryGenerationPriorityModel: noOp,
+    onChangeMateMemoryGenerationPriorityReasoningEffort: noOp,
+    onChangeMateMemoryGenerationPriorityTimeoutSeconds: noOp,
+    onChangeMateMemoryGenerationTriggerIntervalMinutes: noOp,
+    onChangeAutoCollapseActionDockOnSend: noOp,
+    onChangeProviderEnabled: noOp,
+    onChangeProviderInstructionEnabled: noOp,
+    onChangeProviderInstructionWriteMode: noOp,
+    onChangeProviderInstructionFailPolicy: noOp,
+    onChangeProviderInstructionRootDirectory: noOp,
+    onChangeProviderInstructionInstructionRelativePath: noOp,
+    onChangeProviderSkillRootPath: noOp,
+    onBrowseProviderSkillRootPath: noOp,
+    onChangeMemoryExtractionModel: noOp,
+    onChangeMemoryExtractionReasoningEffort: noOp,
+    onChangeMemoryExtractionThreshold: noOp,
+    onChangeMemoryExtractionTimeoutSeconds: noOp,
+    onChangeCharacterReflectionModel: noOp,
+    onChangeCharacterReflectionReasoningEffort: noOp,
+    onChangeCharacterReflectionTimeoutSeconds: noOp,
+    onChangeCharacterReflectionCooldownSeconds: noOp,
+    onChangeCharacterReflectionCharDeltaThreshold: noOp,
+    onChangeCharacterReflectionMessageDeltaThreshold: noOp,
+    onImportModelCatalog: noOp,
+    onExportModelCatalog: noOp,
+    onOpenAppLogFolder: noOp,
+    onOpenCrashDumpFolder: noOp,
+    onReloadMemoryManagement: noOp,
+    onChangeMemoryManagementViewFilters: noOp,
+    onLoadMoreMemoryManagement: noOp,
+    onDeleteSessionMemory: noOp,
+    onDeleteProjectMemoryEntry: noOp,
+    onDeleteCharacterMemoryEntry: noOp,
+    onDeleteMateProfileItem: noOp,
+    onStartMateEmbeddingDownload: noOp,
+    onApplyPendingGrowth: params?.applyPendingGrowth ? noOp : undefined,
+    canApplyPendingGrowth: params?.canApplyPendingGrowth,
+    applyPendingGrowthBusy: params?.applyPendingGrowthBusy,
+    onUpdateMateGrowthSettings: params?.onUpdateMateGrowthSettings ?? noOp,
+    onResetMate: noOp,
+    canResetMate: params?.canResetMate ?? false,
+    mateResetBusy: params?.mateResetBusy ?? false,
+    onSaveSettings: noOp,
+  });
+
+  const renderSettings = (params?: RenderSettingsParams) => renderToStaticMarkup(buildSettingsContent(params));
 
   const extractResetButton = (html: string) => {
     const resetLabelIndex = html.indexOf(`<strong>${SETTINGS_MATE_RESET_LABEL}</strong>`);
@@ -139,6 +197,19 @@ describe("HomeSettingsContent", () => {
     const growthButtonEndIndex = html.indexOf("</button>", growthButtonIndex);
     assert.ok(growthLabelIndex >= 0 && growthButtonIndex >= 0 && growthButtonEndIndex >= 0);
     return html.slice(growthButtonIndex, growthButtonEndIndex + 9);
+  };
+
+  const collectGrowthInputElements = (params?: RenderSettingsParams) => {
+    const content = buildSettingsContent(params);
+    const byId = (id: string, type: "input" | "select") =>
+      collectElementsById(content, (element) => element.type === type && element.props.id === id);
+
+    return {
+      enabled: byId("mate-growth-enabled", "input")[0],
+      autoApplyEnabled: byId("mate-growth-auto-apply-enabled", "input")[0],
+      memoryCandidateMode: byId("mate-growth-memory-candidate-mode", "select")[0],
+      applyIntervalMinutes: byId("mate-growth-apply-interval-minutes", "input")[0],
+    };
   };
 
   it("Mate Memory Generation のセクションが表示される", () => {
@@ -162,6 +233,94 @@ describe("HomeSettingsContent", () => {
     const html = renderSettings({ applyPendingGrowth: true });
     assert.ok(html.includes(`<strong>${SETTINGS_MATE_GROWTH_LABEL}</strong>`));
     assert.ok(html.includes(`<p class="settings-help">${SETTINGS_MATE_GROWTH_HELP}</p>`));
+  });
+
+  it("Mate Growth 設定セクションが表示される", () => {
+    const html = renderSettings();
+    assert.ok(html.includes(`<strong>${SETTINGS_MATE_GROWTH_SETTINGS_LABEL}</strong>`));
+    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_ENABLED_LABEL}</span>`));
+    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_AUTO_APPLY_ENABLED_LABEL}</span>`));
+    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_MEMORY_CANDIDATE_MODE_LABEL}</span>`));
+    assert.ok(/<option value="every_turn"[^>]*>every_turn<\/option>/.test(html));
+    assert.ok(/<option value="threshold"[^>]*>threshold<\/option>/.test(html));
+    assert.ok(/<option value="manual"[^>]*>manual<\/option>/.test(html));
+    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_APPLY_INTERVAL_MINUTES_LABEL}</span>`));
+  });
+
+  it("Growth 設定の checkbox/select/input 変更で onUpdate callback が呼ばれる", () => {
+    const updates: Array<Record<string, unknown>> = [];
+    const { enabled, autoApplyEnabled, memoryCandidateMode, applyIntervalMinutes } = collectGrowthInputElements({
+      onUpdateMateGrowthSettings: (input) => {
+        updates.push(input as Record<string, unknown>);
+      },
+    });
+
+    if (!enabled || !autoApplyEnabled || !memoryCandidateMode || !applyIntervalMinutes) {
+      throw new Error("Growth 設定 input が取得できませんでした。");
+    }
+
+    enabled.props.onChange({ target: { checked: false } } as { target: { checked: boolean } });
+    autoApplyEnabled.props.onChange({ target: { checked: true } } as { target: { checked: boolean } });
+    memoryCandidateMode.props.onChange({ target: { value: "manual" } } as { target: { value: string } });
+    applyIntervalMinutes.props.onChange({ target: { value: "15" } } as { target: { value: string } });
+
+    assert.equal(updates.length, 4);
+    assert.deepEqual(updates[0], { enabled: false });
+    assert.deepEqual(updates[1], { autoApplyEnabled: true });
+    assert.deepEqual(updates[2], { memoryCandidateMode: "manual" });
+    assert.deepEqual(updates[3], { applyIntervalMinutes: 15 });
+  });
+
+  it("Growth 設定の interval input が空文字のとき onUpdate callback は呼ばれない", () => {
+    const updates: Array<Record<string, unknown>> = [];
+    const { applyIntervalMinutes } = collectGrowthInputElements({
+      onUpdateMateGrowthSettings: (input) => {
+        updates.push(input as Record<string, unknown>);
+      },
+    });
+
+    if (!applyIntervalMinutes) {
+      throw new Error("Growth 設定 interval input が取得できませんでした。");
+    }
+
+    applyIntervalMinutes.props.onChange({ target: { value: "" } } as { target: { value: string } });
+
+    assert.deepEqual(updates, []);
+  });
+
+  it("mateGrowthSettings が null のとき成長設定コントロールは操作不可", () => {
+    const elements = collectGrowthInputElements({ mateGrowthSettings: null });
+    if (!elements.enabled || !elements.autoApplyEnabled || !elements.memoryCandidateMode || !elements.applyIntervalMinutes) {
+      throw new Error("Growth 設定 input が見つからないためテストを実行できません。");
+    }
+    assert.ok(elements.enabled.props.disabled);
+    assert.ok(elements.autoApplyEnabled.props.disabled);
+    assert.ok(elements.memoryCandidateMode.props.disabled);
+    assert.ok(elements.applyIntervalMinutes.props.disabled);
+  });
+
+  it("mateGrowthBusy=true のとき成長設定コントロールは操作不可", () => {
+    const html = renderSettings({ mateGrowthBusy: true, mateGrowthFeedback: "更新中..." });
+    const elements = collectGrowthInputElements({ mateGrowthBusy: true });
+    if (!elements.enabled || !elements.autoApplyEnabled || !elements.memoryCandidateMode || !elements.applyIntervalMinutes) {
+      throw new Error("Growth 設定 input が見つからないためテストを実行できません。");
+    }
+    assert.ok(elements.enabled.props.disabled);
+    assert.ok(elements.autoApplyEnabled.props.disabled);
+    assert.ok(elements.memoryCandidateMode.props.disabled);
+    assert.ok(elements.applyIntervalMinutes.props.disabled);
+    assert.ok(html.includes("更新中..."));
+  });
+
+  it("mateGrowthSettings.enabled=false のとき有効化以外の成長設定コントロールは操作不可", () => {
+    const elements = collectGrowthInputElements({ mateGrowthSettings: disabledMateGrowthSettings });
+    if (!elements.enabled || !elements.autoApplyEnabled || !elements.memoryCandidateMode || !elements.applyIntervalMinutes) {
+      throw new Error("Growth 設定 input が見つからないためテストを実行できません。");
+    }
+    assert.equal(elements.enabled.props.disabled, false);
+    assert.ok(elements.autoApplyEnabled.props.disabled);
+    assert.ok(elements.memoryCandidateMode.props.disabled);
+    assert.ok(elements.applyIntervalMinutes.props.disabled);
   });
 
   it("canResetMate=false のときリセットボタンは無効化される", () => {
@@ -195,6 +354,16 @@ describe("HomeSettingsContent", () => {
     const html = renderSettings({ applyPendingGrowth: true, canApplyPendingGrowth: true });
     const buttonHtml = extractGrowthButton(html);
     assert.ok(!buttonHtml.includes("disabled=\"\""));
+  });
+
+  it("mateGrowthSettings.enabled=false のとき適用ボタンは無効", () => {
+    const html = renderSettings({
+      applyPendingGrowth: true,
+      canApplyPendingGrowth: true,
+      mateGrowthSettings: disabledMateGrowthSettings,
+    });
+    const buttonHtml = extractGrowthButton(html);
+    assert.ok(buttonHtml.includes("disabled=\"\""));
   });
 
   it("applyPendingGrowthBusy=true のとき適用ボタンは無効化され「適用中...」が表示される", () => {
@@ -243,6 +412,9 @@ describe("HomeSettingsContent", () => {
         memoryManagementLoading={false}
         memoryManagementBusyTarget={null}
         memoryManagementFeedback=""
+        mateGrowthSettings={nextMateGrowthSettings}
+        mateGrowthFeedback=""
+        mateGrowthBusy={false}
         mateEmbeddingSettings={mateEmbeddingSettings}
         mateEmbeddingFeedback=""
         mateEmbeddingBusy={false}
@@ -284,6 +456,7 @@ describe("HomeSettingsContent", () => {
         onDeleteCharacterMemoryEntry={noOp}
         onDeleteMateProfileItem={noOp}
         onStartMateEmbeddingDownload={noOp}
+        onUpdateMateGrowthSettings={noOp}
         onSaveSettings={noOp}
       />,
     );
@@ -378,6 +551,10 @@ describe("HomeSettingsContent", () => {
         onDeleteCharacterMemoryEntry={noOp}
         onDeleteMateProfileItem={noOp}
         onStartMateEmbeddingDownload={noOp}
+        mateGrowthSettings={nextMateGrowthSettings}
+        mateGrowthFeedback=""
+        mateGrowthBusy={false}
+        onUpdateMateGrowthSettings={noOp}
         onSaveSettings={noOp}
       />,
     );
@@ -468,6 +645,10 @@ describe("HomeSettingsContent", () => {
         onDeleteCharacterMemoryEntry={noOp}
         onDeleteMateProfileItem={noOp}
         onStartMateEmbeddingDownload={noOp}
+        mateGrowthSettings={nextMateGrowthSettings}
+        mateGrowthFeedback=""
+        mateGrowthBusy={false}
+        onUpdateMateGrowthSettings={noOp}
         onSaveSettings={noOp}
       />,
     );

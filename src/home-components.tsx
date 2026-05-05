@@ -8,6 +8,7 @@ import type {
 } from "./app-state.js";
 import type { MateEmbeddingSettings } from "./mate-embedding-settings.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
+import type { MateGrowthCandidateMode, MateGrowthSettings } from "./mate-state.js";
 import type {
   MemoryManagementDomain,
   MemoryManagementDomainPageInfo,
@@ -58,6 +59,14 @@ import {
   SETTINGS_MATE_EMBEDDING_DOWNLOAD_LABEL,
   SETTINGS_MATE_EMBEDDING_LABEL,
   SETTINGS_MATE_EMBEDDING_MODEL_LABEL,
+  SETTINGS_MATE_GROWTH_APPLY_INTERVAL_MINUTES_LABEL,
+  SETTINGS_MATE_GROWTH_AUTO_APPLY_ENABLED_LABEL,
+  SETTINGS_MATE_GROWTH_ENABLED_LABEL,
+  SETTINGS_MATE_GROWTH_EVERY_TURN_LABEL,
+  SETTINGS_MATE_GROWTH_MANUAL_LABEL,
+  SETTINGS_MATE_GROWTH_MEMORY_CANDIDATE_MODE_LABEL,
+  SETTINGS_MATE_GROWTH_SETTINGS_LABEL,
+  SETTINGS_MATE_GROWTH_THRESHOLD_LABEL,
   SETTINGS_MATE_GROWTH_HELP,
   SETTINGS_MATE_GROWTH_LABEL,
   SETTINGS_MATE_RESET_HELP,
@@ -87,6 +96,9 @@ export type HomeSettingsContentProps = {
   memoryManagementLoading: boolean;
   memoryManagementBusyTarget: string | null;
   memoryManagementFeedback: string;
+  mateGrowthSettings: MateGrowthSettings | null;
+  mateGrowthFeedback: string;
+  mateGrowthBusy: boolean;
   mateEmbeddingSettings: MateEmbeddingSettings | null;
   mateEmbeddingFeedback: string;
   mateEmbeddingBusy: boolean;
@@ -140,6 +152,12 @@ export type HomeSettingsContentProps = {
   onApplyPendingGrowth?: () => void;
   applyPendingGrowthBusy?: boolean;
   canApplyPendingGrowth?: boolean;
+  onUpdateMateGrowthSettings: (input: {
+    enabled?: boolean;
+    autoApplyEnabled?: boolean;
+    memoryCandidateMode?: MateGrowthCandidateMode;
+    applyIntervalMinutes?: number;
+  }) => void;
   onResetMate?: () => void;
   mateResetBusy?: boolean;
   canResetMate?: boolean;
@@ -177,6 +195,9 @@ export function HomeSettingsContent({
   memoryManagementLoading,
   memoryManagementBusyTarget,
   memoryManagementFeedback,
+  mateGrowthSettings,
+  mateGrowthFeedback,
+  mateGrowthBusy = false,
   mateEmbeddingSettings,
   mateEmbeddingFeedback,
   mateEmbeddingBusy,
@@ -222,6 +243,7 @@ export function HomeSettingsContent({
   onApplyPendingGrowth,
   applyPendingGrowthBusy = false,
   canApplyPendingGrowth = false,
+  onUpdateMateGrowthSettings,
   onResetMate,
   mateResetBusy = false,
   canResetMate = false,
@@ -270,6 +292,9 @@ export function HomeSettingsContent({
     mateMemoryGenerationPriority?.reasoningEffort ??
     mateMemoryGenerationModel?.reasoningEfforts[0] ??
     "high";
+  const isMateGrowthUnavailable = mateGrowthBusy || mateGrowthSettings === null;
+  const isMateGrowthFeatureDisabled = mateGrowthSettings?.enabled === false;
+  const isMateGrowthControlDisabled = isMateGrowthUnavailable || isMateGrowthFeatureDisabled;
 
   return (
     <>
@@ -547,7 +572,7 @@ export function HomeSettingsContent({
                     className="launch-toggle"
                     type="button"
                     onClick={onApplyPendingGrowth}
-                    disabled={!canApplyPendingGrowth || applyPendingGrowthBusy}
+                    disabled={isMateGrowthControlDisabled || applyPendingGrowthBusy || !canApplyPendingGrowth}
                   >
                     {applyPendingGrowthBusy ? "適用中..." : SETTINGS_MATE_GROWTH_LABEL}
                   </button>
@@ -555,6 +580,72 @@ export function HomeSettingsContent({
               </div>
             </section>
           ) : null}
+
+          <section className="settings-section-card">
+            <div className="settings-field">
+              <strong>{SETTINGS_MATE_GROWTH_SETTINGS_LABEL}</strong>
+              <label className="settings-provider-toggle-row settings-section-toggle">
+                <span>{SETTINGS_MATE_GROWTH_ENABLED_LABEL}</span>
+                <input
+                  id="mate-growth-enabled"
+                  type="checkbox"
+                  checked={mateGrowthSettings?.enabled ?? false}
+                  disabled={isMateGrowthUnavailable}
+                  onChange={(event) => onUpdateMateGrowthSettings({
+                    enabled: event.target.checked,
+                  })}
+                />
+              </label>
+              <label className="settings-provider-toggle-row settings-section-toggle">
+                <span>{SETTINGS_MATE_GROWTH_AUTO_APPLY_ENABLED_LABEL}</span>
+                <input
+                  id="mate-growth-auto-apply-enabled"
+                  type="checkbox"
+                  checked={mateGrowthSettings?.autoApplyEnabled ?? false}
+                  disabled={isMateGrowthControlDisabled}
+                  onChange={(event) => onUpdateMateGrowthSettings({
+                    autoApplyEnabled: event.target.checked,
+                  })}
+                />
+              </label>
+              <label className="settings-provider-input">
+                <span>{SETTINGS_MATE_GROWTH_MEMORY_CANDIDATE_MODE_LABEL}</span>
+                <select
+                  id="mate-growth-memory-candidate-mode"
+                  value={mateGrowthSettings?.memoryCandidateMode ?? "every_turn"}
+                  disabled={isMateGrowthControlDisabled}
+                  onChange={(event) => onUpdateMateGrowthSettings({
+                    memoryCandidateMode: event.target.value as "every_turn" | "threshold" | "manual",
+                  })}
+                >
+                  <option value="every_turn">{SETTINGS_MATE_GROWTH_EVERY_TURN_LABEL}</option>
+                  <option value="threshold">{SETTINGS_MATE_GROWTH_THRESHOLD_LABEL}</option>
+                  <option value="manual">{SETTINGS_MATE_GROWTH_MANUAL_LABEL}</option>
+                </select>
+              </label>
+              <label className="settings-provider-input">
+                <span>{SETTINGS_MATE_GROWTH_APPLY_INTERVAL_MINUTES_LABEL}</span>
+                <input
+                  id="mate-growth-apply-interval-minutes"
+                  type="number"
+                  min={1}
+                  value={mateGrowthSettings?.applyIntervalMinutes ?? 1}
+                  disabled={isMateGrowthControlDisabled}
+                  onChange={(event) => {
+                    if (event.target.value.trim() === "") {
+                      return;
+                    }
+                    const nextApplyIntervalMinutes = Number(event.target.value);
+                    if (Number.isNaN(nextApplyIntervalMinutes)) {
+                      return;
+                    }
+                    onUpdateMateGrowthSettings({ applyIntervalMinutes: nextApplyIntervalMinutes });
+                  }}
+                />
+              </label>
+              {mateGrowthFeedback ? <p className="settings-feedback">{mateGrowthFeedback}</p> : null}
+            </div>
+          </section>
 
           <section className="settings-section-card danger-zone">
             <div className="settings-field">
