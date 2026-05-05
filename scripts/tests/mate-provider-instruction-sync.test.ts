@@ -314,6 +314,80 @@ describe("syncEnabledProviderInstructionTargets", () => {
     }
   });
 
+  it("projectionAllowed: false のセクションを storage-backed synced target では除外する", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+    const targetPath = path.join(workspacePath, "AGENTS.md");
+
+    try {
+      storage.upsertTarget({
+        providerId: "copilot",
+        enabled: true,
+        rootDirectory: workspacePath,
+        instructionRelativePath: "AGENTS.md",
+        writeMode: "managed_block",
+        failPolicy: "warn_continue",
+      });
+
+      const profile = createProfile({
+        sections: [
+          {
+            sectionKey: "core",
+            filePath: path.join(workspacePath, "mate", "core.md"),
+            sha256: "sha256-core",
+            byteSize: 12,
+            updatedByRevisionId: "revision-1",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+          {
+            sectionKey: "bond",
+            filePath: path.join(workspacePath, "mate", "bond.md"),
+            sha256: "sha256-bond",
+            byteSize: 12,
+            updatedByRevisionId: "revision-1",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            projectionAllowed: false,
+          },
+          {
+            sectionKey: "work_style",
+            filePath: path.join(workspacePath, "mate", "work-style.md"),
+            sha256: "sha256-work-style",
+            byteSize: 16,
+            updatedByRevisionId: "revision-1",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      });
+
+      const result = await syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES);
+      const target = storage.getTarget("copilot", "main");
+      if (!target) {
+        throw new Error("target がありません");
+      }
+
+      const updated = await readFile(targetPath, "utf8");
+
+      assert.equal(result.targetCount, 1);
+      assert.equal(result.syncedCount, 1);
+      assert.equal(result.failedCount, 0);
+      assert.equal(result.skippedCount, 0);
+      assert.equal(result.runIds.length, 1);
+      assert.equal(result.runIds[0], target.lastSyncRunId);
+      assert.equal(target.lastSyncState, "synced");
+      assert.equal(updated.includes("- **core:** `mate/core.md`"), true);
+      assert.equal(updated.includes("- **work_style:** `mate/work-style.md`"), true);
+      assert.equal(updated.includes("- **bond:**"), false);
+      assert.equal(updated.includes("- **bond:** `mate/bond.md`"), false);
+      assert.equal(updated.includes("bond.md"), false);
+    } finally {
+      storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("redaction_required の target は同期せず状態を維持する", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
     const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
