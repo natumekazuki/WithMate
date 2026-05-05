@@ -198,6 +198,43 @@ test("handleReady で Mate が active の場合は Growth 設定由来の interv
   assert.equal(timerSpies.createdTimers[0]!.intervalMs, 2 * 60 * 1000);
 });
 
+test("getGrowthApplyIntervalMs が無効値の場合は 1h fallback の timer を作り、usage/token 情報なしでも apply を実行できる", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  let applied = 0;
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "active";
+    },
+    async applyPendingGrowth() {
+      applied += 1;
+      return zeroGrowthResult;
+    },
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+    getGrowthApplyIntervalMs() {
+      return Number.NaN;
+    },
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.ensureGrowthApplyTimer();
+  assert.equal(timerSpies.createdTimers.length, 1);
+  assert.equal(timerSpies.createdTimers[0]!.intervalMs, 60 * 60 * 1000);
+  assert.equal(timerSpies.events.filter((event) => event === "create").length, 1);
+
+  timerSpies.createdTimers[0]!.handler();
+  await Promise.resolve();
+
+  assert.equal(applied, 1);
+});
+
 test("handleReady で Mate が not_created の場合は Growth timer が作成されない", async () => {
   const timerSpies = createGrowthTimerSpies();
   const service = new MainBootstrapService({
