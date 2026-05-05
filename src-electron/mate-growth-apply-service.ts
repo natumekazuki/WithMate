@@ -3,6 +3,7 @@ import type {
   MateGrowthStorage,
 } from "./mate-growth-storage.js";
 import { createHash } from "node:crypto";
+import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
 import type {
   MateProfileItem,
   MateProfileItemCategory,
@@ -18,12 +19,7 @@ type ApplyPendingGrowthOptions = {
   limit?: number;
 };
 
-export type ApplyPendingGrowthResult = {
-  candidateCount: number;
-  appliedCount: number;
-  skippedCount: number;
-  revisionId: string | null;
-};
+export type ApplyPendingGrowthResult = MateGrowthApplyResult;
 
 const APPLY_TARGET_SECTIONS = ["core", "bond", "work_style", "project_digest"] as const;
 const APPLYABLE_CORE_GROWTH_SOURCE_TYPES = ["explicit_user_instruction", "user_correction"] as const;

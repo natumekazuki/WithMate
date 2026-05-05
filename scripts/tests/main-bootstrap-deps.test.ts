@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { MateGrowthApplyResult } from "../../src/mate-growth-apply-result.js";
 import { createMainBootstrapDeps } from "../../src-electron/main-bootstrap-deps.js";
+
+const zeroGrowthResult: MateGrowthApplyResult = {
+  candidateCount: 0,
+  appliedCount: 0,
+  skippedCount: 0,
+  revisionId: null,
+};
 
 test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMainIpcHandlers に渡す", async () => {
   const calls: string[] = [];
@@ -153,7 +161,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
       mate: {
         getMateState: () => "not_created",
         getMateProfile: () => null,
-        applyPendingGrowth: async () => null,
+        applyPendingGrowth: async () => zeroGrowthResult,
         createMate: async () => ({}) as never,
         runMateTalkTurn: async () => ({}) as never,
         resetMate: async () => {},

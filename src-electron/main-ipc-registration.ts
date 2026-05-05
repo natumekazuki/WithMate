@@ -29,6 +29,7 @@ import type {
   MateTalkTurnInput,
   MateTalkTurnResult,
 } from "../src/mate-state.js";
+import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
 import type {
@@ -329,7 +330,7 @@ export type MainIpcRegistrationDeps = {
   getMateState(): Awaitable<MateStorageState>;
   getMateProfile(): Awaitable<MateProfile | null>;
   createMate(input: CreateMateInput): Promise<MateProfile>;
-  applyPendingGrowth(): Promise<unknown>;
+  applyPendingGrowth(): Promise<MateGrowthApplyResult>;
   runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
   resetMate(): Promise<void>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;

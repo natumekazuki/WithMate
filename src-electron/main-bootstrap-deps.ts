@@ -1,6 +1,7 @@
 import type { BrowserWindow, IpcMain } from "electron";
 
 import type { MateStorageState } from "../src/mate-state.js";
+import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import {
   createMainIpcRegistrationDeps,
@@ -18,7 +19,7 @@ type CreateMainBootstrapDepsArgs = {
   createHomeWindow(): Promise<BrowserWindow>;
   broadcastModelCatalog(snapshot: ModelCatalogSnapshot): void;
   getMateState(): MateStorageState | Promise<MateStorageState>;
-  applyPendingGrowth(): Promise<unknown>;
+  applyPendingGrowth(): Promise<MateGrowthApplyResult>;
   cleanupStaleGrowthApplyRuns?: () => Promise<number>;
   growthApplyIntervalMs?: number;
   getGrowthApplyIntervalMs?: () => number | Promise<number>;

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { IpcMain } from "electron";
+import type { MateGrowthApplyResult } from "../../src/mate-growth-apply-result.js";
 
 import {
   MATE_NOT_CREATED_ERROR_MESSAGE,
@@ -111,6 +112,13 @@ import {
 } from "../../src/withmate-ipc-channels.js";
 
 type Handler = (...args: unknown[]) => unknown;
+
+const zeroGrowthResult: MateGrowthApplyResult = {
+  candidateCount: 0,
+  appliedCount: 0,
+  skippedCount: 0,
+  revisionId: null,
+};
 
 function createIpcMainStub() {
   const handlers = new Map<string, Handler>();
@@ -636,7 +644,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
       return null;
     },
     applyPendingGrowth() {
-      return null;
+      return zeroGrowthResult;
     },
     async createMate() {
       return {} as never;

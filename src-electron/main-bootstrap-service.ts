@@ -1,4 +1,5 @@
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
+import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
 import type { MateStorageState } from "../src/mate-state.js";
 
 type MainBootstrapServiceDeps = {
@@ -9,7 +10,7 @@ type MainBootstrapServiceDeps = {
   createHomeWindow(): Promise<void>;
   broadcastModelCatalog(snapshot: ModelCatalogSnapshot): void;
   getMateState: () => MateStorageState | Promise<MateStorageState>;
-  applyPendingGrowth(): Promise<unknown>;
+  applyPendingGrowth(): Promise<MateGrowthApplyResult>;
   cleanupStaleGrowthApplyRuns?: () => Promise<number>;
   growthApplyIntervalMs?: number;
   getGrowthApplyIntervalMs?: () => number | Promise<number>;

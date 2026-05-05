@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { MateGrowthApplyResult } from "../../src/mate-growth-apply-result.js";
 import { createMainIpcRegistrationDeps } from "../../src-electron/main-ipc-deps.js";
+
+const zeroGrowthResult: MateGrowthApplyResult = {
+  candidateCount: 0,
+  appliedCount: 0,
+  skippedCount: 0,
+  revisionId: null,
+};
 
 test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化して delegate する", async () => {
   const calls: string[] = [];
@@ -222,7 +230,7 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
       },
       async applyPendingGrowth() {
         calls.push("applyPendingGrowth");
-        return {};
+        return zeroGrowthResult;
       },
       async runMateTalkTurn(input) {
         calls.push(`runMateTalk:${input.message}`);
