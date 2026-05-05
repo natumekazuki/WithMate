@@ -289,6 +289,94 @@ describe("CompanionRuntimeService", () => {
     assert.equal(runInputRef.current?.projectContextText, "project digest context");
   });
 
+  it("resolveProjectContextTextForPrompt 失敗時は runSessionTurn を reject し、CompanionSession が running に更新されない", async () => {
+    let storedSession = createCompanionSession();
+    const updatedSessions: CompanionSession[] = [];
+    let composePromptCallCount = 0;
+    let runSessionTurnCallCount = 0;
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        composePromptCallCount += 1;
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        runSessionTurnCallCount += 1;
+        return {
+          threadId: "thread-1",
+          assistantText: "この実行は行われない",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          transportPayload: null,
+          operations: [],
+          rawItemsJson: "[]",
+          usage: null,
+        };
+      },
+    };
+
+    const service = new CompanionRuntimeService({
+      getCompanionSession(sessionId) {
+        return sessionId === storedSession.id ? storedSession : null;
+      },
+      updateCompanionSession(nextSession) {
+        updatedSessions.push(nextSession);
+        storedSession = nextSession;
+        return nextSession;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      resolveProjectContextTextForPrompt() {
+        throw new Error("project context failed");
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        const provider = createProviderCatalog();
+        return { snapshot: { revision: 1, providers: [provider] }, provider };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry(_telemetry: ProviderQuotaTelemetry) {},
+      setSessionContextTelemetry(_telemetry: SessionContextTelemetry) {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      clearWorkspaceFileIndex() {},
+      broadcastCompanionSessions() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel: () => "2026-04-26 10:01",
+    });
+
+    await assert.rejects(() => service.runSessionTurn(storedSession.id, { userMessage: "お願いします" }), /project context failed/);
+    assert.equal(composePromptCallCount, 0);
+    assert.equal(runSessionTurnCallCount, 0);
+    assert.equal(updatedSessions.some((session) => session.runState === "running"), false);
+    assert.equal(storedSession.runState, "idle");
+  });
+
   it("起動時に running の CompanionSession を error に戻して操作可能にする", async () => {
     let storedSession = createCompanionSession({
       runState: "running",
