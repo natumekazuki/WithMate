@@ -88,3 +88,15 @@ test("MateTalkService は空入力と Mate 未作成を拒否する", async () =
   await assert.rejects(() => service.runTurn({ message: " " }), { message: "メッセージを入力してね。" });
   await assert.rejects(() => service.runTurn({ message: "hello" }), { message: "Mate が見つかりません。" });
 });
+
+test("MateTalkService は provider 応答の生成失敗を呼び出し元へ返す", async () => {
+  const service = new MateTalkService({
+    getMateProfile: () => PROFILE,
+    now: () => new Date("2026-05-04T01:02:03.000Z"),
+    generateAssistantMessage: async () => {
+      throw new Error("provider error");
+    },
+  });
+
+  await assert.rejects(() => service.runTurn({ message: "  hello  " }), /provider error/);
+});

@@ -60,10 +60,7 @@ import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { CodexAdapter } from "./codex-adapter.js";
 import { CopilotAdapter } from "./copilot-adapter.js";
-import {
-  canUseProviderForMateTalkBackgroundPrompt,
-  ProviderTurnError,
-} from "./provider-runtime.js";
+import { canUseProviderForMateTalkBackgroundPrompt } from "./provider-runtime.js";
 import { resolveComposerPreview } from "./composer-attachments.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { resolveOpenPathTarget } from "./open-path.js";
@@ -188,6 +185,7 @@ const MATE_TALK_OUTPUT_SCHEMA = {
   },
   required: ["assistantMessage"],
 } as const;
+const MATE_TALK_FALLBACK_MESSAGE = "受け取ったよ。";
 const appLogService = new AppLogService({
   logsPath: appLogsPath,
   runtimeInfo: {
@@ -1624,10 +1622,12 @@ async function generateMateTalkAssistantMessage(input: {
     }
 
     if (lastFailure) {
-      throw lastFailure;
+      console.warn("Failed to generate MateTalk response.", lastFailure);
+    } else {
+      console.warn("有効な MateTalk provider が見つかりませんでした。");
     }
 
-    throw new Error("有効な MateTalk provider が見つかりませんでした。");
+    return MATE_TALK_FALLBACK_MESSAGE;
   } finally {
     if (preparedRun) {
       await workspaceService.completeRun();
