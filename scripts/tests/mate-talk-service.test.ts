@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { MateTalkService } from "../../src-electron/mate-talk-service.js";
 import type { MateProfile } from "../../src/mate-state.js";
+import { normalizeAppSettings } from "../../src/provider-settings-state.js";
 
 const PROFILE: MateProfile = {
   id: "mate-1",
@@ -87,6 +88,40 @@ test("MateTalkService は空入力と Mate 未作成を拒否する", async () =
 
   await assert.rejects(() => service.runTurn({ message: " " }), { message: "メッセージを入力してね。" });
   await assert.rejects(() => service.runTurn({ message: "hello" }), { message: "Mate が見つかりません。" });
+});
+
+test("MateTalkService は memoryGenerationEnabled=false なら scheduleMemoryGeneration を呼ばない", async () => {
+  let scheduleCalled = 0;
+  const service = new MateTalkService({
+    getMateProfile: () => PROFILE,
+    getAppSettings: () => normalizeAppSettings({ memoryGenerationEnabled: false }),
+    now: () => new Date("2026-05-04T01:02:03.000Z"),
+    scheduleMemoryGeneration: () => {
+      scheduleCalled += 1;
+    },
+  });
+
+  const result = await service.runTurn({ message: "  hello  " });
+
+  assert.equal(result.userMessage, "hello");
+  assert.equal(scheduleCalled, 0);
+});
+
+test("MateTalkService は Mate state が draft/deleted なら scheduleMemoryGeneration を呼ばない", async () => {
+  for (const state of ["draft", "deleted"] as const) {
+    let scheduleCalled = 0;
+    const service = new MateTalkService({
+      getMateProfile: () => ({ ...PROFILE, state }),
+      now: () => new Date("2026-05-04T01:02:03.000Z"),
+      scheduleMemoryGeneration: () => {
+        scheduleCalled += 1;
+      },
+    });
+
+    const result = await service.runTurn({ message: "  hello  " });
+    assert.equal(result.userMessage, "hello");
+    assert.equal(scheduleCalled, 0, `${state} では呼ばれない`);
+  }
 });
 
 test("MateTalkService は provider 応答の生成失敗を呼び出し元へ返す", async () => {

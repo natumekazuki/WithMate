@@ -1,4 +1,5 @@
 import type { MateProfile, MateTalkTurnInput, MateTalkTurnResult } from "../src/mate-state.js";
+import type { AppSettings } from "../src/provider-settings-state.js";
 
 export type ScheduleMateTalkMemoryGenerationInput = {
   userMessage: string;
@@ -21,6 +22,7 @@ export type MateTalkServiceDeps = {
   }) => Promise<string>;
   scheduleMemoryGeneration?(input: ScheduleMateTalkMemoryGenerationInput): unknown;
   onMemoryGenerationScheduleError?(error: unknown): void | Promise<void>;
+  getAppSettings?(): AppSettings;
   now?(): Date;
 };
 
@@ -61,11 +63,15 @@ export class MateTalkService {
       mateProfile,
     }) ?? Promise.resolve(MateTalkService.fallbackMessage));
 
+    const appSettings = this.deps.getAppSettings?.();
+    const shouldScheduleMemoryGeneration = (appSettings?.memoryGenerationEnabled ?? true) && profile.state === "active";
     try {
-      void Promise.resolve(this.deps.scheduleMemoryGeneration?.({
-        userMessage,
-        assistantText: assistantMessage,
-      })).catch((error) => this.notifyMemoryGenerationScheduleError(error));
+      if (shouldScheduleMemoryGeneration) {
+        void Promise.resolve(this.deps.scheduleMemoryGeneration?.({
+          userMessage,
+          assistantText: assistantMessage,
+        })).catch((error) => this.notifyMemoryGenerationScheduleError(error));
+      }
     } catch (error) {
       this.notifyMemoryGenerationScheduleError(error);
     }

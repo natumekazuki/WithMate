@@ -2996,6 +2996,193 @@ describe("SessionRuntimeService", () => {
     assert.equal(result.messages.at(-1)?.text, "完了したよ。");
   });
 
+  it("memoryGenerationEnabled=false なら scheduleMateMemoryGeneration が呼ばれない", async () => {
+    const session = createSession();
+    let called = 0;
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        return createPartialResult({
+          threadId: "thread-1",
+          assistantText: "完了したよ。",
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({ memoryGenerationEnabled: false });
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      scheduleMateMemoryGeneration() {
+        called += 1;
+      },
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "お願い" });
+
+    assert.equal(result.runState, "idle");
+    assert.equal(called, 0);
+  });
+
+  it("mate が not_created/draft/deleted のとき scheduleMateMemoryGeneration が呼ばれない", async () => {
+    for (const mateState of ["not_created", "draft", "deleted"] as const) {
+      const session = createSession();
+      let called = 0;
+
+      const adapter: ProviderCodingAdapter = {
+        composePrompt() {
+          return {
+            systemBodyText: "system",
+            inputBodyText: "input",
+            logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+            imagePaths: [],
+            additionalDirectories: [],
+          };
+        },
+        async getProviderQuotaTelemetry() {
+          return null;
+        },
+        invalidateSessionThread() {},
+        invalidateAllSessionThreads() {},
+        async runSessionTurn() {
+          return createPartialResult({
+            threadId: "thread-1",
+            assistantText: "完了したよ。",
+          });
+        },
+      };
+
+      const service = new SessionRuntimeService({
+        getSession(sessionId) {
+          return sessionId === session.id ? session : null;
+        },
+        upsertSession(next) {
+          return next;
+        },
+        async resolveComposerPreview() {
+          return { attachments: [], errors: [] } satisfies ComposerPreview;
+        },
+        async resolveSessionCharacter() {
+          return createCharacter();
+        },
+        getAppSettings() {
+          return normalizeAppSettings({});
+        },
+        resolveProviderCatalog() {
+          return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        },
+        getProviderCodingAdapter() {
+          return adapter;
+        },
+        getSessionMemory(current) {
+          return createSessionMemory(current.id);
+        },
+        resolveProjectMemoryEntriesForPrompt() {
+          return [];
+        },
+        createAuditLog(input) {
+          return createAuditLogBase(input);
+        },
+        updateAuditLog() {},
+        setLiveSessionRun() {},
+        getLiveSessionRun() {
+          return null;
+        },
+        async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+          return "approve";
+        },
+        async waitForElicitationResponse() {
+          return { action: "cancel" } as const;
+        },
+        setProviderQuotaTelemetry() {},
+        setSessionContextTelemetry() {},
+        invalidateProviderSessionThread() {},
+        scheduleProviderQuotaTelemetryRefresh() {},
+        runSessionMemoryExtraction() {},
+        runCharacterReflection() {},
+        clearWorkspaceFileIndex() {},
+        broadcastLiveSessionRun() {},
+        resolvePendingApprovalRequest() {},
+        resolvePendingElicitationRequest() {},
+        getMateState() {
+          return mateState;
+        },
+        scheduleMateMemoryGeneration() {
+          called += 1;
+        },
+        currentTimestampLabel,
+      });
+
+      const result = await service.runSessionTurn(session.id, { userMessage: "お願い" });
+
+      assert.equal(result.runState, "idle");
+      assert.equal(called, 0, `${mateState} では呼ばれない`);
+    }
+  });
+
   it("canceled で実質的な assistantText が無い場合は Mate Memory hook を呼ばない", async () => {
     const session = createSession();
     let called = 0;

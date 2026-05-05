@@ -1846,6 +1846,7 @@ async function runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnRe
 
   const service = new MateTalkService({
     getMateProfile: () => requireMateStorage().getMateProfile(),
+    getAppSettings: () => requireAppSettingsStorage().getSettings(),
     getMateProfileContextText: (profile) => {
       try {
         const profileItems = requireMateProfileItemStorage().listProfileItems({
@@ -1869,7 +1870,11 @@ async function runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnRe
     },
     generateAssistantMessage: generateMateTalkAssistantMessage,
     scheduleMemoryGeneration: ({ userMessage, assistantText }) => {
+      const appSettings = requireAppSettingsStorage().getSettings();
       const mateProfile = requireMateStorage().getMateProfile();
+      if (!appSettings.memoryGenerationEnabled || mateProfile?.state !== "active") {
+        return;
+      }
       const recentConversationText = [
         userMessage.trim() ? `User: ${userMessage.trim()}` : null,
         assistantText.trim() ? `Assistant: ${assistantText.trim()}` : null,
@@ -2091,7 +2096,9 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       },
       scheduleMateMemoryGeneration: (params) => {
         const activeMateStorage = requireMateStorage();
-        if (activeMateStorage.getMateState() === "not_created") {
+        const appSettings = requireAppSettingsStorage().getSettings();
+        const mateState = requireMateStorage().getMateState();
+        if (!appSettings.memoryGenerationEnabled || mateState !== "active") {
           return;
         }
 
