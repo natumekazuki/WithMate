@@ -19,6 +19,7 @@ import {
 } from "./memory-management-view.js";
 import {
   buildMemoryManagementPageRequest,
+  type MemoryManagementPageResult,
   mergeMemoryManagementSnapshots,
   removeMateProfileItemFromSnapshot,
   removeCharacterMemoryEntryFromSnapshot,
@@ -197,6 +198,16 @@ const EMPTY_MEMORY_MANAGEMENT_PAGE_STATE: MemoryManagementPageState = {
   mate_profile: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
 };
 
+function normalizeMemoryManagementPages(pages: MemoryManagementPageResult["pages"]): MemoryManagementPageState {
+  return {
+    ...EMPTY_MEMORY_MANAGEMENT_PAGE_STATE,
+    session: pages.session,
+    project: pages.project,
+    character: pages.character,
+    mate_profile: pages.mate_profile ?? EMPTY_MEMORY_MANAGEMENT_PAGE_STATE.mate_profile,
+  };
+}
+
 function getHomeWindowMode(): HomeWindowMode {
   if (typeof window === "undefined") {
     return "home";
@@ -372,7 +383,7 @@ export default function HomeApp() {
           }
 
           setMemoryManagementSnapshot(page.snapshot);
-          setMemoryManagementPages(page.pages);
+          setMemoryManagementPages(normalizeMemoryManagementPages(page.pages));
           setMemoryManagementLoaded(true);
         } catch (error) {
           if (!active) {
@@ -1121,7 +1132,7 @@ export default function HomeApp() {
         return;
       }
       setMemoryManagementSnapshot(page.snapshot);
-      setMemoryManagementPages(page.pages);
+      setMemoryManagementPages(normalizeMemoryManagementPages(page.pages));
       setMemoryManagementFeedback("Memory 管理ビューを更新したよ。");
     } catch (error) {
       setMemoryManagementFeedback(error instanceof Error ? error.message : "Memory 一覧の読み込みに失敗したよ。");
@@ -1155,9 +1166,10 @@ export default function HomeApp() {
         return;
       }
       setMemoryManagementSnapshot((current) => mergeMemoryManagementSnapshots(current, page.snapshot, domain));
+      const normalizedPages = normalizeMemoryManagementPages(page.pages);
       setMemoryManagementPages((current) => ({
         ...current,
-        [domain]: page.pages[domain],
+        [domain]: normalizedPages[domain],
       }));
       setMemoryManagementFeedback("Memory 管理ビューを追加読み込みしたよ。");
     } catch (error) {
@@ -1189,7 +1201,7 @@ export default function HomeApp() {
         return;
       }
       setMemoryManagementSnapshot(page.snapshot);
-      setMemoryManagementPages(page.pages);
+      setMemoryManagementPages(normalizeMemoryManagementPages(page.pages));
     } catch (error) {
       if (!isLatestMemoryManagementRequest(requestId)) {
         return;
@@ -1219,7 +1231,7 @@ export default function HomeApp() {
         return;
       }
       setMemoryManagementSnapshot(removeSessionMemoryFromSnapshot(page.snapshot, sessionId));
-      setMemoryManagementPages(page.pages);
+      setMemoryManagementPages(normalizeMemoryManagementPages(page.pages));
       setMemoryManagementFeedback("Session Memory を削除したよ。");
     } catch (error) {
       setMemoryManagementFeedback(error instanceof Error ? error.message : "Session Memory の削除に失敗したよ。");
@@ -1246,7 +1258,7 @@ export default function HomeApp() {
         return;
       }
       setMemoryManagementSnapshot(removeProjectMemoryEntryFromSnapshot(page.snapshot, entryId));
-      setMemoryManagementPages(page.pages);
+      setMemoryManagementPages(normalizeMemoryManagementPages(page.pages));
       setMemoryManagementFeedback("Project Memory を削除したよ。");
     } catch (error) {
       setMemoryManagementFeedback(error instanceof Error ? error.message : "Project Memory の削除に失敗したよ。");
@@ -1273,7 +1285,7 @@ export default function HomeApp() {
         return;
       }
       setMemoryManagementSnapshot(removeCharacterMemoryEntryFromSnapshot(page.snapshot, entryId));
-      setMemoryManagementPages(page.pages);
+      setMemoryManagementPages(normalizeMemoryManagementPages(page.pages));
       setMemoryManagementFeedback("Character Memory を削除したよ。");
     } catch (error) {
       setMemoryManagementFeedback(error instanceof Error ? error.message : "Character Memory の削除に失敗したよ。");
@@ -1363,7 +1375,7 @@ export default function HomeApp() {
         return;
       }
       setMemoryManagementSnapshot(removeMateProfileItemFromSnapshot(page.snapshot, itemId));
-      setMemoryManagementPages(page.pages);
+      setMemoryManagementPages(normalizeMemoryManagementPages(page.pages));
       setMemoryManagementFeedback("Mate Profile Item を忘却したよ。");
     } catch (error) {
       setMemoryManagementFeedback(error instanceof Error ? error.message : "Mate Profile Item の忘却に失敗したよ。");
