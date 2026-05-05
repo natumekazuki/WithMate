@@ -1338,6 +1338,14 @@ function requireMemoryRuntimeWorkspaceService(): MemoryRuntimeWorkspaceService {
   return memoryRuntimeWorkspaceService;
 }
 
+async function cleanupMemoryRuntimeWorkspaceOnStartup(): Promise<void> {
+  try {
+    await requireMemoryRuntimeWorkspaceService().cleanupStaleRuns();
+  } catch (error) {
+    console.warn("Memory runtime workspace cleanup failed", error);
+  }
+}
+
 function requireMateTalkRuntimeWorkspaceService(): MateTalkRuntimeWorkspaceService {
   if (!mateTalkRuntimeWorkspaceService) {
     mateTalkRuntimeWorkspaceService = new MateTalkRuntimeWorkspaceService({
@@ -3287,6 +3295,7 @@ app.whenReady().then(async () => {
       crashDumpsPath,
     },
   });
+  await cleanupMemoryRuntimeWorkspaceOnStartup();
   await requireMainBootstrapService().handleReady();
 
   if (process.env.WITHMATE_DEBUG_OPEN_SESSION_ID) {
