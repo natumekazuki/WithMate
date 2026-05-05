@@ -431,6 +431,38 @@ describe("MemoryRuntimeWorkspaceService", () => {
     }
   });
 
+  it("cleanupStaleRuns は .status が completed の場合、残存 lock があっても run を削除する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-runtime-"));
+
+    try {
+      const service = new MemoryRuntimeWorkspaceService({ userDataPath });
+      const completed = await service.prepareRun();
+      const completedMetadata = {
+        runId: path.basename(completed.workspacePath),
+        createdAt: Date.now(),
+        heartbeatAt: Date.now(),
+        status: "completed" as const,
+      };
+      const staleLockMetadata = {
+        runId: path.basename(completed.workspacePath),
+        createdAt: Date.now(),
+        heartbeatAt: Date.now(),
+        status: "running" as const,
+      };
+
+      await writeFile(path.join(completed.workspacePath, ".status"), JSON.stringify(completedMetadata), "utf8");
+      await writeFile(completed.lockPath, JSON.stringify(staleLockMetadata), "utf8");
+      await writeFile(path.join(userDataPath, "memory-runtime", "current", ".lock"), JSON.stringify(staleLockMetadata), "utf8");
+
+      await service.cleanupStaleRuns({ staleHeartbeatMs: 60_000_000 });
+
+      assert.equal(await exists(completed.workspacePath), false);
+      assert.equal(await exists(path.join(userDataPath, "memory-runtime", "current", ".lock")), false);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
   it("resetWorkspace は current 配下を丸ごと作り直す", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-runtime-"));
     const workspacePath = path.join(userDataPath, "memory-runtime", "current");

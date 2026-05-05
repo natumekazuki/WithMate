@@ -240,7 +240,7 @@ export class MemoryRuntimeWorkspaceService {
       const statusMetadata = await this.readWorkspaceStatus(runWorkspacePath);
       const lockMetadata = hasLock ? await this.readRunMetadataFromLock(lockPath) : null;
       const legacyLockMetadata = await this.readRunMetadataFromLock(this.lockPath);
-      const activeMetadata = lockMetadata ?? statusMetadata;
+      const activeMetadata = this.resolveCleanupRunMetadata(statusMetadata, lockMetadata);
 
       if (this.activeWorkspacePath === runWorkspacePath && activeMetadata?.status === "running") {
         continue;
@@ -293,6 +293,17 @@ export class MemoryRuntimeWorkspaceService {
     await this.forceReleaseLock(this.lockPath);
     this.activeWorkspacePath = null;
     this.activeRunId = null;
+  }
+
+  private resolveCleanupRunMetadata(
+    statusMetadata: MemoryRuntimeRunMetadata | null,
+    lockMetadata: MemoryRuntimeRunMetadata | null,
+  ): MemoryRuntimeRunMetadata | null {
+    if (statusMetadata?.status === "completed" || statusMetadata?.status === "failed") {
+      return statusMetadata;
+    }
+
+    return lockMetadata ?? statusMetadata;
   }
 
   async resetWorkspace(): Promise<void> {

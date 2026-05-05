@@ -325,7 +325,7 @@ projection に含めないもの:
 - [x] Memory 生成専用 `memory-runtime/templates/` と provider native instruction files を作成し、保存方針を固定する
 - [x] Memory 生成 run ごとに `memory-runtime/runs/{runId}/.lock` 付き workspace を作成する
 - [x] Memory 生成 run の `.lock` は atomic create と heartbeat で管理し、stale run は quarantine してから cleanup する
-- [ ] app 起動時に active heartbeat のない stale / completed / failed な Memory 生成 run workspace を cleanup する
+- [x] app 起動時に active heartbeat のない stale / completed / failed な Memory 生成 run workspace を cleanup する
 - [ ] GrowthModelPort input は current turn と必要 metadata に限定し、session transcript 全量を渡さない
 - [ ] Codex GrowthModelPort では background `outputSchema` を渡す
 - [ ] Copilot GrowthModelPort では schema 付き internal submit tool を渡し、tool args を structured output として扱う
