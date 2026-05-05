@@ -52,6 +52,8 @@ import type {
   MateStorageState,
   MateTalkTurnInput,
   MateTalkTurnResult,
+  MateGrowthSettings,
+  UpdateMateGrowthSettingsInput,
 } from "./mate-state.js";
 import type { MateEmbeddingSettings } from "./mate-embedding-settings.js";
 import type {
@@ -176,6 +178,8 @@ export type WithMateWindowSettingsApi = {
   resetAppDatabase(request: ResetAppDatabaseRequest): Promise<ResetAppDatabaseResult>;
   getMemoryManagementSnapshot(): Promise<MemoryManagementSnapshot>;
   getMemoryManagementPage(request: MemoryManagementPageRequest): Promise<MemoryManagementPageResult>;
+  getMateGrowthSettings(): Promise<MateGrowthSettings | null>;
+  updateMateGrowthSettings(input: UpdateMateGrowthSettingsInput): Promise<MateGrowthSettings | null>;
   getMateEmbeddingSettings(): Promise<MateEmbeddingSettings | null>;
   listProviderInstructionTargets(): Promise<ProviderInstructionTarget[]>;
   upsertProviderInstructionTarget(input: ProviderInstructionTargetInput): Promise<ProviderInstructionTarget>;

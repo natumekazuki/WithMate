@@ -7,6 +7,7 @@ import {
   CREATE_V4_SCHEMA_SQL,
 } from "./database-schema-v4.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+import type { MateGrowthCandidateMode, MateGrowthSettings, UpdateMateGrowthSettingsInput } from "../src/mate-state.js";
 
 const MATE_ID = "current";
 const MATE_DIRECTORY_NAME = "mate";
@@ -85,14 +86,6 @@ export type MateProfile = {
   sections: MateProfileSectionState[];
 };
 
-export type MateGrowthSettings = {
-  enabled: boolean;
-  autoApplyEnabled: boolean;
-  memoryCandidateMode: "every_turn" | "threshold" | "manual";
-  applyIntervalMinutes: number;
-  updatedAt: string;
-};
-
 export type CreateMateInput = {
   displayName: string;
   description?: string;
@@ -125,6 +118,28 @@ function sha256Hex(content: string): string {
 
 function byteSize(content: string): number {
   return Buffer.byteLength(content, "utf8");
+}
+
+function normalizeApplyIntervalMinutes(applyIntervalMinutes: number): number {
+  if (!Number.isFinite(applyIntervalMinutes)) {
+    throw new Error("applyIntervalMinutes は有限の数値で指定してね。");
+  }
+
+  return Math.min(14_400, Math.max(1, Math.trunc(applyIntervalMinutes)));
+}
+
+function normalizeMemoryCandidateMode(mode: string): MateGrowthCandidateMode {
+  if (mode === "every_turn" || mode === "threshold" || mode === "manual") {
+    return mode;
+  }
+
+  throw new Error("memoryCandidateMode は every_turn / threshold / manual のいずれかで指定してね。");
+}
+
+function assertMateGrowthSettingsInput(input: UpdateMateGrowthSettingsInput): void {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("Mate Growth 設定の更新内容は object で指定してね。");
+  }
 }
 
 function withDefaults(input: CreateMateInput): Required<CreateMateInput> {
@@ -285,11 +300,7 @@ export class MateStorage {
   }
 
   updateMateGrowthApplyIntervalMinutes(applyIntervalMinutes: number): MateGrowthSettings | null {
-    if (!Number.isFinite(applyIntervalMinutes)) {
-      throw new Error("applyIntervalMinutes は有限の数値で指定してね。");
-    }
-
-    const normalizedApplyIntervalMinutes = Math.min(14_400, Math.max(1, Math.trunc(applyIntervalMinutes)));
+    const normalizedApplyIntervalMinutes = normalizeApplyIntervalMinutes(applyIntervalMinutes);
     this.withDb((db) => {
       db.prepare(`
         UPDATE mate_growth_settings
@@ -300,6 +311,54 @@ export class MateStorage {
         nowIso(),
         MATE_ID,
       );
+    });
+
+    return this.getMateGrowthSettings();
+  }
+
+  updateMateGrowthSettings(input: UpdateMateGrowthSettingsInput): MateGrowthSettings | null {
+    assertMateGrowthSettingsInput(input);
+
+    const updates: string[] = [];
+    const values: Array<number | string> = [];
+
+    if (input.enabled !== undefined) {
+      if (typeof input.enabled !== "boolean") {
+        throw new Error("enabled は boolean で指定してね。");
+      }
+      updates.push("enabled = ?");
+      values.push(input.enabled ? 1 : 0);
+    }
+    if (input.autoApplyEnabled !== undefined) {
+      if (typeof input.autoApplyEnabled !== "boolean") {
+        throw new Error("autoApplyEnabled は boolean で指定してね。");
+      }
+      updates.push("auto_apply_enabled = ?");
+      values.push(input.autoApplyEnabled ? 1 : 0);
+    }
+    if (input.memoryCandidateMode !== undefined) {
+      updates.push("memory_candidate_mode = ?");
+      values.push(normalizeMemoryCandidateMode(input.memoryCandidateMode));
+    }
+    if (input.applyIntervalMinutes !== undefined) {
+      updates.push("apply_interval_minutes = ?");
+      values.push(normalizeApplyIntervalMinutes(input.applyIntervalMinutes));
+    }
+
+    if (updates.length === 0) {
+      return this.getMateGrowthSettings();
+    }
+
+    updates.push("updated_at = ?");
+    values.push(nowIso());
+    values.push(MATE_ID);
+
+    this.withDb((db) => {
+      db.prepare(`
+        UPDATE mate_growth_settings
+        SET ${updates.join(", ")}
+        WHERE mate_id = ?
+      `).run(...values);
     });
 
     return this.getMateGrowthSettings();

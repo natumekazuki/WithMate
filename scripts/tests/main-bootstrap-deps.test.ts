@@ -84,6 +84,8 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
             mate_profile: { nextCursor: null, hasMore: false, total: 0 },
           },
         }),
+        getMateGrowthSettings: () => null,
+        updateMateGrowthSettings: () => null,
         getMateEmbeddingSettings: () => null,
         startMateEmbeddingDownload: async () => {},
         deleteSessionMemory: () => {},

@@ -44,6 +44,8 @@ import {
   WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
   WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
+  WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL,
   WITHMATE_GET_MATE_PROFILE_CHANNEL,
   WITHMATE_GET_MATE_STATE_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
@@ -202,6 +204,14 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
     getMateEmbeddingSettings: () => null,
+    getMateGrowthSettings: () => {
+      calls.push("getMateGrowthSettings");
+      return null;
+    },
+    updateMateGrowthSettings: () => {
+      calls.push("updateMateGrowthSettings");
+      return null;
+    },
     listProviderInstructionTargets: () => [],
     upsertProviderInstructionTarget: (input) => input as never,
     startMateEmbeddingDownload: () => {
@@ -396,6 +406,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   assert.ok(handlers.has("withmate:list-session-summaries"));
   assert.ok(handlers.has("withmate:get-app-settings"));
   assert.ok(handlers.has(WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL));
   assert.ok(handlers.has(WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL));
@@ -420,6 +432,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     await handlers.get(WITHMATE_APPLY_MATE_GROWTH_CHANNEL)?.(),
     expectedGrowthResult,
   );
+  await handlers.get(WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL)?.();
+  await handlers.get(WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL)?.({}, { enabled: false });
   await handlers.get(WITHMATE_RESET_MATE_CHANNEL)?.();
   const auditPageResult = await handlers.get(WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL)?.(
     {},
@@ -444,6 +458,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     "runMateTalk:hello",
     "getMateState",
     "applyPendingGrowth",
+    "getMateGrowthSettings",
+    "updateMateGrowthSettings",
     "resetMate",
     "getMateState",
   ]);
@@ -515,6 +531,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     "runMateTalk:hello",
     "getMateState",
     "applyPendingGrowth",
+    "getMateGrowthSettings",
+    "updateMateGrowthSettings",
     "resetMate",
     "getMateState",
     "getMateState",
@@ -567,6 +585,8 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
     getMateEmbeddingSettings: () => null,
+    getMateGrowthSettings: () => null,
+    updateMateGrowthSettings: () => null,
     listProviderInstructionTargets: () => [],
     upsertProviderInstructionTarget: (input) => input as never,
     startMateEmbeddingDownload: () => {},
@@ -750,6 +770,8 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_CREATE_CHARACTER_CHANNEL,
     WITHMATE_UPDATE_CHARACTER_CHANNEL,
     WITHMATE_DELETE_CHARACTER_CHANNEL,
+    WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL,
+    WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL,
     WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
     WITHMATE_GET_MATE_STATE_CHANNEL,
     WITHMATE_GET_MATE_PROFILE_CHANNEL,

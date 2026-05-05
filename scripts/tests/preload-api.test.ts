@@ -70,9 +70,17 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-memory-management-snapshot",
     args: [],
   });
+  assert.deepEqual(await api.getMateGrowthSettings(), {
+    channel: "withmate:get-mate-growth-settings",
+    args: [],
+  });
   assert.deepEqual(await api.getMemoryManagementPage({ domain: "session", limit: 50 }), {
     channel: "withmate:get-memory-management-page",
     args: [{ domain: "session", limit: 50 }],
+  });
+  assert.deepEqual(await api.updateMateGrowthSettings({ autoApplyEnabled: false }), {
+    channel: "withmate:update-mate-growth-settings",
+    args: [{ autoApplyEnabled: false }],
   });
   assert.deepEqual(await api.forgetMateProfileItem("mate-profile-item-1"), {
     channel: "withmate:forget-mate-profile-item",
@@ -140,6 +148,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getDiffPreview",
     "getLiveSessionRun",
     "getMateEmbeddingSettings",
+    "getMateGrowthSettings",
     "getMemoryManagementPage",
     "getMemoryManagementSnapshot",
     "getModelCatalog",
@@ -204,6 +213,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "searchCompanionWorkspaceFiles",
     "searchWorkspaceFiles",
     "startMateEmbeddingDownload",
+    "updateMateGrowthSettings",
     "stashCompanionTargetChanges",
     "subscribeAppSettings",
     "subscribeCharacters",

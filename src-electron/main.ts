@@ -158,7 +158,11 @@ import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
 import { getMateMemoryGenerationSettings, getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
-import type { MateTalkTurnInput, MateTalkTurnResult } from "../src/mate-state.js";
+import type {
+  MateTalkTurnInput,
+  MateTalkTurnResult,
+  UpdateMateGrowthSettingsInput,
+} from "../src/mate-state.js";
 import {
   type CharacterReflectionTriggerReason,
 } from "./character-reflection.js";
@@ -922,6 +926,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 resetAppDatabase: async (request) => requireSettingsCatalogService().resetAppDatabase(request),
                 getMemoryManagementSnapshot: () => requireMemoryManagementService().getSnapshot(),
                 getMemoryManagementPage: (request) => requireMemoryManagementService().getPage(request),
+                getMateGrowthSettings: () => getMateGrowthSettings(),
+                updateMateGrowthSettings: (input) => updateMateGrowthSettings(input),
                 getMateEmbeddingSettings: () => requireMateEmbeddingCacheService().getEmbeddingSettings(),
                 listProviderInstructionTargets: () => requireProviderInstructionTargetStorage().listTargets(),
                 upsertProviderInstructionTarget: async (input) => {
@@ -1362,6 +1368,16 @@ function getMateMemoryGenerationProviderIds(): string[] {
 function syncMateGrowthApplyIntervalFromAppSettings(settings: AppSettings = requireAppSettingsStorage().getSettings()): void {
   const mateMemoryGenerationSettings = getMateMemoryGenerationSettings(settings);
   requireMateStorage().updateMateGrowthApplyIntervalMinutes(mateMemoryGenerationSettings.triggerIntervalMinutes);
+}
+
+function getMateGrowthSettings(): ReturnType<MateStorage["getMateGrowthSettings"]> {
+  return requireMateStorage().getMateGrowthSettings();
+}
+
+async function updateMateGrowthSettings(input: UpdateMateGrowthSettingsInput): Promise<ReturnType<MateStorage["updateMateGrowthSettings"]>> {
+  const updatedSettings = requireMateStorage().updateMateGrowthSettings(input);
+  await restartMateGrowthApplyTimerIfMateActive();
+  return updatedSettings;
 }
 
 async function restartMateGrowthApplyTimerIfMateActive(): Promise<void> {

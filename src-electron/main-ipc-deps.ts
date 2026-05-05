@@ -51,6 +51,8 @@ import type {
   MateStorageState,
   MateTalkTurnInput,
   MateTalkTurnResult,
+  MateGrowthSettings,
+  UpdateMateGrowthSettingsInput,
 } from "../src/mate-state.js";
 import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
 import type { MateEmbeddingSettings } from "../src/mate-embedding-settings.js";
@@ -98,6 +100,8 @@ export type MainIpcSettingsDepsArgs = {
   getMemoryManagementSnapshot(): MemoryManagementSnapshot;
   getMemoryManagementPage(request: MemoryManagementPageRequest): MemoryManagementPageResult;
   getMateEmbeddingSettings(): MateEmbeddingSettings | null;
+  getMateGrowthSettings(): MateGrowthSettings | null;
+  updateMateGrowthSettings(input: UpdateMateGrowthSettingsInput): Awaitable<MateGrowthSettings | null>;
   listProviderInstructionTargets(): Awaitable<ProviderInstructionTarget[]>;
   upsertProviderInstructionTarget(input: ProviderInstructionTargetInput): Awaitable<ProviderInstructionTarget>;
   startMateEmbeddingDownload(): Awaitable<void>;
@@ -277,7 +281,9 @@ export function createMainIpcRegistrationDeps(
     getMemoryManagementSnapshot: args.settings.getMemoryManagementSnapshot,
     getMemoryManagementPage: args.settings.getMemoryManagementPage,
     getMateEmbeddingSettings: args.settings.getMateEmbeddingSettings,
+    getMateGrowthSettings: args.settings.getMateGrowthSettings,
     listProviderInstructionTargets: args.settings.listProviderInstructionTargets,
+    updateMateGrowthSettings: args.settings.updateMateGrowthSettings,
     upsertProviderInstructionTarget: args.settings.upsertProviderInstructionTarget,
     startMateEmbeddingDownload: args.settings.startMateEmbeddingDownload,
     deleteSessionMemory: args.settings.deleteSessionMemory,

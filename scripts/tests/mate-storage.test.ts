@@ -124,6 +124,110 @@ describe("MateStorage", () => {
     }
   });
 
+  it("updateMateGrowthSettings は部分更新で Growth 設定を更新する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+
+      const updated1 = storage.updateMateGrowthSettings({
+        enabled: false,
+        autoApplyEnabled: false,
+      });
+      assert.equal(updated1?.enabled, false);
+      assert.equal(updated1?.autoApplyEnabled, false);
+      assert.equal(updated1?.memoryCandidateMode, "every_turn");
+      assert.equal(updated1?.applyIntervalMinutes, 60);
+
+      const updated2 = storage.updateMateGrowthSettings({
+        memoryCandidateMode: "threshold",
+        applyIntervalMinutes: 300.8,
+      });
+      assert.equal(updated2?.enabled, false);
+      assert.equal(updated2?.autoApplyEnabled, false);
+      assert.equal(updated2?.memoryCandidateMode, "threshold");
+      assert.equal(updated2?.applyIntervalMinutes, 300);
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("updateMateGrowthSettings は applyIntervalMinutes を 1..14400 に clamp/trunc する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+
+      const below = storage.updateMateGrowthSettings({ applyIntervalMinutes: 0 });
+      assert.equal(below?.applyIntervalMinutes, 1);
+      const above = storage.updateMateGrowthSettings({ applyIntervalMinutes: 20000 });
+      assert.equal(above?.applyIntervalMinutes, 14400);
+      const decimal = storage.updateMateGrowthSettings({ applyIntervalMinutes: 12.9 });
+      assert.equal(decimal?.applyIntervalMinutes, 12);
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("updateMateGrowthSettings は不正な memoryCandidateMode を拒否する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+
+      assert.throws(
+        () => storage!.updateMateGrowthSettings({ memoryCandidateMode: "invalid" as never }),
+        /memoryCandidateMode/,
+      );
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("updateMateGrowthSettings は object 以外の入力を拒否する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+
+      assert.throws(
+        () => storage!.updateMateGrowthSettings(null as never),
+        /object/,
+      );
+      assert.throws(
+        () => storage!.updateMateGrowthSettings([] as never),
+        /object/,
+      );
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("updateMateGrowthSettings は Mate 未作成時に null を返す", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      assert.equal(storage.updateMateGrowthSettings({ enabled: false }), null);
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
   it("createMate は既存 Mate を上書きしない", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: MateStorage | null = null;

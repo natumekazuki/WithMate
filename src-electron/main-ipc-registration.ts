@@ -53,6 +53,7 @@ import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionInput, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
 import type { MateEmbeddingSettings } from "../src/mate-embedding-settings.js";
+import type { MateGrowthSettings, UpdateMateGrowthSettingsInput } from "../src/mate-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
@@ -80,6 +81,7 @@ import {
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_MATE_STATE_CHANNEL,
   WITHMATE_GET_MATE_PROFILE_CHANNEL,
+  WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
@@ -151,6 +153,7 @@ import {
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL,
   WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
@@ -177,6 +180,8 @@ const MATE_CREATED_REQUIRED_CHANNEL_WHITELIST = new Set<string>([
   WITHMATE_RESET_MATE_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL,
   WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
   WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
   WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
@@ -269,6 +274,8 @@ export type MainIpcRegistrationDeps = {
   listOpenCompanionReviewWindowIds(): string[];
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
+  getMateGrowthSettings(): MateGrowthSettings | null;
+  updateMateGrowthSettings(input: UpdateMateGrowthSettingsInput): Awaitable<MateGrowthSettings | null>;
   getMateEmbeddingSettings(): MateEmbeddingSettings | null;
   listProviderInstructionTargets(): Awaitable<ProviderInstructionTarget[]>;
   upsertProviderInstructionTarget(input: ProviderInstructionTargetInput): Awaitable<ProviderInstructionTarget>;
@@ -383,6 +390,8 @@ type MainIpcSettingsDeps = Pick<
   MainIpcRegistrationDeps,
   | "getAppSettings"
   | "updateAppSettings"
+  | "getMateGrowthSettings"
+  | "updateMateGrowthSettings"
   | "getMateEmbeddingSettings"
   | "listProviderInstructionTargets"
   | "upsertProviderInstructionTarget"
@@ -560,7 +569,11 @@ function registerCatalogHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCatal
 function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSettingsDeps): void {
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => deps.getAppSettings());
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => deps.updateAppSettings(settings));
+  ipcMain.handle(WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL, () => deps.getMateGrowthSettings());
   ipcMain.handle(WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL, () => deps.getMateEmbeddingSettings());
+  ipcMain.handle(WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL, (_event, input: UpdateMateGrowthSettingsInput) =>
+    deps.updateMateGrowthSettings(input),
+  );
   ipcMain.handle(WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL, () => deps.listProviderInstructionTargets());
   ipcMain.handle(WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL, (_event, input: ProviderInstructionTargetInput) =>
     deps.upsertProviderInstructionTarget(input),

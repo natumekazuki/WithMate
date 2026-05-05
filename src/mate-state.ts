@@ -28,6 +28,23 @@ export type MateProfile = {
   sections: MateProfileSectionState[];
 };
 
+export type MateGrowthCandidateMode = "every_turn" | "threshold" | "manual";
+
+export type MateGrowthSettings = {
+  enabled: boolean;
+  autoApplyEnabled: boolean;
+  memoryCandidateMode: MateGrowthCandidateMode;
+  applyIntervalMinutes: number;
+  updatedAt: string;
+};
+
+export type UpdateMateGrowthSettingsInput = {
+  enabled?: boolean;
+  autoApplyEnabled?: boolean;
+  memoryCandidateMode?: MateGrowthCandidateMode;
+  applyIntervalMinutes?: number;
+};
+
 export type CreateMateInput = {
   displayName: string;
   description?: string;

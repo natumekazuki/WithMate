@@ -74,15 +74,15 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
         return null;
       },
     },
-      settings: {
-        getAppSettings: () =>
-          ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} }) as never,
-        updateAppSettings: (settings) => settings,
-        listProviderInstructionTargets: () => [],
-        upsertProviderInstructionTarget: (input) => input as never,
-        async resetAppDatabase() {
-          return null;
-        },
+    settings: {
+      getAppSettings: () =>
+        ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} }) as never,
+      updateAppSettings: (settings) => settings,
+      listProviderInstructionTargets: () => [],
+      upsertProviderInstructionTarget: (input) => input as never,
+      async resetAppDatabase() {
+        return null;
+      },
       getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], characterMemories: [] }),
       getMemoryManagementPage: () => ({
         snapshot: { sessionMemories: [], projectMemories: [], characterMemories: [] },
@@ -93,6 +93,8 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
           mate_profile: { nextCursor: null, hasMore: false, total: 0 },
         },
       }),
+      getMateGrowthSettings: () => null,
+      updateMateGrowthSettings: () => null,
       getMateEmbeddingSettings: () => null,
       startMateEmbeddingDownload: () => {
         calls.push("startMateEmbeddingDownload");
