@@ -97,7 +97,11 @@ import { buildMateMemoryRuntimeInstructionFiles } from "./mate-memory-runtime-in
 import { MateGrowthApplyService } from "./mate-growth-apply-service.js";
 import { MateGrowthStorage } from "./mate-growth-storage.js";
 import { MateProjectContextService } from "./mate-project-context-service.js";
-import { type MateProjectDigest, MateProjectDigestStorage } from "./mate-project-digest-storage.js";
+import { MateProjectDigestStorage } from "./mate-project-digest-storage.js";
+import {
+  resolveMateProjectContextTextForPrompt,
+  resolveMateProjectDigestForSession,
+} from "./mate-project-context-resolver.js";
 import { MateProfileItemStorage } from "./mate-profile-item-storage.js";
 import { ProviderInstructionTargetStorage } from "./provider-instruction-target-storage.js";
 import { MateEmbeddingVectorizer } from "./mate-embedding-vectorizer.js";
@@ -1704,39 +1708,6 @@ function requireMateProjectContextService(): MateProjectContextService {
   return mateProjectContextService;
 }
 
-function resolveMateProjectDigestForSession(session: Session): MateProjectDigest | null {
-  const activeMateStorage = requireMateStorage();
-  if (activeMateStorage.getMateState() === "not_created") {
-    return null;
-  }
-
-  try {
-    return requireMateProjectDigestStorage().resolveProjectDigestForWorkspace(session.workspacePath);
-  } catch (error) {
-    console.warn("Failed to resolve Mate Project Digest", session.id, error);
-    return null;
-  }
-}
-
-async function resolveMateProjectContextTextForPrompt(
-  session: Session,
-  userMessage: string,
-): Promise<string | null> {
-  const digest = resolveMateProjectDigestForSession(session);
-  if (!digest) {
-    return null;
-  }
-
-  try {
-    return await requireMateProjectContextService().getProjectDigestContextText(digest.id, {
-      queryText: userMessage,
-    });
-  } catch (error) {
-    console.warn("Failed to resolve Mate Project Context", session.id, error);
-    return null;
-  }
-}
-
 function requireMateGrowthApplyService(): MateGrowthApplyService {
   if (!mateGrowthApplyService) {
     mateGrowthApplyService = new MateGrowthApplyService(
@@ -2042,7 +2013,15 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       resolveProjectMemoryEntriesForPrompt: (session, userMessage, sessionMemory) =>
         requireSessionMemorySupportService().resolveProjectMemoryEntriesForPrompt(session, userMessage, sessionMemory),
       resolveProjectContextTextForPrompt: (session, userMessage) =>
-        resolveMateProjectContextTextForPrompt(session, userMessage),
+        resolveMateProjectContextTextForPrompt({
+          session,
+          userMessage,
+          getMateState: () => requireMateStorage().getMateState(),
+          resolveProjectDigestForWorkspace: (workspacePath) =>
+            requireMateProjectDigestStorage().resolveProjectDigestForWorkspace(workspacePath),
+          getProjectDigestContextText: (projectDigestId, options) =>
+            requireMateProjectContextService().getProjectDigestContextText(projectDigestId, options),
+        }),
       createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
       updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
       setLiveSessionRun,
@@ -2082,7 +2061,12 @@ function requireSessionRuntimeService(): SessionRuntimeService {
             sourceType: "session",
             sourceSessionId: params.session.id,
             sourceAuditLogId: params.auditLogId,
-            projectDigestId: resolveMateProjectDigestForSession(params.session)?.id ?? null,
+            projectDigestId: resolveMateProjectDigestForSession({
+              session: params.session,
+              getMateState: () => requireMateStorage().getMateState(),
+              resolveProjectDigestForWorkspace: (workspacePath) =>
+                requireMateProjectDigestStorage().resolveProjectDigestForWorkspace(workspacePath),
+            })?.id ?? null,
           },
           mateName: mateProfile?.displayName,
           mateSummary: mateProfile?.description,
