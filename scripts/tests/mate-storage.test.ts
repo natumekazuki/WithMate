@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import { mkdtemp, rm } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -232,6 +232,172 @@ describe("MateStorage", () => {
         assert.equal(coreSection.byte_size, Buffer.byteLength("# Core\n\n- Updated\n", "utf8"));
         assert.equal(coreSection.updated_by_revision_id, updatedProfile.activeRevisionId);
         assert.equal(revisionSectionCount.count, 2);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("applyProfileFiles はセクションの canonical path 以外を拒否する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+      const beforeProfile = storage.getMateProfile();
+      if (!beforeProfile) {
+        throw new Error("事前プロフィールが見つからないよ。");
+      }
+      const db = new DatabaseSync(dbPath);
+      try {
+        const revisionCountBefore = db
+          .prepare("SELECT COUNT(*) AS count FROM mate_profile_revisions WHERE mate_id = 'current'")
+          .get() as { count: number };
+        const sectionBefore = db
+          .prepare("SELECT sha256, byte_size FROM mate_profile_sections WHERE mate_id = 'current' AND section_key = 'core'")
+          .get() as { sha256: string; byte_size: number };
+
+        await assert.rejects(
+          () => storage!.applyProfileFiles({
+            summary: "growth apply",
+            files: [{ sectionKey: "core", relativePath: "mate/other.md", content: "# Other\n" }],
+          }),
+          /relativePath が不正/,
+        );
+
+        const afterProfile = storage.getMateProfile();
+        assert.equal(afterProfile?.profileGeneration, beforeProfile.profileGeneration);
+        assert.equal(afterProfile?.activeRevisionId, beforeProfile.activeRevisionId);
+
+        const revisionCountAfter = db
+          .prepare("SELECT COUNT(*) AS count FROM mate_profile_revisions WHERE mate_id = 'current'")
+          .get() as { count: number };
+        assert.equal(revisionCountAfter.count, revisionCountBefore.count);
+
+        const sectionAfter = db
+          .prepare("SELECT sha256, byte_size FROM mate_profile_sections WHERE mate_id = 'current' AND section_key = 'core'")
+          .get() as { sha256: string; byte_size: number };
+        assert.equal(sectionAfter.sha256, sectionBefore.sha256);
+        assert.equal(sectionAfter.byte_size, sectionBefore.byte_size);
+        assert.equal(sectionAfter.sha256, EMPTY_SHA256);
+
+        assert.equal(await readFile(path.join(userDataPath, "mate/core.md"), "utf8"), "");
+        await assert.rejects(
+          () => access(path.join(userDataPath, "mate/other.md"), constants.F_OK),
+          /ENOENT/,
+        );
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("applyProfileFiles は存在しない sourceGrowthEventId の場合に DB 更新しない", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+
+      const beforeProfile = storage.getMateProfile();
+      if (!beforeProfile) {
+        throw new Error("事前プロフィールが見つからないよ。");
+      }
+
+      const growthEventId = randomUUID();
+      const now = new Date().toISOString();
+      const db = new DatabaseSync(dbPath);
+      try {
+        const revisionCountBefore = db
+          .prepare("SELECT COUNT(*) AS count FROM mate_profile_revisions WHERE mate_id = 'current'")
+          .get() as { count: number };
+        const sectionRowsBefore = db
+          .prepare(
+            "SELECT section_key, file_path, sha256, byte_size, updated_by_revision_id, updated_at FROM mate_profile_sections WHERE mate_id = 'current' ORDER BY section_key",
+          )
+          .all() as Array<{
+            section_key: string;
+            file_path: string;
+            sha256: string;
+            byte_size: number;
+            updated_by_revision_id: string | null;
+            updated_at: string;
+          }>;
+
+        db.prepare(`
+          INSERT INTO mate_growth_events (
+            id,
+            mate_id,
+            source_type,
+            growth_source_type,
+            kind,
+            statement,
+            target_claim_key,
+            state,
+            first_seen_at,
+            last_seen_at,
+            created_at,
+            updated_at
+          ) VALUES (?, 'current', 'manual', 'explicit_user_instruction', 'observation', 'test statement', '', 'candidate', ?, ?, ?, ?)
+        `).run(
+          growthEventId,
+          now,
+          now,
+          now,
+          now,
+        );
+
+        await assert.rejects(
+          () => storage!.applyProfileFiles({
+            summary: "growth apply",
+            sourceGrowthEventId: randomUUID(),
+            files: [{ sectionKey: "core", relativePath: "mate/core.md", content: "# Core\n\n- Updated\n" }],
+          }),
+          /sourceGrowthEventId が見つからないよ/,
+        );
+
+        const afterProfile = storage.getMateProfile();
+        assert.equal(afterProfile?.profileGeneration, beforeProfile.profileGeneration);
+        assert.equal(afterProfile?.activeRevisionId, beforeProfile.activeRevisionId);
+        assert.equal(await readFile(path.join(userDataPath, "mate/core.md"), "utf8"), "");
+        assert.equal(await readFile(path.join(userDataPath, "mate/bond.md"), "utf8"), "");
+        assert.equal(await readFile(path.join(userDataPath, "mate/work-style.md"), "utf8"), "");
+        assert.equal(await readFile(path.join(userDataPath, "mate/notes.md"), "utf8"), "");
+
+        const revisionCountAfter = db
+          .prepare("SELECT COUNT(*) AS count FROM mate_profile_revisions WHERE mate_id = 'current'")
+          .get() as { count: number };
+        assert.equal(revisionCountAfter.count, revisionCountBefore.count);
+
+        const sectionRowsAfter = db
+          .prepare(
+            "SELECT section_key, file_path, sha256, byte_size, updated_by_revision_id, updated_at FROM mate_profile_sections WHERE mate_id = 'current' ORDER BY section_key",
+          )
+          .all() as Array<{
+            section_key: string;
+            file_path: string;
+            sha256: string;
+            byte_size: number;
+            updated_by_revision_id: string | null;
+            updated_at: string;
+          }>;
+        assert.equal(sectionRowsBefore.length, sectionRowsAfter.length);
+        for (let index = 0; index < sectionRowsBefore.length; index++) {
+          assert.equal(sectionRowsBefore[index].section_key, sectionRowsAfter[index].section_key);
+          assert.equal(sectionRowsBefore[index].file_path, sectionRowsAfter[index].file_path);
+          assert.equal(sectionRowsBefore[index].sha256, sectionRowsAfter[index].sha256);
+          assert.equal(sectionRowsBefore[index].byte_size, sectionRowsAfter[index].byte_size);
+          assert.equal(sectionRowsBefore[index].updated_by_revision_id, sectionRowsAfter[index].updated_by_revision_id);
+          assert.equal(sectionRowsBefore[index].updated_at, sectionRowsAfter[index].updated_at);
+        }
       } finally {
         db.close();
       }

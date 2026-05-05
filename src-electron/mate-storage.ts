@@ -544,6 +544,10 @@ export class MateStorage {
       };
     });
 
+    if (sourceGrowthEventId !== null) {
+      this.assertSourceGrowthEventExists(sourceGrowthEventId);
+    }
+
     await this.ensureMateFiles(nextSections.map((section) => ({
       relativePath: section.relativePath,
       content: section.content,
@@ -638,6 +642,16 @@ export class MateStorage {
     return updatedProfile;
   }
 
+  private assertSourceGrowthEventExists(sourceGrowthEventId: string): void {
+    const row = this.withDb((db) => db
+      .prepare("SELECT id FROM mate_growth_events WHERE id = ?")
+      .get(sourceGrowthEventId) as { id: string } | undefined);
+
+    if (!row) {
+      throw new Error(`sourceGrowthEventId が見つからないよ: ${sourceGrowthEventId}`);
+    }
+  }
+
   private async ensureMateFiles(files: Array<{ relativePath: string; content: string }>): Promise<void> {
     const mateDirectoryPath = this.getMateDirectoryPath();
     await mkdir(mateDirectoryPath, { recursive: true });
@@ -683,6 +697,11 @@ function normalizeProfileFiles(files: ApplyMateProfileFileInput[]): ApplyMatePro
     seen.add(sectionKey);
 
     const relativePath = file.relativePath.trim().replace(/\\/g, "/");
+    const canonical = MATE_SECTION_FILES.find((section) => section.key === sectionKey)?.relativePath;
+    if (!canonical || relativePath !== canonical) {
+      throw new Error(`relativePath が不正です: ${file.relativePath}`);
+    }
+
     if (!relativePath || path.isAbsolute(relativePath) || relativePath.startsWith("../") || relativePath.includes("/../")) {
       throw new Error(`relativePath が不正です: ${file.relativePath}`);
     }
