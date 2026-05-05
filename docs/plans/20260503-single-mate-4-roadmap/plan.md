@@ -354,7 +354,7 @@ projection に含めないもの:
 - [x] invalid Memory Candidate response は DB に保存せず run summary に記録する
 - [x] Codex / Copilot background usage を `inputTokens` / `cachedInputTokens` / `outputTokens` / `reasoningOutputTokens` / `totalTokens` に正規化して保存する
 - [x] usage が null の場合は token trigger を使わず elapsed time / pending Memory / manual run に fallback する
-- [ ] Memory Candidate 生成の model / reasoning effort / timeout 設定を実装する
+- [x] Memory Candidate 生成の model / reasoning effort / timeout 設定を実装する
 - [ ] Memory Candidate 生成は turn ごとの軽量 background run を既定候補にする
 - [x] Growth apply 実行頻度を 1 時間に 1 回を上限とする elapsed time / pending Memory / manual run と token usage 補助 signal で制御する
 - [x] ProfileUpdateSkill は internal background job として実装する

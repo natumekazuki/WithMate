@@ -4,7 +4,11 @@ import { describe, it } from "node:test";
 import { MATE_MEMORY_GENERATION_OUTPUT_SCHEMA, type MateMemoryGenerationPrompt } from "../../src-electron/mate-memory-generation-prompt.js";
 import { createMateMemoryGenerationRunner, type MateMemoryGenerationRunnerDeps } from "../../src-electron/mate-memory-generation-runner.js";
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
-import type { ProviderBackgroundAdapter, ProviderBackgroundStructuredPromptPolicy } from "../../src-electron/provider-runtime.js";
+import type {
+  ProviderBackgroundAdapter,
+  ProviderBackgroundStructuredPromptPolicy,
+  RunBackgroundStructuredPromptInput,
+} from "../../src-electron/provider-runtime.js";
 
 function createPrompt(): MateMemoryGenerationPrompt {
   return {
@@ -23,7 +27,7 @@ function createLogicalPrompt() {
 }
 
 function createAdapter(
-  onCall: () => void,
+  onCall: (input: RunBackgroundStructuredPromptInput) => void = () => {},
   result?: { parsedJson?: unknown; structuredOutput?: unknown; rawText: string; threadId?: string | null },
   policy: Partial<ProviderBackgroundStructuredPromptPolicy> = {},
   rejectionError?: Error,
@@ -45,8 +49,8 @@ function createAdapter(
     runCharacterReflection() {
       throw new Error("not used");
     },
-    runBackgroundStructuredPrompt() {
-      onCall();
+    runBackgroundStructuredPrompt(input: RunBackgroundStructuredPromptInput) {
+      onCall(input);
       if (rejectionError) {
         return Promise.reject(rejectionError);
       }
@@ -452,6 +456,48 @@ describe("createMateMemoryGenerationRunner", () => {
 
     assert.deepEqual(called, ["copilot"]);
     assert.deepEqual(output.parsedJson, { memories: [{ foo: "from-parsed" }] });
+  });
+
+  it("選択 candidate の model / reasoningEffort / timeoutSeconds が runBackgroundStructuredPrompt input に渡る", async () => {
+    let calledInput: RunBackgroundStructuredPromptInput | null = null;
+    const adapters = new Map<string, ProviderBackgroundAdapter>([
+      [
+        "copilot",
+        createAdapter((input) => {
+          calledInput = input;
+        }, {
+          parsedJson: { memories: [] },
+          rawText: "{\"memories\":[]}",
+        }),
+      ],
+    ]);
+    const appSettings = normalizeAppSettings({
+      mateMemoryGenerationSettings: {
+        priorityList: [{ provider: "copilot", model: "copilot-light", reasoningEffort: "high", timeoutSeconds: 31 }],
+      },
+      codingProviderSettings: {
+        copilot: {
+          enabled: true,
+          apiKey: "",
+          skillRootPath: "",
+        },
+      },
+    });
+    const runner = createMateMemoryGenerationRunner(createDeps({ adapters, appSettings }));
+    const prompt = createPrompt();
+
+    await runner({ prompt, logicalPrompt: createLogicalPrompt() });
+
+    assert.ok(calledInput);
+    assert.equal(calledInput.providerId, "copilot");
+    assert.equal(calledInput.model, "copilot-light");
+    assert.equal(calledInput.reasoningEffort, "high");
+    assert.equal(calledInput.timeoutMs, 31000);
+    assert.equal(calledInput.workspacePath, "C:/workspace");
+    assert.deepEqual(calledInput.appSettings, appSettings);
+    assert.deepEqual(calledInput.prompt.outputSchema, MATE_MEMORY_GENERATION_OUTPUT_SCHEMA);
+    assert.equal(calledInput.prompt.systemText, prompt.systemText);
+    assert.equal(calledInput.prompt.userText, prompt.userText);
   });
 
   it("onProviderFailure が throw しても次候補へ fallback する", async () => {
