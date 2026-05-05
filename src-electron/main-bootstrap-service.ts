@@ -24,6 +24,7 @@ export class MainBootstrapService {
   private readonly getGrowthApplyIntervalMs?: () => number | Promise<number>;
   private readonly createGrowthApplyTimer: (handler: () => void, intervalMs: number) => unknown;
   private readonly clearGrowthApplyTimerHandle: (timer: unknown) => void;
+  private growthApplyInFlight: ReturnType<MainBootstrapServiceDeps["applyPendingGrowth"]> | null = null;
   private growthApplyTimer: GrowthApplyTimerHandle | null = null;
 
   constructor(private readonly deps: MainBootstrapServiceDeps) {
@@ -49,10 +50,26 @@ export class MainBootstrapService {
 
     const intervalMs = await this.resolveGrowthApplyIntervalMs();
     this.growthApplyTimer = this.createGrowthApplyTimer(() => {
-      void this.deps.applyPendingGrowth().catch((error) => {
+      void this.runGrowthApplyOnce().catch((error) => {
         console.warn("Failed to apply pending growth", error);
       });
     }, intervalMs);
+  }
+
+  async runGrowthApplyOnce(): ReturnType<MainBootstrapServiceDeps["applyPendingGrowth"]> {
+    if (this.growthApplyInFlight) {
+      return this.growthApplyInFlight;
+    }
+
+    const pendingApply = this.deps.applyPendingGrowth();
+    this.growthApplyInFlight = pendingApply;
+    try {
+      return await pendingApply;
+    } finally {
+      if (this.growthApplyInFlight === pendingApply) {
+        this.growthApplyInFlight = null;
+      }
+    }
   }
 
   clearGrowthApplyTimer(): void {

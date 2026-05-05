@@ -217,6 +217,78 @@ test("Growth timer handler 実行で applyPendingGrowth が呼ばれる", async 
   assert.equal(applied, 1);
 });
 
+test("Growth timer handler の連続実行時、同時実行は起きない", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  let applied = 0;
+  let finish!: () => void;
+  const applyWait = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "active";
+    },
+    async applyPendingGrowth() {
+      applied += 1;
+      await applyWait;
+    },
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.ensureGrowthApplyTimer();
+
+  timerSpies.createdTimers[0]!.handler();
+  timerSpies.createdTimers[0]!.handler();
+  await Promise.resolve();
+  assert.equal(applied, 1);
+
+  finish();
+  await applyWait;
+  await Promise.resolve();
+
+  timerSpies.createdTimers[0]!.handler();
+  await Promise.resolve();
+  assert.equal(applied, 2);
+});
+
+test("Growth apply が失敗した後も次の実行を開始できる", async () => {
+  let applied = 0;
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "active";
+    },
+    async applyPendingGrowth() {
+      applied += 1;
+      if (applied === 1) {
+        throw new Error("growth failed");
+      }
+      return { applied };
+    },
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+  });
+
+  await assert.rejects(() => service.runGrowthApplyOnce(), /growth failed/);
+  assert.deepEqual(await service.runGrowthApplyOnce(), { applied: 2 });
+  assert.equal(applied, 2);
+});
+
 test("clearGrowthApplyTimer で clear が呼ばれ、再度 ensure できる", async () => {
   const timerSpies = createGrowthTimerSpies();
   const service = new MainBootstrapService({

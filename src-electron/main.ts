@@ -1060,7 +1060,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               },
             },
             getMateState: () => requireMateStorage().getMateState(),
-            applyPendingGrowth,
+            applyPendingGrowth: applyPendingGrowthCore,
             getGrowthApplyIntervalMs: () => resolveMateGrowthApplyIntervalMs(),
             createGrowthApplyTimer: (handler, intervalMs) => setInterval(handler, intervalMs),
             clearGrowthApplyTimer: (timer) => {
@@ -1500,6 +1500,11 @@ async function syncProviderInstructionTargetsForDisabledMateProfile(): Promise<v
 }
 
 async function applyPendingGrowth(): ReturnType<MateGrowthApplyService["applyPendingGrowth"]> {
+  const result = await requireMainBootstrapService().runGrowthApplyOnce();
+  return result as Awaited<ReturnType<MateGrowthApplyService["applyPendingGrowth"]>>;
+}
+
+async function applyPendingGrowthCore(): ReturnType<MateGrowthApplyService["applyPendingGrowth"]> {
   if (requireMateStorage().getMateState() === "not_created") {
     return {
       candidateCount: 0,
