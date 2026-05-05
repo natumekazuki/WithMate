@@ -173,6 +173,166 @@ describe("MateStorage", () => {
     }
   });
 
+  it("getMateProfile は active_revision_id が staging でも最新の ready revision を返す", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      const profile = await storage.createMate({ displayName: "Mika" });
+      const initialRevisionId = profile.activeRevisionId;
+
+      if (!initialRevisionId) {
+        throw new Error("初期の active revision が見つからないよ。");
+      }
+
+      const now = new Date().toISOString();
+      const stagingRevisionId = randomUUID();
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare(`
+          INSERT INTO mate_profile_revisions (
+            id,
+            mate_id,
+            seq,
+            parent_revision_id,
+            status,
+            kind,
+            source_growth_event_id,
+            summary,
+            snapshot_dir_path,
+            created_by,
+            created_at,
+            ready_at,
+            failed_at,
+            reverted_by_revision_id
+          ) VALUES (?, ?, ?, ?, 'staging', 'growth_apply', NULL, 'staging', '', 'system', ?, NULL, NULL, NULL)
+        `).run(stagingRevisionId, "current", 2, initialRevisionId, now);
+
+        db.prepare(`
+          UPDATE mate_profile
+          SET active_revision_id = ?
+          WHERE id = ?
+        `).run(stagingRevisionId, "current");
+
+        const reopenedProfile = storage.getMateProfile();
+        assert.equal(reopenedProfile?.activeRevisionId, initialRevisionId);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("getMateProfile は failed / missing でも最新の ready revision を返す", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      const profile = await storage.createMate({ displayName: "Mika" });
+      const initialRevisionId = profile.activeRevisionId;
+
+      if (!initialRevisionId) {
+        throw new Error("初期の active revision が見つからないよ。");
+      }
+
+      const now = new Date().toISOString();
+      const failedRevisionId = randomUUID();
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare(`
+          INSERT INTO mate_profile_revisions (
+            id,
+            mate_id,
+            seq,
+            parent_revision_id,
+            status,
+            kind,
+            source_growth_event_id,
+            summary,
+            snapshot_dir_path,
+            created_by,
+            created_at,
+            ready_at,
+            failed_at,
+            reverted_by_revision_id
+          ) VALUES (?, ?, ?, ?, 'failed', 'growth_apply', NULL, 'failed', '', 'system', ?, NULL, ?, NULL)
+        `).run(failedRevisionId, "current", 2, initialRevisionId, now, now);
+
+        db.prepare("UPDATE mate_profile SET active_revision_id = ? WHERE id = ?").run(failedRevisionId, "current");
+        const failedFallbackProfile = storage.getMateProfile();
+        assert.equal(failedFallbackProfile?.activeRevisionId, initialRevisionId);
+
+        db.prepare("UPDATE mate_profile SET active_revision_id = ? WHERE id = ?").run(randomUUID(), "current");
+        const missingFallbackProfile = storage.getMateProfile();
+        assert.equal(missingFallbackProfile?.activeRevisionId, initialRevisionId);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("getMateProfile は active_revision_id が null でも最新の ready revision を返す", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      const profile = await storage.createMate({ displayName: "Mika" });
+
+      if (!profile.activeRevisionId) {
+        throw new Error("初期の active revision が見つからないよ。");
+      }
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare("UPDATE mate_profile SET active_revision_id = NULL WHERE id = ?").run("current");
+
+        const fallbackProfile = storage.getMateProfile();
+        assert.equal(fallbackProfile?.activeRevisionId, profile.activeRevisionId);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("ready revision がない場合は activeRevisionId が null を返す", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      const profile = await storage.createMate({ displayName: "Mika" });
+
+      if (!profile.activeRevisionId) {
+        throw new Error("初期の active revision が見つからないよ。");
+      }
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare("DELETE FROM mate_profile_revisions WHERE mate_id = ?").run("current");
+        db.prepare("UPDATE mate_profile SET active_revision_id = ? WHERE id = ?").run(profile.activeRevisionId, "current");
+
+        const noReadyProfile = storage.getMateProfile();
+        assert.equal(noReadyProfile?.activeRevisionId, null);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
   it("createMate は displayName のみでプロフィールと初期関連行を作る", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: MateStorage | null = null;

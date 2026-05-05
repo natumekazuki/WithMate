@@ -274,7 +274,7 @@ export class MateStorage {
         avatarFilePath: profileRow.avatar_file_path,
         avatarSha256: profileRow.avatar_sha256,
         avatarByteSize: profileRow.avatar_byte_size,
-        activeRevisionId: profileRow.active_revision_id,
+        activeRevisionId: this.getReadyActiveRevisionId(db, profileRow.active_revision_id),
         profileGeneration: profileRow.profile_generation,
         createdAt: profileRow.created_at,
         updatedAt: profileRow.updated_at,
@@ -289,6 +289,36 @@ export class MateStorage {
         })),
       };
     });
+  }
+
+  private getReadyActiveRevisionId(db: DatabaseSync, activeRevisionId: string | null): string | null {
+    if (!activeRevisionId) {
+      return this.getLatestReadyRevisionId(db);
+    }
+
+    const revision = db.prepare(`
+      SELECT status
+      FROM mate_profile_revisions
+      WHERE mate_id = ? AND id = ?
+    `).get(MATE_ID, activeRevisionId) as { status: string } | undefined;
+
+    if (revision?.status === "ready") {
+      return activeRevisionId;
+    }
+
+    return this.getLatestReadyRevisionId(db);
+  }
+
+  private getLatestReadyRevisionId(db: DatabaseSync): string | null {
+    const revision = db.prepare(`
+      SELECT id
+      FROM mate_profile_revisions
+      WHERE mate_id = ? AND status = 'ready'
+      ORDER BY seq DESC
+      LIMIT 1
+    `).get(MATE_ID) as { id: string } | undefined;
+
+    return revision?.id ?? null;
   }
 
   getMateGrowthSettings(): MateGrowthSettings | null {
