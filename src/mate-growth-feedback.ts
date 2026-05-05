@@ -1,18 +1,13 @@
-const DEFAULT_FEEDBACK = "Mate 成長の手動適用が完了したよ。";
+import type { MateGrowthApplyResult } from "./mate-growth-apply-result.js";
 
-export type ApplyPendingGrowthResult = {
-  candidateCount?: unknown;
-  appliedCount?: unknown;
-  skippedCount?: unknown;
-  revisionId?: unknown;
-};
+const DEFAULT_FEEDBACK = "Mate 成長の手動適用が完了したよ。";
 
 export function buildApplyPendingGrowthFeedback(result: unknown): string {
   if (result === null || typeof result !== "object") {
     return DEFAULT_FEEDBACK;
   }
 
-  const typedResult = result as ApplyPendingGrowthResult;
+  const typedResult = result as MateGrowthApplyResult;
   const parts: string[] = [];
 
   if (typeof typedResult.candidateCount === "number") {
