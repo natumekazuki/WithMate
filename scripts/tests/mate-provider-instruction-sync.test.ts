@@ -10,6 +10,7 @@ import {
   MATE_PROFILE_BLOCK_ID,
 } from "../../src-electron/mate-instruction-projection.js";
 import { buildProviderInstructionTargetProtectedRoots } from "../../src-electron/provider-instruction-target-root-guard.js";
+import { MateStorage } from "../../src-electron/mate-storage.js";
 import {
   createDefaultProviderInstructionTargets,
   MateProviderInstructionSyncBlockedError,
@@ -311,6 +312,54 @@ describe("syncEnabledProviderInstructionTargets", () => {
       storage.close();
       await rm(workspacePath, { recursive: true, force: true });
       await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("getMateProfile() で保存済みの実 profile から同期できる", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const mateDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-provider-targets-v4.db");
+    const mateUserDataPath = path.join(mateDatabaseDirectory, "userData");
+    const targetStorage = new ProviderInstructionTargetStorage(storagePath);
+    const mateStorage = new MateStorage(storagePath, mateUserDataPath);
+
+    try {
+      await mateStorage.createMate({ displayName: "Mia" });
+      const profile = mateStorage.getMateProfile();
+      if (!profile) {
+        throw new Error("保存済み profile が見つかりません");
+      }
+
+      targetStorage.upsertTarget({
+        providerId: "codex",
+        enabled: true,
+        rootDirectory: workspacePath,
+        instructionRelativePath: path.join(".github", "copilot-instructions.md"),
+        writeMode: "managed_block",
+        failPolicy: "warn_continue",
+      });
+
+      const result = await syncEnabledProviderInstructionTargets(targetStorage, profile, FILE_DEPENDENCIES);
+      const updated = await readFile(path.join(workspacePath, ".github", "copilot-instructions.md"), "utf8");
+
+      assert.equal(result.targetCount, 1);
+      assert.equal(result.syncedCount, 1);
+      assert.equal(result.failedCount, 0);
+      assert.equal(result.skippedCount, 0);
+      assert.equal(result.runIds.length, 1);
+      assert.equal(countProfileBlocks(updated), 1);
+      assert.ok(updated.includes("- **core:** `mate/core.md`"));
+      assert.ok(updated.includes("- **bond:** `mate/bond.md`"));
+      assert.ok(updated.includes("- **work_style:** `mate/work-style.md`"));
+      assert.equal(updated.includes("- **notes:**"), false);
+      assert.equal(updated.includes("mate/notes.md"), false);
+    } finally {
+      mateStorage.close();
+      targetStorage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+      await rm(mateDatabaseDirectory, { recursive: true, force: true });
     }
   });
 
