@@ -1743,6 +1743,7 @@ function requireMateGrowthApplyService(): MateGrowthApplyService {
       requireMateStorage(),
       requireMateSemanticEmbeddingIndexService(),
       requireProviderInstructionTargetStorage(),
+      requireMateProjectDigestStorage(),
     );
   }
 

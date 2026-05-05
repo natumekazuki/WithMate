@@ -8,6 +8,7 @@ import { describe, it } from "node:test";
 import { MateGrowthApplyService } from "../../src-electron/mate-growth-apply-service.js";
 import { MateGrowthStorage } from "../../src-electron/mate-growth-storage.js";
 import { MateProfileItemStorage } from "../../src-electron/mate-profile-item-storage.js";
+import { MateProjectDigestStorage } from "../../src-electron/mate-project-digest-storage.js";
 import { MateStorage } from "../../src-electron/mate-storage.js";
 
 function createTempPaths(): Promise<{ dbPath: string; userDataPath: string; cleanup: () => Promise<void> }> {
@@ -123,6 +124,196 @@ describe("MateGrowthApplyService", () => {
     } finally {
       profileItemStorage.close();
       growthStorage.close();
+      mateStorage.close();
+      await cleanup();
+    }
+  });
+
+  it("project_digest は projectDigestId があれば apply される", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const mateStorage = new MateStorage(dbPath, userDataPath);
+    const growthStorage = new MateGrowthStorage(dbPath);
+    const profileItemStorage = new MateProfileItemStorage(dbPath);
+    const projectDigestStorage = new MateProjectDigestStorage(dbPath);
+
+    try {
+      await mateStorage.createMate({ displayName: "Mika" });
+      const projectDigest = projectDigestStorage.resolveProjectDigestForWorkspace(process.cwd());
+      assert.ok(projectDigest);
+      const projectDigestId = projectDigest.id;
+      const runId = growthStorage.createRun({
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        triggerReason: "test",
+      });
+      const projectDigestEvent = growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "repeated_user_behavior",
+        kind: "project_context",
+        targetSection: "project_digest",
+        projectDigestId,
+        statement: "このプロジェクトでは TypeScript を重視する",
+        statementFingerprint: "project-typescript-first",
+        targetClaimKey: "project-preference",
+        confidence: 84,
+        salienceScore: 70,
+        projectionAllowed: true,
+      });
+
+      const service = new MateGrowthApplyService(
+        growthStorage,
+        profileItemStorage,
+        mateStorage,
+        undefined,
+        undefined,
+        projectDigestStorage,
+      );
+      const result = await service.applyPendingGrowth({ runId });
+
+      assert.equal(result.candidateCount, 1);
+      assert.equal(result.appliedCount, 1);
+      assert.equal(result.skippedCount, 0);
+      assert.equal(typeof result.revisionId, "string");
+
+      const projectDigestItems = profileItemStorage.listProfileItems({
+        sectionKey: "project_digest",
+        state: "active",
+        projectDigestId,
+      });
+      assert.equal(projectDigestItems.length, 1);
+      assert.equal(projectDigestItems[0].projectDigestId, projectDigestId);
+      assert.equal(projectDigestItems[0].claimKey, "project-preference");
+      assert.equal(projectDigestItems[0].category, "project_context");
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const row = db.prepare("SELECT state, applied_revision_id FROM mate_growth_events WHERE id = ?").get(
+          projectDigestEvent.id,
+        ) as { state: string; applied_revision_id: string | null };
+        assert.equal(row.state, "applied");
+        assert.equal(row.applied_revision_id, result.revisionId);
+      } finally {
+        db.close();
+      }
+    } finally {
+      profileItemStorage.close();
+      growthStorage.close();
+      projectDigestStorage.close();
+      mateStorage.close();
+      await cleanup();
+    }
+  });
+
+  it("project_digest は projectDigestId がない場合 skipped になる", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const mateStorage = new MateStorage(dbPath, userDataPath);
+    const growthStorage = new MateGrowthStorage(dbPath);
+    const profileItemStorage = new MateProfileItemStorage(dbPath);
+
+    try {
+      await mateStorage.createMate({ displayName: "Mika" });
+      const runId = growthStorage.createRun({
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        triggerReason: "test",
+      });
+      growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "repeated_user_behavior",
+        kind: "project_context",
+        targetSection: "project_digest",
+        statement: "このプロジェクトでは TypeScript を重視する",
+        statementFingerprint: "project-typescript-first",
+        targetClaimKey: "project-preference",
+        confidence: 84,
+        salienceScore: 70,
+        projectionAllowed: true,
+      });
+
+      const service = new MateGrowthApplyService(growthStorage, profileItemStorage, mateStorage);
+      const result = await service.applyPendingGrowth({ runId });
+
+      assert.equal(result.candidateCount, 1);
+      assert.equal(result.appliedCount, 0);
+      assert.equal(result.skippedCount, 1);
+      assert.equal(result.revisionId, null);
+
+      const projectDigestItems = profileItemStorage.listProfileItems({ sectionKey: "project_digest", state: "active" });
+      assert.equal(projectDigestItems.length, 0);
+    } finally {
+      profileItemStorage.close();
+      growthStorage.close();
+      mateStorage.close();
+      await cleanup();
+    }
+  });
+
+  it("project_digest は存在しない projectDigestId の場合 skipped になる", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const mateStorage = new MateStorage(dbPath, userDataPath);
+    const growthStorage = new MateGrowthStorage(dbPath);
+    const profileItemStorage = new MateProfileItemStorage(dbPath);
+    const projectDigestStorage = new MateProjectDigestStorage(dbPath);
+
+    try {
+      await mateStorage.createMate({ displayName: "Mika" });
+      const runId = growthStorage.createRun({
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        triggerReason: "test",
+      });
+      const event = growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "repeated_user_behavior",
+        kind: "project_context",
+        targetSection: "project_digest",
+        projectDigestId: "missing-project-digest",
+        statement: "このプロジェクトでは TypeScript を重視する",
+        statementFingerprint: "project-typescript-first",
+        targetClaimKey: "project-preference",
+        confidence: 84,
+        salienceScore: 70,
+        projectionAllowed: true,
+      });
+
+      const service = new MateGrowthApplyService(
+        growthStorage,
+        profileItemStorage,
+        mateStorage,
+        undefined,
+        undefined,
+        projectDigestStorage,
+      );
+      const result = await service.applyPendingGrowth({ runId });
+
+      assert.equal(result.candidateCount, 1);
+      assert.equal(result.appliedCount, 0);
+      assert.equal(result.skippedCount, 1);
+      assert.equal(result.revisionId, null);
+
+      const projectDigestItems = profileItemStorage.listProfileItems({ sectionKey: "project_digest", state: "active" });
+      assert.equal(projectDigestItems.length, 0);
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const row = db.prepare("SELECT state, applied_revision_id FROM mate_growth_events WHERE id = ?").get(
+          event.id,
+        ) as { state: string; applied_revision_id: string | null };
+        assert.equal(row.state, "disabled");
+        assert.equal(row.applied_revision_id, null);
+      } finally {
+        db.close();
+      }
+    } finally {
+      profileItemStorage.close();
+      growthStorage.close();
+      projectDigestStorage.close();
       mateStorage.close();
       await cleanup();
     }

@@ -8,6 +8,7 @@ import type {
   MateProfileItemCategory,
   MateProfileItemSectionKey,
   MateProfileItemStorage,
+  UpsertMateProfileItemInput,
 } from "./mate-profile-item-storage.js";
 import { renderMateProfileFiles } from "./mate-profile-file-renderer.js";
 import type { MateStorage } from "./mate-storage.js";
@@ -24,7 +25,7 @@ export type ApplyPendingGrowthResult = {
   revisionId: string | null;
 };
 
-const APPLY_TARGET_SECTIONS = ["core", "bond", "work_style"] as const;
+const APPLY_TARGET_SECTIONS = ["core", "bond", "work_style", "project_digest"] as const;
 const APPLYABLE_CORE_GROWTH_SOURCE_TYPES = ["explicit_user_instruction", "user_correction"] as const;
 
 const APPLYABLE_CORE_SOURCE_TYPES = ["mate_talk"] as const;
@@ -40,6 +41,10 @@ type ProviderInstructionTargetInvalidator = {
   markEnabledTargetsStale(): number;
 };
 
+type ProjectDigestLookupService = {
+  hasProjectDigest(projectDigestId: string): boolean;
+};
+
 export class MateGrowthApplyService {
   constructor(
     private readonly growthStorage: MateGrowthStorage,
@@ -47,6 +52,7 @@ export class MateGrowthApplyService {
     private readonly mateStorage: MateStorage,
     private readonly semanticEmbeddingIndexService?: SemanticEmbeddingIndexService,
     private readonly providerInstructionTargetInvalidator?: ProviderInstructionTargetInvalidator,
+    private readonly projectDigestLookupService?: ProjectDigestLookupService,
   ) {}
 
   async applyPendingGrowth(options: ApplyPendingGrowthOptions = {}): Promise<ApplyPendingGrowthResult> {
@@ -68,8 +74,10 @@ export class MateGrowthApplyService {
       throw new Error("Mate が作成されていないよ。");
     }
 
-    const applicableEvents = events.filter(isApplicableProfileEvent);
-    const skippedEvents = events.filter((event) => !isApplicableProfileEvent(event));
+    const applicableEvents = events.filter((event) =>
+      isApplicableProfileEvent(event, this.projectDigestLookupService));
+    const skippedEvents = events.filter((event) =>
+      !isApplicableProfileEvent(event, this.projectDigestLookupService));
     const runFingerprint = buildGrowthApplyInputFingerprint(options, events);
     const operationId = `growth-apply:${runFingerprint}`;
     const lock = this.growthStorage.acquireGrowthApplyRun({
@@ -116,7 +124,7 @@ export class MateGrowthApplyService {
       }
 
       for (const event of applicableEvents) {
-        const upsertedItem = this.profileItemStorage.upsertProfileItem({
+        const upsertInput: UpsertMateProfileItemInput = {
           sectionKey: event.targetSection,
           category: growthEventCategory(event),
           claimKey: growthEventClaimKey(event),
@@ -132,7 +140,13 @@ export class MateGrowthApplyService {
             { type: "growth_kind", value: event.kind },
             { type: "growth_source_type", value: event.growthSourceType },
           ],
-        });
+        };
+
+        if (event.targetSection === "project_digest") {
+          upsertInput.projectDigestId = event.projectDigestId;
+        }
+
+        const upsertedItem = this.profileItemStorage.upsertProfileItem(upsertInput);
 
         appliedIndexTargets.push({ event, profileItem: upsertedItem });
       }
@@ -245,6 +259,7 @@ function buildGrowthApplyInputFingerprint(options: ApplyPendingGrowthOptions, ev
       statementFingerprint: event.statementFingerprint,
       statement: event.statement,
       targetSection: event.targetSection,
+      projectDigestId: event.projectDigestId,
       targetClaimKey: event.targetClaimKey,
       confidence: event.confidence,
       salienceScore: event.salienceScore,
@@ -255,13 +270,39 @@ function buildGrowthApplyInputFingerprint(options: ApplyPendingGrowthOptions, ev
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
-function isApplicableProfileEvent(event: MateGrowthEvent): event is MateGrowthEvent & {
-  targetSection: Extract<MateProfileItemSectionKey, "core" | "bond" | "work_style">;
+function isApplicableProfileEvent(
+  event: MateGrowthEvent,
+  projectDigestLookupService?: ProjectDigestLookupService,
+): event is
+  | (MateGrowthEvent & { targetSection: Extract<MateProfileItemSectionKey, "core" | "bond" | "work_style">; })
+  | (MateGrowthEvent & { targetSection: "project_digest"; projectDigestId: string; }) {
+  const targetSection = event.targetSection;
+  if (!event.projectionAllowed || event.state !== "candidate") {
+    return false;
+  }
+  if (targetSection === "project_digest") {
+    return isProjectDigestGrowthEvent(event, projectDigestLookupService);
+  }
+  if (!(APPLY_TARGET_SECTIONS as readonly string[]).includes(targetSection)) {
+    return false;
+  }
+  return targetSection !== "core" || isManualCoreGrowthEvent(event);
+}
+
+function isProjectDigestGrowthEvent(
+  event: MateGrowthEvent,
+  projectDigestLookupService?: ProjectDigestLookupService,
+): event is MateGrowthEvent & {
+  targetSection: "project_digest";
+  projectDigestId: string;
 } {
-  return event.projectionAllowed &&
-    event.state === "candidate" &&
-    (APPLY_TARGET_SECTIONS as readonly string[]).includes(event.targetSection) &&
-    (event.targetSection !== "core" || isManualCoreGrowthEvent(event));
+  if (event.targetSection !== "project_digest" ||
+    typeof event.projectDigestId !== "string" ||
+    event.projectDigestId.trim().length === 0) {
+    return false;
+  }
+
+  return projectDigestLookupService?.hasProjectDigest(event.projectDigestId) ?? true;
 }
 
 function isManualCoreGrowthEvent(event: MateGrowthEvent): boolean {

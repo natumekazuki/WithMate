@@ -95,6 +95,17 @@ export class MateProjectDigestStorage {
     return toProjectDigest(row);
   }
 
+  hasProjectDigest(projectDigestId: string): boolean {
+    const row = this.db.prepare(`
+      SELECT 1 AS exists_flag
+      FROM mate_project_digests
+      WHERE id = ? AND mate_id = ?
+      LIMIT 1
+    `).get(projectDigestId, MATE_ID) as { exists_flag: number } | undefined;
+
+    return Boolean(row);
+  }
+
   resolveProjectDigestForWorkspace(workspacePath: string): MateProjectDigest | null {
     const scope = resolveProjectScope(workspacePath);
     if (scope.projectType !== "git") {
