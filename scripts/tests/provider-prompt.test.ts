@@ -157,14 +157,18 @@ describe("composeProviderPrompt", () => {
     });
 
     assert.match(prompt.inputBodyText, /# Project Context/);
+    assert.match(prompt.inputBodyText, /このセクションは参照用のプロジェクト情報です/);
     assert.match(prompt.inputBodyText, /# Digest/);
     assert.match(prompt.inputBodyText, /- item 1/);
     assert.match(prompt.inputBodyText, /- item 2/);
-    assertSectionOrder(prompt.inputBodyText, ["# Project Context", "# User Input"]);
+    assertSectionOrder(prompt.inputBodyText, ["# Project Context", "ユーザー入力と上位指示が最優先です。", "# Digest", "# User Input"]);
+    assertSectionOrder(prompt.inputBodyText, ["# Project Context", "# Digest"]);
     assertSectionOrder(prompt.logicalPrompt.composedText, [
       "# System Prompt",
       "# Character",
       "# Project Context",
+      "ユーザー入力と上位指示が最優先です。",
+      "# Digest",
       "# User Input",
     ]);
   });
