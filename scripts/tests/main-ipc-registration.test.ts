@@ -130,6 +130,12 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   const { ipcMain, handlers } = createIpcMainStub();
   const calls: string[] = [];
   const auditPageRequests: unknown[] = [];
+  const expectedGrowthResult = {
+    candidateCount: 4,
+    appliedCount: 3,
+    skippedCount: 1,
+    revisionId: "rev-001",
+  };
   let mateState: "active" | "not_created" = "active";
 
   registerMainIpcHandlers(ipcMain, {
@@ -362,6 +368,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     },
     async applyPendingGrowth() {
       calls.push("applyPendingGrowth");
+      return expectedGrowthResult;
     },
     async runMateTalkTurn(input) {
       calls.push(`runMateTalk:${input.message}`);
@@ -401,7 +408,10 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   await handlers.get(WITHMATE_GET_MATE_PROFILE_CHANNEL)?.();
   await handlers.get(WITHMATE_CREATE_MATE_CHANNEL)?.({}, { displayName: "Buddy" });
   await handlers.get(WITHMATE_RUN_MATE_TALK_TURN_CHANNEL)?.({}, { message: "hello" });
-  await handlers.get(WITHMATE_APPLY_MATE_GROWTH_CHANNEL)?.();
+  assert.deepEqual(
+    await handlers.get(WITHMATE_APPLY_MATE_GROWTH_CHANNEL)?.(),
+    expectedGrowthResult,
+  );
   await handlers.get(WITHMATE_RESET_MATE_CHANNEL)?.();
   const auditPageResult = await handlers.get(WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL)?.(
     {},
