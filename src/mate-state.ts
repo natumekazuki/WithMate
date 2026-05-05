@@ -1,12 +1,13 @@
 export type MateProfileState = "draft" | "active" | "deleted";
 export type MateStorageState = "not_created" | MateProfileState;
 export type MateProfileSectionState = {
-  sectionKey: "core" | "bond" | "work_style" | "notes";
+  sectionKey: "core" | "bond" | "work_style" | "notes" | "project_digest";
   filePath: string;
   sha256: string;
   byteSize: number;
   updatedByRevisionId: string | null;
   updatedAt: string;
+  projectionAllowed?: boolean;
 };
 
 export type MateProfile = {

@@ -105,6 +105,37 @@ test("buildMateInstructionContent は MateProfile から安定した Markdown �
   );
 });
 
+test("buildMateInstructionContent は projectionAllowed=false のセクションを除外する", () => {
+  const profile = createProfile({});
+  const gatedProfile = {
+    ...profile,
+    sections: profile.sections.map((section) => (section.sectionKey === "bond" ? { ...section, projectionAllowed: false } : section)),
+  };
+  const content = buildMateInstructionContent(gatedProfile);
+
+  assert.equal(content.includes("- **bond:** `mate/bond.md`"), false);
+  assert.equal(content.includes("- **core:** `mate/core.md`"), true);
+  assert.equal(content.includes("- **work_style:** `mate/work-style.md`"), true);
+});
+
+test("buildMateInstructionContent は projectionAllowed=true でも非 provider セクションを除外する", () => {
+  const profile = createProfile({});
+  const projectedProfile = {
+    ...profile,
+    sections: profile.sections.map((section) => (
+      section.sectionKey === "notes" || section.sectionKey === "project_digest"
+        ? { ...section, projectionAllowed: true }
+        : section
+    )),
+  };
+  const content = buildMateInstructionContent(projectedProfile);
+
+  assert.equal(content.includes("- **notes:**"), false);
+  assert.equal(content.includes("- **project_digest:**"), false);
+  assert.equal(content.includes("mate/notes.md"), false);
+  assert.equal(content.includes("mate/project-digest.md"), false);
+});
+
 test("buildMateInstructionContent は動的な補助情報を含めない", () => {
   const profile = createProfile({
     displayName: "Tessa",

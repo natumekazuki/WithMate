@@ -37,12 +37,16 @@ function buildOptionalDescription(description: string): string[] {
 
 function buildProfileFileLines(sections: MateProfile["sections"]): string[] {
   return sections
-    .filter((section) => isProviderInstructionProfileSection(section.sectionKey))
+    .filter(isProviderInstructionProfileSection)
     .map((section) => `- **${section.sectionKey}:** \`${relativeProfilePath(section.filePath)}\``);
 }
 
-function isProviderInstructionProfileSection(sectionKey: string): boolean {
-  return sectionKey === "core" || sectionKey === "bond" || sectionKey === "work_style";
+function isProviderInstructionProfileSection(section: MateProfile["sections"][number]): boolean {
+  if (section.projectionAllowed === false) {
+    return false;
+  }
+
+  return section.sectionKey === "core" || section.sectionKey === "bond" || section.sectionKey === "work_style";
 }
 
 function relativeProfilePath(filePath: string): string {
