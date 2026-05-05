@@ -129,8 +129,10 @@ import { WindowEntryLoader } from "./window-entry-loader.js";
 import { AuxWindowService } from "./aux-window-service.js";
 import {
   assertProviderInstructionTargetRootNotProtected,
-  buildProviderInstructionTargetProtectedRoots,
 } from "./provider-instruction-target-root-guard.js";
+import {
+  buildProviderInstructionTargetProtectedRootsWithWorkspace,
+} from "./provider-instruction-target-protected-roots.js";
 import { registerMainIpcHandlers } from "./main-ipc-registration.js";
 import {
   PersistentStoreLifecycleService,
@@ -187,7 +189,6 @@ const fixedUserDataPath = path.join(appDataPath, "WithMate");
 app.setAppUserModelId("com.natumekazuki.withmate");
 app.setPath("userData", fixedUserDataPath);
 const appLogsPath = path.join(fixedUserDataPath, "logs");
-const PROVIDER_INSTRUCTION_TARGET_PROTECTED_ROOTS = buildProviderInstructionTargetProtectedRoots(fixedUserDataPath);
 const MATE_TALK_OUTPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -217,6 +218,12 @@ const bundledModelCatalogPath = devServerUrl
 const codexAdapter = new CodexAdapter();
 const copilotAdapter = new CopilotAdapter();
 const WAL_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
+
+function getProviderInstructionTargetProtectedRoots(): string[] {
+  return buildProviderInstructionTargetProtectedRootsWithWorkspace(fixedUserDataPath, {
+    workspacePaths: sessions.map((session) => session.workspacePath),
+  });
+}
 
 let sessions: Session[] = [];
 let characters: CharacterProfile[] = [];
@@ -923,13 +930,16 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     getMateProfile: () => requireMateStorage().getMateProfile(),
                     syncEnabledProviderInstructionTargetsForMateProfile,
                     syncDisabledProviderInstructionTarget,
-                    protectedRoots: PROVIDER_INSTRUCTION_TARGET_PROTECTED_ROOTS,
+                    protectedRoots: getProviderInstructionTargetProtectedRoots(),
                     syncDeps: {
                       readTextFile: async (filePath) => readFile(filePath, "utf8"),
                       writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
                     },
-                    assertProviderInstructionTargetRootNotProtected: (upsertInput) =>
-                      assertProviderInstructionTargetRootNotProtected(upsertInput, PROVIDER_INSTRUCTION_TARGET_PROTECTED_ROOTS),
+                    assertProviderInstructionTargetRootNotProtected: (upsertInput, protectedRoots) =>
+                      assertProviderInstructionTargetRootNotProtected(
+                        upsertInput,
+                        protectedRoots,
+                      ),
                     logDisabledCleanupFailure(error, previousTarget) {
                       writeAppLog({
                         level: "warn",
@@ -1481,7 +1491,7 @@ async function syncEnabledProviderInstructionTargetsForMateProfile(
         readTextFile: async (filePath) => readFile(filePath, "utf8"),
         writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
       },
-      { protectedRoots: PROVIDER_INSTRUCTION_TARGET_PROTECTED_ROOTS },
+      { protectedRoots: getProviderInstructionTargetProtectedRoots() },
     );
   } catch (error) {
     if (error instanceof MateProviderInstructionSyncBlockedError) {
@@ -1516,7 +1526,7 @@ async function syncProviderInstructionTargetsForDisabledMateProfile(): Promise<v
         readTextFile: async (filePath) => readFile(filePath, "utf8"),
         writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
       },
-      { protectedRoots: PROVIDER_INSTRUCTION_TARGET_PROTECTED_ROOTS },
+      { protectedRoots: getProviderInstructionTargetProtectedRoots() },
     );
   } catch (error) {
     if (error instanceof MateProviderInstructionSyncBlockedError) {
