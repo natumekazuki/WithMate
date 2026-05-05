@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { access, readFile } from "node:fs/promises";
+import { access, mkdir, readFile } from "node:fs/promises";
 import { mkdtemp, rm } from "node:fs/promises";
 import { constants } from "node:fs";
 import os from "node:os";
@@ -304,7 +304,7 @@ describe("MateStorage", () => {
       const db = new DatabaseSync(dbPath);
       try {
         const revision = db.prepare(`
-          SELECT seq, kind, status, summary
+          SELECT seq, kind, status, summary, ready_at, failed_at
           FROM mate_profile_revisions
           WHERE id = ?
         `).get(updatedProfile.activeRevisionId) as {
@@ -312,6 +312,8 @@ describe("MateStorage", () => {
           kind: string;
           status: string;
           summary: string;
+          ready_at: string | null;
+          failed_at: string | null;
         };
         const coreSection = db.prepare(`
           SELECT sha256, byte_size, updated_by_revision_id
@@ -331,6 +333,8 @@ describe("MateStorage", () => {
         assert.equal(revision.seq, 2);
         assert.equal(revision.kind, "growth_apply");
         assert.equal(revision.status, "ready");
+        assert.equal(revision.ready_at !== null, true);
+        assert.equal(revision.failed_at, null);
         assert.equal(revision.summary, "growth apply");
         assert.equal(coreSection.sha256, createHash("sha256").update("# Core\n\n- Updated\n", "utf8").digest("hex"));
         assert.equal(coreSection.byte_size, Buffer.byteLength("# Core\n\n- Updated\n", "utf8"));
@@ -505,6 +509,120 @@ describe("MateStorage", () => {
       } finally {
         db.close();
       }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("applyProfileFiles はファイル保存失敗時に revision を failed 化し profile_generation と active_revision_id を進めない", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+
+      const beforeProfile = storage.getMateProfile();
+      if (!beforeProfile) {
+        throw new Error("事前プロフィールが見つからないよ。");
+      }
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const revisionCountBefore = db
+          .prepare("SELECT COUNT(*) AS count FROM mate_profile_revisions WHERE mate_id = 'current'")
+          .get() as { count: number };
+        const corePath = path.join(userDataPath, "mate/core.md");
+        await rm(corePath, { recursive: true, force: true });
+        await mkdir(corePath);
+
+        await assert.rejects(
+          () => storage!.applyProfileFiles({
+            summary: "growth apply failure",
+            files: [{ sectionKey: "core", relativePath: "mate/core.md", content: "# Core\n\n- Updated\n" }],
+          }),
+          /EISDIR/,
+        );
+
+        const afterProfile = storage.getMateProfile();
+        assert.equal(afterProfile?.profileGeneration, beforeProfile.profileGeneration);
+        assert.equal(afterProfile?.activeRevisionId, beforeProfile.activeRevisionId);
+
+        const revisionCountAfter = db
+          .prepare("SELECT COUNT(*) AS count FROM mate_profile_revisions WHERE mate_id = 'current'")
+          .get() as { count: number };
+        assert.equal(revisionCountAfter.count, revisionCountBefore.count + 1);
+
+        const failedRevision = db
+          .prepare(`
+            SELECT status, ready_at, failed_at
+            FROM mate_profile_revisions
+            WHERE id = (
+              SELECT id
+              FROM mate_profile_revisions
+              WHERE mate_id = 'current'
+              ORDER BY seq DESC
+              LIMIT 1
+            )
+          `)
+          .get() as {
+            status: string;
+            ready_at: string | null;
+            failed_at: string | null;
+          };
+
+        assert.equal(failedRevision.status, "failed");
+        assert.equal(failedRevision.ready_at, null);
+        assert.equal(failedRevision.failed_at !== null, true);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("applyProfileFiles は複数ファイル保存の途中失敗時に書き込み済みファイルを戻す", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+      await storage.applyProfileFiles({
+        summary: "seed content",
+        files: [
+          { sectionKey: "core", relativePath: "mate/core.md", content: "# Core\n\n- Stable\n" },
+          { sectionKey: "bond", relativePath: "mate/bond.md", content: "# Bond\n\n- Old\n" },
+        ],
+      });
+
+      const beforeProfile = storage.getMateProfile();
+      if (!beforeProfile) {
+        throw new Error("事前プロフィールが見つからないよ。");
+      }
+
+      const corePath = path.join(userDataPath, "mate/core.md");
+      await rm(corePath, { recursive: true, force: true });
+      await mkdir(corePath);
+
+      await assert.rejects(
+        () => storage!.applyProfileFiles({
+          summary: "partial write failure",
+          files: [
+            { sectionKey: "bond", relativePath: "mate/bond.md", content: "# Bond\n\n- New\n" },
+            { sectionKey: "core", relativePath: "mate/core.md", content: "# Core\n\n- New\n" },
+          ],
+        }),
+        /EISDIR/,
+      );
+
+      const afterProfile = storage.getMateProfile();
+      assert.equal(afterProfile?.profileGeneration, beforeProfile.profileGeneration);
+      assert.equal(afterProfile?.activeRevisionId, beforeProfile.activeRevisionId);
+      assert.equal(await readFile(path.join(userDataPath, "mate/bond.md"), "utf8"), "# Bond\n\n- Old\n");
     } finally {
       storage?.close();
       await cleanup();

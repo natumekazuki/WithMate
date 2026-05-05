@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -613,12 +613,7 @@ export class MateStorage {
       this.assertSourceGrowthEventExists(sourceGrowthEventId);
     }
 
-    await this.ensureMateFiles(nextSections.map((section) => ({
-      relativePath: section.relativePath,
-      content: section.content,
-    })));
-
-    this.withTransaction((db) => {
+    this.withDb((db) => {
       db.prepare(`
         INSERT INTO mate_profile_revisions (
           id,
@@ -635,7 +630,7 @@ export class MateStorage {
           ready_at,
           failed_at,
           reverted_by_revision_id
-        ) VALUES (?, ?, ?, ?, 'ready', 'growth_apply', ?, ?, '', 'system', ?, ?, NULL, NULL)
+        ) VALUES (?, ?, ?, ?, 'staging', 'growth_apply', ?, ?, '', 'system', ?, NULL, NULL, NULL)
       `).run(
         revisionId,
         MATE_ID,
@@ -644,60 +639,102 @@ export class MateStorage {
         sourceGrowthEventId,
         summary,
         now,
-        now,
       );
-
-      for (const section of nextSections) {
-        db.prepare(`
-          UPDATE mate_profile_sections
-          SET
-            file_path = ?,
-            sha256 = ?,
-            byte_size = ?,
-            updated_by_revision_id = ?,
-            updated_at = ?
-          WHERE mate_id = ? AND section_key = ?
-        `).run(
-          section.relativePath,
-          section.afterSha256,
-          section.afterByteSize,
-          revisionId,
-          now,
-          MATE_ID,
-          section.sectionKey,
-        );
-
-        db.prepare(`
-          INSERT INTO mate_profile_revision_sections (
-            revision_id,
-            section_key,
-            file_path,
-            before_sha256,
-            after_sha256,
-            before_byte_size,
-            after_byte_size,
-            diff_path
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, '')
-        `).run(
-          revisionId,
-          section.sectionKey,
-          section.relativePath,
-          section.beforeSha256,
-          section.afterSha256,
-          section.beforeByteSize,
-          section.afterByteSize,
-        );
-      }
-
-      db.prepare(`
-        UPDATE mate_profile
-        SET
-          active_revision_id = ?,
-          profile_generation = profile_generation + 1,
-          updated_at = ?
-        WHERE id = ?
-      `).run(revisionId, now, MATE_ID);
     });
+
+    this.withDb((db) => {
+      db.prepare(`
+        UPDATE mate_profile_revisions
+        SET status = 'committing_files'
+        WHERE id = ?
+      `).run(revisionId);
+    });
+
+    try {
+      await this.ensureMateFiles(nextSections.map((section) => ({
+        relativePath: section.relativePath,
+        content: section.content,
+      })));
+    } catch (error) {
+      this.withDb((db) => {
+        db.prepare(`
+          UPDATE mate_profile_revisions
+          SET status = 'failed', failed_at = ?
+          WHERE id = ?
+        `).run(nowIso(), revisionId);
+      });
+      throw error;
+    }
+
+    try {
+      this.withTransaction((db) => {
+        db.prepare(`
+          UPDATE mate_profile_revisions
+          SET status = 'ready', ready_at = ?
+          WHERE id = ?
+        `).run(now, revisionId);
+
+        for (const section of nextSections) {
+          db.prepare(`
+            INSERT INTO mate_profile_revision_sections (
+              revision_id,
+              section_key,
+              file_path,
+              before_sha256,
+              after_sha256,
+              before_byte_size,
+              after_byte_size,
+              diff_path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, '')
+          `).run(
+            revisionId,
+            section.sectionKey,
+            section.relativePath,
+            section.beforeSha256,
+            section.afterSha256,
+            section.beforeByteSize,
+            section.afterByteSize,
+          );
+
+          db.prepare(`
+            UPDATE mate_profile_sections
+            SET
+              file_path = ?,
+              sha256 = ?,
+              byte_size = ?,
+              updated_by_revision_id = ?,
+              updated_at = ?
+            WHERE mate_id = ? AND section_key = ?
+          `).run(
+            section.relativePath,
+            section.afterSha256,
+            section.afterByteSize,
+            revisionId,
+            now,
+            MATE_ID,
+            section.sectionKey,
+          );
+        }
+
+        db.prepare(`
+          UPDATE mate_profile
+          SET
+            active_revision_id = ?,
+            profile_generation = profile_generation + 1,
+            updated_at = ?
+          WHERE id = ?
+        `).run(revisionId, now, MATE_ID);
+      });
+    } catch (error) {
+      this.withDb((db) => {
+        db.prepare(`
+          UPDATE mate_profile_revisions
+          SET status = 'failed', failed_at = ?
+          WHERE id = ?
+        `).run(nowIso(), revisionId);
+      });
+      throw error;
+    }
 
     const updatedProfile = this.getMateProfile();
     if (!updatedProfile) {
@@ -721,11 +758,39 @@ export class MateStorage {
     const mateDirectoryPath = this.getMateDirectoryPath();
     await mkdir(mateDirectoryPath, { recursive: true });
 
-    await Promise.all(files.map(({ relativePath, content }) => writeFile(
-      path.join(this.userDataPath, relativePath),
-      content,
-      "utf8",
-    )));
+    const writtenFiles: Array<{ absolutePath: string; previousContent: string | null }> = [];
+
+    try {
+      for (const { relativePath, content } of files) {
+        const absolutePath = path.join(this.userDataPath, relativePath);
+        let previousContent: string | null = null;
+
+        try {
+          previousContent = await readFile(absolutePath, "utf8");
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT") {
+            throw error;
+          }
+        }
+
+        await writeFile(absolutePath, content, "utf8");
+        writtenFiles.push({ absolutePath, previousContent });
+      }
+    } catch (error) {
+      for (const { absolutePath, previousContent } of writtenFiles.reverse()) {
+        try {
+          if (previousContent === null) {
+            await rm(absolutePath, { force: true });
+          } else {
+            await writeFile(absolutePath, previousContent, "utf8");
+          }
+        } catch {
+          // Best-effort rollback. The caller records the failed revision.
+        }
+      }
+      throw error;
+    }
   }
 
   private getNextProfileRevisionSequence(): number {
