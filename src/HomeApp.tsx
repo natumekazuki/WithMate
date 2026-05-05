@@ -169,6 +169,7 @@ type HomeRightPaneView = "monitor" | "mate";
 type HomeWindowMode = "home" | "monitor" | "settings" | "memory";
 
 const MEMORY_MANAGEMENT_PAGE_LIMIT = 50;
+const MATE_EMBEDDING_SETTINGS_POLL_INTERVAL_MS = 2000;
 
 type MemoryManagementPageState = {
   session: MemoryManagementDomainPageInfo;
@@ -298,6 +299,7 @@ export default function HomeApp() {
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const memoryManagementRequestIdRef = useRef(0);
   const mateTalkMessageSequenceRef = useRef(0);
+  const mateEmbeddingSettingsPollingIntervalRef = useRef<number | null>(null);
 
   const beginMemoryManagementRequest = () => {
     memoryManagementRequestIdRef.current += 1;
@@ -306,6 +308,15 @@ export default function HomeApp() {
 
   const isLatestMemoryManagementRequest = (requestId: number) =>
     memoryManagementRequestIdRef.current === requestId;
+
+  const stopMateEmbeddingSettingsPolling = () => {
+    if (mateEmbeddingSettingsPollingIntervalRef.current === null) {
+      return;
+    }
+
+    window.clearInterval(mateEmbeddingSettingsPollingIntervalRef.current);
+    mateEmbeddingSettingsPollingIntervalRef.current = null;
+  };
 
   const applyIncomingAppSettings = (settings: AppSettings, options?: { force?: boolean }) => {
     setAppSettings(settings);
@@ -557,6 +568,57 @@ export default function HomeApp() {
       unsubscribeOpenCompanionReviewWindowIds();
     };
   }, []);
+
+  useEffect(() => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || mateEmbeddingSettings?.cacheState !== "downloading") {
+      stopMateEmbeddingSettingsPolling();
+      return;
+    }
+
+    let active = true;
+    const refreshMateEmbeddingSettings = async () => {
+      try {
+        const nextMateEmbeddingSettings = await withmateApi.getMateEmbeddingSettings();
+        if (!active) {
+          return;
+        }
+
+        setMateEmbeddingSettings(nextMateEmbeddingSettings);
+        if (!nextMateEmbeddingSettings) {
+          stopMateEmbeddingSettingsPolling();
+          return;
+        }
+
+        if (nextMateEmbeddingSettings.cacheState !== "downloading") {
+          stopMateEmbeddingSettingsPolling();
+        }
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        setMateEmbeddingFeedback(
+          error instanceof Error ? error.message : "Mate Embedding の状態取得に失敗したよ。",
+        );
+        stopMateEmbeddingSettingsPolling();
+      }
+    };
+
+    void refreshMateEmbeddingSettings();
+    stopMateEmbeddingSettingsPolling();
+    mateEmbeddingSettingsPollingIntervalRef.current = window.setInterval(
+      () => {
+        void refreshMateEmbeddingSettings();
+      },
+      MATE_EMBEDDING_SETTINGS_POLL_INTERVAL_MS,
+    );
+
+    return () => {
+      active = false;
+      stopMateEmbeddingSettingsPolling();
+    };
+  }, [mateEmbeddingSettings?.cacheState]);
 
   const sessionProjection = useMemo(
     () => buildHomeSessionProjection(
