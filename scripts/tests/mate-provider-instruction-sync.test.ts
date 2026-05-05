@@ -176,6 +176,54 @@ describe("syncMateInstructionFile", () => {
     }
   });
 
+  it("projectionAllowed: false のセクションは除外し、core と work_style は含む", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-sync-"));
+    try {
+      const target = { providerId: "codex", filePath: path.join(workspacePath, "AGENTS.md") };
+      const profile = createProfile({
+        displayName: "Mia",
+        sections: [
+          {
+            sectionKey: "core",
+            filePath: path.join(workspacePath, "mate", "core.md"),
+            sha256: "sha256-core",
+            byteSize: 12,
+            updatedByRevisionId: "revision-1",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+          {
+            sectionKey: "bond",
+            filePath: path.join(workspacePath, "mate", "bond.md"),
+            sha256: "sha256-bond",
+            byteSize: 12,
+            updatedByRevisionId: "revision-1",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            projectionAllowed: false,
+          },
+          {
+            sectionKey: "work_style",
+            filePath: path.join(workspacePath, "mate", "work-style.md"),
+            sha256: "sha256-work-style",
+            byteSize: 16,
+            updatedByRevisionId: "revision-1",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      });
+
+      await syncMateInstructionFile(target, profile, FILE_DEPENDENCIES);
+      const updated = await readFile(target.filePath, "utf8");
+
+      assert.ok(updated.includes("- **core:** `mate/core.md`"));
+      assert.ok(updated.includes("- **work_style:** `mate/work-style.md`"));
+      assert.equal(updated.includes("- **bond:**"), false);
+      assert.equal(updated.includes("- **bond:** `mate/bond.md`"), false);
+      assert.equal(updated.includes("bond.md"), false);
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("copilot の parent directory を作成して同期できる", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-sync-"));
     try {
