@@ -12,6 +12,7 @@ import {
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { buildHomeProviderSettingRows } from "../../src/home-settings-view-model.js";
+import { formatTimestampLabel } from "../../src/time-state.js";
 import {
   SETTINGS_MATE_MEMORY_GENERATION_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL,
@@ -204,6 +205,98 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes(`<span>${SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>`));
     assert.ok(html.includes(`value=\"/repo-root\"`));
     assert.ok(html.includes("value=\"docs/instructions.md\""));
+  });
+
+  it("Provider Instruction Sync の同期状態 / 再起動 / エラープレビューが表示される", () => {
+    const syncedAt = "2026-05-06T10:00:00.000Z";
+    const customRows = buildHomeProviderSettingRows(modelCatalog, settingsDraft, [
+      {
+        providerId: "codex",
+        targetId: "main",
+        enabled: true,
+        rootDirectory: "/repo-root",
+        instructionRelativePath: "docs/instructions.md",
+        writeMode: "managed_block",
+        projectionScope: "mate_only",
+        failPolicy: "warn_continue",
+        requiresRestart: true,
+        lastSyncState: "failed",
+        lastSyncRunId: null,
+        lastSyncedRevisionId: null,
+        lastErrorPreview: "permission denied: EACCES (13): Permission denied",
+        lastSyncedAt: syncedAt,
+      },
+    ]);
+
+    const html = renderToStaticMarkup(
+      <HomeSettingsContent
+        settingsDraft={settingsDraft}
+        providerSettingRows={customRows}
+        modelCatalogRevisionLabel={String(modelCatalog.revision)}
+        settingsDirty={false}
+        settingsFeedback=""
+        memoryManagementSnapshot={null}
+        memoryManagementPages={{
+          session: { nextCursor: null, hasMore: false, total: 0 },
+          project: { nextCursor: null, hasMore: false, total: 0 },
+          character: { nextCursor: null, hasMore: false, total: 0 },
+          mate_profile: { nextCursor: null, hasMore: false, total: 0 },
+        }}
+        memoryManagementLoading={false}
+        memoryManagementBusyTarget={null}
+        memoryManagementFeedback=""
+        mateEmbeddingSettings={null}
+        mateEmbeddingFeedback=""
+        mateEmbeddingBusy={false}
+        onChangeSystemPromptPrefix={noOp}
+        onChangeMemoryGenerationEnabled={noOp}
+        onChangeMateMemoryGenerationPriorityProvider={noOp}
+        onChangeMateMemoryGenerationPriorityModel={noOp}
+        onChangeMateMemoryGenerationPriorityReasoningEffort={noOp}
+        onChangeMateMemoryGenerationPriorityTimeoutSeconds={noOp}
+        onChangeMateMemoryGenerationTriggerIntervalMinutes={noOp}
+        onChangeAutoCollapseActionDockOnSend={noOp}
+        onChangeProviderEnabled={noOp}
+        onChangeProviderInstructionEnabled={noOp}
+        onChangeProviderInstructionWriteMode={noOp}
+        onChangeProviderInstructionFailPolicy={noOp}
+        onChangeProviderInstructionRootDirectory={noOp}
+        onChangeProviderInstructionInstructionRelativePath={noOp}
+        onChangeProviderSkillRootPath={noOp}
+        onBrowseProviderSkillRootPath={noOp}
+        onChangeMemoryExtractionModel={noOp}
+        onChangeMemoryExtractionReasoningEffort={noOp}
+        onChangeMemoryExtractionThreshold={noOp}
+        onChangeMemoryExtractionTimeoutSeconds={noOp}
+        onChangeCharacterReflectionModel={noOp}
+        onChangeCharacterReflectionReasoningEffort={noOp}
+        onChangeCharacterReflectionTimeoutSeconds={noOp}
+        onChangeCharacterReflectionCooldownSeconds={noOp}
+        onChangeCharacterReflectionCharDeltaThreshold={noOp}
+        onChangeCharacterReflectionMessageDeltaThreshold={noOp}
+        onImportModelCatalog={noOp}
+        onExportModelCatalog={noOp}
+        onOpenAppLogFolder={noOp}
+        onOpenCrashDumpFolder={noOp}
+        onReloadMemoryManagement={noOp}
+        onChangeMemoryManagementViewFilters={noOp}
+        onLoadMoreMemoryManagement={noOp}
+        onDeleteSessionMemory={noOp}
+        onDeleteProjectMemoryEntry={noOp}
+        onDeleteCharacterMemoryEntry={noOp}
+        onDeleteMateProfileItem={noOp}
+        onStartMateEmbeddingDownload={noOp}
+        onSaveSettings={noOp}
+      />,
+    );
+
+    assert.ok(html.includes("<dt>同期状態</dt>"));
+    assert.ok(html.includes("<dd>失敗</dd>"));
+    assert.ok(html.includes("<dt>最終同期</dt>"));
+    assert.ok(html.includes(`<dd>${formatTimestampLabel(syncedAt)}</dd>`));
+    assert.ok(html.includes("<p class=\"settings-feedback settings-memory-feedback\">再起動が必要</p>"));
+    assert.ok(html.includes("<span>エラープレビュー</span>"));
+    assert.ok(html.includes("permission denied: EACCES (13): Permission denied"));
   });
 });
 

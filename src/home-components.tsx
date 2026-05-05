@@ -68,6 +68,7 @@ import {
 } from "./settings-ui.js";
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import { buildCardThemeStyle, CharacterAvatar } from "./ui-utils.js";
+import { formatTimestampLabel } from "./time-state.js";
 import type { MateProfile } from "./mate-state.js";
 
 export type HomeSettingsContentProps = {
@@ -143,6 +144,26 @@ export type HomeSettingsContentProps = {
   mateResetBusy?: boolean;
   canResetMate?: boolean;
   onSaveSettings: () => void;
+};
+
+const PROVIDER_INSTRUCTION_SYNC_STATE_LABEL: Record<HomeProviderSettingRow["instructionTarget"]["lastSyncState"], string> = {
+  never: "未実行",
+  stale: "更新あり",
+  redaction_required: "要再編集",
+  synced: "同期済み",
+  skipped: "スキップ",
+  failed: "失敗",
+};
+
+const MAX_PROVIDER_INSTRUCTION_ERROR_PREVIEW_LENGTH = 96;
+
+const normalizeProviderInstructionErrorPreview = (errorPreview: string): string => {
+  const trimmed = errorPreview.trim();
+  if (trimmed.length <= MAX_PROVIDER_INSTRUCTION_ERROR_PREVIEW_LENGTH) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, MAX_PROVIDER_INSTRUCTION_ERROR_PREVIEW_LENGTH - 3)}...`;
 };
 
 export function HomeSettingsContent({
@@ -363,6 +384,25 @@ export function HomeSettingsContent({
                             spellCheck={false}
                           />
                         </label>
+                        <dl className="settings-memory-meta">
+                          <div>
+                            <dt>同期状態</dt>
+                            <dd>{PROVIDER_INSTRUCTION_SYNC_STATE_LABEL[instructionTarget.lastSyncState]}</dd>
+                          </div>
+                          {instructionTarget.lastSyncedAt ? (
+                            <div>
+                              <dt>最終同期</dt>
+                              <dd>{formatTimestampLabel(instructionTarget.lastSyncedAt)}</dd>
+                            </div>
+                          ) : null}
+                        </dl>
+                        {instructionTarget.requiresRestart ? <p className="settings-feedback settings-memory-feedback">再起動が必要</p> : null}
+                        {instructionTarget.lastErrorPreview.trim() ? (
+                          <div className="settings-memory-block">
+                            <span>エラープレビュー</span>
+                            <p>{normalizeProviderInstructionErrorPreview(instructionTarget.lastErrorPreview)}</p>
+                          </div>
+                        ) : null}
                       </section>
                     ))}
                   </div>
