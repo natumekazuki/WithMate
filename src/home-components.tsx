@@ -8,7 +8,11 @@ import type {
 } from "./app-state.js";
 import type { MateEmbeddingSettings } from "./mate-embedding-settings.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
-import type { MateGrowthCandidateMode, MateGrowthSettings } from "./mate-state.js";
+import {
+  DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES,
+  type MateGrowthCandidateMode,
+  type MateGrowthSettings,
+} from "./mate-state.js";
 import type {
   MemoryManagementDomain,
   MemoryManagementDomainPageInfo,
@@ -629,7 +633,7 @@ export function HomeSettingsContent({
                   id="mate-growth-apply-interval-minutes"
                   type="number"
                   min={1}
-                  value={mateGrowthSettings?.applyIntervalMinutes ?? 1}
+                  value={mateGrowthSettings?.applyIntervalMinutes ?? DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES}
                   disabled={isMateGrowthControlDisabled}
                   onChange={(event) => {
                     if (event.target.value.trim() === "") {

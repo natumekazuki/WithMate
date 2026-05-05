@@ -12,7 +12,7 @@ import {
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { buildHomeProviderSettingRows } from "../../src/home-settings-view-model.js";
-import type { MateGrowthSettings } from "../../src/mate-state.js";
+import { DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES, type MateGrowthSettings } from "../../src/mate-state.js";
 import type { MateEmbeddingSettings } from "../../src/mate-embedding-settings.js";
 import { formatTimestampLabel } from "../../src/time-state.js";
 import {
@@ -297,6 +297,7 @@ describe("HomeSettingsContent", () => {
     assert.ok(elements.autoApplyEnabled.props.disabled);
     assert.ok(elements.memoryCandidateMode.props.disabled);
     assert.ok(elements.applyIntervalMinutes.props.disabled);
+    assert.equal(elements.applyIntervalMinutes.props.value, DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES);
   });
 
   it("mateGrowthBusy=true のとき成長設定コントロールは操作不可", () => {

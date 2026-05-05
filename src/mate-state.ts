@@ -30,6 +30,8 @@ export type MateProfile = {
 
 export type MateGrowthCandidateMode = "every_turn" | "threshold" | "manual";
 
+export const DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES = 60;
+
 export type MateGrowthSettings = {
   enabled: boolean;
   autoApplyEnabled: boolean;

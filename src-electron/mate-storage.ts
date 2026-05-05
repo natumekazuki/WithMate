@@ -7,7 +7,12 @@ import {
   CREATE_V4_SCHEMA_SQL,
 } from "./database-schema-v4.js";
 import { openAppDatabase } from "./sqlite-connection.js";
-import type { MateGrowthCandidateMode, MateGrowthSettings, UpdateMateGrowthSettingsInput } from "../src/mate-state.js";
+import {
+  DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES,
+  type MateGrowthCandidateMode,
+  type MateGrowthSettings,
+  type UpdateMateGrowthSettingsInput,
+} from "../src/mate-state.js";
 
 const MATE_ID = "current";
 const MATE_DIRECTORY_NAME = "mate";
@@ -508,9 +513,10 @@ export class MateStorage {
             cooldown_seconds,
             timeout_seconds,
             updated_at
-          ) VALUES (?, 1, 1, 75, 'every_turn', 60, 60, 'hybrid', 80, 40, 12, 10, 300, 900, 180, ?)
+          ) VALUES (?, 1, 1, 75, 'every_turn', 60, ?, 'hybrid', 80, 40, 12, 10, 300, 900, 180, ?)
         `).run(
           MATE_ID,
+          DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES,
           createdAt,
         );
 

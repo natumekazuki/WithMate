@@ -158,10 +158,11 @@ import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
 import { getMateMemoryGenerationSettings, getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
-import type {
-  MateTalkTurnInput,
-  MateTalkTurnResult,
-  UpdateMateGrowthSettingsInput,
+import {
+  DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES,
+  type MateTalkTurnInput,
+  type MateTalkTurnResult,
+  type UpdateMateGrowthSettingsInput,
 } from "../src/mate-state.js";
 import {
   type CharacterReflectionTriggerReason,
@@ -1142,7 +1143,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
 
 function resolveMateGrowthApplyIntervalMs(): number {
   const settings = requireMateStorage().getMateGrowthSettings();
-  return (settings?.applyIntervalMinutes ?? 60) * 60 * 1000;
+  return (settings?.applyIntervalMinutes ?? DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES) * 60 * 1000;
 }
 
 function requireSessionStorage(): SessionStorageRead {
