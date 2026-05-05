@@ -16,6 +16,7 @@ import {
   MateProviderInstructionSyncBlockedError,
   resolveProviderInstructionFilePath,
   syncDisabledProviderInstructionTargets,
+  syncDisabledProviderInstructionTarget,
   syncEnabledProviderInstructionTargets,
   syncMateInstructionFile,
   syncMateInstructionFiles,
@@ -1125,6 +1126,61 @@ describe("syncEnabledProviderInstructionTargets", () => {
 });
 
 describe("syncDisabledProviderInstructionTargets", () => {
+  it("single target API でも enabled 状態に関係なく target の cleanup を行う", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-reset-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+    const targetPath = path.join(workspacePath, "AGENTS.md");
+    const existingContent = "User note\n"
+      + `${buildManagedProfileBeginMarker("copilot")}\n`
+      + "## WithMate Mate Profile\n"
+      + "old body\n"
+      + `${buildManagedProfileEndMarker("copilot")}\n`;
+
+    try {
+      await writeFile(targetPath, existingContent, "utf8");
+      storage.upsertTarget({
+        providerId: "copilot",
+        enabled: false,
+        rootDirectory: workspacePath,
+        instructionRelativePath: "AGENTS.md",
+        writeMode: "managed_block",
+        failPolicy: "warn_continue",
+      });
+
+      const db = new DatabaseSync(storagePath);
+      try {
+        await db.prepare(`
+          UPDATE provider_instruction_targets
+          SET last_sync_state = 'never'
+          WHERE provider_id = 'copilot'
+            AND target_id = 'main'
+        `).run();
+      } finally {
+        db.close();
+      }
+
+      const previousTarget = storage.getTarget("copilot")!;
+      const result = await syncDisabledProviderInstructionTarget(storage, previousTarget, FILE_DEPENDENCIES);
+
+      const updated = await readFile(targetPath, "utf8");
+      const updatedTarget = storage.getTarget("copilot", "main");
+
+      assert.equal(result.targetCount, 1);
+      assert.equal(result.syncedCount, 1);
+      assert.equal(result.failedCount, 0);
+      assert.equal(result.skippedCount, 0);
+      assert.equal(result.runIds.length, 1);
+      assert.equal(updated.includes("old body"), false);
+      assert.equal(updatedTarget?.lastSyncState, "synced");
+    } finally {
+      storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("redaction_required の target は cleanup せず状態を維持する", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
     const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));

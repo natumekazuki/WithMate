@@ -111,6 +111,7 @@ import { MateSemanticEmbeddingIndexService } from "./mate-semantic-embedding-ind
 import {
   MateProviderInstructionSyncBlockedError,
   syncDisabledProviderInstructionTargets,
+  syncDisabledProviderInstructionTarget,
   syncEnabledProviderInstructionTargets,
 } from "./mate-provider-instruction-sync.js";
 import { createMateMemoryGenerationRunner } from "./mate-memory-generation-runner.js";
@@ -918,7 +919,36 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 upsertProviderInstructionTarget: async (input) => {
                   assertProviderInstructionTargetRootNotProtected(input, PROVIDER_INSTRUCTION_TARGET_PROTECTED_ROOTS);
                   const storage = requireProviderInstructionTargetStorage();
+                  const previousTarget = storage.getTarget(input.providerId, input.targetId);
                   const target = storage.upsertTarget(input);
+
+                  if (!target.enabled && previousTarget && previousTarget.enabled) {
+                    try {
+                      await syncDisabledProviderInstructionTarget(
+                        storage,
+                        previousTarget,
+                        {
+                          readTextFile: async (filePath) => readFile(filePath, "utf8"),
+                          writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
+                        },
+                        { protectedRoots: PROVIDER_INSTRUCTION_TARGET_PROTECTED_ROOTS },
+                      );
+                    } catch (error) {
+                      writeAppLog({
+                        level: "warn",
+                        kind: "mate.provider-instruction-sync.disabled-projection.failed",
+                        process: "main",
+                        message: "target を disabled にした際の Provider Instruction cleanup が完了しませんでした。",
+                        data: {
+                          providerId: previousTarget.providerId,
+                          targetId: previousTarget.targetId,
+                          syncBlocked: error instanceof MateProviderInstructionSyncBlockedError,
+                        },
+                        error: appLogService.errorToLogError(error),
+                      });
+                    }
+                  }
+
                   if (target.enabled) {
                     const profile = requireMateStorage().getMateProfile();
                     if (profile) {
@@ -926,7 +956,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                       return storage.getTarget(target.providerId, target.targetId) ?? target;
                     }
                   }
-                  return target;
+                  return storage.getTarget(target.providerId, target.targetId) ?? target;
                 },
                 startMateEmbeddingDownload: () => startMateEmbeddingDownload(),
                 deleteSessionMemory: (sessionId) => requireMemoryManagementService().deleteSessionMemory(sessionId),

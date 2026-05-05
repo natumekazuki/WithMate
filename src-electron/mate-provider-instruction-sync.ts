@@ -225,6 +225,7 @@ export async function syncDisabledProviderInstructionTargets(
   storage: ProviderInstructionTargetStorage,
   deps: MateProviderInstructionSyncDeps,
   syncOptions: ProviderInstructionSyncOptions = {},
+  options: { targets?: readonly ProviderInstructionTargetState[] } = {},
 ): Promise<SyncEnabledProviderInstructionTargetsResult> {
   const result: SyncEnabledProviderInstructionTargetsResult = {
     targetCount: 0,
@@ -234,7 +235,7 @@ export async function syncDisabledProviderInstructionTargets(
     runIds: [],
   };
 
-  const targets = storage.listTargets({ enabledOnly: true });
+  const targets = options.targets ?? storage.listTargets({ enabledOnly: true });
   const protectedRoots = await resolveProviderInstructionTargetProtectedRoots(syncOptions);
 
   for (const target of targets) {
@@ -249,7 +250,7 @@ export async function syncDisabledProviderInstructionTargets(
       const instructionFilePath = resolveTargetInstructionFilePath(target);
       assertProviderInstructionTargetRootNotProtected(target, protectedRoots, instructionFilePath);
 
-      const syncResult = await syncDisabledProviderInstructionTarget({
+      const syncResult = await syncDisabledProviderInstructionTargetProjection({
         ...target,
         filePath: instructionFilePath,
       }, deps);
@@ -313,6 +314,17 @@ export async function syncDisabledProviderInstructionTargets(
   return result;
 }
 
+export async function syncDisabledProviderInstructionTarget(
+  storage: ProviderInstructionTargetStorage,
+  target: ProviderInstructionTargetState,
+  deps: MateProviderInstructionSyncDeps,
+  syncOptions: ProviderInstructionSyncOptions = {},
+): Promise<SyncEnabledProviderInstructionTargetsResult> {
+  return syncDisabledProviderInstructionTargets(storage, deps, syncOptions, {
+    targets: [target],
+  });
+}
+
 async function readProviderInstructionText(
   filePath: string,
   readTextFile: (filePath: string) => Promise<string>,
@@ -343,7 +355,7 @@ async function readExistingProviderInstructionText(
   }
 }
 
-async function syncDisabledProviderInstructionTarget(
+async function syncDisabledProviderInstructionTargetProjection(
   target: {
     providerId: string;
     targetId?: string;
