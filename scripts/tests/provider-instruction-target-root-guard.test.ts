@@ -151,4 +151,52 @@ describe("ProviderInstructionTargetRootGuard", () => {
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
+
+  it("additionalProtectedRoots の重複は1つにまとめられ、rootDirectory と instructionRelativePath 解決先の両方が拒否される", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-root-guard-additional-"));
+    const userDataPath = path.join(tempDirectory, "WithMate");
+    const additionalProtectedRoot = path.join(tempDirectory, "ExternalSource");
+
+    const protectedRoots = buildProviderInstructionTargetProtectedRoots(userDataPath, {
+      additionalProtectedRoots: [additionalProtectedRoot, additionalProtectedRoot, path.join(additionalProtectedRoot, ".")],
+    });
+
+    try {
+      const normalizedAdditionalProtectedRoot = path.resolve(additionalProtectedRoot);
+      const additionalProtectedRootMatches = protectedRoots.filter(
+        (root) => path.resolve(root) === normalizedAdditionalProtectedRoot,
+      );
+      assert.equal(additionalProtectedRootMatches.length, 1);
+
+      assert.throws(
+        () =>
+          assertProviderInstructionTargetRootNotProtected(
+            buildInput({
+              enabled: true,
+              rootDirectory: normalizedAdditionalProtectedRoot,
+            }),
+            protectedRoots,
+          ),
+        /保護ディレクトリ配下/,
+      );
+
+      assert.throws(
+        () =>
+          assertProviderInstructionTargetRootNotProtected(
+            buildInput({
+              enabled: true,
+              rootDirectory: tempDirectory,
+              instructionRelativePath: path.relative(
+                tempDirectory,
+                path.join(additionalProtectedRoot, "AGENTS.md"),
+              ),
+            }),
+            protectedRoots,
+          ),
+        /保護ディレクトリ配下/,
+      );
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
 });
