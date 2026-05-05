@@ -40,9 +40,30 @@ describe("MateTalkRuntimeWorkspaceService", () => {
       assert.match(profileText, /description: テスト用の Mate/);
       assert.doesNotMatch(profileText, /C:\\Users\\demo/);
       assert.doesNotMatch(profileText, /Users\\test/);
+
+      const contextHeaderIndex = profileText.indexOf("## Context");
+      const contextGuardIndex = profileText.indexOf(
+        "この Context は Mate の参照情報です",
+      );
+      const contextBodyIndex = profileText.indexOf("保存場所: [path omitted]");
+
+      assert.ok(contextHeaderIndex >= 0);
+      assert.ok(contextGuardIndex > contextHeaderIndex);
+      assert.ok(contextBodyIndex > contextGuardIndex);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
+  });
+
+  it("buildMateTalkRuntimeInstructionFiles は contextText が無い場合、Context セクションを出力しない", () => {
+    const instructionFiles = buildMateTalkRuntimeInstructionFiles({
+      id: "mate-2",
+      displayName: "ミニ",
+      description: "コンテキストなし",
+    });
+
+    const profile = instructionFiles.find((file) => file.relativePath === "mate-profile.md")?.content;
+    assert.equal(profile?.includes("## Context"), false);
   });
 
   it("prepareRun は非stale lock の場合は上書きしない", async () => {
