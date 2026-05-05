@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { CREATE_V4_SCHEMA_SQL } from "./database-schema-v4.js";
@@ -16,6 +16,12 @@ type MateRetention = "auto" | "force";
 type MateRelation = "new" | "reinforces" | "updates" | "contradicts";
 type MateMemoryTagCatalogState = "active" | "disabled";
 type MateMemoryTagCatalogCreatedBy = "app" | "llm" | "user";
+type MemoryRefType = "memory" | "profile_item";
+type MemoryRef = {
+  type: MemoryRefType;
+  id: string;
+};
+type MemoryRefInput = string | MemoryRef;
 
 const SOURCE_TYPES = ["session", "companion", "manual", "system", "mate_talk"] as const;
 const GROWTH_SOURCE_TYPES = [
@@ -37,10 +43,49 @@ const MEMORY_KINDS = [
   "correction",
 ] as const;
 const TARGET_SECTIONS = ["bond", "work_style", "project_digest", "core", "none"] as const;
+const TOMBSTONE_CATEGORIES = [
+  "persona",
+  "voice",
+  "preference",
+  "relationship",
+  "work_style",
+  "boundary",
+  "project_context",
+  "note",
+] as const;
+const TOMBSTONE_SECTION_KEYS = ["core", "bond", "work_style", "notes", "project_digest"] as const;
+const TOMBSTONE_DIGEST_KIND_GROWTH_STATEMENT = "growth_statement";
+const TOMBSTONE_HMAC_VERSION = 1;
+const TOMBSTONE_HMAC_KEY_ID = "default";
+const TOMBSTONE_HMAC_KEY = "withmate-memory-forgotten-tombstone-key";
+const MEMORY_KIND_TO_TOMBSTONE_CATEGORY: Record<MateMemoryKind, (typeof TOMBSTONE_CATEGORIES)[number]> = {
+  conversation: "note",
+  preference: "preference",
+  relationship: "relationship",
+  work_style: "work_style",
+  boundary: "boundary",
+  project_context: "project_context",
+  curiosity: "note",
+  observation: "note",
+  correction: "note",
+};
+const TARGET_SECTION_TO_TOMBSTONE_SECTION_KEY: Record<MateTargetSection, (typeof TOMBSTONE_SECTION_KEYS)[number]> = {
+  core: "core",
+  bond: "bond",
+  work_style: "work_style",
+  project_digest: "project_digest",
+  none: "notes",
+};
 
 type SavedTagInput = {
   type: string;
   value: string;
+};
+
+type NewTagInput = {
+  type: string;
+  value: string;
+  reason: string;
 };
 
 export type MateGeneratedMemoryInput = {
@@ -55,7 +100,10 @@ export type MateGeneratedMemoryInput = {
   rationalePreview?: string;
   retention?: MateRetention;
   relation?: MateRelation;
+  relatedRefs?: MemoryRefInput[];
+  supersedesRefs?: MemoryRefInput[];
   targetClaimKey?: string;
+  newTags?: NewTagInput[];
   confidence: number;
   salienceScore: number;
   recurrenceCount?: number;
@@ -74,6 +122,7 @@ type NormalizedTag = {
   value: string;
   typeNormalized: string;
   valueNormalized: string;
+  reason?: string;
 };
 
 type NormalizedMemory = {
@@ -90,18 +139,49 @@ type NormalizedMemory = {
   rationalePreview: string;
   retention: MateRetention;
   relation: MateRelation;
+  relatedRefs: MemoryRef[];
+  supersedesRefs: MemoryRef[];
+  linksSpecified: boolean;
   targetClaimKey: string;
   confidence: number;
   salienceScore: number;
   recurrenceCount: number;
   projectionAllowed: 0 | 1;
   tags: NormalizedTag[];
+  normalizedNewTags: NormalizedTag[];
 };
 
 export type SavedMateTag = {
   type: string;
   value: string;
   valueNormalized: string;
+};
+
+export type MateMemoryGenerationRelevantMemory = {
+  id: string;
+  state: MateGrowthEventState;
+  kind: MateMemoryKind;
+  targetSection: MateTargetSection;
+  relation: MateRelation;
+  targetClaimKey: string;
+  statement: string;
+  salienceScore: number;
+  updatedAt: string;
+  tags: readonly {
+    type: string;
+    value: string;
+  }[];
+};
+
+export type MateMemoryGenerationForgottenTombstone = {
+  id: string;
+  digestKind: string;
+  category: string;
+  sectionKey: string;
+  projectDigestId: string | null;
+  sourceGrowthEventId: string | null;
+  sourceProfileItemId: string | null;
+  createdAt: string;
 };
 
 export type SavedMateMemory = {
@@ -169,6 +249,118 @@ function normalizePositive(value: unknown, fallback: number, field: string): num
   return normalized;
 }
 
+function hmacSha256Hex(content: string, key: string): string {
+  return createHmac("sha256", key).update(content, "utf8").digest("hex");
+}
+
+function buildGrowthEventTombstoneCategory(kind: MateMemoryKind): (typeof TOMBSTONE_CATEGORIES)[number] {
+  return MEMORY_KIND_TO_TOMBSTONE_CATEGORY[kind];
+}
+
+function buildGrowthEventTombstoneSectionKey(targetSection: MateTargetSection): (typeof TOMBSTONE_SECTION_KEYS)[number] {
+  return TARGET_SECTION_TO_TOMBSTONE_SECTION_KEY[targetSection];
+}
+
+const MEMORY_REF_TYPES = ["memory", "profile_item"] as const;
+
+function parseMemoryRefs(value: unknown): MemoryRef[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const unique = new Set<string>();
+  const refs: MemoryRef[] = [];
+
+  for (const item of value) {
+    if (typeof item === "string") {
+      const ref = normalizeOptionalText(item);
+      if (!ref || unique.has(`memory\u0000${ref}`)) {
+        continue;
+      }
+      unique.add(`memory\u0000${ref}`);
+      refs.push({ type: "memory", id: ref });
+      continue;
+    }
+
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+
+    const type = normalizeOptionalText((item as { type?: unknown }).type);
+    const id = normalizeOptionalText((item as { id?: unknown }).id);
+    if (!type || !MEMORY_REF_TYPES.includes(type as (typeof MEMORY_REF_TYPES)[number]) || !id) {
+      continue;
+    }
+
+    const key = `${type}\u0000${id}`;
+    if (unique.has(key)) {
+      continue;
+    }
+    unique.add(key);
+    refs.push({ type: type as MemoryRefType, id });
+  }
+
+  return refs;
+}
+
+function normalizeNewTagList(newTags: unknown): NormalizedTag[] {
+  if (!Array.isArray(newTags)) {
+    return [];
+  }
+
+  const unique = new Set<string>();
+  const normalized: NormalizedTag[] = [];
+
+  for (const tag of newTags) {
+    if (!tag || typeof tag !== "object") {
+      continue;
+    }
+    const rawType = normalizeText((tag as { type?: unknown }).type);
+    const rawValue = normalizeText((tag as { value?: unknown }).value);
+    const reason = normalizeText((tag as { reason?: unknown }).reason);
+    const normalizedType = normalizeTagValue(rawType);
+    const normalizedValue = normalizeTagValue(rawValue);
+    if (!normalizedType || !normalizedValue || !reason) {
+      continue;
+    }
+
+    const key = `${normalizedType}\u0000${normalizedValue}`;
+    if (unique.has(key)) {
+      continue;
+    }
+    unique.add(key);
+    normalized.push({
+      type: rawType,
+      value: rawValue,
+      typeNormalized: normalizedType,
+      valueNormalized: normalizedValue,
+      reason,
+    });
+  }
+
+  return normalized;
+}
+
+function mergeNormalizedTags(tags: NormalizedTag[], newTags: NormalizedTag[]): NormalizedTag[] {
+  const unique = new Set<string>();
+  const merged: NormalizedTag[] = [];
+
+  for (const tag of [...tags, ...newTags]) {
+    const key = `${tag.typeNormalized}\u0000${tag.valueNormalized}`;
+    if (unique.has(key)) {
+      continue;
+    }
+    unique.add(key);
+    merged.push(tag);
+  }
+
+  return merged;
+}
+
+function linkTypeForRelation(relation: MateRelation): "related" | "reinforces" | "updates" | "contradicts" {
+  return relation === "new" ? "related" : relation;
+}
+
 function assertOneOf<T extends string>(value: unknown, candidates: readonly T[], field: string): T {
   if (typeof value === "string" && (candidates as readonly string[]).includes(value)) {
     return value as T;
@@ -228,6 +420,7 @@ function normalizeMemoryInput(input: MateGeneratedMemoryInput): NormalizedMemory
 
   const statementFingerprint = normalizeOptionalText(input.statementFingerprint) ?? sha256Hex(statement);
   const tags = normalizeTags(input.tags);
+  const normalizedNewTags = normalizeNewTagList(input.newTags);
   const recurrenceCount = normalizePositive(input.recurrenceCount, 1, "recurrenceCount");
   const confidence = normalizePercent(input.confidence, "confidence");
   const salienceScore = normalizePercent(input.salienceScore, "salienceScore");
@@ -249,13 +442,61 @@ function normalizeMemoryInput(input: MateGeneratedMemoryInput): NormalizedMemory
       : normalizeOptionalText(input.relation) === "updates" ? "updates"
       : normalizeOptionalText(input.relation) === "contradicts" ? "contradicts"
       : "new",
+    relatedRefs: parseMemoryRefs(input.relatedRefs),
+    supersedesRefs: parseMemoryRefs(input.supersedesRefs),
+    linksSpecified: input.relatedRefs !== undefined || input.supersedesRefs !== undefined,
     targetClaimKey: normalizeText(input.targetClaimKey),
     confidence,
     salienceScore,
     recurrenceCount,
     projectionAllowed: input.projectionAllowed === true ? 1 : 0,
     tags,
+    normalizedNewTags,
   };
+}
+
+function isMemoryRef(ref: MemoryRef): ref is MemoryRef {
+  return ref.type === "memory";
+}
+
+function isProfileItemRef(ref: MemoryRef): ref is MemoryRef {
+  return ref.type === "profile_item";
+}
+
+function filterExistingEventRefs(db: DatabaseSync, refs: MemoryRef[], sourceEventId: string): string[] {
+  const existsStmt = db.prepare(SELECT_EVENT_EXISTS_SQL);
+  const existing: string[] = [];
+  const seen = new Set<string>();
+
+  for (const ref of refs) {
+    if (!isMemoryRef(ref) || ref.id === sourceEventId || seen.has(ref.id)) {
+      continue;
+    }
+    seen.add(ref.id);
+    if (existsStmt.get(ref.id)) {
+      existing.push(ref.id);
+    }
+  }
+
+  return existing;
+}
+
+function filterExistingProfileItemRefs(db: DatabaseSync, refs: MemoryRef[], sourceEventId: string): string[] {
+  const existsStmt = db.prepare(SELECT_PROFILE_ITEM_EXISTS_SQL);
+  const existing: string[] = [];
+  const seen = new Set<string>();
+
+  for (const ref of refs) {
+    if (!isProfileItemRef(ref) || ref.id === sourceEventId || seen.has(ref.id)) {
+      continue;
+    }
+    seen.add(ref.id);
+    if (existsStmt.get(ref.id)) {
+      existing.push(ref.id);
+    }
+  }
+
+  return existing;
 }
 
 type MemoryRow = {
@@ -276,6 +517,43 @@ type TagCatalogRow = {
   created_at: string;
   updated_at: string;
   disabled_at: string | null;
+};
+
+type RelevantMemoryRow = {
+  id: string;
+  state: MateGrowthEventState;
+  kind: MateMemoryKind;
+  target_section: MateTargetSection;
+  relation: MateRelation;
+  target_claim_key: string;
+  statement: string;
+  salience_score: number;
+  updated_at: string;
+};
+
+type ForgottenTombstoneRow = {
+  id: string;
+  digest_kind: string;
+  category: string;
+  section_key: string;
+  project_digest_id: string | null;
+  source_growth_event_id: string | null;
+  source_profile_item_id: string | null;
+  created_at: string;
+};
+
+type GrowthEventForTombstoneRow = {
+  id: string;
+  statement: string;
+  kind: MateMemoryKind;
+  target_section: MateTargetSection;
+  project_digest_id: string | null;
+};
+
+type MemoryTagRow = {
+  memory_id: string;
+  tag_type: string;
+  tag_value: string;
 };
 
 const INSERT_GROWTH_EVENT_SQL = `
@@ -341,7 +619,11 @@ const SELECT_MEMORY_ID_BY_ID_SQL = `
 `;
 
 const SELECT_MEMORY_ID_BY_FINGERPRINT_SQL = `
-  SELECT id FROM mate_growth_events WHERE statement_fingerprint = ? LIMIT 1
+  SELECT id
+  FROM mate_growth_events
+  WHERE statement_fingerprint = ?
+    AND state <> 'forgotten'
+  LIMIT 1
 `;
 
 const SELECT_MEMORY_SQL = `
@@ -350,10 +632,58 @@ const SELECT_MEMORY_SQL = `
   WHERE id = ?
 `;
 
+const SELECT_GROWTH_EVENT_FOR_TOMBSTONE_SQL = `
+  SELECT id, statement, kind, target_section, project_digest_id
+  FROM mate_growth_events
+  WHERE id = ?
+`;
+
 const SELECT_MEMORY_TAGS_SQL = `
   SELECT tag_type, tag_value, tag_value_normalized
   FROM mate_memory_tags
   WHERE memory_id = ?
+  ORDER BY id
+`;
+
+const SELECT_RELEVANT_MEMORIES_SQL = `
+  SELECT
+    id,
+    state,
+    kind,
+    target_section,
+    relation,
+    target_claim_key,
+    statement,
+    salience_score,
+    updated_at
+  FROM mate_growth_events
+  WHERE state NOT IN ('forgotten', 'failed')
+  ORDER BY salience_score DESC, updated_at DESC
+  LIMIT ?
+`;
+
+const SELECT_FORGOTTEN_TOMBSTONES_SQL = `
+  SELECT
+    id,
+    digest_kind,
+    category,
+    section_key,
+    project_digest_id,
+    source_growth_event_id,
+    source_profile_item_id,
+    created_at
+  FROM mate_forgotten_tombstones
+  ORDER BY created_at DESC
+  LIMIT ?
+`;
+
+const SELECT_MEMORY_TAGS_BY_IDS_SQL = `
+  SELECT
+    memory_id,
+    tag_type,
+    tag_value
+  FROM mate_memory_tags
+  WHERE memory_id IN (${""})
   ORDER BY id
 `;
 
@@ -417,8 +747,68 @@ const FORGET_MEMORY_SQL = `
   UPDATE mate_growth_events
   SET
     state = 'forgotten',
-    forgotten_at = ?,
+    forgotten_at = COALESCE(forgotten_at, ?),
     updated_at = ?
+  WHERE id = ?
+    AND state <> 'forgotten'
+`;
+
+const INSERT_FORGOTTEN_TOMBSTONE_SQL = `
+  INSERT INTO mate_forgotten_tombstones (
+    id,
+    mate_id,
+    hmac_digest,
+    hmac_version,
+    hmac_key_id,
+    digest_kind,
+    category,
+    section_key,
+    project_digest_id,
+    source_growth_event_id,
+    source_profile_item_id,
+    redaction_revision_id,
+    created_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT (mate_id, hmac_version, hmac_key_id, digest_kind, hmac_digest) DO NOTHING
+`;
+
+const DELETE_EVENT_LINKS_SQL = `
+  DELETE FROM mate_growth_event_links
+  WHERE source_growth_event_id = ?
+`;
+
+const DELETE_PROFILE_ITEM_LINKS_SQL = `
+  DELETE FROM mate_growth_event_profile_item_links
+  WHERE growth_event_id = ?
+`;
+
+const SELECT_EVENT_EXISTS_SQL = `
+  SELECT id
+  FROM mate_growth_events
+  WHERE id = ?
+`;
+
+const INSERT_EVENT_LINK_SQL = `
+  INSERT OR IGNORE INTO mate_growth_event_links (
+    source_growth_event_id,
+    target_growth_event_id,
+    link_type,
+    created_at
+  ) VALUES (?, ?, ?, ?)
+`;
+
+const INSERT_PROFILE_ITEM_LINK_SQL = `
+  INSERT OR IGNORE INTO mate_growth_event_profile_item_links (
+    growth_event_id,
+    profile_item_id,
+    link_type,
+    created_at
+  ) VALUES (?, ?, ?, ?)
+`;
+
+const SELECT_PROFILE_ITEM_EXISTS_SQL = `
+  SELECT id
+  FROM mate_profile_items
   WHERE id = ?
 `;
 
@@ -473,6 +863,10 @@ export class MateMemoryStorage {
     const insertTagStmt = this.db.prepare(INSERT_MEMORY_TAG_SQL);
     const deleteTagsStmt = this.db.prepare(DELETE_MEMORY_TAGS_SQL);
     const upsertTagCatalogStmt = this.db.prepare(UPSERT_MEMORY_TAG_CATALOG_SQL);
+    const deleteEventLinksStmt = this.db.prepare(DELETE_EVENT_LINKS_SQL);
+    const insertEventLinkStmt = this.db.prepare(INSERT_EVENT_LINK_SQL);
+    const deleteEventProfileItemLinksStmt = this.db.prepare(DELETE_PROFILE_ITEM_LINKS_SQL);
+    const insertEventProfileItemLinkStmt = this.db.prepare(INSERT_PROFILE_ITEM_LINK_SQL);
 
     const results = this.withTransaction(() => {
       const saved: SavedMateMemory[] = [];
@@ -539,9 +933,10 @@ export class MateMemoryStorage {
           created = true;
         }
 
-        if (memory.tags) {
+        const mergedTags = mergeNormalizedTags(memory.tags, memory.normalizedNewTags);
+        if (memory.tags || memory.normalizedNewTags.length > 0) {
           deleteTagsStmt.run(memoryId);
-          for (const tag of memory.tags) {
+          for (const tag of mergedTags) {
             insertTagStmt.run(
               memoryId,
               tag.typeNormalized,
@@ -556,6 +951,29 @@ export class MateMemoryStorage {
               now,
               now,
             );
+          }
+        }
+
+        if (memory.linksSpecified) {
+          deleteEventLinksStmt.run(memoryId);
+          deleteEventProfileItemLinksStmt.run(memoryId);
+          const relatedLinkType = linkTypeForRelation(memory.relation);
+          const filteredRelatedRefs = filterExistingEventRefs(this.db, memory.relatedRefs, memoryId);
+          const filteredSupersedesRefs = filterExistingEventRefs(this.db, memory.supersedesRefs, memoryId);
+          const filteredRelatedProfileRefs = filterExistingProfileItemRefs(this.db, memory.relatedRefs, memoryId);
+          const filteredSupersedesProfileRefs = filterExistingProfileItemRefs(this.db, memory.supersedesRefs, memoryId);
+
+          for (const ref of filteredRelatedRefs) {
+            insertEventLinkStmt.run(memoryId, ref, relatedLinkType, now);
+          }
+          for (const ref of filteredSupersedesRefs) {
+            insertEventLinkStmt.run(memoryId, ref, "supersedes", now);
+          }
+          for (const ref of filteredRelatedProfileRefs) {
+            insertEventProfileItemLinkStmt.run(memoryId, ref, relatedLinkType, now);
+          }
+          for (const ref of filteredSupersedesProfileRefs) {
+            insertEventProfileItemLinkStmt.run(memoryId, ref, "supersedes", now);
           }
         }
 
@@ -617,13 +1035,89 @@ export class MateMemoryStorage {
     return [...unique.values()];
   }
 
+  listRelevantMemoriesForGeneration(
+    input: { limit?: number } = {},
+  ): MateMemoryGenerationRelevantMemory[] {
+    const limit = normalizePositive(input.limit, 20, "limit");
+    const rows = this.db.prepare(SELECT_RELEVANT_MEMORIES_SQL).all(limit) as RelevantMemoryRow[];
+    if (rows.length === 0) {
+      return [];
+    }
+
+    const ids = rows.map((row) => row.id);
+    const selectTags = SELECT_MEMORY_TAGS_BY_IDS_SQL.replace("IN ()", `IN (${ids.map(() => "?").join(", ")})`);
+    const tagRows = this.db.prepare(selectTags).all(...ids) as MemoryTagRow[];
+    const tagsByMemory = new Map<string, { type: string; value: string }[]>();
+    for (const tagRow of tagRows) {
+      const existing = tagsByMemory.get(tagRow.memory_id) ?? [];
+      existing.push({ type: tagRow.tag_type, value: tagRow.tag_value });
+      tagsByMemory.set(tagRow.memory_id, existing);
+    }
+
+    return rows.map((row) => ({
+      id: row.id,
+      state: row.state,
+      kind: row.kind,
+      targetSection: row.target_section,
+      relation: row.relation,
+      targetClaimKey: row.target_claim_key,
+      statement: row.statement,
+      salienceScore: row.salience_score,
+      updatedAt: row.updated_at,
+      tags: tagsByMemory.get(row.id) ?? [],
+    }));
+  }
+
+  listForgottenTombstonesForGeneration(
+    input: { limit?: number } = {},
+  ): MateMemoryGenerationForgottenTombstone[] {
+    const limit = normalizePositive(input.limit, 20, "limit");
+    const rows = this.db.prepare(SELECT_FORGOTTEN_TOMBSTONES_SQL).all(limit) as ForgottenTombstoneRow[];
+    return rows.map((row) => ({
+      id: row.id,
+      digestKind: row.digest_kind,
+      category: row.category,
+      sectionKey: row.section_key,
+      projectDigestId: row.project_digest_id,
+      sourceGrowthEventId: row.source_growth_event_id,
+      sourceProfileItemId: row.source_profile_item_id,
+      createdAt: row.created_at,
+    }));
+  }
+
   deleteMemory(memoryId: string): void {
     if (!memoryId.trim()) {
       return;
     }
 
     const now = nowIso();
-    this.db.prepare(FORGET_MEMORY_SQL).run(now, now, memoryId);
+    this.withTransaction(() => {
+      const growthEvent = this.db.prepare(SELECT_GROWTH_EVENT_FOR_TOMBSTONE_SQL).get(memoryId) as GrowthEventForTombstoneRow | undefined;
+      if (!growthEvent) {
+        return;
+      }
+
+      this.db.prepare(FORGET_MEMORY_SQL).run(now, now, memoryId);
+      const category = buildGrowthEventTombstoneCategory(growthEvent.kind);
+      const sectionKey = buildGrowthEventTombstoneSectionKey(growthEvent.target_section);
+      const digest = hmacSha256Hex(normalizeText(growthEvent.statement), TOMBSTONE_HMAC_KEY);
+      const tombstoneId = randomUUID();
+      this.db.prepare(INSERT_FORGOTTEN_TOMBSTONE_SQL).run(
+        tombstoneId,
+        MATE_ID,
+        digest,
+        TOMBSTONE_HMAC_VERSION,
+        TOMBSTONE_HMAC_KEY_ID,
+        TOMBSTONE_DIGEST_KIND_GROWTH_STATEMENT,
+        category,
+        sectionKey,
+        growthEvent.project_digest_id,
+        memoryId,
+        null,
+        null,
+        now,
+      );
+    });
   }
 
   close(): void {

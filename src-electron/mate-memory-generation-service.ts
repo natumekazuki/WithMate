@@ -5,10 +5,13 @@ import {
   buildMateMemoryGenerationPrompt,
   type MateMemoryGenerationPrompt,
   type MateMemoryGenerationPromptInput,
+  type MateMemoryGenerationRelevantMemory,
+  type MateMemoryGenerationRelevantProfileItem,
+  type MateMemoryGenerationForgottenTombstone,
 } from "./mate-memory-generation-prompt.js";
 import type { MemoryRuntimeInstructionFile, MemoryRuntimeWorkspaceService } from "./memory-runtime-workspace.js";
 import { MateMemoryStorage } from "./mate-memory-storage.js";
-import type { MateGrowthEventInput, MateGrowthStorage } from "./mate-growth-storage.js";
+import type { MateGrowthEventInput, MateGrowthRunInput, MateGrowthStorage } from "./mate-growth-storage.js";
 
 type TagCatalogEntry = MateMemoryGenerationPromptInput["existingTagCatalog"][number];
 
@@ -32,6 +35,9 @@ export type GetInstructionFilesInput = {
   logicalPrompt: AuditLogicalPrompt;
   recentConversationText: string;
   existingTagCatalog: readonly TagCatalogEntry[];
+  relevantMemories: readonly MateMemoryGenerationRelevantMemory[];
+  relevantProfileItems: readonly MateMemoryGenerationRelevantProfileItem[];
+  forgottenTombstones: readonly MateMemoryGenerationForgottenTombstone[];
   providerIds: readonly string[];
   sourceDefaults?: MateMemoryGenerationParseDefaults;
 };
@@ -40,6 +46,9 @@ export type MateMemoryGenerationServiceDeps = {
   workspace: MemoryRuntimeWorkspaceService;
   storage: MateMemoryStorage;
   growthStorage?: Pick<MateGrowthStorage, "createRun" | "upsertEvent" | "finishRun" | "failRun">;
+  getRelevantMemories?: () => Promise<readonly MateMemoryGenerationRelevantMemory[]>;
+  getRelevantProfileItems?: () => Promise<readonly MateMemoryGenerationRelevantProfileItem[]>;
+  getForgottenTombstones?: () => Promise<readonly MateMemoryGenerationForgottenTombstone[]>;
   runStructuredGeneration(input: RunStructuredGenerationInput): Promise<StructuredGenerationResult>;
   getTagCatalog(): Promise<readonly TagCatalogEntry[]>;
   getInstructionFiles(input: GetInstructionFilesInput): Promise<readonly MemoryRuntimeInstructionFile[]>;
@@ -88,7 +97,7 @@ function isGrowthTargetSection(value: unknown): value is GrowthTargetSection {
   return typeof value === "string" && GROWTH_TARGET_SECTIONS.includes(value as GrowthTargetSection);
 }
 
-function buildGrowthRunInput(seed: GrowthCandidateSeed, runCount: number, provider?: string, model?: string) {
+function buildGrowthRunInput(seed: GrowthCandidateSeed, runCount: number, provider?: string, model?: string): MateGrowthRunInput {
   return {
     sourceType: seed.sourceType,
     sourceSessionId: seed.sourceSessionId,
@@ -117,6 +126,29 @@ function normalizeErrorPreview(error: unknown): string {
   return String(error);
 }
 
+function resolveRunSourceType(sourceType: MateMemoryGenerationParseDefaults["sourceType"]): MateGrowthEventInput["sourceType"] {
+  return sourceType === "session" || sourceType === "companion" || sourceType === "manual" || sourceType === "system" || sourceType === "mate_talk"
+    ? sourceType
+    : "session";
+}
+
+function buildFailedGrowthRunInput(
+  sourceDefaults: MateMemoryGenerationParseDefaults,
+  provider?: string,
+  model?: string,
+) : MateGrowthRunInput {
+  return {
+    sourceType: resolveRunSourceType(sourceDefaults.sourceType ?? "session"),
+    sourceSessionId: sourceDefaults.sourceSessionId,
+    sourceAuditLogId: sourceDefaults.sourceAuditLogId,
+    projectDigestId: sourceDefaults.projectDigestId,
+    triggerReason: MATE_GROWTH_TRIGGER_REASON,
+    providerId: provider,
+    model,
+    candidateCount: 0,
+  };
+}
+
 export class MateMemoryGenerationService {
   constructor(private readonly deps: MateMemoryGenerationServiceDeps) {}
 
@@ -138,9 +170,20 @@ export class MateMemoryGenerationService {
       const recentConversationText = input.recentConversationText ?? await this.deps.getRecentConversationText();
       const providerIds = input.providerIds ?? [];
       const existingTagCatalog = await this.deps.getTagCatalog();
+      const parseOptions = {
+        ...sourceDefaults,
+        sourceType: sourceDefaults.sourceType ?? "session",
+        existingTagCatalog,
+      };
+      const relevantMemories = await (this.deps.getRelevantMemories?.() ?? Promise.resolve([]));
+      const relevantProfileItems = await (this.deps.getRelevantProfileItems?.() ?? Promise.resolve([]));
+      const forgottenTombstones = await (this.deps.getForgottenTombstones?.() ?? Promise.resolve([]));
       const prompt = buildMateMemoryGenerationPrompt({
         recentConversationText,
         existingTagCatalog,
+        relevantMemories,
+        relevantProfileItems,
+        forgottenTombstones,
         sourceDefaults,
         mateName: input.mateName,
         mateSummary: input.mateSummary,
@@ -152,6 +195,9 @@ export class MateMemoryGenerationService {
         logicalPrompt,
         recentConversationText,
         existingTagCatalog,
+        relevantMemories,
+        relevantProfileItems,
+        forgottenTombstones,
         sourceDefaults,
         providerIds,
       }));
@@ -160,8 +206,25 @@ export class MateMemoryGenerationService {
         prompt,
         logicalPrompt,
       });
-      const parsedJson = generationResult.parsedJson ?? JSON.parse(generationResult.rawText);
-      const normalized = parseMateMemoryGenerationResponse(parsedJson, sourceDefaults);
+      let normalized: ReturnType<typeof parseMateMemoryGenerationResponse>;
+      try {
+        const parsedJson = generationResult.parsedJson ?? JSON.parse(generationResult.rawText);
+        normalized = parseMateMemoryGenerationResponse(parsedJson, parseOptions);
+      } catch (error) {
+        if (this.deps.growthStorage) {
+          try {
+            const runId = this.deps.growthStorage.createRun(buildFailedGrowthRunInput(
+              sourceDefaults,
+              generationResult.provider,
+              generationResult.model,
+            ));
+            this.deps.growthStorage.failRun(runId, normalizeErrorPreview(error));
+          } catch {
+            // fail 追記自体ができなくても元の parse エラーは caller に返す
+          }
+        }
+        throw error;
+      }
       const savedMemories = this.deps.storage.saveGeneratedMemories(normalized);
       if (this.deps.growthStorage && normalized.memories.length > 0) {
         const runInput = buildGrowthRunInput(normalized.memories[0], normalized.memories.length, generationResult.provider, generationResult.model);

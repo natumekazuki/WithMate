@@ -1355,6 +1355,9 @@ function requireMateMemoryGenerationService(): MateMemoryGenerationService {
       throw new Error("mate memory storage が初期化されていないよ。");
     }
     const memoryStorage = mateMemoryStorage;
+    const RELEVANT_MEMORY_LIMIT = 20;
+    const RELEVANT_PROFILE_ITEM_LIMIT = 20;
+    const RELEVANT_FORGOTTEN_TOMBSTONE_LIMIT = 20;
 
     mateMemoryGenerationService = new MateMemoryGenerationService({
       workspace: workspaceService,
@@ -1366,6 +1369,28 @@ function requireMateMemoryGenerationService(): MateMemoryGenerationService {
         getWorkspacePath: () => workspaceService.getWorkspacePath(),
       }),
       getTagCatalog: async () => memoryStorage.listMemoryTagCatalog(),
+      getRelevantMemories: () => Promise.resolve(memoryStorage.listRelevantMemoriesForGeneration({
+        limit: RELEVANT_MEMORY_LIMIT,
+      })),
+      getRelevantProfileItems: () => Promise.resolve(requireMateProfileItemStorage().listProfileItems({
+        state: "active",
+      }).sort((left, right) => (
+        right.salienceScore - left.salienceScore
+        || right.updatedAt.localeCompare(left.updatedAt)
+        || right.id.localeCompare(left.id)
+      )).slice(0, RELEVANT_PROFILE_ITEM_LIMIT).map((item) => ({
+        id: item.id,
+        sectionKey: item.sectionKey,
+        category: item.category,
+        claimKey: item.claimKey,
+        renderedText: item.renderedText,
+        salienceScore: item.salienceScore,
+        updatedAt: item.updatedAt,
+        tags: item.tags.map(({ type, value }) => ({ type, value })),
+      }))),
+      getForgottenTombstones: () => Promise.resolve(memoryStorage.listForgottenTombstonesForGeneration({
+        limit: RELEVANT_FORGOTTEN_TOMBSTONE_LIMIT,
+      })),
       getInstructionFiles: async (input) => buildMateMemoryRuntimeInstructionFiles({
         prompt: input.prompt,
         logicalPrompt: input.logicalPrompt,
@@ -3295,4 +3320,3 @@ app.on("will-quit", () => {
     message: "App will quit",
   });
 });
-

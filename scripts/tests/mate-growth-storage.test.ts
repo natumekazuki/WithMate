@@ -87,6 +87,35 @@ function buildRun(): MateGrowthRunInput {
   };
 }
 
+function seedProfileItem(dbPath: string, id: string): void {
+  const now = BASE_TIME;
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.prepare(`
+      INSERT OR IGNORE INTO mate_profile_items (
+        id,
+        mate_id,
+        section_key,
+        category,
+        claim_key,
+        claim_value,
+        claim_value_normalized,
+        rendered_text,
+        normalized_claim,
+        confidence,
+        salience_score,
+        state,
+        first_seen_at,
+        last_seen_at,
+        created_at,
+        updated_at
+      ) VALUES (?, 'current', 'core', 'preference', ?, ?, ?, ?, ?, 80, 80, 'active', ?, ?, ?, ?)
+    `).run(id, `${id}-claim`, id, id, id, now, now, now, now, now);
+  } finally {
+    db.close();
+  }
+}
+
 function buildEvent(input: Partial<MateGrowthEventInput> = {}): MateGrowthEventInput {
   return {
     sourceType: "session",
@@ -114,7 +143,354 @@ function listStates(dbPath: string): Array<{ id: string; state: string; source_g
   }
 }
 
+function buildCursorInput(overrides: Partial<{
+  cursorKey: "extraction_cursor" | "consolidation_cursor" | "applied_event_watermark" | "project_digest_cursor";
+  scopeType: "global" | "session" | "companion" | "project";
+  scopeId: string | null;
+  lastMessageId: string;
+  lastAuditLogId: number | null;
+  lastGrowthEventId: string;
+  lastProfileGeneration: number;
+  contentFingerprint: string;
+  updatedByRunId: number | null;
+}> = {}): {
+  cursorKey: "extraction_cursor" | "consolidation_cursor" | "applied_event_watermark" | "project_digest_cursor";
+  scopeType: "global" | "session" | "companion" | "project";
+  scopeId?: string | null;
+  lastMessageId: string;
+  lastAuditLogId: number | null;
+  lastGrowthEventId: string;
+  lastProfileGeneration: number;
+  contentFingerprint: string;
+  updatedByRunId: number | null;
+} {
+  return {
+    cursorKey: "extraction_cursor",
+    scopeType: "session",
+    scopeId: "session-1",
+    lastMessageId: "m-1",
+    lastAuditLogId: 100,
+    lastGrowthEventId: "g-1",
+    lastProfileGeneration: 1,
+    contentFingerprint: "fingerprint-1",
+    updatedByRunId: null,
+    ...overrides,
+  };
+}
+
 describe("MateGrowthStorage", () => {
+  it("getCursor は存在しないとき null を返す", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      const cursor = storage.getCursor({
+        cursorKey: "extraction_cursor",
+        scopeType: "session",
+        scopeId: "session-missing",
+      });
+      assert.equal(cursor, null);
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("getCursor / upsertCursor は cursorKey / scope の validation を行う", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+
+      assert.throws(() => {
+        storage.getCursor({
+          cursorKey: "invalid_key" as unknown as "extraction_cursor",
+          scopeType: "global",
+        });
+      }, /不正です/);
+
+      assert.throws(() => {
+        storage.getCursor({
+          cursorKey: "extraction_cursor",
+          scopeType: "unknown" as unknown as "global",
+        });
+      }, /不正です/);
+
+      assert.throws(() => {
+        storage.upsertCursor({
+          ...(buildCursorInput({
+            scopeType: "session",
+            scopeId: "  ",
+          })),
+        });
+      }, /空/);
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("global は scopeId が '' に正規化される", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+
+      storage.upsertCursor({
+        cursorKey: "consolidation_cursor",
+        scopeType: "global",
+        scopeId: "should-be-ignored",
+        lastMessageId: "msg-1",
+        lastAuditLogId: 1,
+        lastGrowthEventId: "growth-1",
+        lastProfileGeneration: 1,
+        contentFingerprint: "cursor-fp",
+      });
+
+      const cursor = storage.getCursor({
+        cursorKey: "consolidation_cursor",
+        scopeType: "global",
+        scopeId: "",
+      });
+
+      assert.equal(cursor?.scopeId, "");
+      assert.equal(cursor?.lastMessageId, "msg-1");
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("upsertCursor は insert / update を返し、必要項目を正規化できる", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+
+      const created = storage.upsertCursor(buildCursorInput({
+        scopeId: "  session-1  ",
+        lastMessageId: "  msg-1  ",
+        lastGrowthEventId: "  growth-1  ",
+        contentFingerprint: "  fp  ",
+      }));
+
+      assert.equal(created.scopeId, "session-1");
+      assert.equal(created.lastMessageId, "msg-1");
+      assert.equal(created.lastGrowthEventId, "growth-1");
+      assert.equal(created.contentFingerprint, "fp");
+
+      const updated = storage.upsertCursor(buildCursorInput({
+        scopeId: "session-1",
+        lastMessageId: "msg-2",
+        lastAuditLogId: 200,
+        lastGrowthEventId: "growth-2",
+        lastProfileGeneration: 5,
+        contentFingerprint: "fp-2",
+      }));
+
+      assert.equal(updated.lastMessageId, "msg-2");
+      assert.equal(updated.lastAuditLogId, 200);
+      assert.equal(updated.lastProfileGeneration, 5);
+      assert.equal(updated.lastGrowthEventId, "growth-2");
+      assert.equal(updated.contentFingerprint, "fp-2");
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("upsertCursorIfCurrent は一致時に更新し、mismatch 時は advanced=false を返す", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      storage.upsertCursor(buildCursorInput());
+
+      const success = storage.upsertCursorIfCurrent({
+        ...buildCursorInput(),
+        lastMessageId: "msg-2",
+        expectedContentFingerprint: "fingerprint-1",
+        expectedLastAuditLogId: 100,
+        expectedLastGrowthEventId: "g-1",
+      });
+
+      assert.equal(success.advanced, true);
+      assert.equal(success.cursor?.lastMessageId, "msg-2");
+
+      const failure = storage.upsertCursorIfCurrent({
+        ...buildCursorInput(),
+        lastMessageId: "msg-3",
+        expectedContentFingerprint: "wrong-fingerprint",
+      });
+
+      assert.equal(failure.advanced, false);
+      assert.equal(failure.cursor?.lastMessageId, "msg-2");
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("advanceCursor は expected checkpoint なしでは更新しない", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      storage.upsertCursor(buildCursorInput());
+
+      assert.throws(() => {
+        storage.advanceCursor({
+          ...buildCursorInput({
+            lastMessageId: "msg-without-checkpoint",
+            contentFingerprint: "unchecked",
+          }),
+        });
+      }, /expected checkpoint/);
+
+      const cursor = storage.getCursor({
+        cursorKey: "extraction_cursor",
+        scopeType: "session",
+        scopeId: "session-1",
+      });
+      assert.equal(cursor?.lastMessageId, "m-1");
+      assert.equal(cursor?.contentFingerprint, "fingerprint-1");
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("cursor の lastAuditLogId と expectedLastAuditLogId は負数を拒否する", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+
+      assert.throws(() => {
+        storage.upsertCursor(buildCursorInput({ lastAuditLogId: -1 }));
+      }, /lastAuditLogId は 0 以上/);
+
+      storage.upsertCursor(buildCursorInput());
+      assert.throws(() => {
+        storage.advanceCursor({
+          ...buildCursorInput(),
+          expectedLastAuditLogId: -1,
+        });
+      }, /expectedLastAuditLogId は 0 以上/);
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("upsertCursor は lastAuditLogId と lastProfileGeneration の後退時に cursor 全体を更新しない", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      storage.upsertCursor(buildCursorInput());
+
+      const afterStale = storage.upsertCursor(buildCursorInput({
+        lastAuditLogId: 20,
+        lastProfileGeneration: 1,
+        lastMessageId: "stale-message",
+        lastGrowthEventId: "stale-growth",
+        contentFingerprint: "stale-fingerprint",
+      }));
+
+      const afterStale2 = storage.upsertCursor(buildCursorInput({
+        lastAuditLogId: 10,
+        lastProfileGeneration: 0,
+        contentFingerprint: "fingerprint-2",
+      }));
+
+      assert.equal(afterStale.lastAuditLogId, 100);
+      assert.equal(afterStale.lastProfileGeneration, 1);
+      assert.equal(afterStale.lastMessageId, "m-1");
+      assert.equal(afterStale.lastGrowthEventId, "g-1");
+      assert.equal(afterStale.contentFingerprint, "fingerprint-1");
+      assert.equal(afterStale2.lastAuditLogId, 100);
+      assert.equal(afterStale2.lastProfileGeneration, 1);
+      assert.equal(afterStale2.contentFingerprint, "fingerprint-1");
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("upsertCursorIfCurrent は一致していても counter 後退なら advanced=false で更新しない", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      storage.upsertCursor(buildCursorInput());
+
+      const stale = storage.upsertCursorIfCurrent({
+        ...buildCursorInput({
+          lastAuditLogId: 99,
+          lastGrowthEventId: "stale-growth",
+          contentFingerprint: "stale-fingerprint",
+        }),
+        expectedContentFingerprint: "fingerprint-1",
+        expectedLastAuditLogId: 100,
+        expectedLastGrowthEventId: "g-1",
+      });
+
+      assert.equal(stale.advanced, false);
+      assert.equal(stale.cursor?.lastAuditLogId, 100);
+      assert.equal(stale.cursor?.lastGrowthEventId, "g-1");
+      assert.equal(stale.cursor?.contentFingerprint, "fingerprint-1");
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("upsertCursor は run の FK を満たす updatedByRunId を保存でき、null も許容する", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      const runId = storage.createRun(buildRun());
+
+      const withRun = storage.upsertCursor({
+        ...buildCursorInput({
+          scopeType: "project",
+          scopeId: "project-1",
+          updatedByRunId: runId,
+        }),
+        cursorKey: "project_digest_cursor",
+        lastMessageId: "msg-1",
+      });
+
+      assert.equal(withRun.updatedByRunId, runId);
+      const fallback = storage.upsertCursor({
+        ...buildCursorInput({
+          cursorKey: "project_digest_cursor",
+          scopeType: "project",
+          scopeId: "project-1",
+          updatedByRunId: null,
+        }),
+      });
+      assert.equal(fallback.updatedByRunId, null);
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const row = db.prepare(`
+          SELECT updated_by_run_id
+          FROM mate_growth_cursors
+          WHERE cursor_key = ? AND scope_type = ? AND scope_id = ?
+        `).get("project_digest_cursor", "project", "project-1") as { updated_by_run_id: number | null };
+        assert.equal(row.updated_by_run_id, null);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
   it("createRun は run を追加でき、finishRun で completed に更新できる", async () => {
     const { dbPath, cleanup } = await createTempDbPath();
     const storage = new MateGrowthStorage(dbPath);
@@ -231,6 +607,261 @@ describe("MateGrowthStorage", () => {
         assert.equal(count.count, 1);
         assert.equal(event.statement, "会話は要点を重視する（更新）");
         assert.equal(event.confidence, 88);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("upsertEvent は forgotten の同一 fingerprint を復活させず新規候補として保存する", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      const first = storage.upsertEvent(buildEvent({
+        id: "growth-forgotten-original",
+        statement: "復活させない Growth",
+        statementFingerprint: "growth-fingerprint-no-revive",
+      }));
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare("UPDATE mate_growth_events SET state = 'forgotten', forgotten_at = ?, updated_at = ? WHERE id = ?").run(
+          "2026-01-03T00:00:00.000Z",
+          "2026-01-03T00:00:00.000Z",
+          first.id,
+        );
+      } finally {
+        db.close();
+      }
+
+      const second = storage.upsertEvent(buildEvent({
+        id: "growth-forgotten-regenerated",
+        statement: "復活させない Growth",
+        statementFingerprint: "growth-fingerprint-no-revive",
+      }));
+
+      assert.notEqual(first.id, second.id);
+      assert.equal(second.created, true);
+
+      const dbAfter = new DatabaseSync(dbPath);
+      try {
+        const rows = dbAfter.prepare(`
+          SELECT id, state
+          FROM mate_growth_events
+          WHERE statement_fingerprint = ?
+          ORDER BY id
+        `).all("growth-fingerprint-no-revive") as Array<{ id: string; state: string }>;
+        assert.deepEqual(rows.map((row) => ({ ...row })), [{
+          id: "growth-forgotten-original",
+          state: "forgotten",
+        }, {
+          id: "growth-forgotten-regenerated",
+          state: "candidate",
+        }]);
+      } finally {
+        dbAfter.close();
+      }
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("upsertEvent は forgotten event id を指定されても復活させない", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      const first = storage.upsertEvent(buildEvent({
+        id: "growth-forgotten-by-id",
+        statement: "id 復活させない Growth",
+        statementFingerprint: "growth-fingerprint-forgotten-id",
+      }));
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare("UPDATE mate_growth_events SET state = 'forgotten', forgotten_at = ?, updated_at = ? WHERE id = ?").run(
+          "2026-01-03T00:00:00.000Z",
+          "2026-01-03T00:00:00.000Z",
+          first.id,
+        );
+      } finally {
+        db.close();
+      }
+
+      const second = storage.upsertEvent(buildEvent({
+        id: first.id,
+        statement: "id 復活させない Growth updated",
+        statementFingerprint: "growth-fingerprint-forgotten-id",
+      }));
+
+      assert.equal(second.id, first.id);
+      assert.equal(second.created, false);
+      assert.equal(second.state, "forgotten");
+
+      const dbAfter = new DatabaseSync(dbPath);
+      try {
+        const row = dbAfter.prepare("SELECT statement, state FROM mate_growth_events WHERE id = ?").get(first.id) as {
+          statement: string;
+          state: string;
+        };
+        assert.equal(row.statement, "id 復活させない Growth");
+        assert.equal(row.state, "forgotten");
+      } finally {
+        dbAfter.close();
+      }
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("upsertEvent は relatedRefs / supersedesRefs を event link として保存し更新時に差し替える", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      storage.upsertEvent(buildEvent({
+        id: "event-related",
+        statement: "関連先",
+        statementFingerprint: "fingerprint-related",
+      }));
+      storage.upsertEvent(buildEvent({
+        id: "event-superseded",
+        statement: "上書き対象",
+        statementFingerprint: "fingerprint-superseded",
+      }));
+      storage.upsertEvent(buildEvent({
+        id: "event-next",
+        statement: "次の関連先",
+        statementFingerprint: "fingerprint-next",
+      }));
+
+      storage.upsertEvent(buildEvent({
+        id: "event-source",
+        statement: "ユーザーは短い報告を好む",
+        statementFingerprint: "fingerprint-source",
+        relation: "updates",
+        relatedRefs: ["event-related", "event-related", "event-source", "event-missing"],
+        supersedesRefs: ["event-superseded"],
+      }));
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const links = db.prepare(`
+          SELECT source_growth_event_id, target_growth_event_id, link_type
+          FROM mate_growth_event_links
+          WHERE source_growth_event_id = 'event-source'
+          ORDER BY target_growth_event_id, link_type
+        `).all() as Array<{ source_growth_event_id: string; target_growth_event_id: string; link_type: string }>;
+
+        assert.deepEqual(links.map((link) => ({ ...link })), [{
+          source_growth_event_id: "event-source",
+          target_growth_event_id: "event-related",
+          link_type: "updates",
+        }, {
+          source_growth_event_id: "event-source",
+          target_growth_event_id: "event-superseded",
+          link_type: "supersedes",
+        }]);
+      } finally {
+        db.close();
+      }
+
+      storage.upsertEvent(buildEvent({
+        id: "event-source",
+        statement: "ユーザーは短い報告を好む（更新）",
+        statementFingerprint: "fingerprint-source",
+        relation: "reinforces",
+        relatedRefs: ["event-next"],
+      }));
+
+      const db2 = new DatabaseSync(dbPath);
+      try {
+        const links = db2.prepare(`
+          SELECT source_growth_event_id, target_growth_event_id, link_type
+          FROM mate_growth_event_links
+          WHERE source_growth_event_id = 'event-source'
+          ORDER BY target_growth_event_id, link_type
+        `).all() as Array<{ source_growth_event_id: string; target_growth_event_id: string; link_type: string }>;
+
+        assert.deepEqual(links.map((link) => ({ ...link })), [{
+          source_growth_event_id: "event-source",
+          target_growth_event_id: "event-next",
+          link_type: "reinforces",
+        }]);
+      } finally {
+        db2.close();
+      }
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("upsertEvent は profile_item refs を profile item link に保存し、未知 profile item を無視する", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      seedProfileItem(dbPath, "profile-1");
+      seedProfileItem(dbPath, "profile-2");
+      storage.upsertEvent(buildEvent({
+        id: "growth-related",
+        statement: "関連先イベント",
+        statementFingerprint: "fingerprint-related",
+      }));
+
+      storage.upsertEvent(buildEvent({
+        id: "growth-source",
+        statement: "profile item を参照するイベント",
+        statementFingerprint: "fingerprint-source",
+        relation: "updates",
+        relatedRefs: [
+          { type: "memory", id: "growth-related" },
+          { type: "profile_item", id: "profile-1" },
+          { type: "profile_item", id: "missing" },
+          { type: "memory", id: "growth-source" },
+        ],
+        supersedesRefs: [
+          { type: "profile_item", id: "profile-2" },
+        ],
+      }));
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const memoryLinks = db.prepare(`
+          SELECT source_growth_event_id, target_growth_event_id, link_type
+          FROM mate_growth_event_links
+          WHERE source_growth_event_id = 'growth-source'
+          ORDER BY target_growth_event_id, link_type
+        `).all() as Array<{ source_growth_event_id: string; target_growth_event_id: string; link_type: string }>;
+
+        const profileLinks = db.prepare(`
+          SELECT growth_event_id, profile_item_id, link_type
+          FROM mate_growth_event_profile_item_links
+          WHERE growth_event_id = 'growth-source'
+          ORDER BY profile_item_id, link_type
+        `).all() as Array<{ growth_event_id: string; profile_item_id: string; link_type: string }>;
+
+        assert.deepEqual(memoryLinks.map((link) => ({ ...link })), [{
+          source_growth_event_id: "growth-source",
+          target_growth_event_id: "growth-related",
+          link_type: "updates",
+        }]);
+        assert.deepEqual(profileLinks.map((link) => ({ ...link })), [{
+          growth_event_id: "growth-source",
+          profile_item_id: "profile-1",
+          link_type: "updates",
+        }, {
+          growth_event_id: "growth-source",
+          profile_item_id: "profile-2",
+          link_type: "supersedes",
+        }]);
       } finally {
         db.close();
       }

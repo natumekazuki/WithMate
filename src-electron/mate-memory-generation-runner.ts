@@ -5,7 +5,11 @@ import {
   type MateMemoryGenerationProviderSettings,
 } from "../src/provider-settings-state.js";
 import type { MateMemoryGenerationPrompt } from "./mate-memory-generation-prompt.js";
-import type { ProviderBackgroundAdapter, RunBackgroundStructuredPromptInput } from "./provider-runtime.js";
+import {
+  isMateTalkBackgroundStructuredPromptPolicyCompatible,
+  type ProviderBackgroundAdapter,
+  type RunBackgroundStructuredPromptInput,
+} from "./provider-runtime.js";
 import type {
   MateMemoryGenerationServiceDeps,
   RunStructuredGenerationInput,
@@ -50,7 +54,7 @@ function normalizeResult(input: {
 
   return {
     rawText: providerResult.rawText,
-    parsedJson: providerResult.parsedJson ?? providerResult.output ?? undefined,
+    parsedJson: providerResult.parsedJson ?? providerResult.structuredOutput ?? providerResult.output ?? undefined,
     usage: providerResult.usage,
     threadId: providerResult.threadId,
     rawItemsJson: providerResult.rawItemsJson,
@@ -95,8 +99,15 @@ export function createMateMemoryGenerationRunner(
         continue;
       }
 
-      const adapter = deps.getProviderBackgroundAdapter(candidate.provider);
       try {
+        const adapter = deps.getProviderBackgroundAdapter(candidate.provider);
+        const policy = adapter.getBackgroundStructuredPromptPolicy();
+        if (!isMateTalkBackgroundStructuredPromptPolicyCompatible(policy)) {
+          throw new Error(
+            `provider ${candidate.provider} の background structured prompt policy が未対応です。`,
+          );
+        }
+
         const structuredInput = buildBackgroundInput(
           candidate,
           input.prompt,

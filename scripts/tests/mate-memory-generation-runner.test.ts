@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { MATE_MEMORY_GENERATION_OUTPUT_SCHEMA, type MateMemoryGenerationPrompt } from "../../src-electron/mate-memory-generation-prompt.js";
 import { createMateMemoryGenerationRunner, type MateMemoryGenerationRunnerDeps } from "../../src-electron/mate-memory-generation-runner.js";
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
-import type { ProviderBackgroundAdapter } from "../../src-electron/provider-runtime.js";
+import type { ProviderBackgroundAdapter, ProviderBackgroundStructuredPromptPolicy } from "../../src-electron/provider-runtime.js";
 
 function createPrompt(): MateMemoryGenerationPrompt {
   return {
@@ -22,14 +22,22 @@ function createLogicalPrompt() {
   };
 }
 
-function createAdapter(onCall: () => void, result?: { parsedJson?: unknown; rawText: string; threadId?: string | null }): ProviderBackgroundAdapter {
+function createAdapter(
+  onCall: () => void,
+  result?: { parsedJson?: unknown; structuredOutput?: unknown; rawText: string; threadId?: string | null },
+  policy: Partial<ProviderBackgroundStructuredPromptPolicy> = {},
+  rejectionError?: Error,
+): ProviderBackgroundAdapter {
+  const mergedPolicy: ProviderBackgroundStructuredPromptPolicy = {
+    allowsFileWrite: false,
+    allowsToolPermissionRequests: false,
+    structuredOutputOnly: true,
+    ...policy,
+  };
+
   return {
     getBackgroundStructuredPromptPolicy() {
-      return {
-        allowsFileWrite: false,
-        allowsToolPermissionRequests: false,
-        structuredOutputOnly: true,
-      };
+      return mergedPolicy;
     },
     extractSessionMemoryDelta() {
       throw new Error("not used");
@@ -39,11 +47,15 @@ function createAdapter(onCall: () => void, result?: { parsedJson?: unknown; rawT
     },
     runBackgroundStructuredPrompt() {
       onCall();
+      if (rejectionError) {
+        return Promise.reject(rejectionError);
+      }
       return Promise.resolve({
         threadId: result?.threadId ?? null,
         rawText: result?.rawText ?? "{}",
         output: null,
         parsedJson: result?.parsedJson,
+        structuredOutput: result?.structuredOutput,
         rawItemsJson: "{\"type\":\"mock\"}",
         usage: {
           inputTokens: 1,
@@ -57,25 +69,7 @@ function createAdapter(onCall: () => void, result?: { parsedJson?: unknown; rawT
 }
 
 function createErrorAdapter(onCall: () => void, _result?: never, error = new Error("provider failed")): ProviderBackgroundAdapter {
-  return {
-    getBackgroundStructuredPromptPolicy() {
-      return {
-        allowsFileWrite: false,
-        allowsToolPermissionRequests: false,
-        structuredOutputOnly: true,
-      };
-    },
-    extractSessionMemoryDelta() {
-      throw new Error("not used");
-    },
-    runCharacterReflection() {
-      throw new Error("not used");
-    },
-    runBackgroundStructuredPrompt() {
-      onCall();
-      return Promise.reject(error);
-    },
-  };
+  return createAdapter(onCall, undefined, {}, error);
 }
 
 function createDeps(overrides: {
@@ -263,6 +257,254 @@ describe("createMateMemoryGenerationRunner", () => {
 
     assert.deepEqual(called, ["copilot", "codex"]);
     assert.deepEqual(failures, [{ provider: "copilot", model: "copilot-1" }]);
+    assert.equal(output.provider, "codex");
+    assert.equal(output.model, "codex-1");
+  });
+
+  it("unsafe な policy の候補は実行せず次候補へ fallback する", async () => {
+    const called: string[] = [];
+    const adapters = new Map<string, ProviderBackgroundAdapter>([
+      [
+        "copilot",
+        createAdapter(
+          () => {
+            called.push("copilot");
+          },
+          {
+            parsedJson: { memories: [{ foo: "unsafe" }] },
+            rawText: "{\"memories\":[{\"foo\":\"unsafe\"}]}",
+            threadId: "thread-unsafe",
+          },
+          {
+            structuredOutputOnly: false,
+          },
+        ),
+      ],
+      [
+        "codex",
+        createAdapter(() => {
+          called.push("codex");
+        }, {
+          parsedJson: { memories: [{ foo: "safe" }] },
+          rawText: "{\"memories\":[{\"foo\":\"safe\"}]}",
+          threadId: "thread-safe",
+        }),
+      ],
+    ]);
+    const appSettings = normalizeAppSettings({
+      mateMemoryGenerationSettings: {
+        priorityList: [
+          { provider: "copilot", model: "copilot-1", reasoningEffort: "high", timeoutSeconds: 31 },
+          { provider: "codex", model: "codex-1", reasoningEffort: "high", timeoutSeconds: 31 },
+        ],
+      },
+      codingProviderSettings: {
+        copilot: {
+          enabled: true,
+          apiKey: "",
+          skillRootPath: "",
+        },
+        codex: {
+          enabled: true,
+          apiKey: "",
+          skillRootPath: "",
+        },
+      },
+    });
+    const failures: Array<{ provider: string; model: string }> = [];
+    const runner = createMateMemoryGenerationRunner(
+      createDeps({
+        adapters,
+        appSettings,
+        onProviderFailure(error, candidate) {
+          failures.push(candidate);
+          assert.equal(candidate.provider, "copilot");
+          assert.ok(error.message.includes("未対応"));
+        },
+      }),
+    );
+
+    const output = await runner({ prompt: createPrompt(), logicalPrompt: createLogicalPrompt() });
+
+    assert.deepEqual(called, ["codex"]);
+    assert.deepEqual(failures, [{ provider: "copilot", model: "copilot-1" }]);
+    assert.equal(output.provider, "codex");
+    assert.equal(output.model, "codex-1");
+  });
+
+  it("adapter 取得失敗でも次候補へ fallback する", async () => {
+    const called: string[] = [];
+    const adapters = new Map<string, ProviderBackgroundAdapter>([
+      [
+        "codex",
+        createAdapter(() => {
+          called.push("codex");
+        }, {
+          parsedJson: { memories: [{ foo: "used" }] },
+          rawText: "{\"memories\":[{\"foo\":\"used\"}]}",
+          threadId: "thread-codex",
+        }),
+      ],
+    ]);
+    const appSettings = normalizeAppSettings({
+      mateMemoryGenerationSettings: {
+        priorityList: [
+          { provider: "copilot", model: "copilot-1", reasoningEffort: "high", timeoutSeconds: 31 },
+          { provider: "codex", model: "codex-1", reasoningEffort: "high", timeoutSeconds: 31 },
+        ],
+      },
+      codingProviderSettings: {
+        copilot: {
+          enabled: true,
+          apiKey: "",
+          skillRootPath: "",
+        },
+        codex: {
+          enabled: true,
+          apiKey: "",
+          skillRootPath: "",
+        },
+      },
+    });
+    const failures: Array<{ provider: string; model: string }> = [];
+    const runner = createMateMemoryGenerationRunner(
+      createDeps({
+        adapters,
+        appSettings,
+        onProviderFailure(error, candidate) {
+          failures.push(candidate);
+          assert.equal(candidate.provider, "copilot");
+          assert.equal(error.message, "missing adapter: copilot");
+        },
+      }),
+    );
+
+    const output = await runner({ prompt: createPrompt(), logicalPrompt: createLogicalPrompt() });
+
+    assert.deepEqual(called, ["codex"]);
+    assert.deepEqual(failures, [{ provider: "copilot", model: "copilot-1" }]);
+    assert.equal(output.provider, "codex");
+    assert.equal(output.model, "codex-1");
+  });
+
+  it("providerResult.structuredOutput が parsedJson として返る", async () => {
+    const called: string[] = [];
+    const adapters = new Map<string, ProviderBackgroundAdapter>([
+      [
+        "copilot",
+        createAdapter(() => {
+          called.push("copilot");
+        }, {
+          rawText: "{\"memories\":[{\"foo\":\"from-structured\"}]}",
+          structuredOutput: { memories: [{ foo: "from-structured" }] },
+        }),
+      ],
+    ]);
+    const appSettings = normalizeAppSettings({
+      mateMemoryGenerationSettings: {
+        priorityList: [{ provider: "copilot", model: "copilot-1", reasoningEffort: "medium", timeoutSeconds: 31 }],
+      },
+      codingProviderSettings: {
+        copilot: {
+          enabled: true,
+          apiKey: "",
+          skillRootPath: "",
+        },
+      },
+    });
+    const runner = createMateMemoryGenerationRunner(createDeps({ adapters, appSettings }));
+    const output = await runner({ prompt: createPrompt(), logicalPrompt: createLogicalPrompt() });
+
+    assert.deepEqual(called, ["copilot"]);
+    assert.deepEqual(output.parsedJson, { memories: [{ foo: "from-structured" }] });
+    assert.equal(output.provider, "copilot");
+    assert.equal(output.model, "copilot-1");
+  });
+
+  it("providerResult.parsedJson と structuredOutput が両方ある場合は parsedJson を優先する", async () => {
+    const called: string[] = [];
+    const adapters = new Map<string, ProviderBackgroundAdapter>([
+      [
+        "copilot",
+        createAdapter(() => {
+          called.push("copilot");
+        }, {
+          rawText: "{\"memories\":[{\"foo\":\"from-parsed\"}]}",
+          parsedJson: { memories: [{ foo: "from-parsed" }] },
+          structuredOutput: { memories: [{ foo: "from-structured" }] },
+        }),
+      ],
+    ]);
+    const appSettings = normalizeAppSettings({
+      mateMemoryGenerationSettings: {
+        priorityList: [{ provider: "copilot", model: "copilot-1", reasoningEffort: "medium", timeoutSeconds: 31 }],
+      },
+      codingProviderSettings: {
+        copilot: {
+          enabled: true,
+          apiKey: "",
+          skillRootPath: "",
+        },
+      },
+    });
+    const runner = createMateMemoryGenerationRunner(createDeps({ adapters, appSettings }));
+    const output = await runner({ prompt: createPrompt(), logicalPrompt: createLogicalPrompt() });
+
+    assert.deepEqual(called, ["copilot"]);
+    assert.deepEqual(output.parsedJson, { memories: [{ foo: "from-parsed" }] });
+  });
+
+  it("onProviderFailure が throw しても次候補へ fallback する", async () => {
+    const called: string[] = [];
+    const adapters = new Map<string, ProviderBackgroundAdapter>([
+      [
+        "copilot",
+        createErrorAdapter(() => {
+          called.push("copilot");
+        }, undefined, new Error("first failed")),
+      ],
+      [
+        "codex",
+        createAdapter(() => {
+          called.push("codex");
+        }, {
+          parsedJson: { memories: [{ foo: "fallback" }] },
+          rawText: "{\"memories\":[{\"foo\":\"fallback\"}]}",
+        }),
+      ],
+    ]);
+    const appSettings = normalizeAppSettings({
+      mateMemoryGenerationSettings: {
+        priorityList: [
+          { provider: "copilot", model: "copilot-1", reasoningEffort: "medium", timeoutSeconds: 31 },
+          { provider: "codex", model: "codex-1", reasoningEffort: "medium", timeoutSeconds: 31 },
+        ],
+      },
+      codingProviderSettings: {
+        copilot: {
+          enabled: true,
+          apiKey: "",
+          skillRootPath: "",
+        },
+        codex: {
+          enabled: true,
+          apiKey: "",
+          skillRootPath: "",
+        },
+      },
+    });
+    const runner = createMateMemoryGenerationRunner(
+      createDeps({
+        adapters,
+        appSettings,
+        onProviderFailure() {
+          throw new Error("failure callback failed");
+        },
+      }),
+    );
+    const output = await runner({ prompt: createPrompt(), logicalPrompt: createLogicalPrompt() });
+
+    assert.deepEqual(called, ["copilot", "codex"]);
     assert.equal(output.provider, "codex");
     assert.equal(output.model, "codex-1");
   });
