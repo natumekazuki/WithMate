@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import path from "node:path";
 
 import type {
   ProviderInstructionFailPolicy,
@@ -96,6 +97,40 @@ function normalizeTargetId(value: unknown): string {
   return normalized;
 }
 
+function isWindowsAbsolutePath(value: string): boolean {
+  return path.win32.isAbsolute(value);
+}
+
+function isWindowsDriveRelativePath(value: string): boolean {
+  return /^[A-Za-z]:/.test(value) && !path.win32.isAbsolute(value);
+}
+
+function normalizeRootDirectory(value: unknown, enabled: boolean): string {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (enabled && !normalized) {
+    throw new Error("enabled=true の target は rootDirectory を指定してください");
+  }
+  if (normalized && !path.isAbsolute(normalized)) {
+    throw new Error("rootDirectory は絶対パスを指定してください");
+  }
+  return normalized ? path.resolve(normalized) : "";
+}
+
+function ensureInstructionWithinRoot(rootDirectory: string, instructionRelativePath: string): void {
+  if (!rootDirectory) {
+    return;
+  }
+
+  const rootDirectoryPath = path.resolve(rootDirectory);
+  const resolvedInstructionPath = path.resolve(rootDirectoryPath, instructionRelativePath);
+  const relativeInstructionPath = path.relative(rootDirectoryPath, resolvedInstructionPath);
+  const topSegment = relativeInstructionPath.split(/[\\\/]/)[0] ?? "";
+
+  if (!relativeInstructionPath || topSegment === "..") {
+    throw new Error("instructionRelativePath は rootDirectory から外れるパスにできません");
+  }
+}
+
 function normalizeOptionalBoolean(value: unknown, field: string): boolean {
   if (typeof value !== "boolean") {
     throw new Error(`${field} は true/false を指定してください`);
@@ -136,10 +171,13 @@ function normalizeInstructionRelativePath(value: unknown): string {
   if (!normalized) {
     throw new Error("instructionRelativePath が空です");
   }
+  if (path.isAbsolute(normalized) || isWindowsAbsolutePath(normalized) || isWindowsDriveRelativePath(normalized)) {
+    throw new Error("instructionRelativePath は相対パスで指定してください");
+  }
 
   const segments = normalized.split(/[\\\/]+/);
-  if (segments.some((segment) => segment === "..")) {
-    throw new Error("instructionRelativePath は .. を含められません");
+  if (segments.some((segment) => segment === "." || segment === "..")) {
+    throw new Error("instructionRelativePath は . や .. を含められません");
   }
 
   return normalized;
@@ -221,9 +259,10 @@ export class ProviderInstructionTargetStorage {
   upsertTarget(input: ProviderInstructionTargetInput): ProviderInstructionTarget {
     const providerId = normalizeProviderId(input.providerId);
     const targetId = input.targetId === undefined ? DEFAULT_TARGET_ID : normalizeTargetId(input.targetId);
-    const rootDirectory = typeof input.rootDirectory === "string" ? input.rootDirectory : "";
-    const instructionRelativePath = normalizeInstructionRelativePath(input.instructionRelativePath);
     const enabled = normalizeOptionalBoolean(input.enabled, "enabled");
+    const rootDirectory = normalizeRootDirectory(input.rootDirectory, enabled);
+    const instructionRelativePath = normalizeInstructionRelativePath(input.instructionRelativePath);
+    ensureInstructionWithinRoot(rootDirectory, instructionRelativePath);
     const writeMode = normalizeWriteMode(input.writeMode);
     const failPolicy = normalizeFailPolicy(input.failPolicy);
     const requiresRestart = input.requiresRestart === undefined ? false : normalizeOptionalBoolean(input.requiresRestart, "requiresRestart");

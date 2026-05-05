@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import type { MateProfile } from "../../src/mate-state.js";
@@ -376,7 +377,7 @@ describe("syncEnabledProviderInstructionTargets", () => {
       storage.upsertTarget({
         providerId: "codex",
         enabled: true,
-        rootDirectory: "relative/root",
+        rootDirectory: path.join(workspacePath, "failing"),
         instructionRelativePath: path.join("AGENTS.md"),
         writeMode: "managed_block",
         failPolicy: "warn_continue",
@@ -393,7 +394,15 @@ describe("syncEnabledProviderInstructionTargets", () => {
       });
 
       const profile = createProfile({ displayName: "Mia", description: "partial" });
-      const result = await syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES);
+      const result = await syncEnabledProviderInstructionTargets(storage, profile, {
+        ...FILE_DEPENDENCIES,
+        async writeTextFile(filePath, content) {
+          if (filePath.includes(`${path.sep}failing${path.sep}`)) {
+            throw new Error("write failed");
+          }
+          await FILE_DEPENDENCIES.writeTextFile(filePath, content);
+        },
+      });
 
       const failed = storage.getTarget("codex", "main");
       if (!failed) {
@@ -430,7 +439,7 @@ describe("syncEnabledProviderInstructionTargets", () => {
       storage.upsertTarget({
         providerId: "codex",
         enabled: true,
-        rootDirectory: "relative/root",
+        rootDirectory: path.join(workspacePath, "failing"),
         instructionRelativePath: path.join("AGENTS.md"),
         writeMode: "managed_block",
         failPolicy: "block_session",
@@ -449,14 +458,22 @@ describe("syncEnabledProviderInstructionTargets", () => {
       const profile = createProfile({ displayName: "Mia", description: "blocking fail" });
       await assert.rejects(async () => {
         try {
-          await syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES);
+          await syncEnabledProviderInstructionTargets(storage, profile, {
+            ...FILE_DEPENDENCIES,
+            async writeTextFile(filePath, content) {
+              if (filePath.includes(`${path.sep}failing${path.sep}`)) {
+                throw new Error("write failed");
+              }
+              await FILE_DEPENDENCIES.writeTextFile(filePath, content);
+            },
+          });
         } catch (error) {
           if (!(error instanceof MateProviderInstructionSyncBlockedError)) {
             throw error;
           }
           assert.equal(error.providerId, "codex");
           assert.equal(error.targetId, "main");
-          assert.match(error.errorPreview, /rootDirectory/);
+          assert.match(error.errorPreview, /write failed/);
           throw error;
         }
       });
@@ -472,7 +489,7 @@ describe("syncEnabledProviderInstructionTargets", () => {
 
       assert.equal(failed.lastSyncState, "failed");
       assert.equal(skipped.lastSyncState, "never");
-      assert.match(failed.lastErrorPreview, /rootDirectory/);
+      assert.match(failed.lastErrorPreview, /write failed/);
     } finally {
       storage.close();
       await rm(workspacePath, { recursive: true, force: true });
@@ -480,7 +497,8 @@ describe("syncEnabledProviderInstructionTargets", () => {
     }
   });
 
-  it("target path が空の場合は failed として記録する", async () => {
+  it("書き込み失敗時は failed として記録する", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
     const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
     const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
     const storage = new ProviderInstructionTargetStorage(storagePath);
@@ -489,13 +507,63 @@ describe("syncEnabledProviderInstructionTargets", () => {
       storage.upsertTarget({
         providerId: "codex",
         enabled: true,
-        rootDirectory: "",
+        rootDirectory: workspacePath,
         instructionRelativePath: path.join("AGENTS.md"),
         writeMode: "managed_block",
         failPolicy: "warn_continue",
       });
 
       const profile = createProfile({ displayName: "Mia", description: "invalid root" });
+      const result = await syncEnabledProviderInstructionTargets(storage, profile, {
+        ...FILE_DEPENDENCIES,
+        async writeTextFile() {
+          throw new Error("write failed");
+        },
+      });
+      const target = storage.getTarget("codex", "main");
+      if (!target) {
+        throw new Error("target がありません");
+      }
+
+      assert.equal(result.failedCount, 1);
+      assert.equal(target.lastSyncState, "failed");
+      assert.match(target.lastErrorPreview, /write failed/);
+    } finally {
+      storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("旧 DB に残った invalid rootDirectory target は sync 時に failed として記録する", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+
+    try {
+      storage.upsertTarget({
+        providerId: "codex",
+        enabled: true,
+        rootDirectory: workspacePath,
+        instructionRelativePath: path.join("AGENTS.md"),
+        writeMode: "managed_block",
+        failPolicy: "warn_continue",
+      });
+
+      const db = new DatabaseSync(storagePath);
+      try {
+        db.prepare(`
+          UPDATE provider_instruction_targets
+          SET root_directory = ''
+          WHERE provider_id = 'codex'
+            AND target_id = 'main'
+        `).run();
+      } finally {
+        db.close();
+      }
+
+      const profile = createProfile({ displayName: "Mia", description: "legacy invalid root" });
       const result = await syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES);
       const target = storage.getTarget("codex", "main");
       if (!target) {
@@ -507,6 +575,7 @@ describe("syncEnabledProviderInstructionTargets", () => {
       assert.match(target.lastErrorPreview, /rootDirectory/);
     } finally {
       storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
       await rm(tempDatabaseDirectory, { recursive: true, force: true });
     }
   });

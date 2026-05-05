@@ -220,6 +220,47 @@ describe("ProviderInstructionTargetStorage", () => {
       assert.throws(() =>
         storage.upsertTarget({
           ...targetInput(),
+          enabled: true,
+          rootDirectory: "",
+        }),
+      /rootDirectory/);
+
+      assert.throws(() =>
+        storage.upsertTarget({
+          ...targetInput(),
+          enabled: true,
+          rootDirectory: "relative-workspace",
+        }),
+      /rootDirectory/);
+
+      storage.upsertTarget({
+        ...targetInput(),
+        enabled: false,
+        rootDirectory: "",
+        instructionRelativePath: "AGENTS.md",
+      });
+      const disabledTarget = storage.getTarget("codex", "main");
+      if (!disabledTarget) {
+        throw new Error("target がありません");
+      }
+      assert.equal(disabledTarget.rootDirectory, "");
+
+      const canonicalInputRootDirectory = path.join(tempDirectory, "nested", "..", "nested");
+      const canonicalInputExpectedRootDirectory = path.resolve(canonicalInputRootDirectory);
+      storage.upsertTarget({
+        ...targetInput(),
+        targetId: "canonical",
+        rootDirectory: canonicalInputRootDirectory,
+      });
+      const canonicalTarget = storage.getTarget("codex", "canonical");
+      if (!canonicalTarget) {
+        throw new Error("target がありません");
+      }
+      assert.equal(canonicalTarget.rootDirectory, canonicalInputExpectedRootDirectory);
+
+      assert.throws(() =>
+        storage.upsertTarget({
+          ...targetInput(),
           providerId: "../codex",
         }),
       /invalid providerId/);
@@ -234,7 +275,37 @@ describe("ProviderInstructionTargetStorage", () => {
       assert.throws(() =>
         storage.upsertTarget({
           ...targetInput(),
+          instructionRelativePath: "/tmp/copilot-instructions.md",
+        }),
+      /instructionRelativePath/);
+
+      assert.throws(() =>
+        storage.upsertTarget({
+          ...targetInput(),
+          instructionRelativePath: "C:copilot-instructions.md",
+        }),
+      /instructionRelativePath/);
+
+      assert.throws(() =>
+        storage.upsertTarget({
+          ...targetInput(),
+          instructionRelativePath: ".",
+        }),
+      /instructionRelativePath/);
+
+      assert.throws(() =>
+        storage.upsertTarget({
+          ...targetInput(),
+          rootDirectory: tempDirectory,
           instructionRelativePath: "..\\foo.md",
+        }),
+      /instructionRelativePath/);
+
+      assert.throws(() =>
+        storage.upsertTarget({
+          ...targetInput(),
+          rootDirectory: tempDirectory,
+          instructionRelativePath: "foo/../bar.md",
         }),
       /instructionRelativePath/);
     } finally {
