@@ -93,7 +93,7 @@ import {
 import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-withmate-api.js";
 import { type MateProfile, type MateStorageState } from "./mate-state.js";
 import { type MateEmbeddingSettings } from "./mate-embedding-settings.js";
-import { buildApplyPendingGrowthFeedback } from "./mate-growth-feedback.js";
+import { applyHomePendingGrowth } from "./home-mate-growth-actions.js";
 
 async function openSessionWindow(sessionId: string) {
   await withWithMateApi((api) => api.openSession(sessionId));
@@ -931,8 +931,7 @@ export default function HomeApp() {
     setMateGrowthApplying(true);
     setSettingsFeedback("Mate 成長を適用中...");
     try {
-      const result = await withmateApi.applyPendingGrowth();
-      setSettingsFeedback(buildApplyPendingGrowthFeedback(result));
+      setSettingsFeedback(await applyHomePendingGrowth(withmateApi));
       await refreshMateStatus(withmateApi);
     } catch (error) {
       setSettingsFeedback(error instanceof Error ? error.message : "Mate 成長の適用に失敗したよ。");
