@@ -260,23 +260,23 @@ projection に含めないもの:
 
 ### Phase 3: Provider Instruction Sync
 
-- [ ] Settings に provider instruction target 設定を追加する
-- [ ] 既存 provider / skill root 系の Settings state と同じ流儀で provider instruction target を保存する
-- [ ] provider root directory と instruction file path の検証を実装する
-- [ ] provider instruction target は canonical path で検証し、symlink / junction / `..` / drive letter 差異 / UNC path の escape を拒否する
-- [ ] provider instruction target が Mate source root、read-only projection workspace、memory-runtime、repository workspace、temporary run directory に入る場合は hard fail にする
-- [ ] managed-block は WithMate marker block だけを差し替え、既存 user content を変更しない
-- [ ] managed-block marker の `target_id` / `provider_id` / `write_mode` が保存済み target と一致することを検証する
-- [ ] marker block が存在しない file には Settings confirmation 後に block を追記する
-- [ ] duplicate marker / malformed marker / target mismatch は hard fail にする
-- [ ] managed-file は専用 file をユーザーが明示指定した場合だけ許可する
-- [ ] Mate Profile から provider projection を生成する
+- [x] Settings に provider instruction target 設定を追加する
+- [x] 既存 provider / skill root 系の Settings state と同じ流儀で provider instruction target を保存する
+- [x] provider root directory と instruction file path の検証を実装する
+- [x] provider instruction target は canonical path で検証し、symlink / junction / `..` / drive letter 差異 / UNC path の escape を拒否する
+- [x] provider instruction target が Mate source root、read-only projection workspace、memory-runtime、repository workspace、temporary run directory に入る場合は hard fail にする
+- [x] managed-block は WithMate marker block だけを差し替え、既存 user content を変更しない
+- [x] managed-block marker の `target_id` / `provider_id` / `write_mode` が保存済み target と一致することを検証する
+- [x] marker block が存在しない file には Settings confirmation 後に block を追記する
+- [x] duplicate marker / malformed marker / target mismatch は hard fail にする
+- [x] managed-file は専用 file をユーザーが明示指定した場合だけ許可する
+- [x] Mate Profile から provider projection を生成する
 - [ ] adapter capability から Codex / Copilot の instruction sync、structured output / schema submit tool、usage、file write / shell write 無効化可否を検出する
-- [ ] Codex 向け `AGENTS.md` projection を実装する
-- [ ] Copilot 向け `copilot-instructions.md` projection を実装する
-- [ ] unsupported provider は instruction sync 対象外として扱う
-- [ ] session 起動前に instruction sync を実行する
-- [ ] sync 結果と再起動要否を UI に表示する
+- [x] Codex 向け `AGENTS.md` projection を実装する
+- [x] Copilot 向け `copilot-instructions.md` projection を実装する
+- [x] unsupported provider は instruction sync 対象外として扱う
+- [x] session 起動前に instruction sync を実行する
+- [x] sync 結果と再起動要否を UI に表示する
 
 主な実装境界:
 
@@ -316,78 +316,78 @@ projection に含めないもの:
 - [x] 毎 turn 軽量 Memory Candidate 生成と、低頻度 Growth apply を分離する
 - [x] Growth apply interval / pending Memory trigger と human-like memory score の方針を定義する
 - [x] ChatGPT Pro 検討用 summary を `docs/design/mate-memory-summary.md` に作る
-- [ ] Mate Growth Engine の service boundary を実装する
+- [x] Mate Growth Engine の service boundary を実装する
 - [ ] Growth LLM provider / model / depth の fixed priority list を Settings / storage に追加する
 - [ ] GrowthModelPort を stub / fake 可能な契約で実装する
 - [ ] GrowthModelPort を通常 turn response とは別の background job として実行する
 - [ ] GrowthModelPort は user-facing provider thread を再利用せず、別 background session / utility call として実行する
 - [ ] GrowthModelPort background execution は tool-less utility call を優先し、agent session が必要な provider では schema submit tool 以外の file write / shell write / provider instruction write を許可しない
-- [ ] Memory 生成専用 `memory-runtime/templates/` と provider native instruction files を作成し、保存方針を固定する
-- [ ] Memory 生成 run ごとに `memory-runtime/runs/{runId}/.lock` 付き workspace を作成する
-- [ ] Memory 生成 run の `.lock` は atomic create と heartbeat で管理し、stale run は quarantine してから cleanup する
+- [x] Memory 生成専用 `memory-runtime/templates/` と provider native instruction files を作成し、保存方針を固定する
+- [x] Memory 生成 run ごとに `memory-runtime/runs/{runId}/.lock` 付き workspace を作成する
+- [x] Memory 生成 run の `.lock` は atomic create と heartbeat で管理し、stale run は quarantine してから cleanup する
 - [ ] app 起動時に active heartbeat のない stale / completed / failed な Memory 生成 run workspace を cleanup する
 - [ ] GrowthModelPort input は current turn と必要 metadata に限定し、session transcript 全量を渡さない
 - [ ] Codex GrowthModelPort では background `outputSchema` を渡す
 - [ ] Copilot GrowthModelPort では schema 付き internal submit tool を渡し、tool args を structured output として扱う
-- [ ] Memory Candidate LLM response は `{ memories: MemoryCandidate[] }` として Zod schema validation を実装する
-- [ ] Memory Candidate 生成 LLM が返した `memories[]` を schema validation 後に全件保存する
-- [ ] app 側は保存価値、危険性、重複、forgotten tombstone との意味的な一致を保存前に判定せず、schema validation と DB 整合性だけを行う
-- [ ] Memory Candidate の `relation` / `relatedRefs` / `supersedesRefs` / `targetClaimKey` を schema validation と storage に反映する
-- [ ] `mate_growth_event_links` を実装し、Memory 同士の reinforce / update / contradict / supersede link を保存する
-- [ ] `mate_profile_item_relations` を実装し、apply 後の Profile Item 同士の reinforce / update / contradict / supersede relation を保存する
-- [ ] Memory Candidate input に relevant Memory / Profile Item / forgotten tombstone / tag catalog を含める
-- [ ] tag catalog storage / API を実装する
-- [ ] tag catalog sanitized metadata の全件 snapshot を Memory Candidate background run に毎回渡す
+- [x] Memory Candidate LLM response は `{ memories: MemoryCandidate[] }` として Zod schema validation を実装する
+- [x] Memory Candidate 生成 LLM が返した `memories[]` を schema validation 後に全件保存する
+- [x] app 側は保存価値、危険性、重複、forgotten tombstone との意味的な一致を保存前に判定せず、schema validation と DB 整合性だけを行う
+- [x] Memory Candidate の `relation` / `relatedRefs` / `supersedesRefs` / `targetClaimKey` を schema validation と storage に反映する
+- [x] `mate_growth_event_links` を実装し、Memory 同士の reinforce / update / contradict / supersede link を保存する
+- [x] `mate_profile_item_relations` を実装し、apply 後の Profile Item 同士の reinforce / update / contradict / supersede relation を保存する
+- [x] Memory Candidate input に relevant Memory / Profile Item / forgotten tombstone / tag catalog を含める
+- [x] tag catalog storage / API を実装する
+- [x] tag catalog sanitized metadata の全件 snapshot を Memory Candidate background run に毎回渡す
 - [ ] 保存すべきでない内容は Memory 生成 LLM が `memories[]` に含めないよう provider native instruction files / prompt に明記する
-- [ ] `mate_growth_cursors` を実装し、`extraction_cursor` / `consolidation_cursor` / `applied_event_watermark` / `project_digest_cursor` を nullable unique に依存せず管理する
-- [ ] Memory Candidate の `growthSourceType` を `mate_growth_events.growth_source_type` に保存する
-- [ ] `type = "profile_item"` の `relatedRefs` / `supersedesRefs` を `mate_growth_event_profile_item_links` に保存する
+- [x] `mate_growth_cursors` を実装し、`extraction_cursor` / `consolidation_cursor` / `applied_event_watermark` / `project_digest_cursor` を nullable unique に依存せず管理する
+- [x] Memory Candidate の `growthSourceType` を `mate_growth_events.growth_source_type` に保存する
+- [x] `type = "profile_item"` の `relatedRefs` / `supersedesRefs` を `mate_growth_event_profile_item_links` に保存する
 - [ ] LLM の `newTags` を app 側で正規化 / 類似判定 / duplicate collapse してから catalog に追加する
-- [ ] `mate_semantic_embeddings` を実装する
-- [ ] local embedding backend / model cache 設定を Settings / storage に追加する
-- [ ] Settings に embedding model download button / progress / retry UI を追加する
-- [ ] 既定 model `Xenova/multilingual-e5-small` の初回 download と local cache 管理を実装する
-- [ ] temporary download、manifest 検証、active cache 昇格、破損検出、stale 再生成を実装する
-- [ ] Growth Event / Profile Item / tag catalog の embedding 生成と stale 再生成を実装する
-- [ ] Relevant Memory Retrieval を SQL filter + embedding similarity + rule rerank の hybrid で実装する
-- [ ] embedding model cache missing / index recovery 時の `sql_only` fallback を実装する
-- [ ] invalid Memory Candidate response は DB に保存せず run summary に記録する
-- [ ] Codex / Copilot background usage を `inputTokens` / `cachedInputTokens` / `outputTokens` / `reasoningOutputTokens` / `totalTokens` に正規化して保存する
+- [x] `mate_semantic_embeddings` を実装する
+- [x] local embedding backend / model cache 設定を Settings / storage に追加する
+- [x] Settings に embedding model download button / progress / retry UI を追加する
+- [x] 既定 model `Xenova/multilingual-e5-small` の初回 download と local cache 管理を実装する
+- [x] temporary download、manifest 検証、active cache 昇格、破損検出、stale 再生成を実装する
+- [x] Growth Event / Profile Item / tag catalog の embedding 生成と stale 再生成を実装する
+- [x] Relevant Memory Retrieval を SQL filter + embedding similarity + rule rerank の hybrid で実装する
+- [x] embedding model cache missing / index recovery 時の `sql_only` fallback を実装する
+- [x] invalid Memory Candidate response は DB に保存せず run summary に記録する
+- [x] Codex / Copilot background usage を `inputTokens` / `cachedInputTokens` / `outputTokens` / `reasoningOutputTokens` / `totalTokens` に正規化して保存する
 - [ ] usage が null の場合は token trigger を使わず elapsed time / pending Memory / manual run に fallback する
 - [ ] Memory Candidate 生成の model / reasoning effort / timeout 設定を実装する
 - [ ] Memory Candidate 生成は turn ごとの軽量 background run を既定候補にする
-- [ ] Growth apply 実行頻度を 1 時間に 1 回を上限とする elapsed time / pending Memory / manual run と token usage 補助 signal で制御する
-- [ ] ProfileUpdateSkill は internal background job として実装する
-- [ ] ProfileUpdateSkill の出力を Markdown 全文ではなく structured Profile Operation にする
-- [ ] `mate_profile_items` / `mate_profile_item_sources` / `mate_forgotten_tombstones` を実装する
-- [ ] `mate_memory_tags` を実装する
-- [ ] `mate_memory_tag_catalog` を実装する
-- [ ] Profile Item claim key / claim value normalization を実装する
-- [ ] Profile Item apply / render API を実装する
-- [ ] 一人称、二人称、呼びかけ、口調、語尾、性格傾向、相談時の反応、coding 時の作業支援方針を Profile Item として扱う
-- [ ] Memory tag relation API / storage を実装する
+- [x] Growth apply 実行頻度を 1 時間に 1 回を上限とする elapsed time / pending Memory / manual run と token usage 補助 signal で制御する
+- [x] ProfileUpdateSkill は internal background job として実装する
+- [x] ProfileUpdateSkill の出力を Markdown 全文ではなく structured Profile Operation にする
+- [x] `mate_profile_items` / `mate_profile_item_sources` / `mate_forgotten_tombstones` を実装する
+- [x] `mate_memory_tags` を実装する
+- [x] `mate_memory_tag_catalog` を実装する
+- [x] Profile Item claim key / claim value normalization を実装する
+- [x] Profile Item apply / render API を実装する
+- [x] 一人称、二人称、呼びかけ、口調、語尾、性格傾向、相談時の反応、coding 時の作業支援方針を Profile Item として扱う
+- [x] Memory tag relation API / storage を実装する
 - [ ] Profile Item tag は source Memory tags から継承または render 時に派生させる
 - [ ] Git 管理下 workspace の Git 情報から project tag を付与する
 - [ ] Git 非管理 workspace では project tag を付与しない
-- [ ] Project Digest は provider instruction に常設せず、prompt 送信時に workspace / Git 情報 / user input で relevant Profile Item を検索して一時 context として注入する
-- [ ] Project Digest の prompt injection は `projection_allowed = 1`、active Profile Item、active tag catalog、project tag、token budget、audit record を契約として実装する
-- [ ] Growth Event は Project Digest prompt injection の直接出力対象にせず、Profile Item / Project Digest apply の evidence に留める
-- [ ] GrowthPolicyGate を Profile apply / provider projection 用に実装する
-- [ ] StorageGate は schema validation と DB transaction だけを行い、保存価値の意味判定をしない
-- [ ] PostPolicyGate は Profile apply / provider projection 直前の検査として実装する
-- [ ] Growth evidence に source role / source kind / trust level を保存する
-- [ ] statement fingerprint / forgotten tombstone を実装し、保存前 dedupe は行わない
-- [ ] recurrence / salience / recency / decay を storage と policy gate に反映する
+- [x] Project Digest は provider instruction に常設せず、prompt 送信時に workspace / Git 情報 / user input で relevant Profile Item を検索して一時 context として注入する
+- [x] Project Digest の prompt injection は `projection_allowed = 1`、active Profile Item、active tag catalog、project tag、token budget、audit record を契約として実装する
+- [x] Growth Event は Project Digest prompt injection の直接出力対象にせず、Profile Item / Project Digest apply の evidence に留める
+- [x] GrowthPolicyGate を Profile apply / provider projection 用に実装する
+- [x] StorageGate は schema validation と DB transaction だけを行い、保存価値の意味判定をしない
+- [x] PostPolicyGate は Profile apply / provider projection 直前の検査として実装する
+- [x] Growth evidence に source role / source kind / trust level を保存する
+- [x] statement fingerprint / forgotten tombstone を実装し、保存前 dedupe は行わない
+- [x] recurrence / salience / recency / decay を storage と policy gate に反映する
 - [ ] Growth apply / correct / forget / disable の単一 writer lock を実装する
 - [ ] Growth apply transaction の idempotency key を実装する
 - [ ] Growth apply は final commit 前に current Profile Item / Growth Event state / cursor を更新せず、proposed Profile Item set から projection snapshot を生成する
 - [ ] Growth apply revision は `committing_files` / `ready` state を持ち、provider sync は `ready` な SQLite snapshot だけを読む
 - [ ] `mate_profile_revisions.status` は `staging` / `committing_files` / `ready` / `failed` を持ち、`active_revision_id` は `ready` revision だけを指す
 - [ ] final commit で current Profile Item、Growth Event state、source link、`active_revision_id`、`profile_generation`、cursor を同時に更新する
-- [ ] provider sync の read snapshot 境界を実装する
+- [x] provider sync の read snapshot 境界を実装する
 - [ ] forget 後の `redaction_required` は 4.0.0 MVP では warning state として扱い、session 起動は block しない
-- [ ] `projection_allowed` と provider instruction projection gate を実装する
-- [ ] `core` section の operation は `manual` / `mate_talk_explicit` のみ許可し、`growth_auto` 由来を PostPolicyGate で拒否する
+- [x] `projection_allowed` と provider instruction projection gate を実装する
+- [x] `core` section の operation は `manual` / `mate_talk_explicit` のみ許可し、`growth_auto` 由来を PostPolicyGate で拒否する
 - [ ] 自律反映された Growth Event を最小管理 UI に表示する
 - [ ] `修正` / `忘れる` / `無効化` の操作を追加する
 - [ ] Growth Event を Bond Profile / Work Style / project tag 付き digest に反映する
