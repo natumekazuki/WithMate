@@ -616,6 +616,29 @@ const MATE_EMBEDDING_CACHE_STATE_LABELS: Record<MateEmbeddingSettings["cacheStat
   stale: "更新あり",
 };
 
+const MATE_EMBEDDING_LAST_STATUS_LABELS: Record<MateEmbeddingSettings["lastStatus"], string> = {
+  unknown: "不明",
+  available: "利用可",
+  unavailable: "利用不可",
+  failed: "失敗",
+};
+
+const formatCacheSizeLabel = (cacheSizeBytes: number): string => {
+  if (!Number.isFinite(cacheSizeBytes) || cacheSizeBytes < 0) {
+    return "-";
+  }
+  if (cacheSizeBytes < 1024) {
+    return `${cacheSizeBytes} B`;
+  }
+  if (cacheSizeBytes < 1024 ** 2) {
+    return `${(cacheSizeBytes / 1024).toFixed(1)} KB`;
+  }
+  if (cacheSizeBytes < 1024 ** 3) {
+    return `${(cacheSizeBytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+  return `${(cacheSizeBytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+};
+
 function SettingsMateEmbeddingSection({
   settings,
   feedback,
@@ -639,8 +662,24 @@ function SettingsMateEmbeddingSection({
                 <dd>{settings.dimension}</dd>
               </div>
               <div>
+                <dt>キャッシュサイズ</dt>
+                <dd>{formatCacheSizeLabel(settings.cacheSizeBytes)}</dd>
+              </div>
+              <div>
                 <dt>{SETTINGS_MATE_EMBEDDING_CACHE_STATE_LABEL}</dt>
                 <dd>{MATE_EMBEDDING_CACHE_STATE_LABELS[settings.cacheState]}</dd>
+              </div>
+              <div>
+                <dt>最終更新</dt>
+                <dd>{settings.cacheUpdatedAt ? formatTimestampLabel(settings.cacheUpdatedAt) : "-"}</dd>
+              </div>
+              <div>
+                <dt>最終確認</dt>
+                <dd>{settings.lastVerifiedAt ? formatTimestampLabel(settings.lastVerifiedAt) : "-"}</dd>
+              </div>
+              <div>
+                <dt>最終ステータス</dt>
+                <dd>{MATE_EMBEDDING_LAST_STATUS_LABELS[settings.lastStatus]}</dd>
               </div>
             </dl>
             {settings.lastErrorPreview ? (
