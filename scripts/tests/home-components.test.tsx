@@ -18,6 +18,8 @@ import {
   SETTINGS_MATE_EMBEDDING_LABEL,
   SETTINGS_MATE_RESET_HELP,
   SETTINGS_MATE_RESET_LABEL,
+  SETTINGS_MATE_GROWTH_HELP,
+  SETTINGS_MATE_GROWTH_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_MODEL_LABEL,
@@ -50,6 +52,9 @@ describe("HomeSettingsContent", () => {
   const noOp = (..._args: unknown[]) => undefined;
 
   const renderSettings = (params?: {
+    applyPendingGrowth?: boolean;
+    canApplyPendingGrowth?: boolean;
+    applyPendingGrowthBusy?: boolean;
     canResetMate?: boolean;
     mateResetBusy?: boolean;
   }) => renderToStaticMarkup(
@@ -110,6 +115,9 @@ describe("HomeSettingsContent", () => {
       onDeleteCharacterMemoryEntry={noOp}
       onDeleteMateProfileItem={noOp}
       onStartMateEmbeddingDownload={noOp}
+      onApplyPendingGrowth={params?.applyPendingGrowth ? noOp : undefined}
+      canApplyPendingGrowth={params?.canApplyPendingGrowth}
+      applyPendingGrowthBusy={params?.applyPendingGrowthBusy}
       onResetMate={noOp}
       canResetMate={params?.canResetMate ?? false}
       mateResetBusy={params?.mateResetBusy ?? false}
@@ -123,6 +131,14 @@ describe("HomeSettingsContent", () => {
     const resetButtonEndIndex = html.indexOf("</button>", resetButtonIndex);
     assert.ok(resetLabelIndex >= 0 && resetButtonIndex >= 0 && resetButtonEndIndex >= 0);
     return html.slice(resetButtonIndex, resetButtonEndIndex + 9);
+  };
+
+  const extractGrowthButton = (html: string) => {
+    const growthLabelIndex = html.indexOf(`<strong>${SETTINGS_MATE_GROWTH_LABEL}</strong>`);
+    const growthButtonIndex = html.indexOf('<button class="launch-toggle"', growthLabelIndex);
+    const growthButtonEndIndex = html.indexOf("</button>", growthButtonIndex);
+    assert.ok(growthLabelIndex >= 0 && growthButtonIndex >= 0 && growthButtonEndIndex >= 0);
+    return html.slice(growthButtonIndex, growthButtonEndIndex + 9);
   };
 
   it("Mate Memory Generation のセクションが表示される", () => {
@@ -140,6 +156,12 @@ describe("HomeSettingsContent", () => {
     const html = renderSettings();
     assert.ok(html.includes(`<strong>${SETTINGS_MATE_RESET_LABEL}</strong>`));
     assert.ok(html.includes(`<p class="settings-help">${SETTINGS_MATE_RESET_HELP}</p>`));
+  });
+
+  it("Mate Growth のラベルとヘルプが表示される", () => {
+    const html = renderSettings({ applyPendingGrowth: true });
+    assert.ok(html.includes(`<strong>${SETTINGS_MATE_GROWTH_LABEL}</strong>`));
+    assert.ok(html.includes(`<p class="settings-help">${SETTINGS_MATE_GROWTH_HELP}</p>`));
   });
 
   it("canResetMate=false のときリセットボタンは無効化される", () => {
@@ -160,6 +182,26 @@ describe("HomeSettingsContent", () => {
     const buttonHtml = extractResetButton(html);
     assert.ok(buttonHtml.includes('disabled=""'));
     assert.ok(buttonHtml.includes("リセット中..."));
+  });
+
+  it("canApplyPendingGrowth=false のとき適用ボタンは無効化される", () => {
+    const html = renderSettings({ applyPendingGrowth: true, canApplyPendingGrowth: false });
+    const buttonHtml = extractGrowthButton(html);
+    assert.ok(buttonHtml.includes("disabled=\"\""));
+    assert.ok(buttonHtml.includes(SETTINGS_MATE_GROWTH_LABEL));
+  });
+
+  it("canApplyPendingGrowth=true のとき適用ボタンは有効", () => {
+    const html = renderSettings({ applyPendingGrowth: true, canApplyPendingGrowth: true });
+    const buttonHtml = extractGrowthButton(html);
+    assert.ok(!buttonHtml.includes("disabled=\"\""));
+  });
+
+  it("applyPendingGrowthBusy=true のとき適用ボタンは無効化され「適用中...」が表示される", () => {
+    const html = renderSettings({ applyPendingGrowth: true, canApplyPendingGrowth: true, applyPendingGrowthBusy: true });
+    const buttonHtml = extractGrowthButton(html);
+    assert.ok(buttonHtml.includes("disabled=\"\""));
+    assert.ok(buttonHtml.includes("適用中..."));
   });
 
   it("Mate Embedding のキャッシュ状態が拡張表示される", () => {
