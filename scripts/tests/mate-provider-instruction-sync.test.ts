@@ -50,6 +50,14 @@ function buildManagedProfileEndMarker(
   return `<!-- WITHMATE:END provider=${providerId} target=${targetId} mode=${mode} block=${MATE_PROFILE_BLOCK_ID} -->`;
 }
 
+function buildLegacyManagedProfileBeginMarker(): string {
+  return `<!-- WITHMATE:BEGIN ${MATE_PROFILE_BLOCK_ID} -->`;
+}
+
+function buildLegacyManagedProfileEndMarker(): string {
+  return `<!-- WITHMATE:END ${MATE_PROFILE_BLOCK_ID} -->`;
+}
+
 function createProfile(partial: Partial<MateProfile> = {}): MateProfile {
   return {
     id: "current",
@@ -661,6 +669,111 @@ describe("syncEnabledProviderInstructionTargets", () => {
         assert.match(error.errorPreview, /duplicate managed block|重複 managed block/);
         return true;
       });
+    } finally {
+      storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("legacy marker と属性付き marker が混在すると warn_continue で failed 記録される", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+    const targetPath = path.join(workspacePath, "AGENTS.md");
+    const existingContent =
+      "User note\n"
+      + `${buildLegacyManagedProfileBeginMarker()}\n`
+      + "## WithMate Mate Profile\n"
+      + "legacy body\n"
+      + `${buildLegacyManagedProfileEndMarker()}\n`
+      + `${buildManagedProfileBeginMarker("codex", "main")}\n`
+      + "## WithMate Mate Profile\n"
+      + "attribute body\n"
+      + `${buildManagedProfileEndMarker("codex", "main")}\n`;
+
+    try {
+      await writeFile(targetPath, existingContent, "utf8");
+      storage.upsertTarget({
+        providerId: "codex",
+        enabled: true,
+        rootDirectory: workspacePath,
+        instructionRelativePath: "AGENTS.md",
+        writeMode: "managed_block",
+        failPolicy: "warn_continue",
+      });
+
+      const profile = createProfile({ displayName: "Mia", sections: [] });
+      const result = await syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES);
+      const updated = await readFile(targetPath, "utf8");
+      const target = storage.getTarget("codex", "main");
+      if (!target) {
+        throw new Error("target がありません");
+      }
+
+      assert.equal(result.targetCount, 1);
+      assert.equal(result.syncedCount, 0);
+      assert.equal(result.failedCount, 1);
+      assert.equal(result.skippedCount, 0);
+      assert.equal(target.lastSyncState, "failed");
+      assert.match(target.lastErrorPreview, /marker mismatch|混在しています/);
+      assert.equal(updated, existingContent);
+    } finally {
+      storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("legacy/属性付き marker 混在時は block_session で MateProviderInstructionSyncBlockedError になる", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+    const targetPath = path.join(workspacePath, "AGENTS.md");
+    const existingContent =
+      `${buildManagedProfileBeginMarker("codex", "main")}\n`
+      + "## WithMate Mate Profile\n"
+      + "attribute body\n"
+      + `${buildManagedProfileEndMarker("codex", "main")}\n`
+      + `${buildLegacyManagedProfileBeginMarker()}\n`
+      + "## WithMate Mate Profile\n"
+      + "legacy body\n"
+      + `${buildLegacyManagedProfileEndMarker()}\n`;
+
+    try {
+      await writeFile(targetPath, existingContent, "utf8");
+      storage.upsertTarget({
+        providerId: "codex",
+        enabled: true,
+        rootDirectory: workspacePath,
+        instructionRelativePath: "AGENTS.md",
+        writeMode: "managed_block",
+        failPolicy: "block_session",
+      });
+
+      const profile = createProfile({ displayName: "Mia", sections: [] });
+      await assert.rejects(async () => {
+        await syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES);
+      }, (error: unknown) => {
+        if (!(error instanceof MateProviderInstructionSyncBlockedError)) {
+          return false;
+        }
+        assert.equal(error.providerId, "codex");
+        assert.equal(error.targetId, "main");
+        assert.match(error.errorPreview, /marker mismatch|混在しています/);
+        return true;
+      });
+
+      const updated = await readFile(targetPath, "utf8");
+      assert.equal(updated, existingContent);
+      const target = storage.getTarget("codex", "main");
+      if (!target) {
+        throw new Error("target がありません");
+      }
+      assert.equal(target.lastSyncState, "failed");
+      assert.match(target.lastErrorPreview, /marker mismatch|混在しています/);
     } finally {
       storage.close();
       await rm(workspacePath, { recursive: true, force: true });
@@ -1446,6 +1559,114 @@ describe("syncDisabledProviderInstructionTargets", () => {
       }
       assert.equal(target.lastSyncState, "failed");
       assert.match(target.lastErrorPreview, /malformed marker/);
+    } finally {
+      storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("disabled cleanup 側の warn_continue でも legacy/属性付き marker 混在は failed 記録になる", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-reset-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+    const targetPath = path.join(workspacePath, "AGENTS.md");
+    const existingContent =
+      "User note\n"
+      + `${buildLegacyManagedProfileBeginMarker()}\n`
+      + "## WithMate Mate Profile\n"
+      + "legacy body\n"
+      + `${buildLegacyManagedProfileEndMarker()}\n`
+      + `${buildManagedProfileBeginMarker("copilot", "main")}\n`
+      + "## WithMate Mate Profile\n"
+      + "attribute body\n"
+      + `${buildManagedProfileEndMarker("copilot", "main")}\n`;
+
+    try {
+      await writeFile(targetPath, existingContent, "utf8");
+      storage.upsertTarget({
+        providerId: "copilot",
+        enabled: true,
+        rootDirectory: workspacePath,
+        instructionRelativePath: "AGENTS.md",
+        writeMode: "managed_block",
+        failPolicy: "warn_continue",
+      });
+
+      const result = await syncDisabledProviderInstructionTargets(storage, FILE_DEPENDENCIES);
+      const updated = await readFile(targetPath, "utf8");
+      const target = storage.getTarget("copilot", "main");
+      if (!target) {
+        throw new Error("target がありません");
+      }
+
+      assert.equal(result.targetCount, 1);
+      assert.equal(result.syncedCount, 0);
+      assert.equal(result.failedCount, 1);
+      assert.equal(result.skippedCount, 0);
+      assert.equal(target.lastSyncState, "failed");
+      assert.match(target.lastErrorPreview, /marker mismatch|混在しています/);
+      assert.equal(updated, existingContent);
+    } finally {
+      storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("disabled cleanup 側の block_session で legacy/属性付き marker 混在は blocked error になる", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-reset-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+    const targetPath = path.join(workspacePath, "AGENTS.md");
+    const existingContent =
+      "User note\n"
+      + `${buildLegacyManagedProfileBeginMarker()}\n`
+      + "## WithMate Mate Profile\n"
+      + "legacy body\n"
+      + `${buildLegacyManagedProfileEndMarker()}\n`
+      + `${buildManagedProfileBeginMarker("copilot", "main")}\n`
+      + "## WithMate Mate Profile\n"
+      + "attribute body\n"
+      + `${buildManagedProfileEndMarker("copilot", "main")}\n`;
+
+    try {
+      await writeFile(targetPath, existingContent, "utf8");
+      storage.upsertTarget({
+        providerId: "copilot",
+        enabled: true,
+        rootDirectory: workspacePath,
+        instructionRelativePath: "AGENTS.md",
+        writeMode: "managed_block",
+        failPolicy: "block_session",
+      });
+
+      await assert.rejects(
+        async () => {
+          await syncDisabledProviderInstructionTargets(storage, FILE_DEPENDENCIES);
+        },
+        (error: unknown) => {
+          if (!(error instanceof MateProviderInstructionSyncBlockedError)) {
+            return false;
+          }
+          assert.equal(error.providerId, "copilot");
+          assert.equal(error.targetId, "main");
+          assert.match(error.errorPreview, /marker mismatch|混在しています/);
+          return true;
+        },
+      );
+
+      const updated = await readFile(targetPath, "utf8");
+      const target = storage.getTarget("copilot", "main");
+      if (!target) {
+        throw new Error("target がありません");
+      }
+
+      assert.equal(updated, existingContent);
+      assert.equal(target.lastSyncState, "failed");
+      assert.match(target.lastErrorPreview, /marker mismatch|混在しています/);
     } finally {
       storage.close();
       await rm(workspacePath, { recursive: true, force: true });
