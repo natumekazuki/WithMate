@@ -93,41 +93,7 @@ import {
 import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-withmate-api.js";
 import { type MateProfile, type MateStorageState } from "./mate-state.js";
 import { type MateEmbeddingSettings } from "./mate-embedding-settings.js";
-
-type ApplyPendingGrowthResult = {
-  candidateCount?: unknown;
-  appliedCount?: unknown;
-  skippedCount?: unknown;
-  revisionId?: unknown;
-};
-
-function buildApplyPendingGrowthFeedback(result: unknown): string {
-  if (result === null || typeof result !== "object") {
-    return "Mate 成長の手動適用が完了したよ。";
-  }
-
-  const typedResult = result as ApplyPendingGrowthResult;
-  const parts: string[] = [];
-
-  if (typeof typedResult.candidateCount === "number") {
-    parts.push(`候補 ${typedResult.candidateCount} 件`);
-  }
-  if (typeof typedResult.appliedCount === "number") {
-    parts.push(`適用 ${typedResult.appliedCount} 件`);
-  }
-  if (typeof typedResult.skippedCount === "number") {
-    parts.push(`スキップ ${typedResult.skippedCount} 件`);
-  }
-  if (typeof typedResult.revisionId === "string") {
-    parts.push(`revisionId ${typedResult.revisionId}`);
-  }
-
-  if (parts.length === 0) {
-    return "Mate 成長の手動適用が完了したよ。";
-  }
-
-  return `Mate 成長を手動適用したよ（${parts.join(" / ")}）。`;
-}
+import { buildApplyPendingGrowthFeedback } from "./mate-growth-feedback.js";
 
 async function openSessionWindow(sessionId: string) {
   await withWithMateApi((api) => api.openSession(sessionId));
