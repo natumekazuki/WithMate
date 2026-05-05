@@ -161,42 +161,81 @@ function findManagedBlockRangeByParsedMarkers(
   blockId: string,
   markerAttributes: ManagedInstructionBlockMarkerAttributes,
 ): { start: number; end: number } | null {
+  const markers = parseManagedBlockMarkers(existingText);
+  const matchedBlockIdMarkers = markers.filter((markerMatch) => markerMatch.marker.blockId === blockId);
+
+  const hasLegacyMarker = matchedBlockIdMarkers.some((markerMatch) => Object.keys(markerMatch.marker.attributes).length === 0);
+  const hasAttributeMarker = matchedBlockIdMarkers.some((markerMatch) => Object.keys(markerMatch.marker.attributes).length > 0);
+  if (hasLegacyMarker && hasAttributeMarker) {
+    throw new Error(`marker mismatch: blockId=${blockId} の legacy marker と属性付き marker が混在しています。対象 managed block を特定できません`);
+  }
+
+  const matchingRanges: { start: number; end: number }[] = [];
+  let activeStart = -1;
+
+  for (const markerMatch of matchedBlockIdMarkers) {
+    if (!isManagedBlockMarkerMatch(markerMatch.marker, blockId, markerAttributes)) {
+      continue;
+    }
+
+    if (markerMatch.kind === "BEGIN") {
+      if (activeStart >= 0) {
+        throw new Error(`malformed marker: blockId=${blockId} の BEGIN が重複しています`);
+      }
+      activeStart = markerMatch.index;
+      continue;
+    }
+
+    if (activeStart < 0) {
+      throw new Error(`malformed marker: blockId=${blockId} の END だけの marker が見つかりました`);
+    }
+
+    matchingRanges.push({ start: activeStart, end: markerMatch.index + markerMatch.length });
+    activeStart = -1;
+
+    if (matchingRanges.length > 1) {
+      throw new Error(`duplicate managed block: blockId=${blockId} が複数存在します`);
+    }
+  }
+
+  if (activeStart >= 0) {
+    throw new Error(`malformed marker: blockId=${blockId} の BEGIN に対応する END が見つかりません`);
+  }
+
+  return matchingRanges[0] ?? null;
+}
+
+type ParsedManagedBlockMarker = {
+  kind: "BEGIN" | "END";
+  marker: {
+    blockId: string;
+    attributes: Record<string, string>;
+  };
+  index: number;
+  length: number;
+};
+
+function parseManagedBlockMarkers(existingText: string): ParsedManagedBlockMarker[] {
   const markerPattern = /<!-- WITHMATE:(BEGIN|END) ([^>]*?) -->/g;
+  const markerMatches: ParsedManagedBlockMarker[] = [];
   let markerMatch: RegExpExecArray | null;
 
   while ((markerMatch = markerPattern.exec(existingText)) !== null) {
-    if (markerMatch[1] !== "BEGIN") {
+    const parsedMarker = parseManagedBlockMarkerBody(markerMatch[2] ?? "");
+    if (!parsedMarker) {
       continue;
     }
 
-    const beginMarker = parseManagedBlockMarkerBody(markerMatch[2] ?? "");
-    if (!beginMarker || !isManagedBlockMarkerMatch(beginMarker, blockId, markerAttributes)) {
-      continue;
-    }
-
-    const endPattern = new RegExp(markerPattern.source, "g");
-    endPattern.lastIndex = markerMatch.index + markerMatch[0].length;
-    let endMarkerMatch: RegExpExecArray | null;
-    while ((endMarkerMatch = endPattern.exec(existingText)) !== null) {
-      if (endMarkerMatch[1] !== "END") {
-        continue;
-      }
-
-      const endMarker = parseManagedBlockMarkerBody(endMarkerMatch[2] ?? "");
-      if (!endMarker || !isManagedBlockMarkerMatch(endMarker, blockId, markerAttributes)) {
-        continue;
-      }
-
-      return {
-        start: markerMatch.index,
-        end: endMarkerMatch.index + endMarkerMatch[0].length,
-      };
-    }
-
-    return null;
+    const markerKind = markerMatch[1] === "BEGIN" ? "BEGIN" : "END";
+    markerMatches.push({
+      kind: markerKind,
+      marker: parsedMarker,
+      index: markerMatch.index,
+      length: markerMatch[0].length,
+    });
   }
 
-  return null;
+  return markerMatches;
 }
 
 function parseManagedBlockMarkerBody(body: string): { blockId: string; attributes: Record<string, string> } | null {

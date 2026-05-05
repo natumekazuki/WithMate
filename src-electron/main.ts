@@ -121,6 +121,10 @@ import { MateTalkService } from "./mate-talk-service.js";
 import { buildMateTalkProfileContextText } from "./mate-talk-profile-context.js";
 import { WindowEntryLoader } from "./window-entry-loader.js";
 import { AuxWindowService } from "./aux-window-service.js";
+import {
+  assertProviderInstructionTargetRootNotProtected,
+  buildProviderInstructionTargetProtectedRoots,
+} from "./provider-instruction-target-root-guard.js";
 import { registerMainIpcHandlers } from "./main-ipc-registration.js";
 import {
   PersistentStoreLifecycleService,
@@ -177,6 +181,7 @@ const fixedUserDataPath = path.join(appDataPath, "WithMate");
 app.setAppUserModelId("com.natumekazuki.withmate");
 app.setPath("userData", fixedUserDataPath);
 const appLogsPath = path.join(fixedUserDataPath, "logs");
+const PROVIDER_INSTRUCTION_TARGET_PROTECTED_ROOTS = buildProviderInstructionTargetProtectedRoots(fixedUserDataPath);
 const MATE_TALK_OUTPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -906,7 +911,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getMemoryManagementPage: (request) => requireMemoryManagementService().getPage(request),
                 getMateEmbeddingSettings: () => requireMateEmbeddingCacheService().getEmbeddingSettings(),
                 listProviderInstructionTargets: () => requireProviderInstructionTargetStorage().listTargets(),
-                upsertProviderInstructionTarget: (input) => requireProviderInstructionTargetStorage().upsertTarget(input),
+                upsertProviderInstructionTarget: (input) => {
+                  assertProviderInstructionTargetRootNotProtected(input, PROVIDER_INSTRUCTION_TARGET_PROTECTED_ROOTS);
+                  return requireProviderInstructionTargetStorage().upsertTarget(input);
+                },
                 startMateEmbeddingDownload: () => startMateEmbeddingDownload(),
                 deleteSessionMemory: (sessionId) => requireMemoryManagementService().deleteSessionMemory(sessionId),
                 deleteProjectMemoryEntry: (entryId) => requireMemoryManagementService().deleteProjectMemoryEntry(entryId),
@@ -1436,6 +1444,7 @@ async function syncEnabledProviderInstructionTargetsForMateProfile(
         readTextFile: async (filePath) => readFile(filePath, "utf8"),
         writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
       },
+      { protectedRoots: PROVIDER_INSTRUCTION_TARGET_PROTECTED_ROOTS },
     );
   } catch (error) {
     if (error instanceof MateProviderInstructionSyncBlockedError) {
@@ -1470,6 +1479,7 @@ async function syncProviderInstructionTargetsForDisabledMateProfile(): Promise<v
         readTextFile: async (filePath) => readFile(filePath, "utf8"),
         writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
       },
+      { protectedRoots: PROVIDER_INSTRUCTION_TARGET_PROTECTED_ROOTS },
     );
   } catch (error) {
     if (error instanceof MateProviderInstructionSyncBlockedError) {

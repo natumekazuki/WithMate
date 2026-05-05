@@ -185,6 +185,57 @@ test("属性付き managed block は一致する属性の block だけ削除す�
   assert.equal(updated.includes("Footer"), true);
 });
 
+test("属性付き managed block が重複すると例外になる", () => {
+  const existing = [
+    "Header",
+    "<!-- WITHMATE:BEGIN mode=managed-block block=mate-profile target=main provider=codex -->",
+    "## Main",
+    "main body 1",
+    "<!-- WITHMATE:END target=main provider=codex block=mate-profile mode=managed-block -->",
+    "<!-- WITHMATE:BEGIN provider=codex target=main mode=managed-block block=mate-profile -->",
+    "## Main",
+    "main body 2",
+    "<!-- WITHMATE:END provider=codex target=main mode=managed-block block=mate-profile -->",
+    "Footer",
+    "",
+  ].join("\n");
+
+  assert.throws(() => {
+    upsertManagedBlockWithMarkerAttributes(existing, {
+      blockId: "mate-profile",
+      title: "New Profile",
+      content: "new body",
+      markerAttributes: {
+        provider: "codex",
+        target: "main",
+        mode: "managed-block",
+      },
+    });
+  }, /duplicate managed block|重複 managed block/);
+});
+
+test("属性付き managed block の BEGIN/END 不整合は例外になる", () => {
+  const existing = [
+    "Header",
+    "<!-- WITHMATE:BEGIN mode=managed-block block=mate-profile target=main provider=codex -->",
+    "## Main",
+    "main body",
+    "Footer",
+    "",
+  ].join("\n");
+
+  assert.throws(() => {
+    removeManagedBlockWithMarkerAttributes(existing, {
+      blockId: "mate-profile",
+      markerAttributes: {
+        provider: "codex",
+        target: "main",
+        mode: "managed-block",
+      },
+    });
+  }, /malformed marker|BEGIN/);
+});
+
 test("空の属性は属性付き block に一致しない", () => {
   const existing = [
     "Header",

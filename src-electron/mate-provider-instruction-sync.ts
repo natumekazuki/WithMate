@@ -14,6 +14,10 @@ import {
   removeManagedBlockWithMarkerAttributes,
   upsertManagedBlockWithMarkerAttributes,
 } from "./managed-instruction-block.js";
+import {
+  assertProviderInstructionTargetRootNotProtected,
+  buildProviderInstructionTargetProtectedRoots,
+} from "./provider-instruction-target-root-guard.js";
 
 export type ProviderInstructionTarget = {
   providerId: string;
@@ -25,6 +29,10 @@ export type ProviderInstructionTarget = {
 export type MateProviderInstructionSyncDeps = {
   readTextFile(filePath: string): Promise<string>;
   writeTextFile(filePath: string, content: string): Promise<void>;
+};
+
+export type ProviderInstructionSyncOptions = {
+  protectedRoots?: readonly string[];
 };
 
 export type SyncEnabledProviderInstructionTargetsResult = {
@@ -118,6 +126,7 @@ export async function syncEnabledProviderInstructionTargets(
   storage: ProviderInstructionTargetStorage,
   profile: MateProfile,
   deps: MateProviderInstructionSyncDeps,
+  syncOptions: ProviderInstructionSyncOptions = {},
 ): Promise<SyncEnabledProviderInstructionTargetsResult> {
   const result: SyncEnabledProviderInstructionTargetsResult = {
     targetCount: 0,
@@ -129,12 +138,14 @@ export async function syncEnabledProviderInstructionTargets(
 
   const targets = storage.listTargets({ enabledOnly: true });
   const mateRevisionId = profile.activeRevisionId ?? undefined;
+  const protectedRoots = await resolveProviderInstructionTargetProtectedRoots(syncOptions);
 
   for (const target of targets) {
     result.targetCount += 1;
 
     try {
       const instructionFilePath = resolveTargetInstructionFilePath(target);
+      assertProviderInstructionTargetRootNotProtected(target, protectedRoots, instructionFilePath);
 
       if (target.writeMode === "managed_block") {
         await syncMateInstructionFile(
@@ -208,6 +219,7 @@ export async function syncEnabledProviderInstructionTargets(
 export async function syncDisabledProviderInstructionTargets(
   storage: ProviderInstructionTargetStorage,
   deps: MateProviderInstructionSyncDeps,
+  syncOptions: ProviderInstructionSyncOptions = {},
 ): Promise<SyncEnabledProviderInstructionTargetsResult> {
   const result: SyncEnabledProviderInstructionTargetsResult = {
     targetCount: 0,
@@ -218,12 +230,14 @@ export async function syncDisabledProviderInstructionTargets(
   };
 
   const targets = storage.listTargets({ enabledOnly: true });
+  const protectedRoots = await resolveProviderInstructionTargetProtectedRoots(syncOptions);
 
   for (const target of targets) {
     result.targetCount += 1;
 
     try {
       const instructionFilePath = resolveTargetInstructionFilePath(target);
+      assertProviderInstructionTargetRootNotProtected(target, protectedRoots, instructionFilePath);
 
       const syncResult = await syncDisabledProviderInstructionTarget({
         ...target,
@@ -377,6 +391,34 @@ function buildManagedBlockMarkerAttributes(
 
 function sha256Hex(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+const SYNC_PROTECTED_ROOTS_CACHE: { value?: readonly string[] } = {};
+
+async function resolveProviderInstructionTargetProtectedRoots(
+  syncOptions: ProviderInstructionSyncOptions,
+): Promise<readonly string[]> {
+  if (syncOptions.protectedRoots !== undefined) {
+    return syncOptions.protectedRoots;
+  }
+
+  if (SYNC_PROTECTED_ROOTS_CACHE.value !== undefined) {
+    return SYNC_PROTECTED_ROOTS_CACHE.value;
+  }
+
+  if (!process.versions.electron) {
+    SYNC_PROTECTED_ROOTS_CACHE.value = [];
+    return [];
+  }
+
+  try {
+    const { app } = await import("electron");
+    SYNC_PROTECTED_ROOTS_CACHE.value = buildProviderInstructionTargetProtectedRoots(app.getPath("userData"));
+    return SYNC_PROTECTED_ROOTS_CACHE.value;
+  } catch {
+    SYNC_PROTECTED_ROOTS_CACHE.value = [];
+    return [];
+  }
 }
 
 function errorToMessage(error: unknown): string {
