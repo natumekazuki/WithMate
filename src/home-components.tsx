@@ -1525,6 +1525,7 @@ export type HomeMateTalkPanelProps = {
   onSubmit: () => void;
   onClose: () => void;
   sending?: boolean;
+  feedback: string;
 };
 
 export function HomeMateSetupPanel({
@@ -1585,7 +1586,10 @@ export function HomeMateTalkPanel({
   onSubmit,
   onClose,
   sending = false,
+  feedback,
 }: HomeMateTalkPanelProps) {
+  const isSubmitDisabled = sending || input.trim() === "";
+
   return (
     <section className="home-mate-talk-panel">
       <h2 className="home-mate-talk-head">メイトーク</h2>
@@ -1608,6 +1612,8 @@ export function HomeMateTalkPanel({
           <p className="home-mate-talk-empty">まだ会話は開始してないよ。まずは入力してね。</p>
         )}
       </section>
+
+      {feedback ? <p className="settings-feedback home-mate-feedback">{feedback}</p> : null}
 
       <form
         className="home-mate-talk-form"
@@ -1633,7 +1639,7 @@ export function HomeMateTalkPanel({
           <button className="launch-toggle" type="button" onClick={onClose}>
             ホームに戻る
           </button>
-          <button className="start-session-button" type="submit" disabled={sending}>
+          <button className="start-session-button" type="submit" disabled={isSubmitDisabled}>
             {sending ? "送信中..." : "送信"}
           </button>
         </div>

@@ -269,6 +269,7 @@ export default function HomeApp() {
   const [mateTalkInput, setMateTalkInput] = useState("");
   const [mateTalkMessages, setMateTalkMessages] = useState<MateTalkMessage[]>([]);
   const [mateTalkSending, setMateTalkSending] = useState(false);
+  const [mateTalkFeedback, setMateTalkFeedback] = useState("");
   const settingsDirtyRef = useRef(false);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const memoryManagementRequestIdRef = useRef(0);
@@ -675,10 +676,12 @@ export default function HomeApp() {
     setMateTalkInput("");
     setMateTalkMessages([]);
     setMateTalkSending(false);
+    setMateTalkFeedback("");
   };
 
   const openMateTalk = () => {
     setMateTalkOpen(true);
+    setMateTalkFeedback("");
   };
 
   const closeMateTalk = () => {
@@ -687,7 +690,12 @@ export default function HomeApp() {
 
   const handleSubmitMateTalk = async () => {
     const normalizedText = mateTalkInput.trim();
-    if (!normalizedText || mateTalkSending) {
+    if (!normalizedText) {
+      setMateTalkFeedback("入力してから送信してね。");
+      return;
+    }
+
+    if (mateTalkSending) {
       return;
     }
 
@@ -697,6 +705,7 @@ export default function HomeApp() {
     const now = Date.now();
 
     setMateTalkSending(true);
+    setMateTalkFeedback("");
     setMateTalkMessages((current) => [
       ...current,
       {
@@ -1631,7 +1640,11 @@ export default function HomeApp() {
       mateName={mateProfile?.displayName ?? "Mate"}
       messages={mateTalkMessages}
       input={mateTalkInput}
-      onChangeInput={setMateTalkInput}
+      feedback={mateTalkFeedback}
+      onChangeInput={(value) => {
+        setMateTalkInput(value);
+        setMateTalkFeedback("");
+      }}
       onSubmit={() => void handleSubmitMateTalk()}
       onClose={() => void closeMateTalk()}
       sending={mateTalkSending}
