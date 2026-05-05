@@ -36,6 +36,143 @@ describe("MateStorage", () => {
     }
   });
 
+  it("recovery 後は staging / committing_files のみ failed になる（ready / failed はそのまま）", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      const profile = await storage.createMate({ displayName: "Mika" });
+
+      const activeRevisionId = profile.activeRevisionId;
+      const before = new DatabaseSync(dbPath);
+      const now = new Date().toISOString();
+      const stagingRevisionId = randomUUID();
+      const committingRevisionId = randomUUID();
+      const readyRevisionId = randomUUID();
+      const failedRevisionId = randomUUID();
+      const failedAt = "2025-01-01T00:00:00.000Z";
+
+      before.prepare(`
+        INSERT INTO mate_profile_revisions (
+          id,
+          mate_id,
+          seq,
+          parent_revision_id,
+          status,
+          kind,
+          source_growth_event_id,
+          summary,
+          snapshot_dir_path,
+          created_by,
+          created_at,
+          ready_at,
+          failed_at,
+          reverted_by_revision_id
+        ) VALUES (?, ?, ?, ?, ?, 'growth_apply', NULL, ?, '', 'system', ?, NULL, NULL, NULL)
+      `).run(stagingRevisionId, "current", 2, activeRevisionId, "staging", "staging", now);
+
+      before.prepare(`
+        INSERT INTO mate_profile_revisions (
+          id,
+          mate_id,
+          seq,
+          parent_revision_id,
+          status,
+          kind,
+          source_growth_event_id,
+          summary,
+          snapshot_dir_path,
+          created_by,
+          created_at,
+          ready_at,
+          failed_at,
+          reverted_by_revision_id
+        ) VALUES (?, ?, ?, ?, ?, 'growth_apply', NULL, ?, '', 'system', ?, NULL, NULL, NULL)
+      `).run(committingRevisionId, "current", 3, activeRevisionId, "committing_files", "committing", now);
+
+      before.prepare(`
+        INSERT INTO mate_profile_revisions (
+          id,
+          mate_id,
+          seq,
+          parent_revision_id,
+          status,
+          kind,
+          source_growth_event_id,
+          summary,
+          snapshot_dir_path,
+          created_by,
+          created_at,
+          ready_at,
+          failed_at,
+          reverted_by_revision_id
+        ) VALUES (?, ?, ?, ?, 'ready', 'growth_apply', NULL, 'ready', '', 'system', ?, ?, NULL, NULL)
+      `).run(readyRevisionId, "current", 4, activeRevisionId, now, now);
+
+      before.prepare(`
+        INSERT INTO mate_profile_revisions (
+          id,
+          mate_id,
+          seq,
+          parent_revision_id,
+          status,
+          kind,
+          source_growth_event_id,
+          summary,
+          snapshot_dir_path,
+          created_by,
+          created_at,
+          ready_at,
+          failed_at,
+          reverted_by_revision_id
+        ) VALUES (?, ?, ?, ?, 'failed', 'growth_apply', NULL, 'failed', '', 'system', ?, ?, ?, NULL)
+      `).run(failedRevisionId, "current", 5, activeRevisionId, now, now, failedAt);
+      before.close();
+
+      storage.close();
+      storage = null;
+
+      storage = new MateStorage(dbPath, userDataPath);
+      assert.equal(storage.getMateState(), "active");
+
+      const after = new DatabaseSync(dbPath);
+      try {
+        const rows = after.prepare(`
+          SELECT id, status, failed_at
+          FROM mate_profile_revisions
+          WHERE mate_id = 'current'
+            AND id IN (?, ?, ?, ?)
+        `).all(stagingRevisionId, committingRevisionId, readyRevisionId, failedRevisionId) as Array<{
+          id: string;
+          status: string;
+          failed_at: string | null;
+        }>;
+
+        assert.equal(rows.length, 4);
+
+        const byId = new Map(rows.map((row) => [row.id, row]));
+
+        assert.equal(byId.get(stagingRevisionId)?.status, "failed");
+        assert.equal(byId.get(stagingRevisionId)?.failed_at !== null, true);
+        assert.equal(byId.get(committingRevisionId)?.status, "failed");
+        assert.equal(byId.get(committingRevisionId)?.failed_at !== null, true);
+        assert.equal(byId.get(readyRevisionId)?.status, "ready");
+        assert.equal(byId.get(readyRevisionId)?.failed_at, null);
+        assert.equal(byId.get(failedRevisionId)?.status, "failed");
+        assert.equal(byId.get(failedRevisionId)?.failed_at, failedAt);
+
+        const reopenedProfile = storage.getMateProfile();
+        assert.equal(reopenedProfile?.activeRevisionId, activeRevisionId);
+      } finally {
+        after.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
   it("createMate は displayName のみでプロフィールと初期関連行を作る", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: MateStorage | null = null;

@@ -169,6 +169,7 @@ export class MateStorage {
     this.userDataPath = userDataPath;
     this.db = openAppDatabase(dbPath);
     this.initializeSchema();
+    this.recoverIncompleteRevisions();
   }
 
   private withDb<T>(runner: (db: DatabaseSync) => T): T {
@@ -198,6 +199,19 @@ export class MateStorage {
       for (const statement of CREATE_V4_SCHEMA_SQL) {
         db.exec(statement);
       }
+    });
+  }
+
+  private recoverIncompleteRevisions(): void {
+    const now = nowIso();
+    this.withDb((db) => {
+      db.prepare(`
+        UPDATE mate_profile_revisions
+        SET status = 'failed',
+            failed_at = COALESCE(failed_at, ?)
+        WHERE mate_id = ?
+          AND status IN ('staging', 'committing_files')
+      `).run(now, MATE_ID);
     });
   }
 
