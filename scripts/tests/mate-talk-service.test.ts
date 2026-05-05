@@ -100,3 +100,68 @@ test("MateTalkService は provider 応答の生成失敗を呼び出し元へ返
 
   await assert.rejects(() => service.runTurn({ message: "  hello  " }), /provider error/);
 });
+
+test("MateTalkService は Memory 生成のスケジュール失敗を握りつぶして成功結果を返す", async () => {
+  let scheduledError: unknown;
+  const service = new MateTalkService({
+    getMateProfile: () => PROFILE,
+    now: () => new Date("2026-05-04T01:02:03.000Z"),
+    scheduleMemoryGeneration: () => {
+      throw new Error("memory scheduler failed");
+    },
+    onMemoryGenerationScheduleError: (error) => {
+      scheduledError = error;
+    },
+  });
+
+  const result = await service.runTurn({ message: "  hello  " });
+
+  assert.deepEqual(result, {
+    mateId: "mate-1",
+    userMessage: "hello",
+    assistantMessage: "受け取ったよ。",
+    createdAt: "2026-05-04T01:02:03.000Z",
+  });
+  assert.ok(scheduledError instanceof Error);
+  assert.equal((scheduledError as Error).message, "memory scheduler failed");
+});
+
+test("MateTalkService は非同期の Memory 生成スケジュール失敗も UI 応答から切り離す", async () => {
+  let scheduledError: unknown;
+  const service = new MateTalkService({
+    getMateProfile: () => PROFILE,
+    now: () => new Date("2026-05-04T01:02:03.000Z"),
+    scheduleMemoryGeneration: async () => {
+      throw new Error("async memory scheduler failed");
+    },
+    onMemoryGenerationScheduleError: (error) => {
+      scheduledError = error;
+      throw new Error("logger failed");
+    },
+  });
+
+  const result = await service.runTurn({ message: "  hello  " });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(result.assistantMessage, "受け取ったよ。");
+  assert.ok(scheduledError instanceof Error);
+  assert.equal((scheduledError as Error).message, "async memory scheduler failed");
+});
+
+test("MateTalkService は非同期の Memory 生成エラー通知失敗も握りつぶす", async () => {
+  const service = new MateTalkService({
+    getMateProfile: () => PROFILE,
+    now: () => new Date("2026-05-04T01:02:03.000Z"),
+    scheduleMemoryGeneration: () => {
+      throw new Error("memory scheduler failed");
+    },
+    onMemoryGenerationScheduleError: async () => {
+      throw new Error("async logger failed");
+    },
+  });
+
+  const result = await service.runTurn({ message: "  hello  " });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(result.assistantMessage, "受け取ったよ。");
+});

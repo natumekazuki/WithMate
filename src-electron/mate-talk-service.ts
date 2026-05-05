@@ -19,7 +19,8 @@ export type MateTalkServiceDeps = {
       contextText?: string;
     };
   }) => Promise<string>;
-  scheduleMemoryGeneration?(input: ScheduleMateTalkMemoryGenerationInput): void;
+  scheduleMemoryGeneration?(input: ScheduleMateTalkMemoryGenerationInput): void | Promise<void>;
+  onMemoryGenerationScheduleError?(error: unknown): void | Promise<void>;
   now?(): Date;
 };
 
@@ -60,10 +61,14 @@ export class MateTalkService {
       mateProfile,
     }) ?? Promise.resolve(MateTalkService.fallbackMessage));
 
-    this.deps.scheduleMemoryGeneration?.({
-      userMessage,
-      assistantText: assistantMessage,
-    });
+    try {
+      void Promise.resolve(this.deps.scheduleMemoryGeneration?.({
+        userMessage,
+        assistantText: assistantMessage,
+      })).catch((error) => this.notifyMemoryGenerationScheduleError(error));
+    } catch (error) {
+      this.notifyMemoryGenerationScheduleError(error);
+    }
 
     return {
       mateId: profile.id,
@@ -71,5 +76,15 @@ export class MateTalkService {
       assistantMessage,
       createdAt,
     };
+  }
+
+  private notifyMemoryGenerationScheduleError(error: unknown): void {
+    try {
+      void Promise.resolve(this.deps.onMemoryGenerationScheduleError?.(error)).catch(() => {
+        // Memory generation scheduling is background work and must not break the visible turn.
+      });
+    } catch {
+      // Memory generation scheduling is background work and must not break the visible turn.
+    }
   }
 }
