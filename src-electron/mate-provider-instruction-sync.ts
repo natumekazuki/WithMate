@@ -11,6 +11,8 @@ import {
 } from "./mate-instruction-projection.js";
 import { ProviderInstructionTargetStorage } from "./provider-instruction-target-storage.js";
 import {
+  buildManagedBlock,
+  hasManagedBlockWithMarkerAttributes,
   removeManagedBlockWithMarkerAttributes,
   upsertManagedBlockWithMarkerAttributes,
 } from "./managed-instruction-block.js";
@@ -88,15 +90,48 @@ export async function syncMateInstructionFile(
   profile: MateProfile,
   deps: MateProviderInstructionSyncDeps,
 ): Promise<void> {
+  const normalizedFilePath = path.normalize(target.filePath);
   const writeMode = target.writeMode ?? "managed_block";
+
   if (writeMode === "managed_file") {
-    throw new Error(`syncMateInstructionFile は managed_file をサポートしていません: providerId=${target.providerId}, targetId=${target.targetId ?? "main"}`);
+    const markerAttributes = buildManagedBlockMarkerAttributes({
+      providerId: target.providerId,
+      targetId: target.targetId,
+      writeMode: "managed_file",
+    });
+    const existingText = await readExistingProviderInstructionText(normalizedFilePath, deps.readTextFile);
+
+    if (
+      existingText !== null
+      && !hasManagedBlockWithMarkerAttributes(existingText, {
+        blockId: MATE_PROFILE_BLOCK_ID,
+        markerAttributes,
+      })
+    ) {
+      throw new Error(`marker mismatch: managed_file marker が一致しません: providerId=${target.providerId}, targetId=${target.targetId ?? "main"}`);
+    }
+
+    const nextText = buildManagedBlock({
+      blockId: MATE_PROFILE_BLOCK_ID,
+      title: MATE_PROFILE_BLOCK_TITLE,
+      content: buildMateInstructionContent(profile),
+      markerAttributes,
+    });
+
+    const directoryPath = path.dirname(normalizedFilePath);
+    if (directoryPath && directoryPath !== "." && directoryPath !== path.sep) {
+      await mkdir(directoryPath, { recursive: true });
+    }
+
+    await deps.writeTextFile(normalizedFilePath, nextText);
+    return;
   }
+
   if (writeMode !== "managed_block") {
     throw new Error(`unsupported writeMode: ${writeMode}`);
   }
 
-  const existingText = await readProviderInstructionText(target.filePath, deps.readTextFile);
+  const existingText = await readProviderInstructionText(normalizedFilePath, deps.readTextFile);
   const nextText = upsertManagedBlockWithMarkerAttributes(existingText, {
     blockId: MATE_PROFILE_BLOCK_ID,
     title: MATE_PROFILE_BLOCK_TITLE,
@@ -104,12 +139,12 @@ export async function syncMateInstructionFile(
     markerAttributes: buildManagedBlockMarkerAttributes(target),
   });
 
-  const directoryPath = path.dirname(target.filePath);
+  const directoryPath = path.dirname(normalizedFilePath);
   if (directoryPath && directoryPath !== "." && directoryPath !== path.sep) {
     await mkdir(directoryPath, { recursive: true });
   }
 
-  await deps.writeTextFile(path.normalize(target.filePath), nextText);
+  await deps.writeTextFile(normalizedFilePath, nextText);
 }
 
 export async function syncMateInstructionFiles(
@@ -152,46 +187,31 @@ export async function syncEnabledProviderInstructionTargets(
       const instructionFilePath = resolveTargetInstructionFilePath(target);
       assertProviderInstructionTargetRootNotProtected(target, protectedRoots, instructionFilePath);
 
-      if (target.writeMode === "managed_block") {
-        await syncMateInstructionFile(
-          {
-            providerId: target.providerId,
-            targetId: target.targetId,
-            writeMode: target.writeMode,
-            filePath: instructionFilePath,
-          },
-          profile,
-          deps,
-        );
-
-        const syncedText = await deps.readTextFile(instructionFilePath);
-        const run = storage.recordSyncRun({
+      await syncMateInstructionFile(
+        {
           providerId: target.providerId,
           targetId: target.targetId,
-          mateRevisionId,
           writeMode: target.writeMode,
-          projectionScope: target.projectionScope,
-          projectionSha256: sha256Hex(syncedText),
-          status: "synced",
-          requiresRestart: target.requiresRestart,
-        });
-        result.syncedCount += 1;
-        result.runIds.push(run.id);
-        continue;
-      }
+          filePath: instructionFilePath,
+        },
+        profile,
+        deps,
+      );
 
+      const syncedText = await deps.readTextFile(instructionFilePath);
       const run = storage.recordSyncRun({
         providerId: target.providerId,
         targetId: target.targetId,
         mateRevisionId,
         writeMode: target.writeMode,
         projectionScope: target.projectionScope,
-        projectionSha256: "not-applicable",
-        status: "skipped",
+        projectionSha256: sha256Hex(syncedText),
+        status: "synced",
         requiresRestart: target.requiresRestart,
       });
-      result.skippedCount += 1;
+      result.syncedCount += 1;
       result.runIds.push(run.id);
+      continue;
     } catch (error) {
       const errorPreview = errorToMessage(error);
       const run = storage.recordSyncRun({
@@ -384,9 +404,7 @@ async function syncDisabledProviderInstructionTargetProjection(
   }
 
   if (target.writeMode === "managed_file") {
-    const nextText = "";
-    await deps.writeTextFile(normalizedFilePath, nextText);
-    return { status: "synced", text: nextText };
+    return { status: "skipped" };
   }
 
   throw new Error(`unsupported writeMode: ${target.writeMode}`);

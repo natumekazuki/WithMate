@@ -83,6 +83,17 @@ export function removeManagedBlockWithMarkerAttributes(
   return normalizeTrailingNewline(existingText.slice(0, range.start) + existingText.slice(range.end));
 }
 
+export function hasManagedBlockWithMarkerAttributes(
+  existingText: string,
+  { blockId, markerAttributes }: {
+    blockId: string;
+    markerAttributes: ManagedInstructionBlockMarkerAttributes;
+  },
+): boolean {
+  validateBlockId(blockId);
+  return findManagedBlockRangeByParsedMarkers(existingText, blockId, markerAttributes) !== null;
+}
+
 function validateBlockId(blockId: string): void {
   if (!BLOCK_ID_PATTERN.test(blockId)) {
     throw new Error(`Invalid blockId: ${blockId}`);
