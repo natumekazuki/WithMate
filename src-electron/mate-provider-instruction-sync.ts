@@ -187,6 +187,15 @@ export async function syncEnabledProviderInstructionTargets(
       const instructionFilePath = resolveTargetInstructionFilePath(target);
       assertProviderInstructionTargetRootNotProtected(target, protectedRoots, instructionFilePath);
 
+      if (
+        target.lastSyncState === "synced"
+        && mateRevisionId !== undefined
+        && target.lastSyncedRevisionId === mateRevisionId
+      ) {
+        result.skippedCount += 1;
+        continue;
+      }
+
       await syncMateInstructionFile(
         {
           providerId: target.providerId,
