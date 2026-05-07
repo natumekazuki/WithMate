@@ -87,6 +87,7 @@ export class MateTalkRuntimeWorkspaceService {
   private readonly workspacePath: string;
   private readonly lockPath: string;
   private readonly runtimeRootPath: string;
+  private acquiredLockValue: string | null = null;
 
   constructor(deps: MateTalkRuntimeWorkspaceServiceDeps) {
     const userDataRoot = path.resolve(deps.userDataPath);
@@ -135,7 +136,9 @@ export class MateTalkRuntimeWorkspaceService {
 
     while (true) {
       try {
-        await writeFile(this.lockPath, `${Date.now()}`, { flag: "wx" });
+        const lockValue = `${Date.now()}`;
+        await writeFile(this.lockPath, lockValue, { flag: "wx" });
+        this.acquiredLockValue = lockValue;
         return;
       } catch (error) {
         const errnoError = error as NodeJS.ErrnoException | undefined;
@@ -178,7 +181,16 @@ export class MateTalkRuntimeWorkspaceService {
   }
 
   async releaseLock(): Promise<void> {
-    await rm(this.lockPath, { force: true });
+    const acquiredLockValue = this.acquiredLockValue;
+    this.acquiredLockValue = null;
+    if (acquiredLockValue == null) {
+      return;
+    }
+
+    const currentLockValue = await this.readLockValue();
+    if (currentLockValue === acquiredLockValue) {
+      await rm(this.lockPath, { force: true });
+    }
   }
 
   async resetWorkspace(): Promise<void> {
@@ -189,6 +201,8 @@ export class MateTalkRuntimeWorkspaceService {
   async regenerateInstructionFiles(
     files: ReadonlyArray<MateTalkRuntimeInstructionFile>,
   ): Promise<void> {
+    await this.ensureLockOwned();
+
     await Promise.all(
       files.map(async ({ relativePath, content }) => {
         const instructionPath = this.resolveInstructionFilePath(relativePath);
@@ -199,19 +213,40 @@ export class MateTalkRuntimeWorkspaceService {
   }
 
   private async readLockTimestampMs(): Promise<number | null> {
+    const lockValue = await this.readLockValue();
+    if (lockValue == null) {
+      return null;
+    }
+
+    const timestamp = Number(lockValue);
+    if (!Number.isFinite(timestamp)) {
+      return null;
+    }
+    return timestamp;
+  }
+
+  private async readLockValue(): Promise<string | null> {
     try {
       const raw = await readFile(this.lockPath, "utf8");
-      const timestamp = Number(raw.trim());
-      if (!Number.isFinite(timestamp)) {
-        return null;
-      }
-      return timestamp;
+      const trimmed = raw.trim();
+      return trimmed.length > 0 ? trimmed : null;
     } catch (error) {
       const errnoError = error as NodeJS.ErrnoException | undefined;
       if (errnoError?.code === "ENOENT") {
         return null;
       }
       throw error;
+    }
+  }
+
+  private async ensureLockOwned(): Promise<void> {
+    if (this.acquiredLockValue == null) {
+      throw new Error("MateTalk runtime workspace lock has not been acquired");
+    }
+
+    const currentLockValue = await this.readLockValue();
+    if (currentLockValue == null || currentLockValue !== this.acquiredLockValue) {
+      throw new Error("MateTalk runtime workspace lock is already in use");
     }
   }
 

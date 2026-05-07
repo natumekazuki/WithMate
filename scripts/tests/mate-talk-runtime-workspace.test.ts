@@ -156,6 +156,23 @@ describe("MateTalkRuntimeWorkspaceService", () => {
     }
   });
 
+  it("completeRun は別の lock に置き換わっている場合は削除しない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-mate-talk-runtime-"));
+    const lockPath = path.join(userDataPath, "mate-talk-runtime", ".lock");
+
+    try {
+      const service = new MateTalkRuntimeWorkspaceService({ userDataPath });
+      await service.prepareRun();
+      await writeFile(lockPath, "external-lock", "utf8");
+
+      await service.completeRun();
+
+      assert.equal(await readFile(lockPath, "utf8"), "external-lock");
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
   it("sanitizeMateTalkProfileContextText は絶対パスを除去する", () => {
     const input = "これは /Users/test/secret の内容です\nC:\\work\\repo のパスです\n外部: https://example.com/ok\n";
     const sanitized = sanitizeMateTalkProfileContextText(input);
@@ -191,6 +208,82 @@ describe("MateTalkRuntimeWorkspaceService", () => {
 
       assert.equal(await exists(outsidePath), false);
       await service.completeRun();
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("regenerateInstructionFiles は prepareRun 前に拒否され workspace を書き換えない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-mate-talk-runtime-"));
+    const workspacePath = path.join(userDataPath, "mate-talk-runtime", "current");
+    const instructionPath = path.join(workspacePath, "AGENTS.md");
+
+    try {
+      const service = new MateTalkRuntimeWorkspaceService({ userDataPath });
+
+      await assert.rejects(
+        () =>
+          service.regenerateInstructionFiles([
+            { relativePath: "AGENTS.md", content: "rejected\n" },
+          ]),
+        /has not been acquired|already in use/i,
+      );
+
+      assert.equal(await exists(instructionPath), false);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("regenerateInstructionFiles は completeRun 後に拒否され workspace を書き換えない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-mate-talk-runtime-"));
+    const workspacePath = path.join(userDataPath, "mate-talk-runtime", "current");
+    const keepPath = path.join(workspacePath, "keep.txt");
+
+    try {
+      const service = new MateTalkRuntimeWorkspaceService({ userDataPath });
+      await service.prepareRun();
+      await writeFile(keepPath, "keep", "utf8");
+      await service.completeRun();
+
+      await assert.rejects(
+        () =>
+          service.regenerateInstructionFiles([
+            { relativePath: "AGENTS.md", content: "rejected\n" },
+          ]),
+        /has not been acquired|already in use/i,
+      );
+
+      assert.equal(await readFile(keepPath, "utf8"), "keep");
+      assert.equal(await exists(path.join(workspacePath, "AGENTS.md")), false);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("regenerateInstructionFiles は stale/外部 lock ファイルだけがある状態では拒否される", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-mate-talk-runtime-"));
+    const workspacePath = path.join(userDataPath, "mate-talk-runtime", "current");
+    const lockPath = path.join(userDataPath, "mate-talk-runtime", ".lock");
+    const keepPath = path.join(workspacePath, "keep.txt");
+
+    try {
+      await mkdir(workspacePath, { recursive: true });
+      await writeFile(lockPath, String(Date.now()), "utf8");
+      await writeFile(keepPath, "keep", "utf8");
+
+      const service = new MateTalkRuntimeWorkspaceService({ userDataPath });
+
+      await assert.rejects(
+        () =>
+          service.regenerateInstructionFiles([
+            { relativePath: "AGENTS.md", content: "rejected\n" },
+          ]),
+        /already in use|has not been acquired/i,
+      );
+
+      assert.equal(await readFile(keepPath, "utf8"), "keep");
+      assert.equal(await exists(path.join(workspacePath, "AGENTS.md")), false);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
