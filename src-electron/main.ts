@@ -1382,8 +1382,7 @@ async function restartMateGrowthApplyTimerIfMateActive(): Promise<void> {
   }
 
   const bootstrapService = requireMainBootstrapService();
-  bootstrapService.clearGrowthApplyTimer();
-  await bootstrapService.ensureGrowthApplyTimer();
+  await bootstrapService.restartGrowthApplyTimer();
 }
 
 async function updateAppSettingsAndSyncMateGrowth(settings: AppSettings): Promise<AppSettings> {

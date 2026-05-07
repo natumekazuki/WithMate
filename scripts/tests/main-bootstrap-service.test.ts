@@ -472,3 +472,40 @@ test("clearGrowthApplyTimer で clear が呼ばれ、再度 ensure できる", a
   assert.equal(timerSpies.createdTimers[0]!.cleared, true);
   assert.equal(timerSpies.createdTimers[1]!.cleared, false);
 });
+
+test("restartGrowthApplyTimer は既存 timer を破棄して最新 interval で作り直す", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  let intervalMs = 10 * 60 * 1000;
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "active";
+    },
+    async applyPendingGrowth() {
+      return zeroGrowthResult;
+    },
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+    getGrowthApplyIntervalMs() {
+      return intervalMs;
+    },
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.ensureGrowthApplyTimer();
+  intervalMs = 60 * 60 * 1000;
+  await service.restartGrowthApplyTimer();
+
+  assert.equal(timerSpies.events.filter((event) => event === "clear").length, 1);
+  assert.equal(timerSpies.events.filter((event) => event === "create").length, 2);
+  assert.equal(timerSpies.createdTimers[0]!.intervalMs, 10 * 60 * 1000);
+  assert.equal(timerSpies.createdTimers[0]!.cleared, true);
+  assert.equal(timerSpies.createdTimers[1]!.intervalMs, 60 * 60 * 1000);
+  assert.equal(timerSpies.createdTimers[1]!.cleared, false);
+});

@@ -93,6 +93,11 @@ export class MainBootstrapService {
     this.growthApplyTimer = null;
   }
 
+  async restartGrowthApplyTimer(): Promise<void> {
+    this.clearGrowthApplyTimer();
+    await this.ensureGrowthApplyTimer();
+  }
+
   async handleReady(): Promise<void> {
     const activeModelCatalog = await this.deps.initializePersistentStores();
     if (this.deps.cleanupStaleGrowthApplyRuns) {
