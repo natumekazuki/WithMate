@@ -103,7 +103,7 @@ describe("MateTalkRuntimeWorkspaceService", () => {
 
       const service = new MateTalkRuntimeWorkspaceService({ userDataPath });
       const result = await service.prepareRun({ staleLockMs: 1_000 });
-      const newTimestamp = Number(await readFile(result.lockPath, "utf8"));
+      const newTimestamp = await readLockTimestampMs(result.lockPath);
 
       assert.equal(result.workspacePath, workspacePath);
       assert.ok(Number.isFinite(newTimestamp));
@@ -168,6 +168,65 @@ describe("MateTalkRuntimeWorkspaceService", () => {
       await service.completeRun();
 
       assert.equal(await readFile(lockPath, "utf8"), "external-lock");
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("regenerateInstructionFiles は同じ timestamp でも別 token の lock なら拒否する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-mate-talk-runtime-"));
+    const workspacePath = path.join(userDataPath, "mate-talk-runtime", "current");
+    const lockPath = path.join(userDataPath, "mate-talk-runtime", ".lock");
+
+    try {
+      const service = new MateTalkRuntimeWorkspaceService({ userDataPath });
+      await service.prepareRun();
+      const lockTimestamp = await readLockTimestampMs(lockPath);
+      await writeFile(lockPath, `${lockTimestamp}:external`, "utf8");
+
+      await assert.rejects(
+        () =>
+          service.regenerateInstructionFiles([
+            { relativePath: "AGENTS.md", content: "rejected\n" },
+          ]),
+        /already in use/i,
+      );
+      await service.completeRun();
+
+      assert.equal(await readFile(lockPath, "utf8"), `${lockTimestamp}:external`);
+      assert.equal(await exists(path.join(workspacePath, "AGENTS.md")), false);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("並行 prepareRun は stale lock 回復後も 1 件だけ成功する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-mate-talk-runtime-"));
+    const workspacePath = path.join(userDataPath, "mate-talk-runtime", "current");
+    const lockPath = path.join(userDataPath, "mate-talk-runtime", ".lock");
+    const staleTimestamp = Date.now() - 11 * 60_000;
+    const services = [
+      new MateTalkRuntimeWorkspaceService({ userDataPath }),
+      new MateTalkRuntimeWorkspaceService({ userDataPath }),
+    ];
+
+    try {
+      await mkdir(workspacePath, { recursive: true });
+      await writeFile(lockPath, String(staleTimestamp), "utf8");
+      await writeFile(path.join(workspacePath, "keep.txt"), "keep", "utf8");
+
+      const results = await Promise.allSettled(
+        services.map((service) => service.prepareRun({ staleLockMs: 1_000 })),
+      );
+      const fulfilled = results.filter((result) => result.status === "fulfilled");
+      const rejected = results.filter((result) => result.status === "rejected");
+
+      assert.equal(fulfilled.length, 1);
+      assert.equal(rejected.length, 1);
+      assert.equal(await exists(lockPath), true);
+      assert.equal(await exists(path.join(workspacePath, "keep.txt")), false);
+
+      await services[results.findIndex((result) => result.status === "fulfilled")]?.completeRun();
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
@@ -297,4 +356,9 @@ async function exists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function readLockTimestampMs(lockPath: string): Promise<number> {
+  const raw = await readFile(lockPath, "utf8");
+  return Number(raw.trim().split(":", 1)[0]);
 }

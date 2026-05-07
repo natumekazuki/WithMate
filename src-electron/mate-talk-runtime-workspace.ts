@@ -1,4 +1,5 @@
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export type MateTalkRuntimeWorkspaceServiceDeps = {
@@ -38,6 +39,35 @@ const DEFAULT_STALE_LOCK_MS = 10 * 60_000;
 
 function removeAbsolutePaths(value: string): string {
   return value.replace(ABSOLUTE_PATH_TOKEN_PATTERN, "[path omitted]");
+}
+
+function buildLockValue(): string {
+  return `${Date.now()}:${randomUUID()}`;
+}
+
+function parseLockTimestampMs(lockValue: string | null): number | null {
+  if (lockValue == null) {
+    return null;
+  }
+
+  const timestamp = Number(lockValue.split(":", 1)[0]);
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+  return timestamp;
+}
+
+async function restoreMovedLock(staleLockPath: string, lockPath: string): Promise<void> {
+  try {
+    await rename(staleLockPath, lockPath);
+  } catch (error) {
+    const errnoError = error as NodeJS.ErrnoException | undefined;
+    if (errnoError?.code === "EEXIST") {
+      await rm(staleLockPath, { force: true });
+      return;
+    }
+    throw error;
+  }
 }
 
 export function sanitizeMateTalkProfileContextText(contextText: string | undefined): string | null {
@@ -136,7 +166,7 @@ export class MateTalkRuntimeWorkspaceService {
 
     while (true) {
       try {
-        const lockValue = `${Date.now()}`;
+        const lockValue = buildLockValue();
         await writeFile(this.lockPath, lockValue, { flag: "wx" });
         this.acquiredLockValue = lockValue;
         return;
@@ -150,8 +180,9 @@ export class MateTalkRuntimeWorkspaceService {
           throw new Error("MateTalk runtime workspace is already in use");
         }
 
-        const staleAt = await this.readLockTimestampMs();
-        if (staleAt == null) {
+        const staleLockValue = await this.readLockValue();
+        const staleAt = parseLockTimestampMs(staleLockValue);
+        if (staleLockValue == null || staleAt == null) {
           throw new Error("MateTalk runtime workspace is already in use");
         }
 
@@ -159,7 +190,7 @@ export class MateTalkRuntimeWorkspaceService {
           throw new Error("MateTalk runtime workspace is already in use");
         }
 
-        await rm(this.lockPath, { force: true });
+        await this.recoverStaleLock(staleLockValue);
       }
     }
   }
@@ -182,15 +213,18 @@ export class MateTalkRuntimeWorkspaceService {
 
   async releaseLock(): Promise<void> {
     const acquiredLockValue = this.acquiredLockValue;
-    this.acquiredLockValue = null;
     if (acquiredLockValue == null) {
       return;
     }
 
     const currentLockValue = await this.readLockValue();
-    if (currentLockValue === acquiredLockValue) {
-      await rm(this.lockPath, { force: true });
+    if (currentLockValue == null || currentLockValue !== acquiredLockValue) {
+      this.acquiredLockValue = null;
+      return;
     }
+
+    await rm(this.lockPath, { force: true });
+    this.acquiredLockValue = null;
   }
 
   async resetWorkspace(): Promise<void> {
@@ -214,15 +248,7 @@ export class MateTalkRuntimeWorkspaceService {
 
   private async readLockTimestampMs(): Promise<number | null> {
     const lockValue = await this.readLockValue();
-    if (lockValue == null) {
-      return null;
-    }
-
-    const timestamp = Number(lockValue);
-    if (!Number.isFinite(timestamp)) {
-      return null;
-    }
-    return timestamp;
+    return parseLockTimestampMs(lockValue);
   }
 
   private async readLockValue(): Promise<string | null> {
@@ -248,6 +274,32 @@ export class MateTalkRuntimeWorkspaceService {
     if (currentLockValue == null || currentLockValue !== this.acquiredLockValue) {
       throw new Error("MateTalk runtime workspace lock is already in use");
     }
+  }
+
+  private async recoverStaleLock(expectedLockValue: string): Promise<void> {
+    const currentLockValue = await this.readLockValue();
+    if (currentLockValue !== expectedLockValue) {
+      return;
+    }
+
+    const staleLockPath = `${this.lockPath}.stale-${process.pid}-${Date.now()}-${randomUUID()}`;
+    try {
+      await rename(this.lockPath, staleLockPath);
+    } catch (error) {
+      const errnoError = error as NodeJS.ErrnoException | undefined;
+      if (errnoError?.code === "ENOENT") {
+        return;
+      }
+      throw error;
+    }
+
+    const movedLockValue = await readFile(staleLockPath, "utf8");
+    if (movedLockValue.trim() !== expectedLockValue) {
+      await restoreMovedLock(staleLockPath, this.lockPath);
+      return;
+    }
+
+    await rm(staleLockPath, { force: true });
   }
 
   private resolveInstructionFilePath(relativePath: string): string {
