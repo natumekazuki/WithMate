@@ -224,6 +224,10 @@ export class MateStorage {
     return profile ? profile.state : "not_created";
   }
 
+  getUserDataPath(): string {
+    return this.userDataPath;
+  }
+
   getMateProfile(): MateProfile | null {
     return this.withDb((db) => {
       const profileRow = db.prepare(`

@@ -13,6 +13,7 @@ import type {
 } from "./mate-profile-item-storage.js";
 import { renderMateProfileFiles } from "./mate-profile-file-renderer.js";
 import type { MateStorage } from "./mate-storage.js";
+import type { ProjectDigestProjectionWriter } from "./mate-project-digest-storage.js";
 
 type ApplyPendingGrowthOptions = {
   runId?: number;
@@ -39,9 +40,18 @@ type ProviderInstructionTargetInvalidator = {
 
 type ProjectDigestLookupService = {
   hasProjectDigest(projectDigestId: string): boolean;
+} & ProjectDigestProjectionWriter;
+
+type ProjectDigestContextRenderer = {
+  buildProjectDigestProjectionText(
+    projectDigestId: string,
+    options?: { items?: readonly MateProfileItem[] },
+  ): string;
 };
 
 export class MateGrowthApplyService {
+  private readonly projectDigestContextService: ProjectDigestContextRenderer;
+
   constructor(
     private readonly growthStorage: MateGrowthStorage,
     private readonly profileItemStorage: MateProfileItemStorage,
@@ -49,7 +59,10 @@ export class MateGrowthApplyService {
     private readonly semanticEmbeddingIndexService?: SemanticEmbeddingIndexService,
     private readonly providerInstructionTargetInvalidator?: ProviderInstructionTargetInvalidator,
     private readonly projectDigestLookupService?: ProjectDigestLookupService,
-  ) {}
+    projectDigestContextService?: ProjectDigestContextRenderer,
+  ) {
+    this.projectDigestContextService = projectDigestContextService ?? new DefaultProjectDigestContextRenderer(profileItemStorage);
+  }
 
   async applyPendingGrowth(options: ApplyPendingGrowthOptions = {}): Promise<ApplyPendingGrowthResult> {
     const events = this.growthStorage.listPendingEvents({
@@ -153,6 +166,13 @@ export class MateGrowthApplyService {
       for (const event of applicableEvents) {
         this.growthStorage.markEventApplied(event.id, updatedProfileRevisionId ?? undefined);
       }
+      await this.rewriteProjectDigestProjectionsBestEffort({
+        events: applicableEvents,
+        projectedProfileItems,
+        activeRevisionId: updatedProfileRevisionId,
+        projectDigestStorage: this.projectDigestLookupService,
+        userDataPath: this.mateStorage.getUserDataPath(),
+      });
       this.markProviderInstructionTargetsStaleBestEffort();
       await this.indexAppliedGrowthBestEffort(appliedIndexTargets);
 
@@ -174,6 +194,70 @@ export class MateGrowthApplyService {
     });
 
     return result;
+  }
+
+  private async rewriteProjectDigestProjectionsBestEffort(params: {
+    events: MateGrowthEvent[];
+    projectedProfileItems: readonly MateProfileItem[];
+    activeRevisionId: string | null;
+    projectDigestStorage?: ProjectDigestLookupService;
+    userDataPath: string;
+  }): Promise<void> {
+    try {
+      await this.rewriteProjectDigestProjections(params);
+    } catch (error) {
+      console.warn("Failed to rewrite project digest projection after growth apply", error);
+      // Project Digest の Markdown 投影は参照用キャッシュなので、Growth apply 本体の成功は維持する。
+    }
+  }
+
+  private async rewriteProjectDigestProjections(params: {
+    events: MateGrowthEvent[];
+    projectedProfileItems: readonly MateProfileItem[];
+    activeRevisionId: string | null;
+    projectDigestStorage?: ProjectDigestLookupService;
+    userDataPath: string;
+  }): Promise<void> {
+    const projectDigestEvents = params.events.filter((event): event is MateGrowthEvent & {
+      targetSection: "project_digest";
+      projectDigestId: string;
+    } => (
+      event.targetSection === "project_digest" &&
+      typeof event.projectDigestId === "string" &&
+      event.projectDigestId.trim().length > 0
+    ));
+
+    if (projectDigestEvents.length === 0) {
+      return;
+    }
+
+    if (!params.projectDigestStorage) {
+      throw new Error("project digest projection 用ストレージが未指定です");
+    }
+
+    const latestEventByDigest = new Map<string, string>();
+    for (const event of projectDigestEvents) {
+      latestEventByDigest.set(event.projectDigestId, event.id);
+    }
+
+    const projectDigestIds = new Set(projectDigestEvents.map((event) => event.projectDigestId));
+    for (const projectDigestId of projectDigestIds) {
+      const projectionText = this.projectDigestContextService.buildProjectDigestProjectionText(projectDigestId, {
+        items: params.projectedProfileItems.filter((item) => item.sectionKey === "project_digest" && item.projectDigestId === projectDigestId),
+      });
+
+      try {
+        await params.projectDigestStorage.rewriteProjectDigestProjection({
+          projectDigestId,
+          userDataPath: params.userDataPath,
+          content: projectionText,
+          activeRevisionId: params.activeRevisionId,
+          lastGrowthEventId: latestEventByDigest.get(projectDigestId) ?? null,
+        });
+      } catch (error) {
+        console.warn(`Failed to rewrite project digest projection: ${projectDigestId}`, error);
+      }
+    }
   }
 
   private buildApplyResultFromRun(run: {
@@ -236,6 +320,49 @@ export class MateGrowthApplyService {
       // Provider instruction sync state は後続通知なので、profile apply の成功は維持する。
     }
   }
+}
+
+class DefaultProjectDigestContextRenderer implements ProjectDigestContextRenderer {
+  constructor(private readonly profileItemStorage: MateProfileItemStorage) {}
+
+  buildProjectDigestProjectionText(
+    projectDigestId: string,
+    options?: { items?: readonly MateProfileItem[] },
+  ): string {
+    const items = (options?.items ?? this.profileItemStorage.listProfileItems({
+      sectionKey: "project_digest",
+      state: "active",
+      projectionAllowed: true,
+      projectDigestId,
+    })).filter((item) =>
+      item.sectionKey === "project_digest" &&
+      item.projectDigestId === projectDigestId &&
+      item.state === "active" &&
+      item.projectionAllowed
+    );
+
+    return buildProjectDigestProjectionText(projectDigestId, items);
+  }
+}
+
+function buildProjectDigestProjectionText(
+  _projectDigestId: string,
+  items: readonly MateProfileItem[],
+): string {
+  const lines = [
+    "### Project Digest",
+    ...items
+      .slice()
+      .sort((left, right) => {
+        const keyOrder = left.claimKey.localeCompare(right.claimKey);
+        if (keyOrder !== 0) {
+          return keyOrder;
+        }
+        return right.updatedAt.localeCompare(left.updatedAt);
+      })
+      .map((item) => `- **${item.claimKey}:** ${item.renderedText}`),
+  ];
+  return lines.join("\n");
 }
 
 function buildProjectedProfileItemLookupKey(input: UpsertMateProfileItemInput | MateProfileItem): string {

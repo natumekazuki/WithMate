@@ -57,6 +57,38 @@ export class MateProjectContextService {
     ].join("\n");
   }
 
+  buildProjectDigestProjectionText(
+    projectDigestId: string,
+    options: { items?: readonly MateProfileItem[] } = {},
+  ): string {
+    const sourceItems = options.items ?? this.profileItemStorage.listProfileItems({
+      sectionKey: "project_digest",
+      state: "active",
+      projectionAllowed: true,
+      projectDigestId,
+    });
+    const items = sourceItems.filter((item) =>
+      item.sectionKey === "project_digest" &&
+      item.projectDigestId === projectDigestId &&
+      item.state === "active" &&
+      item.projectionAllowed
+    );
+
+    return [
+      "### Project Digest",
+      ...items
+        .slice()
+        .sort((left, right) => {
+          const keyOrder = left.claimKey.localeCompare(right.claimKey);
+          if (keyOrder !== 0) {
+            return keyOrder;
+          }
+          return right.updatedAt.localeCompare(left.updatedAt);
+        })
+        .map((item) => this.formatItem(item)),
+    ].join("\n");
+  }
+
   private async rankProfileItemsByQuery(items: MateProfileItem[], queryText: string): Promise<MateProfileItem[]> {
     const tokens = this.normalizeQueryTokens(queryText);
     const lexicalRanks = items.map((item, index) => ({

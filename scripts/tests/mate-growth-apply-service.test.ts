@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -161,6 +162,17 @@ describe("MateGrowthApplyService", () => {
         salienceScore: 70,
         projectionAllowed: true,
       });
+      profileItemStorage.upsertProfileItem({
+        sectionKey: "project_digest",
+        projectDigestId,
+        category: "project_context",
+        claimKey: "hidden-project-note",
+        claimValue: "これは投影しない",
+        renderedText: "これは投影しない",
+        confidence: 40,
+        salienceScore: 40,
+        projectionAllowed: false,
+      });
 
       const service = new MateGrowthApplyService(
         growthStorage,
@@ -181,12 +193,24 @@ describe("MateGrowthApplyService", () => {
         sectionKey: "project_digest",
         state: "active",
         projectDigestId,
+        projectionAllowed: true,
       });
       assert.equal(projectDigestItems.length, 1);
       assert.equal(projectDigestItems[0].projectDigestId, projectDigestId);
       assert.equal(projectDigestItems[0].claimKey, "project-preference");
       assert.equal(projectDigestItems[0].category, "project_context");
 
+      const expectedProjection = [
+        "### Project Digest",
+        "- **project-preference:** このプロジェクトでは TypeScript を重視する",
+      ].join("\n");
+      const projectionPath = path.join(userDataPath, projectDigest.digestFilePath);
+      const projectionText = await readFile(projectionPath, "utf8");
+      assert.equal(projectionText, expectedProjection);
+      assert.equal(projectionText.includes("hidden-project-note"), false);
+
+      const expectedSha256 = createHash("sha256").update(expectedProjection, "utf8").digest("hex");
+      const expectedByteSize = Buffer.byteLength(expectedProjection, "utf8");
       const db = new DatabaseSync(dbPath);
       try {
         const row = db.prepare("SELECT state, applied_revision_id FROM mate_growth_events WHERE id = ?").get(
@@ -194,6 +218,127 @@ describe("MateGrowthApplyService", () => {
         ) as { state: string; applied_revision_id: string | null };
         assert.equal(row.state, "applied");
         assert.equal(row.applied_revision_id, result.revisionId);
+
+        const metadata = db.prepare(`
+          SELECT
+            digest_file_path,
+            sha256,
+            byte_size,
+            last_growth_event_id,
+            active_revision_id,
+            last_compiled_at
+          FROM mate_project_digests
+          WHERE id = ?
+        `).get(projectDigestId) as {
+          digest_file_path: string;
+          sha256: string;
+          byte_size: number;
+          last_growth_event_id: string | null;
+          active_revision_id: string | null;
+          last_compiled_at: string | null;
+        };
+        assert.equal(metadata.digest_file_path, projectDigest.digestFilePath);
+        assert.equal(metadata.sha256, expectedSha256);
+        assert.equal(metadata.byte_size, expectedByteSize);
+        assert.equal(metadata.last_growth_event_id, projectDigestEvent.id);
+        assert.equal(metadata.active_revision_id, result.revisionId);
+        assert.equal(typeof metadata.last_compiled_at, "string");
+        assert.equal(path.isAbsolute(metadata.digest_file_path), false);
+      } finally {
+        db.close();
+      }
+    } finally {
+      profileItemStorage.close();
+      growthStorage.close();
+      projectDigestStorage.close();
+      mateStorage.close();
+      await cleanup();
+    }
+  });
+
+  it("project_digest は projection 書き込み失敗時も apply 成功を維持し DB metadata が進まない", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const mateStorage = new MateStorage(dbPath, userDataPath);
+    const growthStorage = new MateGrowthStorage(dbPath);
+    const profileItemStorage = new MateProfileItemStorage(dbPath);
+    const projectDigestStorage = new MateProjectDigestStorage(dbPath);
+
+    try {
+      await mateStorage.createMate({ displayName: "Mika" });
+      const projectDigest = projectDigestStorage.resolveProjectDigestForWorkspace(process.cwd());
+      assert.ok(projectDigest);
+      const runId = growthStorage.createRun({
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        triggerReason: "test",
+      });
+      const projectDigestEvent = growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "repeated_user_behavior",
+        kind: "project_context",
+        targetSection: "project_digest",
+        projectDigestId: projectDigest.id,
+        statement: "このプロジェクトでは TypeScript を重視する",
+        statementFingerprint: "project-typescript-first",
+        targetClaimKey: "project-preference",
+        confidence: 84,
+        salienceScore: 70,
+        projectionAllowed: true,
+      });
+      const failingProjectDigestStorage = {
+        hasProjectDigest: projectDigestStorage.hasProjectDigest.bind(projectDigestStorage),
+        rewriteProjectDigestProjection: async () => {
+          throw new Error("projection write failed");
+        },
+      };
+
+      const service = new MateGrowthApplyService(
+        growthStorage,
+        profileItemStorage,
+        mateStorage,
+        undefined,
+        undefined,
+        failingProjectDigestStorage,
+      );
+
+      const warn = console.warn;
+      console.warn = () => {};
+      let result;
+      try {
+        result = await service.applyPendingGrowth({ runId });
+      } finally {
+        console.warn = warn;
+      }
+      assert.equal(result.candidateCount, 1);
+      assert.equal(result.appliedCount, 1);
+      assert.equal(result.skippedCount, 0);
+      assert.equal(typeof result.revisionId, "string");
+
+      const projectDigestItems = profileItemStorage.listProfileItems({ sectionKey: "project_digest", state: "active" });
+      assert.equal(projectDigestItems.length, 1);
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const eventRow = db.prepare("SELECT state, applied_revision_id FROM mate_growth_events WHERE id = ?").get(
+          projectDigestEvent.id,
+        ) as { state: string; applied_revision_id: string | null };
+        assert.equal(eventRow.state, "applied");
+        assert.equal(eventRow.applied_revision_id, result.revisionId);
+
+        const metadata = db.prepare(`
+          SELECT last_growth_event_id, sha256, active_revision_id
+          FROM mate_project_digests
+          WHERE id = ?
+        `).get(projectDigest.id) as {
+          last_growth_event_id: string | null;
+          sha256: string;
+          active_revision_id: string | null;
+        };
+        assert.equal(metadata.last_growth_event_id, null);
+        assert.equal(metadata.sha256, "");
+        assert.equal(metadata.active_revision_id, null);
       } finally {
         db.close();
       }
