@@ -41,6 +41,48 @@ describe("MateStorage", () => {
     }
   });
 
+  it("initializeSchema は古い mate_profile_revision_sections へ written_at 列を追加する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+    let before: DatabaseSync | null = null;
+
+    try {
+      before = new DatabaseSync(dbPath);
+      before.exec(`
+        CREATE TABLE mate_profile_revision_sections (
+          revision_id TEXT NOT NULL,
+          section_key TEXT NOT NULL CHECK (section_key IN ('core', 'bond', 'work_style', 'notes', 'avatar')),
+          file_path TEXT NOT NULL DEFAULT '',
+          before_sha256 TEXT NOT NULL DEFAULT '',
+          after_sha256 TEXT NOT NULL DEFAULT '',
+          before_byte_size INTEGER NOT NULL DEFAULT 0,
+          after_byte_size INTEGER NOT NULL DEFAULT 0,
+          diff_path TEXT NOT NULL DEFAULT '',
+          PRIMARY KEY (revision_id, section_key),
+          FOREIGN KEY (revision_id) REFERENCES mate_profile_revisions(id) ON DELETE CASCADE
+        );
+      `);
+
+      before.close();
+      before = null;
+
+      storage = new MateStorage(dbPath, userDataPath);
+      const db = new DatabaseSync(dbPath);
+      try {
+        const columns = db
+          .prepare("PRAGMA table_info(mate_profile_revision_sections)")
+          .all() as Array<{ name: string }>;
+        assert.equal(columns.some((column) => column.name === "written_at"), true);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      before?.close();
+      await cleanup();
+    }
+  });
+
   it("recovery 後は staging / committing_files のみ failed になる（ready / failed はそのまま）", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: MateStorage | null = null;
@@ -396,6 +438,90 @@ describe("MateStorage", () => {
         assert.equal(growthSettingCount.count, 1);
         assert.equal(embeddingSettingCount.count, 1);
         assert.equal(revisionCount.count, 1);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("createMate の initial revision section に written_at が保存される", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      const profile = await storage.createMate({ displayName: "Mika" });
+
+      if (!profile.activeRevisionId) {
+        throw new Error("active revision が見つからないよ。");
+      }
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const revision = db
+          .prepare("SELECT created_at FROM mate_profile_revisions WHERE id = ?")
+          .get(profile.activeRevisionId) as { created_at: string };
+        const sectionRows = db
+          .prepare(`
+            SELECT written_at
+            FROM mate_profile_revision_sections
+            WHERE revision_id = ?
+          `)
+          .all(profile.activeRevisionId) as Array<{ written_at: string }>;
+
+        assert.equal(sectionRows.length, 4);
+        for (const sectionRow of sectionRows) {
+          assert.equal(sectionRow.written_at, revision.created_at);
+        }
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("applyProfileFiles の revision section に written_at が保存される", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      const profile = await storage.createMate({ displayName: "Mika" });
+
+      const updatedProfile = await storage.applyProfileFiles({
+        summary: "update sections",
+        files: [
+          { sectionKey: "core", relativePath: "mate/core.md", content: "# Core\n" },
+          { sectionKey: "bond", relativePath: "mate/bond.md", content: "# Bond\n" },
+        ],
+      });
+
+      if (!updatedProfile.activeRevisionId) {
+        throw new Error("active revision が見つからないよ。");
+      }
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const revision = db
+          .prepare("SELECT created_at FROM mate_profile_revisions WHERE id = ?")
+          .get(updatedProfile.activeRevisionId) as { created_at: string };
+        const sectionRows = db
+          .prepare(`
+            SELECT written_at
+            FROM mate_profile_revision_sections
+            WHERE revision_id = ?
+          `)
+          .all(updatedProfile.activeRevisionId) as Array<{ written_at: string }>;
+
+        assert.equal(sectionRows.length, 2);
+        for (const sectionRow of sectionRows) {
+          assert.equal(sectionRow.written_at, revision.created_at);
+        }
       } finally {
         db.close();
       }

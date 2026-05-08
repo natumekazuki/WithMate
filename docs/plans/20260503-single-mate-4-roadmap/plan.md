@@ -240,7 +240,7 @@ projection に含めないもの:
 - [ ] 初回 Mate 未作成状態を検出する
 - [ ] 初回 Mate 作成 flow を追加する
 - [ ] `mate_profile_revisions.status` / `mate_profile_revision_sections` を実装し、`ready` revision だけを active にできる制約を storage 層で enforce する
-- [ ] generated projection file の hash / byte size / written_at を revision section に保存し、起動時 recovery で SQLite snapshot と実 file の不一致を検出する
+- [x] generated projection file の hash / byte size / written_at を revision section に保存し、起動時 recovery で SQLite snapshot と実 file の不一致を検出する
 - [ ] `committing_files` / `failed` revision の recovery を実装し、provider sync が不完全 revision を読まないことを保証する
 - [ ] Mate Profile reset 時に provider instruction managed block / managed file から旧 Mate projection を削除または disabled projection に同期し、失敗時は warning と再同期導線を出す
 - [ ] existing character storage / catalog API を runtime main path から外す

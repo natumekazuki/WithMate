@@ -150,6 +150,7 @@ export const CREATE_V4_MATE_PROFILE_REVISION_SECTIONS_TABLE_SQL = `
     after_sha256 TEXT NOT NULL DEFAULT '',
     before_byte_size INTEGER NOT NULL DEFAULT 0,
     after_byte_size INTEGER NOT NULL DEFAULT 0,
+    written_at TEXT NOT NULL DEFAULT '',
     diff_path TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (revision_id, section_key),
     FOREIGN KEY (revision_id) REFERENCES mate_profile_revisions(id) ON DELETE CASCADE

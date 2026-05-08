@@ -210,7 +210,19 @@ export class MateStorage {
       for (const statement of CREATE_V4_SCHEMA_SQL) {
         db.exec(statement);
       }
+      this.ensureMateProfileRevisionSectionsColumns(db);
     });
+  }
+
+  private ensureMateProfileRevisionSectionsColumns(db: DatabaseSync): void {
+    const columns = db.prepare("PRAGMA table_info(mate_profile_revision_sections)").all() as Array<{
+      name: string;
+    }>;
+
+    const hasWrittenAt = columns.some((column) => column.name === "written_at");
+    if (!hasWrittenAt) {
+      db.exec("ALTER TABLE mate_profile_revision_sections ADD COLUMN written_at TEXT NOT NULL DEFAULT '';");
+    }
   }
 
   private recoverIncompleteRevisions(): void {
@@ -622,14 +634,16 @@ export class MateStorage {
               after_sha256,
               before_byte_size,
               after_byte_size,
+              written_at,
               diff_path
-            ) VALUES (?, ?, ?, '', ?, 0, ?, '')
+            ) VALUES (?, ?, ?, '', ?, 0, ?, ?, '')
           `).run(
             revisionId,
             section.section.key,
             section.path,
             section.sha256,
             section.byteSize,
+            createdAt,
           );
         }
 
@@ -878,8 +892,9 @@ export class MateStorage {
               after_sha256,
               before_byte_size,
               after_byte_size,
+              written_at,
               diff_path
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, '')
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')
           `).run(
             revisionId,
             section.sectionKey,
@@ -888,6 +903,7 @@ export class MateStorage {
             section.afterSha256,
             section.beforeByteSize,
             section.afterByteSize,
+            now,
           );
 
           db.prepare(`
