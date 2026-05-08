@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { MATE_MEMORY_GENERATION_OUTPUT_SCHEMA, type MateMemoryGenerationPrompt } from "../../src-electron/mate-memory-generation-prompt.js";
 import { createMateMemoryGenerationRunner, type MateMemoryGenerationRunnerDeps } from "../../src-electron/mate-memory-generation-runner.js";
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
+import type { MateGrowthSettings } from "../../src/mate-state.js";
 import type {
   ProviderBackgroundAdapter,
   ProviderBackgroundStructuredPromptPolicy,
@@ -92,6 +93,7 @@ function createErrorAdapter(onCall: () => void, _result?: never, error = new Err
 function createDeps(overrides: {
   adapters: Map<string, ProviderBackgroundAdapter>;
   appSettings: ReturnType<typeof normalizeAppSettings>;
+  mateGrowthSettings?: MateGrowthSettings | null;
   onProviderFailure?: MateMemoryGenerationRunnerDeps["onProviderFailure"];
 }): MateMemoryGenerationRunnerDeps {
   return {
@@ -105,6 +107,9 @@ function createDeps(overrides: {
     },
     getWorkspacePath() {
       return "C:/workspace";
+    },
+    getMateGrowthSettings() {
+      return overrides.mateGrowthSettings ?? null;
     },
     onProviderFailure: overrides.onProviderFailure,
   };
@@ -355,6 +360,310 @@ describe("createMateMemoryGenerationRunner", () => {
     assert.deepEqual(failures, [{ provider: "copilot", model: "copilot-1" }]);
     assert.equal(output.provider, "codex");
     assert.equal(output.model, "codex-1");
+  });
+
+  it("有効な memory_candidate 用 growth settings を優先して利用する", async () => {
+    const called: string[] = [];
+    const adapters = new Map<string, ProviderBackgroundAdapter>([
+      [
+        "growth-primary",
+        createAdapter(() => {
+          called.push("growth-primary");
+        }, {
+          parsedJson: { memories: [{ foo: "growth" }] },
+          rawText: "{\"memories\":[{\"foo\":\"growth\"}]}",
+          threadId: "thread-growth",
+        }),
+      ],
+      [
+        "growth-secondary",
+        createAdapter(() => {
+          called.push("growth-secondary");
+        }, {
+          parsedJson: { memories: [{ foo: "secondary" }] },
+          rawText: "{\"memories\":[{\"foo\":\"secondary\"}]}",
+          threadId: "thread-secondary",
+        }),
+      ],
+      [
+        "fallback",
+        createAdapter(() => {
+          called.push("fallback");
+        }, {
+          parsedJson: { memories: [{ foo: "fallback" }] },
+          rawText: "{\"memories\":[{\"foo\":\"fallback\"}]}",
+          threadId: "thread-fallback",
+        }),
+      ],
+    ]);
+
+    const appSettings = normalizeAppSettings({
+      mateMemoryGenerationSettings: {
+        priorityList: [
+          { provider: "fallback", model: "fallback-1", reasoningEffort: "low", timeoutSeconds: 31 },
+          { provider: "growth-primary", model: "growth-1", reasoningEffort: "low", timeoutSeconds: 31 },
+        ],
+      },
+      codingProviderSettings: {
+        "growth-primary": {
+          enabled: true,
+          apiKey: "",
+          skillRootPath: "",
+        },
+        fallback: {
+          enabled: true,
+          apiKey: "",
+          skillRootPath: "",
+        },
+      },
+    });
+    const growthSettings: MateGrowthSettings = {
+      enabled: true,
+      autoApplyEnabled: true,
+      memoryCandidateMode: "manual",
+      applyIntervalMinutes: 60,
+      modelPreferences: [
+        {
+          purpose: "memory_candidate",
+          priority: 1,
+          provider: "growth-primary",
+          model: "growth-1",
+          depth: "low",
+          enabled: true,
+        },
+        {
+          purpose: "memory_candidate",
+          priority: 2,
+          provider: "growth-secondary",
+          model: "growth-2",
+          depth: "high",
+          enabled: true,
+        },
+        {
+          purpose: "profile_update",
+          priority: 2,
+          provider: "fallback",
+          model: "fallback-1",
+          depth: "low",
+          enabled: true,
+        },
+      ],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const runner = createMateMemoryGenerationRunner(createDeps({
+      adapters,
+      appSettings,
+      mateGrowthSettings: growthSettings,
+    }));
+    const output = await runMemoryCandidate(runner);
+
+    assert.deepEqual(called, ["growth-primary"]);
+    assert.equal(output.provider, "growth-primary");
+    assert.equal(output.model, "growth-1");
+    assert.equal(output.reasoningEffort, "low");
+    assert.equal(output.depth, "low");
+  });
+
+  it("growth settings の memory_candidate が無効なら app settings 優先リストへ fallback する", async () => {
+    const called: string[] = [];
+    const adapters = new Map<string, ProviderBackgroundAdapter>([
+      [
+        "fallback",
+        createAdapter(() => {
+          called.push("fallback");
+        }, {
+          parsedJson: { memories: [{ foo: "fallback" }] },
+          rawText: "{\"memories\":[{\"foo\":\"fallback\"}]}",
+          threadId: "thread-fallback",
+        }),
+      ],
+      [
+        "growth-disabled",
+        createAdapter(() => {
+          called.push("growth-disabled");
+        }, {
+          parsedJson: { memories: [{ foo: "should-not-run" }] },
+          rawText: "{\"memories\":[{\"foo\":\"should-not-run\"}]}",
+          threadId: "thread-ignored",
+        }),
+      ],
+    ]);
+
+    const appSettings = normalizeAppSettings({
+      mateMemoryGenerationSettings: {
+        priorityList: [
+          { provider: "fallback", model: "fallback-1", reasoningEffort: "medium", timeoutSeconds: 31 },
+        ],
+      },
+      codingProviderSettings: {
+        "growth-disabled": {
+          enabled: true,
+          apiKey: "",
+          skillRootPath: "",
+        },
+        fallback: {
+          enabled: true,
+          apiKey: "",
+          skillRootPath: "",
+        },
+      },
+    });
+    const growthSettings: MateGrowthSettings = {
+      enabled: true,
+      autoApplyEnabled: true,
+      memoryCandidateMode: "manual",
+      applyIntervalMinutes: 60,
+      modelPreferences: [
+        {
+          purpose: "memory_candidate",
+          priority: 1,
+          provider: "growth-disabled",
+          model: "growth-1",
+          depth: "low",
+          enabled: false,
+        },
+      ],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const runner = createMateMemoryGenerationRunner(createDeps({
+      adapters,
+      appSettings,
+      mateGrowthSettings: growthSettings,
+    }));
+    const output = await runMemoryCandidate(runner);
+
+    assert.deepEqual(called, ["fallback"]);
+    assert.equal(output.provider, "fallback");
+    assert.equal(output.model, "fallback-1");
+  });
+
+  it("growth settings の有効候補が provider disabled なら app settings 候補へ fallback する", async () => {
+    const called: string[] = [];
+    const adapters = new Map<string, ProviderBackgroundAdapter>([
+      [
+        "growth-disabled-provider",
+        createAdapter(() => {
+          called.push("growth-disabled-provider");
+        }, {
+          parsedJson: { memories: [{ foo: "should-not-run" }] },
+          rawText: "{\"memories\":[{\"foo\":\"should-not-run\"}]}",
+        }),
+      ],
+      [
+        "fallback",
+        createAdapter(() => {
+          called.push("fallback");
+        }, {
+          parsedJson: { memories: [{ foo: "fallback" }] },
+          rawText: "{\"memories\":[{\"foo\":\"fallback\"}]}",
+          threadId: "thread-fallback",
+        }),
+      ],
+    ]);
+
+    const appSettings = normalizeAppSettings({
+      mateMemoryGenerationSettings: {
+        priorityList: [
+          { provider: "fallback", model: "fallback-1", reasoningEffort: "medium", timeoutSeconds: 31 },
+        ],
+      },
+      codingProviderSettings: {
+        "growth-disabled-provider": {
+          enabled: false,
+          apiKey: "",
+          skillRootPath: "",
+        },
+        fallback: {
+          enabled: true,
+          apiKey: "",
+          skillRootPath: "",
+        },
+      },
+    });
+    const growthSettings: MateGrowthSettings = {
+      enabled: true,
+      autoApplyEnabled: true,
+      memoryCandidateMode: "manual",
+      applyIntervalMinutes: 60,
+      modelPreferences: [
+        {
+          purpose: "memory_candidate",
+          priority: 1,
+          provider: "growth-disabled-provider",
+          model: "growth-1",
+          depth: "low",
+          enabled: true,
+        },
+      ],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const runner = createMateMemoryGenerationRunner(createDeps({
+      adapters,
+      appSettings,
+      mateGrowthSettings: growthSettings,
+    }));
+    const output = await runMemoryCandidate(runner);
+
+    assert.deepEqual(called, ["fallback"]);
+    assert.equal(output.provider, "fallback");
+    assert.equal(output.model, "fallback-1");
+  });
+
+  it("growth depth が reasoningEffort でなくても safe に正規化される", async () => {
+    const called: string[] = [];
+    const adapters = new Map<string, ProviderBackgroundAdapter>([
+      [
+        "growth-primary",
+        createAdapter((input) => {
+          called.push(`growth-primary:${input.reasoningEffort}`);
+        }, {
+          parsedJson: { memories: [{ foo: "growth" }] },
+          rawText: "{\"memories\":[{\"foo\":\"growth\"}]}",
+        }),
+      ],
+    ]);
+
+    const appSettings = normalizeAppSettings({
+      mateMemoryGenerationSettings: {
+        priorityList: [
+          { provider: "growth-primary", model: "growth-1", reasoningEffort: "low", timeoutSeconds: 31 },
+        ],
+      },
+      codingProviderSettings: {
+        "growth-primary": {
+          enabled: true,
+          apiKey: "",
+          skillRootPath: "",
+        },
+      },
+    });
+    const growthSettings: MateGrowthSettings = {
+      enabled: true,
+      autoApplyEnabled: true,
+      memoryCandidateMode: "manual",
+      applyIntervalMinutes: 60,
+      modelPreferences: [
+        {
+          purpose: "memory_candidate",
+          priority: 1,
+          provider: "growth-primary",
+          model: "growth-1",
+          depth: "invalid-depth",
+          enabled: true,
+        },
+      ],
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const runner = createMateMemoryGenerationRunner(createDeps({ adapters, appSettings, mateGrowthSettings: growthSettings }));
+    const output = await runMemoryCandidate(runner);
+
+    assert.deepEqual(called, ["growth-primary:high"]);
+    assert.equal(output.reasoningEffort, "high");
+    assert.equal(output.depth, "high");
   });
 
   it("adapter 取得失敗でも次候補へ fallback する", async () => {

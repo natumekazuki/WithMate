@@ -4,6 +4,8 @@ import {
   type AppSettings,
   type MateMemoryGenerationProviderSettings,
 } from "../src/provider-settings-state.js";
+import { DEFAULT_REASONING_EFFORT, type ModelReasoningEffort } from "../src/model-catalog.js";
+import type { MateGrowthSettings } from "../src/mate-state.js";
 import type { MateMemoryGenerationPrompt } from "./mate-memory-generation-prompt.js";
 import {
   getMateTalkBackgroundStructuredPromptCapability,
@@ -29,8 +31,113 @@ export type MateMemoryGenerationRunnerDeps = {
   getAppSettings(): AppSettings;
   getProviderBackgroundAdapter(providerId: string): ProviderBackgroundAdapter;
   getWorkspacePath(): string;
+  getMateGrowthSettings(): MateGrowthSettings | null;
   onProviderFailure?: (error: Error, candidate: FailureCandidate) => void;
 };
+
+type RunnerCandidate = {
+  provider: string;
+  model: string;
+  reasoningEffort: ModelReasoningEffort;
+  depth: string;
+  timeoutSeconds: number;
+};
+
+const REASONING_EFFORT_SET = new Set<ModelReasoningEffort>([
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+]);
+
+function normalizeReasoningEffort(value: unknown, fallback: ModelReasoningEffort): ModelReasoningEffort {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const normalized = value.trim();
+  if (normalized.length === 0) {
+    return fallback;
+  }
+
+  if (REASONING_EFFORT_SET.has(normalized as ModelReasoningEffort)) {
+    return normalized as ModelReasoningEffort;
+  }
+
+  return fallback;
+}
+
+function selectTimeoutSeconds(
+  candidates: ReadonlyArray<MateMemoryGenerationProviderSettings>,
+  provider: string,
+  model: string,
+): number {
+  return candidates.find((candidate) => candidate.provider === provider && candidate.model === model)?.timeoutSeconds
+    ?? candidates.find((candidate) => candidate.provider === provider)?.timeoutSeconds
+    ?? candidates[0]?.timeoutSeconds
+    ?? 30;
+}
+
+function buildCandidateFromAppSettings(
+  appCandidates: ReadonlyArray<MateMemoryGenerationProviderSettings>,
+): RunnerCandidate[] {
+  return appCandidates.map((candidate) => ({
+    provider: candidate.provider,
+    model: candidate.model,
+    reasoningEffort: candidate.reasoningEffort,
+    depth: candidate.reasoningEffort,
+    timeoutSeconds: candidate.timeoutSeconds,
+  }));
+}
+
+function buildCandidatesFromGrowthSettings(
+  growthSettings: MateGrowthSettings,
+  appCandidates: ReadonlyArray<MateMemoryGenerationProviderSettings>,
+): RunnerCandidate[] {
+  const candidates = growthSettings.modelPreferences
+    .map((preference, index) => ({ preference, index }))
+    .filter((entry) => entry.preference.purpose === "memory_candidate" && entry.preference.enabled)
+    .sort((left, right) => {
+      if (left.preference.priority === right.preference.priority) {
+        return left.index - right.index;
+      }
+
+      return left.preference.priority - right.preference.priority;
+    })
+    .map((entry) => {
+      const reasoningEffort = normalizeReasoningEffort(entry.preference.depth, DEFAULT_REASONING_EFFORT);
+      return {
+        provider: entry.preference.provider,
+        model: entry.preference.model,
+        reasoningEffort,
+        depth: reasoningEffort,
+        timeoutSeconds: selectTimeoutSeconds(
+          appCandidates,
+          entry.preference.provider,
+          entry.preference.model,
+        ),
+      };
+    });
+
+  return candidates;
+}
+
+function buildRunnerCandidates(
+  appSettings: AppSettings,
+  getMateGrowthSettings: MateMemoryGenerationRunnerDeps["getMateGrowthSettings"],
+): RunnerCandidate[] {
+  const appCandidates = getMateMemoryGenerationSettings(appSettings).priorityList;
+  const appRunnerCandidates = buildCandidateFromAppSettings(appCandidates);
+  const growthSettings = getMateGrowthSettings();
+  const growthCandidates = growthSettings
+    ? buildCandidatesFromGrowthSettings(growthSettings, appCandidates)
+    : [];
+
+  return growthCandidates.length > 0
+    ? [...growthCandidates, ...appRunnerCandidates]
+    : appRunnerCandidates;
+}
 
 function isError(value: unknown): value is Error {
   return value instanceof Error;
@@ -53,7 +160,7 @@ function toError(value: unknown): Error {
 }
 
 function normalizeResult(input: {
-  candidate: MateMemoryGenerationProviderSettings;
+  candidate: RunnerCandidate;
   providerResult: Awaited<ReturnType<ProviderBackgroundAdapter["runBackgroundStructuredPrompt"]>>;
 }): MateGrowthModelPortResult {
   const { candidate, providerResult } = input;
@@ -72,7 +179,7 @@ function normalizeResult(input: {
 }
 
 function buildBackgroundInput(
-  candidate: MateMemoryGenerationProviderSettings,
+  candidate: RunnerCandidate,
   prompt: MateMemoryGenerationPrompt,
   appSettings: AppSettings,
   workspacePath: string,
@@ -98,14 +205,14 @@ export function createMateMemoryGenerationRunner(
   return {
     async runStructuredGeneration(input: MateGrowthModelPortInput): Promise<MateGrowthModelPortResult> {
       const appSettings = deps.getAppSettings();
+      const candidates = buildRunnerCandidates(appSettings, deps.getMateGrowthSettings);
       const workspacePath = deps.getWorkspacePath();
-      const settings = getMateMemoryGenerationSettings(appSettings);
       let lastFailure: Error | null = null;
 
       assertMemoryCandidatePurpose(input);
       void input.logicalPrompt;
 
-      for (const candidate of settings.priorityList) {
+      for (const candidate of candidates) {
         const providerAppSettings = getProviderAppSettings(appSettings, candidate.provider);
         if (!providerAppSettings.enabled) {
           continue;

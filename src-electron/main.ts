@@ -1359,12 +1359,22 @@ function requireAppSettingsStorage(): AppSettingsStorage {
 }
 
 function getMateMemoryGenerationProviderIds(): string[] {
+  const growthSettings = getMateGrowthSettings();
+  const growthProviderIds = growthSettings?.modelPreferences
+    .filter((preference) => preference.purpose === "memory_candidate" && preference.enabled)
+    .sort((left, right) => left.priority - right.priority)
+    .map((preference) => preference.provider)
+    .filter((provider) => provider.trim().length > 0);
+
   const settings = getMateMemoryGenerationSettings(requireAppSettingsStorage().getSettings());
   const providerIds = settings.priorityList
     .map((candidate) => candidate.provider)
     .filter((provider) => provider.trim().length > 0);
 
-  return [...new Set(providerIds)];
+  return [...new Set([
+    ...(growthProviderIds ?? []),
+    ...providerIds,
+  ])];
 }
 
 function getMateGrowthSettings(): ReturnType<MateStorage["getMateGrowthSettings"]> {
@@ -1444,6 +1454,7 @@ function requireMateMemoryGenerationService(): MateMemoryGenerationService {
       growthModelPort: createMateMemoryGenerationRunner({
         getAppSettings: () => requireAppSettingsStorage().getSettings(),
         getProviderBackgroundAdapter,
+        getMateGrowthSettings,
         getWorkspacePath: () => workspaceService.getWorkspacePath(),
       }),
       getTagCatalog: async () => memoryStorage.listMemoryTagCatalog(),
