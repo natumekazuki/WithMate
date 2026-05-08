@@ -265,6 +265,7 @@ export default function HomeApp() {
   const [mateGrowthApplying, setMateGrowthApplying] = useState(false);
   const [mateResetting, setMateResetting] = useState(false);
   const [mateCreationFeedback, setMateCreationFeedback] = useState("");
+  const [mateProfileEditorOpen, setMateProfileEditorOpen] = useState(false);
   const [mateTalkOpen, setMateTalkOpen] = useState(false);
   const [mateTalkInput, setMateTalkInput] = useState("");
   const [mateTalkMessages, setMateTalkMessages] = useState<MateTalkMessage[]>([]);
@@ -319,6 +320,7 @@ export default function HomeApp() {
     if (nextMateState === "not_created") {
       setMateState("not_created");
       setMateProfile(null);
+      setMateDisplayName("");
       setMateEmbeddingSettings(null);
       setMateEmbeddingFeedback("");
       setMateEmbeddingBusy(false);
@@ -338,6 +340,7 @@ export default function HomeApp() {
       return nextMateState;
     }
     setMateProfile(nextMateProfile);
+    setMateDisplayName(nextMateProfile?.displayName ?? "");
     return nextMateState;
   };
 
@@ -769,7 +772,7 @@ export default function HomeApp() {
     setLaunchDraft((current) => closeLaunchDraft(current));
   };
 
-  const handleCreateMate = async () => {
+  const handleSaveMate = async () => {
     const displayName = mateDisplayName.trim();
     if (!displayName) {
       setMateCreationFeedback("displayName を入力してね。");
@@ -782,12 +785,15 @@ export default function HomeApp() {
       return;
     }
 
-    setMateCreationFeedback("Mate 作成中...");
+    const creatingMate = mateState === "not_created";
+    setMateCreationFeedback(creatingMate ? "Mate 作成中..." : "Mate 保存中...");
     setMateCreating(true);
     try {
-      const createdProfile = await withmateApi.createMate({ displayName });
+      const savedProfile = creatingMate
+        ? await withmateApi.createMate({ displayName })
+        : await withmateApi.updateMate({ displayName });
       let nextMateState: MateStorageState = "active";
-      let nextMateProfile = createdProfile as MateProfile | null;
+      let nextMateProfile = savedProfile as MateProfile | null;
 
       try {
         nextMateState = await withmateApi.getMateState();
@@ -802,8 +808,9 @@ export default function HomeApp() {
 
       setMateState(nextMateState);
       setMateProfile(nextMateProfile);
-      setMateDisplayName("");
-      setMateCreationFeedback("");
+      setMateDisplayName(nextMateProfile?.displayName ?? "");
+      setMateCreationFeedback(creatingMate ? "" : "Mate を保存したよ。");
+      setMateProfileEditorOpen(false);
       if (nextMateState !== "not_created") {
         try {
           const [nextSessions, nextCompanionSessions, nextEmbeddingSettings, nextGrowthSettings] = await Promise.all([
@@ -824,10 +831,16 @@ export default function HomeApp() {
         setMateGrowthFeedback("");
       }
     } catch (error) {
-      setMateCreationFeedback(error instanceof Error ? error.message : "Mate の作成に失敗したよ。");
+      setMateCreationFeedback(error instanceof Error ? error.message : "Mate の保存に失敗したよ。");
     } finally {
       setMateCreating(false);
     }
+  };
+
+  const openMateProfileEditor = () => {
+    setMateDisplayName(mateProfile?.displayName ?? "");
+    setMateCreationFeedback("");
+    setMateProfileEditorOpen(true);
   };
 
   const resolveLaunchValidationMessage = () => {
@@ -1651,8 +1664,13 @@ export default function HomeApp() {
     />
   );
 
+  const isMateStateLoading = mateState === null;
+  const isMateNotCreated = mateState === "not_created";
+  const canUsePrimaryFeatures = mateState !== "not_created" && mateProfile !== null;
+
   const mateSetupContent = (
     <HomeMateSetupPanel
+      mode={isMateNotCreated ? "create" : "edit"}
       displayName={mateDisplayName}
       creating={mateCreating}
       feedback={mateCreationFeedback}
@@ -1660,14 +1678,12 @@ export default function HomeApp() {
         setMateDisplayName(value);
         setMateCreationFeedback("");
       }}
-      onSubmit={handleCreateMate}
+      onSubmit={handleSaveMate}
       onOpenSettings={() => void openSettingsWindow()}
+      onCancel={isMateNotCreated ? undefined : () => setMateProfileEditorOpen(false)}
       mateDisplayName={mateProfile?.displayName ?? null}
     />
   );
-  const isMateStateLoading = mateState === null;
-  const isMateNotCreated = mateState === "not_created";
-  const canUsePrimaryFeatures = mateState !== "not_created" && mateProfile !== null;
 
   if (!desktopRuntime) {
     return (
@@ -1712,6 +1728,18 @@ export default function HomeApp() {
   }
 
   if (isMateNotCreated) {
+    return (
+      <div className={`${homePageClassName} home-page-settings-window`.trim()}>
+        <main className="home-layout home-layout-settings-window">
+          <section className="launch-dialog settings-dialog home-mate-setup-shell">
+            {mateSetupContent}
+          </section>
+        </main>
+      </div>
+    );
+  }
+
+  if (mateProfileEditorOpen) {
     return (
       <div className={`${homePageClassName} home-page-settings-window`.trim()}>
         <main className="home-layout home-layout-settings-window">
@@ -1802,6 +1830,7 @@ export default function HomeApp() {
           onOpenSessionMonitorWindow={() => void openSessionMonitorWindow()}
           onOpenMemoryManagementWindow={() => void openMemoryManagementWindow()}
           onOpenSettingsWindow={() => void openSettingsWindow()}
+          onOpenMateProfile={openMateProfileEditor}
           onOpenMateTalk={() => void openMateTalk()}
           onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
           onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}

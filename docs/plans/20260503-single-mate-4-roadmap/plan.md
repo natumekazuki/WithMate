@@ -216,7 +216,7 @@ projection に含めないもの:
 - [ ] `mate-talk` は app data 配下の read-only projection workspace で provider session を起動する
 - [ ] `mate-talk` では provider の file write / shell write tool を無効化し、できない provider は unsupported として provider picker で選択不可にする
 - [ ] `mate-talk` では Mate source file を直接編集せず、Memory Candidate と Growth apply transaction 経由で Profile Item を更新する
-- [ ] create / delete ではなく initial create / edit / reset を主操作にする
+- [x] create / delete ではなく initial create / edit / reset を主操作にする
 - [x] session header / avatar / copy を Mate 前提へ変更する
 
 主な実装境界:

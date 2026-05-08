@@ -1512,6 +1512,7 @@ export type HomeRecentSessionsPanelProps = {
 };
 
 export type HomeMateSetupPanelProps = {
+  mode?: "create" | "edit";
   displayName: string;
   creating: boolean;
   feedback: string;
@@ -1519,6 +1520,7 @@ export type HomeMateSetupPanelProps = {
   onChangeDisplayName: (value: string) => void;
   onSubmit: () => void;
   onOpenSettings: () => void;
+  onCancel?: () => void;
 };
 
 export type HomeMateTalkPanelProps = {
@@ -1533,6 +1535,7 @@ export type HomeMateTalkPanelProps = {
 };
 
 export function HomeMateSetupPanel({
+  mode = "create",
   displayName,
   creating,
   feedback,
@@ -1540,12 +1543,15 @@ export function HomeMateSetupPanel({
   onChangeDisplayName,
   onSubmit,
   onOpenSettings,
+  onCancel,
 }: HomeMateSetupPanelProps) {
+  const isEditMode = mode === "edit";
+
   return (
     <section className="home-mate-setup-panel">
-      <h2 className="home-mate-setup-head">Mate 作成</h2>
+      <h2 className="home-mate-setup-head">{isEditMode ? "Mate プロフィール" : "Mate 作成"}</h2>
       <p className="home-mate-setup-description">
-        Home を使う前に Mate を 1 つ作成してね。設定は利用できるよ。
+        {isEditMode ? "Mate の表示名を編集できるよ。" : "Home を使う前に Mate を 1 つ作成してね。設定は利用できるよ。"}
       </p>
       <form
         className="home-mate-setup-form"
@@ -1571,8 +1577,13 @@ export function HomeMateSetupPanel({
         {feedback ? <p className="settings-feedback home-mate-feedback">{feedback}</p> : null}
         <div className="home-mate-setup-actions">
           <button className="start-session-button" type="submit" disabled={creating}>
-            {creating ? "作成中..." : "Mate を作成"}
+            {creating ? (isEditMode ? "保存中..." : "作成中...") : isEditMode ? "Mate を保存" : "Mate を作成"}
           </button>
+          {onCancel ? (
+            <button className="launch-toggle" type="button" onClick={onCancel} disabled={creating}>
+              戻る
+            </button>
+          ) : null}
           <button className="launch-toggle" type="button" onClick={onOpenSettings}>
             設定
           </button>
@@ -1945,6 +1956,7 @@ export type HomeRightPaneProps = {
   onOpenSessionMonitorWindow: () => void;
   onOpenMemoryManagementWindow: () => void;
   onOpenSettingsWindow: () => void;
+  onOpenMateProfile: () => void;
   onOpenMateTalk: () => void;
   onOpenSession: (sessionId: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
@@ -1963,6 +1975,7 @@ export function HomeRightPane({
   onOpenSessionMonitorWindow,
   onOpenMemoryManagementWindow,
   onOpenSettingsWindow,
+  onOpenMateProfile,
   onOpenMateTalk,
   onOpenSession,
   onOpenCompanionReview,
@@ -1985,6 +1998,12 @@ export function HomeRightPane({
       return;
     }
     onOpenMemoryManagementWindow();
+  };
+  const openMateProfile = () => {
+    if (!canUsePrimaryFeatures) {
+      return;
+    }
+    onOpenMateProfile();
   };
   const openMateTalk = () => {
     if (!canUsePrimaryFeatures) {
@@ -2092,6 +2111,11 @@ export function HomeRightPane({
               ) : (
                 <p>Mate の説明は未設定だよ。</p>
               )}
+              <div className="home-monitor-actions">
+                <button className="launch-toggle" type="button" onClick={openMateProfile} disabled={!canUsePrimaryFeatures}>
+                  Mate を編集
+                </button>
+              </div>
             </div>
           </div>
         </section>

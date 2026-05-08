@@ -42,6 +42,7 @@ export const WITHMATE_GET_CHARACTER_CHANNEL = "withmate:get-character";
 export const WITHMATE_GET_MATE_STATE_CHANNEL = "withmate:get-mate-state";
 export const WITHMATE_GET_MATE_PROFILE_CHANNEL = "withmate:get-mate-profile";
 export const WITHMATE_CREATE_MATE_CHANNEL = "withmate:create-mate";
+export const WITHMATE_UPDATE_MATE_CHANNEL = "withmate:update-mate";
 export const WITHMATE_RUN_MATE_TALK_TURN_CHANNEL = "withmate:run-mate-talk-turn";
 export const WITHMATE_CREATE_CHARACTER_CHANNEL = "withmate:create-character";
 export const WITHMATE_RESET_MATE_CHANNEL = "withmate:reset-mate";

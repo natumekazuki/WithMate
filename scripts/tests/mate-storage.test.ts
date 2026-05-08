@@ -543,6 +543,46 @@ describe("MateStorage", () => {
     }
   });
 
+  it("updateMate は active Mate の表示名を更新し revision は維持する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      const created = await storage.createMate({ displayName: "Mika" });
+
+      const updated = await storage.updateMate({ displayName: "Mika 2" });
+      const reopened = storage.getMateProfile();
+
+      assert.equal(updated.displayName, "Mika 2");
+      assert.equal(updated.activeRevisionId, created.activeRevisionId);
+      assert.equal(updated.profileGeneration, created.profileGeneration);
+      assert.equal(reopened?.displayName, "Mika 2");
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("updateMate は空の displayName を拒否する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+
+      await assert.rejects(
+        () => storage!.updateMate({ displayName: "   " }),
+        /displayName が空だよ/,
+      );
+      assert.equal(storage.getMateProfile()?.displayName, "Mika");
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
   it("createMate の initial revision section に written_at が保存される", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: MateStorage | null = null;

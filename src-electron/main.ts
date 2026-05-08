@@ -1108,6 +1108,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getMateState: () => requireMateStorage().getMateState(),
                 getMateProfile: () => requireMateStorage().getMateProfile(),
                 createMate,
+                updateMate,
                 applyPendingGrowth,
                 runMateTalkTurn,
                 resetMate,
@@ -1491,6 +1492,12 @@ function requireMateStorage(): MateStorage {
 async function createMate(input: Parameters<MateStorage["createMate"]>[0]): ReturnType<MateStorage["createMate"]> {
   const profile = await requireMateStorage().createMate(input);
   await requireMainBootstrapService().ensureGrowthApplyTimer();
+  await syncEnabledProviderInstructionTargetsForMateProfile(profile);
+  return profile;
+}
+
+async function updateMate(input: Parameters<MateStorage["updateMate"]>[0]): ReturnType<MateStorage["updateMate"]> {
+  const profile = await requireMateStorage().updateMate(input);
   await syncEnabledProviderInstructionTargetsForMateProfile(profile);
   return profile;
 }

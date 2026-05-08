@@ -165,6 +165,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         getMateProfile: () => null,
         applyPendingGrowth: async () => zeroGrowthResult,
         createMate: async () => ({}) as never,
+        updateMate: async () => ({}) as never,
         runMateTalkTurn: async () => ({}) as never,
         resetMate: async () => {},
       },

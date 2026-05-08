@@ -726,20 +726,24 @@ describe("HomeMateSetupPanel", () => {
   };
 
   const renderPanel = (params?: {
+    mode?: "create" | "edit";
     creating?: boolean;
     feedback?: string;
     displayName?: string;
     mateDisplayName?: string | null;
     onSubmit?: () => void;
+    onCancel?: () => void;
     onOpenSettings?: () => void;
   }) => {
     return HomeMateSetupPanel({
+      mode: params?.mode,
       displayName: params?.displayName ?? "Your Mate",
       creating: params?.creating ?? false,
       feedback: params?.feedback ?? "",
       mateDisplayName: params?.mateDisplayName ?? null,
       onChangeDisplayName: () => undefined,
       onSubmit: params?.onSubmit ?? (() => undefined),
+      onCancel: params?.onCancel,
       onOpenSettings: params?.onOpenSettings ?? (() => undefined),
     });
   };
@@ -811,6 +815,30 @@ describe("HomeMateSetupPanel", () => {
     assert.ok(input.props.disabled);
     assert.ok(submitButton.props.disabled);
     assert.equal(submitButton.props.children, "作成中...");
+  });
+
+  it("edit mode では Mate プロフィール保存と戻る導線を表示する", () => {
+    let canceled = 0;
+    const panel = renderPanel({
+      mode: "edit",
+      displayName: "Mika",
+      mateDisplayName: "Mika",
+      onCancel: () => {
+        canceled += 1;
+      },
+    });
+    const html = renderToStaticMarkup(panel);
+    const submitButton = collectElements(panel, (element) => element.type === "button" && element.props.type === "submit")[0];
+    const cancelButton = collectElements(
+      panel,
+      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "戻る",
+    )[0];
+
+    assert.ok(html.includes("Mate プロフィール"));
+    assert.equal(submitButton?.props.children, "Mate を保存");
+    assert.ok(cancelButton);
+    cancelButton.props.onClick();
+    assert.equal(canceled, 1);
   });
 });
 
@@ -922,6 +950,7 @@ describe("HomeRightPane", () => {
       onOpenSessionMonitorWindow={noOp}
       onOpenMemoryManagementWindow={noOp}
       onOpenSettingsWindow={noOp}
+      onOpenMateProfile={noOp}
       onOpenMateTalk={noOp}
       onOpenSession={noOp}
       onOpenCompanionReview={noOp}
@@ -953,6 +982,7 @@ describe("HomeRightPane", () => {
     assert.ok(!html.includes("Characters"));
     assert.ok(!html.includes("Add Character"));
     assert.ok(html.includes("メイトーク"));
+    assert.ok(html.includes("Mate を編集"));
   });
 
   it("mateProfile が null でも fallback で Mate 表示できる", () => {

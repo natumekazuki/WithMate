@@ -53,6 +53,7 @@ import type {
   MateTalkTurnInput,
   MateTalkTurnResult,
   MateGrowthSettings,
+  UpdateMateInput,
   UpdateMateGrowthSettingsInput,
 } from "./mate-state.js";
 import type { MateEmbeddingSettings } from "./mate-embedding-settings.js";
@@ -232,6 +233,7 @@ export type WithMateWindowMateApi = {
   getMateState(): Promise<MateStorageState>;
   getMateProfile(): Promise<MateProfile | null>;
   createMate(input: CreateMateInput): Promise<MateProfile>;
+  updateMate(input: UpdateMateInput): Promise<MateProfile>;
   applyPendingGrowth(): Promise<MateGrowthApplyResult>;
   runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
   resetMate(): Promise<void>;

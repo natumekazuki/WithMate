@@ -28,6 +28,7 @@ import type {
   MateStorageState,
   MateTalkTurnInput,
   MateTalkTurnResult,
+  UpdateMateInput,
 } from "../src/mate-state.js";
 import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
@@ -63,6 +64,7 @@ import {
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
+  WITHMATE_UPDATE_MATE_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
@@ -337,6 +339,7 @@ export type MainIpcRegistrationDeps = {
   getMateState(): Awaitable<MateStorageState>;
   getMateProfile(): Awaitable<MateProfile | null>;
   createMate(input: CreateMateInput): Promise<MateProfile>;
+  updateMate(input: UpdateMateInput): Promise<MateProfile>;
   applyPendingGrowth(): Promise<MateGrowthApplyResult>;
   runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
   resetMate(): Promise<void>;
@@ -485,6 +488,7 @@ type MainIpcMateDeps = Pick<
   | "getMateState"
   | "getMateProfile"
   | "createMate"
+  | "updateMate"
   | "applyPendingGrowth"
   | "runMateTalkTurn"
   | "resetMate"
@@ -823,6 +827,7 @@ function registerMateHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcMateDeps
   ipcMain.handle(WITHMATE_GET_MATE_STATE_CHANNEL, () => deps.getMateState());
   ipcMain.handle(WITHMATE_GET_MATE_PROFILE_CHANNEL, () => deps.getMateProfile());
   ipcMain.handle(WITHMATE_CREATE_MATE_CHANNEL, (_event, input: CreateMateInput) => deps.createMate(input));
+  ipcMain.handle(WITHMATE_UPDATE_MATE_CHANNEL, (_event, input: UpdateMateInput) => deps.updateMate(input));
   ipcMain.handle(WITHMATE_APPLY_MATE_GROWTH_CHANNEL, () => deps.applyPendingGrowth());
   ipcMain.handle(WITHMATE_RUN_MATE_TALK_TURN_CHANNEL, (_event, input: MateTalkTurnInput) =>
     deps.runMateTalkTurn(input),

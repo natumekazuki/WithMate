@@ -113,6 +113,13 @@ export type CreateMateInput = {
   avatarByteSize?: number;
 };
 
+export type UpdateMateInput = {
+  displayName?: string;
+  description?: string;
+  themeMain?: string;
+  themeSub?: string;
+};
+
 export type SetMateAvatarInput = {
   avatarFilePath?: string | null;
 };
@@ -175,6 +182,30 @@ function withDefaults(input: CreateMateInput): Required<CreateMateInput> {
     avatarSha256: input.avatarSha256 ?? "",
     avatarByteSize: typeof input.avatarByteSize === "number" && input.avatarByteSize >= 0 ? input.avatarByteSize : 0,
   };
+}
+
+function normalizeMateUpdate(input: UpdateMateInput): UpdateMateInput {
+  const output: UpdateMateInput = {};
+
+  if (input.displayName !== undefined) {
+    const displayName = input.displayName.trim();
+    if (!displayName) {
+      throw new Error("displayName が空だよ。");
+    }
+    output.displayName = displayName;
+  }
+
+  if (input.description !== undefined) {
+    output.description = input.description;
+  }
+  if (input.themeMain !== undefined) {
+    output.themeMain = input.themeMain;
+  }
+  if (input.themeSub !== undefined) {
+    output.themeSub = input.themeSub;
+  }
+
+  return output;
 }
 
 export class MateStorage {
@@ -736,6 +767,38 @@ export class MateStorage {
     }
 
     return profile;
+  }
+
+  async updateMate(input: UpdateMateInput): Promise<MateProfile> {
+    const profile = this.getMateProfile();
+    if (!profile || profile.state !== "active") {
+      throw new Error("Mate が作成されていないよ。");
+    }
+
+    const normalized = normalizeMateUpdate(input);
+    const updatedAt = nowIso();
+
+    this.withDb((db) => {
+      db.prepare(`
+        UPDATE mate_profile
+        SET display_name = ?, description = ?, theme_main = ?, theme_sub = ?, updated_at = ?
+        WHERE id = ?
+      `).run(
+        normalized.displayName ?? profile.displayName,
+        normalized.description ?? profile.description,
+        normalized.themeMain ?? profile.themeMain,
+        normalized.themeSub ?? profile.themeSub,
+        updatedAt,
+        MATE_ID,
+      );
+    });
+
+    const updatedProfile = this.getMateProfile();
+    if (!updatedProfile) {
+      throw new Error("Mate 更新後の再読込に失敗したよ。");
+    }
+
+    return updatedProfile;
   }
 
   async setMateAvatar(input: SetMateAvatarInput): Promise<MateProfile> {

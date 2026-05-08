@@ -52,6 +52,7 @@ import type {
   MateTalkTurnInput,
   MateTalkTurnResult,
   MateGrowthSettings,
+  UpdateMateInput,
   UpdateMateGrowthSettingsInput,
 } from "../src/mate-state.js";
 import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
@@ -211,6 +212,7 @@ export type MainIpcMateDepsArgs = {
   getMateState(): Awaitable<MateStorageState>;
   getMateProfile(): Awaitable<MateProfile | null>;
   createMate(input: CreateMateInput): Promise<MateProfile>;
+  updateMate(input: UpdateMateInput): Promise<MateProfile>;
   applyPendingGrowth(): Promise<MateGrowthApplyResult>;
   runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
   resetMate(): Promise<void>;
@@ -352,6 +354,7 @@ export function createMainIpcRegistrationDeps(
     getMateState: args.mate.getMateState,
     getMateProfile: args.mate.getMateProfile,
     createMate: args.mate.createMate,
+    updateMate: args.mate.updateMate,
     applyPendingGrowth: args.mate.applyPendingGrowth,
     runMateTalkTurn: args.mate.runMateTalkTurn,
     resetMate: args.mate.resetMate,

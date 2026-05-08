@@ -54,6 +54,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:create-mate",
     args: [{ displayName: "Buddy" }],
   });
+  assert.deepEqual(await api.updateMate({ displayName: "Buddy 2" }), {
+    channel: "withmate:update-mate",
+    args: [{ displayName: "Buddy 2" }],
+  });
   assert.deepEqual(await api.runMateTalkTurn({ message: "hello" }), {
     channel: "withmate:run-mate-talk-turn",
     args: [{ message: "hello" }],
@@ -232,6 +236,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "upsertProviderInstructionTarget",
     "updateCharacter",
     "updateCompanionSession",
+    "updateMate",
     "updateSession",
   ] satisfies Array<keyof WithMateWindowApi>;
 

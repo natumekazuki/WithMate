@@ -125,6 +125,7 @@ import {
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_MATE_CHANNEL,
   WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL,
   WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
@@ -445,6 +446,9 @@ function createMateApi(ipcRenderer: IpcRendererLike): WithMateWindowMateApi {
     },
     createMate(input) {
       return ipcRenderer.invoke(WITHMATE_CREATE_MATE_CHANNEL, input);
+    },
+    updateMate(input) {
+      return ipcRenderer.invoke(WITHMATE_UPDATE_MATE_CHANNEL, input);
     },
     applyPendingGrowth() {
       return ipcRenderer.invoke(WITHMATE_APPLY_MATE_GROWTH_CHANNEL);

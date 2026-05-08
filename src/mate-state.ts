@@ -57,6 +57,13 @@ export type CreateMateInput = {
   avatarByteSize?: number;
 };
 
+export type UpdateMateInput = {
+  displayName?: string;
+  description?: string;
+  themeMain?: string;
+  themeSub?: string;
+};
+
 export type MateTalkTurnInput = {
   message: string;
 };
