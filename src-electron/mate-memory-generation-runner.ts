@@ -6,7 +6,7 @@ import {
 } from "../src/provider-settings-state.js";
 import type { MateMemoryGenerationPrompt } from "./mate-memory-generation-prompt.js";
 import {
-  isMateTalkBackgroundStructuredPromptPolicyCompatible,
+  getMateTalkBackgroundStructuredPromptCapability,
   type ProviderBackgroundAdapter,
   type RunBackgroundStructuredPromptInput,
 } from "./provider-runtime.js";
@@ -101,10 +101,10 @@ export function createMateMemoryGenerationRunner(
 
       try {
         const adapter = deps.getProviderBackgroundAdapter(candidate.provider);
-        const policy = adapter.getBackgroundStructuredPromptPolicy();
-        if (!isMateTalkBackgroundStructuredPromptPolicyCompatible(policy)) {
+        const capability = getMateTalkBackgroundStructuredPromptCapability(adapter);
+        if (!capability.compatible) {
           throw new Error(
-            `provider ${candidate.provider} の background structured prompt policy が未対応です。`,
+            `provider ${candidate.provider} の background structured prompt が未対応です: ${capability.reasons.join(", ")}`,
           );
         }
 

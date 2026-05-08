@@ -280,6 +280,8 @@ describe("createMateMemoryGenerationRunner", () => {
             threadId: "thread-unsafe",
           },
           {
+            allowsFileWrite: true,
+            allowsToolPermissionRequests: true,
             structuredOutputOnly: false,
           },
         ),
@@ -323,7 +325,10 @@ describe("createMateMemoryGenerationRunner", () => {
         onProviderFailure(error, candidate) {
           failures.push(candidate);
           assert.equal(candidate.provider, "copilot");
-          assert.ok(error.message.includes("未対応"));
+          assert.ok(error.message.includes("copilot"));
+          assert.ok(error.message.includes("file_write_allowed"));
+          assert.ok(error.message.includes("tool_permission_requests_allowed"));
+          assert.ok(error.message.includes("structured_output_not_guaranteed"));
         },
       }),
     );

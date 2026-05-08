@@ -60,7 +60,7 @@ import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { CodexAdapter } from "./codex-adapter.js";
 import { CopilotAdapter } from "./copilot-adapter.js";
-import { canUseProviderForMateTalkBackgroundPrompt } from "./provider-runtime.js";
+import { getMateTalkBackgroundStructuredPromptCapability } from "./provider-runtime.js";
 import { resolveComposerPreview } from "./composer-attachments.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { resolveOpenPathTarget } from "./open-path.js";
@@ -1645,8 +1645,13 @@ async function generateMateTalkAssistantMessage(input: {
       }
 
       const backgroundAdapter = getProviderBackgroundAdapter(candidate.provider);
-      if (!canUseProviderForMateTalkBackgroundPrompt(backgroundAdapter)) {
-        console.warn("メイトーク背景 structured prompt の条件を満たさない provider をスキップしました:", candidate.provider);
+      const capability = getMateTalkBackgroundStructuredPromptCapability(backgroundAdapter);
+      if (!capability.compatible) {
+        console.warn(
+          "メイトーク背景 structured prompt の条件を満たさない provider をスキップしました:",
+          candidate.provider,
+          capability.reasons.join(", "),
+        );
         continue;
       }
 
