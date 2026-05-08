@@ -17,9 +17,10 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
 
   if (projectContextSection) {
     inputSections.push(projectContextSection);
+    inputSections.push(`# User Input\n\n${input.userMessage.trim()}`);
+  } else {
+    inputSections.push(input.userMessage.trim());
   }
-
-  inputSections.push(`# User Input\n\n${input.userMessage.trim()}`);
   const inputPromptBody = inputSections.join("\n\n");
   const inputPromptText = inputPromptBody;
   const composedPromptText = [systemPromptBody, inputPromptText]
