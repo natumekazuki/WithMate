@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ProviderCodingAdapter, ProviderTurnAdapter } from "../../src-electron/provider-runtime.js";
+import type {
+  ProviderBackgroundAdapter,
+  ProviderCodingAdapter,
+  ProviderTurnAdapter,
+} from "../../src-electron/provider-runtime.js";
 import {
   fetchProviderQuotaTelemetry,
+  getProviderRuntimeCapabilities,
   resolveProviderCatalogOrThrow,
   resolveProviderBackgroundAdapter,
   resolveProviderCodingAdapter,
@@ -118,4 +123,85 @@ test("fetchProviderQuotaTelemetry は adapter と app settings を使って quot
 
   assert.equal(result, telemetry);
   assert.deepEqual(calls, ["codex:gpt-5.4"]);
+});
+
+test("getProviderRuntimeCapabilities は provider と background policy から対応状況を返す", () => {
+  const adapter: ProviderBackgroundAdapter = {
+    getBackgroundStructuredPromptPolicy() {
+      return {
+        allowsFileWrite: false,
+        allowsShellWrite: false,
+        allowsToolPermissionRequests: false,
+        structuredOutputOnly: true,
+        structuredOutputMode: "schema_submit_tool",
+      };
+    },
+    async extractSessionMemoryDelta() {
+      throw new Error("not used");
+    },
+    async runCharacterReflection() {
+      throw new Error("not used");
+    },
+    async runBackgroundStructuredPrompt() {
+      throw new Error("not used");
+    },
+  };
+
+  const capabilities = getProviderRuntimeCapabilities({
+    providerId: "copilot",
+    backgroundAdapter: adapter,
+  });
+
+  assert.equal(capabilities.providerId, "copilot");
+  assert.equal(capabilities.providerSupported, true);
+  assert.equal(capabilities.instructionSyncSupported, true);
+  assert.equal(capabilities.tokenUsageSupported, true);
+  assert.equal(capabilities.mateTalkBackgroundPromptSupported, true);
+  assert.equal(capabilities.backgroundStructuredPrompt.compatible, true);
+  assert.deepEqual(capabilities.backgroundStructuredPromptSummary, {
+    structuredOutputSupported: true,
+    providerSchemaSupported: false,
+    schemaSubmitToolSupported: true,
+    fileWriteDisabled: true,
+    shellWriteDisabled: true,
+    toolPermissionRequestDisabled: true,
+  });
+});
+
+test("getProviderRuntimeCapabilities は MVP 対象外 provider の support flag を false にする", () => {
+  const adapter: ProviderBackgroundAdapter = {
+    getBackgroundStructuredPromptPolicy() {
+      return {
+        allowsFileWrite: true,
+        allowsShellWrite: true,
+        allowsToolPermissionRequests: false,
+        structuredOutputOnly: true,
+        structuredOutputMode: "provider_schema",
+      };
+    },
+    async extractSessionMemoryDelta() {
+      throw new Error("not used");
+    },
+    async runCharacterReflection() {
+      throw new Error("not used");
+    },
+    async runBackgroundStructuredPrompt() {
+      throw new Error("not used");
+    },
+  };
+
+  const capabilities = getProviderRuntimeCapabilities({
+    providerId: "unknown",
+    backgroundAdapter: adapter,
+  });
+
+  assert.equal(capabilities.instructionSyncSupported, false);
+  assert.equal(capabilities.tokenUsageSupported, false);
+  assert.equal(capabilities.providerSupported, false);
+  assert.equal(capabilities.mateTalkBackgroundPromptSupported, false);
+  assert.equal(capabilities.backgroundStructuredPrompt.compatible, false);
+  assert.deepEqual(capabilities.backgroundStructuredPrompt.reasons, [
+    "file_write_allowed",
+    "shell_write_allowed",
+  ]);
 });

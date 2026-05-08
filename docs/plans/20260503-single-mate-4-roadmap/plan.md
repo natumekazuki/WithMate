@@ -271,7 +271,7 @@ projection に含めないもの:
 - [x] duplicate marker / malformed marker / target mismatch は hard fail にする
 - [x] managed-file は専用 file をユーザーが明示指定した場合だけ許可する
 - [x] Mate Profile から provider projection を生成する
-- [ ] adapter capability から Codex / Copilot の instruction sync、structured output / schema submit tool、usage、file write / shell write 無効化可否を検出する
+- [x] adapter capability から Codex / Copilot の instruction sync、structured output / schema submit tool、usage、file write / shell write 無効化可否を検出する
 - [x] Codex 向け `AGENTS.md` projection を実装する
 - [x] Copilot 向け `copilot-instructions.md` projection を実装する
 - [x] unsupported provider は instruction sync 対象外として扱う

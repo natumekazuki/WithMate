@@ -93,8 +93,10 @@ describe("MemoryOrchestrationService", () => {
       getBackgroundStructuredPromptPolicy() {
         return {
           allowsFileWrite: false,
+          allowsShellWrite: false,
           allowsToolPermissionRequests: false,
           structuredOutputOnly: true,
+          structuredOutputMode: "schema_submit_tool",
         };
       },
       async extractSessionMemoryDelta() {
@@ -176,8 +178,10 @@ describe("MemoryOrchestrationService", () => {
       getBackgroundStructuredPromptPolicy() {
         return {
           allowsFileWrite: false,
+          allowsShellWrite: false,
           allowsToolPermissionRequests: false,
           structuredOutputOnly: true,
+          structuredOutputMode: "schema_submit_tool",
         };
       },
       async extractSessionMemoryDelta(input) {
@@ -303,8 +307,10 @@ describe("MemoryOrchestrationService", () => {
       getBackgroundStructuredPromptPolicy() {
         return {
           allowsFileWrite: false,
+          allowsShellWrite: false,
           allowsToolPermissionRequests: false,
           structuredOutputOnly: true,
+          structuredOutputMode: "schema_submit_tool",
         };
       },
       async extractSessionMemoryDelta() {
@@ -397,8 +403,10 @@ describe("MemoryOrchestrationService", () => {
       getBackgroundStructuredPromptPolicy() {
         return {
           allowsFileWrite: false,
+          allowsShellWrite: false,
           allowsToolPermissionRequests: false,
           structuredOutputOnly: true,
+          structuredOutputMode: "schema_submit_tool",
         };
       },
       async extractSessionMemoryDelta() {

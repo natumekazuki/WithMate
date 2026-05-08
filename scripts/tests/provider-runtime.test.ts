@@ -7,13 +7,16 @@ import {
   canUseProviderForMateTalkBackgroundPrompt,
   isMateTalkBackgroundStructuredPromptPolicyCompatible,
   getMateTalkBackgroundStructuredPromptCapability,
+  summarizeMateTalkBackgroundStructuredPromptCapability,
   type ProviderBackgroundStructuredPromptPolicy,
 } from "../../src-electron/provider-runtime.js";
 
 const MATE_TALK_SUPPORTED_POLICY: ProviderBackgroundStructuredPromptPolicy = {
   allowsFileWrite: false,
+  allowsShellWrite: false,
   allowsToolPermissionRequests: false,
   structuredOutputOnly: true,
+  structuredOutputMode: "provider_schema",
 };
 
 function createAdapter(policy: ProviderBackgroundStructuredPromptPolicy): ProviderBackgroundAdapter {
@@ -43,6 +46,16 @@ describe("provider-runtime background structured prompt policy", () => {
       isMateTalkBackgroundStructuredPromptPolicyCompatible({
         ...MATE_TALK_SUPPORTED_POLICY,
         allowsFileWrite: true,
+      }),
+      false,
+    );
+  });
+
+  it("shell write を許可する policy は MateTalk 対応外とする", () => {
+    assert.equal(
+      isMateTalkBackgroundStructuredPromptPolicyCompatible({
+        ...MATE_TALK_SUPPORTED_POLICY,
+        allowsShellWrite: true,
       }),
       false,
     );
@@ -86,6 +99,16 @@ describe("provider-runtime background structured prompt policy", () => {
     assert.deepEqual(capability.reasons, ["file_write_allowed"]);
   });
 
+  it("shell write 有効時の不適合理由を返す", () => {
+    const capability = evaluateMateTalkBackgroundStructuredPromptPolicy({
+      ...MATE_TALK_SUPPORTED_POLICY,
+      allowsShellWrite: true,
+    });
+
+    assert.equal(capability.compatible, false);
+    assert.deepEqual(capability.reasons, ["shell_write_allowed"]);
+  });
+
   it("tool permission requests 有効時の不適合理由を返す", () => {
     const capability = evaluateMateTalkBackgroundStructuredPromptPolicy({
       ...MATE_TALK_SUPPORTED_POLICY,
@@ -109,13 +132,16 @@ describe("provider-runtime background structured prompt policy", () => {
   it("複数不一致のときは理由の順序が安定している", () => {
     const capability = evaluateMateTalkBackgroundStructuredPromptPolicy({
       allowsFileWrite: true,
+      allowsShellWrite: true,
       allowsToolPermissionRequests: true,
       structuredOutputOnly: false,
+      structuredOutputMode: "provider_schema",
     });
 
     assert.equal(capability.compatible, false);
     assert.deepEqual(capability.reasons, [
       "file_write_allowed",
+      "shell_write_allowed",
       "tool_permission_requests_allowed",
       "structured_output_not_guaranteed",
     ]);
@@ -139,8 +165,10 @@ describe("provider-runtime background structured prompt policy", () => {
   it("adapter 由来の policy を反映した capability を返す", () => {
     const policy: ProviderBackgroundStructuredPromptPolicy = {
       allowsFileWrite: true,
+      allowsShellWrite: false,
       allowsToolPermissionRequests: false,
       structuredOutputOnly: false,
+      structuredOutputMode: "provider_schema",
     };
     const adapter = createAdapter(policy);
     const capability = getMateTalkBackgroundStructuredPromptCapability(adapter);
@@ -150,5 +178,43 @@ describe("provider-runtime background structured prompt policy", () => {
       "file_write_allowed",
       "structured_output_not_guaranteed",
     ]);
+  });
+
+  it("runtime capability summary helper が provider schema の対応を一括で取得できる", () => {
+    const summary = summarizeMateTalkBackgroundStructuredPromptCapability({
+      allowsFileWrite: true,
+      allowsShellWrite: true,
+      allowsToolPermissionRequests: false,
+      structuredOutputOnly: true,
+      structuredOutputMode: "provider_schema",
+    });
+
+    assert.deepEqual(summary, {
+      structuredOutputSupported: true,
+      providerSchemaSupported: true,
+      schemaSubmitToolSupported: false,
+      fileWriteDisabled: false,
+      shellWriteDisabled: false,
+      toolPermissionRequestDisabled: true,
+    });
+  });
+
+  it("runtime capability summary helper が schema submit tool の対応を一括で取得できる", () => {
+    const summary = summarizeMateTalkBackgroundStructuredPromptCapability({
+      allowsFileWrite: false,
+      allowsShellWrite: false,
+      allowsToolPermissionRequests: false,
+      structuredOutputOnly: true,
+      structuredOutputMode: "schema_submit_tool",
+    });
+
+    assert.deepEqual(summary, {
+      structuredOutputSupported: true,
+      providerSchemaSupported: false,
+      schemaSubmitToolSupported: true,
+      fileWriteDisabled: true,
+      shellWriteDisabled: true,
+      toolPermissionRequestDisabled: true,
+    });
   });
 });

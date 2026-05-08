@@ -34,8 +34,10 @@ function createAdapter(
 ): ProviderBackgroundAdapter {
   const mergedPolicy: ProviderBackgroundStructuredPromptPolicy = {
     allowsFileWrite: false,
+    allowsShellWrite: false,
     allowsToolPermissionRequests: false,
     structuredOutputOnly: true,
+    structuredOutputMode: "schema_submit_tool",
     ...policy,
   };
 
@@ -281,8 +283,10 @@ describe("createMateMemoryGenerationRunner", () => {
           },
           {
             allowsFileWrite: true,
+            allowsShellWrite: true,
             allowsToolPermissionRequests: true,
             structuredOutputOnly: false,
+            structuredOutputMode: "schema_submit_tool",
           },
         ),
       ],
@@ -327,6 +331,7 @@ describe("createMateMemoryGenerationRunner", () => {
           assert.equal(candidate.provider, "copilot");
           assert.ok(error.message.includes("copilot"));
           assert.ok(error.message.includes("file_write_allowed"));
+          assert.ok(error.message.includes("shell_write_allowed"));
           assert.ok(error.message.includes("tool_permission_requests_allowed"));
           assert.ok(error.message.includes("structured_output_not_guaranteed"));
         },

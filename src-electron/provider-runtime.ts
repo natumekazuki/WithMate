@@ -191,12 +191,15 @@ export type ProviderBackgroundAdapter = {
 
 export type ProviderBackgroundStructuredPromptPolicy = {
   allowsFileWrite: boolean;
+  allowsShellWrite: boolean;
   allowsToolPermissionRequests: boolean;
   structuredOutputOnly: boolean;
+  structuredOutputMode: "provider_schema" | "schema_submit_tool";
 };
 
 export type ProviderBackgroundStructuredPromptIncompatibilityReason =
   | "file_write_allowed"
+  | "shell_write_allowed"
   | "tool_permission_requests_allowed"
   | "structured_output_not_guaranteed";
 
@@ -206,11 +209,33 @@ export type ProviderBackgroundStructuredPromptCapability = {
   reasons: readonly ProviderBackgroundStructuredPromptIncompatibilityReason[];
 };
 
-export const MATE_TALK_BACKGROUND_STRUCTURED_PROMPT_POLICY: ProviderBackgroundStructuredPromptPolicy = {
+export type ProviderBackgroundStructuredPromptCapabilitySummary = {
+  structuredOutputSupported: boolean;
+  providerSchemaSupported: boolean;
+  schemaSubmitToolSupported: boolean;
+  fileWriteDisabled: boolean;
+  shellWriteDisabled: boolean;
+  toolPermissionRequestDisabled: boolean;
+};
+
+export const MATE_TALK_PROVIDER_SCHEMA_BACKGROUND_STRUCTURED_PROMPT_POLICY: ProviderBackgroundStructuredPromptPolicy = {
   allowsFileWrite: false,
+  allowsShellWrite: false,
   allowsToolPermissionRequests: false,
   structuredOutputOnly: true,
+  structuredOutputMode: "provider_schema",
 };
+
+export const MATE_TALK_SCHEMA_SUBMIT_TOOL_BACKGROUND_STRUCTURED_PROMPT_POLICY: ProviderBackgroundStructuredPromptPolicy = {
+  allowsFileWrite: false,
+  allowsShellWrite: false,
+  allowsToolPermissionRequests: false,
+  structuredOutputOnly: true,
+  structuredOutputMode: "schema_submit_tool",
+};
+
+export const MATE_TALK_BACKGROUND_STRUCTURED_PROMPT_POLICY =
+  MATE_TALK_PROVIDER_SCHEMA_BACKGROUND_STRUCTURED_PROMPT_POLICY;
 
 export function evaluateMateTalkBackgroundStructuredPromptPolicy(
   policy: ProviderBackgroundStructuredPromptPolicy,
@@ -218,6 +243,9 @@ export function evaluateMateTalkBackgroundStructuredPromptPolicy(
   const reasons: ProviderBackgroundStructuredPromptIncompatibilityReason[] = [];
   if (policy.allowsFileWrite) {
     reasons.push("file_write_allowed");
+  }
+  if (policy.allowsShellWrite) {
+    reasons.push("shell_write_allowed");
   }
   if (policy.allowsToolPermissionRequests) {
     reasons.push("tool_permission_requests_allowed");
@@ -229,6 +257,19 @@ export function evaluateMateTalkBackgroundStructuredPromptPolicy(
     compatible: reasons.length === 0,
     policy,
     reasons,
+  };
+}
+
+export function summarizeMateTalkBackgroundStructuredPromptCapability(
+  policy: ProviderBackgroundStructuredPromptPolicy,
+): ProviderBackgroundStructuredPromptCapabilitySummary {
+  return {
+    structuredOutputSupported: policy.structuredOutputOnly,
+    providerSchemaSupported: policy.structuredOutputOnly && policy.structuredOutputMode === "provider_schema",
+    schemaSubmitToolSupported: policy.structuredOutputOnly && policy.structuredOutputMode === "schema_submit_tool",
+    fileWriteDisabled: !policy.allowsFileWrite,
+    shellWriteDisabled: !policy.allowsShellWrite,
+    toolPermissionRequestDisabled: !policy.allowsToolPermissionRequests,
   };
 }
 

@@ -34,10 +34,12 @@ import {
 } from "../../src-electron/copilot-adapter.js";
 import {
   ProviderTurnError,
+  type RunBackgroundStructuredPromptInput,
   type ProviderPromptComposition,
   type RunSessionTurnInput,
   type RunSessionTurnResult,
 } from "../../src-electron/provider-runtime.js";
+import { MATE_MEMORY_GENERATION_OUTPUT_SCHEMA } from "../../src-electron/mate-memory-generation-prompt.js";
 
 function createPartialResult(overrides?: Partial<RunSessionTurnResult>): RunSessionTurnResult {
   return {
@@ -151,6 +153,50 @@ function createRunSessionInput(options?: {
     userMessage: "hello",
     appSettings: createDefaultAppSettings(),
     attachments: [],
+  };
+}
+
+function createBackgroundPromptInput(
+  overrides?: Partial<RunBackgroundStructuredPromptInput>,
+): RunBackgroundStructuredPromptInput {
+  const session = buildNewSession({
+    provider: "copilot",
+    taskTitle: "copilot",
+    workspaceLabel: "workspace",
+    workspacePath: "F:/repo",
+    branch: "main",
+    characterId: "char-a",
+    character: "A",
+    characterIconPath: "",
+    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    approvalMode: DEFAULT_APPROVAL_MODE,
+    model: "gpt-4.1",
+    reasoningEffort: "high",
+    customAgentName: "reviewer",
+  });
+
+  return {
+    providerId: "copilot",
+    workspacePath: session.workspacePath,
+    appSettings: createDefaultAppSettings(),
+    model: session.model,
+    reasoningEffort: session.reasoningEffort,
+    timeoutMs: 10000,
+    prompt: {
+      systemText: "",
+      userText: "extract data",
+      outputSchema: {
+        type: "object",
+        properties: {
+          answer: {
+            type: "string",
+          },
+        },
+        required: ["answer"],
+        additionalProperties: false,
+      },
+    },
+    ...overrides,
   };
 }
 
@@ -1293,6 +1339,264 @@ describe("CopilotAdapter permission.completed live status", () => {
     ]) {
       assert.equal(getCopilotPermissionCompletedLiveStatus(kind), "failed");
     }
+  });
+});
+
+describe("CopilotAdapter background structured prompt", () => {
+  it("schema submit tool 未呼び出し時は自然言語 fallback を使わない", async () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      getOrCreateClientByAppSettings: (
+        providerId: string,
+        appSettings: unknown,
+      ) => {
+        start: () => Promise<void>;
+        createSession: () => Promise<{
+          on: (_event: "assistant.usage", _listener: (event: { data: { usage: unknown } }) => void) => () => void;
+          sendAndWait: () => Promise<{ data: { content: string } }>;
+          disconnect: () => Promise<void>;
+        }>;
+      };
+      fetchProviderQuotaTelemetry: () => Promise<null>;
+      runBackgroundPromptFromInput: <TOutput>(
+        input: RunBackgroundStructuredPromptInput,
+        parse: (rawText: string) => TOutput | null,
+      ) => Promise<{
+        threadId: string | null;
+        rawText: string;
+        output: TOutput | null;
+        parsedJson: unknown | null;
+        structuredOutput: unknown | null;
+        rawItemsJson: string;
+        usage: null;
+        providerQuotaTelemetry: null;
+      }>;
+    };
+
+    adapter.getOrCreateClientByAppSettings = () => ({
+      start: async () => undefined,
+      createSession: async () => ({
+        on: () => () => undefined,
+        sendAndWait: async () => ({ data: { content: "自然言語で応答します" } }),
+        disconnect: async () => undefined,
+      }),
+    });
+    adapter.fetchProviderQuotaTelemetry = async () => null;
+
+    let parseCalled = false;
+    await assert.rejects(
+      adapter.runBackgroundPromptFromInput(createBackgroundPromptInput(), () => {
+        parseCalled = true;
+        return null;
+      }),
+      /Structured output tool was not called/i,
+    );
+    assert.equal(parseCalled, false);
+  });
+
+  it("schema submit tool 呼び出し時は tool の structured output を使用する", async () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      getOrCreateClientByAppSettings: (
+        providerId: string,
+        appSettings: unknown,
+      ) => {
+        start: () => Promise<void>;
+        createSession: (config: {
+          tools?: Array<{
+            name: string;
+            handler: (args: Record<string, unknown>) => string;
+          }>;
+        }) => Promise<{
+          on: (_event: "assistant.usage", _listener: (event: { data: { usage: unknown } }) => void) => () => void;
+          sendAndWait: () => Promise<{ data: { content: string } }>;
+          disconnect: () => Promise<void>;
+        }>;
+      };
+      fetchProviderQuotaTelemetry: () => Promise<null>;
+      runBackgroundPromptFromInput: <TOutput>(
+        input: RunBackgroundStructuredPromptInput,
+        parse: (rawText: string) => TOutput | null,
+      ) => Promise<{
+        threadId: string | null;
+        rawText: string;
+        output: TOutput | null;
+        parsedJson: unknown | null;
+        structuredOutput: unknown | null;
+        rawItemsJson: string;
+        usage: null;
+        providerQuotaTelemetry: null;
+      }>;
+    };
+
+    let handlerCalled = false;
+    adapter.getOrCreateClientByAppSettings = () => ({
+      start: async () => undefined,
+      createSession: async (config) => {
+        const submitTool = config.tools?.find((tool) => tool.name === "withmate_submit_structured_output");
+        assert.ok(submitTool);
+        return {
+          on: () => () => undefined,
+          sendAndWait: async () => {
+            const handlerResult = submitTool?.handler({ answer: "ok" });
+            handlerCalled = true;
+            assert.equal(handlerResult, "structured output accepted");
+            return { data: { content: "自然言語の応答" } };
+          },
+          disconnect: async () => undefined,
+        };
+      },
+    });
+    adapter.fetchProviderQuotaTelemetry = async () => null;
+
+    const result = await adapter.runBackgroundPromptFromInput(createBackgroundPromptInput(), (rawText) => {
+      return JSON.parse(rawText) as { answer: string };
+    });
+
+    assert.equal(handlerCalled, true);
+    assert.equal(result.rawText, "{\"answer\":\"ok\"}");
+    assert.equal(result.output?.answer, "ok");
+    assert.deepEqual(result.parsedJson, { answer: "ok" });
+  });
+
+  it("schema submit tool の args が実 schema の anyOf / oneOf / bounds 不一致なら失敗する", async () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      getOrCreateClientByAppSettings: () => {
+        start: () => Promise<void>;
+        createSession: (config: {
+          tools?: Array<{
+            name: string;
+            handler: (args: Record<string, unknown>) => string;
+          }>;
+        }) => Promise<{
+          on: (_event: "assistant.usage", _listener: (event: { data: { usage: unknown } }) => void) => () => void;
+          sendAndWait: () => Promise<{ data: { content: string } }>;
+          disconnect: () => Promise<void>;
+        }>;
+      };
+      fetchProviderQuotaTelemetry: () => Promise<null>;
+      runBackgroundPromptFromInput: <TOutput>(
+        input: RunBackgroundStructuredPromptInput,
+        parse: (rawText: string) => TOutput | null,
+      ) => Promise<{
+        threadId: string | null;
+        rawText: string;
+        output: TOutput | null;
+        parsedJson: unknown | null;
+        structuredOutput: unknown | null;
+        rawItemsJson: string;
+        usage: null;
+        providerQuotaTelemetry: null;
+      }>;
+    };
+
+    adapter.getOrCreateClientByAppSettings = () => ({
+      start: async () => undefined,
+      createSession: async (config) => {
+        const submitTool = config.tools?.find((tool) => tool.name === "withmate_submit_structured_output");
+        assert.ok(submitTool);
+        return {
+          on: () => () => undefined,
+          sendAndWait: async () => {
+            submitTool.handler({
+              memories: [
+                {
+                  statement: "ユーザーは短い報告を好む",
+                  growthSourceType: "explicit_user_instruction",
+                  kind: "preference",
+                  targetSection: "work_style",
+                  confidence: 101,
+                  salienceScore: 50,
+                  tags: [],
+                  relation: "new",
+                  relatedRefs: [123],
+                  supersedesRefs: [],
+                  targetClaimKey: "work-style.short-report",
+                  newTags: [],
+                  remember: true,
+                  sourceType: "session",
+                  sourceSessionId: 123,
+                  sourceAuditLogId: null,
+                  projectDigestId: null,
+                },
+              ],
+            });
+            return { data: { content: "" } };
+          },
+          disconnect: async () => undefined,
+        };
+      },
+    });
+    adapter.fetchProviderQuotaTelemetry = async () => null;
+
+    await assert.rejects(
+      adapter.runBackgroundPromptFromInput(
+        createBackgroundPromptInput({
+          prompt: {
+            systemText: "",
+            userText: "extract memory candidates",
+            outputSchema: MATE_MEMORY_GENERATION_OUTPUT_SCHEMA,
+          },
+        }),
+        (rawText) => JSON.parse(rawText),
+      ),
+      /did not match schema/i,
+    );
+  });
+
+  it("schema submit tool が複数回呼び出されたら失敗する", async () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      getOrCreateClientByAppSettings: () => {
+        start: () => Promise<void>;
+        createSession: (config: {
+          tools?: Array<{
+            name: string;
+            handler: (args: Record<string, unknown>) => string;
+          }>;
+        }) => Promise<{
+          on: (_event: "assistant.usage", _listener: (event: { data: { usage: unknown } }) => void) => () => void;
+          sendAndWait: () => Promise<{ data: { content: string } }>;
+          disconnect: () => Promise<void>;
+        }>;
+      };
+      fetchProviderQuotaTelemetry: () => Promise<null>;
+      runBackgroundPromptFromInput: <TOutput>(
+        input: RunBackgroundStructuredPromptInput,
+        parse: (rawText: string) => TOutput | null,
+      ) => Promise<{
+        threadId: string | null;
+        rawText: string;
+        output: TOutput | null;
+        parsedJson: unknown | null;
+        structuredOutput: unknown | null;
+        rawItemsJson: string;
+        usage: null;
+        providerQuotaTelemetry: null;
+      }>;
+    };
+
+    adapter.getOrCreateClientByAppSettings = () => ({
+      start: async () => undefined,
+      createSession: async (config) => {
+        const submitTool = config.tools?.find((tool) => tool.name === "withmate_submit_structured_output");
+        assert.ok(submitTool);
+        return {
+          on: () => () => undefined,
+          sendAndWait: async () => {
+            submitTool.handler({ answer: "first" });
+            submitTool.handler({ answer: "second" });
+            return { data: { content: "" } };
+          },
+          disconnect: async () => undefined,
+        };
+      },
+    });
+    adapter.fetchProviderQuotaTelemetry = async () => null;
+
+    await assert.rejects(
+      adapter.runBackgroundPromptFromInput(createBackgroundPromptInput(), (rawText) => {
+        return JSON.parse(rawText) as { answer: string };
+      }),
+      /called multiple times/i,
+    );
   });
 });
 

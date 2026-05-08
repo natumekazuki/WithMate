@@ -38,7 +38,7 @@ import { composeProviderPrompt, isCanceledProviderMessage } from "./provider-pro
 import {
   ProviderTurnError,
   resolveRunWorkspacePath,
-  MATE_TALK_BACKGROUND_STRUCTURED_PROMPT_POLICY,
+  MATE_TALK_SCHEMA_SUBMIT_TOOL_BACKGROUND_STRUCTURED_PROMPT_POLICY,
   type ExtractSessionMemoryResult,
   type ExtractSessionMemoryInput,
   type ProviderPromptComposition,
@@ -532,6 +532,137 @@ function parseStructuredPromptJson(rawText: string): unknown | null {
     return JSON.parse(jsonText);
   } catch {
     return null;
+  }
+}
+
+function validateStructuredPromptSchemaValue(schema: unknown, value: unknown, path = "$"): string[] {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    return [];
+  }
+
+  const schemaRecord = schema as Record<string, unknown>;
+  const errors: string[] = [];
+  const anyOf = schemaRecord.anyOf;
+  if (Array.isArray(anyOf)) {
+    if (!anyOf.some((candidate) => validateStructuredPromptSchemaValue(candidate, value, path).length === 0)) {
+      errors.push(`${path} must match at least one anyOf schema`);
+    }
+  }
+
+  const oneOf = schemaRecord.oneOf;
+  if (Array.isArray(oneOf)) {
+    const matchedCount = oneOf.filter((candidate) => validateStructuredPromptSchemaValue(candidate, value, path).length === 0)
+      .length;
+    if (matchedCount !== 1) {
+      errors.push(`${path} must match exactly one oneOf schema`);
+    }
+  }
+
+  const expectedType = schemaRecord.type;
+  if (typeof expectedType === "string" && !matchesJsonSchemaType(value, expectedType)) {
+    errors.push(`${path} must be ${expectedType}`);
+    return errors;
+  }
+
+  const enumValues = schemaRecord.enum;
+  if (Array.isArray(enumValues) && !enumValues.some((enumValue) => Object.is(enumValue, value))) {
+    errors.push(`${path} must match one of the enum values`);
+  }
+
+  if (typeof value === "number") {
+    if (typeof schemaRecord.minimum === "number" && value < schemaRecord.minimum) {
+      errors.push(`${path} must be >= ${schemaRecord.minimum}`);
+    }
+    if (typeof schemaRecord.maximum === "number" && value > schemaRecord.maximum) {
+      errors.push(`${path} must be <= ${schemaRecord.maximum}`);
+    }
+  }
+
+  if (typeof value === "string") {
+    if (typeof schemaRecord.minLength === "number" && value.length < schemaRecord.minLength) {
+      errors.push(`${path} length must be >= ${schemaRecord.minLength}`);
+    }
+    if (typeof schemaRecord.maxLength === "number" && value.length > schemaRecord.maxLength) {
+      errors.push(`${path} length must be <= ${schemaRecord.maxLength}`);
+    }
+  }
+
+  if (schemaRecord.type === "object" || schemaRecord.properties || schemaRecord.required) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      errors.push(`${path} must be object`);
+      return errors;
+    }
+
+    const valueRecord = value as Record<string, unknown>;
+    const properties = schemaRecord.properties && typeof schemaRecord.properties === "object" && !Array.isArray(schemaRecord.properties)
+      ? schemaRecord.properties as Record<string, unknown>
+      : {};
+    const required = Array.isArray(schemaRecord.required)
+      ? schemaRecord.required.filter((property): property is string => typeof property === "string")
+      : [];
+
+    for (const property of required) {
+      if (!Object.prototype.hasOwnProperty.call(valueRecord, property)) {
+        errors.push(`${path}.${property} is required`);
+      }
+    }
+
+    if (schemaRecord.additionalProperties === false) {
+      for (const property of Object.keys(valueRecord)) {
+        if (!Object.prototype.hasOwnProperty.call(properties, property)) {
+          errors.push(`${path}.${property} is not allowed`);
+        }
+      }
+    }
+
+    for (const [property, propertySchema] of Object.entries(properties)) {
+      if (Object.prototype.hasOwnProperty.call(valueRecord, property)) {
+        errors.push(...validateStructuredPromptSchemaValue(propertySchema, valueRecord[property], `${path}.${property}`));
+      }
+    }
+  }
+
+  if (schemaRecord.type === "array" || schemaRecord.items) {
+    if (!Array.isArray(value)) {
+      errors.push(`${path} must be array`);
+      return errors;
+    }
+
+    if (typeof schemaRecord.minItems === "number" && value.length < schemaRecord.minItems) {
+      errors.push(`${path} length must be >= ${schemaRecord.minItems}`);
+    }
+    if (typeof schemaRecord.maxItems === "number" && value.length > schemaRecord.maxItems) {
+      errors.push(`${path} length must be <= ${schemaRecord.maxItems}`);
+    }
+
+    if (schemaRecord.items) {
+      for (const [index, item] of value.entries()) {
+        errors.push(...validateStructuredPromptSchemaValue(schemaRecord.items, item, `${path}[${index}]`));
+      }
+    }
+  }
+
+  return errors;
+}
+
+function matchesJsonSchemaType(value: unknown, expectedType: string): boolean {
+  switch (expectedType) {
+    case "array":
+      return Array.isArray(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "integer":
+      return typeof value === "number" && Number.isInteger(value);
+    case "null":
+      return value === null;
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "object":
+      return !!value && typeof value === "object" && !Array.isArray(value);
+    case "string":
+      return typeof value === "string";
+    default:
+      return true;
   }
 }
 
@@ -1650,7 +1781,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   }
 
   getBackgroundStructuredPromptPolicy() {
-    return MATE_TALK_BACKGROUND_STRUCTURED_PROMPT_POLICY;
+    return MATE_TALK_SCHEMA_SUBMIT_TOOL_BACKGROUND_STRUCTURED_PROMPT_POLICY;
   }
 
   invalidateSessionThread(sessionId: string): void {
@@ -1821,7 +1952,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     await client.start();
     let usage: AuditLogUsage | null = null;
     let structuredOutput: unknown = null;
-    let hasStructuredOutput = false;
+    let structuredOutputCallCount = 0;
     const submitToolName = "withmate_submit_structured_output";
     const submitTool: Tool = {
       name: submitToolName,
@@ -1830,7 +1961,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       skipPermission: true,
       handler: (args) => {
         structuredOutput = args;
-        hasStructuredOutput = true;
+        structuredOutputCallCount += 1;
         return "structured output accepted";
       },
     };
@@ -1848,7 +1979,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     }
 
     try {
-      const response = await extractionSession.sendAndWait({
+      await extractionSession.sendAndWait({
         prompt: [
           input.prompt.userText,
           "",
@@ -1857,21 +1988,32 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           "Do not answer in natural language.",
         ].join("\n"),
       }, input.timeoutMs);
-      const rawText = hasStructuredOutput ? JSON.stringify(structuredOutput) : response?.data.content ?? "";
+      if (structuredOutputCallCount === 0) {
+        throw new Error("Structured output tool was not called for schema submit workflow.");
+      }
+      if (structuredOutputCallCount > 1) {
+        throw new Error("Structured output tool was called multiple times for schema submit workflow.");
+      }
+
+      const validationErrors = validateStructuredPromptSchemaValue(input.prompt.outputSchema, structuredOutput);
+      if (validationErrors.length > 0) {
+        throw new Error(`Structured output tool arguments did not match schema: ${validationErrors.join("; ")}`);
+      }
+
+      const rawText = JSON.stringify(structuredOutput);
       const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.providerId, input.appSettings)
         .catch(() => null);
-      const parsedJson = hasStructuredOutput ? structuredOutput : parseStructuredPromptJson(rawText);
       return {
         threadId: extractionSession.sessionId,
         rawText,
         output: parse(rawText),
-        parsedJson,
-        structuredOutput: hasStructuredOutput ? structuredOutput : null,
+        parsedJson: structuredOutput,
+        structuredOutput,
         rawItemsJson: JSON.stringify({
           type: "copilot-background-response",
           sessionId: extractionSession.sessionId,
           content: rawText,
-          structuredOutputSource: hasStructuredOutput ? "tool" : "assistant-message",
+          structuredOutputSource: "tool",
           quotaSnapshots: providerQuotaTelemetry?.snapshots ?? [],
         }, null, 2),
         usage,
