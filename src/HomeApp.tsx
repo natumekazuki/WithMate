@@ -282,6 +282,7 @@ export default function HomeApp() {
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const memoryManagementRequestIdRef = useRef(0);
   const mateTalkMessageSequenceRef = useRef(0);
+  const mateTalkTurnRequestIdRef = useRef(0);
   const mateEmbeddingSettingsPollingIntervalRef = useRef<number | null>(null);
 
   const beginMemoryManagementRequest = () => {
@@ -291,6 +292,13 @@ export default function HomeApp() {
 
   const isLatestMemoryManagementRequest = (requestId: number) =>
     memoryManagementRequestIdRef.current === requestId;
+
+  const beginMateTalkTurn = () => {
+    mateTalkTurnRequestIdRef.current += 1;
+    return mateTalkTurnRequestIdRef.current;
+  };
+
+  const isLatestMateTalkTurn = (turnId: number) => mateTalkTurnRequestIdRef.current === turnId;
 
   const stopMateEmbeddingSettingsPolling = () => {
     if (mateEmbeddingSettingsPollingIntervalRef.current === null) {
@@ -728,6 +736,7 @@ export default function HomeApp() {
   const homePageClassName = `page-shell home-page${isMonitorWindowMode ? " home-page-monitor-window" : ""}`;
 
   const resetMateTalkState = () => {
+    mateTalkTurnRequestIdRef.current += 1;
     setMateTalkOpen(false);
     setMateTalkInput("");
     setMateTalkMessages([]);
@@ -755,6 +764,7 @@ export default function HomeApp() {
       return;
     }
 
+    const turnId = beginMateTalkTurn();
     const messageSequence = mateTalkMessageSequenceRef.current + 1;
     mateTalkMessageSequenceRef.current = messageSequence;
     const userMessageId = `user-${messageSequence}`;
@@ -774,6 +784,9 @@ export default function HomeApp() {
 
     try {
       const result = await withWithMateApi((api) => api.runMateTalkTurn({ message: normalizedText }));
+      if (!isLatestMateTalkTurn(turnId)) {
+        return;
+      }
       if (!result) {
         throw new Error("メイトークの応答を取得できませんでした。");
       }
@@ -786,6 +799,9 @@ export default function HomeApp() {
         },
       ]);
     } catch (error) {
+      if (!isLatestMateTalkTurn(turnId)) {
+        return;
+      }
       const message = error instanceof Error ? error.message : "メイトークの送信に失敗しました。";
       setMateTalkMessages((current) => [
         ...current,
@@ -796,6 +812,9 @@ export default function HomeApp() {
         },
       ]);
     } finally {
+      if (!isLatestMateTalkTurn(turnId)) {
+        return;
+      }
       setMateTalkSending(false);
     }
   };
