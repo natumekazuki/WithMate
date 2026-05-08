@@ -239,7 +239,7 @@ projection に含めないもの:
 - [ ] 任意 file としての `avatar.png` 読み書きと未設定 placeholder を実装する
 - [ ] 初回 Mate 未作成状態を検出する
 - [ ] 初回 Mate 作成 flow を追加する
-- [ ] `mate_profile_revisions.status` / `mate_profile_revision_sections` を実装し、`ready` revision だけを active にできる制約を storage 層で enforce する
+- [x] `mate_profile_revisions.status` / `mate_profile_revision_sections` を実装し、`ready` revision だけを active にできる制約を storage 層で enforce する
 - [x] generated projection file の hash / byte size / written_at を revision section に保存し、起動時 recovery で SQLite snapshot と実 file の不一致を検出する
 - [ ] `committing_files` / `failed` revision の recovery を実装し、provider sync が不完全 revision を読まないことを保証する
 - [ ] Mate Profile reset 時に provider instruction managed block / managed file から旧 Mate projection を削除または disabled projection に同期し、失敗時は warning と再同期導線を出す
@@ -382,7 +382,7 @@ projection に含めないもの:
 - [x] Growth apply transaction の idempotency key を実装する
 - [ ] Growth apply は final commit 前に current Profile Item / Growth Event state / cursor を更新せず、proposed Profile Item set から projection snapshot を生成する
 - [ ] Growth apply revision は `committing_files` / `ready` state を持ち、provider sync は `ready` な SQLite snapshot だけを読む
-- [ ] `mate_profile_revisions.status` は `staging` / `committing_files` / `ready` / `failed` を持ち、`active_revision_id` は `ready` revision だけを指す
+- [x] `mate_profile_revisions.status` は `staging` / `committing_files` / `ready` / `failed` を持ち、`active_revision_id` は `ready` revision だけを指す
 - [ ] final commit で current Profile Item、Growth Event state、source link、`active_revision_id`、`profile_generation`、cursor を同時に更新する
 - [x] provider sync の read snapshot 境界を実装する
 - [ ] forget 後の `redaction_required` は 4.0.0 MVP では warning state として扱い、session 起動は block しない

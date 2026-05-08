@@ -955,9 +955,15 @@ describe("MateStorage", () => {
       if (!beforeProfile) {
         throw new Error("事前プロフィールが見つからないよ。");
       }
+      if (!beforeProfile.activeRevisionId) {
+        throw new Error("初期の active revision が見つからないよ。");
+      }
 
       const db = new DatabaseSync(dbPath);
       try {
+        const profileRowBefore = db
+          .prepare("SELECT active_revision_id FROM mate_profile WHERE id = 'current'")
+          .get() as { active_revision_id: string | null };
         const revisionCountBefore = db
           .prepare("SELECT COUNT(*) AS count FROM mate_profile_revisions WHERE mate_id = 'current'")
           .get() as { count: number };
@@ -974,8 +980,34 @@ describe("MateStorage", () => {
         );
 
         const afterProfile = storage.getMateProfile();
+        const latestReadyRevision = db
+          .prepare(`
+            SELECT id
+            FROM mate_profile_revisions
+            WHERE mate_id = 'current' AND status = 'ready'
+            ORDER BY seq DESC
+            LIMIT 1
+          `)
+          .get() as { id: string } | undefined;
+        const latestRevision = db
+          .prepare(`
+            SELECT status
+            FROM mate_profile_revisions
+            WHERE mate_id = 'current'
+            ORDER BY seq DESC
+            LIMIT 1
+          `)
+          .get() as { status: string };
+        const activeRevisionInDb = db
+          .prepare("SELECT active_revision_id FROM mate_profile WHERE id = 'current'")
+          .get() as { active_revision_id: string | null };
+
         assert.equal(afterProfile?.profileGeneration, beforeProfile.profileGeneration);
         assert.equal(afterProfile?.activeRevisionId, beforeProfile.activeRevisionId);
+        assert.equal(activeRevisionInDb.active_revision_id, beforeProfile.activeRevisionId);
+        assert.equal(profileRowBefore.active_revision_id, beforeProfile.activeRevisionId);
+        assert.equal(latestReadyRevision?.id, beforeProfile.activeRevisionId);
+        assert.equal(latestRevision.status, "failed");
 
         const revisionCountAfter = db
           .prepare("SELECT COUNT(*) AS count FROM mate_profile_revisions WHERE mate_id = 'current'")
