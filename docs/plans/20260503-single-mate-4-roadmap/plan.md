@@ -342,7 +342,7 @@ projection に含めないもの:
 - [x] `mate_growth_cursors` を実装し、`extraction_cursor` / `consolidation_cursor` / `applied_event_watermark` / `project_digest_cursor` を nullable unique に依存せず管理する
 - [x] Memory Candidate の `growthSourceType` を `mate_growth_events.growth_source_type` に保存する
 - [x] `type = "profile_item"` の `relatedRefs` / `supersedesRefs` を `mate_growth_event_profile_item_links` に保存する
-- [ ] LLM の `newTags` を app 側で正規化 / 類似判定 / duplicate collapse してから catalog に追加する
+- [x] LLM の `newTags` を app 側で正規化 / 類似判定 / duplicate collapse してから catalog に追加する
 - [x] `mate_semantic_embeddings` を実装する
 - [x] local embedding backend / model cache 設定を Settings / storage に追加する
 - [x] Settings に embedding model download button / progress / retry UI を追加する
@@ -406,7 +406,7 @@ projection に含めないもの:
 - [ ] Growth Candidate の誤抽出時に後から修正 / 忘却できることを検証する
 - [ ] Memory Candidate LLM が返した `memories[]` は schema valid なら全件保存され、forgotten tombstone は Memory 生成 input / instruction により再抽出を抑制することを検証する
 - [ ] Memory 生成 run の `.lock` / heartbeat / stale quarantine / cleanup を検証する
-- [ ] tag catalog sanitized metadata 全件 snapshot により既存 tag が再利用されることを検証する
+- [x] tag catalog sanitized metadata 全件 snapshot により既存 tag が再利用されることを検証する
 - [ ] embedding model download button、download 進捗、retry、cache missing / failed 時の SQL-only fallback を検証する
 - [ ] `mate-talk` が Mate source file を直接編集できず、Memory Candidate / Growth apply 経由で Profile Item を更新することを検証する
 - [ ] Project Digest が provider instruction file に常設されず、prompt request の一時 context にだけ注入されることを検証する

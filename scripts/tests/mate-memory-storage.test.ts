@@ -91,6 +91,43 @@ function buildMemory(input: Partial<MateGeneratedMemoryInput>): MateGeneratedMem
   };
 }
 
+function seedTagCatalogTag(dbPath: string, input: {
+  tagType: string;
+  tagValue: string;
+  tagValueNormalized: string;
+  aliases?: string;
+  usageCount?: number;
+}): void {
+  const now = BASE_TIME;
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.prepare(`
+      INSERT INTO mate_memory_tag_catalog (
+        tag_type,
+        tag_value,
+        tag_value_normalized,
+        description,
+        aliases,
+        state,
+        usage_count,
+        created_by,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, '', ?, 'active', ?, 'llm', ?, ?)
+    `).run(
+      input.tagType,
+      input.tagValue,
+      input.tagValueNormalized,
+      input.aliases ?? "",
+      input.usageCount ?? 1,
+      now,
+      now,
+    );
+  } finally {
+    db.close();
+  }
+}
+
 describe("MateMemoryStorage", () => {
   it("saveGeneratedMemories は growth event とタグを保存し、catalog を upsert する", async () => {
     const { dbPath, cleanup } = await createTempDbPath();
@@ -463,6 +500,357 @@ describe("MateMemoryStorage", () => {
           tag_value: "focus",
         }]);
         assert.equal(catalogRow?.usage_count, 2);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("newTags は同一 type で compact 正規化一致した既存 catalog を再利用して新規 catalog 行を作らない", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    let storage: MateMemoryStorage | null = null;
+
+    try {
+      storage = new MateMemoryStorage(dbPath);
+      seedCurrentMateProfile(dbPath);
+      seedTagCatalogTag(dbPath, {
+        tagType: "topic",
+        tagValue: "Front End",
+        tagValueNormalized: "front end",
+        usageCount: 1,
+      });
+
+      storage.saveGeneratedMemories({
+        memories: [buildMemory({
+          id: "mem-compact-tag",
+          statement: "compact タグ正規化",
+          statementFingerprint: "fp-compact-tag",
+          tags: [],
+          newTags: [
+            { type: "topic", value: "front-end", reason: "入力が compact で差異がある" },
+          ],
+        })],
+      });
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const tagRows = db.prepare("SELECT tag_type, tag_value FROM mate_memory_tags WHERE memory_id = ?").all("mem-compact-tag") as Array<
+          { tag_type: string; tag_value: string }
+        >;
+        const catalogRows = db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM mate_memory_tag_catalog
+          WHERE state = 'active' AND tag_type = 'topic'
+        `).get() as { count: number };
+        const catalogUsageRow = db.prepare(`
+          SELECT usage_count, tag_value
+          FROM mate_memory_tag_catalog
+          WHERE tag_type = 'topic' AND tag_value_normalized = 'front end'
+        `).get() as { usage_count: number; tag_value: string };
+
+        assert.deepEqual(tagRows.map((tag) => ({ ...tag })), [{
+          tag_type: "topic",
+          tag_value: "Front End",
+        }]);
+        assert.equal(catalogRows.count, 1);
+        assert.equal(catalogUsageRow.tag_value, "Front End");
+        assert.equal(catalogUsageRow.usage_count, 2);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("newTags は aliases で一致した場合は既存 catalog を再利用する", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    let storage: MateMemoryStorage | null = null;
+
+    try {
+      storage = new MateMemoryStorage(dbPath);
+      seedCurrentMateProfile(dbPath);
+      seedTagCatalogTag(dbPath, {
+        tagType: "topic",
+        tagValue: "frontend",
+        tagValueNormalized: "frontend",
+        aliases: "front-end, front end;fe",
+        usageCount: 3,
+      });
+
+      storage.saveGeneratedMemories({
+        memories: [buildMemory({
+          id: "mem-alias-tag",
+          statement: "alias タグ一致",
+          statementFingerprint: "fp-alias-tag",
+          tags: [],
+          newTags: [
+            { type: "topic", value: "Front End", reason: "aliases に一致する" },
+          ],
+        })],
+      });
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const tagRows = db.prepare("SELECT tag_type, tag_value FROM mate_memory_tags WHERE memory_id = ?").all("mem-alias-tag") as Array<
+          { tag_type: string; tag_value: string }
+        >;
+        const catalogRows = db.prepare(`
+          SELECT COUNT(*) AS count, usage_count
+          FROM mate_memory_tag_catalog
+          WHERE tag_type = 'topic' AND tag_value_normalized = 'frontend'
+        `).get() as { count: number; usage_count: number };
+
+        assert.deepEqual(tagRows.map((tag) => ({ ...tag })), [{
+          tag_type: "topic",
+          tag_value: "frontend",
+        }]);
+        assert.equal(catalogRows.count, 1);
+        assert.equal(catalogRows.usage_count, 4);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("newTags は type が異なる場合は同名でも別 catalog として扱われる", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    let storage: MateMemoryStorage | null = null;
+
+    try {
+      storage = new MateMemoryStorage(dbPath);
+      seedCurrentMateProfile(dbPath);
+      seedTagCatalogTag(dbPath, {
+        tagType: "topic",
+        tagValue: "Front End",
+        tagValueNormalized: "front end",
+        usageCount: 1,
+      });
+
+      storage.saveGeneratedMemories({
+        memories: [buildMemory({
+          id: "mem-type-boundary",
+          statement: "type 境界",
+          statementFingerprint: "fp-type-boundary",
+          tags: [],
+          newTags: [
+            { type: "area", value: "front-end", reason: "別 type ではマージしない" },
+          ],
+        })],
+      });
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const tagRows = db.prepare("SELECT tag_type, tag_value FROM mate_memory_tags WHERE memory_id = ?").all("mem-type-boundary") as Array<
+          { tag_type: string; tag_value: string }
+        >;
+        const catalogRows = db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM mate_memory_tag_catalog
+          WHERE state = 'active'
+        `).get() as { count: number };
+        const topicRow = db.prepare(`
+          SELECT usage_count FROM mate_memory_tag_catalog WHERE tag_type = 'topic' AND tag_value_normalized = 'front end'
+        `).get() as { usage_count: number } | undefined;
+        const areaRow = db.prepare(`
+          SELECT tag_value, tag_value_normalized
+          FROM mate_memory_tag_catalog
+          WHERE tag_type = 'area'
+        `).get() as { tag_value: string; tag_value_normalized: string } | undefined;
+
+        assert.deepEqual(tagRows.map((tag) => ({ ...tag })), [{
+          tag_type: "area",
+          tag_value: "front-end",
+        }]);
+        assert.equal(catalogRows.count, 2);
+        assert.equal(topicRow?.usage_count, 1);
+        assert.equal(areaRow?.tag_value_normalized, "front-end");
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("newTags は catalog の tag_value_normalized が canonical value と異なる場合も既存 catalog を再利用する", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    let storage: MateMemoryStorage | null = null;
+
+    try {
+      storage = new MateMemoryStorage(dbPath);
+      seedCurrentMateProfile(dbPath);
+      seedTagCatalogTag(dbPath, {
+        tagType: "topic",
+        tagValue: "C++",
+        tagValueNormalized: "cpp",
+        usageCount: 5,
+      });
+
+      storage.saveGeneratedMemories({
+        memories: [buildMemory({
+          id: "mem-special-normalized-tag",
+          statement: "特殊 normalized tag",
+          statementFingerprint: "fp-special-normalized-tag",
+          tags: [],
+          newTags: [
+            { type: "topic", value: "cpp", reason: "既存 catalog の normalized value と一致する" },
+          ],
+        })],
+      });
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const tagRows = db.prepare("SELECT tag_type, tag_value, tag_value_normalized FROM mate_memory_tags WHERE memory_id = ?").all(
+          "mem-special-normalized-tag",
+        ) as Array<{ tag_type: string; tag_value: string; tag_value_normalized: string }>;
+        const catalogRows = db.prepare(`
+          SELECT tag_type, tag_value, tag_value_normalized, usage_count
+          FROM mate_memory_tag_catalog
+          WHERE tag_type = 'topic'
+          ORDER BY tag_value_normalized
+        `).all() as Array<{ tag_type: string; tag_value: string; tag_value_normalized: string; usage_count: number }>;
+
+        assert.deepEqual(tagRows.map((tag) => ({ ...tag })), [{
+          tag_type: "topic",
+          tag_value: "C++",
+          tag_value_normalized: "cpp",
+        }]);
+        assert.deepEqual(catalogRows.map((tag) => ({ ...tag })), [{
+          tag_type: "topic",
+          tag_value: "C++",
+          tag_value_normalized: "cpp",
+          usage_count: 6,
+        }]);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("newTags の compact fallback は後続の exact catalog match を妨げない", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    let storage: MateMemoryStorage | null = null;
+
+    try {
+      storage = new MateMemoryStorage(dbPath);
+      seedCurrentMateProfile(dbPath);
+      seedTagCatalogTag(dbPath, {
+        tagType: "topic",
+        tagValue: "Front End",
+        tagValueNormalized: "front end",
+        usageCount: 1,
+      });
+      seedTagCatalogTag(dbPath, {
+        tagType: "topic",
+        tagValue: "frontend",
+        tagValueNormalized: "frontend",
+        usageCount: 2,
+      });
+
+      storage.saveGeneratedMemories({
+        memories: [buildMemory({
+          id: "mem-compact-collision",
+          statement: "compact 衝突タグ",
+          statementFingerprint: "fp-compact-collision",
+          tags: [],
+          newTags: [
+            { type: "topic", value: "front-end", reason: "compact match が複数あるため fallback" },
+            { type: "topic", value: "frontend", reason: "後続 exact match は catalog を使う" },
+          ],
+        })],
+      });
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const tagRows = db.prepare(`
+          SELECT tag_type, tag_value, tag_value_normalized
+          FROM mate_memory_tags
+          WHERE memory_id = ?
+          ORDER BY tag_value_normalized
+        `).all("mem-compact-collision") as Array<{ tag_type: string; tag_value: string; tag_value_normalized: string }>;
+        const catalogRows = db.prepare(`
+          SELECT tag_value, tag_value_normalized, usage_count
+          FROM mate_memory_tag_catalog
+          WHERE tag_type = 'topic'
+          ORDER BY tag_value_normalized
+        `).all() as Array<{ tag_value: string; tag_value_normalized: string; usage_count: number }>;
+
+        assert.deepEqual(tagRows.map((tag) => ({ ...tag })), [{
+          tag_type: "topic",
+          tag_value: "front-end",
+          tag_value_normalized: "front-end",
+        }, {
+          tag_type: "topic",
+          tag_value: "frontend",
+          tag_value_normalized: "frontend",
+        }]);
+        assert.deepEqual(catalogRows.map((tag) => ({ ...tag })), [{
+          tag_value: "Front End",
+          tag_value_normalized: "front end",
+          usage_count: 1,
+        }, {
+          tag_value: "front-end",
+          tag_value_normalized: "front-end",
+          usage_count: 1,
+        }, {
+          tag_value: "frontend",
+          tag_value_normalized: "frontend",
+          usage_count: 3,
+        }]);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("tags / newTags が空の更新では既存 memory_tags を削除する", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    let storage: MateMemoryStorage | null = null;
+
+    try {
+      storage = new MateMemoryStorage(dbPath);
+      seedCurrentMateProfile(dbPath);
+
+      storage.saveGeneratedMemories({
+        memories: [buildMemory({
+          id: "mem-clear-tags",
+          statement: "タグ削除対象",
+          statementFingerprint: "fp-clear-tags",
+          tags: [{ type: "topic", value: "work" }],
+        })],
+      });
+      storage.saveGeneratedMemories({
+        memories: [buildMemory({
+          id: "mem-clear-tags",
+          statement: "タグ削除対象",
+          statementFingerprint: "fp-clear-tags",
+          tags: [],
+          newTags: [],
+        })],
+      });
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const tagCount = db.prepare("SELECT COUNT(*) AS count FROM mate_memory_tags WHERE memory_id = ?").get("mem-clear-tags") as {
+          count: number;
+        };
+
+        assert.equal(tagCount.count, 0);
       } finally {
         db.close();
       }

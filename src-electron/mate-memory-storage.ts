@@ -125,6 +125,20 @@ type NormalizedTag = {
   reason?: string;
 };
 
+type TagCatalogLookupEntry = {
+  tagTypeNormalized: string;
+  tagValue: string;
+  tagValueNormalized: string;
+  tagValueCompactNormalized: string;
+  aliasesNormalized: string[];
+};
+
+type ResolvedCatalogTag = {
+  typeNormalized: string;
+  value: string;
+  valueNormalized: string;
+};
+
 type NormalizedMemory = {
   id: string;
   sourceType: MateSourceType;
@@ -370,6 +384,96 @@ function assertOneOf<T extends string>(value: unknown, candidates: readonly T[],
 
 function normalizeTagValue(value: unknown): string {
   return normalizeText(value).toLowerCase();
+}
+
+function normalizeTagValueCompact(value: string): string {
+  return normalizeText(value).replace(/[\s_-]+/g, "");
+}
+
+function splitTagAliases(rawAliases: string): string[] {
+  return rawAliases
+    .split(/[,\n;]+/)
+    .map((alias) => normalizeText(alias).toLowerCase())
+    .filter((alias) => alias.length > 0);
+}
+
+function buildTagCatalogLookup(rows: TagCatalogRow[]): Map<string, TagCatalogLookupEntry[]> {
+  const lookup = new Map<string, TagCatalogLookupEntry[]>();
+  for (const row of rows) {
+    const typeNormalized = normalizeTagValue(row.tag_type);
+    const value = normalizeText(row.tag_value);
+    const valueNormalized = normalizeTagValue(row.tag_value_normalized || value);
+    if (!typeNormalized || !valueNormalized || !value) {
+      continue;
+    }
+    const entry: TagCatalogLookupEntry = {
+      tagTypeNormalized: typeNormalized,
+      tagValue: value,
+      tagValueNormalized: valueNormalized,
+      tagValueCompactNormalized: normalizeTagValueCompact(valueNormalized),
+      aliasesNormalized: splitTagAliases(row.aliases),
+    };
+    const list = lookup.get(typeNormalized) ?? [];
+    list.push(entry);
+    lookup.set(typeNormalized, list);
+  }
+  return lookup;
+}
+
+function resolveCatalogTag(
+  catalogLookup: Map<string, TagCatalogLookupEntry[]>,
+  inCallTagValueByTypeAndCompact: Map<string, ResolvedCatalogTag>,
+  tag: NormalizedTag,
+): ResolvedCatalogTag {
+  const typeNormalized = tag.typeNormalized;
+  const compactValue = normalizeTagValueCompact(tag.valueNormalized);
+  const inCallKey = `${typeNormalized}\u0000${compactValue}`;
+
+  const candidates = catalogLookup.get(typeNormalized) ?? [];
+  const exactMatch = candidates.find((candidate) => candidate.tagValueNormalized === tag.valueNormalized);
+  if (exactMatch) {
+    const resolved = {
+      typeNormalized: exactMatch.tagTypeNormalized,
+      value: exactMatch.tagValue,
+      valueNormalized: exactMatch.tagValueNormalized,
+    };
+    inCallTagValueByTypeAndCompact.set(inCallKey, resolved);
+    return resolved;
+  }
+
+  const aliasMatches = candidates.filter((candidate) => candidate.aliasesNormalized.includes(tag.valueNormalized));
+  if (aliasMatches.length === 1) {
+    const resolved = {
+      typeNormalized: aliasMatches[0].tagTypeNormalized,
+      value: aliasMatches[0].tagValue,
+      valueNormalized: aliasMatches[0].tagValueNormalized,
+    };
+    inCallTagValueByTypeAndCompact.set(inCallKey, resolved);
+    return resolved;
+  }
+
+  const compactMatches = candidates.filter((candidate) => candidate.tagValueCompactNormalized === compactValue);
+  if (compactMatches.length === 1) {
+    const resolved = {
+      typeNormalized: compactMatches[0].tagTypeNormalized,
+      value: compactMatches[0].tagValue,
+      valueNormalized: compactMatches[0].tagValueNormalized,
+    };
+    inCallTagValueByTypeAndCompact.set(inCallKey, resolved);
+    return resolved;
+  }
+
+  const cached = inCallTagValueByTypeAndCompact.get(inCallKey);
+  if (cached) {
+    return cached;
+  }
+
+  const resolved = {
+    typeNormalized,
+    value: tag.value,
+    valueNormalized: tag.valueNormalized,
+  };
+  return resolved;
 }
 
 function normalizeTags(tags: unknown): NormalizedTag[] {
@@ -743,6 +847,16 @@ const SELECT_MEMORY_TAG_CATALOG_SQL = `
   ORDER BY tag_type, tag_value_normalized
 `;
 
+const SELECT_ACTIVE_TAG_CATALOG_SQL = `
+  SELECT
+    tag_type,
+    tag_value,
+    tag_value_normalized,
+    aliases
+  FROM mate_memory_tag_catalog
+  WHERE state = 'active'
+`;
+
 const FORGET_MEMORY_SQL = `
   UPDATE mate_growth_events
   SET
@@ -863,6 +977,7 @@ export class MateMemoryStorage {
     const insertTagStmt = this.db.prepare(INSERT_MEMORY_TAG_SQL);
     const deleteTagsStmt = this.db.prepare(DELETE_MEMORY_TAGS_SQL);
     const upsertTagCatalogStmt = this.db.prepare(UPSERT_MEMORY_TAG_CATALOG_SQL);
+    const selectActiveTagCatalogStmt = this.db.prepare(SELECT_ACTIVE_TAG_CATALOG_SQL);
     const deleteEventLinksStmt = this.db.prepare(DELETE_EVENT_LINKS_SQL);
     const insertEventLinkStmt = this.db.prepare(INSERT_EVENT_LINK_SQL);
     const deleteEventProfileItemLinksStmt = this.db.prepare(DELETE_PROFILE_ITEM_LINKS_SQL);
@@ -870,6 +985,8 @@ export class MateMemoryStorage {
 
     const results = this.withTransaction(() => {
       const saved: SavedMateMemory[] = [];
+      const catalogLookup = buildTagCatalogLookup(selectActiveTagCatalogStmt.all() as TagCatalogRow[]);
+      const inCallTagValueByTypeAndCompact = new Map<string, ResolvedCatalogTag>();
 
       for (const memory of normalizedInputs) {
         const existingById = findByIdStmt.get(memory.id) as MemoryRow | undefined;
@@ -934,24 +1051,39 @@ export class MateMemoryStorage {
         }
 
         const mergedTags = mergeNormalizedTags(memory.tags, memory.normalizedNewTags);
-        if (memory.tags || memory.normalizedNewTags.length > 0) {
-          deleteTagsStmt.run(memoryId);
-          for (const tag of mergedTags) {
-            insertTagStmt.run(
-              memoryId,
-              tag.typeNormalized,
-              tag.value,
-              tag.valueNormalized,
-              now,
-            );
-            upsertTagCatalogStmt.run(
-              tag.typeNormalized,
-              tag.value,
-              tag.valueNormalized,
-              now,
-              now,
-            );
+        deleteTagsStmt.run(memoryId);
+        const uniqueResolvedTags = new Map<string, ResolvedCatalogTag>();
+        for (const tag of mergedTags) {
+          const resolvedTag = resolveCatalogTag(
+            catalogLookup,
+            inCallTagValueByTypeAndCompact,
+            tag,
+          );
+          const resolvedKey = `${resolvedTag.typeNormalized}\u0000${resolvedTag.valueNormalized}`;
+          if (uniqueResolvedTags.has(resolvedKey)) {
+            continue;
           }
+          uniqueResolvedTags.set(resolvedKey, resolvedTag);
+        }
+
+        for (const resolvedTag of uniqueResolvedTags.values()) {
+          insertTagStmt.run(
+            memoryId,
+            resolvedTag.typeNormalized,
+            resolvedTag.value,
+            resolvedTag.valueNormalized,
+            now,
+          );
+          upsertTagCatalogStmt.run(
+            resolvedTag.typeNormalized,
+            resolvedTag.value,
+            resolvedTag.valueNormalized,
+            now,
+            now,
+          );
+          const compactValue = normalizeTagValueCompact(resolvedTag.valueNormalized);
+          const inCallKey = `${resolvedTag.typeNormalized}\u0000${compactValue}`;
+          inCallTagValueByTypeAndCompact.set(inCallKey, resolvedTag);
         }
 
         if (memory.linksSpecified) {
