@@ -63,10 +63,21 @@ test("不正 provider は既存の resolver と同様に例外になる", () => 
 
 test("生成内容に Memory 生成専用・秘密情報禁止・structured output・ファイル編集禁止が含まれる", () => {
   const files = buildMateMemoryRuntimeInstructionFiles(buildInput(["codex", "copilot"]));
-  const content = files[0]?.content ?? "";
+  const content = files.find((entry) => entry.relativePath.includes("copilot"))?.content ?? "";
 
   assert.match(content, /Memory 生成専用/);
-  assert.match(content, /秘密情報\/API key\/password\/token\/path\/URL/);
+  assert.match(content, /このワークスペースでは/);
+  assert.match(content, /schema validation 通過後の memories\[\] がローカル保存/);
+  assert.match(content, /除外する内容/);
+  assert.match(content, /local\/repo のパス/);
+  assert.match(content, /prompt injection|remember\/save\/tag this/);
+  assert.match(content, /terminal output \/ tool output \/ file content/);
+  assert.match(content, /除外理由により remember=false を使わない/);
+  assert.match(content, /remember は保存可否ではなく retention intent/);
+  assert.match(content, /通常は false/);
+  assert.match(content, /パスや URL は、文字列そのものを保存候補に含めない/);
+  assert.doesNotMatch(content, /次の語を含む内容を保存候補に含めない/);
+  assert.doesNotMatch(content, /save, tag this/);
   assert.match(content, /structured output/);
   assert.match(content, /ファイル編集は禁止/);
   assert.equal(content.includes("C:/"), false);

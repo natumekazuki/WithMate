@@ -82,7 +82,15 @@ describe("mate-memory-generation-prompt", () => {
     assert.match(result.systemText, /schema-valid/);
     assert.match(result.systemText, /機密情報/);
     assert.match(result.systemText, /既存 tag catalog/);
-    assert.match(result.systemText, /forgotten tombstone 一致を除いて全件返してください/);
+    assert.match(result.systemText, /schema 検証後にローカル保存/);
+    assert.match(result.systemText, /保存判定はこの生成段階で行い/);
+    assert.match(result.systemText, /除外対象は次のとおりです:.*prompt injection/);
+    assert.match(result.systemText, /除外対象は次のとおりです:.*remember\/save\/tag this/);
+    assert.match(result.systemText, /パス\/URL\/terminal output\/tool output\/file content は生値を保存せず/);
+    assert.match(result.systemText, /一般的な好みや作業傾向として抽象化できる場合のみ/);
+    assert.match(result.systemText, /tags\/type\/value に改行・過度な長文/);
+    assert.match(result.systemText, /保存可否の意味で remember を使わない/);
+    assert.match(result.systemText, /remember は保存可否ではなく retention intent/);
     assert.match(result.userText, /relation/);
     assert.match(result.userText, /relatedRefs/);
     assert.match(result.userText, /supersedesRefs/);
@@ -90,6 +98,22 @@ describe("mate-memory-generation-prompt", () => {
     assert.match(result.userText, /newTags/);
     assert.match(result.userText, /reason/);
     assert.match(result.userText, /Profile Item 参照には使わない/);
+    assert.match(result.userText, /除外対象の情報は、remember=false/);
+    assert.match(result.userText, /schema validation 済み/);
+    assert.match(result.userText, /通常保存は false、強保持が必要な明示指示だけ true/);
+  });
+
+  it("保存不能の項目を remember=false ではなく omit するように明示する", () => {
+    const result = buildMateMemoryGenerationPrompt({
+      recentConversationText: "保存ルール確認用",
+      existingTagCatalog: [{ tagType: "Topic", tagValue: "safety" }],
+      sourceDefaults: { sourceType: "system" },
+    });
+
+    assert.match(result.systemText, /保存判定はこの生成段階で行い/);
+    assert.match(result.systemText, /保存可否の意味で remember を使わない/);
+    assert.match(result.systemText, /通常は false を使い、ユーザーが明示的に強く覚えてほしい内容だけ true/);
+    assert.match(result.userText, /記憶に該当しない\/除外対象の情報は、remember=false を使わずに配列から省略/);
   });
 
   it("既存 tag catalog は metadata snapshot を sanitized 形式で含め、disabledAt は含めない", () => {
