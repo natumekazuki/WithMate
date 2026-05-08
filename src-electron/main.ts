@@ -2081,9 +2081,8 @@ function requireSessionRuntimeService(): SessionRuntimeService {
   if (!sessionRuntimeService) {
     sessionRuntimeService = new SessionRuntimeService({
       getSession: getDisplaySession,
-        upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSession(session),
+      upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSession(session),
       resolveComposerPreview,
-      resolveSessionCharacter,
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
@@ -3265,10 +3264,6 @@ async function updateCharacter(nextCharacter: CharacterProfile): Promise<Charact
 
 async function deleteCharacter(characterId: string): Promise<void> {
   await requireMainCharacterFacade().deleteCharacter(characterId);
-}
-
-async function resolveSessionCharacter(session: Session): Promise<CharacterProfile | null> {
-  return requireMainCharacterFacade().resolveSessionCharacter(session);
 }
 
 async function previewComposerInput(
