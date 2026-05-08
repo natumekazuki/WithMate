@@ -39,7 +39,7 @@ export type RunSessionTurnInput = {
   sessionMemory: SessionMemory;
   projectMemoryEntries: ProjectMemoryEntry[];
   projectContextText?: string | null;
-  character: CharacterProfile;
+  character?: CharacterProfile;
   providerCatalog: ModelCatalogProvider;
   userMessage: string;
   appSettings: AppSettings;

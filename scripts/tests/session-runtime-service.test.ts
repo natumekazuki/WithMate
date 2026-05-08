@@ -167,7 +167,6 @@ describe("SessionRuntimeService stale retry helpers", () => {
     })), true);
   });
 });
-
 describe("SessionRuntimeService", () => {
   it("resolveProjectContextTextForPrompt の値が composePrompt と runSessionTurn の projectContextText に渡る", async () => {
     const session = createSession();
@@ -280,6 +279,97 @@ describe("SessionRuntimeService", () => {
     assert.equal(composeProjectContextText, runProjectContextText);
   });
 
+  it("resolveSessionCharacter 未提供でも provider turn まで進む", async () => {
+    const session = createSession();
+    let composeCalled = false;
+    let runCalled = false;
+    let hasCharacterKey = false;
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt(input) {
+        composeCalled = true;
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      runSessionTurn(input) {
+        runCalled = true;
+        hasCharacterKey = Object.prototype.hasOwnProperty.call(input, "character");
+        return Promise.resolve(createPartialResult({
+          threadId: "thread-1",
+          assistantText: "完了したよ。",
+        }));
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "お願い" });
+
+    assert.equal(composeCalled, true);
+    assert.equal(runCalled, true);
+    assert.equal(hasCharacterKey, false);
+    assert.equal(result.runState, "idle");
+  });
   it("resolveProjectContextTextForPrompt が await で解決される", async () => {
     const session = createSession();
     const expectedProjectContextText = "Async Project Digest";

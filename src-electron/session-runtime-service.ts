@@ -31,7 +31,7 @@ export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(session: Session): Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
-  resolveSessionCharacter(session: Session): Promise<CharacterProfile | null>;
+  resolveSessionCharacter?: (session: Session) => Promise<CharacterProfile | null>;
   getAppSettings: () => AppSettings;
   resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): {
     snapshot: ModelCatalogSnapshot;
@@ -399,11 +399,6 @@ export class SessionRuntimeService {
       throw new Error(composerPreview.errors[0] ?? "添付の解決に失敗したよ。");
     }
 
-    const character = await this.deps.resolveSessionCharacter(session);
-    if (!character) {
-      throw new Error("キャラクター定義が見つからないよ。");
-    }
-
     const appSettings = this.deps.getAppSettings();
     if (!getProviderAppSettings(appSettings, session.provider).enabled) {
       throw new Error("この provider は Settings で無効になっているよ。");
@@ -421,7 +416,6 @@ export class SessionRuntimeService {
       sessionMemory,
       projectMemoryEntries,
       projectContextText,
-      character,
       providerCatalog: provider,
       userMessage: nextMessage,
       appSettings,
@@ -554,7 +548,6 @@ export class SessionRuntimeService {
         sessionMemory,
         projectMemoryEntries,
         projectContextText,
-        character,
         providerCatalog: provider,
         userMessage: nextMessage,
         appSettings,

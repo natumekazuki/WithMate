@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import {
-  buildNewSession,
-  DEFAULT_CHARACTER_SESSION_COPY,
-  type CharacterProfile,
-} from "../../src/app-state.js";
+import { buildNewSession } from "../../src/app-state.js";
 import { createDefaultSessionMemory, type ProjectMemoryEntry } from "../../src/memory-state.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
@@ -25,19 +21,9 @@ const providerCatalog: ModelCatalogProvider = {
   ],
 };
 
-const character: CharacterProfile = {
-  id: "character-1",
-  name: "Test",
-  description: "",
-  roleMarkdown: "あなたは丁寧に説明する。",
-  notesMarkdown: "",
-  iconPath: "",
-  themeColors: {
-    main: "#000000",
-    sub: "#111111",
-  },
-  sessionCopy: DEFAULT_CHARACTER_SESSION_COPY,
-  updatedAt: "2026-03-28T00:00:00.000Z",
+const characterThemeColors = {
+  main: "#000000",
+  sub: "#111111",
 };
 
 function makeProjectMemoryEntry(partial: Partial<ProjectMemoryEntry> & Pick<ProjectMemoryEntry, "id" | "category" | "detail">): ProjectMemoryEntry {
@@ -72,10 +58,10 @@ describe("composeProviderPrompt", () => {
       workspaceLabel: "workspace",
       workspacePath: "workspace",
       branch: "",
-      characterId: character.id,
-      character: character.name,
+      characterId: "character-1",
+      character: "Test",
       characterIconPath: "",
-      characterThemeColors: character.themeColors,
+      characterThemeColors,
       approvalMode: "untrusted",
     });
     const sessionMemory = {
@@ -97,7 +83,6 @@ describe("composeProviderPrompt", () => {
           detail: "Copilot の image は file attachment として扱う",
         }),
       ],
-      character,
       providerCatalog,
       userMessage: "approval UI の次を進めて",
       appSettings: {
@@ -134,10 +119,10 @@ describe("composeProviderPrompt", () => {
       workspaceLabel: "workspace",
       workspacePath: "workspace",
       branch: "",
-      characterId: character.id,
-      character: character.name,
+      characterId: "character-1",
+      character: "Test",
       characterIconPath: "",
-      characterThemeColors: character.themeColors,
+      characterThemeColors,
       approvalMode: "untrusted",
     });
     const sessionMemory = createDefaultSessionMemory(session);
@@ -147,7 +132,6 @@ describe("composeProviderPrompt", () => {
       sessionMemory,
       projectMemoryEntries: [],
       projectContextText: "  # Digest\n- item 1\n- item 2  ",
-      character,
       providerCatalog,
       userMessage: "次の実装を進めて",
       appSettings: {
@@ -179,10 +163,10 @@ describe("composeProviderPrompt", () => {
       workspaceLabel: "workspace",
       workspacePath: "workspace",
       branch: "",
-      characterId: character.id,
-      character: character.name,
+      characterId: "character-1",
+      character: "Test",
       characterIconPath: "",
-      characterThemeColors: character.themeColors,
+      characterThemeColors,
       approvalMode: "untrusted",
     });
     const sessionMemory = createDefaultSessionMemory(session);
@@ -192,7 +176,6 @@ describe("composeProviderPrompt", () => {
       sessionMemory,
       projectMemoryEntries: [],
       projectContextText: "",
-      character,
       providerCatalog,
       userMessage: "次の実装を進めて",
       appSettings: {
@@ -211,7 +194,6 @@ describe("composeProviderPrompt", () => {
       sessionMemory,
       projectMemoryEntries: [],
       projectContextText: null,
-      character,
       providerCatalog,
       userMessage: "次の実装を進めて",
       appSettings: {
@@ -226,7 +208,6 @@ describe("composeProviderPrompt", () => {
       session,
       sessionMemory,
       projectMemoryEntries: [],
-      character,
       providerCatalog,
       userMessage: "次の実装を進めて",
       appSettings: {
@@ -244,10 +225,10 @@ describe("composeProviderPrompt", () => {
       workspaceLabel: "workspace",
       workspacePath: "workspace",
       branch: "",
-      characterId: character.id,
-      character: character.name,
+      characterId: "character-1",
+      character: "Test",
       characterIconPath: "",
-      characterThemeColors: character.themeColors,
+      characterThemeColors,
       approvalMode: "untrusted",
     });
 
@@ -255,9 +236,8 @@ describe("composeProviderPrompt", () => {
       session,
       sessionMemory: createDefaultSessionMemory(session),
       projectMemoryEntries: [],
-      character,
       providerCatalog,
-      userMessage: "character が消えないことを確認する",
+      userMessage: "system prompt が空でも user input は残ることを確認する",
       appSettings: {
         ...createDefaultAppSettings(),
         systemPromptPrefix: "",
@@ -283,4 +263,3 @@ describe("composeProviderPrompt", () => {
     assertSectionOrder(prompt.logicalPrompt.composedText, ["# User Input"]);
   });
 });
-
