@@ -105,6 +105,12 @@ describe("HomeSettingsContent", () => {
     mateGrowthEventsFeedback?: string;
     mateGrowthEventBusyTarget?: string | null;
     onReloadMateGrowthEvents?: () => void;
+    correctingMateGrowthEventId?: string | null;
+    correctingMateGrowthEventStatement?: string;
+    onBeginCorrectMateGrowthEvent?: (eventId: string, statement: string) => void;
+    onChangeCorrectMateGrowthEventStatement?: (statement: string) => void;
+    onCancelCorrectMateGrowthEvent?: () => void;
+    onCorrectMateGrowthEvent?: (eventId: string, statement: string) => void;
     onDisableMateGrowthEvent?: (eventId: string) => void;
     onForgetMateGrowthEvent?: (eventId: string) => void;
     onUpdateMateGrowthSettings?: (input: unknown) => void;
@@ -207,6 +213,12 @@ describe("HomeSettingsContent", () => {
     canApplyPendingGrowth: params?.canApplyPendingGrowth,
     applyPendingGrowthBusy: params?.applyPendingGrowthBusy,
     onReloadMateGrowthEvents: params?.onReloadMateGrowthEvents ?? noOp,
+    correctingMateGrowthEventId: params?.correctingMateGrowthEventId ?? null,
+    correctingMateGrowthEventStatement: params?.correctingMateGrowthEventStatement ?? "",
+    onBeginCorrectMateGrowthEvent: params?.onBeginCorrectMateGrowthEvent ?? noOp,
+    onChangeCorrectMateGrowthEventStatement: params?.onChangeCorrectMateGrowthEventStatement ?? noOp,
+    onCancelCorrectMateGrowthEvent: params?.onCancelCorrectMateGrowthEvent ?? noOp,
+    onCorrectMateGrowthEvent: params?.onCorrectMateGrowthEvent ?? noOp,
     onDisableMateGrowthEvent: params?.onDisableMateGrowthEvent ?? noOp,
     onForgetMateGrowthEvent: params?.onForgetMateGrowthEvent ?? noOp,
     onUpdateMateGrowthSettings: params?.onUpdateMateGrowthSettings ?? noOp,
@@ -547,11 +559,12 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("候補"));
     assert.ok(html.includes("tone"));
     assert.ok(html.includes("メイトークで明示されたため"));
+    assert.ok(html.includes("修正"));
     assert.ok(html.includes("無効化"));
     assert.ok(html.includes("忘れる"));
   });
 
-  it("Growth Event の無効化 / 忘却ボタンは対象 id を渡す", () => {
+  it("Growth Event の修正 / 無効化 / 忘却ボタンは対象 id を渡す", () => {
     const calls: string[] = [];
     const content = buildSettingsContent({
       mateGrowthEvents: [
@@ -574,23 +587,80 @@ describe("HomeSettingsContent", () => {
           updatedAt: "2026-05-01T09:30:00.000Z",
         },
       ],
+      onBeginCorrectMateGrowthEvent: (eventId, statement) => calls.push(`begin:${eventId}:${statement}`),
       onDisableMateGrowthEvent: (eventId) => calls.push(`disable:${eventId}`),
       onForgetMateGrowthEvent: (eventId) => calls.push(`forget:${eventId}`),
     });
 
     const actionButtons = collectElementsById(content, (element) =>
       element.type === "button" &&
-      (element.props.children === "無効化" || element.props.children === "忘れる"),
+      (element.props.children === "修正" || element.props.children === "無効化" || element.props.children === "忘れる"),
     );
-    assert.equal(actionButtons.length, 2);
+    assert.equal(actionButtons.length, 3);
 
     actionButtons[0]?.props.onClick();
     actionButtons[1]?.props.onClick();
+    actionButtons[2]?.props.onClick();
 
-    assert.deepEqual(calls, ["disable:event-action", "forget:event-action"]);
+    assert.deepEqual(calls, [
+      "begin:event-action:語尾は落ち着かせる",
+      "disable:event-action",
+      "forget:event-action",
+    ]);
   });
 
-  it("Growth Event の無効化 / 忘却ボタンは候補以外では無効", () => {
+  it("Growth Event の修正フォームは修正内容を保存する", () => {
+    const calls: string[] = [];
+    const content = buildSettingsContent({
+      mateGrowthEvents: [
+        {
+          id: "event-correct-action",
+          sourceType: "mate_talk",
+          sourceSessionId: "session-1",
+          growthSourceType: "memory",
+          kind: "update",
+          targetSection: "tone",
+          statement: "修正前イベント",
+          rationalePreview: "",
+          confidence: 0.91,
+          salienceScore: 0.82,
+          recurrenceCount: 2,
+          projectionAllowed: true,
+          state: "candidate",
+          appliedAt: null,
+          createdAt: "2026-05-01T09:00:00.000Z",
+          updatedAt: "2026-05-01T09:30:00.000Z",
+        },
+      ],
+      correctingMateGrowthEventId: "event-correct-action",
+      correctingMateGrowthEventStatement: "修正後イベント",
+      onChangeCorrectMateGrowthEventStatement: (statement) => calls.push(`change:${statement}`),
+      onCancelCorrectMateGrowthEvent: () => calls.push("cancel"),
+      onCorrectMateGrowthEvent: (eventId, statement) => calls.push(`correct:${eventId}:${statement}`),
+    });
+
+    const textarea = collectElementsById(content, (element) =>
+      element.type === "textarea" && element.props.value === "修正後イベント",
+    )[0];
+    assert.equal(textarea?.props.value, "修正後イベント");
+    textarea?.props.onChange({ target: { value: "さらに修正" } });
+
+    const formButtons = collectElementsById(content, (element) =>
+      element.type === "button" &&
+      (element.props.children === "保存" || element.props.children === "キャンセル"),
+    );
+    assert.equal(formButtons.length, 2);
+    formButtons[0]?.props.onClick();
+    formButtons[1]?.props.onClick();
+
+    assert.deepEqual(calls, [
+      "change:さらに修正",
+      "correct:event-correct-action:修正後イベント",
+      "cancel",
+    ]);
+  });
+
+  it("Growth Event の修正 / 無効化 / 忘却ボタンは候補以外では無効", () => {
     const content = buildSettingsContent({
       mateGrowthEvents: [
         {
@@ -612,17 +682,59 @@ describe("HomeSettingsContent", () => {
           updatedAt: "2026-05-01T09:30:00.000Z",
         },
       ],
+      onBeginCorrectMateGrowthEvent: () => {},
+      onCorrectMateGrowthEvent: () => {},
       onDisableMateGrowthEvent: () => {},
       onForgetMateGrowthEvent: () => {},
     });
 
     const actionButtons = collectElementsById(content, (element) =>
       element.type === "button" &&
-      (element.props.children === "無効化" || element.props.children === "忘れる"),
+      (element.props.children === "修正" || element.props.children === "無効化" || element.props.children === "忘れる"),
     );
 
-    assert.equal(actionButtons.length, 2);
+    assert.equal(actionButtons.length, 3);
     assert.ok(actionButtons.every((button) => button.props.disabled));
+  });
+
+  it("Growth Event の修正ボタンと保存ボタンは Growth apply 中に無効", () => {
+    const content = buildSettingsContent({
+      applyPendingGrowthBusy: true,
+      mateGrowthEvents: [
+        {
+          id: "event-correct-busy",
+          sourceType: "mate_talk",
+          sourceSessionId: "session-1",
+          growthSourceType: "memory",
+          kind: "update",
+          targetSection: "tone",
+          statement: "修正対象イベント",
+          rationalePreview: "",
+          confidence: 0.91,
+          salienceScore: 0.82,
+          recurrenceCount: 2,
+          projectionAllowed: true,
+          state: "candidate",
+          appliedAt: null,
+          createdAt: "2026-05-01T09:00:00.000Z",
+          updatedAt: "2026-05-01T09:30:00.000Z",
+        },
+      ],
+      correctingMateGrowthEventId: "event-correct-busy",
+      correctingMateGrowthEventStatement: "修正後イベント",
+      onBeginCorrectMateGrowthEvent: () => {},
+      onCorrectMateGrowthEvent: () => {},
+    });
+
+    const correctButton = collectElementsById(content, (element) =>
+      element.type === "button" && element.props.children === "修正",
+    )[0];
+    const saveButton = collectElementsById(content, (element) =>
+      element.type === "button" && element.props.children === "保存",
+    )[0];
+
+    assert.equal(correctButton?.props.disabled, true);
+    assert.equal(saveButton?.props.disabled, true);
   });
 
   it("applyPendingGrowthBusy=true のとき適用ボタンは無効化され「適用中...」が表示される", () => {

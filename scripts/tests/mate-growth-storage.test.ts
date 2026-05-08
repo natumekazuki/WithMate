@@ -1380,7 +1380,211 @@ describe("MateGrowthStorage", () => {
     }
   });
 
-  it("disableEventForReview / forgetEventForReview は候補以外と active apply 中の操作を拒否する", async () => {
+  it("correctEventForReview は元候補を corrected にして修正版候補と action log を保存する", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      seedProfileItem(dbPath, "profile-correct-1");
+      const related = storage.upsertEvent(buildEvent({
+        id: "event-review-correct-related",
+        statement: "関連先イベント",
+        statementFingerprint: "f-review-correct-related",
+      }));
+      const original = storage.upsertEvent(buildEvent({
+        id: "event-review-correct-action",
+        sourceSessionId: "session-correct",
+        sourceAuditLogId: 123,
+        projectDigestId: "digest-correct",
+        kind: "correction",
+        targetSection: "work_style",
+        statement: "修正前イベント",
+        statementFingerprint: "f-review-correct-action",
+        rationalePreview: "修正前理由",
+        retention: "force",
+        relation: "updates",
+        targetClaimKey: "tone:v1",
+        confidence: 91,
+        salienceScore: 82,
+        recurrenceCount: 3,
+        projectionAllowed: true,
+        relatedRefs: [
+          { type: "memory", id: related.id },
+          { type: "profile_item", id: "profile-correct-1" },
+        ],
+      }));
+      const tagSeedDb = new DatabaseSync(dbPath);
+      try {
+        tagSeedDb.prepare(`
+          INSERT INTO mate_memory_tags (
+            memory_id,
+            tag_type,
+            tag_value,
+            tag_value_normalized,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?)
+        `).run(original.id, "Topic", "呼び方", "呼び方", "2026-05-01T09:05:00.000Z");
+      } finally {
+        tagSeedDb.close();
+      }
+
+      const correctedResult = storage.correctEventForReview(original.id, "修正後イベント");
+
+      assert.equal(correctedResult.event?.id, original.id);
+      assert.equal(correctedResult.event?.state, "corrected");
+      assert.ok(correctedResult.createdEvent?.id);
+      assert.notEqual(correctedResult.createdEvent?.id, original.id);
+      assert.equal(correctedResult.createdEvent?.state, "candidate");
+      assert.equal(correctedResult.createdEvent?.statement, "修正後イベント");
+      assert.equal(correctedResult.createdEvent?.growthSourceType, "user_correction");
+      assert.equal(correctedResult.createdEvent?.rationalePreview, "修正前理由");
+
+      const correctedEventId = correctedResult.createdEvent.id;
+      const db = new DatabaseSync(dbPath);
+      try {
+        const originalRow = db.prepare(`
+          SELECT state, corrected_by_event_id, applied_revision_id, applied_at, disabled_at, forgotten_at
+          FROM mate_growth_events
+          WHERE id = ?
+        `).get(original.id) as {
+          state: string;
+          corrected_by_event_id: string | null;
+          applied_revision_id: string | null;
+          applied_at: string | null;
+          disabled_at: string | null;
+          forgotten_at: string | null;
+        };
+        assert.deepEqual({ ...originalRow }, {
+          state: "corrected",
+          corrected_by_event_id: correctedEventId,
+          applied_revision_id: null,
+          applied_at: null,
+          disabled_at: null,
+          forgotten_at: null,
+        });
+
+        const correctedRow = db.prepare(`
+          SELECT
+            state,
+            growth_source_type,
+            source_session_id,
+            source_audit_log_id,
+            project_digest_id,
+            kind,
+            target_section,
+            statement,
+            rationale_preview,
+            retention,
+            relation,
+            target_claim_key,
+            confidence,
+            salience_score,
+            recurrence_count,
+            projection_allowed
+          FROM mate_growth_events
+          WHERE id = ?
+        `).get(correctedEventId) as {
+          state: string;
+          growth_source_type: string;
+          source_session_id: string | null;
+          source_audit_log_id: number | null;
+          project_digest_id: string | null;
+          kind: string;
+          target_section: string;
+          statement: string;
+          rationale_preview: string;
+          retention: string;
+          relation: string;
+          target_claim_key: string;
+          confidence: number;
+          salience_score: number;
+          recurrence_count: number;
+          projection_allowed: number;
+        };
+        assert.deepEqual({ ...correctedRow }, {
+          state: "candidate",
+          growth_source_type: "user_correction",
+          source_session_id: "session-correct",
+          source_audit_log_id: 123,
+          project_digest_id: "digest-correct",
+          kind: "correction",
+          target_section: "work_style",
+          statement: "修正後イベント",
+          rationale_preview: "修正前理由",
+          retention: "force",
+          relation: "updates",
+          target_claim_key: "tone:v1",
+          confidence: 91,
+          salience_score: 82,
+          recurrence_count: 3,
+          projection_allowed: 1,
+        });
+
+        const eventLinks = db.prepare(`
+          SELECT target_growth_event_id, link_type
+          FROM mate_growth_event_links
+          WHERE source_growth_event_id = ?
+          ORDER BY target_growth_event_id
+        `).all(correctedEventId) as Array<{ target_growth_event_id: string; link_type: string }>;
+        assert.deepEqual(eventLinks.map((link) => ({ ...link })), [{
+          target_growth_event_id: original.id,
+          link_type: "updates",
+        }, {
+          target_growth_event_id: related.id,
+          link_type: "updates",
+        }]);
+
+        const profileLinks = db.prepare(`
+          SELECT profile_item_id, link_type
+          FROM mate_growth_event_profile_item_links
+          WHERE growth_event_id = ?
+        `).all(correctedEventId) as Array<{ profile_item_id: string; link_type: string }>;
+        assert.deepEqual(profileLinks.map((link) => ({ ...link })), [{
+          profile_item_id: "profile-correct-1",
+          link_type: "updates",
+        }]);
+
+        const tags = db.prepare(`
+          SELECT tag_type, tag_value, tag_value_normalized
+          FROM mate_memory_tags
+          WHERE memory_id = ?
+        `).all(correctedEventId) as Array<{
+          tag_type: string;
+          tag_value: string;
+          tag_value_normalized: string;
+        }>;
+        assert.deepEqual(tags.map((tag) => ({ ...tag })), [{
+          tag_type: "Topic",
+          tag_value: "呼び方",
+          tag_value_normalized: "呼び方",
+        }]);
+
+        const action = db.prepare(`
+          SELECT growth_event_id, action, actor, note
+          FROM mate_growth_event_actions
+          WHERE growth_event_id = ?
+        `).get(original.id) as {
+          growth_event_id: string;
+          action: string;
+          actor: string;
+          note: string | null;
+        };
+        assert.deepEqual({ ...action }, {
+          growth_event_id: original.id,
+          action: "correct",
+          actor: "user",
+          note: "修正後イベント",
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("Growth Event review 操作は候補以外と active apply 中の操作を拒否する", async () => {
     const { dbPath, cleanup } = await createTempDbPath();
     const storage = new MateGrowthStorage(dbPath);
     try {
@@ -1397,7 +1601,34 @@ describe("MateGrowthStorage", () => {
         /候補状態の Growth Event だけ操作できるよ。/,
       );
       assert.throws(
+        () => storage.correctEventForReview(applied.id, "修正できない"),
+        /候補状態の Growth Event だけ操作できるよ。/,
+      );
+
+      const duplicateBase = storage.upsertEvent(buildEvent({
+        id: "event-review-duplicate-base",
+        statement: "重複チェック元",
+        statementFingerprint: "f-review-duplicate-base",
+      }));
+      storage.upsertEvent(buildEvent({
+        id: "event-review-duplicate-other",
+        statement: "すでに存在する修正文",
+      }));
+      assert.throws(
+        () => storage.correctEventForReview(duplicateBase.id, "重複チェック元"),
+        /修正内容が元の Growth Event と同じです。/,
+      );
+      assert.throws(
+        () => storage.correctEventForReview(duplicateBase.id, "すでに存在する修正文"),
+        /同じ内容の Growth Event がすでにあります。/,
+      );
+
+      assert.throws(
         () => storage.forgetEventForReview("missing-growth-event"),
+        /Growth Event が見つからないよ。/,
+      );
+      assert.throws(
+        () => storage.correctEventForReview("missing-growth-event", "修正できない"),
         /Growth Event が見つからないよ。/,
       );
 
@@ -1414,6 +1645,10 @@ describe("MateGrowthStorage", () => {
 
       assert.throws(
         () => storage.forgetEventForReview(active.id),
+        /Growth apply はすでに実行中です。/,
+      );
+      assert.throws(
+        () => storage.correctEventForReview(active.id, "修正できない"),
         /Growth apply はすでに実行中です。/,
       );
     } finally {

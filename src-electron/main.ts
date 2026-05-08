@@ -167,6 +167,7 @@ import {
 import type {
   MateGrowthEventActionRequest,
   MateGrowthEventActionResult,
+  MateGrowthEventCorrectionRequest,
   MateGrowthEventListRequest,
   MateGrowthEventListResult,
 } from "../src/mate-growth-events-state.js";
@@ -1117,6 +1118,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 updateMate,
                 applyPendingGrowth,
                 listMateGrowthEvents,
+                correctMateGrowthEvent,
                 disableMateGrowthEvent,
                 forgetMateGrowthEvent,
                 runMateTalkTurn,
@@ -1605,12 +1607,34 @@ async function listMateGrowthEvents(request?: MateGrowthEventListRequest | null)
   return requireMateGrowthStorage().listEventsForReview(request ?? {});
 }
 
+function readMateGrowthReviewStringField(request: unknown, fieldName: "eventId" | "statement"): string {
+  if (request === null || typeof request !== "object") {
+    throw new Error("Growth Event review リクエストが不正です。");
+  }
+  const value = (request as Record<string, unknown>)[fieldName];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`Growth Event review リクエストの ${fieldName} が不正です。`);
+  }
+  return value;
+}
+
 async function disableMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult> {
-  return requireMateGrowthStorage().disableEventForReview(request.eventId);
+  return requireMateGrowthStorage().disableEventForReview(
+    readMateGrowthReviewStringField(request, "eventId"),
+  );
 }
 
 async function forgetMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult> {
-  return requireMateGrowthStorage().forgetEventForReview(request.eventId);
+  return requireMateGrowthStorage().forgetEventForReview(
+    readMateGrowthReviewStringField(request, "eventId"),
+  );
+}
+
+async function correctMateGrowthEvent(request: MateGrowthEventCorrectionRequest): Promise<MateGrowthEventActionResult> {
+  return requireMateGrowthStorage().correctEventForReview(
+    readMateGrowthReviewStringField(request, "eventId"),
+    readMateGrowthReviewStringField(request, "statement"),
+  );
 }
 
 async function applyPendingGrowthCore(): ReturnType<MateGrowthApplyService["applyPendingGrowth"]> {

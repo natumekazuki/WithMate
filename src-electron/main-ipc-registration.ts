@@ -34,6 +34,7 @@ import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
 import type {
   MateGrowthEventActionRequest,
   MateGrowthEventActionResult,
+  MateGrowthEventCorrectionRequest,
   MateGrowthEventListRequest,
   MateGrowthEventListResult,
 } from "../src/mate-growth-events-state.js";
@@ -148,6 +149,7 @@ import {
   WITHMATE_RESET_MATE_CHANNEL,
   WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
   WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL,
+  WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL,
   WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL,
   WITHMATE_FORGET_MATE_GROWTH_EVENT_CHANNEL,
   WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL,
@@ -351,6 +353,7 @@ export type MainIpcRegistrationDeps = {
   updateMate(input: UpdateMateInput): Promise<MateProfile>;
   applyPendingGrowth(): Promise<MateGrowthApplyResult>;
   listMateGrowthEvents(request?: MateGrowthEventListRequest | null): Promise<MateGrowthEventListResult>;
+  correctMateGrowthEvent(request: MateGrowthEventCorrectionRequest): Promise<MateGrowthEventActionResult>;
   disableMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult>;
   forgetMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult>;
   runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
@@ -503,6 +506,7 @@ type MainIpcMateDeps = Pick<
   | "updateMate"
   | "applyPendingGrowth"
   | "listMateGrowthEvents"
+  | "correctMateGrowthEvent"
   | "disableMateGrowthEvent"
   | "forgetMateGrowthEvent"
   | "runMateTalkTurn"
@@ -846,6 +850,9 @@ function registerMateHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcMateDeps
   ipcMain.handle(WITHMATE_APPLY_MATE_GROWTH_CHANNEL, () => deps.applyPendingGrowth());
   ipcMain.handle(WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL, (_event, request?: MateGrowthEventListRequest | null) =>
     deps.listMateGrowthEvents(request),
+  );
+  ipcMain.handle(WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL, (_event, request: MateGrowthEventCorrectionRequest) =>
+    deps.correctMateGrowthEvent(request),
   );
   ipcMain.handle(WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL, (_event, request: MateGrowthEventActionRequest) =>
     deps.disableMateGrowthEvent(request),

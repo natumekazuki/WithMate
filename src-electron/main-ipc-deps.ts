@@ -59,6 +59,7 @@ import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
 import type {
   MateGrowthEventActionRequest,
   MateGrowthEventActionResult,
+  MateGrowthEventCorrectionRequest,
   MateGrowthEventListRequest,
   MateGrowthEventListResult,
 } from "../src/mate-growth-events-state.js";
@@ -221,6 +222,7 @@ export type MainIpcMateDepsArgs = {
   updateMate(input: UpdateMateInput): Promise<MateProfile>;
   applyPendingGrowth(): Promise<MateGrowthApplyResult>;
   listMateGrowthEvents(request?: MateGrowthEventListRequest | null): Promise<MateGrowthEventListResult>;
+  correctMateGrowthEvent(request: MateGrowthEventCorrectionRequest): Promise<MateGrowthEventActionResult>;
   disableMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult>;
   forgetMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult>;
   runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
@@ -366,6 +368,7 @@ export function createMainIpcRegistrationDeps(
     updateMate: args.mate.updateMate,
     applyPendingGrowth: args.mate.applyPendingGrowth,
     listMateGrowthEvents: args.mate.listMateGrowthEvents,
+    correctMateGrowthEvent: args.mate.correctMateGrowthEvent,
     disableMateGrowthEvent: args.mate.disableMateGrowthEvent,
     forgetMateGrowthEvent: args.mate.forgetMateGrowthEvent,
     runMateTalkTurn: args.mate.runMateTalkTurn,

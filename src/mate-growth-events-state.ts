@@ -40,6 +40,12 @@ export type MateGrowthEventActionRequest = {
   eventId: string;
 };
 
+export type MateGrowthEventCorrectionRequest = {
+  eventId: string;
+  statement: string;
+};
+
 export type MateGrowthEventActionResult = {
   event: MateGrowthEventListItem | null;
+  createdEvent?: MateGrowthEventListItem | null;
 };

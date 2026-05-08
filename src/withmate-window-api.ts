@@ -46,6 +46,7 @@ import type { MateGrowthApplyResult } from "./mate-growth-apply-result.js";
 import type {
   MateGrowthEventActionRequest,
   MateGrowthEventActionResult,
+  MateGrowthEventCorrectionRequest,
   MateGrowthEventListRequest,
   MateGrowthEventListResult,
 } from "./mate-growth-events-state.js";
@@ -242,6 +243,7 @@ export type WithMateWindowMateApi = {
   updateMate(input: UpdateMateInput): Promise<MateProfile>;
   applyPendingGrowth(): Promise<MateGrowthApplyResult>;
   listMateGrowthEvents(request?: MateGrowthEventListRequest | null): Promise<MateGrowthEventListResult>;
+  correctMateGrowthEvent(request: MateGrowthEventCorrectionRequest): Promise<MateGrowthEventActionResult>;
   disableMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult>;
   forgetMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult>;
   runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;

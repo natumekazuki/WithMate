@@ -704,6 +704,22 @@ const MARK_EVENT_FORGOTTEN_SQL = `
     AND state = 'candidate'
 `;
 
+const MARK_EVENT_CORRECTED_SQL = `
+  UPDATE mate_growth_events
+  SET
+    state = 'corrected',
+    corrected_by_event_id = ?,
+    applied_revision_id = NULL,
+    applied_at = NULL,
+    disabled_revision_id = NULL,
+    disabled_at = NULL,
+    forgotten_revision_id = NULL,
+    forgotten_at = NULL,
+    updated_at = ?
+  WHERE id = ?
+    AND state = 'candidate'
+`;
+
 const INSERT_EVENT_ACTION_SQL = `
   INSERT INTO mate_growth_event_actions (
     growth_event_id,
@@ -713,6 +729,35 @@ const INSERT_EVENT_ACTION_SQL = `
     note,
     created_at
   ) VALUES (?, ?, 'user', NULL, ?, ?)
+`;
+
+const SELECT_EVENT_LINKS_FOR_COPY_SQL = `
+  SELECT target_growth_event_id, link_type
+  FROM mate_growth_event_links
+  WHERE source_growth_event_id = ?
+`;
+
+const SELECT_PROFILE_ITEM_LINKS_FOR_COPY_SQL = `
+  SELECT profile_item_id, link_type
+  FROM mate_growth_event_profile_item_links
+  WHERE growth_event_id = ?
+`;
+
+const SELECT_MEMORY_TAGS_FOR_COPY_SQL = `
+  SELECT tag_type, tag_value, tag_value_normalized
+  FROM mate_memory_tags
+  WHERE memory_id = ?
+  ORDER BY id
+`;
+
+const INSERT_MEMORY_TAG_FOR_COPY_SQL = `
+  INSERT INTO mate_memory_tags (
+    memory_id,
+    tag_type,
+    tag_value,
+    tag_value_normalized,
+    created_at
+  ) VALUES (?, ?, ?, ?, ?)
 `;
 
 const INSERT_FORGOTTEN_TOMBSTONE_SQL = `
@@ -1796,6 +1841,116 @@ export class MateGrowthStorage {
 
       return {
         event: this.getEventForReviewInTransaction(db, targetId),
+      };
+    });
+  }
+
+  correctEventForReview(eventId: string, statement: string): MateGrowthEventActionResult {
+    const targetId = normalizeText(eventId, "eventId");
+    const nextStatement = normalizeText(statement, "statement");
+    return this.withTransaction((db) => {
+      const event = this.requireCandidateEventForReviewInTransaction(db, targetId);
+      const now = nowIso();
+      const correctedEventId = randomUUID();
+      const correctedFingerprint = sha256Hex(nextStatement);
+      if (event.statement === nextStatement) {
+        throw new Error("修正内容が元の Growth Event と同じです。");
+      }
+      const existingByFingerprint = db.prepare(SELECT_EVENT_BY_FINGERPRINT_SQL).get(correctedFingerprint) as {
+        id: string;
+        state: string;
+      } | undefined;
+
+      if (existingByFingerprint) {
+        if (existingByFingerprint.id === targetId) {
+          throw new Error("修正内容が元の Growth Event と同じです。");
+        }
+        throw new Error("同じ内容の Growth Event がすでにあります。");
+      }
+
+      db.prepare(INSERT_EVENT_SQL).run(
+        correctedEventId,
+        MATE_ID,
+        event.sourceGrowthRunId,
+        event.sourceType,
+        event.sourceSessionId,
+        event.sourceAuditLogId,
+        event.projectDigestId,
+        "user_correction",
+        event.kind,
+        event.targetSection,
+        nextStatement,
+        correctedFingerprint,
+        event.rationalePreview,
+        event.retention,
+        event.relation,
+        event.targetClaimKey,
+        event.confidence,
+        event.salienceScore,
+        event.recurrenceCount,
+        event.projectionAllowed ? 1 : 0,
+        now,
+        now,
+        now,
+        now,
+      );
+
+      const insertLinkStmt = db.prepare(INSERT_EVENT_LINK_SQL);
+      const links = db.prepare(SELECT_EVENT_LINKS_FOR_COPY_SQL).all(targetId) as Array<{
+        target_growth_event_id: string;
+        link_type: string;
+      }>;
+      for (const link of links) {
+        if (link.target_growth_event_id === correctedEventId) {
+          continue;
+        }
+        insertLinkStmt.run(correctedEventId, link.target_growth_event_id, link.link_type, now);
+      }
+      insertLinkStmt.run(correctedEventId, targetId, "updates", now);
+
+      const insertProfileItemLinkStmt = db.prepare(INSERT_PROFILE_ITEM_LINK_SQL);
+      const profileItemLinks = db.prepare(SELECT_PROFILE_ITEM_LINKS_FOR_COPY_SQL).all(targetId) as Array<{
+        profile_item_id: string;
+        link_type: string;
+      }>;
+      for (const link of profileItemLinks) {
+        insertProfileItemLinkStmt.run(correctedEventId, link.profile_item_id, link.link_type, now);
+      }
+
+      const insertMemoryTagStmt = db.prepare(INSERT_MEMORY_TAG_FOR_COPY_SQL);
+      const tagRows = db.prepare(SELECT_MEMORY_TAGS_FOR_COPY_SQL).all(targetId) as Array<{
+        tag_type: string;
+        tag_value: string;
+        tag_value_normalized: string;
+      }>;
+      for (const tagRow of tagRows) {
+        insertMemoryTagStmt.run(
+          correctedEventId,
+          tagRow.tag_type,
+          tagRow.tag_value,
+          tagRow.tag_value_normalized,
+          now,
+        );
+      }
+
+      const result = db.prepare(MARK_EVENT_CORRECTED_SQL).run(
+        correctedEventId,
+        now,
+        targetId,
+      );
+      if (Number(result.changes) === 0) {
+        throw new Error("Growth Event の修正に失敗しました。");
+      }
+      db.prepare(INSERT_EVENT_ACTION_SQL).run(
+        targetId,
+        "correct",
+        nextStatement,
+        now,
+      );
+
+      return {
+        event: this.getEventForReviewInTransaction(db, targetId),
+        createdEvent: this.getEventForReviewInTransaction(db, correctedEventId),
       };
     });
   }

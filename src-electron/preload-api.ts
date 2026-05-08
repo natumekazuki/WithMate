@@ -23,6 +23,7 @@ import {
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
   WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL,
+  WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL,
   WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL,
   WITHMATE_FORGET_MATE_GROWTH_EVENT_CHANNEL,
   WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
@@ -458,6 +459,9 @@ function createMateApi(ipcRenderer: IpcRendererLike): WithMateWindowMateApi {
     },
     listMateGrowthEvents(request) {
       return ipcRenderer.invoke(WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL, request ?? null);
+    },
+    correctMateGrowthEvent(request) {
+      return ipcRenderer.invoke(WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL, request);
     },
     disableMateGrowthEvent(request) {
       return ipcRenderer.invoke(WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL, request);

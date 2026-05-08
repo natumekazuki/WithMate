@@ -173,6 +173,12 @@ export type HomeSettingsContentProps = {
   applyPendingGrowthBusy?: boolean;
   canApplyPendingGrowth?: boolean;
   onReloadMateGrowthEvents?: () => void;
+  correctingMateGrowthEventId?: string | null;
+  correctingMateGrowthEventStatement?: string;
+  onBeginCorrectMateGrowthEvent?: (eventId: string, statement: string) => void;
+  onChangeCorrectMateGrowthEventStatement?: (statement: string) => void;
+  onCancelCorrectMateGrowthEvent?: () => void;
+  onCorrectMateGrowthEvent?: (eventId: string, statement: string) => void;
   onDisableMateGrowthEvent?: (eventId: string) => void;
   onForgetMateGrowthEvent?: (eventId: string) => void;
   onUpdateMateGrowthSettings: (input: UpdateMateGrowthSettingsInput) => void;
@@ -284,6 +290,12 @@ export function HomeSettingsContent({
   applyPendingGrowthBusy = false,
   canApplyPendingGrowth = false,
   onReloadMateGrowthEvents,
+  correctingMateGrowthEventId = null,
+  correctingMateGrowthEventStatement = "",
+  onBeginCorrectMateGrowthEvent,
+  onChangeCorrectMateGrowthEventStatement,
+  onCancelCorrectMateGrowthEvent,
+  onCorrectMateGrowthEvent,
   onDisableMateGrowthEvent,
   onForgetMateGrowthEvent,
   onUpdateMateGrowthSettings,
@@ -697,6 +709,20 @@ export function HomeSettingsContent({
                         </div>
                         <div className="settings-memory-actions">
                           <button
+                            className="launch-toggle"
+                            type="button"
+                            onClick={() => onBeginCorrectMateGrowthEvent?.(event.id, event.statement)}
+                            disabled={
+                              !onBeginCorrectMateGrowthEvent ||
+                              !onCorrectMateGrowthEvent ||
+                              mateGrowthEventBusyTarget !== null ||
+                              applyPendingGrowthBusy ||
+                              event.state !== "candidate"
+                            }
+                          >
+                            修正
+                          </button>
+                          <button
                             className="danger-button"
                             type="button"
                             onClick={() => onDisableMateGrowthEvent?.(event.id)}
@@ -722,6 +748,50 @@ export function HomeSettingsContent({
                           </button>
                         </div>
                       </div>
+                      {correctingMateGrowthEventId === event.id ? (
+                        <div className="settings-field compact">
+                          <label>
+                            <span>修正後の内容</span>
+                            <textarea
+                              value={correctingMateGrowthEventStatement}
+                              rows={3}
+                              disabled={mateGrowthEventBusyTarget !== null}
+                              onChange={(changeEvent) =>
+                                onChangeCorrectMateGrowthEventStatement?.(changeEvent.target.value)}
+                            />
+                          </label>
+                          <div className="settings-actions">
+                            <button
+                              className="launch-toggle"
+                              type="button"
+                              onClick={() => {
+                                const nextStatement = correctingMateGrowthEventStatement.trim();
+                                if (nextStatement.length === 0) {
+                                  return;
+                                }
+                                onCorrectMateGrowthEvent?.(event.id, nextStatement);
+                              }}
+                              disabled={
+                                !onCorrectMateGrowthEvent ||
+                                mateGrowthEventBusyTarget !== null ||
+                                applyPendingGrowthBusy ||
+                                event.state !== "candidate" ||
+                                correctingMateGrowthEventStatement.trim().length === 0
+                              }
+                            >
+                              保存
+                            </button>
+                            <button
+                              className="launch-toggle"
+                              type="button"
+                              onClick={() => onCancelCorrectMateGrowthEvent?.()}
+                              disabled={mateGrowthEventBusyTarget !== null}
+                            >
+                              キャンセル
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                       {event.rationalePreview ? <p className="settings-help">{event.rationalePreview}</p> : null}
                     </article>
                   ))}

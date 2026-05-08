@@ -18,6 +18,7 @@ import {
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
   WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL,
+  WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL,
   WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL,
   WITHMATE_FORGET_MATE_GROWTH_EVENT_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
@@ -403,6 +404,10 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
         limit: request?.limit ?? 20,
       };
     },
+    async correctMateGrowthEvent(request) {
+      calls.push(`correctMateGrowthEvent:${request.eventId}:${request.statement}`);
+      return { event: null };
+    },
     async disableMateGrowthEvent(request) {
       calls.push(`disableMateGrowthEvent:${request.eventId}`);
       return { event: null };
@@ -440,6 +445,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   assert.ok(handlers.has(WITHMATE_CREATE_MATE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_UPDATE_MATE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_APPLY_MATE_GROWTH_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL));
   assert.ok(handlers.has(WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL));
   assert.ok(handlers.has(WITHMATE_FORGET_MATE_GROWTH_EVENT_CHANNEL));
   assert.ok(handlers.has(WITHMATE_RUN_MATE_TALK_TURN_CHANNEL));
@@ -462,6 +468,10 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   assert.deepEqual(
     await handlers.get(WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL)?.({}, { limit: 5 }),
     { events: [], limit: 5 },
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL)?.({}, { eventId: "event-0", statement: "修正後" }),
+    { event: null },
   );
   assert.deepEqual(
     await handlers.get(WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL)?.({}, { eventId: "event-1" }),
@@ -501,6 +511,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     "applyPendingGrowth",
     "getMateState",
     "listMateGrowthEvents:5",
+    "getMateState",
+    "correctMateGrowthEvent:event-0:修正後",
     "getMateState",
     "disableMateGrowthEvent:event-1",
     "getMateState",
@@ -582,6 +594,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     "applyPendingGrowth",
     "getMateState",
     "listMateGrowthEvents:5",
+    "getMateState",
+    "correctMateGrowthEvent:event-0:修正後",
     "getMateState",
     "disableMateGrowthEvent:event-1",
     "getMateState",
@@ -758,6 +772,9 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async listMateGrowthEvents() {
       return { events: [], limit: 20 };
     },
+    async correctMateGrowthEvent() {
+      return { event: null };
+    },
     async disableMateGrowthEvent() {
       return { event: null };
     },
@@ -871,6 +888,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_CREATE_CHARACTER_CHANNEL,
     WITHMATE_UPDATE_CHARACTER_CHANNEL,
     WITHMATE_DELETE_CHARACTER_CHANNEL,
+    WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL,
     WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL,
     WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL,
     WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
