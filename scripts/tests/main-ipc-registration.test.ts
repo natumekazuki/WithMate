@@ -146,7 +146,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     skippedCount: 1,
     revisionId: "rev-001",
   };
-  let mateState: "active" | "not_created" = "active";
+  let mateState: "active" | "not_created" | "draft" | "deleted" = "active";
 
   registerMainIpcHandlers(ipcMain, {
     resolveEventWindow: () => null,
@@ -545,6 +545,40 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   ]);
   assert.deepEqual(auditPageRequests, [{ sessionId: "session-1", request: { cursor: 50, limit: 25 } }]);
   assert.deepEqual(auditPageResult, { entries: [], nextCursor: null, hasMore: false, total: 0 });
+
+  mateState = "draft";
+  const openSettingsCallCountBeforeDraft = calls.filter((call) => call === "openSettings").length;
+  await handlers.get(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL)?.({});
+  assert.strictEqual(
+    calls.filter((call) => call === "openSettings").length,
+    openSettingsCallCountBeforeDraft + 1,
+  );
+  const deleteSessionCallCountBeforeDraft = calls.filter((call) => call === "deleteSession").length;
+  await assert.rejects(
+    async () => handlers.get(WITHMATE_DELETE_SESSION_CHANNEL)?.({}, "session-1"),
+    { message: MATE_NOT_CREATED_ERROR_MESSAGE },
+  );
+  assert.strictEqual(
+    calls.filter((call) => call === "deleteSession").length,
+    deleteSessionCallCountBeforeDraft,
+  );
+
+  mateState = "deleted";
+  const getMateStateCallCountBeforeDeleted = calls.filter((call) => call === "getMateState").length;
+  await handlers.get(WITHMATE_GET_MATE_STATE_CHANNEL)?.();
+  assert.strictEqual(
+    calls.filter((call) => call === "getMateState").length,
+    getMateStateCallCountBeforeDeleted + 1,
+  );
+  const deleteCharacterCallCountBeforeDeleted = calls.filter((call) => call === "deleteCharacter").length;
+  await assert.rejects(
+    async () => handlers.get(WITHMATE_DELETE_CHARACTER_CHANNEL)?.({}, "char-1"),
+    { message: MATE_NOT_CREATED_ERROR_MESSAGE },
+  );
+  assert.strictEqual(
+    calls.filter((call) => call === "deleteCharacter").length,
+    deleteCharacterCallCountBeforeDeleted,
+  );
 });
 
 test("registerMainIpcHandlers は current invoke channel を domain ごとにすべて登録する", () => {

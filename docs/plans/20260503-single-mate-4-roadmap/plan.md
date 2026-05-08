@@ -205,7 +205,7 @@ projection に含めないもの:
 ### Phase 1: Product Surface
 
 - [ ] package version を 4.0.0 に上げる
-- [ ] Mate 未作成または draft 時に Mate 作成と Settings 以外の全機能を block する
+- [x] Mate 未作成または draft 時に Mate 作成と Settings 以外の全機能を block する
 - [ ] 初回 Mate 作成 flow は `name` だけで active 化できる
 - [ ] 初回 Mate 作成時に core / notes / bond / work_style 用の初期 SQLite row と generated projection file を空状態で作成または生成する
 - [ ] avatar 未設定でも placeholder 表示で Mate を active 化できる
@@ -397,7 +397,7 @@ projection に含めないもの:
 ### Phase 6: Validation
 
 - [ ] 初回 Mate 作成から session 起動までを手動検証する
-- [ ] Mate 未作成または draft 時に Mate 作成と Settings 以外が block されることを検証する
+- [x] Mate 未作成または draft 時に Mate 作成と Settings 以外が block されることを検証する
 - [ ] Codex instruction sync の反映タイミングを検証する
 - [ ] Copilot instruction sync の反映タイミングを検証する
 - [ ] provider root が存在しない / 書き込み不可の場合の recovery を検証する

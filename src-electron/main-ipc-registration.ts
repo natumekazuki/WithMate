@@ -209,7 +209,7 @@ async function ensureMateCreated(deps: Pick<MainIpcRegistrationDeps, "getMateSta
   }
 
   const mateState = await deps.getMateState();
-  if (mateState === "not_created") {
+  if (mateState !== "active") {
     throw new Error(MATE_NOT_CREATED_ERROR_MESSAGE);
   }
 }
