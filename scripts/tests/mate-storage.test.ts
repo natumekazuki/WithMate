@@ -17,6 +17,10 @@ function hashSha256(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
 }
 
+function hashSha256Buffer(content: Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
 function createTempPaths(): Promise<{ dbPath: string; userDataPath: string; cleanup: () => Promise<void> }> {
   return mkdtemp(path.join(os.tmpdir(), "withmate-mate-storage-")).then((tmpDir) => ({
     dbPath: path.join(tmpDir, "withmate-v4.db"),
@@ -449,6 +453,90 @@ describe("MateStorage", () => {
       } finally {
         db.close();
       }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("createMate 時に avatar ファイルを指定すると mate/avatar.png へコピーされメタが反映される", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      const sourceAvatarPath = path.join(userDataPath, "seed-avatar.png");
+      const sourceAvatarContent = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02, 0x03]);
+      await mkdir(userDataPath, { recursive: true });
+      await writeFile(sourceAvatarPath, sourceAvatarContent);
+
+      const profile = await storage.createMate({
+        displayName: "Mika",
+        avatarFilePath: sourceAvatarPath,
+      });
+
+      assert.equal(profile.avatarFilePath, "mate/avatar.png");
+      assert.equal(profile.avatarSha256, hashSha256Buffer(sourceAvatarContent));
+      assert.equal(profile.avatarByteSize, sourceAvatarContent.byteLength);
+
+      const storedAvatar = await readFile(path.join(userDataPath, "mate/avatar.png"));
+      assert.equal(storedAvatar.equals(sourceAvatarContent), true);
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const row = db
+          .prepare("SELECT avatar_file_path, avatar_sha256, avatar_byte_size FROM mate_profile WHERE id = 'current'")
+          .get() as {
+            avatar_file_path: string;
+            avatar_sha256: string;
+            avatar_byte_size: number;
+          };
+        assert.equal(row.avatar_file_path, "mate/avatar.png");
+        assert.equal(row.avatar_sha256, hashSha256Buffer(sourceAvatarContent));
+        assert.equal(row.avatar_byte_size, sourceAvatarContent.byteLength);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("setMateAvatar で avatar を更新 / 空文字で未設定状態に戻せる", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      const profile = await storage.createMate({ displayName: "Mika" });
+      const beforeActiveRevision = profile.activeRevisionId;
+      const beforeGeneration = profile.profileGeneration;
+
+      const sourceAvatarPath = path.join(userDataPath, "seed-avatar.png");
+      const sourceAvatarContent = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x04, 0x05, 0x06]);
+      await writeFile(sourceAvatarPath, sourceAvatarContent);
+
+      const updatedProfile = await storage.setMateAvatar({
+        avatarFilePath: sourceAvatarPath,
+      });
+
+      assert.equal(updatedProfile.avatarFilePath, "mate/avatar.png");
+      assert.equal(updatedProfile.avatarSha256, hashSha256Buffer(sourceAvatarContent));
+      assert.equal(updatedProfile.avatarByteSize, sourceAvatarContent.byteLength);
+      assert.equal(updatedProfile.activeRevisionId, beforeActiveRevision);
+      assert.equal(updatedProfile.profileGeneration, beforeGeneration);
+
+      const storedAvatar = await readFile(path.join(userDataPath, "mate/avatar.png"));
+      assert.equal(storedAvatar.equals(sourceAvatarContent), true);
+      assert.deepEqual(await storage.verifyMateProfileFiles(), []);
+
+      const clearedProfile = await storage.setMateAvatar({ avatarFilePath: "" });
+      assert.equal(clearedProfile.avatarFilePath, "");
+      assert.equal(clearedProfile.avatarSha256, "");
+      assert.equal(clearedProfile.avatarByteSize, 0);
+
+      await assert.rejects(() => access(path.join(userDataPath, "mate/avatar.png"), constants.F_OK), /ENOENT/);
     } finally {
       storage?.close();
       await cleanup();

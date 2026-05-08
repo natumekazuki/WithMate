@@ -17,6 +17,7 @@ import {
 const MATE_ID = "current";
 const MATE_DIRECTORY_NAME = "mate";
 const MATE_REVISIONS_DIRECTORY_NAME = "revisions";
+const MATE_AVATAR_FILE_PATH = "mate/avatar.png";
 
 const MATE_SECTION_FILES = [
   { key: "core", relativePath: "mate/core.md" },
@@ -112,6 +113,10 @@ export type CreateMateInput = {
   avatarByteSize?: number;
 };
 
+export type SetMateAvatarInput = {
+  avatarFilePath?: string | null;
+};
+
 export type ApplyMateProfileFileInput = {
   sectionKey: MateSectionKey;
   relativePath: string;
@@ -128,8 +133,8 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function sha256Hex(content: string): string {
-  return createHash("sha256").update(content, "utf8").digest("hex");
+function sha256Hex(content: string | Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
 }
 
 function byteSize(content: string): number {
@@ -252,6 +257,10 @@ export class MateStorage {
 
   private getSectionSnapshotAbsolutePath(snapshotDirPath: string, sectionRelativePath: string): string {
     return path.join(this.userDataPath, snapshotDirPath, path.basename(sectionRelativePath));
+  }
+
+  private getMateAvatarAbsolutePath(): string {
+    return path.join(this.userDataPath, MATE_AVATAR_FILE_PATH);
   }
 
   getMateState(): MateStorageState {
@@ -523,6 +532,17 @@ export class MateStorage {
     }
 
     const createdAt = nowIso();
+    let avatarFilePath = normalized.avatarFilePath;
+    let avatarSha256 = normalized.avatarSha256;
+    let avatarByteSize = normalized.avatarByteSize;
+
+    if (avatarFilePath) {
+      const avatarMeta = await this.loadAvatarFromSourcePath(avatarFilePath);
+      avatarFilePath = avatarMeta.avatarFilePath;
+      avatarSha256 = avatarMeta.avatarSha256;
+      avatarByteSize = avatarMeta.avatarByteSize;
+    }
+
     const revisionId = randomUUID();
     const snapshotDirPath = this.getRevisionSnapshotRelativePath(revisionId);
     const sectionSeed = MATE_SECTION_FILES.map((section) => ({
@@ -570,9 +590,9 @@ export class MateStorage {
           normalized.description,
           normalized.themeMain,
           normalized.themeSub,
-          normalized.avatarFilePath,
-          normalized.avatarSha256,
-          normalized.avatarByteSize,
+          avatarFilePath,
+          avatarSha256,
+          avatarByteSize,
           createdAt,
           createdAt,
         );
@@ -716,6 +736,88 @@ export class MateStorage {
     }
 
     return profile;
+  }
+
+  async setMateAvatar(input: SetMateAvatarInput): Promise<MateProfile> {
+    const profile = this.getMateProfile();
+    if (!profile || profile.state !== "active") {
+      throw new Error("Mate が作成されていないよ。");
+    }
+
+    const sourceAvatarFilePath = input.avatarFilePath?.trim() ?? "";
+    const avatarAbsolutePath = this.getMateAvatarAbsolutePath();
+    let previousAvatar: Buffer | null = null;
+    let nextAvatarFilePath = "";
+    let nextAvatarSha256 = "";
+    let nextAvatarByteSize = 0;
+
+    try {
+      try {
+        previousAvatar = await readFile(avatarAbsolutePath);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT") {
+          throw error;
+        }
+      }
+
+      if (sourceAvatarFilePath) {
+        const avatarContent = await readFile(sourceAvatarFilePath);
+        await mkdir(this.getMateDirectoryPath(), { recursive: true });
+        await writeFile(avatarAbsolutePath, avatarContent);
+
+        nextAvatarFilePath = MATE_AVATAR_FILE_PATH;
+        nextAvatarSha256 = sha256Hex(avatarContent);
+        nextAvatarByteSize = avatarContent.byteLength;
+      } else {
+        await rm(avatarAbsolutePath, { force: true });
+      }
+
+      this.withDb((db) => {
+        db.prepare(`
+          UPDATE mate_profile
+          SET avatar_file_path = ?, avatar_sha256 = ?, avatar_byte_size = ?, updated_at = ?
+          WHERE id = ?
+        `).run(
+          nextAvatarFilePath,
+          nextAvatarSha256,
+          nextAvatarByteSize,
+          nowIso(),
+          MATE_ID,
+        );
+      });
+    } catch (error) {
+      if (sourceAvatarFilePath) {
+        if (previousAvatar === null) {
+          try {
+            await rm(avatarAbsolutePath, { force: true });
+          } catch {
+            // Best-effort rollback.
+          }
+        } else {
+          try {
+            await writeFile(avatarAbsolutePath, previousAvatar);
+          } catch {
+            // Best-effort rollback.
+          }
+        }
+      } else if (previousAvatar !== null) {
+        try {
+          await writeFile(avatarAbsolutePath, previousAvatar);
+        } catch {
+          // Best-effort rollback.
+        }
+      }
+
+      throw error;
+    }
+
+    const updatedProfile = this.getMateProfile();
+    if (!updatedProfile) {
+      throw new Error("プロフィールの再取得に失敗したよ。");
+    }
+
+    return updatedProfile;
   }
 
   async recoverMateProfileFilesFromActiveRevision(): Promise<MateProfileFileMismatch[]> {
@@ -1014,6 +1116,22 @@ export class MateStorage {
 
   private async deleteMateDirectory(): Promise<void> {
     await rm(this.getMateDirectoryPath(), { recursive: true, force: true });
+  }
+
+  private async loadAvatarFromSourcePath(sourceAvatarFilePath: string): Promise<{
+    avatarFilePath: string;
+    avatarSha256: string;
+    avatarByteSize: number;
+  }> {
+    const avatarContent = await readFile(sourceAvatarFilePath);
+    await mkdir(this.getMateDirectoryPath(), { recursive: true });
+    const avatarAbsolutePath = this.getMateAvatarAbsolutePath();
+    await writeFile(avatarAbsolutePath, avatarContent);
+    return {
+      avatarFilePath: MATE_AVATAR_FILE_PATH,
+      avatarSha256: sha256Hex(avatarContent),
+      avatarByteSize: avatarContent.byteLength,
+    };
   }
 
   private async saveRevisionSnapshotFiles(
