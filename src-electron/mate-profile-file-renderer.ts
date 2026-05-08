@@ -32,6 +32,7 @@ const CATEGORY_TITLES: Readonly<Record<MateProfileItemCategory, string>> = {
   project_context: "Project Context",
   note: "Note",
 };
+const PROJECT_DIGEST_MARKDOWN_HEADER = "### Project Digest";
 
 export function renderMateProfileFiles(
   profile: MateProfile,
@@ -49,6 +50,31 @@ export function renderMateProfileFiles(
       content: renderSection(profile, sectionKey, sectionItems),
     };
   });
+}
+
+export function renderProjectDigestProjectionText(
+  projectDigestId: string,
+  options?: { items?: readonly MateProfileItem[] },
+): string {
+  const items = (options?.items ?? []).filter((item) =>
+    item.sectionKey === "project_digest" &&
+    item.projectDigestId === projectDigestId &&
+    item.state === "active" &&
+    item.projectionAllowed
+  );
+
+  const sortedItems = [...items].sort((left, right) => {
+    const keyOrder = left.claimKey.localeCompare(right.claimKey);
+    if (keyOrder !== 0) {
+      return keyOrder;
+    }
+    return right.updatedAt.localeCompare(left.updatedAt);
+  });
+
+  return [
+    PROJECT_DIGEST_MARKDOWN_HEADER,
+    ...sortedItems.map((item) => `- **${item.claimKey}:** ${item.renderedText}`),
+  ].join("\n");
 }
 
 function groupRenderableItems(items: readonly MateProfileItem[]): Map<RenderableSectionKey, MateProfileItem[]> {

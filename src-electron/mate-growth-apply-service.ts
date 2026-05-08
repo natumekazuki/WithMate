@@ -12,7 +12,10 @@ import type {
   MateProfileItemTagInput,
   UpsertMateProfileItemInput,
 } from "./mate-profile-item-storage.js";
-import { renderMateProfileFiles } from "./mate-profile-file-renderer.js";
+import {
+  renderMateProfileFiles,
+  renderProjectDigestProjectionText,
+} from "./mate-profile-file-renderer.js";
 import type { MateStorage } from "./mate-storage.js";
 import type { ProjectDigestProjectionWriter } from "./mate-project-digest-storage.js";
 
@@ -43,16 +46,7 @@ type ProjectDigestLookupService = {
   hasProjectDigest(projectDigestId: string): boolean;
 } & ProjectDigestProjectionWriter;
 
-type ProjectDigestContextRenderer = {
-  buildProjectDigestProjectionText(
-    projectDigestId: string,
-    options?: { items?: readonly MateProfileItem[] },
-  ): string;
-};
-
 export class MateGrowthApplyService {
-  private readonly projectDigestContextService: ProjectDigestContextRenderer;
-
   constructor(
     private readonly growthStorage: MateGrowthStorage,
     private readonly profileItemStorage: MateProfileItemStorage,
@@ -60,10 +54,7 @@ export class MateGrowthApplyService {
     private readonly semanticEmbeddingIndexService?: SemanticEmbeddingIndexService,
     private readonly providerInstructionTargetInvalidator?: ProviderInstructionTargetInvalidator,
     private readonly projectDigestLookupService?: ProjectDigestLookupService,
-    projectDigestContextService?: ProjectDigestContextRenderer,
-  ) {
-    this.projectDigestContextService = projectDigestContextService ?? new DefaultProjectDigestContextRenderer(profileItemStorage);
-  }
+  ) {}
 
   async applyPendingGrowth(options: ApplyPendingGrowthOptions = {}): Promise<ApplyPendingGrowthResult> {
     const events = this.growthStorage.listPendingEvents({
@@ -114,7 +105,6 @@ export class MateGrowthApplyService {
 
     try {
       this.growthStorage.markGrowthApplyRunApplying(lock.runId);
-
       for (const event of skippedEvents) {
         this.growthStorage.markEventSkipped(event.id);
       }
@@ -248,9 +238,7 @@ export class MateGrowthApplyService {
 
     const projectDigestIds = new Set(projectDigestEvents.map((event) => event.projectDigestId));
     for (const projectDigestId of projectDigestIds) {
-      const projectionText = this.projectDigestContextService.buildProjectDigestProjectionText(projectDigestId, {
-        items: params.projectedProfileItems.filter((item) => item.sectionKey === "project_digest" && item.projectDigestId === projectDigestId),
-      });
+      const projectionText = renderProjectDigestProjectionText(projectDigestId, { items: params.projectedProfileItems });
 
       try {
         await params.projectDigestStorage.rewriteProjectDigestProjection({
@@ -326,49 +314,6 @@ export class MateGrowthApplyService {
       // Provider instruction sync state は後続通知なので、profile apply の成功は維持する。
     }
   }
-}
-
-class DefaultProjectDigestContextRenderer implements ProjectDigestContextRenderer {
-  constructor(private readonly profileItemStorage: MateProfileItemStorage) {}
-
-  buildProjectDigestProjectionText(
-    projectDigestId: string,
-    options?: { items?: readonly MateProfileItem[] },
-  ): string {
-    const items = (options?.items ?? this.profileItemStorage.listProfileItems({
-      sectionKey: "project_digest",
-      state: "active",
-      projectionAllowed: true,
-      projectDigestId,
-    })).filter((item) =>
-      item.sectionKey === "project_digest" &&
-      item.projectDigestId === projectDigestId &&
-      item.state === "active" &&
-      item.projectionAllowed
-    );
-
-    return buildProjectDigestProjectionText(projectDigestId, items);
-  }
-}
-
-function buildProjectDigestProjectionText(
-  _projectDigestId: string,
-  items: readonly MateProfileItem[],
-): string {
-  const lines = [
-    "### Project Digest",
-    ...items
-      .slice()
-      .sort((left, right) => {
-        const keyOrder = left.claimKey.localeCompare(right.claimKey);
-        if (keyOrder !== 0) {
-          return keyOrder;
-        }
-        return right.updatedAt.localeCompare(left.updatedAt);
-      })
-      .map((item) => `- **${item.claimKey}:** ${item.renderedText}`),
-  ];
-  return lines.join("\n");
 }
 
 function buildProjectedProfileItemLookupKey(input: UpsertMateProfileItemInput | MateProfileItem): string {

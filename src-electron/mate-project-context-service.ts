@@ -1,4 +1,5 @@
 import type { MateProfileItem, MateProfileItemStorage } from "./mate-profile-item-storage.js";
+import { renderProjectDigestProjectionText } from "./mate-profile-file-renderer.js";
 
 const DEFAULT_PROJECT_CONTEXT_LIMIT = 20;
 const PROJECT_CONTEXT_MARKDOWN_HEADER = "### Project Digest";
@@ -53,7 +54,7 @@ export class MateProjectContextService {
 
     return [
       PROJECT_CONTEXT_MARKDOWN_HEADER,
-      ...selectedItems.map((item) => this.formatItem(item)),
+      ...selectedItems.map((item) => `- **${item.claimKey}:** ${item.renderedText}`),
     ].join("\n");
   }
 
@@ -67,26 +68,7 @@ export class MateProjectContextService {
       projectionAllowed: true,
       projectDigestId,
     });
-    const items = sourceItems.filter((item) =>
-      item.sectionKey === "project_digest" &&
-      item.projectDigestId === projectDigestId &&
-      item.state === "active" &&
-      item.projectionAllowed
-    );
-
-    return [
-      "### Project Digest",
-      ...items
-        .slice()
-        .sort((left, right) => {
-          const keyOrder = left.claimKey.localeCompare(right.claimKey);
-          if (keyOrder !== 0) {
-            return keyOrder;
-          }
-          return right.updatedAt.localeCompare(left.updatedAt);
-        })
-        .map((item) => this.formatItem(item)),
-    ].join("\n");
+    return renderProjectDigestProjectionText(projectDigestId, { items: sourceItems });
   }
 
   private async rankProfileItemsByQuery(items: MateProfileItem[], queryText: string): Promise<MateProfileItem[]> {
@@ -200,7 +182,4 @@ export class MateProjectContextService {
     return value.trim().toLowerCase();
   }
 
-  private formatItem(item: MateProfileItem): string {
-    return `- **${item.claimKey}:** ${item.renderedText}`;
-  }
 }
