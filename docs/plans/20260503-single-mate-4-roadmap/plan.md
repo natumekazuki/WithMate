@@ -237,7 +237,7 @@ projection に含めないもの:
 - [ ] `core` section は 4.0.0 MVP では manual / メイトーク由来 Profile Item だけを source にし、通常 Growth apply の自律更新対象から除外する
 - [ ] `bond` / `work_style` / `project_digest` は active Profile Item から完全再生成し、Markdown 差分編集を行わない
 - [ ] 任意 file としての `avatar.png` 読み書きと未設定 placeholder を実装する
-- [ ] 初回 Mate 未作成状態を検出する
+- [x] 初回 Mate 未作成状態を検出する
 - [x] 初回 Mate 作成 flow を追加する
 - [x] `mate_profile_revisions.status` / `mate_profile_revision_sections` を実装し、`ready` revision だけを active にできる制約を storage 層で enforce する
 - [x] generated projection file の hash / byte size / written_at を revision section に保存し、起動時 recovery で SQLite snapshot と実 file の不一致を検出する

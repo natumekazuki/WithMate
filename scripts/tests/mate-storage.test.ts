@@ -35,6 +35,7 @@ describe("MateStorage", () => {
     try {
       storage = new MateStorage(dbPath, userDataPath);
       assert.equal(storage.getMateState(), "not_created");
+      assert.equal(storage.getMateProfile(), null);
     } finally {
       storage?.close();
       await cleanup();
