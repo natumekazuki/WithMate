@@ -392,7 +392,14 @@ describe("MateStorage", () => {
 
       assert.equal(profile.state, "active");
       assert.equal(profile.displayName, "Mika");
+      assert.equal(profile.description, "");
+      assert.equal(profile.themeMain, "#6f8cff");
+      assert.equal(profile.themeSub, "#6fb8c7");
+      assert.equal(profile.avatarFilePath, "");
+      assert.equal(profile.avatarSha256, "");
+      assert.equal(profile.avatarByteSize, 0);
       assert.equal(profile.sections.length, 4);
+      assert.equal(profile.sections.every((section) => section.filePath.startsWith("mate/")), true);
       assert.equal(profile.activeRevisionId === null, false);
       assert.equal(growthSettings?.enabled, true);
       assert.equal(growthSettings?.autoApplyEnabled, true);

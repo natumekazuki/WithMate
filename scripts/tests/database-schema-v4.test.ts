@@ -119,8 +119,38 @@ describe("database-schema-v4", () => {
       assert.equal(mateProfileColumns.includes("id"), true);
       assert.equal(mateProfileColumns.includes("state"), true);
       assert.equal(mateProfileColumns.includes("display_name"), true);
+      assert.equal(mateProfileColumns.includes("description"), true);
+      assert.equal(mateProfileColumns.includes("theme_main"), true);
+      assert.equal(mateProfileColumns.includes("theme_sub"), true);
+      assert.equal(mateProfileColumns.includes("avatar_file_path"), true);
+      assert.equal(mateProfileColumns.includes("avatar_sha256"), true);
+      assert.equal(mateProfileColumns.includes("avatar_byte_size"), true);
       assert.equal(mateProfileColumns.includes("active_revision_id"), true);
       assert.equal(tableSql(db, "mate_profile").includes("CHECK (id = 'current')"), true);
+      assert.equal(
+        tableSql(db, "mate_profile").includes("description TEXT NOT NULL DEFAULT ''"),
+        true,
+      );
+      assert.equal(
+        tableSql(db, "mate_profile").includes("theme_main TEXT NOT NULL DEFAULT '#6f8cff'"),
+        true,
+      );
+      assert.equal(
+        tableSql(db, "mate_profile").includes("theme_sub TEXT NOT NULL DEFAULT '#6fb8c7'"),
+        true,
+      );
+      assert.equal(
+        tableSql(db, "mate_profile").includes("avatar_file_path TEXT NOT NULL DEFAULT ''"),
+        true,
+      );
+      assert.equal(
+        tableSql(db, "mate_profile").includes("avatar_sha256 TEXT NOT NULL DEFAULT ''"),
+        true,
+      );
+      assert.equal(
+        tableSql(db, "mate_profile").includes("avatar_byte_size INTEGER NOT NULL DEFAULT 0"),
+        true,
+      );
 
       assert.equal(growthSettingsColumns.includes("memory_candidate_mode"), true);
       assert.equal(growthSettingsColumns.includes("apply_interval_minutes"), true);

@@ -207,7 +207,7 @@ projection に含めないもの:
 - [ ] package version を 4.0.0 に上げる
 - [x] Mate 未作成または draft 時に Mate 作成と Settings 以外の全機能を block する
 - [x] 初回 Mate 作成 flow は `name` だけで active 化できる
-- [ ] 初回 Mate 作成時に core / notes / bond / work_style 用の初期 SQLite row と generated projection file を空状態で作成または生成する
+- [x] 初回 Mate 作成時に core / notes / bond / work_style 用の初期 SQLite row と generated projection file を空状態で作成または生成する
 - [x] avatar 未設定でも placeholder 表示で Mate を active 化できる
 - [x] Home の character list を Your Mate 表示へ置き換える
 - [x] New Session / Companion 起動から character picker を削除する
@@ -230,9 +230,9 @@ projection に含めないもの:
 
 ### Phase 2: Mate Storage
 
-- [ ] Mate Profile の保存 root を定義する
-- [ ] Mate Profile metadata 用 SQLite schema / storage を定義する
-- [ ] `withmate-v4.db` / schema version 4 を追加する
+- [x] Mate Profile の保存 root を定義する
+- [x] Mate Profile metadata 用 SQLite schema / storage を定義する
+- [x] `withmate-v4.db` / schema version 4 を追加する
 - [ ] `core.md` / `notes.md` の読み書きと、`bond.md` / `work-style.md` / `project-digests/*.md` の完全再生成 render を実装する
 - [ ] `core` section は 4.0.0 MVP では manual / メイトーク由来 Profile Item だけを source にし、通常 Growth apply の自律更新対象から除外する
 - [ ] `bond` / `work_style` / `project_digest` は active Profile Item から完全再生成し、Markdown 差分編集を行わない
