@@ -385,7 +385,7 @@ projection に含めないもの:
 - [x] `mate_profile_revisions.status` は `staging` / `committing_files` / `ready` / `failed` を持ち、`active_revision_id` は `ready` revision だけを指す
 - [ ] final commit で current Profile Item、Growth Event state、source link、`active_revision_id`、`profile_generation`、cursor を同時に更新する
 - [x] provider sync の read snapshot 境界を実装する
-- [ ] forget 後の `redaction_required` は 4.0.0 MVP では warning state として扱い、session 起動は block しない
+- [x] forget 後の `redaction_required` は 4.0.0 MVP では warning state として扱い、session 起動は block しない
 - [x] `projection_allowed` と provider instruction projection gate を実装する
 - [x] `core` section の operation は `manual` / `mate_talk_explicit` のみ許可し、`growth_auto` 由来を PostPolicyGate で拒否する
 - [ ] 自律反映された Growth Event を最小管理 UI に表示する

@@ -1951,6 +1951,54 @@ describe("syncEnabledProviderInstructionTargets", () => {
       await rm(tempDatabaseDirectory, { recursive: true, force: true });
     }
   });
+
+  it("redaction_required の target は failPolicy=block_session でも同期対象外としてスキップされる", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+
+    try {
+      storage.upsertTarget({
+        providerId: "codex",
+        enabled: true,
+        rootDirectory: workspacePath,
+        instructionRelativePath: path.join(".github", "copilot-instructions.md"),
+        writeMode: "managed_block",
+        failPolicy: "block_session",
+      });
+
+      const db = new DatabaseSync(storagePath);
+      try {
+        db.prepare(`
+          UPDATE provider_instruction_targets
+          SET last_sync_state = 'redaction_required'
+          WHERE provider_id = 'codex'
+            AND target_id = 'main'
+        `).run();
+      } finally {
+        db.close();
+      }
+
+      const profile = createProfile({ displayName: "Mia", description: "sync block_session redaction" });
+      const result = await syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES);
+      const target = storage.getTarget("codex", "main");
+      if (!target) {
+        throw new Error("target がありません");
+      }
+
+      assert.equal(result.targetCount, 1);
+      assert.equal(result.syncedCount, 0);
+      assert.equal(result.failedCount, 0);
+      assert.equal(result.skippedCount, 1);
+      assert.equal(result.runIds.length, 0);
+      assert.equal(target.lastSyncState, "redaction_required");
+    } finally {
+      storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("syncDisabledProviderInstructionTargets", () => {
