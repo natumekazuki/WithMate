@@ -327,8 +327,8 @@ projection に含めないもの:
 - [x] Memory 生成 run の `.lock` は atomic create と heartbeat で管理し、stale run は quarantine してから cleanup する
 - [x] app 起動時に active heartbeat のない stale / completed / failed な Memory 生成 run workspace を cleanup する
 - [x] GrowthModelPort input は current turn と必要 metadata に限定し、session transcript 全量を渡さない
-- [ ] Codex GrowthModelPort では background `outputSchema` を渡す
-- [ ] Copilot GrowthModelPort では schema 付き internal submit tool を渡し、tool args を structured output として扱う
+- [x] Codex GrowthModelPort では background `outputSchema` を渡す
+- [x] Copilot GrowthModelPort では schema 付き internal submit tool を渡し、tool args を structured output として扱う
 - [x] Memory Candidate LLM response は `{ memories: MemoryCandidate[] }` として Zod schema validation を実装する
 - [x] Memory Candidate 生成 LLM が返した `memories[]` を schema validation 後に全件保存する
 - [x] app 側は保存価値、危険性、重複、forgotten tombstone との意味的な一致を保存前に判定せず、schema validation と DB 整合性だけを行う

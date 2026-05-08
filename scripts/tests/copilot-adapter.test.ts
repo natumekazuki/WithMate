@@ -1394,6 +1394,7 @@ describe("CopilotAdapter background structured prompt", () => {
   });
 
   it("schema submit tool 呼び出し時は tool の structured output を使用する", async () => {
+    const expectedSchema = createBackgroundPromptInput().prompt.outputSchema;
     const adapter = new CopilotAdapter() as unknown as {
       getOrCreateClientByAppSettings: (
         providerId: string,
@@ -1428,15 +1429,20 @@ describe("CopilotAdapter background structured prompt", () => {
     };
 
     let handlerCalled = false;
+    let submitSchema: unknown = null;
+    let submitArgs: Record<string, unknown> | null = null;
     adapter.getOrCreateClientByAppSettings = () => ({
       start: async () => undefined,
       createSession: async (config) => {
         const submitTool = config.tools?.find((tool) => tool.name === "withmate_submit_structured_output");
         assert.ok(submitTool);
+        submitSchema = submitTool.parameters;
         return {
           on: () => () => undefined,
           sendAndWait: async () => {
-            const handlerResult = submitTool?.handler({ answer: "ok" });
+            const toolArgs: Record<string, unknown> = { answer: "ok" };
+            submitArgs = toolArgs;
+            const handlerResult = submitTool?.handler(toolArgs);
             handlerCalled = true;
             assert.equal(handlerResult, "structured output accepted");
             return { data: { content: "自然言語の応答" } };
@@ -1451,7 +1457,9 @@ describe("CopilotAdapter background structured prompt", () => {
       return JSON.parse(rawText) as { answer: string };
     });
 
+    assert.deepEqual(submitSchema, expectedSchema);
     assert.equal(handlerCalled, true);
+    assert.deepEqual(submitArgs, { answer: "ok" });
     assert.equal(result.rawText, "{\"answer\":\"ok\"}");
     assert.equal(result.output?.answer, "ok");
     assert.deepEqual(result.parsedJson, { answer: "ok" });

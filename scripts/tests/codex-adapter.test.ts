@@ -7,8 +7,10 @@ import { describe, it } from "node:test";
 
 import { buildNewSession } from "../../src/app-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
+  CodexAdapter,
   buildCodexThreadSettings,
   collectCodexAssistantTextSnapshotsFromEventsForTesting,
   collectCodexAssistantTextFromEventsForTesting,
@@ -21,6 +23,7 @@ import {
   createWorkspaceSnapshotIndex,
   refreshWorkspaceSnapshotIndex,
 } from "../../src-electron/snapshot-ignore.js";
+import type { RunBackgroundStructuredPromptInput } from "../../src-electron/provider-runtime.js";
 
 const CODEX_PROVIDER_CATALOG: ModelCatalogProvider = {
   id: "codex",
@@ -76,6 +79,34 @@ function createSession(options?: {
       allowedAdditionalDirectories,
     }),
     threadId,
+  };
+}
+
+function createCodexBackgroundPromptInput(
+  overrides?: Partial<RunBackgroundStructuredPromptInput>,
+): RunBackgroundStructuredPromptInput {
+  return {
+    providerId: "codex",
+    workspacePath: "F:/repo",
+    appSettings: createDefaultAppSettings(),
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+    timeoutMs: 10_000,
+    prompt: {
+      systemText: "",
+      userText: "extract data",
+      outputSchema: {
+        type: "object",
+        properties: {
+          answer: {
+            type: "string",
+          },
+        },
+        required: ["answer"],
+        additionalProperties: false,
+      },
+    },
+    ...overrides,
   };
 }
 
@@ -272,6 +303,79 @@ describe("CodexAdapter thread settings", () => {
     assert.equal(resumeCalls[0]?.threadId, "thread-1");
     assert.equal(resumeCalls[0]?.options.model, "gpt-5.4-mini");
     assert.equal(resumeCalls[0]?.options.modelReasoningEffort, "low");
+  });
+});
+
+describe("CodexAdapter background structured prompt", () => {
+  it("runBackgroundStructuredPromptFromInput は outputSchema を thread.run の options.outputSchema へ渡す", async () => {
+    const adapter = new CodexAdapter() as unknown as {
+      getClient: (
+        providerId: string,
+        appSettings: unknown,
+      ) => {
+        client: {
+          startThread: (options: { [key: string]: unknown }) => never;
+        };
+        clientKey: string;
+      };
+      runBackgroundStructuredPromptFromInput: <TOutput>(
+        input: RunBackgroundStructuredPromptInput,
+        parse: (rawText: string) => TOutput | null,
+      ) => Promise<{
+        threadId: string | null;
+        rawText: string;
+        output: TOutput | null;
+        parsedJson: unknown | null;
+        structuredOutput: undefined;
+        rawItemsJson: string;
+        usage: null;
+        providerQuotaTelemetry: null;
+      }>;
+    };
+
+    const backgroundInput = createCodexBackgroundPromptInput();
+    let capturedThreadOptions: { [key: string]: unknown } | null = null;
+    let capturedRunOptions: { [key: string]: unknown } | null = null;
+    let capturedRunInput = "";
+    let threadRunCalled = false;
+
+    adapter.getClient = () => {
+      return {
+        client: {
+          startThread: (threadOptions: { [key: string]: unknown }) => {
+            capturedThreadOptions = threadOptions;
+            return {
+              id: "thread-1",
+              run: async (input: string, options: { [key: string]: unknown }) => {
+                threadRunCalled = true;
+                capturedRunOptions = options;
+                capturedRunInput = input;
+                return {
+                  finalResponse: "{\"answer\":\"ok\"}",
+                  usage: null,
+                };
+              },
+            } as never;
+          },
+        },
+        clientKey: "client-key",
+      };
+    };
+
+    const result = await adapter.runBackgroundStructuredPromptFromInput(backgroundInput, (rawText) => {
+      return JSON.parse(rawText) as { answer: string };
+    });
+
+    assert.equal(threadRunCalled, true);
+    assert.equal(capturedThreadOptions?.workingDirectory, backgroundInput.workspacePath);
+    assert.equal(capturedThreadOptions?.skipGitRepoCheck, true);
+    assert.equal(capturedThreadOptions?.sandboxMode, "read-only");
+    assert.equal(capturedThreadOptions?.approvalPolicy, "never");
+    assert.equal(capturedRunOptions?.outputSchema, backgroundInput.prompt.outputSchema);
+    assert.equal(capturedRunInput, `${backgroundInput.prompt.systemText}\n\n${backgroundInput.prompt.userText}`.trim());
+    assert.equal(result.rawText, "{\"answer\":\"ok\"}");
+    assert.equal(result.output?.answer, "ok");
+    assert.deepEqual(result.parsedJson, { answer: "ok" });
   });
 });
 
