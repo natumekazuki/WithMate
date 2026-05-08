@@ -320,8 +320,8 @@ projection に含めないもの:
 - [x] Growth LLM provider / model / depth の fixed priority list を Settings / storage に追加する
 - [x] GrowthModelPort を stub / fake 可能な契約で実装する
 - [x] GrowthModelPort を通常 turn response とは別の background job として実行する
-- [ ] GrowthModelPort は user-facing provider thread を再利用せず、別 background session / utility call として実行する
-- [ ] GrowthModelPort background execution は tool-less utility call を優先し、agent session が必要な provider では schema submit tool 以外の file write / shell write / provider instruction write を許可しない
+- [x] GrowthModelPort は user-facing provider thread を再利用せず、別 background session / utility call として実行する
+- [x] GrowthModelPort background execution は tool-less utility call を優先し、agent session が必要な provider では schema submit tool 以外の file write / shell write / provider instruction write を許可しない
 - [x] Memory 生成専用 `memory-runtime/templates/` と provider native instruction files を作成し、保存方針を固定する
 - [x] Memory 生成 run ごとに `memory-runtime/runs/{runId}/.lock` 付き workspace を作成する
 - [x] Memory 生成 run の `.lock` は atomic create と heartbeat で管理し、stale run は quarantine してから cleanup する
