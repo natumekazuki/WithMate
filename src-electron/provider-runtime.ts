@@ -195,22 +195,57 @@ export type ProviderBackgroundStructuredPromptPolicy = {
   structuredOutputOnly: boolean;
 };
 
+export type ProviderBackgroundStructuredPromptIncompatibilityReason =
+  | "file_write_allowed"
+  | "tool_permission_requests_allowed"
+  | "structured_output_not_guaranteed";
+
+export type ProviderBackgroundStructuredPromptCapability = {
+  compatible: boolean;
+  policy: ProviderBackgroundStructuredPromptPolicy;
+  reasons: readonly ProviderBackgroundStructuredPromptIncompatibilityReason[];
+};
+
 export const MATE_TALK_BACKGROUND_STRUCTURED_PROMPT_POLICY: ProviderBackgroundStructuredPromptPolicy = {
   allowsFileWrite: false,
   allowsToolPermissionRequests: false,
   structuredOutputOnly: true,
 };
 
+export function evaluateMateTalkBackgroundStructuredPromptPolicy(
+  policy: ProviderBackgroundStructuredPromptPolicy,
+): ProviderBackgroundStructuredPromptCapability {
+  const reasons: ProviderBackgroundStructuredPromptIncompatibilityReason[] = [];
+  if (policy.allowsFileWrite) {
+    reasons.push("file_write_allowed");
+  }
+  if (policy.allowsToolPermissionRequests) {
+    reasons.push("tool_permission_requests_allowed");
+  }
+  if (!policy.structuredOutputOnly) {
+    reasons.push("structured_output_not_guaranteed");
+  }
+  return {
+    compatible: reasons.length === 0,
+    policy,
+    reasons,
+  };
+}
+
+export function getMateTalkBackgroundStructuredPromptCapability(
+  adapter: ProviderBackgroundAdapter,
+): ProviderBackgroundStructuredPromptCapability {
+  return evaluateMateTalkBackgroundStructuredPromptPolicy(adapter.getBackgroundStructuredPromptPolicy());
+}
+
 export function isMateTalkBackgroundStructuredPromptPolicyCompatible(
   policy: ProviderBackgroundStructuredPromptPolicy,
 ): boolean {
-  return !policy.allowsFileWrite
-    && !policy.allowsToolPermissionRequests
-    && policy.structuredOutputOnly;
+  return evaluateMateTalkBackgroundStructuredPromptPolicy(policy).compatible;
 }
 
 export function canUseProviderForMateTalkBackgroundPrompt(adapter: ProviderBackgroundAdapter): boolean {
-  return isMateTalkBackgroundStructuredPromptPolicyCompatible(adapter.getBackgroundStructuredPromptPolicy());
+  return getMateTalkBackgroundStructuredPromptCapability(adapter).compatible;
 }
 
 export type ProviderTurnAdapter = ProviderCodingAdapter & ProviderBackgroundAdapter;
