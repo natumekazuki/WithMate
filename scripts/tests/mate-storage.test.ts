@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, readFile } from "node:fs/promises";
 import { mkdtemp, rm } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +12,10 @@ import { describe, it } from "node:test";
 import { MateStorage } from "../../src-electron/mate-storage.js";
 
 const EMPTY_SHA256 = createHash("sha256").update("", "utf8").digest("hex");
+
+function hashSha256(content: string): string {
+  return createHash("sha256").update(content, "utf8").digest("hex");
+}
 
 function createTempPaths(): Promise<{ dbPath: string; userDataPath: string; cleanup: () => Promise<void> }> {
   return mkdtemp(path.join(os.tmpdir(), "withmate-mate-storage-")).then((tmpDir) => ({
@@ -920,6 +925,132 @@ describe("MateStorage", () => {
       assert.equal(afterProfile?.profileGeneration, beforeProfile.profileGeneration);
       assert.equal(afterProfile?.activeRevisionId, beforeProfile.activeRevisionId);
       assert.equal(await readFile(path.join(userDataPath, "mate/bond.md"), "utf8"), "# Bond\n\n- Old\n");
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("verifyMateProfileFiles は一致していれば mismatch が空配列", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+
+      assert.deepEqual(await storage.verifyMateProfileFiles(), []);
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("verifyMateProfileFiles は欠損ファイルを missing として返す", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+
+      const profile = storage.getMateProfile();
+      if (!profile) {
+        throw new Error("作成後プロフィールが見つからないよ。");
+      }
+      const targetSection = profile.sections.find((section) => section.sectionKey === "core");
+      if (!targetSection) {
+        throw new Error("core セクションが見つからないよ。");
+      }
+
+      await rm(path.join(userDataPath, "mate/core.md"));
+      const mismatches = await storage.verifyMateProfileFiles();
+      assert.equal(mismatches.length, 1);
+      assert.equal(mismatches[0].sectionKey, "core");
+      assert.equal(mismatches[0].filePath, "mate/core.md");
+      assert.equal(mismatches[0].reason, "missing");
+      assert.equal(mismatches[0].expectedHash, targetSection.sha256);
+      assert.equal(mismatches[0].actualHash, "");
+      assert.equal(mismatches[0].expectedByteSize, targetSection.byteSize);
+      assert.equal(mismatches[0].actualByteSize, 0);
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("verifyMateProfileFiles は同一でないファイルサイズを size_mismatch で検出する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+
+      await storage.applyProfileFiles({
+        summary: "update core",
+        files: [{ sectionKey: "core", relativePath: "mate/core.md", content: "# Core\n" }],
+      });
+
+      const profile = storage.getMateProfile();
+      if (!profile) {
+        throw new Error("更新後プロフィールが見つからないよ。");
+      }
+      const targetSection = profile.sections.find((section) => section.sectionKey === "core");
+      if (!targetSection) {
+        throw new Error("core セクションが見つからないよ。");
+      }
+
+      const mismatchedContent = "# Core!\n";
+      await writeFile(path.join(userDataPath, "mate/core.md"), mismatchedContent, "utf8");
+
+      const mismatches = await storage.verifyMateProfileFiles();
+      assert.equal(mismatches.length, 1);
+      assert.equal(mismatches[0].sectionKey, "core");
+      assert.equal(mismatches[0].reason, "size_mismatch");
+      assert.equal(mismatches[0].expectedByteSize, targetSection.byteSize);
+      assert.equal(mismatches[0].actualByteSize, Buffer.byteLength(mismatchedContent, "utf8"));
+      assert.equal(mismatches[0].expectedHash, targetSection.sha256);
+      assert.equal(mismatches[0].actualHash, hashSha256(mismatchedContent));
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("verifyMateProfileFiles は同一サイズでハッシュ不一致を hash_mismatch で検出する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+
+      await storage.applyProfileFiles({
+        summary: "update core",
+        files: [{ sectionKey: "core", relativePath: "mate/core.md", content: "# Core\n" }],
+      });
+
+      const profile = storage.getMateProfile();
+      if (!profile) {
+        throw new Error("更新後プロフィールが見つからないよ。");
+      }
+      const targetSection = profile.sections.find((section) => section.sectionKey === "core");
+      if (!targetSection) {
+        throw new Error("core セクションが見つからないよ。");
+      }
+
+      const mismatchedContent = "# core\n";
+      await writeFile(path.join(userDataPath, "mate/core.md"), mismatchedContent, "utf8");
+
+      const mismatches = await storage.verifyMateProfileFiles();
+      assert.equal(mismatches.length, 1);
+      assert.equal(mismatches[0].sectionKey, "core");
+      assert.equal(mismatches[0].reason, "hash_mismatch");
+      assert.equal(mismatches[0].expectedByteSize, targetSection.byteSize);
+      assert.equal(mismatches[0].actualByteSize, targetSection.byteSize);
+      assert.equal(mismatches[0].expectedHash, targetSection.sha256);
+      assert.equal(mismatches[0].actualHash, hashSha256(mismatchedContent));
     } finally {
       storage?.close();
       await cleanup();

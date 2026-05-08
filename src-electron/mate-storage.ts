@@ -73,6 +73,16 @@ export type MateProfileSectionState = {
   updatedAt: string;
 };
 
+export type MateProfileFileMismatch = {
+  sectionKey: MateSectionKey;
+  filePath: string;
+  expectedHash: string;
+  actualHash: string;
+  expectedByteSize: number;
+  actualByteSize: number;
+  reason: "missing" | "hash_mismatch" | "size_mismatch" | "unreadable";
+};
+
 export type MateProfile = {
   id: string;
   state: MateProfileState;
@@ -293,6 +303,64 @@ export class MateStorage {
         })),
       };
     });
+  }
+
+  async verifyMateProfileFiles(): Promise<MateProfileFileMismatch[]> {
+    const profile = this.getMateProfile();
+    if (!profile) {
+      return [];
+    }
+
+    const mismatches: MateProfileFileMismatch[] = [];
+
+    for (const section of profile.sections) {
+      const absolutePath = path.join(this.userDataPath, section.filePath);
+      let content: string;
+
+      try {
+        content = await readFile(absolutePath, "utf8");
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        const missing = code === "ENOENT";
+        mismatches.push({
+          sectionKey: section.sectionKey,
+          filePath: section.filePath,
+          expectedHash: section.sha256,
+          actualHash: "",
+          expectedByteSize: section.byteSize,
+          actualByteSize: 0,
+          reason: missing ? "missing" : "unreadable",
+        });
+        continue;
+      }
+
+      const actualHash = sha256Hex(content);
+      const actualByteSize = byteSize(content);
+
+      if (actualByteSize !== section.byteSize) {
+        mismatches.push({
+          sectionKey: section.sectionKey,
+          filePath: section.filePath,
+          expectedHash: section.sha256,
+          actualHash,
+          expectedByteSize: section.byteSize,
+          actualByteSize,
+          reason: "size_mismatch",
+        });
+      } else if (actualHash !== section.sha256) {
+        mismatches.push({
+          sectionKey: section.sectionKey,
+          filePath: section.filePath,
+          expectedHash: section.sha256,
+          actualHash,
+          expectedByteSize: section.byteSize,
+          actualByteSize,
+          reason: "hash_mismatch",
+        });
+      }
+    }
+
+    return mismatches;
   }
 
   private getReadyActiveRevisionId(db: DatabaseSync, activeRevisionId: string | null): string | null {
