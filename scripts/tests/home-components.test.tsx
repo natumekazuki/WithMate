@@ -82,6 +82,7 @@ describe("HomeSettingsContent", () => {
     mateGrowthBusy?: boolean;
     mateGrowthFeedback?: string;
     onUpdateMateGrowthSettings?: (input: unknown) => void;
+    onResetMate?: () => void;
   };
 
   const collectElementsById = (node: ReactNode, predicate: (element: React.ReactElement) => boolean): React.ReactElement[] => {
@@ -176,7 +177,7 @@ describe("HomeSettingsContent", () => {
     canApplyPendingGrowth: params?.canApplyPendingGrowth,
     applyPendingGrowthBusy: params?.applyPendingGrowthBusy,
     onUpdateMateGrowthSettings: params?.onUpdateMateGrowthSettings ?? noOp,
-    onResetMate: noOp,
+    onResetMate: params?.onResetMate ?? noOp,
     canResetMate: params?.canResetMate ?? false,
     mateResetBusy: params?.mateResetBusy ?? false,
     onSaveSettings: noOp,
@@ -198,6 +199,21 @@ describe("HomeSettingsContent", () => {
     const growthButtonEndIndex = html.indexOf("</button>", growthButtonIndex);
     assert.ok(growthLabelIndex >= 0 && growthButtonIndex >= 0 && growthButtonEndIndex >= 0);
     return html.slice(growthButtonIndex, growthButtonEndIndex + 9);
+  };
+
+  const extractResetButtonElement = (params?: RenderSettingsParams): React.ReactElement => {
+    const content = buildSettingsContent(params);
+    const buttons = collectElementsById(content, (element) => element.type === "button");
+    const resetButton = buttons.find((button) =>
+      button.props.type === "button" &&
+      button.props.className === "launch-toggle danger-button" &&
+      typeof button.props.children === "string"
+    );
+    if (!resetButton) {
+      throw new Error("Mate Reset ボタンが見つからないためテストを実行できません。");
+    }
+
+    return resetButton;
   };
 
   const collectGrowthInputElements = (params?: RenderSettingsParams) => {
@@ -343,6 +359,21 @@ describe("HomeSettingsContent", () => {
     const buttonHtml = extractResetButton(html);
     assert.ok(buttonHtml.includes('disabled=""'));
     assert.ok(buttonHtml.includes("リセット中..."));
+  });
+
+  it("Mate Reset ボタンを押すと onResetMate が呼ばれる", () => {
+    let called = 0;
+    const button = extractResetButtonElement({
+      canResetMate: true,
+      mateResetBusy: false,
+      onResetMate: () => {
+        called += 1;
+      },
+    });
+
+    button.props.onClick?.();
+
+    assert.equal(called, 1);
   });
 
   it("canApplyPendingGrowth=false のとき適用ボタンは無効化される", () => {

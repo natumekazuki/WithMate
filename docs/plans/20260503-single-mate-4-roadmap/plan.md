@@ -245,7 +245,7 @@ projection に含めないもの:
 - [x] Mate Profile reset 時に provider instruction managed block / managed file から旧 Mate projection を削除または disabled projection に同期し、失敗時は warning と再同期導線を出す
 - [ ] existing character storage / catalog API を runtime main path から外す
 - [ ] renderer / main IPC を Mate Profile API へ置き換える
-- [ ] 4.0.0 MVP では reset のみ実装し、export / import と複数端末同期は後続設計へ送る
+- [x] 4.0.0 MVP では reset のみ実装し、export / import と複数端末同期は後続設計へ送る
 
 主な実装境界:
 
