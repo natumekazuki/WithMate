@@ -241,7 +241,7 @@ projection に含めないもの:
 - [ ] 初回 Mate 作成 flow を追加する
 - [x] `mate_profile_revisions.status` / `mate_profile_revision_sections` を実装し、`ready` revision だけを active にできる制約を storage 層で enforce する
 - [x] generated projection file の hash / byte size / written_at を revision section に保存し、起動時 recovery で SQLite snapshot と実 file の不一致を検出する
-- [ ] `committing_files` / `failed` revision の recovery を実装し、provider sync が不完全 revision を読まないことを保証する
+- [x] `committing_files` / `failed` revision の recovery を実装し、provider sync が不完全 revision を読まないことを保証する
 - [ ] Mate Profile reset 時に provider instruction managed block / managed file から旧 Mate projection を削除または disabled projection に同期し、失敗時は warning と再同期導線を出す
 - [ ] existing character storage / catalog API を runtime main path から外す
 - [ ] renderer / main IPC を Mate Profile API へ置き換える
@@ -381,7 +381,7 @@ projection に含めないもの:
 - [ ] Growth apply / correct / forget / disable の単一 writer lock を実装する
 - [x] Growth apply transaction の idempotency key を実装する
 - [ ] Growth apply は final commit 前に current Profile Item / Growth Event state / cursor を更新せず、proposed Profile Item set から projection snapshot を生成する
-- [ ] Growth apply revision は `committing_files` / `ready` state を持ち、provider sync は `ready` な SQLite snapshot だけを読む
+- [x] Growth apply revision は `committing_files` / `ready` state を持ち、provider sync は `ready` な SQLite snapshot だけを読む
 - [x] `mate_profile_revisions.status` は `staging` / `committing_files` / `ready` / `failed` を持ち、`active_revision_id` は `ready` revision だけを指す
 - [ ] final commit で current Profile Item、Growth Event state、source link、`active_revision_id`、`profile_generation`、cursor を同時に更新する
 - [x] provider sync の read snapshot 境界を実装する
@@ -410,7 +410,7 @@ projection に含めないもの:
 - [ ] embedding model download button、download 進捗、retry、cache missing / failed 時の SQL-only fallback を検証する
 - [ ] `mate-talk` が Mate source file を直接編集できず、Memory Candidate / Growth apply 経由で Profile Item を更新することを検証する
 - [ ] Project Digest が provider instruction file に常設されず、prompt request の一時 context にだけ注入されることを検証する
-- [ ] Growth apply 中の crash recovery で `committing_files` revision が復旧され、provider sync が `ready` snapshot だけを読むことを検証する
+- [x] Growth apply 中の crash recovery で `committing_files` revision が復旧され、provider sync が `ready` snapshot だけを読むことを検証する
 - [ ] Growth Review UI が承認 queue ではなく、検索 / 最近覚えたこと / 忘却 / 無効化に絞られていることを確認する
 - [ ] personal instruction file が repo に混ざらないことを検証する
 - [ ] package 4.0.0 build / typecheck / targeted tests を通す
