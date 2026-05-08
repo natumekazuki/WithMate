@@ -786,27 +786,38 @@ describe("HomeMateSetupPanel", () => {
 describe("HomeLaunchDialog", () => {
   const noOp = (..._args: unknown[]) => undefined;
 
-  it("セッション起動ダイアログにキャラ選択 UI が含まれない", () => {
-    const html = renderToStaticMarkup(
-      <HomeLaunchDialog
-        open={true}
-        mode="session"
-        title="demo"
-        workspace={null}
-        launchWorkspacePathLabel="workspace"
-        enabledLaunchProviders={[{ id: "codex", label: "Codex" }]}
-        selectedLaunchProviderId="codex"
-        canStartSession={true}
-        launchFeedback=""
-        launchStarting={false}
-        onClose={noOp}
-        onSelectMode={noOp}
-        onChangeTitle={noOp}
-        onBrowseWorkspace={noOp}
-        onSelectProvider={noOp}
-        onStartSession={noOp}
-      />,
-    );
+  const renderHomeLaunchDialog = (mode: "session" | "companion") => renderToStaticMarkup(
+    <HomeLaunchDialog
+      open={true}
+      mode={mode}
+      title="demo"
+      workspace={null}
+      launchWorkspacePathLabel="workspace"
+      enabledLaunchProviders={[{ id: "codex", label: "Codex" }]}
+      selectedLaunchProviderId="codex"
+      canStartSession={true}
+      launchFeedback=""
+      launchStarting={false}
+      onClose={noOp}
+      onSelectMode={noOp}
+      onChangeTitle={noOp}
+      onBrowseWorkspace={noOp}
+      onSelectProvider={noOp}
+      onStartSession={noOp}
+    />,
+  );
+
+  it("session mode でダイアログにキャラ選択 UI が含まれない", () => {
+    const html = renderHomeLaunchDialog("session");
+
+    assert.ok(!html.includes("launch-search-row"));
+    assert.ok(!html.includes("キャラクターを選ぶ"));
+    assert.ok(!html.includes("キャラを選んでね"));
+    assert.ok(!html.includes("Add Character"));
+  });
+
+  it("companion mode でもダイアログにキャラ選択 UI が含まれない", () => {
+    const html = renderHomeLaunchDialog("companion");
 
     assert.ok(!html.includes("launch-search-row"));
     assert.ok(!html.includes("キャラクターを選ぶ"));
@@ -887,7 +898,7 @@ describe("HomeRightPane", () => {
     />,
   );
 
-  it("Your Mate タブは Characters / Add Character を含まない", () => {
+  it("Your Mate タブは character list ではなく Your Mate を表示し Characters / Add Character を含まない", () => {
     const html = renderHomeRightPane("mate", {
       id: "mate-1",
       state: "active",

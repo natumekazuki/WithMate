@@ -209,8 +209,8 @@ projection に含めないもの:
 - [x] 初回 Mate 作成 flow は `name` だけで active 化できる
 - [ ] 初回 Mate 作成時に core / notes / bond / work_style 用の初期 SQLite row と generated projection file を空状態で作成または生成する
 - [x] avatar 未設定でも placeholder 表示で Mate を active 化できる
-- [ ] Home の character list を Your Mate 表示へ置き換える
-- [ ] New Session / Companion 起動から character picker を削除する
+- [x] Home の character list を Your Mate 表示へ置き換える
+- [x] New Session / Companion 起動から character picker を削除する
 - [ ] Character Editor を Mate Profile 画面へ置き換える
 - [ ] Mate を対話的に育てる `mate-talk` 画面を表示名「メイトーク」として追加する
 - [ ] `mate-talk` は app data 配下の read-only projection workspace で provider session を起動する
