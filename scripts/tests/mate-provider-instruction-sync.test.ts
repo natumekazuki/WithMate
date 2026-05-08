@@ -2098,12 +2098,40 @@ describe("syncDisabledProviderInstructionTargets", () => {
         writeMode: "managed_block",
         failPolicy: "warn_continue",
       });
+      const setupDb = new DatabaseSync(storagePath);
+      try {
+        setupDb.prepare(`
+          UPDATE provider_instruction_targets
+          SET last_synced_revision_id = ?
+          WHERE provider_id = 'codex'
+            AND target_id = 'main'
+        `).run("legacy-revision");
+      } finally {
+        setupDb.close();
+      }
+      const previouslySyncedTarget = storage.getTarget("codex", "main");
+      if (!previouslySyncedTarget) {
+        throw new Error("target がありません");
+      }
+      assert.equal(previouslySyncedTarget.lastSyncedRevisionId, "legacy-revision");
 
       const result = await syncDisabledProviderInstructionTargets(storage, FILE_DEPENDENCIES);
       const updated = await readFile(targetPath, "utf8");
       const target = storage.getTarget("codex", "main");
       if (!target) {
         throw new Error("target がありません");
+      }
+      const db = new DatabaseSync(storagePath);
+      let latestSyncRun: { mate_revision_id: string | null } | undefined;
+      try {
+        latestSyncRun = db
+          .prepare("SELECT mate_revision_id FROM provider_instruction_sync_runs WHERE id = ?")
+          .get(target.lastSyncRunId) as { mate_revision_id: string | null } | undefined;
+      } finally {
+        db.close();
+      }
+      if (!latestSyncRun) {
+        throw new Error("sync run が見つかりません");
       }
 
       assert.equal(result.targetCount, 1);
@@ -2113,6 +2141,8 @@ describe("syncDisabledProviderInstructionTargets", () => {
       assert.equal(result.runIds.length, 1);
       assert.equal(result.runIds[0], target.lastSyncRunId);
       assert.equal(target.lastSyncState, "synced");
+      assert.equal(target.lastSyncedRevisionId, null);
+      assert.equal(latestSyncRun.mate_revision_id, null);
       assert.equal(countProfileBlocks(updated), 2);
       assert.equal(updated.includes("User note"), true);
       assert.equal(updated.includes("Footer"), true);
