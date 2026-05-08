@@ -89,6 +89,7 @@ export const WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL = "withmate:get-mate-e
 export const WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL = "withmate:list-provider-instruction-targets";
 export const WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL = "withmate:upsert-provider-instruction-target";
 export const WITHMATE_APPLY_MATE_GROWTH_CHANNEL = "withmate:apply-mate-growth";
+export const WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL = "withmate:list-mate-growth-events";
 export const WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL = "withmate:start-mate-embedding-download";
 export const WITHMATE_DELETE_SESSION_MEMORY_CHANNEL = "withmate:delete-session-memory";
 export const WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL = "withmate:delete-project-memory-entry";

@@ -1208,6 +1208,49 @@ describe("MateGrowthStorage", () => {
     }
   });
 
+  it("listEventsForReview は Growth Event を状態で絞り込み、表示用 DTO に変換する", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      const candidate = storage.upsertEvent(buildEvent({
+        id: "event-review-candidate",
+        statement: "候補イベント",
+        statementFingerprint: "f-review-candidate",
+        rationalePreview: "候補理由",
+      }));
+      const applied = storage.upsertEvent(buildEvent({
+        id: "event-review-applied",
+        statement: "適用イベント",
+        statementFingerprint: "f-review-applied",
+      }));
+      const disabled = storage.upsertEvent(buildEvent({
+        id: "event-review-disabled",
+        statement: "無効イベント",
+        statementFingerprint: "f-review-disabled",
+      }));
+
+      storage.markEventApplied(applied.id);
+      storage.markEventSkipped(disabled.id);
+
+      const all = storage.listEventsForReview({ limit: 10 });
+      assert.deepEqual(
+        all.events.map((event) => event.id).sort(),
+        [candidate.id, applied.id, disabled.id].sort(),
+      );
+      assert.equal(all.limit, 10);
+      assert.equal(all.events.find((event) => event.id === candidate.id)?.rationalePreview, "候補理由");
+      assert.equal(all.events.find((event) => event.id === applied.id)?.state, "applied");
+      assert.equal(all.events.find((event) => event.id === disabled.id)?.state, "disabled");
+
+      const candidatesOnly = storage.listEventsForReview({ states: ["candidate"], limit: 5 });
+      assert.deepEqual(candidatesOnly.events.map((event) => event.id), [candidate.id]);
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
   it("markEventApplied / markEventSkipped はそれぞれ state を更新する", async () => {
     const { dbPath, cleanup } = await createTempDbPath();
     const storage = new MateGrowthStorage(dbPath);

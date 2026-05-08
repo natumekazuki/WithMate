@@ -4,6 +4,12 @@ import type { DatabaseSync } from "node:sqlite";
 import { CREATE_V4_SCHEMA_SQL } from "./database-schema-v4.js";
 import { ensureSourceTypeCheckSupportsMateTalk } from "./mate-source-type-migration.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+import type {
+  MateGrowthEventListItem,
+  MateGrowthEventListRequest,
+  MateGrowthEventListResult,
+  MateGrowthEventState,
+} from "../src/mate-growth-events-state.js";
 
 const MATE_ID = "current";
 
@@ -13,7 +19,6 @@ type MateGrowthKind = "conversation" | "preference" | "relationship" | "work_sty
 type MateGrowthTargetSection = "bond" | "work_style" | "project_digest" | "core" | "none";
 type MateRetention = "auto" | "force";
 type MateRelation = "new" | "reinforces" | "updates" | "contradicts";
-type MateGrowthEventState = "candidate" | "applied" | "corrected" | "superseded" | "disabled" | "forgotten" | "failed";
 type MemoryRefType = "memory" | "profile_item";
 type MemoryRef = {
   type: MemoryRefType;
@@ -41,6 +46,15 @@ const GROWTH_KINDS = [
   "correction",
 ] as const;
 const TARGET_SECTIONS = ["bond", "work_style", "project_digest", "core", "none"] as const;
+const GROWTH_EVENT_STATES = [
+  "candidate",
+  "applied",
+  "corrected",
+  "superseded",
+  "disabled",
+  "forgotten",
+  "failed",
+] as const;
 const CURSOR_KEYS = [
   "extraction_cursor",
   "consolidation_cursor",
@@ -581,6 +595,37 @@ const SELECT_PENDING_EVENTS_SQL = `
   LIMIT ?
 `;
 
+const SELECT_REVIEW_EVENTS_BASE_SQL = `
+  SELECT
+    id,
+    mate_id,
+    source_growth_run_id,
+    source_type,
+    source_session_id,
+    source_audit_log_id,
+    project_digest_id,
+    growth_source_type,
+    kind,
+    target_section,
+    statement,
+    statement_fingerprint,
+    rationale_preview,
+    retention,
+    relation,
+    target_claim_key,
+    confidence,
+    salience_score,
+    recurrence_count,
+    projection_allowed,
+    state,
+    applied_revision_id,
+    applied_at,
+    created_at,
+    updated_at
+  FROM mate_growth_events
+  WHERE mate_id = ?
+`;
+
 const MARK_EVENT_APPLIED_SQL = `
   UPDATE mate_growth_events
   SET
@@ -762,6 +807,45 @@ function rowToEvent(row: EventRow): MateGrowthEvent {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function eventToListItem(event: MateGrowthEvent): MateGrowthEventListItem {
+  return {
+    id: event.id,
+    sourceType: event.sourceType,
+    sourceSessionId: event.sourceSessionId,
+    growthSourceType: event.growthSourceType,
+    kind: event.kind,
+    targetSection: event.targetSection,
+    statement: event.statement,
+    rationalePreview: event.rationalePreview,
+    confidence: event.confidence,
+    salienceScore: event.salienceScore,
+    recurrenceCount: event.recurrenceCount,
+    projectionAllowed: event.projectionAllowed,
+    state: event.state,
+    appliedAt: event.appliedAt,
+    createdAt: event.createdAt,
+    updatedAt: event.updatedAt,
+  };
+}
+
+function normalizeGrowthEventStates(states: MateGrowthEventListRequest["states"]): MateGrowthEventState[] {
+  if (states === undefined || states.length === 0) {
+    return [...GROWTH_EVENT_STATES];
+  }
+
+  const normalizedStates: MateGrowthEventState[] = [];
+  const seen = new Set<string>();
+  for (const state of states) {
+    const normalizedState = assertOneOf(state, GROWTH_EVENT_STATES, "state");
+    if (seen.has(normalizedState)) {
+      continue;
+    }
+    seen.add(normalizedState);
+    normalizedStates.push(normalizedState);
+  }
+  return normalizedStates;
 }
 
 function rowToCursor(row: CursorRow): MateGrowthCursor {
@@ -1435,6 +1519,27 @@ export class MateGrowthStorage {
       limit,
     ) as EventRow[];
     return rows.map(rowToEvent);
+  }
+
+  listEventsForReview(request: MateGrowthEventListRequest = {}): MateGrowthEventListResult {
+    const limit = normalizePositiveInteger(request.limit, 20, "limit");
+    const states = normalizeGrowthEventStates(request.states);
+    const statePlaceholders = states.map(() => "?").join(", ");
+    const rows = this.db.prepare(`
+      ${SELECT_REVIEW_EVENTS_BASE_SQL}
+        AND state IN (${statePlaceholders})
+      ORDER BY updated_at DESC, id DESC
+      LIMIT ?
+    `).all(
+      MATE_ID,
+      ...states,
+      limit,
+    ) as EventRow[];
+
+    return {
+      events: rows.map(rowToEvent).map(eventToListItem),
+      limit,
+    };
   }
 
   markEventApplied(eventId: string, appliedRevisionId?: string): void {

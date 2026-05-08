@@ -94,6 +94,7 @@ import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import { buildCardThemeStyle, CharacterAvatar } from "./ui-utils.js";
 import { formatTimestampLabel } from "./time-state.js";
 import type { MateProfile } from "./mate-state.js";
+import type { MateGrowthEventListItem } from "./mate-growth-events-state.js";
 
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
@@ -114,6 +115,9 @@ export type HomeSettingsContentProps = {
   mateGrowthSettings: MateGrowthSettings | null;
   mateGrowthFeedback: string;
   mateGrowthBusy: boolean;
+  mateGrowthEvents: MateGrowthEventListItem[];
+  mateGrowthEventsLoading: boolean;
+  mateGrowthEventsFeedback: string;
   mateEmbeddingSettings: MateEmbeddingSettings | null;
   mateEmbeddingFeedback: string;
   mateEmbeddingBusy: boolean;
@@ -167,6 +171,7 @@ export type HomeSettingsContentProps = {
   onApplyPendingGrowth?: () => void;
   applyPendingGrowthBusy?: boolean;
   canApplyPendingGrowth?: boolean;
+  onReloadMateGrowthEvents?: () => void;
   onUpdateMateGrowthSettings: (input: UpdateMateGrowthSettingsInput) => void;
   onResetMate?: () => void;
   mateResetBusy?: boolean;
@@ -184,6 +189,15 @@ const PROVIDER_INSTRUCTION_SYNC_STATE_LABEL: Record<HomeProviderSettingRow["inst
 };
 
 const MAX_PROVIDER_INSTRUCTION_ERROR_PREVIEW_LENGTH = 96;
+const GROWTH_EVENT_STATE_LABEL: Record<MateGrowthEventListItem["state"], string> = {
+  candidate: "候補",
+  applied: "適用済み",
+  corrected: "修正済み",
+  superseded: "置換済み",
+  disabled: "無効",
+  forgotten: "忘却済み",
+  failed: "失敗",
+};
 
 const normalizeProviderInstructionErrorPreview = (errorPreview: string): string => {
   const trimmed = errorPreview.trim();
@@ -193,6 +207,15 @@ const normalizeProviderInstructionErrorPreview = (errorPreview: string): string 
 
   return `${trimmed.slice(0, MAX_PROVIDER_INSTRUCTION_ERROR_PREVIEW_LENGTH - 3)}...`;
 };
+
+const formatMateGrowthEventMeta = (event: MateGrowthEventListItem): string =>
+  [
+    GROWTH_EVENT_STATE_LABEL[event.state],
+    event.kind,
+    event.targetSection,
+    `${event.confidence}%`,
+    formatTimestampLabel(event.updatedAt),
+  ].join(" / ");
 
 export function HomeSettingsContent({
   settingsDraft,
@@ -208,6 +231,9 @@ export function HomeSettingsContent({
   mateGrowthSettings,
   mateGrowthFeedback,
   mateGrowthBusy = false,
+  mateGrowthEvents,
+  mateGrowthEventsLoading,
+  mateGrowthEventsFeedback,
   mateEmbeddingSettings,
   mateEmbeddingFeedback,
   mateEmbeddingBusy,
@@ -253,6 +279,7 @@ export function HomeSettingsContent({
   onApplyPendingGrowth,
   applyPendingGrowthBusy = false,
   canApplyPendingGrowth = false,
+  onReloadMateGrowthEvents,
   onUpdateMateGrowthSettings,
   onResetMate,
   mateResetBusy = false,
@@ -639,6 +666,42 @@ export function HomeSettingsContent({
               </div>
             </section>
           ) : null}
+
+          <section className="settings-section-card">
+            <div className="settings-field">
+              <strong>最近の Growth Event</strong>
+              <div className="settings-actions">
+                <button
+                  className="launch-toggle"
+                  type="button"
+                  onClick={() => onReloadMateGrowthEvents?.()}
+                  disabled={!onReloadMateGrowthEvents || mateGrowthEventsLoading || mateGrowthSettings === null}
+                >
+                  {mateGrowthEventsLoading ? "更新中..." : "再読み込み"}
+                </button>
+              </div>
+              {mateGrowthEvents.length > 0 ? (
+                <div className="settings-memory-card-list">
+                  {mateGrowthEvents.map((event) => (
+                    <article key={event.id} className="settings-memory-card compact">
+                      <div className="settings-memory-card-head">
+                        <div className="settings-memory-card-copy">
+                          <strong>{event.statement}</strong>
+                          <span>{formatMateGrowthEventMeta(event)}</span>
+                        </div>
+                      </div>
+                      {event.rationalePreview ? <p className="settings-help">{event.rationalePreview}</p> : null}
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="settings-help">
+                  {mateGrowthEventsLoading ? "Growth Event を読み込み中..." : "表示できる Growth Event はまだないよ。"}
+                </p>
+              )}
+              {mateGrowthEventsFeedback ? <p className="settings-feedback">{mateGrowthEventsFeedback}</p> : null}
+            </div>
+          </section>
 
           <section className="settings-section-card">
             <div className="settings-field">

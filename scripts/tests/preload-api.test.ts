@@ -66,6 +66,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:apply-mate-growth",
     args: [],
   });
+  assert.deepEqual(await api.listMateGrowthEvents({ limit: 5 }), {
+    channel: "withmate:list-mate-growth-events",
+    args: [{ limit: 5 }],
+  });
   assert.deepEqual(await api.resetMate(), {
     channel: "withmate:reset-mate",
     args: [],
@@ -158,6 +162,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getModelCatalog",
     "getProviderQuotaTelemetry",
     "listProviderInstructionTargets",
+    "listMateGrowthEvents",
     "getSession",
     "getSessionAuditLogDetail",
     "getSessionAuditLogDetailSection",

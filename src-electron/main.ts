@@ -164,6 +164,7 @@ import {
   type MateTalkTurnResult,
   type UpdateMateGrowthSettingsInput,
 } from "../src/mate-state.js";
+import type { MateGrowthEventListRequest, MateGrowthEventListResult } from "../src/mate-growth-events-state.js";
 import {
   type CharacterReflectionTriggerReason,
 } from "./character-reflection.js";
@@ -1110,6 +1111,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 createMate,
                 updateMate,
                 applyPendingGrowth,
+                listMateGrowthEvents,
                 runMateTalkTurn,
                 resetMate,
               },
@@ -1590,6 +1592,10 @@ async function syncProviderInstructionTargetsForDisabledMateProfile(): Promise<v
 async function applyPendingGrowth(): ReturnType<MateGrowthApplyService["applyPendingGrowth"]> {
   const result = await requireMainBootstrapService().runGrowthApplyOnce();
   return result as Awaited<ReturnType<MateGrowthApplyService["applyPendingGrowth"]>>;
+}
+
+async function listMateGrowthEvents(request?: MateGrowthEventListRequest | null): Promise<MateGrowthEventListResult> {
+  return requireMateGrowthStorage().listEventsForReview(request ?? {});
 }
 
 async function applyPendingGrowthCore(): ReturnType<MateGrowthApplyService["applyPendingGrowth"]> {

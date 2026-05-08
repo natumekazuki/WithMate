@@ -98,6 +98,7 @@ import {
   type UpdateMateGrowthSettingsInput,
 } from "./mate-state.js";
 import { type MateEmbeddingSettings } from "./mate-embedding-settings.js";
+import type { MateGrowthEventListItem } from "./mate-growth-events-state.js";
 import { applyHomePendingGrowth } from "./home-mate-growth-actions.js";
 
 async function openSessionWindow(sessionId: string) {
@@ -261,6 +262,9 @@ export default function HomeApp() {
   const [mateGrowthSettings, setMateGrowthSettings] = useState<MateGrowthSettings | null>(null);
   const [mateGrowthFeedback, setMateGrowthFeedback] = useState("");
   const [mateGrowthBusy, setMateGrowthBusy] = useState(false);
+  const [mateGrowthEvents, setMateGrowthEvents] = useState<MateGrowthEventListItem[]>([]);
+  const [mateGrowthEventsLoading, setMateGrowthEventsLoading] = useState(false);
+  const [mateGrowthEventsFeedback, setMateGrowthEventsFeedback] = useState("");
   const [mateCreating, setMateCreating] = useState(false);
   const [mateGrowthApplying, setMateGrowthApplying] = useState(false);
   const [mateResetting, setMateResetting] = useState(false);
@@ -327,6 +331,9 @@ export default function HomeApp() {
       setMateGrowthSettings(null);
       setMateGrowthFeedback("");
       setMateGrowthBusy(false);
+      setMateGrowthEvents([]);
+      setMateGrowthEventsFeedback("");
+      setMateGrowthEventsLoading(false);
       stopMateEmbeddingSettingsPolling();
       return nextMateState;
     }
@@ -342,6 +349,37 @@ export default function HomeApp() {
     setMateProfile(nextMateProfile);
     setMateDisplayName(nextMateProfile?.displayName ?? "");
     return nextMateState;
+  };
+
+  const refreshMateGrowthEvents = async (
+    withmateApi: NonNullable<ReturnType<typeof getWithMateApi>>,
+    options?: { isActive?: () => boolean; silent?: boolean },
+  ): Promise<void> => {
+    const isActive = options?.isActive ?? (() => true);
+    if (!options?.silent) {
+      setMateGrowthEventsLoading(true);
+      setMateGrowthEventsFeedback("");
+    }
+
+    try {
+      const result = await withmateApi.listMateGrowthEvents({ limit: 20 });
+      if (!isActive()) {
+        return;
+      }
+      setMateGrowthEvents(result.events);
+      if (!options?.silent) {
+        setMateGrowthEventsFeedback("Growth Event を更新したよ。");
+      }
+    } catch (error) {
+      if (!isActive()) {
+        return;
+      }
+      setMateGrowthEventsFeedback(error instanceof Error ? error.message : "Growth Event の取得に失敗したよ。");
+    } finally {
+      if (isActive()) {
+        setMateGrowthEventsLoading(false);
+      }
+    }
   };
 
   useEffect(() => {
@@ -424,8 +462,11 @@ export default function HomeApp() {
       if (nextMateState === "not_created") {
         setMateGrowthSettings(null);
         setMateGrowthFeedback("");
+        setMateGrowthEvents([]);
+        setMateGrowthEventsFeedback("");
       } else {
         setMateGrowthSettings(growthSettings);
+        void refreshMateGrowthEvents(withmateApi, { isActive: () => active, silent: true });
       }
 
       if (nextMateState !== "not_created") {
@@ -446,6 +487,8 @@ export default function HomeApp() {
       setMateProfile(null);
       setMateGrowthSettings(null);
       setMateGrowthFeedback("");
+      setMateGrowthEvents([]);
+      setMateGrowthEventsFeedback("");
       setMateCreationFeedback(error instanceof Error ? error.message : "Mate 状態の取得に失敗したよ。");
     });
 
@@ -823,12 +866,15 @@ export default function HomeApp() {
           setCompanionSessions(nextCompanionSessions);
           setMateEmbeddingSettings(nextEmbeddingSettings);
           setMateGrowthSettings(nextGrowthSettings);
+          await refreshMateGrowthEvents(withmateApi, { silent: true });
         } catch (error) {
           setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
         }
       } else {
         setMateGrowthSettings(null);
         setMateGrowthFeedback("");
+        setMateGrowthEvents([]);
+        setMateGrowthEventsFeedback("");
       }
     } catch (error) {
       setMateCreationFeedback(error instanceof Error ? error.message : "Mate の保存に失敗したよ。");
@@ -980,11 +1026,27 @@ export default function HomeApp() {
     try {
       setSettingsFeedback(await applyHomePendingGrowth(withmateApi));
       await refreshMateStatus(withmateApi);
+      await refreshMateGrowthEvents(withmateApi, { silent: true });
     } catch (error) {
       setSettingsFeedback(error instanceof Error ? error.message : "Mate 成長の適用に失敗したよ。");
     } finally {
       setMateGrowthApplying(false);
     }
+  };
+
+  const handleReloadMateGrowthEvents = async () => {
+    if (mateState !== "active") {
+      setMateGrowthEventsFeedback("Mate 作成後に確認してね。");
+      return;
+    }
+
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
+      setMateGrowthEventsFeedback("Mate API が利用できないよ。");
+      return;
+    }
+
+    await refreshMateGrowthEvents(withmateApi);
   };
 
   const handleUpdateMateGrowthSettings = async (input: UpdateMateGrowthSettingsInput) => {
@@ -1526,6 +1588,9 @@ export default function HomeApp() {
       mateGrowthSettings={mateGrowthSettings}
       mateGrowthFeedback={mateGrowthFeedback}
       mateGrowthBusy={mateGrowthBusy}
+      mateGrowthEvents={mateGrowthEvents}
+      mateGrowthEventsLoading={mateGrowthEventsLoading}
+      mateGrowthEventsFeedback={mateGrowthEventsFeedback}
       mateEmbeddingSettings={mateEmbeddingSettings}
       mateEmbeddingFeedback={mateEmbeddingFeedback}
       mateEmbeddingBusy={mateEmbeddingBusy}
@@ -1574,6 +1639,7 @@ export default function HomeApp() {
       onApplyPendingGrowth={() => void handleApplyPendingGrowth()}
       applyPendingGrowthBusy={mateGrowthApplying}
       canApplyPendingGrowth={mateState === "active"}
+      onReloadMateGrowthEvents={() => void handleReloadMateGrowthEvents()}
       onUpdateMateGrowthSettings={(input) => void handleUpdateMateGrowthSettings(input)}
       onResetMate={() => void handleResetMate()}
       mateResetBusy={mateResetting}
@@ -1597,6 +1663,9 @@ export default function HomeApp() {
       mateGrowthSettings={mateGrowthSettings}
       mateGrowthFeedback={mateGrowthFeedback}
       mateGrowthBusy={mateGrowthBusy}
+      mateGrowthEvents={mateGrowthEvents}
+      mateGrowthEventsLoading={mateGrowthEventsLoading}
+      mateGrowthEventsFeedback={mateGrowthEventsFeedback}
       mateEmbeddingSettings={mateEmbeddingSettings}
       mateEmbeddingFeedback={mateEmbeddingFeedback}
       mateEmbeddingBusy={mateEmbeddingBusy}
@@ -1643,6 +1712,7 @@ export default function HomeApp() {
       onDeleteCharacterMemoryEntry={(entryId) => void handleDeleteCharacterMemoryEntry(entryId)}
       onDeleteMateProfileItem={(itemId) => void handleDeleteMateProfileItem(itemId)}
       onStartMateEmbeddingDownload={() => void handleStartMateEmbeddingDownload()}
+      onReloadMateGrowthEvents={() => void handleReloadMateGrowthEvents()}
       onUpdateMateGrowthSettings={(input) => void handleUpdateMateGrowthSettings(input)}
       onSaveSettings={() => void handleSaveSettings()}
     />

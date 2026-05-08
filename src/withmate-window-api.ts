@@ -43,6 +43,7 @@ import type {
 } from "./memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
 import type { MateGrowthApplyResult } from "./mate-growth-apply-result.js";
+import type { MateGrowthEventListRequest, MateGrowthEventListResult } from "./mate-growth-events-state.js";
 import type { RendererLogInput } from "./app-log-types.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import type { OpenPathOptions, ResetAppDatabaseRequest, ResetAppDatabaseResult } from "./withmate-window-types.js";
@@ -235,6 +236,7 @@ export type WithMateWindowMateApi = {
   createMate(input: CreateMateInput): Promise<MateProfile>;
   updateMate(input: UpdateMateInput): Promise<MateProfile>;
   applyPendingGrowth(): Promise<MateGrowthApplyResult>;
+  listMateGrowthEvents(request?: MateGrowthEventListRequest | null): Promise<MateGrowthEventListResult>;
   runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
   resetMate(): Promise<void>;
 };

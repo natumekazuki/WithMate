@@ -31,6 +31,7 @@ import type {
   UpdateMateInput,
 } from "../src/mate-state.js";
 import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
+import type { MateGrowthEventListRequest, MateGrowthEventListResult } from "../src/mate-growth-events-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
 import type {
@@ -141,6 +142,7 @@ import {
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESET_MATE_CHANNEL,
   WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
+  WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL,
   WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
@@ -341,6 +343,7 @@ export type MainIpcRegistrationDeps = {
   createMate(input: CreateMateInput): Promise<MateProfile>;
   updateMate(input: UpdateMateInput): Promise<MateProfile>;
   applyPendingGrowth(): Promise<MateGrowthApplyResult>;
+  listMateGrowthEvents(request?: MateGrowthEventListRequest | null): Promise<MateGrowthEventListResult>;
   runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
   resetMate(): Promise<void>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
@@ -490,6 +493,7 @@ type MainIpcMateDeps = Pick<
   | "createMate"
   | "updateMate"
   | "applyPendingGrowth"
+  | "listMateGrowthEvents"
   | "runMateTalkTurn"
   | "resetMate"
 >;
@@ -829,6 +833,9 @@ function registerMateHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcMateDeps
   ipcMain.handle(WITHMATE_CREATE_MATE_CHANNEL, (_event, input: CreateMateInput) => deps.createMate(input));
   ipcMain.handle(WITHMATE_UPDATE_MATE_CHANNEL, (_event, input: UpdateMateInput) => deps.updateMate(input));
   ipcMain.handle(WITHMATE_APPLY_MATE_GROWTH_CHANNEL, () => deps.applyPendingGrowth());
+  ipcMain.handle(WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL, (_event, request?: MateGrowthEventListRequest | null) =>
+    deps.listMateGrowthEvents(request),
+  );
   ipcMain.handle(WITHMATE_RUN_MATE_TALK_TURN_CHANNEL, (_event, input: MateTalkTurnInput) =>
     deps.runMateTalkTurn(input),
   );

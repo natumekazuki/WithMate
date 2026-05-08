@@ -238,6 +238,10 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
         calls.push("applyPendingGrowth");
         return zeroGrowthResult;
       },
+      async listMateGrowthEvents(request) {
+        calls.push(`listMateGrowthEvents:${request?.limit ?? "default"}`);
+        return { events: [], limit: request?.limit ?? 20 };
+      },
       async runMateTalkTurn(input) {
         calls.push(`runMateTalk:${input.message}`);
         return {
@@ -261,6 +265,7 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
   await deps.createMate({ displayName: "Buddy" });
   await deps.updateMate({ displayName: "Buddy 2" });
   await deps.applyPendingGrowth();
+  await deps.listMateGrowthEvents({ limit: 5 });
   await deps.runMateTalkTurn({ message: "hello" });
   await deps.resetMate();
   deps.startMateEmbeddingDownload();
@@ -273,6 +278,7 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
     "createMate:Buddy",
     "updateMate:Buddy 2",
     "applyPendingGrowth",
+    "listMateGrowthEvents:5",
     "runMateTalk:hello",
     "resetMate",
     "startMateEmbeddingDownload",

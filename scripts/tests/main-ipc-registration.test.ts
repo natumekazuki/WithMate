@@ -17,6 +17,7 @@ import {
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
+  WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
@@ -393,6 +394,13 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
       calls.push("applyPendingGrowth");
       return expectedGrowthResult;
     },
+    async listMateGrowthEvents(request) {
+      calls.push(`listMateGrowthEvents:${request?.limit ?? "default"}`);
+      return {
+        events: [],
+        limit: request?.limit ?? 20,
+      };
+    },
     async runMateTalkTurn(input) {
       calls.push(`runMateTalk:${input.message}`);
       return {
@@ -439,6 +447,10 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     await handlers.get(WITHMATE_APPLY_MATE_GROWTH_CHANNEL)?.(),
     expectedGrowthResult,
   );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL)?.({}, { limit: 5 }),
+    { events: [], limit: 5 },
+  );
   await handlers.get(WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL)?.();
   await handlers.get(WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL)?.({}, { enabled: false });
   await handlers.get(WITHMATE_RESET_MATE_CHANNEL)?.();
@@ -467,6 +479,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     "runMateTalk:hello",
     "getMateState",
     "applyPendingGrowth",
+    "getMateState",
+    "listMateGrowthEvents:5",
     "getMateGrowthSettings",
     "updateMateGrowthSettings",
     "resetMate",
@@ -542,6 +556,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     "runMateTalk:hello",
     "getMateState",
     "applyPendingGrowth",
+    "getMateState",
+    "listMateGrowthEvents:5",
     "getMateGrowthSettings",
     "updateMateGrowthSettings",
     "resetMate",
@@ -708,8 +724,11 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     getMateProfile() {
       return null;
     },
-    applyPendingGrowth() {
+    async applyPendingGrowth() {
       return zeroGrowthResult;
+    },
+    async listMateGrowthEvents() {
+      return { events: [], limit: 20 };
     },
     async createMate() {
       return {} as never;
@@ -826,6 +845,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_CREATE_MATE_CHANNEL,
     WITHMATE_UPDATE_MATE_CHANNEL,
     WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
+    WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL,
     WITHMATE_RUN_MATE_TALK_TURN_CHANNEL,
     WITHMATE_RESET_MATE_CHANNEL,
     WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,

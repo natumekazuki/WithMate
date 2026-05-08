@@ -14,6 +14,7 @@ import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { buildHomeProviderSettingRows } from "../../src/home-settings-view-model.js";
 import { DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES, type MateGrowthSettings } from "../../src/mate-state.js";
+import type { MateGrowthEventListItem } from "../../src/mate-growth-events-state.js";
 import type { MateEmbeddingSettings } from "../../src/mate-embedding-settings.js";
 import { formatTimestampLabel } from "../../src/time-state.js";
 import {
@@ -99,6 +100,10 @@ describe("HomeSettingsContent", () => {
     mateGrowthSettings?: MateGrowthSettings | null;
     mateGrowthBusy?: boolean;
     mateGrowthFeedback?: string;
+    mateGrowthEvents?: MateGrowthEventListItem[];
+    mateGrowthEventsLoading?: boolean;
+    mateGrowthEventsFeedback?: string;
+    onReloadMateGrowthEvents?: () => void;
     onUpdateMateGrowthSettings?: (input: unknown) => void;
     onResetMate?: () => void;
   };
@@ -150,6 +155,9 @@ describe("HomeSettingsContent", () => {
     mateGrowthSettings: params && "mateGrowthSettings" in params ? params.mateGrowthSettings ?? null : nextMateGrowthSettings,
     mateGrowthFeedback: params?.mateGrowthFeedback ?? "",
     mateGrowthBusy: params?.mateGrowthBusy ?? false,
+    mateGrowthEvents: params?.mateGrowthEvents ?? [],
+    mateGrowthEventsLoading: params?.mateGrowthEventsLoading ?? false,
+    mateGrowthEventsFeedback: params?.mateGrowthEventsFeedback ?? "",
     mateEmbeddingSettings: null,
     mateEmbeddingFeedback: "",
     mateEmbeddingBusy: false,
@@ -194,6 +202,7 @@ describe("HomeSettingsContent", () => {
     onApplyPendingGrowth: params?.applyPendingGrowth ? noOp : undefined,
     canApplyPendingGrowth: params?.canApplyPendingGrowth,
     applyPendingGrowthBusy: params?.applyPendingGrowthBusy,
+    onReloadMateGrowthEvents: params?.onReloadMateGrowthEvents ?? noOp,
     onUpdateMateGrowthSettings: params?.onUpdateMateGrowthSettings ?? noOp,
     onResetMate: params?.onResetMate ?? noOp,
     canResetMate: params?.canResetMate ?? false,
@@ -503,6 +512,37 @@ describe("HomeSettingsContent", () => {
     assert.ok(buttonHtml.includes("disabled=\"\""));
   });
 
+  it("最近の Growth Event が表示される", () => {
+    const html = renderSettings({
+      mateGrowthEvents: [
+        {
+          id: "event-1",
+          sourceType: "mate_talk",
+          sourceSessionId: "session-1",
+          growthSourceType: "memory",
+          kind: "update",
+          targetSection: "tone",
+          statement: "一人称は「私」を優先する",
+          rationalePreview: "メイトークで明示されたため",
+          confidence: 0.91,
+          salienceScore: 0.82,
+          recurrenceCount: 2,
+          projectionAllowed: true,
+          state: "candidate",
+          appliedAt: null,
+          createdAt: "2026-05-01T09:00:00.000Z",
+          updatedAt: "2026-05-01T09:30:00.000Z",
+        },
+      ],
+    });
+
+    assert.ok(html.includes("<strong>最近の Growth Event</strong>"));
+    assert.ok(html.includes("一人称は「私」を優先する"));
+    assert.ok(html.includes("候補"));
+    assert.ok(html.includes("tone"));
+    assert.ok(html.includes("メイトークで明示されたため"));
+  });
+
   it("applyPendingGrowthBusy=true のとき適用ボタンは無効化され「適用中...」が表示される", () => {
     const html = renderSettings({ applyPendingGrowth: true, canApplyPendingGrowth: true, applyPendingGrowthBusy: true });
     const buttonHtml = extractGrowthButton(html);
@@ -552,6 +592,9 @@ describe("HomeSettingsContent", () => {
         mateGrowthSettings={nextMateGrowthSettings}
         mateGrowthFeedback=""
         mateGrowthBusy={false}
+        mateGrowthEvents={[]}
+        mateGrowthEventsLoading={false}
+        mateGrowthEventsFeedback=""
         mateEmbeddingSettings={mateEmbeddingSettings}
         mateEmbeddingFeedback=""
         mateEmbeddingBusy={false}
@@ -593,6 +636,7 @@ describe("HomeSettingsContent", () => {
         onDeleteCharacterMemoryEntry={noOp}
         onDeleteMateProfileItem={noOp}
         onStartMateEmbeddingDownload={noOp}
+        onReloadMateGrowthEvents={noOp}
         onUpdateMateGrowthSettings={noOp}
         onSaveSettings={noOp}
       />,
@@ -650,6 +694,9 @@ describe("HomeSettingsContent", () => {
         mateEmbeddingSettings={null}
         mateEmbeddingFeedback=""
         mateEmbeddingBusy={false}
+        mateGrowthEvents={[]}
+        mateGrowthEventsLoading={false}
+        mateGrowthEventsFeedback=""
         onChangeSystemPromptPrefix={noOp}
         onChangeMemoryGenerationEnabled={noOp}
         onChangeMateMemoryGenerationPriorityProvider={noOp}
@@ -691,6 +738,7 @@ describe("HomeSettingsContent", () => {
         mateGrowthSettings={nextMateGrowthSettings}
         mateGrowthFeedback=""
         mateGrowthBusy={false}
+        onReloadMateGrowthEvents={noOp}
         onUpdateMateGrowthSettings={noOp}
         onSaveSettings={noOp}
       />,
@@ -744,6 +792,9 @@ describe("HomeSettingsContent", () => {
         mateEmbeddingSettings={null}
         mateEmbeddingFeedback=""
         mateEmbeddingBusy={false}
+        mateGrowthEvents={[]}
+        mateGrowthEventsLoading={false}
+        mateGrowthEventsFeedback=""
         onChangeSystemPromptPrefix={noOp}
         onChangeMemoryGenerationEnabled={noOp}
         onChangeMateMemoryGenerationPriorityProvider={noOp}
@@ -785,6 +836,7 @@ describe("HomeSettingsContent", () => {
         mateGrowthSettings={nextMateGrowthSettings}
         mateGrowthFeedback=""
         mateGrowthBusy={false}
+        onReloadMateGrowthEvents={noOp}
         onUpdateMateGrowthSettings={noOp}
         onSaveSettings={noOp}
       />,
