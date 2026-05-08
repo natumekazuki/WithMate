@@ -2156,7 +2156,7 @@ describe("syncDisabledProviderInstructionTargets", () => {
     }
   });
 
-  it("managed_file は disabled cleanup でファイルを変更せず skipped になる", async () => {
+  it("managed_file は disabled cleanup で disabled projection を同期する", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-reset-"));
     const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
     const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
@@ -2164,7 +2164,11 @@ describe("syncDisabledProviderInstructionTargets", () => {
     const targetPath = path.join(workspacePath, "AGENTS.md");
 
     try {
-      await writeFile(targetPath, "managed file content", "utf8");
+      const existingContent = `${buildManagedProfileBeginMarker("copilot", DEFAULT_TARGET_ID, "managed-file")}\n`
+        + "## WithMate Mate Profile\n"
+        + "old body\n"
+        + `${buildManagedProfileEndMarker("copilot", DEFAULT_TARGET_ID, "managed-file")}\n`;
+      await writeFile(targetPath, existingContent, "utf8");
       storage.upsertTarget({
         providerId: "copilot",
         enabled: true,
@@ -2176,12 +2180,74 @@ describe("syncDisabledProviderInstructionTargets", () => {
 
       const result = await syncDisabledProviderInstructionTargets(storage, FILE_DEPENDENCIES);
       const updated = await readFile(targetPath, "utf8");
+      const target = storage.getTarget("copilot", "main");
+      if (!target) {
+        throw new Error("target がありません");
+      }
 
       assert.equal(result.targetCount, 1);
-      assert.equal(result.syncedCount, 0);
+      assert.equal(result.syncedCount, 1);
       assert.equal(result.failedCount, 0);
-      assert.equal(result.skippedCount, 1);
-      assert.equal(updated, "managed file content");
+      assert.equal(result.skippedCount, 0);
+      assert.equal(target.lastSyncState, "synced");
+      assert.equal(target.lastSyncedRevisionId, null);
+      assert.equal(countProfileBlocks(updated), 1);
+      assert.equal(updated.includes("old body"), false);
+      assert.equal(updated.includes("Mate profile is currently not configured."), true);
+      assert.equal(updated.includes(buildManagedProfileBeginMarker("copilot", DEFAULT_TARGET_ID, "managed-file")), true);
+    } finally {
+      storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("managed_file で marker mismatch / unmanaged な disabled cleanup は failed になり内容を変更しない", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-reset-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+    const mismatchPath = path.join(workspacePath, "AGENTS.md");
+    const unmanagedPath = path.join(workspacePath, "legacy.md");
+
+    try {
+      const mismatchContent =
+        `${buildManagedProfileBeginMarker("codex", "feature", "managed-file")}\n`
+        + "## WithMate Mate Profile\n"
+        + "old body\n"
+        + `${buildManagedProfileEndMarker("codex", "feature", "managed-file")}\n`;
+
+      await writeFile(mismatchPath, mismatchContent, "utf8");
+      await writeFile(unmanagedPath, "unmanaged text", "utf8");
+
+      storage.upsertTarget({
+        providerId: "copilot",
+        enabled: true,
+        rootDirectory: workspacePath,
+        instructionRelativePath: "AGENTS.md",
+        writeMode: "managed_file",
+        failPolicy: "warn_continue",
+      });
+      storage.upsertTarget({
+        providerId: "codex",
+        enabled: true,
+        targetId: "feature",
+        rootDirectory: workspacePath,
+        instructionRelativePath: path.relative(workspacePath, unmanagedPath),
+        writeMode: "managed_file",
+        failPolicy: "warn_continue",
+      });
+
+      const result = await syncDisabledProviderInstructionTargets(storage, FILE_DEPENDENCIES);
+      const mismatchUpdated = await readFile(mismatchPath, "utf8");
+      const unmanagedUpdated = await readFile(unmanagedPath, "utf8");
+
+      assert.equal(result.targetCount, 2);
+      assert.equal(result.syncedCount, 0);
+      assert.equal(result.failedCount, 2);
+      assert.equal(result.skippedCount, 0);
+      assert.equal(mismatchUpdated, mismatchContent);
+      assert.equal(unmanagedUpdated, "unmanaged text");
     } finally {
       storage.close();
       await rm(workspacePath, { recursive: true, force: true });

@@ -242,7 +242,7 @@ projection に含めないもの:
 - [x] `mate_profile_revisions.status` / `mate_profile_revision_sections` を実装し、`ready` revision だけを active にできる制約を storage 層で enforce する
 - [x] generated projection file の hash / byte size / written_at を revision section に保存し、起動時 recovery で SQLite snapshot と実 file の不一致を検出する
 - [x] `committing_files` / `failed` revision の recovery を実装し、provider sync が不完全 revision を読まないことを保証する
-- [ ] Mate Profile reset 時に provider instruction managed block / managed file から旧 Mate projection を削除または disabled projection に同期し、失敗時は warning と再同期導線を出す
+- [x] Mate Profile reset 時に provider instruction managed block / managed file から旧 Mate projection を削除または disabled projection に同期し、失敗時は warning と再同期導線を出す
 - [ ] existing character storage / catalog API を runtime main path から外す
 - [ ] renderer / main IPC を Mate Profile API へ置き換える
 - [ ] 4.0.0 MVP では reset のみ実装し、export / import と複数端末同期は後続設計へ送る

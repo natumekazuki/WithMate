@@ -51,6 +51,7 @@ export const PROVIDER_INSTRUCTION_FILE_BY_PROVIDER: Readonly<Record<string, stri
 };
 
 const PROVIDER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9_-]{0,63})$/;
+const DISABLED_PROFILE_CONTENT = "\nMate profile is currently not configured.";
 
 export class MateProviderInstructionSyncBlockedError extends Error {
   public readonly providerId: string;
@@ -413,7 +414,25 @@ async function syncDisabledProviderInstructionTargetProjection(
   }
 
   if (target.writeMode === "managed_file") {
-    return { status: "skipped" };
+    const markerAttributes = buildManagedBlockMarkerAttributes(target);
+    if (
+      !hasManagedBlockWithMarkerAttributes(existingText, {
+        blockId: MATE_PROFILE_BLOCK_ID,
+        markerAttributes,
+      })
+    ) {
+      throw new Error(`marker mismatch: managed_file marker が一致しません: providerId=${target.providerId}, targetId=${target.targetId ?? "main"}`);
+    }
+
+    const nextText = buildManagedBlock({
+      blockId: MATE_PROFILE_BLOCK_ID,
+      title: MATE_PROFILE_BLOCK_TITLE,
+      content: DISABLED_PROFILE_CONTENT,
+      markerAttributes,
+    });
+
+    await deps.writeTextFile(normalizedFilePath, nextText);
+    return { status: "synced", text: nextText };
   }
 
   throw new Error(`unsupported writeMode: ${target.writeMode}`);
