@@ -521,7 +521,7 @@ describe("SessionRuntimeService", () => {
           threadId: "thread-1",
           assistantText: "完了したよ。",
           logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          transportPayload: { summary: "transport", fields: [] },
+          transportPayload: null,
           operations: [],
           rawItemsJson: "[]",
           usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 220 },
@@ -641,6 +641,30 @@ describe("SessionRuntimeService", () => {
     assert.equal(
       auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "attachmentCount")?.value,
       "0",
+    );
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptEstimatedChars")?.value,
+      "12",
+    );
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptEstimatedTokens")?.value,
+      "3",
+    );
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptSystemEstimatedChars")?.value,
+      "6",
+    );
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptSystemEstimatedTokens")?.value,
+      "2",
+    );
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptInputEstimatedChars")?.value,
+      "5",
+    );
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptInputEstimatedTokens")?.value,
+      "2",
     );
     assert.deepEqual(memoryTriggers, []);
     assert.deepEqual(reflectionTriggers, []);
@@ -767,7 +791,7 @@ describe("SessionRuntimeService", () => {
       threadId: null,
       assistantText: "",
       logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-      transportPayload: null,
+      transportPayload: { summary: "transport", fields: [] },
       operations: [],
       rawItemsJson: "[]",
       usage: null,
@@ -896,6 +920,30 @@ describe("SessionRuntimeService", () => {
     assert.equal(auditUpdates.at(-1)?.assistantText, "途中まで進んだよ。");
     assert.deepEqual(auditUpdates.at(-1)?.operations, [{ type: "command_execution", summary: "npm run build", details: "in_progress" }]);
     assert.deepEqual(auditUpdates.at(-1)?.usage, { inputTokens: 5, cachedInputTokens: 0, outputTokens: 2 });
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptEstimatedChars")?.value,
+      "12",
+    );
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptEstimatedTokens")?.value,
+      "3",
+    );
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptSystemEstimatedChars")?.value,
+      "6",
+    );
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptSystemEstimatedTokens")?.value,
+      "2",
+    );
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptInputEstimatedChars")?.value,
+      "5",
+    );
+    assert.equal(
+      auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptInputEstimatedTokens")?.value,
+      "2",
+    );
     assert.equal(canceledSessionId, baseSession.id);
   });
 

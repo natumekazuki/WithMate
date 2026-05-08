@@ -23,6 +23,7 @@ import type { MateStorageState } from "../src/mate-state.js";
 import { ProviderTurnError, type ProviderCodingAdapter, type RunSessionTurnResult } from "./provider-runtime.js";
 import { appendQuotaTelemetryToTransportPayload } from "./audit-log-quota.js";
 import { appendTransportPayloadFields, calculateAuditDurationMs } from "./audit-log-metadata.js";
+import { estimateLogicalPromptTokens } from "./prompt-token-estimate.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
@@ -281,6 +282,12 @@ function hasNonEmptyRawItemsJson(value: string | null | undefined): value is str
 
 function buildAuditOperationMergeKey(operation: CreateAuditLogInput["operations"][number]): string {
   return `${operation.type}\u0000${operation.summary}`;
+}
+
+function ensureAuditTransportPayload(
+  payload: CreateAuditLogInput["transportPayload"],
+): NonNullable<CreateAuditLogInput["transportPayload"]> {
+  return payload ?? { summary: "prompt estimate", fields: [] };
 }
 
 function mergeTerminalAuditOperations(
@@ -651,6 +658,7 @@ export class SessionRuntimeService {
 
       const completedAt = new Date().toISOString();
       const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
+      const logicalPromptEstimate = estimateLogicalPromptTokens(result.logicalPrompt);
 
       await flushAuditWrites();
       terminalAuditSettled = true;
@@ -662,11 +670,17 @@ export class SessionRuntimeService {
         logicalPrompt: result.logicalPrompt,
         transportPayload: appendTransportPayloadFields(
           appendQuotaTelemetryToTransportPayload(
-            result.transportPayload,
+            ensureAuditTransportPayload(result.transportPayload),
             result.providerQuotaTelemetry,
           ),
           [
             { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
+            { label: "promptEstimatedChars", value: String(logicalPromptEstimate.composed.charCount) },
+            { label: "promptEstimatedTokens", value: String(logicalPromptEstimate.composed.estimatedTokens) },
+            { label: "promptSystemEstimatedChars", value: String(logicalPromptEstimate.system.charCount) },
+            { label: "promptSystemEstimatedTokens", value: String(logicalPromptEstimate.system.estimatedTokens) },
+            { label: "promptInputEstimatedChars", value: String(logicalPromptEstimate.input.charCount) },
+            { label: "promptInputEstimatedTokens", value: String(logicalPromptEstimate.input.estimatedTokens) },
             { label: "projectMemoryHits", value: String(projectMemoryEntries.length) },
             { label: "attachmentCount", value: String(composerPreview.attachments.length) },
           ],
@@ -727,6 +741,8 @@ export class SessionRuntimeService {
       const nextSessionThreadId = shouldResetFailedThread ? "" : failedAuditThreadId;
       const completedAt = new Date().toISOString();
       const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
+      const failedLogicalPrompt = partialResult?.logicalPrompt ?? promptForAudit.logicalPrompt;
+      const failedLogicalPromptEstimate = estimateLogicalPromptTokens(failedLogicalPrompt);
       if (canceled || shouldResetFailedThread) {
         this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId);
       }
@@ -741,11 +757,17 @@ export class SessionRuntimeService {
         logicalPrompt: partialResult?.logicalPrompt ?? promptForAudit.logicalPrompt,
         transportPayload: appendTransportPayloadFields(
           appendQuotaTelemetryToTransportPayload(
-            partialResult?.transportPayload ?? null,
+            ensureAuditTransportPayload(partialResult?.transportPayload ?? null),
             partialResult?.providerQuotaTelemetry,
           ),
           [
             { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
+            { label: "promptEstimatedChars", value: String(failedLogicalPromptEstimate.composed.charCount) },
+            { label: "promptEstimatedTokens", value: String(failedLogicalPromptEstimate.composed.estimatedTokens) },
+            { label: "promptSystemEstimatedChars", value: String(failedLogicalPromptEstimate.system.charCount) },
+            { label: "promptSystemEstimatedTokens", value: String(failedLogicalPromptEstimate.system.estimatedTokens) },
+            { label: "promptInputEstimatedChars", value: String(failedLogicalPromptEstimate.input.charCount) },
+            { label: "promptInputEstimatedTokens", value: String(failedLogicalPromptEstimate.input.estimatedTokens) },
             { label: "projectMemoryHits", value: String(projectMemoryEntries.length) },
             { label: "attachmentCount", value: String(composerPreview.attachments.length) },
           ],
