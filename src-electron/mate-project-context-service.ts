@@ -52,6 +52,10 @@ export class MateProjectContextService {
       : items
     ).slice(0, limit);
 
+    if (queryText && selectedItems.length === 0) {
+      return null;
+    }
+
     return [
       PROJECT_CONTEXT_MARKDOWN_HEADER,
       ...selectedItems.map((item) => `- **${item.claimKey}:** ${item.renderedText}`),
@@ -82,10 +86,12 @@ export class MateProjectContextService {
     const semanticScores = await this.getSemanticScores(queryText, lexicalRanks);
     const rankedItems = lexicalRanks.map((rankedItem) => ({
       ...rankedItem,
+      semanticScore: semanticScores.get(rankedItem.item.id) ?? 0,
       score: rankedItem.score + (semanticScores.get(rankedItem.item.id) ?? 0) * DEFAULT_QUERY_VECTOR_SCORE_WEIGHT,
     }));
 
     return rankedItems
+      .filter((item) => item.score > 0 || item.semanticScore > 0)
       .sort((left, right) => {
         if (left.score !== right.score) {
           return right.score - left.score;

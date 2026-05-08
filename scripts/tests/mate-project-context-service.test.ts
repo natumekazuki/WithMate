@@ -232,8 +232,41 @@ describe("MateProjectContextService", () => {
       assert.deepEqual(itemLines, [
         "- **token:** endpoint notes",
         "- **api-tag:** auth notes",
-        "- **other:** no match",
       ]);
+    } finally {
+      storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("queryText で lexical も semantic もスコアがない場合は null を返す", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-context-service-"));
+    const dbPath = path.join(tempDirectory, "withmate-v4.db");
+    let storage: MateProfileItemStorage | null = null;
+    let service: MateProjectContextService | null = null;
+
+    try {
+      storage = new MateProfileItemStorage(dbPath);
+      service = new MateProjectContextService(storage, {
+        retrieve: async () => [],
+      });
+      seedCurrentMate(dbPath);
+      const digestId = seedProjectDigest(dbPath);
+
+      storage.upsertProfileItem({
+        sectionKey: "project_digest",
+        projectDigestId: digestId,
+        category: "note",
+        claimKey: "unrelated-item",
+        claimValue: "random value",
+        renderedText: "Some unrelated text",
+        confidence: 50,
+        salienceScore: 50,
+        projectionAllowed: true,
+      });
+
+      const text = await service.getProjectDigestContextText(digestId, { queryText: "needle" });
+      assert.equal(text, null);
     } finally {
       storage?.close();
       await rm(tempDirectory, { recursive: true, force: true });
@@ -391,7 +424,6 @@ describe("MateProjectContextService", () => {
       const itemLines = (text?.split("\n") ?? []).filter((line) => line.startsWith("- "));
       assert.deepEqual(itemLines, [
         `- **${semanticItem.claimKey}:** ${semanticItem.renderedText}`,
-        `- **${lexicalItem.claimKey}:** ${lexicalItem.renderedText}`,
       ]);
     } finally {
       storage?.close();
@@ -604,7 +636,6 @@ describe("MateProjectContextService", () => {
       const itemLines = (text?.split("\n") ?? []).filter((line) => line.startsWith("- "));
       assert.deepEqual(itemLines, [
         "- **high-lexical:** Needle detail",
-        "- **low-lexical:** Other detail",
       ]);
     } finally {
       storage?.close();
