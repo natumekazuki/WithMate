@@ -919,6 +919,29 @@ describe("HomeRightPane", () => {
     assert.ok(html.includes("Mate の説明は未設定だよ。"));
   });
 
+  it("active mateProfile で avatar 未設定のとき fallback がレンダリングされ、画像タグは出力されない", () => {
+    const html = renderHomeRightPane("mate", {
+      id: "mate-2",
+      state: "active",
+      displayName: "テストマテ",
+      description: "説明文",
+      themeMain: "#10b981",
+      themeSub: "#047857",
+      avatarFilePath: "",
+      avatarSha256: "",
+      avatarByteSize: 0,
+      activeRevisionId: null,
+      profileGeneration: 2,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      deletedAt: null,
+      sections: [],
+    });
+
+    assert.ok(html.includes('<span class="avatar-fallback">テ</span>'));
+    assert.ok(!html.includes("<img"));
+  });
+
   it("canUsePrimaryFeatures false の時は主要アクションを無効化する", () => {
     const html = renderHomeRightPane("monitor", null, false);
     assert.match(html, /<button class="launch-toggle home-monitor-window-button"[^>]*disabled=""/);

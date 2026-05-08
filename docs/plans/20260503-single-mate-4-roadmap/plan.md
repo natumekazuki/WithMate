@@ -208,7 +208,7 @@ projection に含めないもの:
 - [x] Mate 未作成または draft 時に Mate 作成と Settings 以外の全機能を block する
 - [x] 初回 Mate 作成 flow は `name` だけで active 化できる
 - [ ] 初回 Mate 作成時に core / notes / bond / work_style 用の初期 SQLite row と generated projection file を空状態で作成または生成する
-- [ ] avatar 未設定でも placeholder 表示で Mate を active 化できる
+- [x] avatar 未設定でも placeholder 表示で Mate を active 化できる
 - [ ] Home の character list を Your Mate 表示へ置き換える
 - [ ] New Session / Companion 起動から character picker を削除する
 - [ ] Character Editor を Mate Profile 画面へ置き換える
