@@ -380,10 +380,10 @@ projection に含めないもの:
 - [x] recurrence / salience / recency / decay を storage と policy gate に反映する
 - [x] Growth apply / forget / disable の単一 writer lock を実装する（correct は独立操作が追加された時点で同じ lock に合流する）
 - [x] Growth apply transaction の idempotency key を実装する
-- [ ] Growth apply は final commit 前に current Profile Item / Growth Event state / cursor を更新せず、proposed Profile Item set から projection snapshot を生成する
+- [x] Growth apply は final commit 前に current Profile Item / Growth Event state / cursor を更新せず、proposed Profile Item set から projection snapshot を生成する
 - [x] Growth apply revision は `committing_files` / `ready` state を持ち、provider sync は `ready` な SQLite snapshot だけを読む
 - [x] `mate_profile_revisions.status` は `staging` / `committing_files` / `ready` / `failed` を持ち、`active_revision_id` は `ready` revision だけを指す
-- [ ] final commit で current Profile Item、Growth Event state、source link、`active_revision_id`、`profile_generation`、cursor を同時に更新する
+- [x] final commit で current Profile Item、Growth Event state、source link、`active_revision_id`、`profile_generation`、cursor を同時に更新する
 - [x] provider sync の read snapshot 境界を実装する
 - [x] forget 後の `redaction_required` は 4.0.0 MVP では warning state として扱い、session 起動は block しない
 - [x] `projection_allowed` と provider instruction projection gate を実装する

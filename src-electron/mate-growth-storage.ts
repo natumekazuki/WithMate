@@ -931,62 +931,64 @@ export class MateGrowthStorage {
   }
 
   upsertCursor(input: MateGrowthCursorInput): MateGrowthCursor {
+    return this.withTransaction((db) => this.upsertCursorInTransaction(db, input));
+  }
+
+  upsertCursorInTransaction(db: DatabaseSync, input: MateGrowthCursorInput): MateGrowthCursor {
     const normalized = normalizeCursorInput(input);
     const now = nowIso();
 
-    return this.withTransaction((db) => {
-      const existing = db.prepare(SELECT_CURSOR_SQL).get(
+    const existing = db.prepare(SELECT_CURSOR_SQL).get(
+      MATE_ID,
+      normalized.cursorKey,
+      normalized.scopeType,
+      normalized.scopeId,
+    ) as CursorRow | undefined;
+
+    if (!existing) {
+      db.prepare(INSERT_CURSOR_SQL).run(
         MATE_ID,
         normalized.cursorKey,
         normalized.scopeType,
         normalized.scopeId,
-      ) as CursorRow | undefined;
-
-      if (!existing) {
-        db.prepare(INSERT_CURSOR_SQL).run(
-          MATE_ID,
-          normalized.cursorKey,
-          normalized.scopeType,
-          normalized.scopeId,
-          normalized.lastMessageId,
-          normalized.lastAuditLogId,
-          normalized.lastGrowthEventId,
-          normalized.lastProfileGeneration,
-          normalized.contentFingerprint,
-          normalized.updatedByRunId,
-          now,
-        );
-      } else if (isCursorRewind(existing, input, normalized)) {
-        return rowToCursor(existing);
-      } else {
-        const nextLastAuditLogId = applyNoRewindCounter(existing.last_audit_log_id, normalized.lastAuditLogId);
-        const nextLastProfileGeneration = applyNoRewindCounter(existing.last_profile_generation, normalized.lastProfileGeneration);
-        db.prepare(UPDATE_CURSOR_SQL).run(
-          normalized.lastMessageId,
-          nextLastAuditLogId,
-          normalized.lastGrowthEventId,
-          nextLastProfileGeneration,
-          normalized.contentFingerprint,
-          normalized.updatedByRunId,
-          now,
-          MATE_ID,
-          normalized.cursorKey,
-          normalized.scopeType,
-          normalized.scopeId,
-        );
-      }
-
-      const saved = db.prepare(SELECT_CURSOR_SQL).get(
+        normalized.lastMessageId,
+        normalized.lastAuditLogId,
+        normalized.lastGrowthEventId,
+        normalized.lastProfileGeneration,
+        normalized.contentFingerprint,
+        normalized.updatedByRunId,
+        now,
+      );
+    } else if (isCursorRewind(existing, input, normalized)) {
+      return rowToCursor(existing);
+    } else {
+      const nextLastAuditLogId = applyNoRewindCounter(existing.last_audit_log_id, normalized.lastAuditLogId);
+      const nextLastProfileGeneration = applyNoRewindCounter(existing.last_profile_generation, normalized.lastProfileGeneration);
+      db.prepare(UPDATE_CURSOR_SQL).run(
+        normalized.lastMessageId,
+        nextLastAuditLogId,
+        normalized.lastGrowthEventId,
+        nextLastProfileGeneration,
+        normalized.contentFingerprint,
+        normalized.updatedByRunId,
+        now,
         MATE_ID,
         normalized.cursorKey,
         normalized.scopeType,
         normalized.scopeId,
-      ) as CursorRow | undefined;
-      if (!saved) {
-        throw new Error("Cursor の保存に失敗したよ。");
-      }
-      return rowToCursor(saved);
-    });
+      );
+    }
+
+    const saved = db.prepare(SELECT_CURSOR_SQL).get(
+      MATE_ID,
+      normalized.cursorKey,
+      normalized.scopeType,
+      normalized.scopeId,
+    ) as CursorRow | undefined;
+    if (!saved) {
+      throw new Error("Cursor の保存に失敗したよ。");
+    }
+    return rowToCursor(saved);
   }
 
   upsertCursorIfCurrent(input: MateGrowthCursorAdvanceInput): MateGrowthCursorAdvanceResult {

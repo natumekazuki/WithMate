@@ -31,6 +31,7 @@ describe("MateGrowthApplyService", () => {
 
     try {
       await mateStorage.createMate({ displayName: "Mika" });
+      const beforeProfileGeneration = mateStorage.getMateProfile()?.profileGeneration ?? 0;
       const runId = growthStorage.createRun({
         sourceType: "session",
         sourceSessionId: "session-1",
@@ -119,6 +120,14 @@ describe("MateGrowthApplyService", () => {
         assert.equal(rows.find((row) => row.id === applicable.id)?.applied_revision_id, null);
         assert.equal(rows.find((row) => row.id === bond.id)?.applied_revision_id, result.revisionId);
         assert.equal(rows.find((row) => row.id === workStyle.id)?.applied_revision_id, result.revisionId);
+
+        const cursor = growthStorage.getCursor({
+          cursorKey: "applied_event_watermark",
+          scopeType: "global",
+        });
+        assert.equal(cursor?.lastGrowthEventId, workStyle.id);
+        assert.equal(cursor?.lastProfileGeneration, beforeProfileGeneration + 1);
+        assert.notEqual(cursor?.updatedByRunId, null);
       } finally {
         db.close();
       }
@@ -878,6 +887,85 @@ describe("MateGrowthApplyService", () => {
       profileItemStorage.close();
       growthStorage.close();
       profileItemStorage.upsertProfileItemInTransaction = originalUpsertProfileItemInTransaction;
+      mateStorage.close();
+      await cleanup();
+    }
+  });
+
+  it("applied_event_watermark の upsert が失敗すると apply が失敗し cursor がロールバックされる", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const mateStorage = new MateStorage(dbPath, userDataPath);
+    const growthStorage = new MateGrowthStorage(dbPath);
+    const profileItemStorage = new MateProfileItemStorage(dbPath);
+    const originalUpsertCursorInTransaction = growthStorage.upsertCursorInTransaction;
+
+    try {
+      await mateStorage.createMate({ displayName: "Mika" });
+      const beforeCursor = growthStorage.upsertCursor({
+        cursorKey: "applied_event_watermark",
+        scopeType: "global",
+        lastGrowthEventId: "before-growth-event",
+        lastProfileGeneration: 3,
+      });
+
+      const runId = growthStorage.createRun({
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        triggerReason: "test",
+      });
+      const event = growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "repeated_user_behavior",
+        kind: "relationship",
+        targetSection: "bond",
+        statement: "ユーザーは短文を好む",
+        statementFingerprint: "short-message-preference",
+        targetClaimKey: "reply_length",
+        confidence: 82,
+        salienceScore: 68,
+        projectionAllowed: true,
+      });
+
+      growthStorage.upsertCursorInTransaction = (() => {
+        throw new Error("applied_event_watermark cursor upsert failed");
+      }) as typeof growthStorage.upsertCursorInTransaction;
+
+      const service = new MateGrowthApplyService(
+        growthStorage,
+        profileItemStorage,
+        mateStorage,
+      );
+
+      await assert.rejects(
+        () => service.applyPendingGrowth({ runId }),
+        /applied_event_watermark cursor upsert failed/,
+      );
+
+      const afterCursor = growthStorage.getCursor({
+        cursorKey: "applied_event_watermark",
+        scopeType: "global",
+      });
+      assert.equal(afterCursor?.lastGrowthEventId, beforeCursor.lastGrowthEventId);
+      assert.equal(afterCursor?.lastProfileGeneration, beforeCursor.lastProfileGeneration);
+      assert.equal(afterCursor?.updatedByRunId, beforeCursor.updatedByRunId);
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const row = db.prepare("SELECT state, applied_revision_id FROM mate_growth_events WHERE id = ?").get(event.id) as {
+          state: string;
+          applied_revision_id: string | null;
+        };
+        assert.equal(row.state, "candidate");
+        assert.equal(row.applied_revision_id, null);
+      } finally {
+        db.close();
+      }
+    } finally {
+      growthStorage.upsertCursorInTransaction = originalUpsertCursorInTransaction;
+      profileItemStorage.close();
+      growthStorage.close();
       mateStorage.close();
       await cleanup();
     }

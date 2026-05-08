@@ -101,6 +101,8 @@ export class MateGrowthApplyService {
       profileItem: MateProfileItem;
     }> = [];
     let updatedProfileRevisionId: string | null = null;
+    const nextProfileGeneration = profile.profileGeneration + 1;
+    const lastApplicableGrowthEventId = applicableEvents[applicableEvents.length - 1]?.id ?? null;
     let result: ApplyPendingGrowthResult;
 
     try {
@@ -161,6 +163,14 @@ export class MateGrowthApplyService {
             appliedIndexTargets.push({ event: applicableEvents[i], profileItem: upsertedItem });
             this.growthStorage.markEventAppliedInTransaction(db, applicableEvents[i].id, revisionId);
           }
+
+          this.growthStorage.upsertCursorInTransaction(db, {
+            cursorKey: "applied_event_watermark",
+            scopeType: "global",
+            lastGrowthEventId: lastApplicableGrowthEventId,
+            lastProfileGeneration: nextProfileGeneration,
+            updatedByRunId: lock.runId,
+          });
 
           this.growthStorage.finishRunInTransaction(db, lock.runId, {
             outputRevisionId: revisionId,
