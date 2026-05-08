@@ -100,6 +100,7 @@ import {
 import { type MateEmbeddingSettings } from "./mate-embedding-settings.js";
 import type { MateGrowthEventListItem } from "./mate-growth-events-state.js";
 import { applyHomePendingGrowth } from "./home-mate-growth-actions.js";
+import { HomeMateTalkTurnController } from "./home-mate-talk-state.js";
 
 async function openSessionWindow(sessionId: string) {
   await withWithMateApi((api) => api.openSession(sessionId));
@@ -281,8 +282,7 @@ export default function HomeApp() {
   const settingsDirtyRef = useRef(false);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const memoryManagementRequestIdRef = useRef(0);
-  const mateTalkMessageSequenceRef = useRef(0);
-  const mateTalkTurnRequestIdRef = useRef(0);
+  const mateTalkTurnControllerRef = useRef(new HomeMateTalkTurnController());
   const mateEmbeddingSettingsPollingIntervalRef = useRef<number | null>(null);
 
   const beginMemoryManagementRequest = () => {
@@ -292,13 +292,6 @@ export default function HomeApp() {
 
   const isLatestMemoryManagementRequest = (requestId: number) =>
     memoryManagementRequestIdRef.current === requestId;
-
-  const beginMateTalkTurn = () => {
-    mateTalkTurnRequestIdRef.current += 1;
-    return mateTalkTurnRequestIdRef.current;
-  };
-
-  const isLatestMateTalkTurn = (turnId: number) => mateTalkTurnRequestIdRef.current === turnId;
 
   const stopMateEmbeddingSettingsPolling = () => {
     if (mateEmbeddingSettingsPollingIntervalRef.current === null) {
@@ -736,7 +729,7 @@ export default function HomeApp() {
   const homePageClassName = `page-shell home-page${isMonitorWindowMode ? " home-page-monitor-window" : ""}`;
 
   const resetMateTalkState = () => {
-    mateTalkTurnRequestIdRef.current += 1;
+    mateTalkTurnControllerRef.current.invalidateTurns();
     setMateTalkOpen(false);
     setMateTalkInput("");
     setMateTalkMessages([]);
@@ -764,9 +757,7 @@ export default function HomeApp() {
       return;
     }
 
-    const turnId = beginMateTalkTurn();
-    const messageSequence = mateTalkMessageSequenceRef.current + 1;
-    mateTalkMessageSequenceRef.current = messageSequence;
+    const { turnId, messageSequence } = mateTalkTurnControllerRef.current.beginTurn();
     const userMessageId = `user-${messageSequence}`;
     const now = Date.now();
 
@@ -784,7 +775,7 @@ export default function HomeApp() {
 
     try {
       const result = await withWithMateApi((api) => api.runMateTalkTurn({ message: normalizedText }));
-      if (!isLatestMateTalkTurn(turnId)) {
+      if (!mateTalkTurnControllerRef.current.isLatestTurn(turnId)) {
         return;
       }
       if (!result) {
@@ -799,7 +790,7 @@ export default function HomeApp() {
         },
       ]);
     } catch (error) {
-      if (!isLatestMateTalkTurn(turnId)) {
+      if (!mateTalkTurnControllerRef.current.isLatestTurn(turnId)) {
         return;
       }
       const message = error instanceof Error ? error.message : "メイトークの送信に失敗しました。";
@@ -812,7 +803,7 @@ export default function HomeApp() {
         },
       ]);
     } finally {
-      if (!isLatestMateTalkTurn(turnId)) {
+      if (!mateTalkTurnControllerRef.current.isLatestTurn(turnId)) {
         return;
       }
       setMateTalkSending(false);
