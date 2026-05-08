@@ -1931,7 +1931,13 @@ export function HomeMateTalkPanel({
       <h2 className="home-mate-talk-head">メイトーク</h2>
       <p className="home-mate-talk-description">{mateName} と話す</p>
 
-      <section className="home-mate-talk-messages" aria-label="メイトーク会話履歴">
+      <section
+        className="home-mate-talk-messages"
+        aria-label="メイトーク会話履歴"
+        role="region"
+        aria-live="polite"
+        aria-busy={sending}
+      >
         {messages.length > 0 ? (
           messages.map((message) => (
             <article
@@ -1949,7 +1955,7 @@ export function HomeMateTalkPanel({
         )}
       </section>
 
-      {feedback ? <p className="settings-feedback home-mate-feedback">{feedback}</p> : null}
+      {feedback ? <p role="status" className="settings-feedback home-mate-feedback">{feedback}</p> : null}
 
       <form
         className="home-mate-talk-form"
