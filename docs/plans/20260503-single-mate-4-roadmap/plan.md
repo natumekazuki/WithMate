@@ -317,7 +317,7 @@ projection に含めないもの:
 - [x] Growth apply interval / pending Memory trigger と human-like memory score の方針を定義する
 - [x] ChatGPT Pro 検討用 summary を `docs/design/mate-memory-summary.md` に作る
 - [x] Mate Growth Engine の service boundary を実装する
-- [ ] Growth LLM provider / model / depth の fixed priority list を Settings / storage に追加する
+- [x] Growth LLM provider / model / depth の fixed priority list を Settings / storage に追加する
 - [ ] GrowthModelPort を stub / fake 可能な契約で実装する
 - [x] GrowthModelPort を通常 turn response とは別の background job として実行する
 - [ ] GrowthModelPort は user-facing provider thread を再利用せず、別 background session / utility call として実行する

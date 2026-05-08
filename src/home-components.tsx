@@ -10,8 +10,11 @@ import type { MateEmbeddingSettings } from "./mate-embedding-settings.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
 import {
   DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES,
-  type MateGrowthCandidateMode,
+  MATE_GROWTH_MODEL_PREFERENCES,
+  type MateGrowthModelPreference,
+  type MateGrowthModelPreferencePurpose,
   type MateGrowthSettings,
+  type UpdateMateGrowthSettingsInput,
 } from "./mate-state.js";
 import type {
   MemoryManagementDomain,
@@ -69,6 +72,14 @@ import {
   SETTINGS_MATE_GROWTH_EVERY_TURN_LABEL,
   SETTINGS_MATE_GROWTH_MANUAL_LABEL,
   SETTINGS_MATE_GROWTH_MEMORY_CANDIDATE_MODE_LABEL,
+  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_ADD_LABEL,
+  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_DEPTH_LABEL,
+  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_ENABLED_LABEL,
+  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_MODEL_LABEL,
+  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PROVIDER_LABEL,
+  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PURPOSE_LABEL,
+  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_REMOVE_LABEL,
+  SETTINGS_MATE_GROWTH_MODEL_PREFERENCES_LABEL,
   SETTINGS_MATE_GROWTH_SETTINGS_LABEL,
   SETTINGS_MATE_GROWTH_THRESHOLD_LABEL,
   SETTINGS_MATE_GROWTH_HELP,
@@ -156,12 +167,7 @@ export type HomeSettingsContentProps = {
   onApplyPendingGrowth?: () => void;
   applyPendingGrowthBusy?: boolean;
   canApplyPendingGrowth?: boolean;
-  onUpdateMateGrowthSettings: (input: {
-    enabled?: boolean;
-    autoApplyEnabled?: boolean;
-    memoryCandidateMode?: MateGrowthCandidateMode;
-    applyIntervalMinutes?: number;
-  }) => void;
+  onUpdateMateGrowthSettings: (input: UpdateMateGrowthSettingsInput) => void;
   onResetMate?: () => void;
   mateResetBusy?: boolean;
   canResetMate?: boolean;
@@ -299,6 +305,55 @@ export function HomeSettingsContent({
   const isMateGrowthUnavailable = mateGrowthBusy || mateGrowthSettings === null;
   const isMateGrowthFeatureDisabled = mateGrowthSettings?.enabled === false;
   const isMateGrowthControlDisabled = isMateGrowthUnavailable || isMateGrowthFeatureDisabled;
+  const mateGrowthModelPreferences = mateGrowthSettings?.modelPreferences ?? [];
+  const defaultMateGrowthProvider = providerSettingRows[0]?.provider;
+  const createDefaultMateGrowthModelPreference = (): MateGrowthModelPreference => ({
+    purpose: "memory_candidate",
+    priority: mateGrowthModelPreferences.length + 1,
+    provider: defaultMateGrowthProvider?.id ?? "codex",
+    model: defaultMateGrowthProvider?.defaultModelId ?? "gpt-5.4",
+    depth: defaultMateGrowthProvider?.defaultReasoningEffort ?? "low",
+    enabled: true,
+  });
+  const normalizeMateGrowthModelPreferencePriorities = (
+    preferences: MateGrowthModelPreference[],
+  ): MateGrowthModelPreference[] =>
+    preferences.map((preference, index) => ({
+      ...preference,
+      priority: index + 1,
+    }));
+  const updateMateGrowthModelPreference = (
+    index: number,
+    patch: Partial<MateGrowthModelPreference>,
+  ) => {
+    onUpdateMateGrowthSettings({
+      modelPreferences: normalizeMateGrowthModelPreferencePriorities(
+        mateGrowthModelPreferences.map((preference, preferenceIndex) =>
+          preferenceIndex === index
+            ? {
+              ...preference,
+              ...patch,
+            }
+            : preference,
+        ),
+      ),
+    });
+  };
+  const removeMateGrowthModelPreference = (index: number) => {
+    onUpdateMateGrowthSettings({
+      modelPreferences: normalizeMateGrowthModelPreferencePriorities(
+        mateGrowthModelPreferences.filter((_, preferenceIndex) => preferenceIndex !== index),
+      ),
+    });
+  };
+  const addMateGrowthModelPreference = () => {
+    onUpdateMateGrowthSettings({
+      modelPreferences: normalizeMateGrowthModelPreferencePriorities([
+        ...mateGrowthModelPreferences,
+        createDefaultMateGrowthModelPreference(),
+      ]),
+    });
+  };
 
   return (
     <>
@@ -647,6 +702,107 @@ export function HomeSettingsContent({
                   }}
                 />
               </label>
+              <div className="settings-field">
+                <strong>{SETTINGS_MATE_GROWTH_MODEL_PREFERENCES_LABEL}</strong>
+                <div className="settings-provider-list">
+                  {mateGrowthModelPreferences.map((preference, index) => (
+                    <section key={`${preference.purpose}-${preference.priority}-${index}`} className="settings-provider-card">
+                      <label className="settings-provider-input">
+                        <span>{SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PURPOSE_LABEL}</span>
+                        <select
+                          id={`mate-growth-model-preference-purpose-${index}`}
+                          value={preference.purpose}
+                          disabled={isMateGrowthControlDisabled}
+                          onChange={(event) =>
+                            updateMateGrowthModelPreference(index, {
+                              purpose: event.target.value as MateGrowthModelPreferencePurpose,
+                            })}
+                        >
+                          {MATE_GROWTH_MODEL_PREFERENCES.map((purpose) => (
+                            <option key={purpose} value={purpose}>
+                              {purpose}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="settings-provider-input">
+                        <span>{SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PROVIDER_LABEL}</span>
+                        <input
+                          id={`mate-growth-model-preference-provider-${index}`}
+                          type="text"
+                          value={preference.provider}
+                          disabled={isMateGrowthControlDisabled}
+                          onChange={(event) =>
+                            updateMateGrowthModelPreference(index, {
+                              provider: event.target.value,
+                            })}
+                        />
+                      </label>
+                      <label className="settings-provider-input">
+                        <span>{SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_MODEL_LABEL}</span>
+                        <input
+                          id={`mate-growth-model-preference-model-${index}`}
+                          type="text"
+                          value={preference.model}
+                          disabled={isMateGrowthControlDisabled}
+                          onChange={(event) =>
+                            updateMateGrowthModelPreference(index, {
+                              model: event.target.value,
+                            })}
+                        />
+                      </label>
+                      <label className="settings-provider-input">
+                        <span>{SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_DEPTH_LABEL}</span>
+                        <input
+                          id={`mate-growth-model-preference-depth-${index}`}
+                          type="text"
+                          value={preference.depth}
+                          disabled={isMateGrowthControlDisabled}
+                          onChange={(event) =>
+                            updateMateGrowthModelPreference(index, {
+                              depth: event.target.value,
+                            })}
+                        />
+                      </label>
+                      <label className="settings-provider-toggle-row settings-section-toggle">
+                        <span>{SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_ENABLED_LABEL}</span>
+                        <input
+                          id={`mate-growth-model-preference-enabled-${index}`}
+                          type="checkbox"
+                          checked={preference.enabled}
+                          disabled={isMateGrowthControlDisabled}
+                          onChange={(event) =>
+                            updateMateGrowthModelPreference(index, {
+                              enabled: event.target.checked,
+                            })}
+                        />
+                      </label>
+                      <div className="settings-actions">
+                        <button
+                          id={`mate-growth-model-preference-remove-${index}`}
+                          className="launch-toggle compact"
+                          type="button"
+                          disabled={isMateGrowthControlDisabled}
+                          onClick={() => removeMateGrowthModelPreference(index)}
+                        >
+                          {SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_REMOVE_LABEL}
+                        </button>
+                      </div>
+                    </section>
+                  ))}
+                </div>
+                <div className="settings-actions">
+                  <button
+                    id="mate-growth-model-preference-add"
+                    className="launch-toggle"
+                    type="button"
+                    disabled={isMateGrowthControlDisabled}
+                    onClick={addMateGrowthModelPreference}
+                  >
+                    {SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_ADD_LABEL}
+                  </button>
+                </div>
+              </div>
               {mateGrowthFeedback ? <p className="settings-feedback">{mateGrowthFeedback}</p> : null}
             </div>
           </section>

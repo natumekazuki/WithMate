@@ -29,6 +29,12 @@ export type MateProfile = {
 };
 
 export type MateGrowthCandidateMode = "every_turn" | "threshold" | "manual";
+export const MATE_GROWTH_MODEL_PREFERENCES = [
+  "memory_candidate",
+  "profile_update",
+  "project_digest",
+] as const;
+export type MateGrowthModelPreferencePurpose = (typeof MATE_GROWTH_MODEL_PREFERENCES)[number];
 
 export const DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES = 60;
 
@@ -37,7 +43,26 @@ export type MateGrowthSettings = {
   autoApplyEnabled: boolean;
   memoryCandidateMode: MateGrowthCandidateMode;
   applyIntervalMinutes: number;
+  modelPreferences: MateGrowthModelPreference[];
   updatedAt: string;
+};
+
+export type MateGrowthModelPreference = {
+  purpose: MateGrowthModelPreferencePurpose;
+  priority: number;
+  provider: string;
+  model: string;
+  depth: string;
+  enabled: boolean;
+};
+
+export type UpdateMateGrowthModelPreferenceInput = {
+  purpose: MateGrowthModelPreferencePurpose;
+  priority?: number;
+  provider: string;
+  model: string;
+  depth: string;
+  enabled?: boolean;
 };
 
 export type UpdateMateGrowthSettingsInput = {
@@ -45,6 +70,7 @@ export type UpdateMateGrowthSettingsInput = {
   autoApplyEnabled?: boolean;
   memoryCandidateMode?: MateGrowthCandidateMode;
   applyIntervalMinutes?: number;
+  modelPreferences?: UpdateMateGrowthModelPreferenceInput[];
 };
 
 export type CreateMateInput = {

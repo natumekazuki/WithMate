@@ -23,6 +23,14 @@ import {
   SETTINGS_MATE_GROWTH_ENABLED_LABEL,
   SETTINGS_MATE_GROWTH_MANUAL_LABEL,
   SETTINGS_MATE_GROWTH_MEMORY_CANDIDATE_MODE_LABEL,
+  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_ADD_LABEL,
+  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_DEPTH_LABEL,
+  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_ENABLED_LABEL,
+  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_MODEL_LABEL,
+  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PROVIDER_LABEL,
+  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PURPOSE_LABEL,
+  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_REMOVE_LABEL,
+  SETTINGS_MATE_GROWTH_MODEL_PREFERENCES_LABEL,
   SETTINGS_MATE_GROWTH_SETTINGS_LABEL,
   SETTINGS_MATE_GROWTH_THRESHOLD_LABEL,
   SETTINGS_MATE_EMBEDDING_LABEL,
@@ -65,6 +73,16 @@ describe("HomeSettingsContent", () => {
     autoApplyEnabled: true,
     memoryCandidateMode: "every_turn",
     applyIntervalMinutes: 5,
+    modelPreferences: [
+      {
+        purpose: "memory_candidate",
+        priority: 1,
+        provider: "codex",
+        model: "gpt-5.4",
+        depth: "low",
+        enabled: true,
+      },
+    ],
     updatedAt: "2026-05-01T09:00:00.000Z",
   };
   const disabledMateGrowthSettings: MateGrowthSettings = {
@@ -218,7 +236,7 @@ describe("HomeSettingsContent", () => {
 
   const collectGrowthInputElements = (params?: RenderSettingsParams) => {
     const content = buildSettingsContent(params);
-    const byId = (id: string, type: "input" | "select") =>
+    const byId = (id: string, type: "button" | "input" | "select") =>
       collectElementsById(content, (element) => element.type === type && element.props.id === id);
 
     return {
@@ -226,6 +244,13 @@ describe("HomeSettingsContent", () => {
       autoApplyEnabled: byId("mate-growth-auto-apply-enabled", "input")[0],
       memoryCandidateMode: byId("mate-growth-memory-candidate-mode", "select")[0],
       applyIntervalMinutes: byId("mate-growth-apply-interval-minutes", "input")[0],
+      modelPreferencePurpose: byId("mate-growth-model-preference-purpose-0", "select")[0],
+      modelPreferenceProvider: byId("mate-growth-model-preference-provider-0", "input")[0],
+      modelPreferenceModel: byId("mate-growth-model-preference-model-0", "input")[0],
+      modelPreferenceDepth: byId("mate-growth-model-preference-depth-0", "input")[0],
+      modelPreferenceEnabled: byId("mate-growth-model-preference-enabled-0", "input")[0],
+      modelPreferenceRemove: byId("mate-growth-model-preference-remove-0", "button")[0],
+      modelPreferenceAdd: byId("mate-growth-model-preference-add", "button")[0],
     };
   };
 
@@ -262,6 +287,14 @@ describe("HomeSettingsContent", () => {
     assert.ok(/<option value="threshold"[^>]*>threshold<\/option>/.test(html));
     assert.ok(/<option value="manual"[^>]*>manual<\/option>/.test(html));
     assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_APPLY_INTERVAL_MINUTES_LABEL}</span>`));
+    assert.ok(html.includes(`<strong>${SETTINGS_MATE_GROWTH_MODEL_PREFERENCES_LABEL}</strong>`));
+    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PURPOSE_LABEL}</span>`));
+    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PROVIDER_LABEL}</span>`));
+    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_MODEL_LABEL}</span>`));
+    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_DEPTH_LABEL}</span>`));
+    assert.ok(html.includes(`<span>${SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_ENABLED_LABEL}</span>`));
+    assert.ok(html.includes(`>${SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_REMOVE_LABEL}</button>`));
+    assert.ok(html.includes(`>${SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_ADD_LABEL}</button>`));
   });
 
   it("Growth 設定の checkbox/select/input 変更で onUpdate callback が呼ばれる", () => {
@@ -286,6 +319,77 @@ describe("HomeSettingsContent", () => {
     assert.deepEqual(updates[1], { autoApplyEnabled: true });
     assert.deepEqual(updates[2], { memoryCandidateMode: "manual" });
     assert.deepEqual(updates[3], { applyIntervalMinutes: 15 });
+  });
+
+  it("Growth model priority の変更で onUpdate callback が呼ばれる", () => {
+    const updates: Array<Record<string, unknown>> = [];
+    const {
+      modelPreferencePurpose,
+      modelPreferenceProvider,
+      modelPreferenceModel,
+      modelPreferenceDepth,
+      modelPreferenceEnabled,
+      modelPreferenceRemove,
+      modelPreferenceAdd,
+    } = collectGrowthInputElements({
+      onUpdateMateGrowthSettings: (input) => {
+        updates.push(input as Record<string, unknown>);
+      },
+    });
+
+    if (
+      !modelPreferencePurpose ||
+      !modelPreferenceProvider ||
+      !modelPreferenceModel ||
+      !modelPreferenceDepth ||
+      !modelPreferenceEnabled ||
+      !modelPreferenceRemove ||
+      !modelPreferenceAdd
+    ) {
+      throw new Error("Growth model priority input が取得できませんでした。");
+    }
+
+    modelPreferencePurpose.props.onChange({ target: { value: "profile_update" } } as { target: { value: string } });
+    modelPreferenceProvider.props.onChange({ target: { value: "copilot" } } as { target: { value: string } });
+    modelPreferenceModel.props.onChange({ target: { value: "model-b" } } as { target: { value: string } });
+    modelPreferenceDepth.props.onChange({ target: { value: "medium" } } as { target: { value: string } });
+    modelPreferenceEnabled.props.onChange({ target: { checked: false } } as { target: { checked: boolean } });
+    modelPreferenceRemove.props.onClick();
+    modelPreferenceAdd.props.onClick();
+
+    assert.equal(updates.length, 7);
+    assert.deepEqual(updates[0]?.modelPreferences, [{
+      ...nextMateGrowthSettings.modelPreferences[0],
+      purpose: "profile_update",
+    }]);
+    assert.deepEqual(updates[1]?.modelPreferences, [{
+      ...nextMateGrowthSettings.modelPreferences[0],
+      provider: "copilot",
+    }]);
+    assert.deepEqual(updates[2]?.modelPreferences, [{
+      ...nextMateGrowthSettings.modelPreferences[0],
+      model: "model-b",
+    }]);
+    assert.deepEqual(updates[3]?.modelPreferences, [{
+      ...nextMateGrowthSettings.modelPreferences[0],
+      depth: "medium",
+    }]);
+    assert.deepEqual(updates[4]?.modelPreferences, [{
+      ...nextMateGrowthSettings.modelPreferences[0],
+      enabled: false,
+    }]);
+    assert.deepEqual(updates[5], { modelPreferences: [] });
+    assert.deepEqual(updates[6]?.modelPreferences, [
+      nextMateGrowthSettings.modelPreferences[0],
+      {
+        purpose: "memory_candidate",
+        priority: 2,
+        provider: "codex",
+        model: "gpt-5.4",
+        depth: "high",
+        enabled: true,
+      },
+    ]);
   });
 
   it("Growth 設定の interval input が空文字のとき onUpdate callback は呼ばれない", () => {

@@ -9,8 +9,12 @@ import {
 import { openAppDatabase } from "./sqlite-connection.js";
 import {
   DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES,
+  type MateGrowthModelPreferencePurpose,
+  MATE_GROWTH_MODEL_PREFERENCES,
   type MateGrowthCandidateMode,
+  type MateGrowthModelPreference,
   type MateGrowthSettings,
+  type UpdateMateGrowthModelPreferenceInput,
   type UpdateMateGrowthSettingsInput,
 } from "../src/mate-state.js";
 
@@ -18,7 +22,9 @@ const MATE_ID = "current";
 const MATE_DIRECTORY_NAME = "mate";
 const MATE_REVISIONS_DIRECTORY_NAME = "revisions";
 const MATE_AVATAR_FILE_PATH = "mate/avatar.png";
-
+const MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_PROVIDER_ID = "codex";
+const MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_MODEL = "gpt-5.4";
+const MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_DEPTH = "low";
 const MATE_SECTION_FILES = [
   { key: "core", relativePath: "mate/core.md" },
   { key: "bond", relativePath: "mate/bond.md" },
@@ -64,6 +70,15 @@ type MateGrowthSettingsRow = {
   memory_candidate_mode: "every_turn" | "threshold" | "manual";
   apply_interval_minutes: number;
   updated_at: string;
+};
+
+type MateGrowthModelPreferenceRow = {
+  purpose: MateGrowthModelPreferencePurpose;
+  priority: number;
+  provider_id: string;
+  model: string;
+  reasoning_effort: string;
+  enabled: number;
 };
 
 export type MateProfileSectionState = {
@@ -162,6 +177,100 @@ function normalizeMemoryCandidateMode(mode: string): MateGrowthCandidateMode {
   }
 
   throw new Error("memoryCandidateMode は every_turn / threshold / manual のいずれかで指定してね。");
+}
+
+function normalizeGrowthModelPreferences(modelPreferences: Array<UpdateMateGrowthModelPreferenceInput> | undefined): Array<MateGrowthModelPreference> | undefined {
+  if (modelPreferences === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(modelPreferences)) {
+    throw new Error("modelPreferences は配列で指定してね。");
+  }
+
+  if (modelPreferences.length === 0) {
+    return [];
+  }
+
+  const normalized = modelPreferences.map((preference, index) => {
+    if (preference === null || typeof preference !== "object" || Array.isArray(preference)) {
+      throw new Error("modelPreferences は配列で指定してね。");
+    }
+
+    const purpose = preference.purpose;
+    if (!MATE_GROWTH_MODEL_PREFERENCES.includes(purpose)) {
+      throw new Error("purpose は memory_candidate / profile_update / project_digest のいずれかで指定してね。");
+    }
+
+    if (typeof preference.provider !== "string") {
+      throw new Error("provider は文字列で指定してね。");
+    }
+    const provider = preference.provider.trim();
+    if (!provider) {
+      throw new Error("provider は空にできないよ。");
+    }
+
+    if (typeof preference.model !== "string") {
+      throw new Error("model は文字列で指定してね。");
+    }
+    const model = preference.model.trim();
+    if (!model) {
+      throw new Error("model は空にできないよ。");
+    }
+
+    if (typeof preference.depth !== "string") {
+      throw new Error("depth は文字列で指定してね。");
+    }
+    const depth = preference.depth.trim();
+    if (!depth) {
+      throw new Error("depth は空にできないよ。");
+    }
+
+    let priority = preference.priority;
+    if (priority !== undefined) {
+      if (!Number.isFinite(priority)) {
+        throw new Error("priority は有限の数値で指定してね。");
+      }
+      priority = Math.trunc(priority);
+      if (priority < 1) {
+        throw new Error("priority は1以上で指定してね。");
+      }
+    }
+
+    const enabled = preference.enabled ?? true;
+    if (typeof enabled !== "boolean") {
+      throw new Error("enabled は boolean で指定してね。");
+    }
+
+    return {
+      purpose,
+      provider,
+      model,
+      depth,
+      priority,
+      enabled,
+      index,
+    };
+  });
+
+  const hasPriority = normalized.some((preference) => typeof preference.priority === "number");
+  const ordered = hasPriority
+    ? [...normalized].sort((left, right) => {
+      if (left.priority === right.priority) {
+        return left.index - right.index;
+      }
+      return (left.priority ?? 0) - (right.priority ?? 0);
+    })
+    : [...normalized].sort((left, right) => left.index - right.index);
+
+  return ordered.map((preference, index) => ({
+    purpose: preference.purpose,
+    provider: preference.provider,
+    model: preference.model,
+    depth: preference.depth,
+    enabled: preference.enabled,
+    priority: index + 1,
+  }));
 }
 
 function assertMateGrowthSettingsInput(input: UpdateMateGrowthSettingsInput): void {
@@ -475,11 +584,32 @@ export class MateStorage {
         return null;
       }
 
+      const preferenceRows = db.prepare(`
+        SELECT
+          purpose,
+          priority,
+          provider_id,
+          model,
+          reasoning_effort,
+          enabled
+        FROM mate_growth_model_preferences
+        WHERE mate_id = ?
+        ORDER BY priority ASC
+      `).all(MATE_ID) as MateGrowthModelPreferenceRow[];
+
       return {
         enabled: row.enabled === 1,
         autoApplyEnabled: row.auto_apply_enabled === 1,
         memoryCandidateMode: row.memory_candidate_mode,
         applyIntervalMinutes: row.apply_interval_minutes,
+        modelPreferences: preferenceRows.map((preferenceRow) => ({
+          purpose: preferenceRow.purpose,
+          priority: preferenceRow.priority,
+          provider: preferenceRow.provider_id,
+          model: preferenceRow.model,
+          depth: preferenceRow.reasoning_effort,
+          enabled: preferenceRow.enabled === 1,
+        })),
         updatedAt: row.updated_at,
       };
     });
@@ -504,9 +634,11 @@ export class MateStorage {
 
   updateMateGrowthSettings(input: UpdateMateGrowthSettingsInput): MateGrowthSettings | null {
     assertMateGrowthSettingsInput(input);
+    const normalizedModelPreferences = normalizeGrowthModelPreferences(input.modelPreferences);
 
     const updates: string[] = [];
     const values: Array<number | string> = [];
+    const hasModelPreferenceUpdate = normalizedModelPreferences !== undefined;
 
     if (input.enabled !== undefined) {
       if (typeof input.enabled !== "boolean") {
@@ -531,20 +663,59 @@ export class MateStorage {
       values.push(normalizeApplyIntervalMinutes(input.applyIntervalMinutes));
     }
 
-    if (updates.length === 0) {
+    if (updates.length === 0 && !hasModelPreferenceUpdate) {
       return this.getMateGrowthSettings();
     }
 
+    const current = this.getMateGrowthSettings();
+    if (!current) {
+      return null;
+    }
+
+    const updatedAt = nowIso();
     updates.push("updated_at = ?");
-    values.push(nowIso());
+    values.push(updatedAt);
     values.push(MATE_ID);
 
-    this.withDb((db) => {
-      db.prepare(`
-        UPDATE mate_growth_settings
-        SET ${updates.join(", ")}
-        WHERE mate_id = ?
-      `).run(...values);
+    this.withTransaction((db) => {
+      if (updates.length > 0) {
+        db.prepare(`
+          UPDATE mate_growth_settings
+          SET ${updates.join(", ")}
+          WHERE mate_id = ?
+        `).run(...values);
+      }
+
+      if (hasModelPreferenceUpdate) {
+        db.prepare("DELETE FROM mate_growth_model_preferences WHERE mate_id = ?").run(MATE_ID);
+        const insert = db.prepare(`
+          INSERT INTO mate_growth_model_preferences (
+            mate_id,
+            purpose,
+            priority,
+            provider_id,
+            model,
+            reasoning_effort,
+            enabled,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        for (const preference of normalizedModelPreferences) {
+          insert.run(
+            MATE_ID,
+            preference.purpose,
+            preference.priority,
+            preference.provider,
+            preference.model,
+            preference.depth,
+            preference.enabled ? 1 : 0,
+            updatedAt,
+            updatedAt,
+          );
+        }
+      }
     });
 
     return this.getMateGrowthSettings();
@@ -722,6 +893,33 @@ export class MateStorage {
           DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES,
           createdAt,
         );
+
+        const insertGrowthModelPreference = db.prepare(`
+          INSERT INTO mate_growth_model_preferences (
+            mate_id,
+            purpose,
+            priority,
+            provider_id,
+            model,
+            reasoning_effort,
+            enabled,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const [index, purpose] of MATE_GROWTH_MODEL_PREFERENCES.entries()) {
+          insertGrowthModelPreference.run(
+            MATE_ID,
+            purpose,
+            index + 1,
+            MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_PROVIDER_ID,
+            MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_MODEL,
+            MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_DEPTH,
+            1,
+            createdAt,
+            createdAt,
+          );
+        }
 
         db.prepare(`
           INSERT INTO mate_embedding_settings (
