@@ -95,6 +95,7 @@ import { buildCardThemeStyle, CharacterAvatar } from "./ui-utils.js";
 import { formatTimestampLabel } from "./time-state.js";
 import type { MateProfile } from "./mate-state.js";
 import type { MateGrowthEventListItem } from "./mate-growth-events-state.js";
+import { shouldSubmitMateTalkInputByKey } from "./home-mate-talk-state.js";
 
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
@@ -1970,6 +1971,12 @@ export function HomeMateTalkPanel({
             id="home-mate-talk-input"
             value={input}
             onChange={(event) => onChangeInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (!isSubmitDisabled && shouldSubmitMateTalkInputByKey(event)) {
+                event.preventDefault();
+                onSubmit();
+              }
+            }}
             rows={4}
             disabled={sending}
             autoComplete="off"

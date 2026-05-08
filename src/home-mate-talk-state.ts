@@ -24,3 +24,22 @@ export class HomeMateTalkTurnController {
     return this.turnId === turnId;
   }
 }
+
+export const shouldSubmitMateTalkInputByKey = (eventLike: {
+  key: string;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  shiftKey?: boolean;
+  isComposing?: boolean;
+}): boolean => {
+  if (eventLike.isComposing === true) {
+    return false;
+  }
+  if (eventLike.key !== "Enter") {
+    return false;
+  }
+  if (eventLike.shiftKey === true) {
+    return false;
+  }
+  return eventLike.ctrlKey === true || eventLike.metaKey === true;
+};
