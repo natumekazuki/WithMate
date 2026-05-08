@@ -267,6 +267,34 @@ function mergeTagsWithNewTags(
   return merged;
 }
 
+function isProjectTag(tag: { type: string }): boolean {
+  return normalizeTagValue(tag.type) === "project";
+}
+
+function filterReservedProjectAcceptedTags(
+  tags: Array<{ type: string; value: string }>,
+): Array<{ type: string; value: string }> {
+  return tags.filter((tag) => !isProjectTag(tag));
+}
+
+function filterReservedProjectNewTags(
+  tags: Array<{ type: string; value: string; reason: string }>,
+): Array<{ type: string; value: string; reason: string }> {
+  return tags.filter((tag) => !isProjectTag(tag));
+}
+
+function filterNewTagsByAcceptedTags(
+  newTags: Array<{ type: string; value: string; reason: string }>,
+  acceptedTags: Array<{ type: string; value: string }>,
+): Array<{ type: string; value: string; reason: string }> {
+  if (newTags.length === 0 || acceptedTags.length === 0) {
+    return newTags;
+  }
+
+  const acceptedKeys = new Set(acceptedTags.map((tag) => makeTagKey(tag.type, tag.value)));
+  return newTags.filter((tag) => !acceptedKeys.has(makeTagKey(tag.type, tag.value)));
+}
+
 function mergeAcceptedTags(
   left: Array<{ type: string; value: string }>,
   right: Array<{ type: string; value: string }>,
@@ -286,6 +314,11 @@ function mergeAcceptedTags(
     merged.push(tag);
   }
   return merged;
+}
+
+function buildDefaultTags(defaults: ParsedOptions): Array<{ type: string; value: string }> {
+  const projectDigestId = toOptionalText(defaults.projectDigestId);
+  return projectDigestId ? [{ type: "project", value: projectDigestId }] : [];
 }
 
 function parseTagCandidates(value: unknown, field: string): Array<{ type: string; value: string; reason: string }> {
@@ -437,11 +470,17 @@ function parseMemory(
     acceptedTags: acceptedTagsFromNewTags,
     newTags: unmatchedNewTags,
   } = splitNewTagsByCatalog(parsedNewTags, catalog);
-  const tags = mergeAcceptedTags(parsedTags, acceptedTagsFromNewTags);
-  const newTags = mergeTagsWithNewTags(
-    unmatchedNewTags,
-    convertedNewTags,
+  const nonProjectParsedTags = filterReservedProjectAcceptedTags(parsedTags);
+  const nonProjectAcceptedTagsFromNewTags = filterReservedProjectAcceptedTags(acceptedTagsFromNewTags);
+  const tags = mergeAcceptedTags(
+    mergeAcceptedTags(buildDefaultTags(defaults), nonProjectParsedTags),
+    nonProjectAcceptedTagsFromNewTags,
   );
+  const newTags = mergeTagsWithNewTags(
+    filterReservedProjectNewTags(unmatchedNewTags),
+    filterReservedProjectNewTags(convertedNewTags),
+  );
+  const filteredNewTags = filterNewTagsByAcceptedTags(newTags, tags);
 
   return {
     sourceType,
@@ -459,7 +498,7 @@ function parseMemory(
     relation,
     ...(relatedRefs !== undefined ? { relatedRefs } : {}),
     ...(supersedesRefs !== undefined ? { supersedesRefs } : {}),
-    newTags,
+    newTags: filteredNewTags,
     targetClaimKey,
     tags,
     retention: (memory.remember === true || memory.forceRemember === true || memory.retention === "force") ? "force" : undefined,
@@ -468,11 +507,14 @@ function parseMemory(
 
 function readSourceDefaults(root: Record<string, unknown>, explicitDefaults: MateMemoryGenerationParseDefaults): ParsedOptions {
   const sourceType = explicitDefaults.sourceType ?? toOptionalText(root.sourceType);
+  const hasExplicitProjectDigestId = Object.prototype.hasOwnProperty.call(explicitDefaults, "projectDigestId");
   return {
     sourceType: sourceType ?? null,
     sourceSessionId: explicitDefaults.sourceSessionId ?? toOptionalText(root.sourceSessionId) ?? null,
     sourceAuditLogId: explicitDefaults.sourceAuditLogId ?? (root.sourceAuditLogId as number | undefined | null) ?? null,
-    projectDigestId: explicitDefaults.projectDigestId ?? toOptionalText(root.projectDigestId) ?? null,
+    projectDigestId: hasExplicitProjectDigestId
+      ? explicitDefaults.projectDigestId ?? null
+      : toOptionalText(root.projectDigestId) ?? null,
     ...(explicitDefaults.existingTagCatalog ? { existingTagCatalog: explicitDefaults.existingTagCatalog } : {}),
   };
 }

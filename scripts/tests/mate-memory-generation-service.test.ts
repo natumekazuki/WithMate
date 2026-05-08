@@ -159,7 +159,10 @@ describe("MateMemoryGenerationService", () => {
                 targetSection: "core",
                 confidence: 80,
                 salienceScore: 78,
-                tags: [{ type: "Topic", value: "work" }],
+                tags: [
+                  { type: "project", value: " project-1 " },
+                  { type: "Topic", value: "work" },
+                ],
               }],
             },
             rawText: "{\"invalid\"",
@@ -206,8 +209,14 @@ describe("MateMemoryGenerationService", () => {
       try {
         const savedEvent = db.prepare("SELECT COUNT(*) AS count FROM mate_growth_events").get() as { count: number };
         const savedCatalog = db.prepare("SELECT COUNT(*) AS count FROM mate_memory_tag_catalog").get() as { count: number };
+        const projectTag = db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM mate_memory_tags
+          WHERE tag_type = 'project' AND tag_value = 'project-1'
+        `).get() as { count: number };
         assert.equal(savedEvent.count, 1);
-        assert.equal(savedCatalog.count, 1);
+        assert.equal(savedCatalog.count, 2);
+        assert.equal(projectTag?.count, 1);
       } finally {
         db.close();
       }
@@ -304,6 +313,78 @@ describe("MateMemoryGenerationService", () => {
       assert.deepEqual(instructionInput.relevantMemories, []);
       assert.deepEqual(instructionInput.relevantProfileItems, []);
       assert.deepEqual(instructionInput.forgottenTombstones, []);
+    } finally {
+      storage?.close();
+      await cleanupDb();
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("projectDigestId が空/未設定だと project tag は付与されない", async () => {
+    const { dbPath, cleanup: cleanupDb } = await createTempDbPath();
+    const userDataPath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-memory-workspace-"));
+    let storage: MateMemoryStorage | null = null;
+
+    try {
+      storage = new MateMemoryStorage(dbPath);
+      seedCurrentMateProfile(dbPath);
+      const workspace = new MemoryRuntimeWorkspaceService({ userDataPath });
+
+      const service = new MateMemoryGenerationService({
+        workspace,
+        storage,
+        async runStructuredGeneration() {
+          return {
+            parsedJson: {
+              memories: [{
+                statement: "非 Git workspace では project tag を付与しない。",
+                growthSourceType: "assistant_inference",
+                kind: "observation",
+                targetSection: "core",
+                confidence: 70,
+                salienceScore: 60,
+                tags: [{ type: "Topic", value: "work" }],
+              }],
+            },
+            rawText: "{\"invalid\"",
+            usage: null,
+            provider: "copilot",
+            model: "mock-no-project",
+            threadId: "thread-no-project",
+            rawItemsJson: "{\"type\":\"mock\"}",
+          };
+        },
+        async getTagCatalog() {
+          return [];
+        },
+        async getInstructionFiles(_input) {
+          return [];
+        },
+        async getRecentConversationText() {
+          return "ユーザー: 最近の会話テキスト";
+        },
+      });
+
+      const result = await service.runOnce({
+        sourceDefaults: {
+          sourceType: "session",
+          projectDigestId: "   ",
+        },
+      });
+
+      assert.equal(result.savedCount, 1);
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const projectTagCount = db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM mate_memory_tags
+          WHERE tag_type = 'project'
+        `).get() as { count: number };
+        assert.equal(projectTagCount.count, 0);
+      } finally {
+        db.close();
+      }
     } finally {
       storage?.close();
       await cleanupDb();

@@ -53,8 +53,96 @@ describe("parseMateMemoryGenerationResponse", () => {
     assert.equal(result.memories[0].relation, "reinforces");
     assert.equal(result.memories[0].targetClaimKey, "existing-claim-1");
     assert.deepEqual(result.memories[0].tags, [
+      { type: "project", value: "digest-1" },
       { type: "Topic", value: "work" },
       { type: "topic", value: "focus" },
+    ]);
+  });
+
+  it("projectDigestId がある場合は project tag を app 側で付与する", () => {
+    const result = parseMateMemoryGenerationResponse({
+      memories: [{
+        statement: "Git 管理下 workspace の project context を分類する",
+        growthSourceType: "assistant_inference",
+        kind: "project_context",
+        targetSection: "project_digest",
+        confidence: 80,
+        salienceScore: 80,
+        tags: [
+          { type: "project", value: "project-2" },
+          { type: "Topic", value: "work" },
+        ],
+        newTags: [
+          { type: "project", value: "project-3", reason: "LLM 由来 project tag" },
+        ],
+      }],
+    }, {
+      sourceType: "session",
+      projectDigestId: "project-1",
+    });
+
+    assert.deepEqual(result.memories[0].tags, [
+      { type: "project", value: "project-1" },
+      { type: "Topic", value: "work" },
+    ]);
+    assert.deepEqual(result.memories[0].newTags, []);
+  });
+
+  it("catalog に project tag がない場合も LLM 由来 project tag は残さない", () => {
+    const result = parseMateMemoryGenerationResponse({
+      memories: [{
+        statement: "LLM 由来 project tag の候補を落とす",
+        growthSourceType: "assistant_inference",
+        kind: "project_context",
+        targetSection: "project_digest",
+        confidence: 80,
+        salienceScore: 80,
+        tags: [
+          { type: "project", value: " project-1 " },
+          { type: "Topic", value: "work" },
+        ],
+      }],
+    }, {
+      sourceType: "session",
+      projectDigestId: "project-1",
+      existingTagCatalog: [{
+        tagType: "Topic",
+        tagValue: "work",
+      }],
+    });
+
+    assert.deepEqual(result.memories[0].tags, [
+      { type: "project", value: "project-1" },
+      { type: "Topic", value: "work" },
+    ]);
+    assert.deepEqual(result.memories[0].newTags, []);
+  });
+
+  it("projectDigestId がない場合は LLM が返した project tag も付与しない", () => {
+    const result = parseMateMemoryGenerationResponse({
+      projectDigestId: "llm-root-project",
+      memories: [{
+        statement: "Git 非管理 workspace では project tag を作らない",
+        growthSourceType: "assistant_inference",
+        kind: "observation",
+        targetSection: "core",
+        confidence: 80,
+        salienceScore: 80,
+        tags: [
+          { type: "Topic", value: "work" },
+          { type: "project", value: "llm-memory-project" },
+        ],
+        newTags: [
+          { type: "project", value: "llm-new-project", reason: "LLM 由来 project tag" },
+        ],
+      }],
+    }, {
+      sourceType: "session",
+      projectDigestId: null,
+    });
+
+    assert.deepEqual(result.memories[0].tags, [
+      { type: "Topic", value: "work" },
     ]);
   });
 

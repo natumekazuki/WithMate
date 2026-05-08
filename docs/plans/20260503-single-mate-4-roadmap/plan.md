@@ -367,8 +367,8 @@ projection に含めないもの:
 - [x] 一人称、二人称、呼びかけ、口調、語尾、性格傾向、相談時の反応、coding 時の作業支援方針を Profile Item として扱う
 - [x] Memory tag relation API / storage を実装する
 - [x] Profile Item tag は source Memory tags から継承または render 時に派生させる
-- [ ] Git 管理下 workspace の Git 情報から project tag を付与する
-- [ ] Git 非管理 workspace では project tag を付与しない
+- [x] Git 管理下 workspace の Git 情報から project tag を付与する
+- [x] Git 非管理 workspace では project tag を付与しない
 - [x] Project Digest は provider instruction に常設せず、prompt 送信時に workspace / Git 情報 / user input で relevant Profile Item を検索して一時 context として注入する
 - [x] Project Digest の prompt injection は `projection_allowed = 1`、active Profile Item、active tag catalog、project tag、token budget、audit record を契約として実装する
 - [x] Growth Event は Project Digest prompt injection の直接出力対象にせず、Profile Item / Project Digest apply の evidence に留める
