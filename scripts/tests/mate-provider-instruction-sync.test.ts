@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -474,6 +474,101 @@ describe("syncEnabledProviderInstructionTargets", () => {
     } finally {
       mateStorage.close();
       targetStorage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+      await rm(mateDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("getMateProfile が staging の active_revision_id を ready revision にフォールバックして sync する", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const mateDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-provider-targets-v4.db");
+    const mateUserDataPath = path.join(mateDatabaseDirectory, "userData");
+    const targetStorage = new ProviderInstructionTargetStorage(storagePath);
+    const mateStorage = new MateStorage(storagePath, mateUserDataPath);
+
+    try {
+      await mateStorage.createMate({ displayName: "Mia" });
+      const applied = await mateStorage.applyProfileFiles({
+        summary: "sync-ready regression",
+        files: [{ sectionKey: "core", relativePath: "mate/core.md", content: "# Core\n- recognizable content\n" }],
+      });
+      if (!applied.activeRevisionId) {
+        throw new Error("ready revision が見つからないよ。");
+      }
+
+      const readyRevisionId = applied.activeRevisionId;
+      const incompleteRevisionId = randomUUID();
+      const now = new Date().toISOString();
+      const db = new DatabaseSync(storagePath);
+      try {
+        db.prepare(`
+          INSERT INTO mate_profile_revisions (
+            id,
+            mate_id,
+            seq,
+            parent_revision_id,
+            status,
+            kind,
+            source_growth_event_id,
+            summary,
+            snapshot_dir_path,
+            created_by,
+            created_at,
+            ready_at,
+            failed_at,
+            reverted_by_revision_id
+          ) VALUES (?, 'current', 3, ?, 'staging', 'growth_apply', NULL, 'staging', '', 'system', ?, NULL, NULL, NULL)
+        `).run(incompleteRevisionId, readyRevisionId, now);
+
+        db.prepare("UPDATE mate_profile SET active_revision_id = ? WHERE id = ?").run(incompleteRevisionId, "current");
+      } finally {
+        db.close();
+      }
+
+      const profile = mateStorage.getMateProfile();
+      if (!profile) {
+        throw new Error("保存済み profile が見つかりません");
+      }
+      assert.equal(profile.activeRevisionId, readyRevisionId);
+      const coreSection = profile.sections.find((section) => section.sectionKey === "core");
+      if (!coreSection) {
+        throw new Error("core セクションが見つからないよ。");
+      }
+      assert.equal(coreSection.sha256, sha256Hex("# Core\n- recognizable content\n"));
+
+      targetStorage.upsertTarget({
+        providerId: "codex",
+        enabled: true,
+        rootDirectory: workspacePath,
+        instructionRelativePath: path.join(".github", "copilot-instructions.md"),
+        writeMode: "managed_block",
+        failPolicy: "warn_continue",
+      });
+
+      const result = await syncEnabledProviderInstructionTargets(targetStorage, profile, FILE_DEPENDENCIES);
+      const updated = await readFile(path.join(workspacePath, ".github", "copilot-instructions.md"), "utf8");
+      const target = targetStorage.getTarget("codex", "main");
+      if (!target) {
+        throw new Error("target がありません");
+      }
+
+      assert.equal(result.targetCount, 1);
+      assert.equal(result.syncedCount, 1);
+      assert.equal(result.failedCount, 0);
+      assert.equal(result.skippedCount, 0);
+      assert.equal(result.runIds.length, 1);
+      assert.equal(result.runIds[0], target.lastSyncRunId);
+      assert.equal(target.lastSyncState, "synced");
+      assert.equal(target.lastSyncedRevisionId, readyRevisionId);
+      assert.notEqual(target.lastSyncedRevisionId, incompleteRevisionId);
+      assert.equal(countProfileBlocks(updated), 1);
+      assert.ok(updated.includes("- **core:** `mate/core.md`"));
+    } finally {
+      targetStorage.close();
+      mateStorage.close();
       await rm(workspacePath, { recursive: true, force: true });
       await rm(tempDatabaseDirectory, { recursive: true, force: true });
       await rm(mateDatabaseDirectory, { recursive: true, force: true });
