@@ -7,8 +7,19 @@ import { describe, it } from "node:test";
 
 import { MemoryRuntimeWorkspaceService, type MemoryRuntimeInstructionFile } from "../../src-electron/memory-runtime-workspace.js";
 import { MateMemoryGenerationService, type GetInstructionFilesInput } from "../../src-electron/mate-memory-generation-service.js";
+import type {
+  MateGrowthModelPort,
+  MateGrowthModelPortInput,
+  MateGrowthModelPortResult,
+} from "../../src-electron/mate-growth-model-port.js";
 import { MateGrowthStorage } from "../../src-electron/mate-growth-storage.js";
 import { MateMemoryStorage } from "../../src-electron/mate-memory-storage.js";
+
+function createGrowthModelPort(
+  runStructuredGeneration: (input: MateGrowthModelPortInput) => Promise<MateGrowthModelPortResult> | MateGrowthModelPortResult,
+): MateGrowthModelPort {
+  return { runStructuredGeneration };
+}
 
 function createTempDbPath(): Promise<{ dbPath: string; cleanup: () => Promise<void> }> {
   return mkdtemp(path.join(os.tmpdir(), "withmate-mate-memory-generation-")).then((tmpDir) => ({
@@ -148,7 +159,7 @@ describe("MateMemoryGenerationService", () => {
       const service = new MateMemoryGenerationService({
         workspace,
         storage,
-        async runStructuredGeneration() {
+        growthModelPort: createGrowthModelPort(async () => {
           runWorkspacePath = workspace.getWorkspacePath();
           return {
             parsedJson: {
@@ -176,7 +187,7 @@ describe("MateMemoryGenerationService", () => {
             threadId: "thread-1",
             rawItemsJson: "{\"type\":\"mock\"}",
           };
-        },
+        }),
         async getTagCatalog() {
           return existingTagCatalog;
         },
@@ -269,7 +280,7 @@ describe("MateMemoryGenerationService", () => {
       const service = new MateMemoryGenerationService({
         workspace,
         storage,
-        async runStructuredGeneration() {
+        growthModelPort: createGrowthModelPort(async () => {
           return {
             parsedJson: {
               memories: [{
@@ -288,7 +299,7 @@ describe("MateMemoryGenerationService", () => {
             threadId: "thread-empty",
             rawItemsJson: "{\"type\":\"mock\"}",
           };
-        },
+        }),
         async getTagCatalog() {
           return [];
         },
@@ -333,7 +344,7 @@ describe("MateMemoryGenerationService", () => {
       const service = new MateMemoryGenerationService({
         workspace,
         storage,
-        async runStructuredGeneration() {
+        growthModelPort: createGrowthModelPort(async () => {
           return {
             parsedJson: {
               memories: [{
@@ -353,7 +364,7 @@ describe("MateMemoryGenerationService", () => {
             threadId: "thread-no-project",
             rawItemsJson: "{\"type\":\"mock\"}",
           };
-        },
+        }),
         async getTagCatalog() {
           return [];
         },
@@ -405,7 +416,7 @@ describe("MateMemoryGenerationService", () => {
       const service = new MateMemoryGenerationService({
         workspace,
         storage,
-        async runStructuredGeneration() {
+        growthModelPort: createGrowthModelPort(async () => {
           return {
             parsedJson: {
               memories: [{
@@ -428,7 +439,7 @@ describe("MateMemoryGenerationService", () => {
             threadId: "thread-catalog",
             rawItemsJson: "{\"type\":\"mock\"}",
           };
-        },
+        }),
         async getTagCatalog() {
           return [{
             tagType: "Topic",
@@ -523,7 +534,7 @@ describe("MateMemoryGenerationService", () => {
       const service = new MateMemoryGenerationService({
         workspace,
         storage,
-        async runStructuredGeneration() {
+        growthModelPort: createGrowthModelPort(async () => {
           return {
             parsedJson: {
               memories: [{
@@ -556,7 +567,7 @@ describe("MateMemoryGenerationService", () => {
             threadId: "thread-refs",
             rawItemsJson: "{\"type\":\"mock\"}",
           };
-        },
+        }),
         async getTagCatalog() {
           return [{ tagType: "Topic", tagValue: "work" }];
         },
@@ -627,6 +638,7 @@ describe("MateMemoryGenerationService", () => {
     const growthUpserts: unknown[] = [];
     const growthFinishes: unknown[] = [];
     const growthFails: unknown[] = [];
+    let capturedGrowthModelInput: MateGrowthModelPortInput | null = null;
 
     const growthStorage = {
       createRun(input: unknown) {
@@ -654,7 +666,8 @@ describe("MateMemoryGenerationService", () => {
         workspace,
         storage,
         growthStorage,
-        async runStructuredGeneration() {
+        growthModelPort: createGrowthModelPort(async (input) => {
+          capturedGrowthModelInput = input;
           return {
             parsedJson: {
               memories: [{
@@ -681,10 +694,11 @@ describe("MateMemoryGenerationService", () => {
             usage: null,
             provider: "copilot",
             model: "mock-2",
+            reasoningEffort: "high",
             threadId: "thread-2",
             rawItemsJson: "{\"type\":\"mock\"}",
           };
-        },
+        }),
         async getTagCatalog() {
           return [];
         },
@@ -719,8 +733,10 @@ describe("MateMemoryGenerationService", () => {
         projectDigestId: string | null;
         providerId: string | null;
         model: string | null;
+        reasoningEffort: string | null;
         candidateCount: number;
       };
+      assert.equal(capturedGrowthModelInput?.purpose, "memory_candidate");
       assert.equal(run.triggerReason, "mate-memory-generation");
       assert.equal(run.sourceType, "session");
       assert.equal(run.sourceSessionId, "session-77");
@@ -728,6 +744,7 @@ describe("MateMemoryGenerationService", () => {
       assert.equal(run.projectDigestId, "project-77");
       assert.equal(run.providerId, "copilot");
       assert.equal(run.model, "mock-2");
+      assert.equal(run.reasoningEffort, "high");
       assert.equal(run.candidateCount, 2);
 
       const firstEvent = growthUpserts[0] as {
@@ -788,7 +805,7 @@ describe("MateMemoryGenerationService", () => {
         workspace,
         storage,
         growthStorage,
-        async runStructuredGeneration() {
+        growthModelPort: createGrowthModelPort(async () => {
           runWorkspacePath = workspace.getWorkspacePath();
           return {
             rawText: JSON.stringify({
@@ -807,7 +824,7 @@ describe("MateMemoryGenerationService", () => {
             threadId: null,
             rawItemsJson: "{\"type\":\"mock\"}",
           };
-        },
+        }),
         async getTagCatalog() {
           return [{ tagType: "Topic", tagValue: "work" }];
         },
@@ -908,7 +925,7 @@ describe("MateMemoryGenerationService", () => {
         workspace,
         storage,
         growthStorage,
-        async runStructuredGeneration() {
+        growthModelPort: createGrowthModelPort(async () => {
           runWorkspacePath = workspace.getWorkspacePath();
           return {
             rawText: "{\"memories\":[",
@@ -918,7 +935,7 @@ describe("MateMemoryGenerationService", () => {
             threadId: null,
             rawItemsJson: "{\"type\":\"mock\"}",
           };
-        },
+        }),
         async getTagCatalog() {
           return [];
         },
@@ -988,7 +1005,7 @@ describe("MateMemoryGenerationService", () => {
         workspace,
         storage,
         growthStorage,
-        async runStructuredGeneration() {
+        growthModelPort: createGrowthModelPort(async () => {
           return {
             rawText: JSON.stringify({
               memories: [{
@@ -1006,7 +1023,7 @@ describe("MateMemoryGenerationService", () => {
             threadId: null,
             rawItemsJson: "{\"type\":\"mock\"}",
           };
-        },
+        }),
         async getTagCatalog() {
           return [];
         },
@@ -1071,7 +1088,7 @@ describe("MateMemoryGenerationService", () => {
       const service = new MateMemoryGenerationService({
         workspace,
         storage,
-        runStructuredGeneration() {
+        growthModelPort: createGrowthModelPort(() => {
           runWorkspacePath = workspace.getWorkspacePath();
           return Promise.resolve({
             rawText: JSON.stringify({
@@ -1090,7 +1107,7 @@ describe("MateMemoryGenerationService", () => {
             threadId: null,
             rawItemsJson: "{\"type\":\"mock\"}",
           });
-        },
+        }),
         async getTagCatalog() {
           return [{ tagType: "Topic", tagValue: "work" }];
         },
@@ -1145,10 +1162,10 @@ describe("MateMemoryGenerationService", () => {
       const service = new MateMemoryGenerationService({
         workspace,
         storage,
-        runStructuredGeneration() {
+        growthModelPort: createGrowthModelPort(() => {
           runWorkspacePath = workspace.getWorkspacePath();
           throw new Error("provider boom");
-        },
+        }),
         async getTagCatalog() {
           return [];
         },
@@ -1194,9 +1211,9 @@ describe("MateMemoryGenerationService", () => {
       const service = new MateMemoryGenerationService({
         workspace,
         storage,
-        runStructuredGeneration() {
+        growthModelPort: createGrowthModelPort(() => {
           throw new Error("should not call");
-        },
+        }),
         async getTagCatalog() {
           return [];
         },

@@ -11,10 +11,10 @@ import {
   type RunBackgroundStructuredPromptInput,
 } from "./provider-runtime.js";
 import type {
-  MateMemoryGenerationServiceDeps,
-  RunStructuredGenerationInput,
-  StructuredGenerationResult,
-} from "./mate-memory-generation-service.js";
+  MateGrowthModelPort,
+  MateGrowthModelPortInput,
+  MateGrowthModelPortResult,
+} from "./mate-growth-model-port.js";
 
 type FailureCandidate = {
   provider: string;
@@ -42,6 +42,12 @@ function createNoProviderError(): NoProviderCandidateError {
   return error;
 }
 
+function assertMemoryCandidatePurpose(input: MateGrowthModelPortInput): void {
+  if (input.purpose !== "memory_candidate") {
+    throw new Error(`Mate Memory 生成 runner は ${input.purpose} purpose に対応していません。`);
+  }
+}
+
 function toError(value: unknown): Error {
   return isError(value) ? value : new Error(String(value));
 }
@@ -49,7 +55,7 @@ function toError(value: unknown): Error {
 function normalizeResult(input: {
   candidate: MateMemoryGenerationProviderSettings;
   providerResult: Awaited<ReturnType<ProviderBackgroundAdapter["runBackgroundStructuredPrompt"]>>;
-}): StructuredGenerationResult {
+}): MateGrowthModelPortResult {
   const { candidate, providerResult } = input;
 
   return {
@@ -60,6 +66,8 @@ function normalizeResult(input: {
     rawItemsJson: providerResult.rawItemsJson,
     provider: candidate.provider,
     model: candidate.model,
+    reasoningEffort: candidate.reasoningEffort,
+    depth: candidate.reasoningEffort,
   };
 }
 
@@ -86,53 +94,58 @@ function buildBackgroundInput(
 
 export function createMateMemoryGenerationRunner(
   deps: MateMemoryGenerationRunnerDeps,
-): MateMemoryGenerationServiceDeps["runStructuredGeneration"] {
-  return async (input: RunStructuredGenerationInput): Promise<StructuredGenerationResult> => {
-    const appSettings = deps.getAppSettings();
-    const workspacePath = deps.getWorkspacePath();
-    const settings = getMateMemoryGenerationSettings(appSettings);
-    let lastFailure: Error | null = null;
+): MateGrowthModelPort {
+  return {
+    async runStructuredGeneration(input: MateGrowthModelPortInput): Promise<MateGrowthModelPortResult> {
+      const appSettings = deps.getAppSettings();
+      const workspacePath = deps.getWorkspacePath();
+      const settings = getMateMemoryGenerationSettings(appSettings);
+      let lastFailure: Error | null = null;
 
-    for (const candidate of settings.priorityList) {
-      const providerAppSettings = getProviderAppSettings(appSettings, candidate.provider);
-      if (!providerAppSettings.enabled) {
-        continue;
-      }
+      assertMemoryCandidatePurpose(input);
+      void input.logicalPrompt;
 
-      try {
-        const adapter = deps.getProviderBackgroundAdapter(candidate.provider);
-        const capability = getMateTalkBackgroundStructuredPromptCapability(adapter);
-        if (!capability.compatible) {
-          throw new Error(
-            `provider ${candidate.provider} の background structured prompt が未対応です: ${capability.reasons.join(", ")}`,
-          );
+      for (const candidate of settings.priorityList) {
+        const providerAppSettings = getProviderAppSettings(appSettings, candidate.provider);
+        if (!providerAppSettings.enabled) {
+          continue;
         }
 
-        const structuredInput = buildBackgroundInput(
-          candidate,
-          input.prompt,
-          appSettings,
-          workspacePath,
-        );
-        const providerResult = await adapter.runBackgroundStructuredPrompt(structuredInput);
-        return normalizeResult({ candidate, providerResult });
-      } catch (error: unknown) {
-        const failure = toError(error);
-        lastFailure = failure;
-        if (deps.onProviderFailure) {
-          try {
-            deps.onProviderFailure(failure, { provider: candidate.provider, model: candidate.model });
-          } catch {
-            // ここで onProviderFailure のエラーは握り潰して次候補へ進む
+        try {
+          const adapter = deps.getProviderBackgroundAdapter(candidate.provider);
+          const capability = getMateTalkBackgroundStructuredPromptCapability(adapter);
+          if (!capability.compatible) {
+            throw new Error(
+              `provider ${candidate.provider} の background structured prompt が未対応です: ${capability.reasons.join(", ")}`,
+            );
+          }
+
+          const structuredInput = buildBackgroundInput(
+            candidate,
+            input.prompt,
+            appSettings,
+            workspacePath,
+          );
+          const providerResult = await adapter.runBackgroundStructuredPrompt(structuredInput);
+          return normalizeResult({ candidate, providerResult });
+        } catch (error: unknown) {
+          const failure = toError(error);
+          lastFailure = failure;
+          if (deps.onProviderFailure) {
+            try {
+              deps.onProviderFailure(failure, { provider: candidate.provider, model: candidate.model });
+            } catch {
+              // ここで onProviderFailure のエラーは握り潰して次候補へ進む
+            }
           }
         }
       }
-    }
 
-    if (lastFailure) {
-      throw lastFailure;
-    }
+      if (lastFailure) {
+        throw lastFailure;
+      }
 
-    throw createNoProviderError();
+      throw createNoProviderError();
+    },
   };
 }

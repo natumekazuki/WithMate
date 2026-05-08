@@ -26,6 +26,17 @@ function createLogicalPrompt() {
   };
 }
 
+function runMemoryCandidate(
+  runner: ReturnType<typeof createMateMemoryGenerationRunner>,
+  prompt = createPrompt(),
+) {
+  return runner.runStructuredGeneration({
+    purpose: "memory_candidate",
+    prompt,
+    logicalPrompt: createLogicalPrompt(),
+  });
+}
+
 function createAdapter(
   onCall: (input: RunBackgroundStructuredPromptInput) => void = () => {},
   result?: { parsedJson?: unknown; structuredOutput?: unknown; rawText: string; threadId?: string | null },
@@ -147,7 +158,7 @@ describe("createMateMemoryGenerationRunner", () => {
     const runner = createMateMemoryGenerationRunner(
       createDeps({ adapters, appSettings, onProviderFailure: () => {} }),
     );
-    const output = await runner({ prompt: createPrompt(), logicalPrompt: createLogicalPrompt() });
+    const output = await runMemoryCandidate(runner);
 
     assert.deepEqual(called, ["copilot"]);
     assert.equal(output.provider, "copilot");
@@ -201,7 +212,7 @@ describe("createMateMemoryGenerationRunner", () => {
       },
     });
     const runner = createMateMemoryGenerationRunner(createDeps({ adapters, appSettings }));
-    const output = await runner({ prompt: createPrompt(), logicalPrompt: createLogicalPrompt() });
+    const output = await runMemoryCandidate(runner);
 
     assert.deepEqual(called, ["codex"]);
     assert.equal(output.provider, "codex");
@@ -259,7 +270,7 @@ describe("createMateMemoryGenerationRunner", () => {
         },
       }),
     );
-    const output = await runner({ prompt: createPrompt(), logicalPrompt: createLogicalPrompt() });
+    const output = await runMemoryCandidate(runner);
 
     assert.deepEqual(called, ["copilot", "codex"]);
     assert.deepEqual(failures, [{ provider: "copilot", model: "copilot-1" }]);
@@ -338,7 +349,7 @@ describe("createMateMemoryGenerationRunner", () => {
       }),
     );
 
-    const output = await runner({ prompt: createPrompt(), logicalPrompt: createLogicalPrompt() });
+    const output = await runMemoryCandidate(runner);
 
     assert.deepEqual(called, ["codex"]);
     assert.deepEqual(failures, [{ provider: "copilot", model: "copilot-1" }]);
@@ -393,7 +404,7 @@ describe("createMateMemoryGenerationRunner", () => {
       }),
     );
 
-    const output = await runner({ prompt: createPrompt(), logicalPrompt: createLogicalPrompt() });
+    const output = await runMemoryCandidate(runner);
 
     assert.deepEqual(called, ["codex"]);
     assert.deepEqual(failures, [{ provider: "copilot", model: "copilot-1" }]);
@@ -427,7 +438,7 @@ describe("createMateMemoryGenerationRunner", () => {
       },
     });
     const runner = createMateMemoryGenerationRunner(createDeps({ adapters, appSettings }));
-    const output = await runner({ prompt: createPrompt(), logicalPrompt: createLogicalPrompt() });
+    const output = await runMemoryCandidate(runner);
 
     assert.deepEqual(called, ["copilot"]);
     assert.deepEqual(output.parsedJson, { memories: [{ foo: "from-structured" }] });
@@ -462,7 +473,7 @@ describe("createMateMemoryGenerationRunner", () => {
       },
     });
     const runner = createMateMemoryGenerationRunner(createDeps({ adapters, appSettings }));
-    const output = await runner({ prompt: createPrompt(), logicalPrompt: createLogicalPrompt() });
+    const output = await runMemoryCandidate(runner);
 
     assert.deepEqual(called, ["copilot"]);
     assert.deepEqual(output.parsedJson, { memories: [{ foo: "from-parsed" }] });
@@ -496,7 +507,7 @@ describe("createMateMemoryGenerationRunner", () => {
     const runner = createMateMemoryGenerationRunner(createDeps({ adapters, appSettings }));
     const prompt = createPrompt();
 
-    await runner({ prompt, logicalPrompt: createLogicalPrompt() });
+    await runMemoryCandidate(runner, prompt);
 
     assert.ok(calledInput);
     assert.equal(calledInput.providerId, "copilot");
@@ -558,7 +569,7 @@ describe("createMateMemoryGenerationRunner", () => {
         },
       }),
     );
-    const output = await runner({ prompt: createPrompt(), logicalPrompt: createLogicalPrompt() });
+    const output = await runMemoryCandidate(runner);
 
     assert.deepEqual(called, ["copilot", "codex"]);
     assert.equal(output.provider, "codex");
@@ -604,9 +615,46 @@ describe("createMateMemoryGenerationRunner", () => {
     const runner = createMateMemoryGenerationRunner(createDeps({ adapters, appSettings }));
 
     await assert.rejects(
-      () => runner({ prompt: createPrompt(), logicalPrompt: createLogicalPrompt() }),
+      () => runMemoryCandidate(runner),
       /last failed/,
     );
     assert.deepEqual(called, ["copilot", "codex"]);
+  });
+
+  it("memory_candidate 以外の purpose は実行しない", async () => {
+    const called: string[] = [];
+    const adapters = new Map<string, ProviderBackgroundAdapter>([
+      [
+        "copilot",
+        createAdapter(() => {
+          called.push("copilot");
+        }),
+      ],
+    ]);
+    const appSettings = normalizeAppSettings({
+      mateMemoryGenerationSettings: {
+        priorityList: [
+          { provider: "copilot", model: "copilot-1", reasoningEffort: "medium", timeoutSeconds: 31 },
+        ],
+      },
+      codingProviderSettings: {
+        copilot: {
+          enabled: true,
+          apiKey: "",
+          skillRootPath: "",
+        },
+      },
+    });
+    const runner = createMateMemoryGenerationRunner(createDeps({ adapters, appSettings }));
+
+    await assert.rejects(
+      () => runner.runStructuredGeneration({
+        purpose: "profile_update",
+        prompt: createPrompt(),
+        logicalPrompt: createLogicalPrompt(),
+      }),
+      /profile_update purpose に対応していません/,
+    );
+    assert.deepEqual(called, []);
   });
 });

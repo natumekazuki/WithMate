@@ -318,7 +318,7 @@ projection に含めないもの:
 - [x] ChatGPT Pro 検討用 summary を `docs/design/mate-memory-summary.md` に作る
 - [x] Mate Growth Engine の service boundary を実装する
 - [x] Growth LLM provider / model / depth の fixed priority list を Settings / storage に追加する
-- [ ] GrowthModelPort を stub / fake 可能な契約で実装する
+- [x] GrowthModelPort を stub / fake 可能な契約で実装する
 - [x] GrowthModelPort を通常 turn response とは別の background job として実行する
 - [ ] GrowthModelPort は user-facing provider thread を再利用せず、別 background session / utility call として実行する
 - [ ] GrowthModelPort background execution は tool-less utility call を優先し、agent session が必要な provider では schema submit tool 以外の file write / shell write / provider instruction write を許可しない

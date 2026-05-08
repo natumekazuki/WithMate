@@ -1441,7 +1441,7 @@ function requireMateMemoryGenerationService(): MateMemoryGenerationService {
       workspace: workspaceService,
       storage: memoryStorage,
       growthStorage: requireMateGrowthStorage(),
-      runStructuredGeneration: createMateMemoryGenerationRunner({
+      growthModelPort: createMateMemoryGenerationRunner({
         getAppSettings: () => requireAppSettingsStorage().getSettings(),
         getProviderBackgroundAdapter,
         getWorkspacePath: () => workspaceService.getWorkspacePath(),

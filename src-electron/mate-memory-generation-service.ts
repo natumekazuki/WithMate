@@ -11,24 +11,10 @@ import {
 } from "./mate-memory-generation-prompt.js";
 import type { MemoryRuntimeInstructionFile, MemoryRuntimeWorkspaceService } from "./memory-runtime-workspace.js";
 import { MateMemoryStorage } from "./mate-memory-storage.js";
+import type { MateGrowthModelPort } from "./mate-growth-model-port.js";
 import type { MateGrowthEventInput, MateGrowthRunInput, MateGrowthStorage } from "./mate-growth-storage.js";
 
 type TagCatalogEntry = MateMemoryGenerationPromptInput["existingTagCatalog"][number];
-
-export type StructuredGenerationResult = {
-  rawText: string;
-  parsedJson?: unknown;
-  usage?: AuditLogUsage | null;
-  provider?: string;
-  model?: string;
-  threadId?: string | null;
-  rawItemsJson?: string;
-};
-
-export type RunStructuredGenerationInput = {
-  prompt: MateMemoryGenerationPrompt;
-  logicalPrompt: AuditLogicalPrompt;
-};
 
 export type GetInstructionFilesInput = {
   prompt: MateMemoryGenerationPrompt;
@@ -49,7 +35,7 @@ export type MateMemoryGenerationServiceDeps = {
   getRelevantMemories?: () => Promise<readonly MateMemoryGenerationRelevantMemory[]>;
   getRelevantProfileItems?: () => Promise<readonly MateMemoryGenerationRelevantProfileItem[]>;
   getForgottenTombstones?: () => Promise<readonly MateMemoryGenerationForgottenTombstone[]>;
-  runStructuredGeneration(input: RunStructuredGenerationInput): Promise<StructuredGenerationResult>;
+  growthModelPort: MateGrowthModelPort;
   getTagCatalog(): Promise<readonly TagCatalogEntry[]>;
   getInstructionFiles(input: GetInstructionFilesInput): Promise<readonly MemoryRuntimeInstructionFile[]>;
   getRecentConversationText(): Promise<string>;
@@ -97,7 +83,13 @@ function isGrowthTargetSection(value: unknown): value is GrowthTargetSection {
   return typeof value === "string" && GROWTH_TARGET_SECTIONS.includes(value as GrowthTargetSection);
 }
 
-function buildGrowthRunInput(seed: GrowthCandidateSeed, runCount: number, provider?: string, model?: string): MateGrowthRunInput {
+function buildGrowthRunInput(
+  seed: GrowthCandidateSeed,
+  runCount: number,
+  provider?: string,
+  model?: string,
+  reasoningEffort?: string,
+): MateGrowthRunInput {
   return {
     sourceType: seed.sourceType,
     sourceSessionId: seed.sourceSessionId,
@@ -106,8 +98,28 @@ function buildGrowthRunInput(seed: GrowthCandidateSeed, runCount: number, provid
     triggerReason: MATE_GROWTH_TRIGGER_REASON,
     providerId: provider,
     model,
+    reasoningEffort,
     candidateCount: runCount,
   };
+}
+
+function resolveGrowthRunReasoningEffort(input: {
+  reasoningEffort?: string | null;
+  depth?: string | null;
+}): string | undefined {
+  if (typeof input.reasoningEffort === "string") {
+    const normalized = input.reasoningEffort.trim();
+    if (normalized.length > 0) {
+      return normalized;
+    }
+  }
+  if (typeof input.depth === "string") {
+    const normalized = input.depth.trim();
+    if (normalized.length > 0) {
+      return normalized;
+    }
+  }
+  return undefined;
 }
 
 function resolveGrowthTarget(memory: GrowthCandidateSeed): {
@@ -136,6 +148,7 @@ function buildFailedGrowthRunInput(
   sourceDefaults: MateMemoryGenerationParseDefaults,
   provider?: string,
   model?: string,
+  reasoningEffort?: string,
 ) : MateGrowthRunInput {
   return {
     sourceType: resolveRunSourceType(sourceDefaults.sourceType ?? "session"),
@@ -145,6 +158,7 @@ function buildFailedGrowthRunInput(
     triggerReason: MATE_GROWTH_TRIGGER_REASON,
     providerId: provider,
     model,
+    reasoningEffort,
     candidateCount: 0,
   };
 }
@@ -205,10 +219,12 @@ export class MateMemoryGenerationService {
         providerIds,
       }));
 
-      const generationResult = await this.deps.runStructuredGeneration({
+      const generationResult = await this.deps.growthModelPort.runStructuredGeneration({
+        purpose: "memory_candidate",
         prompt,
         logicalPrompt,
       });
+      const reasoningEffort = resolveGrowthRunReasoningEffort(generationResult);
       let normalized: ReturnType<typeof parseMateMemoryGenerationResponse>;
       try {
         const parsedJson = generationResult.parsedJson ?? JSON.parse(generationResult.rawText);
@@ -220,6 +236,7 @@ export class MateMemoryGenerationService {
               sourceDefaults,
               generationResult.provider,
               generationResult.model,
+              reasoningEffort,
             ));
             this.deps.growthStorage.failRun(runId, normalizeErrorPreview(error));
           } catch {
@@ -235,6 +252,7 @@ export class MateMemoryGenerationService {
           normalized.memories.length,
           generationResult.provider,
           generationResult.model,
+          reasoningEffort,
         );
         const runId = this.deps.growthStorage.createRun(runInput);
 
