@@ -149,6 +149,11 @@ export type ApplyMateProfileFilesInput = {
   sourceGrowthEventId?: string | null;
   summary: string;
   files: ApplyMateProfileFileInput[];
+  finalizeInTransaction?: (context: {
+    db: DatabaseSync;
+    revisionId: string;
+    now: string;
+  }) => void;
 };
 
 function nowIso(): string {
@@ -1288,6 +1293,8 @@ export class MateStorage {
             section.sectionKey,
           );
         }
+
+        input.finalizeInTransaction?.({ db, revisionId, now });
 
         db.prepare(`
           UPDATE mate_profile

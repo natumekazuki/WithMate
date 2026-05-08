@@ -1163,6 +1163,26 @@ export class MateGrowthStorage {
     );
   }
 
+  finishRunInTransaction(db: DatabaseSync, runId: number, input: MateGrowthRunUpdateInput = {}): void {
+    const now = nowIso();
+    const outputHash = normalizeOptionalText(input.outputHash);
+    const outputRevisionId = resolveRevisionId(db, normalizeOptionalText(input.outputRevisionId));
+    const appliedCount = normalizeInteger(input.appliedCount, 0, "appliedCount");
+    const invalidCount = normalizeInteger(input.invalidCount, 0, "invalidCount");
+    const errorPreview = normalizeOptionalText(input.errorPreview) ?? "";
+
+    db.prepare(UPDATE_RUN_SQL).run(
+      "completed",
+      outputRevisionId,
+      outputHash,
+      appliedCount,
+      invalidCount,
+      errorPreview,
+      now,
+      runId,
+    );
+  }
+
   cleanupStaleGrowthApplyRuns(options: CleanupStaleGrowthApplyRunsOptions): number {
     const staleBeforeIso = normalizeText(options.staleBeforeIso, "staleBeforeIso");
     if (Number.isNaN(Date.parse(staleBeforeIso))) {
@@ -1439,10 +1459,44 @@ export class MateGrowthStorage {
     );
   }
 
+  markEventAppliedInTransaction(db: DatabaseSync, eventId: string, appliedRevisionId?: string): void {
+    const targetId = normalizeText(eventId, "eventId");
+    const now = nowIso();
+    let revisionId = normalizeOptionalText(appliedRevisionId);
+    if (revisionId !== null) {
+      const revisionExists = db.prepare(`
+        SELECT id
+        FROM mate_profile_revisions
+        WHERE id = ?
+      `).get(revisionId) as { id: string } | undefined;
+
+      if (!revisionExists) {
+        revisionId = null;
+      }
+    }
+
+    db.prepare(MARK_EVENT_APPLIED_SQL).run(
+      revisionId,
+      now,
+      now,
+      targetId,
+    );
+  }
+
   markEventSkipped(eventId: string): void {
     const targetId = normalizeText(eventId, "eventId");
     const now = nowIso();
     this.db.prepare(MARK_EVENT_SKIPPED_SQL).run(
+      now,
+      now,
+      targetId,
+    );
+  }
+
+  markEventSkippedInTransaction(db: DatabaseSync, eventId: string): void {
+    const targetId = normalizeText(eventId, "eventId");
+    const now = nowIso();
+    db.prepare(MARK_EVENT_SKIPPED_SQL).run(
       now,
       now,
       targetId,

@@ -500,6 +500,201 @@ export class MateProfileItemStorage {
     return item;
   }
 
+  upsertProfileItemInTransaction(db: DatabaseSync, input: UpsertMateProfileItemInput): MateProfileItem {
+    const sectionKey = assertOneOf(input.sectionKey, SECTION_KEYS, "sectionKey");
+    const category = assertOneOf(input.category, CATEGORIES, "category");
+
+    const claimKey = normalizeText(input.claimKey, "claimKey");
+    const claimValue = normalizeOptionalText(input.claimValue) ?? "";
+    const claimValueNormalized = claimValue.trim().toLowerCase();
+    const renderedText = normalizeText(input.renderedText, "renderedText");
+    const normalizedClaim =
+      normalizeOptionalText(input.normalizedClaim) ?? (claimValueNormalized.length > 0 ? claimValueNormalized : claimKey);
+    const confidence = normalizeInteger(input.confidence, Number.NaN, "confidence");
+    const salienceScore = normalizeInteger(input.salienceScore, Number.NaN, "salienceScore");
+    const recurrenceCount = normalizePositiveInteger(input.recurrenceCount, 1, "recurrenceCount");
+    const projectionAllowed = input.projectionAllowed === true;
+    const sourceGrowthEventId = normalizeOptionalText(input.sourceGrowthEventId);
+    const createdRevisionId = normalizeOptionalText(input.createdRevisionId);
+    const updatedRevisionId = normalizeOptionalText(input.updatedRevisionId);
+    const id = normalizeOptionalText(input.id);
+
+    const resolvedProjectDigestId = sectionKey === "project_digest"
+      ? normalizeOptionalText(input.projectDigestId)
+      : null;
+
+    if (sectionKey === "project_digest" && !resolvedProjectDigestId) {
+      throw new Error("project_digest セクションでは projectDigestId が必要です");
+    }
+
+    const tags = input.tags === undefined ? null : normalizeTags(input.tags);
+    const now = nowIso();
+
+    const existingById = id
+      ? db.prepare("SELECT id FROM mate_profile_items WHERE id = ?").get(id) as { id: string } | undefined
+      : undefined;
+
+    const targetByClaim = sectionKey === "project_digest"
+      ? db
+        .prepare(SELECT_ACTIVE_BY_CLAIM_PROJECT_SQL)
+        .get(MATE_ID, sectionKey, claimKey, resolvedProjectDigestId) as { id: string } | undefined
+      : db
+        .prepare(SELECT_ACTIVE_BY_CLAIM_GLOBAL_SQL)
+        .get(MATE_ID, sectionKey, claimKey) as { id: string } | undefined;
+
+    const targetId = existingById?.id ?? targetByClaim?.id ?? id ?? randomUUID();
+    const isInsert = existingById === undefined && targetByClaim === undefined;
+
+    if (isInsert) {
+      db.prepare(`
+        INSERT INTO mate_profile_items (
+          id,
+          mate_id,
+          section_key,
+          project_digest_id,
+          category,
+          claim_key,
+          claim_value,
+          claim_value_normalized,
+          rendered_text,
+          normalized_claim,
+          confidence,
+          salience_score,
+          recurrence_count,
+          projection_allowed,
+          state,
+          first_seen_at,
+          last_seen_at,
+          created_revision_id,
+          updated_revision_id,
+          disabled_revision_id,
+          forgotten_revision_id,
+          disabled_at,
+          forgotten_at,
+          content_redacted,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, NULL, NULL, NULL, NULL, 0, ?, ?)
+      `).run(
+        targetId,
+        MATE_ID,
+        sectionKey,
+        resolvedProjectDigestId,
+        category,
+        claimKey,
+        claimValue,
+        claimValueNormalized,
+        renderedText,
+        normalizedClaim,
+        confidence,
+        salienceScore,
+        recurrenceCount,
+        projectionAllowed ? 1 : 0,
+        now,
+        now,
+        createdRevisionId,
+        updatedRevisionId,
+        now,
+        now,
+      );
+    } else {
+      db.prepare(`
+        UPDATE mate_profile_items
+        SET
+          section_key = ?,
+          project_digest_id = ?,
+          category = ?,
+          claim_key = ?,
+          claim_value = ?,
+          claim_value_normalized = ?,
+          rendered_text = ?,
+          normalized_claim = ?,
+          confidence = ?,
+          salience_score = ?,
+          recurrence_count = ?,
+          projection_allowed = ?,
+          state = 'active',
+          first_seen_at = first_seen_at,
+          last_seen_at = ?,
+          created_revision_id = COALESCE(?, created_revision_id),
+          updated_revision_id = ?,
+          disabled_revision_id = NULL,
+          forgotten_revision_id = NULL,
+          disabled_at = NULL,
+          forgotten_at = NULL,
+          updated_at = ?
+        WHERE id = ?
+      `).run(
+        sectionKey,
+        resolvedProjectDigestId,
+        category,
+        claimKey,
+        claimValue,
+        claimValueNormalized,
+        renderedText,
+        normalizedClaim,
+        confidence,
+        salienceScore,
+        recurrenceCount,
+        projectionAllowed ? 1 : 0,
+        now,
+        createdRevisionId,
+        updatedRevisionId,
+        now,
+        targetId,
+      );
+    }
+
+    if (tags !== null) {
+      db.prepare("DELETE FROM mate_profile_item_tags WHERE profile_item_id = ?").run(targetId);
+
+      const insertTag = db.prepare(`
+        INSERT INTO mate_profile_item_tags (
+          profile_item_id,
+          tag_type,
+          tag_value,
+          tag_value_normalized,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?)
+      `);
+      for (const tag of tags) {
+        insertTag.run(
+          targetId,
+          tag.type,
+          tag.value,
+          tag.value.toLowerCase().trim(),
+          now,
+        );
+      }
+    }
+
+    if (sourceGrowthEventId) {
+      const linkType: SourceLinkType = isInsert ? "created_by" : "reinforced_by";
+      db.prepare(`
+        INSERT OR IGNORE INTO mate_profile_item_sources (
+          profile_item_id,
+          growth_event_id,
+          link_type,
+          created_revision_id,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?)
+      `).run(
+        targetId,
+        sourceGrowthEventId,
+        linkType,
+        isInsert ? createdRevisionId : updatedRevisionId,
+        now,
+      );
+    }
+
+    const item = this.getProfileItem(targetId, db);
+    if (!item) {
+      throw new Error("保存した profile item を再読込できないよ。");
+    }
+
+    return item;
+  }
+
   listProfileItems(request: ListProfileItemsRequest = {}): MateProfileItem[] {
     const clauses: string[] = ["mate_id = ?"];
     const params: Array<string | number | null> = [MATE_ID];
@@ -652,8 +847,8 @@ export class MateProfileItemStorage {
     }
   }
 
-  private getProfileItem(itemId: string): MateProfileItem | null {
-    const row = this.db.prepare(`
+  private getProfileItem(itemId: string, db: DatabaseSync = this.db): MateProfileItem | null {
+    const row = db.prepare(`
       SELECT
         id,
         section_key,
@@ -687,7 +882,7 @@ export class MateProfileItemStorage {
       return null;
     }
 
-    const tags = this.db.prepare(`
+    const tags = db.prepare(`
       SELECT
         profile_item_id,
         tag_type,

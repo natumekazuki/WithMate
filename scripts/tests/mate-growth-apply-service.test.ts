@@ -808,6 +808,81 @@ describe("MateGrowthApplyService", () => {
     }
   });
 
+  it("applyProfileFiles 成功後の profileItem upsert 失敗時は apply が失敗扱いになり、event も applied にならず profile item も active に残らず、active revision と profileGeneration も進まない", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const mateStorage = new MateStorage(dbPath, userDataPath);
+    const growthStorage = new MateGrowthStorage(dbPath);
+    const profileItemStorage = new MateProfileItemStorage(dbPath);
+    let originalUpsertProfileItemInTransaction = profileItemStorage.upsertProfileItemInTransaction;
+
+    try {
+      await mateStorage.createMate({ displayName: "Mika" });
+      const beforeProfile = mateStorage.getMateProfile();
+      const beforeActiveRevisionId = beforeProfile?.activeRevisionId ?? null;
+      const beforeProfileGeneration = beforeProfile?.profileGeneration;
+
+      const runId = growthStorage.createRun({
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        triggerReason: "test",
+      });
+      const event = growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "repeated_user_behavior",
+        kind: "relationship",
+        targetSection: "bond",
+        statement: "ユーザーは短文を好む",
+        statementFingerprint: "short-message-preference",
+        targetClaimKey: "reply_length",
+        confidence: 82,
+        salienceScore: 68,
+        projectionAllowed: true,
+      });
+
+      profileItemStorage.upsertProfileItemInTransaction = (() => {
+        throw new Error("profile item upsert failed");
+      }) as typeof profileItemStorage.upsertProfileItemInTransaction;
+
+      const service = new MateGrowthApplyService(
+        growthStorage,
+        profileItemStorage,
+        mateStorage,
+      );
+
+      await assert.rejects(
+        () => service.applyPendingGrowth({ runId }),
+        /profile item upsert failed/,
+      );
+
+      const activeBondItems = profileItemStorage.listProfileItems({ sectionKey: "bond", state: "active" });
+      assert.equal(activeBondItems.length, 0);
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const row = db.prepare("SELECT state, applied_revision_id FROM mate_growth_events WHERE id = ?").get(event.id) as {
+          state: string;
+          applied_revision_id: string | null;
+        };
+        assert.equal(row.state, "candidate");
+        assert.equal(row.applied_revision_id, null);
+
+        const profile = mateStorage.getMateProfile();
+        assert.equal(profile?.activeRevisionId, beforeActiveRevisionId);
+        assert.equal(profile?.profileGeneration, beforeProfileGeneration);
+      } finally {
+        db.close();
+      }
+    } finally {
+      profileItemStorage.close();
+      growthStorage.close();
+      profileItemStorage.upsertProfileItemInTransaction = originalUpsertProfileItemInTransaction;
+      mateStorage.close();
+      await cleanup();
+    }
+  });
+
   it("適用イベントがある場合は provider instruction target の stale 無効化が呼ばれる", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     const mateStorage = new MateStorage(dbPath, userDataPath);

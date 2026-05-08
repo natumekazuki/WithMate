@@ -105,11 +105,11 @@ export class MateGrowthApplyService {
 
     try {
       this.growthStorage.markGrowthApplyRunApplying(lock.runId);
-      for (const event of skippedEvents) {
-        this.growthStorage.markEventSkipped(event.id);
-      }
 
       if (applicableEvents.length === 0) {
+        for (const event of skippedEvents) {
+          this.growthStorage.markEventSkipped(event.id);
+        }
         result = {
           candidateCount: events.length,
           appliedCount: 0,
@@ -132,36 +132,44 @@ export class MateGrowthApplyService {
       );
       const projectedProfileItems = buildProjectedProfileItems(profileItems, upsertInputs);
       const renderedFiles = renderMateProfileFiles(profile, projectedProfileItems);
-      const updatedProfile = await this.mateStorage.applyProfileFiles({
-        sourceGrowthEventId: applicableEvents[0].id,
-        summary: `growth apply: ${applicableEvents.length} item(s)`,
-        files: renderedFiles,
-      });
-      updatedProfileRevisionId = updatedProfile.activeRevisionId;
-
       const profileItemsByClaimKey = new Map(
         profileItems
           .map((item) => [buildProjectedProfileItemLookupKey(item), item.id] as const),
       );
-      for (let i = 0; i < applicableEvents.length; i += 1) {
-        const upsertInput = {
-          ...upsertInputs[i],
-          sourceGrowthEventId: applicableEvents[i].id,
-          ...(profileItemsByClaimKey.has(buildProjectedProfileItemLookupKey(upsertInputs[i])) ? {
-            updatedRevisionId: updatedProfileRevisionId ?? undefined,
-          } : {
-            createdRevisionId: updatedProfileRevisionId ?? undefined,
-          }),
-        };
+      const updatedProfile = await this.mateStorage.applyProfileFiles({
+        sourceGrowthEventId: applicableEvents[0].id,
+        summary: `growth apply: ${applicableEvents.length} item(s)`,
+        files: renderedFiles,
+        finalizeInTransaction: ({ db, revisionId }) => {
+          for (const event of skippedEvents) {
+            this.growthStorage.markEventSkippedInTransaction(db, event.id);
+          }
 
-        const upsertedItem = this.profileItemStorage.upsertProfileItem(upsertInput);
-        profileItemsByClaimKey.set(buildProjectedProfileItemLookupKey(upsertedItem), upsertedItem.id);
-        appliedIndexTargets.push({ event: applicableEvents[i], profileItem: upsertedItem });
-      }
+          for (let i = 0; i < applicableEvents.length; i += 1) {
+            const upsertInput = {
+              ...upsertInputs[i],
+              sourceGrowthEventId: applicableEvents[i].id,
+              ...(profileItemsByClaimKey.has(buildProjectedProfileItemLookupKey(upsertInputs[i])) ? {
+                updatedRevisionId: revisionId,
+              } : {
+                createdRevisionId: revisionId,
+              }),
+            };
 
-      for (const event of applicableEvents) {
-        this.growthStorage.markEventApplied(event.id, updatedProfileRevisionId ?? undefined);
-      }
+            const upsertedItem = this.profileItemStorage.upsertProfileItemInTransaction(db, upsertInput);
+            profileItemsByClaimKey.set(buildProjectedProfileItemLookupKey(upsertedItem), upsertedItem.id);
+            appliedIndexTargets.push({ event: applicableEvents[i], profileItem: upsertedItem });
+            this.growthStorage.markEventAppliedInTransaction(db, applicableEvents[i].id, revisionId);
+          }
+
+          this.growthStorage.finishRunInTransaction(db, lock.runId, {
+            outputRevisionId: revisionId,
+            appliedCount: applicableEvents.length,
+            invalidCount: skippedEvents.length,
+          });
+        },
+      });
+      updatedProfileRevisionId = updatedProfile.activeRevisionId;
       await this.rewriteProjectDigestProjectionsBestEffort({
         events: applicableEvents,
         projectedProfileItems,
@@ -182,12 +190,6 @@ export class MateGrowthApplyService {
       this.growthStorage.failRun(lock.runId, error instanceof Error ? error.message : String(error));
       throw error;
     }
-
-    this.growthStorage.finishRun(lock.runId, {
-      outputRevisionId: result.revisionId ?? undefined,
-      appliedCount: result.appliedCount,
-      invalidCount: result.skippedCount,
-    });
 
     return result;
   }
