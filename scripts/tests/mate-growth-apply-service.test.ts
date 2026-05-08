@@ -130,6 +130,86 @@ describe("MateGrowthApplyService", () => {
     }
   });
 
+  it("source memory の tags は profile item の tags として引き継がれる", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const mateStorage = new MateStorage(dbPath, userDataPath);
+    const growthStorage = new MateGrowthStorage(dbPath);
+    const profileItemStorage = new MateProfileItemStorage(dbPath);
+
+    try {
+      await mateStorage.createMate({ displayName: "Mika" });
+      const runId = growthStorage.createRun({
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        triggerReason: "test",
+      });
+      const memoryTaggedEvent = growthStorage.upsertEvent({
+        id: "memory-tag-event-1",
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "assistant_inference",
+        kind: "relationship",
+        targetSection: "bond",
+        statement: "ユーザーは短文を好む",
+        statementFingerprint: "short-message-preference",
+        targetClaimKey: "reply_length",
+        confidence: 82,
+        salienceScore: 68,
+        projectionAllowed: true,
+      });
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const now = new Date().toISOString();
+        db.prepare(`
+          INSERT INTO mate_memory_tags (
+            memory_id,
+            tag_type,
+            tag_value,
+            tag_value_normalized,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?)
+        `).run(memoryTaggedEvent.id, "Topic", "work", "work", now);
+        db.prepare(`
+          INSERT INTO mate_memory_tags (
+            memory_id,
+            tag_type,
+            tag_value,
+            tag_value_normalized,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?)
+        `).run(memoryTaggedEvent.id, "Scope", "frontend", "frontend", now);
+      } finally {
+        db.close();
+      }
+
+      const service = new MateGrowthApplyService(growthStorage, profileItemStorage, mateStorage);
+      const result = await service.applyPendingGrowth({ runId });
+
+      assert.equal(result.candidateCount, 1);
+      assert.equal(result.appliedCount, 1);
+      assert.equal(result.skippedCount, 0);
+      assert.equal(typeof result.revisionId, "string");
+
+      const bondItems = profileItemStorage.listProfileItems({ sectionKey: "bond", state: "active" });
+      assert.equal(bondItems.length, 1);
+      const bondTags = bondItems[0].tags;
+      const tagPairs = bondTags.map((tag) => `${tag.type}:${tag.value}`).sort();
+      assert.deepEqual(tagPairs, [
+        "growth_kind:relationship",
+        "growth_source_type:assistant_inference",
+        "scope:frontend",
+        "topic:work",
+      ]);
+    } finally {
+      profileItemStorage.close();
+      growthStorage.close();
+      mateStorage.close();
+      await cleanup();
+    }
+  });
+
   it("project_digest は projectDigestId があれば apply される", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     const mateStorage = new MateStorage(dbPath, userDataPath);

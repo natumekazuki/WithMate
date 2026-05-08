@@ -125,6 +125,13 @@ type TagRow = {
   tag_value_normalized: string;
 };
 
+type MemoryTagRow = {
+  memory_id: string;
+  tag_type: string;
+  tag_value: string;
+  tag_value_normalized: string;
+};
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -562,6 +569,41 @@ export class MateProfileItemStorage {
     `).all(...params, ...(normalizedLimit !== null ? [normalizedLimit] : [])) as ProfileItemRow[];
 
     return this.withTags(rows);
+  }
+
+  listMemoryTagsByGrowthEventIds(growthEventIds: readonly string[]): Map<string, MateProfileItemTagInput[]> {
+    const normalizedIds = Array.from(new Set(
+      growthEventIds
+        .map((id) => typeof id === "string" ? id.trim() : "")
+        .filter((id) => id.length > 0),
+    ));
+
+    if (normalizedIds.length === 0) {
+      return new Map();
+    }
+
+    const tags = this.db.prepare(`
+      SELECT
+        memory_id,
+        tag_type,
+        tag_value,
+        tag_value_normalized
+      FROM mate_memory_tags
+      WHERE memory_id IN (${normalizedIds.map(() => "?").join(", ")})
+      ORDER BY memory_id, id
+    `).all(...normalizedIds) as MemoryTagRow[];
+
+    const tagsByEventId = new Map<string, MateProfileItemTagInput[]>();
+    for (const row of tags) {
+      const existing = tagsByEventId.get(row.memory_id) ?? [];
+      existing.push({
+        type: row.tag_type,
+        value: row.tag_value,
+      });
+      tagsByEventId.set(row.memory_id, existing);
+    }
+
+    return tagsByEventId;
   }
 
   private withTags(rows: ProfileItemRow[]): MateProfileItem[] {

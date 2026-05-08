@@ -179,6 +179,56 @@ describe("MateProfileItemStorage", () => {
     }
   });
 
+  it("listMemoryTagsByGrowthEventIds で対象 growth event の tags をまとめて取得できます", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-profile-item-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate-v4.db");
+    let storage: MateProfileItemStorage | null = null;
+
+    try {
+      storage = new MateProfileItemStorage(dbPath);
+      seedCurrentMate(dbPath);
+      const growthEventId = "memory-tag-source";
+      seedGrowthEvent(dbPath, growthEventId);
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const now = BASE_TIME;
+        db.prepare(`
+          INSERT INTO mate_memory_tags (
+            memory_id,
+            tag_type,
+            tag_value,
+            tag_value_normalized,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?)
+        `).run(growthEventId, "Topic", "work", "work", now);
+        db.prepare(`
+          INSERT INTO mate_memory_tags (
+            memory_id,
+            tag_type,
+            tag_value,
+            tag_value_normalized,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?)
+        `).run(growthEventId, "Scope", "frontend", "frontend", now);
+      } finally {
+        db.close();
+      }
+
+      const tagsByGrowthEventId = storage.listMemoryTagsByGrowthEventIds([growthEventId]);
+      assert.deepEqual(
+        tagsByGrowthEventId.get(growthEventId),
+        [
+          { type: "Topic", value: "work" },
+          { type: "Scope", value: "frontend" },
+        ],
+      );
+    } finally {
+      storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("sectionKey=project_digest では projectDigestId を必須にし、保存時に紐付けます", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-profile-item-storage-"));
     const dbPath = path.join(tempDirectory, "withmate-v4.db");

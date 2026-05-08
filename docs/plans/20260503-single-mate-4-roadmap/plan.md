@@ -366,7 +366,7 @@ projection に含めないもの:
 - [x] Profile Item apply / render API を実装する
 - [x] 一人称、二人称、呼びかけ、口調、語尾、性格傾向、相談時の反応、coding 時の作業支援方針を Profile Item として扱う
 - [x] Memory tag relation API / storage を実装する
-- [ ] Profile Item tag は source Memory tags から継承または render 時に派生させる
+- [x] Profile Item tag は source Memory tags から継承または render 時に派生させる
 - [ ] Git 管理下 workspace の Git 情報から project tag を付与する
 - [ ] Git 非管理 workspace では project tag を付与しない
 - [x] Project Digest は provider instruction に常設せず、prompt 送信時に workspace / Git 情報 / user input で relevant Profile Item を検索して一時 context として注入する

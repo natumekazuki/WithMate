@@ -9,6 +9,7 @@ import type {
   MateProfileItemCategory,
   MateProfileItemSectionKey,
   MateProfileItemStorage,
+  MateProfileItemTagInput,
   UpsertMateProfileItemInput,
 } from "./mate-profile-item-storage.js";
 import { renderMateProfileFiles } from "./mate-profile-file-renderer.js";
@@ -133,7 +134,12 @@ export class MateGrowthApplyService {
       }
 
       const profileItems = this.profileItemStorage.listProfileItems({ state: "active" });
-      const upsertInputs = applicableEvents.map(buildUpsertInputFromGrowthEvent);
+      const sourceMemoryTagsByEventId = this.profileItemStorage.listMemoryTagsByGrowthEventIds(
+        applicableEvents.map((event) => event.id),
+      );
+      const upsertInputs = applicableEvents.map(
+        (event) => buildUpsertInputFromGrowthEvent(event, sourceMemoryTagsByEventId.get(event.id)),
+      );
       const projectedProfileItems = buildProjectedProfileItems(profileItems, upsertInputs);
       const renderedFiles = renderMateProfileFiles(profile, projectedProfileItems);
       const updatedProfile = await this.mateStorage.applyProfileFiles({
@@ -453,6 +459,7 @@ function buildProjectedProfileItems(
 
 function buildUpsertInputFromGrowthEvent(
   event: MateGrowthEvent & { targetSection: MateProfileItemSectionKey },
+  sourceMemoryTags?: readonly MateProfileItemTagInput[],
 ): UpsertMateProfileItemInput {
   const baseInput: UpsertMateProfileItemInput = {
     sectionKey: event.targetSection,
@@ -468,6 +475,7 @@ function buildUpsertInputFromGrowthEvent(
     tags: [
       { type: "growth_kind", value: event.kind },
       { type: "growth_source_type", value: event.growthSourceType },
+      ...(sourceMemoryTags ?? []),
     ],
   };
 
