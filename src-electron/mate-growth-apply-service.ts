@@ -27,8 +27,6 @@ type ApplyPendingGrowthOptions = {
 export type ApplyPendingGrowthResult = MateGrowthApplyResult;
 
 const APPLY_TARGET_SECTIONS = ["core", "bond", "work_style", "project_digest"] as const;
-const APPLYABLE_CORE_GROWTH_SOURCE_TYPES = ["explicit_user_instruction", "user_correction"] as const;
-
 const APPLYABLE_CORE_SOURCE_TYPES = ["mate_talk"] as const;
 const APPLY_PENDING_GROWTH_WAIT_MS = 50;
 const APPLY_PENDING_GROWTH_MAX_ATTEMPTS = 30;
@@ -501,9 +499,13 @@ function isProjectDigestGrowthEvent(
 }
 
 function isManualCoreGrowthEvent(event: MateGrowthEvent): boolean {
+  if (event.growthSourceType === "user_correction") {
+    return true;
+  }
+
   return (
-    (APPLYABLE_CORE_SOURCE_TYPES as readonly string[]).includes(event.sourceType) &&
-    (APPLYABLE_CORE_GROWTH_SOURCE_TYPES as readonly string[]).includes(event.growthSourceType)
+    event.growthSourceType === "explicit_user_instruction" &&
+    (APPLYABLE_CORE_SOURCE_TYPES as readonly string[]).includes(event.sourceType)
   );
 }
 

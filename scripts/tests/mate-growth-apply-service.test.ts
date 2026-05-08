@@ -236,6 +236,82 @@ describe("MateGrowthApplyService", () => {
     }
   });
 
+  it("session 由来 core でも user_correction は core へ apply される", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const mateStorage = new MateStorage(dbPath, userDataPath);
+    const growthStorage = new MateGrowthStorage(dbPath);
+    const profileItemStorage = new MateProfileItemStorage(dbPath);
+
+    try {
+      await mateStorage.createMate({ displayName: "Mika" });
+      const runId = growthStorage.createRun({
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        triggerReason: "test",
+      });
+      const originalCore = growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "session",
+        sourceSessionId: "session-1",
+        growthSourceType: "assistant_inference",
+        kind: "conversation",
+        targetSection: "core",
+        statement: "一人称は「ぼく」を使う",
+        statementFingerprint: "first-person-boku-original",
+        targetClaimKey: "first_person",
+        confidence: 80,
+        salienceScore: 72,
+        projectionAllowed: true,
+      });
+      const correction = growthStorage.correctEventForReview(originalCore.id, "一人称は「わたし」を使う");
+      assert.ok(correction.createdEvent);
+
+      const service = new MateGrowthApplyService(growthStorage, profileItemStorage, mateStorage);
+      const result = await service.applyPendingGrowth({ runId });
+
+      assert.equal(result.candidateCount, 1);
+      assert.equal(result.appliedCount, 1);
+      assert.equal(result.skippedCount, 0);
+      assert.equal(typeof result.revisionId, "string");
+
+      const coreContent = await readFile(path.join(userDataPath, "mate/core.md"), "utf8");
+      assert.equal(coreContent.includes("わたし"), true);
+      assert.equal(coreContent.includes("ぼく"), false);
+
+      const coreItems = profileItemStorage.listProfileItems({ sectionKey: "core", state: "active" });
+      assert.equal(coreItems.length, 1);
+      assert.equal(coreItems[0].claimKey, "first_person");
+      assert.equal(coreItems[0].claimValue, "一人称は「わたし」を使う");
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const rows = db.prepare(`
+          SELECT id, state, applied_revision_id
+          FROM mate_growth_events
+          WHERE id IN (?, ?)
+        `).all(
+          originalCore.id,
+          correction.createdEvent.id,
+        ) as Array<{ id: string; state: string; applied_revision_id: string | null }>;
+
+        assert.equal(rows.find((row) => row.id === originalCore.id)?.state, "corrected");
+        assert.equal(rows.find((row) => row.id === correction.createdEvent?.id)?.state, "applied");
+        assert.equal(rows.find((row) => row.id === originalCore.id)?.applied_revision_id, null);
+        assert.equal(
+          rows.find((row) => row.id === correction.createdEvent?.id)?.applied_revision_id,
+          result.revisionId,
+        );
+      } finally {
+        db.close();
+      }
+    } finally {
+      profileItemStorage.close();
+      growthStorage.close();
+      mateStorage.close();
+      await cleanup();
+    }
+  });
+
   it("source memory の tags は profile item の tags として引き継がれる", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     const mateStorage = new MateStorage(dbPath, userDataPath);
