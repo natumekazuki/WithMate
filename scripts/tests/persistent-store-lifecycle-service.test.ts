@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -233,6 +233,76 @@ test("PersistentStoreLifecycleService は store を初期化して session depen
   ]);
   assert.equal(listSessionsCallCount, 0);
 });
+
+test("PersistentStoreLifecycleService は起動時に Mate projection を復元し、残存 mismatch を警告ログに残す", async () => {
+  const warnCalls: unknown[][] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnCalls.push(args);
+  };
+
+  try {
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => ({ revision: 1, providers: [] }),
+          close() {},
+        }) as never,
+      createSessionStorage: () =>
+        ({
+          listSessions: () => [],
+          listSessionSummaries: () => [],
+          close() {},
+        }) as never,
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => ({ close() {} }) as never,
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () =>
+        ({
+          close() {},
+          recoverMateProfileFilesFromActiveRevision: async () => [
+            {
+              sectionKey: "core",
+              filePath: "mate/core.md",
+              expectedHash: "expected",
+              actualHash: "actual",
+              expectedByteSize: 10,
+              actualByteSize: 9,
+              reason: "hash_mismatch",
+            },
+          ],
+        }) as never,
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile() {},
+    });
+
+    const bundle = await service.initialize("withmate.db", "model-catalog.json");
+
+    service.close(bundle, "withmate.db");
+    assert.equal(warnCalls.length, 1);
+    assert.equal(warnCalls[0]?.[0], "Mate profile projection recovery has remaining mismatches");
+    assert.deepEqual(warnCalls[0]?.[1], {
+      count: 1,
+      mismatches: [
+        {
+          sectionKey: "core",
+          filePath: "mate/core.md",
+          expectedHash: "expected",
+          actualHash: "actual",
+          expectedByteSize: 10,
+          actualByteSize: 9,
+          reason: "hash_mismatch",
+        },
+      ],
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
 test("PersistentStoreLifecycleService は v4 DB 起動時に Mate schema を初期化する", async () => {
   await withTempDatabaseAndUserData(async (dbPath, userDataPath) => {
     const service = new PersistentStoreLifecycleService({
@@ -273,6 +343,58 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate schema を初�
     }
 
     service.close(bundle, dbPath);
+  });
+});
+
+test("PersistentStoreLifecycleService は v4 DB 起動時に Mate projection を active revision snapshot から復元する", async () => {
+  await withTempDatabaseAndUserData(async (dbPath, userDataPath) => {
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => ({ revision: 1, providers: [] }),
+          close() {},
+        }) as never,
+      createSessionStorage: () =>
+        ({
+          listSessions: () => [],
+          listSessionSummaries: () => [],
+          close() {},
+        }) as never,
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => ({ close() {} }) as never,
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile() {},
+    });
+
+    const firstBundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+    try {
+      await firstBundle.mateStorage.createMate({ displayName: "Mika" });
+      await firstBundle.mateStorage.applyProfileFiles({
+        summary: "seed core",
+        files: [{ sectionKey: "core", relativePath: "mate/core.md", content: "# Core\n- Stable\n" }],
+      });
+    } finally {
+      service.close(firstBundle, dbPath);
+    }
+
+    const corePath = path.join(userDataPath, "mate/core.md");
+    await writeFile(corePath, "# Core\n- Broken\n", "utf8");
+
+    const secondBundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+    try {
+      const restoredCore = await readFile(corePath, "utf8");
+      const mismatches = await secondBundle.mateStorage.verifyMateProfileFiles();
+
+      assert.equal(restoredCore, "# Core\n- Stable\n");
+      assert.deepEqual(mismatches, []);
+    } finally {
+      service.close(secondBundle, dbPath);
+    }
   });
 });
 

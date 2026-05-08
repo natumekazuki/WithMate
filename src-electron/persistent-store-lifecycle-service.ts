@@ -10,7 +10,7 @@ import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogStorageV2 } from "./audit-log-storage-v2.js";
 import { AuditLogStorageV3 } from "./audit-log-storage-v3.js";
 import { CharacterMemoryStorage } from "./character-memory-storage.js";
-import { MateStorage } from "./mate-storage.js";
+import { MateStorage, type MateProfileFileMismatch } from "./mate-storage.js";
 import {
   CharacterMemoryStorageV2Read,
   ProjectMemoryStorageV2Read,
@@ -136,6 +136,7 @@ export class PersistentStoreLifecycleService {
       : this.deps.createAuditLogStorage(dbPath);
     const appSettingsStorage = this.deps.createAppSettingsStorage(dbPath);
     const mateStorage = this.deps.createMateStorage(dbPath, resolvedUserDataPath);
+    await this.recoverActiveMateProfileProjection(mateStorage);
     const loadedSessionSummaries = await sessionStorage.listSessionSummaries();
     const sessions = loadedSessionSummaries.length === 0 ? [] : sessionSummariesToSessions(loadedSessionSummaries);
 
@@ -224,6 +225,28 @@ export class PersistentStoreLifecycleService {
 
   private v3BlobRootPath(dbPath: string): string {
     return join(dirname(dbPath), "blobs", "v3");
+  }
+
+  private async recoverActiveMateProfileProjection(mateStorage: MateStorage): Promise<void> {
+    const recoverFunc = (mateStorage as {
+      recoverMateProfileFilesFromActiveRevision?: () => Promise<MateProfileFileMismatch[]>;
+    }).recoverMateProfileFilesFromActiveRevision;
+
+    if (typeof recoverFunc !== "function") {
+      return;
+    }
+
+    try {
+      const mismatches = await recoverFunc.call(mateStorage);
+      if (mismatches.length > 0) {
+        console.warn("Mate profile projection recovery has remaining mismatches", {
+          count: mismatches.length,
+          mismatches,
+        });
+      }
+    } catch (error) {
+      console.warn("Mate profile projection recovery failed during initialization", error);
+    }
   }
 }
 
