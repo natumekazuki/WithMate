@@ -338,7 +338,7 @@ projection に含めないもの:
 - [x] Memory Candidate input に relevant Memory / Profile Item / forgotten tombstone / tag catalog を含める
 - [x] tag catalog storage / API を実装する
 - [x] tag catalog sanitized metadata の全件 snapshot を Memory Candidate background run に毎回渡す
-- [ ] 保存すべきでない内容は Memory 生成 LLM が `memories[]` に含めないよう provider native instruction files / prompt に明記する
+- [x] 保存すべきでない内容は Memory 生成 LLM が `memories[]` に含めないよう provider native instruction files / prompt に明記する
 - [x] `mate_growth_cursors` を実装し、`extraction_cursor` / `consolidation_cursor` / `applied_event_watermark` / `project_digest_cursor` を nullable unique に依存せず管理する
 - [x] Memory Candidate の `growthSourceType` を `mate_growth_events.growth_source_type` に保存する
 - [x] `type = "profile_item"` の `relatedRefs` / `supersedesRefs` を `mate_growth_event_profile_item_links` に保存する
@@ -379,7 +379,7 @@ projection に含めないもの:
 - [x] statement fingerprint / forgotten tombstone を実装し、保存前 dedupe は行わない
 - [x] recurrence / salience / recency / decay を storage と policy gate に反映する
 - [ ] Growth apply / correct / forget / disable の単一 writer lock を実装する
-- [ ] Growth apply transaction の idempotency key を実装する
+- [x] Growth apply transaction の idempotency key を実装する
 - [ ] Growth apply は final commit 前に current Profile Item / Growth Event state / cursor を更新せず、proposed Profile Item set から projection snapshot を生成する
 - [ ] Growth apply revision は `committing_files` / `ready` state を持ち、provider sync は `ready` な SQLite snapshot だけを読む
 - [ ] `mate_profile_revisions.status` は `staging` / `committing_files` / `ready` / `failed` を持ち、`active_revision_id` は `ready` revision だけを指す
@@ -391,7 +391,7 @@ projection に含めないもの:
 - [ ] 自律反映された Growth Event を最小管理 UI に表示する
 - [ ] `修正` / `忘れる` / `無効化` の操作を追加する
 - [ ] Growth Event を Bond Profile / Work Style / project tag 付き digest に反映する
-- [ ] Growth 反映時に Mate Profile revision を作る
+- [x] Growth 反映時に Mate Profile revision を作る
 - [ ] 4.0.0 MVP では `changes.patch` を保存せず、diff は snapshot から必要時生成する
 
 ### Phase 6: Validation
