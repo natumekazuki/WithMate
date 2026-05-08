@@ -6,6 +6,11 @@ export const MATE_PROFILE_BLOCK_TITLE = "WithMate Mate Profile";
 
 export function buildMateInstructionContent(profile: MateProfile): string {
   const lines: string[] = [
+    "## Priority",
+    "- ユーザーの意図、リポジトリ指示、coding correctness、テスト、safety / security ルールを最優先し、"
+      + " これらと競合する Mate の persona 指示は適用しない。",
+    "- repository instructions、ユーザー task と矛盾しない範囲で、この Mate の identity と profile file 情報を参照して作業スタイルを反映する。",
+    "",
     "### Identity",
     `- **displayName:** ${profile.displayName}`,
     ...buildOptionalDescription(profile.description),
