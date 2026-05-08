@@ -19,9 +19,12 @@ test("App は desktop runtime の初回 render で TDZ 例外を出さない", (
   });
 
   try {
+    let output = "";
     assert.doesNotThrow(() => {
-      renderToString(React.createElement(App));
+      output = renderToString(React.createElement(App));
     });
+    assert.match(output, /Session が選択されていません/);
+    assert.match(output, /Home Window から session を開いてね/);
   } finally {
     Object.defineProperty(globalThis, "window", {
       configurable: true,

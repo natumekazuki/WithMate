@@ -1497,6 +1497,7 @@ export function SessionContextPane({
 
   const renderCompanionGroupMonitorEntry = (entry: Extract<HomeMonitorEntry, { kind: "companion" }>) => {
     const { session, state } = entry;
+    const companionSessionCharacterName = session.character.trim() || "Mate";
     return (
       <button
         key={session.id}
@@ -1504,10 +1505,16 @@ export function SessionContextPane({
         type="button"
         onClick={() => onOpenCompanionReview(session.id)}
       >
-        <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
+        <CharacterAvatar
+          character={{
+            name: companionSessionCharacterName,
+            iconPath: session.characterIconPath,
+          }}
+          size="tiny"
+        />
         <div className="companion-group-monitor-copy">
           <strong>{session.taskTitle}</strong>
-          <span>{session.character}</span>
+          <span>{companionSessionCharacterName}</span>
         </div>
         <div className="companion-group-monitor-badges">
           <span className={`session-status companion-group-monitor-status ${state.kind}`.trim()}>{state.label}</span>

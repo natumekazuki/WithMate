@@ -136,6 +136,7 @@ const EMPTY_COMPOSER_PREVIEW: ComposerPreview = { attachments: [], errors: [] };
 const COMPOSER_PREVIEW_DEBOUNCE_MS = 120;
 const COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS = 280;
 const WORKSPACE_PATH_QUERY_MIN_LENGTH = 2;
+const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
 
 function defaultRetryBannerDetailsOpen(kind: RetryBannerKind): boolean {
   return kind !== "canceled";
@@ -395,7 +396,7 @@ function renderCharacterSessionCopy(
   }
 
   const selectedTemplate = normalizedTemplates[hashStringToPositiveInt(seed || normalizedTemplates.join("\u001f")) % normalizedTemplates.length];
-  return selectedTemplate.replaceAll("{name}", characterName?.trim() || "キャラクター");
+  return selectedTemplate.replaceAll("{name}", characterName?.trim() || DEFAULT_SESSION_RUNTIME_NAME);
 }
 
 export default function App() {
@@ -648,7 +649,8 @@ function AgentSessionWindowApp() {
       selectedSession
         ? {
             id: resolvedCharacter?.id ?? selectedSession.characterId,
-            name: resolvedCharacter?.name ?? selectedSession.character,
+            name:
+              resolvedCharacter?.name?.trim() || selectedSession.character.trim() || DEFAULT_SESSION_RUNTIME_NAME,
             iconPath: resolvedCharacter?.iconPath ?? selectedSession.characterIconPath,
             description: resolvedCharacter?.description ?? "",
             roleMarkdown: resolvedCharacter?.roleMarkdown ?? "",
@@ -700,11 +702,11 @@ function AgentSessionWindowApp() {
     }
 
     if (isCharacterResolutionPending) {
-      return "この session の character 状態を確認しているよ。少し待ってね。";
+      return "この session の Mate 状態を確認しているよ。少し待ってね。";
     }
 
     if (isSelectedCharacterMissing) {
-      return "この session は元の character が見つからないため、過去ログの閲覧のみできるよ。";
+      return "この session は元の Mate 情報が見つからないため、過去ログの閲覧のみできるよ。";
     }
 
     if (!isSelectedProviderEnabled) {
@@ -2525,7 +2527,7 @@ function AgentSessionWindowApp() {
     return (
       <div className="page-shell session-page">
         <section className="panel session-window-bar rise-1">
-          <span className="session-window-title">No Session Selected</span>
+          <span className="session-window-title">Session が選択されていません</span>
         </section>
         <section className="panel empty-session-card rise-2">
           <h2>Home Window から session を開いてね</h2>
