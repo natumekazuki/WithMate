@@ -1194,6 +1194,109 @@ describe("syncEnabledProviderInstructionTargets", () => {
     }
   });
 
+  it("warn_continue の duplicate managed block は failed 記録になり、file は変更しない", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+    const targetPath = path.join(workspacePath, ".github", "copilot-instructions.md");
+    const existingContent =
+      `${buildManagedProfileBeginMarker("codex", "main")}\n`
+      + "## WithMate Mate Profile\n"
+      + "first body\n"
+      + `${buildManagedProfileEndMarker("codex", "main")}\n`
+      + `${buildManagedProfileBeginMarker("codex", "main")}\n`
+      + "## WithMate Mate Profile\n"
+      + "second body\n"
+      + `${buildManagedProfileEndMarker("codex", "main")}\n`;
+
+    try {
+      await mkdir(path.dirname(targetPath), { recursive: true });
+      await writeFile(targetPath, existingContent, "utf8");
+      storage.upsertTarget({
+        providerId: "codex",
+        enabled: true,
+        rootDirectory: workspacePath,
+        instructionRelativePath: path.join(".github", "copilot-instructions.md"),
+        writeMode: "managed_block",
+        failPolicy: "warn_continue",
+      });
+
+      const profile = createProfile({ displayName: "Mia", sections: [] });
+      const result = await syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES);
+      const updated = await readFile(targetPath, "utf8");
+      const target = storage.getTarget("codex", "main");
+      if (!target) {
+        throw new Error("target がありません");
+      }
+
+      assert.equal(result.targetCount, 1);
+      assert.equal(result.syncedCount, 0);
+      assert.equal(result.failedCount, 1);
+      assert.equal(result.skippedCount, 0);
+      assert.equal(result.runIds.length, 1);
+      assert.equal(target.lastSyncState, "failed");
+      assert.match(target.lastErrorPreview, /duplicate managed block|重複 managed block/);
+      assert.equal(updated, existingContent);
+      assert.equal(updated.includes("- **displayName:** Mia"), false);
+    } finally {
+      storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("block_session の malformed managed block は MateProviderInstructionSyncBlockedError になり、file は変更しない", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+    const targetPath = path.join(workspacePath, "AGENTS.md");
+    const existingContent =
+      `${buildManagedProfileBeginMarker("codex", "main")}\n`
+      + "## WithMate Mate Profile\n"
+      + "broken body\n";
+
+    try {
+      await writeFile(targetPath, existingContent, "utf8");
+      storage.upsertTarget({
+        providerId: "codex",
+        enabled: true,
+        rootDirectory: workspacePath,
+        instructionRelativePath: "AGENTS.md",
+        writeMode: "managed_block",
+        failPolicy: "block_session",
+      });
+
+      const profile = createProfile({ displayName: "Mia", sections: [] });
+      await assert.rejects(async () => {
+        await syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES);
+      }, (error: unknown) => {
+        if (!(error instanceof MateProviderInstructionSyncBlockedError)) {
+          return false;
+        }
+        assert.equal(error.providerId, "codex");
+        assert.equal(error.targetId, "main");
+        assert.match(error.errorPreview, /malformed marker|BEGIN/);
+        return true;
+      });
+
+      const updated = await readFile(targetPath, "utf8");
+      const target = storage.getTarget("codex", "main");
+      if (!target) {
+        throw new Error("target がありません");
+      }
+
+      assert.equal(updated, existingContent);
+      assert.equal(target.lastSyncState, "failed");
+      assert.match(target.lastErrorPreview, /malformed marker|BEGIN/);
+    } finally {
+      storage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("failPolicy block_session では duplicate managed block が MateProviderInstructionSyncBlockedError になる", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
     const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
