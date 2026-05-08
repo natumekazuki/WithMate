@@ -291,7 +291,7 @@ projection に含めないもの:
 
 ### Phase 4: Prompt Composition Cleanup
 
-- [ ] character.md 全文を毎 turn prompt に合成する経路を削除または無効化する
+- [x] character.md 全文を毎 turn prompt に合成する経路を削除または無効化する
 - [ ] user input へ付ける WithMate marker を最小化する
 - [ ] provider instruction を優先しつつ、coding correctness と repository instruction を上位に置く guard を入れる
 - [ ] prompt / instruction の token 量を計測できるようにする

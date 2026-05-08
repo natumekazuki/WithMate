@@ -66,7 +66,7 @@ function assertSectionOrder(text: string, sections: string[]): void {
 }
 
 describe("composeProviderPrompt", () => {
-  it("System / Character / User Input の順で合成し、Memory は注入しない", () => {
+  it("System / Project Context / User Input の順で合成し、Memory は注入しない", () => {
     const session = buildNewSession({
       taskTitle: "task",
       workspaceLabel: "workspace",
@@ -108,21 +108,22 @@ describe("composeProviderPrompt", () => {
     });
 
     assert.match(prompt.systemBodyText, /# System Prompt/);
-    assert.match(prompt.systemBodyText, /# Character/);
+    assert.doesNotMatch(prompt.systemBodyText, /# Character/);
     assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
-    assert.match(prompt.logicalPrompt.systemText, /# Character/);
+    assert.doesNotMatch(prompt.logicalPrompt.systemText, /# Character/);
     assert.equal(prompt.logicalPrompt.inputText, prompt.inputBodyText);
     assert.equal(
       prompt.logicalPrompt.composedText,
-      `${prompt.logicalPrompt.systemText}\n\n${prompt.logicalPrompt.inputText}`,
+      prompt.logicalPrompt.systemText
+        ? `${prompt.logicalPrompt.systemText}\n\n${prompt.logicalPrompt.inputText}`
+        : prompt.logicalPrompt.inputText,
     );
-    assert.match(prompt.logicalPrompt.composedText, /# Character/);
+    assert.doesNotMatch(prompt.logicalPrompt.composedText, /# Character/);
     assert.doesNotMatch(prompt.inputBodyText, /# Session Memory/);
     assert.doesNotMatch(prompt.inputBodyText, /# Project Memory/);
     assert.match(prompt.inputBodyText, /# User Input/);
     assertSectionOrder(prompt.logicalPrompt.composedText, [
       "# System Prompt",
-      "# Character",
       "# User Input",
     ]);
   });
@@ -165,7 +166,6 @@ describe("composeProviderPrompt", () => {
     assertSectionOrder(prompt.inputBodyText, ["# Project Context", "# Digest"]);
     assertSectionOrder(prompt.logicalPrompt.composedText, [
       "# System Prompt",
-      "# Character",
       "# Project Context",
       "ユーザー入力と上位指示が最優先です。",
       "# Digest",
@@ -204,7 +204,7 @@ describe("composeProviderPrompt", () => {
 
     assert.doesNotMatch(promptWithoutContext.inputBodyText, /# Project Context/);
     assert.match(promptWithoutContext.inputBodyText, /# User Input/);
-    assertSectionOrder(promptWithoutContext.logicalPrompt.composedText, ["# System Prompt", "# Character", "# User Input"]);
+    assertSectionOrder(promptWithoutContext.logicalPrompt.composedText, ["# System Prompt", "# User Input"]);
 
     const promptWithNullContext = composeProviderPrompt({
       session,
@@ -238,7 +238,7 @@ describe("composeProviderPrompt", () => {
     assert.doesNotMatch(promptWithUndefinedContext.inputBodyText, /# Project Context/);
   });
 
-  it("system prompt prefix が空でも character を Codex 用 logical prompt から落とさない", () => {
+  it("system prompt prefix が空の場合 system prompt を空文字にする", () => {
     const session = buildNewSession({
       taskTitle: "task",
       workspaceLabel: "workspace",
@@ -265,17 +265,22 @@ describe("composeProviderPrompt", () => {
       attachments: [],
     });
 
-    assert.equal(prompt.systemBodyText, "# Character\n\nあなたは丁寧に説明する。");
+    assert.equal(prompt.systemBodyText, "");
     assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
-    assert.match(prompt.logicalPrompt.systemText, /# Character/);
+    assert.equal(prompt.logicalPrompt.systemText, "");
+    assert.doesNotMatch(prompt.inputBodyText, /# Character/);
+    assert.doesNotMatch(prompt.inputBodyText, /あなたは丁寧に説明する。/);
+    assert.doesNotMatch(prompt.logicalPrompt.composedText, /# Character/);
+    assert.doesNotMatch(prompt.logicalPrompt.composedText, /あなたは丁寧に説明する。/);
     assert.equal(prompt.logicalPrompt.inputText, prompt.inputBodyText);
     assert.equal(
       prompt.logicalPrompt.composedText,
-      `${prompt.logicalPrompt.systemText}\n\n${prompt.logicalPrompt.inputText}`,
+      prompt.logicalPrompt.systemText
+        ? `${prompt.logicalPrompt.systemText}\n\n${prompt.logicalPrompt.inputText}`
+        : prompt.logicalPrompt.inputText,
     );
-    assert.match(prompt.logicalPrompt.composedText, /^# Character/);
-    assert.match(prompt.logicalPrompt.composedText, /あなたは丁寧に説明する。/);
-    assertSectionOrder(prompt.logicalPrompt.composedText, ["# Character", "# User Input"]);
+    assert.match(prompt.logicalPrompt.composedText, /# User Input/);
+    assertSectionOrder(prompt.logicalPrompt.composedText, ["# User Input"]);
   });
 });
 
