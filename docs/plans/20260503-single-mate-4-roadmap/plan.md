@@ -319,14 +319,14 @@ projection に含めないもの:
 - [x] Mate Growth Engine の service boundary を実装する
 - [ ] Growth LLM provider / model / depth の fixed priority list を Settings / storage に追加する
 - [ ] GrowthModelPort を stub / fake 可能な契約で実装する
-- [ ] GrowthModelPort を通常 turn response とは別の background job として実行する
+- [x] GrowthModelPort を通常 turn response とは別の background job として実行する
 - [ ] GrowthModelPort は user-facing provider thread を再利用せず、別 background session / utility call として実行する
 - [ ] GrowthModelPort background execution は tool-less utility call を優先し、agent session が必要な provider では schema submit tool 以外の file write / shell write / provider instruction write を許可しない
 - [x] Memory 生成専用 `memory-runtime/templates/` と provider native instruction files を作成し、保存方針を固定する
 - [x] Memory 生成 run ごとに `memory-runtime/runs/{runId}/.lock` 付き workspace を作成する
 - [x] Memory 生成 run の `.lock` は atomic create と heartbeat で管理し、stale run は quarantine してから cleanup する
 - [x] app 起動時に active heartbeat のない stale / completed / failed な Memory 生成 run workspace を cleanup する
-- [ ] GrowthModelPort input は current turn と必要 metadata に限定し、session transcript 全量を渡さない
+- [x] GrowthModelPort input は current turn と必要 metadata に限定し、session transcript 全量を渡さない
 - [ ] Codex GrowthModelPort では background `outputSchema` を渡す
 - [ ] Copilot GrowthModelPort では schema 付き internal submit tool を渡し、tool args を structured output として扱う
 - [x] Memory Candidate LLM response は `{ memories: MemoryCandidate[] }` として Zod schema validation を実装する
@@ -355,7 +355,7 @@ projection に含めないもの:
 - [x] Codex / Copilot background usage を `inputTokens` / `cachedInputTokens` / `outputTokens` / `reasoningOutputTokens` / `totalTokens` に正規化して保存する
 - [x] usage が null の場合は token trigger を使わず elapsed time / pending Memory / manual run に fallback する
 - [x] Memory Candidate 生成の model / reasoning effort / timeout 設定を実装する
-- [ ] Memory Candidate 生成は turn ごとの軽量 background run を既定候補にする
+- [x] Memory Candidate 生成は turn ごとの軽量 background run を既定候補にする
 - [x] Growth apply 実行頻度を 1 時間に 1 回を上限とする elapsed time / pending Memory / manual run と token usage 補助 signal で制御する
 - [x] ProfileUpdateSkill は internal background job として実装する
 - [x] ProfileUpdateSkill の出力を Markdown 全文ではなく structured Profile Operation にする

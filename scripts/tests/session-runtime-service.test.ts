@@ -3044,6 +3044,249 @@ describe("SessionRuntimeService", () => {
     assert.equal(typeof calls[0]?.auditLogId, "number");
   });
 
+  it("completed turn 後の scheduleMateMemoryGeneration payload は current turn と metadata のみを含む", async () => {
+    const session = createSession();
+    const calls: Array<{
+      payload: {
+        userMessage: string;
+        assistantText: string;
+        phase: "completed" | "failed" | "canceled";
+        auditLogId: number;
+        provider: string;
+        threadId: string;
+        logicalPrompt: CreateAuditLogInput["logicalPrompt"];
+        session: {
+          id: string;
+          workspacePath: string;
+        };
+      };
+      rawJson: string;
+    }> = [];
+
+    session.messages = [
+      ...session.messages,
+      { role: "user", text: "古いユーザーの発言" },
+      { role: "assistant", text: "古いアシスタントの返答" },
+    ];
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        return createPartialResult({
+          threadId: "thread-1",
+          assistantText: "完了したよ。",
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      scheduleMateMemoryGeneration(payload) {
+        calls.push({
+          payload: {
+            userMessage: payload.userMessage,
+            assistantText: payload.assistantText,
+            phase: payload.phase,
+            auditLogId: payload.auditLogId,
+            provider: payload.provider,
+            threadId: payload.threadId,
+            logicalPrompt: payload.logicalPrompt,
+            session: payload.session,
+          },
+          rawJson: JSON.stringify(payload),
+        });
+      },
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "今回の質問" });
+
+    assert.equal(result.runState, "idle");
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0]?.payload.session, {
+      id: session.id,
+      workspacePath: session.workspacePath,
+    });
+    assert.equal(calls[0]?.payload.userMessage, "今回の質問");
+    assert.equal(calls[0]?.payload.assistantText, "完了したよ。");
+    assert.equal(calls[0]?.payload.session.id, result.id);
+    assert.equal(calls[0]?.payload.threadId, result.threadId);
+    assert.equal(calls[0]?.payload.provider, "codex");
+    assert.equal(calls[0]?.payload.phase, "completed");
+    assert.equal(calls[0]?.payload.logicalPrompt.systemText, "system");
+    assert.equal(calls[0]?.payload.logicalPrompt.inputText, "input");
+    assert.equal(typeof calls[0]?.payload.auditLogId, "number");
+    assert.equal(calls[0]?.rawJson.includes("古いユーザーの発言"), false);
+    assert.equal(calls[0]?.rawJson.includes("古いアシスタントの返答"), false);
+  });
+
+  it("scheduleMateMemoryGeneration は completed 直後に background で起動される", async () => {
+    const session = createSession();
+    let backgroundStarted = false;
+    let backgroundFinished = false;
+    let continueBackground: (() => void) | null = null;
+    const backgroundBlocker = new Promise<void>((resolve) => {
+      continueBackground = resolve;
+    });
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        return createPartialResult({
+          threadId: "thread-1",
+          assistantText: "完了したよ。",
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      scheduleMateMemoryGeneration: async () => {
+        backgroundStarted = true;
+        await backgroundBlocker;
+        backgroundFinished = true;
+      },
+      currentTimestampLabel,
+    });
+
+    const result = await service.runSessionTurn(session.id, { userMessage: "お願い" });
+
+    assert.equal(result.runState, "idle");
+    assert.equal(backgroundStarted, true);
+    assert.equal(backgroundFinished, false);
+
+    assert.ok(continueBackground);
+    continueBackground();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(backgroundFinished, true);
+  });
+
   it("hook が throw しても runSessionTurn の結果は成功で返る", async () => {
     const session = createSession();
 

@@ -1,11 +1,15 @@
-import type { Session } from "../src/session-state.js";
 import type { MateStorageState } from "../src/mate-state.js";
 import type { MateProjectDigest } from "./mate-project-digest-storage.js";
+
+type SessionMetadata = {
+  id: string;
+  workspacePath: string;
+};
 
 type WarningLogger = (...data: unknown[]) => void;
 
 type ResolveMateProjectDigestForSessionDeps = {
-  session: Session;
+  session: SessionMetadata;
   getMateState: () => MateStorageState;
   resolveProjectDigestForWorkspace: (workspacePath: string) => MateProjectDigest | null;
   logWarning?: WarningLogger;

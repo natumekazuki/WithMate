@@ -27,6 +27,10 @@ import { estimateLogicalPromptTokens } from "./prompt-token-estimate.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
+type SessionMetadataForMemoryGeneration = Pick<
+  Session,
+  "id" | "workspacePath"
+>;
 
 export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
@@ -73,7 +77,7 @@ export type SessionRuntimeServiceDeps = {
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
   resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
   scheduleMateMemoryGeneration?: (params: {
-    session: Session;
+    session: SessionMetadataForMemoryGeneration;
     userMessage: string;
     assistantText: string;
     auditLogId: number;
@@ -520,7 +524,7 @@ export class SessionRuntimeService {
       await enqueueAuditWrite(nextRunningAuditEntry, nextSignature);
     };
     const scheduleMateMemoryGeneration = async (params: {
-      session: Session;
+      session: SessionMetadataForMemoryGeneration;
       userMessage: string;
       assistantText: string;
       phase: "completed" | "failed" | "canceled";
@@ -541,7 +545,7 @@ export class SessionRuntimeService {
         await Promise.resolve(schedule({
           ...params,
           logicalPrompt: promptForAudit.logicalPrompt,
-          provider: params.session.provider,
+          provider: activeRunningSession.provider,
         }));
       } catch {
         console.warn("Failed to schedule Mate Memory generation", params.session.id);
@@ -712,7 +716,10 @@ export class SessionRuntimeService {
 
       const storedCompletedSession = await this.deps.upsertSession(completedSession);
       void scheduleMateMemoryGeneration({
-        session: storedCompletedSession,
+        session: {
+          id: storedCompletedSession.id,
+          workspacePath: storedCompletedSession.workspacePath,
+        },
         userMessage: nextMessage,
         assistantText: completedSession.messages.at(-1)?.text ?? "",
         phase: "completed",
@@ -805,7 +812,10 @@ export class SessionRuntimeService {
       const storedFailedSession = await this.deps.upsertSession(failedSession);
       if (!canceled || partialResult?.assistantText.trim()) {
         void scheduleMateMemoryGeneration({
-          session: storedFailedSession,
+          session: {
+            id: storedFailedSession.id,
+            workspacePath: storedFailedSession.workspacePath,
+          },
           userMessage: nextMessage,
           assistantText: failedSession.messages.at(-1)?.text ?? "",
           phase: canceled ? "canceled" : "failed",
