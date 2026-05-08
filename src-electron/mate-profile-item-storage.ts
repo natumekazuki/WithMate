@@ -268,6 +268,15 @@ const SELECT_ACTIVE_BY_CLAIM_PROJECT_SQL = `
   LIMIT 1
 `;
 
+const SELECT_ACTIVE_GROWTH_APPLY_RUN_SQL = `
+  SELECT id
+  FROM mate_growth_runs
+  WHERE mate_id = ?
+    AND operation_id LIKE 'growth-apply:%'
+    AND status IN ('queued', 'applying')
+  LIMIT 1
+`;
+
 export class MateProfileItemStorage {
   private readonly db: DatabaseSync;
 
@@ -636,6 +645,13 @@ export class MateProfileItemStorage {
     });
   }
 
+  private assertNoActiveGrowthApplyRun(): void {
+    const activeRun = this.db.prepare(SELECT_ACTIVE_GROWTH_APPLY_RUN_SQL).get(MATE_ID) as { id: number } | undefined;
+    if (activeRun) {
+      throw new Error("Growth apply はすでに実行中です。");
+    }
+  }
+
   private getProfileItem(itemId: string): MateProfileItem | null {
     const row = this.db.prepare(`
       SELECT
@@ -690,6 +706,7 @@ export class MateProfileItemStorage {
     if (!targetId) {
       return;
     }
+    this.assertNoActiveGrowthApplyRun();
 
     const forgottenRevisionId = normalizeOptionalText(revisionId);
     const now = nowIso();
@@ -712,6 +729,7 @@ export class MateProfileItemStorage {
     if (!targetId) {
       return;
     }
+    this.assertNoActiveGrowthApplyRun();
 
     const disabledRevisionId = normalizeOptionalText(revisionId);
     const now = nowIso();

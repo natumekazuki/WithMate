@@ -378,7 +378,7 @@ projection に含めないもの:
 - [x] Growth evidence に source role / source kind / trust level を保存する
 - [x] statement fingerprint / forgotten tombstone を実装し、保存前 dedupe は行わない
 - [x] recurrence / salience / recency / decay を storage と policy gate に反映する
-- [ ] Growth apply / correct / forget / disable の単一 writer lock を実装する
+- [x] Growth apply / forget / disable の単一 writer lock を実装する（correct は独立操作が追加された時点で同じ lock に合流する）
 - [x] Growth apply transaction の idempotency key を実装する
 - [ ] Growth apply は final commit 前に current Profile Item / Growth Event state / cursor を更新せず、proposed Profile Item set から projection snapshot を生成する
 - [x] Growth apply revision は `committing_files` / `ready` state を持ち、provider sync は `ready` な SQLite snapshot だけを読む

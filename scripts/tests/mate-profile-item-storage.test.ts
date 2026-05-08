@@ -129,6 +129,35 @@ function seedProfileRevision(dbPath: string, revisionId: string, sequence = 1): 
   }
 }
 
+function seedGrowthApplyRun(dbPath: string, status: "queued" | "applying"): void {
+  const now = BASE_TIME;
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.prepare(`
+      INSERT INTO mate_growth_runs (
+        mate_id,
+        source_type,
+        trigger_reason,
+        status,
+        operation_id,
+        input_hash,
+        started_at
+      ) VALUES (?, 'system', 'test', ?, ?, ?, ?)
+    `).run("current", status, `growth-apply:${status}`, `hash-${status}`, now);
+  } finally {
+    db.close();
+  }
+}
+
+function clearGrowthApplyRuns(dbPath: string): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.prepare("DELETE FROM mate_growth_runs").run();
+  } finally {
+    db.close();
+  }
+}
+
 describe("MateProfileItemStorage", () => {
   it("upsert は project_digest を除き project_digest_id を null 化し、同一 claim は上書きしてタグを差し替えます", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-profile-item-storage-"));
@@ -435,6 +464,49 @@ describe("MateProfileItemStorage", () => {
       assert.equal(disabled.length, 1);
       assert.equal(disabled[0].disabledRevisionId, disableRevision);
       assert.equal(disabled[0].disabledAt !== null, true);
+    } finally {
+      storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("growth apply 実行中は forgetProfileItem と disableProfileItem が throw し、active のまま残ります", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-profile-item-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate-v4.db");
+    let storage: MateProfileItemStorage | null = null;
+
+    try {
+      storage = new MateProfileItemStorage(dbPath);
+      seedCurrentMate(dbPath);
+      const item = storage.upsertProfileItem({
+        sectionKey: "core",
+        category: "boundary",
+        claimKey: "boundary-guard",
+        claimValue: "boundary value",
+        renderedText: "Boundary",
+        normalizedClaim: "boundary",
+        confidence: 20,
+        salienceScore: 20,
+      });
+
+      for (const status of ["queued", "applying"] as const) {
+        seedGrowthApplyRun(dbPath, status);
+
+        assert.throws(
+          () => storage.forgetProfileItem(item.id, "rev_forget"),
+          { message: "Growth apply はすでに実行中です。" },
+        );
+        assert.throws(
+          () => storage.disableProfileItem(item.id, "rev_disable"),
+          { message: "Growth apply はすでに実行中です。" },
+        );
+
+        const activeItems = storage.listProfileItems({ sectionKey: "core", category: "boundary", state: "active" });
+        assert.equal(activeItems.length, 1);
+        assert.equal(activeItems[0].state, "active");
+
+        clearGrowthApplyRuns(dbPath);
+      }
     } finally {
       storage?.close();
       await rm(tempDirectory, { recursive: true, force: true });
