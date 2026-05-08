@@ -130,6 +130,103 @@ describe("MateGrowthApplyService", () => {
     }
   });
 
+  it("mate_talk 由来の explicit_user_instruction / user_correction は core へ apply されるが、assistant_inference は適用されない", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    const mateStorage = new MateStorage(dbPath, userDataPath);
+    const growthStorage = new MateGrowthStorage(dbPath);
+    const profileItemStorage = new MateProfileItemStorage(dbPath);
+
+    try {
+      await mateStorage.createMate({ displayName: "Mika" });
+      const runId = growthStorage.createRun({
+        sourceType: "mate_talk",
+        triggerReason: "test",
+      });
+      const explicitCore = growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "mate_talk",
+        growthSourceType: "explicit_user_instruction",
+        kind: "conversation",
+        targetSection: "core",
+        statement: "一人称は「わたし」を使う",
+        statementFingerprint: "first-person-watashi",
+        targetClaimKey: "first_person",
+        confidence: 93,
+        salienceScore: 84,
+        projectionAllowed: true,
+      });
+      const correctionCore = growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "mate_talk",
+        growthSourceType: "user_correction",
+        kind: "relationship",
+        targetSection: "core",
+        statement: "敬語は控えめにする",
+        statementFingerprint: "tone-gentle-polite",
+        targetClaimKey: "tone",
+        confidence: 90,
+        salienceScore: 82,
+        projectionAllowed: true,
+      });
+      const inferredCore = growthStorage.upsertEvent({
+        sourceGrowthRunId: runId,
+        sourceType: "mate_talk",
+        growthSourceType: "assistant_inference",
+        kind: "observation",
+        targetSection: "core",
+        statement: "ユーザーが細かい内容に詳しい",
+        statementFingerprint: "user-is-detailed",
+        targetClaimKey: "user_style_detailed",
+        confidence: 88,
+        salienceScore: 79,
+        projectionAllowed: true,
+      });
+
+      const service = new MateGrowthApplyService(growthStorage, profileItemStorage, mateStorage);
+      const result = await service.applyPendingGrowth({ runId });
+
+      assert.equal(result.candidateCount, 3);
+      assert.equal(result.appliedCount, 2);
+      assert.equal(result.skippedCount, 1);
+      assert.equal(typeof result.revisionId, "string");
+
+      const coreContent = await readFile(path.join(userDataPath, "mate/core.md"), "utf8");
+      assert.equal(coreContent.includes("わたし"), true);
+      assert.equal(coreContent.includes("控えめ"), true);
+      assert.equal(coreContent.includes("詳しい"), false);
+
+      const coreItems = profileItemStorage.listProfileItems({ sectionKey: "core", state: "active" });
+      const claimKeys = new Set(coreItems.map((item) => item.claimKey));
+      assert.equal(coreItems.length, 2);
+      assert.equal(claimKeys.has("first_person"), true);
+      assert.equal(claimKeys.has("tone"), true);
+      assert.equal(claimKeys.has("user_style_detailed"), false);
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const rows = db.prepare(`
+          SELECT id, state, applied_revision_id
+          FROM mate_growth_events
+          ORDER BY id
+        `).all() as Array<{ id: string; state: string; applied_revision_id: string | null }>;
+
+        assert.equal(rows.find((row) => row.id === explicitCore.id)?.state, "applied");
+        assert.equal(rows.find((row) => row.id === correctionCore.id)?.state, "applied");
+        assert.equal(rows.find((row) => row.id === inferredCore.id)?.state, "disabled");
+        assert.equal(rows.find((row) => row.id === explicitCore.id)?.applied_revision_id, result.revisionId);
+        assert.equal(rows.find((row) => row.id === correctionCore.id)?.applied_revision_id, result.revisionId);
+        assert.equal(rows.find((row) => row.id === inferredCore.id)?.applied_revision_id, null);
+      } finally {
+        db.close();
+      }
+    } finally {
+      profileItemStorage.close();
+      growthStorage.close();
+      mateStorage.close();
+      await cleanup();
+    }
+  });
+
   it("source memory の tags は profile item の tags として引き継がれる", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     const mateStorage = new MateStorage(dbPath, userDataPath);

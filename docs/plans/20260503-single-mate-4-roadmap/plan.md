@@ -234,7 +234,7 @@ projection に含めないもの:
 - [x] Mate Profile metadata 用 SQLite schema / storage を定義する
 - [x] `withmate-v4.db` / schema version 4 を追加する
 - [x] `core.md` / `notes.md` の読み書きと、`bond.md` / `work-style.md` / `project-digests/*.md` の完全再生成 render を実装する
-- [ ] `core` section は 4.0.0 MVP では manual / メイトーク由来 Profile Item だけを source にし、通常 Growth apply の自律更新対象から除外する
+- [x] `core` section は 4.0.0 MVP では manual / メイトーク由来 Profile Item だけを source にし、通常 Growth apply の自律更新対象から除外する
 - [x] `bond` / `work_style` / `project_digest` は active Profile Item から完全再生成し、Markdown 差分編集を行わない
 - [ ] 任意 file としての `avatar.png` 読み書きと未設定 placeholder を実装する
 - [x] 初回 Mate 未作成状態を検出する
