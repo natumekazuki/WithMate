@@ -43,9 +43,14 @@ export class MateTalkService {
     }
 
     const createdAt = (this.deps.now?.() ?? new Date()).toISOString();
-    const mateProfileContextText = this.deps.getMateProfileContextText
-      ? await this.deps.getMateProfileContextText(profile)
-      : null;
+    let mateProfileContextText: string | null | undefined;
+    try {
+      mateProfileContextText = this.deps.getMateProfileContextText
+        ? await this.deps.getMateProfileContextText(profile)
+        : null;
+    } catch {
+      mateProfileContextText = null;
+    }
     const normalizedContextText = mateProfileContextText?.trim();
     const includeContextText = normalizedContextText ? normalizedContextText : null;
 
@@ -58,10 +63,11 @@ export class MateTalkService {
       ...(includeContextText ? { contextText: includeContextText } : {}),
     };
 
-    const assistantMessage = await (this.deps.generateAssistantMessage?.({
+    const assistantMessageRaw = await (this.deps.generateAssistantMessage?.({
       userMessage,
       mateProfile,
     }) ?? Promise.resolve(MateTalkService.fallbackMessage));
+    const assistantMessage = assistantMessageRaw.trim() || MateTalkService.fallbackMessage;
 
     const appSettings = this.deps.getAppSettings?.();
     const shouldScheduleMemoryGeneration = (appSettings?.memoryGenerationEnabled ?? true) && profile.state === "active";

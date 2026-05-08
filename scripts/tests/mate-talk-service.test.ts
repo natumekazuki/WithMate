@@ -81,6 +81,50 @@ test("MateTalkService は provider 未設定時に fallback 応答を返す", as
   assert.deepEqual(scheduled, [{ userMessage: "hello", assistantText: "受け取ったよ。" }]);
 });
 
+test("MateTalkService は provider の空文字/空白応答を fallback 応答に変換し、Memory scheduling に反映する", async () => {
+  const scheduled: unknown[] = [];
+  const service = new MateTalkService({
+    getMateProfile: () => PROFILE,
+    now: () => new Date("2026-05-04T01:02:03.000Z"),
+    scheduleMemoryGeneration: (input) => scheduled.push(input),
+    generateAssistantMessage: async () => "   ",
+  });
+
+  const result = await service.runTurn({ message: "  hello  " });
+
+  assert.equal(result.assistantMessage, "受け取ったよ。");
+  assert.deepEqual(scheduled, [{ userMessage: "hello", assistantText: "受け取ったよ。" }]);
+});
+
+test("MateTalkService は getMateProfileContextText の例外でも visible turn を失敗させず provider 呼び出しを継続する", async () => {
+  const assistantInputs: unknown[] = [];
+  const service = new MateTalkService({
+    getMateProfile: () => PROFILE,
+    now: () => new Date("2026-05-04T01:02:03.000Z"),
+    getMateProfileContextText: async () => {
+      throw new Error("context failed");
+    },
+    generateAssistantMessage: async (input) => {
+      assistantInputs.push(input);
+      return `${input.mateProfile.displayName}、${input.userMessage}に応答するよ。`;
+    },
+  });
+
+  const result = await service.runTurn({ message: "  hello  " });
+
+  assert.equal(result.assistantMessage, "Buddy、helloに応答するよ。");
+  assert.deepEqual(assistantInputs, [{
+    userMessage: "hello",
+    mateProfile: {
+      id: "mate-1",
+      displayName: "Buddy",
+      description: "",
+      themeMain: "",
+      themeSub: "",
+    },
+  }]);
+});
+
 test("MateTalkService は空入力と Mate 未作成を拒否する", async () => {
   const service = new MateTalkService({
     getMateProfile: () => null,
