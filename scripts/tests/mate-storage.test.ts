@@ -1056,4 +1056,161 @@ describe("MateStorage", () => {
       await cleanup();
     }
   });
+
+  it("createMate 後に active revision の snapshot_dir_path と snapshot ファイルが保存される", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      const profile = await storage.createMate({ displayName: "Mika" });
+
+      if (!profile.activeRevisionId) {
+        throw new Error("active revision が見つからないよ。");
+      }
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const revision = db
+          .prepare("SELECT snapshot_dir_path FROM mate_profile_revisions WHERE id = ?")
+          .get(profile.activeRevisionId) as { snapshot_dir_path: string };
+        const snapshotPath = path.join(userDataPath, revision.snapshot_dir_path);
+        assert.equal(revision.snapshot_dir_path, `mate/revisions/${profile.activeRevisionId}`);
+        await access(snapshotPath, constants.F_OK);
+
+        const sections = [
+          { file: "core.md", content: "" },
+          { file: "bond.md", content: "" },
+          { file: "work-style.md", content: "" },
+          { file: "notes.md", content: "" },
+        ];
+        for (const section of sections) {
+          const sectionPath = path.join(snapshotPath, section.file);
+          const sectionContent = await readFile(sectionPath, "utf8");
+          assert.equal(sectionContent, section.content);
+        }
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("applyProfileFiles 後の active ready revision snapshot は更新後内容を持つ", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+
+      const updatedProfile = await storage.applyProfileFiles({
+        summary: "update sections",
+        files: [
+          { sectionKey: "core", relativePath: "mate/core.md", content: "# Core\n- Next\n" },
+          { sectionKey: "bond", relativePath: "mate/bond.md", content: "# Bond\n- Next\n" },
+        ],
+      });
+
+      if (!updatedProfile.activeRevisionId) {
+        throw new Error("active revision が見つからないよ。");
+      }
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const revision = db
+          .prepare("SELECT snapshot_dir_path FROM mate_profile_revisions WHERE id = ?")
+          .get(updatedProfile.activeRevisionId) as { snapshot_dir_path: string };
+
+        const snapshotPath = path.join(userDataPath, revision.snapshot_dir_path);
+        const snapshotCore = await readFile(path.join(snapshotPath, "core.md"), "utf8");
+        const snapshotBond = await readFile(path.join(snapshotPath, "bond.md"), "utf8");
+        const snapshotWorkStyle = await readFile(path.join(snapshotPath, "work-style.md"), "utf8");
+        const snapshotNotes = await readFile(path.join(snapshotPath, "notes.md"), "utf8");
+
+        assert.equal(snapshotCore, "# Core\n- Next\n");
+        assert.equal(snapshotBond, "# Bond\n- Next\n");
+        assert.equal(snapshotWorkStyle, "");
+        assert.equal(snapshotNotes, "");
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("current projection の破損後に recoverMateProfileFilesFromActiveRevision で snapshot から復元され verify が空になる", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+      await storage.applyProfileFiles({
+        summary: "seed content",
+        files: [{ sectionKey: "core", relativePath: "mate/core.md", content: "# Core\n- Stable\n" }],
+      });
+
+      const corePath = path.join(userDataPath, "mate/core.md");
+      const expectedCore = "# Core\n- Stable\n";
+
+      await writeFile(corePath, "# Core\n- Broken\n", "utf8");
+      const beforeMismatches = await storage.verifyMateProfileFiles();
+      assert.equal(beforeMismatches.length > 0, true);
+
+      const recoveredMismatches = await storage.recoverMateProfileFilesFromActiveRevision();
+      assert.equal(recoveredMismatches.length, 0);
+
+      const restoredCore = await readFile(corePath, "utf8");
+      const afterMismatches = await storage.verifyMateProfileFiles();
+
+      assert.equal(restoredCore, expectedCore);
+      assert.deepEqual(afterMismatches, []);
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("snapshot が欠損している場合は復元せず mismatch を返す", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      const profile = await storage.createMate({ displayName: "Mika" });
+      const activeRevisionId = profile.activeRevisionId;
+      if (!activeRevisionId) {
+        throw new Error("active revision が見つからないよ。");
+      }
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const revision = db
+          .prepare("SELECT snapshot_dir_path FROM mate_profile_revisions WHERE id = ?")
+          .get(activeRevisionId) as { snapshot_dir_path: string };
+        await rm(path.join(userDataPath, revision.snapshot_dir_path), { recursive: true, force: true });
+      } finally {
+        db.close();
+      }
+
+      const corePath = path.join(userDataPath, "mate/core.md");
+      await writeFile(corePath, "# Core\n- Broken\n", "utf8");
+
+      const mismatches = await storage.recoverMateProfileFilesFromActiveRevision();
+      const afterMismatches = await storage.verifyMateProfileFiles();
+      const restoredCore = await readFile(corePath, "utf8");
+
+      assert.equal(restoredCore, "# Core\n- Broken\n");
+      assert.deepEqual(mismatches, afterMismatches);
+      assert.equal(afterMismatches.length > 0, true);
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
 });

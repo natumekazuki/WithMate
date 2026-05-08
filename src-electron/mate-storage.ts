@@ -16,6 +16,7 @@ import {
 
 const MATE_ID = "current";
 const MATE_DIRECTORY_NAME = "mate";
+const MATE_REVISIONS_DIRECTORY_NAME = "revisions";
 
 const MATE_SECTION_FILES = [
   { key: "core", relativePath: "mate/core.md" },
@@ -227,6 +228,18 @@ export class MateStorage {
 
   private getMateDirectoryPath(): string {
     return path.join(this.userDataPath, MATE_DIRECTORY_NAME);
+  }
+
+  private getRevisionSnapshotRelativePath(revisionId: string): string {
+    return `${MATE_DIRECTORY_NAME}/${MATE_REVISIONS_DIRECTORY_NAME}/${revisionId}`;
+  }
+
+  private getRevisionSnapshotAbsolutePath(revisionId: string): string {
+    return path.join(this.userDataPath, this.getRevisionSnapshotRelativePath(revisionId));
+  }
+
+  private getSectionSnapshotAbsolutePath(snapshotDirPath: string, sectionRelativePath: string): string {
+    return path.join(this.userDataPath, snapshotDirPath, path.basename(sectionRelativePath));
   }
 
   getMateState(): MateStorageState {
@@ -499,6 +512,7 @@ export class MateStorage {
 
     const createdAt = nowIso();
     const revisionId = randomUUID();
+    const snapshotDirPath = this.getRevisionSnapshotRelativePath(revisionId);
     const sectionSeed = MATE_SECTION_FILES.map((section) => ({
       section,
       path: section.relativePath,
@@ -507,12 +521,19 @@ export class MateStorage {
       byteSize: Buffer.byteLength("", "utf8"),
     }));
 
-    await this.ensureMateFiles(sectionSeed.map((section) => ({
-      relativePath: section.path,
-      content: "",
-    })));
-
     try {
+      await this.ensureMateFiles(sectionSeed.map((section) => ({
+        relativePath: section.path,
+        content: "",
+      })));
+      await this.saveRevisionSnapshotFiles(
+        revisionId,
+        sectionSeed.map((section) => ({
+          relativePath: section.path,
+          content: section.content,
+        })),
+      );
+
       this.withTransaction((db) => {
         db.prepare(`
           INSERT INTO mate_profile (
@@ -582,10 +603,11 @@ export class MateStorage {
             ready_at,
             failed_at,
             reverted_by_revision_id
-          ) VALUES (?, ?, 1, NULL, 'ready', 'initial', NULL, 'initial', '', 'user', ?, ?, NULL, NULL)
+          ) VALUES (?, ?, 1, NULL, 'ready', 'initial', NULL, 'initial', ?, 'user', ?, ?, NULL, NULL)
         `).run(
           revisionId,
           MATE_ID,
+          snapshotDirPath,
           createdAt,
           createdAt,
         );
@@ -682,6 +704,47 @@ export class MateStorage {
     return profile;
   }
 
+  async recoverMateProfileFilesFromActiveRevision(): Promise<MateProfileFileMismatch[]> {
+    const profile = this.getMateProfile();
+    if (!profile || !profile.activeRevisionId) {
+      return [];
+    }
+
+    const activeRevision = this.withDb((db) => {
+      return db.prepare(`
+        SELECT snapshot_dir_path
+        FROM mate_profile_revisions
+        WHERE mate_id = ? AND id = ? AND status = 'ready'
+      `).get(MATE_ID, profile.activeRevisionId) as { snapshot_dir_path: string } | undefined;
+    });
+
+    if (!activeRevision?.snapshot_dir_path) {
+      return this.verifyMateProfileFiles();
+    }
+
+    const snapshotFiles: Array<{ relativePath: string; content: string }> = [];
+    try {
+      for (const section of profile.sections) {
+        const sectionSnapshotAbsolutePath = this.getSectionSnapshotAbsolutePath(activeRevision.snapshot_dir_path, section.filePath);
+        const content = await readFile(sectionSnapshotAbsolutePath, "utf8");
+        snapshotFiles.push({
+          relativePath: section.filePath,
+          content,
+        });
+      }
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code === "ENOENT" || err.code === "EISDIR") {
+        return this.verifyMateProfileFiles();
+      }
+      throw error;
+    }
+
+    await this.ensureMateFiles(snapshotFiles);
+
+    return this.verifyMateProfileFiles();
+  }
+
   async resetMate(): Promise<void> {
     this.withTransaction((db) => {
       db.prepare("DELETE FROM mate_profile WHERE id = ?").run(MATE_ID);
@@ -707,6 +770,7 @@ export class MateStorage {
     }
 
     const revisionId = randomUUID();
+    const snapshotDirPath = this.getRevisionSnapshotRelativePath(revisionId);
     const now = nowIso();
     const nextSequence = this.getNextProfileRevisionSequence();
     const sectionByKey = new Map(profile.sections.map((section) => [section.sectionKey, section]));
@@ -746,7 +810,7 @@ export class MateStorage {
           ready_at,
           failed_at,
           reverted_by_revision_id
-        ) VALUES (?, ?, ?, ?, 'staging', 'growth_apply', ?, ?, '', 'system', ?, NULL, NULL, NULL)
+        ) VALUES (?, ?, ?, ?, 'staging', 'growth_apply', ?, ?, ?, 'system', ?, NULL, NULL, NULL)
       `).run(
         revisionId,
         MATE_ID,
@@ -754,6 +818,7 @@ export class MateStorage {
         profile.activeRevisionId,
         sourceGrowthEventId,
         summary,
+        snapshotDirPath,
         now,
       );
     });
@@ -767,6 +832,19 @@ export class MateStorage {
     });
 
     try {
+      const nextSectionByKey = new Map(nextSections.map((section) => [section.sectionKey, section.content]));
+      const snapshotFiles = await Promise.all(
+        profile.sections.map(async (section) => {
+          const currentContent = await readFile(path.join(this.userDataPath, section.filePath), "utf8");
+          return {
+            relativePath: section.filePath,
+            content: nextSectionByKey.get(section.sectionKey) ?? currentContent,
+          };
+        }),
+      );
+
+      await this.saveRevisionSnapshotFiles(revisionId, snapshotFiles);
+
       await this.ensureMateFiles(nextSections.map((section) => ({
         relativePath: section.relativePath,
         content: section.content,
@@ -920,6 +998,39 @@ export class MateStorage {
 
   private async deleteMateDirectory(): Promise<void> {
     await rm(this.getMateDirectoryPath(), { recursive: true, force: true });
+  }
+
+  private async saveRevisionSnapshotFiles(
+    revisionId: string,
+    files: Array<{ relativePath: string; content: string }>,
+  ): Promise<void> {
+    const snapshotDirectoryPath = this.getRevisionSnapshotAbsolutePath(revisionId);
+    await mkdir(snapshotDirectoryPath, { recursive: true });
+
+    const writtenFiles: string[] = [];
+    try {
+      for (const { relativePath, content } of files) {
+        const snapshotFilePath = this.getSectionSnapshotAbsolutePath(this.getRevisionSnapshotRelativePath(revisionId), relativePath);
+        await writeFile(snapshotFilePath, content, "utf8");
+        writtenFiles.push(snapshotFilePath);
+      }
+    } catch (error) {
+      for (const absolutePath of writtenFiles.reverse()) {
+        try {
+          await rm(absolutePath, { force: true });
+        } catch {
+          // Best-effort rollback.
+        }
+      }
+
+      try {
+        await rm(snapshotDirectoryPath, { recursive: true, force: true });
+      } catch {
+        // Best-effort rollback.
+      }
+
+      throw error;
+    }
   }
 
   close(): void {
