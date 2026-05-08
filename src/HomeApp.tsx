@@ -265,6 +265,7 @@ export default function HomeApp() {
   const [mateGrowthEvents, setMateGrowthEvents] = useState<MateGrowthEventListItem[]>([]);
   const [mateGrowthEventsLoading, setMateGrowthEventsLoading] = useState(false);
   const [mateGrowthEventsFeedback, setMateGrowthEventsFeedback] = useState("");
+  const [mateGrowthEventBusyTarget, setMateGrowthEventBusyTarget] = useState<string | null>(null);
   const [mateCreating, setMateCreating] = useState(false);
   const [mateGrowthApplying, setMateGrowthApplying] = useState(false);
   const [mateResetting, setMateResetting] = useState(false);
@@ -334,6 +335,7 @@ export default function HomeApp() {
       setMateGrowthEvents([]);
       setMateGrowthEventsFeedback("");
       setMateGrowthEventsLoading(false);
+      setMateGrowthEventBusyTarget(null);
       stopMateEmbeddingSettingsPolling();
       return nextMateState;
     }
@@ -1049,6 +1051,74 @@ export default function HomeApp() {
     await refreshMateGrowthEvents(withmateApi);
   };
 
+  const updateMateGrowthEventListItem = (nextEvent: MateGrowthEventListItem | null) => {
+    if (nextEvent === null) {
+      return;
+    }
+
+    setMateGrowthEvents((current) =>
+      current.map((event) => event.id === nextEvent.id ? nextEvent : event),
+    );
+  };
+
+  const handleDisableMateGrowthEvent = async (eventId: string) => {
+    if (mateGrowthEventBusyTarget !== null) {
+      return;
+    }
+
+    if (mateState !== "active") {
+      setMateGrowthEventsFeedback("Mate 作成後に操作してね。");
+      return;
+    }
+
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
+      setMateGrowthEventsFeedback("Mate API が利用できないよ。");
+      return;
+    }
+
+    setMateGrowthEventBusyTarget(eventId);
+    setMateGrowthEventsFeedback("");
+    try {
+      const result = await withmateApi.disableMateGrowthEvent({ eventId });
+      updateMateGrowthEventListItem(result.event);
+      setMateGrowthEventsFeedback("Growth Event を無効化したよ。");
+    } catch (error) {
+      setMateGrowthEventsFeedback(error instanceof Error ? error.message : "Growth Event の無効化に失敗したよ。");
+    } finally {
+      setMateGrowthEventBusyTarget(null);
+    }
+  };
+
+  const handleForgetMateGrowthEvent = async (eventId: string) => {
+    if (mateGrowthEventBusyTarget !== null) {
+      return;
+    }
+
+    if (mateState !== "active") {
+      setMateGrowthEventsFeedback("Mate 作成後に操作してね。");
+      return;
+    }
+
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
+      setMateGrowthEventsFeedback("Mate API が利用できないよ。");
+      return;
+    }
+
+    setMateGrowthEventBusyTarget(eventId);
+    setMateGrowthEventsFeedback("");
+    try {
+      const result = await withmateApi.forgetMateGrowthEvent({ eventId });
+      updateMateGrowthEventListItem(result.event);
+      setMateGrowthEventsFeedback("Growth Event を忘却済みにしたよ。");
+    } catch (error) {
+      setMateGrowthEventsFeedback(error instanceof Error ? error.message : "Growth Event の忘却に失敗したよ。");
+    } finally {
+      setMateGrowthEventBusyTarget(null);
+    }
+  };
+
   const handleUpdateMateGrowthSettings = async (input: UpdateMateGrowthSettingsInput) => {
     if (mateGrowthBusy) {
       return;
@@ -1591,6 +1661,7 @@ export default function HomeApp() {
       mateGrowthEvents={mateGrowthEvents}
       mateGrowthEventsLoading={mateGrowthEventsLoading}
       mateGrowthEventsFeedback={mateGrowthEventsFeedback}
+      mateGrowthEventBusyTarget={mateGrowthEventBusyTarget}
       mateEmbeddingSettings={mateEmbeddingSettings}
       mateEmbeddingFeedback={mateEmbeddingFeedback}
       mateEmbeddingBusy={mateEmbeddingBusy}
@@ -1640,6 +1711,8 @@ export default function HomeApp() {
       applyPendingGrowthBusy={mateGrowthApplying}
       canApplyPendingGrowth={mateState === "active"}
       onReloadMateGrowthEvents={() => void handleReloadMateGrowthEvents()}
+      onDisableMateGrowthEvent={(eventId) => void handleDisableMateGrowthEvent(eventId)}
+      onForgetMateGrowthEvent={(eventId) => void handleForgetMateGrowthEvent(eventId)}
       onUpdateMateGrowthSettings={(input) => void handleUpdateMateGrowthSettings(input)}
       onResetMate={() => void handleResetMate()}
       mateResetBusy={mateResetting}
@@ -1666,6 +1739,7 @@ export default function HomeApp() {
       mateGrowthEvents={mateGrowthEvents}
       mateGrowthEventsLoading={mateGrowthEventsLoading}
       mateGrowthEventsFeedback={mateGrowthEventsFeedback}
+      mateGrowthEventBusyTarget={mateGrowthEventBusyTarget}
       mateEmbeddingSettings={mateEmbeddingSettings}
       mateEmbeddingFeedback={mateEmbeddingFeedback}
       mateEmbeddingBusy={mateEmbeddingBusy}
@@ -1713,6 +1787,8 @@ export default function HomeApp() {
       onDeleteMateProfileItem={(itemId) => void handleDeleteMateProfileItem(itemId)}
       onStartMateEmbeddingDownload={() => void handleStartMateEmbeddingDownload()}
       onReloadMateGrowthEvents={() => void handleReloadMateGrowthEvents()}
+      onDisableMateGrowthEvent={(eventId) => void handleDisableMateGrowthEvent(eventId)}
+      onForgetMateGrowthEvent={(eventId) => void handleForgetMateGrowthEvent(eventId)}
       onUpdateMateGrowthSettings={(input) => void handleUpdateMateGrowthSettings(input)}
       onSaveSettings={() => void handleSaveSettings()}
     />

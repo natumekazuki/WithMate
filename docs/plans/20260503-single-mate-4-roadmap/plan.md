@@ -388,8 +388,9 @@ projection に含めないもの:
 - [x] forget 後の `redaction_required` は 4.0.0 MVP では warning state として扱い、session 起動は block しない
 - [x] `projection_allowed` と provider instruction projection gate を実装する
 - [x] `core` section の operation は `manual` / `mate_talk_explicit` のみ許可し、`growth_auto` 由来を PostPolicyGate で拒否する
-- [ ] 自律反映された Growth Event を最小管理 UI に表示する
-- [ ] `修正` / `忘れる` / `無効化` の操作を追加する
+- [x] 自律反映された Growth Event を最小管理 UI に表示する
+- [x] Growth Event の `忘れる` / `無効化` 操作を追加する
+- [ ] Growth Event の `修正` 操作を追加する
 - [ ] Growth Event を Bond Profile / Work Style / project tag 付き digest に反映する
 - [x] Growth 反映時に Mate Profile revision を作る
 - [ ] 4.0.0 MVP では `changes.patch` を保存せず、diff は snapshot から必要時生成する

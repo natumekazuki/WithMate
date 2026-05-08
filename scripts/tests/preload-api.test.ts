@@ -70,6 +70,14 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:list-mate-growth-events",
     args: [{ limit: 5 }],
   });
+  assert.deepEqual(await api.disableMateGrowthEvent({ eventId: "event-1" }), {
+    channel: "withmate:disable-mate-growth-event",
+    args: [{ eventId: "event-1" }],
+  });
+  assert.deepEqual(await api.forgetMateGrowthEvent({ eventId: "event-2" }), {
+    channel: "withmate:forget-mate-growth-event",
+    args: [{ eventId: "event-2" }],
+  });
   assert.deepEqual(await api.resetMate(), {
     channel: "withmate:reset-mate",
     args: [],
@@ -163,6 +171,8 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getProviderQuotaTelemetry",
     "listProviderInstructionTargets",
     "listMateGrowthEvents",
+    "disableMateGrowthEvent",
+    "forgetMateGrowthEvent",
     "getSession",
     "getSessionAuditLogDetail",
     "getSessionAuditLogDetailSection",

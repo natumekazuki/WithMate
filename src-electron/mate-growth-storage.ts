@@ -1,10 +1,11 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { CREATE_V4_SCHEMA_SQL } from "./database-schema-v4.js";
 import { ensureSourceTypeCheckSupportsMateTalk } from "./mate-source-type-migration.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import type {
+  MateGrowthEventActionResult,
   MateGrowthEventListItem,
   MateGrowthEventListRequest,
   MateGrowthEventListResult,
@@ -46,6 +47,39 @@ const GROWTH_KINDS = [
   "correction",
 ] as const;
 const TARGET_SECTIONS = ["bond", "work_style", "project_digest", "core", "none"] as const;
+const TOMBSTONE_CATEGORIES = [
+  "persona",
+  "voice",
+  "preference",
+  "relationship",
+  "work_style",
+  "boundary",
+  "project_context",
+  "note",
+] as const;
+const TOMBSTONE_SECTION_KEYS = ["core", "bond", "work_style", "notes", "project_digest"] as const;
+const TOMBSTONE_DIGEST_KIND_GROWTH_STATEMENT = "growth_statement";
+const TOMBSTONE_HMAC_VERSION = 1;
+const TOMBSTONE_HMAC_KEY_ID = "default";
+const TOMBSTONE_HMAC_KEY = "withmate-memory-forgotten-tombstone-key";
+const GROWTH_KIND_TO_TOMBSTONE_CATEGORY: Record<MateGrowthKind, (typeof TOMBSTONE_CATEGORIES)[number]> = {
+  conversation: "note",
+  preference: "preference",
+  relationship: "relationship",
+  work_style: "work_style",
+  boundary: "boundary",
+  project_context: "project_context",
+  curiosity: "note",
+  observation: "note",
+  correction: "note",
+};
+const TARGET_SECTION_TO_TOMBSTONE_SECTION_KEY: Record<MateGrowthTargetSection, (typeof TOMBSTONE_SECTION_KEYS)[number]> = {
+  core: "core",
+  bond: "bond",
+  work_style: "work_style",
+  project_digest: "project_digest",
+  none: "notes",
+};
 const GROWTH_EVENT_STATES = [
   "candidate",
   "applied",
@@ -652,6 +686,52 @@ const MARK_EVENT_SKIPPED_SQL = `
     forgotten_at = NULL,
     updated_at = ?
   WHERE id = ?
+    AND state = 'candidate'
+`;
+
+const MARK_EVENT_FORGOTTEN_SQL = `
+  UPDATE mate_growth_events
+  SET
+    state = 'forgotten',
+    applied_revision_id = NULL,
+    applied_at = NULL,
+    disabled_revision_id = NULL,
+    disabled_at = NULL,
+    forgotten_revision_id = NULL,
+    forgotten_at = ?,
+    updated_at = ?
+  WHERE id = ?
+    AND state = 'candidate'
+`;
+
+const INSERT_EVENT_ACTION_SQL = `
+  INSERT INTO mate_growth_event_actions (
+    growth_event_id,
+    action,
+    actor,
+    revision_id,
+    note,
+    created_at
+  ) VALUES (?, ?, 'user', NULL, ?, ?)
+`;
+
+const INSERT_FORGOTTEN_TOMBSTONE_SQL = `
+  INSERT INTO mate_forgotten_tombstones (
+    id,
+    mate_id,
+    hmac_digest,
+    hmac_version,
+    hmac_key_id,
+    digest_kind,
+    category,
+    section_key,
+    project_digest_id,
+    source_growth_event_id,
+    source_profile_item_id,
+    redaction_revision_id,
+    created_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT (mate_id, hmac_version, hmac_key_id, digest_kind, hmac_digest) DO NOTHING
 `;
 
 function nowIso(): string {
@@ -807,6 +887,20 @@ function rowToEvent(row: EventRow): MateGrowthEvent {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function hmacSha256Hex(content: string, key: string): string {
+  return createHmac("sha256", key).update(content, "utf8").digest("hex");
+}
+
+function buildGrowthEventTombstoneCategory(kind: MateGrowthKind): (typeof TOMBSTONE_CATEGORIES)[number] {
+  return GROWTH_KIND_TO_TOMBSTONE_CATEGORY[kind];
+}
+
+function buildGrowthEventTombstoneSectionKey(
+  targetSection: MateGrowthTargetSection,
+): (typeof TOMBSTONE_SECTION_KEYS)[number] {
+  return TARGET_SECTION_TO_TOMBSTONE_SECTION_KEY[targetSection];
 }
 
 function eventToListItem(event: MateGrowthEvent): MateGrowthEventListItem {
@@ -1542,6 +1636,43 @@ export class MateGrowthStorage {
     };
   }
 
+  private getEventForReview(eventId: string): MateGrowthEventListItem | null {
+    const targetId = normalizeText(eventId, "eventId");
+    return this.getEventForReviewInTransaction(this.db, targetId);
+  }
+
+  private getEventForReviewInTransaction(db: DatabaseSync, eventId: string): MateGrowthEventListItem | null {
+    const targetId = normalizeText(eventId, "eventId");
+    const row = db.prepare(SELECT_REVIEW_EVENTS_BASE_SQL + " AND id = ?").get(
+      MATE_ID,
+      targetId,
+    ) as EventRow | undefined;
+
+    return row === undefined ? null : eventToListItem(rowToEvent(row));
+  }
+
+  private requireCandidateEventForReviewInTransaction(db: DatabaseSync, eventId: string): MateGrowthEvent {
+    const targetId = normalizeText(eventId, "eventId");
+    const row = db.prepare(SELECT_REVIEW_EVENTS_BASE_SQL + " AND id = ?").get(
+      MATE_ID,
+      targetId,
+    ) as EventRow | undefined;
+    if (row === undefined) {
+      throw new Error("Growth Event が見つからないよ。");
+    }
+
+    const event = rowToEvent(row);
+    if (event.state !== "candidate") {
+      throw new Error("候補状態の Growth Event だけ操作できるよ。");
+    }
+
+    if (this.getActiveGrowthApplyRun()) {
+      throw new Error("Growth apply はすでに実行中です。完了後にもう一度試してね。");
+    }
+
+    return event;
+  }
+
   markEventApplied(eventId: string, appliedRevisionId?: string): void {
     const targetId = normalizeText(eventId, "eventId");
     const now = nowIso();
@@ -1598,6 +1729,75 @@ export class MateGrowthStorage {
       now,
       targetId,
     );
+  }
+
+  disableEventForReview(eventId: string): MateGrowthEventActionResult {
+    const targetId = normalizeText(eventId, "eventId");
+    return this.withTransaction((db) => {
+      this.requireCandidateEventForReviewInTransaction(db, targetId);
+      const now = nowIso();
+      const result = db.prepare(MARK_EVENT_SKIPPED_SQL).run(
+        now,
+        now,
+        targetId,
+      );
+      if (Number(result.changes) === 0) {
+        throw new Error("Growth Event の無効化に失敗しました。");
+      }
+      db.prepare(INSERT_EVENT_ACTION_SQL).run(
+        targetId,
+        "disable",
+        "",
+        now,
+      );
+
+      return {
+        event: this.getEventForReviewInTransaction(db, targetId),
+      };
+    });
+  }
+
+  forgetEventForReview(eventId: string): MateGrowthEventActionResult {
+    const targetId = normalizeText(eventId, "eventId");
+    return this.withTransaction((db) => {
+      const event = this.requireCandidateEventForReviewInTransaction(db, targetId);
+      const now = nowIso();
+      const result = db.prepare(MARK_EVENT_FORGOTTEN_SQL).run(
+        now,
+        now,
+        targetId,
+      );
+      if (Number(result.changes) === 0) {
+        throw new Error("Growth Event の忘却に失敗しました。");
+      }
+
+      const digest = hmacSha256Hex(normalizeText(event.statement, "statement"), TOMBSTONE_HMAC_KEY);
+      db.prepare(INSERT_FORGOTTEN_TOMBSTONE_SQL).run(
+        randomUUID(),
+        MATE_ID,
+        digest,
+        TOMBSTONE_HMAC_VERSION,
+        TOMBSTONE_HMAC_KEY_ID,
+        TOMBSTONE_DIGEST_KIND_GROWTH_STATEMENT,
+        buildGrowthEventTombstoneCategory(event.kind),
+        buildGrowthEventTombstoneSectionKey(event.targetSection),
+        event.projectDigestId,
+        event.id,
+        null,
+        null,
+        now,
+      );
+      db.prepare(INSERT_EVENT_ACTION_SQL).run(
+        targetId,
+        "forget",
+        "",
+        now,
+      );
+
+      return {
+        event: this.getEventForReviewInTransaction(db, targetId),
+      };
+    });
   }
 
   markEventSkippedInTransaction(db: DatabaseSync, eventId: string): void {

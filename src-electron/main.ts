@@ -164,7 +164,12 @@ import {
   type MateTalkTurnResult,
   type UpdateMateGrowthSettingsInput,
 } from "../src/mate-state.js";
-import type { MateGrowthEventListRequest, MateGrowthEventListResult } from "../src/mate-growth-events-state.js";
+import type {
+  MateGrowthEventActionRequest,
+  MateGrowthEventActionResult,
+  MateGrowthEventListRequest,
+  MateGrowthEventListResult,
+} from "../src/mate-growth-events-state.js";
 import {
   type CharacterReflectionTriggerReason,
 } from "./character-reflection.js";
@@ -1112,6 +1117,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 updateMate,
                 applyPendingGrowth,
                 listMateGrowthEvents,
+                disableMateGrowthEvent,
+                forgetMateGrowthEvent,
                 runMateTalkTurn,
                 resetMate,
               },
@@ -1596,6 +1603,14 @@ async function applyPendingGrowth(): ReturnType<MateGrowthApplyService["applyPen
 
 async function listMateGrowthEvents(request?: MateGrowthEventListRequest | null): Promise<MateGrowthEventListResult> {
   return requireMateGrowthStorage().listEventsForReview(request ?? {});
+}
+
+async function disableMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult> {
+  return requireMateGrowthStorage().disableEventForReview(request.eventId);
+}
+
+async function forgetMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult> {
+  return requireMateGrowthStorage().forgetEventForReview(request.eventId);
 }
 
 async function applyPendingGrowthCore(): ReturnType<MateGrowthApplyService["applyPendingGrowth"]> {

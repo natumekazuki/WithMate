@@ -56,7 +56,12 @@ import type {
   UpdateMateGrowthSettingsInput,
 } from "../src/mate-state.js";
 import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
-import type { MateGrowthEventListRequest, MateGrowthEventListResult } from "../src/mate-growth-events-state.js";
+import type {
+  MateGrowthEventActionRequest,
+  MateGrowthEventActionResult,
+  MateGrowthEventListRequest,
+  MateGrowthEventListResult,
+} from "../src/mate-growth-events-state.js";
 import type { MateEmbeddingSettings } from "../src/mate-embedding-settings.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import type { MainIpcRegistrationDeps } from "./main-ipc-registration.js";
@@ -216,6 +221,8 @@ export type MainIpcMateDepsArgs = {
   updateMate(input: UpdateMateInput): Promise<MateProfile>;
   applyPendingGrowth(): Promise<MateGrowthApplyResult>;
   listMateGrowthEvents(request?: MateGrowthEventListRequest | null): Promise<MateGrowthEventListResult>;
+  disableMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult>;
+  forgetMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult>;
   runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
   resetMate(): Promise<void>;
 };
@@ -359,6 +366,8 @@ export function createMainIpcRegistrationDeps(
     updateMate: args.mate.updateMate,
     applyPendingGrowth: args.mate.applyPendingGrowth,
     listMateGrowthEvents: args.mate.listMateGrowthEvents,
+    disableMateGrowthEvent: args.mate.disableMateGrowthEvent,
+    forgetMateGrowthEvent: args.mate.forgetMateGrowthEvent,
     runMateTalkTurn: args.mate.runMateTalkTurn,
     resetMate: args.mate.resetMate,
   };

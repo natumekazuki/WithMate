@@ -103,7 +103,10 @@ describe("HomeSettingsContent", () => {
     mateGrowthEvents?: MateGrowthEventListItem[];
     mateGrowthEventsLoading?: boolean;
     mateGrowthEventsFeedback?: string;
+    mateGrowthEventBusyTarget?: string | null;
     onReloadMateGrowthEvents?: () => void;
+    onDisableMateGrowthEvent?: (eventId: string) => void;
+    onForgetMateGrowthEvent?: (eventId: string) => void;
     onUpdateMateGrowthSettings?: (input: unknown) => void;
     onResetMate?: () => void;
   };
@@ -158,6 +161,7 @@ describe("HomeSettingsContent", () => {
     mateGrowthEvents: params?.mateGrowthEvents ?? [],
     mateGrowthEventsLoading: params?.mateGrowthEventsLoading ?? false,
     mateGrowthEventsFeedback: params?.mateGrowthEventsFeedback ?? "",
+    mateGrowthEventBusyTarget: params?.mateGrowthEventBusyTarget ?? null,
     mateEmbeddingSettings: null,
     mateEmbeddingFeedback: "",
     mateEmbeddingBusy: false,
@@ -203,6 +207,8 @@ describe("HomeSettingsContent", () => {
     canApplyPendingGrowth: params?.canApplyPendingGrowth,
     applyPendingGrowthBusy: params?.applyPendingGrowthBusy,
     onReloadMateGrowthEvents: params?.onReloadMateGrowthEvents ?? noOp,
+    onDisableMateGrowthEvent: params?.onDisableMateGrowthEvent ?? noOp,
+    onForgetMateGrowthEvent: params?.onForgetMateGrowthEvent ?? noOp,
     onUpdateMateGrowthSettings: params?.onUpdateMateGrowthSettings ?? noOp,
     onResetMate: params?.onResetMate ?? noOp,
     canResetMate: params?.canResetMate ?? false,
@@ -541,6 +547,82 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("候補"));
     assert.ok(html.includes("tone"));
     assert.ok(html.includes("メイトークで明示されたため"));
+    assert.ok(html.includes("無効化"));
+    assert.ok(html.includes("忘れる"));
+  });
+
+  it("Growth Event の無効化 / 忘却ボタンは対象 id を渡す", () => {
+    const calls: string[] = [];
+    const content = buildSettingsContent({
+      mateGrowthEvents: [
+        {
+          id: "event-action",
+          sourceType: "mate_talk",
+          sourceSessionId: "session-1",
+          growthSourceType: "memory",
+          kind: "update",
+          targetSection: "tone",
+          statement: "語尾は落ち着かせる",
+          rationalePreview: "",
+          confidence: 0.91,
+          salienceScore: 0.82,
+          recurrenceCount: 2,
+          projectionAllowed: true,
+          state: "candidate",
+          appliedAt: null,
+          createdAt: "2026-05-01T09:00:00.000Z",
+          updatedAt: "2026-05-01T09:30:00.000Z",
+        },
+      ],
+      onDisableMateGrowthEvent: (eventId) => calls.push(`disable:${eventId}`),
+      onForgetMateGrowthEvent: (eventId) => calls.push(`forget:${eventId}`),
+    });
+
+    const actionButtons = collectElementsById(content, (element) =>
+      element.type === "button" &&
+      (element.props.children === "無効化" || element.props.children === "忘れる"),
+    );
+    assert.equal(actionButtons.length, 2);
+
+    actionButtons[0]?.props.onClick();
+    actionButtons[1]?.props.onClick();
+
+    assert.deepEqual(calls, ["disable:event-action", "forget:event-action"]);
+  });
+
+  it("Growth Event の無効化 / 忘却ボタンは候補以外では無効", () => {
+    const content = buildSettingsContent({
+      mateGrowthEvents: [
+        {
+          id: "event-applied-action",
+          sourceType: "mate_talk",
+          sourceSessionId: "session-1",
+          growthSourceType: "memory",
+          kind: "update",
+          targetSection: "tone",
+          statement: "適用済みイベント",
+          rationalePreview: "",
+          confidence: 0.91,
+          salienceScore: 0.82,
+          recurrenceCount: 2,
+          projectionAllowed: true,
+          state: "applied",
+          appliedAt: "2026-05-01T09:10:00.000Z",
+          createdAt: "2026-05-01T09:00:00.000Z",
+          updatedAt: "2026-05-01T09:30:00.000Z",
+        },
+      ],
+      onDisableMateGrowthEvent: () => {},
+      onForgetMateGrowthEvent: () => {},
+    });
+
+    const actionButtons = collectElementsById(content, (element) =>
+      element.type === "button" &&
+      (element.props.children === "無効化" || element.props.children === "忘れる"),
+    );
+
+    assert.equal(actionButtons.length, 2);
+    assert.ok(actionButtons.every((button) => button.props.disabled));
   });
 
   it("applyPendingGrowthBusy=true のとき適用ボタンは無効化され「適用中...」が表示される", () => {

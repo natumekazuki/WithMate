@@ -35,3 +35,11 @@ export type MateGrowthEventListResult = {
   events: MateGrowthEventListItem[];
   limit: number;
 };
+
+export type MateGrowthEventActionRequest = {
+  eventId: string;
+};
+
+export type MateGrowthEventActionResult = {
+  event: MateGrowthEventListItem | null;
+};

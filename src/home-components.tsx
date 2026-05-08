@@ -118,6 +118,7 @@ export type HomeSettingsContentProps = {
   mateGrowthEvents: MateGrowthEventListItem[];
   mateGrowthEventsLoading: boolean;
   mateGrowthEventsFeedback: string;
+  mateGrowthEventBusyTarget: string | null;
   mateEmbeddingSettings: MateEmbeddingSettings | null;
   mateEmbeddingFeedback: string;
   mateEmbeddingBusy: boolean;
@@ -172,6 +173,8 @@ export type HomeSettingsContentProps = {
   applyPendingGrowthBusy?: boolean;
   canApplyPendingGrowth?: boolean;
   onReloadMateGrowthEvents?: () => void;
+  onDisableMateGrowthEvent?: (eventId: string) => void;
+  onForgetMateGrowthEvent?: (eventId: string) => void;
   onUpdateMateGrowthSettings: (input: UpdateMateGrowthSettingsInput) => void;
   onResetMate?: () => void;
   mateResetBusy?: boolean;
@@ -234,6 +237,7 @@ export function HomeSettingsContent({
   mateGrowthEvents,
   mateGrowthEventsLoading,
   mateGrowthEventsFeedback,
+  mateGrowthEventBusyTarget,
   mateEmbeddingSettings,
   mateEmbeddingFeedback,
   mateEmbeddingBusy,
@@ -280,6 +284,8 @@ export function HomeSettingsContent({
   applyPendingGrowthBusy = false,
   canApplyPendingGrowth = false,
   onReloadMateGrowthEvents,
+  onDisableMateGrowthEvent,
+  onForgetMateGrowthEvent,
   onUpdateMateGrowthSettings,
   onResetMate,
   mateResetBusy = false,
@@ -688,6 +694,32 @@ export function HomeSettingsContent({
                         <div className="settings-memory-card-copy">
                           <strong>{event.statement}</strong>
                           <span>{formatMateGrowthEventMeta(event)}</span>
+                        </div>
+                        <div className="settings-memory-actions">
+                          <button
+                            className="danger-button"
+                            type="button"
+                            onClick={() => onDisableMateGrowthEvent?.(event.id)}
+                            disabled={
+                              !onDisableMateGrowthEvent ||
+                              mateGrowthEventBusyTarget !== null ||
+                              event.state !== "candidate"
+                            }
+                          >
+                            {mateGrowthEventBusyTarget === event.id ? "処理中..." : "無効化"}
+                          </button>
+                          <button
+                            className="danger-button"
+                            type="button"
+                            onClick={() => onForgetMateGrowthEvent?.(event.id)}
+                            disabled={
+                              !onForgetMateGrowthEvent ||
+                              mateGrowthEventBusyTarget !== null ||
+                              event.state !== "candidate"
+                            }
+                          >
+                            {mateGrowthEventBusyTarget === event.id ? "処理中..." : "忘れる"}
+                          </button>
                         </div>
                       </div>
                       {event.rationalePreview ? <p className="settings-help">{event.rationalePreview}</p> : null}

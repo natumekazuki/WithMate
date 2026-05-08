@@ -1289,4 +1289,136 @@ describe("MateGrowthStorage", () => {
       await cleanup();
     }
   });
+
+  it("disableEventForReview / forgetEventForReview は表示用 DTO を返して state を更新する", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      const disabled = storage.upsertEvent(buildEvent({
+        id: "event-review-disable-action",
+        statement: "無効化対象イベント",
+        statementFingerprint: "f-review-disable-action",
+      }));
+      const forgotten = storage.upsertEvent(buildEvent({
+        id: "event-review-forget-action",
+        statement: "忘却対象イベント",
+        statementFingerprint: "f-review-forget-action",
+      }));
+
+      const disabledResult = storage.disableEventForReview(disabled.id);
+      const forgottenResult = storage.forgetEventForReview(forgotten.id);
+
+      assert.equal(disabledResult.event?.id, disabled.id);
+      assert.equal(disabledResult.event?.state, "disabled");
+      assert.equal(forgottenResult.event?.id, forgotten.id);
+      assert.equal(forgottenResult.event?.state, "forgotten");
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const forgottenRow = db.prepare(`
+          SELECT state, applied_revision_id, applied_at, disabled_revision_id, disabled_at, forgotten_at
+          FROM mate_growth_events
+          WHERE id = ?
+        `).get(forgotten.id) as {
+          state: string;
+          applied_revision_id: string | null;
+          applied_at: string | null;
+          disabled_revision_id: string | null;
+          disabled_at: string | null;
+          forgotten_at: string | null;
+        };
+        assert.equal(forgottenRow.state, "forgotten");
+        assert.equal(forgottenRow.applied_revision_id, null);
+        assert.equal(forgottenRow.applied_at, null);
+        assert.equal(forgottenRow.disabled_revision_id, null);
+        assert.equal(forgottenRow.disabled_at, null);
+        assert.equal(typeof forgottenRow.forgotten_at, "string");
+
+        const actions = db.prepare(`
+          SELECT growth_event_id, action, actor
+          FROM mate_growth_event_actions
+          WHERE growth_event_id IN (?, ?)
+          ORDER BY id
+        `).all(disabled.id, forgotten.id) as Array<{
+          growth_event_id: string;
+          action: string;
+          actor: string;
+        }>;
+        assert.deepEqual(actions.map((action) => ({ ...action })), [{
+          growth_event_id: disabled.id,
+          action: "disable",
+          actor: "user",
+        }, {
+          growth_event_id: forgotten.id,
+          action: "forget",
+          actor: "user",
+        }]);
+
+        const tombstone = db.prepare(`
+          SELECT digest_kind, category, section_key, source_growth_event_id
+          FROM mate_forgotten_tombstones
+          WHERE source_growth_event_id = ?
+        `).get(forgotten.id) as {
+          digest_kind: string;
+          category: string;
+          section_key: string;
+          source_growth_event_id: string;
+        };
+        assert.deepEqual({ ...tombstone }, {
+          digest_kind: "growth_statement",
+          category: "note",
+          section_key: "core",
+          source_growth_event_id: forgotten.id,
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
+
+  it("disableEventForReview / forgetEventForReview は候補以外と active apply 中の操作を拒否する", async () => {
+    const { dbPath, cleanup } = await createTempDbPath();
+    const storage = new MateGrowthStorage(dbPath);
+    try {
+      seedCurrentMateProfile(dbPath);
+      const applied = storage.upsertEvent(buildEvent({
+        id: "event-review-applied-action",
+        statement: "適用済み対象イベント",
+        statementFingerprint: "f-review-applied-action",
+      }));
+      storage.markEventApplied(applied.id);
+
+      assert.throws(
+        () => storage.disableEventForReview(applied.id),
+        /候補状態の Growth Event だけ操作できるよ。/,
+      );
+      assert.throws(
+        () => storage.forgetEventForReview("missing-growth-event"),
+        /Growth Event が見つからないよ。/,
+      );
+
+      const active = storage.upsertEvent(buildEvent({
+        id: "event-review-active-apply-action",
+        statement: "実行中 apply と競合する候補",
+        statementFingerprint: "f-review-active-apply-action",
+      }));
+      storage.acquireGrowthApplyRun({
+        operationId: "growth-apply:review-action-active-apply",
+        inputHash: "review-action-active-apply-hash",
+        candidateCount: 1,
+      });
+
+      assert.throws(
+        () => storage.forgetEventForReview(active.id),
+        /Growth apply はすでに実行中です。/,
+      );
+    } finally {
+      storage.close();
+      await cleanup();
+    }
+  });
 });
