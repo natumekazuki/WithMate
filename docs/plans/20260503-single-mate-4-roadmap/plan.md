@@ -206,7 +206,7 @@ projection に含めないもの:
 
 - [ ] package version を 4.0.0 に上げる
 - [x] Mate 未作成または draft 時に Mate 作成と Settings 以外の全機能を block する
-- [ ] 初回 Mate 作成 flow は `name` だけで active 化できる
+- [x] 初回 Mate 作成 flow は `name` だけで active 化できる
 - [ ] 初回 Mate 作成時に core / notes / bond / work_style 用の初期 SQLite row と generated projection file を空状態で作成または生成する
 - [ ] avatar 未設定でも placeholder 表示で Mate を active 化できる
 - [ ] Home の character list を Your Mate 表示へ置き換える
@@ -238,7 +238,7 @@ projection に含めないもの:
 - [ ] `bond` / `work_style` / `project_digest` は active Profile Item から完全再生成し、Markdown 差分編集を行わない
 - [ ] 任意 file としての `avatar.png` 読み書きと未設定 placeholder を実装する
 - [ ] 初回 Mate 未作成状態を検出する
-- [ ] 初回 Mate 作成 flow を追加する
+- [x] 初回 Mate 作成 flow を追加する
 - [x] `mate_profile_revisions.status` / `mate_profile_revision_sections` を実装し、`ready` revision だけを active にできる制約を storage 層で enforce する
 - [x] generated projection file の hash / byte size / written_at を revision section に保存し、起動時 recovery で SQLite snapshot と実 file の不一致を検出する
 - [x] `committing_files` / `failed` revision の recovery を実装し、provider sync が不完全 revision を読まないことを保証する

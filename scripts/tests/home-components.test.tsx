@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   HomeLaunchDialog,
+  HomeMateSetupPanel,
   HomeRecentSessionsPanel,
   HomeRightPane,
   HomeSettingsContent,
@@ -661,6 +662,124 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("<p class=\"settings-feedback settings-memory-feedback\">再起動が必要</p>"));
     assert.ok(html.includes("<span>エラープレビュー</span>"));
     assert.ok(html.includes("permission denied: EACCES (13): Permission denied"));
+  });
+});
+
+describe("HomeMateSetupPanel", () => {
+  const collectElements = (node: ReactNode, predicate: (element: React.ReactElement) => boolean): React.ReactElement[] => {
+    const result: React.ReactElement[] = [];
+    const visitNode = (currentNode: ReactNode) => {
+      if (!isValidElement(currentNode)) {
+        return;
+      }
+
+      if (predicate(currentNode)) {
+        result.push(currentNode);
+      }
+
+      const children = currentNode.props.children;
+      if (Array.isArray(children)) {
+        children.forEach((child) => visitNode(child as ReactNode));
+        return;
+      }
+
+      if (children === null || children === undefined || typeof children === "boolean") {
+        return;
+      }
+
+      visitNode(children as ReactNode);
+    };
+
+    visitNode(node);
+    return result;
+  };
+
+  const renderPanel = (params?: {
+    creating?: boolean;
+    feedback?: string;
+    displayName?: string;
+    mateDisplayName?: string | null;
+    onSubmit?: () => void;
+    onOpenSettings?: () => void;
+  }) => {
+    return HomeMateSetupPanel({
+      displayName: params?.displayName ?? "Your Mate",
+      creating: params?.creating ?? false,
+      feedback: params?.feedback ?? "",
+      mateDisplayName: params?.mateDisplayName ?? null,
+      onChangeDisplayName: () => undefined,
+      onSubmit: params?.onSubmit ?? (() => undefined),
+      onOpenSettings: params?.onOpenSettings ?? (() => undefined),
+    });
+  };
+
+  it("表示名 input / Mate 作成ボタン / 設定ボタン / feedback が render される", () => {
+    const panel = renderPanel({ feedback: "作成完了まで少し待ってね。" });
+    const html = renderToStaticMarkup(panel);
+    const input = collectElements(panel, (element) => element.type === "input" && element.props.id === "mate-display-name")[0];
+    const submitButton = collectElements(panel, (element) => element.type === "button" && element.props.type === "submit")[0];
+    const settingsButton = collectElements(
+      panel,
+      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "設定",
+    )[0];
+
+    assert.ok(input);
+    assert.ok(submitButton);
+    assert.ok(settingsButton);
+    assert.ok(input.props.value === "Your Mate");
+    assert.ok(submitButton.props.children === "Mate を作成");
+    assert.ok(html.includes("作成完了まで少し待ってね。"));
+  });
+
+  it("form submit で onSubmit が呼ばれる", () => {
+    let submitted = 0;
+    const panel = renderPanel({
+      onSubmit: () => {
+        submitted += 1;
+      },
+    });
+    const forms = collectElements(panel, (element) => element.type === "form");
+    const form = forms[0];
+    if (!form) {
+      throw new Error("HomeMateSetupPanel の form が見つかりません。");
+    }
+
+    form.props.onSubmit({ preventDefault: () => undefined });
+
+    assert.equal(submitted, 1);
+  });
+
+  it("設定ボタンで onOpenSettings が呼ばれる", () => {
+    let settingsOpened = 0;
+    const panel = renderPanel({
+      onOpenSettings: () => {
+        settingsOpened += 1;
+      },
+    });
+    const buttons = collectElements(
+      panel,
+      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "設定",
+    );
+    const settingsButton = buttons.find((button) => button.props.type === "button" && button.props.onClick);
+    if (!settingsButton) {
+      throw new Error("HomeMateSetupPanel の設定ボタンが見つかりません。");
+    }
+
+    settingsButton.props.onClick();
+    assert.equal(settingsOpened, 1);
+  });
+
+  it("creating=true で input / submit button が disabled になり、作成中表示になる", () => {
+    const panel = renderPanel({ creating: true, feedback: "作成中..." });
+    const input = collectElements(panel, (element) => element.type === "input" && element.props.id === "mate-display-name")[0];
+    const submitButton = collectElements(panel, (element) => element.type === "button" && element.props.type === "submit")[0];
+    if (!input || !submitButton) {
+      throw new Error("HomeMateSetupPanel の入力 or submit button が見つかりません。");
+    }
+
+    assert.ok(input.props.disabled);
+    assert.ok(submitButton.props.disabled);
+    assert.equal(submitButton.props.children, "作成中...");
   });
 });
 
