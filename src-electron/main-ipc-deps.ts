@@ -116,7 +116,7 @@ export type MainIpcSettingsDepsArgs = {
   deleteSessionMemory(sessionId: string): void;
   deleteProjectMemoryEntry(entryId: string): void;
   deleteCharacterMemoryEntry(entryId: string): void;
-  forgetMateProfileItem(itemId: string): void;
+  forgetMateProfileItem(itemId: string): Awaitable<void>;
 };
 
 export type MainIpcSessionQueryDepsArgs = {

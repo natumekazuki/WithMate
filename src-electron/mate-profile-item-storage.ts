@@ -847,6 +847,10 @@ export class MateProfileItemStorage {
     }
   }
 
+  assertProfileItemMutationAllowed(): void {
+    this.assertNoActiveGrowthApplyRun();
+  }
+
   private getProfileItem(itemId: string, db: DatabaseSync = this.db): MateProfileItem | null {
     const row = db.prepare(`
       SELECT
@@ -903,10 +907,19 @@ export class MateProfileItemStorage {
     }
     this.assertNoActiveGrowthApplyRun();
 
-    const forgottenRevisionId = normalizeOptionalText(revisionId);
-    const now = nowIso();
+    this.forgetProfileItemInTransaction(this.db, targetId, revisionId);
+  }
 
-    this.db.prepare(`
+  forgetProfileItemInTransaction(db: DatabaseSync, itemId: string, revisionId?: string, updatedAt?: string): void {
+    const targetId = normalizeOptionalText(itemId);
+    if (!targetId) {
+      return;
+    }
+
+    const forgottenRevisionId = normalizeOptionalText(revisionId);
+    const now = updatedAt ?? nowIso();
+
+    db.prepare(`
       UPDATE mate_profile_items
       SET
         state = 'forgotten',

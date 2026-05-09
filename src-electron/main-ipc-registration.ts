@@ -299,7 +299,7 @@ export type MainIpcRegistrationDeps = {
   deleteSessionMemory(sessionId: string): void;
   deleteProjectMemoryEntry(entryId: string): void;
   deleteCharacterMemoryEntry(entryId: string): void;
-  forgetMateProfileItem(itemId: string): void;
+  forgetMateProfileItem(itemId: string): Awaitable<void>;
   listCharacters(): Promise<CharacterProfile[]>;
   getModelCatalog(revision: number | null): ModelCatalogSnapshot | null;
   importModelCatalogDocument(document: ModelCatalogDocument): Awaitable<ModelCatalogSnapshot>;

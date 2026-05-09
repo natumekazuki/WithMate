@@ -32,7 +32,7 @@ type MemoryManagementServiceDeps = {
   listMateProfileItems?: () => ManagedMateProfileItem[];
   listMateProfileItemPage?:
     (request: MemoryManagementPageRequest) => { items: ManagedMateProfileItem[]; total: number };
-  forgetMateProfileItem?: (itemId: string) => void;
+  forgetMateProfileItem?: (itemId: string) => void | Promise<void>;
 };
 
 export class MemoryManagementService {
@@ -191,8 +191,8 @@ export class MemoryManagementService {
     this.deps.deleteCharacterMemoryEntry(entryId);
   }
 
-  forgetMateProfileItem(itemId: string): void {
-    this.deps.forgetMateProfileItem?.(itemId);
+  async forgetMateProfileItem(itemId: string): Promise<void> {
+    await this.deps.forgetMateProfileItem?.(itemId);
   }
 }
 

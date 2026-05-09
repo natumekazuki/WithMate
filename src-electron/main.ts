@@ -96,6 +96,7 @@ import { MateEmbeddingDownloadService } from "./mate-embedding-download-service.
 import { buildMateMemoryRuntimeInstructionFiles } from "./mate-memory-runtime-instructions.js";
 import { MateGrowthApplyService } from "./mate-growth-apply-service.js";
 import { MateGrowthStorage } from "./mate-growth-storage.js";
+import { MateProfileProjectionRefreshService } from "./mate-profile-projection-refresh-service.js";
 import { MateProjectContextService } from "./mate-project-context-service.js";
 import { MateProjectDigestStorage } from "./mate-project-digest-storage.js";
 import {
@@ -1524,6 +1525,19 @@ async function updateMate(input: Parameters<MateStorage["updateMate"]>[0]): Retu
   return profile;
 }
 
+async function forgetMateProfileItemAndRefreshProjection(itemId: string): Promise<void> {
+  const service = new MateProfileProjectionRefreshService({
+    mateStorage: requireMateStorage(),
+    profileItemStorage: requireMateProfileItemStorage(),
+    projectDigestProjectionWriter: requireMateProjectDigestStorage(),
+    providerInstructionSyncer: {
+      syncEnabledProviderInstructionTargetsForMateProfile,
+    },
+  });
+
+  await service.forgetProfileItemAndRefreshProjection(itemId);
+}
+
 async function syncEnabledProviderInstructionTargetsForMateProfile(
   profile: NonNullable<ReturnType<MateStorage["getMateProfile"]>>,
 ): Promise<void> {
@@ -2077,7 +2091,7 @@ function requireMemoryManagementService(): MemoryManagementService {
         tags: item.tags.map((tag) => `${tag.type}:${tag.value}`),
         updatedAt: item.updatedAt,
       })),
-      forgetMateProfileItem: (itemId) => requireMateProfileItemStorage().forgetProfileItem(itemId),
+      forgetMateProfileItem: (itemId) => forgetMateProfileItemAndRefreshProjection(itemId),
     });
   }
 

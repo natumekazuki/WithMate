@@ -325,7 +325,7 @@ describe("MemoryManagementService", () => {
     assert.equal(page.pages.mate_profile?.total, 2);
   });
 
-  it("forgetMateProfileItem は deps の忘却を呼ぶ", () => {
+  it("forgetMateProfileItem は deps の忘却を呼ぶ", async () => {
     const deleted: string[] = [];
     const service = new MemoryManagementService({
       listSessionSummaries: () => [],
@@ -343,7 +343,7 @@ describe("MemoryManagementService", () => {
       },
     });
 
-    service.forgetMateProfileItem("mate-profile-item-1");
+    await service.forgetMateProfileItem("mate-profile-item-1");
 
     assert.deepEqual(deleted, ["mate-profile-item-1"]);
   });
