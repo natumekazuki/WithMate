@@ -429,7 +429,13 @@ export function HomeSettingsContent({
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>System Prompt Prefix</strong>
-              <p className="settings-help">保存時に先頭へ <code># System Prompt</code> が自動で付く。</p>
+              <SettingsInlineHelp summary="System Prompt Prefix のヘルプ">
+                <p>各セッションの共通 system 指示として送信プロンプトへ含まれる。</p>
+                <p>Mate 固有の性格や振る舞いは Mate 管理側で育てる。</p>
+              </SettingsInlineHelp>
+              <p className="settings-help">
+                共通 system 指示として使われ、保存時に先頭へ <code># System Prompt</code> が自動で付く。
+              </p>
               <textarea
                 value={settingsDraft.systemPromptPrefix}
                 onChange={(event) => onChangeSystemPromptPrefix(event.target.value)}
