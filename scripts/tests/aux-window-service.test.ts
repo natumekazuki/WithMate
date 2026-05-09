@@ -83,6 +83,7 @@ test("AuxWindowService は singleton window を再利用する", async () => {
     },
     async loadDiffEntry() {},
     async loadCompanionChatEntry() {},
+    async loadMateTalkEntry() {},
     async loadCompanionMergeEntry() {},
     onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
@@ -123,6 +124,7 @@ test("AuxWindowService は diff preview を保持し reset 時に close する",
       diffLoads.push(token);
     },
     async loadCompanionChatEntry() {},
+    async loadMateTalkEntry() {},
     async loadCompanionMergeEntry() {},
     onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
@@ -161,6 +163,7 @@ test("AuxWindowService は companion chat と merge の entry を分けて開く
     async loadCompanionChatEntry(_window, sessionId) {
       companionChatLoads.push(sessionId);
     },
+    async loadMateTalkEntry() {},
     async loadCompanionMergeEntry(_window, sessionId) {
       companionMergeLoads.push(sessionId);
     },

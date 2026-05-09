@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { HomeMateTalkTurnController, shouldSubmitMateTalkInputByKey } from "../../src/home-mate-talk-state.js";
+import { MateTalkTurnController, shouldSubmitMateTalkInputByKey } from "../../src/chat/mate-talk-state.js";
 
-test("HomeMateTalkTurnController は beginTurn で turnId と messageSequence を増やす", () => {
-  const controller = new HomeMateTalkTurnController();
+test("MateTalkTurnController は beginTurn で turnId と messageSequence を増やす", () => {
+  const controller = new MateTalkTurnController();
   const first = controller.beginTurn();
   const second = controller.beginTurn();
 
@@ -14,8 +14,8 @@ test("HomeMateTalkTurnController は beginTurn で turnId と messageSequence �
   assert.equal(second.messageSequence, 2);
 });
 
-test("HomeMateTalkTurnController は invalidateTurns 後に前の turnId が stale になる", () => {
-  const controller = new HomeMateTalkTurnController();
+test("MateTalkTurnController は invalidateTurns 後に前の turnId が stale になる", () => {
+  const controller = new MateTalkTurnController();
   const firstTurn = controller.beginTurn();
 
   controller.invalidateTurns();
@@ -25,8 +25,8 @@ test("HomeMateTalkTurnController は invalidateTurns 後に前の turnId が sta
   assert.equal(controller.isLatestTurn(secondTurn.turnId), true);
 });
 
-test("HomeMateTalkTurnController は invalidateTurns で messageSequence を進めない", () => {
-  const controller = new HomeMateTalkTurnController();
+test("MateTalkTurnController は invalidateTurns で messageSequence を進めない", () => {
+  const controller = new MateTalkTurnController();
   const firstTurn = controller.beginTurn();
 
   controller.invalidateTurns();
@@ -36,8 +36,8 @@ test("HomeMateTalkTurnController は invalidateTurns で messageSequence を進�
   assert.equal(secondTurn.messageSequence, 2);
 });
 
-test("HomeMateTalkTurnController は新規 turn が旧 turn を stale として扱う", () => {
-  const controller = new HomeMateTalkTurnController();
+test("MateTalkTurnController は新規 turn が旧 turn を stale として扱う", () => {
+  const controller = new MateTalkTurnController();
   const firstTurn = controller.beginTurn();
   const secondTurn = controller.beginTurn();
 

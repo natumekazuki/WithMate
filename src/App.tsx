@@ -100,6 +100,7 @@ import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import { extractTextReferenceCandidates } from "./path-reference.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import CompanionReviewApp from "./CompanionReviewApp.js";
+import { MateTalkWindowApp } from "./chat/MateTalkWindowApp.js";
 import { resolveSessionWindowModeFromSearch } from "./session-window-mode.js";
 
 type RetryBannerKind = "interrupted" | "failed" | "canceled";
@@ -403,6 +404,9 @@ export default function App() {
   const sessionWindowMode = useMemo(() => resolveSessionWindowModeFromSearch(window.location.search), []);
   if (sessionWindowMode.kind === "companion") {
     return <CompanionReviewApp />;
+  }
+  if (sessionWindowMode.kind === "mate-talk") {
+    return <MateTalkWindowApp />;
   }
 
   return <AgentSessionWindowApp />;

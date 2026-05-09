@@ -12,7 +12,7 @@ import {
 } from "./provider-settings-state.js";
 import { type SessionSummary } from "./session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "./approval-mode.js";
-import { type ModelCatalogProvider, type ModelCatalogSnapshot, type ModelReasoningEffort } from "./model-catalog.js";
+import { type ModelCatalogSnapshot } from "./model-catalog.js";
 import {
   DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
   type MemoryManagementViewFilters,
@@ -61,7 +61,6 @@ import {
   HomeRightPane,
   HomeSettingsContent,
   HomeMateSetupPanel,
-  HomeMateTalkPanel,
 } from "./home-components.js";
 import { HomeDashboardScreen } from "./home/HomeDashboardScreen.js";
 import { HomeMonitorWindowScreen } from "./home/HomeMonitorWindowScreen.js";
@@ -108,9 +107,6 @@ import {
 import { type MateEmbeddingSettings } from "./mate-embedding-settings.js";
 import type { MateGrowthEventListItem } from "./mate-growth-events-state.js";
 import { applyHomePendingGrowth } from "./home-mate-growth-actions.js";
-import { HomeMateTalkTurnController } from "./home-mate-talk-state.js";
-import { buildCharacterThemeStyle } from "./theme-utils.js";
-import { modelDisplayLabel, modelOptionLabel } from "./ui-utils.js";
 
 async function openSessionWindow(sessionId: string) {
   await withWithMateApi((api) => api.openSession(sessionId));
@@ -130,6 +126,10 @@ async function openSettingsWindow() {
 
 async function openMemoryManagementWindow() {
   await withWithMateApi((api) => api.openMemoryManagementWindow());
+}
+
+async function openMateTalkWindow() {
+  await withWithMateApi((api) => api.openMateTalkWindow());
 }
 
 function getMemoryManagementCursor(pages: MemoryManagementPageState, domain: MemoryManagementDomain): number | null {
@@ -159,12 +159,6 @@ type MemoryManagementPageState = {
   project: MemoryManagementDomainPageInfo;
   character: MemoryManagementDomainPageInfo;
   mate_profile: MemoryManagementDomainPageInfo;
-};
-
-type MateTalkMessage = {
-  id: string;
-  role: "user" | "mate";
-  text: string;
 };
 
 type HomeProviderInstructionTargetDraft = HomeProviderInstructionTargetSettings;
@@ -285,19 +279,9 @@ export default function HomeApp() {
   const [mateResetting, setMateResetting] = useState(false);
   const [mateCreationFeedback, setMateCreationFeedback] = useState("");
   const [mateProfileEditorOpen, setMateProfileEditorOpen] = useState(false);
-  const [mateTalkOpen, setMateTalkOpen] = useState(false);
-  const [mateTalkInput, setMateTalkInput] = useState("");
-  const [mateTalkMessages, setMateTalkMessages] = useState<MateTalkMessage[]>([]);
-  const [mateTalkSending, setMateTalkSending] = useState(false);
-  const [mateTalkFeedback, setMateTalkFeedback] = useState("");
-  const [isMateTalkHeaderExpanded, setIsMateTalkHeaderExpanded] = useState(true);
-  const [mateTalkProviderId, setMateTalkProviderId] = useState("");
-  const [mateTalkModel, setMateTalkModel] = useState("");
-  const [mateTalkReasoningEffort, setMateTalkReasoningEffort] = useState<ModelReasoningEffort>("low");
   const settingsDirtyRef = useRef(false);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const memoryManagementRequestIdRef = useRef(0);
-  const mateTalkTurnControllerRef = useRef(new HomeMateTalkTurnController());
   const mateEmbeddingSettingsPollingIntervalRef = useRef<number | null>(null);
 
   const beginMemoryManagementRequest = () => {
@@ -713,27 +697,6 @@ export default function HomeApp() {
     [appSettings, launchDraft, modelCatalog],
   );
   const { enabledLaunchProviders, selectedLaunchProvider, launchWorkspacePathLabel, canStartSession } = launchProjection;
-  const mateTalkDefaultPriority = settingsDraft.mateMemoryGenerationSettings.priorityList[0] ?? null;
-  const mateTalkProviderCatalog = useMemo<ModelCatalogProvider | null>(() => {
-    return enabledLaunchProviders.find((provider) => provider.id === mateTalkProviderId) ?? enabledLaunchProviders[0] ?? null;
-  }, [enabledLaunchProviders, mateTalkProviderId]);
-  const mateTalkSelectedModel =
-    mateTalkProviderCatalog?.models.find((model) => model.id === mateTalkModel) ??
-    mateTalkProviderCatalog?.models.find((model) => model.id === mateTalkProviderCatalog.defaultModelId) ??
-    mateTalkProviderCatalog?.models[0] ??
-    null;
-  const mateTalkModelOptions = useMemo(
-    () => mateTalkProviderCatalog?.models.map((model) => ({ value: model.id, label: modelOptionLabel(model) })) ?? [],
-    [mateTalkProviderCatalog],
-  );
-  const mateTalkReasoningOptions = useMemo(
-    () => mateTalkSelectedModel?.reasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? [],
-    [mateTalkSelectedModel],
-  );
-  const mateTalkThemeStyle = useMemo(
-    () => buildCharacterThemeStyle(mateProfile ? { main: mateProfile.themeMain, sub: mateProfile.themeSub } : null),
-    [mateProfile],
-  );
 
   useEffect(() => {
     setLaunchDraft((current) => {
@@ -747,48 +710,6 @@ export default function HomeApp() {
       };
     });
   }, [enabledLaunchProviders]);
-  useEffect(() => {
-    const preferredProviderId =
-      enabledLaunchProviders.find((provider) => provider.id === mateTalkDefaultPriority?.provider)?.id ??
-      enabledLaunchProviders[0]?.id ??
-      "";
-    const providerCatalog = enabledLaunchProviders.find((provider) => provider.id === (mateTalkProviderId || preferredProviderId)) ??
-      enabledLaunchProviders.find((provider) => provider.id === preferredProviderId) ??
-      enabledLaunchProviders[0] ??
-      null;
-    const nextProviderId = providerCatalog?.id ?? "";
-    const preferredModelId = nextProviderId === mateTalkDefaultPriority?.provider ? mateTalkDefaultPriority.model : "";
-    const model =
-      providerCatalog?.models.find((candidate) => candidate.id === mateTalkModel) ??
-      providerCatalog?.models.find((candidate) => candidate.id === preferredModelId) ??
-      providerCatalog?.models.find((candidate) => candidate.id === providerCatalog.defaultModelId) ??
-      providerCatalog?.models[0] ??
-      null;
-    const preferredReasoningEffort =
-      nextProviderId === mateTalkDefaultPriority?.provider && model?.reasoningEfforts.includes(mateTalkDefaultPriority.reasoningEffort)
-        ? mateTalkDefaultPriority.reasoningEffort
-        : undefined;
-    const nextReasoningEffort =
-      model?.reasoningEfforts.includes(mateTalkReasoningEffort)
-        ? mateTalkReasoningEffort
-        : preferredReasoningEffort ?? model?.reasoningEfforts[0] ?? providerCatalog?.defaultReasoningEffort ?? "low";
-
-    if (mateTalkProviderId !== nextProviderId) {
-      setMateTalkProviderId(nextProviderId);
-    }
-    if (mateTalkModel !== (model?.id ?? "")) {
-      setMateTalkModel(model?.id ?? "");
-    }
-    if (mateTalkReasoningEffort !== nextReasoningEffort) {
-      setMateTalkReasoningEffort(nextReasoningEffort);
-    }
-  }, [
-    enabledLaunchProviders,
-    mateTalkDefaultPriority,
-    mateTalkModel,
-    mateTalkProviderId,
-    mateTalkReasoningEffort,
-  ]);
 
   const renderSearchIcon = () => (
     <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
@@ -807,93 +728,6 @@ export default function HomeApp() {
     </svg>
   );
   const homePageClassName = `page-shell home-page${isMonitorWindowMode ? " home-page-monitor-window" : ""}`;
-
-  const resetMateTalkState = () => {
-    mateTalkTurnControllerRef.current.invalidateTurns();
-    setMateTalkOpen(false);
-    setMateTalkInput("");
-    setMateTalkMessages([]);
-    setMateTalkSending(false);
-    setMateTalkFeedback("");
-  };
-
-  const openMateTalk = () => {
-    setMateTalkOpen(true);
-    setMateTalkFeedback("");
-  };
-
-  const closeMateTalk = () => {
-    resetMateTalkState();
-  };
-
-  const handleSubmitMateTalk = async () => {
-    const normalizedText = mateTalkInput.trim();
-    if (!normalizedText) {
-      setMateTalkFeedback("入力してから送信してね。");
-      return;
-    }
-
-    if (mateTalkSending) {
-      return;
-    }
-
-    const { turnId, messageSequence } = mateTalkTurnControllerRef.current.beginTurn();
-    const userMessageId = `user-${messageSequence}`;
-    const now = Date.now();
-
-    setMateTalkSending(true);
-    setMateTalkFeedback("");
-    setMateTalkMessages((current) => [
-      ...current,
-      {
-        id: userMessageId,
-        role: "user",
-        text: normalizedText,
-      },
-    ]);
-    setMateTalkInput("");
-
-    try {
-      const result = await withWithMateApi((api) => api.runMateTalkTurn({
-        message: normalizedText,
-        provider: mateTalkProviderId,
-        model: mateTalkModel,
-        reasoningEffort: mateTalkReasoningEffort,
-      }));
-      if (!mateTalkTurnControllerRef.current.isLatestTurn(turnId)) {
-        return;
-      }
-      if (!result) {
-        throw new Error("メイトークの応答を取得できませんでした。");
-      }
-      setMateTalkMessages((current) => [
-        ...current,
-        {
-          id: `mate-${messageSequence}-${Date.parse(result.createdAt) || now}`,
-          role: "mate",
-          text: result.assistantMessage,
-        },
-      ]);
-    } catch (error) {
-      if (!mateTalkTurnControllerRef.current.isLatestTurn(turnId)) {
-        return;
-      }
-      const message = error instanceof Error ? error.message : "メイトークの送信に失敗しました。";
-      setMateTalkMessages((current) => [
-        ...current,
-        {
-          id: `mate-error-${messageSequence}-${now}`,
-          role: "mate",
-          text: message,
-        },
-      ]);
-    } finally {
-      if (!mateTalkTurnControllerRef.current.isLatestTurn(turnId)) {
-        return;
-      }
-      setMateTalkSending(false);
-    }
-  };
 
   const handleBrowseWorkspace = async () => {
     const selectedPath = await withWithMateApi((api) => api.pickDirectory());
@@ -1421,7 +1255,6 @@ export default function HomeApp() {
     try {
       await withmateApi.resetMate();
       await refreshMateStatus(withmateApi);
-      resetMateTalkState();
       setSettingsFeedback("Mate を初期化したよ。");
     } catch (error) {
       setSettingsFeedback(error instanceof Error ? error.message : "Mate の初期化に失敗したよ。");
@@ -2099,44 +1932,6 @@ export default function HomeApp() {
     />
   );
 
-  const mateTalkContent = (
-    <HomeMateTalkPanel
-      mateName={mateProfile?.displayName ?? "Mate"}
-      themeStyle={mateTalkThemeStyle}
-      isHeaderExpanded={isMateTalkHeaderExpanded}
-      messages={mateTalkMessages}
-      input={mateTalkInput}
-      feedback={mateTalkFeedback}
-      modelOptions={mateTalkModelOptions}
-      selectedModel={mateTalkModel}
-      selectedModelFallbackLabel={modelDisplayLabel(mateTalkProviderCatalog, mateTalkModel)}
-      reasoningOptions={mateTalkReasoningOptions}
-      selectedReasoningEffort={mateTalkReasoningEffort}
-      onChangeInput={(value) => {
-        setMateTalkInput(value);
-        setMateTalkFeedback("");
-      }}
-      onChangeModel={(model) => {
-        const nextModel = mateTalkProviderCatalog?.models.find((candidate) => candidate.id === model) ?? null;
-        setMateTalkModel(model);
-        setMateTalkReasoningEffort((current) =>
-          nextModel?.reasoningEfforts.includes(current)
-            ? current
-            : nextModel?.reasoningEfforts[0] ?? mateTalkProviderCatalog?.defaultReasoningEffort ?? current,
-        );
-      }}
-      onChangeReasoningEffort={(reasoningEffort) => {
-        if (mateTalkSelectedModel?.reasoningEfforts.includes(reasoningEffort as ModelReasoningEffort)) {
-          setMateTalkReasoningEffort(reasoningEffort as ModelReasoningEffort);
-        }
-      }}
-      onSubmit={() => void handleSubmitMateTalk()}
-      onClose={() => void closeMateTalk()}
-      onToggleHeaderExpanded={() => setIsMateTalkHeaderExpanded((current) => !current)}
-      sending={mateTalkSending}
-    />
-  );
-
   const isMateStateLoading = mateState === null;
   const isMateNotCreated = mateState === "not_created";
   const canUsePrimaryFeatures = mateState !== "not_created" && mateProfile !== null;
@@ -2198,10 +1993,6 @@ export default function HomeApp() {
     );
   }
 
-  if (mateTalkOpen) {
-    return mateTalkContent;
-  }
-
   if (isMonitorWindowMode) {
     return (
       <HomeMonitorWindowScreen
@@ -2251,7 +2042,7 @@ export default function HomeApp() {
           onOpenMemoryManagementWindow={() => void openMemoryManagementWindow()}
           onOpenSettingsWindow={() => void openSettingsWindow()}
           onOpenMateProfile={openMateProfileEditor}
-          onOpenMateTalk={() => void openMateTalk()}
+          onOpenMateTalk={() => void openMateTalkWindow()}
           onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
           onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
           canUsePrimaryFeatures={canUsePrimaryFeatures}

@@ -809,6 +809,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           loadDiffEntry: (window, token) => requireWindowEntryLoader().loadDiffEntry(window, token),
           loadCompanionChatEntry: (window, sessionId) =>
             requireWindowEntryLoader().loadCompanionChatEntry(window, sessionId),
+          loadMateTalkEntry: (window) => requireWindowEntryLoader().loadMateTalkEntry(window),
           loadCompanionMergeEntry: (window, sessionId) =>
             requireWindowEntryLoader().loadCompanionMergeEntry(window, sessionId),
           generateDiffToken: () => crypto.randomUUID(),
@@ -910,6 +911,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openSessionMonitorWindow,
                 openSettingsWindow,
                 openMemoryManagementWindow,
+                openMateTalkWindow,
                 openCharacterEditorWindow,
                 openDiffWindow,
                 openCompanionReviewWindow,
@@ -3417,6 +3419,10 @@ async function openSettingsWindow(): Promise<BrowserWindow> {
 
 async function openMemoryManagementWindow(): Promise<BrowserWindow> {
   return requireMainWindowFacade().openMemoryManagementWindow();
+}
+
+async function openMateTalkWindow(): Promise<BrowserWindow> {
+  return requireMainWindowFacade().openMateTalkWindow();
 }
 
 async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {

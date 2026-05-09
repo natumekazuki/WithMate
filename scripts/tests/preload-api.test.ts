@@ -38,6 +38,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:open-memory-management-window",
     args: [],
   });
+  assert.deepEqual(await api.openMateTalkWindow(), {
+    channel: "withmate:open-mate-talk-window",
+    args: [],
+  });
   assert.deepEqual(await api.resetAppDatabase({ targets: ["appSettings"] }), {
     channel: "withmate:reset-app-database",
     args: [{ targets: ["appSettings"] }],
@@ -217,6 +221,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "openAppLogFolder",
     "openCrashDumpFolder",
     "openMemoryManagementWindow",
+    "openMateTalkWindow",
     "openPath",
     "openSession",
     "openSessionMonitorWindow",

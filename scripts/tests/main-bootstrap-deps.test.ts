@@ -47,6 +47,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         openSessionMonitorWindow: async () => ({}) as never,
         openSettingsWindow: async () => ({}) as never,
         openMemoryManagementWindow: async () => ({}) as never,
+        openMateTalkWindow: async () => ({}) as never,
         openCharacterEditorWindow: async () => ({}) as never,
         openDiffWindow: async () => ({}) as never,
         openCompanionReviewWindow: async () => ({}) as never,

@@ -1,13 +1,13 @@
-export type HomeMateTalkTurnState = {
+export type MateTalkTurnState = {
   turnId: number;
   messageSequence: number;
 };
 
-export class HomeMateTalkTurnController {
+export class MateTalkTurnController {
   private turnId = 0;
   private messageSequence = 0;
 
-  beginTurn(): HomeMateTalkTurnState {
+  beginTurn(): MateTalkTurnState {
     this.turnId += 1;
     this.messageSequence += 1;
     return {

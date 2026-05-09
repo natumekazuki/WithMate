@@ -28,6 +28,10 @@ export class MainWindowFacade {
     return this.deps.getAuxWindowService().openMemoryManagementWindow();
   }
 
+  async openMateTalkWindow(): Promise<BrowserWindow> {
+    return this.deps.getAuxWindowService().openMateTalkWindow();
+  }
+
   async openSessionWindow(sessionId: string): Promise<BrowserWindow> {
     return this.deps.getSessionWindowBridge().openSessionWindow(sessionId);
   }

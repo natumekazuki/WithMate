@@ -33,6 +33,7 @@ export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
   loadCharacterEntry(window: TWindow, characterId?: string | null): Promise<void>;
   loadDiffEntry(window: TWindow, token: string): Promise<void>;
   loadCompanionChatEntry(window: TWindow, sessionId: string): Promise<void>;
+  loadMateTalkEntry(window: TWindow): Promise<void>;
   loadCompanionMergeEntry(window: TWindow, sessionId: string): Promise<void>;
   generateDiffToken(): string;
   onCompanionReviewWindowsChanged(): void;
@@ -43,6 +44,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   private sessionMonitorWindow: TWindow | null = null;
   private settingsWindow: TWindow | null = null;
   private memoryManagementWindow: TWindow | null = null;
+  private mateTalkWindow: TWindow | null = null;
   private readonly characterEditorWindows = new Map<string, TWindow>();
   private readonly diffWindows = new Map<string, TWindow>();
   private readonly companionReviewWindows = new Map<string, TWindow>();
@@ -61,6 +63,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       this.sessionMonitorWindow,
       this.settingsWindow,
       this.memoryManagementWindow,
+      this.mateTalkWindow,
     ].filter((window): window is TWindow => !!window && !window.isDestroyed());
   }
 
@@ -166,6 +169,25 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       this.memoryManagementWindow = null;
     });
     await this.deps.loadHomeEntry(window, "memory");
+    return window;
+  }
+
+  async openMateTalkWindow(): Promise<TWindow> {
+    const existing = this.reuseWindow(this.mateTalkWindow);
+    if (existing) {
+      return existing;
+    }
+
+    const window = this.deps.createWindow({
+      ...COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
+      title: "WithMate MateTalk",
+    });
+    this.mateTalkWindow = window;
+    window.once("ready-to-show", () => window.show());
+    window.on("closed", () => {
+      this.mateTalkWindow = null;
+    });
+    await this.deps.loadMateTalkEntry(window);
     return window;
   }
 
@@ -279,6 +301,10 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       }
     }
     this.companionMergeWindows.clear();
+    if (this.mateTalkWindow && !this.mateTalkWindow.isDestroyed()) {
+      this.mateTalkWindow.close();
+    }
+    this.mateTalkWindow = null;
   }
 
   private reuseWindow(window: TWindow | null): TWindow | null {

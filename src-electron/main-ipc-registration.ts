@@ -134,6 +134,7 @@ import {
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
+  WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
@@ -241,6 +242,7 @@ export type MainIpcRegistrationDeps = {
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
   openMemoryManagementWindow(): Promise<void>;
+  openMateTalkWindow(): Promise<void>;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
@@ -382,6 +384,7 @@ type MainIpcWindowDeps = Pick<
   | "openSessionMonitorWindow"
   | "openSettingsWindow"
   | "openMemoryManagementWindow"
+  | "openMateTalkWindow"
   | "openCharacterEditorWindow"
   | "openDiffWindow"
   | "openCompanionReviewWindow"
@@ -542,6 +545,9 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   });
   ipcMain.handle(WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL, async () => {
     await deps.openMemoryManagementWindow();
+  });
+  ipcMain.handle(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL, async () => {
+    await deps.openMateTalkWindow();
   });
   ipcMain.handle(WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL, async (_event, characterId: string | null) => {
     await deps.openCharacterEditorWindow(characterId);

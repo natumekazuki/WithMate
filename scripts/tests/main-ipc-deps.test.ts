@@ -36,6 +36,10 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
         calls.push("openMemory");
         return {} as never;
       },
+      async openMateTalkWindow() {
+        calls.push("openMateTalk");
+        return {} as never;
+      },
       async openCharacterEditorWindow() {
         return {} as never;
       },
@@ -275,6 +279,7 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
 
   assert.equal(await deps.openHomeWindow(), undefined);
   assert.equal(await deps.openMemoryManagementWindow(), undefined);
+  assert.equal(await deps.openMateTalkWindow(), undefined);
   assert.equal(await deps.openSessionWindow("session-1"), undefined);
   await deps.getMateState();
   await deps.getMateProfile();
@@ -292,6 +297,7 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
   assert.deepEqual(calls, [
     "openHome",
     "openMemory",
+    "openMateTalk",
     "openSession:session-1",
     "getMateState",
     "getMateProfile",

@@ -78,6 +78,7 @@ export type MainIpcWindowDepsArgs = {
   openSessionMonitorWindow(): Promise<BrowserWindow>;
   openSettingsWindow(): Promise<BrowserWindow>;
   openMemoryManagementWindow(): Promise<BrowserWindow>;
+  openMateTalkWindow(): Promise<BrowserWindow>;
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
   openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow>;
@@ -262,6 +263,9 @@ export function createMainIpcRegistrationDeps(
     },
     openMemoryManagementWindow: async () => {
       await args.window.openMemoryManagementWindow();
+    },
+    openMateTalkWindow: async () => {
+      await args.window.openMateTalkWindow();
     },
     openCharacterEditorWindow: async (characterId) => {
       await args.window.openCharacterEditorWindow(characterId);

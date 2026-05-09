@@ -87,6 +87,7 @@ import {
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
+  WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL,
   WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
@@ -171,6 +172,9 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     },
     async openMemoryManagementWindow() {
       calls.push("openMemory");
+    },
+    async openMateTalkWindow() {
+      calls.push("openMateTalk");
     },
     async openCharacterEditorWindow(characterId) {
       calls.push(`openCharacter:${characterId ?? ""}`);
@@ -444,6 +448,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   assert.ok(handlers.has(WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL));
   assert.ok(handlers.has(WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL));
   assert.ok(handlers.has("withmate:run-session-turn"));
   assert.ok(handlers.has(WITHMATE_GET_MATE_STATE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_MATE_PROFILE_CHANNEL));
@@ -459,6 +464,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
 
   await handlers.get("withmate:open-session")?.({}, "session-1");
   await handlers.get("withmate:open-memory-management-window")?.({});
+  await handlers.get(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL)?.({});
   await handlers.get("withmate:cancel-session-run")?.({}, "session-1");
   await handlers.get("withmate:open-path")?.({}, "target", null);
   await handlers.get(WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL)?.({});
@@ -502,6 +508,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     "openSession:session-1",
     "getMateState",
     "openMemory",
+    "getMateState",
+    "openMateTalk",
     "getMateState",
     "cancelRun",
     "getMateState",
@@ -588,6 +596,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     "getMateState",
     "openMemory",
     "getMateState",
+    "openMateTalk",
+    "getMateState",
     "cancelRun",
     "getMateState",
     "openPath",
@@ -672,6 +682,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async openSessionMonitorWindow() {},
     async openSettingsWindow() {},
     async openMemoryManagementWindow() {},
+    async openMateTalkWindow() {},
     async openCharacterEditorWindow() {},
     async openDiffWindow() {},
     async openCompanionReviewWindow() {},
@@ -815,6 +826,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
     WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
     WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
+    WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL,
     WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
     WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
     WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
