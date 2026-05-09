@@ -3296,34 +3296,10 @@ button:disabled {
   background: rgba(20, 27, 40, 0.98);
 }
 
-.session-plain-message-avatar {
-  display: grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  border: 1px solid color-mix(in srgb, var(--character-main) 34%, rgba(203, 213, 225, 0.2));
-  background: color-mix(in srgb, var(--character-main-soft) 58%, rgba(15, 19, 26, 0.92));
-  color: var(--ink);
-  font-size: 0.84rem;
-  font-weight: 800;
-}
-
-.session-plain-message-speaker {
-  margin: 0 0 6px;
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
 .session-message-empty {
   margin: 0;
   color: var(--muted);
   line-height: 1.45;
-}
-
-.session-plain-composer-feedback {
-  margin: 0;
 }
 
 .message-card.has-artifact {
