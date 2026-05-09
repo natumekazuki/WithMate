@@ -66,7 +66,7 @@ import {
   SessionDiffModal,
   SessionRetryBanner,
 } from "./session-components.js";
-import { SessionChatWindow } from "./chat/chat-window.js";
+import { ChatWindow } from "./chat/chat-window.js";
 import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,
@@ -2542,7 +2542,7 @@ function AgentSessionWindowApp() {
   }
 
   return (
-    <SessionChatWindow
+        <ChatWindow
       mode="agent"
       className={isSessionHeaderExpanded ? "" : "session-page-header-collapsed"}
       style={sessionThemeStyle}

@@ -9,9 +9,9 @@ import {
 import { DEFAULT_APPROVAL_MODE } from "../approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../codex-sandbox-mode.js";
 import {
-  SessionChatWindow,
-  SessionHeaderHandle,
-  type SessionSelectOption,
+  ChatHeaderHandle,
+  ChatWindow,
+  type ChatSelectOption,
 } from "./chat-window.js";
 import { shouldSubmitMateTalkInputByKey } from "./mate-talk-state.js";
 
@@ -21,10 +21,10 @@ export type MateTalkChatWindowProps = {
   isHeaderExpanded: boolean;
   messages: Array<{ id: string; role: "user" | "mate"; text: string }>;
   input: string;
-  modelOptions: SessionSelectOption[];
+  modelOptions: ChatSelectOption[];
   selectedModel: string;
   selectedModelFallbackLabel: string;
-  reasoningOptions: SessionSelectOption[];
+  reasoningOptions: ChatSelectOption[];
   selectedReasoningEffort: string;
   onChangeInput: (value: string) => void;
   onChangeModel: (model: string) => void;
@@ -82,7 +82,7 @@ export function MateTalkChatWindow({
   };
 
   return (
-    <SessionChatWindow
+    <ChatWindow
       mode="mate-talk"
       className={`mate-talk-chat-window${isHeaderExpanded ? "" : " session-page-header-collapsed"}`}
       style={themeStyle}
@@ -227,7 +227,7 @@ export function MateTalkChatWindow({
           className={`session-context-pane${isHeaderExpanded ? " session-context-pane-header-expanded" : ""}`}
           aria-label="メイトーク補助情報"
         >
-          {!isHeaderExpanded ? <SessionHeaderHandle taskTitle="メイトーク" onClick={onToggleHeaderExpanded} /> : null}
+          {!isHeaderExpanded ? <ChatHeaderHandle taskTitle="メイトーク" onClick={onToggleHeaderExpanded} /> : null}
         </aside>
       )}
     />

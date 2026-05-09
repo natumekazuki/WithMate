@@ -53,7 +53,7 @@ import {
   SessionHeader,
   SessionPaneErrorBoundary,
 } from "./session-components.js";
-import { SessionChatWindow, SessionHeaderHandle } from "./chat/chat-window.js";
+import { ChatHeaderHandle, ChatWindow } from "./chat/chat-window.js";
 import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,
@@ -2003,7 +2003,7 @@ export default function CompanionReviewApp() {
 
   if (!isMergeView) {
     return (
-      <SessionChatWindow
+      <ChatWindow
         mode="companion"
         className={`theme-accent${isHeaderExpanded ? "" : " session-page-header-collapsed"}`}
         style={themeStyle}
@@ -2377,7 +2377,7 @@ export default function CompanionReviewApp() {
             >
               <aside className="companion-review-file-list" aria-label="Changed files">
                 {!isHeaderExpanded ? (
-                  <SessionHeaderHandle taskTitle={snapshot.session.taskTitle} onClick={handleToggleHeaderExpanded} />
+                  <ChatHeaderHandle taskTitle={snapshot.session.taskTitle} onClick={handleToggleHeaderExpanded} />
                 ) : null}
                 {(visibleMergeBlockers.length > 0 || visibleMergeWarnings.length > 0) && (
                   <section className="companion-review-readiness compact">
