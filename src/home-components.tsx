@@ -729,7 +729,7 @@ export function HomeSettingsContent({
                 })}
               </div>
               <div className="settings-actions">
-                <button className="launch-toggle" type="button" onClick={onAddMateMemoryGenerationPriority}>
+                <button id="mate-memory-generation-priority-add" className="launch-toggle" type="button" onClick={onAddMateMemoryGenerationPriority}>
                   {SETTINGS_MATE_MEMORY_GENERATION_PRIORITY_ADD_LABEL}
                 </button>
               </div>

@@ -96,6 +96,7 @@ describe("HomeSettingsContent", () => {
   };
 
   type RenderSettingsParams = {
+    settingsDraft?: typeof settingsDraft;
     applyPendingGrowth?: boolean;
     canApplyPendingGrowth?: boolean;
     applyPendingGrowthBusy?: boolean;
@@ -119,6 +120,7 @@ describe("HomeSettingsContent", () => {
     onForgetMateGrowthEvent?: (eventId: string) => void;
     onUpdateMateGrowthSettings?: (input: unknown) => void;
     onResetMate?: () => void;
+    onAddMateMemoryGenerationPriority?: () => void;
     onBrowseProviderInstructionInstructionRelativePath?: (providerId: string) => void;
   };
 
@@ -151,7 +153,7 @@ describe("HomeSettingsContent", () => {
   };
 
   const buildSettingsContent = (params?: RenderSettingsParams) => HomeSettingsContent({
-    settingsDraft,
+    settingsDraft: params?.settingsDraft ?? settingsDraft,
     providerSettingRows,
     modelCatalogRevisionLabel: String(modelCatalog.revision),
     settingsDirty: false,
@@ -182,7 +184,7 @@ describe("HomeSettingsContent", () => {
     onChangeMateMemoryGenerationPriorityModel: noOp,
     onChangeMateMemoryGenerationPriorityReasoningEffort: noOp,
     onChangeMateMemoryGenerationPriorityTimeoutSeconds: noOp,
-    onAddMateMemoryGenerationPriority: noOp,
+    onAddMateMemoryGenerationPriority: params?.onAddMateMemoryGenerationPriority ?? noOp,
     onRemoveMateMemoryGenerationPriority: noOp,
     onChangeMateMemoryGenerationTriggerIntervalMinutes: noOp,
     onChangeAutoCollapseActionDockOnSend: noOp,
@@ -236,6 +238,11 @@ describe("HomeSettingsContent", () => {
   });
 
   const renderSettings = (params?: RenderSettingsParams) => renderToStaticMarkup(buildSettingsContent(params));
+
+  const getMateMemoryGenerationAddButton = (content: React.ReactNode) => collectElementsById(
+    content,
+    (element) => element.type === "button" && element.props.id === "mate-memory-generation-priority-add",
+  )[0];
 
   const extractResetButton = (html: string) => {
     const resetLabelIndex = html.indexOf(`<strong>${SETTINGS_MATE_RESET_LABEL}</strong>`);
@@ -299,6 +306,45 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_REASONING_LABEL}</span>`));
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_TIMEOUT_LABEL}</span>`));
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL}</span>`));
+  });
+
+  it("Mate Memory Generation の Add で onAdd callback が呼ばれる", () => {
+    let added = 0;
+    const content = buildSettingsContent({
+      onAddMateMemoryGenerationPriority: () => {
+        added += 1;
+      },
+    });
+    const addButton = getMateMemoryGenerationAddButton(content);
+    if (!addButton) {
+      throw new Error("Mate Memory Generation の Add ボタンが見つからない。");
+    }
+
+    addButton.props.onClick();
+    assert.equal(added, 1);
+  });
+
+  it("Priority 2 以上の設定を持つと Priority 2 が表示される", () => {
+    const twoPrioritySettings = {
+      ...settingsDraft,
+      mateMemoryGenerationSettings: {
+        ...settingsDraft.mateMemoryGenerationSettings,
+        priorityList: [
+          ...settingsDraft.mateMemoryGenerationSettings.priorityList,
+          {
+            provider: "codex",
+            model: "gpt-5.4-mini",
+            reasoningEffort: "low",
+            timeoutSeconds: 60,
+          },
+        ],
+      },
+    };
+
+    const html = renderSettings({ settingsDraft: twoPrioritySettings });
+
+    assert.ok(html.includes(`<span class="settings-provider-name">Priority 1</span>`));
+    assert.ok(html.includes(`<span class="settings-provider-name">Priority 2</span>`));
   });
 
   it("Mate Reset のラベルとヘルプが表示される", () => {
