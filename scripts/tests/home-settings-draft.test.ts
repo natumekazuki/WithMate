@@ -35,6 +35,8 @@ import {
   updateMateMemoryGenerationPriorityModelDraft,
   updateMateMemoryGenerationPriorityReasoningEffortDraft,
   updateMateMemoryGenerationPriorityTimeoutSecondsDraft,
+  addMateMemoryGenerationPriorityDraft,
+  removeMateMemoryGenerationPriorityDraft,
 } from "../../src/home-settings-draft.js";
 
 const providerCatalog: ModelCatalogProvider = {
@@ -246,10 +248,10 @@ describe("home-settings-draft", () => {
   it("mate memory generation の priority 1 を provider / model / reasoning / timeout / interval で更新できる", () => {
     const draft = createDefaultAppSettings();
 
-    const withProvider = updateMateMemoryGenerationPriorityProviderDraft(draft, "codex");
-    const withModel = updateMateMemoryGenerationPriorityModelDraft(withProvider, providerCatalog, "codex", "gpt-5.4-mini");
-    const withReasoning = updateMateMemoryGenerationPriorityReasoningEffortDraft(withModel, "low");
-    const withTimeout = updateMateMemoryGenerationPriorityTimeoutSecondsDraft(withReasoning, "42");
+    const withProvider = updateMateMemoryGenerationPriorityProviderDraft(draft, 0, "codex");
+    const withModel = updateMateMemoryGenerationPriorityModelDraft(withProvider, providerCatalog, 0, "codex", "gpt-5.4-mini");
+    const withReasoning = updateMateMemoryGenerationPriorityReasoningEffortDraft(withModel, 0, "low");
+    const withTimeout = updateMateMemoryGenerationPriorityTimeoutSecondsDraft(withReasoning, 0, "42");
     const withInterval = updateMateMemoryGenerationTriggerIntervalMinutesDraft(withTimeout, "90");
 
     assert.equal(withInterval.mateMemoryGenerationSettings.priorityList[0].provider, "codex");
@@ -257,5 +259,23 @@ describe("home-settings-draft", () => {
     assert.equal(withInterval.mateMemoryGenerationSettings.priorityList[0].reasoningEffort, "low");
     assert.equal(withInterval.mateMemoryGenerationSettings.priorityList[0].timeoutSeconds, 42);
     assert.equal(withInterval.mateMemoryGenerationSettings.triggerIntervalMinutes, 90);
+  });
+
+  it("mate memory generation の priority list を追加 / 個別更新 / 削除できる", () => {
+    const draft = createDefaultAppSettings();
+    const withAdded = addMateMemoryGenerationPriorityDraft(draft, {
+      provider: "copilot",
+      model: "copilot-1",
+      reasoningEffort: "medium",
+      timeoutSeconds: 60,
+    });
+    const withUpdated = updateMateMemoryGenerationPriorityTimeoutSecondsDraft(withAdded, 1, "75");
+    const withRemoved = removeMateMemoryGenerationPriorityDraft(withUpdated, 0);
+
+    assert.equal(withAdded.mateMemoryGenerationSettings.priorityList.length, 2);
+    assert.equal(withUpdated.mateMemoryGenerationSettings.priorityList[1]?.provider, "copilot");
+    assert.equal(withUpdated.mateMemoryGenerationSettings.priorityList[1]?.timeoutSeconds, 75);
+    assert.equal(withRemoved.mateMemoryGenerationSettings.priorityList.length, 1);
+    assert.equal(withRemoved.mateMemoryGenerationSettings.priorityList[0]?.provider, "copilot");
   });
 });

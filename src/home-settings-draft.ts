@@ -347,12 +347,40 @@ export function updateCharacterReflectionTimeoutSecondsDraft(
   };
 }
 
-function getResolvedMateMemoryGenerationPriority(draft: AppSettings): MateMemoryGenerationProviderSettings {
-  return getMateMemoryGenerationSettings(draft).priorityList[0] ?? {
+function getDefaultMateMemoryGenerationPriority(): MateMemoryGenerationProviderSettings {
+  return {
     provider: "",
     model: "",
     reasoningEffort: "high",
     timeoutSeconds: 30,
+  };
+}
+
+function getResolvedMateMemoryGenerationPriority(
+  draft: AppSettings,
+  index: number,
+): MateMemoryGenerationProviderSettings {
+  return getMateMemoryGenerationSettings(draft).priorityList[index] ?? getDefaultMateMemoryGenerationPriority();
+}
+
+function updateMateMemoryGenerationPriorityAt(
+  draft: AppSettings,
+  index: number,
+  nextPriority: MateMemoryGenerationProviderSettings,
+): AppSettings {
+  const current = getMateMemoryGenerationSettings(draft);
+  const priorityList = current.priorityList.length > 0
+    ? [...current.priorityList]
+    : [getDefaultMateMemoryGenerationPriority()];
+  const normalizedIndex = Math.max(0, Math.min(index, priorityList.length - 1));
+  priorityList[normalizedIndex] = nextPriority;
+
+  return {
+    ...draft,
+    mateMemoryGenerationSettings: {
+      ...current,
+      priorityList,
+    },
   };
 }
 
@@ -372,86 +400,89 @@ export function updateMateMemoryGenerationTriggerIntervalMinutesDraft(
 
 export function updateMateMemoryGenerationPriorityProviderDraft(
   draft: AppSettings,
+  index: number,
   providerId: string,
 ): AppSettings {
-  const current = getMateMemoryGenerationSettings(draft);
-  const currentPriority = getResolvedMateMemoryGenerationPriority(draft);
-  const nextPriority: MateMemoryGenerationProviderSettings = {
+  const currentPriority = getResolvedMateMemoryGenerationPriority(draft, index);
+  return updateMateMemoryGenerationPriorityAt(draft, index, {
     ...currentPriority,
     provider: providerId,
-  };
-
-  return {
-    ...draft,
-    mateMemoryGenerationSettings: {
-      ...current,
-      priorityList: [nextPriority],
-    },
-  };
+  });
 }
 
 export function updateMateMemoryGenerationPriorityModelDraft(
   draft: AppSettings,
   providerCatalog: ModelCatalogProvider,
+  index: number,
   providerId: string,
   model: string,
 ): AppSettings {
-  const current = getMateMemoryGenerationSettings(draft);
-  const currentPriority = getResolvedMateMemoryGenerationPriority(draft);
+  const currentPriority = getResolvedMateMemoryGenerationPriority(draft, index);
   const selection = coerceModelSelection(providerCatalog, model, currentPriority.reasoningEffort);
-  return {
-    ...draft,
-    mateMemoryGenerationSettings: {
-      ...current,
-      priorityList: [
-        {
-          ...currentPriority,
-          provider: providerId,
-          model: selection.resolvedModel,
-          reasoningEffort: selection.resolvedReasoningEffort,
-        },
-      ],
-    },
-  };
+  return updateMateMemoryGenerationPriorityAt(draft, index, {
+    ...currentPriority,
+    provider: providerId,
+    model: selection.resolvedModel,
+    reasoningEffort: selection.resolvedReasoningEffort,
+  });
 }
 
 export function updateMateMemoryGenerationPriorityReasoningEffortDraft(
   draft: AppSettings,
+  index: number,
   reasoningEffort: MateMemoryGenerationProviderSettings["reasoningEffort"],
 ): AppSettings {
-  const current = getMateMemoryGenerationSettings(draft);
-  const currentPriority = getResolvedMateMemoryGenerationPriority(draft);
-  return {
-    ...draft,
-    mateMemoryGenerationSettings: {
-      ...current,
-      priorityList: [
-        {
-          ...currentPriority,
-          reasoningEffort,
-        },
-      ],
-    },
-  };
+  const currentPriority = getResolvedMateMemoryGenerationPriority(draft, index);
+  return updateMateMemoryGenerationPriorityAt(draft, index, {
+    ...currentPriority,
+    reasoningEffort,
+  });
 }
 
 export function updateMateMemoryGenerationPriorityTimeoutSecondsDraft(
   draft: AppSettings,
+  index: number,
   rawValue: string,
 ): AppSettings {
-  const current = getMateMemoryGenerationSettings(draft);
-  const currentPriority = getResolvedMateMemoryGenerationPriority(draft);
+  const currentPriority = getResolvedMateMemoryGenerationPriority(draft, index);
   const normalized = Number.parseInt(rawValue, 10);
+  return {
+    ...draft,
+    mateMemoryGenerationSettings: updateMateMemoryGenerationPriorityAt(draft, index, {
+      ...currentPriority,
+      timeoutSeconds: Number.isFinite(normalized) && normalized > 0 ? normalized : 30,
+    }).mateMemoryGenerationSettings,
+  };
+}
+
+export function addMateMemoryGenerationPriorityDraft(
+  draft: AppSettings,
+  priority: MateMemoryGenerationProviderSettings,
+): AppSettings {
+  const current = getMateMemoryGenerationSettings(draft);
   return {
     ...draft,
     mateMemoryGenerationSettings: {
       ...current,
-      priorityList: [
-        {
-          ...currentPriority,
-          timeoutSeconds: Number.isFinite(normalized) && normalized > 0 ? normalized : 30,
-        },
-      ],
+      priorityList: [...current.priorityList, priority],
+    },
+  };
+}
+
+export function removeMateMemoryGenerationPriorityDraft(
+  draft: AppSettings,
+  index: number,
+): AppSettings {
+  const current = getMateMemoryGenerationSettings(draft);
+  if (current.priorityList.length <= 1) {
+    return draft;
+  }
+
+  return {
+    ...draft,
+    mateMemoryGenerationSettings: {
+      ...current,
+      priorityList: current.priorityList.filter((_, priorityIndex) => priorityIndex !== index),
     },
   };
 }

@@ -88,6 +88,8 @@ import {
   updateMateMemoryGenerationPriorityModelDraft,
   updateMateMemoryGenerationPriorityReasoningEffortDraft,
   updateMateMemoryGenerationPriorityTimeoutSecondsDraft,
+  addMateMemoryGenerationPriorityDraft,
+  removeMateMemoryGenerationPriorityDraft,
   updateMemoryGenerationEnabled,
   updateSystemPromptPrefix,
 } from "./home-settings-draft.js";
@@ -1446,27 +1448,42 @@ export default function HomeApp() {
     setSettingsDraft((current) => updateCharacterReflectionMessageDeltaThreshold(current, value));
   };
 
-  const handleChangeMateMemoryGenerationPriorityProvider = (providerId: string) => {
-    setSettingsDraft((current) => updateMateMemoryGenerationPriorityProviderDraft(current, providerId));
+  const handleChangeMateMemoryGenerationPriorityProvider = (index: number, providerId: string) => {
+    setSettingsDraft((current) => updateMateMemoryGenerationPriorityProviderDraft(current, index, providerId));
   };
 
-  const handleChangeMateMemoryGenerationPriorityModel = (providerId: string, model: string) => {
+  const handleChangeMateMemoryGenerationPriorityModel = (index: number, providerId: string, model: string) => {
     const providerCatalog = modelCatalog?.providers.find((provider) => provider.id === providerId);
     if (!providerCatalog) {
       return;
     }
 
-    setSettingsDraft((current) => updateMateMemoryGenerationPriorityModelDraft(current, providerCatalog, providerId, model));
+    setSettingsDraft((current) => updateMateMemoryGenerationPriorityModelDraft(current, providerCatalog, index, providerId, model));
   };
 
   const handleChangeMateMemoryGenerationPriorityReasoningEffort = (
+    index: number,
     reasoningEffort: AppSettings["mateMemoryGenerationSettings"]["priorityList"][number]["reasoningEffort"],
   ) => {
-    setSettingsDraft((current) => updateMateMemoryGenerationPriorityReasoningEffortDraft(current, reasoningEffort));
+    setSettingsDraft((current) => updateMateMemoryGenerationPriorityReasoningEffortDraft(current, index, reasoningEffort));
   };
 
-  const handleChangeMateMemoryGenerationPriorityTimeoutSeconds = (value: string) => {
-    setSettingsDraft((current) => updateMateMemoryGenerationPriorityTimeoutSecondsDraft(current, value));
+  const handleChangeMateMemoryGenerationPriorityTimeoutSeconds = (index: number, value: string) => {
+    setSettingsDraft((current) => updateMateMemoryGenerationPriorityTimeoutSecondsDraft(current, index, value));
+  };
+
+  const handleAddMateMemoryGenerationPriority = () => {
+    const provider = modelCatalog?.providers[0];
+    setSettingsDraft((current) => addMateMemoryGenerationPriorityDraft(current, {
+      provider: provider?.id ?? "codex",
+      model: provider?.defaultModelId ?? "gpt-5.4",
+      reasoningEffort: provider?.defaultReasoningEffort ?? "low",
+      timeoutSeconds: 180,
+    }));
+  };
+
+  const handleRemoveMateMemoryGenerationPriority = (index: number) => {
+    setSettingsDraft((current) => removeMateMemoryGenerationPriorityDraft(current, index));
   };
 
   const handleChangeMateMemoryGenerationTriggerIntervalMinutes = (value: string) => {
@@ -1794,6 +1811,8 @@ export default function HomeApp() {
       onChangeMateMemoryGenerationPriorityModel={handleChangeMateMemoryGenerationPriorityModel}
       onChangeMateMemoryGenerationPriorityReasoningEffort={handleChangeMateMemoryGenerationPriorityReasoningEffort}
       onChangeMateMemoryGenerationPriorityTimeoutSeconds={handleChangeMateMemoryGenerationPriorityTimeoutSeconds}
+      onAddMateMemoryGenerationPriority={handleAddMateMemoryGenerationPriority}
+      onRemoveMateMemoryGenerationPriority={handleRemoveMateMemoryGenerationPriority}
       onChangeMateMemoryGenerationTriggerIntervalMinutes={handleChangeMateMemoryGenerationTriggerIntervalMinutes}
       onChangeAutoCollapseActionDockOnSend={(enabled) =>
         setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, enabled))
@@ -1882,6 +1901,8 @@ export default function HomeApp() {
       onChangeMateMemoryGenerationPriorityModel={handleChangeMateMemoryGenerationPriorityModel}
       onChangeMateMemoryGenerationPriorityReasoningEffort={handleChangeMateMemoryGenerationPriorityReasoningEffort}
       onChangeMateMemoryGenerationPriorityTimeoutSeconds={handleChangeMateMemoryGenerationPriorityTimeoutSeconds}
+      onAddMateMemoryGenerationPriority={handleAddMateMemoryGenerationPriority}
+      onRemoveMateMemoryGenerationPriority={handleRemoveMateMemoryGenerationPriority}
       onChangeMateMemoryGenerationTriggerIntervalMinutes={handleChangeMateMemoryGenerationTriggerIntervalMinutes}
       onChangeAutoCollapseActionDockOnSend={(enabled) =>
         setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, enabled))

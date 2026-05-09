@@ -42,6 +42,8 @@ import {
   SETTINGS_MATE_MEMORY_GENERATION_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_MODEL_LABEL,
+  SETTINGS_MATE_MEMORY_GENERATION_PRIORITY_ADD_LABEL,
+  SETTINGS_MATE_MEMORY_GENERATION_PRIORITY_REMOVE_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_REASONING_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_TIMEOUT_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL,
@@ -177,6 +179,8 @@ describe("HomeSettingsContent", () => {
     onChangeMateMemoryGenerationPriorityModel: noOp,
     onChangeMateMemoryGenerationPriorityReasoningEffort: noOp,
     onChangeMateMemoryGenerationPriorityTimeoutSeconds: noOp,
+    onAddMateMemoryGenerationPriority: noOp,
+    onRemoveMateMemoryGenerationPriority: noOp,
     onChangeMateMemoryGenerationTriggerIntervalMinutes: noOp,
     onChangeAutoCollapseActionDockOnSend: noOp,
     onChangeProviderEnabled: noOp,
@@ -285,7 +289,9 @@ describe("HomeSettingsContent", () => {
     const html = renderSettings();
 
     assert.ok(html.includes(`<strong>${SETTINGS_MATE_MEMORY_GENERATION_LABEL}</strong>`));
-    assert.ok(html.includes("<span>Priority 1</span>"));
+    assert.ok(html.includes('<span class="settings-provider-name">Priority 1</span>'));
+    assert.ok(html.includes(`>${SETTINGS_MATE_MEMORY_GENERATION_PRIORITY_ADD_LABEL}</button>`));
+    assert.ok(html.includes(`>${SETTINGS_MATE_MEMORY_GENERATION_PRIORITY_REMOVE_LABEL}</button>`));
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_MODEL_LABEL}</span>`));
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_REASONING_LABEL}</span>`));
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_TIMEOUT_LABEL}</span>`));
@@ -798,6 +804,8 @@ describe("HomeSettingsContent", () => {
         onChangeMateMemoryGenerationPriorityModel={noOp}
         onChangeMateMemoryGenerationPriorityReasoningEffort={noOp}
         onChangeMateMemoryGenerationPriorityTimeoutSeconds={noOp}
+        onAddMateMemoryGenerationPriority={noOp}
+        onRemoveMateMemoryGenerationPriority={noOp}
         onChangeMateMemoryGenerationTriggerIntervalMinutes={noOp}
         onChangeAutoCollapseActionDockOnSend={noOp}
         onChangeProviderEnabled={noOp}
@@ -899,6 +907,8 @@ describe("HomeSettingsContent", () => {
         onChangeMateMemoryGenerationPriorityModel={noOp}
         onChangeMateMemoryGenerationPriorityReasoningEffort={noOp}
         onChangeMateMemoryGenerationPriorityTimeoutSeconds={noOp}
+        onAddMateMemoryGenerationPriority={noOp}
+        onRemoveMateMemoryGenerationPriority={noOp}
         onChangeMateMemoryGenerationTriggerIntervalMinutes={noOp}
         onChangeAutoCollapseActionDockOnSend={noOp}
         onChangeProviderEnabled={noOp}
@@ -1002,6 +1012,8 @@ describe("HomeSettingsContent", () => {
         onChangeMateMemoryGenerationPriorityModel={noOp}
         onChangeMateMemoryGenerationPriorityReasoningEffort={noOp}
         onChangeMateMemoryGenerationPriorityTimeoutSeconds={noOp}
+        onAddMateMemoryGenerationPriority={noOp}
+        onRemoveMateMemoryGenerationPriority={noOp}
         onChangeMateMemoryGenerationTriggerIntervalMinutes={noOp}
         onChangeAutoCollapseActionDockOnSend={noOp}
         onChangeProviderEnabled={noOp}

@@ -59,6 +59,8 @@ import {
   SETTINGS_MEMORY_GENERATION_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_MODEL_LABEL,
+  SETTINGS_MATE_MEMORY_GENERATION_PRIORITY_ADD_LABEL,
+  SETTINGS_MATE_MEMORY_GENERATION_PRIORITY_REMOVE_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_REASONING_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_TIMEOUT_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL,
@@ -131,12 +133,15 @@ export type HomeSettingsContentProps = {
   memoryManagementOnly?: boolean;
   onChangeSystemPromptPrefix: (value: string) => void;
   onChangeMemoryGenerationEnabled: (enabled: boolean) => void;
-  onChangeMateMemoryGenerationPriorityProvider: (providerId: string) => void;
-  onChangeMateMemoryGenerationPriorityModel: (providerId: string, model: string) => void;
+  onChangeMateMemoryGenerationPriorityProvider: (index: number, providerId: string) => void;
+  onChangeMateMemoryGenerationPriorityModel: (index: number, providerId: string, model: string) => void;
   onChangeMateMemoryGenerationPriorityReasoningEffort: (
+    index: number,
     reasoningEffort: AppSettings["mateMemoryGenerationSettings"]["priorityList"][number]["reasoningEffort"],
   ) => void;
-  onChangeMateMemoryGenerationPriorityTimeoutSeconds: (value: string) => void;
+  onChangeMateMemoryGenerationPriorityTimeoutSeconds: (index: number, value: string) => void;
+  onAddMateMemoryGenerationPriority: () => void;
+  onRemoveMateMemoryGenerationPriority: (index: number) => void;
   onChangeMateMemoryGenerationTriggerIntervalMinutes: (value: string) => void;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
@@ -262,6 +267,8 @@ export function HomeSettingsContent({
   onChangeMateMemoryGenerationPriorityModel,
   onChangeMateMemoryGenerationPriorityReasoningEffort,
   onChangeMateMemoryGenerationPriorityTimeoutSeconds,
+  onAddMateMemoryGenerationPriority,
+  onRemoveMateMemoryGenerationPriority,
   onChangeMateMemoryGenerationTriggerIntervalMinutes,
   onChangeAutoCollapseActionDockOnSend,
   onChangeProviderEnabled,
@@ -337,26 +344,20 @@ export function HomeSettingsContent({
       </div>
     );
   }
-  const mateMemoryGenerationPriority = settingsDraft.mateMemoryGenerationSettings.priorityList[0] ?? null;
-  const mateMemoryGenerationProvider = providerSettingRows.find(
-    ({ provider }) => provider.id === (mateMemoryGenerationPriority?.provider ?? ""),
-  ) ?? providerSettingRows[0] ?? null;
-  const mateMemoryGenerationModel = mateMemoryGenerationProvider
-    ? mateMemoryGenerationProvider.provider.models.find((model) => model.id === mateMemoryGenerationPriority?.model) ??
-      mateMemoryGenerationProvider.provider.models.find((model) => model.id === mateMemoryGenerationProvider.provider.defaultModelId) ??
+  const mateMemoryGenerationPriorities = settingsDraft.mateMemoryGenerationSettings.priorityList.length > 0
+    ? settingsDraft.mateMemoryGenerationSettings.priorityList
+    : [];
+  const resolveMateMemoryGenerationProvider = (
+    priority: AppSettings["mateMemoryGenerationSettings"]["priorityList"][number],
+  ) => providerSettingRows.find(({ provider }) => provider.id === priority.provider) ?? providerSettingRows[0] ?? null;
+  const resolveMateMemoryGenerationModel = (
+    providerRow: HomeProviderSettingRow | null,
+    priority: AppSettings["mateMemoryGenerationSettings"]["priorityList"][number],
+  ) => providerRow
+    ? providerRow.provider.models.find((model) => model.id === priority.model) ??
+      providerRow.provider.models.find((model) => model.id === providerRow.provider.defaultModelId) ??
       null
     : null;
-  const mateMemoryGenerationReasoningEfforts = mateMemoryGenerationModel?.reasoningEfforts ??
-    [mateMemoryGenerationProvider?.provider.defaultReasoningEffort].filter((reasoningEffort) => typeof reasoningEffort === "string");
-  const mateMemoryGenerationProviderId = mateMemoryGenerationProvider?.provider.id ?? "";
-  const mateMemoryGenerationModelId = mateMemoryGenerationModel?.id ??
-    mateMemoryGenerationPriority?.model ??
-    mateMemoryGenerationProvider?.provider.defaultModelId ??
-    "";
-  const mateMemoryGenerationReasoningEffort =
-    mateMemoryGenerationPriority?.reasoningEffort ??
-    mateMemoryGenerationModel?.reasoningEfforts[0] ??
-    "high";
   const isMateGrowthUnavailable = mateGrowthBusy || mateGrowthSettings === null;
   const isMateGrowthFeatureDisabled = mateGrowthSettings?.enabled === false;
   const isMateGrowthControlDisabled = isMateGrowthUnavailable || isMateGrowthFeatureDisabled;
@@ -621,70 +622,99 @@ export function HomeSettingsContent({
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>{SETTINGS_MATE_MEMORY_GENERATION_LABEL}</strong>
+              <label className="settings-provider-input">
+                <span>{SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL}</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={settingsDraft.mateMemoryGenerationSettings.triggerIntervalMinutes}
+                  onChange={(event) => onChangeMateMemoryGenerationTriggerIntervalMinutes(event.target.value)}
+                />
+              </label>
               <div className="settings-provider-list">
-                <section className="settings-provider-card">
-                  <label className="settings-provider-input">
-                    <span>Priority 1</span>
-                    <select
-                      value={mateMemoryGenerationProviderId}
-                      onChange={(event) => onChangeMateMemoryGenerationPriorityProvider(event.target.value)}
-                    >
-                      {providerSettingRows.map(({ provider }) => (
-                        <option key={provider.id} value={provider.id}>
-                          {provider.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="settings-provider-input">
-                    <span>{SETTINGS_MATE_MEMORY_GENERATION_MODEL_LABEL}</span>
-                    <select
-                      value={mateMemoryGenerationModelId}
-                      onChange={(event) =>
-                        onChangeMateMemoryGenerationPriorityModel(mateMemoryGenerationProviderId, event.target.value)}
-                    >
-                      {mateMemoryGenerationProvider?.provider.models.map((model) => (
-                        <option key={model.id} value={model.id}>
-                          {model.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="settings-provider-input">
-                    <span>{SETTINGS_MATE_MEMORY_GENERATION_REASONING_LABEL}</span>
-                    <select
-                      value={mateMemoryGenerationReasoningEffort}
-                      onChange={(event) =>
-                        onChangeMateMemoryGenerationPriorityReasoningEffort(
-                          event.target.value as AppSettings["mateMemoryGenerationSettings"]["priorityList"][number]["reasoningEffort"],
-                        )}
-                    >
-                      {mateMemoryGenerationReasoningEfforts.map((reasoningEffort) => (
-                        <option key={reasoningEffort} value={reasoningEffort}>
-                          {reasoningEffort}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="settings-provider-input">
-                    <span>{SETTINGS_MATE_MEMORY_GENERATION_TIMEOUT_LABEL}</span>
-                    <input
-                      type="number"
-                      min={1}
-                      value={mateMemoryGenerationPriority?.timeoutSeconds ?? 30}
-                      onChange={(event) => onChangeMateMemoryGenerationPriorityTimeoutSeconds(event.target.value)}
-                    />
-                  </label>
-                  <label className="settings-provider-input">
-                    <span>{SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL}</span>
-                    <input
-                      type="number"
-                      min={1}
-                      value={settingsDraft.mateMemoryGenerationSettings.triggerIntervalMinutes}
-                      onChange={(event) => onChangeMateMemoryGenerationTriggerIntervalMinutes(event.target.value)}
-                    />
-                  </label>
-                </section>
+                {mateMemoryGenerationPriorities.map((priority, index) => {
+                  const providerRow = resolveMateMemoryGenerationProvider(priority);
+                  const model = resolveMateMemoryGenerationModel(providerRow, priority);
+                  const providerId = providerRow?.provider.id ?? priority.provider;
+                  const modelId = model?.id ?? priority.model ?? providerRow?.provider.defaultModelId ?? "";
+                  const reasoningEfforts = model?.reasoningEfforts ??
+                    [providerRow?.provider.defaultReasoningEffort].filter((reasoningEffort) => typeof reasoningEffort === "string");
+                  const reasoningEffort = priority.reasoningEffort ?? model?.reasoningEfforts[0] ?? "high";
+                  return (
+                    <section key={`${providerId}-${index}`} className="settings-provider-card">
+                      <div className="settings-provider-toggle-row">
+                        <span className="settings-provider-name">Priority {index + 1}</span>
+                        <button
+                          className="launch-toggle"
+                          type="button"
+                          onClick={() => onRemoveMateMemoryGenerationPriority(index)}
+                          disabled={mateMemoryGenerationPriorities.length <= 1}
+                        >
+                          {SETTINGS_MATE_MEMORY_GENERATION_PRIORITY_REMOVE_LABEL}
+                        </button>
+                      </div>
+                      <label className="settings-provider-input">
+                        <span>Provider</span>
+                        <select
+                          value={providerId}
+                          onChange={(event) => onChangeMateMemoryGenerationPriorityProvider(index, event.target.value)}
+                        >
+                          {providerSettingRows.map(({ provider }) => (
+                            <option key={provider.id} value={provider.id}>
+                              {provider.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="settings-provider-input">
+                        <span>{SETTINGS_MATE_MEMORY_GENERATION_MODEL_LABEL}</span>
+                        <select
+                          value={modelId}
+                          onChange={(event) =>
+                            onChangeMateMemoryGenerationPriorityModel(index, providerId, event.target.value)}
+                        >
+                          {providerRow?.provider.models.map((providerModel) => (
+                            <option key={providerModel.id} value={providerModel.id}>
+                              {providerModel.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="settings-provider-input">
+                        <span>{SETTINGS_MATE_MEMORY_GENERATION_REASONING_LABEL}</span>
+                        <select
+                          value={reasoningEffort}
+                          onChange={(event) =>
+                            onChangeMateMemoryGenerationPriorityReasoningEffort(
+                              index,
+                              event.target.value as AppSettings["mateMemoryGenerationSettings"]["priorityList"][number]["reasoningEffort"],
+                            )}
+                        >
+                          {reasoningEfforts.map((nextReasoningEffort) => (
+                            <option key={nextReasoningEffort} value={nextReasoningEffort}>
+                              {nextReasoningEffort}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="settings-provider-input">
+                        <span>{SETTINGS_MATE_MEMORY_GENERATION_TIMEOUT_LABEL}</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={priority.timeoutSeconds ?? 30}
+                          onChange={(event) =>
+                            onChangeMateMemoryGenerationPriorityTimeoutSeconds(index, event.target.value)}
+                        />
+                      </label>
+                    </section>
+                  );
+                })}
+              </div>
+              <div className="settings-actions">
+                <button className="launch-toggle" type="button" onClick={onAddMateMemoryGenerationPriority}>
+                  {SETTINGS_MATE_MEMORY_GENERATION_PRIORITY_ADD_LABEL}
+                </button>
               </div>
             </div>
           </section>
