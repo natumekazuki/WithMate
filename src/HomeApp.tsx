@@ -63,11 +63,17 @@ import {
   HomeMateSetupPanel,
   HomeMateTalkPanel,
 } from "./home-components.js";
+import { HomeDashboardScreen } from "./home/HomeDashboardScreen.js";
+import { HomeMonitorWindowScreen } from "./home/HomeMonitorWindowScreen.js";
+import { HomeStatusScreen } from "./home/HomeStatusScreen.js";
 import {
   exportHomeModelCatalog,
   importHomeModelCatalog,
   saveHomeSettings,
 } from "./home-settings-actions.js";
+import { MemoryManagementWindowScreen } from "./memory/MemoryManagementWindowScreen.js";
+import { MateProfileScreen } from "./mate/MateProfileScreen.js";
+import { SettingsWindowScreen } from "./settings/SettingsWindowScreen.js";
 import { buildResetMateConfirmMessage } from "./settings-ui.js";
 import {
   updateCharacterReflectionCharDeltaThreshold,
@@ -2157,86 +2163,38 @@ export default function HomeApp() {
   );
 
   if (!desktopRuntime) {
-    return (
-      <div className={homePageClassName}>
-        <main className="home-layout home-layout-minimal">
-          <section className="panel empty-list-card rise-1">
-            <p>Home は Electron から起動してね。</p>
-          </section>
-        </main>
-      </div>
-    );
+    return <HomeStatusScreen homePageClassName={homePageClassName} message="Home は Electron から起動してね。" />;
   }
 
   if (isSettingsWindowMode) {
     return (
-      <div className={`${homePageClassName} home-page-settings-window`.trim()}>
-        <main className="home-layout home-layout-settings-window">
-          <section className="launch-dialog settings-dialog panel settings-window-shell">
-            {settingsWindowReady ? (
-              settingsContent
-            ) : (
-              <div className="settings-loading-state">
-                <p>Settings を読み込み中...</p>
-              </div>
-            )}
-          </section>
-        </main>
-      </div>
+      <SettingsWindowScreen
+        homePageClassName={homePageClassName}
+        ready={settingsWindowReady}
+        content={settingsContent}
+      />
     );
   }
 
   if (isMateStateLoading) {
-    return (
-      <div className={homePageClassName}>
-        <main className="home-layout home-layout-minimal">
-          <section className="panel empty-list-card rise-1">
-            <p>Mate 状態を読み込んでるよ...</p>
-          </section>
-        </main>
-      </div>
-    );
+    return <HomeStatusScreen homePageClassName={homePageClassName} message="Mate 状態を読み込んでるよ..." />;
   }
 
   if (isMateNotCreated) {
-    return (
-      <div className={`${homePageClassName} home-page-settings-window`.trim()}>
-        <main className="home-layout home-layout-settings-window">
-          <section className="launch-dialog settings-dialog home-mate-setup-shell">
-            {mateSetupContent}
-          </section>
-        </main>
-      </div>
-    );
+    return <MateProfileScreen homePageClassName={homePageClassName} content={mateSetupContent} />;
   }
 
   if (mateProfileEditorOpen) {
-    return (
-      <div className={`${homePageClassName} home-page-settings-window`.trim()}>
-        <main className="home-layout home-layout-settings-window">
-          <section className="launch-dialog settings-dialog home-mate-setup-shell">
-            {mateSetupContent}
-          </section>
-        </main>
-      </div>
-    );
+    return <MateProfileScreen homePageClassName={homePageClassName} content={mateSetupContent} />;
   }
 
   if (isMemoryWindowMode) {
     return (
-      <div className={`${homePageClassName} home-page-settings-window`.trim()}>
-        <main className="home-layout home-layout-settings-window">
-          <section className="launch-dialog settings-dialog panel settings-window-shell memory-window-shell">
-            {memoryManagementLoaded ? (
-              memoryManagementContent
-            ) : (
-              <div className="settings-loading-state">
-                <p>Memory 管理を読み込み中...</p>
-              </div>
-            )}
-          </section>
-        </main>
-      </div>
+      <MemoryManagementWindowScreen
+        homePageClassName={homePageClassName}
+        loaded={memoryManagementLoaded}
+        content={memoryManagementContent}
+      />
     );
   }
 
@@ -2246,28 +2204,26 @@ export default function HomeApp() {
 
   if (isMonitorWindowMode) {
     return (
-      <div className={homePageClassName}>
-        <main className="home-layout home-layout-monitor-window">
-          <section className="panel home-monitor-window-panel rise-3">
-            <section className="home-monitor-panel compact" aria-label="Session Monitor">
-              <HomeMonitorContent
-                runningEntries={runningMonitorEntries}
-                nonRunningEntries={nonRunningMonitorEntries}
-                runningEmptyMessage={monitorRunningEmptyMessage}
-                completedEmptyMessage={monitorCompletedEmptyMessage}
-                onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
-                onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
-              />
-            </section>
-          </section>
-        </main>
-      </div>
+      <HomeMonitorWindowScreen
+        homePageClassName={homePageClassName}
+        content={(
+          <HomeMonitorContent
+            runningEntries={runningMonitorEntries}
+            nonRunningEntries={nonRunningMonitorEntries}
+            runningEmptyMessage={monitorRunningEmptyMessage}
+            completedEmptyMessage={monitorCompletedEmptyMessage}
+            onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
+            onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
+          />
+        )}
+      />
     );
   }
 
   return (
-    <div className={homePageClassName}>
-      <main className="home-layout rise-2">
+    <HomeDashboardScreen
+      homePageClassName={homePageClassName}
+      recentSessionsPanel={(
         <HomeRecentSessionsPanel
           filteredSessionEntries={filteredSessionEntries}
           companionSessions={companionSessions}
@@ -2280,7 +2236,8 @@ export default function HomeApp() {
           onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
           canUsePrimaryFeatures={canUsePrimaryFeatures}
         />
-
+      )}
+      rightPane={(
         <HomeRightPane
           rightPaneView={rightPaneView}
           runningMonitorEntries={runningMonitorEntries}
@@ -2299,46 +2256,46 @@ export default function HomeApp() {
           onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
           canUsePrimaryFeatures={canUsePrimaryFeatures}
         />
-      </main>
-
-      <HomeLaunchDialog
-        open={launchDraft.open}
-        mode={launchDraft.mode}
-        title={launchDraft.title}
-        workspace={launchDraft.workspace}
-        launchWorkspacePathLabel={launchWorkspacePathLabel}
-        enabledLaunchProviders={enabledLaunchProviders}
-        selectedLaunchProviderId={selectedLaunchProvider?.id ?? null}
-        canStartSession={canStartSession && canUsePrimaryFeatures}
-        launchFeedback={launchFeedback}
-        launchStarting={launchStarting}
-        onClose={closeLaunchDialog}
-        onSelectMode={(mode) => {
-          setLaunchFeedback("");
-          setLaunchDraft((current) => ({ ...current, mode }));
-        }}
-        onChangeTitle={(value) => {
-          setLaunchFeedback("");
-          setLaunchDraft((current) => ({ ...current, title: value }));
-        }}
-        onBrowseWorkspace={() => void handleBrowseWorkspace()}
-        onSelectProvider={(providerId) => {
-          setLaunchFeedback("");
-          const provider = enabledLaunchProviders.find((candidate) => candidate.id === providerId) ?? null;
-          const model =
-            provider?.models.find((candidate) => candidate.id === provider.defaultModelId) ??
-            provider?.models[0] ??
-            null;
-          setLaunchDraft((current) => ({
-            ...current,
-            providerId,
-            model: model?.id ?? current.model,
-            reasoningEffort: model?.reasoningEfforts[0] ?? provider?.defaultReasoningEffort ?? current.reasoningEffort,
-          }));
-        }}
-        onStartSession={(mode) => void handleStartSession(mode)}
-      />
-
-    </div>
+      )}
+      launchDialog={(
+        <HomeLaunchDialog
+          open={launchDraft.open}
+          mode={launchDraft.mode}
+          title={launchDraft.title}
+          workspace={launchDraft.workspace}
+          launchWorkspacePathLabel={launchWorkspacePathLabel}
+          enabledLaunchProviders={enabledLaunchProviders}
+          selectedLaunchProviderId={selectedLaunchProvider?.id ?? null}
+          canStartSession={canStartSession && canUsePrimaryFeatures}
+          launchFeedback={launchFeedback}
+          launchStarting={launchStarting}
+          onClose={closeLaunchDialog}
+          onSelectMode={(mode) => {
+            setLaunchFeedback("");
+            setLaunchDraft((current) => ({ ...current, mode }));
+          }}
+          onChangeTitle={(value) => {
+            setLaunchFeedback("");
+            setLaunchDraft((current) => ({ ...current, title: value }));
+          }}
+          onBrowseWorkspace={() => void handleBrowseWorkspace()}
+          onSelectProvider={(providerId) => {
+            setLaunchFeedback("");
+            const provider = enabledLaunchProviders.find((candidate) => candidate.id === providerId) ?? null;
+            const model =
+              provider?.models.find((candidate) => candidate.id === provider.defaultModelId) ??
+              provider?.models[0] ??
+              null;
+            setLaunchDraft((current) => ({
+              ...current,
+              providerId,
+              model: model?.id ?? current.model,
+              reasoningEffort: model?.reasoningEfforts[0] ?? provider?.defaultReasoningEffort ?? current.reasoningEffort,
+            }));
+          }}
+          onStartSession={(mode) => void handleStartSession(mode)}
+        />
+      )}
+    />
   );
 }

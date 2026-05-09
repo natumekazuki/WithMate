@@ -29,6 +29,19 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - current UI の正本はこの文書とする
 - UI の経緯メモや旧検討文書は `docs/design/archive/2026/03/` へ移しており、この文書より優先しない
 
+## UI Implementation Boundary
+
+- 画面の実装ファイルは、表示される入口ではなく役割ごとの domain に置く
+- `Home` 配下に置くのは Home dashboard と Home から直接見える管理ハブだけとする
+- `Settings Window` の画面実装は `settings` domain に置き、Home の実装ファイルへ混ぜない
+- `Memory Management Window` の画面実装は `memory` domain に置き、Home の実装ファイルへ混ぜない
+- `Mate Setup` / `Mate Profile` / avatar picker は `mate` domain に置き、Home には起動導線と routing だけを残す
+- chat layout の実装は 1 系統だけとし、`chat` domain を正本にする
+- Agent / Companion / メイトークは同じ chat layout に乗せ、各機能側には state / service / adapter だけを置く
+- `mate-talk` domain に専用 chat layout、専用 message list、専用 composer、専用 right pane shell を作らない
+- `Session` という名前の UI 実装に Agent / Companion / メイトーク固有処理を詰め込まない。必要な差分は mode / capability / adapter として注入する
+- right pane に表示する情報がない mode では、説明文や誘導文で埋めず、空の pane shell として扱う
+
 ## Runtime
 
 - 対応 runtime は Electron のみ
