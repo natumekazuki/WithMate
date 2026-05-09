@@ -40,7 +40,6 @@ import {
   SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL,
-  SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_PLACEHOLDER,
   SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER,
   SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL,
@@ -148,9 +147,7 @@ export type HomeSettingsContentProps = {
   onChangeProviderInstructionEnabled: (providerId: string, enabled: boolean) => void;
   onChangeProviderInstructionWriteMode: (providerId: string, value: string) => void;
   onChangeProviderInstructionFailPolicy: (providerId: string, value: string) => void;
-  onChangeProviderInstructionRootDirectory: (providerId: string, rootDirectory: string) => void;
   onChangeProviderInstructionInstructionRelativePath: (providerId: string, instructionRelativePath: string) => void;
-  onBrowseProviderInstructionRootDirectory: (providerId: string) => void;
   onBrowseProviderInstructionInstructionRelativePath: (providerId: string) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
   onBrowseProviderSkillRootPath: (providerId: string) => void;
@@ -275,9 +272,7 @@ export function HomeSettingsContent({
   onChangeProviderInstructionEnabled,
   onChangeProviderInstructionWriteMode,
   onChangeProviderInstructionFailPolicy,
-  onChangeProviderInstructionRootDirectory,
   onChangeProviderInstructionInstructionRelativePath,
-  onBrowseProviderInstructionRootDirectory,
   onBrowseProviderInstructionInstructionRelativePath,
   onChangeProviderSkillRootPath,
   onBrowseProviderSkillRootPath,
@@ -477,7 +472,7 @@ export function HomeSettingsContent({
                     </div>
                   </details>
                   <div className="settings-provider-list">
-                    {providerSettingRows.map(({ provider, instructionTarget }) => (
+                    {providerSettingRows.map(({ provider, settings, instructionTarget }) => (
                       <section key={`provider-instruction-${provider.id}`} className="settings-provider-card">
                         <label className="settings-provider-toggle-row">
                           <span className="settings-provider-name">{provider.label}</span>
@@ -511,24 +506,9 @@ export function HomeSettingsContent({
                         </label>
                         <label className="settings-provider-input">
                           <span>{SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL}</span>
-                          <div className="settings-inline-input-row">
-                            <input
-                              type="text"
-                              value={instructionTarget.rootDirectory}
-                              onChange={(event) =>
-                                onChangeProviderInstructionRootDirectory(provider.id, event.target.value)}
-                              placeholder={SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_PLACEHOLDER}
-                              autoComplete="off"
-                              spellCheck={false}
-                            />
-                            <button
-                              className="launch-toggle"
-                              type="button"
-                              onClick={() => onBrowseProviderInstructionRootDirectory(provider.id)}
-                            >
-                              Browse
-                            </button>
-                          </div>
+                          <p className="settings-help">
+                            {settings.skillRootPath.trim() || "Skill Root を指定するとここに反映される。"}
+                          </p>
                         </label>
                         <label className="settings-provider-input">
                           <span>{SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>

@@ -187,7 +187,6 @@ describe("HomeSettingsContent", () => {
     onChangeProviderInstructionEnabled: noOp,
     onChangeProviderInstructionWriteMode: noOp,
     onChangeProviderInstructionFailPolicy: noOp,
-    onChangeProviderInstructionRootDirectory: noOp,
     onChangeProviderInstructionInstructionRelativePath: noOp,
     onChangeProviderSkillRootPath: noOp,
     onBrowseProviderSkillRootPath: noOp,
@@ -812,9 +811,7 @@ describe("HomeSettingsContent", () => {
         onChangeProviderInstructionEnabled={noOp}
         onChangeProviderInstructionWriteMode={noOp}
         onChangeProviderInstructionFailPolicy={noOp}
-        onChangeProviderInstructionRootDirectory={noOp}
         onChangeProviderInstructionInstructionRelativePath={noOp}
-        onBrowseProviderInstructionRootDirectory={noOp}
         onBrowseProviderInstructionInstructionRelativePath={noOp}
         onChangeProviderSkillRootPath={noOp}
         onBrowseProviderSkillRootPath={noOp}
@@ -858,8 +855,18 @@ describe("HomeSettingsContent", () => {
     assert.ok(!html.includes("hidden-cache-path-marker"));
   });
 
-  it("Provider Instruction Sync に rootDirectory / instructionRelativePath の入力が表示される", () => {
-    const customRows = buildHomeProviderSettingRows(modelCatalog, settingsDraft, [
+  it("Provider Instruction Sync に Skill Root 由来の rootDirectory / instructionRelativePath が表示される", () => {
+    const settingsWithSkillRoot = {
+      ...settingsDraft,
+      codingProviderSettings: {
+        ...settingsDraft.codingProviderSettings,
+        codex: {
+          ...settingsDraft.codingProviderSettings.codex,
+          skillRootPath: "/repo-root",
+        },
+      },
+    };
+    const customRows = buildHomeProviderSettingRows(modelCatalog, settingsWithSkillRoot, [
       {
         providerId: "codex",
         targetId: "main",
@@ -880,7 +887,7 @@ describe("HomeSettingsContent", () => {
 
     const html = renderToStaticMarkup(
       <HomeSettingsContent
-        settingsDraft={settingsDraft}
+        settingsDraft={settingsWithSkillRoot}
         providerSettingRows={customRows}
         modelCatalogRevisionLabel={String(modelCatalog.revision)}
         settingsDirty={false}
@@ -915,9 +922,7 @@ describe("HomeSettingsContent", () => {
         onChangeProviderInstructionEnabled={noOp}
         onChangeProviderInstructionWriteMode={noOp}
         onChangeProviderInstructionFailPolicy={noOp}
-        onChangeProviderInstructionRootDirectory={noOp}
         onChangeProviderInstructionInstructionRelativePath={noOp}
-        onBrowseProviderInstructionRootDirectory={noOp}
         onBrowseProviderInstructionInstructionRelativePath={noOp}
         onChangeProviderSkillRootPath={noOp}
         onBrowseProviderSkillRootPath={noOp}
@@ -957,8 +962,7 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes(`<span>${SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>`));
     assert.ok(html.includes("Provider Instruction Sync のヘルプ"));
     assert.ok(html.includes("managed_block は既存ファイル内"));
-    assert.equal(html.split(">Browse</button>").length - 1 >= 3, true);
-    assert.ok(html.includes(`value=\"/repo-root\"`));
+    assert.ok(html.includes(`<p class=\"settings-help\">/repo-root</p>`));
     assert.ok(html.includes("value=\"docs/instructions.md\""));
   });
 
@@ -1020,9 +1024,7 @@ describe("HomeSettingsContent", () => {
         onChangeProviderInstructionEnabled={noOp}
         onChangeProviderInstructionWriteMode={noOp}
         onChangeProviderInstructionFailPolicy={noOp}
-        onChangeProviderInstructionRootDirectory={noOp}
         onChangeProviderInstructionInstructionRelativePath={noOp}
-        onBrowseProviderInstructionRootDirectory={noOp}
         onBrowseProviderInstructionInstructionRelativePath={noOp}
         onChangeProviderSkillRootPath={noOp}
         onBrowseProviderSkillRootPath={noOp}

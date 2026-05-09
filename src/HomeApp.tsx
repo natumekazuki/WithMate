@@ -1014,6 +1014,32 @@ export default function HomeApp() {
     }
   };
 
+  const syncProviderInstructionTargetRoots = async (
+    withmateApi: NonNullable<ReturnType<typeof getWithMateApi>>,
+    nextSettings: AppSettings,
+  ): Promise<HomeProviderInstructionTargetDraft[]> => {
+    const nextTargets = providerInstructionTargets.map((target) => {
+      const rootDirectory = getProviderAppSettings(nextSettings, target.providerId).skillRootPath.trim();
+      if (rootDirectory === target.rootDirectory) {
+        return target;
+      }
+
+      return {
+        ...target,
+        rootDirectory,
+      };
+    });
+
+    const changedTargets = nextTargets.filter((target, index) =>
+      target.rootDirectory !== providerInstructionTargets[index]?.rootDirectory);
+    await Promise.all(
+      changedTargets.map((target) =>
+        withmateApi.upsertProviderInstructionTarget(buildHomeProviderInstructionTargetUpsertInput(target))),
+    );
+
+    return nextTargets;
+  };
+
   const handleSaveSettings = async () => {
     const withmateApi = getWithMateApi();
     if (!withmateApi) {
@@ -1022,8 +1048,10 @@ export default function HomeApp() {
 
     try {
       const result = await saveHomeSettings(withmateApi, persistedSettingsDraft);
+      const nextProviderInstructionTargets = await syncProviderInstructionTargetRoots(withmateApi, result.nextSettings);
       setAppSettings(result.nextSettings);
       setSettingsDraft(result.nextSettings);
+      setProviderInstructionTargets(nextProviderInstructionTargets);
       setSettingsFeedback(result.feedback);
     } catch (error) {
       setSettingsFeedback(error instanceof Error ? error.message : "設定の保存に失敗したよ。");
@@ -1273,9 +1301,11 @@ export default function HomeApp() {
   ) => {
     const current = providerInstructionTargets.find((next) => next.providerId === providerId);
     const fallback = buildFallbackProviderInstructionTarget(providerId);
+    const rootDirectory = getProviderAppSettings(settingsDraft, providerId).skillRootPath.trim();
     const nextTarget = {
       ...(current ?? fallback),
       ...patch,
+      rootDirectory,
       providerId,
     };
     setProviderInstructionTargets((previous) => {
@@ -1309,28 +1339,8 @@ export default function HomeApp() {
     updateProviderInstructionTarget(providerId, { failPolicy });
   };
 
-  const handleChangeProviderInstructionRootDirectory = (providerId: string, rootDirectory: string) => {
-    updateProviderInstructionTarget(providerId, { rootDirectory });
-  };
-
   const handleChangeProviderInstructionInstructionRelativePath = (providerId: string, instructionRelativePath: string) => {
     updateProviderInstructionTarget(providerId, { instructionRelativePath });
-  };
-
-  const handleBrowseProviderInstructionRootDirectory = async (providerId: string) => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-
-    const current = providerInstructionTargets.find((target) => target.providerId === providerId);
-    const currentSettings = getProviderAppSettings(settingsDraft, providerId);
-    const selectedPath = await withmateApi.pickDirectory(current?.rootDirectory || currentSettings.skillRootPath || null);
-    if (!selectedPath) {
-      return;
-    }
-
-    updateProviderInstructionTarget(providerId, { rootDirectory: selectedPath });
   };
 
   const handleBrowseProviderInstructionInstructionRelativePath = async (providerId: string) => {
@@ -1339,12 +1349,10 @@ export default function HomeApp() {
       return;
     }
 
-    const current = providerInstructionTargets.find((target) => target.providerId === providerId);
-    const fallback = buildFallbackProviderInstructionTarget(providerId);
     const currentSettings = getProviderAppSettings(settingsDraft, providerId);
-    const rootDirectory = current?.rootDirectory || currentSettings.skillRootPath || fallback.rootDirectory;
+    const rootDirectory = currentSettings.skillRootPath.trim();
     if (!rootDirectory.trim()) {
-      setSettingsFeedback("Instruction Relative Path を選ぶ前に Root Directory を指定してね。");
+      setSettingsFeedback("Instruction Relative Path を選ぶ前に Skill Root を指定してね。");
       return;
     }
 
@@ -1355,18 +1363,11 @@ export default function HomeApp() {
 
     const relativePath = resolveInstructionRelativePathFromSelection(rootDirectory, selectedPath);
     if (relativePath === null) {
-      setSettingsFeedback("Root Directory 配下の instruction file を選んでね。");
+      setSettingsFeedback("Skill Root 配下の instruction file を選んでね。");
       return;
     }
 
-    const nextInstructionTarget: Partial<HomeProviderInstructionTargetSettings> = {
-      instructionRelativePath: relativePath,
-    };
-    if (!current?.rootDirectory && currentSettings.skillRootPath) {
-      nextInstructionTarget.rootDirectory = currentSettings.skillRootPath;
-    }
-
-    updateProviderInstructionTarget(providerId, nextInstructionTarget);
+    updateProviderInstructionTarget(providerId, { instructionRelativePath: relativePath });
   };
 
   const handleChangeProviderEnabled = (providerId: string, enabled: boolean) => {
@@ -1821,9 +1822,7 @@ export default function HomeApp() {
       onChangeProviderInstructionEnabled={handleChangeProviderInstructionEnabled}
       onChangeProviderInstructionWriteMode={handleChangeProviderInstructionWriteMode}
       onChangeProviderInstructionFailPolicy={handleChangeProviderInstructionFailPolicy}
-      onChangeProviderInstructionRootDirectory={handleChangeProviderInstructionRootDirectory}
       onChangeProviderInstructionInstructionRelativePath={handleChangeProviderInstructionInstructionRelativePath}
-      onBrowseProviderInstructionRootDirectory={(providerId) => void handleBrowseProviderInstructionRootDirectory(providerId)}
       onBrowseProviderInstructionInstructionRelativePath={(providerId) =>
         void handleBrowseProviderInstructionInstructionRelativePath(providerId)}
       onChangeProviderSkillRootPath={handleChangeProviderSkillRootPath}
@@ -1911,9 +1910,7 @@ export default function HomeApp() {
       onChangeProviderInstructionEnabled={handleChangeProviderInstructionEnabled}
       onChangeProviderInstructionWriteMode={handleChangeProviderInstructionWriteMode}
       onChangeProviderInstructionFailPolicy={handleChangeProviderInstructionFailPolicy}
-      onChangeProviderInstructionRootDirectory={handleChangeProviderInstructionRootDirectory}
       onChangeProviderInstructionInstructionRelativePath={handleChangeProviderInstructionInstructionRelativePath}
-      onBrowseProviderInstructionRootDirectory={(providerId) => void handleBrowseProviderInstructionRootDirectory(providerId)}
       onBrowseProviderInstructionInstructionRelativePath={(providerId) =>
         void handleBrowseProviderInstructionInstructionRelativePath(providerId)}
       onChangeProviderSkillRootPath={handleChangeProviderSkillRootPath}
