@@ -64,9 +64,9 @@ import {
   SessionPaneErrorBoundary,
   SessionContextPane,
   SessionDiffModal,
-  SessionChatWindow,
   SessionRetryBanner,
 } from "./session-components.js";
+import { SessionChatWindow } from "./chat/chat-window.js";
 import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,

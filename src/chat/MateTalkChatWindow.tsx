@@ -12,7 +12,7 @@ import {
   SessionChatWindow,
   SessionHeaderHandle,
   type SessionSelectOption,
-} from "../session-components.js";
+} from "./chat-window.js";
 import { shouldSubmitMateTalkInputByKey } from "./mate-talk-state.js";
 
 export type MateTalkChatWindowProps = {

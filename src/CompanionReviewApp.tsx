@@ -50,11 +50,10 @@ import {
   SessionAuditLogModal,
   SessionContextPane,
   SessionDiffModal,
-  SessionChatWindow,
   SessionHeader,
-  SessionHeaderHandle,
   SessionPaneErrorBoundary,
 } from "./session-components.js";
+import { SessionChatWindow, SessionHeaderHandle } from "./chat/chat-window.js";
 import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,
