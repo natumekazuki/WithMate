@@ -8,7 +8,7 @@ import {
 } from "../app-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../codex-sandbox-mode.js";
-import { ChatHeaderHandle, type ChatSelectOption, type ChatWindowProps } from "./chat-window.js";
+import { ChatRightPaneShell, type ChatSelectOption, type ChatWindowProps } from "./chat-window.js";
 import { shouldSubmitMateTalkInputByKey } from "./mate-talk-state.js";
 
 export type MateTalkMessage = {
@@ -234,12 +234,12 @@ export function buildMateTalkChatWindowProps({
     },
     splitter: <div className="session-workbench-splitter mate-talk-splitter" aria-hidden="true" />,
     rightPane: (
-      <aside
-        className={`session-context-pane${isHeaderExpanded ? " session-context-pane-header-expanded" : ""}`}
-        aria-label="メイトーク補助情報"
-      >
-        {!isHeaderExpanded ? <ChatHeaderHandle taskTitle="メイトーク" onClick={onToggleHeaderExpanded} /> : null}
-      </aside>
+      <ChatRightPaneShell
+        isHeaderExpanded={isHeaderExpanded}
+        headerHandleTitle="メイトーク"
+        ariaLabel="メイトーク補助情報"
+        onToggleHeaderExpanded={onToggleHeaderExpanded}
+      />
     ),
   };
 }

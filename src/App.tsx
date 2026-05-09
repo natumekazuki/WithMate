@@ -58,14 +58,6 @@ import {
   resolveAvailableContextPaneTabs,
   resolveAutoContextPaneTab,
 } from "./session-ui-projection.js";
-import {
-  SessionAuditLogModal,
-  CharacterUpdateContextPane,
-  SessionPaneErrorBoundary,
-  SessionContextPane,
-  SessionDiffModal,
-  SessionRetryBanner,
-} from "./session-components.js";
 import { ChatWindow } from "./chat/chat-window.js";
 import {
   buildComposerSendabilityState,
@@ -94,6 +86,7 @@ import {
   useSessionContextRail,
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
+import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home-session-projection.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
@@ -2542,45 +2535,21 @@ function AgentSessionWindowApp() {
   }
 
   return (
-        <ChatWindow
-      mode="agent"
-      className={isSessionHeaderExpanded ? "" : "session-page-header-collapsed"}
-      style={sessionThemeStyle}
-      workbenchRef={sessionWorkbenchRef}
-      workbenchStyle={sessionWorkbenchStyle}
-      isHeaderExpanded={isSessionHeaderExpanded}
-      headerProps={{
-        taskTitle: selectedSession.taskTitle,
+    <ChatWindow
+      {...buildAgentSessionChatWindowProps({
+        selectedSession,
+        selectedSessionCharacter,
+        displayedMessages,
+        expandedArtifacts,
+        sessionThemeStyle,
+        sessionWorkbenchRef,
+        sessionWorkbenchStyle,
+        isSessionHeaderExpanded,
         isEditingTitle,
         titleDraft,
-        isRunning: isSelectedSessionRunning,
-        showTerminalButton: !isCharacterUpdateSession,
-        onToggleExpanded: handleToggleHeaderExpanded,
-        onOpenAuditLog: () => setAuditLogsOpen(true),
-        onOpenTerminal: () => void handleOpenSessionTerminal(),
-        onTitleDraftChange: setTitleDraft,
-        onTitleInputKeyDown: handleTitleInputKeyDown,
-        onSaveTitle: () => void handleSaveTitle(),
-        onCancelTitleEdit: handleCancelTitleEdit,
-        onStartTitleEdit: handleStartTitleEdit,
-        onDeleteSession: () => void handleDeleteSession(),
-        workspaceActions: !isCharacterUpdateSession ? (
-          <button
-            className="drawer-toggle compact secondary"
-            type="button"
-            onClick={() => void handleOpenSessionExplorer()}
-          >
-            Explorer
-          </button>
-        ) : null,
-      }}
-      messageColumnProps={{
-        sessionId: selectedSession.id,
-        character: selectedSessionCharacter,
-        messages: displayedMessages,
-        expandedArtifacts,
+        isSelectedSessionRunning,
+        isCharacterUpdateSession,
         messageListRef,
-        isRunning: isSelectedSessionRunning,
         pendingRunIndicatorAnnouncement,
         pendingRunIndicatorText,
         liveApprovalRequest,
@@ -2591,6 +2560,80 @@ function AgentSessionWindowApp() {
         hasLiveRunAssistantText,
         liveRunErrorMessage: selectedSessionLiveRun?.errorMessage ?? "",
         isMessageListFollowing,
+        retryBanner,
+        isRetryDetailsOpen,
+        isRetryActionDisabled,
+        isRetryEditDisabled,
+        isRetryDraftReplacePending,
+        composerBlocked: !!composerBlockedReason,
+        isAgentPickerOpen,
+        isSkillPickerOpen,
+        isAdditionalDirectoryListOpen,
+        selectedCustomAgentLabel: selectedCustomAgentDisplay.label,
+        selectedCustomAgentTitle: selectedCustomAgentDisplay.title ?? "Copilot custom agent を選択",
+        canCollapseActionDock,
+        isCustomAgentListLoading,
+        isSkillListLoading,
+        customAgentItems,
+        skillItems,
+        composerAttachmentItems,
+        additionalDirectoryItems,
+        workspacePathMatchItems,
+        draft,
+        composerTextareaRef,
+        isComposerDisabled,
+        isSendDisabled,
+        composerSendability,
+        composerSendButtonTitle,
+        isComposerBlockedFeedbackActive: forceComposerBlockedFeedback && composerSendability.shouldShowFeedback,
+        approvalChoiceOptions,
+        sandboxChoiceOptions,
+        modelSelectOptions,
+        selectedModelFallbackLabel,
+        reasoningSelectOptions,
+        actionDockCompactPreview,
+        attachmentCount: composerPreview.attachments.length,
+        isActionDockExpanded,
+        isContextRailResizing,
+        activeCharacterUpdatePaneTab,
+        latestCommandView,
+        runningDetailsEntries,
+        selectedCharacterUpdateMemoryExtract,
+        isCharacterUpdateMemoryExtractLoading,
+        activeContextPaneTab,
+        availableContextPaneTabs,
+        contextPaneProjection,
+        selectedBackgroundTasks,
+        selectedCompanionGroupMonitorEntries,
+        isCopilotSession,
+        selectedCopilotRemainingPercentLabel,
+        selectedCopilotRemainingRequestsLabel,
+        selectedCopilotQuotaResetLabel,
+        selectedSessionContextTelemetry,
+        selectedSessionContextTelemetryProjection,
+        selectedContextEmptyText,
+        selectedDiff,
+        selectedDiffThemeStyle,
+        auditLogsOpen,
+        displayedSessionAuditLogs,
+        auditLogDetails,
+        auditLogOperationDetails,
+        auditLogsHasMore: auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.hasMore : false,
+        auditLogsLoading: auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.loading : false,
+        auditLogsTotal: auditLogsState.ownerSessionId === selectedSessionId
+          ? Math.max(auditLogsState.total, displayedSessionAuditLogs.length)
+          : displayedSessionAuditLogs.length,
+        auditLogsErrorMessage: auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.errorMessage : null,
+        onToggleHeaderExpanded: handleToggleHeaderExpanded,
+        onOpenAuditLog: () => setAuditLogsOpen(true),
+        onOpenSessionTerminal: () => void handleOpenSessionTerminal(),
+        onTitleDraftChange: setTitleDraft,
+        onTitleInputKeyDown: handleTitleInputKeyDown,
+        onSaveTitle: () => void handleSaveTitle(),
+        onCancelTitleEdit: handleCancelTitleEdit,
+        onStartTitleEdit: handleStartTitleEdit,
+        onDeleteSession: () => void handleDeleteSession(),
+        onOpenSessionExplorer: () => void handleOpenSessionExplorer(),
         onMessageListScroll: handleMessageListScroll,
         onToggleArtifact: toggleArtifact,
         onLoadArtifactDetail: (messageIndex) =>
@@ -2603,7 +2646,7 @@ function AgentSessionWindowApp() {
           }),
         onResolveLiveApproval: (request, decision) => void handleResolveLiveApproval(request, decision),
         onResolveLiveElicitation: (request, response) => void handleResolveLiveElicitation(request, response),
-        onOpenPath: handleOpenInlinePath,
+        onOpenInlinePath: handleOpenInlinePath,
         getChangedFilesEmptyText: (artifactKey, artifactHasSnapshotRisk) =>
           artifactHasSnapshotRisk
             ? "差分は見つからなかったけど、snapshot の上限や省略で取りこぼしがあるかもしれないよ。"
@@ -2612,60 +2655,11 @@ function AgentSessionWindowApp() {
               pendingIndicatorCharacterName,
               `changed-files-empty:${artifactKey}`,
             ),
-      }}
-      isActionDockExpanded={isActionDockExpanded}
-      composerProps={{
-        retryBanner: (
-          <SessionRetryBanner
-            retryBanner={retryBanner}
-            isRetryDetailsOpen={isRetryDetailsOpen}
-            isRetryActionDisabled={isRetryActionDisabled}
-            isRetryEditDisabled={isRetryEditDisabled}
-            isRetryDraftReplacePending={isRetryDraftReplacePending}
-            onToggleDetails={() => setIsRetryDetailsOpen((current) => !current)}
-            onResendLastMessage={() => void handleResendLastMessage()}
-            onEditLastMessage={handleEditLastMessage}
-            onConfirmRetryDraftReplace={handleConfirmRetryDraftReplace}
-            onCancelRetryDraftReplace={handleCancelRetryDraftReplace}
-            onOpenPath={handleOpenInlinePath}
-          />
-        ),
-        isRunning: selectedSession.runState === "running",
-        composerBlocked: !!composerBlockedReason,
-        canSelectCustomAgent: !isCharacterUpdateSession && selectedSession.provider === "copilot",
-        showCustomAgentPicker: !isCharacterUpdateSession,
-        showSkillPicker: !isCharacterUpdateSession,
-        isAgentPickerOpen,
-        isSkillPickerOpen,
-        isAdditionalDirectoryListOpen,
-        selectedCustomAgentLabel: selectedSession.provider === "copilot" ? selectedCustomAgentDisplay.label : "Agent",
-        selectedCustomAgentTitle: selectedCustomAgentDisplay.title ?? "Copilot custom agent を選択",
-        additionalDirectoryCount: selectedSession.allowedAdditionalDirectories.length,
-        canCollapseActionDock,
-        showJumpToBottom: !isMessageListFollowing,
-        isCustomAgentListLoading,
-        isSkillListLoading,
-        customAgentItems,
-        skillItems,
-        attachmentItems: composerAttachmentItems,
-        additionalDirectoryItems,
-        workspacePathMatchItems,
-        draft,
-        composerTextareaRef,
-        isComposerDisabled,
-        isSendDisabled,
-        composerSendability,
-        sendButtonTitle: composerSendButtonTitle,
-        isComposerBlockedFeedbackActive: forceComposerBlockedFeedback && composerSendability.shouldShowFeedback,
-        approvalOptions: approvalChoiceOptions,
-        selectedApprovalMode: selectedSession.approvalMode,
-        sandboxOptions: sandboxChoiceOptions,
-        selectedCodexSandboxMode: selectedSession.codexSandboxMode,
-        modelOptions: modelSelectOptions,
-        selectedModel: selectedSession.model,
-        selectedModelFallbackLabel,
-        reasoningOptions: reasoningSelectOptions,
-        selectedReasoningEffort: selectedSession.reasoningEffort,
+        onToggleRetryDetails: () => setIsRetryDetailsOpen((current) => !current),
+        onResendLastMessage: () => void handleResendLastMessage(),
+        onEditLastMessage: handleEditLastMessage,
+        onConfirmRetryDraftReplace: handleConfirmRetryDraftReplace,
+        onCancelRetryDraftReplace: handleCancelRetryDraftReplace,
         onPickFile: () => void handlePickFile(),
         onPickFolder: () => void handlePickFolder(),
         onPickImage: () => void handlePickImage(),
@@ -2679,8 +2673,8 @@ function AgentSessionWindowApp() {
         },
         onAddAdditionalDirectory: () => void handleAddAdditionalDirectory(),
         onToggleAdditionalDirectoryList: () => setIsAdditionalDirectoryListOpen((current) => !current),
-        onCollapse: handleCollapseActionDock,
-        onJumpToBottom: handleJumpToMessageListBottom,
+        onCollapseActionDock: handleCollapseActionDock,
+        onJumpToMessageListBottom: handleJumpToMessageListBottom,
         onSelectCustomAgent: (value) => void handleSelectCustomAgent(
           value ? availableCustomAgents.find((agent) => agent.name === value) ?? null : null,
         ),
@@ -2706,105 +2700,26 @@ function AgentSessionWindowApp() {
           setComposerCaret(composerTextareaRef.current?.selectionStart ?? draft.length);
         },
         onSendOrCancel: () => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend()),
+        onExpandActionDock: () => handleExpandActionDock({ focusComposer: true }),
         onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
         onActivateWorkspacePathMatch: setActiveWorkspacePathMatchIndex,
         onChangeApprovalMode: (value) => void handleChangeApproval(value),
         onChangeCodexSandboxMode: (value) => void handleChangeCodexSandboxMode(value),
         onChangeModel: (value) => void handleChangeModel(value),
         onChangeReasoningEffort: (value) => void handleChangeReasoningEffort(value as Session["reasoningEffort"]),
-      }}
-      compactActionDockProps={{
-        draft,
-        actionDockCompactPreview,
-        attachmentCount: composerPreview.attachments.length,
-        isRunning: selectedSession.runState === "running",
-        isSendDisabled,
-        showJumpToBottom: !isMessageListFollowing,
-        sendButtonTitle: composerSendButtonTitle,
-        onExpand: () => handleExpandActionDock({ focusComposer: true }),
-        onJumpToBottom: handleJumpToMessageListBottom,
-        onSendOrCancel: () => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend()),
-      }}
-      splitter={(
-        <button
-          className={`session-workbench-splitter${isContextRailResizing ? " is-active" : ""}`}
-          type="button"
-          onPointerDown={handleStartContextRailResize}
-          aria-label="会話と command pane の幅を調整"
-          title="左右の幅をドラッグで調整"
-        />
-      )}
-      rightPane={(
-        <SessionPaneErrorBoundary>
-          {isCharacterUpdateSession ? (
-            <CharacterUpdateContextPane
-              taskTitle={selectedSession.taskTitle}
-              isHeaderExpanded={isSessionHeaderExpanded}
-              activePaneTab={activeCharacterUpdatePaneTab}
-              latestCommandView={latestCommandView}
-              runningDetailsEntries={runningDetailsEntries}
-              selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
-              memoryExtract={selectedCharacterUpdateMemoryExtract}
-              isLoadingMemoryExtract={isCharacterUpdateMemoryExtractLoading}
-              onToggleHeaderExpanded={handleToggleHeaderExpanded}
-              onSelectPaneTab={setActiveCharacterUpdatePaneTab}
-              onRefreshMemoryExtract={() => void handleRefreshCharacterUpdateMemoryExtract()}
-              onCopyMemoryExtract={() => void handleCopyCharacterUpdateMemoryExtract()}
-            />
-          ) : (
-            <SessionContextPane
-              taskTitle={selectedSession.taskTitle}
-              isHeaderExpanded={isSessionHeaderExpanded}
-              activeContextPaneTab={activeContextPaneTab}
-              availableContextPaneTabs={availableContextPaneTabs}
-              contextPaneProjection={contextPaneProjection}
-              latestCommandView={latestCommandView}
-              runningDetailsEntries={runningDetailsEntries}
-              backgroundTasks={selectedBackgroundTasks}
-              companionGroupMonitorEntries={selectedCompanionGroupMonitorEntries}
-              selectedSessionLiveRunErrorMessage={selectedSessionLiveRun?.errorMessage ?? ""}
-              isSelectedSessionRunning={isSelectedSessionRunning}
-              isCopilotSession={isCopilotSession}
-              selectedCopilotRemainingPercentLabel={selectedCopilotRemainingPercentLabel}
-              selectedCopilotRemainingRequestsLabel={selectedCopilotRemainingRequestsLabel}
-              selectedCopilotQuotaResetLabel={selectedCopilotQuotaResetLabel}
-              selectedSessionContextTelemetry={selectedSessionContextTelemetry}
-              selectedSessionContextTelemetryProjection={selectedSessionContextTelemetryProjection}
-              contextEmptyText={selectedContextEmptyText}
-              onToggleHeaderExpanded={handleToggleHeaderExpanded}
-              onCycleContextPaneTab={handleCycleContextPaneTab}
-              onOpenCompanionReview={(sessionId) => void withmateApi?.openCompanionReviewWindow(sessionId)}
-            />
-          )}
-        </SessionPaneErrorBoundary>
-      )}
-      modals={(
-        <>
-          <SessionDiffModal
-            selectedDiff={selectedDiff}
-            themeStyle={selectedDiffThemeStyle}
-            onClose={() => setSelectedDiff(null)}
-            onOpenDiffWindow={(payload) => void handleOpenDiffWindow(payload)}
-          />
-
-          <SessionAuditLogModal
-            open={auditLogsOpen}
-            entries={displayedSessionAuditLogs}
-            details={auditLogDetails}
-            operationDetails={auditLogOperationDetails}
-            hasMore={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.hasMore : false}
-            loadingMore={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.loading : false}
-            total={auditLogsState.ownerSessionId === selectedSessionId
-              ? Math.max(auditLogsState.total, displayedSessionAuditLogs.length)
-              : displayedSessionAuditLogs.length}
-            errorMessage={auditLogsState.ownerSessionId === selectedSessionId ? auditLogsState.errorMessage : null}
-            onLoadMore={handleLoadMoreAuditLogs}
-            onLoadDetail={handleLoadAuditLogDetail}
-            onLoadOperationDetail={handleLoadAuditLogOperationDetail}
-            onClose={() => setAuditLogsOpen(false)}
-          />
-        </>
-      )}
+        onStartContextRailResize: handleStartContextRailResize,
+        onSelectCharacterUpdatePaneTab: setActiveCharacterUpdatePaneTab,
+        onRefreshCharacterUpdateMemoryExtract: () => void handleRefreshCharacterUpdateMemoryExtract(),
+        onCopyCharacterUpdateMemoryExtract: () => void handleCopyCharacterUpdateMemoryExtract(),
+        onCycleContextPaneTab: handleCycleContextPaneTab,
+        onOpenCompanionReview: (sessionId) => void withmateApi?.openCompanionReviewWindow(sessionId),
+        onCloseDiff: () => setSelectedDiff(null),
+        onOpenDiffWindow: (payload) => void handleOpenDiffWindow(payload),
+        onLoadMoreAuditLogs: handleLoadMoreAuditLogs,
+        onLoadAuditLogDetail: handleLoadAuditLogDetail,
+        onLoadAuditLogOperationDetail: handleLoadAuditLogOperationDetail,
+        onCloseAuditLog: () => setAuditLogsOpen(false),
+      })}
     />
   );
 }

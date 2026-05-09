@@ -24,9 +24,18 @@ export type ChatWindowProps = Omit<SessionChatScreenProps, "header" | "messageCo
   compactActionDockProps: SessionActionDockCompactRowProps;
 };
 export type ChatSelectOption = SessionSelectOption;
+export type ChatHeaderHandleProps = ComponentProps<typeof SessionHeaderHandle>;
 
-// Keep every conversation surface on one chat layout. Feature-specific behavior
-// belongs in adapters that build these props, not in separate chat screens.
+export type ChatRightPaneShellProps = {
+  isHeaderExpanded: boolean;
+  headerHandleTitle: string;
+  ariaLabel: string;
+  className?: string;
+  onToggleHeaderExpanded: () => void;
+};
+
+// Keep every conversation surface on one chat layout. Projection builders own
+// the feature-specific props and content.
 export function ChatWindow({
   isHeaderExpanded,
   headerProps,
@@ -54,13 +63,25 @@ export function ChatWindow({
   );
 }
 
-export function ChatHeaderHandle(props: ComponentProps<typeof SessionHeaderHandle>) {
+export function ChatHeaderHandle(props: ChatHeaderHandleProps) {
   return <SessionHeaderHandle {...props} />;
 }
 
-export {
-  ChatWindow as SessionChatWindow,
-  ChatHeaderHandle as SessionHeaderHandle,
-  type ChatWindowProps as SessionChatWindowProps,
-  type ChatSelectOption as SessionSelectOption,
-};
+export function ChatRightPaneShell({
+  isHeaderExpanded,
+  headerHandleTitle,
+  ariaLabel,
+  className = "",
+  onToggleHeaderExpanded,
+}: ChatRightPaneShellProps) {
+  return (
+    <aside
+      className={`session-context-pane${isHeaderExpanded ? " session-context-pane-header-expanded" : ""}${
+        className ? ` ${className}` : ""
+      }`}
+      aria-label={ariaLabel}
+    >
+      {!isHeaderExpanded ? <ChatHeaderHandle taskTitle={headerHandleTitle} onClick={onToggleHeaderExpanded} /> : null}
+    </aside>
+  );
+}
