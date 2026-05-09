@@ -1974,29 +1974,50 @@ export function HomeMateTalkPanel({
   const isSubmitDisabled = sending || input.trim() === "";
 
   return (
-    <section className="home-mate-talk-panel">
-      <h2 className="home-mate-talk-head">メイトーク</h2>
-      <p className="home-mate-talk-description">{mateName} と話す</p>
+    <section className="home-mate-talk-panel session-page">
+      <header className="home-mate-talk-header">
+        <div>
+          <h2 className="home-mate-talk-head">メイトーク</h2>
+          <p className="home-mate-talk-description">{mateName} と話す</p>
+        </div>
+        <button className="drawer-toggle compact secondary" type="button" onClick={onClose}>
+          ホーム
+        </button>
+      </header>
 
       <section
-        className="home-mate-talk-messages"
+        className="session-message-list home-mate-talk-messages"
         aria-label="メイトーク会話履歴"
         role="region"
         aria-live="polite"
         aria-busy={sending}
       >
         {messages.length > 0 ? (
-          messages.map((message) => (
-            <article
-              key={message.id}
-              className={`home-mate-talk-message ${message.role === "user" ? "home-mate-talk-message-user" : "home-mate-talk-message-mate"}`}
-            >
-              <p>
-                <strong>{message.role === "user" ? "あなた" : mateName}:</strong>
-                {` ${message.text}`}
-              </p>
-            </article>
-          ))
+          <div className="session-message-list-window">
+            <div className="session-message-list-window-items">
+              {messages.map((message) => {
+                const isUser = message.role === "user";
+                const speaker = isUser ? "あなた" : mateName;
+
+                return (
+                  <article
+                    key={message.id}
+                    className={`message-row ${isUser ? "user" : "assistant"} home-mate-talk-row`}
+                  >
+                    {isUser ? null : (
+                      <div className="home-mate-talk-avatar" aria-hidden="true">
+                        {mateName.slice(0, 1)}
+                      </div>
+                    )}
+                    <div className={`message-card ${isUser ? "user" : "assistant"} home-mate-talk-card`}>
+                      <p className="home-mate-talk-speaker">{speaker}</p>
+                      <p className="home-mate-talk-text">{message.text}</p>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
         ) : (
           <p className="home-mate-talk-empty">まだ会話は開始してないよ。まずは入力してね。</p>
         )}
@@ -2005,14 +2026,16 @@ export function HomeMateTalkPanel({
       {feedback ? <p role="status" className="settings-feedback home-mate-feedback">{feedback}</p> : null}
 
       <form
-        className="home-mate-talk-form"
+        className="composer home-mate-talk-form"
         onSubmit={(event) => {
           event.preventDefault();
           onSubmit();
         }}
       >
-        <label className="settings-field home-mate-talk-input-field" htmlFor="home-mate-talk-input">
-          <span>入力</span>
+        <label className="visually-hidden" htmlFor="home-mate-talk-input">
+          入力
+        </label>
+        <div className="composer-box home-mate-talk-composer-box">
           <textarea
             id="home-mate-talk-input"
             value={input}
@@ -2029,12 +2052,7 @@ export function HomeMateTalkPanel({
             spellCheck={false}
             placeholder="今日はどうする？"
           />
-        </label>
-        <div className="launch-dialog-foot settings-dialog-foot">
-          <button className="launch-toggle" type="button" onClick={onClose}>
-            ホームに戻る
-          </button>
-          <button className="start-session-button" type="submit" disabled={isSubmitDisabled}>
+          <button className="session-send-button" type="submit" disabled={isSubmitDisabled}>
             {sending ? "送信中..." : "送信"}
           </button>
         </div>

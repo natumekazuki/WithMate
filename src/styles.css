@@ -7775,7 +7775,15 @@ button:disabled {
 
 
 .home-page .home-mate-talk-shell {
-  width: min(760px, 100%);
+  width: min(880px, 100%);
+}
+
+.home-mate-talk-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
 }
 
 .home-mate-talk-head {
@@ -7793,40 +7801,67 @@ button:disabled {
 
 .home-mate-talk-panel {
   display: grid;
-  gap: 12px;
+  gap: 16px;
   min-height: auto;
 }
 
 .home-mate-talk-messages {
-  display: grid;
-  gap: 10px;
   min-height: 220px;
   max-height: min(46vh, 480px);
-  overflow: auto;
-  padding: 8px;
-  border-radius: 14px;
+  padding: 12px;
+  border-radius: var(--radius-lg);
   border: 1px solid rgba(203, 213, 225, 0.16);
   background: rgba(255, 255, 255, 0.03);
 }
 
-.home-mate-talk-message {
+.home-mate-talk-row.assistant {
+  grid-template-columns: 42px minmax(0, 1fr);
+}
+
+.home-mate-talk-avatar {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--character-main) 34%, rgba(203, 213, 225, 0.2));
+  background: color-mix(in srgb, var(--character-main-soft) 58%, rgba(15, 19, 26, 0.92));
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.home-mate-talk-card {
+  gap: 6px;
+}
+
+.home-mate-talk-speaker,
+.home-mate-talk-text {
   margin: 0;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.05);
 }
 
-.home-mate-talk-message-user {
-  margin-left: 14px;
-  background: rgba(111, 140, 255, 0.14);
+.home-mate-talk-speaker {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
-.home-mate-talk-message-mate {
-  margin-right: 14px;
+.home-mate-talk-text {
+  color: var(--ink);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .home-mate-talk-form {
-  display: grid;
-  gap: 12px;
+  gap: 0;
+}
+
+.home-mate-talk-composer-box textarea {
+  min-height: 92px;
+}
+
+.home-mate-talk-composer-box .session-send-button {
+  align-self: end;
 }
 
