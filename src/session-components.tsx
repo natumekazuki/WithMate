@@ -731,42 +731,6 @@ export function SessionChatScreen({
   );
 }
 
-export type SessionChatWindowProps = Omit<SessionChatScreenProps, "header" | "messageColumn" | "actionDock"> & {
-  isHeaderExpanded: boolean;
-  headerProps: SessionHeaderProps;
-  messageColumnProps: SessionMessageColumnProps;
-  isActionDockExpanded: boolean;
-  composerProps: SessionComposerExpandedProps;
-  compactActionDockProps: SessionActionDockCompactRowProps;
-};
-
-export function SessionChatWindow({
-  isHeaderExpanded,
-  headerProps,
-  messageColumnProps,
-  isActionDockExpanded,
-  composerProps,
-  compactActionDockProps,
-  ...screenProps
-}: SessionChatWindowProps) {
-  return (
-    <SessionChatScreen
-      {...screenProps}
-      header={isHeaderExpanded ? <SessionHeader {...headerProps} /> : null}
-      messageColumn={<SessionMessageColumn {...messageColumnProps} />}
-      actionDock={(
-        <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
-          {isActionDockExpanded ? (
-            <SessionComposerExpanded {...composerProps} />
-          ) : (
-            <SessionActionDockCompactRow {...compactActionDockProps} />
-          )}
-        </div>
-      )}
-    />
-  );
-}
-
 export function SessionDiffModal({
   selectedDiff,
   themeStyle,
