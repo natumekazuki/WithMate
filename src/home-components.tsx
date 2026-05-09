@@ -236,6 +236,21 @@ const formatMateGrowthEventMeta = (event: MateGrowthEventListItem): string =>
     formatTimestampLabel(event.updatedAt),
   ].join(" / ");
 
+function SettingsInlineHelp({
+  summary,
+  children,
+}: {
+  summary: string;
+  children: ReactNode;
+}) {
+  return (
+    <details className="settings-inline-help settings-field-help-icon">
+      <summary aria-label={summary}>?</summary>
+      <div>{children}</div>
+    </details>
+  );
+}
+
 export function HomeSettingsContent({
   settingsDraft,
   providerSettingRows,
@@ -483,7 +498,13 @@ export function HomeSettingsContent({
                           />
                         </label>
                         <label className="settings-provider-input">
-                          <span>{SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL}</span>
+                          <span className="settings-field-label-with-help">
+                            <span>{SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL}</span>
+                            <SettingsInlineHelp summary={`${SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL} のヘルプ`}>
+                              <p>{SETTINGS_PROVIDER_INSTRUCTION_MANAGED_BLOCK_HELP}</p>
+                              <p>{SETTINGS_PROVIDER_INSTRUCTION_MANAGED_FILE_HELP}</p>
+                            </SettingsInlineHelp>
+                          </span>
                           <select
                             value={instructionTarget.writeMode}
                             onChange={(event) =>
@@ -494,7 +515,12 @@ export function HomeSettingsContent({
                           </select>
                         </label>
                         <label className="settings-provider-input">
-                          <span>{SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_LABEL}</span>
+                          <span className="settings-field-label-with-help">
+                            <span>{SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_LABEL}</span>
+                            <SettingsInlineHelp summary={`${SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_LABEL} のヘルプ`}>
+                              <p>{SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_HELP}</p>
+                            </SettingsInlineHelp>
+                          </span>
                           <select
                             value={instructionTarget.failPolicy}
                             onChange={(event) =>
@@ -505,13 +531,24 @@ export function HomeSettingsContent({
                           </select>
                         </label>
                         <label className="settings-provider-input">
-                          <span>{SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL}</span>
+                          <span className="settings-field-label-with-help">
+                            <span>{SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL}</span>
+                            <SettingsInlineHelp summary={`${SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL} のヘルプ`}>
+                              <p>Root Directory は Coding Agent Provider の Skill Root を使う。</p>
+                              <p>{SETTINGS_PROVIDER_INSTRUCTION_PATH_HELP}</p>
+                            </SettingsInlineHelp>
+                          </span>
                           <p className="settings-help">
                             {settings.skillRootPath.trim() || "Skill Root を指定するとここに反映される。"}
                           </p>
                         </label>
                         <label className="settings-provider-input">
-                          <span>{SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>
+                          <span className="settings-field-label-with-help">
+                            <span>{SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>
+                            <SettingsInlineHelp summary={`${SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL} のヘルプ`}>
+                              <p>{SETTINGS_PROVIDER_INSTRUCTION_PATH_HELP}</p>
+                            </SettingsInlineHelp>
+                          </span>
                           <div className="settings-inline-input-row">
                             <input
                               type="text"

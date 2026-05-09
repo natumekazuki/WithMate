@@ -46,7 +46,9 @@ import {
   SETTINGS_MATE_MEMORY_GENERATION_PRIORITY_REMOVE_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_REASONING_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_TIMEOUT_LABEL,
+  SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL,
+  SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL,
 } from "../../src/settings-ui.js";
@@ -961,7 +963,12 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes(`<span>${SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL}</span>`));
     assert.ok(html.includes(`<span>${SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>`));
     assert.ok(html.includes("Provider Instruction Sync のヘルプ"));
+    assert.ok(html.includes(`${SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL} のヘルプ`));
+    assert.ok(html.includes(`${SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_LABEL} のヘルプ`));
+    assert.ok(html.includes(`${SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL} のヘルプ`));
+    assert.ok(html.includes(`${SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL} のヘルプ`));
     assert.ok(html.includes("managed_block は既存ファイル内"));
+    assert.ok(html.includes("Root Directory は Coding Agent Provider の Skill Root を使う。"));
     assert.ok(html.includes(`<p class=\"settings-help\">/repo-root</p>`));
     assert.ok(html.includes("value=\"docs/instructions.md\""));
   });
