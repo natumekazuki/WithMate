@@ -564,7 +564,7 @@ export function HomeSettingsContent({
                               type="button"
                               onClick={() => onBrowseProviderInstructionInstructionRelativePath(provider.id)}
                             >
-                              Browse
+                              選択
                             </button>
                           </div>
                         </label>

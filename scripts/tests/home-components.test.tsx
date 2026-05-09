@@ -119,6 +119,7 @@ describe("HomeSettingsContent", () => {
     onForgetMateGrowthEvent?: (eventId: string) => void;
     onUpdateMateGrowthSettings?: (input: unknown) => void;
     onResetMate?: () => void;
+    onBrowseProviderInstructionInstructionRelativePath?: (providerId: string) => void;
   };
 
   const collectElementsById = (node: ReactNode, predicate: (element: React.ReactElement) => boolean): React.ReactElement[] => {
@@ -190,6 +191,7 @@ describe("HomeSettingsContent", () => {
     onChangeProviderInstructionWriteMode: noOp,
     onChangeProviderInstructionFailPolicy: noOp,
     onChangeProviderInstructionInstructionRelativePath: noOp,
+    onBrowseProviderInstructionInstructionRelativePath: params?.onBrowseProviderInstructionInstructionRelativePath ?? noOp,
     onChangeProviderSkillRootPath: noOp,
     onBrowseProviderSkillRootPath: noOp,
     onChangeMemoryExtractionModel: noOp,
@@ -1073,6 +1075,27 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("<p class=\"settings-feedback settings-memory-feedback\">再起動が必要</p>"));
     assert.ok(html.includes("<span>エラープレビュー</span>"));
     assert.ok(html.includes("permission denied: EACCES (13): Permission denied"));
+  });
+
+  it("Provider Instruction Sync の Instruction Relative Path 「選択」ボタンで picker handler が呼ばれる", () => {
+    let pickedProviderId: string | null = null;
+    const content = buildSettingsContent({
+      onBrowseProviderInstructionInstructionRelativePath: (providerId) => {
+        pickedProviderId = providerId;
+      },
+    });
+    const browseButtons = collectElementsById(
+      content,
+      (element) => element.type === "button" && element.props.type === "button" && element.props.children === "選択",
+    );
+    const instructionBrowseButton = browseButtons[0];
+    if (!instructionBrowseButton) {
+      throw new Error("Instruction Relative Path の選択ボタンが見つかりません。");
+    }
+
+    assert.equal(pickedProviderId, null);
+    instructionBrowseButton.props.onClick();
+    assert.equal(pickedProviderId, "codex");
   });
 });
 
