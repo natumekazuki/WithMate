@@ -2051,6 +2051,131 @@ export function SessionRetryBanner({
   );
 }
 
+export type SessionPlainMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  speakerLabel?: string;
+};
+
+export type SessionPlainMessageListProps = {
+  messages: SessionPlainMessage[];
+  ariaLabel: string;
+  emptyText: string;
+  assistantInitial?: string;
+  busy?: boolean;
+  className?: string;
+  onOpenPath?: (target: string) => void;
+};
+
+export function SessionPlainMessageList({
+  messages,
+  ariaLabel,
+  emptyText,
+  assistantInitial,
+  busy = false,
+  className,
+  onOpenPath,
+}: SessionPlainMessageListProps) {
+  const listClassName = `session-message-list${className ? ` ${className}` : ""}`;
+
+  return (
+    <section className={listClassName} aria-label={ariaLabel} role="region" aria-live="polite" aria-busy={busy}>
+      {messages.length > 0 ? (
+        <div className="session-message-list-window">
+          <div className="session-message-list-window-items">
+            {messages.map((message) => {
+              const isAssistant = message.role === "assistant";
+
+              return (
+                <article key={message.id} className={`message-row ${message.role}`}>
+                  {isAssistant && assistantInitial ? (
+                    <div className="message-avatar session-plain-message-avatar" aria-hidden="true">
+                      {assistantInitial}
+                    </div>
+                  ) : null}
+                  <div className={`message-card ${message.role}`}>
+                    {message.speakerLabel ? (
+                      <p className="session-plain-message-speaker">{message.speakerLabel}</p>
+                    ) : null}
+                    <MessageRichText text={message.text} onOpenPath={onOpenPath} />
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <p className="session-message-empty">{emptyText}</p>
+      )}
+    </section>
+  );
+}
+
+export type SessionPlainComposerProps = {
+  textareaId: string;
+  input: string;
+  placeholder: string;
+  feedback?: string;
+  disabled?: boolean;
+  submitDisabled?: boolean;
+  busy?: boolean;
+  submitLabel?: string;
+  busySubmitLabel?: string;
+  onChangeInput: (value: string) => void;
+  onSubmit: () => void;
+  onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
+};
+
+export function SessionPlainComposer({
+  textareaId,
+  input,
+  placeholder,
+  feedback,
+  disabled = false,
+  submitDisabled = false,
+  busy = false,
+  submitLabel = "Send",
+  busySubmitLabel = "Sending...",
+  onChangeInput,
+  onSubmit,
+  onKeyDown,
+}: SessionPlainComposerProps) {
+  return (
+    <form
+      className="composer"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (submitDisabled) {
+          return;
+        }
+        onSubmit();
+      }}
+    >
+      {feedback ? <p role="status" className="settings-feedback session-plain-composer-feedback">{feedback}</p> : null}
+      <label className="visually-hidden" htmlFor={textareaId}>
+        入力
+      </label>
+      <div className="composer-box">
+        <textarea
+          id={textareaId}
+          value={input}
+          onChange={(event) => onChangeInput(event.target.value)}
+          onKeyDown={onKeyDown}
+          rows={4}
+          disabled={disabled}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={placeholder}
+        />
+        <button className="session-send-button" type="submit" disabled={submitDisabled}>
+          {busy ? busySubmitLabel : submitLabel}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export type SessionMessageColumnProps = {
   sessionId: string;
   character: CharacterProfile;

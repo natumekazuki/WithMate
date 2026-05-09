@@ -3258,6 +3258,36 @@ button:disabled {
   background: rgba(20, 27, 40, 0.98);
 }
 
+.session-plain-message-avatar {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--character-main) 34%, rgba(203, 213, 225, 0.2));
+  background: color-mix(in srgb, var(--character-main-soft) 58%, rgba(15, 19, 26, 0.92));
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.session-plain-message-speaker {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.session-message-empty {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.session-plain-composer-feedback {
+  margin: 0;
+}
+
 .message-card.has-artifact {
   padding-top: 14px;
 }
@@ -7818,8 +7848,7 @@ button:disabled {
   font-size: 1.06rem;
 }
 
-.home-mate-talk-description,
-.home-mate-talk-empty {
+.home-mate-talk-description {
   margin: 0;
   color: var(--muted);
   line-height: 1.45;
@@ -7838,56 +7867,5 @@ button:disabled {
   border-radius: var(--radius-lg);
   border: 1px solid rgba(203, 213, 225, 0.16);
   background: rgba(255, 255, 255, 0.03);
-}
-
-.home-mate-talk-row.assistant {
-  grid-template-columns: 42px minmax(0, 1fr);
-}
-
-.home-mate-talk-avatar {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  border: 1px solid color-mix(in srgb, var(--character-main) 34%, rgba(203, 213, 225, 0.2));
-  background: color-mix(in srgb, var(--character-main-soft) 58%, rgba(15, 19, 26, 0.92));
-  color: var(--ink);
-  font-size: 0.84rem;
-  font-weight: 800;
-}
-
-.home-mate-talk-card {
-  gap: 6px;
-}
-
-.home-mate-talk-speaker,
-.home-mate-talk-text {
-  margin: 0;
-}
-
-.home-mate-talk-speaker {
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.home-mate-talk-text {
-  color: var(--ink);
-  line-height: 1.55;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.home-mate-talk-form {
-  gap: 0;
-}
-
-.home-mate-talk-composer-box textarea {
-  min-height: 92px;
-}
-
-.home-mate-talk-composer-box .session-send-button {
-  align-self: end;
 }
 

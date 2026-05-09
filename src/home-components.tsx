@@ -97,6 +97,7 @@ import {
   SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
 } from "./settings-ui.js";
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
+import { SessionPlainComposer, SessionPlainMessageList, type SessionPlainMessage } from "./session-components.js";
 import { buildCardThemeStyle, CharacterAvatar } from "./ui-utils.js";
 import { formatTimestampLabel } from "./time-state.js";
 import type { MateProfile } from "./mate-state.js";
@@ -1995,6 +1996,16 @@ export function HomeMateTalkPanel({
   feedback,
 }: HomeMateTalkPanelProps) {
   const isSubmitDisabled = sending || input.trim() === "";
+  const conversationMessages: SessionPlainMessage[] = messages.map((message) => {
+    const isUser = message.role === "user";
+
+    return {
+      id: message.id,
+      role: isUser ? "user" : "assistant",
+      text: message.text,
+      speakerLabel: isUser ? "あなた" : mateName,
+    };
+  });
 
   return (
     <section className="home-mate-talk-panel session-page">
@@ -2008,78 +2019,34 @@ export function HomeMateTalkPanel({
         </button>
       </header>
 
-      <section
-        className="session-message-list home-mate-talk-messages"
-        aria-label="メイトーク会話履歴"
-        role="region"
-        aria-live="polite"
-        aria-busy={sending}
-      >
-        {messages.length > 0 ? (
-          <div className="session-message-list-window">
-            <div className="session-message-list-window-items">
-              {messages.map((message) => {
-                const isUser = message.role === "user";
-                const speaker = isUser ? "あなた" : mateName;
+      <SessionPlainMessageList
+        messages={conversationMessages}
+        className="home-mate-talk-messages"
+        ariaLabel="メイトーク会話履歴"
+        emptyText="まだ会話は開始してないよ。まずは入力してね。"
+        assistantInitial={mateName.slice(0, 1)}
+        busy={sending}
+      />
 
-                return (
-                  <article
-                    key={message.id}
-                    className={`message-row ${isUser ? "user" : "assistant"} home-mate-talk-row`}
-                  >
-                    {isUser ? null : (
-                      <div className="home-mate-talk-avatar" aria-hidden="true">
-                        {mateName.slice(0, 1)}
-                      </div>
-                    )}
-                    <div className={`message-card ${isUser ? "user" : "assistant"} home-mate-talk-card`}>
-                      <p className="home-mate-talk-speaker">{speaker}</p>
-                      <p className="home-mate-talk-text">{message.text}</p>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          </div>
-        ) : (
-          <p className="home-mate-talk-empty">まだ会話は開始してないよ。まずは入力してね。</p>
-        )}
-      </section>
-
-      {feedback ? <p role="status" className="settings-feedback home-mate-feedback">{feedback}</p> : null}
-
-      <form
-        className="composer home-mate-talk-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onSubmit();
+      <SessionPlainComposer
+        textareaId="home-mate-talk-input"
+        input={input}
+        placeholder="今日はどうする？"
+        feedback={feedback}
+        disabled={sending}
+        submitDisabled={isSubmitDisabled}
+        busy={sending}
+        submitLabel="送信"
+        busySubmitLabel="送信中..."
+        onChangeInput={onChangeInput}
+        onSubmit={onSubmit}
+        onKeyDown={(event) => {
+          if (!isSubmitDisabled && shouldSubmitMateTalkInputByKey(event)) {
+            event.preventDefault();
+            onSubmit();
+          }
         }}
-      >
-        <label className="visually-hidden" htmlFor="home-mate-talk-input">
-          入力
-        </label>
-        <div className="composer-box home-mate-talk-composer-box">
-          <textarea
-            id="home-mate-talk-input"
-            value={input}
-            onChange={(event) => onChangeInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (!isSubmitDisabled && shouldSubmitMateTalkInputByKey(event)) {
-                event.preventDefault();
-                onSubmit();
-              }
-            }}
-            rows={4}
-            disabled={sending}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="今日はどうする？"
-          />
-          <button className="session-send-button" type="submit" disabled={isSubmitDisabled}>
-            {sending ? "送信中..." : "送信"}
-          </button>
-        </div>
-      </form>
+      />
     </section>
   );
 }
