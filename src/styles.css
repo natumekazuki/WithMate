@@ -623,6 +623,44 @@ button:disabled {
   gap: 12px;
 }
 
+.home-mate-avatar-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(11, 16, 24, 0.74);
+}
+
+.home-mate-avatar-preview {
+  flex: 0 0 auto;
+}
+
+.home-mate-avatar-copy {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.home-mate-avatar-label {
+  color: #f4f7fb;
+  font-weight: 700;
+}
+
+.home-mate-avatar-help {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.home-mate-avatar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .home-mate-setup-actions {
   display: flex;
   flex-wrap: wrap;

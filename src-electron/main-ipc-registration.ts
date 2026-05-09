@@ -28,6 +28,7 @@ import type {
   MateStorageState,
   MateTalkTurnInput,
   MateTalkTurnResult,
+  SetMateAvatarInput,
   UpdateMateInput,
 } from "../src/mate-state.js";
 import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
@@ -160,6 +161,7 @@ import {
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
+  WITHMATE_SET_MATE_AVATAR_CHANNEL,
   WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
   WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL,
   WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
@@ -351,6 +353,7 @@ export type MainIpcRegistrationDeps = {
   getMateProfile(): Awaitable<MateProfile | null>;
   createMate(input: CreateMateInput): Promise<MateProfile>;
   updateMate(input: UpdateMateInput): Promise<MateProfile>;
+  setMateAvatar(input: SetMateAvatarInput): Promise<MateProfile>;
   applyPendingGrowth(): Promise<MateGrowthApplyResult>;
   listMateGrowthEvents(request?: MateGrowthEventListRequest | null): Promise<MateGrowthEventListResult>;
   correctMateGrowthEvent(request: MateGrowthEventCorrectionRequest): Promise<MateGrowthEventActionResult>;
@@ -504,6 +507,7 @@ type MainIpcMateDeps = Pick<
   | "getMateProfile"
   | "createMate"
   | "updateMate"
+  | "setMateAvatar"
   | "applyPendingGrowth"
   | "listMateGrowthEvents"
   | "correctMateGrowthEvent"
@@ -847,6 +851,7 @@ function registerMateHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcMateDeps
   ipcMain.handle(WITHMATE_GET_MATE_PROFILE_CHANNEL, () => deps.getMateProfile());
   ipcMain.handle(WITHMATE_CREATE_MATE_CHANNEL, (_event, input: CreateMateInput) => deps.createMate(input));
   ipcMain.handle(WITHMATE_UPDATE_MATE_CHANNEL, (_event, input: UpdateMateInput) => deps.updateMate(input));
+  ipcMain.handle(WITHMATE_SET_MATE_AVATAR_CHANNEL, (_event, input: SetMateAvatarInput) => deps.setMateAvatar(input));
   ipcMain.handle(WITHMATE_APPLY_MATE_GROWTH_CHANNEL, () => deps.applyPendingGrowth());
   ipcMain.handle(WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL, (_event, request?: MateGrowthEventListRequest | null) =>
     deps.listMateGrowthEvents(request),

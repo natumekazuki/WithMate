@@ -1907,12 +1907,16 @@ export type HomeMateSetupPanelProps = {
   mode?: "create" | "edit";
   displayName: string;
   creating: boolean;
+  avatarUpdating?: boolean;
   feedback: string;
   mateDisplayName: string | null;
+  mateAvatarFilePath?: string | null;
   onChangeDisplayName: (value: string) => void;
   onSubmit: () => void;
   onOpenSettings: () => void;
   onCancel?: () => void;
+  onSelectAvatar?: () => void;
+  onClearAvatar?: () => void;
 };
 
 export type HomeMateTalkPanelProps = {
@@ -1930,14 +1934,22 @@ export function HomeMateSetupPanel({
   mode = "create",
   displayName,
   creating,
+  avatarUpdating = false,
   feedback,
   mateDisplayName,
+  mateAvatarFilePath,
   onChangeDisplayName,
   onSubmit,
   onOpenSettings,
   onCancel,
+  onSelectAvatar,
+  onClearAvatar,
 }: HomeMateSetupPanelProps) {
   const isEditMode = mode === "edit";
+  const canEditAvatar = isEditMode && Boolean(onSelectAvatar);
+  const canClearAvatar = canEditAvatar && Boolean(onClearAvatar) && Boolean(mateAvatarFilePath);
+  const avatarBusy = creating || avatarUpdating;
+  const avatarDisplayName = displayName.trim() || mateDisplayName || "Mate";
 
   return (
     <section className="home-mate-setup-panel">
@@ -1952,6 +1964,31 @@ export function HomeMateSetupPanel({
           onSubmit();
         }}
       >
+        <div className="home-mate-avatar-field">
+          <CharacterAvatar
+            character={{ name: avatarDisplayName, iconPath: mateAvatarFilePath ?? "" }}
+            size="large"
+            className="home-mate-avatar-preview"
+          />
+          <div className="home-mate-avatar-copy">
+            <span className="home-mate-avatar-label">アイコン</span>
+            <p className="home-mate-avatar-help">
+              {canEditAvatar ? "Mate の表示に使う画像を選べます。" : "Mate 作成後に設定できます。"}
+            </p>
+            {canEditAvatar ? (
+              <div className="home-mate-avatar-actions">
+                <button className="launch-toggle" type="button" onClick={onSelectAvatar} disabled={avatarBusy}>
+                  {avatarUpdating ? "更新中..." : "画像を選択"}
+                </button>
+                {canClearAvatar ? (
+                  <button className="launch-toggle" type="button" onClick={onClearAvatar} disabled={avatarBusy}>
+                    解除
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
         <label className="settings-field" htmlFor="mate-display-name">
           <span>表示名</span>
           <input

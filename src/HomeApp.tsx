@@ -272,6 +272,7 @@ export default function HomeApp() {
   const [correctingMateGrowthEventId, setCorrectingMateGrowthEventId] = useState<string | null>(null);
   const [correctingMateGrowthEventStatement, setCorrectingMateGrowthEventStatement] = useState("");
   const [mateCreating, setMateCreating] = useState(false);
+  const [mateAvatarUpdating, setMateAvatarUpdating] = useState(false);
   const [mateGrowthApplying, setMateGrowthApplying] = useState(false);
   const [mateResetting, setMateResetting] = useState(false);
   const [mateCreationFeedback, setMateCreationFeedback] = useState("");
@@ -343,6 +344,7 @@ export default function HomeApp() {
       setMateGrowthEventBusyTarget(null);
       setCorrectingMateGrowthEventId(null);
       setCorrectingMateGrowthEventStatement("");
+      setMateAvatarUpdating(false);
       stopMateEmbeddingSettingsPolling();
       return nextMateState;
     }
@@ -904,6 +906,76 @@ export default function HomeApp() {
       setMateCreationFeedback(error instanceof Error ? error.message : "Mate の保存に失敗したよ。");
     } finally {
       setMateCreating(false);
+    }
+  };
+
+  const handleSelectMateAvatar = async () => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || mateState === "not_created") {
+      setMateCreationFeedback("Mate を作成してからアイコンを設定してね。");
+      return;
+    }
+
+    setMateAvatarUpdating(true);
+    try {
+      setMateCreationFeedback("");
+      const selectedPath = await withmateApi.pickImageFile(mateProfile?.avatarFilePath ?? null);
+      if (!selectedPath) {
+        return;
+      }
+
+      setMateCreationFeedback("Mate のアイコンを更新中...");
+      const nextMateProfile = await withmateApi.setMateAvatar({ avatarFilePath: selectedPath });
+      setMateProfile(nextMateProfile);
+      setMateDisplayName(nextMateProfile.displayName);
+      setMateCreationFeedback("Mate のアイコンを更新したよ。");
+
+      try {
+        const [nextSessions, nextCompanionSessions] = await Promise.all([
+          withmateApi.listSessionSummaries(),
+          withmateApi.listCompanionSessionSummaries(),
+        ]);
+        setSessions(nextSessions);
+        setCompanionSessions(nextCompanionSessions);
+      } catch (error) {
+        setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
+      }
+    } catch (error) {
+      setMateCreationFeedback(error instanceof Error ? error.message : "Mate のアイコン更新に失敗したよ。");
+    } finally {
+      setMateAvatarUpdating(false);
+    }
+  };
+
+  const handleClearMateAvatar = async () => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || mateState === "not_created") {
+      setMateCreationFeedback("Mate を作成してからアイコンを設定してね。");
+      return;
+    }
+
+    setMateAvatarUpdating(true);
+    setMateCreationFeedback("Mate のアイコンを解除中...");
+    try {
+      const nextMateProfile = await withmateApi.setMateAvatar({ avatarFilePath: null });
+      setMateProfile(nextMateProfile);
+      setMateDisplayName(nextMateProfile.displayName);
+      setMateCreationFeedback("Mate のアイコンを解除したよ。");
+
+      try {
+        const [nextSessions, nextCompanionSessions] = await Promise.all([
+          withmateApi.listSessionSummaries(),
+          withmateApi.listCompanionSessionSummaries(),
+        ]);
+        setSessions(nextSessions);
+        setCompanionSessions(nextCompanionSessions);
+      } catch (error) {
+        setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
+      }
+    } catch (error) {
+      setMateCreationFeedback(error instanceof Error ? error.message : "Mate のアイコン解除に失敗したよ。");
+    } finally {
+      setMateAvatarUpdating(false);
     }
   };
 
@@ -1980,6 +2052,10 @@ export default function HomeApp() {
       onOpenSettings={() => void openSettingsWindow()}
       onCancel={isMateNotCreated ? undefined : () => setMateProfileEditorOpen(false)}
       mateDisplayName={mateProfile?.displayName ?? null}
+      mateAvatarFilePath={mateProfile?.avatarFilePath ?? ""}
+      avatarUpdating={mateAvatarUpdating}
+      onSelectAvatar={isMateNotCreated ? undefined : () => void handleSelectMateAvatar()}
+      onClearAvatar={isMateNotCreated ? undefined : () => void handleClearMateAvatar()}
     />
   );
 

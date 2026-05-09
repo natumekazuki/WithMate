@@ -1176,20 +1176,28 @@ describe("HomeMateSetupPanel", () => {
     feedback?: string;
     displayName?: string;
     mateDisplayName?: string | null;
+    mateAvatarFilePath?: string | null;
+    avatarUpdating?: boolean;
     onSubmit?: () => void;
     onCancel?: () => void;
     onOpenSettings?: () => void;
+    onSelectAvatar?: () => void;
+    onClearAvatar?: () => void;
   }) => {
     return HomeMateSetupPanel({
       mode: params?.mode,
       displayName: params?.displayName ?? "Your Mate",
       creating: params?.creating ?? false,
+      avatarUpdating: params?.avatarUpdating,
       feedback: params?.feedback ?? "",
       mateDisplayName: params?.mateDisplayName ?? null,
+      mateAvatarFilePath: params?.mateAvatarFilePath,
       onChangeDisplayName: () => undefined,
       onSubmit: params?.onSubmit ?? (() => undefined),
       onCancel: params?.onCancel,
       onOpenSettings: params?.onOpenSettings ?? (() => undefined),
+      onSelectAvatar: params?.onSelectAvatar,
+      onClearAvatar: params?.onClearAvatar,
     });
   };
 
@@ -1284,6 +1292,53 @@ describe("HomeMateSetupPanel", () => {
     assert.ok(cancelButton);
     cancelButton.props.onClick();
     assert.equal(canceled, 1);
+  });
+
+  it("edit mode では Mate アイコンの選択と解除を実行できる", () => {
+    let selected = 0;
+    let cleared = 0;
+    const panel = renderPanel({
+      mode: "edit",
+      displayName: "Mika",
+      mateDisplayName: "Mika",
+      mateAvatarFilePath: "C:/mate/avatar.png",
+      onSelectAvatar: () => {
+        selected += 1;
+      },
+      onClearAvatar: () => {
+        cleared += 1;
+      },
+    });
+    const html = renderToStaticMarkup(panel);
+    const selectButton = collectElements(
+      panel,
+      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "画像を選択",
+    )[0];
+    const clearButton = collectElements(
+      panel,
+      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "解除",
+    )[0];
+
+    assert.ok(html.includes("アイコン"));
+    assert.ok(html.includes("Mate の表示に使う画像を選べます。"));
+    assert.ok(selectButton);
+    assert.ok(clearButton);
+    selectButton.props.onClick();
+    clearButton.props.onClick();
+    assert.equal(selected, 1);
+    assert.equal(cleared, 1);
+  });
+
+  it("create mode では Mate アイコン設定を作成後の導線として表示する", () => {
+    const panel = renderPanel({ mode: "create" });
+    const html = renderToStaticMarkup(panel);
+    const avatarButtons = collectElements(
+      panel,
+      (element) => element.type === "button" && ["画像を選択", "解除"].includes(String(element.props.children)),
+    );
+
+    assert.ok(html.includes("Mate 作成後に設定できます。"));
+    assert.equal(avatarButtons.length, 0);
   });
 });
 

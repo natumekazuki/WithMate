@@ -110,6 +110,7 @@ import {
   WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESET_MATE_CHANNEL,
+  WITHMATE_SET_MATE_AVATAR_CHANNEL,
   WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
   WITHMATE_RUN_MATE_TALK_TURN_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
@@ -453,6 +454,9 @@ function createMateApi(ipcRenderer: IpcRendererLike): WithMateWindowMateApi {
     },
     updateMate(input) {
       return ipcRenderer.invoke(WITHMATE_UPDATE_MATE_CHANNEL, input);
+    },
+    setMateAvatar(input) {
+      return ipcRenderer.invoke(WITHMATE_SET_MATE_AVATAR_CHANNEL, input);
     },
     applyPendingGrowth() {
       return ipcRenderer.invoke(WITHMATE_APPLY_MATE_GROWTH_CHANNEL);

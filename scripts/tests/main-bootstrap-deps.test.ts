@@ -170,6 +170,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         forgetMateGrowthEvent: async () => ({ event: null }),
         createMate: async () => ({}) as never,
         updateMate: async () => ({}) as never,
+        setMateAvatar: async () => ({}) as never,
         runMateTalkTurn: async () => ({}) as never,
         resetMate: async () => {},
       },

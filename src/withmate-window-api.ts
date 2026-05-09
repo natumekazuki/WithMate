@@ -60,6 +60,7 @@ import type {
   MateTalkTurnInput,
   MateTalkTurnResult,
   MateGrowthSettings,
+  SetMateAvatarInput,
   UpdateMateInput,
   UpdateMateGrowthSettingsInput,
 } from "./mate-state.js";
@@ -241,6 +242,7 @@ export type WithMateWindowMateApi = {
   getMateProfile(): Promise<MateProfile | null>;
   createMate(input: CreateMateInput): Promise<MateProfile>;
   updateMate(input: UpdateMateInput): Promise<MateProfile>;
+  setMateAvatar(input: SetMateAvatarInput): Promise<MateProfile>;
   applyPendingGrowth(): Promise<MateGrowthApplyResult>;
   listMateGrowthEvents(request?: MateGrowthEventListRequest | null): Promise<MateGrowthEventListResult>;
   correctMateGrowthEvent(request: MateGrowthEventCorrectionRequest): Promise<MateGrowthEventActionResult>;

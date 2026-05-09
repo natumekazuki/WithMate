@@ -58,6 +58,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:update-mate",
     args: [{ displayName: "Buddy 2" }],
   });
+  assert.deepEqual(await api.setMateAvatar({ avatarFilePath: "C:/avatar.png" }), {
+    channel: "withmate:set-mate-avatar",
+    args: [{ avatarFilePath: "C:/avatar.png" }],
+  });
   assert.deepEqual(await api.runMateTalkTurn({ message: "hello" }), {
     channel: "withmate:run-mate-talk-turn",
     args: [{ message: "hello" }],
@@ -236,6 +240,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "runSessionTurn",
     "searchCompanionWorkspaceFiles",
     "searchWorkspaceFiles",
+    "setMateAvatar",
     "startMateEmbeddingDownload",
     "updateMateGrowthSettings",
     "stashCompanionTargetChanges",

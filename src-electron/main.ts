@@ -1117,6 +1117,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getMateProfile: () => requireMateStorage().getMateProfile(),
                 createMate,
                 updateMate,
+                setMateAvatar,
                 applyPendingGrowth,
                 listMateGrowthEvents,
                 correctMateGrowthEvent,
@@ -1521,6 +1522,12 @@ async function createMate(input: Parameters<MateStorage["createMate"]>[0]): Retu
 
 async function updateMate(input: Parameters<MateStorage["updateMate"]>[0]): ReturnType<MateStorage["updateMate"]> {
   const profile = await requireMateStorage().updateMate(input);
+  await syncEnabledProviderInstructionTargetsForMateProfile(profile);
+  return profile;
+}
+
+async function setMateAvatar(input: Parameters<MateStorage["setMateAvatar"]>[0]): ReturnType<MateStorage["setMateAvatar"]> {
+  const profile = await requireMateStorage().setMateAvatar(input);
   await syncEnabledProviderInstructionTargetsForMateProfile(profile);
   return profile;
 }

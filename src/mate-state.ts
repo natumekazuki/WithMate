@@ -90,6 +90,10 @@ export type UpdateMateInput = {
   themeSub?: string;
 };
 
+export type SetMateAvatarInput = {
+  avatarFilePath?: string | null;
+};
+
 export type MateTalkTurnInput = {
   message: string;
 };

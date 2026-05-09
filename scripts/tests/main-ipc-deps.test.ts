@@ -234,6 +234,10 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
         calls.push(`updateMate:${input.displayName}`);
         return {} as never;
       },
+      async setMateAvatar(input) {
+        calls.push(`setMateAvatar:${input.avatarFilePath ?? "clear"}`);
+        return {} as never;
+      },
       async applyPendingGrowth() {
         calls.push("applyPendingGrowth");
         return zeroGrowthResult;
@@ -276,6 +280,7 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
   await deps.getMateProfile();
   await deps.createMate({ displayName: "Buddy" });
   await deps.updateMate({ displayName: "Buddy 2" });
+  await deps.setMateAvatar({ avatarFilePath: "C:/avatar.png" });
   await deps.applyPendingGrowth();
   await deps.listMateGrowthEvents({ limit: 5 });
   await deps.correctMateGrowthEvent({ eventId: "event-0", statement: "修正後" });
@@ -292,6 +297,7 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
     "getMateProfile",
     "createMate:Buddy",
     "updateMate:Buddy 2",
+    "setMateAvatar:C:/avatar.png",
     "applyPendingGrowth",
     "listMateGrowthEvents:5",
     "correctMateGrowthEvent:event-0:修正後",
