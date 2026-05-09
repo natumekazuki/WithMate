@@ -85,14 +85,11 @@ describe("composeProviderPrompt", () => {
       ],
       providerCatalog,
       userMessage: "approval UI の次を進めて",
-      appSettings: {
-        ...createDefaultAppSettings(),
-        systemPromptPrefix: "安全第一で進める。",
-      },
+      appSettings: createDefaultAppSettings(),
       attachments: [],
     });
 
-    assert.match(prompt.systemBodyText, /# System Prompt/);
+    assert.equal(prompt.systemBodyText, "");
     assert.doesNotMatch(prompt.systemBodyText, /# Character/);
     assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
     assert.doesNotMatch(prompt.logicalPrompt.systemText, /# Character/);
@@ -109,7 +106,7 @@ describe("composeProviderPrompt", () => {
     assert.doesNotMatch(prompt.inputBodyText, /# Session Memory/);
     assert.doesNotMatch(prompt.inputBodyText, /# Project Memory/);
     assert.doesNotMatch(prompt.inputBodyText, /# User Input/);
-    assertSectionOrder(prompt.logicalPrompt.composedText, ["# System Prompt", "approval UI の次を進めて"]);
+    assertSectionOrder(prompt.logicalPrompt.composedText, ["approval UI の次を進めて"]);
   });
 
   it("projectContextText がある場合、User Input より前に Project Context を注入する", () => {
@@ -133,10 +130,7 @@ describe("composeProviderPrompt", () => {
       projectContextText: "  # Digest\n- item 1\n- item 2  ",
       providerCatalog,
       userMessage: "次の実装を進めて",
-      appSettings: {
-        ...createDefaultAppSettings(),
-        systemPromptPrefix: "安全第一で進める。",
-      },
+      appSettings: createDefaultAppSettings(),
       attachments: [],
     });
 
@@ -148,7 +142,6 @@ describe("composeProviderPrompt", () => {
     assertSectionOrder(prompt.inputBodyText, ["# Project Context", "ユーザー入力と上位指示が最優先です。", "# Digest", "# User Input"]);
     assertSectionOrder(prompt.inputBodyText, ["# Project Context", "# Digest"]);
     assertSectionOrder(prompt.logicalPrompt.composedText, [
-      "# System Prompt",
       "# Project Context",
       "ユーザー入力と上位指示が最優先です。",
       "# Digest",
@@ -177,10 +170,7 @@ describe("composeProviderPrompt", () => {
       projectContextText: "",
       providerCatalog,
       userMessage: "次の実装を進めて",
-      appSettings: {
-        ...createDefaultAppSettings(),
-        systemPromptPrefix: "安全第一で進める。",
-      },
+      appSettings: createDefaultAppSettings(),
       attachments: [],
     });
 
@@ -188,7 +178,7 @@ describe("composeProviderPrompt", () => {
     assert.equal(promptWithoutContext.inputBodyText, "次の実装を進めて");
     assert.equal(promptWithoutContext.logicalPrompt.inputText, "次の実装を進めて");
     assert.doesNotMatch(promptWithoutContext.inputBodyText, /# User Input/);
-    assertSectionOrder(promptWithoutContext.logicalPrompt.composedText, ["# System Prompt", "次の実装を進めて"]);
+    assertSectionOrder(promptWithoutContext.logicalPrompt.composedText, ["次の実装を進めて"]);
 
     const promptWithNullContext = composeProviderPrompt({
       session,
@@ -197,10 +187,7 @@ describe("composeProviderPrompt", () => {
       projectContextText: null,
       providerCatalog,
       userMessage: "次の実装を進めて",
-      appSettings: {
-        ...createDefaultAppSettings(),
-        systemPromptPrefix: "安全第一で進める。",
-      },
+      appSettings: createDefaultAppSettings(),
       attachments: [],
     });
     assert.doesNotMatch(promptWithNullContext.inputBodyText, /# Project Context/);
@@ -211,16 +198,13 @@ describe("composeProviderPrompt", () => {
       projectMemoryEntries: [],
       providerCatalog,
       userMessage: "次の実装を進めて",
-      appSettings: {
-        ...createDefaultAppSettings(),
-        systemPromptPrefix: "安全第一で進める。",
-      },
+      appSettings: createDefaultAppSettings(),
       attachments: [],
     });
     assert.doesNotMatch(promptWithUndefinedContext.inputBodyText, /# Project Context/);
   });
 
-  it("system prompt prefix が空の場合 system prompt を空文字にする", () => {
+  it("共通 system prompt を空文字にする", () => {
     const session = buildNewSession({
       taskTitle: "task",
       workspaceLabel: "workspace",
@@ -239,10 +223,7 @@ describe("composeProviderPrompt", () => {
       projectMemoryEntries: [],
       providerCatalog,
       userMessage: "system prompt が空でも user input は残ることを確認する",
-      appSettings: {
-        ...createDefaultAppSettings(),
-        systemPromptPrefix: "",
-      },
+      appSettings: createDefaultAppSettings(),
       attachments: [],
     });
 

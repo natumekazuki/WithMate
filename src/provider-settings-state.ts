@@ -14,7 +14,6 @@ import type {
 } from "./provider-instruction-target-state.js";
 
 export type AppSettings = {
-  systemPromptPrefix: string;
   memoryGenerationEnabled: boolean;
   autoCollapseActionDockOnSend: boolean;
   characterReflectionTriggerSettings: CharacterReflectionTriggerSettings;
@@ -131,7 +130,6 @@ export const DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS: CharacterReflectionT
 
 export function createDefaultAppSettings(): AppSettings {
   return {
-    systemPromptPrefix: "",
     memoryGenerationEnabled: true,
     autoCollapseActionDockOnSend: true,
     characterReflectionTriggerSettings: { ...DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS },
@@ -419,7 +417,6 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   }
 
   return {
-    systemPromptPrefix: typeof candidate.systemPromptPrefix === "string" ? candidate.systemPromptPrefix : "",
     memoryGenerationEnabled:
       typeof candidate.memoryGenerationEnabled === "boolean" ? candidate.memoryGenerationEnabled : true,
     autoCollapseActionDockOnSend:

@@ -149,12 +149,12 @@ provider 境界は current 実装で次の 2 plane に分けて扱う。
 3. `characterId` で `CharacterProfile` を読む
 4. Main Process が textarea 内の `@path` を解決し、file / folder / image を正規化する
    - workspace 外 path は `allowedAdditionalDirectories` 配下だけを許可する
-5. Main Process が app settings から `System Prompt Prefix` を読む
-6. prompt composer が `# System Prompt + (system prompt prefix + roleMarkdown) + # User Input Prompt + userMessage` を空行区切りで合成する
+5. Main Process が provider instruction sync status を参照する
+6. prompt composer が app 共通 system prompt を挿入せず、user input と添付 reference を provider へ渡す形式に正規化する
 7. Main Process が session の `catalogRevision` と `provider` から provider catalog を解決する
 8. `MainProviderFacade` が coding plane adapter を解決し、`model / reasoningEffort` を検証したうえで provider-native SDK 実行へ変換する
    - `CodexAdapter`: file / folder の workspace 外 access は session metadata `allowedAdditionalDirectories` だけを `additionalDirectories` へ変換し、画像は structured input にして `thread.runStreamed()` を実行する
-   - `CopilotAdapter`: `systemPromptPrefix + roleMarkdown` は `SessionConfig.systemMessage` `mode: "append"` に載せ、`session.send()` には user input 本文だけを送る。file / folder は `session.send({ attachments })` の `file` / `directory` へ変換して同時に渡す。image も `file` attachment として吸収し、renderer 側では共通の `Image` 導線を維持する。workspace 外 path は WithMate 側の `allowedAdditionalDirectories` 判定だけを正本にして許可する。`on-request` / `on-failure` では permission request を Main Process へ返し、Session UI の approval card と往復する。Electron では native CLI binary を明示して起動し、bootstrap failure 時は audit log に debug metadata を残す
+   - `CopilotAdapter`: Mate 定義は provider instruction file の managed block 側へ同期済みであることを前提にし、`session.send()` には user input 本文と attachment だけを送る。file / folder は `session.send({ attachments })` の `file` / `directory` へ変換して同時に渡す。image も `file` attachment として吸収し、renderer 側では共通の `Image` 導線を維持する。workspace 外 path は WithMate 側の `allowedAdditionalDirectories` 判定だけを正本にして許可する。`on-request` / `on-failure` では permission request を Main Process へ返し、Session UI の approval card と往復する。Electron では native CLI binary を明示して起動し、bootstrap failure 時は audit log に debug metadata を残す
 9. Main Process が stream event から live state と provider telemetry を組み立て、IPC で Session Window へ中継する
    - live state には `approvalRequest` と `elicitationRequest` を含められる
    - quota telemetry は provider 単位、context telemetry は session 単位で memory cache する

@@ -62,7 +62,7 @@ describe("resolveModelChangeSelection", () => {
 
 describe("app settings provider helpers", () => {
   it("settings 未設定でも codex は既定で enabled になる", () => {
-    const settings = normalizeAppSettings({ systemPromptPrefix: "" });
+    const settings = normalizeAppSettings({});
 
     assert.equal(getProviderAppSettings(settings, "codex").enabled, true);
     assert.equal(getProviderAppSettings(settings, "copilot").enabled, false);
@@ -98,7 +98,6 @@ describe("app settings provider helpers", () => {
 
   it("canonical な codingProviderSettings だけを正本として扱う", () => {
     const settings = normalizeAppSettings({
-      systemPromptPrefix: "canonical",
       codingProviderSettings: {
         codex: {
           enabled: false,
@@ -113,7 +112,6 @@ describe("app settings provider helpers", () => {
       },
     });
 
-    assert.equal(settings.systemPromptPrefix, "canonical");
     assert.deepEqual(settings.codingProviderSettings, {
       codex: {
         enabled: false,

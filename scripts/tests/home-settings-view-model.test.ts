@@ -149,9 +149,8 @@ describe("home-settings-view-model", () => {
     );
   });
 
-  it("persisted settings は draft の system prompt を維持したまま resolved provider settings を埋め込む", () => {
+  it("persisted settings は resolved provider settings を埋め込む", () => {
     const draft = createDefaultAppSettings();
-    draft.systemPromptPrefix = "prefix";
     draft.autoCollapseActionDockOnSend = false;
     draft.characterReflectionTriggerSettings.cooldownSeconds = 180;
     draft.memoryExtractionProviderSettings.codex = {
@@ -164,7 +163,6 @@ describe("home-settings-view-model", () => {
     const rows = buildHomeProviderSettingRows(createSnapshot(), draft);
     const persisted = buildPersistedAppSettingsFromRows(draft, rows);
 
-    assert.equal(persisted.systemPromptPrefix, "prefix");
     assert.equal(persisted.autoCollapseActionDockOnSend, false);
     assert.equal(persisted.characterReflectionTriggerSettings.cooldownSeconds, 180);
     assert.deepEqual(persisted.memoryExtractionProviderSettings.codex, {

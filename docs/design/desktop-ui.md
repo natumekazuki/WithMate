@@ -323,7 +323,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `Session Monitor Window` も同じ IPC bridge と truth source を使い、`Home` と別 window でも monitor 内容を同期する
 - Session 実行の監査ログは SQLite に保存し、Session Window から閲覧する
 - chat message は限定的な rich text renderer で整形表示する
-- `Settings Window` の `System Prompt Prefix` は SQLite に保存し、次回 turn から prompt composition へ反映する
+- `Settings Window` は app 共通 system prompt を編集しない。Mate 定義は provider instruction sync の managed block へ投影する
 - `Memory Management Window` は Main Process から `Session / Project / Character Memory` の snapshot を取得し、delete 後は再取得して整合を保つ
 - character は `userData/characters/` を正本とする
 - `userData` は `<appData>/WithMate/` に固定する

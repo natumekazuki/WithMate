@@ -15,7 +15,7 @@ describe("AppSettingsStorage", () => {
     try {
       const storage = new AppSettingsStorage(dbPath);
       const updated = storage.updateSettings({
-        systemPromptPrefix: "prefix",
+        ...createDefaultAppSettings(),
         memoryGenerationEnabled: false,
         autoCollapseActionDockOnSend: false,
         codingProviderSettings: {
@@ -93,7 +93,7 @@ describe("AppSettingsStorage", () => {
     try {
       const storage = new AppSettingsStorage(dbPath);
       storage.updateSettings({
-        systemPromptPrefix: "custom-prefix",
+        ...createDefaultAppSettings(),
         memoryGenerationEnabled: false,
         autoCollapseActionDockOnSend: false,
         codingProviderSettings: {

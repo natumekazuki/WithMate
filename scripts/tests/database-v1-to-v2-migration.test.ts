@@ -521,14 +521,14 @@ describe("V1 to V2 database migration write mode", () => {
         assert.equal(countRowsBySessionId(v2Db, "session_messages", "session-2"), 1);
         assert.equal(countRowsBySessionId(v2Db, "audit_logs", "session-2"), 0);
 
-        assert.equal(
-          v2Db.prepare("SELECT COUNT(*) AS count FROM app_settings WHERE setting_key = ?").get("system_prompt_prefix").count,
-          1,
-        );
-        assert.equal(
-          v2Db.prepare("SELECT COUNT(*) AS count FROM app_settings WHERE setting_key = ?").get("memory_generation_enabled").count,
-          0,
-        );
+        const migratedSystemPromptPrefixRow = v2Db
+          .prepare("SELECT COUNT(*) AS count FROM app_settings WHERE setting_key = ?")
+          .get("system_prompt_prefix") as { count: number };
+        const skippedMemoryGenerationEnabledRow = v2Db
+          .prepare("SELECT COUNT(*) AS count FROM app_settings WHERE setting_key = ?")
+          .get("memory_generation_enabled") as { count: number };
+        assert.equal(migratedSystemPromptPrefixRow.count, 1);
+        assert.equal(skippedMemoryGenerationEnabledRow.count, 0);
       } finally {
         v2Db.close();
       }

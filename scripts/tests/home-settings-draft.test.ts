@@ -29,7 +29,6 @@ import {
   updateMemoryExtractionTimeoutSeconds,
   updateMemoryExtractionTimeoutSecondsDraft,
   updateMemoryGenerationEnabled,
-  updateSystemPromptPrefix,
   updateMateMemoryGenerationTriggerIntervalMinutesDraft,
   updateMateMemoryGenerationPriorityProviderDraft,
   updateMateMemoryGenerationPriorityModelDraft,
@@ -179,7 +178,7 @@ describe("home-settings-draft", () => {
                 updateCodingProviderApiKeyDraft(
                   updateCodingProviderEnabledDraft(
                     updateAutoCollapseActionDockOnSend(
-                      updateMemoryGenerationEnabled(updateSystemPromptPrefix(draft, "prefix"), false),
+                      updateMemoryGenerationEnabled(draft, false),
                       false,
                     ),
                     "codex",
@@ -222,7 +221,6 @@ describe("home-settings-draft", () => {
       "3",
     );
 
-    assert.equal(nextWithTriggers.systemPromptPrefix, "prefix");
     assert.equal(nextWithTriggers.memoryGenerationEnabled, false);
     assert.equal(nextWithTriggers.autoCollapseActionDockOnSend, false);
     assert.equal(nextWithTriggers.codingProviderSettings.codex.enabled, false);

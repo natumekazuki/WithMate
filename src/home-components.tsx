@@ -130,7 +130,6 @@ export type HomeSettingsContentProps = {
   mateEmbeddingFeedback: string;
   mateEmbeddingBusy: boolean;
   memoryManagementOnly?: boolean;
-  onChangeSystemPromptPrefix: (value: string) => void;
   onChangeMemoryGenerationEnabled: (enabled: boolean) => void;
   onChangeMateMemoryGenerationPriorityProvider: (index: number, providerId: string) => void;
   onChangeMateMemoryGenerationPriorityModel: (index: number, providerId: string, model: string) => void;
@@ -273,7 +272,6 @@ export function HomeSettingsContent({
   mateEmbeddingFeedback,
   mateEmbeddingBusy,
   memoryManagementOnly = false,
-  onChangeSystemPromptPrefix,
   onChangeMemoryGenerationEnabled,
   onChangeMateMemoryGenerationPriorityProvider,
   onChangeMateMemoryGenerationPriorityModel,
@@ -426,24 +424,6 @@ export function HomeSettingsContent({
       <div className="settings-panel settings-panel-window">
         <div className="settings-panel-window-scroll">
           <section className="settings-section">
-          <section className="settings-section-card">
-            <div className="settings-field">
-              <strong>System Prompt Prefix</strong>
-              <SettingsInlineHelp summary="System Prompt Prefix のヘルプ">
-                <p>各セッションの共通 system 指示として送信プロンプトへ含まれる。</p>
-                <p>Mate 固有の性格や振る舞いは Mate 管理側で育てる。</p>
-              </SettingsInlineHelp>
-              <p className="settings-help">
-                共通 system 指示として使われ、保存時に先頭へ <code># System Prompt</code> が自動で付く。
-              </p>
-              <textarea
-                value={settingsDraft.systemPromptPrefix}
-                onChange={(event) => onChangeSystemPromptPrefix(event.target.value)}
-                rows={8}
-              />
-            </div>
-          </section>
-
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>Session Window</strong>

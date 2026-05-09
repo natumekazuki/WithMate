@@ -38,11 +38,11 @@ describe("home-settings-actions", () => {
 
   it("save は nextSettings と feedback を返す", async () => {
     const settings = createDefaultAppSettings();
-    settings.systemPromptPrefix = "prefix";
+    settings.autoCollapseActionDockOnSend = false;
 
     const result = await saveHomeSettings(createApi(), settings);
 
-    assert.equal(result.nextSettings.systemPromptPrefix, "prefix");
+    assert.equal(result.nextSettings.autoCollapseActionDockOnSend, false);
     assert.equal(result.feedback, "設定を保存したよ。");
   });
 

@@ -91,7 +91,6 @@ import {
   addMateMemoryGenerationPriorityDraft,
   removeMateMemoryGenerationPriorityDraft,
   updateMemoryGenerationEnabled,
-  updateSystemPromptPrefix,
 } from "./home-settings-draft.js";
 import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-withmate-api.js";
 import {
@@ -1804,7 +1803,6 @@ export default function HomeApp() {
       mateEmbeddingSettings={mateEmbeddingSettings}
       mateEmbeddingFeedback={mateEmbeddingFeedback}
       mateEmbeddingBusy={mateEmbeddingBusy}
-      onChangeSystemPromptPrefix={(value) => setSettingsDraft((current) => updateSystemPromptPrefix(current, value))}
       onChangeMemoryGenerationEnabled={(enabled) =>
         setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled))
       }
@@ -1892,7 +1890,6 @@ export default function HomeApp() {
       mateEmbeddingFeedback={mateEmbeddingFeedback}
       mateEmbeddingBusy={mateEmbeddingBusy}
       memoryManagementOnly
-      onChangeSystemPromptPrefix={(value) => setSettingsDraft((current) => updateSystemPromptPrefix(current, value))}
       onChangeMemoryGenerationEnabled={(enabled) =>
         setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled))
       }

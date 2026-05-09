@@ -12,16 +12,6 @@ import {
 } from "./provider-settings-state.js";
 import { coerceModelSelection, type ModelCatalogProvider } from "./model-catalog.js";
 
-export function updateSystemPromptPrefix(
-  draft: AppSettings,
-  systemPromptPrefix: string,
-): AppSettings {
-  return {
-    ...draft,
-    systemPromptPrefix,
-  };
-}
-
 export function updateMemoryGenerationEnabled(
   draft: AppSettings,
   enabled: boolean,

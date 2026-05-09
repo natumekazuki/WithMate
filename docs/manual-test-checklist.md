@@ -28,7 +28,7 @@ npm run electron:start
 | MT-001A | Home narrow width guardrail | Home Window を最小幅近くまで縮める | single-column layout へ倒れても `Recent Sessions` と right pane toggle / `Settings` 導線が残り、操作不能にならない |
 | MT-002 | Home 一覧 | session が 0 件の状態で起動する | 空状態メッセージが表示される |
 | MT-003 | Characters 一覧 | character が 0 件の状態で起動する | 空状態メッセージと `Add Character` が表示される |
-| MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `System Prompt Prefix` / `Session Window` / `Coding Agent Providers` / `Skill Roots` / `Memory Extraction` / `Character Reflection` / `Model Catalog` が既存値で表示される |
+| MT-004 | Settings Window | Home の `Settings` を押す | 独立した `Settings Window` が開き、保存済み設定の読込完了までは loading が出る。読み込み後は `Session Window` / `Coding Agent Providers` / `Provider Instruction Sync` / `Skill Roots` / `Memory Extraction` / `Character Reflection` / `Model Catalog` が既存値で表示される |
 | MT-004H | Settings window shell layout | `Settings Window` を wide 幅で開き、縦に長い内容まで scroll する | panel は window 幅に追従し、`Home / Close` の header は出ない。本文は inner scroll で最後まで到達でき、scrollbar が shell の角丸に隠れない |
 | MT-004A | Settings provider row layout | `Settings Window` を開いて `Coding Agent Providers` を確認する | provider 名が左、checkbox が右の row で揃って見え、どの provider を on/off しているか即判別できる |
 | MT-004B | Memory extraction settings | `Settings Window` の `Memory Extraction` を確認する | provider ごとに `Model` / `Reasoning Depth` / `Output Tokens Threshold` が表示され、現在の model catalog に沿った選択肢だけが出る |
@@ -38,7 +38,7 @@ npm run electron:start
 | MT-004G | Cursor-based window placement | cursor を画面端寄りへ移動してから `Settings Window`、`Memory Management Window`、`Character Editor Window`、`Session Window`、`Diff Window` を新規に開く | `Home Window` 以外の新規 window は cursor がある display 付近に開き、workArea 外へはみ出さない。既に開いている window を再度開いた時は位置を変えず focus だけが前面へ来る |
 | MT-004E | Memory 管理一覧 / delete | `Memory Management Window` を開き、Session / Project / Character Memory が少なくとも 1 件ずつある状態で `Delete` を実行する | `Session / Project / Character Memory` の件数、一覧、`Reload Memory` が表示される。対象 domain の item が消え、最後の `Project / Character Memory` entry を削除した時は空 scope も残らない。reload 後も再出現しない |
 | MT-004F | Memory 管理 search / filter | `Memory Management Window` で search text、domain tab、status / category、sort を切り替える | search は title / detail / keyword / workspace を横断して絞り込める。domain は `All / Session / Project / Character` tab で切り替えられ、選択中 section だけが出る。domain に応じて不要な filter は disabled になり、sort は更新日時順の切替が効く |
-| MT-007 | Settings save | `System Prompt Prefix` または coding provider 設定を変更して `Save Settings` を押す | 保存成功メッセージが表示され、再度開いても保持される |
+| MT-007 | Settings save | Session 表示設定または coding provider 設定を変更して `Save Settings` を押す | 保存成功メッセージが表示され、再度開いても保持される |
 | MT-008 | Model catalog export | Settings の `Model Catalog` から `Export Models` を押す | catalog JSON が保存される |
 | MT-009 | Model catalog import | Settings の `Model Catalog` から `Import Models` を実行する | import 成功メッセージが表示され、active revision が更新される |
 | MT-013 | New Session 起動 | Home の `New Session` を押す | launch dialog が開く |

@@ -5,7 +5,6 @@ import { CREATE_APP_SETTINGS_TABLE_SQL } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
-const SYSTEM_PROMPT_PREFIX_KEY = "system_prompt_prefix";
 const MEMORY_GENERATION_ENABLED_KEY = "memory_generation_enabled";
 const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
 const CHARACTER_REFLECTION_TRIGGER_SETTINGS_KEY = "character_reflection_trigger_settings_json";
@@ -30,13 +29,6 @@ export class AppSettingsStorage {
 
   private ensureDefaults(): void {
     const updatedAt = new Date().toISOString();
-    this.db
-      .prepare(`
-        INSERT INTO app_settings (setting_key, setting_value, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(setting_key) DO NOTHING
-      `)
-      .run(SYSTEM_PROMPT_PREFIX_KEY, DEFAULT_APP_SETTINGS.systemPromptPrefix, updatedAt);
     this.db
       .prepare(`
         INSERT INTO app_settings (setting_key, setting_value, updated_at)
@@ -118,10 +110,6 @@ export class AppSettingsStorage {
 
     const settings = createDefaultAppSettings();
     for (const row of rows) {
-      if (row.setting_key === SYSTEM_PROMPT_PREFIX_KEY) {
-        settings.systemPromptPrefix = row.setting_value;
-        continue;
-      }
       if (row.setting_key === MEMORY_GENERATION_ENABLED_KEY) {
         settings.memoryGenerationEnabled = row.setting_value === "true";
         continue;
@@ -209,15 +197,6 @@ export class AppSettingsStorage {
 
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      this.db
-        .prepare(`
-          INSERT INTO app_settings (setting_key, setting_value, updated_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(setting_key) DO UPDATE SET
-            setting_value = excluded.setting_value,
-            updated_at = excluded.updated_at
-        `)
-        .run(SYSTEM_PROMPT_PREFIX_KEY, normalized.systemPromptPrefix, updatedAt);
       this.db
         .prepare(`
           INSERT INTO app_settings (setting_key, setting_value, updated_at)

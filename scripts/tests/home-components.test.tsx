@@ -178,7 +178,6 @@ describe("HomeSettingsContent", () => {
     mateEmbeddingSettings: null,
     mateEmbeddingFeedback: "",
     mateEmbeddingBusy: false,
-    onChangeSystemPromptPrefix: noOp,
     onChangeMemoryGenerationEnabled: noOp,
     onChangeMateMemoryGenerationPriorityProvider: noOp,
     onChangeMateMemoryGenerationPriorityModel: noOp,
@@ -306,15 +305,6 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_REASONING_LABEL}</span>`));
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_TIMEOUT_LABEL}</span>`));
     assert.ok(html.includes(`<span>${SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL}</span>`));
-  });
-
-  it("System Prompt Prefix は現在の送信仕様がわかるヘルプを表示する", () => {
-    const html = renderSettings();
-
-    assert.ok(html.includes("<strong>System Prompt Prefix</strong>"));
-    assert.ok(html.includes("System Prompt Prefix のヘルプ"));
-    assert.ok(html.includes("各セッションの共通 system 指示として送信プロンプトへ含まれる。"));
-    assert.ok(html.includes("Mate 固有の性格や振る舞いは Mate 管理側で育てる。"));
   });
 
   it("Mate Memory Generation の Add で onAdd callback が呼ばれる", () => {
@@ -856,7 +846,6 @@ describe("HomeSettingsContent", () => {
         mateEmbeddingSettings={mateEmbeddingSettings}
         mateEmbeddingFeedback=""
         mateEmbeddingBusy={false}
-        onChangeSystemPromptPrefix={noOp}
         onChangeMemoryGenerationEnabled={noOp}
         onChangeMateMemoryGenerationPriorityProvider={noOp}
         onChangeMateMemoryGenerationPriorityModel={noOp}
@@ -967,7 +956,6 @@ describe("HomeSettingsContent", () => {
         mateGrowthEvents={[]}
         mateGrowthEventsLoading={false}
         mateGrowthEventsFeedback=""
-        onChangeSystemPromptPrefix={noOp}
         onChangeMemoryGenerationEnabled={noOp}
         onChangeMateMemoryGenerationPriorityProvider={noOp}
         onChangeMateMemoryGenerationPriorityModel={noOp}
@@ -1074,7 +1062,6 @@ describe("HomeSettingsContent", () => {
         mateGrowthEvents={[]}
         mateGrowthEventsLoading={false}
         mateGrowthEventsFeedback=""
-        onChangeSystemPromptPrefix={noOp}
         onChangeMemoryGenerationEnabled={noOp}
         onChangeMateMemoryGenerationPriorityProvider={noOp}
         onChangeMateMemoryGenerationPriorityModel={noOp}

@@ -360,14 +360,17 @@ current 実装の key:
 
 | setting_key | Meaning |
 | --- | --- |
-| `system_prompt_prefix` | app 共通の system prompt prefix |
+| `auto_collapse_action_dock_on_send` | Session 送信後に Action Dock を自動で閉じるか |
 | `coding_provider_settings_json` | coding plane provider 設定 |
 | `memory_extraction_provider_settings_json` | memory extraction provider 設定 |
 | `character_reflection_provider_settings_json` | character reflection provider 設定 |
+| `mate_memory_generation_settings_json` | Mate Memory Generation provider 設定 |
+| `character_reflection_trigger_settings_json` | character reflection trigger 設定 |
 
 補足:
 
 - `memory_extraction_provider_settings_json` と `character_reflection_provider_settings_json` は互換用の legacy key として残る場合がある
+- `system_prompt_prefix` は SingleMate 化で廃止する。V1 / V2 / V3 の履歴 migration では当時の app setting として保持し、V4 の新規 DB へは持ち込まない
 - current UI では MemoryGeneration / Character Reflection 設定を表示しない
 - current runtime ではこれらの設定を参照して background task を起動しない
 
