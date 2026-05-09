@@ -2106,7 +2106,7 @@ export function SessionPlainMessageList({
           </div>
         </div>
       ) : (
-        <p className="session-message-empty">{emptyText}</p>
+        emptyText ? <p className="session-message-empty">{emptyText}</p> : null
       )}
     </section>
   );
@@ -2122,9 +2122,16 @@ export type SessionPlainComposerProps = {
   busy?: boolean;
   submitLabel?: string;
   busySubmitLabel?: string;
+  modelOptions?: SessionSelectOption[];
+  selectedModel?: string;
+  selectedModelFallbackLabel?: string;
+  reasoningOptions?: SessionSelectOption[];
+  selectedReasoningEffort?: string;
   onChangeInput: (value: string) => void;
   onSubmit: () => void;
   onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
+  onChangeModel?: (model: string) => void;
+  onChangeReasoningEffort?: (reasoningEffort: string) => void;
 };
 
 export function SessionPlainComposer({
@@ -2137,10 +2144,19 @@ export function SessionPlainComposer({
   busy = false,
   submitLabel = "Send",
   busySubmitLabel = "Sending...",
+  modelOptions = [],
+  selectedModel = "",
+  selectedModelFallbackLabel = "",
+  reasoningOptions = [],
+  selectedReasoningEffort = "",
   onChangeInput,
   onSubmit,
   onKeyDown,
+  onChangeModel,
+  onChangeReasoningEffort,
 }: SessionPlainComposerProps) {
+  const shouldShowSettings = modelOptions.length > 0 || reasoningOptions.length > 0;
+
   return (
     <form
       className="composer"
@@ -2172,7 +2188,144 @@ export function SessionPlainComposer({
           {busy ? busySubmitLabel : submitLabel}
         </button>
       </div>
+      {shouldShowSettings ? (
+        <div className="composer-settings session-plain-composer-settings">
+          <label className="composer-setting-field">
+            <span>Model</span>
+            <select
+              value={selectedModel}
+              onChange={(event) => onChangeModel?.(event.target.value)}
+              disabled={disabled || !onChangeModel || modelOptions.length === 0}
+            >
+              {modelOptions.length > 0 ? (
+                modelOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))
+              ) : (
+                <option value={selectedModel}>{selectedModelFallbackLabel || selectedModel || "Default"}</option>
+              )}
+            </select>
+          </label>
+          <label className="composer-setting-field">
+            <span>Depth</span>
+            <select
+              value={selectedReasoningEffort}
+              onChange={(event) => onChangeReasoningEffort?.(event.target.value)}
+              disabled={disabled || !onChangeReasoningEffort || reasoningOptions.length === 0}
+            >
+              {reasoningOptions.length > 0 ? (
+                reasoningOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))
+              ) : (
+                <option value={selectedReasoningEffort}>{selectedReasoningEffort || "Default"}</option>
+              )}
+            </select>
+          </label>
+        </div>
+      ) : null}
     </form>
+  );
+}
+
+export type SessionPlainContextPaneProps = {
+  ariaLabel: string;
+  kicker: string;
+  title: string;
+  description?: string;
+  placeholder: string;
+  className?: string;
+  cardClassName?: string;
+};
+
+export type SessionPlainChatWindowProps = Omit<SessionChatScreenProps, "header" | "messageColumn" | "actionDock" | "rightPane" | "splitter"> & {
+  title: string;
+  closeLabel: string;
+  onClose: () => void;
+  isHeaderExpanded: boolean;
+  onToggleHeaderExpanded: () => void;
+  messageListProps: SessionPlainMessageListProps;
+  composerProps: SessionPlainComposerProps;
+  contextPaneProps?: SessionPlainContextPaneProps;
+  actionDockClassName?: string;
+  splitterClassName?: string;
+};
+
+export function SessionPlainChatWindow({
+  title,
+  closeLabel,
+  onClose,
+  isHeaderExpanded,
+  onToggleHeaderExpanded,
+  messageListProps,
+  composerProps,
+  contextPaneProps,
+  actionDockClassName = "",
+  splitterClassName = "",
+  ...screenProps
+}: SessionPlainChatWindowProps) {
+  const actionDockClass = `session-action-dock${actionDockClassName ? ` ${actionDockClassName}` : ""}`;
+  const splitterClass = `session-workbench-splitter${splitterClassName ? ` ${splitterClassName}` : ""}`;
+  const contextPaneClass = `session-context-pane${isHeaderExpanded ? " session-context-pane-header-expanded" : ""}${contextPaneProps?.className ? ` ${contextPaneProps.className}` : ""}`;
+  const contextCardClass = `context-panel${contextPaneProps?.cardClassName ? ` ${contextPaneProps.cardClassName}` : ""}`;
+
+  return (
+    <SessionChatScreen
+      {...screenProps}
+      header={isHeaderExpanded ? (
+        <SessionHeader
+          taskTitle={title}
+          isEditingTitle={false}
+          titleDraft={title}
+          isRunning={composerProps.busy ?? false}
+          showRenameButton={false}
+          showAuditLogButton={false}
+          showTerminalButton={false}
+          showDeleteButton={false}
+          onToggleExpanded={onToggleHeaderExpanded}
+          onOpenAuditLog={() => {}}
+          onOpenTerminal={() => {}}
+          onTitleDraftChange={() => {}}
+          onTitleInputKeyDown={() => {}}
+          onSaveTitle={() => {}}
+          onCancelTitleEdit={() => {}}
+          onStartTitleEdit={() => {}}
+          onDeleteSession={() => {}}
+          workspaceActions={(
+            <button className="drawer-toggle compact secondary" type="button" onClick={onClose}>
+              {closeLabel}
+            </button>
+          )}
+        />
+      ) : null}
+      messageColumn={<SessionPlainMessageList {...messageListProps} />}
+      actionDock={(
+        <div className={actionDockClass}>
+          <SessionPlainComposer {...composerProps} />
+        </div>
+      )}
+      splitter={<div className={splitterClass} aria-hidden="true" />}
+      rightPane={(
+        <aside className={contextPaneClass} aria-label={contextPaneProps?.ariaLabel ?? "右ペイン"}>
+          {!isHeaderExpanded ? <SessionHeaderHandle taskTitle={title} onClick={onToggleHeaderExpanded} /> : null}
+          {contextPaneProps ? (
+            <section className={contextCardClass}>
+              <div className="context-panel-head">
+                <div>
+                  <span className="context-panel-kicker">{contextPaneProps.kicker}</span>
+                  <h3>{contextPaneProps.title}</h3>
+                </div>
+              </div>
+              {contextPaneProps.description?.trim() ? <p>{contextPaneProps.description.trim()}</p> : null}
+            </section>
+          ) : null}
+        </aside>
+      )}
+    />
   );
 }
 
@@ -2699,7 +2852,7 @@ export function SessionActionDockCompactRow({
   );
 }
 
-type SessionSelectOption = {
+export type SessionSelectOption = {
   value: string;
   label: string;
 };

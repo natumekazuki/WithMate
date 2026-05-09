@@ -81,6 +81,38 @@ test("MateTalkService は provider 未設定時に fallback 応答を返す", as
   assert.deepEqual(scheduled, [{ userMessage: "hello", assistantText: "受け取ったよ。" }]);
 });
 
+test("MateTalkService は選択された provider/model/depth を provider 呼び出しへ渡す", async () => {
+  const assistantInputs: unknown[] = [];
+  const service = new MateTalkService({
+    getMateProfile: () => PROFILE,
+    generateAssistantMessage: async (input) => {
+      assistantInputs.push(input);
+      return "ok";
+    },
+  });
+
+  await service.runTurn({
+    message: "hello",
+    provider: "copilot",
+    model: "claude-sonnet-4.5",
+    reasoningEffort: "medium",
+  });
+
+  assert.deepEqual(assistantInputs, [{
+    userMessage: "hello",
+    provider: "copilot",
+    model: "claude-sonnet-4.5",
+    reasoningEffort: "medium",
+    mateProfile: {
+      id: "mate-1",
+      displayName: "Buddy",
+      description: "",
+      themeMain: "",
+      themeSub: "",
+    },
+  }]);
+});
+
 test("MateTalkService は provider の空文字/空白応答を fallback 応答に変換し、Memory scheduling に反映する", async () => {
   const scheduled: unknown[] = [];
   const service = new MateTalkService({

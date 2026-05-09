@@ -148,6 +148,9 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 
 - Home と同じ dark base を使う
 - キャラカラーは限定的に使い、過度に Session 全体へ広げない
+- チャット UI の実装正本は Session Window の UI 定義だけとする
+- Agent / Companion / メイトークは同じ chat screen / header / message list / composer / right pane shell を使い、mode と service adapter で差分を切り替える
+- 新しい会話機能を追加する場合も、chat layout 実装を増やさず、Session UI の mode を追加する
 - `sessionKind === "character-update"` の時は update 用 variant に切り替える
 - session title の rename / delete
 - `Audit Log` overlay
@@ -193,10 +196,15 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
 - right pane は `Latest Command` を基本 tab とし、provider が `Copilot` の時だけ `Tasks` tab を追加する
 - right pane 上部には collapsed state の `title handle` を置く
+- right pane shell は Agent / Companion / メイトークで共有する。表示する内容がない mode では pane 構造だけを残し、説明文や空メッセージを常設しない
 - `Generate Memory` は current UI では表示しない
 - `character-update` variant では right pane を `LatestCommand / MemoryExtract` の 2 面に切り替える
 - `character-update` variant では expanded header の `Terminal` を出さない
 - `character-update` variant では composer の `Skill / Agent` picker を出さない
+- `mate-talk` variant では expanded header の作業用操作を出さず、Home へ戻る導線と header collapse だけを残す
+- `mate-talk` variant では composer 上の `File / Folder / Image / Skill / Agent` 操作を出さない
+- `mate-talk` variant では composer 下の `Model / Depth` selection を残し、通常 Session と同じ control を使う
+- `mate-talk` variant では right pane に command / task / memory extraction を出さない。将来表示する情報が決まるまでは空 pane として扱う
 - command 実行中は `Latest Command` を最優先で自動表示する
 - MemoryGeneration / 独り言の right pane 自動切り替えは行わない
 - right pane の empty / idle copy は説明過多にせず、使えば分かる最小表現を優先する
@@ -232,6 +240,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - turn 内の `agent_message / command_execution / file_change / reasoning` を arrival 順に並べる operation timeline は item ごとに default closed とし、summary 1 行だけを先に見せる
 - composer 上の添付 toolbar (`File / Folder / Image`)
 - `File / Folder / Image` は attachment group として並べ、`Skill` は別カテゴリの単独 button として区別する
+- 添付 toolbar は Agent / Companion の作業 chat 用であり、メイトークでは表示しない
 - composer の attachment chip
   - basename を主表示にし、file / folder / image の kind と `ワークスペース内` / `ワークスペース外` を即判別できる
   - 補足 path は副次表示へ回し、long path でも basename を先に読める

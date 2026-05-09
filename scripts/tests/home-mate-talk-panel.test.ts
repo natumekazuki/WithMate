@@ -10,6 +10,7 @@ function renderPanel(options?: {
   input?: string;
   messages?: Array<{ id: string; role: "user" | "mate"; text: string }>;
   feedback?: string;
+  isHeaderExpanded?: boolean;
 }) {
   return renderToStaticMarkup(
     React.createElement(HomeMateTalkPanel, {
@@ -18,9 +19,18 @@ function renderPanel(options?: {
       input: options?.input ?? "",
       feedback: options?.feedback ?? "",
       sending: options?.sending,
+      isHeaderExpanded: options?.isHeaderExpanded ?? true,
+      modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+      selectedModel: "gpt-test",
+      selectedModelFallbackLabel: "GPT Test",
+      reasoningOptions: [{ value: "low", label: "low" }, { value: "medium", label: "medium" }],
+      selectedReasoningEffort: "low",
       onChangeInput() {},
+      onChangeModel() {},
+      onChangeReasoningEffort() {},
       onSubmit() {},
       onClose() {},
+      onToggleHeaderExpanded() {},
     }),
   );
 }
@@ -29,8 +39,10 @@ function renderPanelElement(options?: {
   sending?: boolean;
   input?: string;
   onClose?: () => void;
+  onToggleHeaderExpanded?: () => void;
   onSubmit?: () => void;
   onChangeInput?: (value: string) => void;
+  isHeaderExpanded?: boolean;
 }) {
   return HomeMateTalkPanel({
     mateName: "ユニバーサル",
@@ -38,10 +50,33 @@ function renderPanelElement(options?: {
     input: options?.input ?? "",
     feedback: "",
     sending: options?.sending,
+    isHeaderExpanded: options?.isHeaderExpanded ?? true,
+    modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+    selectedModel: "gpt-test",
+    selectedModelFallbackLabel: "GPT Test",
+    reasoningOptions: [{ value: "low", label: "low" }, { value: "medium", label: "medium" }],
+    selectedReasoningEffort: "low",
     onChangeInput: options?.onChangeInput ?? (() => {}),
+    onChangeModel: () => {},
+    onChangeReasoningEffort: () => {},
     onSubmit: options?.onSubmit ?? (() => {}),
     onClose: options?.onClose ?? (() => {}),
+    onToggleHeaderExpanded: options?.onToggleHeaderExpanded ?? (() => {}),
   }) as ReactElement;
+}
+
+function renderFunctionElement(root: ReactElement): ReactNode | null {
+  const elementType = root.type;
+  if (typeof elementType !== "function") {
+    return null;
+  }
+
+  const prototype = elementType.prototype as { render?: unknown } | undefined;
+  if (prototype && typeof prototype.render === "function") {
+    return null;
+  }
+
+  return (elementType as (props: unknown) => ReactNode)(root.props);
 }
 
 function findElementByType(root: ReactNode, type: string): ReactElement | null {
@@ -54,7 +89,7 @@ function findElementByType(root: ReactNode, type: string): ReactElement | null {
   }
 
   if (typeof root.type === "function") {
-    const rendered = root.type(root.props);
+    const rendered = renderFunctionElement(root);
     const found = findElementByType(rendered, type);
     if (found) {
       return found;
@@ -84,7 +119,7 @@ function findButtonByText(root: ReactNode, text: string): ReactElement | null {
   }
 
   if (typeof root.type === "function") {
-    const rendered = root.type(root.props);
+    const rendered = renderFunctionElement(root);
     const found = findButtonByText(rendered, text);
     if (found) {
       return found;
@@ -107,12 +142,23 @@ function findButtonByText(root: ReactNode, text: string): ReactElement | null {
 test("HomeMateTalkPanel は未送信時の通常状態をレンダリングする", () => {
   const html = renderPanel({ input: "おはよう" });
 
-  assert.match(html, /<section class="home-mate-talk-panel session-page">/);
-  assert.match(html, /<h2 class="home-mate-talk-head">メイトーク<\/h2>/);
+  assert.match(html, /<div class="page-shell session-page home-mate-talk-panel"/);
+  assert.match(html, /<div class="session-main-grid">/);
+  assert.match(html, /<div class="session-action-dock home-mate-talk-action-dock">/);
+  assert.match(html, /<aside class="session-context-pane session-context-pane-header-expanded"/);
+  assert.match(html, /data-session-mode="mate-talk"/);
+  assert.match(html, /<header class="session-window-bar session-top-bar rise-1">/);
+  assert.match(html, /<span class="session-window-title session-title-accent">メイトーク<\/span>/);
   assert.match(html, /<button class="drawer-toggle compact secondary" type="button">ホーム<\/button>/);
-  assert.match(html, /<p class="session-message-empty">まだ会話は開始してないよ。まずは入力してね。<\/p>/);
+  assert.doesNotMatch(html, /まだ会話は開始してないよ。まずは入力してね。/);
+  assert.doesNotMatch(html, /メイトーク中に使う補助情報はここに表示されます。/);
   assert.match(html, /<div class="composer-box">/);
   assert.match(html, /<button class="session-send-button" type="submit">送信<\/button>/);
+  assert.match(html, /<span>Model<\/span>/);
+  assert.match(html, /<span>Depth<\/span>/);
+  assert.doesNotMatch(html, />File<\/button>/);
+  assert.doesNotMatch(html, />Folder<\/button>/);
+  assert.doesNotMatch(html, />Image<\/button>/);
   assert.doesNotMatch(html, /<button class="session-send-button"[^>]*disabled="[^"]*"/);
   assert.doesNotMatch(html, /<textarea[^>]*id="home-mate-talk-input"[^>]*disabled="disabled"/);
   assert.doesNotMatch(html, /<button class="session-send-button"[^>]*disabled="disabled">送信中\.\.\.<\/button>/);
@@ -128,10 +174,18 @@ test("HomeMateTalkPanel は空白入力で送信を抑制する", () => {
 test("HomeMateTalkPanel は sending 中に送信ボタン文言と disabled を反映する", () => {
   const html = renderPanel({ sending: true, input: "おはよう" });
 
-  assert.match(html, /<h2 class="home-mate-talk-head">メイトーク<\/h2>/);
-  assert.match(html, /<p class="session-message-empty">まだ会話は開始してないよ。まずは入力してね。<\/p>/);
+  assert.match(html, /<span class="session-window-title session-title-accent">メイトーク<\/span>/);
+  assert.doesNotMatch(html, /まだ会話は開始してないよ。まずは入力してね。/);
   assert.match(html, /<button class="session-send-button"[^>]*type="submit"[^>]*disabled="">送信中\.\.\.<\/button>/);
   assert.match(html, /<textarea[^>]*id="home-mate-talk-input"[^>]*disabled=""/);
+});
+
+test("HomeMateTalkPanel は Session と同じヘッダー格納ハンドルを使う", () => {
+  const html = renderPanel({ input: "おはよう", isHeaderExpanded: false });
+
+  assert.match(html, /session-page-header-collapsed/);
+  assert.doesNotMatch(html, /<header class="session-window-bar session-top-bar rise-1">/);
+  assert.match(html, /<button class="session-header-handle" type="button"><span class="session-window-title session-title-accent">メイトーク<\/span><\/button>/);
 });
 
 test("HomeMateTalkPanel は user/mate メッセージに発話者ラベルを含めてレンダリングする", () => {

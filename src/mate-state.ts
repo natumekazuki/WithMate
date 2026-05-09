@@ -1,3 +1,5 @@
+import type { ModelReasoningEffort } from "./model-catalog.js";
+
 export type MateProfileState = "draft" | "active" | "deleted";
 export type MateStorageState = "not_created" | MateProfileState;
 export type MateProfileSectionState = {
@@ -96,6 +98,9 @@ export type SetMateAvatarInput = {
 
 export type MateTalkTurnInput = {
   message: string;
+  provider?: string;
+  model?: string;
+  reasoningEffort?: ModelReasoningEffort;
 };
 
 export type MateTalkTurnResult = {

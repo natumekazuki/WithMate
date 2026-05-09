@@ -1,4 +1,4 @@
-export type SessionWindowModeKind = "agent" | "companion";
+export type SessionWindowModeKind = "agent" | "companion" | "mate-talk";
 
 export type SessionWindowMode =
   | { kind: "agent"; sessionId: string | null }

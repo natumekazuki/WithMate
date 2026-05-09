@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import type {
   AppSettings,
@@ -97,7 +97,11 @@ import {
   SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
 } from "./settings-ui.js";
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
-import { SessionPlainComposer, SessionPlainMessageList, type SessionPlainMessage } from "./session-components.js";
+import {
+  SessionPlainChatWindow,
+  type SessionPlainMessage,
+  type SessionSelectOption,
+} from "./session-components.js";
 import { buildCardThemeStyle, CharacterAvatar } from "./ui-utils.js";
 import { formatTimestampLabel } from "./time-state.js";
 import type { MateProfile } from "./mate-state.js";
@@ -1921,11 +1925,21 @@ export type HomeMateSetupPanelProps = {
 
 export type HomeMateTalkPanelProps = {
   mateName: string;
+  themeStyle?: CSSProperties;
+  isHeaderExpanded: boolean;
   messages: Array<{ id: string; role: "user" | "mate"; text: string }>;
   input: string;
+  modelOptions: SessionSelectOption[];
+  selectedModel: string;
+  selectedModelFallbackLabel: string;
+  reasoningOptions: SessionSelectOption[];
+  selectedReasoningEffort: string;
   onChangeInput: (value: string) => void;
+  onChangeModel: (model: string) => void;
+  onChangeReasoningEffort: (reasoningEffort: string) => void;
   onSubmit: () => void;
   onClose: () => void;
+  onToggleHeaderExpanded: () => void;
   sending?: boolean;
   feedback: string;
 };
@@ -2024,11 +2038,21 @@ export function HomeMateSetupPanel({
 
 export function HomeMateTalkPanel({
   mateName,
+  themeStyle,
+  isHeaderExpanded,
   messages,
   input,
+  modelOptions,
+  selectedModel,
+  selectedModelFallbackLabel,
+  reasoningOptions,
+  selectedReasoningEffort,
   onChangeInput,
+  onChangeModel,
+  onChangeReasoningEffort,
   onSubmit,
   onClose,
+  onToggleHeaderExpanded,
   sending = false,
   feedback,
 }: HomeMateTalkPanelProps) {
@@ -2045,46 +2069,52 @@ export function HomeMateTalkPanel({
   });
 
   return (
-    <section className="home-mate-talk-panel session-page">
-      <header className="home-mate-talk-header">
-        <div>
-          <h2 className="home-mate-talk-head">メイトーク</h2>
-          <p className="home-mate-talk-description">{mateName} と話す</p>
-        </div>
-        <button className="drawer-toggle compact secondary" type="button" onClick={onClose}>
-          ホーム
-        </button>
-      </header>
-
-      <SessionPlainMessageList
-        messages={conversationMessages}
-        className="home-mate-talk-messages"
-        ariaLabel="メイトーク会話履歴"
-        emptyText="まだ会話は開始してないよ。まずは入力してね。"
-        assistantInitial={mateName.slice(0, 1)}
-        busy={sending}
-      />
-
-      <SessionPlainComposer
-        textareaId="home-mate-talk-input"
-        input={input}
-        placeholder="今日はどうする？"
-        feedback={feedback}
-        disabled={sending}
-        submitDisabled={isSubmitDisabled}
-        busy={sending}
-        submitLabel="送信"
-        busySubmitLabel="送信中..."
-        onChangeInput={onChangeInput}
-        onSubmit={onSubmit}
-        onKeyDown={(event) => {
+    <SessionPlainChatWindow
+      mode="mate-talk"
+      className={`home-mate-talk-panel${isHeaderExpanded ? "" : " session-page-header-collapsed"}`}
+      style={themeStyle}
+      title="メイトーク"
+      closeLabel="ホーム"
+      onClose={onClose}
+      isHeaderExpanded={isHeaderExpanded}
+      onToggleHeaderExpanded={onToggleHeaderExpanded}
+      actionDockClassName="home-mate-talk-action-dock"
+      splitterClassName="home-mate-talk-splitter"
+      messageListProps={{
+        messages: conversationMessages,
+        className: "home-mate-talk-messages",
+        ariaLabel: "メイトーク会話履歴",
+        emptyText: "",
+        assistantInitial: mateName.slice(0, 1),
+        busy: sending,
+      }}
+      composerProps={{
+        textareaId: "home-mate-talk-input",
+        input,
+        placeholder: "今日はどうする？",
+        feedback,
+        disabled: sending,
+        submitDisabled: isSubmitDisabled,
+        busy: sending,
+        submitLabel: "送信",
+        busySubmitLabel: "送信中...",
+        modelOptions,
+        selectedModel,
+        selectedModelFallbackLabel,
+        reasoningOptions,
+        selectedReasoningEffort,
+        onChangeInput,
+        onChangeModel,
+        onChangeReasoningEffort,
+        onSubmit,
+        onKeyDown: (event) => {
           if (!isSubmitDisabled && shouldSubmitMateTalkInputByKey(event)) {
             event.preventDefault();
             onSubmit();
           }
-        }}
-      />
-    </section>
+        },
+      }}
+    />
   );
 }
 

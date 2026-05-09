@@ -1,4 +1,5 @@
 import type { MateProfile, MateTalkTurnInput, MateTalkTurnResult } from "../src/mate-state.js";
+import type { ModelReasoningEffort } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 
 export type ScheduleMateTalkMemoryGenerationInput = {
@@ -11,6 +12,9 @@ export type MateTalkServiceDeps = {
   getMateProfileContextText?(profile: MateProfile): string | null | Promise<string | null>;
   generateAssistantMessage?: (input: {
     userMessage: string;
+    provider?: string;
+    model?: string;
+    reasoningEffort?: ModelReasoningEffort;
     mateProfile: {
       id: string;
       displayName: string;
@@ -65,6 +69,9 @@ export class MateTalkService {
 
     const assistantMessageRaw = await (this.deps.generateAssistantMessage?.({
       userMessage,
+      ...(input.provider ? { provider: input.provider } : {}),
+      ...(input.model ? { model: input.model } : {}),
+      ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
       mateProfile,
     }) ?? Promise.resolve(MateTalkService.fallbackMessage));
     const assistantMessage = assistantMessageRaw.trim() || MateTalkService.fallbackMessage;

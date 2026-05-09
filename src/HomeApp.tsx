@@ -12,7 +12,7 @@ import {
 } from "./provider-settings-state.js";
 import { type SessionSummary } from "./session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "./approval-mode.js";
-import { type ModelCatalogSnapshot } from "./model-catalog.js";
+import { type ModelCatalogProvider, type ModelCatalogSnapshot, type ModelReasoningEffort } from "./model-catalog.js";
 import {
   DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
   type MemoryManagementViewFilters,
@@ -103,6 +103,8 @@ import { type MateEmbeddingSettings } from "./mate-embedding-settings.js";
 import type { MateGrowthEventListItem } from "./mate-growth-events-state.js";
 import { applyHomePendingGrowth } from "./home-mate-growth-actions.js";
 import { HomeMateTalkTurnController } from "./home-mate-talk-state.js";
+import { buildCharacterThemeStyle } from "./theme-utils.js";
+import { modelDisplayLabel, modelOptionLabel } from "./ui-utils.js";
 
 async function openSessionWindow(sessionId: string) {
   await withWithMateApi((api) => api.openSession(sessionId));
@@ -282,6 +284,10 @@ export default function HomeApp() {
   const [mateTalkMessages, setMateTalkMessages] = useState<MateTalkMessage[]>([]);
   const [mateTalkSending, setMateTalkSending] = useState(false);
   const [mateTalkFeedback, setMateTalkFeedback] = useState("");
+  const [isMateTalkHeaderExpanded, setIsMateTalkHeaderExpanded] = useState(true);
+  const [mateTalkProviderId, setMateTalkProviderId] = useState("");
+  const [mateTalkModel, setMateTalkModel] = useState("");
+  const [mateTalkReasoningEffort, setMateTalkReasoningEffort] = useState<ModelReasoningEffort>("low");
   const settingsDirtyRef = useRef(false);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const memoryManagementRequestIdRef = useRef(0);
@@ -701,6 +707,28 @@ export default function HomeApp() {
     [appSettings, launchDraft, modelCatalog],
   );
   const { enabledLaunchProviders, selectedLaunchProvider, launchWorkspacePathLabel, canStartSession } = launchProjection;
+  const mateTalkDefaultPriority = settingsDraft.mateMemoryGenerationSettings.priorityList[0] ?? null;
+  const mateTalkProviderCatalog = useMemo<ModelCatalogProvider | null>(() => {
+    return enabledLaunchProviders.find((provider) => provider.id === mateTalkProviderId) ?? enabledLaunchProviders[0] ?? null;
+  }, [enabledLaunchProviders, mateTalkProviderId]);
+  const mateTalkSelectedModel =
+    mateTalkProviderCatalog?.models.find((model) => model.id === mateTalkModel) ??
+    mateTalkProviderCatalog?.models.find((model) => model.id === mateTalkProviderCatalog.defaultModelId) ??
+    mateTalkProviderCatalog?.models[0] ??
+    null;
+  const mateTalkModelOptions = useMemo(
+    () => mateTalkProviderCatalog?.models.map((model) => ({ value: model.id, label: modelOptionLabel(model) })) ?? [],
+    [mateTalkProviderCatalog],
+  );
+  const mateTalkReasoningOptions = useMemo(
+    () => mateTalkSelectedModel?.reasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? [],
+    [mateTalkSelectedModel],
+  );
+  const mateTalkThemeStyle = useMemo(
+    () => buildCharacterThemeStyle(mateProfile ? { main: mateProfile.themeMain, sub: mateProfile.themeSub } : null),
+    [mateProfile],
+  );
+
   useEffect(() => {
     setLaunchDraft((current) => {
       if (enabledLaunchProviders.find((provider) => provider.id === current.providerId)) {
@@ -713,6 +741,48 @@ export default function HomeApp() {
       };
     });
   }, [enabledLaunchProviders]);
+  useEffect(() => {
+    const preferredProviderId =
+      enabledLaunchProviders.find((provider) => provider.id === mateTalkDefaultPriority?.provider)?.id ??
+      enabledLaunchProviders[0]?.id ??
+      "";
+    const providerCatalog = enabledLaunchProviders.find((provider) => provider.id === (mateTalkProviderId || preferredProviderId)) ??
+      enabledLaunchProviders.find((provider) => provider.id === preferredProviderId) ??
+      enabledLaunchProviders[0] ??
+      null;
+    const nextProviderId = providerCatalog?.id ?? "";
+    const preferredModelId = nextProviderId === mateTalkDefaultPriority?.provider ? mateTalkDefaultPriority.model : "";
+    const model =
+      providerCatalog?.models.find((candidate) => candidate.id === mateTalkModel) ??
+      providerCatalog?.models.find((candidate) => candidate.id === preferredModelId) ??
+      providerCatalog?.models.find((candidate) => candidate.id === providerCatalog.defaultModelId) ??
+      providerCatalog?.models[0] ??
+      null;
+    const preferredReasoningEffort =
+      nextProviderId === mateTalkDefaultPriority?.provider && model?.reasoningEfforts.includes(mateTalkDefaultPriority.reasoningEffort)
+        ? mateTalkDefaultPriority.reasoningEffort
+        : undefined;
+    const nextReasoningEffort =
+      model?.reasoningEfforts.includes(mateTalkReasoningEffort)
+        ? mateTalkReasoningEffort
+        : preferredReasoningEffort ?? model?.reasoningEfforts[0] ?? providerCatalog?.defaultReasoningEffort ?? "low";
+
+    if (mateTalkProviderId !== nextProviderId) {
+      setMateTalkProviderId(nextProviderId);
+    }
+    if (mateTalkModel !== (model?.id ?? "")) {
+      setMateTalkModel(model?.id ?? "");
+    }
+    if (mateTalkReasoningEffort !== nextReasoningEffort) {
+      setMateTalkReasoningEffort(nextReasoningEffort);
+    }
+  }, [
+    enabledLaunchProviders,
+    mateTalkDefaultPriority,
+    mateTalkModel,
+    mateTalkProviderId,
+    mateTalkReasoningEffort,
+  ]);
 
   const renderSearchIcon = () => (
     <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
@@ -778,7 +848,12 @@ export default function HomeApp() {
     setMateTalkInput("");
 
     try {
-      const result = await withWithMateApi((api) => api.runMateTalkTurn({ message: normalizedText }));
+      const result = await withWithMateApi((api) => api.runMateTalkTurn({
+        message: normalizedText,
+        provider: mateTalkProviderId,
+        model: mateTalkModel,
+        reasoningEffort: mateTalkReasoningEffort,
+      }));
       if (!mateTalkTurnControllerRef.current.isLatestTurn(turnId)) {
         return;
       }
@@ -2021,15 +2096,37 @@ export default function HomeApp() {
   const mateTalkContent = (
     <HomeMateTalkPanel
       mateName={mateProfile?.displayName ?? "Mate"}
+      themeStyle={mateTalkThemeStyle}
+      isHeaderExpanded={isMateTalkHeaderExpanded}
       messages={mateTalkMessages}
       input={mateTalkInput}
       feedback={mateTalkFeedback}
+      modelOptions={mateTalkModelOptions}
+      selectedModel={mateTalkModel}
+      selectedModelFallbackLabel={modelDisplayLabel(mateTalkProviderCatalog, mateTalkModel)}
+      reasoningOptions={mateTalkReasoningOptions}
+      selectedReasoningEffort={mateTalkReasoningEffort}
       onChangeInput={(value) => {
         setMateTalkInput(value);
         setMateTalkFeedback("");
       }}
+      onChangeModel={(model) => {
+        const nextModel = mateTalkProviderCatalog?.models.find((candidate) => candidate.id === model) ?? null;
+        setMateTalkModel(model);
+        setMateTalkReasoningEffort((current) =>
+          nextModel?.reasoningEfforts.includes(current)
+            ? current
+            : nextModel?.reasoningEfforts[0] ?? mateTalkProviderCatalog?.defaultReasoningEffort ?? current,
+        );
+      }}
+      onChangeReasoningEffort={(reasoningEffort) => {
+        if (mateTalkSelectedModel?.reasoningEfforts.includes(reasoningEffort as ModelReasoningEffort)) {
+          setMateTalkReasoningEffort(reasoningEffort as ModelReasoningEffort);
+        }
+      }}
       onSubmit={() => void handleSubmitMateTalk()}
       onClose={() => void closeMateTalk()}
+      onToggleHeaderExpanded={() => setIsMateTalkHeaderExpanded((current) => !current)}
       sending={mateTalkSending}
     />
   );
@@ -2144,15 +2241,7 @@ export default function HomeApp() {
   }
 
   if (mateTalkOpen) {
-    return (
-      <div className={`${homePageClassName} home-page-mate-talk`.trim()}>
-        <main className="home-layout home-layout-minimal">
-          <section className="launch-dialog settings-dialog panel home-mate-talk-shell">
-            {mateTalkContent}
-          </section>
-        </main>
-      </div>
-    );
+    return mateTalkContent;
   }
 
   if (isMonitorWindowMode) {

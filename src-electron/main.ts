@@ -158,7 +158,13 @@ import { MainSessionPersistenceFacade } from "./main-session-persistence-facade.
 import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
-import { getMateMemoryGenerationSettings, getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
+import {
+  DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS,
+  getMateMemoryGenerationSettings,
+  getProviderAppSettings,
+  type AppSettings,
+  type MateMemoryGenerationProviderSettings,
+} from "../src/provider-settings-state.js";
 import {
   DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES,
   type MateTalkTurnInput,
@@ -1702,6 +1708,9 @@ function extractMateTalkAssistantMessage(value: unknown): string | null {
 
 async function generateMateTalkAssistantMessage(input: {
   userMessage: string;
+  provider?: string;
+  model?: string;
+  reasoningEffort?: MateMemoryGenerationProviderSettings["reasoningEffort"];
   mateProfile: {
     id: string;
     displayName: string;
@@ -1713,6 +1722,17 @@ async function generateMateTalkAssistantMessage(input: {
 }): Promise<string> {
   const appSettings = requireAppSettingsStorage().getSettings();
   const settings = getMateMemoryGenerationSettings(appSettings);
+  const firstCandidate = settings.priorityList[0] ?? DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS;
+  const requestedCandidate =
+    input.provider || input.model || input.reasoningEffort
+      ? [{
+        ...firstCandidate,
+        provider: input.provider?.trim() || firstCandidate.provider,
+        model: input.model?.trim() || firstCandidate.model,
+        reasoningEffort: input.reasoningEffort ?? firstCandidate.reasoningEffort,
+      }]
+      : [];
+  const candidates = requestedCandidate.length > 0 ? requestedCandidate : settings.priorityList;
   let lastFailure: Error | null = null;
   const workspaceService = requireMateTalkRuntimeWorkspaceService();
   let preparedRun: { workspacePath: string; lockPath: string } | null = null;
@@ -1722,7 +1742,7 @@ async function generateMateTalkAssistantMessage(input: {
     await workspaceService.regenerateInstructionFiles(buildMateTalkRuntimeInstructionFiles(input.mateProfile));
     const profileContextText = sanitizeMateTalkProfileContextText(input.mateProfile.contextText);
 
-    for (const candidate of settings.priorityList) {
+    for (const candidate of candidates) {
       const providerSettings = getProviderAppSettings(appSettings, candidate.provider);
       if (!providerSettings.enabled) {
         continue;
