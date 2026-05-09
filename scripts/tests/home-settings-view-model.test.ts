@@ -9,6 +9,7 @@ import {
   buildHomeProviderSettingRows,
   buildNormalizedCharacterReflectionProviderSettings,
   buildNormalizedMemoryExtractionProviderSettings,
+  resolveInstructionRelativePathFromSelection,
 } from "../../src/home-settings-view-model.js";
 
 function createSnapshot(): ModelCatalogSnapshot {
@@ -119,6 +120,33 @@ describe("home-settings-view-model", () => {
 
     assert.equal(upsertInput.rootDirectory, "/workspace");
     assert.equal(upsertInput.instructionRelativePath, "docs/rules.md");
+  });
+
+  it("instruction file picker の選択結果を root からの相対 path に変換する", () => {
+    assert.equal(
+      resolveInstructionRelativePathFromSelection(
+        "C:\\workspace\\mate",
+        "C:\\workspace\\mate\\.github\\copilot-instructions.md",
+      ),
+      ".github/copilot-instructions.md",
+    );
+    assert.equal(
+      resolveInstructionRelativePathFromSelection(
+        "/workspace/mate/",
+        "/workspace/mate/AGENTS.md",
+      ),
+      "AGENTS.md",
+    );
+  });
+
+  it("instruction file picker は root 外の選択を拒否する", () => {
+    assert.equal(
+      resolveInstructionRelativePathFromSelection(
+        "C:\\workspace\\mate",
+        "C:\\workspace\\other\\AGENTS.md",
+      ),
+      null,
+    );
   });
 
   it("persisted settings は draft の system prompt を維持したまま resolved provider settings を埋め込む", () => {

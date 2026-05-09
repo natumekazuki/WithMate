@@ -44,6 +44,11 @@ import {
   SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER,
   SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL,
+  SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_HELP,
+  SETTINGS_PROVIDER_INSTRUCTION_HELP_SUMMARY,
+  SETTINGS_PROVIDER_INSTRUCTION_MANAGED_BLOCK_HELP,
+  SETTINGS_PROVIDER_INSTRUCTION_MANAGED_FILE_HELP,
+  SETTINGS_PROVIDER_INSTRUCTION_PATH_HELP,
   SETTINGS_CHARACTER_REFLECTION_CHAR_DELTA_LABEL,
   SETTINGS_CHARACTER_REFLECTION_COOLDOWN_LABEL,
   SETTINGS_CHARACTER_REFLECTION_MESSAGE_DELTA_LABEL,
@@ -140,6 +145,8 @@ export type HomeSettingsContentProps = {
   onChangeProviderInstructionFailPolicy: (providerId: string, value: string) => void;
   onChangeProviderInstructionRootDirectory: (providerId: string, rootDirectory: string) => void;
   onChangeProviderInstructionInstructionRelativePath: (providerId: string, instructionRelativePath: string) => void;
+  onBrowseProviderInstructionRootDirectory: (providerId: string) => void;
+  onBrowseProviderInstructionInstructionRelativePath: (providerId: string) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
   onBrowseProviderSkillRootPath: (providerId: string) => void;
   onChangeMemoryExtractionModel: (providerId: string, model: string) => void;
@@ -263,6 +270,8 @@ export function HomeSettingsContent({
   onChangeProviderInstructionFailPolicy,
   onChangeProviderInstructionRootDirectory,
   onChangeProviderInstructionInstructionRelativePath,
+  onBrowseProviderInstructionRootDirectory,
+  onBrowseProviderInstructionInstructionRelativePath,
   onChangeProviderSkillRootPath,
   onBrowseProviderSkillRootPath,
   onChangeMemoryExtractionModel,
@@ -457,6 +466,15 @@ export function HomeSettingsContent({
               <section className="settings-section-card">
                 <div className="settings-field">
                   <strong>{SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL}</strong>
+                  <details className="settings-inline-help">
+                    <summary aria-label={SETTINGS_PROVIDER_INSTRUCTION_HELP_SUMMARY}>?</summary>
+                    <div>
+                      <p>{SETTINGS_PROVIDER_INSTRUCTION_MANAGED_BLOCK_HELP}</p>
+                      <p>{SETTINGS_PROVIDER_INSTRUCTION_MANAGED_FILE_HELP}</p>
+                      <p>{SETTINGS_PROVIDER_INSTRUCTION_PATH_HELP}</p>
+                      <p>{SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_HELP}</p>
+                    </div>
+                  </details>
                   <div className="settings-provider-list">
                     {providerSettingRows.map(({ provider, instructionTarget }) => (
                       <section key={`provider-instruction-${provider.id}`} className="settings-provider-card">
@@ -492,27 +510,45 @@ export function HomeSettingsContent({
                         </label>
                         <label className="settings-provider-input">
                           <span>{SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL}</span>
-                          <input
-                            type="text"
-                            value={instructionTarget.rootDirectory}
-                            onChange={(event) =>
-                              onChangeProviderInstructionRootDirectory(provider.id, event.target.value)}
-                            placeholder={SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_PLACEHOLDER}
-                            autoComplete="off"
-                            spellCheck={false}
-                          />
+                          <div className="settings-inline-input-row">
+                            <input
+                              type="text"
+                              value={instructionTarget.rootDirectory}
+                              onChange={(event) =>
+                                onChangeProviderInstructionRootDirectory(provider.id, event.target.value)}
+                              placeholder={SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_PLACEHOLDER}
+                              autoComplete="off"
+                              spellCheck={false}
+                            />
+                            <button
+                              className="launch-toggle"
+                              type="button"
+                              onClick={() => onBrowseProviderInstructionRootDirectory(provider.id)}
+                            >
+                              Browse
+                            </button>
+                          </div>
                         </label>
                         <label className="settings-provider-input">
                           <span>{SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>
-                          <input
-                            type="text"
-                            value={instructionTarget.instructionRelativePath}
-                            onChange={(event) =>
-                              onChangeProviderInstructionInstructionRelativePath(provider.id, event.target.value)}
-                            placeholder={SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER}
-                            autoComplete="off"
-                            spellCheck={false}
-                          />
+                          <div className="settings-inline-input-row">
+                            <input
+                              type="text"
+                              value={instructionTarget.instructionRelativePath}
+                              onChange={(event) =>
+                                onChangeProviderInstructionInstructionRelativePath(provider.id, event.target.value)}
+                              placeholder={SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER}
+                              autoComplete="off"
+                              spellCheck={false}
+                            />
+                            <button
+                              className="launch-toggle"
+                              type="button"
+                              onClick={() => onBrowseProviderInstructionInstructionRelativePath(provider.id)}
+                            >
+                              Browse
+                            </button>
+                          </div>
                         </label>
                         <dl className="settings-memory-meta">
                           <div>

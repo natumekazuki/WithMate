@@ -26,6 +26,15 @@ export const SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL = "Root Director
 export const SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_PLACEHOLDER = "Instruction sync の root directory";
 export const SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL = "Instruction Relative Path";
 export const SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER = "Instruction file path (relative)";
+export const SETTINGS_PROVIDER_INSTRUCTION_HELP_SUMMARY = "Provider Instruction Sync のヘルプ";
+export const SETTINGS_PROVIDER_INSTRUCTION_MANAGED_BLOCK_HELP =
+  "managed_block は既存ファイル内の WithMate 管理ブロックだけを更新する。管理ブロック外の手書き内容は残す。";
+export const SETTINGS_PROVIDER_INSTRUCTION_MANAGED_FILE_HELP =
+  "managed_file は対象ファイル全体を WithMate 管理として上書きする。";
+export const SETTINGS_PROVIDER_INSTRUCTION_PATH_HELP =
+  "Root Directory を基準に Instruction Relative Path のファイルへ同期する。Relative Path は Root Directory 配下のファイルを選ぶと自動で相対化する。";
+export const SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_HELP =
+  "warn_continue は同期に失敗しても起動を続ける。block_session は同期失敗時に対象セッション起動を止める。";
 export const SETTINGS_MATE_MEMORY_GENERATION_LABEL = "Mate Memory Generation";
 export const SETTINGS_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_LABEL = "Trigger Interval (Minutes)";
 export const SETTINGS_MATE_GROWTH_SETTINGS_LABEL = "Mate Growth Settings";

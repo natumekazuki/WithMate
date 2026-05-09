@@ -49,6 +49,7 @@ import {
 import {
   buildHomeProviderSettingRows,
   buildPersistedAppSettingsFromRows,
+  resolveInstructionRelativePathFromSelection,
   type HomeProviderInstructionTargetSettings,
   buildHomeProviderInstructionTargetUpsertInput,
   type HomeProviderSettingRow,
@@ -1314,6 +1315,58 @@ export default function HomeApp() {
     updateProviderInstructionTarget(providerId, { instructionRelativePath });
   };
 
+  const handleBrowseProviderInstructionRootDirectory = async (providerId: string) => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
+      return;
+    }
+
+    const current = providerInstructionTargets.find((target) => target.providerId === providerId);
+    const currentSettings = getProviderAppSettings(settingsDraft, providerId);
+    const selectedPath = await withmateApi.pickDirectory(current?.rootDirectory || currentSettings.skillRootPath || null);
+    if (!selectedPath) {
+      return;
+    }
+
+    updateProviderInstructionTarget(providerId, { rootDirectory: selectedPath });
+  };
+
+  const handleBrowseProviderInstructionInstructionRelativePath = async (providerId: string) => {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi) {
+      return;
+    }
+
+    const current = providerInstructionTargets.find((target) => target.providerId === providerId);
+    const fallback = buildFallbackProviderInstructionTarget(providerId);
+    const currentSettings = getProviderAppSettings(settingsDraft, providerId);
+    const rootDirectory = current?.rootDirectory || currentSettings.skillRootPath || fallback.rootDirectory;
+    if (!rootDirectory.trim()) {
+      setSettingsFeedback("Instruction Relative Path を選ぶ前に Root Directory を指定してね。");
+      return;
+    }
+
+    const selectedPath = await withmateApi.pickFile(rootDirectory);
+    if (!selectedPath) {
+      return;
+    }
+
+    const relativePath = resolveInstructionRelativePathFromSelection(rootDirectory, selectedPath);
+    if (relativePath === null) {
+      setSettingsFeedback("Root Directory 配下の instruction file を選んでね。");
+      return;
+    }
+
+    const nextInstructionTarget: Partial<HomeProviderInstructionTargetSettings> = {
+      instructionRelativePath: relativePath,
+    };
+    if (!current?.rootDirectory && currentSettings.skillRootPath) {
+      nextInstructionTarget.rootDirectory = currentSettings.skillRootPath;
+    }
+
+    updateProviderInstructionTarget(providerId, nextInstructionTarget);
+  };
+
   const handleChangeProviderEnabled = (providerId: string, enabled: boolean) => {
     setSettingsDraft((current) => updateCodingProviderEnabledDraft(current, providerId, enabled));
   };
@@ -1751,6 +1804,9 @@ export default function HomeApp() {
       onChangeProviderInstructionFailPolicy={handleChangeProviderInstructionFailPolicy}
       onChangeProviderInstructionRootDirectory={handleChangeProviderInstructionRootDirectory}
       onChangeProviderInstructionInstructionRelativePath={handleChangeProviderInstructionInstructionRelativePath}
+      onBrowseProviderInstructionRootDirectory={(providerId) => void handleBrowseProviderInstructionRootDirectory(providerId)}
+      onBrowseProviderInstructionInstructionRelativePath={(providerId) =>
+        void handleBrowseProviderInstructionInstructionRelativePath(providerId)}
       onChangeProviderSkillRootPath={handleChangeProviderSkillRootPath}
       onBrowseProviderSkillRootPath={(providerId) => void handleBrowseProviderSkillRootPath(providerId)}
       onChangeMemoryExtractionModel={handleChangeMemoryExtractionModel}
@@ -1836,6 +1892,9 @@ export default function HomeApp() {
       onChangeProviderInstructionFailPolicy={handleChangeProviderInstructionFailPolicy}
       onChangeProviderInstructionRootDirectory={handleChangeProviderInstructionRootDirectory}
       onChangeProviderInstructionInstructionRelativePath={handleChangeProviderInstructionInstructionRelativePath}
+      onBrowseProviderInstructionRootDirectory={(providerId) => void handleBrowseProviderInstructionRootDirectory(providerId)}
+      onBrowseProviderInstructionInstructionRelativePath={(providerId) =>
+        void handleBrowseProviderInstructionInstructionRelativePath(providerId)}
       onChangeProviderSkillRootPath={handleChangeProviderSkillRootPath}
       onBrowseProviderSkillRootPath={(providerId) => void handleBrowseProviderSkillRootPath(providerId)}
       onChangeMemoryExtractionModel={handleChangeMemoryExtractionModel}

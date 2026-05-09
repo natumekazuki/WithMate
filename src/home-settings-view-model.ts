@@ -50,6 +50,32 @@ export function buildHomeProviderInstructionTargetUpsertInput(
   };
 }
 
+export function resolveInstructionRelativePathFromSelection(
+  rootDirectory: string,
+  selectedFilePath: string,
+): string | null {
+  const normalizedRoot = normalizePathForComparison(rootDirectory);
+  const normalizedSelected = normalizePathForComparison(selectedFilePath);
+  if (!normalizedRoot || !normalizedSelected) {
+    return null;
+  }
+
+  const rootForComparison = normalizedRoot.toLowerCase();
+  const selectedForComparison = normalizedSelected.toLowerCase();
+  if (!selectedForComparison.startsWith(`${rootForComparison}/`)) {
+    return null;
+  }
+
+  return normalizedSelected.slice(normalizedRoot.length + 1);
+}
+
+function normalizePathForComparison(pathValue: string): string {
+  return pathValue
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/\/+$/g, "");
+}
+
 export function buildHomeProviderSettingRows(
   modelCatalog: ModelCatalogSnapshot | null,
   appSettings: AppSettings,

@@ -3385,6 +3385,45 @@ button:disabled {
   line-height: 1.5;
 }
 
+.settings-inline-help {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.settings-inline-help summary {
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(15, 61, 99, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: rgba(15, 61, 99, 0.72);
+  cursor: pointer;
+  font-weight: 700;
+  list-style: none;
+}
+
+.settings-inline-help summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-inline-help div {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid rgba(15, 61, 99, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.settings-inline-help p {
+  margin: 0;
+}
+
 .empty-chat-row {
   align-items: center;
 }

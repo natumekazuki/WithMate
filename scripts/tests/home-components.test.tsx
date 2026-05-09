@@ -806,6 +806,8 @@ describe("HomeSettingsContent", () => {
         onChangeProviderInstructionFailPolicy={noOp}
         onChangeProviderInstructionRootDirectory={noOp}
         onChangeProviderInstructionInstructionRelativePath={noOp}
+        onBrowseProviderInstructionRootDirectory={noOp}
+        onBrowseProviderInstructionInstructionRelativePath={noOp}
         onChangeProviderSkillRootPath={noOp}
         onBrowseProviderSkillRootPath={noOp}
         onChangeMemoryExtractionModel={noOp}
@@ -905,6 +907,8 @@ describe("HomeSettingsContent", () => {
         onChangeProviderInstructionFailPolicy={noOp}
         onChangeProviderInstructionRootDirectory={noOp}
         onChangeProviderInstructionInstructionRelativePath={noOp}
+        onBrowseProviderInstructionRootDirectory={noOp}
+        onBrowseProviderInstructionInstructionRelativePath={noOp}
         onChangeProviderSkillRootPath={noOp}
         onBrowseProviderSkillRootPath={noOp}
         onChangeMemoryExtractionModel={noOp}
@@ -941,6 +945,9 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes(`<strong>${SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL}</strong>`));
     assert.ok(html.includes(`<span>${SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL}</span>`));
     assert.ok(html.includes(`<span>${SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>`));
+    assert.ok(html.includes("Provider Instruction Sync のヘルプ"));
+    assert.ok(html.includes("managed_block は既存ファイル内"));
+    assert.equal(html.split(">Browse</button>").length - 1 >= 3, true);
     assert.ok(html.includes(`value=\"/repo-root\"`));
     assert.ok(html.includes("value=\"docs/instructions.md\""));
   });
@@ -1003,6 +1010,8 @@ describe("HomeSettingsContent", () => {
         onChangeProviderInstructionFailPolicy={noOp}
         onChangeProviderInstructionRootDirectory={noOp}
         onChangeProviderInstructionInstructionRelativePath={noOp}
+        onBrowseProviderInstructionRootDirectory={noOp}
+        onBrowseProviderInstructionInstructionRelativePath={noOp}
         onChangeProviderSkillRootPath={noOp}
         onBrowseProviderSkillRootPath={noOp}
         onChangeMemoryExtractionModel={noOp}
