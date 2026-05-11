@@ -1,4 +1,4 @@
-import type { MateProfile, MateProfileSectionState } from "../src/mate-state.js";
+import type { MateProfile, MateProfileSectionState } from "../src/mate/mate-state.js";
 import type {
   MateProfileItem,
   MateProfileItemCategory,

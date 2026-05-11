@@ -5,7 +5,7 @@ import type {
   ProviderInstructionTarget,
   ProviderInstructionTargetInput,
 } from "../../src/provider-instruction-target-state.js";
-import type { MateProfile } from "../../src/mate-state.js";
+import type { MateProfile } from "../../src/mate/mate-state.js";
 import {
   upsertProviderInstructionTargetCommand,
   type UpsertProviderInstructionTargetCommandDeps,

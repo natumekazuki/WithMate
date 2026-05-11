@@ -5,7 +5,7 @@ import {
   type MateMemoryGenerationProviderSettings,
 } from "../src/provider-settings-state.js";
 import { DEFAULT_REASONING_EFFORT, type ModelReasoningEffort } from "../src/model-catalog.js";
-import type { MateGrowthSettings } from "../src/mate-state.js";
+import type { MateGrowthSettings } from "../src/mate/mate-state.js";
 import type { MateMemoryGenerationPrompt } from "./mate-memory-generation-prompt.js";
 import {
   getMateTalkBackgroundStructuredPromptCapability,

@@ -170,14 +170,14 @@ import {
   type MateTalkTurnInput,
   type MateTalkTurnResult,
   type UpdateMateGrowthSettingsInput,
-} from "../src/mate-state.js";
+} from "../src/mate/mate-state.js";
 import type {
   MateGrowthEventActionRequest,
   MateGrowthEventActionResult,
   MateGrowthEventCorrectionRequest,
   MateGrowthEventListRequest,
   MateGrowthEventListResult,
-} from "../src/mate-growth-events-state.js";
+} from "../src/mate/mate-growth-events-state.js";
 import {
   type CharacterReflectionTriggerReason,
 } from "./character-reflection.js";

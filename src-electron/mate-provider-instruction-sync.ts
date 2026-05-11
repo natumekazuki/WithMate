@@ -2,7 +2,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 
-import type { MateProfile } from "../src/mate-state.js";
+import type { MateProfile } from "../src/mate/mate-state.js";
 import type { ProviderInstructionTarget as ProviderInstructionTargetState } from "../src/provider-instruction-target-state.js";
 import {
   MATE_PROFILE_BLOCK_ID,

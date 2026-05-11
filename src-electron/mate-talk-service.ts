@@ -1,4 +1,4 @@
-import type { MateProfile, MateTalkTurnInput, MateTalkTurnResult } from "../src/mate-state.js";
+import type { MateProfile, MateTalkTurnInput, MateTalkTurnResult } from "../src/mate/mate-state.js";
 import type { ModelReasoningEffort } from "../src/model-catalog.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 

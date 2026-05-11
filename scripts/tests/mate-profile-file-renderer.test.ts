@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { MateProfile } from "../../src/mate-state.js";
+import type { MateProfile } from "../../src/mate/mate-state.js";
 import type { MateProfileItem } from "../../src-electron/mate-profile-item-storage.js";
 import {
   renderMateProfileFiles,

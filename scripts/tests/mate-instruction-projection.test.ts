@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { MateProfile } from "../../src/mate-state.js";
+import type { MateProfile } from "../../src/mate/mate-state.js";
 import {
   buildMateInstructionContent,
   upsertMateInstructionBlock,

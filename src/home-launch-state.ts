@@ -5,7 +5,7 @@ import { DEFAULT_CODEX_SANDBOX_MODE, type CodexSandboxMode } from "./codex-sandb
 import type { CreateCompanionSessionInput } from "./companion-state.js";
 import { inferWorkspaceFromPath, type LaunchWorkspace } from "./home-launch-projection.js";
 import { DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT, type ModelReasoningEffort } from "./model-catalog.js";
-import type { MateProfile } from "./mate-state.js";
+import type { MateProfile } from "./mate/mate-state.js";
 
 type LastUsedSessionSelectionSource = Pick<
   SessionSummary,

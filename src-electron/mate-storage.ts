@@ -16,7 +16,7 @@ import {
   type MateGrowthSettings,
   type UpdateMateGrowthModelPreferenceInput,
   type UpdateMateGrowthSettingsInput,
-} from "../src/mate-state.js";
+} from "../src/mate/mate-state.js";
 
 const MATE_ID = "current";
 const MATE_DIRECTORY_NAME = "mate";

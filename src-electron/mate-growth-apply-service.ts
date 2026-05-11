@@ -3,7 +3,7 @@ import type {
   MateGrowthStorage,
 } from "./mate-growth-storage.js";
 import { createHash, randomUUID } from "node:crypto";
-import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
+import type { MateGrowthApplyResult } from "../src/mate/mate-growth-apply-result.js";
 import type {
   MateProfileItem,
   MateProfileItemCategory,

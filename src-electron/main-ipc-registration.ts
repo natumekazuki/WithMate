@@ -30,15 +30,15 @@ import type {
   MateTalkTurnResult,
   SetMateAvatarInput,
   UpdateMateInput,
-} from "../src/mate-state.js";
-import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
+} from "../src/mate/mate-state.js";
+import type { MateGrowthApplyResult } from "../src/mate/mate-growth-apply-result.js";
 import type {
   MateGrowthEventActionRequest,
   MateGrowthEventActionResult,
   MateGrowthEventCorrectionRequest,
   MateGrowthEventListRequest,
   MateGrowthEventListResult,
-} from "../src/mate-growth-events-state.js";
+} from "../src/mate/mate-growth-events-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
 import type {
@@ -61,8 +61,8 @@ import type {
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionInput, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
-import type { MateEmbeddingSettings } from "../src/mate-embedding-settings.js";
-import type { MateGrowthSettings, UpdateMateGrowthSettingsInput } from "../src/mate-state.js";
+import type { MateEmbeddingSettings } from "../src/mate/mate-embedding-settings.js";
+import type { MateGrowthSettings, UpdateMateGrowthSettingsInput } from "../src/mate/mate-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,

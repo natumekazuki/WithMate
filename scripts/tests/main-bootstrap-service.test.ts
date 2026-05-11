@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
-import type { MateGrowthApplyResult } from "../../src/mate-growth-apply-result.js";
+import type { MateGrowthApplyResult } from "../../src/mate/mate-growth-apply-result.js";
 import { MainBootstrapService } from "../../src-electron/main-bootstrap-service.js";
 
 const zeroGrowthResult: MateGrowthApplyResult = {

@@ -55,16 +55,16 @@ import type {
   SetMateAvatarInput,
   UpdateMateInput,
   UpdateMateGrowthSettingsInput,
-} from "../src/mate-state.js";
-import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
+} from "../src/mate/mate-state.js";
+import type { MateGrowthApplyResult } from "../src/mate/mate-growth-apply-result.js";
 import type {
   MateGrowthEventActionRequest,
   MateGrowthEventActionResult,
   MateGrowthEventCorrectionRequest,
   MateGrowthEventListRequest,
   MateGrowthEventListResult,
-} from "../src/mate-growth-events-state.js";
-import type { MateEmbeddingSettings } from "../src/mate-embedding-settings.js";
+} from "../src/mate/mate-growth-events-state.js";
+import type { MateEmbeddingSettings } from "../src/mate/mate-embedding-settings.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import type { MainIpcRegistrationDeps } from "./main-ipc-registration.js";
 

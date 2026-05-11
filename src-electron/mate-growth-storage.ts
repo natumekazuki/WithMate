@@ -10,7 +10,7 @@ import type {
   MateGrowthEventListRequest,
   MateGrowthEventListResult,
   MateGrowthEventState,
-} from "../src/mate-growth-events-state.js";
+} from "../src/mate/mate-growth-events-state.js";
 
 const MATE_ID = "current";
 

@@ -6,7 +6,7 @@ import {
   type MemoryExtractionProviderSettings,
   type SessionSummary,
 } from "./app-state.js";
-import type { MateEmbeddingSettings } from "./mate-embedding-settings.js";
+import type { MateEmbeddingSettings } from "./mate/mate-embedding-settings.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
 import {
   DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES,
@@ -15,7 +15,7 @@ import {
   type MateGrowthModelPreferencePurpose,
   type MateGrowthSettings,
   type UpdateMateGrowthSettingsInput,
-} from "./mate-state.js";
+} from "./mate/mate-state.js";
 import type {
   MemoryManagementDomain,
   MemoryManagementDomainPageInfo,
@@ -99,8 +99,8 @@ import {
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import { buildCardThemeStyle, CharacterAvatar } from "./ui-utils.js";
 import { formatTimestampLabel } from "./time-state.js";
-import type { MateProfile } from "./mate-state.js";
-import type { MateGrowthEventListItem } from "./mate-growth-events-state.js";
+import type { MateProfile } from "./mate/mate-state.js";
+import type { MateGrowthEventListItem } from "./mate/mate-growth-events-state.js";
 
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;

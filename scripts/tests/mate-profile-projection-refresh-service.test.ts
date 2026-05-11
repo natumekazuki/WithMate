@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { DatabaseSync } from "node:sqlite";
 
-import type { MateProfile } from "../../src/mate-state.js";
+import type { MateProfile } from "../../src/mate/mate-state.js";
 import type { MateProfileItem } from "../../src-electron/mate-profile-item-storage.js";
 import { MateProfileProjectionRefreshService } from "../../src-electron/mate-profile-projection-refresh-service.js";
 import type { ApplyMateProfileFilesInput } from "../../src-electron/mate-storage.js";

@@ -100,10 +100,10 @@ import {
   type MateProfile,
   type MateStorageState,
   type UpdateMateGrowthSettingsInput,
-} from "./mate-state.js";
-import { type MateEmbeddingSettings } from "./mate-embedding-settings.js";
-import type { MateGrowthEventListItem } from "./mate-growth-events-state.js";
-import { applyHomePendingGrowth } from "./home-mate-growth-actions.js";
+} from "./mate/mate-state.js";
+import { type MateEmbeddingSettings } from "./mate/mate-embedding-settings.js";
+import type { MateGrowthEventListItem } from "./mate/mate-growth-events-state.js";
+import { applyHomePendingGrowth } from "./mate/mate-growth-actions.js";
 
 async function openSessionWindow(sessionId: string) {
   await withWithMateApi((api) => api.openSession(sessionId));

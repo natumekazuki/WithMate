@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { MateTalkService } from "../../src-electron/mate-talk-service.js";
-import type { MateProfile } from "../../src/mate-state.js";
+import type { MateProfile } from "../../src/mate/mate-state.js";
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
 
 const PROFILE: MateProfile = {

@@ -19,7 +19,7 @@ import { buildLiveRunAuditOperations } from "../src/live-run-audit-operations.js
 import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
 import { type Session } from "../src/session-state.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type { MateStorageState } from "../src/mate-state.js";
+import type { MateStorageState } from "../src/mate/mate-state.js";
 import { ProviderTurnError, type ProviderCodingAdapter, type RunSessionTurnResult } from "./provider-runtime.js";
 import { appendQuotaTelemetryToTransportPayload } from "./audit-log-quota.js";
 import { appendTransportPayloadFields, calculateAuditDurationMs } from "./audit-log-metadata.js";

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { IpcMain } from "electron";
-import type { MateGrowthApplyResult } from "../../src/mate-growth-apply-result.js";
+import type { MateGrowthApplyResult } from "../../src/mate/mate-growth-apply-result.js";
 
 import {
   MATE_NOT_CREATED_ERROR_MESSAGE,

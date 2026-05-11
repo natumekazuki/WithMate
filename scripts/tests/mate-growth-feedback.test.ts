@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildApplyPendingGrowthFeedback } from "../../src/mate-growth-feedback.js";
+import { buildApplyPendingGrowthFeedback } from "../../src/mate/mate-growth-feedback.js";
 
 describe("buildApplyPendingGrowthFeedback", () => {
   it("null は既定完了メッセージを返す", () => {

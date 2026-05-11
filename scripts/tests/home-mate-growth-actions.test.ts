@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import {
   applyHomePendingGrowth,
   type HomeMateGrowthApplyApi,
-} from "../../src/home-mate-growth-actions.js";
+} from "../../src/mate/mate-growth-actions.js";
 
 function createApi(overrides?: Partial<HomeMateGrowthApplyApi>): HomeMateGrowthApplyApi {
   return {

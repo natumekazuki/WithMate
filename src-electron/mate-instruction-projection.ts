@@ -1,4 +1,4 @@
-import type { MateProfile } from "../src/mate-state.js";
+import type { MateProfile } from "../src/mate/mate-state.js";
 import { upsertManagedBlock } from "./managed-instruction-block.js";
 
 export const MATE_PROFILE_BLOCK_ID = "mate-profile";

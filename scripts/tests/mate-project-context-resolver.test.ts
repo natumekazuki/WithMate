@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { buildNewSession } from "../../src/app-state.js";
 import type { Session } from "../../src/session-state.js";
 import type { MateProjectDigest } from "../../src-electron/mate-project-digest-storage.js";
-import type { MateStorageState } from "../../src/mate-state.js";
+import type { MateStorageState } from "../../src/mate/mate-state.js";
 import {
   resolveMateProjectContextTextForPrompt,
   resolveMateProjectDigestForSession,

@@ -1,4 +1,4 @@
-import type { ModelReasoningEffort } from "./model-catalog.js";
+import type { ModelReasoningEffort } from "../model-catalog.js";
 
 export type MateProfileState = "draft" | "active" | "deleted";
 export type MateStorageState = "not_created" | MateProfileState;

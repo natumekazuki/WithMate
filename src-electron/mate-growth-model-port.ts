@@ -1,5 +1,5 @@
 import type { AuditLogicalPrompt, AuditLogUsage } from "../src/app-state.js";
-import type { MateGrowthModelPreferencePurpose } from "../src/mate-state.js";
+import type { MateGrowthModelPreferencePurpose } from "../src/mate/mate-state.js";
 
 import type { MateMemoryGenerationPrompt } from "./mate-memory-generation-prompt.js";
 

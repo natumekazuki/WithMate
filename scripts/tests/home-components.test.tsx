@@ -12,10 +12,10 @@ import {
 } from "../../src/home-components.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
-import { buildHomeProviderSettingRows } from "../../src/home-settings-view-model.js";
-import { DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES, type MateGrowthSettings } from "../../src/mate-state.js";
-import type { MateGrowthEventListItem } from "../../src/mate-growth-events-state.js";
-import type { MateEmbeddingSettings } from "../../src/mate-embedding-settings.js";
+import { buildHomeProviderSettingRows } from "../../src/settings/settings-view-model.js";
+import { DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES, type MateGrowthSettings } from "../../src/mate/mate-state.js";
+import type { MateGrowthEventListItem } from "../../src/mate/mate-growth-events-state.js";
+import type { MateEmbeddingSettings } from "../../src/mate/mate-embedding-settings.js";
 import { formatTimestampLabel } from "../../src/time-state.js";
 import {
   SETTINGS_MATE_GROWTH_APPLY_INTERVAL_MINUTES_LABEL,

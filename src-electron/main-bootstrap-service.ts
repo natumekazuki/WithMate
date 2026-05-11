@@ -1,6 +1,6 @@
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type { MateGrowthApplyResult } from "../src/mate-growth-apply-result.js";
-import type { MateStorageState } from "../src/mate-state.js";
+import type { MateGrowthApplyResult } from "../src/mate/mate-growth-apply-result.js";
+import type { MateStorageState } from "../src/mate/mate-state.js";
 
 type MainBootstrapServiceDeps = {
   initializePersistentStores(): Promise<ModelCatalogSnapshot>;

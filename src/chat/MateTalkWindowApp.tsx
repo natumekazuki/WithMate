@@ -7,7 +7,7 @@ import {
 } from "../provider-settings-state.js";
 import { getWithMateApi, isDesktopRuntime } from "../renderer-withmate-api.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot, ModelReasoningEffort } from "../model-catalog.js";
-import type { MateProfile, MateStorageState } from "../mate-state.js";
+import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import { buildCharacterThemeStyle } from "../theme-utils.js";
 import { modelDisplayLabel, modelOptionLabel } from "../ui-utils.js";
 import { MateTalkChatWindow } from "./MateTalkChatWindow.js";

@@ -42,14 +42,14 @@ import type {
   MemoryManagementSnapshot,
 } from "./memory/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
-import type { MateGrowthApplyResult } from "./mate-growth-apply-result.js";
+import type { MateGrowthApplyResult } from "./mate/mate-growth-apply-result.js";
 import type {
   MateGrowthEventActionRequest,
   MateGrowthEventActionResult,
   MateGrowthEventCorrectionRequest,
   MateGrowthEventListRequest,
   MateGrowthEventListResult,
-} from "./mate-growth-events-state.js";
+} from "./mate/mate-growth-events-state.js";
 import type { RendererLogInput } from "./app-log-types.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import type { OpenPathOptions, ResetAppDatabaseRequest, ResetAppDatabaseResult } from "./withmate-window-types.js";
@@ -63,8 +63,8 @@ import type {
   SetMateAvatarInput,
   UpdateMateInput,
   UpdateMateGrowthSettingsInput,
-} from "./mate-state.js";
-import type { MateEmbeddingSettings } from "./mate-embedding-settings.js";
+} from "./mate/mate-state.js";
+import type { MateEmbeddingSettings } from "./mate/mate-embedding-settings.js";
 import type {
   ProviderInstructionTarget,
   ProviderInstructionTargetInput,

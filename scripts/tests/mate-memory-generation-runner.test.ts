@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { MATE_MEMORY_GENERATION_OUTPUT_SCHEMA, type MateMemoryGenerationPrompt } from "../../src-electron/mate-memory-generation-prompt.js";
 import { createMateMemoryGenerationRunner, type MateMemoryGenerationRunnerDeps } from "../../src-electron/mate-memory-generation-runner.js";
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
-import type { MateGrowthSettings } from "../../src/mate-state.js";
+import type { MateGrowthSettings } from "../../src/mate/mate-state.js";
 import type {
   ProviderBackgroundAdapter,
   ProviderBackgroundStructuredPromptPolicy,

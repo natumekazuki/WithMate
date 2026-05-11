@@ -14,7 +14,7 @@ import {
   resolveLastUsedSessionSelection,
   setLaunchWorkspaceFromPath,
 } from "../../src/home-launch-state.js";
-import type { MateProfile } from "../../src/mate-state.js";
+import type { MateProfile } from "../../src/mate/mate-state.js";
 
 function createMateProfile(partial: Partial<MateProfile> & Pick<MateProfile, "id" | "displayName">): MateProfile {
   return {

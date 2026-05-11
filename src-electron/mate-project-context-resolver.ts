@@ -1,4 +1,4 @@
-import type { MateStorageState } from "../src/mate-state.js";
+import type { MateStorageState } from "../src/mate/mate-state.js";
 import type { MateProjectDigest } from "./mate-project-digest-storage.js";
 
 type SessionMetadata = {
