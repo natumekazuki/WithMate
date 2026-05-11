@@ -1,5 +1,11 @@
 import { DEFAULT_APPROVAL_MODE } from "../approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../codex-sandbox-mode.js";
+import {
+  DEFAULT_CHARACTER_SESSION_COPY,
+  DEFAULT_CHARACTER_THEME_COLORS,
+  type CharacterProfile,
+  type Message,
+} from "../app-state.js";
 import type { ChatWindowProps } from "./chat-window.js";
 
 export const chatWindowNoop = () => {};
@@ -8,6 +14,16 @@ type ChatHeaderProps = ChatWindowProps["headerProps"];
 type ChatMessageColumnProps = ChatWindowProps["messageColumnProps"];
 type ChatComposerProps = ChatWindowProps["composerProps"];
 type ChatCompactActionDockProps = ChatWindowProps["compactActionDockProps"];
+
+type StaticChatCharacterInput = {
+  id: string;
+  name: string;
+} & Partial<Omit<CharacterProfile, "id" | "name">>;
+
+type ChatRoleMessage = {
+  role: string;
+  text: string;
+};
 
 type StaticChatHeaderProps = {
   taskTitle: string;
@@ -113,6 +129,37 @@ export function createStaticChatHeaderProps({
   };
 }
 
+export function createStaticChatCharacterProfile({
+  id,
+  name,
+  iconPath = "",
+  description = "",
+  roleMarkdown = "",
+  notesMarkdown = "",
+  updatedAt = "",
+  themeColors = { ...DEFAULT_CHARACTER_THEME_COLORS },
+  sessionCopy = DEFAULT_CHARACTER_SESSION_COPY,
+}: StaticChatCharacterInput): CharacterProfile {
+  return {
+    id,
+    name,
+    iconPath,
+    description,
+    roleMarkdown,
+    notesMarkdown,
+    updatedAt,
+    themeColors,
+    sessionCopy,
+  };
+}
+
+export function toConversationMessages(messages: ChatRoleMessage[]): Message[] {
+  return messages.map((message) => ({
+    role: message.role === "user" ? "user" : "assistant",
+    text: message.text,
+  }));
+}
+
 export function createIdleChatMessageColumnProps(props: IdleChatMessageColumnProps): ChatMessageColumnProps {
   return {
     expandedArtifacts: {},
@@ -188,6 +235,21 @@ export function createHiddenControlsChatComposerProps(props: HiddenControlsChatC
     onChangeApprovalMode: chatWindowNoop,
     onChangeCodexSandboxMode: chatWindowNoop,
     ...props,
+  };
+}
+
+export function isStaticChatSendDisabled({ draft, isRunning }: { draft: string; isRunning: boolean }): boolean {
+  return isRunning || draft.trim() === "";
+}
+
+export function createStaticChatComposerSendability(
+  feedback: string,
+): ChatComposerProps["composerSendability"] {
+  return {
+    primaryFeedback: feedback,
+    secondaryFeedback: [],
+    feedbackTone: feedback ? "helper" : null,
+    shouldShowFeedback: feedback.trim().length > 0,
   };
 }
 

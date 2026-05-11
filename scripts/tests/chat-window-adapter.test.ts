@@ -3,40 +3,21 @@ import test from "node:test";
 import React from "react";
 
 import {
+  createStaticChatCharacterProfile,
+  createStaticChatComposerSendability,
   createHiddenControlsChatComposerProps,
   createIdleChatMessageColumnProps,
   createStaticChatCompactActionDockProps,
   createStaticChatHeaderProps,
+  isStaticChatSendDisabled,
+  toConversationMessages,
 } from "../../src/chat/chat-window-adapter.js";
 import type { ChatWindowProps } from "../../src/chat/chat-window.js";
 
 const noop = () => {};
 
 function createCharacter(): ChatWindowProps["messageColumnProps"]["character"] {
-  return {
-    id: "mate",
-    name: "Mate",
-    iconPath: "",
-    description: "",
-    roleMarkdown: "",
-    notesMarkdown: "",
-    updatedAt: "",
-    themeColors: {
-      background: "#ffffff",
-      text: "#111111",
-      accent: "#3366ff",
-    },
-    sessionCopy: {
-      newSessionTitle: "",
-      inputPlaceholder: "",
-      emptyStateTitle: "",
-      emptyStateDescription: "",
-      emptyStateAction: "",
-      runningStatusLabel: "",
-      completedStatusLabel: "",
-      failedStatusLabel: "",
-    },
-  };
+  return createStaticChatCharacterProfile({ id: "mate", name: "Mate" });
 }
 
 test("createStaticChatHeaderProps は操作を隠す header 既定値を補う", () => {
@@ -75,7 +56,38 @@ test("createIdleChatMessageColumnProps は approval や diff のない message c
   assert.equal(messageColumnProps.hasLiveRunAssistantText, false);
   assert.equal(messageColumnProps.liveRunErrorMessage, "");
   assert.equal(messageColumnProps.isMessageListFollowing, true);
-  assert.equal(messageColumnProps.getChangedFilesEmptyText(), "");
+  assert.equal(messageColumnProps.getChangedFilesEmptyText("artifact-1", false), "");
+});
+
+test("createStaticChatCharacterProfile は静的 chat 用 CharacterProfile 既定値を補う", () => {
+  const character = createStaticChatCharacterProfile({
+    id: "static-chat",
+    name: "Static Mate",
+  });
+
+  assert.equal(character.id, "static-chat");
+  assert.equal(character.name, "Static Mate");
+  assert.equal(character.iconPath, "");
+  assert.equal(character.description, "");
+  assert.equal(character.roleMarkdown, "");
+  assert.equal(character.notesMarkdown, "");
+  assert.equal(character.updatedAt, "");
+  assert.equal(character.themeColors.main, "#6f8cff");
+  assert.equal(character.themeColors.sub, "#6fb8c7");
+  assert.deepEqual(character.sessionCopy.pendingResponding, ["応答を生成中"]);
+});
+
+test("toConversationMessages は user 以外を assistant として共通 message に変換する", () => {
+  assert.deepEqual(
+    toConversationMessages([
+      { role: "user", text: "おはよう" },
+      { role: "mate", text: "やあ" },
+    ]),
+    [
+      { role: "user", text: "おはよう" },
+      { role: "assistant", text: "やあ" },
+    ],
+  );
 });
 
 test("createHiddenControlsChatComposerProps は composer の非対応操作を隠す", () => {
@@ -115,6 +127,25 @@ test("createHiddenControlsChatComposerProps は composer の非対応操作を�
   assert.deepEqual(composerProps.additionalDirectoryItems, []);
   assert.deepEqual(composerProps.workspacePathMatchItems, []);
   assert.equal(composerProps.selectedCustomAgentLabel, "Agent");
+});
+
+test("static chat sendability helper は running と空白 draft を送信不可にする", () => {
+  assert.equal(isStaticChatSendDisabled({ draft: "こんにちは", isRunning: false }), false);
+  assert.equal(isStaticChatSendDisabled({ draft: "   ", isRunning: false }), true);
+  assert.equal(isStaticChatSendDisabled({ draft: "こんにちは", isRunning: true }), true);
+
+  assert.deepEqual(createStaticChatComposerSendability("入力してから送信してね。"), {
+    primaryFeedback: "入力してから送信してね。",
+    secondaryFeedback: [],
+    feedbackTone: "helper",
+    shouldShowFeedback: true,
+  });
+  assert.deepEqual(createStaticChatComposerSendability(""), {
+    primaryFeedback: "",
+    secondaryFeedback: [],
+    feedbackTone: null,
+    shouldShowFeedback: false,
+  });
 });
 
 test("createStaticChatCompactActionDockProps は静的 compact dock の既定値を補う", () => {

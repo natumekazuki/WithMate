@@ -1,22 +1,20 @@
 import { type CSSProperties, type RefObject } from "react";
 
 import {
-  DEFAULT_CHARACTER_SESSION_COPY,
-  DEFAULT_CHARACTER_THEME_COLORS,
-  type CharacterProfile,
-  type Message,
-} from "../app-state.js";
-import {
   ChatRightPaneShell,
   ChatWorkbenchSplitter,
   type ChatSelectOption,
   type ChatWindowProps,
 } from "./chat-window.js";
 import {
+  createStaticChatCharacterProfile,
+  createStaticChatComposerSendability,
   createHiddenControlsChatComposerProps,
   createIdleChatMessageColumnProps,
   createStaticChatCompactActionDockProps,
   createStaticChatHeaderProps,
+  isStaticChatSendDisabled,
+  toConversationMessages,
 } from "./chat-window-adapter.js";
 import { shouldSubmitMateTalkInputByKey } from "./mate-talk-state.js";
 
@@ -54,27 +52,6 @@ type MateTalkMessageColumnProps = ChatWindowProps["messageColumnProps"];
 type MateTalkComposerProps = ChatWindowProps["composerProps"];
 type MateTalkCompactActionDockProps = ChatWindowProps["compactActionDockProps"];
 
-function toConversationMessages(messages: MateTalkMessage[]): Message[] {
-  return messages.map((message) => ({
-    role: message.role === "user" ? "user" : "assistant",
-    text: message.text,
-  }));
-}
-
-function buildMateCharacter(mateName: string): CharacterProfile {
-  return {
-    id: "mate-talk",
-    name: mateName,
-    iconPath: "",
-    description: "",
-    roleMarkdown: "",
-    notesMarkdown: "",
-    updatedAt: "",
-    themeColors: { ...DEFAULT_CHARACTER_THEME_COLORS },
-    sessionCopy: DEFAULT_CHARACTER_SESSION_COPY,
-  };
-}
-
 function buildMateTalkHeaderProps({
   sending,
   onClose,
@@ -101,7 +78,7 @@ function buildMateTalkMessageColumnProps({
 }: Pick<MateTalkChatProjectionInput, "mateName" | "messages" | "messageListRef" | "sending">): MateTalkMessageColumnProps {
   return createIdleChatMessageColumnProps({
     sessionId: "mate-talk",
-    character: buildMateCharacter(mateName),
+    character: createStaticChatCharacterProfile({ id: "mate-talk", name: mateName }),
     messages: toConversationMessages(messages),
     messageListRef,
     isRunning: sending,
@@ -140,13 +117,7 @@ function buildMateTalkComposerProps({
   | "sending"
   | "feedback"
 >): MateTalkComposerProps {
-  const isSubmitDisabled = sending || input.trim() === "";
-  const composerSendability: MateTalkComposerProps["composerSendability"] = {
-    primaryFeedback: feedback,
-    secondaryFeedback: [],
-    feedbackTone: feedback ? "helper" : null,
-    shouldShowFeedback: feedback.trim().length > 0,
-  };
+  const isSubmitDisabled = isStaticChatSendDisabled({ draft: input, isRunning: sending });
 
   return createHiddenControlsChatComposerProps({
     composerBlocked: sending,
@@ -155,7 +126,7 @@ function buildMateTalkComposerProps({
     composerTextareaRef,
     isComposerDisabled: sending,
     isSendDisabled: isSubmitDisabled,
-    composerSendability,
+    composerSendability: createStaticChatComposerSendability(feedback),
     sendButtonTitle: isSubmitDisabled ? undefined : "メッセージを送信",
     modelOptions,
     selectedModel,
@@ -180,11 +151,13 @@ function buildMateTalkCompactActionDockProps({
   sending,
   onSubmit,
 }: Pick<MateTalkChatProjectionInput, "input" | "sending" | "onSubmit">): MateTalkCompactActionDockProps {
+  const isSubmitDisabled = isStaticChatSendDisabled({ draft: input, isRunning: sending });
+
   return createStaticChatCompactActionDockProps({
     draft: input,
     actionDockCompactPreview: input.trim() || "下書きなし",
     isRunning: sending,
-    isSendDisabled: sending || input.trim() === "",
+    isSendDisabled: isSubmitDisabled,
     onSendOrCancel: onSubmit,
   });
 }
