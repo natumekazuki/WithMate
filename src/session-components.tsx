@@ -28,8 +28,8 @@ import {
 } from "./ui-utils.js";
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import type { ApprovalMode } from "./approval-mode.js";
+import type { ChatWindowModeKind } from "./chat/chat-window-mode.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
-import type { SessionWindowModeKind } from "./session-window-mode.js";
 import {
   contextPaneTabLabel,
   liveRunStepToneClassName,
@@ -680,7 +680,7 @@ export function SessionHeaderHandle({ taskTitle, onClick }: SessionHeaderHandleP
 }
 
 export type SessionChatScreenProps = {
-  mode: SessionWindowModeKind;
+  mode: ChatWindowModeKind;
   className?: string;
   style?: CSSProperties;
   header: ReactNode;
