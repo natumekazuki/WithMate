@@ -8,14 +8,15 @@ import {
   SessionHeaderHandle,
   SessionMessageColumn,
   type SessionActionDockCompactRowProps,
-  type SessionChatScreenProps,
   type SessionComposerExpandedProps,
   type SessionHeaderProps,
   type SessionMessageColumnProps,
   type SessionSelectOption,
 } from "../session-components.js";
 
-export type ChatWindowProps = Omit<SessionChatScreenProps, "header" | "messageColumn" | "actionDock"> & {
+type ChatScreenProps = ComponentProps<typeof SessionChatScreen>;
+
+export type ChatWindowProps = Omit<ChatScreenProps, "header" | "messageColumn" | "actionDock"> & {
   isHeaderExpanded: boolean;
   headerProps: SessionHeaderProps;
   messageColumnProps: SessionMessageColumnProps;
