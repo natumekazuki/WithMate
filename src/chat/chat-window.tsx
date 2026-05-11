@@ -1,4 +1,4 @@
-import { type ComponentProps } from "react";
+import { type ComponentProps, type PointerEventHandler } from "react";
 
 import {
   SessionActionDockCompactRow,
@@ -37,6 +37,13 @@ export type ChatRightPaneShellProps = {
   ariaLabel: string;
   className?: string;
   onToggleHeaderExpanded: () => void;
+};
+
+export type ChatWorkbenchSplitterProps = {
+  isActive?: boolean;
+  onPointerDown?: PointerEventHandler<HTMLButtonElement>;
+  ariaLabel?: string;
+  title?: string;
 };
 
 // Keep every conversation surface on one chat layout. Projection builders own
@@ -79,6 +86,27 @@ export function ChatWindowStatusScreen({ message, className = "" }: ChatWindowSt
         <p className="session-message-empty">{message}</p>
       </section>
     </main>
+  );
+}
+
+export function ChatWorkbenchSplitter({
+  isActive = false,
+  onPointerDown,
+  ariaLabel = "会話と command pane の幅を調整",
+  title = "左右の幅をドラッグで調整",
+}: ChatWorkbenchSplitterProps) {
+  if (!onPointerDown) {
+    return <div className="session-workbench-splitter" aria-hidden="true" />;
+  }
+
+  return (
+    <button
+      className={`session-workbench-splitter${isActive ? " is-active" : ""}`}
+      type="button"
+      onPointerDown={onPointerDown}
+      aria-label={ariaLabel}
+      title={title}
+    />
   );
 }
 

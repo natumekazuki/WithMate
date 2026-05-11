@@ -8,7 +8,12 @@ import {
 } from "../app-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../codex-sandbox-mode.js";
-import { ChatRightPaneShell, type ChatSelectOption, type ChatWindowProps } from "./chat-window.js";
+import {
+  ChatRightPaneShell,
+  ChatWorkbenchSplitter,
+  type ChatSelectOption,
+  type ChatWindowProps,
+} from "./chat-window.js";
 import { shouldSubmitMateTalkInputByKey } from "./mate-talk-state.js";
 
 export type MateTalkMessage = {
@@ -232,7 +237,7 @@ export function buildMateTalkChatWindowProps({
       onJumpToBottom: noop,
       onSendOrCancel: onSubmit,
     },
-    splitter: <div className="session-workbench-splitter" aria-hidden="true" />,
+    splitter: <ChatWorkbenchSplitter />,
     rightPane: (
       <ChatRightPaneShell
         isHeaderExpanded={isHeaderExpanded}

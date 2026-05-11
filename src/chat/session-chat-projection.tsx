@@ -21,7 +21,7 @@ import {
   type SessionRetryBannerProps,
 } from "../session-components.js";
 import type { ContextPaneTabKey } from "../session-ui-projection.js";
-import type { ChatWindowProps } from "./chat-window.js";
+import { ChatWorkbenchSplitter, type ChatWindowProps } from "./chat-window.js";
 
 export type AgentSessionChatProjectionInput = {
   selectedSession: Session;
@@ -329,12 +329,9 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     composerProps,
     compactActionDockProps,
     splitter: (
-      <button
-        className={`session-workbench-splitter${input.isContextRailResizing ? " is-active" : ""}`}
-        type="button"
+      <ChatWorkbenchSplitter
+        isActive={input.isContextRailResizing}
         onPointerDown={input.onStartContextRailResize}
-        aria-label="会話と command pane の幅を調整"
-        title="左右の幅をドラッグで調整"
       />
     ),
     rightPane: (
