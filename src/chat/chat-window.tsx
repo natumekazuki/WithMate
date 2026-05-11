@@ -26,6 +26,11 @@ export type ChatWindowProps = Omit<SessionChatScreenProps, "header" | "messageCo
 export type ChatSelectOption = SessionSelectOption;
 export type ChatHeaderHandleProps = ComponentProps<typeof SessionHeaderHandle>;
 
+export type ChatWindowStatusScreenProps = {
+  message: string;
+  className?: string;
+};
+
 export type ChatRightPaneShellProps = {
   isHeaderExpanded: boolean;
   headerHandleTitle: string;
@@ -65,6 +70,16 @@ export function ChatWindow({
 
 export function ChatHeaderHandle(props: ChatHeaderHandleProps) {
   return <SessionHeaderHandle {...props} />;
+}
+
+export function ChatWindowStatusScreen({ message, className = "" }: ChatWindowStatusScreenProps) {
+  return (
+    <main className={`page-shell session-page${className ? ` ${className}` : ""}`}>
+      <section className="session-work-surface chat-panel" aria-live="polite">
+        <p className="session-message-empty">{message}</p>
+      </section>
+    </main>
+  );
 }
 
 export function ChatRightPaneShell({
