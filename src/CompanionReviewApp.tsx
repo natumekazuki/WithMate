@@ -245,14 +245,6 @@ type CompanionReviewAppProps = {
   viewMode?: CompanionSessionWindowView;
 };
 
-export function CompanionChatModeApp() {
-  return <CompanionReviewApp viewMode="chat" />;
-}
-
-export function CompanionMergeReviewApp() {
-  return <CompanionReviewApp viewMode="merge" />;
-}
-
 export default function CompanionReviewApp({ viewMode: forcedViewMode }: CompanionReviewAppProps = {}) {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 
 import AgentSessionWindowApp from "../App.js";
-import { CompanionChatModeApp } from "../CompanionReviewApp.js";
+import { CompanionChatModeApp } from "./CompanionChatModeApp.js";
 import { resolveChatWindowModeFromSearch, resolveChatWindowModeTarget } from "./chat-window-mode.js";
 import { MateTalkChatModeApp } from "./MateTalkChatModeApp.js";
 

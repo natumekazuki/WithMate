@@ -4,7 +4,7 @@ import React from "react";
 import { renderToString } from "react-dom/server";
 
 import App from "../../src/App.js";
-import { CompanionChatModeApp } from "../../src/CompanionReviewApp.js";
+import { CompanionChatModeApp } from "../../src/chat/CompanionChatModeApp.js";
 
 test("App は desktop runtime の初回 render で TDZ 例外を出さない", () => {
   const previousWindow = globalThis.window;

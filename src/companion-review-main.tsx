@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 
-import { CompanionMergeReviewApp } from "./CompanionReviewApp.js";
+import { CompanionMergeReviewApp } from "./companion-review/CompanionMergeReviewApp.js";
 import { WindowErrorBoundary } from "./error-boundary.js";
 import "./styles.css";
 
