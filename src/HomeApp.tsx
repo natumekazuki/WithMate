@@ -4,11 +4,6 @@ import {
   createDefaultAppSettings,
   getProviderAppSettings,
   type AppSettings,
-  type ProviderInstructionTargetSettings,
-  type ProviderInstructionFailPolicy,
-  type ProviderInstructionWriteMode,
-  DEFAULT_PROVIDER_INSTRUCTION_TARGET_ID,
-  getDefaultProviderInstructionRelativePath,
 } from "./provider-settings-state.js";
 import { type SessionSummary } from "./session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "./approval-mode.js";
@@ -19,14 +14,12 @@ import {
 } from "./memory-management-view.js";
 import {
   buildMemoryManagementPageRequest,
-  type MemoryManagementPageResult,
   mergeMemoryManagementSnapshots,
   removeMateProfileItemFromSnapshot,
   removeCharacterMemoryEntryFromSnapshot,
   removeProjectMemoryEntryFromSnapshot,
   removeSessionMemoryFromSnapshot,
   type MemoryManagementDomain,
-  type MemoryManagementDomainPageInfo,
   type MemoryManagementSnapshot,
 } from "./memory-management-state.js";
 import {
@@ -63,12 +56,26 @@ import {
   HomeMateSetupPanel,
 } from "./home-components.js";
 import { HomeAppRouter } from "./home/HomeAppRouter.js";
+import { getHomeWindowMode } from "./home/home-window-mode.js";
 import {
   exportHomeModelCatalog,
   importHomeModelCatalog,
   saveHomeSettings,
 } from "./home-settings-actions.js";
+import {
+  EMPTY_MEMORY_MANAGEMENT_PAGE_STATE,
+  getMemoryManagementCursor,
+  normalizeMemoryManagementPages,
+  type MemoryManagementPageState,
+} from "./memory/memory-management-page-state.js";
 import { buildResetMateConfirmMessage } from "./settings-ui.js";
+import {
+  buildFallbackProviderInstructionTarget,
+  isProviderInstructionFailPolicy,
+  isProviderInstructionWriteMode,
+  normalizeProviderInstructionTarget,
+  type HomeProviderInstructionTargetDraft,
+} from "./settings/provider-instruction-target-draft.js";
 import {
   updateCharacterReflectionCharDeltaThreshold,
   updateCharacterReflectionCooldownSeconds,
@@ -127,99 +134,10 @@ async function openMateTalkWindow() {
   await withWithMateApi((api) => api.openMateTalkWindow());
 }
 
-function getMemoryManagementCursor(pages: MemoryManagementPageState, domain: MemoryManagementDomain): number | null {
-  if (domain === "session") {
-    return pages.session.nextCursor;
-  }
-  if (domain === "project") {
-    return pages.project.nextCursor;
-  }
-  if (domain === "character") {
-    return pages.character.nextCursor;
-  }
-  if (domain === "mate_profile") {
-    return pages.mate_profile.nextCursor;
-  }
-  return null;
-}
-
 type HomeRightPaneView = "monitor" | "mate";
-type HomeWindowMode = "home" | "monitor" | "settings" | "memory";
 
 const MEMORY_MANAGEMENT_PAGE_LIMIT = 50;
 const MATE_EMBEDDING_SETTINGS_POLL_INTERVAL_MS = 2000;
-
-type MemoryManagementPageState = {
-  session: MemoryManagementDomainPageInfo;
-  project: MemoryManagementDomainPageInfo;
-  character: MemoryManagementDomainPageInfo;
-  mate_profile: MemoryManagementDomainPageInfo;
-};
-
-type HomeProviderInstructionTargetDraft = HomeProviderInstructionTargetSettings;
-
-const EMPTY_MEMORY_MANAGEMENT_PAGE_INFO: MemoryManagementDomainPageInfo = {
-  nextCursor: null,
-  hasMore: false,
-  total: 0,
-};
-
-const EMPTY_MEMORY_MANAGEMENT_PAGE_STATE: MemoryManagementPageState = {
-  session: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
-  project: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
-  character: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
-  mate_profile: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
-};
-
-function normalizeMemoryManagementPages(pages: MemoryManagementPageResult["pages"]): MemoryManagementPageState {
-  return {
-    ...EMPTY_MEMORY_MANAGEMENT_PAGE_STATE,
-    session: pages.session,
-    project: pages.project,
-    character: pages.character,
-    mate_profile: pages.mate_profile ?? EMPTY_MEMORY_MANAGEMENT_PAGE_STATE.mate_profile,
-  };
-}
-
-function getHomeWindowMode(): HomeWindowMode {
-  if (typeof window === "undefined") {
-    return "home";
-  }
-
-  const mode = new URLSearchParams(window.location.search).get("mode");
-  return mode === "monitor" || mode === "settings" || mode === "memory" ? mode : "home";
-}
-
-function normalizeProviderInstructionTarget(target: ProviderInstructionTargetSettings): HomeProviderInstructionTargetDraft {
-  return target;
-}
-
-function buildFallbackProviderInstructionTarget(providerId: string): HomeProviderInstructionTargetDraft {
-  return {
-    providerId,
-    targetId: DEFAULT_PROVIDER_INSTRUCTION_TARGET_ID,
-    enabled: false,
-    rootDirectory: "",
-    instructionRelativePath: getDefaultProviderInstructionRelativePath(providerId),
-    lastSyncState: "never",
-    lastSyncRunId: null,
-    lastSyncedRevisionId: null,
-    lastErrorPreview: "",
-    lastSyncedAt: null,
-    writeMode: "managed_block",
-    projectionScope: "mate_only",
-    failPolicy: "warn_continue",
-    requiresRestart: false,
-  };
-}
-
-function isProviderInstructionWriteMode(value: string): value is ProviderInstructionWriteMode {
-  return value === "managed_file" || value === "managed_block";
-}
-
-function isProviderInstructionFailPolicy(value: string): value is ProviderInstructionFailPolicy {
-  return value === "block_session" || value === "warn_continue";
-}
 
 export default function HomeApp() {
   const desktopRuntime = isDesktopRuntime();
