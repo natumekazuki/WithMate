@@ -1,15 +1,15 @@
-import type { AppSettings } from "./app-state.js";
-import type { ModelCatalogSnapshot } from "./model-catalog.js";
+import type { AppSettings } from "../app-state.js";
+import type { ModelCatalogSnapshot } from "../model-catalog.js";
 import {
   buildResetDatabaseConfirmMessage,
   buildResetDatabaseSuccessMessage,
-} from "./settings-ui.js";
+} from "../settings-ui.js";
 import {
   normalizeResetAppDatabaseTargets,
   type ResetAppDatabaseResult,
   type ResetAppDatabaseTarget,
-} from "./withmate-window-types.js";
-import type { WithMateWindowApi } from "./withmate-window-api.js";
+} from "../withmate-window-types.js";
+import type { WithMateWindowApi } from "../withmate-window-api.js";
 
 export type HomeSettingsApi = Pick<
   WithMateWindowApi,

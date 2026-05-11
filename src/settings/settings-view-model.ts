@@ -10,13 +10,13 @@ import {
   DEFAULT_PROVIDER_INSTRUCTION_TARGET_ID,
   getDefaultProviderInstructionRelativePath,
   type ProviderAppSettings,
-} from "./provider-settings-state.js";
+} from "../provider-settings-state.js";
 import {
   coerceModelSelection,
   getReasoningEffortOptionsForModel,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
-} from "./model-catalog.js";
+} from "../model-catalog.js";
 
 export type HomeProviderSettingRow = {
   provider: ModelCatalogProvider;

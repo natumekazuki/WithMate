@@ -46,7 +46,7 @@ import {
   type HomeProviderInstructionTargetSettings,
   buildHomeProviderInstructionTargetUpsertInput,
   type HomeProviderSettingRow,
-} from "./home-settings-view-model.js";
+} from "./settings/settings-view-model.js";
 import type { HomeSettingsContentProps } from "./home-components.js";
 import { HomeAppRouter } from "./home/HomeAppRouter.js";
 import { buildHomeDashboardSlots } from "./home/HomeDashboardSlots.js";
@@ -56,7 +56,7 @@ import {
   exportHomeModelCatalog,
   importHomeModelCatalog,
   saveHomeSettings,
-} from "./home-settings-actions.js";
+} from "./settings/settings-actions.js";
 import {
   EMPTY_MEMORY_MANAGEMENT_PAGE_STATE,
   getMemoryManagementCursor,
@@ -93,7 +93,7 @@ import {
   addMateMemoryGenerationPriorityDraft,
   removeMateMemoryGenerationPriorityDraft,
   updateMemoryGenerationEnabled,
-} from "./home-settings-draft.js";
+} from "./settings/settings-draft.js";
 import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-withmate-api.js";
 import {
   type MateGrowthSettings,

@@ -9,8 +9,8 @@ import {
   type MemoryExtractionProviderSettings,
   type MateMemoryGenerationProviderSettings,
   type ProviderAppSettings,
-} from "./provider-settings-state.js";
-import { coerceModelSelection, type ModelCatalogProvider } from "./model-catalog.js";
+} from "../provider-settings-state.js";
+import { coerceModelSelection, type ModelCatalogProvider } from "../model-catalog.js";
 
 export function updateMemoryGenerationEnabled(
   draft: AppSettings,

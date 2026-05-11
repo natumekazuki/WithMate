@@ -1,8 +1,8 @@
-import { describeResetDatabaseTargets } from "./settings-ui.js";
+import { describeResetDatabaseTargets } from "../settings-ui.js";
 import {
   ALL_RESET_APP_DATABASE_TARGETS,
   type ResetAppDatabaseTarget,
-} from "./withmate-window-types.js";
+} from "../withmate-window-types.js";
 
 export type HomeSettingsResetTargetItem = {
   target: ResetAppDatabaseTarget;

@@ -31,7 +31,7 @@ import {
   type ProjectMemoryCategoryFilter,
   type SessionMemoryStatusFilter,
 } from "./memory-management-view.js";
-import type { HomeProviderSettingRow } from "./home-settings-view-model.js";
+import type { HomeProviderSettingRow } from "./settings/settings-view-model.js";
 import type { LaunchWorkspace } from "./home-launch-projection.js";
 import { getHomeCompanionSessionState, type HomeMonitorEntry, type HomeSessionState } from "./home-session-projection.js";
 import {
