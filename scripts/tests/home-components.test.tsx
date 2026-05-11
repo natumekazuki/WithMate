@@ -1456,6 +1456,21 @@ describe("HomeRightPane", () => {
     />,
   );
 
+  const assertNoMateTalkChatSurface = (html: string) => {
+    assert.ok(!html.includes('data-session-mode="mate-talk"'));
+    assert.ok(!html.includes("session-content-grid"));
+    assert.ok(!html.includes("session-work-surface"));
+    assert.ok(!html.includes("session-main-grid"));
+    assert.ok(!html.includes("session-message-stack"));
+    assert.ok(!html.includes("session-action-dock"));
+    assert.ok(!html.includes('class="composer"'));
+    assert.ok(!html.includes("<textarea"));
+    assert.ok(!html.includes("今日はどうする？"));
+    assert.ok(!html.includes("session-message-empty"));
+    assert.ok(!html.includes("session-context-pane"));
+    assert.ok(!html.includes('aria-label="補助情報"'));
+  };
+
   it("Your Mate タブは character list ではなく Your Mate を表示し Characters / Add Character を含まない", () => {
     const html = renderHomeRightPane("mate", {
       id: "mate-1",
@@ -1490,14 +1505,18 @@ describe("HomeRightPane", () => {
   });
 
   it("メイトークは Home right pane のタブではなく起動ボタンとして表示する", () => {
-    const html = renderHomeRightPane("monitor", null);
-    const tablistMatch = html.match(/<div class="home-pane-toggle" role="tablist" aria-label="Home right pane">[\s\S]*?<\/div>/);
+    const monitorHtml = renderHomeRightPane("monitor", null);
+    const mateHtml = renderHomeRightPane("mate", null);
+    const tablistMatch = monitorHtml.match(/<div class="home-pane-toggle" role="tablist" aria-label="Home right pane">[\s\S]*?<\/div>/);
 
     assert.ok(tablistMatch);
     assert.ok(tablistMatch[0].includes("Monitor"));
     assert.ok(tablistMatch[0].includes("Your Mate"));
     assert.ok(!tablistMatch[0].includes("メイトーク"));
-    assert.match(html, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
+    assert.match(monitorHtml, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
+    assert.match(mateHtml, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
+    assertNoMateTalkChatSurface(monitorHtml);
+    assertNoMateTalkChatSurface(mateHtml);
   });
 
   it("active mateProfile で avatar 未設定のとき fallback がレンダリングされ、画像タグは出力されない", () => {
