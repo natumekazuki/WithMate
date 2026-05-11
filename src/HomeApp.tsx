@@ -47,13 +47,9 @@ import {
   buildHomeProviderInstructionTargetUpsertInput,
   type HomeProviderSettingRow,
 } from "./home-settings-view-model.js";
-import {
-  HomeMonitorContent,
-  HomeSettingsContent,
-  HomeMateSetupPanel,
-} from "./home-components.js";
 import { HomeAppRouter } from "./home/HomeAppRouter.js";
 import { buildHomeDashboardSlots } from "./home/HomeDashboardSlots.js";
+import { buildHomeWindowContentSlots } from "./home/HomeWindowContentSlots.js";
 import { getHomeWindowMode } from "./home/home-window-mode.js";
 import {
   exportHomeModelCatalog,
@@ -1691,208 +1687,194 @@ export default function HomeApp() {
     }
   };
 
-  const settingsContent = (
-    <HomeSettingsContent
-      settingsDraft={settingsDraft}
-      providerSettingRows={providerSettingRows}
-      modelCatalogRevisionLabel={String(modelCatalog?.revision ?? "-")}
-      settingsDirty={settingsDirty}
-      settingsFeedback={settingsFeedback}
-      memoryManagementSnapshot={memoryManagementSnapshot}
-      memoryManagementPages={memoryManagementPages}
-      memoryManagementLoading={!memoryManagementLoaded}
-      memoryManagementBusyTarget={memoryManagementBusyTarget}
-      memoryManagementFeedback={memoryManagementFeedback}
-      mateGrowthSettings={mateGrowthSettings}
-      mateGrowthFeedback={mateGrowthFeedback}
-      mateGrowthBusy={mateGrowthBusy}
-      mateGrowthEvents={mateGrowthEvents}
-      mateGrowthEventsLoading={mateGrowthEventsLoading}
-      mateGrowthEventsFeedback={mateGrowthEventsFeedback}
-      mateGrowthEventBusyTarget={mateGrowthEventBusyTarget}
-      correctingMateGrowthEventId={correctingMateGrowthEventId}
-      correctingMateGrowthEventStatement={correctingMateGrowthEventStatement}
-      mateEmbeddingSettings={mateEmbeddingSettings}
-      mateEmbeddingFeedback={mateEmbeddingFeedback}
-      mateEmbeddingBusy={mateEmbeddingBusy}
-      onChangeMemoryGenerationEnabled={(enabled) =>
-        setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled))
-      }
-      onChangeMateMemoryGenerationPriorityProvider={handleChangeMateMemoryGenerationPriorityProvider}
-      onChangeMateMemoryGenerationPriorityModel={handleChangeMateMemoryGenerationPriorityModel}
-      onChangeMateMemoryGenerationPriorityReasoningEffort={handleChangeMateMemoryGenerationPriorityReasoningEffort}
-      onChangeMateMemoryGenerationPriorityTimeoutSeconds={handleChangeMateMemoryGenerationPriorityTimeoutSeconds}
-      onAddMateMemoryGenerationPriority={handleAddMateMemoryGenerationPriority}
-      onRemoveMateMemoryGenerationPriority={handleRemoveMateMemoryGenerationPriority}
-      onChangeMateMemoryGenerationTriggerIntervalMinutes={handleChangeMateMemoryGenerationTriggerIntervalMinutes}
-      onChangeAutoCollapseActionDockOnSend={(enabled) =>
-        setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, enabled))
-      }
-      onChangeProviderEnabled={handleChangeProviderEnabled}
-      onChangeProviderInstructionEnabled={handleChangeProviderInstructionEnabled}
-      onChangeProviderInstructionWriteMode={handleChangeProviderInstructionWriteMode}
-      onChangeProviderInstructionFailPolicy={handleChangeProviderInstructionFailPolicy}
-      onChangeProviderInstructionInstructionRelativePath={handleChangeProviderInstructionInstructionRelativePath}
-      onBrowseProviderInstructionInstructionRelativePath={(providerId) =>
-        void handleBrowseProviderInstructionInstructionRelativePath(providerId)}
-      onChangeProviderSkillRootPath={handleChangeProviderSkillRootPath}
-      onBrowseProviderSkillRootPath={(providerId) => void handleBrowseProviderSkillRootPath(providerId)}
-      onChangeMemoryExtractionModel={handleChangeMemoryExtractionModel}
-      onChangeMemoryExtractionReasoningEffort={handleChangeMemoryExtractionReasoningEffort}
-      onChangeMemoryExtractionThreshold={handleChangeMemoryExtractionThreshold}
-      onChangeMemoryExtractionTimeoutSeconds={handleChangeMemoryExtractionTimeoutSeconds}
-      onChangeCharacterReflectionModel={handleChangeCharacterReflectionModel}
-      onChangeCharacterReflectionReasoningEffort={handleChangeCharacterReflectionReasoningEffort}
-      onChangeCharacterReflectionTimeoutSeconds={handleChangeCharacterReflectionTimeoutSeconds}
-      onChangeCharacterReflectionCooldownSeconds={handleChangeCharacterReflectionCooldownSeconds}
-      onChangeCharacterReflectionCharDeltaThreshold={handleChangeCharacterReflectionCharDeltaThreshold}
-      onChangeCharacterReflectionMessageDeltaThreshold={handleChangeCharacterReflectionMessageDeltaThreshold}
-      onImportModelCatalog={() => void handleImportModelCatalog()}
-      onExportModelCatalog={() => void handleExportModelCatalog()}
-      onOpenAppLogFolder={() => void handleOpenAppLogFolder()}
-      onOpenCrashDumpFolder={() => void handleOpenCrashDumpFolder()}
-      onReloadMemoryManagement={() => void handleReloadMemoryManagement()}
-      onChangeMemoryManagementViewFilters={handleChangeMemoryManagementViewFilters}
-      onLoadMoreMemoryManagement={(domain) => void handleLoadMoreMemoryManagement(domain)}
-      onDeleteSessionMemory={(sessionId) => void handleDeleteSessionMemory(sessionId)}
-      onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}
-      onDeleteCharacterMemoryEntry={(entryId) => void handleDeleteCharacterMemoryEntry(entryId)}
-      onDeleteMateProfileItem={(itemId) => void handleDeleteMateProfileItem(itemId)}
-      onStartMateEmbeddingDownload={() => void handleStartMateEmbeddingDownload()}
-      onApplyPendingGrowth={() => void handleApplyPendingGrowth()}
-      applyPendingGrowthBusy={mateGrowthApplying}
-      canApplyPendingGrowth={mateState === "active"}
-      onReloadMateGrowthEvents={() => void handleReloadMateGrowthEvents()}
-      onBeginCorrectMateGrowthEvent={handleBeginCorrectMateGrowthEvent}
-      onChangeCorrectMateGrowthEventStatement={setCorrectingMateGrowthEventStatement}
-      onCancelCorrectMateGrowthEvent={handleCancelCorrectMateGrowthEvent}
-      onCorrectMateGrowthEvent={(eventId, statement) => void handleCorrectMateGrowthEvent(eventId, statement)}
-      onDisableMateGrowthEvent={(eventId) => void handleDisableMateGrowthEvent(eventId)}
-      onForgetMateGrowthEvent={(eventId) => void handleForgetMateGrowthEvent(eventId)}
-      onUpdateMateGrowthSettings={(input) => void handleUpdateMateGrowthSettings(input)}
-      onResetMate={() => void handleResetMate()}
-      mateResetBusy={mateResetting}
-      canResetMate={mateState !== "not_created"}
-      onSaveSettings={() => void handleSaveSettings()}
-    />
-  );
-
-  const memoryManagementContent = (
-    <HomeSettingsContent
-      settingsDraft={settingsDraft}
-      providerSettingRows={providerSettingRows}
-      modelCatalogRevisionLabel={String(modelCatalog?.revision ?? "-")}
-      settingsDirty={settingsDirty}
-      settingsFeedback={settingsFeedback}
-      memoryManagementSnapshot={memoryManagementSnapshot}
-      memoryManagementPages={memoryManagementPages}
-      memoryManagementLoading={!memoryManagementLoaded}
-      memoryManagementBusyTarget={memoryManagementBusyTarget}
-      memoryManagementFeedback={memoryManagementFeedback}
-      mateGrowthSettings={mateGrowthSettings}
-      mateGrowthFeedback={mateGrowthFeedback}
-      mateGrowthBusy={mateGrowthBusy}
-      mateGrowthEvents={mateGrowthEvents}
-      mateGrowthEventsLoading={mateGrowthEventsLoading}
-      mateGrowthEventsFeedback={mateGrowthEventsFeedback}
-      mateGrowthEventBusyTarget={mateGrowthEventBusyTarget}
-      correctingMateGrowthEventId={correctingMateGrowthEventId}
-      correctingMateGrowthEventStatement={correctingMateGrowthEventStatement}
-      mateEmbeddingSettings={mateEmbeddingSettings}
-      mateEmbeddingFeedback={mateEmbeddingFeedback}
-      mateEmbeddingBusy={mateEmbeddingBusy}
-      memoryManagementOnly
-      onChangeMemoryGenerationEnabled={(enabled) =>
-        setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled))
-      }
-      onChangeMateMemoryGenerationPriorityProvider={handleChangeMateMemoryGenerationPriorityProvider}
-      onChangeMateMemoryGenerationPriorityModel={handleChangeMateMemoryGenerationPriorityModel}
-      onChangeMateMemoryGenerationPriorityReasoningEffort={handleChangeMateMemoryGenerationPriorityReasoningEffort}
-      onChangeMateMemoryGenerationPriorityTimeoutSeconds={handleChangeMateMemoryGenerationPriorityTimeoutSeconds}
-      onAddMateMemoryGenerationPriority={handleAddMateMemoryGenerationPriority}
-      onRemoveMateMemoryGenerationPriority={handleRemoveMateMemoryGenerationPriority}
-      onChangeMateMemoryGenerationTriggerIntervalMinutes={handleChangeMateMemoryGenerationTriggerIntervalMinutes}
-      onChangeAutoCollapseActionDockOnSend={(enabled) =>
-        setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, enabled))
-      }
-      onChangeProviderEnabled={handleChangeProviderEnabled}
-      onChangeProviderInstructionEnabled={handleChangeProviderInstructionEnabled}
-      onChangeProviderInstructionWriteMode={handleChangeProviderInstructionWriteMode}
-      onChangeProviderInstructionFailPolicy={handleChangeProviderInstructionFailPolicy}
-      onChangeProviderInstructionInstructionRelativePath={handleChangeProviderInstructionInstructionRelativePath}
-      onBrowseProviderInstructionInstructionRelativePath={(providerId) =>
-        void handleBrowseProviderInstructionInstructionRelativePath(providerId)}
-      onChangeProviderSkillRootPath={handleChangeProviderSkillRootPath}
-      onBrowseProviderSkillRootPath={(providerId) => void handleBrowseProviderSkillRootPath(providerId)}
-      onChangeMemoryExtractionModel={handleChangeMemoryExtractionModel}
-      onChangeMemoryExtractionReasoningEffort={handleChangeMemoryExtractionReasoningEffort}
-      onChangeMemoryExtractionThreshold={handleChangeMemoryExtractionThreshold}
-      onChangeMemoryExtractionTimeoutSeconds={handleChangeMemoryExtractionTimeoutSeconds}
-      onChangeCharacterReflectionModel={handleChangeCharacterReflectionModel}
-      onChangeCharacterReflectionReasoningEffort={handleChangeCharacterReflectionReasoningEffort}
-      onChangeCharacterReflectionTimeoutSeconds={handleChangeCharacterReflectionTimeoutSeconds}
-      onChangeCharacterReflectionCooldownSeconds={handleChangeCharacterReflectionCooldownSeconds}
-      onChangeCharacterReflectionCharDeltaThreshold={handleChangeCharacterReflectionCharDeltaThreshold}
-      onChangeCharacterReflectionMessageDeltaThreshold={handleChangeCharacterReflectionMessageDeltaThreshold}
-      onImportModelCatalog={() => void handleImportModelCatalog()}
-      onExportModelCatalog={() => void handleExportModelCatalog()}
-      onOpenAppLogFolder={() => void handleOpenAppLogFolder()}
-      onOpenCrashDumpFolder={() => void handleOpenCrashDumpFolder()}
-      onReloadMemoryManagement={() => void handleReloadMemoryManagement()}
-      onChangeMemoryManagementViewFilters={handleChangeMemoryManagementViewFilters}
-      onLoadMoreMemoryManagement={(domain) => void handleLoadMoreMemoryManagement(domain)}
-      onDeleteSessionMemory={(sessionId) => void handleDeleteSessionMemory(sessionId)}
-      onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}
-      onDeleteCharacterMemoryEntry={(entryId) => void handleDeleteCharacterMemoryEntry(entryId)}
-      onDeleteMateProfileItem={(itemId) => void handleDeleteMateProfileItem(itemId)}
-      onStartMateEmbeddingDownload={() => void handleStartMateEmbeddingDownload()}
-      onReloadMateGrowthEvents={() => void handleReloadMateGrowthEvents()}
-      onBeginCorrectMateGrowthEvent={handleBeginCorrectMateGrowthEvent}
-      onChangeCorrectMateGrowthEventStatement={setCorrectingMateGrowthEventStatement}
-      onCancelCorrectMateGrowthEvent={handleCancelCorrectMateGrowthEvent}
-      onCorrectMateGrowthEvent={(eventId, statement) => void handleCorrectMateGrowthEvent(eventId, statement)}
-      onDisableMateGrowthEvent={(eventId) => void handleDisableMateGrowthEvent(eventId)}
-      onForgetMateGrowthEvent={(eventId) => void handleForgetMateGrowthEvent(eventId)}
-      onUpdateMateGrowthSettings={(input) => void handleUpdateMateGrowthSettings(input)}
-      onSaveSettings={() => void handleSaveSettings()}
-    />
-  );
-
   const isMateStateLoading = mateState === null;
   const isMateNotCreated = mateState === "not_created";
   const canUsePrimaryFeatures = mateState !== "not_created" && mateProfile !== null;
 
-  const mateSetupContent = (
-    <HomeMateSetupPanel
-      mode={isMateNotCreated ? "create" : "edit"}
-      displayName={mateDisplayName}
-      creating={mateCreating}
-      feedback={mateCreationFeedback}
-      onChangeDisplayName={(value) => {
+  const { settingsContent, memoryManagementContent, mateSetupContent, monitorContent } = buildHomeWindowContentSlots({
+    settingsContent: {
+      settingsDraft,
+      providerSettingRows,
+      modelCatalogRevisionLabel: String(modelCatalog?.revision ?? "-"),
+      settingsDirty,
+      settingsFeedback,
+      memoryManagementSnapshot,
+      memoryManagementPages,
+      memoryManagementLoading: !memoryManagementLoaded,
+      memoryManagementBusyTarget,
+      memoryManagementFeedback,
+      mateGrowthSettings,
+      mateGrowthFeedback,
+      mateGrowthBusy,
+      mateGrowthEvents,
+      mateGrowthEventsLoading,
+      mateGrowthEventsFeedback,
+      mateGrowthEventBusyTarget,
+      correctingMateGrowthEventId,
+      correctingMateGrowthEventStatement,
+      mateEmbeddingSettings,
+      mateEmbeddingFeedback,
+      mateEmbeddingBusy,
+      onChangeMemoryGenerationEnabled: (enabled) =>
+        setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled)),
+      onChangeMateMemoryGenerationPriorityProvider: handleChangeMateMemoryGenerationPriorityProvider,
+      onChangeMateMemoryGenerationPriorityModel: handleChangeMateMemoryGenerationPriorityModel,
+      onChangeMateMemoryGenerationPriorityReasoningEffort: handleChangeMateMemoryGenerationPriorityReasoningEffort,
+      onChangeMateMemoryGenerationPriorityTimeoutSeconds: handleChangeMateMemoryGenerationPriorityTimeoutSeconds,
+      onAddMateMemoryGenerationPriority: handleAddMateMemoryGenerationPriority,
+      onRemoveMateMemoryGenerationPriority: handleRemoveMateMemoryGenerationPriority,
+      onChangeMateMemoryGenerationTriggerIntervalMinutes: handleChangeMateMemoryGenerationTriggerIntervalMinutes,
+      onChangeAutoCollapseActionDockOnSend: (enabled) =>
+        setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, enabled)),
+      onChangeProviderEnabled: handleChangeProviderEnabled,
+      onChangeProviderInstructionEnabled: handleChangeProviderInstructionEnabled,
+      onChangeProviderInstructionWriteMode: handleChangeProviderInstructionWriteMode,
+      onChangeProviderInstructionFailPolicy: handleChangeProviderInstructionFailPolicy,
+      onChangeProviderInstructionInstructionRelativePath: handleChangeProviderInstructionInstructionRelativePath,
+      onBrowseProviderInstructionInstructionRelativePath: (providerId) =>
+        void handleBrowseProviderInstructionInstructionRelativePath(providerId),
+      onChangeProviderSkillRootPath: handleChangeProviderSkillRootPath,
+      onBrowseProviderSkillRootPath: (providerId) => void handleBrowseProviderSkillRootPath(providerId),
+      onChangeMemoryExtractionModel: handleChangeMemoryExtractionModel,
+      onChangeMemoryExtractionReasoningEffort: handleChangeMemoryExtractionReasoningEffort,
+      onChangeMemoryExtractionThreshold: handleChangeMemoryExtractionThreshold,
+      onChangeMemoryExtractionTimeoutSeconds: handleChangeMemoryExtractionTimeoutSeconds,
+      onChangeCharacterReflectionModel: handleChangeCharacterReflectionModel,
+      onChangeCharacterReflectionReasoningEffort: handleChangeCharacterReflectionReasoningEffort,
+      onChangeCharacterReflectionTimeoutSeconds: handleChangeCharacterReflectionTimeoutSeconds,
+      onChangeCharacterReflectionCooldownSeconds: handleChangeCharacterReflectionCooldownSeconds,
+      onChangeCharacterReflectionCharDeltaThreshold: handleChangeCharacterReflectionCharDeltaThreshold,
+      onChangeCharacterReflectionMessageDeltaThreshold: handleChangeCharacterReflectionMessageDeltaThreshold,
+      onImportModelCatalog: () => void handleImportModelCatalog(),
+      onExportModelCatalog: () => void handleExportModelCatalog(),
+      onOpenAppLogFolder: () => void handleOpenAppLogFolder(),
+      onOpenCrashDumpFolder: () => void handleOpenCrashDumpFolder(),
+      onReloadMemoryManagement: () => void handleReloadMemoryManagement(),
+      onChangeMemoryManagementViewFilters: handleChangeMemoryManagementViewFilters,
+      onLoadMoreMemoryManagement: (domain) => void handleLoadMoreMemoryManagement(domain),
+      onDeleteSessionMemory: (sessionId) => void handleDeleteSessionMemory(sessionId),
+      onDeleteProjectMemoryEntry: (entryId) => void handleDeleteProjectMemoryEntry(entryId),
+      onDeleteCharacterMemoryEntry: (entryId) => void handleDeleteCharacterMemoryEntry(entryId),
+      onDeleteMateProfileItem: (itemId) => void handleDeleteMateProfileItem(itemId),
+      onStartMateEmbeddingDownload: () => void handleStartMateEmbeddingDownload(),
+      onApplyPendingGrowth: () => void handleApplyPendingGrowth(),
+      applyPendingGrowthBusy: mateGrowthApplying,
+      canApplyPendingGrowth: mateState === "active",
+      onReloadMateGrowthEvents: () => void handleReloadMateGrowthEvents(),
+      onBeginCorrectMateGrowthEvent: handleBeginCorrectMateGrowthEvent,
+      onChangeCorrectMateGrowthEventStatement: setCorrectingMateGrowthEventStatement,
+      onCancelCorrectMateGrowthEvent: handleCancelCorrectMateGrowthEvent,
+      onCorrectMateGrowthEvent: (eventId, statement) => void handleCorrectMateGrowthEvent(eventId, statement),
+      onDisableMateGrowthEvent: (eventId) => void handleDisableMateGrowthEvent(eventId),
+      onForgetMateGrowthEvent: (eventId) => void handleForgetMateGrowthEvent(eventId),
+      onUpdateMateGrowthSettings: (input) => void handleUpdateMateGrowthSettings(input),
+      onResetMate: () => void handleResetMate(),
+      mateResetBusy: mateResetting,
+      canResetMate: mateState !== "not_created",
+      onSaveSettings: () => void handleSaveSettings(),
+    },
+    memoryManagementContent: {
+      settingsDraft,
+      providerSettingRows,
+      modelCatalogRevisionLabel: String(modelCatalog?.revision ?? "-"),
+      settingsDirty,
+      settingsFeedback,
+      memoryManagementSnapshot,
+      memoryManagementPages,
+      memoryManagementLoading: !memoryManagementLoaded,
+      memoryManagementBusyTarget,
+      memoryManagementFeedback,
+      mateGrowthSettings,
+      mateGrowthFeedback,
+      mateGrowthBusy,
+      mateGrowthEvents,
+      mateGrowthEventsLoading,
+      mateGrowthEventsFeedback,
+      mateGrowthEventBusyTarget,
+      correctingMateGrowthEventId,
+      correctingMateGrowthEventStatement,
+      mateEmbeddingSettings,
+      mateEmbeddingFeedback,
+      mateEmbeddingBusy,
+      onChangeMemoryGenerationEnabled: (enabled) =>
+        setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled)),
+      onChangeMateMemoryGenerationPriorityProvider: handleChangeMateMemoryGenerationPriorityProvider,
+      onChangeMateMemoryGenerationPriorityModel: handleChangeMateMemoryGenerationPriorityModel,
+      onChangeMateMemoryGenerationPriorityReasoningEffort: handleChangeMateMemoryGenerationPriorityReasoningEffort,
+      onChangeMateMemoryGenerationPriorityTimeoutSeconds: handleChangeMateMemoryGenerationPriorityTimeoutSeconds,
+      onAddMateMemoryGenerationPriority: handleAddMateMemoryGenerationPriority,
+      onRemoveMateMemoryGenerationPriority: handleRemoveMateMemoryGenerationPriority,
+      onChangeMateMemoryGenerationTriggerIntervalMinutes: handleChangeMateMemoryGenerationTriggerIntervalMinutes,
+      onChangeAutoCollapseActionDockOnSend: (enabled) =>
+        setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, enabled)),
+      onChangeProviderEnabled: handleChangeProviderEnabled,
+      onChangeProviderInstructionEnabled: handleChangeProviderInstructionEnabled,
+      onChangeProviderInstructionWriteMode: handleChangeProviderInstructionWriteMode,
+      onChangeProviderInstructionFailPolicy: handleChangeProviderInstructionFailPolicy,
+      onChangeProviderInstructionInstructionRelativePath: handleChangeProviderInstructionInstructionRelativePath,
+      onBrowseProviderInstructionInstructionRelativePath: (providerId) =>
+        void handleBrowseProviderInstructionInstructionRelativePath(providerId),
+      onChangeProviderSkillRootPath: handleChangeProviderSkillRootPath,
+      onBrowseProviderSkillRootPath: (providerId) => void handleBrowseProviderSkillRootPath(providerId),
+      onChangeMemoryExtractionModel: handleChangeMemoryExtractionModel,
+      onChangeMemoryExtractionReasoningEffort: handleChangeMemoryExtractionReasoningEffort,
+      onChangeMemoryExtractionThreshold: handleChangeMemoryExtractionThreshold,
+      onChangeMemoryExtractionTimeoutSeconds: handleChangeMemoryExtractionTimeoutSeconds,
+      onChangeCharacterReflectionModel: handleChangeCharacterReflectionModel,
+      onChangeCharacterReflectionReasoningEffort: handleChangeCharacterReflectionReasoningEffort,
+      onChangeCharacterReflectionTimeoutSeconds: handleChangeCharacterReflectionTimeoutSeconds,
+      onChangeCharacterReflectionCooldownSeconds: handleChangeCharacterReflectionCooldownSeconds,
+      onChangeCharacterReflectionCharDeltaThreshold: handleChangeCharacterReflectionCharDeltaThreshold,
+      onChangeCharacterReflectionMessageDeltaThreshold: handleChangeCharacterReflectionMessageDeltaThreshold,
+      onImportModelCatalog: () => void handleImportModelCatalog(),
+      onExportModelCatalog: () => void handleExportModelCatalog(),
+      onOpenAppLogFolder: () => void handleOpenAppLogFolder(),
+      onOpenCrashDumpFolder: () => void handleOpenCrashDumpFolder(),
+      onReloadMemoryManagement: () => void handleReloadMemoryManagement(),
+      onChangeMemoryManagementViewFilters: handleChangeMemoryManagementViewFilters,
+      onLoadMoreMemoryManagement: (domain) => void handleLoadMoreMemoryManagement(domain),
+      onDeleteSessionMemory: (sessionId) => void handleDeleteSessionMemory(sessionId),
+      onDeleteProjectMemoryEntry: (entryId) => void handleDeleteProjectMemoryEntry(entryId),
+      onDeleteCharacterMemoryEntry: (entryId) => void handleDeleteCharacterMemoryEntry(entryId),
+      onDeleteMateProfileItem: (itemId) => void handleDeleteMateProfileItem(itemId),
+      onStartMateEmbeddingDownload: () => void handleStartMateEmbeddingDownload(),
+      onReloadMateGrowthEvents: () => void handleReloadMateGrowthEvents(),
+      onBeginCorrectMateGrowthEvent: handleBeginCorrectMateGrowthEvent,
+      onChangeCorrectMateGrowthEventStatement: setCorrectingMateGrowthEventStatement,
+      onCancelCorrectMateGrowthEvent: handleCancelCorrectMateGrowthEvent,
+      onCorrectMateGrowthEvent: (eventId, statement) => void handleCorrectMateGrowthEvent(eventId, statement),
+      onDisableMateGrowthEvent: (eventId) => void handleDisableMateGrowthEvent(eventId),
+      onForgetMateGrowthEvent: (eventId) => void handleForgetMateGrowthEvent(eventId),
+      onUpdateMateGrowthSettings: (input) => void handleUpdateMateGrowthSettings(input),
+      onSaveSettings: () => void handleSaveSettings(),
+    },
+    mateSetupContent: {
+      mode: isMateNotCreated ? "create" : "edit",
+      displayName: mateDisplayName,
+      creating: mateCreating,
+      feedback: mateCreationFeedback,
+      onChangeDisplayName: (value) => {
         setMateDisplayName(value);
         setMateCreationFeedback("");
-      }}
-      onSubmit={handleSaveMate}
-      onOpenSettings={() => void openSettingsWindow()}
-      onCancel={isMateNotCreated ? undefined : () => setMateProfileEditorOpen(false)}
-      mateDisplayName={mateProfile?.displayName ?? null}
-      mateAvatarFilePath={mateProfile?.avatarFilePath ?? ""}
-      avatarUpdating={mateAvatarUpdating}
-      onSelectAvatar={isMateNotCreated ? undefined : () => void handleSelectMateAvatar()}
-      onClearAvatar={isMateNotCreated ? undefined : () => void handleClearMateAvatar()}
-    />
-  );
-
-  const monitorContent = (
-    <HomeMonitorContent
-      runningEntries={runningMonitorEntries}
-      nonRunningEntries={nonRunningMonitorEntries}
-      runningEmptyMessage={monitorRunningEmptyMessage}
-      completedEmptyMessage={monitorCompletedEmptyMessage}
-      onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
-      onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
-    />
-  );
+      },
+      onSubmit: handleSaveMate,
+      onOpenSettings: () => void openSettingsWindow(),
+      onCancel: isMateNotCreated ? undefined : () => setMateProfileEditorOpen(false),
+      mateDisplayName: mateProfile?.displayName ?? null,
+      mateAvatarFilePath: mateProfile?.avatarFilePath ?? "",
+      avatarUpdating: mateAvatarUpdating,
+      onSelectAvatar: isMateNotCreated ? undefined : () => void handleSelectMateAvatar(),
+      onClearAvatar: isMateNotCreated ? undefined : () => void handleClearMateAvatar(),
+    },
+    monitorContent: {
+      runningEntries: runningMonitorEntries,
+      nonRunningEntries: nonRunningMonitorEntries,
+      runningEmptyMessage: monitorRunningEmptyMessage,
+      completedEmptyMessage: monitorCompletedEmptyMessage,
+      onOpenSession: (sessionId) => void openSessionWindow(sessionId),
+      onOpenCompanionReview: (sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId)),
+    },
+  });
 
   const { recentSessionsPanel, rightPane, launchDialog } = buildHomeDashboardSlots({
     recentSessionsPanel: {
