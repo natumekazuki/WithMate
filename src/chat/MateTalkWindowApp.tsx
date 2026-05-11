@@ -10,14 +10,9 @@ import type { ModelCatalogProvider, ModelCatalogSnapshot, ModelReasoningEffort }
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import { buildCharacterThemeStyle } from "../theme-utils.js";
 import { modelDisplayLabel, modelOptionLabel } from "../ui-utils.js";
-import { MateTalkChatWindow } from "./MateTalkChatWindow.js";
+import { ChatWindow } from "./chat-window.js";
+import { buildMateTalkChatWindowProps, type MateTalkMessage } from "./mate-talk-chat-projection.js";
 import { MateTalkTurnController } from "./mate-talk-state.js";
-
-type MateTalkMessage = {
-  id: string;
-  role: "user" | "mate";
-  text: string;
-};
 
 function MateTalkStatusScreen({ message }: { message: string }) {
   return (
@@ -45,6 +40,8 @@ export function MateTalkWindowApp() {
   const [model, setModel] = useState("");
   const [reasoningEffort, setReasoningEffort] = useState<ModelReasoningEffort>("low");
   const turnControllerRef = useRef(new MateTalkTurnController());
+  const messageListRef = useRef<HTMLDivElement | null>(null);
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     if (!withmateApi) {
@@ -234,40 +231,44 @@ export function MateTalkWindowApp() {
   }
 
   return (
-    <MateTalkChatWindow
-      mateName={mateProfile.displayName}
-      themeStyle={themeStyle}
-      isHeaderExpanded={isHeaderExpanded}
-      messages={messages}
-      input={input}
-      feedback={feedback}
-      modelOptions={modelOptions}
-      selectedModel={model}
-      selectedModelFallbackLabel={modelDisplayLabel(providerCatalog, model)}
-      reasoningOptions={reasoningOptions}
-      selectedReasoningEffort={reasoningEffort}
-      onChangeInput={(value) => {
-        setInput(value);
-        setFeedback("");
-      }}
-      onChangeModel={(nextModel) => {
-        const nextModelCatalog = providerCatalog?.models.find((candidate) => candidate.id === nextModel) ?? null;
-        setModel(nextModel);
-        setReasoningEffort((current) =>
-          nextModelCatalog?.reasoningEfforts.includes(current)
-            ? current
-            : nextModelCatalog?.reasoningEfforts[0] ?? providerCatalog?.defaultReasoningEffort ?? current,
-        );
-      }}
-      onChangeReasoningEffort={(nextReasoningEffort) => {
-        if (selectedModel?.reasoningEfforts.includes(nextReasoningEffort as ModelReasoningEffort)) {
-          setReasoningEffort(nextReasoningEffort as ModelReasoningEffort);
-        }
-      }}
-      onSubmit={() => void handleSubmit()}
-      onClose={() => window.close()}
-      onToggleHeaderExpanded={() => setIsHeaderExpanded((current) => !current)}
-      sending={sending}
+    <ChatWindow
+      {...buildMateTalkChatWindowProps({
+        mateName: mateProfile.displayName,
+        themeStyle,
+        isHeaderExpanded,
+        messages,
+        input,
+        feedback,
+        modelOptions,
+        selectedModel: model,
+        selectedModelFallbackLabel: modelDisplayLabel(providerCatalog, model),
+        reasoningOptions,
+        selectedReasoningEffort: reasoningEffort,
+        messageListRef,
+        composerTextareaRef,
+        onChangeInput: (value) => {
+          setInput(value);
+          setFeedback("");
+        },
+        onChangeModel: (nextModel) => {
+          const nextModelCatalog = providerCatalog?.models.find((candidate) => candidate.id === nextModel) ?? null;
+          setModel(nextModel);
+          setReasoningEffort((current) =>
+            nextModelCatalog?.reasoningEfforts.includes(current)
+              ? current
+              : nextModelCatalog?.reasoningEfforts[0] ?? providerCatalog?.defaultReasoningEffort ?? current,
+          );
+        },
+        onChangeReasoningEffort: (nextReasoningEffort) => {
+          if (selectedModel?.reasoningEfforts.includes(nextReasoningEffort as ModelReasoningEffort)) {
+            setReasoningEffort(nextReasoningEffort as ModelReasoningEffort);
+          }
+        },
+        onSubmit: () => void handleSubmit(),
+        onClose: () => window.close(),
+        onToggleHeaderExpanded: () => setIsHeaderExpanded((current) => !current),
+        sending,
+      })}
     />
   );
 }
