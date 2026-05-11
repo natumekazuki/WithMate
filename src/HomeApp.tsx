@@ -115,6 +115,7 @@ import {
   type MateStorageState,
   type UpdateMateGrowthSettingsInput,
 } from "./mate/mate-state.js";
+import { buildHomeMateSetupContentProps } from "./mate/home-mate-setup-props.js";
 import { type MateEmbeddingSettings } from "./mate/mate-embedding-settings.js";
 import type { MateGrowthEventListItem } from "./mate/mate-growth-events-state.js";
 import {
@@ -139,6 +140,7 @@ import {
   handleStartMateEmbeddingDownload as handleStartMateEmbeddingDownloadAction,
   MEMORY_MANAGEMENT_PAGE_LIMIT,
 } from "./memory/memory-management-actions.js";
+import { buildHomeMonitorContentProps } from "./home/home-monitor-content-props.js";
 
 type HomeRightPaneView = "monitor" | "mate";
 
@@ -1513,32 +1515,31 @@ export default function HomeApp() {
       canResetMate: mateState !== "not_created",
     }),
     memoryManagementContent: buildHomeMemoryManagementContentProps(baseSettingsContentProps),
-    mateSetupContent: {
-      mode: isMateNotCreated ? "create" : "edit",
-      displayName: mateDisplayName,
-      creating: mateCreating,
-      feedback: mateCreationFeedback,
+    mateSetupContent: buildHomeMateSetupContentProps({
+      mateState,
+      mateProfile,
+      mateDisplayName,
+      mateCreating,
+      mateAvatarUpdating,
+      mateCreationFeedback,
       onChangeDisplayName: (value) => {
         setMateDisplayName(value);
         setMateCreationFeedback("");
       },
       onSubmit: handleSaveMate,
       onOpenSettings: () => void openSettingsWindow(),
-      onCancel: isMateNotCreated ? undefined : () => setMateProfileEditorOpen(false),
-      mateDisplayName: mateProfile?.displayName ?? null,
-      mateAvatarFilePath: mateProfile?.avatarFilePath ?? "",
-      avatarUpdating: mateAvatarUpdating,
-      onSelectAvatar: isMateNotCreated ? undefined : () => void handleSelectMateAvatar(),
-      onClearAvatar: isMateNotCreated ? undefined : () => void handleClearMateAvatar(),
-    },
-    monitorContent: {
+      onCancelEdit: () => setMateProfileEditorOpen(false),
+      onSelectAvatar: () => void handleSelectMateAvatar(),
+      onClearAvatar: () => void handleClearMateAvatar(),
+    }),
+    monitorContent: buildHomeMonitorContentProps({
       runningEntries: runningMonitorEntries,
       nonRunningEntries: nonRunningMonitorEntries,
       runningEmptyMessage: monitorRunningEmptyMessage,
       completedEmptyMessage: monitorCompletedEmptyMessage,
       onOpenSession: (sessionId) => void openSessionWindow(sessionId),
       onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
-    },
+    }),
   });
 
   const { recentSessionsPanel, rightPane, launchDialog } = buildHomeDashboardSlots({
