@@ -6,14 +6,18 @@ import {
   type CharacterProfile,
   type Message,
 } from "../app-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../approval-mode.js";
-import { DEFAULT_CODEX_SANDBOX_MODE } from "../codex-sandbox-mode.js";
 import {
   ChatRightPaneShell,
   ChatWorkbenchSplitter,
   type ChatSelectOption,
   type ChatWindowProps,
 } from "./chat-window.js";
+import {
+  createHiddenControlsChatComposerProps,
+  createIdleChatMessageColumnProps,
+  createStaticChatCompactActionDockProps,
+  createStaticChatHeaderProps,
+} from "./chat-window-adapter.js";
 import { shouldSubmitMateTalkInputByKey } from "./mate-talk-state.js";
 
 export type MateTalkMessage = {
@@ -44,8 +48,6 @@ export type MateTalkChatProjectionInput = {
   sending: boolean;
   feedback: string;
 };
-
-const noop = () => {};
 
 type MateTalkHeaderProps = ChatWindowProps["headerProps"];
 type MateTalkMessageColumnProps = ChatWindowProps["messageColumnProps"];
@@ -78,30 +80,17 @@ function buildMateTalkHeaderProps({
   onClose,
   onToggleHeaderExpanded,
 }: Pick<MateTalkChatProjectionInput, "sending" | "onClose" | "onToggleHeaderExpanded">): MateTalkHeaderProps {
-  return {
+  return createStaticChatHeaderProps({
     taskTitle: "メイトーク",
-    isEditingTitle: false,
     titleDraft: "メイトーク",
     isRunning: sending,
-    showRenameButton: false,
-    showAuditLogButton: false,
-    showTerminalButton: false,
-    showDeleteButton: false,
     workspaceActions: (
       <button className="drawer-toggle compact secondary" type="button" onClick={onClose}>
         閉じる
       </button>
     ),
     onToggleExpanded: onToggleHeaderExpanded,
-    onOpenAuditLog: noop,
-    onOpenTerminal: noop,
-    onTitleDraftChange: noop,
-    onTitleInputKeyDown: noop,
-    onSaveTitle: noop,
-    onCancelTitleEdit: noop,
-    onStartTitleEdit: noop,
-    onDeleteSession: noop,
-  };
+  });
 }
 
 function buildMateTalkMessageColumnProps({
@@ -110,30 +99,15 @@ function buildMateTalkMessageColumnProps({
   messageListRef,
   sending,
 }: Pick<MateTalkChatProjectionInput, "mateName" | "messages" | "messageListRef" | "sending">): MateTalkMessageColumnProps {
-  return {
+  return createIdleChatMessageColumnProps({
     sessionId: "mate-talk",
     character: buildMateCharacter(mateName),
     messages: toConversationMessages(messages),
-    expandedArtifacts: {},
     messageListRef,
     isRunning: sending,
     pendingRunIndicatorAnnouncement: `${mateName} の返信を待っています`,
     pendingRunIndicatorText: `${mateName} が返信を準備中`,
-    liveApprovalRequest: null,
-    approvalActionRequestId: null,
-    liveElicitationRequest: null,
-    elicitationActionRequestId: null,
-    liveRunAssistantText: "",
-    hasLiveRunAssistantText: false,
-    liveRunErrorMessage: "",
-    isMessageListFollowing: true,
-    onMessageListScroll: noop,
-    onToggleArtifact: noop,
-    onOpenDiff: noop,
-    onResolveLiveApproval: noop,
-    onResolveLiveElicitation: noop,
-    getChangedFilesEmptyText: () => "",
-  };
+  });
 }
 
 function buildMateTalkComposerProps({
@@ -174,31 +148,8 @@ function buildMateTalkComposerProps({
     shouldShowFeedback: feedback.trim().length > 0,
   };
 
-  return {
-    retryBanner: null,
-    isRunning: false,
+  return createHiddenControlsChatComposerProps({
     composerBlocked: sending,
-    canSelectCustomAgent: false,
-    showAttachmentControls: false,
-    showCustomAgentPicker: false,
-    showSkillPicker: false,
-    showAdditionalDirectoryControls: false,
-    showExecutionModeControls: false,
-    isAgentPickerOpen: false,
-    isSkillPickerOpen: false,
-    isAdditionalDirectoryListOpen: false,
-    selectedCustomAgentLabel: "Agent",
-    selectedCustomAgentTitle: "",
-    additionalDirectoryCount: 0,
-    canCollapseActionDock: false,
-    showJumpToBottom: false,
-    isCustomAgentListLoading: false,
-    isSkillListLoading: false,
-    customAgentItems: [],
-    skillItems: [],
-    attachmentItems: [],
-    additionalDirectoryItems: [],
-    workspacePathMatchItems: [],
     draft: input,
     placeholder: "今日はどうする？",
     composerTextareaRef,
@@ -206,48 +157,22 @@ function buildMateTalkComposerProps({
     isSendDisabled: isSubmitDisabled,
     composerSendability,
     sendButtonTitle: isSubmitDisabled ? undefined : "メッセージを送信",
-    isComposerBlockedFeedbackActive: false,
-    approvalOptions: [{ value: DEFAULT_APPROVAL_MODE, label: DEFAULT_APPROVAL_MODE }],
-    selectedApprovalMode: DEFAULT_APPROVAL_MODE,
-    sandboxOptions: [],
-    selectedCodexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
     modelOptions,
     selectedModel,
     selectedModelFallbackLabel,
     reasoningOptions,
     selectedReasoningEffort,
-    onPickFile: noop,
-    onPickFolder: noop,
-    onPickImage: noop,
-    onToggleAgentPicker: noop,
-    onToggleSkillPicker: noop,
-    onAddAdditionalDirectory: noop,
-    onToggleAdditionalDirectoryList: noop,
-    onCollapse: noop,
-    onJumpToBottom: noop,
-    onSelectCustomAgent: noop,
-    onSelectSkill: noop,
-    onRemoveAttachment: noop,
-    onRemoveAdditionalDirectory: noop,
     onDraftChange: (value) => onChangeInput(value),
-    onDraftFocus: noop,
     onDraftKeyDown: (event) => {
       if (!isSubmitDisabled && shouldSubmitMateTalkInputByKey(event)) {
         event.preventDefault();
         onSubmit();
       }
     },
-    onDraftSelect: noop,
-    onDraftCompositionStart: noop,
-    onDraftCompositionEnd: noop,
     onSendOrCancel: onSubmit,
-    onSelectWorkspacePathMatch: noop,
-    onActivateWorkspacePathMatch: noop,
-    onChangeApprovalMode: noop,
-    onChangeCodexSandboxMode: noop,
     onChangeModel,
     onChangeReasoningEffort,
-  };
+  });
 }
 
 function buildMateTalkCompactActionDockProps({
@@ -255,17 +180,13 @@ function buildMateTalkCompactActionDockProps({
   sending,
   onSubmit,
 }: Pick<MateTalkChatProjectionInput, "input" | "sending" | "onSubmit">): MateTalkCompactActionDockProps {
-  return {
+  return createStaticChatCompactActionDockProps({
     draft: input,
     actionDockCompactPreview: input.trim() || "下書きなし",
-    attachmentCount: 0,
     isRunning: sending,
     isSendDisabled: sending || input.trim() === "",
-    showJumpToBottom: false,
-    onExpand: noop,
-    onJumpToBottom: noop,
     onSendOrCancel: onSubmit,
-  };
+  });
 }
 
 export function buildMateTalkChatWindowProps({
