@@ -62,17 +62,12 @@ import {
   HomeSettingsContent,
   HomeMateSetupPanel,
 } from "./home-components.js";
-import { HomeDashboardScreen } from "./home/HomeDashboardScreen.js";
-import { HomeMonitorWindowScreen } from "./home/HomeMonitorWindowScreen.js";
-import { HomeStatusScreen } from "./home/HomeStatusScreen.js";
+import { HomeAppRouter } from "./home/HomeAppRouter.js";
 import {
   exportHomeModelCatalog,
   importHomeModelCatalog,
   saveHomeSettings,
 } from "./home-settings-actions.js";
-import { MemoryManagementWindowScreen } from "./memory/MemoryManagementWindowScreen.js";
-import { MateProfileScreen } from "./mate/MateProfileScreen.js";
-import { SettingsWindowScreen } from "./settings/SettingsWindowScreen.js";
 import { buildResetMateConfirmMessage } from "./settings-ui.js";
 import {
   updateCharacterReflectionCharDeltaThreshold,
@@ -1957,136 +1952,112 @@ export default function HomeApp() {
     />
   );
 
-  if (!desktopRuntime) {
-    return <HomeStatusScreen homePageClassName={homePageClassName} message="Home は Electron から起動してね。" />;
-  }
+  const monitorContent = (
+    <HomeMonitorContent
+      runningEntries={runningMonitorEntries}
+      nonRunningEntries={nonRunningMonitorEntries}
+      runningEmptyMessage={monitorRunningEmptyMessage}
+      completedEmptyMessage={monitorCompletedEmptyMessage}
+      onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
+      onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
+    />
+  );
 
-  if (isSettingsWindowMode) {
-    return (
-      <SettingsWindowScreen
-        homePageClassName={homePageClassName}
-        ready={settingsWindowReady}
-        content={settingsContent}
-      />
-    );
-  }
+  const recentSessionsPanel = (
+    <HomeRecentSessionsPanel
+      filteredSessionEntries={filteredSessionEntries}
+      companionSessions={companionSessions}
+      normalizedSessionSearch={normalizedSessionSearch}
+      searchText={sessionSearchText}
+      searchIcon={renderSearchIcon()}
+      onChangeSearchText={setSessionSearchText}
+      onOpenLaunchDialog={openLaunchDialog}
+      onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
+      onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
+      canUsePrimaryFeatures={canUsePrimaryFeatures}
+    />
+  );
 
-  if (isMateStateLoading) {
-    return <HomeStatusScreen homePageClassName={homePageClassName} message="Mate 状態を読み込んでるよ..." />;
-  }
+  const rightPane = (
+    <HomeRightPane
+      rightPaneView={rightPaneView}
+      runningMonitorEntries={runningMonitorEntries}
+      nonRunningMonitorEntries={nonRunningMonitorEntries}
+      monitorRunningEmptyMessage={monitorRunningEmptyMessage}
+      monitorCompletedEmptyMessage={monitorCompletedEmptyMessage}
+      mateProfile={mateProfile}
+      monitorWindowIcon={renderMonitorWindowIcon()}
+      onChangeRightPaneView={setRightPaneView}
+      onOpenSessionMonitorWindow={() => void openSessionMonitorWindow()}
+      onOpenMemoryManagementWindow={() => void openMemoryManagementWindow()}
+      onOpenSettingsWindow={() => void openSettingsWindow()}
+      onOpenMateProfile={openMateProfileEditor}
+      onOpenMateTalk={() => void openMateTalkWindow()}
+      onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
+      onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
+      canUsePrimaryFeatures={canUsePrimaryFeatures}
+    />
+  );
 
-  if (isMateNotCreated) {
-    return <MateProfileScreen homePageClassName={homePageClassName} content={mateSetupContent} />;
-  }
-
-  if (mateProfileEditorOpen) {
-    return <MateProfileScreen homePageClassName={homePageClassName} content={mateSetupContent} />;
-  }
-
-  if (isMemoryWindowMode) {
-    return (
-      <MemoryManagementWindowScreen
-        homePageClassName={homePageClassName}
-        loaded={memoryManagementLoaded}
-        content={memoryManagementContent}
-      />
-    );
-  }
-
-  if (isMonitorWindowMode) {
-    return (
-      <HomeMonitorWindowScreen
-        homePageClassName={homePageClassName}
-        content={(
-          <HomeMonitorContent
-            runningEntries={runningMonitorEntries}
-            nonRunningEntries={nonRunningMonitorEntries}
-            runningEmptyMessage={monitorRunningEmptyMessage}
-            completedEmptyMessage={monitorCompletedEmptyMessage}
-            onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
-            onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
-          />
-        )}
-      />
-    );
-  }
+  const launchDialog = (
+    <HomeLaunchDialog
+      open={launchDraft.open}
+      mode={launchDraft.mode}
+      title={launchDraft.title}
+      workspace={launchDraft.workspace}
+      launchWorkspacePathLabel={launchWorkspacePathLabel}
+      enabledLaunchProviders={enabledLaunchProviders}
+      selectedLaunchProviderId={selectedLaunchProvider?.id ?? null}
+      canStartSession={canStartSession && canUsePrimaryFeatures}
+      launchFeedback={launchFeedback}
+      launchStarting={launchStarting}
+      onClose={closeLaunchDialog}
+      onSelectMode={(mode) => {
+        setLaunchFeedback("");
+        setLaunchDraft((current) => ({ ...current, mode }));
+      }}
+      onChangeTitle={(value) => {
+        setLaunchFeedback("");
+        setLaunchDraft((current) => ({ ...current, title: value }));
+      }}
+      onBrowseWorkspace={() => void handleBrowseWorkspace()}
+      onSelectProvider={(providerId) => {
+        setLaunchFeedback("");
+        const provider = enabledLaunchProviders.find((candidate) => candidate.id === providerId) ?? null;
+        const model =
+          provider?.models.find((candidate) => candidate.id === provider.defaultModelId) ??
+          provider?.models[0] ??
+          null;
+        setLaunchDraft((current) => ({
+          ...current,
+          providerId,
+          model: model?.id ?? current.model,
+          reasoningEffort: model?.reasoningEfforts[0] ?? provider?.defaultReasoningEffort ?? current.reasoningEffort,
+        }));
+      }}
+      onStartSession={(mode) => void handleStartSession(mode)}
+    />
+  );
 
   return (
-    <HomeDashboardScreen
+    <HomeAppRouter
+      desktopRuntime={desktopRuntime}
       homePageClassName={homePageClassName}
-      recentSessionsPanel={(
-        <HomeRecentSessionsPanel
-          filteredSessionEntries={filteredSessionEntries}
-          companionSessions={companionSessions}
-          normalizedSessionSearch={normalizedSessionSearch}
-          searchText={sessionSearchText}
-          searchIcon={renderSearchIcon()}
-          onChangeSearchText={setSessionSearchText}
-          onOpenLaunchDialog={openLaunchDialog}
-          onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
-          onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
-          canUsePrimaryFeatures={canUsePrimaryFeatures}
-        />
-      )}
-      rightPane={(
-        <HomeRightPane
-          rightPaneView={rightPaneView}
-          runningMonitorEntries={runningMonitorEntries}
-          nonRunningMonitorEntries={nonRunningMonitorEntries}
-          monitorRunningEmptyMessage={monitorRunningEmptyMessage}
-          monitorCompletedEmptyMessage={monitorCompletedEmptyMessage}
-          mateProfile={mateProfile}
-          monitorWindowIcon={renderMonitorWindowIcon()}
-          onChangeRightPaneView={setRightPaneView}
-          onOpenSessionMonitorWindow={() => void openSessionMonitorWindow()}
-          onOpenMemoryManagementWindow={() => void openMemoryManagementWindow()}
-          onOpenSettingsWindow={() => void openSettingsWindow()}
-          onOpenMateProfile={openMateProfileEditor}
-          onOpenMateTalk={() => void openMateTalkWindow()}
-          onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
-          onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
-          canUsePrimaryFeatures={canUsePrimaryFeatures}
-        />
-      )}
-      launchDialog={(
-        <HomeLaunchDialog
-          open={launchDraft.open}
-          mode={launchDraft.mode}
-          title={launchDraft.title}
-          workspace={launchDraft.workspace}
-          launchWorkspacePathLabel={launchWorkspacePathLabel}
-          enabledLaunchProviders={enabledLaunchProviders}
-          selectedLaunchProviderId={selectedLaunchProvider?.id ?? null}
-          canStartSession={canStartSession && canUsePrimaryFeatures}
-          launchFeedback={launchFeedback}
-          launchStarting={launchStarting}
-          onClose={closeLaunchDialog}
-          onSelectMode={(mode) => {
-            setLaunchFeedback("");
-            setLaunchDraft((current) => ({ ...current, mode }));
-          }}
-          onChangeTitle={(value) => {
-            setLaunchFeedback("");
-            setLaunchDraft((current) => ({ ...current, title: value }));
-          }}
-          onBrowseWorkspace={() => void handleBrowseWorkspace()}
-          onSelectProvider={(providerId) => {
-            setLaunchFeedback("");
-            const provider = enabledLaunchProviders.find((candidate) => candidate.id === providerId) ?? null;
-            const model =
-              provider?.models.find((candidate) => candidate.id === provider.defaultModelId) ??
-              provider?.models[0] ??
-              null;
-            setLaunchDraft((current) => ({
-              ...current,
-              providerId,
-              model: model?.id ?? current.model,
-              reasoningEffort: model?.reasoningEfforts[0] ?? provider?.defaultReasoningEffort ?? current.reasoningEffort,
-            }));
-          }}
-          onStartSession={(mode) => void handleStartSession(mode)}
-        />
-      )}
+      isSettingsWindowMode={isSettingsWindowMode}
+      settingsWindowReady={settingsWindowReady}
+      settingsContent={settingsContent}
+      isMateStateLoading={isMateStateLoading}
+      isMateNotCreated={isMateNotCreated}
+      mateProfileEditorOpen={mateProfileEditorOpen}
+      mateSetupContent={mateSetupContent}
+      isMemoryWindowMode={isMemoryWindowMode}
+      memoryManagementLoaded={memoryManagementLoaded}
+      memoryManagementContent={memoryManagementContent}
+      isMonitorWindowMode={isMonitorWindowMode}
+      monitorContent={monitorContent}
+      recentSessionsPanel={recentSessionsPanel}
+      rightPane={rightPane}
+      launchDialog={launchDialog}
     />
   );
 }
