@@ -47,7 +47,7 @@ function renderPanel(options?: {
 test("MateTalk は ChatWindow で Session 共通レイアウトの通常状態をレンダリングする", () => {
   const html = renderPanel({ input: "おはよう" });
 
-  assert.match(html, /<div class="page-shell session-page mate-talk-chat-window"/);
+  assert.match(html, /<div class="page-shell session-page"/);
   assert.match(html, /data-session-mode="mate-talk"/);
   assert.match(html, /<div class="session-main-grid">/);
   assert.match(html, /<div class="session-action-dock">/);

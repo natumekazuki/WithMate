@@ -95,7 +95,7 @@ export function buildMateTalkChatWindowProps({
 
   return {
     mode: "mate-talk",
-    className: `mate-talk-chat-window${isHeaderExpanded ? "" : " session-page-header-collapsed"}`,
+    className: isHeaderExpanded ? "" : "session-page-header-collapsed",
     style: themeStyle,
     isHeaderExpanded,
     headerProps: {
@@ -232,12 +232,12 @@ export function buildMateTalkChatWindowProps({
       onJumpToBottom: noop,
       onSendOrCancel: onSubmit,
     },
-    splitter: <div className="session-workbench-splitter mate-talk-splitter" aria-hidden="true" />,
+    splitter: <div className="session-workbench-splitter" aria-hidden="true" />,
     rightPane: (
       <ChatRightPaneShell
         isHeaderExpanded={isHeaderExpanded}
         headerHandleTitle="メイトーク"
-        ariaLabel="メイトーク補助情報"
+        ariaLabel="補助情報"
         onToggleHeaderExpanded={onToggleHeaderExpanded}
       />
     ),
