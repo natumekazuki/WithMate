@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
-import type { ModelCatalogProvider } from "../../src/model-catalog.js";
+import { createDefaultAppSettings, type AppSettings } from "../../src/provider-settings-state.js";
+import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import {
   updateAutoCollapseActionDockOnSend,
   updateCharacterReflectionCharDeltaThreshold,
@@ -36,7 +36,30 @@ import {
   updateMateMemoryGenerationPriorityTimeoutSecondsDraft,
   addMateMemoryGenerationPriorityDraft,
   removeMateMemoryGenerationPriorityDraft,
-} from "../../src/home-settings-draft.js";
+} from "../../src/settings/settings-draft.js";
+import {
+  handleChangeAutoCollapseActionDockOnSend as handleChangeAutoCollapseActionDockOnSendAction,
+  handleChangeCharacterReflectionCharDeltaThreshold as handleChangeCharacterReflectionCharDeltaThresholdAction,
+  handleChangeCharacterReflectionCooldownSeconds as handleChangeCharacterReflectionCooldownSecondsAction,
+  handleChangeCharacterReflectionMessageDeltaThreshold as handleChangeCharacterReflectionMessageDeltaThresholdAction,
+  handleChangeCharacterReflectionModel as handleChangeCharacterReflectionModelAction,
+  handleChangeCharacterReflectionReasoningEffort as handleChangeCharacterReflectionReasoningEffortAction,
+  handleChangeCharacterReflectionTimeoutSeconds as handleChangeCharacterReflectionTimeoutSecondsAction,
+  handleChangeMateMemoryGenerationPriorityModel as handleChangeMateMemoryGenerationPriorityModelAction,
+  handleChangeMateMemoryGenerationPriorityProvider as handleChangeMateMemoryGenerationPriorityProviderAction,
+  handleChangeMateMemoryGenerationPriorityReasoningEffort as handleChangeMateMemoryGenerationPriorityReasoningEffortAction,
+  handleChangeMateMemoryGenerationPriorityTimeoutSeconds as handleChangeMateMemoryGenerationPriorityTimeoutSecondsAction,
+  handleChangeMateMemoryGenerationTriggerIntervalMinutes as handleChangeMateMemoryGenerationTriggerIntervalMinutesAction,
+  handleChangeMemoryGenerationEnabled as handleChangeMemoryGenerationEnabledAction,
+  handleChangeMemoryExtractionModel as handleChangeMemoryExtractionModelAction,
+  handleChangeMemoryExtractionReasoningEffort as handleChangeMemoryExtractionReasoningEffortAction,
+  handleChangeMemoryExtractionThreshold as handleChangeMemoryExtractionThresholdAction,
+  handleChangeMemoryExtractionTimeoutSeconds as handleChangeMemoryExtractionTimeoutSecondsAction,
+  handleChangeProviderEnabled as handleChangeProviderEnabledAction,
+  handleChangeProviderSkillRootPath as handleChangeProviderSkillRootPathAction,
+  handleAddMateMemoryGenerationPriority as handleAddMateMemoryGenerationPriorityAction,
+  handleRemoveMateMemoryGenerationPriority as handleRemoveMateMemoryGenerationPriorityAction,
+} from "../../src/settings/settings-draft-actions.js";
 
 const providerCatalog: ModelCatalogProvider = {
   id: "codex",
@@ -56,8 +79,38 @@ const providerCatalog: ModelCatalogProvider = {
     },
   ],
 };
+const copilotProviderCatalog: ModelCatalogProvider = {
+  id: "copilot",
+  label: "Copilot",
+  defaultModelId: "copilot-1",
+  defaultReasoningEffort: "low",
+  models: [
+    {
+      id: "copilot-1",
+      label: "copilot-1",
+      reasoningEfforts: ["low", "medium"],
+    },
+  ],
+};
 
 describe("home-settings-draft", () => {
+  const createDraftTracker = (initial: AppSettings = createDefaultAppSettings()) => {
+    let draft = initial;
+    return {
+      get draft() {
+        return draft;
+      },
+      setSettingsDraft: (updater: (current: AppSettings) => AppSettings) => {
+        draft = updater(draft);
+      },
+    };
+  };
+
+  const modelCatalogSnapshot: ModelCatalogSnapshot = {
+    revision: 1,
+    providers: [providerCatalog, copilotProviderCatalog],
+  };
+
   it("coding provider draft を更新できる", () => {
     const draft = createDefaultAppSettings();
 
@@ -275,5 +328,176 @@ describe("home-settings-draft", () => {
     assert.equal(withUpdated.mateMemoryGenerationSettings.priorityList[1]?.timeoutSeconds, 75);
     assert.equal(withRemoved.mateMemoryGenerationSettings.priorityList.length, 1);
     assert.equal(withRemoved.mateMemoryGenerationSettings.priorityList[0]?.provider, "copilot");
+  });
+
+  it("action: provider enabled を draft 更新で反映できる", () => {
+    const state = createDraftTracker();
+
+    handleChangeProviderEnabledAction({
+      providerId: "codex",
+      enabled: false,
+      setSettingsDraft: state.setSettingsDraft,
+    });
+
+    assert.equal(state.draft.codingProviderSettings.codex.enabled, false);
+  });
+
+  it("action: provider skillRootPath を draft 更新で反映できる", () => {
+    const state = createDraftTracker();
+
+    handleChangeProviderSkillRootPathAction({
+      providerId: "codex",
+      skillRootPath: "C:/skills",
+      setSettingsDraft: state.setSettingsDraft,
+    });
+
+    assert.equal(state.draft.codingProviderSettings.codex.skillRootPath, "C:/skills");
+  });
+
+  it("action: memory generation と auto collapse を draft 更新で反映できる", () => {
+    const state = createDraftTracker();
+
+    handleChangeMemoryGenerationEnabledAction({
+      enabled: false,
+      setSettingsDraft: state.setSettingsDraft,
+    });
+    handleChangeAutoCollapseActionDockOnSendAction({
+      enabled: false,
+      setSettingsDraft: state.setSettingsDraft,
+    });
+
+    assert.equal(state.draft.memoryGenerationEnabled, false);
+    assert.equal(state.draft.autoCollapseActionDockOnSend, false);
+  });
+
+  it("action: catalog 不在時は memory extraction model 更新を反映しない", () => {
+    const state = createDraftTracker();
+    const before = structuredClone(state.draft);
+
+    handleChangeMemoryExtractionModelAction({
+      providerId: "codex",
+      model: "gpt-5.4-mini",
+      modelCatalog: null,
+      setSettingsDraft: state.setSettingsDraft,
+    });
+
+    assert.deepEqual(state.draft, before);
+  });
+
+  it("action: memory extraction model / reasoning / threshold / timeout を更新できる", () => {
+    const state = createDraftTracker();
+
+    handleChangeMemoryExtractionModelAction({
+      providerId: "codex",
+      model: "gpt-5.4-mini",
+      modelCatalog: modelCatalogSnapshot,
+      setSettingsDraft: state.setSettingsDraft,
+    });
+    handleChangeMemoryExtractionReasoningEffortAction({
+      providerId: "codex",
+      reasoningEffort: "medium",
+      setSettingsDraft: state.setSettingsDraft,
+    });
+    handleChangeMemoryExtractionThresholdAction({
+      providerId: "codex",
+      value: "42",
+      setSettingsDraft: state.setSettingsDraft,
+    });
+    handleChangeMemoryExtractionTimeoutSecondsAction({
+      providerId: "codex",
+      value: "90",
+      setSettingsDraft: state.setSettingsDraft,
+    });
+
+    assert.equal(state.draft.memoryExtractionProviderSettings.codex.model, "gpt-5.4-mini");
+    assert.equal(state.draft.memoryExtractionProviderSettings.codex.reasoningEffort, "medium");
+    assert.equal(state.draft.memoryExtractionProviderSettings.codex.outputTokensThreshold, 42);
+    assert.equal(state.draft.memoryExtractionProviderSettings.codex.timeoutSeconds, 90);
+  });
+
+  it("action: character reflection model と trigger を更新できる", () => {
+    const state = createDraftTracker();
+
+    handleChangeCharacterReflectionModelAction({
+      providerId: "codex",
+      model: "gpt-5.4-mini",
+      modelCatalog: modelCatalogSnapshot,
+      setSettingsDraft: state.setSettingsDraft,
+    });
+    handleChangeCharacterReflectionReasoningEffortAction({
+      providerId: "codex",
+      reasoningEffort: "low",
+      setSettingsDraft: state.setSettingsDraft,
+    });
+    handleChangeCharacterReflectionTimeoutSecondsAction({
+      providerId: "codex",
+      value: "210",
+      setSettingsDraft: state.setSettingsDraft,
+    });
+    handleChangeCharacterReflectionCooldownSecondsAction({
+      value: "120",
+      setSettingsDraft: state.setSettingsDraft,
+    });
+    handleChangeCharacterReflectionCharDeltaThresholdAction({
+      value: "99",
+      setSettingsDraft: state.setSettingsDraft,
+    });
+    handleChangeCharacterReflectionMessageDeltaThresholdAction({
+      value: "4",
+      setSettingsDraft: state.setSettingsDraft,
+    });
+
+    assert.equal(state.draft.characterReflectionProviderSettings.codex.model, "gpt-5.4-mini");
+    assert.equal(state.draft.characterReflectionProviderSettings.codex.reasoningEffort, "low");
+    assert.equal(state.draft.characterReflectionProviderSettings.codex.timeoutSeconds, 210);
+    assert.equal(state.draft.characterReflectionTriggerSettings.cooldownSeconds, 120);
+    assert.equal(state.draft.characterReflectionTriggerSettings.charDeltaThreshold, 99);
+    assert.equal(state.draft.characterReflectionTriggerSettings.messageDeltaThreshold, 4);
+  });
+
+  it("action: mate memory generation priority の add/update/remove/interval を更新できる", () => {
+    const state = createDraftTracker();
+
+    handleAddMateMemoryGenerationPriorityAction({
+      modelCatalog: modelCatalogSnapshot,
+      setSettingsDraft: state.setSettingsDraft,
+    });
+    handleChangeMateMemoryGenerationPriorityProviderAction({
+      index: 1,
+      providerId: "copilot",
+      setSettingsDraft: state.setSettingsDraft,
+    });
+    handleChangeMateMemoryGenerationPriorityModelAction({
+      index: 1,
+      providerId: "copilot",
+      model: "copilot-1",
+      modelCatalog: modelCatalogSnapshot,
+      setSettingsDraft: state.setSettingsDraft,
+    });
+    handleChangeMateMemoryGenerationPriorityReasoningEffortAction({
+      index: 1,
+      reasoningEffort: "low",
+      setSettingsDraft: state.setSettingsDraft,
+    });
+    handleChangeMateMemoryGenerationPriorityTimeoutSecondsAction({
+      index: 1,
+      value: "75",
+      setSettingsDraft: state.setSettingsDraft,
+    });
+    handleChangeMateMemoryGenerationTriggerIntervalMinutesAction({
+      value: "90",
+      setSettingsDraft: state.setSettingsDraft,
+    });
+    handleRemoveMateMemoryGenerationPriorityAction({
+      index: 0,
+      setSettingsDraft: state.setSettingsDraft,
+    });
+
+    assert.equal(state.draft.mateMemoryGenerationSettings.priorityList.length, 1);
+    assert.equal(state.draft.mateMemoryGenerationSettings.priorityList[0].provider, "copilot");
+    assert.equal(state.draft.mateMemoryGenerationSettings.priorityList[0].model, "copilot-1");
+    assert.equal(state.draft.mateMemoryGenerationSettings.priorityList[0].reasoningEffort, "low");
+    assert.equal(state.draft.mateMemoryGenerationSettings.priorityList[0].timeoutSeconds, 75);
+    assert.equal(state.draft.mateMemoryGenerationSettings.triggerIntervalMinutes, 90);
   });
 });

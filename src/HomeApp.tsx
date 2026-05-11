@@ -6,7 +6,6 @@ import {
   type AppSettings,
 } from "./provider-settings-state.js";
 import { type SessionSummary } from "./session-state.js";
-import { DEFAULT_APPROVAL_MODE } from "./approval-mode.js";
 import { type ModelCatalogSnapshot } from "./model-catalog.js";
 import {
   DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
@@ -14,11 +13,6 @@ import {
 } from "./memory/memory-management-view.js";
 import {
   buildMemoryManagementPageRequest,
-  mergeMemoryManagementSnapshots,
-  removeMateProfileItemFromSnapshot,
-  removeCharacterMemoryEntryFromSnapshot,
-  removeProjectMemoryEntryFromSnapshot,
-  removeSessionMemoryFromSnapshot,
   type MemoryManagementDomain,
   type MemoryManagementSnapshot,
 } from "./memory/memory-management-state.js";
@@ -26,27 +20,27 @@ import {
   buildHomeLaunchProjection,
 } from "./home/home-launch-projection.js";
 import {
-  buildCreateCompanionSessionInputFromLaunchDraft,
-  buildCreateSessionInputFromLaunchDraft,
   closeLaunchDraft,
   createClosedLaunchDraft,
   openLaunchDraft,
-  resolveLastUsedSessionSelection,
-  resolveLaunchValidationMessage,
   setLaunchWorkspaceFromPath,
   updateLaunchDraftForProviderSelection,
   type HomeLaunchDraft,
 } from "./home/home-launch-state.js";
-import { createCompanionSessionSummary, type CompanionSessionSummary } from "./companion-state.js";
+import { type CompanionSessionSummary } from "./companion-state.js";
+import { startHomeLaunch } from "./home/home-launch-actions.js";
+import {
+  clearHomeMateAvatar,
+  saveHomeMateProfile,
+  selectHomeMateAvatar,
+} from "./home/home-mate-profile-actions.js";
 import {
   buildHomeSessionProjection,
 } from "./home/home-session-projection.js";
 import {
   buildHomeProviderSettingRows,
   buildPersistedAppSettingsFromRows,
-  resolveInstructionRelativePathFromSelection,
   type HomeProviderInstructionTargetSettings,
-  buildHomeProviderInstructionTargetUpsertInput,
   type HomeProviderSettingRow,
 } from "./settings/settings-view-model.js";
 import type { HomeSettingsContentProps } from "./settings/SettingsContent.js";
@@ -65,45 +59,51 @@ import {
 import {
   exportHomeModelCatalog,
   importHomeModelCatalog,
+  syncProviderInstructionTargetRoots,
   saveHomeSettings,
 } from "./settings/settings-actions.js";
 import {
   EMPTY_MEMORY_MANAGEMENT_PAGE_STATE,
-  getMemoryManagementCursor,
   normalizeMemoryManagementPages,
   type MemoryManagementPageState,
 } from "./memory/memory-management-page-state.js";
 import { buildResetMateConfirmMessage } from "./settings/settings-ui.js";
 import {
-  buildFallbackProviderInstructionTarget,
-  isProviderInstructionFailPolicy,
-  isProviderInstructionWriteMode,
   normalizeProviderInstructionTarget,
   type HomeProviderInstructionTargetDraft,
 } from "./settings/provider-instruction-target-draft.js";
 import {
-  updateCharacterReflectionCharDeltaThreshold,
-  updateCharacterReflectionCooldownSeconds,
-  updateCharacterReflectionModelDraft,
-  updateCharacterReflectionMessageDeltaThreshold,
-  updateCharacterReflectionReasoningEffortDraft,
-  updateCharacterReflectionTimeoutSecondsDraft,
-  updateAutoCollapseActionDockOnSend,
-  updateCodingProviderEnabledDraft,
-  updateCodingProviderSkillRootPathDraft,
-  updateMemoryExtractionModelDraft,
-  updateMemoryExtractionReasoningEffortDraft,
-  updateMemoryExtractionThresholdDraft,
-  updateMemoryExtractionTimeoutSecondsDraft,
-  updateMateMemoryGenerationTriggerIntervalMinutesDraft,
-  updateMateMemoryGenerationPriorityProviderDraft,
-  updateMateMemoryGenerationPriorityModelDraft,
-  updateMateMemoryGenerationPriorityReasoningEffortDraft,
-  updateMateMemoryGenerationPriorityTimeoutSecondsDraft,
-  addMateMemoryGenerationPriorityDraft,
-  removeMateMemoryGenerationPriorityDraft,
-  updateMemoryGenerationEnabled,
-} from "./settings/settings-draft.js";
+  handleBrowseProviderInstructionInstructionRelativePath as handleBrowseProviderInstructionInstructionRelativePathAction,
+  handleChangeProviderInstructionEnabled as handleChangeProviderInstructionEnabledAction,
+  handleChangeProviderInstructionFailPolicy as handleChangeProviderInstructionFailPolicyAction,
+  handleChangeProviderInstructionInstructionRelativePath as handleChangeProviderInstructionInstructionRelativePathAction,
+  handleChangeProviderInstructionWriteMode as handleChangeProviderInstructionWriteModeAction,
+  updateProviderInstructionTarget as updateProviderInstructionTargetAction,
+  upsertProviderInstructionTarget as upsertProviderInstructionTargetAction,
+} from "./settings/provider-instruction-target-actions.js";
+import {
+  handleChangeAutoCollapseActionDockOnSend as handleChangeAutoCollapseActionDockOnSendAction,
+  handleChangeCharacterReflectionCharDeltaThreshold as handleChangeCharacterReflectionCharDeltaThresholdAction,
+  handleChangeCharacterReflectionCooldownSeconds as handleChangeCharacterReflectionCooldownSecondsAction,
+  handleChangeCharacterReflectionMessageDeltaThreshold as handleChangeCharacterReflectionMessageDeltaThresholdAction,
+  handleChangeCharacterReflectionModel as handleChangeCharacterReflectionModelAction,
+  handleChangeCharacterReflectionReasoningEffort as handleChangeCharacterReflectionReasoningEffortAction,
+  handleChangeCharacterReflectionTimeoutSeconds as handleChangeCharacterReflectionTimeoutSecondsAction,
+  handleChangeMateMemoryGenerationPriorityModel as handleChangeMateMemoryGenerationPriorityModelAction,
+  handleChangeMateMemoryGenerationPriorityProvider as handleChangeMateMemoryGenerationPriorityProviderAction,
+  handleChangeMateMemoryGenerationPriorityReasoningEffort as handleChangeMateMemoryGenerationPriorityReasoningEffortAction,
+  handleChangeMateMemoryGenerationPriorityTimeoutSeconds as handleChangeMateMemoryGenerationPriorityTimeoutSecondsAction,
+  handleChangeMateMemoryGenerationTriggerIntervalMinutes as handleChangeMateMemoryGenerationTriggerIntervalMinutesAction,
+  handleChangeMemoryGenerationEnabled as handleChangeMemoryGenerationEnabledAction,
+  handleChangeMemoryExtractionModel as handleChangeMemoryExtractionModelAction,
+  handleChangeMemoryExtractionReasoningEffort as handleChangeMemoryExtractionReasoningEffortAction,
+  handleChangeMemoryExtractionThreshold as handleChangeMemoryExtractionThresholdAction,
+  handleChangeMemoryExtractionTimeoutSeconds as handleChangeMemoryExtractionTimeoutSecondsAction,
+  handleChangeProviderEnabled as handleChangeProviderEnabledAction,
+  handleChangeProviderSkillRootPath as handleChangeProviderSkillRootPathAction,
+  handleAddMateMemoryGenerationPriority as handleAddMateMemoryGenerationPriorityAction,
+  handleRemoveMateMemoryGenerationPriority as handleRemoveMateMemoryGenerationPriorityAction,
+} from "./settings/settings-draft-actions.js";
 import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-withmate-api.js";
 import {
   type MateGrowthSettings,
@@ -113,11 +113,31 @@ import {
 } from "./mate/mate-state.js";
 import { type MateEmbeddingSettings } from "./mate/mate-embedding-settings.js";
 import type { MateGrowthEventListItem } from "./mate/mate-growth-events-state.js";
-import { applyHomePendingGrowth } from "./mate/mate-growth-actions.js";
+import {
+  handleApplyPendingGrowth as handleApplyPendingGrowthAction,
+  handleBeginCorrectMateGrowthEvent as handleBeginCorrectMateGrowthEventAction,
+  handleCancelCorrectMateGrowthEvent as handleCancelCorrectMateGrowthEventAction,
+  handleCorrectMateGrowthEvent as handleCorrectMateGrowthEventAction,
+  handleDisableMateGrowthEvent as handleDisableMateGrowthEventAction,
+  handleForgetMateGrowthEvent as handleForgetMateGrowthEventAction,
+  handleReloadMateGrowthEvents as handleReloadMateGrowthEventsAction,
+  handleUpdateMateGrowthSettings as handleUpdateMateGrowthSettingsAction,
+  upsertMateGrowthEventListItem as upsertMateGrowthEventListItemAction,
+} from "./mate/mate-growth-actions.js";
+import {
+  handleChangeMemoryManagementViewFilters as handleChangeMemoryManagementViewFiltersAction,
+  handleDeleteCharacterMemoryEntry as handleDeleteCharacterMemoryEntryAction,
+  handleDeleteMateProfileItem as handleDeleteMateProfileItemAction,
+  handleDeleteProjectMemoryEntry as handleDeleteProjectMemoryEntryAction,
+  handleDeleteSessionMemory as handleDeleteSessionMemoryAction,
+  handleLoadMoreMemoryManagement as handleLoadMoreMemoryManagementAction,
+  handleReloadMemoryManagement as handleReloadMemoryManagementAction,
+  handleStartMateEmbeddingDownload as handleStartMateEmbeddingDownloadAction,
+  MEMORY_MANAGEMENT_PAGE_LIMIT,
+} from "./memory/memory-management-actions.js";
 
 type HomeRightPaneView = "monitor" | "mate";
 
-const MEMORY_MANAGEMENT_PAGE_LIMIT = 50;
 const MATE_EMBEDDING_SETTINGS_POLL_INTERVAL_MS = 2000;
 
 export default function HomeApp() {
@@ -654,143 +674,99 @@ export default function HomeApp() {
   };
 
   const handleSaveMate = async () => {
-    const displayName = mateDisplayName.trim();
-    if (!displayName) {
-      setMateCreationFeedback("displayName を入力してね。");
-      return;
-    }
-
     const withmateApi = getWithMateApi();
     if (!withmateApi) {
       setMateCreationFeedback("Mate API が利用できないよ。");
       return;
     }
 
-    const creatingMate = mateState === "not_created";
-    setMateCreationFeedback(creatingMate ? "Mate 作成中..." : "Mate 保存中...");
-    setMateCreating(true);
-    try {
-      const savedProfile = creatingMate
-        ? await withmateApi.createMate({ displayName })
-        : await withmateApi.updateMate({ displayName });
-      let nextMateState: MateStorageState = "active";
-      let nextMateProfile = savedProfile as MateProfile | null;
-
-      try {
-        nextMateState = await withmateApi.getMateState();
-        if (nextMateState !== "not_created") {
-          const loadedProfile = await withmateApi.getMateProfile();
-          if (loadedProfile) {
-            nextMateProfile = loadedProfile;
-          }
-        }
-      } catch {
-      }
-
-      setMateState(nextMateState);
-      setMateProfile(nextMateProfile);
-      setMateDisplayName(nextMateProfile?.displayName ?? "");
-      setMateCreationFeedback(creatingMate ? "" : "Mate を保存したよ。");
-      setMateProfileEditorOpen(false);
-      if (nextMateState !== "not_created") {
-        try {
-          const [nextSessions, nextCompanionSessions, nextEmbeddingSettings, nextGrowthSettings] = await Promise.all([
-            withmateApi.listSessionSummaries(),
-            withmateApi.listCompanionSessionSummaries(),
-            withmateApi.getMateEmbeddingSettings(),
-            withmateApi.getMateGrowthSettings(),
-          ]);
-          setSessions(nextSessions);
-          setCompanionSessions(nextCompanionSessions);
-          setMateEmbeddingSettings(nextEmbeddingSettings);
-          setMateGrowthSettings(nextGrowthSettings);
-          await refreshMateGrowthEvents(withmateApi, { silent: true });
-        } catch (error) {
-          setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
-        }
-      } else {
+    await saveHomeMateProfile({
+      api: withmateApi,
+      displayName: mateDisplayName,
+      mateState,
+      setMateState,
+      setMateProfile,
+      setMateDisplayName,
+      setMateCreationFeedback,
+      setMateProfileEditorOpen,
+      setMateCreating,
+      setLaunchFeedback,
+      hydrateHomeData: async () => {
+        const [nextSessions, nextCompanionSessions, nextEmbeddingSettings, nextGrowthSettings] = await Promise.all([
+          withmateApi.listSessionSummaries(),
+          withmateApi.listCompanionSessionSummaries(),
+          withmateApi.getMateEmbeddingSettings(),
+          withmateApi.getMateGrowthSettings(),
+        ]);
+        setSessions(nextSessions);
+        setCompanionSessions(nextCompanionSessions);
+        setMateEmbeddingSettings(nextEmbeddingSettings);
+        setMateGrowthSettings(nextGrowthSettings);
+        await refreshMateGrowthEvents(withmateApi, { silent: true });
+      },
+      clearMateGrowthViewState: () => {
         setMateGrowthSettings(null);
         setMateGrowthFeedback("");
         setMateGrowthEvents([]);
         setMateGrowthEventsFeedback("");
         setCorrectingMateGrowthEventId(null);
         setCorrectingMateGrowthEventStatement("");
-      }
-    } catch (error) {
-      setMateCreationFeedback(error instanceof Error ? error.message : "Mate の保存に失敗したよ。");
-    } finally {
-      setMateCreating(false);
-    }
+      },
+    });
   };
 
   const handleSelectMateAvatar = async () => {
     const withmateApi = getWithMateApi();
-    if (!withmateApi || mateState === "not_created") {
-      setMateCreationFeedback("Mate を作成してからアイコンを設定してね。");
+    if (!withmateApi) {
+      setMateCreationFeedback("Mate API が利用できないよ。");
       return;
     }
 
-    setMateAvatarUpdating(true);
-    try {
-      setMateCreationFeedback("");
-      const selectedPath = await withmateApi.pickImageFile(mateProfile?.avatarFilePath ?? null);
-      if (!selectedPath) {
-        return;
-      }
-
-      setMateCreationFeedback("Mate のアイコンを更新中...");
-      const nextMateProfile = await withmateApi.setMateAvatar({ avatarFilePath: selectedPath });
-      setMateProfile(nextMateProfile);
-      setMateDisplayName(nextMateProfile.displayName);
-      setMateCreationFeedback("Mate のアイコンを更新したよ。");
-
-      try {
+    await selectHomeMateAvatar({
+      api: withmateApi,
+      mateState,
+      currentAvatarFilePath: mateProfile?.avatarFilePath ?? null,
+      setMateProfile,
+      setMateDisplayName,
+      setMateCreationFeedback,
+      setMateAvatarUpdating,
+      setLaunchFeedback,
+      refreshSessionSummaries: async () => {
         const [nextSessions, nextCompanionSessions] = await Promise.all([
           withmateApi.listSessionSummaries(),
           withmateApi.listCompanionSessionSummaries(),
         ]);
         setSessions(nextSessions);
         setCompanionSessions(nextCompanionSessions);
-      } catch (error) {
-        setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
-      }
-    } catch (error) {
-      setMateCreationFeedback(error instanceof Error ? error.message : "Mate のアイコン更新に失敗したよ。");
-    } finally {
-      setMateAvatarUpdating(false);
-    }
+      },
+    });
   };
 
   const handleClearMateAvatar = async () => {
     const withmateApi = getWithMateApi();
-    if (!withmateApi || mateState === "not_created") {
-      setMateCreationFeedback("Mate を作成してからアイコンを設定してね。");
+    if (!withmateApi) {
+      setMateCreationFeedback("Mate API が利用できないよ。");
       return;
     }
 
-    setMateAvatarUpdating(true);
-    setMateCreationFeedback("Mate のアイコンを解除中...");
-    try {
-      const nextMateProfile = await withmateApi.setMateAvatar({ avatarFilePath: null });
-      setMateProfile(nextMateProfile);
-      setMateDisplayName(nextMateProfile.displayName);
-      setMateCreationFeedback("Mate のアイコンを解除したよ。");
-
-      try {
+    await clearHomeMateAvatar({
+      api: withmateApi,
+      mateState,
+      currentAvatarFilePath: mateProfile?.avatarFilePath ?? null,
+      setMateProfile,
+      setMateDisplayName,
+      setMateCreationFeedback,
+      setMateAvatarUpdating,
+      setLaunchFeedback,
+      refreshSessionSummaries: async () => {
         const [nextSessions, nextCompanionSessions] = await Promise.all([
           withmateApi.listSessionSummaries(),
           withmateApi.listCompanionSessionSummaries(),
         ]);
         setSessions(nextSessions);
         setCompanionSessions(nextCompanionSessions);
-      } catch (error) {
-        setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
-      }
-    } catch (error) {
-      setMateCreationFeedback(error instanceof Error ? error.message : "Mate のアイコン解除に失敗したよ。");
-    } finally {
-      setMateAvatarUpdating(false);
-    }
+      },
+    });
   };
 
   const openMateProfileEditor = () => {
@@ -800,76 +776,28 @@ export default function HomeApp() {
   };
 
   const handleStartSession = async (requestedMode: HomeLaunchDraft["mode"] = launchDraft.mode) => {
-    if (launchStarting) {
-      return;
-    }
-
-    const validationMessage = resolveLaunchValidationMessage({
+    await startHomeLaunch({
       draft: launchDraft,
+      requestedMode,
+      launchStarting,
       mateState,
       mateProfile,
       selectedProviderId: selectedLaunchProvider?.id ?? null,
-    });
-    if (validationMessage) {
-      setLaunchFeedback(validationMessage);
-      return;
-    }
-
-    setLaunchFeedback(requestedMode === "companion" ? "Companion を開始してるよ..." : "Session を開始してるよ...");
-    setLaunchStarting(true);
-    const lastUsedSelection = resolveLastUsedSessionSelection(sessions, selectedLaunchProvider?.id ?? null);
-    try {
-      if (requestedMode === "companion") {
-        const companionInput = buildCreateCompanionSessionInputFromLaunchDraft({
-          draft: launchDraft,
-          mateProfile,
-          selectedProviderId: selectedLaunchProvider?.id ?? null,
-          lastUsedSelection,
-        });
-        if (!companionInput) {
-          setLaunchFeedback("Companion の開始条件が揃ってないよ。");
-          return;
-        }
-
-        const createdSession = await withWithMateApi((api) => api.createCompanionSession(companionInput));
-        if (!createdSession) {
-          setLaunchFeedback("Companion を開始できなかったよ。");
-          return;
-        }
-
+      sessions,
+      createSession: async (input) => await withWithMateApi((api) => api.createSession(input)),
+      createCompanionSession: async (input) => await withWithMateApi((api) => api.createCompanionSession(input)),
+      openSessionWindow,
+      openCompanionReviewWindow,
+      closeLaunchDialog,
+      setLaunchFeedback,
+      setLaunchStarting,
+      upsertCompanionSessionSummary: (summary) => {
         setCompanionSessions((current) => [
-          createCompanionSessionSummary(createdSession),
-          ...current.filter((session) => session.id !== createdSession.id),
+          summary,
+          ...current.filter((session) => session.id !== summary.id),
         ]);
-        closeLaunchDialog();
-        await openCompanionReviewWindow(createdSession.id);
-        return;
-      }
-
-      const sessionInput = buildCreateSessionInputFromLaunchDraft({
-        draft: launchDraft,
-        mateProfile,
-        selectedProviderId: selectedLaunchProvider?.id ?? null,
-        approvalMode: DEFAULT_APPROVAL_MODE,
-        lastUsedSelection,
-      });
-      if (!sessionInput) {
-        setLaunchFeedback("Session の開始条件が揃ってないよ。");
-        return;
-      }
-
-      const createdSession = await withWithMateApi((api) => api.createSession(sessionInput));
-      if (!createdSession) {
-        setLaunchFeedback("Session を開始できなかったよ。");
-        return;
-      }
-      closeLaunchDialog();
-      await openSessionWindow(createdSession.id);
-    } catch (error) {
-      setLaunchFeedback(error instanceof Error ? error.message : "開始に失敗したよ。");
-    } finally {
-      setLaunchStarting(false);
-    }
+      },
+    });
   };
 
   const handleImportModelCatalog = async () => {
@@ -885,32 +813,6 @@ export default function HomeApp() {
     }
   };
 
-  const syncProviderInstructionTargetRoots = async (
-    withmateApi: NonNullable<ReturnType<typeof getWithMateApi>>,
-    nextSettings: AppSettings,
-  ): Promise<HomeProviderInstructionTargetDraft[]> => {
-    const nextTargets = providerInstructionTargets.map((target) => {
-      const rootDirectory = getProviderAppSettings(nextSettings, target.providerId).skillRootPath.trim();
-      if (rootDirectory === target.rootDirectory) {
-        return target;
-      }
-
-      return {
-        ...target,
-        rootDirectory,
-      };
-    });
-
-    const changedTargets = nextTargets.filter((target, index) =>
-      target.rootDirectory !== providerInstructionTargets[index]?.rootDirectory);
-    await Promise.all(
-      changedTargets.map((target) =>
-        withmateApi.upsertProviderInstructionTarget(buildHomeProviderInstructionTargetUpsertInput(target))),
-    );
-
-    return nextTargets;
-  };
-
   const handleSaveSettings = async () => {
     const withmateApi = getWithMateApi();
     if (!withmateApi) {
@@ -919,7 +821,11 @@ export default function HomeApp() {
 
     try {
       const result = await saveHomeSettings(withmateApi, persistedSettingsDraft);
-      const nextProviderInstructionTargets = await syncProviderInstructionTargetRoots(withmateApi, result.nextSettings);
+      const nextProviderInstructionTargets = await syncProviderInstructionTargetRoots({
+        api: withmateApi,
+        nextSettings: result.nextSettings,
+        providerInstructionTargets,
+      });
       setAppSettings(result.nextSettings);
       setSettingsDraft(result.nextSettings);
       setProviderInstructionTargets(nextProviderInstructionTargets);
@@ -929,190 +835,98 @@ export default function HomeApp() {
     }
   };
 
-  const handleApplyPendingGrowth = async () => {
-    if (mateGrowthApplying) {
-      return;
-    }
-
-    if (mateState !== "active") {
-      setSettingsFeedback("Mate がアクティブなときのみ手動適用できるよ。");
-      return;
-    }
-
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      setSettingsFeedback("Mate API が利用できないよ。");
-      return;
-    }
-
-    setMateGrowthApplying(true);
-    setSettingsFeedback("Mate 成長を適用中...");
-    try {
-      setSettingsFeedback(await applyHomePendingGrowth(withmateApi));
-      await refreshMateStatus(withmateApi);
-      await refreshMateGrowthEvents(withmateApi, { silent: true });
-    } catch (error) {
-      setSettingsFeedback(error instanceof Error ? error.message : "Mate 成長の適用に失敗したよ。");
-    } finally {
-      setMateGrowthApplying(false);
-    }
-  };
-
-  const handleReloadMateGrowthEvents = async () => {
-    if (mateState !== "active") {
-      setMateGrowthEventsFeedback("Mate 作成後に確認してね。");
-      return;
-    }
-
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      setMateGrowthEventsFeedback("Mate API が利用できないよ。");
-      return;
-    }
-
-    await refreshMateGrowthEvents(withmateApi);
-  };
-
   const upsertMateGrowthEventListItem = (nextEvent: MateGrowthEventListItem | null) => {
-    if (nextEvent === null) {
-      return;
-    }
+    setMateGrowthEvents((current) => upsertMateGrowthEventListItemAction(current, nextEvent));
+  };
 
-    setMateGrowthEvents((current) => {
-      const existingIndex = current.findIndex((event) => event.id === nextEvent.id);
-      if (existingIndex === -1) {
-        return [nextEvent, ...current];
-      }
+  const handleApplyPendingGrowth = () => {
+    void handleApplyPendingGrowthAction({
+      api: getWithMateApi(),
+      mateGrowthApplying,
+      mateState,
+      setMateGrowthApplying,
+      setSettingsFeedback,
+      refreshMateStatus,
+      refreshMateGrowthEvents,
+    });
+  };
 
-      return current.map((event) => event.id === nextEvent.id ? nextEvent : event);
+  const handleReloadMateGrowthEvents = () => {
+    void handleReloadMateGrowthEventsAction({
+      api: getWithMateApi(),
+      mateState,
+      setMateGrowthEventsFeedback,
+      refreshMateGrowthEvents,
     });
   };
 
   const handleBeginCorrectMateGrowthEvent = (eventId: string, statement: string) => {
-    setCorrectingMateGrowthEventId(eventId);
-    setCorrectingMateGrowthEventStatement(statement);
+    handleBeginCorrectMateGrowthEventAction({
+      eventId,
+      statement,
+      setCorrectingMateGrowthEventId,
+      setCorrectingMateGrowthEventStatement,
+    });
   };
 
   const handleCancelCorrectMateGrowthEvent = () => {
-    setCorrectingMateGrowthEventId(null);
-    setCorrectingMateGrowthEventStatement("");
+    handleCancelCorrectMateGrowthEventAction({
+      setCorrectingMateGrowthEventId,
+      setCorrectingMateGrowthEventStatement,
+    });
   };
 
-  const handleCorrectMateGrowthEvent = async (eventId: string, statement: string) => {
-    if (mateGrowthEventBusyTarget !== null) {
-      return;
-    }
-
-    if (mateState !== "active") {
-      setMateGrowthEventsFeedback("Mate 作成後に操作してね。");
-      return;
-    }
-
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      setMateGrowthEventsFeedback("Mate API が利用できないよ。");
-      return;
-    }
-
-    setMateGrowthEventBusyTarget(eventId);
-    setMateGrowthEventsFeedback("");
-    try {
-      const result = await withmateApi.correctMateGrowthEvent({ eventId, statement });
-      upsertMateGrowthEventListItem(result.event);
-      upsertMateGrowthEventListItem(result.createdEvent ?? null);
-      handleCancelCorrectMateGrowthEvent();
-      setMateGrowthEventsFeedback("Growth Event を修正したよ。");
-    } catch (error) {
-      setMateGrowthEventsFeedback(error instanceof Error ? error.message : "Growth Event の修正に失敗したよ。");
-    } finally {
-      setMateGrowthEventBusyTarget(null);
-    }
+  const handleCorrectMateGrowthEvent = (eventId: string, statement: string) => {
+    void handleCorrectMateGrowthEventAction({
+      eventId,
+      statement,
+      api: getWithMateApi(),
+      setMateGrowthEventsFeedback,
+      upsertMateGrowthEventListItem,
+      setMateGrowthEventBusyTarget,
+      mateState,
+      mateGrowthEventBusyTarget,
+      runCorrectAction: (api) => api.correctMateGrowthEvent({ eventId, statement }),
+      setCancelCorrectMateGrowthEvent: handleCancelCorrectMateGrowthEvent,
+    });
   };
 
-  const handleDisableMateGrowthEvent = async (eventId: string) => {
-    if (mateGrowthEventBusyTarget !== null) {
-      return;
-    }
-
-    if (mateState !== "active") {
-      setMateGrowthEventsFeedback("Mate 作成後に操作してね。");
-      return;
-    }
-
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      setMateGrowthEventsFeedback("Mate API が利用できないよ。");
-      return;
-    }
-
-    setMateGrowthEventBusyTarget(eventId);
-    setMateGrowthEventsFeedback("");
-    try {
-      const result = await withmateApi.disableMateGrowthEvent({ eventId });
-      upsertMateGrowthEventListItem(result.event);
-      setMateGrowthEventsFeedback("Growth Event を無効化したよ。");
-    } catch (error) {
-      setMateGrowthEventsFeedback(error instanceof Error ? error.message : "Growth Event の無効化に失敗したよ。");
-    } finally {
-      setMateGrowthEventBusyTarget(null);
-    }
+  const handleDisableMateGrowthEvent = (eventId: string) => {
+    void handleDisableMateGrowthEventAction({
+      eventId,
+      api: getWithMateApi(),
+      setMateGrowthEventsFeedback,
+      upsertMateGrowthEventListItem,
+      setMateGrowthEventBusyTarget,
+      mateState,
+      mateGrowthEventBusyTarget,
+      runDisableAction: (api) => api.disableMateGrowthEvent({ eventId }),
+    });
   };
 
-  const handleForgetMateGrowthEvent = async (eventId: string) => {
-    if (mateGrowthEventBusyTarget !== null) {
-      return;
-    }
-
-    if (mateState !== "active") {
-      setMateGrowthEventsFeedback("Mate 作成後に操作してね。");
-      return;
-    }
-
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      setMateGrowthEventsFeedback("Mate API が利用できないよ。");
-      return;
-    }
-
-    setMateGrowthEventBusyTarget(eventId);
-    setMateGrowthEventsFeedback("");
-    try {
-      const result = await withmateApi.forgetMateGrowthEvent({ eventId });
-      upsertMateGrowthEventListItem(result.event);
-      setMateGrowthEventsFeedback("Growth Event を忘却済みにしたよ。");
-    } catch (error) {
-      setMateGrowthEventsFeedback(error instanceof Error ? error.message : "Growth Event の忘却に失敗したよ。");
-    } finally {
-      setMateGrowthEventBusyTarget(null);
-    }
+  const handleForgetMateGrowthEvent = (eventId: string) => {
+    void handleForgetMateGrowthEventAction({
+      eventId,
+      api: getWithMateApi(),
+      setMateGrowthEventsFeedback,
+      upsertMateGrowthEventListItem,
+      setMateGrowthEventBusyTarget,
+      mateState,
+      mateGrowthEventBusyTarget,
+      runForgetAction: (api) => api.forgetMateGrowthEvent({ eventId }),
+    });
   };
 
-  const handleUpdateMateGrowthSettings = async (input: UpdateMateGrowthSettingsInput) => {
-    if (mateGrowthBusy) {
-      return;
-    }
-
-    if (mateState === "not_created") {
-      setMateGrowthFeedback("Mate 作成後に設定してね。");
-      return;
-    }
-
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      setMateGrowthFeedback("Mate API が利用できないよ。");
-      return;
-    }
-
-    setMateGrowthBusy(true);
-    setMateGrowthFeedback("");
-    try {
-      setMateGrowthSettings(await withmateApi.updateMateGrowthSettings(input));
-      setMateGrowthFeedback("Mate Growth 設定を更新したよ。");
-    } catch (error) {
-      setMateGrowthFeedback(error instanceof Error ? error.message : "Mate Growth 設定の更新に失敗したよ。");
-    } finally {
-      setMateGrowthBusy(false);
-    }
+  const handleUpdateMateGrowthSettings = (input: UpdateMateGrowthSettingsInput) => {
+    void handleUpdateMateGrowthSettingsAction({
+      api: getWithMateApi(),
+      input,
+      mateGrowthBusy,
+      mateState,
+      setMateGrowthBusy,
+      setMateGrowthFeedback,
+      setMateGrowthSettings,
+    });
   };
 
   const handleResetMate = async () => {
@@ -1148,104 +962,119 @@ export default function HomeApp() {
     }
   };
 
-  const upsertProviderInstructionTarget = async (target: HomeProviderInstructionTargetDraft): Promise<void> => {
+  const upsertProviderInstructionTarget = (target: HomeProviderInstructionTargetDraft): void => {
     const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-
-    try {
-      await withmateApi.upsertProviderInstructionTarget(buildHomeProviderInstructionTargetUpsertInput(target));
-    } catch (error) {
-      setSettingsFeedback(
-        error instanceof Error
-          ? error.message
-          : "Provider Instruction Sync の保存に失敗したよ。",
-      );
-    }
+    void upsertProviderInstructionTargetAction({
+      target,
+      api: withmateApi,
+      setSettingsFeedback,
+    });
   };
 
   const updateProviderInstructionTarget = (
     providerId: string,
     patch: Partial<HomeProviderInstructionTargetDraft>,
   ) => {
-    const current = providerInstructionTargets.find((next) => next.providerId === providerId);
-    const fallback = buildFallbackProviderInstructionTarget(providerId);
-    const rootDirectory = getProviderAppSettings(settingsDraft, providerId).skillRootPath.trim();
-    const nextTarget = {
-      ...(current ?? fallback),
-      ...patch,
-      rootDirectory,
+    const withmateApi = getWithMateApi();
+    updateProviderInstructionTargetAction({
       providerId,
-    };
-    setProviderInstructionTargets((previous) => {
-      const index = previous.findIndex((candidate) => candidate.providerId === providerId);
-      if (index === -1) {
-        return [...previous, nextTarget];
-      }
-
-      const updated = [...previous];
-      updated[index] = nextTarget;
-      return updated;
+      patch,
+      providerInstructionTargets,
+      settingsDraft,
+      setProviderInstructionTargets,
+      setSettingsFeedback,
+      api: withmateApi,
     });
-    void upsertProviderInstructionTarget(nextTarget);
   };
 
   const handleChangeProviderInstructionEnabled = (providerId: string, enabled: boolean) => {
-    updateProviderInstructionTarget(providerId, { enabled });
+    handleChangeProviderInstructionEnabledAction({
+      providerId,
+      enabled,
+      providerInstructionTargets,
+      settingsDraft,
+      setProviderInstructionTargets,
+      setSettingsFeedback,
+      api: getWithMateApi(),
+    });
   };
 
   const handleChangeProviderInstructionWriteMode = (providerId: string, writeMode: string) => {
-    if (!isProviderInstructionWriteMode(writeMode)) {
-      return;
-    }
-    updateProviderInstructionTarget(providerId, { writeMode });
+    handleChangeProviderInstructionWriteModeAction({
+      providerId,
+      writeMode,
+      providerInstructionTargets,
+      settingsDraft,
+      setProviderInstructionTargets,
+      setSettingsFeedback,
+      api: getWithMateApi(),
+    });
   };
 
   const handleChangeProviderInstructionFailPolicy = (providerId: string, failPolicy: string) => {
-    if (!isProviderInstructionFailPolicy(failPolicy)) {
-      return;
-    }
-    updateProviderInstructionTarget(providerId, { failPolicy });
+    handleChangeProviderInstructionFailPolicyAction({
+      providerId,
+      failPolicy,
+      providerInstructionTargets,
+      settingsDraft,
+      setProviderInstructionTargets,
+      setSettingsFeedback,
+      api: getWithMateApi(),
+    });
   };
 
   const handleChangeProviderInstructionInstructionRelativePath = (providerId: string, instructionRelativePath: string) => {
-    updateProviderInstructionTarget(providerId, { instructionRelativePath });
+    handleChangeProviderInstructionInstructionRelativePathAction({
+      providerId,
+      instructionRelativePath,
+      providerInstructionTargets,
+      settingsDraft,
+      setProviderInstructionTargets,
+      setSettingsFeedback,
+      api: getWithMateApi(),
+    });
   };
 
   const handleBrowseProviderInstructionInstructionRelativePath = async (providerId: string) => {
     const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-
-    const currentSettings = getProviderAppSettings(settingsDraft, providerId);
-    const rootDirectory = currentSettings.skillRootPath.trim();
-    if (!rootDirectory.trim()) {
-      setSettingsFeedback("Instruction Relative Path を選ぶ前に Skill Root を指定してね。");
-      return;
-    }
-
-    const selectedPath = await withmateApi.pickFile(rootDirectory);
-    if (!selectedPath) {
-      return;
-    }
-
-    const relativePath = resolveInstructionRelativePathFromSelection(rootDirectory, selectedPath);
-    if (relativePath === null) {
-      setSettingsFeedback("Skill Root 配下の instruction file を選んでね。");
-      return;
-    }
-
-    updateProviderInstructionTarget(providerId, { instructionRelativePath: relativePath });
+    await handleBrowseProviderInstructionInstructionRelativePathAction({
+      providerId,
+      providerInstructionTargets,
+      settingsDraft,
+      setProviderInstructionTargets,
+      setSettingsFeedback,
+      api: withmateApi,
+    });
   };
 
   const handleChangeProviderEnabled = (providerId: string, enabled: boolean) => {
-    setSettingsDraft((current) => updateCodingProviderEnabledDraft(current, providerId, enabled));
+    handleChangeProviderEnabledAction({
+      providerId,
+      enabled,
+      setSettingsDraft,
+    });
   };
 
   const handleChangeProviderSkillRootPath = (providerId: string, skillRootPath: string) => {
-    setSettingsDraft((current) => updateCodingProviderSkillRootPathDraft(current, providerId, skillRootPath));
+    handleChangeProviderSkillRootPathAction({
+      providerId,
+      skillRootPath,
+      setSettingsDraft,
+    });
+  };
+
+  const handleChangeMemoryGenerationEnabled = (enabled: boolean) => {
+    handleChangeMemoryGenerationEnabledAction({
+      enabled,
+      setSettingsDraft,
+    });
+  };
+
+  const handleChangeAutoCollapseActionDockOnSend = (enabled: boolean) => {
+    handleChangeAutoCollapseActionDockOnSendAction({
+      enabled,
+      setSettingsDraft,
+    });
   };
 
   const handleBrowseProviderSkillRootPath = async (providerId: string) => {
@@ -1264,280 +1093,242 @@ export default function HomeApp() {
   };
 
   const handleChangeMemoryExtractionModel = (providerId: string, model: string) => {
-    const providerCatalog = modelCatalog?.providers.find((provider) => provider.id === providerId);
-    if (!providerCatalog) {
-      return;
-    }
-
-    setSettingsDraft((current) => updateMemoryExtractionModelDraft(current, providerCatalog, providerId, model));
+    handleChangeMemoryExtractionModelAction({
+      providerId,
+      model,
+      modelCatalog,
+      setSettingsDraft,
+    });
   };
 
   const handleChangeMemoryExtractionReasoningEffort = (
     providerId: string,
     reasoningEffort: AppSettings["memoryExtractionProviderSettings"][string]["reasoningEffort"],
   ) => {
-    setSettingsDraft((current) => updateMemoryExtractionReasoningEffortDraft(current, providerId, reasoningEffort));
+    handleChangeMemoryExtractionReasoningEffortAction({
+      providerId,
+      reasoningEffort,
+      setSettingsDraft,
+    });
   };
 
   const handleChangeMemoryExtractionThreshold = (providerId: string, value: string) => {
-    setSettingsDraft((current) => updateMemoryExtractionThresholdDraft(current, providerId, value));
+    handleChangeMemoryExtractionThresholdAction({
+      providerId,
+      value,
+      setSettingsDraft,
+    });
   };
 
   const handleChangeMemoryExtractionTimeoutSeconds = (providerId: string, value: string) => {
-    setSettingsDraft((current) => updateMemoryExtractionTimeoutSecondsDraft(current, providerId, value));
+    handleChangeMemoryExtractionTimeoutSecondsAction({
+      providerId,
+      value,
+      setSettingsDraft,
+    });
   };
 
   const handleChangeCharacterReflectionModel = (providerId: string, model: string) => {
-    const providerCatalog = modelCatalog?.providers.find((provider) => provider.id === providerId);
-    if (!providerCatalog) {
-      return;
-    }
-
-    setSettingsDraft((current) => updateCharacterReflectionModelDraft(current, providerCatalog, providerId, model));
+    handleChangeCharacterReflectionModelAction({
+      providerId,
+      model,
+      modelCatalog,
+      setSettingsDraft,
+    });
   };
 
   const handleChangeCharacterReflectionReasoningEffort = (
     providerId: string,
     reasoningEffort: AppSettings["characterReflectionProviderSettings"][string]["reasoningEffort"],
   ) => {
-    setSettingsDraft((current) => updateCharacterReflectionReasoningEffortDraft(current, providerId, reasoningEffort));
+    handleChangeCharacterReflectionReasoningEffortAction({
+      providerId,
+      reasoningEffort,
+      setSettingsDraft,
+    });
   };
 
   const handleChangeCharacterReflectionTimeoutSeconds = (providerId: string, value: string) => {
-    setSettingsDraft((current) => updateCharacterReflectionTimeoutSecondsDraft(current, providerId, value));
+    handleChangeCharacterReflectionTimeoutSecondsAction({
+      providerId,
+      value,
+      setSettingsDraft,
+    });
   };
 
   const handleChangeCharacterReflectionCooldownSeconds = (value: string) => {
-    setSettingsDraft((current) => updateCharacterReflectionCooldownSeconds(current, value));
+    handleChangeCharacterReflectionCooldownSecondsAction({
+      value,
+      setSettingsDraft,
+    });
   };
 
   const handleChangeCharacterReflectionCharDeltaThreshold = (value: string) => {
-    setSettingsDraft((current) => updateCharacterReflectionCharDeltaThreshold(current, value));
+    handleChangeCharacterReflectionCharDeltaThresholdAction({
+      value,
+      setSettingsDraft,
+    });
   };
 
   const handleChangeCharacterReflectionMessageDeltaThreshold = (value: string) => {
-    setSettingsDraft((current) => updateCharacterReflectionMessageDeltaThreshold(current, value));
+    handleChangeCharacterReflectionMessageDeltaThresholdAction({
+      value,
+      setSettingsDraft,
+    });
   };
 
   const handleChangeMateMemoryGenerationPriorityProvider = (index: number, providerId: string) => {
-    setSettingsDraft((current) => updateMateMemoryGenerationPriorityProviderDraft(current, index, providerId));
+    handleChangeMateMemoryGenerationPriorityProviderAction({
+      index,
+      providerId,
+      setSettingsDraft,
+    });
   };
 
   const handleChangeMateMemoryGenerationPriorityModel = (index: number, providerId: string, model: string) => {
-    const providerCatalog = modelCatalog?.providers.find((provider) => provider.id === providerId);
-    if (!providerCatalog) {
-      return;
-    }
-
-    setSettingsDraft((current) => updateMateMemoryGenerationPriorityModelDraft(current, providerCatalog, index, providerId, model));
+    handleChangeMateMemoryGenerationPriorityModelAction({
+      index,
+      providerId,
+      model,
+      modelCatalog,
+      setSettingsDraft,
+    });
   };
 
   const handleChangeMateMemoryGenerationPriorityReasoningEffort = (
     index: number,
     reasoningEffort: AppSettings["mateMemoryGenerationSettings"]["priorityList"][number]["reasoningEffort"],
   ) => {
-    setSettingsDraft((current) => updateMateMemoryGenerationPriorityReasoningEffortDraft(current, index, reasoningEffort));
+    handleChangeMateMemoryGenerationPriorityReasoningEffortAction({
+      index,
+      reasoningEffort,
+      setSettingsDraft,
+    });
   };
 
   const handleChangeMateMemoryGenerationPriorityTimeoutSeconds = (index: number, value: string) => {
-    setSettingsDraft((current) => updateMateMemoryGenerationPriorityTimeoutSecondsDraft(current, index, value));
+    handleChangeMateMemoryGenerationPriorityTimeoutSecondsAction({
+      index,
+      value,
+      setSettingsDraft,
+    });
   };
 
   const handleAddMateMemoryGenerationPriority = () => {
-    const provider = modelCatalog?.providers[0];
-    setSettingsDraft((current) => addMateMemoryGenerationPriorityDraft(current, {
-      provider: provider?.id ?? "codex",
-      model: provider?.defaultModelId ?? "gpt-5.4",
-      reasoningEffort: provider?.defaultReasoningEffort ?? "low",
-      timeoutSeconds: 180,
-    }));
+    handleAddMateMemoryGenerationPriorityAction({
+      modelCatalog,
+      setSettingsDraft,
+    });
   };
 
   const handleRemoveMateMemoryGenerationPriority = (index: number) => {
-    setSettingsDraft((current) => removeMateMemoryGenerationPriorityDraft(current, index));
+    handleRemoveMateMemoryGenerationPriorityAction({
+      index,
+      setSettingsDraft,
+    });
   };
 
   const handleChangeMateMemoryGenerationTriggerIntervalMinutes = (value: string) => {
-    setSettingsDraft((current) => updateMateMemoryGenerationTriggerIntervalMinutesDraft(current, value));
+    handleChangeMateMemoryGenerationTriggerIntervalMinutesAction({
+      value,
+      setSettingsDraft,
+    });
   };
 
-  const handleReloadMemoryManagement = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !usesMemoryManagementWindow) {
-      return;
-    }
-
-    const requestId = beginMemoryManagementRequest();
-    try {
-      setMemoryManagementLoaded(false);
-      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
-        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-      }));
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementSnapshot(page.snapshot);
-      setMemoryManagementPages(normalizeMemoryManagementPages(page.pages));
-      setMemoryManagementFeedback("Memory 管理ビューを更新したよ。");
-    } catch (error) {
-      setMemoryManagementFeedback(error instanceof Error ? error.message : "Memory 一覧の読み込みに失敗したよ。");
-    } finally {
-      setMemoryManagementLoaded(true);
-    }
+  const handleReloadMemoryManagement = () => {
+    void handleReloadMemoryManagementAction({
+      api: getWithMateApi(),
+      usesMemoryManagementWindow,
+      memoryManagementFilters,
+      beginMemoryManagementRequest,
+      isLatestMemoryManagementRequest,
+      setMemoryManagementLoaded,
+      setMemoryManagementSnapshot,
+      setMemoryManagementPages,
+      setMemoryManagementFeedback,
+    });
   };
 
-  const handleLoadMoreMemoryManagement = async (domain: MemoryManagementDomain) => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !usesMemoryManagementWindow || domain === "all") {
-      return;
-    }
-
-    const cursor = getMemoryManagementCursor(memoryManagementPages, domain);
-    if (cursor === null) {
-      return;
-    }
-
-    const requestId = beginMemoryManagementRequest();
-    try {
-      setMemoryManagementLoaded(false);
-      const page = await withmateApi.getMemoryManagementPage({
-        ...buildMemoryManagementPageRequest(memoryManagementFilters, {
-          domain,
-          cursor,
-          limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-        }),
-      });
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementSnapshot((current) => mergeMemoryManagementSnapshots(current, page.snapshot, domain));
-      const normalizedPages = normalizeMemoryManagementPages(page.pages);
-      setMemoryManagementPages((current) => ({
-        ...current,
-        [domain]: normalizedPages[domain],
-      }));
-      setMemoryManagementFeedback("Memory 管理ビューを追加読み込みしたよ。");
-    } catch (error) {
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementFeedback(error instanceof Error ? error.message : "Memory 一覧の追加読み込みに失敗したよ。");
-    } finally {
-      if (isLatestMemoryManagementRequest(requestId)) {
-        setMemoryManagementLoaded(true);
-      }
-    }
+  const handleLoadMoreMemoryManagement = (domain: MemoryManagementDomain) => {
+    void handleLoadMoreMemoryManagementAction({
+      api: getWithMateApi(),
+      usesMemoryManagementWindow,
+      memoryManagementFilters,
+      memoryManagementPages,
+      beginMemoryManagementRequest,
+      isLatestMemoryManagementRequest,
+      setMemoryManagementLoaded,
+      setMemoryManagementSnapshot,
+      setMemoryManagementPages,
+      setMemoryManagementFeedback,
+      domain,
+    });
   };
 
-  const handleChangeMemoryManagementViewFilters = useCallback(async (filters: MemoryManagementViewFilters) => {
-    setMemoryManagementFilters(filters);
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !usesMemoryManagementWindow) {
-      return;
-    }
-
-    const requestId = beginMemoryManagementRequest();
-    try {
-      setMemoryManagementLoaded(false);
-      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(filters, {
-        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-      }));
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementSnapshot(page.snapshot);
-      setMemoryManagementPages(normalizeMemoryManagementPages(page.pages));
-    } catch (error) {
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementFeedback(error instanceof Error ? error.message : "Memory 一覧の読み込みに失敗したよ。");
-    } finally {
-      if (isLatestMemoryManagementRequest(requestId)) {
-        setMemoryManagementLoaded(true);
-      }
-    }
+  const handleChangeMemoryManagementViewFilters = useCallback((filters: MemoryManagementViewFilters) => {
+    void handleChangeMemoryManagementViewFiltersAction({
+      api: getWithMateApi(),
+      usesMemoryManagementWindow,
+      filters,
+      beginMemoryManagementRequest,
+      isLatestMemoryManagementRequest,
+      setMemoryManagementLoaded,
+      setMemoryManagementSnapshot,
+      setMemoryManagementPages,
+      setMemoryManagementFeedback,
+      setMemoryManagementFilters,
+    });
   }, [usesMemoryManagementWindow]);
 
   const handleDeleteSessionMemory = async (sessionId: string) => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !usesMemoryManagementWindow) {
-      return;
-    }
-
-    try {
-      setMemoryManagementBusyTarget(`session:${sessionId}`);
-      await withmateApi.deleteSessionMemory(sessionId);
-      const requestId = beginMemoryManagementRequest();
-      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
-        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-      }));
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementSnapshot(removeSessionMemoryFromSnapshot(page.snapshot, sessionId));
-      setMemoryManagementPages(normalizeMemoryManagementPages(page.pages));
-      setMemoryManagementFeedback("Session Memory を削除したよ。");
-    } catch (error) {
-      setMemoryManagementFeedback(error instanceof Error ? error.message : "Session Memory の削除に失敗したよ。");
-    } finally {
-      setMemoryManagementBusyTarget(null);
-      setMemoryManagementLoaded(true);
-    }
+    await handleDeleteSessionMemoryAction({
+      api: getWithMateApi(),
+      usesMemoryManagementWindow,
+      memoryManagementFilters,
+      memoryManagementPages,
+      beginMemoryManagementRequest,
+      isLatestMemoryManagementRequest,
+      setMemoryManagementLoaded,
+      setMemoryManagementSnapshot,
+      setMemoryManagementPages,
+      setMemoryManagementFeedback,
+      setMemoryManagementBusyTarget,
+      sessionId,
+    });
   };
 
   const handleDeleteProjectMemoryEntry = async (entryId: string) => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !usesMemoryManagementWindow) {
-      return;
-    }
-
-    try {
-      setMemoryManagementBusyTarget(`project:${entryId}`);
-      await withmateApi.deleteProjectMemoryEntry(entryId);
-      const requestId = beginMemoryManagementRequest();
-      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
-        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-      }));
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementSnapshot(removeProjectMemoryEntryFromSnapshot(page.snapshot, entryId));
-      setMemoryManagementPages(normalizeMemoryManagementPages(page.pages));
-      setMemoryManagementFeedback("Project Memory を削除したよ。");
-    } catch (error) {
-      setMemoryManagementFeedback(error instanceof Error ? error.message : "Project Memory の削除に失敗したよ。");
-    } finally {
-      setMemoryManagementBusyTarget(null);
-      setMemoryManagementLoaded(true);
-    }
+    await handleDeleteProjectMemoryEntryAction({
+      api: getWithMateApi(),
+      usesMemoryManagementWindow,
+      memoryManagementFilters,
+      memoryManagementPages,
+      beginMemoryManagementRequest,
+      isLatestMemoryManagementRequest,
+      setMemoryManagementLoaded,
+      setMemoryManagementSnapshot,
+      setMemoryManagementPages,
+      setMemoryManagementFeedback,
+      setMemoryManagementBusyTarget,
+      entryId,
+    });
   };
 
   const handleDeleteCharacterMemoryEntry = async (entryId: string) => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !usesMemoryManagementWindow) {
-      return;
-    }
-
-    try {
-      setMemoryManagementBusyTarget(`character:${entryId}`);
-      await withmateApi.deleteCharacterMemoryEntry(entryId);
-      const requestId = beginMemoryManagementRequest();
-      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
-        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-      }));
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementSnapshot(removeCharacterMemoryEntryFromSnapshot(page.snapshot, entryId));
-      setMemoryManagementPages(normalizeMemoryManagementPages(page.pages));
-      setMemoryManagementFeedback("Character Memory を削除したよ。");
-    } catch (error) {
-      setMemoryManagementFeedback(error instanceof Error ? error.message : "Character Memory の削除に失敗したよ。");
-    } finally {
-      setMemoryManagementBusyTarget(null);
-      setMemoryManagementLoaded(true);
-    }
+    await handleDeleteCharacterMemoryEntryAction({
+      api: getWithMateApi(),
+      usesMemoryManagementWindow,
+      memoryManagementFilters,
+      memoryManagementPages,
+      beginMemoryManagementRequest,
+      isLatestMemoryManagementRequest,
+      setMemoryManagementLoaded,
+      setMemoryManagementSnapshot,
+      setMemoryManagementPages,
+      setMemoryManagementFeedback,
+      setMemoryManagementBusyTarget,
+      entryId,
+    });
   };
 
   const providerSettingRows = useMemo<HomeProviderSettingRow[]>(
@@ -1604,50 +1395,29 @@ export default function HomeApp() {
   };
 
   const handleDeleteMateProfileItem = async (itemId: string) => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !usesMemoryManagementWindow) {
-      return;
-    }
-
-    try {
-      setMemoryManagementBusyTarget(`mate_profile:${itemId}`);
-      await withmateApi.forgetMateProfileItem(itemId);
-      const requestId = beginMemoryManagementRequest();
-      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
-        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-      }));
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementSnapshot(removeMateProfileItemFromSnapshot(page.snapshot, itemId));
-      setMemoryManagementPages(normalizeMemoryManagementPages(page.pages));
-      setMemoryManagementFeedback("Mate Profile Item を忘却したよ。");
-    } catch (error) {
-      setMemoryManagementFeedback(error instanceof Error ? error.message : "Mate Profile Item の忘却に失敗したよ。");
-    } finally {
-      setMemoryManagementBusyTarget(null);
-      setMemoryManagementLoaded(true);
-    }
+    await handleDeleteMateProfileItemAction({
+      api: getWithMateApi(),
+      usesMemoryManagementWindow,
+      memoryManagementFilters,
+      memoryManagementPages,
+      beginMemoryManagementRequest,
+      isLatestMemoryManagementRequest,
+      setMemoryManagementLoaded,
+      setMemoryManagementSnapshot,
+      setMemoryManagementPages,
+      setMemoryManagementFeedback,
+      setMemoryManagementBusyTarget,
+      itemId,
+    });
   };
 
   const handleStartMateEmbeddingDownload = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      setMateEmbeddingFeedback("Mate Embedding API が利用できないよ。");
-      return;
-    }
-
-    setMateEmbeddingBusy(true);
-    setMateEmbeddingFeedback("");
-    try {
-      await withmateApi.startMateEmbeddingDownload();
-      setMateEmbeddingSettings(await withmateApi.getMateEmbeddingSettings());
-      setMateEmbeddingFeedback("モデルの準備を開始したよ。");
-    } catch (error) {
-      setMateEmbeddingFeedback(error instanceof Error ? error.message : "モデルの準備に失敗したよ。");
-    } finally {
-      setMateEmbeddingBusy(false);
-    }
+    await handleStartMateEmbeddingDownloadAction({
+      api: getWithMateApi(),
+      setMateEmbeddingBusy,
+      setMateEmbeddingFeedback,
+      setMateEmbeddingSettings,
+    });
   };
 
   const isMateStateLoading = mateState === null;
@@ -1677,8 +1447,7 @@ export default function HomeApp() {
     mateEmbeddingSettings,
     mateEmbeddingFeedback,
     mateEmbeddingBusy,
-    onChangeMemoryGenerationEnabled: (enabled) =>
-      setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled)),
+    onChangeMemoryGenerationEnabled: handleChangeMemoryGenerationEnabled,
     onChangeMateMemoryGenerationPriorityProvider: handleChangeMateMemoryGenerationPriorityProvider,
     onChangeMateMemoryGenerationPriorityModel: handleChangeMateMemoryGenerationPriorityModel,
     onChangeMateMemoryGenerationPriorityReasoningEffort: handleChangeMateMemoryGenerationPriorityReasoningEffort,
@@ -1686,8 +1455,7 @@ export default function HomeApp() {
     onAddMateMemoryGenerationPriority: handleAddMateMemoryGenerationPriority,
     onRemoveMateMemoryGenerationPriority: handleRemoveMateMemoryGenerationPriority,
     onChangeMateMemoryGenerationTriggerIntervalMinutes: handleChangeMateMemoryGenerationTriggerIntervalMinutes,
-    onChangeAutoCollapseActionDockOnSend: (enabled) =>
-      setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, enabled)),
+    onChangeAutoCollapseActionDockOnSend: handleChangeAutoCollapseActionDockOnSend,
     onChangeProviderEnabled: handleChangeProviderEnabled,
     onChangeProviderInstructionEnabled: handleChangeProviderInstructionEnabled,
     onChangeProviderInstructionWriteMode: handleChangeProviderInstructionWriteMode,
