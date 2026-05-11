@@ -3,16 +3,17 @@ import { useMemo } from "react";
 import AgentSessionWindowApp from "./App.js";
 import CompanionReviewApp from "./CompanionReviewApp.js";
 import { MateTalkWindowApp } from "./chat/MateTalkWindowApp.js";
-import { resolveSessionWindowModeFromSearch } from "./session-window-mode.js";
+import { resolveSessionWindowModeFromSearch, resolveSessionWindowModeTarget } from "./session-window-mode.js";
+
+const sessionWindowApps = {
+  agent: AgentSessionWindowApp,
+  companion: CompanionReviewApp,
+  "mate-talk": MateTalkWindowApp,
+};
 
 export default function SessionWindowApp() {
   const sessionWindowMode = useMemo(() => resolveSessionWindowModeFromSearch(window.location.search), []);
-  if (sessionWindowMode.kind === "companion") {
-    return <CompanionReviewApp />;
-  }
-  if (sessionWindowMode.kind === "mate-talk") {
-    return <MateTalkWindowApp />;
-  }
+  const ModeApp = resolveSessionWindowModeTarget(sessionWindowMode, sessionWindowApps);
 
-  return <AgentSessionWindowApp />;
+  return <ModeApp />;
 }
