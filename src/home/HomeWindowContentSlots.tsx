@@ -5,9 +5,8 @@ import {
   type HomeMateSetupPanelProps,
   HomeMonitorContent,
   type HomeMonitorContentProps,
-  HomeSettingsContent,
-  type HomeSettingsContentProps,
 } from "../home-components.js";
+import { HomeSettingsContent, type HomeSettingsContentProps } from "../settings/SettingsContent.js";
 
 type HomeWindowContentSlotsInput = {
   settingsContent: HomeSettingsContentProps;

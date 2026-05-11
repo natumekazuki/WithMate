@@ -8,8 +8,8 @@ import {
   HomeMateSetupPanel,
   HomeRecentSessionsPanel,
   HomeRightPane,
-  HomeSettingsContent,
 } from "../../src/home-components.js";
+import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { buildHomeProviderSettingRows } from "../../src/settings/settings-view-model.js";

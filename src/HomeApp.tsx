@@ -47,7 +47,7 @@ import {
   buildHomeProviderInstructionTargetUpsertInput,
   type HomeProviderSettingRow,
 } from "./settings/settings-view-model.js";
-import type { HomeSettingsContentProps } from "./home-components.js";
+import type { HomeSettingsContentProps } from "./settings/SettingsContent.js";
 import { HomeAppRouter } from "./home/HomeAppRouter.js";
 import { buildHomeDashboardSlots } from "./home/HomeDashboardSlots.js";
 import { buildHomeWindowContentSlots } from "./home/HomeWindowContentSlots.js";
