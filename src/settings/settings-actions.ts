@@ -3,7 +3,7 @@ import type { ModelCatalogSnapshot } from "../model-catalog.js";
 import {
   buildResetDatabaseConfirmMessage,
   buildResetDatabaseSuccessMessage,
-} from "../settings-ui.js";
+} from "./settings-ui.js";
 import {
   normalizeResetAppDatabaseTargets,
   type ResetAppDatabaseResult,

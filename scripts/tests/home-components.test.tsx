@@ -49,7 +49,7 @@ import {
   SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL,
-} from "../../src/settings-ui.js";
+} from "../../src/settings/settings-ui.js";
 
 describe("HomeSettingsContent", () => {
   const modelCatalog: ModelCatalogSnapshot = {

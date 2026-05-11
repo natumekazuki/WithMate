@@ -1,4 +1,4 @@
-import { describeResetDatabaseTargets } from "../settings-ui.js";
+import { describeResetDatabaseTargets } from "./settings-ui.js";
 import {
   ALL_RESET_APP_DATABASE_TARGETS,
   type ResetAppDatabaseTarget,

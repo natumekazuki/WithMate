@@ -63,7 +63,7 @@ import {
   normalizeMemoryManagementPages,
   type MemoryManagementPageState,
 } from "./memory/memory-management-page-state.js";
-import { buildResetMateConfirmMessage } from "./settings-ui.js";
+import { buildResetMateConfirmMessage } from "./settings/settings-ui.js";
 import {
   buildFallbackProviderInstructionTarget,
   isProviderInstructionFailPolicy,

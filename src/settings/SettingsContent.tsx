@@ -92,7 +92,7 @@ import {
   SETTINGS_DIAGNOSTICS_LABEL,
   SETTINGS_OPEN_LOG_FOLDER_LABEL,
   SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
-} from "../settings-ui.js";
+} from "./settings-ui.js";
 import { formatTimestampLabel } from "../time-state.js";
 
 export type HomeSettingsContentProps = {

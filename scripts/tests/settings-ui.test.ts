@@ -30,7 +30,7 @@ import {
   buildResetMateConfirmMessage,
   buildResetDatabaseConfirmMessage,
   buildResetDatabaseSuccessMessage,
-} from "../../src/settings-ui.js";
+} from "../../src/settings/settings-ui.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS } from "../../src-electron/window-defaults.js";
 import { ALL_RESET_APP_DATABASE_TARGETS } from "../../src/withmate-window-types.js";
 
