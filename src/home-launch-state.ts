@@ -4,8 +4,13 @@ import type { CharacterThemeColors } from "./character-state.js";
 import { DEFAULT_CODEX_SANDBOX_MODE, type CodexSandboxMode } from "./codex-sandbox-mode.js";
 import type { CreateCompanionSessionInput } from "./companion-state.js";
 import { inferWorkspaceFromPath, type LaunchWorkspace } from "./home-launch-projection.js";
-import { DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT, type ModelReasoningEffort } from "./model-catalog.js";
-import type { MateProfile } from "./mate/mate-state.js";
+import {
+  DEFAULT_MODEL_ID,
+  DEFAULT_REASONING_EFFORT,
+  type ModelCatalogProvider,
+  type ModelReasoningEffort,
+} from "./model-catalog.js";
+import type { MateProfile, MateStorageState } from "./mate/mate-state.js";
 
 type LastUsedSessionSelectionSource = Pick<
   SessionSummary,
@@ -112,6 +117,54 @@ export function setLaunchWorkspaceFromPath(draft: HomeLaunchDraft, selectedPath:
     ...draft,
     workspace: inferWorkspaceFromPath(selectedPath),
   };
+}
+
+export function updateLaunchDraftForProviderSelection(
+  draft: HomeLaunchDraft,
+  providerId: string,
+  enabledLaunchProviders: readonly ModelCatalogProvider[],
+): HomeLaunchDraft {
+  const provider = enabledLaunchProviders.find((candidate) => candidate.id === providerId) ?? null;
+  const model =
+    provider?.models.find((candidate) => candidate.id === provider.defaultModelId) ??
+    provider?.models[0] ??
+    null;
+
+  return {
+    ...draft,
+    providerId,
+    model: model?.id ?? draft.model,
+    reasoningEffort: model?.reasoningEfforts[0] ?? provider?.defaultReasoningEffort ?? draft.reasoningEffort,
+  };
+}
+
+export function resolveLaunchValidationMessage({
+  draft,
+  mateState,
+  mateProfile,
+  selectedProviderId,
+}: {
+  draft: HomeLaunchDraft;
+  mateState: MateStorageState | null;
+  mateProfile: MateProfile | null;
+  selectedProviderId: string | null;
+}): string {
+  if (mateState === "not_created") {
+    return "Mate を作成してから開始してね。";
+  }
+  if (!draft.title.trim()) {
+    return "タイトルを入力してね。";
+  }
+  if (!draft.workspace) {
+    return "workspace を選んでね。";
+  }
+  if (!mateProfile) {
+    return "Mate を確認してから開始してね。";
+  }
+  if (!selectedProviderId) {
+    return "有効な Coding Provider を選んでね。";
+  }
+  return "";
 }
 
 export function resolveLastUsedSessionSelection(

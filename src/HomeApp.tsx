@@ -32,7 +32,9 @@ import {
   createClosedLaunchDraft,
   openLaunchDraft,
   resolveLastUsedSessionSelection,
+  resolveLaunchValidationMessage,
   setLaunchWorkspaceFromPath,
+  updateLaunchDraftForProviderSelection,
   type HomeLaunchDraft,
 } from "./home-launch-state.js";
 import { createCompanionSessionSummary, type CompanionSessionSummary } from "./companion-state.js";
@@ -664,17 +666,7 @@ export default function HomeApp() {
 
   const handleSelectLaunchProvider = (providerId: string) => {
     setLaunchFeedback("");
-    const provider = enabledLaunchProviders.find((candidate) => candidate.id === providerId) ?? null;
-    const model =
-      provider?.models.find((candidate) => candidate.id === provider.defaultModelId) ??
-      provider?.models[0] ??
-      null;
-    setLaunchDraft((current) => ({
-      ...current,
-      providerId,
-      model: model?.id ?? current.model,
-      reasoningEffort: model?.reasoningEfforts[0] ?? provider?.defaultReasoningEffort ?? current.reasoningEffort,
-    }));
+    setLaunchDraft((current) => updateLaunchDraftForProviderSelection(current, providerId, enabledLaunchProviders));
   };
 
   const handleSaveMate = async () => {
@@ -823,31 +815,17 @@ export default function HomeApp() {
     setMateProfileEditorOpen(true);
   };
 
-  const resolveLaunchValidationMessage = () => {
-    if (mateState === "not_created") {
-      return "Mate を作成してから開始してね。";
-    }
-    if (!launchDraft.title.trim()) {
-      return "タイトルを入力してね。";
-    }
-    if (!launchDraft.workspace) {
-      return "workspace を選んでね。";
-    }
-    if (!mateProfile) {
-      return "Mate を確認してから開始してね。";
-    }
-    if (!selectedLaunchProvider) {
-      return "有効な Coding Provider を選んでね。";
-    }
-    return "";
-  };
-
   const handleStartSession = async (requestedMode: HomeLaunchDraft["mode"] = launchDraft.mode) => {
     if (launchStarting) {
       return;
     }
 
-    const validationMessage = resolveLaunchValidationMessage();
+    const validationMessage = resolveLaunchValidationMessage({
+      draft: launchDraft,
+      mateState,
+      mateProfile,
+      selectedProviderId: selectedLaunchProvider?.id ?? null,
+    });
     if (validationMessage) {
       setLaunchFeedback(validationMessage);
       return;

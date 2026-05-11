@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src/codex-sandbox-mode.js";
-import { DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../../src/model-catalog.js";
+import { DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT, type ModelCatalogProvider } from "../../src/model-catalog.js";
 import type { SessionSummary } from "../../src/app-state.js";
 import {
   buildCreateCompanionSessionInputFromLaunchDraft,
@@ -12,15 +12,18 @@ import {
   createClosedLaunchDraft,
   openLaunchDraft,
   resolveLastUsedSessionSelection,
+  resolveLaunchValidationMessage,
   setLaunchWorkspaceFromPath,
+  updateLaunchDraftForProviderSelection,
 } from "../../src/home-launch-state.js";
 import type { MateProfile } from "../../src/mate/mate-state.js";
 
 function createMateProfile(partial: Partial<MateProfile> & Pick<MateProfile, "id" | "displayName">): MateProfile {
+  const { id, displayName, ...rest } = partial;
   return {
-    id: "mate-1",
+    id,
     state: "active",
-    displayName: "Default Mate",
+    displayName,
     description: "",
     themeMain: "#000000",
     themeSub: "#ffffff",
@@ -33,7 +36,7 @@ function createMateProfile(partial: Partial<MateProfile> & Pick<MateProfile, "id
     updatedAt: "",
     deletedAt: null,
     sections: [],
-    ...partial,
+    ...rest,
   };
 }
 
@@ -85,9 +88,113 @@ describe("home-launch-state", () => {
     });
   });
 
+  it("provider 選択時に launch draft の provider/model/reasoningEffort を更新する", () => {
+    const providers: ModelCatalogProvider[] = [
+      {
+        id: "codex",
+        label: "Codex",
+        defaultModelId: "gpt-5.4-mini",
+        defaultReasoningEffort: "medium",
+        models: [
+          {
+            id: "gpt-5.4-mini",
+            label: "GPT 5.4 mini",
+            reasoningEfforts: ["low", "medium"],
+          },
+        ],
+      },
+    ];
+    const draft = updateLaunchDraftForProviderSelection(createClosedLaunchDraft(), "codex", providers);
+
+    assert.equal(draft.providerId, "codex");
+    assert.equal(draft.model, "gpt-5.4-mini");
+    assert.equal(draft.reasoningEffort, "low");
+  });
+
+  it("存在しない provider 選択時は providerId だけ更新して model/reasoningEffort を維持する", () => {
+    const current = {
+      ...createClosedLaunchDraft(),
+      providerId: "codex",
+      model: "gpt-5.4-mini",
+      reasoningEffort: "medium" as const,
+    };
+    const draft = updateLaunchDraftForProviderSelection(current, "missing", []);
+
+    assert.equal(draft.providerId, "missing");
+    assert.equal(draft.model, "gpt-5.4-mini");
+    assert.equal(draft.reasoningEffort, "medium");
+  });
+
+  it("launch validation message は既存の優先順位で返す", () => {
+    const baseDraft = {
+      ...createClosedLaunchDraft(),
+      open: true,
+      title: "task",
+      workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
+      providerId: "codex",
+    };
+    const mateProfile = createMateProfile({ id: "mate-a", displayName: "Mia" });
+
+    assert.equal(
+      resolveLaunchValidationMessage({
+        draft: { ...baseDraft, title: "" },
+        mateState: "not_created",
+        mateProfile: null,
+        selectedProviderId: null,
+      }),
+      "Mate を作成してから開始してね。",
+    );
+    assert.equal(
+      resolveLaunchValidationMessage({
+        draft: { ...baseDraft, title: "  " },
+        mateState: "active",
+        mateProfile,
+        selectedProviderId: "codex",
+      }),
+      "タイトルを入力してね。",
+    );
+    assert.equal(
+      resolveLaunchValidationMessage({
+        draft: { ...baseDraft, workspace: null },
+        mateState: "active",
+        mateProfile,
+        selectedProviderId: "codex",
+      }),
+      "workspace を選んでね。",
+    );
+    assert.equal(
+      resolveLaunchValidationMessage({
+        draft: baseDraft,
+        mateState: "active",
+        mateProfile: null,
+        selectedProviderId: "codex",
+      }),
+      "Mate を確認してから開始してね。",
+    );
+    assert.equal(
+      resolveLaunchValidationMessage({
+        draft: baseDraft,
+        mateState: "active",
+        mateProfile,
+        selectedProviderId: null,
+      }),
+      "有効な Coding Provider を選んでね。",
+    );
+    assert.equal(
+      resolveLaunchValidationMessage({
+        draft: baseDraft,
+        mateState: "active",
+        mateProfile,
+        selectedProviderId: "codex",
+      }),
+      "",
+    );
+  });
+
   it("launch draft から session input を組み立てる", () => {
     const input = buildCreateSessionInputFromLaunchDraft({
       draft: {
+        ...createClosedLaunchDraft(),
         open: true,
         title: "  task  ",
         workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
