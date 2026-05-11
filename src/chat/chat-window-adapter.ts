@@ -100,6 +100,43 @@ type StaticChatCompactActionDockProps = Pick<
 > &
   Partial<Omit<ChatCompactActionDockProps, "draft" | "isRunning" | "isSendDisabled" | "onSendOrCancel">>;
 
+type StaticTextConversationMessageColumnProps = {
+  sessionId: string;
+  characterId: string;
+  characterName: string;
+  messages: ChatRoleMessage[];
+  messageListRef: ChatMessageColumnProps["messageListRef"];
+  isRunning: boolean;
+  pendingRunIndicatorAnnouncement: string;
+  pendingRunIndicatorText: string;
+} & Partial<Omit<IdleChatMessageColumnProps, "sessionId" | "character" | "messages" | "messageListRef" | "isRunning">>;
+
+type HiddenControlsTextChatComposerProps = Pick<
+  ChatComposerProps,
+  | "draft"
+  | "placeholder"
+  | "composerTextareaRef"
+  | "modelOptions"
+  | "selectedModel"
+  | "selectedModelFallbackLabel"
+  | "reasoningOptions"
+  | "selectedReasoningEffort"
+  | "onDraftChange"
+  | "onDraftKeyDown"
+  | "onSendOrCancel"
+  | "onChangeModel"
+  | "onChangeReasoningEffort"
+> & {
+  isRunning: boolean;
+  feedback: string;
+  sendButtonTitleWhenEnabled?: string;
+};
+
+type StaticTextChatCompactActionDockProps = Pick<ChatCompactActionDockProps, "draft" | "onSendOrCancel"> & {
+  isRunning: boolean;
+  emptyPreview?: string;
+};
+
 export function createStaticChatHeaderProps({
   taskTitle,
   titleDraft = taskTitle,
@@ -181,6 +218,29 @@ export function createIdleChatMessageColumnProps(props: IdleChatMessageColumnPro
   };
 }
 
+export function createStaticTextConversationMessageColumnProps({
+  sessionId,
+  characterId,
+  characterName,
+  messages,
+  messageListRef,
+  isRunning,
+  pendingRunIndicatorAnnouncement,
+  pendingRunIndicatorText,
+  ...props
+}: StaticTextConversationMessageColumnProps): ChatMessageColumnProps {
+  return createIdleChatMessageColumnProps({
+    sessionId,
+    character: createStaticChatCharacterProfile({ id: characterId, name: characterName }),
+    messages: toConversationMessages(messages),
+    messageListRef,
+    isRunning,
+    pendingRunIndicatorAnnouncement,
+    pendingRunIndicatorText,
+    ...props,
+  });
+}
+
 export function createHiddenControlsChatComposerProps(props: HiddenControlsChatComposerProps): ChatComposerProps {
   return {
     retryBanner: null,
@@ -238,6 +298,26 @@ export function createHiddenControlsChatComposerProps(props: HiddenControlsChatC
   };
 }
 
+export function createHiddenControlsTextChatComposerProps({
+  draft,
+  isRunning,
+  feedback,
+  sendButtonTitleWhenEnabled,
+  ...props
+}: HiddenControlsTextChatComposerProps): ChatComposerProps {
+  const isSendDisabled = isStaticChatSendDisabled({ draft, isRunning });
+
+  return createHiddenControlsChatComposerProps({
+    composerBlocked: isRunning,
+    draft,
+    isComposerDisabled: isRunning,
+    isSendDisabled,
+    composerSendability: createStaticChatComposerSendability(feedback),
+    sendButtonTitle: isSendDisabled ? undefined : sendButtonTitleWhenEnabled,
+    ...props,
+  });
+}
+
 export function isStaticChatSendDisabled({ draft, isRunning }: { draft: string; isRunning: boolean }): boolean {
   return isRunning || draft.trim() === "";
 }
@@ -264,6 +344,21 @@ export function createStaticChatCompactActionDockProps(
     onJumpToBottom: chatWindowNoop,
     ...props,
   };
+}
+
+export function createStaticTextChatCompactActionDockProps({
+  draft,
+  isRunning,
+  emptyPreview = "下書きなし",
+  onSendOrCancel,
+}: StaticTextChatCompactActionDockProps): ChatCompactActionDockProps {
+  return createStaticChatCompactActionDockProps({
+    draft,
+    actionDockCompactPreview: draft.trim() || emptyPreview,
+    isRunning,
+    isSendDisabled: isStaticChatSendDisabled({ draft, isRunning }),
+    onSendOrCancel,
+  });
 }
 
 export function buildChatPageClassName({

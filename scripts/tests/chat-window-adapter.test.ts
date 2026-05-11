@@ -7,9 +7,12 @@ import {
   createStaticChatCharacterProfile,
   createStaticChatComposerSendability,
   createHiddenControlsChatComposerProps,
+  createHiddenControlsTextChatComposerProps,
   createIdleChatMessageColumnProps,
   createStaticChatCompactActionDockProps,
   createStaticChatHeaderProps,
+  createStaticTextChatCompactActionDockProps,
+  createStaticTextConversationMessageColumnProps,
   isStaticChatSendDisabled,
   toConversationMessages,
 } from "../../src/chat/chat-window-adapter.js";
@@ -74,6 +77,34 @@ test("createIdleChatMessageColumnProps は approval や diff のない message c
   assert.equal(messageColumnProps.liveRunErrorMessage, "");
   assert.equal(messageColumnProps.isMessageListFollowing, true);
   assert.equal(messageColumnProps.getChangedFilesEmptyText("artifact-1", false), "");
+});
+
+test("createStaticTextConversationMessageColumnProps は text conversation を共通 message column に変換する", () => {
+  const messageListRef = React.createRef<HTMLDivElement>();
+  const messageColumnProps = createStaticTextConversationMessageColumnProps({
+    sessionId: "mate-talk",
+    characterId: "mate",
+    characterName: "Mate",
+    messages: [
+      { role: "user", text: "おはよう" },
+      { role: "mate", text: "やあ" },
+    ],
+    messageListRef,
+    isRunning: true,
+    pendingRunIndicatorAnnouncement: "返信待ち",
+    pendingRunIndicatorText: "返信準備中",
+  });
+
+  assert.equal(messageColumnProps.sessionId, "mate-talk");
+  assert.equal(messageColumnProps.character.id, "mate");
+  assert.equal(messageColumnProps.character.name, "Mate");
+  assert.deepEqual(messageColumnProps.messages, [
+    { role: "user", text: "おはよう" },
+    { role: "assistant", text: "やあ" },
+  ]);
+  assert.equal(messageColumnProps.pendingRunIndicatorAnnouncement, "返信待ち");
+  assert.equal(messageColumnProps.pendingRunIndicatorText, "返信準備中");
+  assert.equal(messageColumnProps.isRunning, true);
 });
 
 test("createStaticChatCharacterProfile は静的 chat 用 CharacterProfile 既定値を補う", () => {
@@ -146,6 +177,40 @@ test("createHiddenControlsChatComposerProps は composer の非対応操作を�
   assert.equal(composerProps.selectedCustomAgentLabel, "Agent");
 });
 
+test("createHiddenControlsTextChatComposerProps は text chat 用の送信可否と feedback を補う", () => {
+  const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
+  const composerProps = createHiddenControlsTextChatComposerProps({
+    draft: "おはよう",
+    placeholder: "今日はどうする？",
+    composerTextareaRef,
+    isRunning: false,
+    feedback: "準備できています",
+    sendButtonTitleWhenEnabled: "メッセージを送信",
+    modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+    selectedModel: "gpt-test",
+    selectedModelFallbackLabel: "GPT Test",
+    reasoningOptions: [{ value: "low", label: "low" }],
+    selectedReasoningEffort: "low",
+    onDraftChange: noop,
+    onDraftKeyDown: noop,
+    onSendOrCancel: noop,
+    onChangeModel: noop,
+    onChangeReasoningEffort: noop,
+  });
+
+  assert.equal(composerProps.composerBlocked, false);
+  assert.equal(composerProps.isComposerDisabled, false);
+  assert.equal(composerProps.isSendDisabled, false);
+  assert.equal(composerProps.placeholder, "今日はどうする？");
+  assert.equal(composerProps.sendButtonTitle, "メッセージを送信");
+  assert.deepEqual(composerProps.composerSendability, {
+    primaryFeedback: "準備できています",
+    secondaryFeedback: [],
+    feedbackTone: "helper",
+    shouldShowFeedback: true,
+  });
+});
+
 test("static chat sendability helper は running と空白 draft を送信不可にする", () => {
   assert.equal(isStaticChatSendDisabled({ draft: "こんにちは", isRunning: false }), false);
   assert.equal(isStaticChatSendDisabled({ draft: "   ", isRunning: false }), true);
@@ -176,4 +241,16 @@ test("createStaticChatCompactActionDockProps は静的 compact dock の既定値
   assert.equal(compactProps.actionDockCompactPreview, "下書きなし");
   assert.equal(compactProps.attachmentCount, 0);
   assert.equal(compactProps.showJumpToBottom, false);
+});
+
+test("createStaticTextChatCompactActionDockProps は text chat 用の compact dock を補う", () => {
+  const compactProps = createStaticTextChatCompactActionDockProps({
+    draft: "  ",
+    isRunning: false,
+    onSendOrCancel: noop,
+  });
+
+  assert.equal(compactProps.actionDockCompactPreview, "下書きなし");
+  assert.equal(compactProps.isSendDisabled, true);
+  assert.equal(compactProps.isRunning, false);
 });
