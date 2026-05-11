@@ -34,7 +34,7 @@ test("resolveChatWindowModeTarget は mode kind に対応する target を解決
   const targets = {
     agent: "AgentSessionWindowApp",
     companion: "CompanionReviewApp",
-    "mate-talk": "MateTalkWindowApp",
+    "mate-talk": "MateTalkChatModeApp",
   };
 
   assert.equal(
@@ -45,5 +45,5 @@ test("resolveChatWindowModeTarget は mode kind に対応する target を解決
     resolveChatWindowModeTarget({ kind: "companion", companionSessionId: "companion-1" }, targets),
     "CompanionReviewApp",
   );
-  assert.equal(resolveChatWindowModeTarget({ kind: "mate-talk" }, targets), "MateTalkWindowApp");
+  assert.equal(resolveChatWindowModeTarget({ kind: "mate-talk" }, targets), "MateTalkChatModeApp");
 });

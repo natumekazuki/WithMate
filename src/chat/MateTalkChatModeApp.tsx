@@ -4,7 +4,7 @@ import { ChatWindow, ChatWindowStatusScreen } from "./chat-window.js";
 import { buildMateTalkChatWindowProps } from "./mate-talk-chat-projection.js";
 import { useMateTalkWindowState } from "./use-mate-talk-window-state.js";
 
-export function MateTalkWindowApp() {
+export function MateTalkChatModeApp() {
   const withmateApi = getWithMateApi();
   const desktopRuntime = isDesktopRuntime();
   const state = useMateTalkWindowState({ withmateApi });
