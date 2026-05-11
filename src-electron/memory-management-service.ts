@@ -10,8 +10,8 @@ import {
   type MemoryManagementPageRequest,
   type MemoryManagementPageResult,
   type MemoryManagementSnapshot,
-} from "../src/memory-management-state.js";
-import type { CharacterMemoryEntry, CharacterScope, ProjectMemoryEntry, ProjectScope, SessionMemory } from "../src/memory-state.js";
+} from "../src/memory/memory-management-state.js";
+import type { CharacterMemoryEntry, CharacterScope, ProjectMemoryEntry, ProjectScope, SessionMemory } from "../src/memory/memory-state.js";
 
 const DEFAULT_MEMORY_MANAGEMENT_PAGE_LIMIT = 50;
 const MAX_MEMORY_MANAGEMENT_PAGE_LIMIT = 200;

@@ -16,7 +16,7 @@ import {
   type CharacterMemoryEntry,
   type CharacterReflectionOutput,
   type SessionMemory,
-} from "../src/memory-state.js";
+} from "../src/memory/memory-state.js";
 import type { ModelReasoningEffort } from "../src/model-catalog.js";
 
 export type CharacterReflectionTriggerReason = "session-start" | "context-growth";

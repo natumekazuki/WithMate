@@ -4,8 +4,8 @@ import { describe, it } from "node:test";
 import {
   buildFilteredMemoryManagementSnapshot,
   DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
-} from "../../src/memory-management-view.js";
-import type { MemoryManagementSnapshot } from "../../src/memory-management-state.js";
+} from "../../src/memory/memory-management-view.js";
+import type { MemoryManagementSnapshot } from "../../src/memory/memory-management-state.js";
 
 function createSnapshot(): MemoryManagementSnapshot {
   return {

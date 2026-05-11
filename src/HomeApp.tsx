@@ -11,7 +11,7 @@ import { type ModelCatalogSnapshot } from "./model-catalog.js";
 import {
   DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
   type MemoryManagementViewFilters,
-} from "./memory-management-view.js";
+} from "./memory/memory-management-view.js";
 import {
   buildMemoryManagementPageRequest,
   mergeMemoryManagementSnapshots,
@@ -21,7 +21,7 @@ import {
   removeSessionMemoryFromSnapshot,
   type MemoryManagementDomain,
   type MemoryManagementSnapshot,
-} from "./memory-management-state.js";
+} from "./memory/memory-management-state.js";
 import {
   buildHomeLaunchProjection,
 } from "./home-launch-projection.js";

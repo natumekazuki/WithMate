@@ -6,7 +6,7 @@ import {
   type Session,
   type SessionMemory,
 } from "../src/app-state.js";
-import type { ManagedSessionMemoryItem, MemoryManagementPageRequest } from "../src/memory-management-state.js";
+import type { ManagedSessionMemoryItem, MemoryManagementPageRequest } from "../src/memory/memory-management-state.js";
 import { CREATE_SESSION_MEMORIES_TABLE_SQL } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 

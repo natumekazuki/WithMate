@@ -1,4 +1,4 @@
-import { currentIsoTimestamp } from "./time-state.js";
+import { currentIsoTimestamp } from "../time-state.js";
 
 export type SessionBackgroundActivityKind = "memory-generation" | "character-memory-generation" | "monologue";
 

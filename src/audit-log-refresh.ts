@@ -3,7 +3,7 @@ import type {
   LiveSessionRunState,
 } from "./app-state.js";
 import { buildLiveRunAuditOperations } from "./live-run-audit-operations.js";
-import type { SessionBackgroundActivityState } from "./memory-state.js";
+import type { SessionBackgroundActivityState } from "./memory/memory-state.js";
 import type { Session } from "./session-state.js";
 
 type AuditLogRefreshActivity = Pick<SessionBackgroundActivityState, "kind" | "status" | "updatedAt"> | null | undefined;

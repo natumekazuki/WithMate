@@ -40,7 +40,7 @@ import type {
   MemoryManagementPageRequest,
   MemoryManagementPageResult,
   MemoryManagementSnapshot,
-} from "./memory-management-state.js";
+} from "./memory/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
 import type { MateGrowthApplyResult } from "./mate-growth-apply-result.js";
 import type {

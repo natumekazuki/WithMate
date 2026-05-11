@@ -10,7 +10,7 @@ import {
   removeProjectMemoryEntryFromSnapshot,
   removeSessionMemoryFromSnapshot,
   type MemoryManagementSnapshot,
-} from "../../src/memory-management-state.js";
+} from "../../src/memory/memory-management-state.js";
 
 function createSnapshot(): MemoryManagementSnapshot {
   return {

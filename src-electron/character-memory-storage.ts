@@ -6,9 +6,9 @@ import {
   cloneCharacterScopes,
   normalizeCharacterMemoryEntry,
   normalizeCharacterScope,
-} from "../src/memory-state.js";
-import type { ManagedCharacterMemoryGroup, MemoryManagementPageRequest } from "../src/memory-management-state.js";
-import type { CharacterMemoryEntry, CharacterScope } from "../src/memory-state.js";
+} from "../src/memory/memory-state.js";
+import type { ManagedCharacterMemoryGroup, MemoryManagementPageRequest } from "../src/memory/memory-management-state.js";
+import type { CharacterMemoryEntry, CharacterScope } from "../src/memory/memory-state.js";
 import { CREATE_CHARACTER_MEMORY_TABLES_SQL } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 

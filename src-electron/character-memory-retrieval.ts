@@ -1,5 +1,5 @@
 import type { Session } from "../src/app-state.js";
-import type { CharacterMemoryEntry } from "../src/memory-state.js";
+import type { CharacterMemoryEntry } from "../src/memory/memory-state.js";
 import { computeMemoryTimeDecayScore } from "./memory-time-decay.js";
 
 type RetrievedCharacterMemory = {

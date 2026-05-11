@@ -142,7 +142,7 @@ export {
   normalizeProjectScope,
   normalizeSessionMemory,
   normalizeSessionMemoryDelta,
-} from "./memory-state.js";
+} from "./memory/memory-state.js";
 export type {
   CharacterMemoryCategory,
   CharacterMemoryDelta,
@@ -161,7 +161,7 @@ export type {
   SessionBackgroundActivityStatus,
   SessionMemory,
   SessionMemoryDelta,
-} from "./memory-state.js";
+} from "./memory/memory-state.js";
 export {
   currentIsoTimestamp,
   currentTimestampLabel,

@@ -52,7 +52,7 @@ import type {
   MemoryManagementPageRequest,
   MemoryManagementPageResult,
   MemoryManagementSnapshot,
-} from "../src/memory-management-state.js";
+} from "../src/memory/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type {
   ProviderInstructionTarget,

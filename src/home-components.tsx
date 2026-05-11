@@ -20,7 +20,7 @@ import type {
   MemoryManagementDomain,
   MemoryManagementDomainPageInfo,
   MemoryManagementSnapshot,
-} from "./memory-management-state.js";
+} from "./memory/memory-management-state.js";
 import {
   buildFilteredMemoryManagementSnapshot,
   DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
@@ -30,7 +30,7 @@ import {
   type MemoryManagementViewFilters,
   type ProjectMemoryCategoryFilter,
   type SessionMemoryStatusFilter,
-} from "./memory-management-view.js";
+} from "./memory/memory-management-view.js";
 import type { HomeProviderSettingRow } from "./settings/settings-view-model.js";
 import type { LaunchWorkspace } from "./home-launch-projection.js";
 import { getHomeCompanionSessionState, type HomeMonitorEntry, type HomeSessionState } from "./home-session-projection.js";

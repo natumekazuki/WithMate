@@ -16,7 +16,7 @@ import type {
   ManagedProjectMemoryGroup,
   ManagedSessionMemoryItem,
   MemoryManagementPageRequest,
-} from "../src/memory-management-state.js";
+} from "../src/memory/memory-management-state.js";
 import type { ResolvedProjectScopeInput } from "./project-scope.js";
 
 function currentIsoTimestamp(): string {

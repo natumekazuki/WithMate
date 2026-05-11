@@ -5,7 +5,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import { buildNewSession } from "../../src/app-state.js";
-import { createDefaultSessionMemory, mergeSessionMemory } from "../../src/memory-state.js";
+import { createDefaultSessionMemory, mergeSessionMemory } from "../../src/memory/memory-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import { SessionMemoryStorage } from "../../src-electron/session-memory-storage.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";

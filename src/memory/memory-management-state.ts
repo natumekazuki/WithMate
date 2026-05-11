@@ -1,6 +1,6 @@
 import type { CharacterMemoryEntry, CharacterScope, ProjectMemoryEntry, ProjectScope, SessionMemory } from "./memory-state.js";
 import type { CharacterMemoryCategory, ProjectMemoryCategory } from "./memory-state.js";
-import type { Session } from "./session-state.js";
+import type { Session } from "../session-state.js";
 
 export type ManagedSessionMemoryItem = {
   sessionId: string;

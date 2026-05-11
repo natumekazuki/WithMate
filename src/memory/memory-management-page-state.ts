@@ -2,7 +2,7 @@ import type {
   MemoryManagementDomain,
   MemoryManagementDomainPageInfo,
   MemoryManagementPageResult,
-} from "../memory-management-state.js";
+} from "./memory-management-state.js";
 
 export type MemoryManagementPageState = {
   session: MemoryManagementDomainPageInfo;
