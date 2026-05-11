@@ -1,17 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { buildHomeLaunchProjection } from "../home/home-launch-projection.js";
 import {
   createDefaultAppSettings,
   type AppSettings,
 } from "../provider-settings-state.js";
 import { getWithMateApi, isDesktopRuntime } from "../renderer-withmate-api.js";
-import type { ModelCatalogProvider, ModelCatalogSnapshot, ModelReasoningEffort } from "../model-catalog.js";
+import type { ModelCatalogSnapshot, ModelReasoningEffort } from "../model-catalog.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import { buildCharacterThemeStyle } from "../theme-utils.js";
-import { modelDisplayLabel, modelOptionLabel } from "../ui-utils.js";
+import { modelDisplayLabel } from "../ui-utils.js";
 import { ChatWindow } from "./chat-window.js";
 import { buildMateTalkChatWindowProps, type MateTalkMessage } from "./mate-talk-chat-projection.js";
+import {
+  buildMateTalkModelSelection,
+  isMateTalkReasoningEffortAllowed,
+  resolveMateTalkModelChange,
+} from "./mate-talk-model-selection.js";
 import { MateTalkTurnController } from "./mate-talk-state.js";
 
 function MateTalkStatusScreen({ message }: { message: string }) {
@@ -87,31 +91,19 @@ export function MateTalkWindowApp() {
     };
   }, [withmateApi]);
 
-  const enabledProviders = useMemo(() => buildHomeLaunchProjection({
-    launchProviderId: providerId,
-    launchTitle: "メイトーク",
-    launchWorkspace: null,
+  const modelSelection = useMemo(() => buildMateTalkModelSelection({
     appSettings,
     modelCatalog,
-  }).enabledLaunchProviders, [appSettings, modelCatalog, providerId]);
-
-  const defaultPriority = appSettings.mateMemoryGenerationSettings.priorityList[0] ?? null;
-  const providerCatalog = useMemo<ModelCatalogProvider | null>(() => {
-    return enabledProviders.find((provider) => provider.id === providerId) ?? enabledProviders[0] ?? null;
-  }, [enabledProviders, providerId]);
-  const selectedModel =
-    providerCatalog?.models.find((candidate) => candidate.id === model) ??
-    providerCatalog?.models.find((candidate) => candidate.id === providerCatalog.defaultModelId) ??
-    providerCatalog?.models[0] ??
-    null;
-  const modelOptions = useMemo(
-    () => providerCatalog?.models.map((candidate) => ({ value: candidate.id, label: modelOptionLabel(candidate) })) ?? [],
-    [providerCatalog],
-  );
-  const reasoningOptions = useMemo(
-    () => selectedModel?.reasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? [],
-    [selectedModel],
-  );
+    providerId,
+    model,
+    reasoningEffort,
+  }), [appSettings, modelCatalog, model, providerId, reasoningEffort]);
+  const {
+    providerCatalog,
+    selectedModel,
+    modelOptions,
+    reasoningOptions,
+  } = modelSelection;
   const themeStyle = useMemo(
     () => buildCharacterThemeStyle(
       mateProfile
@@ -125,37 +117,16 @@ export function MateTalkWindowApp() {
   );
 
   useEffect(() => {
-    const preferredProviderId =
-      enabledProviders.find((provider) => provider.id === defaultPriority?.provider)?.id ??
-      enabledProviders[0]?.id ??
-      "";
-    const nextProviderCatalog = enabledProviders.find((provider) => provider.id === (providerId || preferredProviderId)) ??
-      enabledProviders[0] ??
-      null;
-    const nextProviderId = nextProviderCatalog?.id ?? "";
-    const preferredModelId = nextProviderId === defaultPriority?.provider ? defaultPriority.model : "";
-    const nextModel =
-      nextProviderCatalog?.models.find((candidate) => candidate.id === model) ??
-      nextProviderCatalog?.models.find((candidate) => candidate.id === preferredModelId) ??
-      nextProviderCatalog?.models.find((candidate) => candidate.id === nextProviderCatalog.defaultModelId) ??
-      nextProviderCatalog?.models[0] ??
-      null;
-    const nextReasoningEffort =
-      nextProviderId === defaultPriority?.provider && nextModel?.reasoningEfforts.includes(defaultPriority.reasoningEffort)
-        ? defaultPriority.reasoningEffort
-        : nextProviderCatalog?.defaultReasoningEffort ??
-          (nextModel?.reasoningEfforts.includes(reasoningEffort) ? reasoningEffort : nextModel?.reasoningEfforts[0] ?? "low");
-
-    if (providerId !== nextProviderId) {
-      setProviderId(nextProviderId);
+    if (providerId !== modelSelection.providerId) {
+      setProviderId(modelSelection.providerId);
     }
-    if (model !== (nextModel?.id ?? "")) {
-      setModel(nextModel?.id ?? "");
+    if (model !== modelSelection.model) {
+      setModel(modelSelection.model);
     }
-    if (reasoningEffort !== nextReasoningEffort) {
-      setReasoningEffort(nextReasoningEffort);
+    if (reasoningEffort !== modelSelection.reasoningEffort) {
+      setReasoningEffort(modelSelection.reasoningEffort);
     }
-  }, [defaultPriority, enabledProviders, model, providerId, reasoningEffort]);
+  }, [model, modelSelection, providerId, reasoningEffort]);
 
   const handleSubmit = async () => {
     const normalizedText = input.trim();
@@ -251,17 +222,17 @@ export function MateTalkWindowApp() {
           setFeedback("");
         },
         onChangeModel: (nextModel) => {
-          const nextModelCatalog = providerCatalog?.models.find((candidate) => candidate.id === nextModel) ?? null;
-          setModel(nextModel);
-          setReasoningEffort((current) =>
-            nextModelCatalog?.reasoningEfforts.includes(current)
-              ? current
-              : nextModelCatalog?.reasoningEfforts[0] ?? providerCatalog?.defaultReasoningEffort ?? current,
-          );
+          const nextSelection = resolveMateTalkModelChange({
+            providerCatalog,
+            model: nextModel,
+            reasoningEffort,
+          });
+          setModel(nextSelection.model);
+          setReasoningEffort(nextSelection.reasoningEffort);
         },
         onChangeReasoningEffort: (nextReasoningEffort) => {
-          if (selectedModel?.reasoningEfforts.includes(nextReasoningEffort as ModelReasoningEffort)) {
-            setReasoningEffort(nextReasoningEffort as ModelReasoningEffort);
+          if (isMateTalkReasoningEffortAllowed(selectedModel, nextReasoningEffort)) {
+            setReasoningEffort(nextReasoningEffort);
           }
         },
         onSubmit: () => void handleSubmit(),

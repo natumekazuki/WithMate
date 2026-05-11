@@ -17,6 +17,12 @@ test("resolveSessionWindowModeFromSearch は companion session を優先して�
   });
 });
 
+test("resolveSessionWindowModeFromSearch は mate-talk window を優先して解決する", () => {
+  assert.deepEqual(resolveSessionWindowModeFromSearch("?sessionId=session-1&companionSessionId=companion-1&mode=mate-talk"), {
+    kind: "mate-talk",
+  });
+});
+
 test("resolveSessionWindowModeFromSearch は sessionId がない通常 window を許容する", () => {
   assert.deepEqual(resolveSessionWindowModeFromSearch(""), {
     kind: "agent",
