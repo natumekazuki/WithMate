@@ -37,7 +37,7 @@ function renderPanel(options?: {
         onChangeModel() {},
         onChangeReasoningEffort() {},
         onSubmit() {},
-        onClose() {},
+        onOpenHome() {},
         onToggleHeaderExpanded() {},
       }),
     ),
@@ -54,7 +54,7 @@ test("MateTalk は ChatWindow で Session 共通レイアウトの通常状態�
   assert.match(html, /<aside class="session-context-pane session-context-pane-header-expanded"/);
   assert.match(html, /<header class="session-window-bar session-top-bar rise-1">/);
   assert.match(html, /<span class="session-window-title session-title-accent">メイトーク<\/span>/);
-  assert.match(html, /<button class="drawer-toggle compact secondary" type="button">閉じる<\/button>/);
+  assert.match(html, /<button class="drawer-toggle compact secondary" type="button">Home<\/button>/);
   assert.doesNotMatch(html, /まだ会話は開始してないよ。まずは入力してね。/);
   assert.doesNotMatch(html, /メイトーク中に使う補助情報はここに表示されます。/);
   assert.doesNotMatch(html, /session-plain/);

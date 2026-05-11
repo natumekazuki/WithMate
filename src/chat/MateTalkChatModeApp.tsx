@@ -6,10 +6,9 @@ import { useMateTalkWindowState } from "./use-mate-talk-window-state.js";
 
 export function MateTalkChatModeApp() {
   const withmateApi = getWithMateApi();
-  const desktopRuntime = isDesktopRuntime();
   const state = useMateTalkWindowState({ withmateApi });
 
-  if (!desktopRuntime) {
+  if (!isDesktopRuntime() || !withmateApi) {
     return <ChatWindowStatusScreen message="メイトークはデスクトップ版で利用できます。" />;
   }
   if (state.mateState === null) {
@@ -39,7 +38,9 @@ export function MateTalkChatModeApp() {
         onChangeModel: state.onChangeModel,
         onChangeReasoningEffort: state.onChangeReasoningEffort,
         onSubmit: state.onSubmit,
-        onClose: () => window.close(),
+        onOpenHome: () => {
+          void withmateApi.openHomeWindow().finally(() => window.close());
+        },
         onToggleHeaderExpanded: state.onToggleHeaderExpanded,
         sending: state.sending,
       })}

@@ -42,7 +42,7 @@ export type MateTalkChatProjectionInput = {
   onChangeModel: (model: string) => void;
   onChangeReasoningEffort: (reasoningEffort: string) => void;
   onSubmit: () => void;
-  onClose: () => void;
+  onOpenHome: () => void;
   onToggleHeaderExpanded: () => void;
   sending: boolean;
   feedback: string;
@@ -55,16 +55,16 @@ type MateTalkCompactActionDockProps = ChatWindowProps["compactActionDockProps"];
 
 function buildMateTalkHeaderProps({
   sending,
-  onClose,
+  onOpenHome,
   onToggleHeaderExpanded,
-}: Pick<MateTalkChatProjectionInput, "sending" | "onClose" | "onToggleHeaderExpanded">): MateTalkHeaderProps {
+}: Pick<MateTalkChatProjectionInput, "sending" | "onOpenHome" | "onToggleHeaderExpanded">): MateTalkHeaderProps {
   return createStaticChatHeaderProps({
     taskTitle: "メイトーク",
     titleDraft: "メイトーク",
     isRunning: sending,
     workspaceActions: (
-      <button className="drawer-toggle compact secondary" type="button" onClick={onClose}>
-        閉じる
+      <button className="drawer-toggle compact secondary" type="button" onClick={onOpenHome}>
+        Home
       </button>
     ),
     onToggleExpanded: onToggleHeaderExpanded,
@@ -180,7 +180,7 @@ export function buildMateTalkChatWindowProps({
   onChangeModel,
   onChangeReasoningEffort,
   onSubmit,
-  onClose,
+  onOpenHome,
   onToggleHeaderExpanded,
   sending,
   feedback,
@@ -190,7 +190,7 @@ export function buildMateTalkChatWindowProps({
     className: buildChatPageClassName({ isHeaderExpanded }),
     style: themeStyle,
     isHeaderExpanded,
-    headerProps: buildMateTalkHeaderProps({ sending, onClose, onToggleHeaderExpanded }),
+    headerProps: buildMateTalkHeaderProps({ sending, onOpenHome, onToggleHeaderExpanded }),
     messageColumnProps: buildMateTalkMessageColumnProps({ mateName, messages, messageListRef, sending }),
     isActionDockExpanded: true,
     composerProps: buildMateTalkComposerProps({
