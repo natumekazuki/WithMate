@@ -54,6 +54,7 @@ import { HomeAppRouter } from "./home/HomeAppRouter.js";
 import { buildHomeDashboardSlots } from "./home/HomeDashboardSlots.js";
 import { buildHomeWindowContentSlots } from "./home/HomeWindowContentSlots.js";
 import { getHomeWindowMode } from "./home/home-window-mode.js";
+import { openMateTalkWindow } from "./home/home-launch-commands.js";
 import {
   exportHomeModelCatalog,
   importHomeModelCatalog,
@@ -125,10 +126,6 @@ async function openSettingsWindow() {
 
 async function openMemoryManagementWindow() {
   await withWithMateApi((api) => api.openMemoryManagementWindow());
-}
-
-async function openMateTalkWindow() {
-  await withWithMateApi((api) => api.openMateTalkWindow());
 }
 
 type HomeRightPaneView = "monitor" | "mate";
