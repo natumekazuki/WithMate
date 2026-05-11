@@ -46,6 +46,8 @@ import {
 } from "./settings/settings-view-model.js";
 import { HomeAppRouter } from "./home/HomeAppRouter.js";
 import { buildHomeDashboardSlots } from "./home/HomeDashboardSlots.js";
+import { buildHomeRecentSessionsPanelProps } from "./home/home-recent-sessions-panel-props.js";
+import { buildHomeRightPaneProps } from "./home/home-right-pane-props.js";
 import { buildHomeWindowContentSlots } from "./home/HomeWindowContentSlots.js";
 import { getHomeWindowMode } from "./home/home-window-mode.js";
 import {
@@ -1544,19 +1546,21 @@ export default function HomeApp() {
   });
 
   const { recentSessionsPanel, rightPane, launchDialog } = buildHomeDashboardSlots({
-    recentSessionsPanel: {
+    recentSessionsPanel: buildHomeRecentSessionsPanelProps({
       filteredSessionEntries,
       companionSessions,
       normalizedSessionSearch,
       searchText: sessionSearchText,
       searchIcon: renderSearchIcon(),
-      onChangeSearchText: setSessionSearchText,
-      onOpenLaunchDialog: openLaunchDialog,
-      onOpenSession: (sessionId) => void openSessionWindow(sessionId),
-      onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
+      handlers: {
+        onChangeSearchText: setSessionSearchText,
+        onOpenLaunchDialog: openLaunchDialog,
+        onOpenSession: (sessionId) => void openSessionWindow(sessionId),
+        onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
+      },
       canUsePrimaryFeatures,
-    },
-    rightPane: {
+    }),
+    rightPane: buildHomeRightPaneProps({
       rightPaneView,
       runningMonitorEntries,
       nonRunningMonitorEntries,
@@ -1564,16 +1568,18 @@ export default function HomeApp() {
       monitorCompletedEmptyMessage,
       mateProfile,
       monitorWindowIcon: renderMonitorWindowIcon(),
-      onChangeRightPaneView: setRightPaneView,
-      onOpenSessionMonitorWindow: () => void openSessionMonitorWindow(),
-      onOpenMemoryManagementWindow: () => void openMemoryManagementWindow(),
-      onOpenSettingsWindow: () => void openSettingsWindow(),
-      onOpenMateProfile: openMateProfileEditor,
-      onOpenMateTalk: () => void openMateTalkWindow(),
-      onOpenSession: (sessionId) => void openSessionWindow(sessionId),
-      onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
+      handlers: {
+        onChangeRightPaneView: setRightPaneView,
+        onOpenSessionMonitorWindow: () => void openSessionMonitorWindow(),
+        onOpenMemoryManagementWindow: () => void openMemoryManagementWindow(),
+        onOpenSettingsWindow: () => void openSettingsWindow(),
+        onOpenMateProfile: openMateProfileEditor,
+        onOpenMateTalk: () => void openMateTalkWindow(),
+        onOpenSession: (sessionId) => void openSessionWindow(sessionId),
+        onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
+      },
       canUsePrimaryFeatures,
-    },
+    }),
     launchDialog: buildHomeLaunchDialogProps({
       draft: launchDraft,
       projection: launchProjection,
