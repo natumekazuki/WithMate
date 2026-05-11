@@ -92,9 +92,6 @@ import { buildCompanionGroupMonitorEntries } from "./home-session-projection.js"
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import { extractTextReferenceCandidates } from "./path-reference.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
-import CompanionReviewApp from "./CompanionReviewApp.js";
-import { MateTalkWindowApp } from "./chat/MateTalkWindowApp.js";
-import { resolveSessionWindowModeFromSearch } from "./session-window-mode.js";
 
 type RetryBannerKind = "interrupted" | "failed" | "canceled";
 
@@ -393,19 +390,7 @@ function renderCharacterSessionCopy(
   return selectedTemplate.replaceAll("{name}", characterName?.trim() || DEFAULT_SESSION_RUNTIME_NAME);
 }
 
-export default function App() {
-  const sessionWindowMode = useMemo(() => resolveSessionWindowModeFromSearch(window.location.search), []);
-  if (sessionWindowMode.kind === "companion") {
-    return <CompanionReviewApp />;
-  }
-  if (sessionWindowMode.kind === "mate-talk") {
-    return <MateTalkWindowApp />;
-  }
-
-  return <AgentSessionWindowApp />;
-}
-
-function AgentSessionWindowApp() {
+export default function AgentSessionWindowApp() {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();
   const [sessions, setSessions] = useState<Session[]>([]);
