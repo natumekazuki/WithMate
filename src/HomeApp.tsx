@@ -19,6 +19,7 @@ import {
 import {
   buildHomeLaunchProjection,
 } from "./home/home-launch-projection.js";
+import { buildHomeLaunchDialogProps } from "./home/home-launch-dialog-props.js";
 import {
   closeLaunchDraft,
   createClosedLaunchDraft,
@@ -616,7 +617,7 @@ export default function HomeApp() {
     }),
     [appSettings, launchDraft, modelCatalog],
   );
-  const { enabledLaunchProviders, selectedLaunchProvider, launchWorkspacePathLabel, canStartSession } = launchProjection;
+  const { enabledLaunchProviders, selectedLaunchProvider } = launchProjection;
 
   useEffect(() => {
     setLaunchDraft((current) => {
@@ -1573,15 +1574,10 @@ export default function HomeApp() {
       onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
       canUsePrimaryFeatures,
     },
-    launchDialog: {
-      open: launchDraft.open,
-      mode: launchDraft.mode,
-      title: launchDraft.title,
-      workspace: launchDraft.workspace,
-      launchWorkspacePathLabel,
-      enabledLaunchProviders,
-      selectedLaunchProviderId: selectedLaunchProvider?.id ?? null,
-      canStartSession: canStartSession && canUsePrimaryFeatures,
+    launchDialog: buildHomeLaunchDialogProps({
+      draft: launchDraft,
+      projection: launchProjection,
+      canUsePrimaryFeatures,
       launchFeedback,
       launchStarting,
       onClose: closeLaunchDialog,
@@ -1596,7 +1592,7 @@ export default function HomeApp() {
       onBrowseWorkspace: () => void handleBrowseWorkspace(),
       onSelectProvider: handleSelectLaunchProvider,
       onStartSession: (mode) => void handleStartSession(mode),
-    },
+    }),
   });
 
   return (
