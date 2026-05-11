@@ -21,7 +21,13 @@ import {
 import type { ContextPaneTabKey } from "../session-ui-projection.js";
 import { ChatSessionModals } from "./chat-session-modals.js";
 import { ChatWorkbenchSplitter, type ChatWindowProps } from "./chat-window.js";
-import { buildChatPageClassName } from "./chat-window-adapter.js";
+import {
+  buildChatPageClassName,
+  buildLiveSessionCompactActionDockProps,
+  buildLiveSessionComposerProps,
+  buildLiveSessionMessageColumnProps,
+  buildLiveSessionSplitterProps,
+} from "./chat-window-adapter.js";
 
 export type CompanionChatProjectionInput = {
   session: CompanionSession;
@@ -199,7 +205,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     ),
   };
 
-  const messageColumnProps: SessionMessageColumnProps = {
+  const messageColumnProps = buildLiveSessionMessageColumnProps({
     sessionId: input.session.id,
     character: input.character,
     messages: input.session.messages,
@@ -224,9 +230,9 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     onResolveLiveElicitation: input.onResolveLiveElicitation,
     onOpenPath: input.onOpenInlinePath,
     getChangedFilesEmptyText: () => "差分はまだないよ。",
-  };
+  });
 
-  const composerProps: SessionComposerExpandedProps = {
+  const composerProps = buildLiveSessionComposerProps({
     retryBanner: null,
     isRunning: input.isRunning,
     composerBlocked: input.composerBlocked,
@@ -291,9 +297,9 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     onChangeCodexSandboxMode: input.onChangeCodexSandboxMode,
     onChangeModel: input.onChangeModel,
     onChangeReasoningEffort: input.onChangeReasoningEffort,
-  };
+  });
 
-  const compactActionDockProps: SessionActionDockCompactRowProps = {
+  const compactActionDockProps = buildLiveSessionCompactActionDockProps({
     draft: input.draft,
     actionDockCompactPreview: input.actionDockCompactPreview,
     attachmentCount: input.attachmentCount,
@@ -304,7 +310,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     onExpand: input.onExpandActionDock,
     onJumpToBottom: input.onJumpToMessageListBottom,
     onSendOrCancel: input.onSendOrCancel,
-  };
+  });
 
   return {
     mode: "companion",
@@ -322,10 +328,10 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     composerProps,
     compactActionDockProps,
     splitter: (
-      <ChatWorkbenchSplitter
-        isActive={input.isContextRailResizing}
-        onPointerDown={input.onStartContextRailResize}
-      />
+      <ChatWorkbenchSplitter {...buildLiveSessionSplitterProps({
+        isContextRailResizing: input.isContextRailResizing,
+        onStartContextRailResize: input.onStartContextRailResize,
+      })} />
     ),
     rightPane: (
       <SessionPaneErrorBoundary>

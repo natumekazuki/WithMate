@@ -21,7 +21,13 @@ import {
 import type { ContextPaneTabKey } from "../session-ui-projection.js";
 import { ChatSessionModals } from "./chat-session-modals.js";
 import { ChatWorkbenchSplitter, type ChatWindowProps } from "./chat-window.js";
-import { buildChatPageClassName } from "./chat-window-adapter.js";
+import {
+  buildChatPageClassName,
+  buildLiveSessionCompactActionDockProps,
+  buildLiveSessionComposerProps,
+  buildLiveSessionMessageColumnProps,
+  buildLiveSessionSplitterProps,
+} from "./chat-window-adapter.js";
 
 export type AgentSessionChatProjectionInput = {
   selectedSession: Session;
@@ -196,7 +202,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     ) : null,
   };
 
-  const messageColumnProps: SessionMessageColumnProps = {
+  const messageColumnProps = buildLiveSessionMessageColumnProps({
     sessionId: input.selectedSession.id,
     character: input.selectedSessionCharacter,
     messages: input.displayedMessages,
@@ -221,9 +227,9 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onResolveLiveElicitation: input.onResolveLiveElicitation,
     onOpenPath: input.onOpenInlinePath,
     getChangedFilesEmptyText: input.getChangedFilesEmptyText,
-  };
+  });
 
-  const composerProps: SessionComposerExpandedProps = {
+  const composerProps = buildLiveSessionComposerProps({
     retryBanner: (
       <SessionRetryBanner
         retryBanner={input.retryBanner}
@@ -301,9 +307,9 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onChangeCodexSandboxMode: input.onChangeCodexSandboxMode,
     onChangeModel: input.onChangeModel,
     onChangeReasoningEffort: input.onChangeReasoningEffort,
-  };
+  });
 
-  const compactActionDockProps: SessionActionDockCompactRowProps = {
+  const compactActionDockProps = buildLiveSessionCompactActionDockProps({
     draft: input.draft,
     actionDockCompactPreview: input.actionDockCompactPreview,
     attachmentCount: input.attachmentCount,
@@ -314,7 +320,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onExpand: input.onExpandActionDock,
     onJumpToBottom: input.onJumpToMessageListBottom,
     onSendOrCancel: input.onSendOrCancel,
-  };
+  });
 
   return {
     mode: "agent",
@@ -329,10 +335,10 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     composerProps,
     compactActionDockProps,
     splitter: (
-      <ChatWorkbenchSplitter
-        isActive={input.isContextRailResizing}
-        onPointerDown={input.onStartContextRailResize}
-      />
+      <ChatWorkbenchSplitter {...buildLiveSessionSplitterProps({
+        isContextRailResizing: input.isContextRailResizing,
+        onStartContextRailResize: input.onStartContextRailResize,
+      })} />
     ),
     rightPane: (
       <SessionPaneErrorBoundary>

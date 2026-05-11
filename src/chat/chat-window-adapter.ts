@@ -5,7 +5,9 @@ import {
   DEFAULT_CHARACTER_THEME_COLORS,
   type CharacterProfile,
   type Message,
+  type MessageArtifact,
 } from "../app-state.js";
+import { type PointerEventHandler, type RefObject, type UIEventHandler } from "react";
 import type { ChatWindowProps } from "./chat-window.js";
 
 export const chatWindowNoop = () => {};
@@ -136,6 +138,106 @@ type StaticTextChatCompactActionDockProps = Pick<ChatCompactActionDockProps, "dr
   isRunning: boolean;
   emptyPreview?: string;
 };
+
+type LiveSessionMessageColumnProps = {
+  sessionId: string;
+  character: ChatMessageColumnProps["character"];
+  messages: Message[];
+  expandedArtifacts: Record<string, boolean>;
+  messageListRef: RefObject<HTMLDivElement | null>;
+  isRunning: boolean;
+  pendingRunIndicatorAnnouncement: string;
+  pendingRunIndicatorText: string;
+  liveApprovalRequest: ChatMessageColumnProps["liveApprovalRequest"];
+  approvalActionRequestId: ChatMessageColumnProps["approvalActionRequestId"];
+  liveElicitationRequest: ChatMessageColumnProps["liveElicitationRequest"];
+  elicitationActionRequestId: ChatMessageColumnProps["elicitationActionRequestId"];
+  liveRunAssistantText: string;
+  hasLiveRunAssistantText: boolean;
+  liveRunErrorMessage: string;
+  isMessageListFollowing: boolean;
+  onMessageListScroll: UIEventHandler<HTMLDivElement>;
+  onToggleArtifact: (artifactKey: string) => void;
+  onLoadArtifactDetail: (messageIndex: number) => Promise<MessageArtifact | null>;
+  onOpenDiff: ChatMessageColumnProps["onOpenDiff"];
+  onResolveLiveApproval: ChatMessageColumnProps["onResolveLiveApproval"];
+  onResolveLiveElicitation: ChatMessageColumnProps["onResolveLiveElicitation"];
+  onOpenPath: (target: string) => void;
+  getChangedFilesEmptyText: ChatMessageColumnProps["getChangedFilesEmptyText"];
+};
+
+type LiveSessionComposerProps = Omit<
+  ChatComposerProps,
+  | "showAttachmentControls"
+  | "showAdditionalDirectoryControls"
+  | "showExecutionModeControls"
+> & {
+  showAttachmentControls?: boolean;
+  showAdditionalDirectoryControls?: boolean;
+  showExecutionModeControls?: boolean;
+};
+
+type LiveSessionCompactActionDockProps = Omit<ChatCompactActionDockProps, "showJumpToBottom"> & {
+  showJumpToBottom: boolean;
+};
+
+type LiveSessionSplitterProps = {
+  isContextRailResizing: boolean;
+  onStartContextRailResize?: PointerEventHandler<HTMLButtonElement>;
+};
+
+export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColumnProps): ChatMessageColumnProps {
+  return {
+    sessionId: input.sessionId,
+    character: input.character,
+    messages: input.messages,
+    expandedArtifacts: input.expandedArtifacts,
+    messageListRef: input.messageListRef,
+    isRunning: input.isRunning,
+    pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
+    pendingRunIndicatorText: input.pendingRunIndicatorText,
+    liveApprovalRequest: input.liveApprovalRequest,
+    approvalActionRequestId: input.approvalActionRequestId,
+    liveElicitationRequest: input.liveElicitationRequest,
+    elicitationActionRequestId: input.elicitationActionRequestId,
+    liveRunAssistantText: input.liveRunAssistantText,
+    hasLiveRunAssistantText: input.hasLiveRunAssistantText,
+    liveRunErrorMessage: input.liveRunErrorMessage,
+    isMessageListFollowing: input.isMessageListFollowing,
+    onMessageListScroll: input.onMessageListScroll,
+    onToggleArtifact: input.onToggleArtifact,
+    onLoadArtifactDetail: input.onLoadArtifactDetail,
+    onOpenDiff: input.onOpenDiff,
+    onResolveLiveApproval: input.onResolveLiveApproval,
+    onResolveLiveElicitation: input.onResolveLiveElicitation,
+    onOpenPath: input.onOpenPath,
+    getChangedFilesEmptyText: input.getChangedFilesEmptyText,
+  };
+}
+
+export function buildLiveSessionComposerProps(input: LiveSessionComposerProps): ChatComposerProps {
+  return {
+    showAttachmentControls: true,
+    showAdditionalDirectoryControls: true,
+    showExecutionModeControls: true,
+    ...input,
+  };
+}
+
+export function buildLiveSessionCompactActionDockProps(
+  input: LiveSessionCompactActionDockProps,
+): ChatCompactActionDockProps {
+  return input;
+}
+
+export function buildLiveSessionSplitterProps(
+  input: LiveSessionSplitterProps,
+): { isActive: boolean; onPointerDown?: PointerEventHandler<HTMLButtonElement> } {
+  return {
+    isActive: input.isContextRailResizing,
+    onPointerDown: input.onStartContextRailResize,
+  };
+}
 
 export function createStaticChatHeaderProps({
   taskTitle,

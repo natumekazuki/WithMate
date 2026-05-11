@@ -4,6 +4,10 @@ import React from "react";
 
 import {
   buildChatPageClassName,
+  buildLiveSessionCompactActionDockProps,
+  buildLiveSessionComposerProps,
+  buildLiveSessionMessageColumnProps,
+  buildLiveSessionSplitterProps,
   createStaticChatCharacterProfile,
   createStaticChatComposerSendability,
   createHiddenControlsChatComposerProps,
@@ -105,6 +109,129 @@ test("createStaticTextConversationMessageColumnProps は text conversation を�
   assert.equal(messageColumnProps.pendingRunIndicatorAnnouncement, "返信待ち");
   assert.equal(messageColumnProps.pendingRunIndicatorText, "返信準備中");
   assert.equal(messageColumnProps.isRunning, true);
+});
+
+test("buildLiveSessionMessageColumnProps は live message props を共通形式で組み立てる", () => {
+  const messageListRef = React.createRef<HTMLDivElement>();
+  const composerMessageColumnProps = buildLiveSessionMessageColumnProps({
+    sessionId: "session-id",
+    character: createCharacter(),
+    messages: [{ role: "assistant", text: "こんにちは" }],
+    expandedArtifacts: {},
+    messageListRef,
+    isRunning: false,
+    pendingRunIndicatorAnnouncement: "待機中",
+    pendingRunIndicatorText: "応答待ち",
+    liveApprovalRequest: null,
+    approvalActionRequestId: null,
+    liveElicitationRequest: null,
+    elicitationActionRequestId: null,
+    liveRunAssistantText: "",
+    hasLiveRunAssistantText: false,
+    liveRunErrorMessage: "",
+    isMessageListFollowing: true,
+    onMessageListScroll: () => {},
+    onToggleArtifact: () => {},
+    onLoadArtifactDetail: async () => null,
+    onOpenDiff: () => {},
+    onResolveLiveApproval: () => {},
+    onResolveLiveElicitation: () => {},
+    onOpenPath: () => {},
+    getChangedFilesEmptyText: () => "",
+  });
+
+  assert.equal(composerMessageColumnProps.sessionId, "session-id");
+  assert.equal(composerMessageColumnProps.liveRunAssistantText, "");
+  assert.equal(composerMessageColumnProps.hasLiveRunAssistantText, false);
+});
+
+test("buildLiveSessionComposerProps は composer の表示デフォルトを反映する", () => {
+  const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
+  const composerProps = buildLiveSessionComposerProps({
+    retryBanner: null,
+    isRunning: false,
+    composerBlocked: false,
+    canSelectCustomAgent: false,
+    showCustomAgentPicker: true,
+    showSkillPicker: true,
+    isAgentPickerOpen: false,
+    isSkillPickerOpen: false,
+    isAdditionalDirectoryListOpen: false,
+    selectedCustomAgentLabel: "Agent",
+    selectedCustomAgentTitle: "",
+    additionalDirectoryCount: 0,
+    canCollapseActionDock: false,
+    showJumpToBottom: false,
+    isCustomAgentListLoading: false,
+    isSkillListLoading: false,
+    customAgentItems: [],
+    skillItems: [],
+    attachmentItems: [],
+    additionalDirectoryItems: [],
+    workspacePathMatchItems: [],
+    draft: "",
+    composerTextareaRef,
+    isComposerDisabled: false,
+    isSendDisabled: true,
+    composerSendability: {
+      primaryFeedback: "",
+      secondaryFeedback: [],
+      feedbackTone: null,
+      shouldShowFeedback: false,
+    },
+    sendButtonTitle: undefined,
+    isComposerBlockedFeedbackActive: false,
+    approvalOptions: [{ value: "never", label: "never" }],
+    selectedApprovalMode: "never",
+    sandboxOptions: [],
+    selectedCodexSandboxMode: "workspace-write",
+    modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+    selectedModel: "gpt-test",
+    selectedModelFallbackLabel: "GPT Test",
+    reasoningOptions: [{ value: "low", label: "low" }],
+    selectedReasoningEffort: "low",
+    onPickFile: () => {},
+    onPickFolder: () => {},
+    onPickImage: () => {},
+    onToggleAgentPicker: () => {},
+    onToggleSkillPicker: () => {},
+    onAddAdditionalDirectory: () => {},
+    onToggleAdditionalDirectoryList: () => {},
+    onCollapse: () => {},
+    onJumpToBottom: () => {},
+    onSelectCustomAgent: () => {},
+    onSelectSkill: () => {},
+    onRemoveAttachment: () => {},
+    onRemoveAdditionalDirectory: () => {},
+    onDraftChange: () => {},
+    onDraftFocus: () => {},
+    onDraftKeyDown: () => {},
+    onDraftSelect: () => {},
+    onDraftCompositionStart: () => {},
+    onDraftCompositionEnd: () => {},
+    onSendOrCancel: () => {},
+    onSelectWorkspacePathMatch: () => {},
+    onActivateWorkspacePathMatch: () => {},
+    onChangeApprovalMode: () => {},
+    onChangeCodexSandboxMode: () => {},
+    onChangeModel: () => {},
+    onChangeReasoningEffort: () => {},
+  });
+
+  assert.equal(composerProps.showAttachmentControls, true);
+  assert.equal(composerProps.showAdditionalDirectoryControls, true);
+  assert.equal(composerProps.showExecutionModeControls, true);
+});
+
+test("buildLiveSessionSplitterProps は context rail resize state を反映する", () => {
+  const onPointerDown = () => {};
+  const splitterProps = buildLiveSessionSplitterProps({
+    isContextRailResizing: true,
+    onStartContextRailResize: onPointerDown,
+  });
+
+  assert.equal(splitterProps.isActive, true);
+  assert.equal(splitterProps.onPointerDown, onPointerDown);
 });
 
 test("createStaticChatCharacterProfile は静的 chat 用 CharacterProfile 既定値を補う", () => {
