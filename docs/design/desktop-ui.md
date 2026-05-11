@@ -5,7 +5,7 @@
 
 ## Goal
 
-Electron デスクトップアプリとして、`Home Window` / `Session Window` / `Mate Editor Window` / `Diff Window` の責務を整理し、現行 UI の入口を 1 枚で把握できるようにする。`character-update` と `mate-talk` は独立した chat layout ではなく `Session Window` の variant として扱う。
+Electron デスクトップアプリとして、`Home Window` / `Session Window` / `Mate Editor Window` / `Diff Window` の責務を整理し、現行 UI の入口を 1 枚で把握できるようにする。`character-update` と `mate-talk` は独立した chat layout ではなく `Session Window` の mode として扱う。
 
 ## Manual Test Maintenance
 
@@ -98,7 +98,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - primary action として `MateTalk` を開く
   - secondary action として `Mate Profile` / avatar 設定を開く
   - character catalog、複数 character search、character picker は表示しない
-  - `MateTalk` は Home inline ではなく、`Session Window` の `mate-talk` variant として別 window で開く
+  - `MateTalk` は Home inline ではなく、`Session Window` の `mate-talk` mode として別 window で開く
   - card theme
     - background = mate `main`
     - left accent bar = mate `sub`
@@ -165,7 +165,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - チャット UI の実装正本は `chat` domain の単一 UI 定義だけとする
 - Agent / Companion / メイトークは同じ chat screen / header / message list / composer / right pane shell を使い、mode と service adapter で差分を切り替える
 - 新しい会話機能を追加する場合も、chat layout 実装を増やさず、Session UI の mode を追加する
-- `sessionKind === "character-update"` の時は update 用 variant に切り替える
+- `sessionKind === "character-update"` の時は update 用 mode に切り替える
 - session title の rename / delete
 - `Audit Log` overlay
   - approval 表示は `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording を使う
@@ -212,13 +212,13 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - right pane 上部には collapsed state の `title handle` を置く
 - right pane shell は Agent / Companion / メイトークで共有する。表示する内容がない mode では pane 構造だけを残し、説明文や空メッセージを常設しない
 - `Generate Memory` は current UI では表示しない
-- `character-update` variant では right pane を `LatestCommand / MemoryExtract` の 2 面に切り替える
-- `character-update` variant では expanded header の `Terminal` を出さない
-- `character-update` variant では composer の `Skill / Agent` picker を出さない
-- `mate-talk` variant では expanded header の作業用操作を出さず、Home へ戻る導線と header collapse だけを残す
-- `mate-talk` variant では composer 上の `File / Folder / Image / Skill / Agent` 操作を出さない
-- `mate-talk` variant では composer 下の `Model / Depth` selection を残し、通常 Session と同じ control を使う
-- `mate-talk` variant では right pane に command / task / memory extraction を出さない。将来表示する情報が決まるまでは空 pane として扱う
+- `character-update` mode では right pane を `LatestCommand / MemoryExtract` の 2 面に切り替える
+- `character-update` mode では expanded header の `Terminal` を出さない
+- `character-update` mode では composer の `Skill / Agent` picker を出さない
+- `mate-talk` mode では expanded header の作業用操作を出さず、Home へ戻る導線と header collapse だけを残す
+- `mate-talk` mode では composer 上の `File / Folder / Image / Skill / Agent` 操作を出さない
+- `mate-talk` mode では composer 下の `Model / Depth` selection を残し、通常 Session と同じ control を使う
+- `mate-talk` mode では right pane に command / task / memory extraction を出さない。将来表示する情報が決まるまでは空 pane として扱う
 - command 実行中は `Latest Command` を最優先で自動表示する
 - MemoryGeneration / 独り言の right pane 自動切り替えは行わない
 - right pane の empty / idle copy は説明過多にせず、使えば分かる最小表現を優先する

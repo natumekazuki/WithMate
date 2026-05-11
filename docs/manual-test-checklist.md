@@ -45,7 +45,7 @@ npm run electron:start
 | MT-013A | New Session dialog keyboard | `New Session` dialog を開き、初期 focus、`Tab` / `Shift+Tab`、`Escape`、provider chip の矢印キーを試す | open 時に title input へ focus が入り、focus は dialog 内で循環する。`Escape` で閉じ、provider chip は矢印キーで切り替えられる |
 | MT-014 | New Session 作成 | title と workspace と provider を選び `Start New Session` を押す | SingleMate の現在値を使って Session Window が開き、Home の session 一覧に追加され、選んだ provider で session が作られ、approval 初期値は `安全寄り` になる |
 | MT-014A | New Session provider availability | `Coding Agent Providers` で一部 provider を無効化した後に `New Session` を開く | launch dialog の provider 候補には enabled provider だけが出る。0 件なら empty state が出て `Start New Session` は disabled のままになる |
-| MT-014B | MateTalk launch | Home 右ペインの `Your Mate` から `MateTalk` を起動する | MateTalk は Home inline chat では開かれず、Session Window の chat layout variant として別 window で開始される |
+| MT-014B | MateTalk launch | Home 右ペインの `Your Mate` から `MateTalk` を起動する | MateTalk は Home inline chat では開かれず、Session Window の chat layout mode として別 window で開始される |
 | MT-015 | Session 実行 | Session Window の textarea に入力して送信する | user message が追加され、pending と live activity が表示される |
 | MT-015A | Copilot basic turn | provider を `GitHub Copilot` にした session を作成し、text-only の prompt を 1 回送る | assistant response が返り、Session が `idle` へ戻る。添付なしなら Codex と同じ Session UI で 1 turn 完了できる |
 | MT-015A1 | Copilot mate prompt separation | provider を `GitHub Copilot` にした session で mate 指示を有効にした 1 turn を実行し、その後 `Audit Log` を開く | `Logical Prompt` には mate 指示を含む論理合成が残り、`Transport Payload` では `session.systemMessage` と `session.send.prompt` が分離して見える |
