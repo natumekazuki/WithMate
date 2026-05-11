@@ -26,12 +26,12 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
   });
 
   await loader.loadHomeEntry(stub.window, "settings");
-  await loader.loadSessionEntry(stub.window, "session 1");
+  await loader.loadChatEntry(stub.window, { kind: "agent", sessionId: "session 1" });
   await loader.loadCharacterEntry(stub.window, null);
   await loader.loadCharacterEntry(stub.window, "char-1");
   await loader.loadDiffEntry(stub.window, "diff#1");
-  await loader.loadCompanionChatEntry(stub.window, "companion 1");
-  await loader.loadMateTalkEntry(stub.window);
+  await loader.loadChatEntry(stub.window, { kind: "companion", sessionId: "companion 1" });
+  await loader.loadChatEntry(stub.window, { kind: "mate-talk" });
   await loader.loadCompanionMergeEntry(stub.window, "companion 1");
 
   assert.deepEqual(stub.calls, [
@@ -65,8 +65,8 @@ test("WindowEntryLoader は production build で loadFile する", async () => {
   await loader.loadHomeEntry(stub.window);
   await loader.loadCharacterEntry(stub.window, "char-1");
   await loader.loadHomeEntry(stub.window, "settings");
-  await loader.loadCompanionChatEntry(stub.window, "companion 1");
-  await loader.loadMateTalkEntry(stub.window);
+  await loader.loadChatEntry(stub.window, { kind: "companion", sessionId: "companion 1" });
+  await loader.loadChatEntry(stub.window, { kind: "mate-talk" });
   await loader.loadCompanionMergeEntry(stub.window, "companion 1");
 
   assert.deepEqual(stub.calls, [

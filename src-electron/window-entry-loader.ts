@@ -24,10 +24,6 @@ export class WindowEntryLoader {
     await this.load(window, "index.html", search);
   }
 
-  async loadSessionEntry(window: WindowLike, sessionId: string): Promise<void> {
-    await this.loadChatEntry(window, { kind: "agent", sessionId });
-  }
-
   async loadCharacterEntry(window: WindowLike, characterId?: string | null): Promise<void> {
     const search = characterId ? `?characterId=${encodeURIComponent(characterId)}` : "?mode=create";
     await this.load(window, "character.html", search);
@@ -36,14 +32,6 @@ export class WindowEntryLoader {
   async loadDiffEntry(window: WindowLike, token: string): Promise<void> {
     const search = `?token=${encodeURIComponent(token)}`;
     await this.load(window, "diff.html", search);
-  }
-
-  async loadCompanionChatEntry(window: WindowLike, sessionId: string): Promise<void> {
-    await this.loadChatEntry(window, { kind: "companion", sessionId });
-  }
-
-  async loadMateTalkEntry(window: WindowLike): Promise<void> {
-    await this.loadChatEntry(window, { kind: "mate-talk" });
   }
 
   async loadChatEntry(window: WindowLike, mode: ChatEntryMode): Promise<void> {
