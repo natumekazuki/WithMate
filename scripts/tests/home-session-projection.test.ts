@@ -8,7 +8,7 @@ import {
   buildHomeSessionProjection,
   getHomeSessionState,
   shouldDisplayHomeSession,
-} from "../../src/home-session-projection.js";
+} from "../../src/home/home-session-projection.js";
 
 function createSession(partial: Partial<Session> & Pick<Session, "id" | "taskTitle">): Session {
   return {

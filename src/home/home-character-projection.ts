@@ -1,4 +1,4 @@
-import type { CharacterProfile } from "./app-state.js";
+import type { CharacterProfile } from "../app-state.js";
 
 export type HomeCharacterProjection = {
   filteredCharacters: CharacterProfile[];

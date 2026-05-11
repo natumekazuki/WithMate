@@ -1,7 +1,7 @@
 import { useRef } from "react";
 
 import { focusRovingItemByKey, useDialogA11y } from "../a11y.js";
-import type { LaunchWorkspace } from "../home-launch-projection.js";
+import type { LaunchWorkspace } from "./home-launch-projection.js";
 
 export type HomeLaunchDialogProps = {
   open: boolean;

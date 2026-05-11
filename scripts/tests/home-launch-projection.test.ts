@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
-import { buildHomeLaunchProjection, inferWorkspaceFromPath } from "../../src/home-launch-projection.js";
+import { buildHomeLaunchProjection, inferWorkspaceFromPath } from "../../src/home/home-launch-projection.js";
 
 function createCatalog(): ModelCatalogSnapshot {
   return {

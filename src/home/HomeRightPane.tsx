@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import type { HomeMonitorEntry } from "../home-session-projection.js";
+import type { HomeMonitorEntry } from "./home-session-projection.js";
 import type { MateProfile } from "../mate/mate-state.js";
 import { buildCardThemeStyle, CharacterAvatar } from "../ui-utils.js";
 import { HomeMonitorContent } from "./HomeMonitorContent.js";

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { buildHomeLaunchProjection } from "../home-launch-projection.js";
+import { buildHomeLaunchProjection } from "../home/home-launch-projection.js";
 import {
   createDefaultAppSettings,
   type AppSettings,

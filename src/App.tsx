@@ -88,7 +88,7 @@ import {
 } from "./session-chat-layout-hooks.js";
 import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
-import { buildCompanionGroupMonitorEntries } from "./home-session-projection.js";
+import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import { extractTextReferenceCandidates } from "./path-reference.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";

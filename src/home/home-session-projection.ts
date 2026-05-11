@@ -1,6 +1,6 @@
-import type { SessionSummary } from "./app-state.js";
-import type { CompanionSessionSummary } from "./companion-state.js";
-import { sessionStateLabel } from "./ui-utils.js";
+import type { SessionSummary } from "../app-state.js";
+import type { CompanionSessionSummary } from "../companion-state.js";
+import { sessionStateLabel } from "../ui-utils.js";
 
 export type HomeSessionState = {
   kind: "running" | "interrupted" | "error" | "neutral";

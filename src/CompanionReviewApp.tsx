@@ -45,7 +45,7 @@ import {
   type ModelReasoningEffort,
 } from "./model-catalog.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
-import { buildCompanionGroupMonitorEntries } from "./home-session-projection.js";
+import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { SessionHeader } from "./session-components.js";
 import { ChatHeaderHandle, ChatWindow } from "./chat/chat-window.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";

@@ -24,7 +24,7 @@ import {
 } from "./memory/memory-management-state.js";
 import {
   buildHomeLaunchProjection,
-} from "./home-launch-projection.js";
+} from "./home/home-launch-projection.js";
 import {
   buildCreateCompanionSessionInputFromLaunchDraft,
   buildCreateSessionInputFromLaunchDraft,
@@ -36,11 +36,11 @@ import {
   setLaunchWorkspaceFromPath,
   updateLaunchDraftForProviderSelection,
   type HomeLaunchDraft,
-} from "./home-launch-state.js";
+} from "./home/home-launch-state.js";
 import { createCompanionSessionSummary, type CompanionSessionSummary } from "./companion-state.js";
 import {
   buildHomeSessionProjection,
-} from "./home-session-projection.js";
+} from "./home/home-session-projection.js";
 import {
   buildHomeProviderSettingRows,
   buildPersistedAppSettingsFromRows,

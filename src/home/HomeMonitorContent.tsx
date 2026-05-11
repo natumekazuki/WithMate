@@ -1,4 +1,4 @@
-import type { HomeMonitorEntry } from "../home-session-projection.js";
+import type { HomeMonitorEntry } from "./home-session-projection.js";
 import { CharacterAvatar } from "../ui-utils.js";
 
 export type HomeMonitorContentProps = {

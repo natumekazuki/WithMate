@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import type { CharacterProfile } from "../../src/app-state.js";
-import { buildHomeCharacterProjection } from "../../src/home-character-projection.js";
+import { buildHomeCharacterProjection } from "../../src/home/home-character-projection.js";
 
 function createCharacter(partial: Partial<CharacterProfile> & Pick<CharacterProfile, "id" | "name">): CharacterProfile {
   return {

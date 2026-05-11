@@ -1,16 +1,16 @@
-import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "./approval-mode.js";
-import type { CreateSessionInput, SessionSummary } from "./app-state.js";
-import type { CharacterThemeColors } from "./character-state.js";
-import { DEFAULT_CODEX_SANDBOX_MODE, type CodexSandboxMode } from "./codex-sandbox-mode.js";
-import type { CreateCompanionSessionInput } from "./companion-state.js";
+import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "../approval-mode.js";
+import type { CreateSessionInput, SessionSummary } from "../app-state.js";
+import type { CharacterThemeColors } from "../character-state.js";
+import { DEFAULT_CODEX_SANDBOX_MODE, type CodexSandboxMode } from "../codex-sandbox-mode.js";
+import type { CreateCompanionSessionInput } from "../companion-state.js";
 import { inferWorkspaceFromPath, type LaunchWorkspace } from "./home-launch-projection.js";
 import {
   DEFAULT_MODEL_ID,
   DEFAULT_REASONING_EFFORT,
   type ModelCatalogProvider,
   type ModelReasoningEffort,
-} from "./model-catalog.js";
-import type { MateProfile, MateStorageState } from "./mate/mate-state.js";
+} from "../model-catalog.js";
+import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 
 type LastUsedSessionSelectionSource = Pick<
   SessionSummary,

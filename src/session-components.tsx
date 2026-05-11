@@ -41,7 +41,7 @@ import {
   type SessionContextTelemetryProjection,
 } from "./session-ui-projection.js";
 import type { CharacterUpdateMemoryExtract } from "./character-update-state.js";
-import type { HomeMonitorEntry } from "./home-session-projection.js";
+import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
 
 function displayApprovalValue(value: string): string {

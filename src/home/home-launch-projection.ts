@@ -1,5 +1,5 @@
-import { getProviderAppSettings, type AppSettings } from "./provider-settings-state.js";
-import type { ModelCatalogProvider, ModelCatalogSnapshot } from "./model-catalog.js";
+import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../model-catalog.js";
+import { getProviderAppSettings, type AppSettings } from "../provider-settings-state.js";
 
 export type LaunchWorkspace = {
   label: string;

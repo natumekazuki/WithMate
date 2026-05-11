@@ -2,7 +2,7 @@ import type { CSSProperties, KeyboardEventHandler, PointerEventHandler, RefObjec
 
 import type { CharacterProfile, DiffPreviewPayload, Message, MessageArtifact } from "../app-state.js";
 import type { CharacterUpdateMemoryExtract } from "../character-update-state.js";
-import type { HomeMonitorEntry } from "../home-session-projection.js";
+import type { HomeMonitorEntry } from "../home/home-session-projection.js";
 import type { Session } from "../session-state.js";
 import {
   CharacterUpdateContextPane,

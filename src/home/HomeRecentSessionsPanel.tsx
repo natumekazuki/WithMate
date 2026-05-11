@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 import type { SessionSummary } from "../app-state.js";
 import type { CompanionSessionSummary } from "../companion-state.js";
-import { getHomeCompanionSessionState, type HomeSessionState } from "../home-session-projection.js";
+import { getHomeCompanionSessionState, type HomeSessionState } from "./home-session-projection.js";
 import { buildCardThemeStyle, CharacterAvatar } from "../ui-utils.js";
 
 export type HomeRecentSessionsPanelProps = {
