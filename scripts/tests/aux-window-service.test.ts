@@ -83,7 +83,7 @@ test("AuxWindowService は singleton window を再利用する", async () => {
     },
     async loadDiffEntry() {},
     async loadChatEntry() {},
-    async loadCompanionMergeEntry() {},
+    async loadCompanionMergeReviewEntry() {},
     onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "diff-token";
@@ -123,7 +123,7 @@ test("AuxWindowService は diff preview を保持し reset 時に close する",
       diffLoads.push(token);
     },
     async loadChatEntry() {},
-    async loadCompanionMergeEntry() {},
+    async loadCompanionMergeReviewEntry() {},
     onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "diff-token";
@@ -161,7 +161,7 @@ test("AuxWindowService は companion chat と merge の entry を分けて開く
     async loadChatEntry(_window, mode) {
       chatLoads.push(mode);
     },
-    async loadCompanionMergeEntry(_window, sessionId) {
+    async loadCompanionMergeReviewEntry(_window, sessionId) {
       companionMergeLoads.push(sessionId);
     },
     onCompanionReviewWindowsChanged() {
@@ -211,7 +211,7 @@ test("AuxWindowService は MateTalk を chat entry として開く", async () =>
     async loadChatEntry(_window, mode) {
       chatLoads.push(mode);
     },
-    async loadCompanionMergeEntry() {},
+    async loadCompanionMergeReviewEntry() {},
     onCompanionReviewWindowsChanged() {},
     generateDiffToken() {
       return "diff-token";

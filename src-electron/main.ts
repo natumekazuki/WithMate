@@ -808,8 +808,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             requireWindowEntryLoader().loadCharacterEntry(window, characterId),
           loadDiffEntry: (window, token) => requireWindowEntryLoader().loadDiffEntry(window, token),
           loadChatEntry: (window, mode) => requireWindowEntryLoader().loadChatEntry(window, mode),
-          loadCompanionMergeEntry: (window, sessionId) =>
-            requireWindowEntryLoader().loadCompanionMergeEntry(window, sessionId),
+          loadCompanionMergeReviewEntry: (window, sessionId) =>
+            requireWindowEntryLoader().loadCompanionMergeReviewEntry(window, sessionId),
           generateDiffToken: () => crypto.randomUUID(),
           onCompanionReviewWindowsChanged: () => broadcastOpenCompanionReviewWindowIds(),
         }),

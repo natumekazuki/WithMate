@@ -33,7 +33,7 @@ export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
   loadCharacterEntry(window: TWindow, characterId?: string | null): Promise<void>;
   loadDiffEntry(window: TWindow, token: string): Promise<void>;
   loadChatEntry(window: TWindow, mode: ChatEntryMode): Promise<void>;
-  loadCompanionMergeEntry(window: TWindow, sessionId: string): Promise<void>;
+  loadCompanionMergeReviewEntry(window: TWindow, sessionId: string): Promise<void>;
   generateDiffToken(): string;
   onCompanionReviewWindowsChanged(): void;
 };
@@ -267,7 +267,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     window.on("closed", () => {
       this.companionMergeWindows.delete(sessionId);
     });
-    await this.deps.loadCompanionMergeEntry(window, sessionId);
+    await this.deps.loadCompanionMergeReviewEntry(window, sessionId);
     return window;
   }
 

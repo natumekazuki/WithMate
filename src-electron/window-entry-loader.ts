@@ -38,7 +38,7 @@ export class WindowEntryLoader {
     await this.load(window, "session.html", buildChatEntrySearch(mode));
   }
 
-  async loadCompanionMergeEntry(window: WindowLike, sessionId: string): Promise<void> {
+  async loadCompanionMergeReviewEntry(window: WindowLike, sessionId: string): Promise<void> {
     const search = `?companionSessionId=${encodeURIComponent(sessionId)}&view=merge`;
     await this.load(window, "review.html", search);
   }

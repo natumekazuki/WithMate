@@ -32,7 +32,7 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
   await loader.loadDiffEntry(stub.window, "diff#1");
   await loader.loadChatEntry(stub.window, { kind: "companion", sessionId: "companion 1" });
   await loader.loadChatEntry(stub.window, { kind: "mate-talk" });
-  await loader.loadCompanionMergeEntry(stub.window, "companion 1");
+  await loader.loadCompanionMergeReviewEntry(stub.window, "companion 1");
 
   assert.deepEqual(stub.calls, [
     { kind: "url", value: "http://localhost:5173?mode=settings" },
@@ -67,7 +67,7 @@ test("WindowEntryLoader は production build で loadFile する", async () => {
   await loader.loadHomeEntry(stub.window, "settings");
   await loader.loadChatEntry(stub.window, { kind: "companion", sessionId: "companion 1" });
   await loader.loadChatEntry(stub.window, { kind: "mate-talk" });
-  await loader.loadCompanionMergeEntry(stub.window, "companion 1");
+  await loader.loadCompanionMergeReviewEntry(stub.window, "companion 1");
 
   assert.deepEqual(stub.calls, [
     { kind: "file", value: "F:\\dist\\index.html", search: undefined },
