@@ -27,6 +27,7 @@ import { createCompanionSessionSummary } from "./companion-state.js";
 import {
   buildCompanionCharacterProfile,
   buildCompanionChatSnapshot,
+  type CompanionSessionWindowView,
   getCompanionWindowViewFromSearch,
 } from "./companion-session-mode-adapter.js";
 import type { ChangedFile, DiscoveredCustomAgent, DiscoveredSkill } from "./runtime-state.js";
@@ -240,10 +241,22 @@ function summarizeIssuePaths(paths: string[] | undefined): string | null {
   return `${paths.length} files`;
 }
 
-export default function CompanionReviewApp() {
+type CompanionReviewAppProps = {
+  viewMode?: CompanionSessionWindowView;
+};
+
+export function CompanionChatModeApp() {
+  return <CompanionReviewApp viewMode="chat" />;
+}
+
+export function CompanionMergeReviewApp() {
+  return <CompanionReviewApp viewMode="merge" />;
+}
+
+export default function CompanionReviewApp({ viewMode: forcedViewMode }: CompanionReviewAppProps = {}) {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();
-  const viewMode = getCompanionWindowViewFromSearch(window.location.search);
+  const viewMode = forcedViewMode ?? getCompanionWindowViewFromSearch(window.location.search);
   const isMergeView = viewMode === "merge";
   const [snapshot, setSnapshot] = useState<CompanionReviewSnapshot | null>(null);
   const [selectedPath, setSelectedPath] = useState<string>("");

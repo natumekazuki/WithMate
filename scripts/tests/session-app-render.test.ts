@@ -4,7 +4,7 @@ import React from "react";
 import { renderToString } from "react-dom/server";
 
 import App from "../../src/App.js";
-import CompanionReviewApp from "../../src/CompanionReviewApp.js";
+import { CompanionChatModeApp } from "../../src/CompanionReviewApp.js";
 
 test("App は desktop runtime の初回 render で TDZ 例外を出さない", () => {
   const previousWindow = globalThis.window;
@@ -36,7 +36,7 @@ test("App は desktop runtime の初回 render で TDZ 例外を出さない", (
   }
 });
 
-test("CompanionReviewApp は chat mode の初回 render で共通 status shell を使う", () => {
+test("CompanionChatModeApp は chat mode の初回 render で共通 status shell を使う", () => {
   const previousWindow = globalThis.window;
 
   Object.defineProperty(globalThis, "window", {
@@ -52,7 +52,7 @@ test("CompanionReviewApp は chat mode の初回 render で共通 status shell �
   try {
     let output = "";
     assert.doesNotThrow(() => {
-      output = renderToString(React.createElement(CompanionReviewApp));
+      output = renderToString(React.createElement(CompanionChatModeApp));
     });
     assert.match(output, /Companion を読み込み中/);
     assert.match(output, /session-work-surface chat-panel/);
