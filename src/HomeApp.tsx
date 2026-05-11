@@ -54,7 +54,14 @@ import { HomeAppRouter } from "./home/HomeAppRouter.js";
 import { buildHomeDashboardSlots } from "./home/HomeDashboardSlots.js";
 import { buildHomeWindowContentSlots } from "./home/HomeWindowContentSlots.js";
 import { getHomeWindowMode } from "./home/home-window-mode.js";
-import { openMateTalkWindow } from "./home/home-launch-commands.js";
+import {
+  openCompanionReviewWindow,
+  openMateTalkWindow,
+  openMemoryManagementWindow,
+  openSessionMonitorWindow,
+  openSessionWindow,
+  openSettingsWindow,
+} from "./home/home-launch-commands.js";
 import {
   exportHomeModelCatalog,
   importHomeModelCatalog,
@@ -107,26 +114,6 @@ import {
 import { type MateEmbeddingSettings } from "./mate/mate-embedding-settings.js";
 import type { MateGrowthEventListItem } from "./mate/mate-growth-events-state.js";
 import { applyHomePendingGrowth } from "./mate/mate-growth-actions.js";
-
-async function openSessionWindow(sessionId: string) {
-  await withWithMateApi((api) => api.openSession(sessionId));
-}
-
-async function openHomeWindow() {
-  await withWithMateApi((api) => api.openHomeWindow());
-}
-
-async function openSessionMonitorWindow() {
-  await withWithMateApi((api) => api.openSessionMonitorWindow());
-}
-
-async function openSettingsWindow() {
-  await withWithMateApi((api) => api.openSettingsWindow());
-}
-
-async function openMemoryManagementWindow() {
-  await withWithMateApi((api) => api.openMemoryManagementWindow());
-}
 
 type HomeRightPaneView = "monitor" | "mate";
 
@@ -855,7 +842,7 @@ export default function HomeApp() {
           ...current.filter((session) => session.id !== createdSession.id),
         ]);
         closeLaunchDialog();
-        await withWithMateApi((api) => api.openCompanionReviewWindow(createdSession.id));
+        await openCompanionReviewWindow(createdSession.id);
         return;
       }
 
@@ -1778,7 +1765,7 @@ export default function HomeApp() {
       runningEmptyMessage: monitorRunningEmptyMessage,
       completedEmptyMessage: monitorCompletedEmptyMessage,
       onOpenSession: (sessionId) => void openSessionWindow(sessionId),
-      onOpenCompanionReview: (sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId)),
+      onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
     },
   });
 
@@ -1792,7 +1779,7 @@ export default function HomeApp() {
       onChangeSearchText: setSessionSearchText,
       onOpenLaunchDialog: openLaunchDialog,
       onOpenSession: (sessionId) => void openSessionWindow(sessionId),
-      onOpenCompanionReview: (sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId)),
+      onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
       canUsePrimaryFeatures,
     },
     rightPane: {
@@ -1810,7 +1797,7 @@ export default function HomeApp() {
       onOpenMateProfile: openMateProfileEditor,
       onOpenMateTalk: () => void openMateTalkWindow(),
       onOpenSession: (sessionId) => void openSessionWindow(sessionId),
-      onOpenCompanionReview: (sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId)),
+      onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
       canUsePrimaryFeatures,
     },
     launchDialog: {
