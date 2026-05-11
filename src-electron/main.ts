@@ -807,9 +807,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           loadCharacterEntry: (window, characterId) =>
             requireWindowEntryLoader().loadCharacterEntry(window, characterId),
           loadDiffEntry: (window, token) => requireWindowEntryLoader().loadDiffEntry(window, token),
-          loadCompanionChatEntry: (window, sessionId) =>
-            requireWindowEntryLoader().loadCompanionChatEntry(window, sessionId),
-          loadMateTalkEntry: (window) => requireWindowEntryLoader().loadMateTalkEntry(window),
+          loadChatEntry: (window, mode) => requireWindowEntryLoader().loadChatEntry(window, mode),
           loadCompanionMergeEntry: (window, sessionId) =>
             requireWindowEntryLoader().loadCompanionMergeEntry(window, sessionId),
           generateDiffToken: () => crypto.randomUUID(),
@@ -2415,7 +2413,7 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
           ...SESSION_WINDOW_DEFAULT_BOUNDS,
           title: `WithMate Session - ${sessionId}`,
         }),
-      loadSessionEntry: (window, sessionId) => requireWindowEntryLoader().loadSessionEntry(window, sessionId),
+      loadChatEntry: (window, mode) => requireWindowEntryLoader().loadChatEntry(window, mode),
       getSession,
       isRunInFlight: isSessionRunInFlight,
       getAllowQuitWithInFlightRuns: () => allowQuitWithInFlightRuns,

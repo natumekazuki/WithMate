@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { WindowEntryLoader } from "../../src-electron/window-entry-loader.js";
+import { buildChatEntrySearch, WindowEntryLoader } from "../../src-electron/window-entry-loader.js";
 
 function createWindowStub() {
   const calls: Array<{ kind: "url" | "file"; value: string; search?: string }> = [];
@@ -44,6 +44,15 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
     { kind: "url", value: "http://localhost:5173/session.html?mode=mate-talk" },
     { kind: "url", value: "http://localhost:5173/review.html?companionSessionId=companion%201&view=merge" },
   ]);
+});
+
+test("buildChatEntrySearch は chat mode ごとの session.html query を組み立てる", () => {
+  assert.equal(buildChatEntrySearch({ kind: "agent", sessionId: "session 1" }), "?sessionId=session%201");
+  assert.equal(
+    buildChatEntrySearch({ kind: "companion", sessionId: "companion 1" }),
+    "?companionSessionId=companion%201&mode=companion",
+  );
+  assert.equal(buildChatEntrySearch({ kind: "mate-talk" }), "?mode=mate-talk");
 });
 
 test("WindowEntryLoader は production build で loadFile する", async () => {

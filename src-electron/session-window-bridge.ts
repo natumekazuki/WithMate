@@ -1,4 +1,5 @@
 import type { Session } from "../src/app-state.js";
+import type { ChatEntryMode } from "./window-entry-loader.js";
 
 export type SessionWindowCloseEvent = {
   preventDefault(): void;
@@ -18,7 +19,7 @@ export type SessionWindowLike = {
 
 export type SessionWindowBridgeDeps<TWindow extends SessionWindowLike> = {
   createWindow(sessionId: string): TWindow;
-  loadSessionEntry(window: TWindow, sessionId: string): Promise<void>;
+  loadChatEntry(window: TWindow, mode: ChatEntryMode): Promise<void>;
   getSession(sessionId: string): Session | null;
   isRunInFlight(sessionId: string): boolean;
   getAllowQuitWithInFlightRuns(): boolean;
@@ -76,7 +77,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     window.on("close", (event) => this.handleWindowClose(sessionId, window, event));
     window.on("closed", () => this.handleWindowClosed(sessionId));
 
-    await this.deps.loadSessionEntry(window, sessionId);
+    await this.deps.loadChatEntry(window, { kind: "agent", sessionId });
 
     return window;
   }

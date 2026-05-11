@@ -1,5 +1,5 @@
 import type { DiffPreviewPayload } from "../src/session-state.js";
-import type { HomeEntryMode, WindowLike } from "./window-entry-loader.js";
+import type { ChatEntryMode, HomeEntryMode, WindowLike } from "./window-entry-loader.js";
 import {
   COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
   COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
@@ -32,8 +32,7 @@ export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
   loadHomeEntry(window: TWindow, mode: HomeEntryMode): Promise<void>;
   loadCharacterEntry(window: TWindow, characterId?: string | null): Promise<void>;
   loadDiffEntry(window: TWindow, token: string): Promise<void>;
-  loadCompanionChatEntry(window: TWindow, sessionId: string): Promise<void>;
-  loadMateTalkEntry(window: TWindow): Promise<void>;
+  loadChatEntry(window: TWindow, mode: ChatEntryMode): Promise<void>;
   loadCompanionMergeEntry(window: TWindow, sessionId: string): Promise<void>;
   generateDiffToken(): string;
   onCompanionReviewWindowsChanged(): void;
@@ -187,7 +186,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     window.on("closed", () => {
       this.mateTalkWindow = null;
     });
-    await this.deps.loadMateTalkEntry(window);
+    await this.deps.loadChatEntry(window, { kind: "mate-talk" });
     return window;
   }
 
@@ -249,7 +248,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       this.companionReviewWindows.delete(sessionId);
       this.deps.onCompanionReviewWindowsChanged();
     });
-    await this.deps.loadCompanionChatEntry(window, sessionId);
+    await this.deps.loadChatEntry(window, { kind: "companion", sessionId });
     return window;
   }
 

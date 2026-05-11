@@ -6,6 +6,10 @@ export type WindowLike = {
 };
 
 export type HomeEntryMode = "home" | "monitor" | "settings" | "memory";
+export type ChatEntryMode =
+  | { kind: "agent"; sessionId: string }
+  | { kind: "companion"; sessionId: string }
+  | { kind: "mate-talk" };
 
 export type WindowEntryLoaderDeps = {
   devServerUrl?: string | null;
@@ -21,8 +25,7 @@ export class WindowEntryLoader {
   }
 
   async loadSessionEntry(window: WindowLike, sessionId: string): Promise<void> {
-    const search = `?sessionId=${encodeURIComponent(sessionId)}`;
-    await this.load(window, "session.html", search);
+    await this.loadChatEntry(window, { kind: "agent", sessionId });
   }
 
   async loadCharacterEntry(window: WindowLike, characterId?: string | null): Promise<void> {
@@ -36,12 +39,15 @@ export class WindowEntryLoader {
   }
 
   async loadCompanionChatEntry(window: WindowLike, sessionId: string): Promise<void> {
-    const search = `?companionSessionId=${encodeURIComponent(sessionId)}&mode=companion`;
-    await this.load(window, "session.html", search);
+    await this.loadChatEntry(window, { kind: "companion", sessionId });
   }
 
   async loadMateTalkEntry(window: WindowLike): Promise<void> {
-    await this.load(window, "session.html", "?mode=mate-talk");
+    await this.loadChatEntry(window, { kind: "mate-talk" });
+  }
+
+  async loadChatEntry(window: WindowLike, mode: ChatEntryMode): Promise<void> {
+    await this.load(window, "session.html", buildChatEntrySearch(mode));
   }
 
   async loadCompanionMergeEntry(window: WindowLike, sessionId: string): Promise<void> {
@@ -64,4 +70,14 @@ export class WindowEntryLoader {
         : path.resolve(rendererDistPath, entryFileName);
     await window.loadFile(filePath, search ? { search } : undefined);
   }
+}
+
+export function buildChatEntrySearch(mode: ChatEntryMode): string {
+  if (mode.kind === "agent") {
+    return `?sessionId=${encodeURIComponent(mode.sessionId)}`;
+  }
+  if (mode.kind === "companion") {
+    return `?companionSessionId=${encodeURIComponent(mode.sessionId)}&mode=companion`;
+  }
+  return "?mode=mate-talk";
 }
