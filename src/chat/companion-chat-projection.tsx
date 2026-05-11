@@ -9,9 +9,7 @@ import type {
 import type { CharacterProfile, DiffPreviewPayload, MessageArtifact } from "../app-state.js";
 import type { CompanionSession } from "../companion-state.js";
 import {
-  SessionAuditLogModal,
   SessionContextPane,
-  SessionDiffModal,
   SessionPaneErrorBoundary,
   type SessionActionDockCompactRowProps,
   type SessionAuditLogModalProps,
@@ -21,6 +19,7 @@ import {
   type SessionMessageColumnProps,
 } from "../session-components.js";
 import type { ContextPaneTabKey } from "../session-ui-projection.js";
+import { ChatSessionModals } from "./chat-session-modals.js";
 import { ChatWorkbenchSplitter, type ChatWindowProps } from "./chat-window.js";
 
 export type CompanionChatProjectionInput = {
@@ -352,33 +351,13 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       </SessionPaneErrorBoundary>
     ),
     modals: (
-      <>
-        <SessionDiffModal
-          selectedDiff={input.selectedDiff}
-          themeStyle={input.selectedDiffThemeStyle}
-          onClose={input.onCloseDiff}
-          onOpenDiffWindow={input.onOpenDiffWindow}
-        />
-        <SessionAuditLogModal
-          open={input.auditLogsOpen}
-          entries={input.displayedSessionAuditLogs}
-          details={input.auditLogDetails}
-          operationDetails={input.auditLogOperationDetails}
-          hasMore={input.auditLogsHasMore}
-          loadingMore={input.auditLogsLoading}
-          total={input.auditLogsTotal}
-          errorMessage={input.auditLogsErrorMessage}
-          onLoadMore={input.onLoadMoreAuditLogs}
-          onLoadDetail={input.onLoadAuditLogDetail}
-          onLoadOperationDetail={input.onLoadAuditLogOperationDetail}
-          onClose={input.onCloseAuditLog}
-        />
+      <ChatSessionModals {...input}>
         {input.toastMessage ? (
           <div className={`companion-session-toast ${input.toastTone}`}>
             {input.toastMessage}
           </div>
         ) : null}
-      </>
+      </ChatSessionModals>
     ),
   };
 }
