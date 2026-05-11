@@ -48,14 +48,12 @@ import {
   type HomeProviderSettingRow,
 } from "./home-settings-view-model.js";
 import {
-  HomeLaunchDialog,
   HomeMonitorContent,
-  HomeRecentSessionsPanel,
-  HomeRightPane,
   HomeSettingsContent,
   HomeMateSetupPanel,
 } from "./home-components.js";
 import { HomeAppRouter } from "./home/HomeAppRouter.js";
+import { buildHomeDashboardSlots } from "./home/HomeDashboardSlots.js";
 import { getHomeWindowMode } from "./home/home-window-mode.js";
 import {
   exportHomeModelCatalog,
@@ -665,6 +663,21 @@ export default function HomeApp() {
     setLaunchFeedback("");
     setLaunchStarting(false);
     setLaunchDraft((current) => closeLaunchDraft(current));
+  };
+
+  const handleSelectLaunchProvider = (providerId: string) => {
+    setLaunchFeedback("");
+    const provider = enabledLaunchProviders.find((candidate) => candidate.id === providerId) ?? null;
+    const model =
+      provider?.models.find((candidate) => candidate.id === provider.defaultModelId) ??
+      provider?.models[0] ??
+      null;
+    setLaunchDraft((current) => ({
+      ...current,
+      providerId,
+      model: model?.id ?? current.model,
+      reasoningEffort: model?.reasoningEfforts[0] ?? provider?.defaultReasoningEffort ?? current.reasoningEffort,
+    }));
   };
 
   const handleSaveMate = async () => {
@@ -1881,81 +1894,62 @@ export default function HomeApp() {
     />
   );
 
-  const recentSessionsPanel = (
-    <HomeRecentSessionsPanel
-      filteredSessionEntries={filteredSessionEntries}
-      companionSessions={companionSessions}
-      normalizedSessionSearch={normalizedSessionSearch}
-      searchText={sessionSearchText}
-      searchIcon={renderSearchIcon()}
-      onChangeSearchText={setSessionSearchText}
-      onOpenLaunchDialog={openLaunchDialog}
-      onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
-      onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
-      canUsePrimaryFeatures={canUsePrimaryFeatures}
-    />
-  );
-
-  const rightPane = (
-    <HomeRightPane
-      rightPaneView={rightPaneView}
-      runningMonitorEntries={runningMonitorEntries}
-      nonRunningMonitorEntries={nonRunningMonitorEntries}
-      monitorRunningEmptyMessage={monitorRunningEmptyMessage}
-      monitorCompletedEmptyMessage={monitorCompletedEmptyMessage}
-      mateProfile={mateProfile}
-      monitorWindowIcon={renderMonitorWindowIcon()}
-      onChangeRightPaneView={setRightPaneView}
-      onOpenSessionMonitorWindow={() => void openSessionMonitorWindow()}
-      onOpenMemoryManagementWindow={() => void openMemoryManagementWindow()}
-      onOpenSettingsWindow={() => void openSettingsWindow()}
-      onOpenMateProfile={openMateProfileEditor}
-      onOpenMateTalk={() => void openMateTalkWindow()}
-      onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
-      onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
-      canUsePrimaryFeatures={canUsePrimaryFeatures}
-    />
-  );
-
-  const launchDialog = (
-    <HomeLaunchDialog
-      open={launchDraft.open}
-      mode={launchDraft.mode}
-      title={launchDraft.title}
-      workspace={launchDraft.workspace}
-      launchWorkspacePathLabel={launchWorkspacePathLabel}
-      enabledLaunchProviders={enabledLaunchProviders}
-      selectedLaunchProviderId={selectedLaunchProvider?.id ?? null}
-      canStartSession={canStartSession && canUsePrimaryFeatures}
-      launchFeedback={launchFeedback}
-      launchStarting={launchStarting}
-      onClose={closeLaunchDialog}
-      onSelectMode={(mode) => {
+  const { recentSessionsPanel, rightPane, launchDialog } = buildHomeDashboardSlots({
+    recentSessionsPanel: {
+      filteredSessionEntries,
+      companionSessions,
+      normalizedSessionSearch,
+      searchText: sessionSearchText,
+      searchIcon: renderSearchIcon(),
+      onChangeSearchText: setSessionSearchText,
+      onOpenLaunchDialog: openLaunchDialog,
+      onOpenSession: (sessionId) => void openSessionWindow(sessionId),
+      onOpenCompanionReview: (sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId)),
+      canUsePrimaryFeatures,
+    },
+    rightPane: {
+      rightPaneView,
+      runningMonitorEntries,
+      nonRunningMonitorEntries,
+      monitorRunningEmptyMessage,
+      monitorCompletedEmptyMessage,
+      mateProfile,
+      monitorWindowIcon: renderMonitorWindowIcon(),
+      onChangeRightPaneView: setRightPaneView,
+      onOpenSessionMonitorWindow: () => void openSessionMonitorWindow(),
+      onOpenMemoryManagementWindow: () => void openMemoryManagementWindow(),
+      onOpenSettingsWindow: () => void openSettingsWindow(),
+      onOpenMateProfile: openMateProfileEditor,
+      onOpenMateTalk: () => void openMateTalkWindow(),
+      onOpenSession: (sessionId) => void openSessionWindow(sessionId),
+      onOpenCompanionReview: (sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId)),
+      canUsePrimaryFeatures,
+    },
+    launchDialog: {
+      open: launchDraft.open,
+      mode: launchDraft.mode,
+      title: launchDraft.title,
+      workspace: launchDraft.workspace,
+      launchWorkspacePathLabel,
+      enabledLaunchProviders,
+      selectedLaunchProviderId: selectedLaunchProvider?.id ?? null,
+      canStartSession: canStartSession && canUsePrimaryFeatures,
+      launchFeedback,
+      launchStarting,
+      onClose: closeLaunchDialog,
+      onSelectMode: (mode) => {
         setLaunchFeedback("");
         setLaunchDraft((current) => ({ ...current, mode }));
-      }}
-      onChangeTitle={(value) => {
+      },
+      onChangeTitle: (value) => {
         setLaunchFeedback("");
         setLaunchDraft((current) => ({ ...current, title: value }));
-      }}
-      onBrowseWorkspace={() => void handleBrowseWorkspace()}
-      onSelectProvider={(providerId) => {
-        setLaunchFeedback("");
-        const provider = enabledLaunchProviders.find((candidate) => candidate.id === providerId) ?? null;
-        const model =
-          provider?.models.find((candidate) => candidate.id === provider.defaultModelId) ??
-          provider?.models[0] ??
-          null;
-        setLaunchDraft((current) => ({
-          ...current,
-          providerId,
-          model: model?.id ?? current.model,
-          reasoningEffort: model?.reasoningEfforts[0] ?? provider?.defaultReasoningEffort ?? current.reasoningEffort,
-        }));
-      }}
-      onStartSession={(mode) => void handleStartSession(mode)}
-    />
-  );
+      },
+      onBrowseWorkspace: () => void handleBrowseWorkspace(),
+      onSelectProvider: handleSelectLaunchProvider,
+      onStartSession: (mode) => void handleStartSession(mode),
+    },
+  });
 
   return (
     <HomeAppRouter
