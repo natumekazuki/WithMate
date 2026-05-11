@@ -3,12 +3,10 @@ import { describe, it } from "node:test";
 import React, { isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import {
-  HomeLaunchDialog,
-  HomeMateSetupPanel,
-  HomeRecentSessionsPanel,
-  HomeRightPane,
-} from "../../src/home-components.js";
+import { HomeLaunchDialog } from "../../src/home/HomeLaunchDialog.js";
+import { HomeRecentSessionsPanel } from "../../src/home/HomeRecentSessionsPanel.js";
+import { HomeRightPane } from "../../src/home/HomeRightPane.js";
+import { HomeMateSetupPanel } from "../../src/mate/MateSetupPanel.js";
 import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";

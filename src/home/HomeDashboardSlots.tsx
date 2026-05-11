@@ -1,13 +1,8 @@
 import type { ReactNode } from "react";
 
-import {
-  HomeLaunchDialog,
-  type HomeLaunchDialogProps,
-  HomeRecentSessionsPanel,
-  type HomeRecentSessionsPanelProps,
-  HomeRightPane,
-  type HomeRightPaneProps,
-} from "../home-components.js";
+import { HomeLaunchDialog, type HomeLaunchDialogProps } from "./HomeLaunchDialog.js";
+import { HomeRecentSessionsPanel, type HomeRecentSessionsPanelProps } from "./HomeRecentSessionsPanel.js";
+import { HomeRightPane, type HomeRightPaneProps } from "./HomeRightPane.js";
 
 type HomeDashboardSlotsInput = {
   recentSessionsPanel: HomeRecentSessionsPanelProps;

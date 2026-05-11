@@ -1,11 +1,7 @@
 import type { ReactNode } from "react";
 
-import {
-  HomeMateSetupPanel,
-  type HomeMateSetupPanelProps,
-  HomeMonitorContent,
-  type HomeMonitorContentProps,
-} from "../home-components.js";
+import { HomeMonitorContent, type HomeMonitorContentProps } from "./HomeMonitorContent.js";
+import { HomeMateSetupPanel, type HomeMateSetupPanelProps } from "../mate/MateSetupPanel.js";
 import { HomeSettingsContent, type HomeSettingsContentProps } from "../settings/SettingsContent.js";
 
 type HomeWindowContentSlotsInput = {
