@@ -3,7 +3,7 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ChatWindow, ChatWindowStatusScreen } from "../../src/chat/chat-window.js";
+import { ChatWindow } from "../../src/chat/chat-window.js";
 import { buildMateTalkChatWindowProps } from "../../src/chat/mate-talk-chat-projection.js";
 
 function renderPanel(options?: {
@@ -72,15 +72,6 @@ test("MateTalk は ChatWindow で Session 共通レイアウトの通常状態�
   assert.doesNotMatch(html, />Approval<\/span>/);
   assert.doesNotMatch(html, />Sandbox<\/span>/);
   assert.doesNotMatch(html, /<button class="session-send-button"[^>]*disabled=""/);
-});
-
-test("ChatWindowStatusScreen は Session 共通 shell で状態表示をレンダリングする", () => {
-  const html = renderToStaticMarkup(React.createElement(ChatWindowStatusScreen, { message: "準備しています。" }));
-
-  assert.match(html, /<main class="page-shell session-page">/);
-  assert.match(html, /<section class="session-work-surface chat-panel" aria-live="polite">/);
-  assert.match(html, /<p class="session-message-empty">準備しています。<\/p>/);
-  assert.doesNotMatch(html, /session-plain/);
 });
 
 test("MateTalk は ChatWindow で空白入力の送信を抑制する", () => {
