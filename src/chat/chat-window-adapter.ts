@@ -265,3 +265,15 @@ export function createStaticChatCompactActionDockProps(
     ...props,
   };
 }
+
+export function buildChatPageClassName({
+  baseClassName = "",
+  isHeaderExpanded,
+}: {
+  baseClassName?: string;
+  isHeaderExpanded: boolean;
+}): string {
+  return [baseClassName, isHeaderExpanded ? "" : "session-page-header-collapsed"]
+    .filter((className) => className.length > 0)
+    .join(" ");
+}

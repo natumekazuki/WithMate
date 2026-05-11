@@ -3,6 +3,7 @@ import test from "node:test";
 import React from "react";
 
 import {
+  buildChatPageClassName,
   createStaticChatCharacterProfile,
   createStaticChatComposerSendability,
   createHiddenControlsChatComposerProps,
@@ -15,6 +16,22 @@ import {
 import type { ChatWindowProps } from "../../src/chat/chat-window.js";
 
 const noop = () => {};
+
+test("buildChatPageClassName は header collapse class を共通形式で組み立てる", () => {
+  assert.equal(buildChatPageClassName({ isHeaderExpanded: true }), "");
+  assert.equal(
+    buildChatPageClassName({ isHeaderExpanded: false }),
+    "session-page-header-collapsed",
+  );
+  assert.equal(
+    buildChatPageClassName({ baseClassName: "theme-accent", isHeaderExpanded: true }),
+    "theme-accent",
+  );
+  assert.equal(
+    buildChatPageClassName({ baseClassName: "theme-accent", isHeaderExpanded: false }),
+    "theme-accent session-page-header-collapsed",
+  );
+});
 
 function createCharacter(): ChatWindowProps["messageColumnProps"]["character"] {
   return createStaticChatCharacterProfile({ id: "mate", name: "Mate" });

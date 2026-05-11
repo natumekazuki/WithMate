@@ -21,6 +21,7 @@ import {
 import type { ContextPaneTabKey } from "../session-ui-projection.js";
 import { ChatSessionModals } from "./chat-session-modals.js";
 import { ChatWorkbenchSplitter, type ChatWindowProps } from "./chat-window.js";
+import { buildChatPageClassName } from "./chat-window-adapter.js";
 
 export type CompanionChatProjectionInput = {
   session: CompanionSession;
@@ -307,7 +308,10 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
 
   return {
     mode: "companion",
-    className: `theme-accent${input.isHeaderExpanded ? "" : " session-page-header-collapsed"}`,
+    className: buildChatPageClassName({
+      baseClassName: "theme-accent",
+      isHeaderExpanded: input.isHeaderExpanded,
+    }),
     style: input.themeStyle,
     workbenchRef: input.workbenchRef,
     workbenchStyle: input.workbenchStyle,

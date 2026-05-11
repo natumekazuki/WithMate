@@ -7,6 +7,7 @@ import {
   type ChatWindowProps,
 } from "./chat-window.js";
 import {
+  buildChatPageClassName,
   createStaticChatCharacterProfile,
   createStaticChatComposerSendability,
   createHiddenControlsChatComposerProps,
@@ -186,7 +187,7 @@ export function buildMateTalkChatWindowProps({
 }: MateTalkChatProjectionInput): ChatWindowProps {
   return {
     mode: "mate-talk",
-    className: isHeaderExpanded ? "" : "session-page-header-collapsed",
+    className: buildChatPageClassName({ isHeaderExpanded }),
     style: themeStyle,
     isHeaderExpanded,
     headerProps: buildMateTalkHeaderProps({ sending, onClose, onToggleHeaderExpanded }),

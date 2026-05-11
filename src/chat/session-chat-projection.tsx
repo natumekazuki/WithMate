@@ -21,6 +21,7 @@ import {
 import type { ContextPaneTabKey } from "../session-ui-projection.js";
 import { ChatSessionModals } from "./chat-session-modals.js";
 import { ChatWorkbenchSplitter, type ChatWindowProps } from "./chat-window.js";
+import { buildChatPageClassName } from "./chat-window-adapter.js";
 
 export type AgentSessionChatProjectionInput = {
   selectedSession: Session;
@@ -317,7 +318,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
 
   return {
     mode: "agent",
-    className: input.isSessionHeaderExpanded ? "" : "session-page-header-collapsed",
+    className: buildChatPageClassName({ isHeaderExpanded: input.isSessionHeaderExpanded }),
     style: input.sessionThemeStyle,
     workbenchRef: input.sessionWorkbenchRef,
     workbenchStyle: input.sessionWorkbenchStyle,
