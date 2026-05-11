@@ -1489,6 +1489,17 @@ describe("HomeRightPane", () => {
     assert.ok(html.includes("Mate の説明は未設定だよ。"));
   });
 
+  it("メイトークは Home right pane のタブではなく起動ボタンとして表示する", () => {
+    const html = renderHomeRightPane("monitor", null);
+    const tablistMatch = html.match(/<div class="home-pane-toggle" role="tablist" aria-label="Home right pane">[\s\S]*?<\/div>/);
+
+    assert.ok(tablistMatch);
+    assert.ok(tablistMatch[0].includes("Monitor"));
+    assert.ok(tablistMatch[0].includes("Your Mate"));
+    assert.ok(!tablistMatch[0].includes("メイトーク"));
+    assert.match(html, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
+  });
+
   it("active mateProfile で avatar 未設定のとき fallback がレンダリングされ、画像タグは出力されない", () => {
     const html = renderHomeRightPane("mate", {
       id: "mate-2",
