@@ -43,7 +43,6 @@ import {
   type HomeProviderInstructionTargetSettings,
   type HomeProviderSettingRow,
 } from "./settings/settings-view-model.js";
-import type { HomeSettingsContentProps } from "./settings/SettingsContent.js";
 import { HomeAppRouter } from "./home/HomeAppRouter.js";
 import { buildHomeDashboardSlots } from "./home/HomeDashboardSlots.js";
 import { buildHomeWindowContentSlots } from "./home/HomeWindowContentSlots.js";
@@ -72,6 +71,11 @@ import {
   normalizeProviderInstructionTarget,
   type HomeProviderInstructionTargetDraft,
 } from "./settings/provider-instruction-target-draft.js";
+import {
+  buildHomeMemoryManagementContentProps,
+  buildHomeSettingsContentProps,
+  type HomeSettingsContentBaseProps,
+} from "./settings/home-settings-content-props.js";
 import {
   handleBrowseProviderInstructionInstructionRelativePath as handleBrowseProviderInstructionInstructionRelativePathAction,
   handleChangeProviderInstructionEnabled as handleChangeProviderInstructionEnabledAction,
@@ -1424,7 +1428,7 @@ export default function HomeApp() {
   const isMateNotCreated = mateState === "not_created";
   const canUsePrimaryFeatures = mateState !== "not_created" && mateProfile !== null;
 
-  const baseSettingsContentProps: HomeSettingsContentProps = {
+  const baseSettingsContentProps: HomeSettingsContentBaseProps = {
     settingsDraft,
     providerSettingRows,
     modelCatalogRevisionLabel: String(modelCatalog?.revision ?? "-"),
@@ -1499,7 +1503,7 @@ export default function HomeApp() {
   };
 
   const { settingsContent, memoryManagementContent, mateSetupContent, monitorContent } = buildHomeWindowContentSlots({
-    settingsContent: {
+    settingsContent: buildHomeSettingsContentProps({
       ...baseSettingsContentProps,
       onApplyPendingGrowth: () => void handleApplyPendingGrowth(),
       applyPendingGrowthBusy: mateGrowthApplying,
@@ -1507,8 +1511,8 @@ export default function HomeApp() {
       onResetMate: () => void handleResetMate(),
       mateResetBusy: mateResetting,
       canResetMate: mateState !== "not_created",
-    },
-    memoryManagementContent: baseSettingsContentProps,
+    }),
+    memoryManagementContent: buildHomeMemoryManagementContentProps(baseSettingsContentProps),
     mateSetupContent: {
       mode: isMateNotCreated ? "create" : "edit",
       displayName: mateDisplayName,

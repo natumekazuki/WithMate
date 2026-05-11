@@ -26,7 +26,7 @@ export function buildHomeWindowContentSlots({
 }: HomeWindowContentSlotsInput): HomeWindowContentSlots {
   return {
     settingsContent: <HomeSettingsContent {...settingsContent} />,
-    memoryManagementContent: <HomeSettingsContent {...memoryManagementContent} memoryManagementOnly />,
+    memoryManagementContent: <HomeSettingsContent {...memoryManagementContent} />,
     mateSetupContent: <HomeMateSetupPanel {...mateSetupContent} />,
     monitorContent: <HomeMonitorContent {...monitorContent} />,
   };
