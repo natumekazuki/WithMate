@@ -2,12 +2,12 @@ import { type CSSProperties, type RefObject } from "react";
 
 import { type ChatSelectOption, type ChatWindowProps } from "./chat-window.js";
 import {
-  buildStaticChatWindowVariantProps,
-  type StaticChatWindowMessage,
-} from "./static-chat-window-projection.js";
+  buildTextChatWindowProps,
+  type TextChatWindowMessage,
+} from "./text-chat-projection.js";
 import { shouldSubmitMateTalkInputByKey } from "./mate-talk-state.js";
 
-export type MateTalkMessage = StaticChatWindowMessage & {
+export type MateTalkMessage = TextChatWindowMessage & {
   role: "user" | "mate";
 };
 
@@ -56,7 +56,7 @@ export function buildMateTalkChatWindowProps({
   sending,
   feedback,
 }: MateTalkChatProjectionInput): ChatWindowProps {
-  return buildStaticChatWindowVariantProps({
+  return buildTextChatWindowProps({
     mode: "mate-talk",
     pageTitle: "メイトーク",
     characterId: "mate-talk",

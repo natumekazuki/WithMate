@@ -15,13 +15,13 @@ import {
   isStaticChatSendDisabled,
 } from "./chat-window-adapter.js";
 
-export type StaticChatWindowMessage = {
+export type TextChatWindowMessage = {
   id: string;
   role: string;
   text: string;
 };
 
-export type StaticChatWindowVariantInput = {
+export type TextChatWindowProjectionInput = {
   mode: ChatWindowProps["mode"];
   pageTitle: string;
   pageTitleDraft?: string;
@@ -30,7 +30,7 @@ export type StaticChatWindowVariantInput = {
   sessionId: string;
   themeStyle?: CSSProperties;
   isHeaderExpanded: boolean;
-  messages: StaticChatWindowMessage[];
+  messages: TextChatWindowMessage[];
   draft: string;
   placeholder?: string;
   sendButtonTitleWhenEnabled?: string;
@@ -58,7 +58,7 @@ export type StaticChatWindowVariantInput = {
   rightPaneClassName?: string;
 };
 
-export function buildStaticChatWindowVariantProps({
+export function buildTextChatWindowProps({
   mode,
   pageTitle,
   pageTitleDraft,
@@ -93,7 +93,7 @@ export function buildStaticChatWindowVariantProps({
   rightPaneHeaderTitle = pageTitle,
   rightPaneAriaLabel = "補助情報",
   rightPaneClassName,
-}: StaticChatWindowVariantInput): ChatWindowProps {
+}: TextChatWindowProjectionInput): ChatWindowProps {
   const isSendDisabled = isStaticChatSendDisabled({ draft, isRunning });
 
   return {
