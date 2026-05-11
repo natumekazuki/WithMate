@@ -58,7 +58,7 @@ import {
   resolveAvailableContextPaneTabs,
   resolveAutoContextPaneTab,
 } from "./session-ui-projection.js";
-import { ChatWindow } from "./chat/chat-window.js";
+import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,
@@ -2496,27 +2496,11 @@ export default function AgentSessionWindowApp() {
   };
 
   if (!desktopRuntime) {
-    return (
-      <div className="page-shell session-page">
-        <section className="panel empty-session-card rise-2">
-          <p>Session Window は Electron から開いてね。</p>
-        </section>
-      </div>
-    );
+    return <ChatWindowStatusScreen message="Session Window は Electron から開いてね。" />;
   }
 
   if (!selectedSession || !selectedSessionCharacter) {
-    return (
-      <div className="page-shell session-page">
-        <section className="panel session-window-bar rise-1">
-          <span className="session-window-title">Session が選択されていません</span>
-        </section>
-        <section className="panel empty-session-card rise-2">
-          <h2>Home Window から session を開いてね</h2>
-          <p>`/session.html?sessionId=...` で対象 session を受け取る形になってるよ。</p>
-        </section>
-      </div>
-    );
+    return <ChatWindowStatusScreen message="Session が選択されていません。Home Window から session を開いてね。" />;
   }
 
   return (

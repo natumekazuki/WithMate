@@ -47,7 +47,7 @@ import {
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { SessionHeader } from "./session-components.js";
-import { ChatHeaderHandle, ChatWindow } from "./chat/chat-window.js";
+import { ChatHeaderHandle, ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
 import {
   buildComposerSendabilityState,
@@ -1976,23 +1976,27 @@ export default function CompanionReviewApp() {
   }
 
   if (!desktopRuntime) {
-    return (
+    return isMergeView ? (
       <div className="page-shell companion-review-page">
         <section className="panel empty-session-card rise-1">
           <p>Companion は Electron から開いてね。</p>
         </section>
       </div>
+    ) : (
+      <ChatWindowStatusScreen message="Companion は Electron から開いてね。" />
     );
   }
 
   if (!snapshot) {
-    return (
+    return isMergeView ? (
       <div className="page-shell companion-review-page">
         <section className="panel empty-session-card rise-1">
           <h2>Companion</h2>
           <p>{errorMessage || "読み込み中..."}</p>
         </section>
       </div>
+    ) : (
+      <ChatWindowStatusScreen message={errorMessage || "Companion を読み込み中..."} />
     );
   }
 
