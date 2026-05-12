@@ -86,22 +86,14 @@ import {
   type MateGrowthSettings,
   type MateProfile,
   type MateStorageState,
-  type UpdateMateGrowthSettingsInput,
 } from "./mate/mate-state.js";
 import { buildHomeMateSetupContentProps } from "./mate/home-mate-setup-props.js";
 import { type MateEmbeddingSettings } from "./mate/mate-embedding-settings.js";
 import type { MateGrowthEventListItem } from "./mate/mate-growth-events-state.js";
 import {
-  handleApplyPendingGrowth as handleApplyPendingGrowthAction,
-  handleBeginCorrectMateGrowthEvent as handleBeginCorrectMateGrowthEventAction,
-  handleCancelCorrectMateGrowthEvent as handleCancelCorrectMateGrowthEventAction,
-  handleCorrectMateGrowthEvent as handleCorrectMateGrowthEventAction,
-  handleDisableMateGrowthEvent as handleDisableMateGrowthEventAction,
-  handleForgetMateGrowthEvent as handleForgetMateGrowthEventAction,
-  handleReloadMateGrowthEvents as handleReloadMateGrowthEventsAction,
-  handleUpdateMateGrowthSettings as handleUpdateMateGrowthSettingsAction,
   upsertMateGrowthEventListItem as upsertMateGrowthEventListItemAction,
 } from "./mate/mate-growth-actions.js";
+import { buildMateGrowthHandlers } from "./mate/mate-growth-handlers.js";
 import {
   handleStartMateEmbeddingDownload as handleStartMateEmbeddingDownloadAction,
   MEMORY_MANAGEMENT_PAGE_LIMIT,
@@ -796,95 +788,25 @@ export default function HomeApp() {
     setMateGrowthEvents((current) => upsertMateGrowthEventListItemAction(current, nextEvent));
   };
 
-  const handleApplyPendingGrowth = () => {
-    void handleApplyPendingGrowthAction({
-      api: getWithMateApi(),
-      mateGrowthApplying,
-      mateState,
-      setMateGrowthApplying,
-      setSettingsFeedback,
-      refreshMateStatus,
-      refreshMateGrowthEvents,
-    });
-  };
-
-  const handleReloadMateGrowthEvents = () => {
-    void handleReloadMateGrowthEventsAction({
-      api: getWithMateApi(),
-      mateState,
-      setMateGrowthEventsFeedback,
-      refreshMateGrowthEvents,
-    });
-  };
-
-  const handleBeginCorrectMateGrowthEvent = (eventId: string, statement: string) => {
-    handleBeginCorrectMateGrowthEventAction({
-      eventId,
-      statement,
-      setCorrectingMateGrowthEventId,
-      setCorrectingMateGrowthEventStatement,
-    });
-  };
-
-  const handleCancelCorrectMateGrowthEvent = () => {
-    handleCancelCorrectMateGrowthEventAction({
-      setCorrectingMateGrowthEventId,
-      setCorrectingMateGrowthEventStatement,
-    });
-  };
-
-  const handleCorrectMateGrowthEvent = (eventId: string, statement: string) => {
-    void handleCorrectMateGrowthEventAction({
-      eventId,
-      statement,
-      api: getWithMateApi(),
-      setMateGrowthEventsFeedback,
-      upsertMateGrowthEventListItem,
-      setMateGrowthEventBusyTarget,
-      mateState,
-      mateGrowthEventBusyTarget,
-      runCorrectAction: (api) => api.correctMateGrowthEvent({ eventId, statement }),
-      setCancelCorrectMateGrowthEvent: handleCancelCorrectMateGrowthEvent,
-    });
-  };
-
-  const handleDisableMateGrowthEvent = (eventId: string) => {
-    void handleDisableMateGrowthEventAction({
-      eventId,
-      api: getWithMateApi(),
-      setMateGrowthEventsFeedback,
-      upsertMateGrowthEventListItem,
-      setMateGrowthEventBusyTarget,
-      mateState,
-      mateGrowthEventBusyTarget,
-      runDisableAction: (api) => api.disableMateGrowthEvent({ eventId }),
-    });
-  };
-
-  const handleForgetMateGrowthEvent = (eventId: string) => {
-    void handleForgetMateGrowthEventAction({
-      eventId,
-      api: getWithMateApi(),
-      setMateGrowthEventsFeedback,
-      upsertMateGrowthEventListItem,
-      setMateGrowthEventBusyTarget,
-      mateState,
-      mateGrowthEventBusyTarget,
-      runForgetAction: (api) => api.forgetMateGrowthEvent({ eventId }),
-    });
-  };
-
-  const handleUpdateMateGrowthSettings = (input: UpdateMateGrowthSettingsInput) => {
-    void handleUpdateMateGrowthSettingsAction({
-      api: getWithMateApi(),
-      input,
-      mateGrowthBusy,
-      mateState,
-      setMateGrowthBusy,
-      setMateGrowthFeedback,
-      setMateGrowthSettings,
-    });
-  };
+  const mateGrowthHandlers = buildMateGrowthHandlers({
+    getApi: getWithMateApi,
+    mateState,
+    mateGrowthApplying,
+    mateGrowthBusy,
+    mateGrowthEventBusyTarget,
+    setMateGrowthApplying,
+    setMateGrowthBusy,
+    setSettingsFeedback,
+    setMateGrowthFeedback,
+    setMateGrowthSettings,
+    setMateGrowthEventsFeedback,
+    setMateGrowthEventBusyTarget,
+    setCorrectingMateGrowthEventId,
+    setCorrectingMateGrowthEventStatement,
+    upsertMateGrowthEventListItem,
+    refreshMateStatus,
+    refreshMateGrowthEvents,
+  });
 
   const handleResetMate = async () => {
     if (mateResetting) {
@@ -1070,21 +992,21 @@ export default function HomeApp() {
     onOpenAppLogFolder: () => void handleOpenAppLogFolder(),
     onOpenCrashDumpFolder: () => void handleOpenCrashDumpFolder(),
     onStartMateEmbeddingDownload: () => void handleStartMateEmbeddingDownload(),
-    onReloadMateGrowthEvents: () => void handleReloadMateGrowthEvents(),
-    onBeginCorrectMateGrowthEvent: handleBeginCorrectMateGrowthEvent,
-    onChangeCorrectMateGrowthEventStatement: setCorrectingMateGrowthEventStatement,
-    onCancelCorrectMateGrowthEvent: handleCancelCorrectMateGrowthEvent,
-    onCorrectMateGrowthEvent: (eventId, statement) => void handleCorrectMateGrowthEvent(eventId, statement),
-    onDisableMateGrowthEvent: (eventId) => void handleDisableMateGrowthEvent(eventId),
-    onForgetMateGrowthEvent: (eventId) => void handleForgetMateGrowthEvent(eventId),
-    onUpdateMateGrowthSettings: (input) => void handleUpdateMateGrowthSettings(input),
+    onReloadMateGrowthEvents: mateGrowthHandlers.onReloadMateGrowthEvents,
+    onBeginCorrectMateGrowthEvent: mateGrowthHandlers.onBeginCorrectMateGrowthEvent,
+    onChangeCorrectMateGrowthEventStatement: mateGrowthHandlers.onChangeCorrectMateGrowthEventStatement,
+    onCancelCorrectMateGrowthEvent: mateGrowthHandlers.onCancelCorrectMateGrowthEvent,
+    onCorrectMateGrowthEvent: mateGrowthHandlers.onCorrectMateGrowthEvent,
+    onDisableMateGrowthEvent: mateGrowthHandlers.onDisableMateGrowthEvent,
+    onForgetMateGrowthEvent: mateGrowthHandlers.onForgetMateGrowthEvent,
+    onUpdateMateGrowthSettings: mateGrowthHandlers.onUpdateMateGrowthSettings,
     onSaveSettings: () => void handleSaveSettings(),
   };
 
   const { settingsContent, memoryManagementContent, mateSetupContent, monitorContent } = buildHomeWindowContentSlots({
     settingsContent: buildHomeSettingsContentProps({
       ...baseSettingsContentProps,
-      onApplyPendingGrowth: () => void handleApplyPendingGrowth(),
+      onApplyPendingGrowth: mateGrowthHandlers.onApplyPendingGrowth,
       applyPendingGrowthBusy: mateGrowthApplying,
       canApplyPendingGrowth: mateState === "active",
       onResetMate: () => void handleResetMate(),
