@@ -79,15 +79,7 @@ import {
   buildHomeSettingsContentProps,
   type HomeSettingsContentBaseProps,
 } from "./settings/home-settings-content-props.js";
-import {
-  handleBrowseProviderInstructionInstructionRelativePath as handleBrowseProviderInstructionInstructionRelativePathAction,
-  handleChangeProviderInstructionEnabled as handleChangeProviderInstructionEnabledAction,
-  handleChangeProviderInstructionFailPolicy as handleChangeProviderInstructionFailPolicyAction,
-  handleChangeProviderInstructionInstructionRelativePath as handleChangeProviderInstructionInstructionRelativePathAction,
-  handleChangeProviderInstructionWriteMode as handleChangeProviderInstructionWriteModeAction,
-  updateProviderInstructionTarget as updateProviderInstructionTargetAction,
-  upsertProviderInstructionTarget as upsertProviderInstructionTargetAction,
-} from "./settings/provider-instruction-target-actions.js";
+import { buildProviderInstructionTargetHandlers } from "./settings/provider-instruction-target-handlers.js";
 import {
   handleChangeAutoCollapseActionDockOnSend as handleChangeAutoCollapseActionDockOnSendAction,
   handleChangeCharacterReflectionCharDeltaThreshold as handleChangeCharacterReflectionCharDeltaThresholdAction,
@@ -956,90 +948,13 @@ export default function HomeApp() {
     }
   };
 
-  const upsertProviderInstructionTarget = (target: HomeProviderInstructionTargetDraft): void => {
-    const withmateApi = getWithMateApi();
-    void upsertProviderInstructionTargetAction({
-      target,
-      api: withmateApi,
-      setSettingsFeedback,
-    });
-  };
-
-  const updateProviderInstructionTarget = (
-    providerId: string,
-    patch: Partial<HomeProviderInstructionTargetDraft>,
-  ) => {
-    const withmateApi = getWithMateApi();
-    updateProviderInstructionTargetAction({
-      providerId,
-      patch,
-      providerInstructionTargets,
-      settingsDraft,
-      setProviderInstructionTargets,
-      setSettingsFeedback,
-      api: withmateApi,
-    });
-  };
-
-  const handleChangeProviderInstructionEnabled = (providerId: string, enabled: boolean) => {
-    handleChangeProviderInstructionEnabledAction({
-      providerId,
-      enabled,
-      providerInstructionTargets,
-      settingsDraft,
-      setProviderInstructionTargets,
-      setSettingsFeedback,
-      api: getWithMateApi(),
-    });
-  };
-
-  const handleChangeProviderInstructionWriteMode = (providerId: string, writeMode: string) => {
-    handleChangeProviderInstructionWriteModeAction({
-      providerId,
-      writeMode,
-      providerInstructionTargets,
-      settingsDraft,
-      setProviderInstructionTargets,
-      setSettingsFeedback,
-      api: getWithMateApi(),
-    });
-  };
-
-  const handleChangeProviderInstructionFailPolicy = (providerId: string, failPolicy: string) => {
-    handleChangeProviderInstructionFailPolicyAction({
-      providerId,
-      failPolicy,
-      providerInstructionTargets,
-      settingsDraft,
-      setProviderInstructionTargets,
-      setSettingsFeedback,
-      api: getWithMateApi(),
-    });
-  };
-
-  const handleChangeProviderInstructionInstructionRelativePath = (providerId: string, instructionRelativePath: string) => {
-    handleChangeProviderInstructionInstructionRelativePathAction({
-      providerId,
-      instructionRelativePath,
-      providerInstructionTargets,
-      settingsDraft,
-      setProviderInstructionTargets,
-      setSettingsFeedback,
-      api: getWithMateApi(),
-    });
-  };
-
-  const handleBrowseProviderInstructionInstructionRelativePath = async (providerId: string) => {
-    const withmateApi = getWithMateApi();
-    await handleBrowseProviderInstructionInstructionRelativePathAction({
-      providerId,
-      providerInstructionTargets,
-      settingsDraft,
-      setProviderInstructionTargets,
-      setSettingsFeedback,
-      api: withmateApi,
-    });
-  };
+  const providerInstructionTargetHandlers = buildProviderInstructionTargetHandlers({
+    providerInstructionTargets,
+    settingsDraft,
+    setProviderInstructionTargets,
+    setSettingsFeedback,
+    getApi: getWithMateApi,
+  });
 
   const handleChangeProviderEnabled = (providerId: string, enabled: boolean) => {
     handleChangeProviderEnabledAction({
@@ -1451,12 +1366,7 @@ export default function HomeApp() {
     onChangeMateMemoryGenerationTriggerIntervalMinutes: handleChangeMateMemoryGenerationTriggerIntervalMinutes,
     onChangeAutoCollapseActionDockOnSend: handleChangeAutoCollapseActionDockOnSend,
     onChangeProviderEnabled: handleChangeProviderEnabled,
-    onChangeProviderInstructionEnabled: handleChangeProviderInstructionEnabled,
-    onChangeProviderInstructionWriteMode: handleChangeProviderInstructionWriteMode,
-    onChangeProviderInstructionFailPolicy: handleChangeProviderInstructionFailPolicy,
-    onChangeProviderInstructionInstructionRelativePath: handleChangeProviderInstructionInstructionRelativePath,
-    onBrowseProviderInstructionInstructionRelativePath: (providerId) =>
-      void handleBrowseProviderInstructionInstructionRelativePath(providerId),
+    ...providerInstructionTargetHandlers,
     onChangeProviderSkillRootPath: handleChangeProviderSkillRootPath,
     onBrowseProviderSkillRootPath: (providerId) => void handleBrowseProviderSkillRootPath(providerId),
     onChangeMemoryExtractionModel: handleChangeMemoryExtractionModel,
