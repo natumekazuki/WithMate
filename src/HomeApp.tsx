@@ -53,7 +53,6 @@ import {
   normalizeMemoryManagementPages,
   type MemoryManagementPageState,
 } from "./memory/memory-management-page-state.js";
-import { buildResetMateConfirmMessage } from "./settings/settings-ui.js";
 import {
   normalizeProviderInstructionTarget,
   type HomeProviderInstructionTargetDraft,
@@ -80,10 +79,8 @@ import {
   upsertMateGrowthEventListItem as upsertMateGrowthEventListItemAction,
 } from "./mate/mate-growth-actions.js";
 import { buildMateGrowthHandlers } from "./mate/mate-growth-handlers.js";
-import {
-  handleStartMateEmbeddingDownload as handleStartMateEmbeddingDownloadAction,
-  MEMORY_MANAGEMENT_PAGE_LIMIT,
-} from "./memory/memory-management-actions.js";
+import { MEMORY_MANAGEMENT_PAGE_LIMIT } from "./memory/memory-management-actions.js";
+import { buildMateMaintenanceHandlers } from "./mate/mate-maintenance-handlers.js";
 import { buildHomeMonitorContentProps } from "./home/home-monitor-content-props.js";
 import { renderHomeMonitorWindowIcon, renderHomeSearchIcon } from "./home/home-icons.js";
 
@@ -651,39 +648,6 @@ export default function HomeApp() {
     refreshMateGrowthEvents,
   });
 
-  const handleResetMate = async () => {
-    if (mateResetting) {
-      return;
-    }
-
-    if (mateState === "not_created") {
-      return;
-    }
-
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      setSettingsFeedback("Mate API が利用できないよ。");
-      return;
-    }
-
-    const confirmed = window.confirm(buildResetMateConfirmMessage());
-    if (!confirmed) {
-      return;
-    }
-
-    setMateResetting(true);
-    setSettingsFeedback("Mate を初期化中...");
-    try {
-      await withmateApi.resetMate();
-      await refreshMateStatus(withmateApi);
-      setSettingsFeedback("Mate を初期化したよ。");
-    } catch (error) {
-      setSettingsFeedback(error instanceof Error ? error.message : "Mate の初期化に失敗したよ。");
-    } finally {
-      setMateResetting(false);
-    }
-  };
-
   const providerInstructionTargetHandlers = buildProviderInstructionTargetHandlers({
     providerInstructionTargets,
     settingsDraft,
@@ -746,14 +710,17 @@ export default function HomeApp() {
     onChangeProviderSkillRootPath: settingsDraftHandlers.onChangeProviderSkillRootPath,
   });
 
-  const handleStartMateEmbeddingDownload = async () => {
-    await handleStartMateEmbeddingDownloadAction({
-      api: getWithMateApi(),
-      setMateEmbeddingBusy,
-      setMateEmbeddingFeedback,
-      setMateEmbeddingSettings,
-    });
-  };
+  const mateMaintenanceHandlers = buildMateMaintenanceHandlers({
+    getApi: getWithMateApi,
+    mateState,
+    mateResetting,
+    setMateResetting,
+    setSettingsFeedback,
+    setMateEmbeddingBusy,
+    setMateEmbeddingFeedback,
+    setMateEmbeddingSettings,
+    refreshMateStatus,
+  });
 
   const isMateStateLoading = mateState === null;
   const isMateNotCreated = mateState === "not_created";
@@ -786,7 +753,7 @@ export default function HomeApp() {
     ...providerInstructionTargetHandlers,
     ...memoryManagementHandlers,
     ...settingsCommandHandlers,
-    onStartMateEmbeddingDownload: () => void handleStartMateEmbeddingDownload(),
+    onStartMateEmbeddingDownload: mateMaintenanceHandlers.onStartMateEmbeddingDownload,
     onReloadMateGrowthEvents: mateGrowthHandlers.onReloadMateGrowthEvents,
     onBeginCorrectMateGrowthEvent: mateGrowthHandlers.onBeginCorrectMateGrowthEvent,
     onChangeCorrectMateGrowthEventStatement: mateGrowthHandlers.onChangeCorrectMateGrowthEventStatement,
@@ -803,7 +770,7 @@ export default function HomeApp() {
       onApplyPendingGrowth: mateGrowthHandlers.onApplyPendingGrowth,
       applyPendingGrowthBusy: mateGrowthApplying,
       canApplyPendingGrowth: mateState === "active",
-      onResetMate: () => void handleResetMate(),
+      onResetMate: mateMaintenanceHandlers.onResetMate,
       mateResetBusy: mateResetting,
       canResetMate: mateState !== "not_created",
     }),
