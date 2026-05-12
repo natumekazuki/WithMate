@@ -82,6 +82,7 @@ import {
 import { buildMateGrowthHandlers } from "./mate/mate-growth-handlers.js";
 import { MEMORY_MANAGEMENT_PAGE_LIMIT } from "./memory/memory-management-actions.js";
 import { buildMateMaintenanceHandlers } from "./mate/mate-maintenance-handlers.js";
+import { buildMateStatusRefreshers } from "./mate/mate-status-refreshers.js";
 import { buildHomeMonitorContentProps } from "./home/home-monitor-content-props.js";
 import { renderHomeMonitorWindowIcon, renderHomeSearchIcon } from "./home/home-icons.js";
 
@@ -177,80 +178,25 @@ export default function HomeApp() {
     }
   };
 
-  const refreshMateStatus = async (
-    withmateApi: NonNullable<ReturnType<typeof getWithMateApi>>,
-    options?: { isActive?: () => boolean },
-  ): Promise<MateStorageState> => {
-    const isActive = options?.isActive ?? (() => true);
-    const nextMateState = await withmateApi.getMateState();
-    if (!isActive()) {
-      return nextMateState;
-    }
-
-    if (nextMateState === "not_created") {
-      setMateState("not_created");
-      setMateProfile(null);
-      setMateDisplayName("");
-      setMateEmbeddingSettings(null);
-      setMateEmbeddingFeedback("");
-      setMateEmbeddingBusy(false);
-      setMateGrowthSettings(null);
-      setMateGrowthFeedback("");
-      setMateGrowthBusy(false);
-      setMateGrowthEvents([]);
-      setMateGrowthEventsFeedback("");
-      setMateGrowthEventsLoading(false);
-      setMateGrowthEventBusyTarget(null);
-      setCorrectingMateGrowthEventId(null);
-      setCorrectingMateGrowthEventStatement("");
-      setMateAvatarUpdating(false);
-      stopMateEmbeddingSettingsPolling();
-      return nextMateState;
-    }
-
-    setMateState(nextMateState);
-    if (!isActive()) {
-      return nextMateState;
-    }
-    const nextMateProfile = await withmateApi.getMateProfile();
-    if (!isActive()) {
-      return nextMateState;
-    }
-    setMateProfile(nextMateProfile);
-    setMateDisplayName(nextMateProfile?.displayName ?? "");
-    return nextMateState;
-  };
-
-  const refreshMateGrowthEvents = async (
-    withmateApi: NonNullable<ReturnType<typeof getWithMateApi>>,
-    options?: { isActive?: () => boolean; silent?: boolean },
-  ): Promise<void> => {
-    const isActive = options?.isActive ?? (() => true);
-    if (!options?.silent) {
-      setMateGrowthEventsLoading(true);
-      setMateGrowthEventsFeedback("");
-    }
-
-    try {
-      const result = await withmateApi.listMateGrowthEvents({ limit: 20 });
-      if (!isActive()) {
-        return;
-      }
-      setMateGrowthEvents(result.events);
-      if (!options?.silent) {
-        setMateGrowthEventsFeedback("Growth Event を更新したよ。");
-      }
-    } catch (error) {
-      if (!isActive()) {
-        return;
-      }
-      setMateGrowthEventsFeedback(error instanceof Error ? error.message : "Growth Event の取得に失敗したよ。");
-    } finally {
-      if (isActive()) {
-        setMateGrowthEventsLoading(false);
-      }
-    }
-  };
+  const { refreshMateStatus, refreshMateGrowthEvents } = buildMateStatusRefreshers({
+    setMateState,
+    setMateProfile,
+    setMateDisplayName,
+    setMateEmbeddingSettings,
+    setMateEmbeddingFeedback,
+    setMateEmbeddingBusy,
+    setMateGrowthSettings,
+    setMateGrowthFeedback,
+    setMateGrowthBusy,
+    setMateGrowthEvents,
+    setMateGrowthEventsFeedback,
+    setMateGrowthEventsLoading,
+    setMateGrowthEventBusyTarget,
+    setCorrectingMateGrowthEventId,
+    setCorrectingMateGrowthEventStatement,
+    setMateAvatarUpdating,
+    stopMateEmbeddingSettingsPolling,
+  });
 
   useEffect(() => {
     let active = true;
