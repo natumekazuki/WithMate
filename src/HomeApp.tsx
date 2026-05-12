@@ -40,6 +40,7 @@ import { buildHomeRecentSessionsPanelProps } from "./home/home-recent-sessions-p
 import { buildHomeRightPaneProps } from "./home/home-right-pane-props.js";
 import { buildHomeWindowContentSlots } from "./home/HomeWindowContentSlots.js";
 import { getHomeWindowMode } from "./home/home-window-mode.js";
+import { useHomeOpenWindowSubscriptions } from "./home/use-home-open-window-subscriptions.js";
 import {
   openCompanionReviewWindow,
   openMateTalkWindow,
@@ -417,67 +418,11 @@ export default function HomeApp() {
     };
   }, []);
 
-  useEffect(() => {
-    let active = true;
-    let receivedSubscriptionUpdate = false;
-    const withmateApi = getWithMateApi();
-
-    if (!withmateApi) {
-      return () => {
-        active = false;
-      };
-    }
-
-    const unsubscribeOpenSessionWindowIds = withmateApi.subscribeOpenSessionWindowIds((nextSessionIds) => {
-      if (!active) {
-        return;
-      }
-
-      receivedSubscriptionUpdate = true;
-      setOpenSessionWindowIds(nextSessionIds);
-    });
-
-    void withmateApi.listOpenSessionWindowIds().then((nextSessionIds) => {
-      if (!active || receivedSubscriptionUpdate) {
-        return;
-      }
-
-      setOpenSessionWindowIds(nextSessionIds);
-    });
-
-    return () => {
-      active = false;
-      unsubscribeOpenSessionWindowIds();
-    };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return () => {
-        active = false;
-      };
-    }
-
-    const unsubscribeOpenCompanionReviewWindowIds = withmateApi.subscribeOpenCompanionReviewWindowIds((nextSessionIds) => {
-      if (active) {
-        setOpenCompanionReviewWindowIds(nextSessionIds);
-      }
-    });
-
-    void withmateApi.listOpenCompanionReviewWindowIds().then((nextSessionIds) => {
-      if (active) {
-        setOpenCompanionReviewWindowIds(nextSessionIds);
-      }
-    });
-
-    return () => {
-      active = false;
-      unsubscribeOpenCompanionReviewWindowIds();
-    };
-  }, []);
+  useHomeOpenWindowSubscriptions({
+    getApi: getWithMateApi,
+    setOpenSessionWindowIds,
+    setOpenCompanionReviewWindowIds,
+  });
 
   useEffect(() => {
     const withmateApi = getWithMateApi();
