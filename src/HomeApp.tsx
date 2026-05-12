@@ -80,29 +80,7 @@ import {
   type HomeSettingsContentBaseProps,
 } from "./settings/home-settings-content-props.js";
 import { buildProviderInstructionTargetHandlers } from "./settings/provider-instruction-target-handlers.js";
-import {
-  handleChangeAutoCollapseActionDockOnSend as handleChangeAutoCollapseActionDockOnSendAction,
-  handleChangeCharacterReflectionCharDeltaThreshold as handleChangeCharacterReflectionCharDeltaThresholdAction,
-  handleChangeCharacterReflectionCooldownSeconds as handleChangeCharacterReflectionCooldownSecondsAction,
-  handleChangeCharacterReflectionMessageDeltaThreshold as handleChangeCharacterReflectionMessageDeltaThresholdAction,
-  handleChangeCharacterReflectionModel as handleChangeCharacterReflectionModelAction,
-  handleChangeCharacterReflectionReasoningEffort as handleChangeCharacterReflectionReasoningEffortAction,
-  handleChangeCharacterReflectionTimeoutSeconds as handleChangeCharacterReflectionTimeoutSecondsAction,
-  handleChangeMateMemoryGenerationPriorityModel as handleChangeMateMemoryGenerationPriorityModelAction,
-  handleChangeMateMemoryGenerationPriorityProvider as handleChangeMateMemoryGenerationPriorityProviderAction,
-  handleChangeMateMemoryGenerationPriorityReasoningEffort as handleChangeMateMemoryGenerationPriorityReasoningEffortAction,
-  handleChangeMateMemoryGenerationPriorityTimeoutSeconds as handleChangeMateMemoryGenerationPriorityTimeoutSecondsAction,
-  handleChangeMateMemoryGenerationTriggerIntervalMinutes as handleChangeMateMemoryGenerationTriggerIntervalMinutesAction,
-  handleChangeMemoryGenerationEnabled as handleChangeMemoryGenerationEnabledAction,
-  handleChangeMemoryExtractionModel as handleChangeMemoryExtractionModelAction,
-  handleChangeMemoryExtractionReasoningEffort as handleChangeMemoryExtractionReasoningEffortAction,
-  handleChangeMemoryExtractionThreshold as handleChangeMemoryExtractionThresholdAction,
-  handleChangeMemoryExtractionTimeoutSeconds as handleChangeMemoryExtractionTimeoutSecondsAction,
-  handleChangeProviderEnabled as handleChangeProviderEnabledAction,
-  handleChangeProviderSkillRootPath as handleChangeProviderSkillRootPathAction,
-  handleAddMateMemoryGenerationPriority as handleAddMateMemoryGenerationPriorityAction,
-  handleRemoveMateMemoryGenerationPriority as handleRemoveMateMemoryGenerationPriorityAction,
-} from "./settings/settings-draft-actions.js";
+import { buildSettingsDraftHandlers } from "./settings/settings-draft-handlers.js";
 import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-withmate-api.js";
 import {
   type MateGrowthSettings,
@@ -956,35 +934,10 @@ export default function HomeApp() {
     getApi: getWithMateApi,
   });
 
-  const handleChangeProviderEnabled = (providerId: string, enabled: boolean) => {
-    handleChangeProviderEnabledAction({
-      providerId,
-      enabled,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeProviderSkillRootPath = (providerId: string, skillRootPath: string) => {
-    handleChangeProviderSkillRootPathAction({
-      providerId,
-      skillRootPath,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeMemoryGenerationEnabled = (enabled: boolean) => {
-    handleChangeMemoryGenerationEnabledAction({
-      enabled,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeAutoCollapseActionDockOnSend = (enabled: boolean) => {
-    handleChangeAutoCollapseActionDockOnSendAction({
-      enabled,
-      setSettingsDraft,
-    });
-  };
+  const settingsDraftHandlers = buildSettingsDraftHandlers({
+    modelCatalog,
+    setSettingsDraft,
+  });
 
   const handleBrowseProviderSkillRootPath = async (providerId: string) => {
     const withmateApi = getWithMateApi();
@@ -998,150 +951,7 @@ export default function HomeApp() {
       return;
     }
 
-    handleChangeProviderSkillRootPath(providerId, selectedPath);
-  };
-
-  const handleChangeMemoryExtractionModel = (providerId: string, model: string) => {
-    handleChangeMemoryExtractionModelAction({
-      providerId,
-      model,
-      modelCatalog,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeMemoryExtractionReasoningEffort = (
-    providerId: string,
-    reasoningEffort: AppSettings["memoryExtractionProviderSettings"][string]["reasoningEffort"],
-  ) => {
-    handleChangeMemoryExtractionReasoningEffortAction({
-      providerId,
-      reasoningEffort,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeMemoryExtractionThreshold = (providerId: string, value: string) => {
-    handleChangeMemoryExtractionThresholdAction({
-      providerId,
-      value,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeMemoryExtractionTimeoutSeconds = (providerId: string, value: string) => {
-    handleChangeMemoryExtractionTimeoutSecondsAction({
-      providerId,
-      value,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeCharacterReflectionModel = (providerId: string, model: string) => {
-    handleChangeCharacterReflectionModelAction({
-      providerId,
-      model,
-      modelCatalog,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeCharacterReflectionReasoningEffort = (
-    providerId: string,
-    reasoningEffort: AppSettings["characterReflectionProviderSettings"][string]["reasoningEffort"],
-  ) => {
-    handleChangeCharacterReflectionReasoningEffortAction({
-      providerId,
-      reasoningEffort,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeCharacterReflectionTimeoutSeconds = (providerId: string, value: string) => {
-    handleChangeCharacterReflectionTimeoutSecondsAction({
-      providerId,
-      value,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeCharacterReflectionCooldownSeconds = (value: string) => {
-    handleChangeCharacterReflectionCooldownSecondsAction({
-      value,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeCharacterReflectionCharDeltaThreshold = (value: string) => {
-    handleChangeCharacterReflectionCharDeltaThresholdAction({
-      value,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeCharacterReflectionMessageDeltaThreshold = (value: string) => {
-    handleChangeCharacterReflectionMessageDeltaThresholdAction({
-      value,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeMateMemoryGenerationPriorityProvider = (index: number, providerId: string) => {
-    handleChangeMateMemoryGenerationPriorityProviderAction({
-      index,
-      providerId,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeMateMemoryGenerationPriorityModel = (index: number, providerId: string, model: string) => {
-    handleChangeMateMemoryGenerationPriorityModelAction({
-      index,
-      providerId,
-      model,
-      modelCatalog,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeMateMemoryGenerationPriorityReasoningEffort = (
-    index: number,
-    reasoningEffort: AppSettings["mateMemoryGenerationSettings"]["priorityList"][number]["reasoningEffort"],
-  ) => {
-    handleChangeMateMemoryGenerationPriorityReasoningEffortAction({
-      index,
-      reasoningEffort,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeMateMemoryGenerationPriorityTimeoutSeconds = (index: number, value: string) => {
-    handleChangeMateMemoryGenerationPriorityTimeoutSecondsAction({
-      index,
-      value,
-      setSettingsDraft,
-    });
-  };
-
-  const handleAddMateMemoryGenerationPriority = () => {
-    handleAddMateMemoryGenerationPriorityAction({
-      modelCatalog,
-      setSettingsDraft,
-    });
-  };
-
-  const handleRemoveMateMemoryGenerationPriority = (index: number) => {
-    handleRemoveMateMemoryGenerationPriorityAction({
-      index,
-      setSettingsDraft,
-    });
-  };
-
-  const handleChangeMateMemoryGenerationTriggerIntervalMinutes = (value: string) => {
-    handleChangeMateMemoryGenerationTriggerIntervalMinutesAction({
-      value,
-      setSettingsDraft,
-    });
+    settingsDraftHandlers.onChangeProviderSkillRootPath(providerId, selectedPath);
   };
 
   const handleReloadMemoryManagement = () => {
@@ -1356,29 +1166,9 @@ export default function HomeApp() {
     mateEmbeddingSettings,
     mateEmbeddingFeedback,
     mateEmbeddingBusy,
-    onChangeMemoryGenerationEnabled: handleChangeMemoryGenerationEnabled,
-    onChangeMateMemoryGenerationPriorityProvider: handleChangeMateMemoryGenerationPriorityProvider,
-    onChangeMateMemoryGenerationPriorityModel: handleChangeMateMemoryGenerationPriorityModel,
-    onChangeMateMemoryGenerationPriorityReasoningEffort: handleChangeMateMemoryGenerationPriorityReasoningEffort,
-    onChangeMateMemoryGenerationPriorityTimeoutSeconds: handleChangeMateMemoryGenerationPriorityTimeoutSeconds,
-    onAddMateMemoryGenerationPriority: handleAddMateMemoryGenerationPriority,
-    onRemoveMateMemoryGenerationPriority: handleRemoveMateMemoryGenerationPriority,
-    onChangeMateMemoryGenerationTriggerIntervalMinutes: handleChangeMateMemoryGenerationTriggerIntervalMinutes,
-    onChangeAutoCollapseActionDockOnSend: handleChangeAutoCollapseActionDockOnSend,
-    onChangeProviderEnabled: handleChangeProviderEnabled,
+    ...settingsDraftHandlers,
     ...providerInstructionTargetHandlers,
-    onChangeProviderSkillRootPath: handleChangeProviderSkillRootPath,
     onBrowseProviderSkillRootPath: (providerId) => void handleBrowseProviderSkillRootPath(providerId),
-    onChangeMemoryExtractionModel: handleChangeMemoryExtractionModel,
-    onChangeMemoryExtractionReasoningEffort: handleChangeMemoryExtractionReasoningEffort,
-    onChangeMemoryExtractionThreshold: handleChangeMemoryExtractionThreshold,
-    onChangeMemoryExtractionTimeoutSeconds: handleChangeMemoryExtractionTimeoutSeconds,
-    onChangeCharacterReflectionModel: handleChangeCharacterReflectionModel,
-    onChangeCharacterReflectionReasoningEffort: handleChangeCharacterReflectionReasoningEffort,
-    onChangeCharacterReflectionTimeoutSeconds: handleChangeCharacterReflectionTimeoutSeconds,
-    onChangeCharacterReflectionCooldownSeconds: handleChangeCharacterReflectionCooldownSeconds,
-    onChangeCharacterReflectionCharDeltaThreshold: handleChangeCharacterReflectionCharDeltaThreshold,
-    onChangeCharacterReflectionMessageDeltaThreshold: handleChangeCharacterReflectionMessageDeltaThreshold,
     onImportModelCatalog: () => void handleImportModelCatalog(),
     onExportModelCatalog: () => void handleExportModelCatalog(),
     onOpenAppLogFolder: () => void handleOpenAppLogFolder(),
