@@ -28,11 +28,7 @@ import {
 } from "./home/home-launch-state.js";
 import { type CompanionSessionSummary } from "./companion-state.js";
 import { startHomeLaunch } from "./home/home-launch-actions.js";
-import {
-  clearHomeMateAvatar,
-  saveHomeMateProfile,
-  selectHomeMateAvatar,
-} from "./home/home-mate-profile-actions.js";
+import { buildHomeMateProfileHandlers } from "./home/home-mate-profile-handlers.js";
 import {
   buildHomeSessionProjection,
 } from "./home/home-session-projection.js";
@@ -616,107 +612,30 @@ export default function HomeApp() {
     setLaunchDraft((current) => updateLaunchDraftForProviderSelection(current, providerId, enabledLaunchProviders));
   };
 
-  const handleSaveMate = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      setMateCreationFeedback("Mate API が利用できないよ。");
-      return;
-    }
-
-    await saveHomeMateProfile({
-      api: withmateApi,
-      displayName: mateDisplayName,
-      mateState,
-      setMateState,
-      setMateProfile,
-      setMateDisplayName,
-      setMateCreationFeedback,
-      setMateProfileEditorOpen,
-      setMateCreating,
-      setLaunchFeedback,
-      hydrateHomeData: async () => {
-        const [nextSessions, nextCompanionSessions, nextEmbeddingSettings, nextGrowthSettings] = await Promise.all([
-          withmateApi.listSessionSummaries(),
-          withmateApi.listCompanionSessionSummaries(),
-          withmateApi.getMateEmbeddingSettings(),
-          withmateApi.getMateGrowthSettings(),
-        ]);
-        setSessions(nextSessions);
-        setCompanionSessions(nextCompanionSessions);
-        setMateEmbeddingSettings(nextEmbeddingSettings);
-        setMateGrowthSettings(nextGrowthSettings);
-        await refreshMateGrowthEvents(withmateApi, { silent: true });
-      },
-      clearMateGrowthViewState: () => {
-        setMateGrowthSettings(null);
-        setMateGrowthFeedback("");
-        setMateGrowthEvents([]);
-        setMateGrowthEventsFeedback("");
-        setCorrectingMateGrowthEventId(null);
-        setCorrectingMateGrowthEventStatement("");
-      },
-    });
-  };
-
-  const handleSelectMateAvatar = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      setMateCreationFeedback("Mate API が利用できないよ。");
-      return;
-    }
-
-    await selectHomeMateAvatar({
-      api: withmateApi,
-      mateState,
-      currentAvatarFilePath: mateProfile?.avatarFilePath ?? null,
-      setMateProfile,
-      setMateDisplayName,
-      setMateCreationFeedback,
-      setMateAvatarUpdating,
-      setLaunchFeedback,
-      refreshSessionSummaries: async () => {
-        const [nextSessions, nextCompanionSessions] = await Promise.all([
-          withmateApi.listSessionSummaries(),
-          withmateApi.listCompanionSessionSummaries(),
-        ]);
-        setSessions(nextSessions);
-        setCompanionSessions(nextCompanionSessions);
-      },
-    });
-  };
-
-  const handleClearMateAvatar = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      setMateCreationFeedback("Mate API が利用できないよ。");
-      return;
-    }
-
-    await clearHomeMateAvatar({
-      api: withmateApi,
-      mateState,
-      currentAvatarFilePath: mateProfile?.avatarFilePath ?? null,
-      setMateProfile,
-      setMateDisplayName,
-      setMateCreationFeedback,
-      setMateAvatarUpdating,
-      setLaunchFeedback,
-      refreshSessionSummaries: async () => {
-        const [nextSessions, nextCompanionSessions] = await Promise.all([
-          withmateApi.listSessionSummaries(),
-          withmateApi.listCompanionSessionSummaries(),
-        ]);
-        setSessions(nextSessions);
-        setCompanionSessions(nextCompanionSessions);
-      },
-    });
-  };
-
-  const openMateProfileEditor = () => {
-    setMateDisplayName(mateProfile?.displayName ?? "");
-    setMateCreationFeedback("");
-    setMateProfileEditorOpen(true);
-  };
+  const mateProfileHandlers = buildHomeMateProfileHandlers({
+    getApi: getWithMateApi,
+    mateDisplayName,
+    mateState,
+    mateProfile,
+    setMateState,
+    setMateProfile,
+    setMateDisplayName,
+    setMateCreationFeedback,
+    setMateProfileEditorOpen,
+    setMateCreating,
+    setMateAvatarUpdating,
+    setLaunchFeedback,
+    setSessions,
+    setCompanionSessions,
+    setMateEmbeddingSettings,
+    setMateGrowthSettings,
+    setMateGrowthFeedback,
+    setMateGrowthEvents,
+    setMateGrowthEventsFeedback,
+    setCorrectingMateGrowthEventId,
+    setCorrectingMateGrowthEventStatement,
+    refreshMateGrowthEvents,
+  });
 
   const handleStartSession = async (requestedMode: HomeLaunchDraft["mode"] = launchDraft.mode) => {
     await startHomeLaunch({
@@ -931,15 +850,12 @@ export default function HomeApp() {
       mateCreating,
       mateAvatarUpdating,
       mateCreationFeedback,
-      onChangeDisplayName: (value) => {
-        setMateDisplayName(value);
-        setMateCreationFeedback("");
-      },
-      onSubmit: handleSaveMate,
+      onChangeDisplayName: mateProfileHandlers.onChangeDisplayName,
+      onSubmit: mateProfileHandlers.onSubmit,
       onOpenSettings: () => void openSettingsWindow(),
-      onCancelEdit: () => setMateProfileEditorOpen(false),
-      onSelectAvatar: () => void handleSelectMateAvatar(),
-      onClearAvatar: () => void handleClearMateAvatar(),
+      onCancelEdit: mateProfileHandlers.onCancelEdit,
+      onSelectAvatar: mateProfileHandlers.onSelectAvatar,
+      onClearAvatar: mateProfileHandlers.onClearAvatar,
     }),
     monitorContent: buildHomeMonitorContentProps({
       runningEntries: runningMonitorEntries,
@@ -979,7 +895,7 @@ export default function HomeApp() {
         onOpenSessionMonitorWindow: () => void openSessionMonitorWindow(),
         onOpenMemoryManagementWindow: () => void openMemoryManagementWindow(),
         onOpenSettingsWindow: () => void openSettingsWindow(),
-        onOpenMateProfile: openMateProfileEditor,
+        onOpenMateProfile: mateProfileHandlers.onOpenProfileEditor,
         onOpenMateTalk: () => void openMateTalkWindow(),
         onOpenSession: (sessionId) => void openSessionWindow(sessionId),
         onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
