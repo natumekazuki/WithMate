@@ -282,6 +282,9 @@ export default function HomeApp() {
         setMateGrowthEventsFeedback("");
         setCorrectingMateGrowthEventId(null);
         setCorrectingMateGrowthEventStatement("");
+        if (usesMemoryManagementWindow) {
+          setMemoryManagementLoaded(true);
+        }
       } else {
         setMateGrowthSettings(growthSettings);
         void refreshMateGrowthEvents(withmateApi, { isActive: () => active, silent: true });

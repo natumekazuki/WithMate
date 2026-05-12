@@ -18,8 +18,8 @@ type CreateMainBootstrapDepsArgs = {
   refreshCharactersFromStorage(): Promise<void>;
   createHomeWindow(): Promise<BrowserWindow>;
   broadcastModelCatalog(snapshot: ModelCatalogSnapshot): void;
-  getMateState(): MateStorageState | Promise<MateStorageState>;
-  applyPendingGrowth(): Promise<MateGrowthApplyResult>;
+  getMateState?: () => MateStorageState | Promise<MateStorageState>;
+  applyPendingGrowth?: () => Promise<MateGrowthApplyResult>;
   cleanupStaleGrowthApplyRuns?: () => Promise<number>;
   growthApplyIntervalMs?: number;
   getGrowthApplyIntervalMs?: () => number | Promise<number>;
@@ -36,8 +36,8 @@ export function createMainBootstrapDeps(
     initializePersistentStores: args.initializePersistentStores,
     recoverInterruptedSessions: args.recoverInterruptedSessions,
     refreshCharactersFromStorage: args.refreshCharactersFromStorage,
-    getMateState: args.getMateState,
-    applyPendingGrowth: args.applyPendingGrowth,
+    getMateState: args.getMateState ?? args.ipcRegistration.mate.getMateState,
+    applyPendingGrowth: args.applyPendingGrowth ?? args.ipcRegistration.mate.applyPendingGrowth,
     cleanupStaleGrowthApplyRuns: args.cleanupStaleGrowthApplyRuns,
     growthApplyIntervalMs: args.growthApplyIntervalMs,
     getGrowthApplyIntervalMs: args.getGrowthApplyIntervalMs,

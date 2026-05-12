@@ -45,6 +45,7 @@ import {
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
+import type { MateProfile } from "../src/mate/mate-state.js";
 import type { OpenPathOptions } from "../src/withmate-window-types.js";
 import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 import {
@@ -1544,7 +1545,8 @@ async function forgetMateProfileItemAndRefreshProjection(itemId: string): Promis
     profileItemStorage: requireMateProfileItemStorage(),
     projectDigestProjectionWriter: requireMateProjectDigestStorage(),
     providerInstructionSyncer: {
-      syncEnabledProviderInstructionTargetsForMateProfile,
+      syncEnabledProviderInstructionTargetsForMateProfile: (profile) =>
+        syncEnabledProviderInstructionTargetsForMateProfile(profile, { requireComplete: true }),
     },
   });
 
@@ -1552,10 +1554,11 @@ async function forgetMateProfileItemAndRefreshProjection(itemId: string): Promis
 }
 
 async function syncEnabledProviderInstructionTargetsForMateProfile(
-  profile: NonNullable<ReturnType<MateStorage["getMateProfile"]>>,
+  profile: MateProfile,
+  options: { requireComplete?: boolean } = {},
 ): Promise<void> {
   try {
-    await syncEnabledProviderInstructionTargets(
+    const result = await syncEnabledProviderInstructionTargets(
       requireProviderInstructionTargetStorage(),
       profile,
       {
@@ -1564,8 +1567,16 @@ async function syncEnabledProviderInstructionTargetsForMateProfile(
       },
       { protectedRoots: getProviderInstructionTargetProtectedRoots() },
     );
+
+    if (options.requireComplete && result.failedCount > 0) {
+      throw new Error(`Provider Instruction Target の同期に ${result.failedCount} 件失敗しました`);
+    }
   } catch (error) {
     if (error instanceof MateProviderInstructionSyncBlockedError) {
+      throw error;
+    }
+
+    if (options.requireComplete) {
       throw error;
     }
 

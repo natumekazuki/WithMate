@@ -133,6 +133,43 @@ test("forgetProfileItemAndRefreshProjection は project digest item の Markdown
   assert.doesNotMatch(rewrittenContents[0], /忘れるProject情報/);
 });
 
+test("forgetProfileItemAndRefreshProjection は provider instruction 同期失敗を呼び出し元へ伝える", async () => {
+  const profile = createProfile();
+  const targetItem = createItem({ id: "item-forget", claimKey: "nickname", renderedText: "忘れる内容" });
+  const keptItem = createItem({ id: "item-keep", claimKey: "tone", renderedText: "残す内容" });
+
+  const service = new MateProfileProjectionRefreshService({
+    mateStorage: {
+      getMateProfile: () => profile,
+      getUserDataPath: () => "user-data",
+      applyProfileFiles: async (input) => {
+        input.finalizeInTransaction?.({
+          db: {} as DatabaseSync,
+          revisionId: "rev-forget",
+          now: "2026-05-10T00:00:00.000Z",
+        });
+        return { ...profile, activeRevisionId: "rev-forget", profileGeneration: 2 };
+      },
+    },
+    profileItemStorage: {
+      assertProfileItemMutationAllowed: () => {},
+      listProfileItems: () => [targetItem, keptItem],
+      createForgottenTombstoneForProfileItemInTransaction: () => {},
+      forgetProfileItemInTransaction: () => {},
+    },
+    providerInstructionSyncer: {
+      syncEnabledProviderInstructionTargetsForMateProfile: async () => {
+        throw new Error("provider sync failed");
+      },
+    },
+  });
+
+  await assert.rejects(
+    () => service.forgetProfileItemAndRefreshProjection("item-forget"),
+    /provider sync failed/,
+  );
+});
+
 function createProfile(): MateProfile {
   const now = "2026-05-10T00:00:00.000Z";
   return {
