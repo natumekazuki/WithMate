@@ -10,7 +10,7 @@ import {
   buildNormalizedCharacterReflectionProviderSettings,
   buildNormalizedMemoryExtractionProviderSettings,
   resolveInstructionRelativePathFromSelection,
-} from "../../src/home-settings-view-model.js";
+} from "../../src/settings/settings-view-model.js";
 
 function createSnapshot(): ModelCatalogSnapshot {
   return {

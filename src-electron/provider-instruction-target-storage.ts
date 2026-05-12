@@ -294,6 +294,41 @@ export class ProviderInstructionTargetStorage {
         projection_scope = excluded.projection_scope,
         fail_policy = excluded.fail_policy,
         requires_restart = excluded.requires_restart,
+        last_sync_state = CASE
+          WHEN provider_instruction_targets.root_directory != excluded.root_directory
+            OR provider_instruction_targets.instruction_relative_path != excluded.instruction_relative_path
+            OR provider_instruction_targets.write_mode != excluded.write_mode
+          THEN 'stale'
+          ELSE provider_instruction_targets.last_sync_state
+        END,
+        last_synced_revision_id = CASE
+          WHEN provider_instruction_targets.root_directory != excluded.root_directory
+            OR provider_instruction_targets.instruction_relative_path != excluded.instruction_relative_path
+            OR provider_instruction_targets.write_mode != excluded.write_mode
+          THEN NULL
+          ELSE provider_instruction_targets.last_synced_revision_id
+        END,
+        last_sync_run_id = CASE
+          WHEN provider_instruction_targets.root_directory != excluded.root_directory
+            OR provider_instruction_targets.instruction_relative_path != excluded.instruction_relative_path
+            OR provider_instruction_targets.write_mode != excluded.write_mode
+          THEN NULL
+          ELSE provider_instruction_targets.last_sync_run_id
+        END,
+        last_error_preview = CASE
+          WHEN provider_instruction_targets.root_directory != excluded.root_directory
+            OR provider_instruction_targets.instruction_relative_path != excluded.instruction_relative_path
+            OR provider_instruction_targets.write_mode != excluded.write_mode
+          THEN ''
+          ELSE provider_instruction_targets.last_error_preview
+        END,
+        last_synced_at = CASE
+          WHEN provider_instruction_targets.root_directory != excluded.root_directory
+            OR provider_instruction_targets.instruction_relative_path != excluded.instruction_relative_path
+            OR provider_instruction_targets.write_mode != excluded.write_mode
+          THEN NULL
+          ELSE provider_instruction_targets.last_synced_at
+        END,
         updated_at = excluded.updated_at
     `).run(
       providerId,

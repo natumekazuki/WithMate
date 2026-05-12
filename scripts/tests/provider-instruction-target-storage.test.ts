@@ -224,6 +224,63 @@ describe("ProviderInstructionTargetStorage", () => {
     }
   });
 
+  it("upsertTarget は書き込み先や write mode の編集で同期メタデータを stale に戻す", async () => {
+    const { storage, dbPath, tempDirectory } = await createStorage();
+
+    try {
+      const target = targetInput();
+      storage.upsertTarget(target);
+      const syncRun = storage.recordSyncRun({
+        providerId: target.providerId,
+        writeMode: "managed_block",
+        projectionScope: "mate_only",
+        projectionSha256: "dummy-hash",
+        status: "synced",
+      });
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare(`
+          UPDATE provider_instruction_targets
+          SET last_synced_revision_id = ?
+          WHERE provider_id = ?
+            AND target_id = 'main'
+        `).run("mate-revision-1", target.providerId);
+      } finally {
+        db.close();
+      }
+
+      const syncedTarget = storage.getTarget(target.providerId, "main");
+      if (!syncedTarget) {
+        throw new Error("target がありません");
+      }
+      assert.equal(syncedTarget.lastSyncState, "synced");
+      assert.equal(syncedTarget.lastSyncRunId, syncRun.id);
+      assert.equal(syncedTarget.lastSyncedRevisionId, "mate-revision-1");
+
+      storage.upsertTarget({
+        ...target,
+        instructionRelativePath: "AGENTS.md",
+        writeMode: "managed_file",
+      });
+
+      const updatedTarget = storage.getTarget(target.providerId, "main");
+      if (!updatedTarget) {
+        throw new Error("target がありません");
+      }
+
+      assert.equal(updatedTarget.instructionRelativePath, "AGENTS.md");
+      assert.equal(updatedTarget.writeMode, "managed_file");
+      assert.equal(updatedTarget.lastSyncState, "stale");
+      assert.equal(updatedTarget.lastSyncRunId, null);
+      assert.equal(updatedTarget.lastSyncedRevisionId, null);
+      assert.equal(updatedTarget.lastErrorPreview, "");
+      assert.equal(updatedTarget.lastSyncedAt, null);
+    } finally {
+      storage.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("deleteTarget で target を削除でき、run も外部キーで削除される", async () => {
     const { storage, dbPath, tempDirectory } = await createStorage();
 
