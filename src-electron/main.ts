@@ -2756,17 +2756,14 @@ function closePersistentStores(): void {
 }
 
 async function cleanupMateProjectionsBeforeDatabaseRecreate(): Promise<void> {
-  const targetStorage = providerInstructionTargetStorage;
-  if (targetStorage) {
-    await syncDisabledProviderInstructionTargets(
-      targetStorage,
-      {
-        readTextFile: async (filePath) => readFile(filePath, "utf8"),
-        writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
-      },
-      { protectedRoots: getProviderInstructionTargetProtectedRoots() },
-    );
-  }
+  await syncDisabledProviderInstructionTargets(
+    requireProviderInstructionTargetStorage(),
+    {
+      readTextFile: async (filePath) => readFile(filePath, "utf8"),
+      writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
+    },
+    { protectedRoots: getProviderInstructionTargetProtectedRoots() },
+  );
 
   await requireMateStorage().deleteMateProjectionDirectory();
 }
