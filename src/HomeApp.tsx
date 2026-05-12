@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createDefaultAppSettings,
-  getProviderAppSettings,
   type AppSettings,
 } from "./provider-settings-state.js";
 import { type SessionSummary } from "./session-state.js";
@@ -58,12 +57,6 @@ import {
   openSettingsWindow,
 } from "./home/home-launch-commands.js";
 import {
-  exportHomeModelCatalog,
-  importHomeModelCatalog,
-  syncProviderInstructionTargetRoots,
-  saveHomeSettings,
-} from "./settings/settings-actions.js";
-import {
   EMPTY_MEMORY_MANAGEMENT_PAGE_STATE,
   normalizeMemoryManagementPages,
   type MemoryManagementPageState,
@@ -80,6 +73,7 @@ import {
 } from "./settings/home-settings-content-props.js";
 import { buildProviderInstructionTargetHandlers } from "./settings/provider-instruction-target-handlers.js";
 import { buildSettingsDraftHandlers } from "./settings/settings-draft-handlers.js";
+import { buildSettingsCommandHandlers } from "./settings/settings-command-handlers.js";
 import { buildMemoryManagementHandlers } from "./memory/memory-management-handlers.js";
 import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-withmate-api.js";
 import {
@@ -749,41 +743,6 @@ export default function HomeApp() {
     });
   };
 
-  const handleImportModelCatalog = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-
-    try {
-      setSettingsFeedback(await importHomeModelCatalog(withmateApi));
-    } catch (error) {
-      setSettingsFeedback(error instanceof Error ? error.message : "model catalog の読み込みに失敗したよ。");
-    }
-  };
-
-  const handleSaveSettings = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-
-    try {
-      const result = await saveHomeSettings(withmateApi, persistedSettingsDraft);
-      const nextProviderInstructionTargets = await syncProviderInstructionTargetRoots({
-        api: withmateApi,
-        nextSettings: result.nextSettings,
-        providerInstructionTargets,
-      });
-      setAppSettings(result.nextSettings);
-      setSettingsDraft(result.nextSettings);
-      setProviderInstructionTargets(nextProviderInstructionTargets);
-      setSettingsFeedback(result.feedback);
-    } catch (error) {
-      setSettingsFeedback(error instanceof Error ? error.message : "設定の保存に失敗したよ。");
-    }
-  };
-
   const upsertMateGrowthEventListItem = (nextEvent: MateGrowthEventListItem | null) => {
     setMateGrowthEvents((current) => upsertMateGrowthEventListItemAction(current, nextEvent));
   };
@@ -854,21 +813,6 @@ export default function HomeApp() {
     setSettingsDraft,
   });
 
-  const handleBrowseProviderSkillRootPath = async (providerId: string) => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-
-    const currentSettings = getProviderAppSettings(settingsDraft, providerId);
-    const selectedPath = await withmateApi.pickDirectory(currentSettings.skillRootPath || null);
-    if (!selectedPath) {
-      return;
-    }
-
-    settingsDraftHandlers.onChangeProviderSkillRootPath(providerId, selectedPath);
-  };
-
   const providerSettingRows = useMemo<HomeProviderSettingRow[]>(
     () => buildHomeProviderSettingRows(modelCatalog, settingsDraft, providerInstructionTargets),
     [
@@ -891,47 +835,6 @@ export default function HomeApp() {
     settingsDirtyRef.current = settingsDirty;
   }, [settingsDirty]);
 
-  const handleExportModelCatalog = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-
-    try {
-      setSettingsFeedback(await exportHomeModelCatalog(withmateApi));
-    } catch (error) {
-      setSettingsFeedback(error instanceof Error ? error.message : "model catalog の保存に失敗したよ。");
-    }
-  };
-
-  const handleOpenAppLogFolder = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-
-    try {
-      await withmateApi.openAppLogFolder();
-      setSettingsFeedback("ログフォルダを開いたよ。");
-    } catch (error) {
-      setSettingsFeedback(error instanceof Error ? error.message : "ログフォルダを開けなかったよ。");
-    }
-  };
-
-  const handleOpenCrashDumpFolder = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-
-    try {
-      await withmateApi.openCrashDumpFolder();
-      setSettingsFeedback("クラッシュダンプフォルダを開いたよ。");
-    } catch (error) {
-      setSettingsFeedback(error instanceof Error ? error.message : "クラッシュダンプフォルダを開けなかったよ。");
-    }
-  };
-
   const memoryManagementHandlers = buildMemoryManagementHandlers({
     getApi: getWithMateApi,
     usesMemoryManagementWindow,
@@ -945,6 +848,18 @@ export default function HomeApp() {
     setMemoryManagementPages,
     setMemoryManagementFeedback,
     setMemoryManagementBusyTarget,
+  });
+
+  const settingsCommandHandlers = buildSettingsCommandHandlers({
+    getApi: getWithMateApi,
+    settingsDraft,
+    persistedSettingsDraft,
+    providerInstructionTargets,
+    setAppSettings,
+    setSettingsDraft,
+    setProviderInstructionTargets,
+    setSettingsFeedback,
+    onChangeProviderSkillRootPath: settingsDraftHandlers.onChangeProviderSkillRootPath,
   });
 
   const handleStartMateEmbeddingDownload = async () => {
@@ -986,11 +901,7 @@ export default function HomeApp() {
     ...settingsDraftHandlers,
     ...providerInstructionTargetHandlers,
     ...memoryManagementHandlers,
-    onBrowseProviderSkillRootPath: (providerId) => void handleBrowseProviderSkillRootPath(providerId),
-    onImportModelCatalog: () => void handleImportModelCatalog(),
-    onExportModelCatalog: () => void handleExportModelCatalog(),
-    onOpenAppLogFolder: () => void handleOpenAppLogFolder(),
-    onOpenCrashDumpFolder: () => void handleOpenCrashDumpFolder(),
+    ...settingsCommandHandlers,
     onStartMateEmbeddingDownload: () => void handleStartMateEmbeddingDownload(),
     onReloadMateGrowthEvents: mateGrowthHandlers.onReloadMateGrowthEvents,
     onBeginCorrectMateGrowthEvent: mateGrowthHandlers.onBeginCorrectMateGrowthEvent,
@@ -1000,7 +911,6 @@ export default function HomeApp() {
     onDisableMateGrowthEvent: mateGrowthHandlers.onDisableMateGrowthEvent,
     onForgetMateGrowthEvent: mateGrowthHandlers.onForgetMateGrowthEvent,
     onUpdateMateGrowthSettings: mateGrowthHandlers.onUpdateMateGrowthSettings,
-    onSaveSettings: () => void handleSaveSettings(),
   };
 
   const { settingsContent, memoryManagementContent, mateSetupContent, monitorContent } = buildHomeWindowContentSlots({
