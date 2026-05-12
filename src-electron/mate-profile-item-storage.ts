@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { CREATE_V4_SCHEMA_SQL } from "./database-schema-v4.js";
@@ -18,6 +18,11 @@ const CATEGORIES = [
   "note",
 ] as const;
 const SOURCE_LINK_TYPES = ["created_by", "reinforced_by", "corrected_by", "superseded_by"] as const;
+const TOMBSTONE_DIGEST_KIND_NORMALIZED_CLAIM = "normalized_claim";
+const TOMBSTONE_DIGEST_KIND_RENDERED_TEXT = "rendered_text";
+const TOMBSTONE_HMAC_VERSION = 1;
+const TOMBSTONE_HMAC_KEY_ID = "default";
+const TOMBSTONE_HMAC_KEY = "withmate-memory-forgotten-tombstone-key";
 
 export type MateProfileItemSectionKey = (typeof SECTION_KEYS)[number];
 export type MateProfileItemCategory = (typeof CATEGORIES)[number];
@@ -152,6 +157,10 @@ function normalizeOptionalText(value: unknown): string | null {
   return null;
 }
 
+function hmacSha256Hex(content: string, key: string): string {
+  return createHmac("sha256", key).update(content, "utf8").digest("hex");
+}
+
 function normalizeInteger(value: unknown, fallback: number, field: string): number {
   const normalized = typeof value === "number" && Number.isFinite(value) ? Math.floor(value) : fallback;
   if (!Number.isFinite(normalized) || normalized < 0 || normalized > 100) {
@@ -275,6 +284,25 @@ const SELECT_ACTIVE_GROWTH_APPLY_RUN_SQL = `
     AND operation_id LIKE 'growth-apply:%'
     AND status IN ('queued', 'applying')
   LIMIT 1
+`;
+
+const INSERT_FORGOTTEN_TOMBSTONE_SQL = `
+  INSERT INTO mate_forgotten_tombstones (
+    id,
+    mate_id,
+    hmac_digest,
+    hmac_version,
+    hmac_key_id,
+    digest_kind,
+    category,
+    section_key,
+    project_digest_id,
+    source_growth_event_id,
+    source_profile_item_id,
+    redaction_revision_id,
+    created_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT (mate_id, hmac_version, hmac_key_id, digest_kind, hmac_digest) DO NOTHING
 `;
 
 export class MateProfileItemStorage {
@@ -930,6 +958,41 @@ export class MateProfileItemStorage {
         updated_at = ?
       WHERE id = ?
     `).run(forgottenRevisionId, now, now, targetId);
+  }
+
+  createForgottenTombstoneForProfileItemInTransaction(
+    db: DatabaseSync,
+    item: MateProfileItem,
+    redactionRevisionId?: string,
+    createdAt?: string,
+  ): void {
+    const normalizedClaim = normalizeOptionalText(item.normalizedClaim);
+    const renderedText = normalizeOptionalText(item.renderedText);
+    const digestSource = normalizedClaim ?? renderedText;
+    if (!digestSource) {
+      return;
+    }
+
+    const digestKind = normalizedClaim
+      ? TOMBSTONE_DIGEST_KIND_NORMALIZED_CLAIM
+      : TOMBSTONE_DIGEST_KIND_RENDERED_TEXT;
+    const now = createdAt ?? nowIso();
+
+    db.prepare(INSERT_FORGOTTEN_TOMBSTONE_SQL).run(
+      randomUUID(),
+      MATE_ID,
+      hmacSha256Hex(digestSource, TOMBSTONE_HMAC_KEY),
+      TOMBSTONE_HMAC_VERSION,
+      TOMBSTONE_HMAC_KEY_ID,
+      digestKind,
+      item.category,
+      item.sectionKey,
+      item.projectDigestId,
+      null,
+      item.id,
+      normalizeOptionalText(redactionRevisionId),
+      now,
+    );
   }
 
   disableProfileItem(itemId: string, revisionId?: string): void {

@@ -2755,6 +2755,22 @@ function closePersistentStores(): void {
   mainInfrastructureRegistry = null;
 }
 
+async function cleanupMateProjectionsBeforeDatabaseRecreate(): Promise<void> {
+  const targetStorage = providerInstructionTargetStorage;
+  if (targetStorage) {
+    await syncDisabledProviderInstructionTargets(
+      targetStorage,
+      {
+        readTextFile: async (filePath) => readFile(filePath, "utf8"),
+        writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
+      },
+      { protectedRoots: getProviderInstructionTargetProtectedRoots() },
+    );
+  }
+
+  await requireMateStorage().deleteMateProjectionDirectory();
+}
+
 async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   if (!dbPath) {
     throw new Error("DB path が初期化されていないよ。");
@@ -2762,6 +2778,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
 
   stopWalMaintenance();
   mainInfrastructureRegistry?.getMainBootstrapService().clearGrowthApplyTimer();
+  await cleanupMateProjectionsBeforeDatabaseRecreate();
   mateMemoryStorage?.close();
   mateMemoryStorage = null;
   mateGrowthStorage?.close();

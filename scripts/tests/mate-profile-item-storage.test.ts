@@ -267,9 +267,10 @@ describe("MateProfileItemStorage", () => {
       storage = new MateProfileItemStorage(dbPath);
       seedCurrentMate(dbPath);
       const digestId = seedProjectDigest(dbPath);
+      const currentStorage = storage;
 
       assert.throws(() => {
-        storage.upsertProfileItem({
+        currentStorage.upsertProfileItem({
           sectionKey: "project_digest",
           category: "note",
           claimKey: "project_note",
@@ -470,6 +471,80 @@ describe("MateProfileItemStorage", () => {
     }
   });
 
+  it("createForgottenTombstoneForProfileItemInTransaction は profile item の再学習抑制 tombstone を保存します", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-profile-item-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate-v4.db");
+    let storage: MateProfileItemStorage | null = null;
+
+    try {
+      storage = new MateProfileItemStorage(dbPath);
+      seedCurrentMate(dbPath);
+      const revisionId = "rev_forget_tombstone";
+      seedProfileRevision(dbPath, revisionId, 1);
+
+      const item = storage.upsertProfileItem({
+        sectionKey: "core",
+        category: "preference",
+        claimKey: "favorite",
+        claimValue: "coffee",
+        renderedText: "Favorite drink is coffee",
+        normalizedClaim: "favorite drink is coffee",
+        confidence: 80,
+        salienceScore: 80,
+      });
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.exec("BEGIN IMMEDIATE TRANSACTION;");
+        storage.createForgottenTombstoneForProfileItemInTransaction(
+          db,
+          item,
+          revisionId,
+          "2026-05-10T00:00:00.000Z",
+        );
+        storage.forgetProfileItemInTransaction(
+          db,
+          item.id,
+          revisionId,
+          "2026-05-10T00:00:00.000Z",
+        );
+        db.exec("COMMIT;");
+
+        const tombstone = db.prepare(`
+          SELECT
+            digest_kind,
+            category,
+            section_key,
+            source_profile_item_id,
+            redaction_revision_id,
+            created_at
+          FROM mate_forgotten_tombstones
+          WHERE source_profile_item_id = ?
+        `).get(item.id) as {
+          digest_kind: string;
+          category: string;
+          section_key: string;
+          source_profile_item_id: string;
+          redaction_revision_id: string;
+          created_at: string;
+        } | undefined;
+
+        assert.ok(tombstone);
+        assert.equal(tombstone.digest_kind, "normalized_claim");
+        assert.equal(tombstone.category, "preference");
+        assert.equal(tombstone.section_key, "core");
+        assert.equal(tombstone.source_profile_item_id, item.id);
+        assert.equal(tombstone.redaction_revision_id, revisionId);
+        assert.equal(tombstone.created_at, "2026-05-10T00:00:00.000Z");
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("growth apply 実行中は forgetProfileItem と disableProfileItem が throw し、active のまま残ります", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-profile-item-storage-"));
     const dbPath = path.join(tempDirectory, "withmate-v4.db");
@@ -478,6 +553,7 @@ describe("MateProfileItemStorage", () => {
     try {
       storage = new MateProfileItemStorage(dbPath);
       seedCurrentMate(dbPath);
+      const currentStorage = storage;
       const item = storage.upsertProfileItem({
         sectionKey: "core",
         category: "boundary",
@@ -493,11 +569,11 @@ describe("MateProfileItemStorage", () => {
         seedGrowthApplyRun(dbPath, status);
 
         assert.throws(
-          () => storage.forgetProfileItem(item.id, "rev_forget"),
+          () => currentStorage.forgetProfileItem(item.id, "rev_forget"),
           { message: "Growth apply はすでに実行中です。" },
         );
         assert.throws(
-          () => storage.disableProfileItem(item.id, "rev_disable"),
+          () => currentStorage.disableProfileItem(item.id, "rev_disable"),
           { message: "Growth apply はすでに実行中です。" },
         );
 

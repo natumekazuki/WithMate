@@ -1449,6 +1449,60 @@ describe("MateStorage", () => {
     }
   });
 
+  it("applyProfileFiles は finalize 失敗時に active revision のファイルへ戻す", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+      await storage.applyProfileFiles({
+        summary: "seed content",
+        files: [{ sectionKey: "core", relativePath: "mate/core.md", content: "# Core\n\n- Stable\n" }],
+      });
+
+      const beforeProfile = storage.getMateProfile();
+      if (!beforeProfile) {
+        throw new Error("事前プロフィールが見つからないよ。");
+      }
+      const corePath = path.join(userDataPath, "mate/core.md");
+
+      await assert.rejects(
+        () => storage!.applyProfileFiles({
+          summary: "finalize failure",
+          files: [{ sectionKey: "core", relativePath: "mate/core.md", content: "# Core\n\n- Failed\n" }],
+          finalizeInTransaction: () => {
+            throw new Error("finalize failed");
+          },
+        }),
+        /finalize failed/,
+      );
+
+      const afterProfile = storage.getMateProfile();
+      const restoredCore = await readFile(corePath, "utf8");
+      const db = new DatabaseSync(dbPath);
+      try {
+        const latestRevision = db.prepare(`
+          SELECT status
+          FROM mate_profile_revisions
+          WHERE mate_id = 'current'
+          ORDER BY seq DESC
+          LIMIT 1
+        `).get() as { status: string };
+
+        assert.equal(afterProfile?.profileGeneration, beforeProfile.profileGeneration);
+        assert.equal(afterProfile?.activeRevisionId, beforeProfile.activeRevisionId);
+        assert.equal(restoredCore, "# Core\n\n- Stable\n");
+        assert.equal(latestRevision.status, "failed");
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
   it("verifyMateProfileFiles は一致していれば mismatch が空配列", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: MateStorage | null = null;

@@ -1092,21 +1092,33 @@ export class MateStorage {
       return [];
     }
 
+    const restored = await this.restoreMateProfileFilesFromRevisionSnapshot(profile.activeRevisionId, profile.sections);
+    if (!restored) {
+      return this.verifyMateProfileFiles();
+    }
+
+    return this.verifyMateProfileFiles();
+  }
+
+  private async restoreMateProfileFilesFromRevisionSnapshot(
+    revisionId: string,
+    sections: readonly MateProfileSectionState[],
+  ): Promise<boolean> {
     const activeRevision = this.withDb((db) => {
       return db.prepare(`
         SELECT snapshot_dir_path
         FROM mate_profile_revisions
         WHERE mate_id = ? AND id = ? AND status = 'ready'
-      `).get(MATE_ID, profile.activeRevisionId) as { snapshot_dir_path: string } | undefined;
+      `).get(MATE_ID, revisionId) as { snapshot_dir_path: string } | undefined;
     });
 
     if (!activeRevision?.snapshot_dir_path) {
-      return this.verifyMateProfileFiles();
+      return false;
     }
 
     const snapshotFiles: Array<{ relativePath: string; content: string }> = [];
     try {
-      for (const section of profile.sections) {
+      for (const section of sections) {
         const sectionSnapshotAbsolutePath = this.getSectionSnapshotAbsolutePath(activeRevision.snapshot_dir_path, section.filePath);
         const content = await readFile(sectionSnapshotAbsolutePath, "utf8");
         snapshotFiles.push({
@@ -1117,20 +1129,23 @@ export class MateStorage {
     } catch (error) {
       const err = error as NodeJS.ErrnoException;
       if (err.code === "ENOENT" || err.code === "EISDIR") {
-        return this.verifyMateProfileFiles();
+        return false;
       }
       throw error;
     }
 
     await this.ensureMateFiles(snapshotFiles);
-
-    return this.verifyMateProfileFiles();
+    return true;
   }
 
   async resetMate(): Promise<void> {
     this.withTransaction((db) => {
       db.prepare("DELETE FROM mate_profile WHERE id = ?").run(MATE_ID);
     });
+    await this.deleteMateDirectory();
+  }
+
+  async deleteMateProjectionDirectory(): Promise<void> {
     await this.deleteMateDirectory();
   }
 
@@ -1232,6 +1247,13 @@ export class MateStorage {
         content: section.content,
       })));
     } catch (error) {
+      try {
+        if (profile.activeRevisionId) {
+          await this.restoreMateProfileFilesFromRevisionSnapshot(profile.activeRevisionId, profile.sections);
+        }
+      } catch {
+        // DB は前回 active revision のままなので、復旧失敗時も failed 記録を優先する。
+      }
       this.withDb((db) => {
         db.prepare(`
           UPDATE mate_profile_revisions
@@ -1306,6 +1328,13 @@ export class MateStorage {
         `).run(revisionId, now, MATE_ID);
       });
     } catch (error) {
+      try {
+        if (profile.activeRevisionId) {
+          await this.restoreMateProfileFilesFromRevisionSnapshot(profile.activeRevisionId, profile.sections);
+        }
+      } catch {
+        // DB は前回 active revision のままなので、復旧失敗時も failed 記録を優先する。
+      }
       this.withDb((db) => {
         db.prepare(`
           UPDATE mate_profile_revisions

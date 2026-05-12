@@ -12,6 +12,7 @@ test("forgetProfileItemAndRefreshProjection は対象 item を除いた Mate fil
   const targetItem = createItem({ id: "item-forget", claimKey: "nickname", renderedText: "忘れる内容" });
   const keptItem = createItem({ id: "item-keep", claimKey: "tone", renderedText: "残す内容" });
   const forgetCalls: Array<{ itemId: string; revisionId?: string; now?: string }> = [];
+  const tombstoneCalls: Array<{ itemId: string; revisionId?: string; now?: string }> = [];
   const appliedInputs: ApplyMateProfileFilesInput[] = [];
   const syncedRevisionIds: Array<string | null> = [];
 
@@ -32,6 +33,9 @@ test("forgetProfileItemAndRefreshProjection は対象 item を除いた Mate fil
     profileItemStorage: {
       assertProfileItemMutationAllowed: () => {},
       listProfileItems: () => [targetItem, keptItem],
+      createForgottenTombstoneForProfileItemInTransaction: (_db, item, revisionId, now) => {
+        tombstoneCalls.push({ itemId: item.id, revisionId, now });
+      },
       forgetProfileItemInTransaction: (_db, itemId, revisionId, now) => {
         forgetCalls.push({ itemId, revisionId, now });
       },
@@ -53,6 +57,13 @@ test("forgetProfileItemAndRefreshProjection は対象 item を除いた Mate fil
   assert.match(coreFile.content, /残す内容/);
   assert.doesNotMatch(coreFile.content, /忘れる内容/);
   assert.deepEqual(forgetCalls, [
+    {
+      itemId: "item-forget",
+      revisionId: "rev-forget",
+      now: "2026-05-10T00:00:00.000Z",
+    },
+  ]);
+  assert.deepEqual(tombstoneCalls, [
     {
       itemId: "item-forget",
       revisionId: "rev-forget",
@@ -98,6 +109,7 @@ test("forgetProfileItemAndRefreshProjection は project digest item の Markdown
     profileItemStorage: {
       assertProfileItemMutationAllowed: () => {},
       listProfileItems: () => [targetItem, keptItem],
+      createForgottenTombstoneForProfileItemInTransaction: () => {},
       forgetProfileItemInTransaction: () => {},
     },
     projectDigestProjectionWriter: {

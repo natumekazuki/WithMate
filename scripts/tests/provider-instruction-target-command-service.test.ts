@@ -145,7 +145,9 @@ describe("ProviderInstructionTargetCommandService", () => {
       logDisabledCleanupFailure: () => {},
     }));
 
-    assert.equal(syncCalledProfile?.id, profile.id);
+    const calledProfile = syncCalledProfile;
+    assert.ok(calledProfile);
+    assert.deepEqual(calledProfile, profile);
     assert.equal(result.lastSyncState, "synced");
     assert.equal(result.lastSyncedRevisionId, "rev-2");
     assert.equal(result.lastSyncedAt, "2026-02-01T00:00:00.000Z");
@@ -179,6 +181,67 @@ describe("ProviderInstructionTargetCommandService", () => {
     assert.equal(previousTarget?.enabled, true);
     assert.equal(storageState.calls.upsertTarget, 1);
     assert.equal(storageState.calls.getTarget, 2);
+  });
+
+  it("enabled target の同期先を変更したときは旧 target の managed block を cleanup してから enabled sync する", async () => {
+    const initialInput = createInput({
+      enabled: true,
+      rootDirectory: "C:/workspace-old",
+      instructionRelativePath: "AGENTS.md",
+      writeMode: "managed_block",
+    });
+    const storageState = createStorageState(buildStoredTarget(initialInput));
+    const profile = createProfile();
+    const cleanupTargets: string[] = [];
+    let enabledSyncCalled = false;
+
+    const result = await upsertProviderInstructionTargetCommand(
+      createInput({
+        enabled: true,
+        rootDirectory: "C:/workspace-new",
+        instructionRelativePath: ".github/copilot-instructions.md",
+        writeMode: "managed_block",
+      }),
+      createDeps(storageState, {
+        getMateProfile: () => profile,
+        syncDisabledProviderInstructionTarget: async (_, targetToClean) => {
+          cleanupTargets.push(
+            `${targetToClean.rootDirectory}/${targetToClean.instructionRelativePath}/${targetToClean.writeMode}`,
+          );
+        },
+        syncEnabledProviderInstructionTargetsForMateProfile: async () => {
+          enabledSyncCalled = true;
+        },
+        logDisabledCleanupFailure: () => {
+          throw new Error("cleanup should not fail");
+        },
+      }),
+    );
+
+    assert.deepEqual(cleanupTargets, ["C:/workspace-old/AGENTS.md/managed_block"]);
+    assert.equal(enabledSyncCalled, true);
+    assert.equal(result.enabled, true);
+    assert.equal(result.rootDirectory, "C:/workspace-new");
+  });
+
+  it("enabled target の failPolicy だけを変更したときは旧 target cleanup を呼ばない", async () => {
+    const initialInput = createInput({ enabled: true, failPolicy: "warn_continue" });
+    const storageState = createStorageState(buildStoredTarget(initialInput));
+    let cleanupCalled = false;
+
+    await upsertProviderInstructionTargetCommand(
+      createInput({ enabled: true, failPolicy: "block_session" }),
+      createDeps(storageState, {
+        getMateProfile: () => createProfile(),
+        syncDisabledProviderInstructionTarget: async () => {
+          cleanupCalled = true;
+        },
+        syncEnabledProviderInstructionTargetsForMateProfile: async () => {},
+        logDisabledCleanupFailure: () => {},
+      }),
+    );
+
+    assert.equal(cleanupCalled, false);
   });
 
   it("enabled target で Mate profile がない場合は enabled sync をしない", async () => {

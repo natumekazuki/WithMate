@@ -10,6 +10,15 @@ type ProviderInstructionTargetStorageLike = {
   upsertTarget(input: ProviderInstructionTargetInput): ProviderInstructionTarget;
 };
 
+function isProviderInstructionTargetDestinationChanged(
+  previousTarget: ProviderInstructionTarget,
+  target: ProviderInstructionTarget,
+): boolean {
+  return previousTarget.rootDirectory !== target.rootDirectory
+    || previousTarget.instructionRelativePath !== target.instructionRelativePath
+    || previousTarget.writeMode !== target.writeMode;
+}
+
 export type UpsertProviderInstructionTargetCommandDeps<
   TStorage extends ProviderInstructionTargetStorageLike = ProviderInstructionTargetStorageLike,
 > = {
@@ -40,7 +49,10 @@ export async function upsertProviderInstructionTargetCommand<TStorage extends Pr
   const previousTarget = deps.storage.getTarget(input.providerId, input.targetId);
   const target = deps.storage.upsertTarget(input);
 
-  if (!target.enabled && previousTarget && previousTarget.enabled) {
+  const shouldCleanupPreviousTarget = previousTarget?.enabled === true
+    && (!target.enabled || isProviderInstructionTargetDestinationChanged(previousTarget, target));
+
+  if (shouldCleanupPreviousTarget && previousTarget) {
     try {
       await deps.syncDisabledProviderInstructionTarget(
         deps.storage,

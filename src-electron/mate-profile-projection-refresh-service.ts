@@ -19,6 +19,12 @@ type MateProfileProjectionStorage = {
 export type MateProfileProjectionRefreshServiceDeps = {
   mateStorage: MateProfileProjectionStorage;
   profileItemStorage: Pick<MateProfileItemStorage, "assertProfileItemMutationAllowed" | "listProfileItems"> & {
+    createForgottenTombstoneForProfileItemInTransaction(
+      db: DatabaseSync,
+      item: MateProfileItem,
+      redactionRevisionId?: string,
+      createdAt?: string,
+    ): void;
     forgetProfileItemInTransaction(
       db: DatabaseSync,
       itemId: string,
@@ -59,6 +65,12 @@ export class MateProfileProjectionRefreshService {
       summary: `forget profile item: ${targetItem.claimKey}`,
       files: renderedFiles,
       finalizeInTransaction: ({ db, revisionId, now }) => {
+        this.deps.profileItemStorage.createForgottenTombstoneForProfileItemInTransaction(
+          db,
+          targetItem,
+          revisionId,
+          now,
+        );
         this.deps.profileItemStorage.forgetProfileItemInTransaction(db, targetId, revisionId, now);
       },
     });
