@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createDefaultAppSettings,
@@ -13,7 +13,6 @@ import {
 } from "./memory/memory-management-view.js";
 import {
   buildMemoryManagementPageRequest,
-  type MemoryManagementDomain,
   type MemoryManagementSnapshot,
 } from "./memory/memory-management-state.js";
 import {
@@ -81,6 +80,7 @@ import {
 } from "./settings/home-settings-content-props.js";
 import { buildProviderInstructionTargetHandlers } from "./settings/provider-instruction-target-handlers.js";
 import { buildSettingsDraftHandlers } from "./settings/settings-draft-handlers.js";
+import { buildMemoryManagementHandlers } from "./memory/memory-management-handlers.js";
 import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-withmate-api.js";
 import {
   type MateGrowthSettings,
@@ -103,13 +103,6 @@ import {
   upsertMateGrowthEventListItem as upsertMateGrowthEventListItemAction,
 } from "./mate/mate-growth-actions.js";
 import {
-  handleChangeMemoryManagementViewFilters as handleChangeMemoryManagementViewFiltersAction,
-  handleDeleteCharacterMemoryEntry as handleDeleteCharacterMemoryEntryAction,
-  handleDeleteMateProfileItem as handleDeleteMateProfileItemAction,
-  handleDeleteProjectMemoryEntry as handleDeleteProjectMemoryEntryAction,
-  handleDeleteSessionMemory as handleDeleteSessionMemoryAction,
-  handleLoadMoreMemoryManagement as handleLoadMoreMemoryManagementAction,
-  handleReloadMemoryManagement as handleReloadMemoryManagementAction,
   handleStartMateEmbeddingDownload as handleStartMateEmbeddingDownloadAction,
   MEMORY_MANAGEMENT_PAGE_LIMIT,
 } from "./memory/memory-management-actions.js";
@@ -954,102 +947,6 @@ export default function HomeApp() {
     settingsDraftHandlers.onChangeProviderSkillRootPath(providerId, selectedPath);
   };
 
-  const handleReloadMemoryManagement = () => {
-    void handleReloadMemoryManagementAction({
-      api: getWithMateApi(),
-      usesMemoryManagementWindow,
-      memoryManagementFilters,
-      beginMemoryManagementRequest,
-      isLatestMemoryManagementRequest,
-      setMemoryManagementLoaded,
-      setMemoryManagementSnapshot,
-      setMemoryManagementPages,
-      setMemoryManagementFeedback,
-    });
-  };
-
-  const handleLoadMoreMemoryManagement = (domain: MemoryManagementDomain) => {
-    void handleLoadMoreMemoryManagementAction({
-      api: getWithMateApi(),
-      usesMemoryManagementWindow,
-      memoryManagementFilters,
-      memoryManagementPages,
-      beginMemoryManagementRequest,
-      isLatestMemoryManagementRequest,
-      setMemoryManagementLoaded,
-      setMemoryManagementSnapshot,
-      setMemoryManagementPages,
-      setMemoryManagementFeedback,
-      domain,
-    });
-  };
-
-  const handleChangeMemoryManagementViewFilters = useCallback((filters: MemoryManagementViewFilters) => {
-    void handleChangeMemoryManagementViewFiltersAction({
-      api: getWithMateApi(),
-      usesMemoryManagementWindow,
-      filters,
-      beginMemoryManagementRequest,
-      isLatestMemoryManagementRequest,
-      setMemoryManagementLoaded,
-      setMemoryManagementSnapshot,
-      setMemoryManagementPages,
-      setMemoryManagementFeedback,
-      setMemoryManagementFilters,
-    });
-  }, [usesMemoryManagementWindow]);
-
-  const handleDeleteSessionMemory = async (sessionId: string) => {
-    await handleDeleteSessionMemoryAction({
-      api: getWithMateApi(),
-      usesMemoryManagementWindow,
-      memoryManagementFilters,
-      memoryManagementPages,
-      beginMemoryManagementRequest,
-      isLatestMemoryManagementRequest,
-      setMemoryManagementLoaded,
-      setMemoryManagementSnapshot,
-      setMemoryManagementPages,
-      setMemoryManagementFeedback,
-      setMemoryManagementBusyTarget,
-      sessionId,
-    });
-  };
-
-  const handleDeleteProjectMemoryEntry = async (entryId: string) => {
-    await handleDeleteProjectMemoryEntryAction({
-      api: getWithMateApi(),
-      usesMemoryManagementWindow,
-      memoryManagementFilters,
-      memoryManagementPages,
-      beginMemoryManagementRequest,
-      isLatestMemoryManagementRequest,
-      setMemoryManagementLoaded,
-      setMemoryManagementSnapshot,
-      setMemoryManagementPages,
-      setMemoryManagementFeedback,
-      setMemoryManagementBusyTarget,
-      entryId,
-    });
-  };
-
-  const handleDeleteCharacterMemoryEntry = async (entryId: string) => {
-    await handleDeleteCharacterMemoryEntryAction({
-      api: getWithMateApi(),
-      usesMemoryManagementWindow,
-      memoryManagementFilters,
-      memoryManagementPages,
-      beginMemoryManagementRequest,
-      isLatestMemoryManagementRequest,
-      setMemoryManagementLoaded,
-      setMemoryManagementSnapshot,
-      setMemoryManagementPages,
-      setMemoryManagementFeedback,
-      setMemoryManagementBusyTarget,
-      entryId,
-    });
-  };
-
   const providerSettingRows = useMemo<HomeProviderSettingRow[]>(
     () => buildHomeProviderSettingRows(modelCatalog, settingsDraft, providerInstructionTargets),
     [
@@ -1113,22 +1010,20 @@ export default function HomeApp() {
     }
   };
 
-  const handleDeleteMateProfileItem = async (itemId: string) => {
-    await handleDeleteMateProfileItemAction({
-      api: getWithMateApi(),
-      usesMemoryManagementWindow,
-      memoryManagementFilters,
-      memoryManagementPages,
-      beginMemoryManagementRequest,
-      isLatestMemoryManagementRequest,
-      setMemoryManagementLoaded,
-      setMemoryManagementSnapshot,
-      setMemoryManagementPages,
-      setMemoryManagementFeedback,
-      setMemoryManagementBusyTarget,
-      itemId,
-    });
-  };
+  const memoryManagementHandlers = buildMemoryManagementHandlers({
+    getApi: getWithMateApi,
+    usesMemoryManagementWindow,
+    memoryManagementFilters,
+    memoryManagementPages,
+    beginMemoryManagementRequest,
+    isLatestMemoryManagementRequest,
+    setMemoryManagementLoaded,
+    setMemoryManagementFilters,
+    setMemoryManagementSnapshot,
+    setMemoryManagementPages,
+    setMemoryManagementFeedback,
+    setMemoryManagementBusyTarget,
+  });
 
   const handleStartMateEmbeddingDownload = async () => {
     await handleStartMateEmbeddingDownloadAction({
@@ -1168,18 +1063,12 @@ export default function HomeApp() {
     mateEmbeddingBusy,
     ...settingsDraftHandlers,
     ...providerInstructionTargetHandlers,
+    ...memoryManagementHandlers,
     onBrowseProviderSkillRootPath: (providerId) => void handleBrowseProviderSkillRootPath(providerId),
     onImportModelCatalog: () => void handleImportModelCatalog(),
     onExportModelCatalog: () => void handleExportModelCatalog(),
     onOpenAppLogFolder: () => void handleOpenAppLogFolder(),
     onOpenCrashDumpFolder: () => void handleOpenCrashDumpFolder(),
-    onReloadMemoryManagement: () => void handleReloadMemoryManagement(),
-    onChangeMemoryManagementViewFilters: handleChangeMemoryManagementViewFilters,
-    onLoadMoreMemoryManagement: (domain) => void handleLoadMoreMemoryManagement(domain),
-    onDeleteSessionMemory: (sessionId) => void handleDeleteSessionMemory(sessionId),
-    onDeleteProjectMemoryEntry: (entryId) => void handleDeleteProjectMemoryEntry(entryId),
-    onDeleteCharacterMemoryEntry: (entryId) => void handleDeleteCharacterMemoryEntry(entryId),
-    onDeleteMateProfileItem: (itemId) => void handleDeleteMateProfileItem(itemId),
     onStartMateEmbeddingDownload: () => void handleStartMateEmbeddingDownload(),
     onReloadMateGrowthEvents: () => void handleReloadMateGrowthEvents(),
     onBeginCorrectMateGrowthEvent: handleBeginCorrectMateGrowthEvent,
