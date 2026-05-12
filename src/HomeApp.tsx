@@ -19,19 +19,15 @@ import {
 } from "./home/home-launch-projection.js";
 import { buildHomeLaunchDialogProps } from "./home/home-launch-dialog-props.js";
 import {
-  closeLaunchDraft,
   createClosedLaunchDraft,
-  openLaunchDraft,
-  setLaunchWorkspaceFromPath,
-  updateLaunchDraftForProviderSelection,
   type HomeLaunchDraft,
 } from "./home/home-launch-state.js";
 import { type CompanionSessionSummary } from "./companion-state.js";
-import { startHomeLaunch } from "./home/home-launch-actions.js";
 import { buildHomeMateProfileHandlers } from "./home/home-mate-profile-handlers.js";
 import {
   buildHomeSessionProjection,
 } from "./home/home-session-projection.js";
+import { buildHomeLaunchHandlers } from "./home/home-launch-handlers.js";
 import {
   buildHomeProviderSettingRows,
   buildPersistedAppSettingsFromRows,
@@ -582,35 +578,29 @@ export default function HomeApp() {
 
   const homePageClassName = `page-shell home-page${isMonitorWindowMode ? " home-page-monitor-window" : ""}`;
 
-  const handleBrowseWorkspace = async () => {
-    const selectedPath = await withWithMateApi((api) => api.pickDirectory());
-    if (!selectedPath) {
-      return;
-    }
-
-    setLaunchFeedback("");
-    setLaunchDraft((current) => setLaunchWorkspaceFromPath(current, selectedPath));
-  };
-
-  const openLaunchDialog = () => {
-    if (mateState === "not_created") {
-      setLaunchFeedback("Mate を作成してから開始してね。");
-      return;
-    }
-    setLaunchFeedback("");
-    setLaunchDraft((current) => openLaunchDraft(current, enabledLaunchProviders[0]?.id ?? ""));
-  };
-
-  const closeLaunchDialog = () => {
-    setLaunchFeedback("");
-    setLaunchStarting(false);
-    setLaunchDraft((current) => closeLaunchDraft(current));
-  };
-
-  const handleSelectLaunchProvider = (providerId: string) => {
-    setLaunchFeedback("");
-    setLaunchDraft((current) => updateLaunchDraftForProviderSelection(current, providerId, enabledLaunchProviders));
-  };
+  const homeLaunchHandlers = buildHomeLaunchHandlers({
+    launchDraft,
+    launchStarting,
+    mateState,
+    mateProfile,
+    enabledLaunchProviders,
+    selectedLaunchProviderId: selectedLaunchProvider?.id ?? null,
+    sessions,
+    setLaunchFeedback,
+    setLaunchStarting,
+    setLaunchDraft,
+    pickWorkspaceDirectory: async () => withWithMateApi((api) => api.pickDirectory()),
+    openSessionWindow,
+    openCompanionReviewWindow,
+    createSession: async (input) => await withWithMateApi((api) => api.createSession(input)),
+    createCompanionSession: async (input) => await withWithMateApi((api) => api.createCompanionSession(input)),
+    upsertCompanionSessionSummary: (summary) => {
+      setCompanionSessions((current) => [
+        summary,
+        ...current.filter((session) => session.id !== summary.id),
+      ]);
+    },
+  });
 
   const mateProfileHandlers = buildHomeMateProfileHandlers({
     getApi: getWithMateApi,
@@ -636,31 +626,6 @@ export default function HomeApp() {
     setCorrectingMateGrowthEventStatement,
     refreshMateGrowthEvents,
   });
-
-  const handleStartSession = async (requestedMode: HomeLaunchDraft["mode"] = launchDraft.mode) => {
-    await startHomeLaunch({
-      draft: launchDraft,
-      requestedMode,
-      launchStarting,
-      mateState,
-      mateProfile,
-      selectedProviderId: selectedLaunchProvider?.id ?? null,
-      sessions,
-      createSession: async (input) => await withWithMateApi((api) => api.createSession(input)),
-      createCompanionSession: async (input) => await withWithMateApi((api) => api.createCompanionSession(input)),
-      openSessionWindow,
-      openCompanionReviewWindow,
-      closeLaunchDialog,
-      setLaunchFeedback,
-      setLaunchStarting,
-      upsertCompanionSessionSummary: (summary) => {
-        setCompanionSessions((current) => [
-          summary,
-          ...current.filter((session) => session.id !== summary.id),
-        ]);
-      },
-    });
-  };
 
   const upsertMateGrowthEventListItem = (nextEvent: MateGrowthEventListItem | null) => {
     setMateGrowthEvents((current) => upsertMateGrowthEventListItemAction(current, nextEvent));
@@ -876,7 +841,7 @@ export default function HomeApp() {
       searchIcon: renderHomeSearchIcon(),
       handlers: {
         onChangeSearchText: setSessionSearchText,
-        onOpenLaunchDialog: openLaunchDialog,
+        onOpenLaunchDialog: homeLaunchHandlers.onOpenLaunchDialog,
         onOpenSession: (sessionId) => void openSessionWindow(sessionId),
         onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
       },
@@ -908,18 +873,12 @@ export default function HomeApp() {
       canUsePrimaryFeatures,
       launchFeedback,
       launchStarting,
-      onClose: closeLaunchDialog,
-      onSelectMode: (mode) => {
-        setLaunchFeedback("");
-        setLaunchDraft((current) => ({ ...current, mode }));
-      },
-      onChangeTitle: (value) => {
-        setLaunchFeedback("");
-        setLaunchDraft((current) => ({ ...current, title: value }));
-      },
-      onBrowseWorkspace: () => void handleBrowseWorkspace(),
-      onSelectProvider: handleSelectLaunchProvider,
-      onStartSession: (mode) => void handleStartSession(mode),
+      onClose: homeLaunchHandlers.onCloseLaunchDialog,
+      onSelectMode: homeLaunchHandlers.onChangeMode,
+      onChangeTitle: homeLaunchHandlers.onChangeTitle,
+      onBrowseWorkspace: () => void homeLaunchHandlers.onBrowseWorkspace(),
+      onSelectProvider: homeLaunchHandlers.onSelectLaunchProvider,
+      onStartSession: (mode) => void homeLaunchHandlers.onStartSession(mode),
     }),
   });
 
