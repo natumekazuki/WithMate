@@ -4,8 +4,6 @@ import { CharacterAvatar } from "../ui-utils.js";
 export type HomeMonitorContentProps = {
   runningEntries: HomeMonitorEntry[];
   nonRunningEntries: HomeMonitorEntry[];
-  runningEmptyMessage: string;
-  completedEmptyMessage: string;
   onOpenSession: (sessionId: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
 };
@@ -13,8 +11,6 @@ export type HomeMonitorContentProps = {
 export function HomeMonitorContent({
   runningEntries,
   nonRunningEntries,
-  runningEmptyMessage,
-  completedEmptyMessage,
   onOpenSession,
   onOpenCompanionReview,
 }: HomeMonitorContentProps) {
@@ -84,9 +80,7 @@ export function HomeMonitorContent({
         <div className="home-monitor-list">
           {runningEntries.length > 0 ? (
             renderMonitorEntries(runningEntries)
-          ) : (
-            <p className="home-monitor-empty">{runningEmptyMessage}</p>
-          )}
+          ) : null}
         </div>
       </section>
 
@@ -98,9 +92,7 @@ export function HomeMonitorContent({
         <div className="home-monitor-list">
           {nonRunningEntries.length > 0 ? (
             renderMonitorEntries(nonRunningEntries)
-          ) : (
-            <p className="home-monitor-empty">{completedEmptyMessage}</p>
-          )}
+          ) : null}
         </div>
       </section>
     </div>

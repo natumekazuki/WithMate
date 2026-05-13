@@ -168,6 +168,7 @@ import {
 } from "../src/provider-settings-state.js";
 import {
   DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES,
+  type MateTalkLaunchInput,
   type MateTalkTurnInput,
   type MateTalkTurnResult,
   type UpdateMateGrowthSettingsInput,
@@ -205,7 +206,8 @@ const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const preloadPath = path.resolve(currentDir, "preload.js");
 const rendererDistPath = path.resolve(currentDir, "../../dist");
 const appDataPath = app.getPath("appData");
-const fixedUserDataPath = path.join(appDataPath, "WithMate");
+const userDataPathOverride = process.env.WITHMATE_USER_DATA_PATH?.trim();
+const fixedUserDataPath = userDataPathOverride ? path.resolve(userDataPathOverride) : path.join(appDataPath, "WithMate");
 app.setAppUserModelId("com.natumekazuki.withmate");
 app.setPath("userData", fixedUserDataPath);
 const appLogsPath = path.join(fixedUserDataPath, "logs");
@@ -1529,7 +1531,7 @@ async function createMate(input: Parameters<MateStorage["createMate"]>[0]): Retu
 
 async function updateMate(input: Parameters<MateStorage["updateMate"]>[0]): ReturnType<MateStorage["updateMate"]> {
   const profile = await requireMateStorage().updateMate(input);
-  await syncEnabledProviderInstructionTargetsForMateProfile(profile);
+  await syncEnabledProviderInstructionTargetsForMateProfile(profile, { force: true });
   return profile;
 }
 
@@ -1555,7 +1557,7 @@ async function forgetMateProfileItemAndRefreshProjection(itemId: string): Promis
 
 async function syncEnabledProviderInstructionTargetsForMateProfile(
   profile: MateProfile,
-  options: { requireComplete?: boolean } = {},
+  options: { requireComplete?: boolean; force?: boolean } = {},
 ): Promise<void> {
   try {
     const result = await syncEnabledProviderInstructionTargets(
@@ -1565,7 +1567,10 @@ async function syncEnabledProviderInstructionTargetsForMateProfile(
         readTextFile: async (filePath) => readFile(filePath, "utf8"),
         writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
       },
-      { protectedRoots: getProviderInstructionTargetProtectedRoots() },
+      {
+        protectedRoots: getProviderInstructionTargetProtectedRoots(),
+        force: options.force,
+      },
     );
 
     if (options.requireComplete && result.failedCount > 0) {
@@ -3444,8 +3449,8 @@ async function openMemoryManagementWindow(): Promise<BrowserWindow> {
   return requireMainWindowFacade().openMemoryManagementWindow();
 }
 
-async function openMateTalkWindow(): Promise<BrowserWindow> {
-  return requireMainWindowFacade().openMateTalkWindow();
+async function openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<BrowserWindow> {
+  return requireMainWindowFacade().openMateTalkWindow(input);
 }
 
 async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {

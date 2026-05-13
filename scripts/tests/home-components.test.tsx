@@ -1318,7 +1318,7 @@ describe("HomeMateSetupPanel", () => {
     )[0];
 
     assert.ok(html.includes("アイコン"));
-    assert.ok(html.includes("Mate の表示に使う画像を選べます。"));
+    assert.ok(html.includes("画像を選択できます。"));
     assert.ok(selectButton);
     assert.ok(clearButton);
     selectButton.props.onClick();
@@ -1327,7 +1327,7 @@ describe("HomeMateSetupPanel", () => {
     assert.equal(cleared, 1);
   });
 
-  it("create mode では Mate アイコン設定を作成後の導線として表示する", () => {
+  it("create mode では Mate アイコンの補足説明と編集操作を表示しない", () => {
     const panel = renderPanel({ mode: "create" });
     const html = renderToStaticMarkup(panel);
     const avatarButtons = collectElements(
@@ -1335,7 +1335,8 @@ describe("HomeMateSetupPanel", () => {
       (element) => element.type === "button" && ["画像を選択", "解除"].includes(String(element.props.children)),
     );
 
-    assert.ok(html.includes("Mate 作成後に設定できます。"));
+    assert.ok(html.includes("アイコン"));
+    assert.ok(!html.includes("Mate 作成後に設定できます。"));
     assert.equal(avatarButtons.length, 0);
   });
 });
@@ -1343,7 +1344,7 @@ describe("HomeMateSetupPanel", () => {
 describe("HomeLaunchDialog", () => {
   const noOp = (..._args: unknown[]) => undefined;
 
-  const renderHomeLaunchDialog = (mode: "session" | "companion") => renderToStaticMarkup(
+  const renderHomeLaunchDialog = (mode: "session" | "companion" | "mate-talk") => renderToStaticMarkup(
     <HomeLaunchDialog
       open={true}
       mode={mode}
@@ -1380,6 +1381,16 @@ describe("HomeLaunchDialog", () => {
     assert.ok(!html.includes("キャラクターを選ぶ"));
     assert.ok(!html.includes("キャラを選んでね"));
     assert.ok(!html.includes("Add Character"));
+  });
+
+  it("mate-talk mode は provider 選択だけで開始できる表示にする", () => {
+    const html = renderHomeLaunchDialog("mate-talk");
+
+    assert.ok(html.includes("Coding Provider"));
+    assert.ok(html.includes("Start MateTalk"));
+    assert.ok(!html.includes("セッションタイトル"));
+    assert.ok(!html.includes("Browse"));
+    assert.ok(!html.includes("Agent Mode"));
   });
 });
 
@@ -1440,8 +1451,6 @@ describe("HomeRightPane", () => {
       rightPaneView={rightPaneView}
       runningMonitorEntries={[]}
       nonRunningMonitorEntries={[]}
-      monitorRunningEmptyMessage="running"
-      monitorCompletedEmptyMessage="completed"
       mateProfile={mateProfile}
       monitorWindowIcon={<span>Monitor</span>}
       onChangeRightPaneView={noOp}
@@ -1501,7 +1510,7 @@ describe("HomeRightPane", () => {
   it("mateProfile が null でも fallback で Mate 表示できる", () => {
     const html = renderHomeRightPane("mate", null);
     assert.ok(html.includes("Your Mate"));
-    assert.ok(html.includes("Mate の説明は未設定だよ。"));
+    assert.ok(!html.includes("Mate の説明は未設定だよ。"));
   });
 
   it("メイトークは Home right pane のタブではなく起動ボタンとして表示する", () => {

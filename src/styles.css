@@ -601,7 +601,7 @@ button:disabled {
 .home-mate-setup-panel {
   padding: 22px;
   display: grid;
-  gap: 12px;
+  gap: 16px;
   min-height: auto;
 }
 
@@ -614,7 +614,7 @@ button:disabled {
 .home-mate-setup-description,
 .home-mate-current-name {
   margin: 0;
-  color: var(--muted);
+  color: #c0cadb;
   line-height: 1.45;
 }
 
@@ -648,9 +648,15 @@ button:disabled {
   font-weight: 700;
 }
 
+.home-mate-setup-panel .settings-field > span {
+  color: #cbd5e1;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
 .home-mate-avatar-help {
   margin: 0;
-  color: var(--muted);
+  color: #c0cadb;
   font-size: 0.82rem;
   line-height: 1.4;
 }
@@ -743,6 +749,34 @@ button:disabled {
   margin: 0;
   color: #dce4f3;
   font-size: 0.92rem;
+}
+
+.home-page .home-monitor-section-head span {
+  color: #cbd5e1;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.home-page .home-mate-card {
+  background: color-mix(in srgb, var(--card-main, #1a2230) 24%, rgba(10, 14, 20, 0.86) 76%);
+  border-color: color-mix(in srgb, var(--card-sub, #6f8cff) 30%, rgba(203, 213, 225, 0.14) 70%);
+}
+
+.home-page .home-mate-card-body {
+  display: grid;
+  gap: 10px;
+  align-items: start;
+}
+
+.home-page .home-mate-card-body strong {
+  color: #f8fbff;
+  font-size: 0.96rem;
+}
+
+.home-page .home-mate-card-body p {
+  margin: 0;
+  color: #c0cadb;
+  line-height: 1.5;
 }
 
 .home-page .home-monitor-count {
@@ -867,7 +901,7 @@ button:disabled {
   padding: 12px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.04);
-  color: #99a6bb;
+  color: #b6c1d2;
   font-size: 0.82rem;
   line-height: 1.5;
 }
@@ -1069,13 +1103,21 @@ button:disabled {
 }
 
 .home-page .launch-field-label {
-  color: #a8b4ca;
+  color: #cbd5e1;
 }
 
 .home-page .launch-field-input {
   border-color: rgba(203, 213, 225, 0.14);
   background: rgba(10, 14, 20, 0.96);
   color: var(--ink);
+}
+
+.home-page .launch-field-input::placeholder,
+.home-page .settings-field input::placeholder,
+.home-page .settings-field textarea::placeholder,
+.home-page .toolbar-search-input::placeholder {
+  color: #9aa8bd;
+  opacity: 1;
 }
 
 .home-page .launch-field-input:focus {
@@ -1090,7 +1132,7 @@ button:disabled {
 }
 
 .home-page .launch-path {
-  color: #a8b4ca;
+  color: #c0cadb;
 }
 
 .home-page .launch-path.selected {
@@ -1111,7 +1153,7 @@ button:disabled {
 }
 
 .home-page .choice-card-copy span {
-  color: var(--card-muted, #a8b4ca);
+  color: var(--card-muted, #c0cadb);
 }
 
 .home-page .settings-field textarea {
@@ -1676,6 +1718,12 @@ button:disabled {
   border-top: 0;
 }
 
+.settings-window-shell .launch-dialog-foot {
+  border-top: 1px solid rgba(203, 213, 225, 0.12);
+  background: rgba(21, 26, 35, 0.98);
+  box-shadow: 0 -18px 34px rgba(0, 0, 0, 0.24);
+}
+
 .settings-panel,
 .settings-section {
   display: grid;
@@ -1702,6 +1750,7 @@ button:disabled {
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   padding-right: 6px;
+  padding-bottom: 18px;
 }
 
 .settings-panel-memory-only {
@@ -7841,4 +7890,3 @@ button:disabled {
     max-height: min(20vh, 144px);
   }
 }
-

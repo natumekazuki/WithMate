@@ -53,6 +53,10 @@ test("buildChatEntrySearch は chat mode ごとの session.html query を組み�
     "?companionSessionId=companion%201&mode=companion",
   );
   assert.equal(buildChatEntrySearch({ kind: "mate-talk" }), "?mode=mate-talk");
+  assert.equal(
+    buildChatEntrySearch({ kind: "mate-talk", launch: { provider: "copilot", model: "claude-sonnet-4.5", reasoningEffort: "medium" } }),
+    "?mode=mate-talk&provider=copilot&model=claude-sonnet-4.5&reasoningEffort=medium",
+  );
 });
 
 test("WindowEntryLoader は production build で loadFile する", async () => {

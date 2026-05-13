@@ -1,4 +1,5 @@
 import type { DiffPreviewPayload } from "../src/session-state.js";
+import type { MateTalkLaunchInput } from "../src/mate/mate-state.js";
 import type { ChatEntryMode, HomeEntryMode, WindowLike } from "./window-entry-loader.js";
 import {
   COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
@@ -171,7 +172,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return window;
   }
 
-  async openMateTalkWindow(): Promise<TWindow> {
+  async openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<TWindow> {
     const existing = this.reuseWindow(this.mateTalkWindow);
     if (existing) {
       return existing;
@@ -186,7 +187,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     window.on("closed", () => {
       this.mateTalkWindow = null;
     });
-    await this.deps.loadChatEntry(window, { kind: "mate-talk" });
+    await this.deps.loadChatEntry(window, input ? { kind: "mate-talk", launch: input } : { kind: "mate-talk" });
     return window;
   }
 

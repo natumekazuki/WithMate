@@ -78,4 +78,18 @@ describe("home-launch-projection", () => {
     assert.equal(enabledOnlyCodex.launchWorkspacePathLabel, "F:/work/demo");
     assert.equal(enabledOnlyCodex.canStartSession, true);
   });
+
+  it("mate-talk mode は provider があれば title/workspace なしで開始可能にする", () => {
+    const projection = buildHomeLaunchProjection({
+      launchProviderId: "codex",
+      launchMode: "mate-talk",
+      launchTitle: "",
+      launchWorkspace: null,
+      appSettings: createDefaultAppSettings(),
+      modelCatalog: createCatalog(),
+    });
+
+    assert.equal(projection.selectedLaunchProvider?.id, "codex");
+    assert.equal(projection.canStartSession, true);
+  });
 });

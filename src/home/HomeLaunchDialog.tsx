@@ -5,7 +5,7 @@ import type { LaunchWorkspace } from "./home-launch-projection.js";
 
 export type HomeLaunchDialogProps = {
   open: boolean;
-  mode: "session" | "companion";
+  mode: "session" | "companion" | "mate-talk";
   title: string;
   workspace: LaunchWorkspace | null;
   launchWorkspacePathLabel: string;
@@ -15,11 +15,11 @@ export type HomeLaunchDialogProps = {
   launchFeedback: string;
   launchStarting: boolean;
   onClose: () => void;
-  onSelectMode: (mode: "session" | "companion") => void;
+  onSelectMode: (mode: "session" | "companion" | "mate-talk") => void;
   onChangeTitle: (value: string) => void;
   onBrowseWorkspace: () => void;
   onSelectProvider: (providerId: string) => void;
-  onStartSession: (mode: "session" | "companion") => void;
+  onStartSession: (mode: "session" | "companion" | "mate-talk") => void;
 };
 
 export function HomeLaunchDialog({
@@ -50,6 +50,7 @@ export function HomeLaunchDialog({
   if (!open) {
     return null;
   }
+  const isMateTalkMode = mode === "mate-talk";
 
   return (
     <div className="launch-modal" role="dialog" aria-modal="true" onClick={onClose}>
@@ -66,6 +67,7 @@ export function HomeLaunchDialog({
         </div>
 
         <div className="launch-panel minimal">
+          {!isMateTalkMode ? (
           <section className="launch-section minimal">
             <div
               className="choice-list launch-provider-list"
@@ -93,7 +95,9 @@ export function HomeLaunchDialog({
               ))}
             </div>
           </section>
+          ) : null}
 
+          {!isMateTalkMode ? (
           <section className="launch-section minimal">
             <div className="launch-field">
               <label className="launch-field-label" htmlFor="launch-session-title">
@@ -109,7 +113,9 @@ export function HomeLaunchDialog({
               />
             </div>
           </section>
+          ) : null}
 
+          {!isMateTalkMode ? (
           <section className="launch-section workspace-picker minimal">
             <div className="section-head compact-actions">
               <button className="browse-button" type="button" onClick={onBrowseWorkspace}>
@@ -118,6 +124,7 @@ export function HomeLaunchDialog({
             </div>
             <p className={`launch-path${workspace ? " selected" : ""}`}>{launchWorkspacePathLabel}</p>
           </section>
+          ) : null}
 
           <section className="launch-section minimal">
             <div className="launch-field">
@@ -167,7 +174,7 @@ export function HomeLaunchDialog({
             disabled={!canStartSession || launchStarting}
             onClick={() => onStartSession(mode)}
           >
-            {launchStarting ? "Starting..." : mode === "companion" ? "Start Companion" : "Start New Session"}
+            {launchStarting ? "Starting..." : mode === "mate-talk" ? "Start MateTalk" : mode === "companion" ? "Start Companion" : "Start New Session"}
           </button>
         </div>
       </section>

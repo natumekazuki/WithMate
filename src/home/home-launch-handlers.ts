@@ -6,6 +6,7 @@ import type { ModelCatalogProvider } from "../model-catalog.js";
 import type { HomeLaunchDraft } from "./home-launch-state.js";
 import {
   closeLaunchDraft,
+  buildMateTalkLaunchInputFromLaunchDraft,
   openLaunchDraft,
   setLaunchWorkspaceFromPath,
   updateLaunchDraftForProviderSelection,
@@ -26,6 +27,7 @@ type HomeLaunchHandlersContext = {
   pickWorkspaceDirectory: () => Promise<string | null> | string | null;
   openSessionWindow: (sessionId: string) => Promise<void>;
   openCompanionReviewWindow: (sessionId: string) => Promise<void>;
+  openMateTalkWindow: (input: ReturnType<typeof buildMateTalkLaunchInputFromLaunchDraft>) => Promise<void>;
   createSession: (input: CreateSessionInput) => Promise<{ id: string } | null>;
   createCompanionSession: (input: CreateCompanionSessionInput) => Promise<CompanionSession | null>;
   upsertCompanionSessionSummary: (summary: CompanionSessionSummary) => void;
@@ -34,6 +36,7 @@ type HomeLaunchHandlersContext = {
 export type HomeLaunchHandlers = {
   onBrowseWorkspace: () => void;
   onOpenLaunchDialog: () => void;
+  onOpenMateTalkLaunchDialog: () => void;
   onCloseLaunchDialog: () => void;
   onSelectLaunchProvider: (providerId: string) => void;
   onChangeMode: (mode: HomeLaunchDraft["mode"]) => void;
@@ -55,6 +58,7 @@ export function buildHomeLaunchHandlers({
   pickWorkspaceDirectory,
   openSessionWindow,
   openCompanionReviewWindow,
+  openMateTalkWindow,
   createSession,
   createCompanionSession,
   upsertCompanionSessionSummary,
@@ -79,6 +83,23 @@ export function buildHomeLaunchHandlers({
     setLaunchDraft((current) => openLaunchDraft(current, enabledLaunchProviders[0]?.id ?? ""));
   };
 
+  const onOpenMateTalkLaunchDialog = () => {
+    if (mateState === "not_created") {
+      setLaunchFeedback("Mate を作成してから開始してね。");
+      return;
+    }
+
+    setLaunchFeedback("");
+    setLaunchDraft((current) => {
+      const providerId = enabledLaunchProviders[0]?.id ?? "";
+      return updateLaunchDraftForProviderSelection(
+        openLaunchDraft(current, providerId, "mate-talk"),
+        providerId,
+        enabledLaunchProviders,
+      );
+    });
+  };
+
   const onCloseLaunchDialog = () => {
     setLaunchFeedback("");
     setLaunchStarting(false);
@@ -91,6 +112,31 @@ export function buildHomeLaunchHandlers({
   };
 
   const onStartSession = async (requestedMode: HomeLaunchDraft["mode"] = launchDraft.mode) => {
+    if (requestedMode === "mate-talk") {
+      if (launchStarting) {
+        return;
+      }
+      const launchInput = buildMateTalkLaunchInputFromLaunchDraft({
+        draft: launchDraft,
+        selectedProviderId: selectedLaunchProviderId,
+      });
+      if (!launchInput || mateState === "not_created" || !mateProfile) {
+        setLaunchFeedback("メイトークの開始条件が揃ってないよ。");
+        return;
+      }
+      setLaunchFeedback("メイトークを開始してるよ...");
+      setLaunchStarting(true);
+      try {
+        onCloseLaunchDialog();
+        await openMateTalkWindow(launchInput);
+      } catch (error) {
+        setLaunchFeedback(error instanceof Error ? error.message : "メイトークの開始に失敗したよ。");
+      } finally {
+        setLaunchStarting(false);
+      }
+      return;
+    }
+
     await startHomeLaunch({
       draft: launchDraft,
       requestedMode,
@@ -113,6 +159,7 @@ export function buildHomeLaunchHandlers({
   return {
     onBrowseWorkspace: () => void onBrowseWorkspace(),
     onOpenLaunchDialog,
+    onOpenMateTalkLaunchDialog,
     onCloseLaunchDialog,
     onSelectLaunchProvider,
     onChangeMode: (mode) => {

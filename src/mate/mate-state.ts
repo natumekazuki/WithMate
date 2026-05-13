@@ -103,6 +103,12 @@ export type MateTalkTurnInput = {
   reasoningEffort?: ModelReasoningEffort;
 };
 
+export type MateTalkLaunchInput = {
+  provider?: string;
+  model?: string;
+  reasoningEffort?: ModelReasoningEffort;
+};
+
 export type MateTalkTurnResult = {
   mateId: string;
   userMessage: string;

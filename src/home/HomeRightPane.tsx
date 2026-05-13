@@ -9,8 +9,6 @@ export type HomeRightPaneProps = {
   rightPaneView: "monitor" | "mate";
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
-  monitorRunningEmptyMessage: string;
-  monitorCompletedEmptyMessage: string;
   monitorWindowIcon: ReactNode;
   mateProfile: MateProfile | null;
   onChangeRightPaneView: (view: "monitor" | "mate") => void;
@@ -28,8 +26,6 @@ export function HomeRightPane({
   rightPaneView,
   runningMonitorEntries,
   nonRunningMonitorEntries,
-  monitorRunningEmptyMessage,
-  monitorCompletedEmptyMessage,
   monitorWindowIcon,
   mateProfile,
   onChangeRightPaneView,
@@ -149,29 +145,23 @@ export function HomeRightPane({
           <HomeMonitorContent
             runningEntries={runningMonitorEntries}
             nonRunningEntries={nonRunningMonitorEntries}
-            runningEmptyMessage={monitorRunningEmptyMessage}
-            completedEmptyMessage={monitorCompletedEmptyMessage}
             onOpenSession={openSession}
             onOpenCompanionReview={openCompanionReview}
           />
         </section>
       ) : (
         <section className="home-monitor-panel" role="tabpanel" aria-label="Your Mate" style={mateThemeStyle}>
-          <div className="home-monitor-section">
+          <div className="home-monitor-section home-mate-card">
             <div className="home-monitor-section-head">
               <h3>Your Mate</h3>
-              <span>{mateDisplayName}</span>
             </div>
-            <div className="home-monitor-section">
+            <div className="home-mate-card-body">
               <CharacterAvatar
                 character={{ name: mateDisplayName, iconPath: mateProfile?.avatarFilePath ?? "" }}
                 size="large"
               />
-              {mateDescription ? (
-                <p>{mateDescription}</p>
-              ) : (
-                <p>Mate の説明は未設定だよ。</p>
-              )}
+              <strong>{mateDisplayName}</strong>
+              {mateDescription ? <p>{mateDescription}</p> : null}
               <div className="home-monitor-actions">
                 <button className="launch-toggle" type="button" onClick={openMateProfile} disabled={!canUsePrimaryFeatures}>
                   Mate を編集

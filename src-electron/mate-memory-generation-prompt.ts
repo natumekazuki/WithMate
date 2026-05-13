@@ -69,35 +69,25 @@ export const MATE_MEMORY_GENERATION_OUTPUT_SCHEMA = {
           relatedRefs: {
             type: "array",
             items: {
-              oneOf: [
-                { type: "string" },
-                {
-                  type: "object",
-                  additionalProperties: false,
-                  properties: {
-                    type: { type: "string", enum: ["memory", "profile_item"] },
-                    id: { type: "string" },
-                  },
-                  required: ["type", "id"],
-                },
-              ],
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                type: { type: "string", enum: ["memory", "profile_item"] },
+                id: { type: "string" },
+              },
+              required: ["type", "id"],
             },
           },
           supersedesRefs: {
             type: "array",
             items: {
-              oneOf: [
-                { type: "string" },
-                {
-                  type: "object",
-                  additionalProperties: false,
-                  properties: {
-                    type: { type: "string", enum: ["memory", "profile_item"] },
-                    id: { type: "string" },
-                  },
-                  required: ["type", "id"],
-                },
-              ],
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                type: { type: "string", enum: ["memory", "profile_item"] },
+                id: { type: "string" },
+              },
+              required: ["type", "id"],
             },
           },
           targetClaimKey: { type: "string" },

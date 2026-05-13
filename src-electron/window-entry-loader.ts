@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { MateTalkLaunchInput } from "../src/mate/mate-state.js";
 
 export type WindowLike = {
   loadURL(url: string): Promise<unknown>;
@@ -9,7 +10,7 @@ export type HomeEntryMode = "home" | "monitor" | "settings" | "memory";
 export type ChatEntryMode =
   | { kind: "agent"; sessionId: string }
   | { kind: "companion"; sessionId: string }
-  | { kind: "mate-talk" };
+  | { kind: "mate-talk"; launch?: MateTalkLaunchInput | null };
 
 export type WindowEntryLoaderDeps = {
   devServerUrl?: string | null;
@@ -67,5 +68,15 @@ export function buildChatEntrySearch(mode: ChatEntryMode): string {
   if (mode.kind === "companion") {
     return `?companionSessionId=${encodeURIComponent(mode.sessionId)}&mode=companion`;
   }
-  return "?mode=mate-talk";
+  const query = new URLSearchParams({ mode: "mate-talk" });
+  if (mode.launch?.provider) {
+    query.set("provider", mode.launch.provider);
+  }
+  if (mode.launch?.model) {
+    query.set("model", mode.launch.model);
+  }
+  if (mode.launch?.reasoningEffort) {
+    query.set("reasoningEffort", mode.launch.reasoningEffort);
+  }
+  return `?${query.toString()}`;
 }

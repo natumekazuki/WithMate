@@ -439,12 +439,11 @@ export default function HomeApp() {
     normalizedSessionSearch,
     runningMonitorEntries,
     nonRunningMonitorEntries,
-    monitorRunningEmptyMessage,
-    monitorCompletedEmptyMessage,
   } = sessionProjection;
   const launchProjection = useMemo(
     () => buildHomeLaunchProjection({
       launchProviderId: launchDraft.providerId,
+      launchMode: launchDraft.mode,
       launchTitle: launchDraft.title,
       launchWorkspace: launchDraft.workspace,
       appSettings,
@@ -483,6 +482,7 @@ export default function HomeApp() {
     pickWorkspaceDirectory: async () => withWithMateApi((api) => api.pickDirectory()),
     openSessionWindow,
     openCompanionReviewWindow,
+    openMateTalkWindow,
     createSession: async (input) => await withWithMateApi((api) => api.createSession(input)),
     createCompanionSession: async (input) => await withWithMateApi((api) => api.createCompanionSession(input)),
     upsertCompanionSessionSummary: (summary) => {
@@ -686,8 +686,6 @@ export default function HomeApp() {
     monitorContent: buildHomeMonitorContentProps({
       runningEntries: runningMonitorEntries,
       nonRunningEntries: nonRunningMonitorEntries,
-      runningEmptyMessage: monitorRunningEmptyMessage,
-      completedEmptyMessage: monitorCompletedEmptyMessage,
       onOpenSession: (sessionId) => void openSessionWindow(sessionId),
       onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
     }),
@@ -712,8 +710,6 @@ export default function HomeApp() {
       rightPaneView,
       runningMonitorEntries,
       nonRunningMonitorEntries,
-      monitorRunningEmptyMessage,
-      monitorCompletedEmptyMessage,
       mateProfile,
       monitorWindowIcon: renderHomeMonitorWindowIcon(),
       handlers: {
@@ -722,7 +718,7 @@ export default function HomeApp() {
         onOpenMemoryManagementWindow: () => void openMemoryManagementWindow(),
         onOpenSettingsWindow: () => void openSettingsWindow(),
         onOpenMateProfile: mateProfileHandlers.onOpenProfileEditor,
-        onOpenMateTalk: () => void openMateTalkWindow(),
+        onOpenMateTalk: homeLaunchHandlers.onOpenMateTalkLaunchDialog,
         onOpenSession: (sessionId) => void openSessionWindow(sessionId),
         onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
       },

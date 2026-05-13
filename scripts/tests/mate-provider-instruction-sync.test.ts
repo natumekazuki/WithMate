@@ -887,6 +887,66 @@ describe("syncEnabledProviderInstructionTargets", () => {
     }
   });
 
+  it("force 指定時は同一 active revision でも Mate profile metadata を再同期する", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
+    const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));
+    const storagePath = path.join(tempDatabaseDirectory, "withmate-v4.db");
+    const userDataPath = path.join(tempDatabaseDirectory, "user-data");
+    const storage = new ProviderInstructionTargetStorage(storagePath);
+    const mateStorage = new MateStorage(storagePath, userDataPath);
+    const targetPath = path.join(workspacePath, "AGENTS.md");
+
+    try {
+      await mateStorage.createMate({
+        displayName: "Mia",
+        description: "initial profile",
+      });
+      const initialProfile = mateStorage.getMateProfile();
+      if (!initialProfile?.activeRevisionId) {
+        throw new Error("保存済み profile が見つかりません");
+      }
+
+      storage.upsertTarget({
+        providerId: "codex",
+        enabled: true,
+        rootDirectory: workspacePath,
+        instructionRelativePath: "AGENTS.md",
+        writeMode: "managed_block",
+        failPolicy: "warn_continue",
+      });
+
+      await syncEnabledProviderInstructionTargets(storage, initialProfile, FILE_DEPENDENCIES);
+      const initial = await readFile(targetPath, "utf8");
+      assert.ok(initial.includes("- **displayName:** Mia"));
+      assert.ok(initial.includes("- **description:** initial profile"));
+
+      const updatedProfile = await mateStorage.updateMate({
+        displayName: "Mia Updated",
+        description: "updated profile",
+      });
+      const result = await syncEnabledProviderInstructionTargets(
+        storage,
+        updatedProfile,
+        FILE_DEPENDENCIES,
+        { force: true },
+      );
+      const updated = await readFile(targetPath, "utf8");
+
+      assert.equal(result.targetCount, 1);
+      assert.equal(result.syncedCount, 1);
+      assert.equal(result.failedCount, 0);
+      assert.equal(result.skippedCount, 0);
+      assert.ok(updated.includes("- **displayName:** Mia Updated"));
+      assert.ok(updated.includes("- **description:** updated profile"));
+      assert.equal(updated.includes("- **displayName:** Mia\n"), false);
+    } finally {
+      storage.close();
+      mateStorage.close();
+      await rm(workspacePath, { recursive: true, force: true });
+      await rm(tempDatabaseDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("stale の target は同一 active revision でも再同期される", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-target-sync-"));
     const tempDatabaseDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-target-db-"));

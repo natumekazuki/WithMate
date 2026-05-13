@@ -1,7 +1,8 @@
 import { withWithMateApi } from "../renderer-withmate-api.js";
+import type { MateTalkLaunchInput } from "../mate/mate-state.js";
 
-export async function openMateTalkWindow() {
-  await withWithMateApi((api) => api.openMateTalkWindow());
+export async function openMateTalkWindow(input?: MateTalkLaunchInput | null) {
+  await withWithMateApi((api) => input ? api.openMateTalkWindow(input) : api.openMateTalkWindow());
 }
 
 export async function openSessionWindow(sessionId: string) {

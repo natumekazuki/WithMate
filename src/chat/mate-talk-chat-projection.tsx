@@ -28,7 +28,6 @@ export type MateTalkChatProjectionInput = {
   onChangeModel: (model: string) => void;
   onChangeReasoningEffort: (reasoningEffort: string) => void;
   onSubmit: () => void;
-  onOpenHome: () => void;
   onToggleHeaderExpanded: () => void;
   sending: boolean;
   feedback: string;
@@ -51,7 +50,6 @@ export function buildMateTalkChatWindowProps({
   onChangeModel,
   onChangeReasoningEffort,
   onSubmit,
-  onOpenHome,
   onToggleHeaderExpanded,
   sending,
   feedback,
@@ -85,11 +83,6 @@ export function buildMateTalkChatWindowProps({
     isRunning: sending,
     feedback,
     submitOnKey: shouldSubmitMateTalkInputByKey,
-    headerWorkspaceActions: (
-      <button className="drawer-toggle compact secondary" type="button" onClick={onOpenHome}>
-        Home
-      </button>
-    ),
     rightPaneHeaderTitle: "メイトーク",
     rightPaneAriaLabel: "補助情報",
   });

@@ -19,8 +19,6 @@ export type HomeRightPanePropsInput = {
   rightPaneView: HomeRightPaneProps["rightPaneView"];
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
-  monitorRunningEmptyMessage: string;
-  monitorCompletedEmptyMessage: string;
   monitorWindowIcon: ReactNode;
   mateProfile: MateProfile | null;
   handlers: HomeRightPaneHandlers;
@@ -31,8 +29,6 @@ export function buildHomeRightPaneProps({
   rightPaneView,
   runningMonitorEntries,
   nonRunningMonitorEntries,
-  monitorRunningEmptyMessage,
-  monitorCompletedEmptyMessage,
   monitorWindowIcon,
   mateProfile,
   handlers,
@@ -42,8 +38,6 @@ export function buildHomeRightPaneProps({
     rightPaneView,
     runningMonitorEntries,
     nonRunningMonitorEntries,
-    monitorRunningEmptyMessage,
-    monitorCompletedEmptyMessage,
     monitorWindowIcon,
     mateProfile,
     onChangeRightPaneView: handlers.onChangeRightPaneView,

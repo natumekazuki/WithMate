@@ -28,12 +28,14 @@ export function inferWorkspaceFromPath(selectedPath: string): LaunchWorkspace {
 
 export function buildHomeLaunchProjection({
   launchProviderId,
+  launchMode,
   launchTitle,
   launchWorkspace,
   appSettings,
   modelCatalog,
 }: {
   launchProviderId: string;
+  launchMode?: "session" | "companion" | "mate-talk";
   launchTitle: string;
   launchWorkspace: LaunchWorkspace | null;
   appSettings: AppSettings;
@@ -49,6 +51,8 @@ export function buildHomeLaunchProjection({
     enabledLaunchProviders,
     selectedLaunchProvider,
     launchWorkspacePathLabel: launchWorkspace ? launchWorkspace.path : "workspace",
-    canStartSession: !!launchTitle.trim() && !!launchWorkspace && !!selectedLaunchProvider,
+    canStartSession: launchMode === "mate-talk"
+      ? !!selectedLaunchProvider
+      : !!launchTitle.trim() && !!launchWorkspace && !!selectedLaunchProvider,
   };
 }

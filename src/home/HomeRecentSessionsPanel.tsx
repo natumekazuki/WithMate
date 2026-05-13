@@ -168,25 +168,18 @@ export function HomeRecentSessionsPanel({
             </button>
           );
         })}
-        {!hasVisibleEntries ? (
-          normalizedSessionSearch ? (
-            <article className="empty-list-card">
-              <p>一致するセッションはないよ。</p>
-            </article>
-          ) : (
-            <article className="empty-list-card">
-              <p>まだセッションはないよ。</p>
-              <button
-                className="start-session-button"
-                type="button"
-                onClick={openLaunchDialog}
-                aria-disabled={!canUsePrimaryFeatures}
-                disabled={!canUsePrimaryFeatures}
-              >
-                New Session
-              </button>
-            </article>
-          )
+        {!hasVisibleEntries && !normalizedSessionSearch ? (
+          <div className="home-session-empty-actions">
+            <button
+              className="start-session-button"
+              type="button"
+              onClick={openLaunchDialog}
+              aria-disabled={!canUsePrimaryFeatures}
+              disabled={!canUsePrimaryFeatures}
+            >
+              New Session
+            </button>
+          </div>
         ) : null}
       </div>
     </section>

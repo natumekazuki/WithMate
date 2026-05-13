@@ -26,6 +26,7 @@ import type {
   CreateMateInput,
   MateProfile,
   MateStorageState,
+  MateTalkLaunchInput,
   MateTalkTurnInput,
   MateTalkTurnResult,
   SetMateAvatarInput,
@@ -242,7 +243,7 @@ export type MainIpcRegistrationDeps = {
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
   openMemoryManagementWindow(): Promise<void>;
-  openMateTalkWindow(): Promise<void>;
+  openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<void>;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
@@ -546,8 +547,8 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   ipcMain.handle(WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL, async () => {
     await deps.openMemoryManagementWindow();
   });
-  ipcMain.handle(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL, async () => {
-    await deps.openMateTalkWindow();
+  ipcMain.handle(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL, async (_event, input?: MateTalkLaunchInput | null) => {
+    await deps.openMateTalkWindow(input ?? null);
   });
   ipcMain.handle(WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL, async (_event, characterId: string | null) => {
     await deps.openCharacterEditorWindow(characterId);

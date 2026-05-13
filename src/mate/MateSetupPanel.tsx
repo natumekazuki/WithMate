@@ -40,9 +40,6 @@ export function HomeMateSetupPanel({
   return (
     <section className="home-mate-setup-panel">
       <h2 className="home-mate-setup-head">{isEditMode ? "Mate プロフィール" : "Mate 作成"}</h2>
-      <p className="home-mate-setup-description">
-        {isEditMode ? "Mate の表示名を編集できるよ。" : "Home を使う前に Mate を 1 つ作成してね。設定は利用できるよ。"}
-      </p>
       <form
         className="home-mate-setup-form"
         onSubmit={(event) => {
@@ -58,9 +55,7 @@ export function HomeMateSetupPanel({
           />
           <div className="home-mate-avatar-copy">
             <span className="home-mate-avatar-label">アイコン</span>
-            <p className="home-mate-avatar-help">
-              {canEditAvatar ? "Mate の表示に使う画像を選べます。" : "Mate 作成後に設定できます。"}
-            </p>
+            {canEditAvatar ? <p className="home-mate-avatar-help">画像を選択できます。</p> : null}
             {canEditAvatar ? (
               <div className="home-mate-avatar-actions">
                 <button className="launch-toggle" type="button" onClick={onSelectAvatar} disabled={avatarBusy}>

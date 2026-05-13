@@ -16,11 +16,27 @@ import {
 } from "./mate-talk-model-selection.js";
 import { MateTalkTurnController } from "./mate-talk-state.js";
 
+function getMateTalkLaunchParams(): { providerId: string; model: string; reasoningEffort: ModelReasoningEffort } {
+  if (typeof window === "undefined") {
+    return { providerId: "", model: "", reasoningEffort: "low" };
+  }
+  const query = new URLSearchParams(window.location.search);
+  const reasoningEffort = query.get("reasoningEffort");
+  return {
+    providerId: query.get("provider")?.trim() ?? "",
+    model: query.get("model")?.trim() ?? "",
+    reasoningEffort: reasoningEffort === "minimal" || reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high" || reasoningEffort === "xhigh"
+      ? reasoningEffort
+      : "low",
+  };
+}
+
 export function useMateTalkWindowState({
   withmateApi,
 }: {
   withmateApi: WithMateWindowApi | null;
 }) {
+  const launchParams = useMemo(() => getMateTalkLaunchParams(), []);
   const [appSettings, setAppSettings] = useState<AppSettings>(() => createDefaultAppSettings());
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [mateState, setMateState] = useState<MateStorageState | null>(null);
@@ -29,10 +45,10 @@ export function useMateTalkWindowState({
   const [messages, setMessages] = useState<MateTalkMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [feedback, setFeedback] = useState("");
-  const [isHeaderExpanded, setIsHeaderExpanded] = useState(true);
-  const [providerId, setProviderId] = useState("");
-  const [model, setModel] = useState("");
-  const [reasoningEffort, setReasoningEffort] = useState<ModelReasoningEffort>("low");
+  const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
+  const [providerId, setProviderId] = useState(launchParams.providerId);
+  const [model, setModel] = useState(launchParams.model);
+  const [reasoningEffort, setReasoningEffort] = useState<ModelReasoningEffort>(launchParams.reasoningEffort);
   const turnControllerRef = useRef(new MateTalkTurnController());
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);

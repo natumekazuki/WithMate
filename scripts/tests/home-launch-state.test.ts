@@ -8,6 +8,7 @@ import type { SessionSummary } from "../../src/app-state.js";
 import {
   buildCreateCompanionSessionInputFromLaunchDraft,
   buildCreateSessionInputFromLaunchDraft,
+  buildMateTalkLaunchInputFromLaunchDraft,
   closeLaunchDraft,
   createClosedLaunchDraft,
   openLaunchDraft,
@@ -234,6 +235,32 @@ describe("home-launch-state", () => {
       reasoningEffort: "medium",
       customAgentName: "reviewer",
     });
+  });
+
+  it("mate-talk launch は provider だけで validation でき、launch input を組み立てる", () => {
+    const draft = {
+      ...createClosedLaunchDraft(),
+      open: true,
+      mode: "mate-talk" as const,
+      providerId: "codex",
+      model: "gpt-5.4",
+      reasoningEffort: "high" as const,
+    };
+    const mateProfile = createMateProfile({ id: "mate-a", displayName: "Mia" });
+
+    assert.equal(
+      resolveLaunchValidationMessage({
+        draft,
+        mateState: "active",
+        mateProfile,
+        selectedProviderId: "codex",
+      }),
+      "",
+    );
+    assert.deepEqual(
+      buildMateTalkLaunchInputFromLaunchDraft({ draft, selectedProviderId: "codex" }),
+      { provider: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+    );
   });
 
   it("Companion launch は provider の last-used model を優先する", () => {

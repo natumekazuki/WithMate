@@ -10,7 +10,7 @@ import {
   type ModelCatalogProvider,
   type ModelReasoningEffort,
 } from "../model-catalog.js";
-import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
+import type { MateProfile, MateStorageState, MateTalkLaunchInput } from "../mate/mate-state.js";
 
 type LastUsedSessionSelectionSource = Pick<
   SessionSummary,
@@ -19,7 +19,7 @@ type LastUsedSessionSelectionSource = Pick<
 
 export type HomeLaunchDraft = {
   open: boolean;
-  mode: "session" | "companion";
+  mode: "session" | "companion" | "mate-talk";
   title: string;
   workspace: LaunchWorkspace | null;
   providerId: string;
@@ -152,6 +152,15 @@ export function resolveLaunchValidationMessage({
   if (mateState === "not_created") {
     return "Mate を作成してから開始してね。";
   }
+  if (draft.mode === "mate-talk") {
+    if (!mateProfile) {
+      return "Mate を確認してから開始してね。";
+    }
+    if (!selectedProviderId) {
+      return "有効な Coding Provider を選んでね。";
+    }
+    return "";
+  }
   if (!draft.title.trim()) {
     return "タイトルを入力してね。";
   }
@@ -165,6 +174,24 @@ export function resolveLaunchValidationMessage({
     return "有効な Coding Provider を選んでね。";
   }
   return "";
+}
+
+export function buildMateTalkLaunchInputFromLaunchDraft({
+  draft,
+  selectedProviderId,
+}: {
+  draft: HomeLaunchDraft;
+  selectedProviderId: string | null;
+}): MateTalkLaunchInput | null {
+  if (!selectedProviderId) {
+    return null;
+  }
+
+  return {
+    provider: selectedProviderId,
+    model: draft.model,
+    reasoningEffort: draft.reasoningEffort,
+  };
 }
 
 export function resolveLastUsedSessionSelection(

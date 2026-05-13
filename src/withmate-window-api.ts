@@ -57,6 +57,7 @@ import type {
   CreateMateInput,
   MateProfile,
   MateStorageState,
+  MateTalkLaunchInput,
   MateTalkTurnInput,
   MateTalkTurnResult,
   MateGrowthSettings,
@@ -76,7 +77,7 @@ export type WithMateWindowNavigationApi = {
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
   openMemoryManagementWindow(): Promise<void>;
-  openMateTalkWindow(): Promise<void>;
+  openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<void>;
   openCharacterEditor(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openCompanionReviewWindow(sessionId: string): Promise<void>;

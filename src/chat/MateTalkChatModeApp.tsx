@@ -38,9 +38,6 @@ export function MateTalkChatModeApp() {
         onChangeModel: state.onChangeModel,
         onChangeReasoningEffort: state.onChangeReasoningEffort,
         onSubmit: state.onSubmit,
-        onOpenHome: () => {
-          void withmateApi.openHomeWindow().finally(() => window.close());
-        },
         onToggleHeaderExpanded: state.onToggleHeaderExpanded,
         sending: state.sending,
       })}

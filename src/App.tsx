@@ -654,7 +654,7 @@ export default function AgentSessionWindowApp() {
     [selectedDiff],
   );
   const isSelectedCharacterMissing = useMemo(
-    () => !!selectedSession && !!selectedSession.characterId && resolvedCharacter === null,
+    () => !!selectedSession && !!selectedSession.characterId && selectedSession.characterId !== "current" && resolvedCharacter === null,
     [resolvedCharacter, selectedSession],
   );
   const isCharacterResolutionPending = useMemo(
@@ -2692,4 +2692,3 @@ export default function AgentSessionWindowApp() {
     />
   );
 }
-

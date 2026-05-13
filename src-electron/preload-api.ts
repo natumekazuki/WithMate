@@ -213,8 +213,10 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     openMemoryManagementWindow() {
       return ipcRenderer.invoke(WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL);
     },
-    openMateTalkWindow() {
-      return ipcRenderer.invoke(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL);
+    openMateTalkWindow(input) {
+      return input === undefined
+        ? ipcRenderer.invoke(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL)
+        : ipcRenderer.invoke(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL, input);
     },
     openCharacterEditor(characterId) {
       return ipcRenderer.invoke(WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL, characterId ?? null);

@@ -35,6 +35,7 @@ export type MateProviderInstructionSyncDeps = {
 
 export type ProviderInstructionSyncOptions = {
   protectedRoots?: readonly string[];
+  force?: boolean;
 };
 
 export type SyncEnabledProviderInstructionTargetsResult = {
@@ -189,7 +190,8 @@ export async function syncEnabledProviderInstructionTargets(
       assertProviderInstructionTargetRootNotProtected(target, protectedRoots, instructionFilePath);
 
       if (
-        target.lastSyncState === "synced"
+        !syncOptions.force
+        && target.lastSyncState === "synced"
         && mateRevisionId !== undefined
         && target.lastSyncedRevisionId === mateRevisionId
       ) {
