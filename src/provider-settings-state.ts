@@ -49,6 +49,7 @@ export type ProviderAppSettings = {
   enabled: boolean;
   apiKey: string;
   skillRootPath: string;
+  skillRelativePath?: string;
 };
 
 export type MemoryExtractionProviderSettings = {
@@ -92,6 +93,7 @@ export const DEFAULT_PROVIDER_APP_SETTINGS: ProviderAppSettings = {
   enabled: false,
   apiKey: "",
   skillRootPath: "",
+  skillRelativePath: "",
 };
 
 export const DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD = 300_000;
@@ -142,6 +144,7 @@ export function createDefaultAppSettings(): AppSettings {
         enabled: true,
         apiKey: "",
         skillRootPath: "",
+        skillRelativePath: "",
       },
     },
     memoryExtractionProviderSettings: {
@@ -224,6 +227,7 @@ function normalizeProviderAppSettings(value: unknown, defaultEnabled: boolean): 
       enabled: defaultEnabled,
       apiKey: "",
       skillRootPath: "",
+      skillRelativePath: "",
     };
   }
 
@@ -232,7 +236,18 @@ function normalizeProviderAppSettings(value: unknown, defaultEnabled: boolean): 
     enabled: typeof candidate.enabled === "boolean" ? candidate.enabled : defaultEnabled,
     apiKey: typeof candidate.apiKey === "string" ? candidate.apiKey : "",
     skillRootPath: typeof candidate.skillRootPath === "string" ? candidate.skillRootPath : "",
+    skillRelativePath: typeof candidate.skillRelativePath === "string" ? candidate.skillRelativePath : "",
   };
+}
+
+export function resolveProviderSkillRootPath(settings: ProviderAppSettings): string {
+  const rootDirectory = settings.skillRootPath.trim().replace(/[\\/]+$/g, "");
+  const skillRelativePath = (settings.skillRelativePath ?? "").trim().replace(/^[\\/]+|[\\/]+$/g, "");
+  if (!rootDirectory || !skillRelativePath) {
+    return rootDirectory;
+  }
+
+  return `${rootDirectory}/${skillRelativePath}`;
 }
 
 function normalizeOutputTokensThreshold(value: unknown): number {

@@ -25,7 +25,7 @@ describe("ProviderInstructionTargetRootGuard", () => {
   it("enabled target の rootDirectory が保護ルート直下/同一なら拒否する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-root-guard-"));
     const protectedRoots = buildProviderInstructionTargetProtectedRoots(path.join(tempDirectory, "UserData"));
-    const memoryRuntimeRoot = protectedRoots[1]!;
+    const memoryRuntimeRoot = protectedRoots[0]!;
     const siblingPath = path.join(tempDirectory, "AllowedProject");
 
     try {
@@ -38,7 +38,7 @@ describe("ProviderInstructionTargetRootGuard", () => {
             }),
             protectedRoots,
           ),
-        /保護ディレクトリ配下/,
+        /protected WithMate directory/,
       );
 
       assert.throws(
@@ -50,7 +50,7 @@ describe("ProviderInstructionTargetRootGuard", () => {
             }),
             protectedRoots,
           ),
-        /保護ディレクトリ配下/,
+        /protected WithMate directory/,
       );
 
       assert.doesNotThrow(
@@ -62,6 +62,39 @@ describe("ProviderInstructionTargetRootGuard", () => {
             }),
             protectedRoots,
           ),
+      );
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("userData root 自体は provider root として許可し、内部生成ディレクトリだけ拒否する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-provider-root-guard-user-data-"));
+    const userDataPath = path.join(tempDirectory, "UserData");
+    const protectedRoots = buildProviderInstructionTargetProtectedRoots(userDataPath);
+
+    try {
+      assert.doesNotThrow(() =>
+        assertProviderInstructionTargetRootNotProtected(
+          buildInput({
+            enabled: true,
+            rootDirectory: userDataPath,
+            instructionRelativePath: "AGENTS.md",
+          }),
+          protectedRoots,
+        ),
+      );
+
+      assert.throws(
+        () =>
+          assertProviderInstructionTargetRootNotProtected(
+            buildInput({
+              enabled: true,
+              rootDirectory: path.join(userDataPath, "mate"),
+            }),
+            protectedRoots,
+          ),
+        /protected WithMate directory/,
       );
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
@@ -92,7 +125,7 @@ describe("ProviderInstructionTargetRootGuard", () => {
           }),
           protectedRoots,
         ),
-        /保護ディレクトリ配下/,
+        /protected WithMate directory/,
     );
   });
 
@@ -114,7 +147,7 @@ describe("ProviderInstructionTargetRootGuard", () => {
           }),
           protectedRoots,
         ),
-      /保護ディレクトリ配下/,
+      /protected WithMate directory/,
     );
 
     assert.doesNotThrow(() =>
@@ -145,7 +178,7 @@ describe("ProviderInstructionTargetRootGuard", () => {
             }),
             protectedRoots,
           ),
-        /保護ディレクトリ配下/,
+        /protected WithMate directory/,
       );
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
@@ -177,7 +210,7 @@ describe("ProviderInstructionTargetRootGuard", () => {
             }),
             protectedRoots,
           ),
-        /保護ディレクトリ配下/,
+        /protected WithMate directory/,
       );
 
       assert.throws(
@@ -193,7 +226,7 @@ describe("ProviderInstructionTargetRootGuard", () => {
             }),
             protectedRoots,
           ),
-        /保護ディレクトリ配下/,
+        /protected WithMate directory/,
       );
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });

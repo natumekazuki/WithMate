@@ -56,7 +56,6 @@ export function buildProviderInstructionTargetProtectedRoots(
 ): string[] {
   const normalizedUserDataPath = normalizeDirectoryPath(stripWindowsLongPathDrivePrefix(userDataPath));
   const protectedRoots = [
-    normalizedUserDataPath,
     ...PROTECTED_SUB_DIRECTORIES.map((directory) => normalizeDirectoryPath(path.join(normalizedUserDataPath, directory))),
     ...(options.additionalProtectedRoots ?? []).map((root) => normalizeDirectoryPath(stripWindowsLongPathDrivePrefix(root))),
   ];
@@ -90,11 +89,11 @@ export function assertProviderInstructionTargetRootNotProtected(
 
   for (const protectedRoot of protectedRoots) {
     if (isPathWithinDirectoryPortable(normalizedRootDirectory, protectedRoot)) {
-      throw new Error(`rootDirectory が保護ディレクトリ配下（${protectedRoot}）に設定されているため登録できません。`);
+      throw new Error(`rootDirectory is inside a protected WithMate directory: ${protectedRoot}`);
     }
 
     if (normalizedInstructionFilePath && isPathWithinDirectoryPortable(normalizedInstructionFilePath, protectedRoot)) {
-      throw new Error(`instruction file path が保護ディレクトリ配下（${protectedRoot}）に設定されているため登録できません。`);
+      throw new Error(`instruction file path is inside a protected WithMate directory: ${protectedRoot}`);
     }
   }
 }

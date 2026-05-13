@@ -32,11 +32,12 @@ import {
 } from "../memory/memory-management-view.js";
 import type { HomeProviderSettingRow } from "./settings-view-model.js";
 import {
-  SETTINGS_SKILL_ROOT_LABEL,
-  SETTINGS_SKILL_ROOT_PLACEHOLDER,
   SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL,
+  SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_PLACEHOLDER,
+  SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL,
+  SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_PLACEHOLDER,
   SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER,
   SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL,
@@ -142,6 +143,8 @@ export type HomeSettingsContentProps = {
   onBrowseProviderInstructionInstructionRelativePath: (providerId: string) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
   onBrowseProviderSkillRootPath: (providerId: string) => void;
+  onChangeProviderSkillRelativePath: (providerId: string, skillRelativePath: string) => void;
+  onBrowseProviderSkillRelativePath: (providerId: string) => void;
   onChangeMemoryExtractionModel: (providerId: string, model: string) => void;
   onChangeMemoryExtractionReasoningEffort: (
     providerId: string,
@@ -281,6 +284,8 @@ export function HomeSettingsContent({
   onBrowseProviderInstructionInstructionRelativePath,
   onChangeProviderSkillRootPath,
   onBrowseProviderSkillRootPath,
+  onChangeProviderSkillRelativePath,
+  onBrowseProviderSkillRelativePath,
   onChangeMemoryExtractionModel,
   onChangeMemoryExtractionReasoningEffort,
   onChangeMemoryExtractionThreshold,
@@ -477,6 +482,84 @@ export function HomeSettingsContent({
                         </label>
                         <label className="settings-provider-input">
                           <span className="settings-field-label-with-help">
+                            <span>{SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL}</span>
+                            <SettingsInlineHelp summary={`${SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL} のヘルプ`}>
+                              <p>Root Directory は Skill と Instruction Relative Path の共通基準になる。</p>
+                              <p>{SETTINGS_PROVIDER_INSTRUCTION_PATH_HELP}</p>
+                            </SettingsInlineHelp>
+                          </span>
+                          <div className="settings-inline-input-row">
+                            <input
+                              type="text"
+                              value={settings.skillRootPath}
+                              onChange={(event) => onChangeProviderSkillRootPath(provider.id, event.target.value)}
+                              placeholder={SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_PLACEHOLDER}
+                              autoComplete="off"
+                              spellCheck={false}
+                            />
+                            <button
+                              className="launch-toggle"
+                              type="button"
+                              onClick={() => onBrowseProviderSkillRootPath(provider.id)}
+                            >
+                              選択
+                            </button>
+                          </div>
+                        </label>
+                        <label className="settings-provider-input">
+                          <span className="settings-field-label-with-help">
+                            <span>{SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL}</span>
+                            <SettingsInlineHelp summary={`${SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL} のヘルプ`}>
+                              <p>Skills folder を Root Directory 配下の相対パスで指定する。</p>
+                              <p>{SETTINGS_PROVIDER_INSTRUCTION_PATH_HELP}</p>
+                            </SettingsInlineHelp>
+                          </span>
+                          <div className="settings-inline-input-row">
+                            <input
+                              type="text"
+                              value={settings.skillRelativePath ?? ""}
+                              onChange={(event) => onChangeProviderSkillRelativePath(provider.id, event.target.value)}
+                              placeholder={SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_PLACEHOLDER}
+                              autoComplete="off"
+                              spellCheck={false}
+                            />
+                            <button
+                              className="launch-toggle"
+                              type="button"
+                              onClick={() => onBrowseProviderSkillRelativePath(provider.id)}
+                            >
+                              選択
+                            </button>
+                          </div>
+                        </label>
+                        <label className="settings-provider-input">
+                          <span className="settings-field-label-with-help">
+                            <span>{SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>
+                            <SettingsInlineHelp summary={`${SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL} のヘルプ`}>
+                              <p>{SETTINGS_PROVIDER_INSTRUCTION_PATH_HELP}</p>
+                            </SettingsInlineHelp>
+                          </span>
+                          <div className="settings-inline-input-row">
+                            <input
+                              type="text"
+                              value={instructionTarget.instructionRelativePath}
+                              onChange={(event) =>
+                                onChangeProviderInstructionInstructionRelativePath(provider.id, event.target.value)}
+                              placeholder={SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER}
+                              autoComplete="off"
+                              spellCheck={false}
+                            />
+                            <button
+                              className="launch-toggle"
+                              type="button"
+                              onClick={() => onBrowseProviderInstructionInstructionRelativePath(provider.id)}
+                            >
+                              選択
+                            </button>
+                          </div>
+                        </label>
+                        <label className="settings-provider-input">
+                          <span className="settings-field-label-with-help">
                             <span>{SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL}</span>
                             <SettingsInlineHelp summary={`${SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL} のヘルプ`}>
                               <p>{SETTINGS_PROVIDER_INSTRUCTION_MANAGED_BLOCK_HELP}</p>
@@ -508,44 +591,6 @@ export function HomeSettingsContent({
                             <option value="block_session">block_session</option>
                           </select>
                         </label>
-                        <label className="settings-provider-input">
-                          <span className="settings-field-label-with-help">
-                            <span>{SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL}</span>
-                            <SettingsInlineHelp summary={`${SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL} のヘルプ`}>
-                              <p>Root Directory は Coding Agent Provider の Skill Root を使う。</p>
-                              <p>{SETTINGS_PROVIDER_INSTRUCTION_PATH_HELP}</p>
-                            </SettingsInlineHelp>
-                          </span>
-                          <p className="settings-help">
-                            {settings.skillRootPath.trim() || "Skill Root を指定するとここに反映される。"}
-                          </p>
-                        </label>
-                        <label className="settings-provider-input">
-                          <span className="settings-field-label-with-help">
-                            <span>{SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>
-                            <SettingsInlineHelp summary={`${SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL} のヘルプ`}>
-                              <p>{SETTINGS_PROVIDER_INSTRUCTION_PATH_HELP}</p>
-                            </SettingsInlineHelp>
-                          </span>
-                          <div className="settings-inline-input-row">
-                            <input
-                              type="text"
-                              value={instructionTarget.instructionRelativePath}
-                              onChange={(event) =>
-                                onChangeProviderInstructionInstructionRelativePath(provider.id, event.target.value)}
-                              placeholder={SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER}
-                              autoComplete="off"
-                              spellCheck={false}
-                            />
-                            <button
-                              className="launch-toggle"
-                              type="button"
-                              onClick={() => onBrowseProviderInstructionInstructionRelativePath(provider.id)}
-                            >
-                              選択
-                            </button>
-                          </div>
-                        </label>
                         <dl className="settings-memory-meta">
                           <div>
                             <dt>同期状態</dt>
@@ -565,39 +610,6 @@ export function HomeSettingsContent({
                             <p>{normalizeProviderInstructionErrorPreview(instructionTarget.lastErrorPreview)}</p>
                           </div>
                         ) : null}
-                      </section>
-                    ))}
-                  </div>
-                </div>
-              </section>
-
-              <section className="settings-section-card">
-                <div className="settings-field">
-                  <strong>Skill Roots</strong>
-                  <div className="settings-provider-list">
-                    {providerSettingRows.map(({ provider, settings }) => (
-                      <section key={provider.id} className="settings-provider-card">
-                        <p className="settings-provider-name">{provider.label}</p>
-                        <label className="settings-provider-input">
-                          <span>{SETTINGS_SKILL_ROOT_LABEL}</span>
-                          <div className="settings-inline-input-row">
-                            <input
-                              type="text"
-                              value={settings.skillRootPath}
-                              onChange={(event) => onChangeProviderSkillRootPath(provider.id, event.target.value)}
-                              placeholder={SETTINGS_SKILL_ROOT_PLACEHOLDER}
-                              autoComplete="off"
-                              spellCheck={false}
-                            />
-                            <button
-                              className="launch-toggle"
-                              type="button"
-                              onClick={() => onBrowseProviderSkillRootPath(provider.id)}
-                            >
-                              Browse
-                            </button>
-                          </div>
-                        </label>
                       </section>
                     ))}
                   </div>

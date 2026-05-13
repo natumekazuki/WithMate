@@ -131,10 +131,8 @@ import { WindowEntryLoader } from "./window-entry-loader.js";
 import { AuxWindowService } from "./aux-window-service.js";
 import {
   assertProviderInstructionTargetRootNotProtected,
+  buildProviderInstructionTargetProtectedRoots,
 } from "./provider-instruction-target-root-guard.js";
-import {
-  buildProviderInstructionTargetProtectedRootsWithWorkspace,
-} from "./provider-instruction-target-protected-roots.js";
 import { registerMainIpcHandlers } from "./main-ipc-registration.js";
 import {
   PersistentStoreLifecycleService,
@@ -242,9 +240,7 @@ const copilotAdapter = new CopilotAdapter();
 const WAL_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 
 function getProviderInstructionTargetProtectedRoots(): string[] {
-  return buildProviderInstructionTargetProtectedRootsWithWorkspace(fixedUserDataPath, {
-    workspacePaths: sessions.map((session) => session.workspacePath),
-  });
+  return buildProviderInstructionTargetProtectedRoots(fixedUserDataPath);
 }
 
 let sessions: Session[] = [];

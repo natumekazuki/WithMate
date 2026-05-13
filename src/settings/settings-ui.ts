@@ -24,6 +24,8 @@ export const SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL = "Write Mode";
 export const SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_LABEL = "Fail Policy";
 export const SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL = "Root Directory";
 export const SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_PLACEHOLDER = "Instruction sync の root directory";
+export const SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL = "Skill Relative Path";
+export const SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_PLACEHOLDER = "Skills folder path (relative)";
 export const SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL = "Instruction Relative Path";
 export const SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER = "Instruction file path (relative)";
 export const SETTINGS_PROVIDER_INSTRUCTION_HELP_SUMMARY = "Provider Instruction Sync のヘルプ";
@@ -32,7 +34,7 @@ export const SETTINGS_PROVIDER_INSTRUCTION_MANAGED_BLOCK_HELP =
 export const SETTINGS_PROVIDER_INSTRUCTION_MANAGED_FILE_HELP =
   "managed_file は対象ファイル全体を WithMate 管理として上書きする。";
 export const SETTINGS_PROVIDER_INSTRUCTION_PATH_HELP =
-  "Root Directory を基準に Instruction Relative Path のファイルへ同期する。Relative Path は Root Directory 配下のファイルを選ぶと自動で相対化する。";
+  "Root Directory を基準に Skill Relative Path と Instruction Relative Path を解決する。Root Directory 配下を選ぶと自動で相対化する。";
 export const SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_HELP =
   "warn_continue は同期に失敗しても起動を続ける。block_session は同期失敗時に対象セッション起動を止める。";
 export const SETTINGS_MATE_MEMORY_GENERATION_LABEL = "Mate Memory Generation";

@@ -602,6 +602,7 @@ export default function HomeApp() {
     setProviderInstructionTargets,
     setSettingsFeedback,
     onChangeProviderSkillRootPath: settingsDraftHandlers.onChangeProviderSkillRootPath,
+    onChangeProviderSkillRelativePath: settingsDraftHandlers.onChangeProviderSkillRelativePath,
   });
 
   const mateMaintenanceHandlers = buildMateMaintenanceHandlers({

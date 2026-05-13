@@ -10,6 +10,7 @@ import {
   saveHomeSettings,
   syncProviderInstructionTargetRoots,
 } from "./settings-actions.js";
+import { resolveInstructionRelativePathFromSelection } from "./settings-view-model.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 
 type SettingsCommandHandlersContext = {
@@ -22,11 +23,13 @@ type SettingsCommandHandlersContext = {
   setProviderInstructionTargets: (targets: HomeProviderInstructionTargetDraft[]) => void;
   setSettingsFeedback: (feedback: string) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
+  onChangeProviderSkillRelativePath: (providerId: string, skillRelativePath: string) => void;
 };
 
 export type SettingsCommandHandlers = Pick<
   HomeSettingsContentBaseProps,
   | "onBrowseProviderSkillRootPath"
+  | "onBrowseProviderSkillRelativePath"
   | "onImportModelCatalog"
   | "onExportModelCatalog"
   | "onOpenAppLogFolder"
@@ -44,6 +47,7 @@ export function buildSettingsCommandHandlers({
   setProviderInstructionTargets,
   setSettingsFeedback,
   onChangeProviderSkillRootPath,
+  onChangeProviderSkillRelativePath,
 }: SettingsCommandHandlersContext): SettingsCommandHandlers {
   const withApi = async (callback: (api: WithMateWindowApi) => Promise<void>) => {
     const api = getApi();
@@ -64,6 +68,29 @@ export function buildSettingsCommandHandlers({
         }
 
         onChangeProviderSkillRootPath(providerId, selectedPath);
+      });
+    },
+    onBrowseProviderSkillRelativePath: (providerId) => {
+      void withApi(async (api) => {
+        const currentSettings = getProviderAppSettings(settingsDraft, providerId);
+        const rootDirectory = currentSettings.skillRootPath.trim();
+        if (!rootDirectory) {
+          setSettingsFeedback("Skill folder を選ぶ前に Root Directory を指定してね。");
+          return;
+        }
+
+        const selectedPath = await api.pickDirectory(rootDirectory);
+        if (!selectedPath) {
+          return;
+        }
+
+        const relativePath = resolveInstructionRelativePathFromSelection(rootDirectory, selectedPath);
+        if (relativePath === null) {
+          setSettingsFeedback("Root Directory 配下の Skill folder を選んでね。");
+          return;
+        }
+
+        onChangeProviderSkillRelativePath(providerId, relativePath);
       });
     },
     onImportModelCatalog: () => {

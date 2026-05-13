@@ -107,6 +107,17 @@ export function updateCodingProviderSkillRootPathDraft(
   };
 }
 
+export function updateCodingProviderSkillRelativePathDraft(
+  draft: AppSettings,
+  providerId: string,
+  skillRelativePath: string,
+): AppSettings {
+  return {
+    ...draft,
+    codingProviderSettings: updateCodingProviderSkillRelativePath(draft, providerId, skillRelativePath),
+  };
+}
+
 export function updateCodingProviderEnabled(
   draft: AppSettings,
   providerId: string,
@@ -145,6 +156,20 @@ export function updateCodingProviderSkillRootPath(
     [providerId]: {
       ...getProviderAppSettings(draft, providerId),
       skillRootPath,
+    },
+  };
+}
+
+export function updateCodingProviderSkillRelativePath(
+  draft: AppSettings,
+  providerId: string,
+  skillRelativePath: string,
+): Record<string, ProviderAppSettings> {
+  return {
+    ...draft.codingProviderSettings,
+    [providerId]: {
+      ...getProviderAppSettings(draft, providerId),
+      skillRelativePath,
     },
   };
 }

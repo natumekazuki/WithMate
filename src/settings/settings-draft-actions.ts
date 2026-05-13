@@ -11,6 +11,7 @@ import {
   updateCharacterReflectionTimeoutSecondsDraft,
   updateAutoCollapseActionDockOnSend,
   updateCodingProviderEnabledDraft,
+  updateCodingProviderSkillRelativePathDraft,
   updateCodingProviderSkillRootPathDraft,
   updateMateMemoryGenerationPriorityModelDraft,
   updateMateMemoryGenerationPriorityProviderDraft,
@@ -50,6 +51,14 @@ export function handleChangeProviderSkillRootPath(input: SettingsDraftActionInpu
   skillRootPath: string;
 }): void {
   input.setSettingsDraft((current) => updateCodingProviderSkillRootPathDraft(current, input.providerId, input.skillRootPath));
+}
+
+export function handleChangeProviderSkillRelativePath(input: SettingsDraftActionInput & {
+  providerId: string;
+  skillRelativePath: string;
+}): void {
+  input.setSettingsDraft((current) =>
+    updateCodingProviderSkillRelativePathDraft(current, input.providerId, input.skillRelativePath));
 }
 
 export function handleChangeMemoryGenerationEnabled(input: SettingsDraftActionInput & {

@@ -171,7 +171,7 @@ export async function handleBrowseProviderInstructionInstructionRelativePath({
   const currentSettings = getProviderAppSettings(settingsDraft, providerId);
   const rootDirectory = currentSettings.skillRootPath.trim();
   if (!rootDirectory.trim()) {
-    setSettingsFeedback("Instruction Relative Path を選ぶ前に Skill Root を指定してね。");
+    setSettingsFeedback("Instruction Relative Path を選ぶ前に Root Directory を指定してね。");
     return;
   }
 
@@ -182,7 +182,7 @@ export async function handleBrowseProviderInstructionInstructionRelativePath({
 
   const relativePath = resolveInstructionRelativePathFromSelection(rootDirectory, selectedPath);
   if (relativePath === null) {
-    setSettingsFeedback("Skill Root 配下の instruction file を選んでね。");
+    setSettingsFeedback("Root Directory 配下の instruction file を選んでね。");
     return;
   }
 

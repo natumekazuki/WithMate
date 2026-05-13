@@ -48,6 +48,7 @@ import {
   SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL,
+  SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL,
 } from "../../src/settings/settings-ui.js";
 
@@ -193,6 +194,8 @@ describe("HomeSettingsContent", () => {
     onBrowseProviderInstructionInstructionRelativePath: params?.onBrowseProviderInstructionInstructionRelativePath ?? noOp,
     onChangeProviderSkillRootPath: noOp,
     onBrowseProviderSkillRootPath: noOp,
+    onChangeProviderSkillRelativePath: noOp,
+    onBrowseProviderSkillRelativePath: noOp,
     onChangeMemoryExtractionModel: noOp,
     onChangeMemoryExtractionReasoningEffort: noOp,
     onChangeMemoryExtractionThreshold: noOp,
@@ -861,6 +864,8 @@ describe("HomeSettingsContent", () => {
         onBrowseProviderInstructionInstructionRelativePath={noOp}
         onChangeProviderSkillRootPath={noOp}
         onBrowseProviderSkillRootPath={noOp}
+        onChangeProviderSkillRelativePath={noOp}
+        onBrowseProviderSkillRelativePath={noOp}
         onChangeMemoryExtractionModel={noOp}
         onChangeMemoryExtractionReasoningEffort={noOp}
         onChangeMemoryExtractionThreshold={noOp}
@@ -901,7 +906,7 @@ describe("HomeSettingsContent", () => {
     assert.ok(!html.includes("hidden-cache-path-marker"));
   });
 
-  it("Provider Instruction Sync に Skill Root 由来の rootDirectory / instructionRelativePath が表示される", () => {
+  it("Provider Instruction Sync に Root Directory / Skill Relative Path / Instruction Relative Path が表示される", () => {
     const settingsWithSkillRoot = {
       ...settingsDraft,
       codingProviderSettings: {
@@ -909,6 +914,7 @@ describe("HomeSettingsContent", () => {
         codex: {
           ...settingsDraft.codingProviderSettings.codex,
           skillRootPath: "/repo-root",
+          skillRelativePath: ".codex/skills",
         },
       },
     };
@@ -971,6 +977,8 @@ describe("HomeSettingsContent", () => {
         onBrowseProviderInstructionInstructionRelativePath={noOp}
         onChangeProviderSkillRootPath={noOp}
         onBrowseProviderSkillRootPath={noOp}
+        onChangeProviderSkillRelativePath={noOp}
+        onBrowseProviderSkillRelativePath={noOp}
         onChangeMemoryExtractionModel={noOp}
         onChangeMemoryExtractionReasoningEffort={noOp}
         onChangeMemoryExtractionThreshold={noOp}
@@ -1004,15 +1012,18 @@ describe("HomeSettingsContent", () => {
 
     assert.ok(html.includes(`<strong>${SETTINGS_PROVIDER_INSTRUCTION_SECTION_LABEL}</strong>`));
     assert.ok(html.includes(`<span>${SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL}</span>`));
+    assert.ok(html.includes(`<span>${SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL}</span>`));
     assert.ok(html.includes(`<span>${SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>`));
     assert.ok(html.includes("Provider Instruction Sync のヘルプ"));
     assert.ok(html.includes(`${SETTINGS_PROVIDER_INSTRUCTION_WRITE_MODE_LABEL} のヘルプ`));
     assert.ok(html.includes(`${SETTINGS_PROVIDER_INSTRUCTION_FAIL_POLICY_LABEL} のヘルプ`));
     assert.ok(html.includes(`${SETTINGS_PROVIDER_INSTRUCTION_ROOT_DIRECTORY_LABEL} のヘルプ`));
+    assert.ok(html.includes(`${SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL} のヘルプ`));
     assert.ok(html.includes(`${SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL} のヘルプ`));
     assert.ok(html.includes("managed_block は既存ファイル内"));
-    assert.ok(html.includes("Root Directory は Coding Agent Provider の Skill Root を使う。"));
-    assert.ok(html.includes(`<p class=\"settings-help\">/repo-root</p>`));
+    assert.ok(html.includes("Root Directory を基準に Skill Relative Path"));
+    assert.ok(html.includes("value=\"/repo-root\""));
+    assert.ok(html.includes("value=\".codex/skills\""));
     assert.ok(html.includes("value=\"docs/instructions.md\""));
   });
 
@@ -1077,6 +1088,8 @@ describe("HomeSettingsContent", () => {
         onBrowseProviderInstructionInstructionRelativePath={noOp}
         onChangeProviderSkillRootPath={noOp}
         onBrowseProviderSkillRootPath={noOp}
+        onChangeProviderSkillRelativePath={noOp}
+        onBrowseProviderSkillRelativePath={noOp}
         onChangeMemoryExtractionModel={noOp}
         onChangeMemoryExtractionReasoningEffort={noOp}
         onChangeMemoryExtractionThreshold={noOp}
@@ -1128,7 +1141,7 @@ describe("HomeSettingsContent", () => {
       content,
       (element) => element.type === "button" && element.props.type === "button" && element.props.children === "選択",
     );
-    const instructionBrowseButton = browseButtons[0];
+    const instructionBrowseButton = browseButtons[2];
     if (!instructionBrowseButton) {
       throw new Error("Instruction Relative Path の選択ボタンが見つかりません。");
     }

@@ -1915,7 +1915,7 @@ describe("syncEnabledProviderInstructionTargets", () => {
     const storage = new ProviderInstructionTargetStorage(storagePath);
     const userDataPath = path.join(workspacePath, "WithMate");
     const protectedRoots = buildProviderInstructionTargetProtectedRoots(userDataPath);
-    const protectedRootDirectory = protectedRoots[1]!;
+    const protectedRootDirectory = protectedRoots[0]!;
 
     try {
       storage.upsertTarget({
@@ -1948,7 +1948,7 @@ describe("syncEnabledProviderInstructionTargets", () => {
 
       assert.equal(result.failedCount, 1);
       assert.equal(target.lastSyncState, "failed");
-      assert.match(target.lastErrorPreview, /保護ディレクトリ配下|rootDirectory/);
+      assert.match(target.lastErrorPreview, /protected WithMate directory|rootDirectory/);
     } finally {
       storage.close();
       await rm(workspacePath, { recursive: true, force: true });
@@ -2000,7 +2000,7 @@ describe("syncEnabledProviderInstructionTargets", () => {
       assert.equal(result.syncedCount, 0);
       assert.equal(result.skippedCount, 0);
       assert.equal(target.lastSyncState, "failed");
-      assert.match(target.lastErrorPreview, /保護ディレクトリ配下|instruction file path/);
+      assert.match(target.lastErrorPreview, /protected WithMate directory|instruction file path/);
     } finally {
       storage.close();
       await rm(workspacePath, { recursive: true, force: true });
@@ -2015,7 +2015,7 @@ describe("syncEnabledProviderInstructionTargets", () => {
     const storage = new ProviderInstructionTargetStorage(storagePath);
     const userDataPath = path.join(workspacePath, "WithMate");
     const protectedRoots = buildProviderInstructionTargetProtectedRoots(userDataPath);
-    const protectedRootDirectory = protectedRoots[1]!;
+    const protectedRootDirectory = protectedRoots[0]!;
 
     try {
       storage.upsertTarget({
@@ -2050,7 +2050,7 @@ describe("syncEnabledProviderInstructionTargets", () => {
           }
           assert.equal(error.providerId, "codex");
           assert.equal(error.targetId, "main");
-          assert.match(error.errorPreview, /保護ディレクトリ配下|rootDirectory/);
+          assert.match(error.errorPreview, /protected WithMate directory|rootDirectory/);
           return true;
         },
       );
@@ -2104,7 +2104,7 @@ describe("syncEnabledProviderInstructionTargets", () => {
           }
           assert.equal(error.providerId, "copilot");
           assert.equal(error.targetId, "main");
-          assert.match(error.errorPreview, /保護ディレクトリ配下|instruction file path/);
+          assert.match(error.errorPreview, /protected WithMate directory|instruction file path/);
           return true;
         },
       );
@@ -2738,7 +2738,7 @@ describe("syncDisabledProviderInstructionTargets", () => {
       assert.equal(result.syncedCount, 0);
       assert.equal(result.skippedCount, 0);
       assert.equal(target.lastSyncState, "failed");
-      assert.match(target.lastErrorPreview, /保護ディレクトリ配下|instruction file path/);
+      assert.match(target.lastErrorPreview, /protected WithMate directory|instruction file path/);
     } finally {
       storage.close();
       await rm(workspacePath, { recursive: true, force: true });
@@ -2787,7 +2787,7 @@ describe("syncDisabledProviderInstructionTargets", () => {
           }
           assert.equal(error.providerId, "codex");
           assert.equal(error.targetId, "main");
-          assert.match(error.errorPreview, /保護ディレクトリ配下|instruction file path/);
+          assert.match(error.errorPreview, /protected WithMate directory|instruction file path/);
           return true;
         },
       );

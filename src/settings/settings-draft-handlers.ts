@@ -21,6 +21,7 @@ import {
   handleChangeMemoryExtractionThreshold,
   handleChangeMemoryExtractionTimeoutSeconds,
   handleChangeProviderEnabled,
+  handleChangeProviderSkillRelativePath,
   handleChangeProviderSkillRootPath,
   handleRemoveMateMemoryGenerationPriority,
 } from "./settings-draft-actions.js";
@@ -42,6 +43,7 @@ export type SettingsDraftHandlers = Pick<
   | "onChangeMateMemoryGenerationTriggerIntervalMinutes"
   | "onChangeAutoCollapseActionDockOnSend"
   | "onChangeProviderEnabled"
+  | "onChangeProviderSkillRelativePath"
   | "onChangeProviderSkillRootPath"
   | "onChangeMemoryExtractionModel"
   | "onChangeMemoryExtractionReasoningEffort"
@@ -92,6 +94,9 @@ export function buildSettingsDraftHandlers({
     },
     onChangeProviderSkillRootPath: (providerId, skillRootPath) => {
       handleChangeProviderSkillRootPath({ providerId, skillRootPath, setSettingsDraft });
+    },
+    onChangeProviderSkillRelativePath: (providerId, skillRelativePath) => {
+      handleChangeProviderSkillRelativePath({ providerId, skillRelativePath, setSettingsDraft });
     },
     onChangeMemoryExtractionModel: (providerId, model) => {
       handleChangeMemoryExtractionModel({ providerId, model, modelCatalog, setSettingsDraft });

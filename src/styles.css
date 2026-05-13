@@ -3481,7 +3481,7 @@ button:disabled {
 .settings-inline-help {
   display: grid;
   gap: 8px;
-  color: var(--muted);
+  color: var(--ink);
   font-size: 0.82rem;
   line-height: 1.5;
 }
@@ -3508,9 +3508,10 @@ button:disabled {
   display: grid;
   gap: 6px;
   padding: 10px 12px;
-  border: 1px solid rgba(15, 61, 99, 0.12);
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.62);
+  background: var(--surface-strong);
+  color: var(--ink);
 }
 
 .settings-inline-help p {

@@ -188,7 +188,7 @@ describe("provider instruction target actions", () => {
     assert.deepEqual(state.targets, before);
   });
 
-  it("browse では skill root 未設定時はフィードバックして upsert しない", async () => {
+  it("browse では root directory 未設定時はフィードバックして upsert しない", async () => {
     const state = createTargetState();
     const settingsDraft = createSettings("");
     const upsertInputs: unknown[] = [];
@@ -208,7 +208,7 @@ describe("provider instruction target actions", () => {
       providerId: "codex",
     });
 
-    assert.equal(state.feedback, "Instruction Relative Path を選ぶ前に Skill Root を指定してね。");
+    assert.equal(state.feedback, "Instruction Relative Path を選ぶ前に Root Directory を指定してね。");
     assert.equal(upsertInputs.length, 0);
     assert.equal(state.targets.length, 0);
   });
@@ -234,7 +234,7 @@ describe("provider instruction target actions", () => {
       providerId: "codex",
     });
 
-    assert.equal(state.feedback, "Skill Root 配下の instruction file を選んでね。");
+    assert.equal(state.feedback, "Root Directory 配下の instruction file を選んでね。");
     assert.equal(upsertInputs.length, 0);
     assert.equal(state.targets.length, 0);
   });

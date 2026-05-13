@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { createDefaultAppSettings, type AppSettings } from "../../src/provider-settings-state.js";
+import {
+  createDefaultAppSettings,
+  resolveProviderSkillRootPath,
+  type AppSettings,
+} from "../../src/provider-settings-state.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import {
   updateAutoCollapseActionDockOnSend,
@@ -18,6 +22,8 @@ import {
   updateCodingProviderApiKeyDraft,
   updateCodingProviderEnabled,
   updateCodingProviderEnabledDraft,
+  updateCodingProviderSkillRelativePath,
+  updateCodingProviderSkillRelativePathDraft,
   updateCodingProviderSkillRootPath,
   updateCodingProviderSkillRootPathDraft,
   updateMemoryExtractionModel,
@@ -56,6 +62,7 @@ import {
   handleChangeMemoryExtractionThreshold as handleChangeMemoryExtractionThresholdAction,
   handleChangeMemoryExtractionTimeoutSeconds as handleChangeMemoryExtractionTimeoutSecondsAction,
   handleChangeProviderEnabled as handleChangeProviderEnabledAction,
+  handleChangeProviderSkillRelativePath as handleChangeProviderSkillRelativePathAction,
   handleChangeProviderSkillRootPath as handleChangeProviderSkillRootPathAction,
   handleAddMateMemoryGenerationPriority as handleAddMateMemoryGenerationPriorityAction,
   handleRemoveMateMemoryGenerationPriority as handleRemoveMateMemoryGenerationPriorityAction,
@@ -125,10 +132,37 @@ describe("home-settings-draft", () => {
       "codex",
       "C:/skills",
     );
+    const skillRelativePath = updateCodingProviderSkillRelativePath(
+      { ...draft, codingProviderSettings: skillRootPath },
+      "codex",
+      "skills/codex",
+    );
 
-    assert.equal(skillRootPath.codex.enabled, false);
-    assert.equal(skillRootPath.codex.apiKey, "next-key");
-    assert.equal(skillRootPath.codex.skillRootPath, "C:/skills");
+    assert.equal(skillRelativePath.codex.enabled, false);
+    assert.equal(skillRelativePath.codex.apiKey, "next-key");
+    assert.equal(skillRelativePath.codex.skillRootPath, "C:/skills");
+    assert.equal(skillRelativePath.codex.skillRelativePath, "skills/codex");
+  });
+
+  it("provider skill root は Root Directory と Skill Relative Path から解決する", () => {
+    assert.equal(
+      resolveProviderSkillRootPath({
+        enabled: true,
+        apiKey: "",
+        skillRootPath: "C:/workspace/",
+        skillRelativePath: "/.codex/skills/",
+      }),
+      "C:/workspace/.codex/skills",
+    );
+    assert.equal(
+      resolveProviderSkillRootPath({
+        enabled: true,
+        apiKey: "",
+        skillRootPath: "C:/workspace",
+        skillRelativePath: "",
+      }),
+      "C:/workspace",
+    );
   });
 
   it("memory extraction model 更新時に resolved selection を返す", () => {
@@ -227,21 +261,25 @@ describe("home-settings-draft", () => {
           updateMemoryExtractionTimeoutSecondsDraft(
           updateMemoryExtractionReasoningEffortDraft(
             updateMemoryExtractionModelDraft(
-              updateCodingProviderSkillRootPathDraft(
-                updateCodingProviderApiKeyDraft(
-                  updateCodingProviderEnabledDraft(
-                    updateAutoCollapseActionDockOnSend(
-                      updateMemoryGenerationEnabled(draft, false),
+              updateCodingProviderSkillRelativePathDraft(
+                updateCodingProviderSkillRootPathDraft(
+                  updateCodingProviderApiKeyDraft(
+                    updateCodingProviderEnabledDraft(
+                      updateAutoCollapseActionDockOnSend(
+                        updateMemoryGenerationEnabled(draft, false),
+                        false,
+                      ),
+                      "codex",
                       false,
                     ),
                     "codex",
-                    false,
+                    "key",
                   ),
                   "codex",
-                  "key",
+                  "C:/skills",
                 ),
                 "codex",
-                "C:/skills",
+                "skills/codex",
               ),
               providerCatalog,
               "codex",
@@ -279,6 +317,7 @@ describe("home-settings-draft", () => {
     assert.equal(nextWithTriggers.codingProviderSettings.codex.enabled, false);
     assert.equal(nextWithTriggers.codingProviderSettings.codex.apiKey, "key");
     assert.equal(nextWithTriggers.codingProviderSettings.codex.skillRootPath, "C:/skills");
+    assert.equal(nextWithTriggers.codingProviderSettings.codex.skillRelativePath, "skills/codex");
     assert.equal(nextWithTriggers.memoryExtractionProviderSettings.codex.outputTokensThreshold, 321);
     assert.equal(nextWithTriggers.memoryExtractionProviderSettings.codex.timeoutSeconds, 240);
     assert.equal(nextWithTriggers.characterReflectionProviderSettings.codex.reasoningEffort, "medium");
@@ -352,6 +391,18 @@ describe("home-settings-draft", () => {
     });
 
     assert.equal(state.draft.codingProviderSettings.codex.skillRootPath, "C:/skills");
+  });
+
+  it("action: provider skillRelativePath を draft 更新で反映できる", () => {
+    const state = createDraftTracker();
+
+    handleChangeProviderSkillRelativePathAction({
+      providerId: "codex",
+      skillRelativePath: "skills/codex",
+      setSettingsDraft: state.setSettingsDraft,
+    });
+
+    assert.equal(state.draft.codingProviderSettings.codex.skillRelativePath, "skills/codex");
   });
 
   it("action: memory generation と auto collapse を draft 更新で反映できる", () => {
