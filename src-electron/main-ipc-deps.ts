@@ -20,6 +20,7 @@ import type {
   SessionContextTelemetry,
   SessionSummary,
 } from "../src/app-state.js";
+import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
 import type { CreateCharacterInput } from "../src/character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
@@ -107,6 +108,7 @@ export type MainIpcCatalogDepsArgs = {
 export type MainIpcSettingsDepsArgs = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
+  getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
   getMemoryManagementSnapshot(): MemoryManagementSnapshot;
   getMemoryManagementPage(request: MemoryManagementPageRequest): MemoryManagementPageResult;
@@ -297,6 +299,7 @@ export function createMainIpcRegistrationDeps(
     exportModelCatalogToFile: args.catalog.exportModelCatalogToFile,
     getAppSettings: args.settings.getAppSettings,
     updateAppSettings: args.settings.updateAppSettings,
+    getAppDatabaseDiagnostics: args.settings.getAppDatabaseDiagnostics,
     resetAppDatabase: args.settings.resetAppDatabase,
     getMemoryManagementSnapshot: args.settings.getMemoryManagementSnapshot,
     getMemoryManagementPage: args.settings.getMemoryManagementPage,

@@ -1,7 +1,7 @@
 # Database Schema
 
 - 作成日: 2026-03-27
-- 更新日: 2026-05-03
+- 更新日: 2026-05-14
 - 対象: WithMate の current 保存構造
 
 ## Goal
@@ -20,10 +20,9 @@ WithMate が現在どこに何を保存しているかを、1 枚で把握でき
 
 この文書は current 実装を対象にする。
 
-2026-05-03 時点で、WithMate 4.0.0 の完全 SingleMate 化が design target として決定している。current 実装の `<userData>/characters/` は 3.x の current storage として記載し、4.0.0 の Mate Profile storage は `Current / Future Boundary` に分けて記載する。詳細は `docs/design/single-mate-architecture.md` を参照する。
-Mate 関連の SQLite schema 詳細は `docs/design/mate-storage-schema.md` を参照する。
+2026-05-14 時点で、4.0 runtime の新規作成 DB は `<userData>/withmate-v4.db` を canonical path とする。既存の有効な V3 / V2 / V1 DB がある場合は legacy fallback として開くが、起動時に暗黙 migration は行わない。current 実装の `<userData>/characters/` は 3.x legacy storage として記載し、Mate 関連の SQLite schema 詳細は `docs/design/mate-storage-schema.md` を参照する。
 
-2026-04-27 時点では、V1 `withmate.db` と V2 `withmate-v2.db` を分ける方針で進める。V1 schema の SQL 正本は `src-electron/database-schema-v1.ts` に切り出し済みで、V2 schema の SQL 正本は `src-electron/database-schema-v2.ts` に置く。V2 migration 方針は `docs/design/database-v2-migration.md` を正本にする。
+V1 schema の SQL 正本は `src-electron/database-schema-v1.ts`、V2 schema の SQL 正本は `src-electron/database-schema-v2.ts`、V3 schema の SQL 正本は `src-electron/database-schema-v3.ts`、V4 schema の SQL 正本は `src-electron/database-schema-v4.ts` に置く。
 
 - SQLite DB に存在する table
 - DB 外の file-based storage
@@ -36,14 +35,38 @@ future design だけで未実装のものは、最後に別枠で注記する。
 ### DB 本体
 
 - 保存先:
-  - `<userData>/withmate.db`
+  - `<userData>/withmate-v4.db`
+  - `<userData>/withmate-v3.db`
   - `<userData>/withmate-v2.db`
+  - `<userData>/withmate.db`
+- DB path selection:
+  - 有効な DB がある場合は `withmate-v4.db`、`withmate-v3.db`、`withmate-v2.db`、`withmate.db` の順に選ぶ
+  - どの DB も存在しない fresh install では `withmate-v4.db` を返す
+  - 空または未完成の上位世代 DB は、下位の有効な DB があれば shadow しない
+- DB diagnostics:
+  - V4 DB は作成時に `PRAGMA user_version = 4` を設定する
+  - runtime は `withmate:get-app-database-diagnostics` で active DB path、`WITHMATE_USER_DATA_PATH` override の有無、schema version、compatibility mode、既知 DB 世代ごとの valid/invalid 状態を返す
+  - 起動時には同じ診断結果を `app.database.selected` として app log に出力する
+  - 複数世代の有効 DB や、壊れた上位世代 DB がある場合は warning として診断結果に含める
 - V1 schema source:
   - `src-electron/database-schema-v1.ts`
 - V2 schema source:
   - `src-electron/database-schema-v2.ts`
+- V3 schema source:
+  - `src-electron/database-schema-v3.ts`
+- V4 schema source:
+  - `src-electron/database-schema-v4.ts`
 - V2 migration policy:
   - `docs/design/database-v2-migration.md`
+- V4 upgrade / import policy:
+  - runtime は V3 / V2 / V1 から V4 への暗黙 migration を行わない
+  - V3 から V4 へ持ち上げる supported path は `scripts/migrate-database-v3-to-v4.ts` の明示 import とする
+  - V1 / V2 から V4 へ上げる場合は、既存の `scripts/migrate-database-v1-to-v2.ts`、`scripts/migrate-database-v2-to-v3.ts` で V3 へ上げた後、V3 -> V4 import を実行する
+  - V3 -> V4 import は `session`、`audit log`、`app_settings`、`model_catalog_*` を V4 DB 内の runtime 互換 table へ取り込む。Mate profile / growth / provider instruction targets は V4 側で新規開始する
+  - dry-run: `npx tsx scripts/migrate-database-v3-to-v4.ts --dry-run --v3 <userData>/withmate-v3.db [--blob-root <userData>/blobs/v3]`
+  - write: `npx tsx scripts/migrate-database-v3-to-v4.ts --write --v3 <userData>/withmate-v3.db --v4 <userData>/withmate-v4.db [--blob-root <userData>/blobs/v3] [--overwrite]`
+  - `--overwrite` を指定した場合、既存 `withmate-v4.db` / `-wal` / `-shm` は rename backup してから import し、成功後に backup を破棄する
+  - import 失敗時は作成中の V4 DB sidecar を削除し、backup があれば復元する。中途半端な V4 DB は残さない
 - driver:
   - Node 標準の `node:sqlite`
 - 共通設定:
@@ -643,9 +666,19 @@ Settings の `DB を初期化` で対象にできるのは次の 6 系統。
 - `characters` は DB 外保存なので reset 対象外
 - `session_memories` は `sessions` に従属して一緒に消える前提で扱う
 
-## Current / Future Boundary
+## Current / Legacy / Future Boundary
 
-### Current 実装
+### Current runtime
+
+4.0 runtime の current DB は `withmate-v4.db` である。
+
+- V4 DB は V1 互換 runtime table と V4 Mate table を同じ DB に持つ
+- V4 DB の作成時は `PRAGMA user_version = 4` を設定する
+- Mate Profile / Growth / provider instruction sync の SQLite schema は `docs/design/mate-storage-schema.md` を正本にする
+- `mate/*.md` と provider instruction block は generated projection であり、正本は SQLite の Mate table と revision である
+- fresh install では `withmate-v4.db` を選ぶが、path 解決だけでは DB file を作成しない
+
+V4 DB 内の既存 runtime table:
 
 - `sessions`
 - `session_memories`
@@ -658,7 +691,18 @@ Settings の `DB を初期化` で対象にできるのは次の 6 系統。
 - `project_memory_entries`
 - `character_scopes`
 - `character_memory_entries`
-- `<userData>/characters/`
+
+### Legacy runtime
+
+有効な V4 DB がない場合だけ、既存世代 DB を legacy fallback として開く。
+
+- V3: `<userData>/withmate-v3.db` と `<userData>/blobs/v3/`
+- V2: `<userData>/withmate-v2.db`
+- V1: `<userData>/withmate.db`
+- 3.x character catalog: `<userData>/characters/`
+
+legacy DB を開く場合、runtime は該当世代の読み書き境界に留まり、V4 Mate table を legacy DB に作成しない。
+V3 / V2 / V1 から V4 への暗黙 migration は行わない。
 
 ### V2 migration target
 
@@ -677,64 +721,37 @@ Settings の `DB を初期化` で対象にできるのは次の 6 系統。
 
 V2 では Home 一覧と audit log modal 初期表示で巨大 JSON を読まない。session message 本文と audit detail payload は、session 選択時または detail 展開時に遅延取得する。
 
+### V3 blob target
+
+`src-electron/database-schema-v3.ts` で固定した V3 schema は、V2 schema を基礎にしつつ raw/detail payload を `<userData>/blobs/v3/` へ外出しする。
+V3 の詳細は `docs/design/database-v3-blob-storage.md` を参照する。
+
+V3 は 4.0 runtime では legacy fallback として読む。V4 へ移行する supported path は `scripts/migrate-database-v3-to-v4.ts` の明示 import であり、runtime 起動時の暗黙 migration ではない。
+
+### V4 import target
+
+`scripts/migrate-database-v3-to-v4.ts` は、V3 から次のデータを V4 DB の runtime 互換 table へ取り込む。
+
+- `sessions`
+- `audit_logs`
+- `app_settings`
+- `model_catalog_revisions`
+- `model_catalog_providers`
+- `model_catalog_models`
+
+Mate profile / growth / provider instruction targets は import 対象にしない。V4 側で新規開始する。
+import は write 前に dry-run でき、write 失敗時は作成中の V4 DB sidecar を削除し、backup があれば復元する。
+
 ### Future design only
 
 まだ未実装だが design があるもの:
 
-- SingleMate 4.0.0 の Mate Profile storage
 - `project_memory_entry_links`
 - FTS / embedding 系 index
-- `withmate-v3.db` と compressed blob store による raw/detail payload 外出し
 
 詳細は `docs/design/project-memory-storage.md` を参照する。
-V3 の DB 外 blob store 方針は `docs/design/database-v3-blob-storage.md` を参照する。
 SingleMate の保存方針は `docs/design/single-mate-architecture.md` を参照する。
 Mate 関連 SQLite schema は `docs/design/mate-storage-schema.md` を正本にする。
-
-4.0.0 では DB file を `withmate-v4.db`、schema version を `4` とする。V1 / V2 / V3 からの暗黙 migration は行わない。
-
-SingleMate 4.0.0 の候補 storage:
-
-```text
-<userData>/
-  mate/
-    core.md
-    bond.md
-    work-style.md
-    notes.md
-    avatar.png
-    revisions/
-    project-digests/
-```
-
-4.0.0 では既存 character catalog から Mate への自動 migration を行わない。初回 4.0.0 利用時は、新しい Mate 作成から開始する。
-Mate Profile storage / API は完全に単一化し、runtime write path では character catalog API を維持しない。
-Mate Profile の metadata は SQLite に保存し、`profile.json` は作らない。
-
-候補 table:
-
-| Table | Purpose |
-| --- | --- |
-| `mate_profile` | SingleMate の metadata、theme、avatar file、active revision |
-| `mate_profile_sections` | `core` / `bond` / `work_style` / `notes` file metadata と hash |
-| `mate_profile_revisions` | Mate Profile の変更履歴 |
-| `mate_profile_revision_sections` | revision ごとの section snapshot / diff metadata |
-| `mate_growth_settings` | Growth Engine の有効化、auto apply、cooldown、timeout |
-| `mate_growth_model_preferences` | Memory / Profile apply / Project Digest purpose ごとの provider / model / depth 優先順位 |
-| `mate_growth_runs` | Growth background 実行単位の summary |
-| `mate_growth_cursors` | session / companion / project ごとの Growth 処理済み位置 |
-| `mate_growth_events` | Growth Candidate / Growth Event の抽出結果、反映状態、根拠 |
-| `mate_growth_event_links` | Growth Event 間の relation |
-| `mate_growth_event_profile_item_links` | Growth Event と参照 Profile Item の relation |
-| `mate_memory_tags` | Growth Event / Profile Item / tag catalog に付与する tag relation |
-| `mate_memory_tag_catalog` | tag の正規化、再利用、alias、active / disabled 管理 |
-| `mate_embedding_settings` | local embedding backend / model download / cache 状態 |
-| `mate_semantic_embeddings` | Growth Event / Profile Item / tag catalog の semantic retrieval 用 embedding |
-| `mate_growth_event_actions` | Growth Event の状態変更履歴 |
-| `mate_growth_event_evidence` | Growth Event の根拠参照 |
-| `mate_profile_items` | Growth から生成された現在 Profile item |
-| `mate_profile_item_tags` | Profile item に付与する tag relation |
-| `mate_profile_item_sources` | Profile item と source Growth Event の link |
 | `mate_profile_item_relations` | Profile item 間の reinforce / update / contradict / supersede relation |
 | `mate_forgotten_tombstones` | 忘却済み内容の HMAC fingerprint |
 | `mate_project_digests` | project 単位 digest file metadata |

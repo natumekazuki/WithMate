@@ -328,14 +328,21 @@ describe("syncMateInstructionFile", () => {
           },
         ],
       });
+      await mkdir(path.join(workspacePath, "mate"), { recursive: true });
+      await writeFile(path.join(workspacePath, "mate", "core.md"), "# Core\n- visible core\n", "utf8");
+      await writeFile(path.join(workspacePath, "mate", "bond.md"), "# Bond\n- hidden bond\n", "utf8");
+      await writeFile(path.join(workspacePath, "mate", "work-style.md"), "# Work Style\n- visible work\n", "utf8");
 
       await syncMateInstructionFile(target, profile, FILE_DEPENDENCIES);
       const updated = await readFile(target.filePath, "utf8");
 
-      assert.ok(updated.includes("- **core:** `mate/core.md`"));
-      assert.ok(updated.includes("- **work_style:** `mate/work-style.md`"));
-      assert.equal(updated.includes("- **bond:**"), false);
-      assert.equal(updated.includes("- **bond:** `mate/bond.md`"), false);
+      assert.ok(updated.includes("### Character / Persona"));
+      assert.ok(updated.includes("- visible core"));
+      assert.ok(updated.includes("### Work Style"));
+      assert.ok(updated.includes("- visible work"));
+      assert.equal(updated.includes("### Interaction Style"), false);
+      assert.equal(updated.includes("- hidden bond"), false);
+      assert.equal(updated.includes("mate/core.md"), false);
       assert.equal(updated.includes("bond.md"), false);
     } finally {
       await rm(workspacePath, { recursive: true, force: true });
@@ -457,7 +464,10 @@ describe("syncEnabledProviderInstructionTargets", () => {
         failPolicy: "warn_continue",
       });
 
-      const result = await syncEnabledProviderInstructionTargets(targetStorage, profile, FILE_DEPENDENCIES);
+      const result = await syncEnabledProviderInstructionTargets(targetStorage, profile, {
+        ...FILE_DEPENDENCIES,
+        profileRootDirectory: mateUserDataPath,
+      });
       const updated = await readFile(path.join(workspacePath, ".github", "copilot-instructions.md"), "utf8");
 
       assert.equal(result.targetCount, 1);
@@ -466,9 +476,11 @@ describe("syncEnabledProviderInstructionTargets", () => {
       assert.equal(result.skippedCount, 0);
       assert.equal(result.runIds.length, 1);
       assert.equal(countProfileBlocks(updated), 1);
-      assert.ok(updated.includes("- **core:** `mate/core.md`"));
-      assert.ok(updated.includes("- **bond:** `mate/bond.md`"));
-      assert.ok(updated.includes("- **work_style:** `mate/work-style.md`"));
+      assert.ok(updated.includes("### Current Profile"));
+      assert.ok(updated.includes("No provider-visible Mate Profile content is available."));
+      assert.equal(updated.includes("mate/core.md"), false);
+      assert.equal(updated.includes("mate/bond.md"), false);
+      assert.equal(updated.includes("mate/work-style.md"), false);
       assert.equal(updated.includes("- **notes:**"), false);
       assert.equal(updated.includes("mate/notes.md"), false);
     } finally {
@@ -548,7 +560,10 @@ describe("syncEnabledProviderInstructionTargets", () => {
         failPolicy: "warn_continue",
       });
 
-      const result = await syncEnabledProviderInstructionTargets(targetStorage, profile, FILE_DEPENDENCIES);
+      const result = await syncEnabledProviderInstructionTargets(targetStorage, profile, {
+        ...FILE_DEPENDENCIES,
+        profileRootDirectory: mateUserDataPath,
+      });
       const updated = await readFile(path.join(workspacePath, ".github", "copilot-instructions.md"), "utf8");
       const target = targetStorage.getTarget("codex", "main");
       if (!target) {
@@ -565,7 +580,8 @@ describe("syncEnabledProviderInstructionTargets", () => {
       assert.equal(target.lastSyncedRevisionId, readyRevisionId);
       assert.notEqual(target.lastSyncedRevisionId, incompleteRevisionId);
       assert.equal(countProfileBlocks(updated), 1);
-      assert.ok(updated.includes("- **core:** `mate/core.md`"));
+      assert.ok(updated.includes("- recognizable content"));
+      assert.equal(updated.includes("mate/core.md"), false);
     } finally {
       targetStorage.close();
       mateStorage.close();
@@ -655,7 +671,10 @@ describe("syncEnabledProviderInstructionTargets", () => {
         failPolicy: "warn_continue",
       });
 
-      const result = await syncEnabledProviderInstructionTargets(targetStorage, profile, FILE_DEPENDENCIES);
+      const result = await syncEnabledProviderInstructionTargets(targetStorage, profile, {
+        ...FILE_DEPENDENCIES,
+        profileRootDirectory: mateUserDataPath,
+      });
       const updated = await readFile(path.join(workspacePath, ".github", "copilot-instructions.md"), "utf8");
       const target = targetStorage.getTarget("codex", "main");
       if (!target) {
@@ -672,7 +691,8 @@ describe("syncEnabledProviderInstructionTargets", () => {
       assert.equal(target.lastSyncedRevisionId, readyRevisionId);
       assert.notEqual(target.lastSyncedRevisionId, incompleteRevisionId);
       assert.equal(countProfileBlocks(updated), 1);
-      assert.ok(updated.includes("- **core:** `mate/core.md`"));
+      assert.ok(updated.includes("- recognizable content"));
+      assert.equal(updated.includes("mate/core.md"), false);
 
       const runDb = new DatabaseSync(storagePath);
       try {
@@ -738,6 +758,10 @@ describe("syncEnabledProviderInstructionTargets", () => {
           },
         ],
       });
+      await mkdir(path.join(workspacePath, "mate"), { recursive: true });
+      await writeFile(path.join(workspacePath, "mate", "core.md"), "# Core\n- visible core\n", "utf8");
+      await writeFile(path.join(workspacePath, "mate", "bond.md"), "# Bond\n- hidden bond\n", "utf8");
+      await writeFile(path.join(workspacePath, "mate", "work-style.md"), "# Work Style\n- visible work\n", "utf8");
 
       const result = await syncEnabledProviderInstructionTargets(storage, profile, FILE_DEPENDENCIES);
       const target = storage.getTarget("copilot", "main");
@@ -754,10 +778,13 @@ describe("syncEnabledProviderInstructionTargets", () => {
       assert.equal(result.runIds.length, 1);
       assert.equal(result.runIds[0], target.lastSyncRunId);
       assert.equal(target.lastSyncState, "synced");
-      assert.equal(updated.includes("- **core:** `mate/core.md`"), true);
-      assert.equal(updated.includes("- **work_style:** `mate/work-style.md`"), true);
-      assert.equal(updated.includes("- **bond:**"), false);
-      assert.equal(updated.includes("- **bond:** `mate/bond.md`"), false);
+      assert.equal(updated.includes("### Character / Persona"), true);
+      assert.equal(updated.includes("- visible core"), true);
+      assert.equal(updated.includes("### Work Style"), true);
+      assert.equal(updated.includes("- visible work"), true);
+      assert.equal(updated.includes("### Interaction Style"), false);
+      assert.equal(updated.includes("- hidden bond"), false);
+      assert.equal(updated.includes("mate/core.md"), false);
       assert.equal(updated.includes("bond.md"), false);
     } finally {
       storage.close();

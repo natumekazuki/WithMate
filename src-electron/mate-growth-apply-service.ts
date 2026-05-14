@@ -4,6 +4,7 @@ import type {
 } from "./mate-growth-storage.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { MateGrowthApplyResult } from "../src/mate/mate-growth-apply-result.js";
+import { PROVIDER_INSTRUCTION_PROFILE_SECTION_KEYS } from "../src/mate/mate-profile-sections.js";
 import type {
   MateProfileItem,
   MateProfileItemCategory,
@@ -26,7 +27,7 @@ type ApplyPendingGrowthOptions = {
 
 export type ApplyPendingGrowthResult = MateGrowthApplyResult;
 
-const APPLY_TARGET_SECTIONS = ["core", "bond", "work_style", "project_digest"] as const;
+const APPLY_TARGET_SECTIONS = [...PROVIDER_INSTRUCTION_PROFILE_SECTION_KEYS, "project_digest"] as const;
 const APPLYABLE_CORE_SOURCE_TYPES = ["mate_talk"] as const;
 const APPLY_PENDING_GROWTH_WAIT_MS = 50;
 const APPLY_PENDING_GROWTH_MAX_ATTEMPTS = 30;

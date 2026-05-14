@@ -9,6 +9,7 @@ import {
   type MateMemoryGenerationRelevantProfileItem,
   type MateMemoryGenerationForgottenTombstone,
 } from "./mate-memory-generation-prompt.js";
+import { resolveMateMemoryGenerationTargetSection } from "./mate-memory-generation-section-classifier.js";
 import type { MemoryRuntimeInstructionFile, MemoryRuntimeWorkspaceService } from "./memory-runtime-workspace.js";
 import { MateMemoryStorage } from "./mate-memory-storage.js";
 import type { MateGrowthModelPort } from "./mate-growth-model-port.js";
@@ -71,6 +72,7 @@ type GrowthCandidateSeed = {
   kind: MateGrowthEventInput["kind"];
   targetSection: MateGrowthEventInput["targetSection"];
   statement: MateGrowthEventInput["statement"];
+  targetClaimKey?: MateGrowthEventInput["targetClaimKey"];
   confidence: number;
   salienceScore: number;
   projectionAllowed?: MateGrowthEventInput["projectionAllowed"];
@@ -126,7 +128,9 @@ function resolveGrowthTarget(memory: GrowthCandidateSeed): {
   targetSection: GrowthTargetSection;
   projectionAllowed: boolean;
 } {
-  const targetSection = isGrowthTargetSection(memory.targetSection) ? memory.targetSection : "none";
+  const targetSection = isGrowthTargetSection(memory.targetSection)
+    ? resolveMateMemoryGenerationTargetSection(memory)
+    : "none";
   const projectionAllowed = targetSection === "none" ? false : (memory.projectionAllowed ?? true);
   return { targetSection, projectionAllowed };
 }

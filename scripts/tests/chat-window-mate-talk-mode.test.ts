@@ -12,6 +12,7 @@ function renderPanel(options?: {
   messages?: Array<{ id: string; role: "user" | "mate"; text: string }>;
   feedback?: string;
   isHeaderExpanded?: boolean;
+  mateAvatarFilePath?: string;
 }) {
   const messageListRef = React.createRef<HTMLDivElement>();
   const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
@@ -21,6 +22,7 @@ function renderPanel(options?: {
       ChatWindow,
       buildMateTalkChatWindowProps({
         mateName: "ユニバーサル",
+        mateAvatarFilePath: options?.mateAvatarFilePath,
         messages: options?.messages ?? [],
         input: options?.input ?? "",
         feedback: options?.feedback ?? "",
@@ -38,6 +40,24 @@ function renderPanel(options?: {
         onChangeReasoningEffort() {},
         onSubmit() {},
         onToggleHeaderExpanded() {},
+        composerCapabilityProps: {
+          showAttachmentControls: true,
+          showAdditionalDirectoryControls: true,
+          showExecutionModeControls: true,
+          showCustomAgentPicker: false,
+          showSkillPicker: false,
+          approvalOptions: [{ value: "untrusted", label: "untrusted" }],
+          selectedApprovalMode: "untrusted",
+          sandboxOptions: [{ value: "workspace-write", label: "workspace-write" }],
+          selectedCodexSandboxMode: "workspace-write",
+          onPickFile() {},
+          onPickFolder() {},
+          onPickImage() {},
+          onAddAdditionalDirectory() {},
+          onToggleAdditionalDirectoryList() {},
+          onChangeApprovalMode() {},
+          onChangeCodexSandboxMode() {},
+        },
       }),
     ),
   );
@@ -63,14 +83,14 @@ test("MateTalk は ChatWindow で Session 共通レイアウトの通常状態�
   assert.doesNotMatch(html, /<span>Provider<\/span>/);
   assert.match(html, /<span>Model<\/span>/);
   assert.match(html, /<span>Depth<\/span>/);
-  assert.doesNotMatch(html, />File<\/button>/);
-  assert.doesNotMatch(html, />Folder<\/button>/);
-  assert.doesNotMatch(html, />Image<\/button>/);
+  assert.match(html, />File<\/button>/);
+  assert.match(html, />Folder<\/button>/);
+  assert.match(html, />Image<\/button>/);
   assert.doesNotMatch(html, />Agent<\/button>/);
   assert.doesNotMatch(html, />Skills<\/button>/);
-  assert.doesNotMatch(html, />Add Directory<\/button>/);
-  assert.doesNotMatch(html, />Approval<\/span>/);
-  assert.doesNotMatch(html, />Sandbox<\/span>/);
+  assert.match(html, />Add Directory<\/button>/);
+  assert.match(html, />Approval<\/span>/);
+  assert.match(html, />Sandbox<\/span>/);
   assert.doesNotMatch(html, /<button class="session-send-button"[^>]*disabled=""/);
 });
 
@@ -123,6 +143,20 @@ test("MateTalk は ChatWindow で user/mate メッセージを共通 message row
   assert.match(html, /class="character-avatar small message-avatar"/);
   assert.match(html, /<p class="message-paragraph">やあ、元気？<\/p>/);
   assert.doesNotMatch(html, /session-plain-message-speaker/);
+});
+
+test("MateTalk は Mate avatar path を返信メッセージの avatar に渡す", () => {
+  const html = renderPanel({
+    mateAvatarFilePath: "data:image/png;base64,AA==",
+    messages: [
+      { id: "m1", role: "user", text: "おはよう" },
+      { id: "m2", role: "mate", text: "やあ、元気？" },
+    ],
+    input: "test",
+  });
+
+  assert.match(html, /<article class="message-row assistant">/);
+  assert.match(html, /<img src="data:image\/png;base64,AA=="/);
 });
 
 test("MateTalk は ChatWindow で feedback を共通 composer feedback で表示する", () => {

@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
-import { CREATE_V4_SCHEMA_SQL } from "./database-schema-v4.js";
+import { assertV4SchemaInitializationAllowed, CREATE_V4_SCHEMA_SQL } from "./database-schema-v4.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 const MATE_ID = "current";
@@ -125,6 +125,7 @@ export class MateEmbeddingCacheService {
   private readonly userDataPath: string;
 
   constructor(dbPath: string, userDataPath: string) {
+    assertV4SchemaInitializationAllowed(dbPath, "MateEmbeddingCacheService");
     this.db = openAppDatabase(dbPath);
     this.userDataPath = userDataPath;
 

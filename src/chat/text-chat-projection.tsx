@@ -27,6 +27,7 @@ export type TextChatWindowProjectionInput = {
   pageTitleDraft?: string;
   characterId: string;
   characterName: string;
+  characterIconPath?: string;
   sessionId: string;
   themeStyle?: CSSProperties;
   isHeaderExpanded: boolean;
@@ -56,6 +57,30 @@ export type TextChatWindowProjectionInput = {
   rightPaneHeaderTitle?: string;
   rightPaneAriaLabel?: string;
   rightPaneClassName?: string;
+  composerCapabilityProps?: Partial<
+    Omit<
+      ChatWindowProps["composerProps"],
+      | "draft"
+      | "placeholder"
+      | "composerTextareaRef"
+      | "isRunning"
+      | "composerBlocked"
+      | "isComposerDisabled"
+      | "isSendDisabled"
+      | "composerSendability"
+      | "sendButtonTitle"
+      | "modelOptions"
+      | "selectedModel"
+      | "selectedModelFallbackLabel"
+      | "reasoningOptions"
+      | "selectedReasoningEffort"
+      | "onDraftChange"
+      | "onDraftKeyDown"
+      | "onSendOrCancel"
+      | "onChangeModel"
+      | "onChangeReasoningEffort"
+    >
+  >;
 };
 
 export function buildTextChatWindowProps({
@@ -64,6 +89,7 @@ export function buildTextChatWindowProps({
   pageTitleDraft,
   characterId,
   characterName,
+  characterIconPath,
   sessionId,
   themeStyle,
   isHeaderExpanded,
@@ -93,6 +119,7 @@ export function buildTextChatWindowProps({
   rightPaneHeaderTitle = pageTitle,
   rightPaneAriaLabel = "補助情報",
   rightPaneClassName,
+  composerCapabilityProps,
 }: TextChatWindowProjectionInput): ChatWindowProps {
   const isSendDisabled = isStaticChatSendDisabled({ draft, isRunning });
 
@@ -112,6 +139,7 @@ export function buildTextChatWindowProps({
       sessionId,
       characterId,
       characterName,
+      characterIconPath,
       messages,
       messageListRef,
       isRunning,
@@ -141,6 +169,7 @@ export function buildTextChatWindowProps({
       onSendOrCancel: onSubmit,
       onChangeModel,
       onChangeReasoningEffort,
+      ...composerCapabilityProps,
     }),
     compactActionDockProps: createStaticTextChatCompactActionDockProps({
       draft,

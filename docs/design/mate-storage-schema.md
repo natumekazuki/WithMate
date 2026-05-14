@@ -15,6 +15,7 @@ WithMate 4.0.0 の完全 SingleMate 方針に合わせて、`withmate-v4.db` の
 - provider instruction sync の詳細は `docs/design/provider-instruction-sync.md` を参照する
 - current / future DB 全体の一覧は `docs/design/database-schema.md` を参照する
 - 4.0.0 は後方互換なしの破壊的変更として扱い、既存 V1 / V2 / V3 DB からの暗黙 migration は行わない
+- V3 以前から V4 へ上げる場合は `docs/design/database-schema.md` の明示 import path を使う。import 対象は session / audit log / app settings / model catalog であり、Mate Profile / Growth / provider instruction targets は V4 側で新規開始する
 
 ## Core Decisions
 
@@ -141,7 +142,12 @@ Policy:
 
 - `file_path` は `mate/` 配下の相対 path
 - `core` / `bond` / `work_style` / `notes` は active 化時に必須
-- `notes` は provider instruction projection へ直接入れない
+- section の責務は次で固定する
+  - `core`: Mate の自己定義、人格の核、自己認識
+  - `bond`: ユーザーとの関係性、呼び方、距離感
+  - `work_style`: 作業時の振る舞い、説明方針、共同作業の進め方
+  - `notes`: 補助的、非構造、長文のメモ。常時適用する直接指示として扱わない
+- `notes` はメイトークの context では参照してよいが、provider instruction projection へ直接入れない
 - 起動時に `sha256` / `byte_size` と実 file を照合し、missing / mismatch を recovery-required として扱う
 
 ### `mate_profile_revisions`
@@ -249,9 +255,9 @@ Policy:
 - `enabled = 0` では candidate 抽出自体を行わない
 - `auto_apply_enabled = 0` では candidate を作っても profile へ自律反映しない
 - `memory_candidate_mode = 'every_turn'` では turn 完了後に軽量 background run で Memory Candidate を生成する
-- `memory_candidate_mode = 'threshold'` では token / pending / elapsed time による抑制を優先する
+- `memory_candidate_mode = 'threshold'` / `'manual'` は schema 上の予約値として保持するが、4.0.0 MVP の runtime は自動 Memory Candidate 生成を行わず、Settings でも新規選択肢として出さない
 - `apply_interval_minutes` / Growth apply cooldown は consolidation / Profile apply にだけ効き、`every_turn` の Memory Candidate 生成を止めない
-- Memory Candidate 生成の provider / model / depth は `mate_growth_model_preferences` の固定優先順位を使う
+- Memory Candidate 生成の provider / model / depth は `mate_growth_model_preferences` の `memory_candidate` row を使う
 - `memory_candidate_timeout_seconds` は通常 turn response を妨げないため短めにする
 - Memory Candidate 生成の入力範囲はユーザー設定にしない。実装内の固定 policy として current turn と必要 metadata に限定する
 - `retrieval_strategy = 'hybrid'` を 4.0.0 MVP の正規ルートとする
@@ -299,14 +305,13 @@ CREATE INDEX IF NOT EXISTS idx_mate_growth_model_preferences_enabled
 
 Policy:
 
-- Growth LLM execution は purpose ごとに固定 priority list を持つ
+- 4.0.0 MVP の runtime は `memory_candidate` だけを実行対象にする
 - `memory_candidate` は turn ごとの軽量抽出用で、既定 depth は `low`
-- `profile_update` は consolidation / Profile Operation 作成用で、`memory_candidate` より深い depth を設定してよい
-- `project_digest` は project tag 付き digest 更新用で、必要なら `profile_update` と別 priority にできる
-- 実行時は `enabled = 1` の row を `priority ASC` で試す
-- 上位 provider / model / depth が unavailable / failed の場合だけ、保存済み priority list 内で次の候補へ deterministic fallback する
+- `profile_update` / `project_digest` は schema 上の reserved purpose だが、current runtime と Settings では保存・編集対象にしない
+- current runtime では `memory_candidate` row を 1 件だけ扱い、priority は `1` に固定する
+- Settings は provider を known provider、model を選択 provider の model catalog、depth を選択 model の reasoning effort から選ばせる
+- 保存時も current runtime が扱えない purpose、未知 provider / model、model が対応しない depth は拒否する
 - fallback は未設定 provider / model を自動採用しない
-- Settings では `1. Codex model A depth low`、`2. Copilot model B depth medium` のように並べ替えできる
 - embedding は reasoning depth を持たないため、この table ではなく `mate_embedding_settings` で管理する
 
 ### `mate_growth_runs`

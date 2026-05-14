@@ -89,6 +89,7 @@ test("createStaticTextConversationMessageColumnProps は text conversation を�
     sessionId: "mate-talk",
     characterId: "mate",
     characterName: "Mate",
+    characterIconPath: "data:image/png;base64,AA==",
     messages: [
       { role: "user", text: "おはよう" },
       { role: "mate", text: "やあ" },
@@ -102,6 +103,7 @@ test("createStaticTextConversationMessageColumnProps は text conversation を�
   assert.equal(messageColumnProps.sessionId, "mate-talk");
   assert.equal(messageColumnProps.character.id, "mate");
   assert.equal(messageColumnProps.character.name, "Mate");
+  assert.equal(messageColumnProps.character.iconPath, "data:image/png;base64,AA==");
   assert.deepEqual(messageColumnProps.messages, [
     { role: "user", text: "おはよう" },
     { role: "assistant", text: "やあ" },
@@ -336,6 +338,42 @@ test("createHiddenControlsTextChatComposerProps は text chat 用の送信可否
     feedbackTone: "helper",
     shouldShowFeedback: true,
   });
+});
+
+test("createHiddenControlsTextChatComposerProps は必要な共通操作だけを再表示できる", () => {
+  const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
+  const composerProps = createHiddenControlsTextChatComposerProps({
+    draft: "おはよう",
+    placeholder: "今日はどうする？",
+    composerTextareaRef,
+    isRunning: false,
+    feedback: "",
+    modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+    selectedModel: "gpt-test",
+    selectedModelFallbackLabel: "GPT Test",
+    reasoningOptions: [{ value: "low", label: "low" }],
+    selectedReasoningEffort: "low",
+    onDraftChange: noop,
+    onDraftKeyDown: noop,
+    onSendOrCancel: noop,
+    onChangeModel: noop,
+    onChangeReasoningEffort: noop,
+    showAttachmentControls: true,
+    showAdditionalDirectoryControls: true,
+    showExecutionModeControls: true,
+    approvalOptions: [{ value: "untrusted", label: "untrusted" }],
+    selectedApprovalMode: "untrusted",
+    sandboxOptions: [{ value: "workspace-write", label: "workspace-write" }],
+    selectedCodexSandboxMode: "workspace-write",
+  });
+
+  assert.equal(composerProps.showAttachmentControls, true);
+  assert.equal(composerProps.showAdditionalDirectoryControls, true);
+  assert.equal(composerProps.showExecutionModeControls, true);
+  assert.equal(composerProps.showCustomAgentPicker, false);
+  assert.equal(composerProps.showSkillPicker, false);
+  assert.equal(composerProps.approvalOptions[0]?.value, "untrusted");
+  assert.equal(composerProps.sandboxOptions[0]?.value, "workspace-write");
 });
 
 test("static chat sendability helper は running と空白 draft を送信不可にする", () => {

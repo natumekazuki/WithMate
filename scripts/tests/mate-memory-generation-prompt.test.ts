@@ -101,6 +101,11 @@ describe("mate-memory-generation-prompt", () => {
     assert.match(result.userText, /除外対象の情報は、remember=false/);
     assert.match(result.userText, /schema validation 済み/);
     assert.match(result.userText, /通常保存は false、強保持が必要な明示指示だけ true/);
+    assert.match(result.userText, /targetSection は core \/ bond \/ work_style \/ project_digest \/ none の役割で分類する/);
+    assert.match(result.userText, /core は Mate 自身の自己定義、一人称、性格、人格、自己認識/);
+    assert.match(result.userText, /bond はユーザーとの関係、呼び方、距離感/);
+    assert.match(result.userText, /work_style は作業時の進め方、説明粒度、確認方法/);
+    assert.match(result.userText, /MateTalk でユーザーが Mate の自己定義・一人称・性格を明示または訂正した場合は targetSection=core/);
   });
 
   it("保存不能の項目を remember=false ではなく omit するように明示する", () => {

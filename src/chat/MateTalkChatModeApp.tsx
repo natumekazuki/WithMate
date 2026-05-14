@@ -22,6 +22,7 @@ export function MateTalkChatModeApp() {
     <ChatWindow
       {...buildMateTalkChatWindowProps({
         mateName: state.mateProfile.displayName,
+        mateAvatarFilePath: state.mateProfile.avatarFilePath,
         themeStyle: state.themeStyle,
         isHeaderExpanded: state.isHeaderExpanded,
         messages: state.messages,
@@ -40,6 +41,32 @@ export function MateTalkChatModeApp() {
         onSubmit: state.onSubmit,
         onToggleHeaderExpanded: state.onToggleHeaderExpanded,
         sending: state.sending,
+        composerCapabilityProps: {
+          showAttachmentControls: true,
+          showAdditionalDirectoryControls: true,
+          showExecutionModeControls: true,
+          showCustomAgentPicker: false,
+          showSkillPicker: false,
+          isAdditionalDirectoryListOpen: state.isAdditionalDirectoryListOpen,
+          additionalDirectoryCount: state.additionalDirectoryCount,
+          attachmentItems: state.attachmentItems,
+          additionalDirectoryItems: state.additionalDirectoryItems,
+          approvalOptions: state.approvalOptions,
+          selectedApprovalMode: state.selectedApprovalMode,
+          sandboxOptions: state.sandboxOptions,
+          selectedCodexSandboxMode: state.selectedCodexSandboxMode,
+          onPickFile: state.onPickFile,
+          onPickFolder: state.onPickFolder,
+          onPickImage: state.onPickImage,
+          onAddAdditionalDirectory: state.onAddAdditionalDirectory,
+          onToggleAdditionalDirectoryList: state.onToggleAdditionalDirectoryList,
+          onRemoveAttachment: state.onRemoveAttachment,
+          onRemoveAdditionalDirectory: state.onRemoveAdditionalDirectory,
+          onDraftFocus: state.onDraftFocus,
+          onDraftSelect: state.onDraftSelect,
+          onChangeApprovalMode: state.onChangeApprovalMode,
+          onChangeCodexSandboxMode: state.onChangeCodexSandboxMode,
+        },
       })}
     />
   );

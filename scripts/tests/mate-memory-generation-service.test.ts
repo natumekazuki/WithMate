@@ -768,6 +768,91 @@ describe("MateMemoryGenerationService", () => {
     }
   });
 
+  it("MateTalk の自己定義候補は growth event へ core として保存される", async () => {
+    const { dbPath, cleanup: cleanupDb } = await createTempDbPath();
+    const userDataPath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-memory-workspace-"));
+    let storage: MateMemoryStorage | null = null;
+    const growthUpserts: unknown[] = [];
+    const growthStorage = {
+      createRun() {
+        return 99;
+      },
+      upsertEvent(input: unknown) {
+        growthUpserts.push(input);
+      },
+      finishRun() {
+        // noop
+      },
+      failRun() {
+        throw new Error("should not fail");
+      },
+    };
+
+    try {
+      storage = new MateMemoryStorage(dbPath);
+      seedCurrentMateProfile(dbPath);
+      const workspace = new MemoryRuntimeWorkspaceService({ userDataPath });
+      const service = new MateMemoryGenerationService({
+        workspace,
+        storage,
+        growthStorage,
+        growthModelPort: createGrowthModelPort(async () => ({
+          parsedJson: {
+            memories: [{
+              statement: "Mate の一人称は「わたし」とする。",
+              growthSourceType: "explicit_user_instruction",
+              kind: "correction",
+              targetSection: "bond",
+              confidence: 92,
+              salienceScore: 85,
+              targetClaimKey: "relationship_calling",
+              tags: [],
+            }],
+          },
+          rawText: "{}",
+          usage: null,
+          provider: "copilot",
+          model: "mock-self-definition",
+          threadId: "thread-self-definition",
+          rawItemsJson: "{}",
+        })),
+        async getTagCatalog() {
+          return [];
+        },
+        async getInstructionFiles() {
+          return [];
+        },
+        async getRecentConversationText() {
+          return "ユーザー: Mate の一人称は「わたし」とする。";
+        },
+      });
+
+      const result = await service.runOnce({
+        sourceDefaults: {
+          sourceType: "mate_talk",
+          sourceSessionId: "mate-talk-self-definition",
+        },
+      });
+
+      assert.equal(result.savedCount, 1);
+      assert.equal(growthUpserts.length, 1);
+      const event = growthUpserts[0] as {
+        targetSection: string;
+        projectionAllowed: boolean;
+        sourceType: string;
+        growthSourceType: string;
+      };
+      assert.equal(event.sourceType, "mate_talk");
+      assert.equal(event.growthSourceType, "explicit_user_instruction");
+      assert.equal(event.targetSection, "core");
+      assert.equal(event.projectionAllowed, true);
+    } finally {
+      storage?.close();
+      await cleanupDb();
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
   it("growthStorage 付きで schema invalid は save せず failed run が記録される", async () => {
     const { dbPath, cleanup: cleanupDb } = await createTempDbPath();
     const userDataPath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-memory-workspace-"));

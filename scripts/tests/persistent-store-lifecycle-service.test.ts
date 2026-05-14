@@ -12,6 +12,7 @@ import {
   APP_DATABASE_V2_FILENAME,
   CREATE_V2_SCHEMA_SQL,
 } from "../../src-electron/database-schema-v2.js";
+import { APP_DATABASE_V1_FILENAME } from "../../src-electron/database-schema-v1.js";
 import {
   APP_DATABASE_V3_FILENAME,
   CREATE_V3_SCHEMA_SQL,
@@ -160,6 +161,20 @@ async function withTempDatabaseAndUserData<T>(fn: (dbPath: string, userDataPath:
   const dir = await mkdtemp(path.join(tmpdir(), "withmate-v4-lifecycle-"));
   const dbPath = path.join(dir, "withmate-v4.db");
   const userDataPath = path.join(dir, "user-data");
+
+  try {
+    return await fn(dbPath, userDataPath);
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+}
+
+async function withTempLegacyDatabase<T>(fn: (dbPath: string, userDataPath: string) => T | Promise<T>): Promise<T> {
+  const dir = await mkdtemp(path.join(tmpdir(), "withmate-v1-lifecycle-"));
+  const dbPath = path.join(dir, APP_DATABASE_V1_FILENAME);
+  const userDataPath = path.join(dir, "user-data");
+  const db = new DatabaseSync(dbPath);
+  db.close();
 
   try {
     return await fn(dbPath, userDataPath);
@@ -343,6 +358,114 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate schema を初�
     }
 
     service.close(bundle, dbPath);
+  });
+});
+
+test("PersistentStoreLifecycleService は legacy DB 起動時に Mate schema を初期化しない", async () => {
+  await withTempLegacyDatabase(async (dbPath, userDataPath) => {
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => ({ revision: 1, providers: [] }),
+          close() {},
+        }) as never,
+      createSessionStorage: () =>
+        ({
+          listSessions: () => [],
+          listSessionSummaries: () => [],
+          close() {},
+        }) as never,
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => ({ close() {} }) as never,
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile() {},
+    });
+
+    const bundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+    try {
+      assert.equal(bundle.mateStorage.getMateState(), "not_created");
+
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const rows = db.prepare(`
+          SELECT name
+          FROM sqlite_master
+          WHERE type = 'table'
+            AND name IN ('mate_profile', 'provider_instruction_targets')
+          ORDER BY name
+        `).all() as Array<{ name: string }>;
+        assert.deepEqual(rows, []);
+      } finally {
+        db.close();
+      }
+    } finally {
+      service.close(bundle, dbPath);
+    }
+  });
+});
+
+test("PersistentStoreLifecycleService は V3 legacy DB 起動時に Mate schema を初期化しない", async () => {
+  await withTempV3Database(async (dbPath) => {
+    const userDataPath = path.join(path.dirname(dbPath), "user-data");
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => ({ revision: 1, providers: [] }),
+          close() {},
+        }) as never,
+      createSessionStorage: () =>
+        ({
+          listSessions: () => [],
+          listSessionSummaries: () => [],
+          close() {},
+        }) as never,
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => ({ close() {} }) as never,
+      createAppSettingsStorage: () =>
+        ({
+          get() {
+            return null;
+          },
+          set() {},
+          delete() {},
+          listAll() {
+            return [];
+          },
+          close() {},
+        }) as never,
+      createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile() {},
+    });
+
+    const bundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+    try {
+      assert.equal(bundle.mateStorage.getMateState(), "not_created");
+
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const rows = db.prepare(`
+          SELECT name
+          FROM sqlite_master
+          WHERE type = 'table'
+            AND name IN ('mate_profile', 'provider_instruction_targets')
+          ORDER BY name
+        `).all() as Array<{ name: string }>;
+        assert.deepEqual(rows, []);
+      } finally {
+        db.close();
+      }
+    } finally {
+      service.close(bundle, dbPath);
+    }
   });
 });
 

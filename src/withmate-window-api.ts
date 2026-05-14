@@ -51,6 +51,7 @@ import type {
   MateGrowthEventListResult,
 } from "./mate/mate-growth-events-state.js";
 import type { RendererLogInput } from "./app-log-types.js";
+import type { AppDatabaseDiagnostics } from "./app-database-diagnostics-state.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import type { OpenPathOptions, ResetAppDatabaseRequest, ResetAppDatabaseResult } from "./withmate-window-types.js";
 import type {
@@ -186,6 +187,7 @@ export type WithMateWindowObservabilityApi = {
 export type WithMateWindowSettingsApi = {
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
+  getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics>;
   resetAppDatabase(request: ResetAppDatabaseRequest): Promise<ResetAppDatabaseResult>;
   getMemoryManagementSnapshot(): Promise<MemoryManagementSnapshot>;
   getMemoryManagementPage(request: MemoryManagementPageRequest): Promise<MemoryManagementPageResult>;

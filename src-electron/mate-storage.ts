@@ -5,12 +5,12 @@ import type { DatabaseSync } from "node:sqlite";
 
 import {
   CREATE_V4_SCHEMA_SQL,
+  isLegacyAppDatabasePath,
 } from "./database-schema-v4.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import {
   DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES,
   type MateGrowthModelPreferencePurpose,
-  MATE_GROWTH_MODEL_PREFERENCES,
   type MateGrowthCandidateMode,
   type MateGrowthModelPreference,
   type MateGrowthSettings,
@@ -25,6 +25,8 @@ const MATE_AVATAR_FILE_PATH = "mate/avatar.png";
 const MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_PROVIDER_ID = "codex";
 const MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_MODEL = "gpt-5.4";
 const MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_DEPTH = "low";
+const MATE_GROWTH_SUPPORTED_MODEL_PREFERENCE_PURPOSE = "memory_candidate";
+const MATE_GROWTH_SUPPORTED_MODEL_PREFERENCE_DEPTHS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
 const MATE_SECTION_FILES = [
   { key: "core", relativePath: "mate/core.md" },
   { key: "bond", relativePath: "mate/bond.md" },
@@ -197,14 +199,18 @@ function normalizeGrowthModelPreferences(modelPreferences: Array<UpdateMateGrowt
     return [];
   }
 
+  if (modelPreferences.length > 1) {
+    throw new Error("modelPreferences は current runtime では memory_candidate 1 件だけ指定してね。");
+  }
+
   const normalized = modelPreferences.map((preference, index) => {
     if (preference === null || typeof preference !== "object" || Array.isArray(preference)) {
       throw new Error("modelPreferences は配列で指定してね。");
     }
 
     const purpose = preference.purpose;
-    if (!MATE_GROWTH_MODEL_PREFERENCES.includes(purpose)) {
-      throw new Error("purpose は memory_candidate / profile_update / project_digest のいずれかで指定してね。");
+    if (purpose !== MATE_GROWTH_SUPPORTED_MODEL_PREFERENCE_PURPOSE) {
+      throw new Error("purpose は current runtime では memory_candidate だけ指定してね。");
     }
 
     if (typeof preference.provider !== "string") {
@@ -229,6 +235,9 @@ function normalizeGrowthModelPreferences(modelPreferences: Array<UpdateMateGrowt
     const depth = preference.depth.trim();
     if (!depth) {
       throw new Error("depth は空にできないよ。");
+    }
+    if (!MATE_GROWTH_SUPPORTED_MODEL_PREFERENCE_DEPTHS.has(depth)) {
+      throw new Error("depth は minimal / low / medium / high / xhigh のいずれかで指定してね。");
     }
 
     let priority = preference.priority;
@@ -298,6 +307,15 @@ function withDefaults(input: CreateMateInput): Required<CreateMateInput> {
   };
 }
 
+function materializeMateAssetPath(userDataPath: string, filePath: string): string {
+  const trimmed = filePath.trim();
+  if (!trimmed || path.isAbsolute(trimmed) || /^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  return path.join(userDataPath, trimmed);
+}
+
 function normalizeMateUpdate(input: UpdateMateInput): UpdateMateInput {
   const output: UpdateMateInput = {};
 
@@ -325,12 +343,16 @@ function normalizeMateUpdate(input: UpdateMateInput): UpdateMateInput {
 export class MateStorage {
   private db: DatabaseSync | null;
   private readonly userDataPath: string;
+  private readonly isLegacyDatabase: boolean;
 
   constructor(dbPath: string, userDataPath: string) {
     this.userDataPath = userDataPath;
+    this.isLegacyDatabase = isLegacyAppDatabasePath(dbPath);
     this.db = openAppDatabase(dbPath);
-    this.initializeSchema();
-    this.recoverIncompleteRevisions();
+    if (!this.isLegacyDatabase) {
+      this.initializeSchema();
+      this.recoverIncompleteRevisions();
+    }
   }
 
   private withDb<T>(runner: (db: DatabaseSync) => T): T {
@@ -355,7 +377,16 @@ export class MateStorage {
     });
   }
 
+  private assertV4StorageAvailable(operation: string): void {
+    if (!this.isLegacyDatabase) {
+      return;
+    }
+
+    throw new Error(`${operation} requires withmate-v4.db; legacy DB does not support Mate profile persistence.`);
+  }
+
   initializeSchema(): void {
+    this.assertV4StorageAvailable("MateStorage.initializeSchema");
     this.withDb((db) => {
       for (const statement of CREATE_V4_SCHEMA_SQL) {
         db.exec(statement);
@@ -376,6 +407,7 @@ export class MateStorage {
   }
 
   private recoverIncompleteRevisions(): void {
+    this.assertV4StorageAvailable("MateStorage.recoverIncompleteRevisions");
     const now = nowIso();
     this.withDb((db) => {
       db.prepare(`
@@ -418,6 +450,10 @@ export class MateStorage {
   }
 
   getMateProfile(): MateProfile | null {
+    if (this.isLegacyDatabase) {
+      return null;
+    }
+
     return this.withDb((db) => {
       const profileRow = db.prepare(`
         SELECT
@@ -464,7 +500,7 @@ export class MateStorage {
         description: profileRow.description,
         themeMain: profileRow.theme_main,
         themeSub: profileRow.theme_sub,
-        avatarFilePath: profileRow.avatar_file_path,
+        avatarFilePath: materializeMateAssetPath(this.userDataPath, profileRow.avatar_file_path),
         avatarSha256: profileRow.avatar_sha256,
         avatarByteSize: profileRow.avatar_byte_size,
         activeRevisionId: this.getReadyActiveRevisionId(db, profileRow.active_revision_id),
@@ -573,6 +609,10 @@ export class MateStorage {
   }
 
   getMateGrowthSettings(): MateGrowthSettings | null {
+    if (this.isLegacyDatabase) {
+      return null;
+    }
+
     return this.withDb((db) => {
       const row = db.prepare(`
         SELECT
@@ -621,6 +661,7 @@ export class MateStorage {
   }
 
   updateMateGrowthApplyIntervalMinutes(applyIntervalMinutes: number): MateGrowthSettings | null {
+    this.assertV4StorageAvailable("MateStorage.updateMateGrowthApplyIntervalMinutes");
     const normalizedApplyIntervalMinutes = normalizeApplyIntervalMinutes(applyIntervalMinutes);
     this.withDb((db) => {
       db.prepare(`
@@ -638,6 +679,7 @@ export class MateStorage {
   }
 
   updateMateGrowthSettings(input: UpdateMateGrowthSettingsInput): MateGrowthSettings | null {
+    this.assertV4StorageAvailable("MateStorage.updateMateGrowthSettings");
     assertMateGrowthSettingsInput(input);
     const normalizedModelPreferences = normalizeGrowthModelPreferences(input.modelPreferences);
 
@@ -727,6 +769,7 @@ export class MateStorage {
   }
 
   async createMate(input: CreateMateInput): Promise<MateProfile> {
+    this.assertV4StorageAvailable("MateStorage.createMate");
     const normalized = withDefaults(input);
 
     if (!normalized.displayName.trim()) {
@@ -912,19 +955,17 @@ export class MateStorage {
             updated_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
-        for (const [index, purpose] of MATE_GROWTH_MODEL_PREFERENCES.entries()) {
-          insertGrowthModelPreference.run(
-            MATE_ID,
-            purpose,
-            index + 1,
-            MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_PROVIDER_ID,
-            MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_MODEL,
-            MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_DEPTH,
-            1,
-            createdAt,
-            createdAt,
-          );
-        }
+        insertGrowthModelPreference.run(
+          MATE_ID,
+          MATE_GROWTH_SUPPORTED_MODEL_PREFERENCE_PURPOSE,
+          1,
+          MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_PROVIDER_ID,
+          MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_MODEL,
+          MATE_GROWTH_DEFAULT_MODEL_PREFERENCE_DEPTH,
+          1,
+          createdAt,
+          createdAt,
+        );
 
         db.prepare(`
           INSERT INTO mate_embedding_settings (
@@ -973,6 +1014,7 @@ export class MateStorage {
   }
 
   async updateMate(input: UpdateMateInput): Promise<MateProfile> {
+    this.assertV4StorageAvailable("MateStorage.updateMate");
     const profile = this.getMateProfile();
     if (!profile || profile.state !== "active") {
       throw new Error("Mate が作成されていないよ。");
@@ -1005,6 +1047,7 @@ export class MateStorage {
   }
 
   async setMateAvatar(input: SetMateAvatarInput): Promise<MateProfile> {
+    this.assertV4StorageAvailable("MateStorage.setMateAvatar");
     const profile = this.getMateProfile();
     if (!profile || profile.state !== "active") {
       throw new Error("Mate が作成されていないよ。");
@@ -1139,6 +1182,10 @@ export class MateStorage {
   }
 
   async resetMate(): Promise<void> {
+    if (this.isLegacyDatabase) {
+      return;
+    }
+
     this.withTransaction((db) => {
       db.prepare("DELETE FROM mate_profile WHERE id = ?").run(MATE_ID);
     });
@@ -1150,6 +1197,7 @@ export class MateStorage {
   }
 
   async applyProfileFiles(input: ApplyMateProfileFilesInput): Promise<MateProfile> {
+    this.assertV4StorageAvailable("MateStorage.applyProfileFiles");
     const profile = this.getMateProfile();
     if (!profile || profile.state !== "active") {
       throw new Error("Mate が作成されていないよ。");

@@ -9,7 +9,7 @@ import type {
   ProviderInstructionTargetInput,
   ProviderInstructionWriteMode,
 } from "../src/provider-instruction-target-state.js";
-import { CREATE_V4_SCHEMA_SQL } from "./database-schema-v4.js";
+import { assertV4SchemaInitializationAllowed, CREATE_V4_SCHEMA_SQL } from "./database-schema-v4.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 export type {
@@ -238,6 +238,7 @@ export class ProviderInstructionTargetStorage {
   private readonly db: DatabaseSync;
 
   constructor(dbPath: string) {
+    assertV4SchemaInitializationAllowed(dbPath, "ProviderInstructionTargetStorage");
     this.db = openAppDatabase(dbPath);
     for (const statement of CREATE_V4_SCHEMA_SQL) {
       this.db.exec(statement);

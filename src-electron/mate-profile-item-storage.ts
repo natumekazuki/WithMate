@@ -1,7 +1,7 @@
 import { createHmac, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-import { CREATE_V4_SCHEMA_SQL } from "./database-schema-v4.js";
+import { assertV4SchemaInitializationAllowed, CREATE_V4_SCHEMA_SQL } from "./database-schema-v4.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 const MATE_ID = "current";
@@ -309,6 +309,7 @@ export class MateProfileItemStorage {
   private readonly db: DatabaseSync;
 
   constructor(dbPath: string) {
+    assertV4SchemaInitializationAllowed(dbPath, "MateProfileItemStorage");
     this.db = openAppDatabase(dbPath);
     this.initializeSchema();
   }

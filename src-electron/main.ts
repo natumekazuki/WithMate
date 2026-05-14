@@ -118,6 +118,8 @@ import {
   syncEnabledProviderInstructionTargets,
 } from "./mate-provider-instruction-sync.js";
 import { createMateMemoryGenerationRunner } from "./mate-memory-generation-runner.js";
+import { shouldScheduleMateMemoryGeneration } from "./mate-memory-generation-scheduling.js";
+import { validateMateGrowthSettingsAgainstModelCatalog } from "./mate-growth-settings-validation.js";
 import { MateMemoryGenerationService } from "./mate-memory-generation-service.js";
 import { MemoryRuntimeWorkspaceService } from "./memory-runtime-workspace.js";
 import {
@@ -190,6 +192,8 @@ import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./win
 import { resolveCursorAnchoredPosition } from "./window-placement.js";
 import { clearWorkspaceFileIndex, searchWorkspacePathCandidates } from "./workspace-file-search.js";
 import { AppLogService } from "./app-log-service.js";
+import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
+import { inspectAppDatabase } from "./app-database-diagnostics.js";
 import { resolveAppDatabasePath } from "./app-database-path.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
@@ -273,6 +277,7 @@ type CompanionStorageHandle = CompanionStorage | CompanionStorageV3;
 let companionStorage: CompanionStorageHandle | null = null;
 let allowQuitWithInFlightRuns = false;
 let dbPath = "";
+let appDatabaseDiagnostics: AppDatabaseDiagnostics | null = null;
 const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
 let sessionRuntimeService: SessionRuntimeService | null = null;
 let sessionPersistenceService: SessionPersistenceService | null = null;
@@ -333,6 +338,16 @@ function writeAppLog(input: Parameters<AppLogService["write"]>[0]): void {
   } catch (error) {
     console.warn("App log write failed", error);
   }
+}
+
+function getAppDatabaseDiagnostics(): AppDatabaseDiagnostics {
+  if (!appDatabaseDiagnostics) {
+    if (!dbPath) {
+      throw new Error("DB path が初期化されていないよ。");
+    }
+    appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
+  }
+  return appDatabaseDiagnostics;
 }
 
 function resolveCrashDumpsPath(): string {
@@ -937,6 +952,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               settings: {
                 getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
+                getAppDatabaseDiagnostics,
                 resetAppDatabase: async (request) => requireSettingsCatalogService().resetAppDatabase(request),
                 getMemoryManagementSnapshot: () => requireMemoryManagementService().getSnapshot(),
                 getMemoryManagementPage: (request) => requireMemoryManagementService().getPage(request),
@@ -1400,6 +1416,7 @@ function getMateGrowthSettings(): ReturnType<MateStorage["getMateGrowthSettings"
 }
 
 async function updateMateGrowthSettings(input: UpdateMateGrowthSettingsInput): Promise<ReturnType<MateStorage["updateMateGrowthSettings"]>> {
+  validateMateGrowthSettingsAgainstModelCatalog(input, requireModelCatalogStorage().ensureSeeded());
   const updatedSettings = requireMateStorage().updateMateGrowthSettings(input);
   await restartMateGrowthApplyTimerIfMateActive();
   return updatedSettings;
@@ -1562,6 +1579,7 @@ async function syncEnabledProviderInstructionTargetsForMateProfile(
       {
         readTextFile: async (filePath) => readFile(filePath, "utf8"),
         writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
+        profileRootDirectory: app.getPath("userData"),
       },
       {
         protectedRoots: getProviderInstructionTargetProtectedRoots(),
@@ -2006,9 +2024,15 @@ async function runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnRe
     },
     generateAssistantMessage: generateMateTalkAssistantMessage,
     scheduleMemoryGeneration: ({ userMessage, assistantText }) => {
+      const activeMateStorage = requireMateStorage();
       const appSettings = requireAppSettingsStorage().getSettings();
-      const mateProfile = requireMateStorage().getMateProfile();
-      if (!appSettings.memoryGenerationEnabled || mateProfile?.state !== "active") {
+      const mateProfile = activeMateStorage.getMateProfile();
+      const growthSettings = activeMateStorage.getMateGrowthSettings();
+      if (!shouldScheduleMateMemoryGeneration({
+        appSettings,
+        mateState: mateProfile?.state ?? "not_created",
+        growthSettings,
+      })) {
         return;
       }
       const recentConversationText = [
@@ -2232,8 +2256,13 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       scheduleMateMemoryGeneration: (params) => {
         const activeMateStorage = requireMateStorage();
         const appSettings = requireAppSettingsStorage().getSettings();
-        const mateState = requireMateStorage().getMateState();
-        if (!appSettings.memoryGenerationEnabled || mateState !== "active") {
+        const mateState = activeMateStorage.getMateState();
+        const growthSettings = activeMateStorage.getMateGrowthSettings();
+        if (!shouldScheduleMateMemoryGeneration({
+          appSettings,
+          mateState,
+          growthSettings,
+        })) {
           return;
         }
 
@@ -2688,6 +2717,7 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
     );
     mateMemoryStorage = nextMateMemoryStorage;
     const activeModelCatalog = applyPersistentStoreBundle(bundle);
+    appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
     startWalMaintenance();
     return activeModelCatalog;
   } catch (error) {
@@ -2852,6 +2882,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   sessions = [];
 
   const activeModelCatalog = applyPersistentStoreBundle(bundle);
+  appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
   startWalMaintenance();
   return activeModelCatalog;
 }
@@ -3503,6 +3534,7 @@ async function openCompanionMergeWindow(sessionId: string): Promise<BrowserWindo
 
 app.whenReady().then(async () => {
   dbPath = resolveAppDatabasePath(app.getPath("userData"));
+  appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
   writeAppLog({
     level: "info",
     kind: "app.ready",
@@ -3510,9 +3542,20 @@ app.whenReady().then(async () => {
     message: "App ready",
     data: {
       userDataPath: app.getPath("userData"),
+      userDataPathOverrideApplied: appDatabaseDiagnostics.userDataPathOverrideApplied,
+      activeDatabasePath: appDatabaseDiagnostics.activeDatabasePath,
+      activeDatabaseSchemaVersion: appDatabaseDiagnostics.schemaVersion,
+      activeDatabaseCompatibilityMode: appDatabaseDiagnostics.compatibilityMode,
       logsPath: appLogsPath,
       crashDumpsPath,
     },
+  });
+  writeAppLog({
+    level: appDatabaseDiagnostics.warnings.length > 0 ? "warn" : "info",
+    kind: "app.database.selected",
+    process: "main",
+    message: "App database selected",
+    data: appDatabaseDiagnostics,
   });
   await cleanupMemoryRuntimeWorkspaceOnStartup();
   await requireMainBootstrapService().handleReady();

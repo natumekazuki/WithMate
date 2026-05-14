@@ -13,6 +13,7 @@ export type MateTalkMessage = TextChatWindowMessage & {
 
 export type MateTalkChatProjectionInput = {
   mateName: string;
+  mateAvatarFilePath?: string;
   themeStyle?: CSSProperties;
   isHeaderExpanded: boolean;
   messages: MateTalkMessage[];
@@ -31,10 +32,12 @@ export type MateTalkChatProjectionInput = {
   onToggleHeaderExpanded: () => void;
   sending: boolean;
   feedback: string;
+  composerCapabilityProps?: Parameters<typeof buildTextChatWindowProps>[0]["composerCapabilityProps"];
 };
 
 export function buildMateTalkChatWindowProps({
   mateName,
+  mateAvatarFilePath,
   themeStyle,
   isHeaderExpanded,
   messages,
@@ -53,12 +56,14 @@ export function buildMateTalkChatWindowProps({
   onToggleHeaderExpanded,
   sending,
   feedback,
+  composerCapabilityProps,
 }: MateTalkChatProjectionInput): ChatWindowProps {
   return buildTextChatWindowProps({
     mode: "mate-talk",
     pageTitle: "メイトーク",
     characterId: "mate-talk",
     characterName: mateName,
+    characterIconPath: mateAvatarFilePath,
     sessionId: "mate-talk",
     themeStyle,
     isHeaderExpanded,
@@ -85,5 +90,6 @@ export function buildMateTalkChatWindowProps({
     submitOnKey: shouldSubmitMateTalkInputByKey,
     rightPaneHeaderTitle: "メイトーク",
     rightPaneAriaLabel: "補助情報",
+    composerCapabilityProps,
   });
 }

@@ -1,6 +1,10 @@
 import { basename } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { APP_DATABASE_V1_FILENAME } from "./database-schema-v1.js";
+import { APP_DATABASE_V2_FILENAME } from "./database-schema-v2.js";
+import { APP_DATABASE_V3_FILENAME } from "./database-schema-v3.js";
+
 export const APP_DATABASE_V4_FILENAME = "withmate-v4.db";
 export const APP_DATABASE_V4_SCHEMA_VERSION = 4;
 
@@ -60,6 +64,21 @@ export function isValidV4Database(dbPath: string): boolean {
   } finally {
     db?.close();
   }
+}
+
+export function isLegacyAppDatabasePath(dbPath: string): boolean {
+  const fileName = basename(dbPath);
+  return fileName === APP_DATABASE_V1_FILENAME
+    || fileName === APP_DATABASE_V2_FILENAME
+    || fileName === APP_DATABASE_V3_FILENAME;
+}
+
+export function assertV4SchemaInitializationAllowed(dbPath: string, storageName: string): void {
+  if (!isLegacyAppDatabasePath(dbPath)) {
+    return;
+  }
+
+  throw new Error(`${storageName} requires ${APP_DATABASE_V4_FILENAME}; refusing to initialize V4 schema in legacy DB.`);
 }
 
 export const CREATE_V4_MATE_PROFILE_TABLE_SQL = `
@@ -793,6 +812,7 @@ export const CREATE_V4_PROVIDER_INSTRUCTION_SYNC_RUNS_TABLE_SQL = `
 `;
 
 export const CREATE_V4_SCHEMA_SQL = [
+  `PRAGMA user_version = ${APP_DATABASE_V4_SCHEMA_VERSION};`,
   CREATE_V4_MATE_PROFILE_TABLE_SQL,
   CREATE_V4_MATE_PROFILE_SECTIONS_TABLE_SQL,
   CREATE_V4_MATE_PROFILE_REVISIONS_TABLE_SQL,

@@ -3,7 +3,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
-import { CREATE_V4_SCHEMA_SQL } from "./database-schema-v4.js";
+import { assertV4SchemaInitializationAllowed, CREATE_V4_SCHEMA_SQL } from "./database-schema-v4.js";
 import { resolveProjectScope } from "./project-scope.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
@@ -129,6 +129,7 @@ export class MateProjectDigestStorage implements ProjectDigestProjectionWriter {
   private readonly db: DatabaseSync;
 
   constructor(dbPath: string) {
+    assertV4SchemaInitializationAllowed(dbPath, "MateProjectDigestStorage");
     this.db = openAppDatabase(dbPath);
     this.initializeSchema();
   }

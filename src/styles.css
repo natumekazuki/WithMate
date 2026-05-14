@@ -1995,11 +1995,29 @@ button:disabled {
   gap: 10px;
 }
 
+.settings-growth-event-card {
+  align-items: stretch;
+}
+
 .settings-memory-card-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.settings-growth-event-head {
+  display: block;
+}
+
+.settings-growth-event-actions {
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.settings-growth-event-actions .launch-toggle,
+.settings-growth-event-actions .danger-button {
+  min-width: 88px;
 }
 
 .settings-memory-card-copy {

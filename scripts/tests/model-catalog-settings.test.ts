@@ -88,11 +88,13 @@ describe("app settings provider helpers", () => {
       enabled: false,
       apiKey: "codex-key",
       skillRootPath: "",
+      skillRelativePath: "",
     });
     assert.deepEqual(getProviderAppSettings(settings, "copilot"), {
       enabled: true,
       apiKey: "copilot-key",
       skillRootPath: "",
+      skillRelativePath: "",
     });
   });
 
@@ -117,12 +119,14 @@ describe("app settings provider helpers", () => {
         enabled: false,
         apiKey: "canonical-key",
         skillRootPath: "",
+        skillRelativePath: "",
       },
     });
     assert.deepEqual(getProviderAppSettings(settings, "codex"), {
       enabled: false,
       apiKey: "canonical-key",
       skillRootPath: "",
+      skillRelativePath: "",
     });
   });
 
@@ -199,6 +203,7 @@ describe("app settings provider helpers", () => {
         enabled: false,
         apiKey: "codex-key",
         skillRootPath: "C:/skills",
+        skillRelativePath: "",
       },
       memoryExtraction: {
         model: "gpt-5.1-mini",

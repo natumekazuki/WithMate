@@ -77,6 +77,8 @@ describe("database-schema-v4", () => {
       const names = tableNames(db).sort();
       assert.deepEqual(names, [...REQUIRED_V4_TABLES].sort());
       assert.equal(REQUIRED_V4_TABLES.every((tableName) => names.includes(tableName)), true);
+      const userVersion = db.prepare("PRAGMA user_version").get() as { user_version: number };
+      assert.equal(userVersion.user_version, APP_DATABASE_V4_SCHEMA_VERSION);
     } finally {
       db.close();
     }

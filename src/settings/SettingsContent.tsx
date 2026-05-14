@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   type AppSettings,
@@ -8,9 +8,7 @@ import {
 import type { MateEmbeddingSettings } from "../mate/mate-embedding-settings.js";
 import {
   DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES,
-  MATE_GROWTH_MODEL_PREFERENCES,
   type MateGrowthModelPreference,
-  type MateGrowthModelPreferencePurpose,
   type MateGrowthSettings,
   type UpdateMateGrowthSettingsInput,
 } from "../mate/mate-state.js";
@@ -74,18 +72,13 @@ import {
   SETTINGS_MATE_GROWTH_AUTO_APPLY_ENABLED_LABEL,
   SETTINGS_MATE_GROWTH_ENABLED_LABEL,
   SETTINGS_MATE_GROWTH_EVERY_TURN_LABEL,
-  SETTINGS_MATE_GROWTH_MANUAL_LABEL,
   SETTINGS_MATE_GROWTH_MEMORY_CANDIDATE_MODE_LABEL,
-  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_ADD_LABEL,
   SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_DEPTH_LABEL,
   SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_ENABLED_LABEL,
   SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_MODEL_LABEL,
   SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PROVIDER_LABEL,
-  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PURPOSE_LABEL,
-  SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_REMOVE_LABEL,
   SETTINGS_MATE_GROWTH_MODEL_PREFERENCES_LABEL,
   SETTINGS_MATE_GROWTH_SETTINGS_LABEL,
-  SETTINGS_MATE_GROWTH_THRESHOLD_LABEL,
   SETTINGS_MATE_GROWTH_HELP,
   SETTINGS_MATE_GROWTH_LABEL,
   SETTINGS_MATE_RESET_HELP,
@@ -366,53 +359,83 @@ export function HomeSettingsContent({
   const isMateGrowthUnavailable = mateGrowthBusy || mateGrowthSettings === null;
   const isMateGrowthFeatureDisabled = mateGrowthSettings?.enabled === false;
   const isMateGrowthControlDisabled = isMateGrowthUnavailable || isMateGrowthFeatureDisabled;
+  const mateGrowthMemoryCandidateMode = mateGrowthSettings?.memoryCandidateMode ?? "every_turn";
+  const mateGrowthVisibleMemoryCandidateMode =
+    mateGrowthMemoryCandidateMode === "every_turn" ? "every_turn" : "unsupported";
   const mateGrowthModelPreferences = mateGrowthSettings?.modelPreferences ?? [];
-  const defaultMateGrowthProvider = providerSettingRows[0]?.provider;
+  const defaultMateGrowthProviderRow = providerSettingRows[0] ?? null;
+  const defaultMateGrowthProvider = defaultMateGrowthProviderRow?.provider;
   const createDefaultMateGrowthModelPreference = (): MateGrowthModelPreference => ({
     purpose: "memory_candidate",
-    priority: mateGrowthModelPreferences.length + 1,
+    priority: 1,
     provider: defaultMateGrowthProvider?.id ?? "codex",
     model: defaultMateGrowthProvider?.defaultModelId ?? "gpt-5.4",
     depth: defaultMateGrowthProvider?.defaultReasoningEffort ?? "low",
     enabled: true,
   });
-  const normalizeMateGrowthModelPreferencePriorities = (
-    preferences: MateGrowthModelPreference[],
-  ): MateGrowthModelPreference[] =>
-    preferences.map((preference, index) => ({
-      ...preference,
-      priority: index + 1,
-    }));
-  const updateMateGrowthModelPreference = (
-    index: number,
-    patch: Partial<MateGrowthModelPreference>,
-  ) => {
+  const mateGrowthMemoryCandidatePreference =
+    mateGrowthModelPreferences.find((preference) => preference.purpose === "memory_candidate") ??
+    createDefaultMateGrowthModelPreference();
+  const mateGrowthProviderRow =
+    providerSettingRows.find(({ provider }) => provider.id === mateGrowthMemoryCandidatePreference.provider) ??
+    defaultMateGrowthProviderRow;
+  const mateGrowthProvider = mateGrowthProviderRow?.provider ?? null;
+  const mateGrowthModel =
+    mateGrowthProvider?.models.find((model) => model.id === mateGrowthMemoryCandidatePreference.model) ??
+    mateGrowthProvider?.models.find((model) => model.id === mateGrowthProvider.defaultModelId) ??
+    mateGrowthProvider?.models[0] ??
+    null;
+  const mateGrowthDepthOptions = mateGrowthModel?.reasoningEfforts ??
+    (mateGrowthProvider ? [mateGrowthProvider.defaultReasoningEffort] : [mateGrowthMemoryCandidatePreference.depth]);
+  const mateGrowthDepth = mateGrowthDepthOptions.includes(mateGrowthMemoryCandidatePreference.depth as never)
+    ? mateGrowthMemoryCandidatePreference.depth
+    : mateGrowthDepthOptions[0] ?? mateGrowthMemoryCandidatePreference.depth;
+  const mateGrowthNormalizedMemoryCandidatePreference: MateGrowthModelPreference = {
+    ...mateGrowthMemoryCandidatePreference,
+    purpose: "memory_candidate",
+    priority: 1,
+    provider: mateGrowthProvider?.id ?? mateGrowthMemoryCandidatePreference.provider,
+    model: mateGrowthModel?.id ?? mateGrowthMemoryCandidatePreference.model,
+    depth: mateGrowthDepth,
+  };
+  const updateMateGrowthMemoryCandidatePreference = (patch: Partial<MateGrowthModelPreference>) => {
     onUpdateMateGrowthSettings({
-      modelPreferences: normalizeMateGrowthModelPreferencePriorities(
-        mateGrowthModelPreferences.map((preference, preferenceIndex) =>
-          preferenceIndex === index
-            ? {
-              ...preference,
-              ...patch,
-            }
-            : preference,
-        ),
-      ),
+      modelPreferences: [{
+        ...mateGrowthNormalizedMemoryCandidatePreference,
+        ...patch,
+        purpose: "memory_candidate",
+        priority: 1,
+      }],
     });
   };
-  const removeMateGrowthModelPreference = (index: number) => {
-    onUpdateMateGrowthSettings({
-      modelPreferences: normalizeMateGrowthModelPreferencePriorities(
-        mateGrowthModelPreferences.filter((_, preferenceIndex) => preferenceIndex !== index),
-      ),
+  const updateMateGrowthProvider = (providerId: string) => {
+    const nextProviderRow =
+      providerSettingRows.find(({ provider }) => provider.id === providerId) ??
+      defaultMateGrowthProviderRow;
+    const nextProvider = nextProviderRow?.provider ?? mateGrowthProvider;
+    const nextModel =
+      nextProvider?.models.find((model) => model.id === nextProvider.defaultModelId) ??
+      nextProvider?.models[0] ??
+      mateGrowthModel;
+    const nextDepth = nextModel?.reasoningEfforts.includes(nextProvider?.defaultReasoningEffort as never)
+      ? nextProvider?.defaultReasoningEffort
+      : nextModel?.reasoningEfforts[0];
+
+    updateMateGrowthMemoryCandidatePreference({
+      provider: nextProvider?.id ?? providerId,
+      model: nextModel?.id ?? mateGrowthNormalizedMemoryCandidatePreference.model,
+      depth: nextDepth ?? mateGrowthNormalizedMemoryCandidatePreference.depth,
     });
   };
-  const addMateGrowthModelPreference = () => {
-    onUpdateMateGrowthSettings({
-      modelPreferences: normalizeMateGrowthModelPreferencePriorities([
-        ...mateGrowthModelPreferences,
-        createDefaultMateGrowthModelPreference(),
-      ]),
+  const updateMateGrowthModel = (modelId: string) => {
+    const nextModel = mateGrowthProvider?.models.find((model) => model.id === modelId) ?? mateGrowthModel;
+    const nextDepth = nextModel?.reasoningEfforts.includes(mateGrowthDepth as never)
+      ? mateGrowthDepth
+      : nextModel?.reasoningEfforts[0];
+
+    updateMateGrowthMemoryCandidatePreference({
+      model: nextModel?.id ?? modelId,
+      depth: nextDepth ?? mateGrowthDepth,
     });
   };
 
@@ -775,52 +798,52 @@ export function HomeSettingsContent({
               {mateGrowthEvents.length > 0 ? (
                 <div className="settings-memory-card-list">
                   {mateGrowthEvents.map((event) => (
-                    <article key={event.id} className="settings-memory-card compact">
-                      <div className="settings-memory-card-head">
+                    <article key={event.id} className="settings-memory-card settings-growth-event-card compact">
+                      <div className="settings-memory-card-head settings-growth-event-head">
                         <div className="settings-memory-card-copy">
                           <strong>{event.statement}</strong>
                           <span>{formatMateGrowthEventMeta(event)}</span>
                         </div>
-                        <div className="settings-memory-actions">
-                          <button
-                            className="launch-toggle"
-                            type="button"
-                            onClick={() => onBeginCorrectMateGrowthEvent?.(event.id, event.statement)}
-                            disabled={
-                              !onBeginCorrectMateGrowthEvent ||
-                              !onCorrectMateGrowthEvent ||
-                              mateGrowthEventBusyTarget !== null ||
-                              applyPendingGrowthBusy ||
-                              event.state !== "candidate"
-                            }
-                          >
-                            修正
-                          </button>
-                          <button
-                            className="danger-button"
-                            type="button"
-                            onClick={() => onDisableMateGrowthEvent?.(event.id)}
-                            disabled={
-                              !onDisableMateGrowthEvent ||
-                              mateGrowthEventBusyTarget !== null ||
-                              event.state !== "candidate"
-                            }
-                          >
-                            {mateGrowthEventBusyTarget === event.id ? "処理中..." : "無効化"}
-                          </button>
-                          <button
-                            className="danger-button"
-                            type="button"
-                            onClick={() => onForgetMateGrowthEvent?.(event.id)}
-                            disabled={
-                              !onForgetMateGrowthEvent ||
-                              mateGrowthEventBusyTarget !== null ||
-                              event.state !== "candidate"
-                            }
-                          >
-                            {mateGrowthEventBusyTarget === event.id ? "処理中..." : "忘れる"}
-                          </button>
-                        </div>
+                      </div>
+                      <div className="settings-memory-actions settings-growth-event-actions">
+                        <button
+                          className="launch-toggle"
+                          type="button"
+                          onClick={() => onBeginCorrectMateGrowthEvent?.(event.id, event.statement)}
+                          disabled={
+                            !onBeginCorrectMateGrowthEvent ||
+                            !onCorrectMateGrowthEvent ||
+                            mateGrowthEventBusyTarget !== null ||
+                            applyPendingGrowthBusy ||
+                            event.state !== "candidate"
+                          }
+                        >
+                          修正
+                        </button>
+                        <button
+                          className="danger-button"
+                          type="button"
+                          onClick={() => onDisableMateGrowthEvent?.(event.id)}
+                          disabled={
+                            !onDisableMateGrowthEvent ||
+                            mateGrowthEventBusyTarget !== null ||
+                            event.state !== "candidate"
+                          }
+                        >
+                          {mateGrowthEventBusyTarget === event.id ? "処理中..." : "無効化"}
+                        </button>
+                        <button
+                          className="danger-button"
+                          type="button"
+                          onClick={() => onForgetMateGrowthEvent?.(event.id)}
+                          disabled={
+                            !onForgetMateGrowthEvent ||
+                            mateGrowthEventBusyTarget !== null ||
+                            event.state !== "candidate"
+                          }
+                        >
+                          {mateGrowthEventBusyTarget === event.id ? "処理中..." : "忘れる"}
+                        </button>
                       </div>
                       {correctingMateGrowthEventId === event.id ? (
                         <div className="settings-field compact">
@@ -910,15 +933,18 @@ export function HomeSettingsContent({
                 <span>{SETTINGS_MATE_GROWTH_MEMORY_CANDIDATE_MODE_LABEL}</span>
                 <select
                   id="mate-growth-memory-candidate-mode"
-                  value={mateGrowthSettings?.memoryCandidateMode ?? "every_turn"}
+                  value={mateGrowthVisibleMemoryCandidateMode}
                   disabled={isMateGrowthControlDisabled}
                   onChange={(event) => onUpdateMateGrowthSettings({
-                    memoryCandidateMode: event.target.value as "every_turn" | "threshold" | "manual",
+                    memoryCandidateMode: event.target.value as "every_turn",
                   })}
                 >
                   <option value="every_turn">{SETTINGS_MATE_GROWTH_EVERY_TURN_LABEL}</option>
-                  <option value="threshold">{SETTINGS_MATE_GROWTH_THRESHOLD_LABEL}</option>
-                  <option value="manual">{SETTINGS_MATE_GROWTH_MANUAL_LABEL}</option>
+                  {mateGrowthVisibleMemoryCandidateMode === "unsupported" ? (
+                    <option value="unsupported" disabled>
+                      {mateGrowthMemoryCandidateMode}
+                    </option>
+                  ) : null}
                 </select>
               </label>
               <label className="settings-provider-input">
@@ -944,102 +970,80 @@ export function HomeSettingsContent({
               <div className="settings-field">
                 <strong>{SETTINGS_MATE_GROWTH_MODEL_PREFERENCES_LABEL}</strong>
                 <div className="settings-provider-list">
-                  {mateGrowthModelPreferences.map((preference, index) => (
-                    <section key={`${preference.purpose}-${preference.priority}-${index}`} className="settings-provider-card">
+                  <section className="settings-provider-card">
+                    <div className="settings-provider-card-head">
+                      <span className="settings-provider-name">memory_candidate</span>
+                    </div>
                       <label className="settings-provider-input">
-                        <span>{SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PURPOSE_LABEL}</span>
+                        <span>{SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PROVIDER_LABEL}</span>
                         <select
-                          id={`mate-growth-model-preference-purpose-${index}`}
-                          value={preference.purpose}
+                          id="mate-growth-model-preference-provider"
+                          value={mateGrowthNormalizedMemoryCandidatePreference.provider}
+                          disabled={isMateGrowthControlDisabled}
+                          onChange={(event) => updateMateGrowthProvider(event.target.value)}
+                        >
+                          {providerSettingRows.length > 0 ? providerSettingRows.map(({ provider }) => (
+                            <option key={provider.id} value={provider.id}>
+                              {provider.label}
+                            </option>
+                          )) : (
+                            <option value={mateGrowthNormalizedMemoryCandidatePreference.provider}>
+                              {mateGrowthNormalizedMemoryCandidatePreference.provider}
+                            </option>
+                          )}
+                        </select>
+                      </label>
+                      <label className="settings-provider-input">
+                        <span>{SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_MODEL_LABEL}</span>
+                        <select
+                          id="mate-growth-model-preference-model"
+                          value={mateGrowthNormalizedMemoryCandidatePreference.model}
+                          disabled={isMateGrowthControlDisabled}
+                          onChange={(event) => updateMateGrowthModel(event.target.value)}
+                        >
+                          {mateGrowthProvider?.models.length ? mateGrowthProvider.models.map((model) => (
+                            <option key={model.id} value={model.id}>
+                              {model.label}
+                            </option>
+                          )) : (
+                            <option value={mateGrowthNormalizedMemoryCandidatePreference.model}>
+                              {mateGrowthNormalizedMemoryCandidatePreference.model}
+                            </option>
+                          )}
+                        </select>
+                      </label>
+                      <label className="settings-provider-input">
+                        <span>{SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_DEPTH_LABEL}</span>
+                        <select
+                          id="mate-growth-model-preference-depth"
+                          value={mateGrowthNormalizedMemoryCandidatePreference.depth}
                           disabled={isMateGrowthControlDisabled}
                           onChange={(event) =>
-                            updateMateGrowthModelPreference(index, {
-                              purpose: event.target.value as MateGrowthModelPreferencePurpose,
+                            updateMateGrowthMemoryCandidatePreference({
+                              depth: event.target.value,
                             })}
                         >
-                          {MATE_GROWTH_MODEL_PREFERENCES.map((purpose) => (
-                            <option key={purpose} value={purpose}>
-                              {purpose}
+                          {mateGrowthDepthOptions.map((depth) => (
+                            <option key={depth} value={depth}>
+                              {depth}
                             </option>
                           ))}
                         </select>
                       </label>
-                      <label className="settings-provider-input">
-                        <span>{SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_PROVIDER_LABEL}</span>
-                        <input
-                          id={`mate-growth-model-preference-provider-${index}`}
-                          type="text"
-                          value={preference.provider}
-                          disabled={isMateGrowthControlDisabled}
-                          onChange={(event) =>
-                            updateMateGrowthModelPreference(index, {
-                              provider: event.target.value,
-                            })}
-                        />
-                      </label>
-                      <label className="settings-provider-input">
-                        <span>{SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_MODEL_LABEL}</span>
-                        <input
-                          id={`mate-growth-model-preference-model-${index}`}
-                          type="text"
-                          value={preference.model}
-                          disabled={isMateGrowthControlDisabled}
-                          onChange={(event) =>
-                            updateMateGrowthModelPreference(index, {
-                              model: event.target.value,
-                            })}
-                        />
-                      </label>
-                      <label className="settings-provider-input">
-                        <span>{SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_DEPTH_LABEL}</span>
-                        <input
-                          id={`mate-growth-model-preference-depth-${index}`}
-                          type="text"
-                          value={preference.depth}
-                          disabled={isMateGrowthControlDisabled}
-                          onChange={(event) =>
-                            updateMateGrowthModelPreference(index, {
-                              depth: event.target.value,
-                            })}
-                        />
-                      </label>
                       <label className="settings-provider-toggle-row settings-section-toggle">
                         <span>{SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_ENABLED_LABEL}</span>
                         <input
-                          id={`mate-growth-model-preference-enabled-${index}`}
+                          id="mate-growth-model-preference-enabled"
                           type="checkbox"
-                          checked={preference.enabled}
+                          checked={mateGrowthNormalizedMemoryCandidatePreference.enabled}
                           disabled={isMateGrowthControlDisabled}
                           onChange={(event) =>
-                            updateMateGrowthModelPreference(index, {
+                            updateMateGrowthMemoryCandidatePreference({
                               enabled: event.target.checked,
                             })}
                         />
                       </label>
-                      <div className="settings-actions">
-                        <button
-                          id={`mate-growth-model-preference-remove-${index}`}
-                          className="launch-toggle compact"
-                          type="button"
-                          disabled={isMateGrowthControlDisabled}
-                          onClick={() => removeMateGrowthModelPreference(index)}
-                        >
-                          {SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_REMOVE_LABEL}
-                        </button>
-                      </div>
-                    </section>
-                  ))}
-                </div>
-                <div className="settings-actions">
-                  <button
-                    id="mate-growth-model-preference-add"
-                    className="launch-toggle"
-                    type="button"
-                    disabled={isMateGrowthControlDisabled}
-                    onClick={addMateGrowthModelPreference}
-                  >
-                    {SETTINGS_MATE_GROWTH_MODEL_PREFERENCE_ADD_LABEL}
-                  </button>
+                  </section>
                 </div>
               </div>
               {mateGrowthFeedback ? <p className="settings-feedback">{mateGrowthFeedback}</p> : null}
@@ -1249,6 +1253,20 @@ const CHARACTER_CATEGORY_OPTIONS: Array<{ value: CharacterMemoryCategoryFilter; 
   { value: "boundary", label: "boundary" },
 ];
 
+function areMemoryManagementFiltersEqual(
+  left: MemoryManagementViewFilters,
+  right: MemoryManagementViewFilters,
+): boolean {
+  return (
+    left.searchText === right.searchText &&
+    left.domain === right.domain &&
+    left.sort === right.sort &&
+    left.sessionStatus === right.sessionStatus &&
+    left.projectCategory === right.projectCategory &&
+    left.characterCategory === right.characterCategory
+  );
+}
+
 function SettingsMemoryManagementSection({
   snapshot,
   pages,
@@ -1285,8 +1303,13 @@ function SettingsMemoryManagementSection({
     }),
     [characterCategory, domain, projectCategory, searchText, sessionStatus, sort],
   );
+  const lastNotifiedFiltersRef = useRef<MemoryManagementViewFilters>(activeFilters);
 
   useEffect(() => {
+    if (areMemoryManagementFiltersEqual(lastNotifiedFiltersRef.current, activeFilters)) {
+      return;
+    }
+    lastNotifiedFiltersRef.current = activeFilters;
     onChangeViewFilters(activeFilters);
   }, [activeFilters, onChangeViewFilters]);
 

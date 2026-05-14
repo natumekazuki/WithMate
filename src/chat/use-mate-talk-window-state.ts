@@ -1,11 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from "../approval-mode.js";
+import { DEFAULT_CODEX_SANDBOX_MODE, normalizeCodexSandboxMode, type CodexSandboxMode } from "../codex-sandbox-mode.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { ModelCatalogSnapshot, ModelReasoningEffort } from "../model-catalog.js";
+import { getApprovalOptionsForProvider, getSandboxOptionsForProvider } from "../provider-runtime-options.js";
 import {
   createDefaultAppSettings,
   type AppSettings,
 } from "../provider-settings-state.js";
+import {
+  buildAdditionalDirectoryDisplay,
+  compactPathForDisplay,
+  formatPathReference,
+  normalizePathForReference,
+  splitPathForDisplay,
+  toDirectoryPath,
+} from "../session-composer-paths.js";
 import { buildCharacterThemeStyle } from "../theme-utils.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import type { MateTalkMessage } from "./mate-talk-chat-projection.js";
@@ -52,6 +63,14 @@ export function useMateTalkWindowState({
   const turnControllerRef = useRef(new MateTalkTurnController());
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [inputCaret, setInputCaret] = useState(0);
+  const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
+  const [pathReferences, setPathReferences] = useState<Array<{ path: string; kind: "file" | "folder" | "image" }>>([]);
+  const [additionalDirectories, setAdditionalDirectories] = useState<string[]>([]);
+  const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
+  const [selectedApprovalMode, setSelectedApprovalMode] = useState<ApprovalMode>(DEFAULT_APPROVAL_MODE);
+  const [selectedCodexSandboxMode, setSelectedCodexSandboxMode] =
+    useState<CodexSandboxMode>(DEFAULT_CODEX_SANDBOX_MODE);
 
   useEffect(() => {
     if (!withmateApi) {
@@ -139,6 +158,11 @@ export function useMateTalkWindowState({
     setFeedback("");
   };
 
+  const handleChangeInputWithCaret = (value: string, selectionStart = value.length) => {
+    setInputCaret(selectionStart);
+    handleChangeInput(value);
+  };
+
   const handleChangeModel = (nextModel: string) => {
     const nextSelection = resolveMateTalkModelChange({
       providerCatalog,
@@ -154,6 +178,147 @@ export function useMateTalkWindowState({
       setReasoningEffort(nextReasoningEffort);
     }
   };
+
+  const insertReferencePath = (selectedPath: string, kind: "file" | "folder" | "image") => {
+    const textarea = composerTextareaRef.current;
+    const normalizedPath = normalizePathForReference(selectedPath);
+    const referenceToken = formatPathReference(normalizedPath);
+    const caret = textarea?.selectionStart ?? inputCaret;
+    const leadingSpacer = caret > 0 && !/\s/.test(input[caret - 1] ?? "") ? " " : "";
+    const trailingSpacer = input.length > caret && !/\s/.test(input[caret] ?? "") ? " " : "";
+    const insertion = `${leadingSpacer}${referenceToken}${trailingSpacer}`;
+    const nextInput = `${input.slice(0, caret)}${insertion}${input.slice(caret)}`;
+    const nextCaret = caret + insertion.length;
+
+    setInput(nextInput);
+    setInputCaret(nextCaret);
+    setFeedback("");
+    setPathReferences((current) => {
+      if (current.some((entry) => entry.path === normalizedPath)) {
+        return current;
+      }
+      return [...current, { path: normalizedPath, kind }];
+    });
+
+    window.requestAnimationFrame(() => {
+      if (!textarea) {
+        return;
+      }
+
+      textarea.focus();
+      textarea.setSelectionRange(nextCaret, nextCaret);
+    });
+  };
+
+  const pickAndInsertPath = async (kind: "file" | "folder" | "image") => {
+    if (!withmateApi) {
+      return;
+    }
+
+    const initialPath = pickerBaseDirectory || null;
+    const selectedPath = kind === "folder"
+      ? await withmateApi.pickDirectory(initialPath)
+      : kind === "image"
+        ? await withmateApi.pickImageFile(initialPath)
+        : await withmateApi.pickFile(initialPath);
+    if (!selectedPath) {
+      return;
+    }
+
+    setPickerBaseDirectory(kind === "folder" ? selectedPath : toDirectoryPath(selectedPath));
+    insertReferencePath(selectedPath, kind);
+  };
+
+  const removePathReference = (targets: string[]) => {
+    const normalizedTargets = new Set(targets.map((target) => normalizePathForReference(target)));
+    const escapedTokens = Array.from(normalizedTargets)
+      .map((target) => formatPathReference(target))
+      .map((target) => target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    let nextInput = input;
+    for (const escapedToken of escapedTokens) {
+      nextInput = nextInput.replace(
+        new RegExp(`(^|[\\s(])${escapedToken}(?=\\s|$|[),.;:!?])`),
+        (_match, leadingWhitespace: string) => leadingWhitespace || "",
+      );
+    }
+
+    nextInput = nextInput
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/\n{3,}/g, "\n\n");
+    setInput(nextInput);
+    setInputCaret(nextInput.length);
+    setPathReferences((current) => current.filter((entry) => !normalizedTargets.has(entry.path)));
+  };
+
+  const addAdditionalDirectory = async () => {
+    if (!withmateApi || sending) {
+      return;
+    }
+
+    const selectedPath = await withmateApi.pickDirectory(pickerBaseDirectory || null);
+    if (!selectedPath) {
+      return;
+    }
+
+    const normalizedPath = normalizePathForReference(selectedPath);
+    setPickerBaseDirectory(selectedPath);
+    setAdditionalDirectories((current) => Array.from(new Set([...current, normalizedPath])));
+    setIsAdditionalDirectoryListOpen(true);
+  };
+
+  const pathReferenceItems = useMemo(
+    () =>
+      pathReferences.map((entry) => {
+        const { basename, parentPath } = splitPathForDisplay(entry.path);
+        const kindLabel = entry.kind === "folder" ? "フォルダ" : entry.kind === "image" ? "画像" : "ファイル";
+        return {
+          key: `${entry.kind}:${entry.path}`,
+          kind: entry.kind,
+          kindLabel,
+          locationLabel: "参照",
+          primaryLabel: basename || entry.path,
+          secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 42) : "ルート",
+          title: entry.path,
+          removeTargets: [entry.path],
+        };
+      }),
+    [pathReferences],
+  );
+  const additionalDirectoryItems = useMemo(
+    () =>
+      additionalDirectories.map((directoryPath) => {
+        const directoryDisplay = buildAdditionalDirectoryDisplay(directoryPath);
+        return {
+          key: directoryPath,
+          path: directoryPath,
+          primaryLabel: directoryDisplay.primaryLabel,
+          secondaryLabel: directoryDisplay.secondaryLabel,
+          title: directoryDisplay.title,
+          canRemove: true,
+        };
+      }),
+    [additionalDirectories],
+  );
+  const approvalOptions = useMemo(
+    () => getApprovalOptionsForProvider(providerId),
+    [providerId],
+  );
+  const sandboxOptions = useMemo(
+    () => getSandboxOptionsForProvider(providerId),
+    [providerId],
+  );
+
+  useEffect(() => {
+    if (!approvalOptions.some((option) => option.value === selectedApprovalMode)) {
+      setSelectedApprovalMode(approvalOptions[0]?.value ?? DEFAULT_APPROVAL_MODE);
+    }
+  }, [approvalOptions, selectedApprovalMode]);
+
+  useEffect(() => {
+    if (sandboxOptions.length > 0 && !sandboxOptions.some((option) => option.value === selectedCodexSandboxMode)) {
+      setSelectedCodexSandboxMode(sandboxOptions[0]?.value ?? DEFAULT_CODEX_SANDBOX_MODE);
+    }
+  }, [sandboxOptions, selectedCodexSandboxMode]);
 
   const handleSubmit = async () => {
     const normalizedText = input.trim();
@@ -176,6 +341,8 @@ export function useMateTalkWindowState({
     setFeedback("");
     setMessages((current) => [...current, userMessage]);
     setInput("");
+    setInputCaret(0);
+    setPathReferences([]);
 
     try {
       if (!withmateApi) {
@@ -233,7 +400,29 @@ export function useMateTalkWindowState({
     selectedReasoningEffort: reasoningEffort,
     messageListRef,
     composerTextareaRef,
-    onChangeInput: handleChangeInput,
+    attachmentItems: pathReferenceItems,
+    additionalDirectoryItems,
+    isAdditionalDirectoryListOpen,
+    additionalDirectoryCount: additionalDirectories.length,
+    approvalOptions,
+    selectedApprovalMode,
+    sandboxOptions,
+    selectedCodexSandboxMode,
+    onChangeInput: handleChangeInputWithCaret,
+    onPickFile: () => void pickAndInsertPath("file"),
+    onPickFolder: () => void pickAndInsertPath("folder"),
+    onPickImage: () => void pickAndInsertPath("image"),
+    onAddAdditionalDirectory: () => void addAdditionalDirectory(),
+    onToggleAdditionalDirectoryList: () => setIsAdditionalDirectoryListOpen((current) => !current),
+    onRemoveAttachment: removePathReference,
+    onRemoveAdditionalDirectory: (directoryPath: string) => {
+      setAdditionalDirectories((current) => current.filter((entry) => entry !== directoryPath));
+    },
+    onDraftFocus: () => {},
+    onDraftSelect: (selectionStart: number) => setInputCaret(selectionStart),
+    onChangeApprovalMode: (value: ApprovalMode) => setSelectedApprovalMode(normalizeApprovalMode(value)),
+    onChangeCodexSandboxMode: (value: CodexSandboxMode) =>
+      setSelectedCodexSandboxMode(normalizeCodexSandboxMode(value)),
     onChangeModel: handleChangeModel,
     onChangeReasoningEffort: handleChangeReasoningEffort,
     onSubmit: () => void handleSubmit(),

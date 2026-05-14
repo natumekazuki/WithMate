@@ -1,8 +1,11 @@
 import { readFile } from "node:fs/promises";
+import {
+  isMateTalkProfileSectionKey,
+  MATE_TALK_PROFILE_SECTION_KEYS,
+} from "../src/mate/mate-profile-sections.js";
 
-const MATE_TALK_PROFILE_SECTION_ORDER = ["core", "bond", "work_style", "notes"] as const;
 const MATE_TALK_PROFILE_ITEM_DEFAULT_LIMIT = 40;
-const MATE_TALK_PROFILE_SECTION_PRIORITY = MATE_TALK_PROFILE_SECTION_ORDER.reduce(
+const MATE_TALK_PROFILE_SECTION_PRIORITY = MATE_TALK_PROFILE_SECTION_KEYS.reduce(
   (accumulator, sectionKey, index) => {
     accumulator.set(sectionKey, index);
     return accumulator;
@@ -138,7 +141,7 @@ function compareMateProfileItemForMateTalk(left: ProfileItem, right: ProfileItem
 }
 
 function isMateTalkProfileItemAllowed(item: ProfileItem): boolean {
-  if (item.sectionKey === "project_digest") {
+  if (!isMateTalkProfileSectionKey(item.sectionKey)) {
     return false;
   }
   if (item.state !== undefined && item.state !== null && item.state !== "active") {
@@ -154,7 +157,7 @@ function isMateTalkProfileItemAllowed(item: ProfileItem): boolean {
 }
 
 function isMateTalkProfileSectionAllowed(sectionKey: string): boolean {
-  return sectionKey !== "project_digest";
+  return isMateTalkProfileSectionKey(sectionKey);
 }
 
 function renderMateProfileItemForMateTalk(item: ProfileItem): string | null {

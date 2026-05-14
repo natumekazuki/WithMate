@@ -23,6 +23,8 @@ WithMate が管理する Mate Profile を、各 coding provider の instruction 
 - provider instruction file は Mate Profile から生成した projection として扱う
 - Growth Event は直接 projection せず、Mate Profile に圧縮反映された現在状態だけを読む
 - `projection_allowed = false` の Growth 由来情報は provider instruction file へ出さない
+- Mate Profile section のうち provider instruction に本文を同期するのは `core` / `bond` / `work_style` だけとする
+- `notes` は補助的、非構造、長文のメモであり、常時適用される直接指示として扱わないため provider instruction へ直接投影しない
 - provider root directory と instruction file path は Settings で指定可能にする
 - provider instruction sync の設定 UI は既存 Settings に追加する
 - provider / skill root 系の既存設定値と同じ保存導線、validation、view model の流儀に合わせる
@@ -140,7 +142,8 @@ WithMate が file 全体を所有する。
 
 ## Projection Policy
 
-provider instruction へは Mate Profile 全文をそのまま書かない。
+provider instruction へは Mate Profile の provider-visible な短い section 本文だけを書く。
+profile file path は実行時に解決する内部 metadata であり、provider instruction へは出力しない。
 
 含めるもの:
 
@@ -158,6 +161,7 @@ provider instruction へは Mate Profile 全文をそのまま書かない。
 - session transcript
 - 長い notes
 - Project Digest
+- Mate Profile file path
 - repository に保存すべきでない個人情報
 - workspace path / remote URL / customer name / workplace name / secret
 - provider に不要な UI 文脈
@@ -177,15 +181,15 @@ You are running inside WithMate.
 - Use the Mate context for tone, continuity, and work preferences.
 - Do not edit Mate Profile, Growth Event, or provider instruction files unless WithMate explicitly asks.
 
-## Mate Core
+### Character / Persona
 
 ...
 
-## Bond Profile
+### Interaction Style
 
 ...
 
-## Work Style
+### Work Style
 
 ...
 

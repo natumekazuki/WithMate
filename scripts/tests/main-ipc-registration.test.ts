@@ -32,6 +32,7 @@ import {
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL,
+  WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
   WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
@@ -213,6 +214,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     listOpenCompanionReviewWindowIds: () => [],
     getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
+    getAppDatabaseDiagnostics: () => ({}) as never,
     getMateEmbeddingSettings: () => null,
     getMateGrowthSettings: () => {
       calls.push("getMateGrowthSettings");
@@ -709,6 +711,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     listOpenCompanionReviewWindowIds: () => [],
     getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
+    getAppDatabaseDiagnostics: () => ({}) as never,
     getMateEmbeddingSettings: () => null,
     getMateGrowthSettings: () => null,
     updateMateGrowthSettings: () => null,
@@ -845,6 +848,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
     WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
     WITHMATE_GET_APP_SETTINGS_CHANNEL,
+    WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
     WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
     WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
     WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,

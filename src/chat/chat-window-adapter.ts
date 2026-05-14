@@ -106,6 +106,7 @@ type StaticTextConversationMessageColumnProps = {
   sessionId: string;
   characterId: string;
   characterName: string;
+  characterIconPath?: string;
   messages: ChatRoleMessage[];
   messageListRef: ChatMessageColumnProps["messageListRef"];
   isRunning: boolean;
@@ -132,7 +133,24 @@ type HiddenControlsTextChatComposerProps = Pick<
   isRunning: boolean;
   feedback: string;
   sendButtonTitleWhenEnabled?: string;
-};
+} & Partial<
+  Omit<
+    ChatComposerProps,
+    | "draft"
+    | "placeholder"
+    | "composerTextareaRef"
+    | "modelOptions"
+    | "selectedModel"
+    | "selectedModelFallbackLabel"
+    | "reasoningOptions"
+    | "selectedReasoningEffort"
+    | "onDraftChange"
+    | "onDraftKeyDown"
+    | "onSendOrCancel"
+    | "onChangeModel"
+    | "onChangeReasoningEffort"
+  >
+>;
 
 type StaticTextChatCompactActionDockProps = Pick<ChatCompactActionDockProps, "draft" | "onSendOrCancel"> & {
   isRunning: boolean;
@@ -324,6 +342,7 @@ export function createStaticTextConversationMessageColumnProps({
   sessionId,
   characterId,
   characterName,
+  characterIconPath,
   messages,
   messageListRef,
   isRunning,
@@ -333,7 +352,7 @@ export function createStaticTextConversationMessageColumnProps({
 }: StaticTextConversationMessageColumnProps): ChatMessageColumnProps {
   return createIdleChatMessageColumnProps({
     sessionId,
-    character: createStaticChatCharacterProfile({ id: characterId, name: characterName }),
+    character: createStaticChatCharacterProfile({ id: characterId, name: characterName, iconPath: characterIconPath }),
     messages: toConversationMessages(messages),
     messageListRef,
     isRunning,

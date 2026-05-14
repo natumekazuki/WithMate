@@ -168,19 +168,6 @@ export function HomeRecentSessionsPanel({
             </button>
           );
         })}
-        {!hasVisibleEntries && !normalizedSessionSearch ? (
-          <div className="home-session-empty-actions">
-            <button
-              className="start-session-button"
-              type="button"
-              onClick={openLaunchDialog}
-              aria-disabled={!canUsePrimaryFeatures}
-              disabled={!canUsePrimaryFeatures}
-            >
-              New Session
-            </button>
-          </div>
-        ) : null}
       </div>
     </section>
   );

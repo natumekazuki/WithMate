@@ -1,6 +1,7 @@
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
+import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
 import type {
   AuditLogDetail,
   AuditLogDetailFragment,
@@ -83,6 +84,7 @@ import {
   WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
+  WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
@@ -197,6 +199,7 @@ const MATE_CREATED_REQUIRED_CHANNEL_WHITELIST = new Set<string>([
   WITHMATE_RESET_MATE_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
   WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL,
   WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
@@ -292,6 +295,7 @@ export type MainIpcRegistrationDeps = {
   listOpenCompanionReviewWindowIds(): string[];
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
+  getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   getMateGrowthSettings(): MateGrowthSettings | null;
   updateMateGrowthSettings(input: UpdateMateGrowthSettingsInput): Awaitable<MateGrowthSettings | null>;
   getMateEmbeddingSettings(): MateEmbeddingSettings | null;
@@ -415,6 +419,7 @@ type MainIpcSettingsDeps = Pick<
   MainIpcRegistrationDeps,
   | "getAppSettings"
   | "updateAppSettings"
+  | "getAppDatabaseDiagnostics"
   | "getMateGrowthSettings"
   | "updateMateGrowthSettings"
   | "getMateEmbeddingSettings"
@@ -603,6 +608,7 @@ function registerCatalogHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCatal
 function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSettingsDeps): void {
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => deps.getAppSettings());
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => deps.updateAppSettings(settings));
+  ipcMain.handle(WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL, () => deps.getAppDatabaseDiagnostics());
   ipcMain.handle(WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL, () => deps.getMateGrowthSettings());
   ipcMain.handle(WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL, () => deps.getMateEmbeddingSettings());
   ipcMain.handle(WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL, (_event, input: UpdateMateGrowthSettingsInput) =>

@@ -72,6 +72,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         getAppSettings: () =>
           ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} }) as never,
         updateAppSettings: (settings) => settings,
+        getAppDatabaseDiagnostics: () => ({}) as never,
         listProviderInstructionTargets: () => [],
         upsertProviderInstructionTarget: (input) => input as never,
         resetAppDatabase: async () => null,

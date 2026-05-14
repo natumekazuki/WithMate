@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-import { CREATE_V4_SCHEMA_SQL } from "./database-schema-v4.js";
+import { assertV4SchemaInitializationAllowed, CREATE_V4_SCHEMA_SQL } from "./database-schema-v4.js";
 import { ensureSourceTypeCheckSupportsMateTalk } from "./mate-source-type-migration.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import type {
@@ -1112,6 +1112,7 @@ export class MateGrowthStorage {
   private readonly db: DatabaseSync;
 
   constructor(dbPath: string) {
+    assertV4SchemaInitializationAllowed(dbPath, "MateGrowthStorage");
     this.db = openAppDatabase(dbPath);
     this.initializeSchema();
   }

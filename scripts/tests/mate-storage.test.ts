@@ -409,17 +409,13 @@ describe("MateStorage", () => {
       assert.equal(growthSettings?.autoApplyEnabled, true);
       assert.equal(growthSettings?.memoryCandidateMode, "every_turn");
       assert.equal(growthSettings?.applyIntervalMinutes, 60);
-      assert.equal(growthSettings?.modelPreferences.length, 3);
+      assert.equal(growthSettings?.modelPreferences.length, 1);
       assert.equal(growthSettings?.modelPreferences[0]?.purpose, "memory_candidate");
       assert.equal(growthSettings?.modelPreferences[0]?.priority, 1);
       assert.equal(growthSettings?.modelPreferences[0]?.provider, "codex");
       assert.equal(growthSettings?.modelPreferences[0]?.model, "gpt-5.4");
       assert.equal(growthSettings?.modelPreferences[0]?.depth, "low");
       assert.equal(growthSettings?.modelPreferences[0]?.enabled, true);
-      assert.equal(growthSettings?.modelPreferences[1]?.purpose, "profile_update");
-      assert.equal(growthSettings?.modelPreferences[1]?.priority, 2);
-      assert.equal(growthSettings?.modelPreferences[2]?.purpose, "project_digest");
-      assert.equal(growthSettings?.modelPreferences[2]?.priority, 3);
 
       const files = [
         path.join(userDataPath, "mate/core.md"),
@@ -462,7 +458,7 @@ describe("MateStorage", () => {
         assert.equal(sectionCount.count, 4);
         assert.equal(sectionHashCount.count, 4);
         assert.equal(growthSettingCount.count, 1);
-        assert.equal(growthModelPreferenceCount.count, 3);
+        assert.equal(growthModelPreferenceCount.count, 1);
         assert.equal(embeddingSettingCount.count, 1);
         assert.equal(revisionCount.count, 1);
       } finally {
@@ -489,12 +485,14 @@ describe("MateStorage", () => {
         displayName: "Mika",
         avatarFilePath: sourceAvatarPath,
       });
+      const expectedAvatarPath = path.join(userDataPath, "mate/avatar.png");
 
-      assert.equal(profile.avatarFilePath, "mate/avatar.png");
+      assert.equal(profile.avatarFilePath, expectedAvatarPath);
       assert.equal(profile.avatarSha256, hashSha256Buffer(sourceAvatarContent));
       assert.equal(profile.avatarByteSize, sourceAvatarContent.byteLength);
+      assert.equal(storage.getMateProfile()?.avatarFilePath, expectedAvatarPath);
 
-      const storedAvatar = await readFile(path.join(userDataPath, "mate/avatar.png"));
+      const storedAvatar = await readFile(expectedAvatarPath);
       assert.equal(storedAvatar.equals(sourceAvatarContent), true);
 
       const db = new DatabaseSync(dbPath);
@@ -535,16 +533,28 @@ describe("MateStorage", () => {
       const updatedProfile = await storage.setMateAvatar({
         avatarFilePath: sourceAvatarPath,
       });
+      const expectedAvatarPath = path.join(userDataPath, "mate/avatar.png");
 
-      assert.equal(updatedProfile.avatarFilePath, "mate/avatar.png");
+      assert.equal(updatedProfile.avatarFilePath, expectedAvatarPath);
       assert.equal(updatedProfile.avatarSha256, hashSha256Buffer(sourceAvatarContent));
       assert.equal(updatedProfile.avatarByteSize, sourceAvatarContent.byteLength);
       assert.equal(updatedProfile.activeRevisionId, beforeActiveRevision);
       assert.equal(updatedProfile.profileGeneration, beforeGeneration);
+      assert.equal(storage.getMateProfile()?.avatarFilePath, expectedAvatarPath);
 
-      const storedAvatar = await readFile(path.join(userDataPath, "mate/avatar.png"));
+      const storedAvatar = await readFile(expectedAvatarPath);
       assert.equal(storedAvatar.equals(sourceAvatarContent), true);
       assert.deepEqual(await storage.verifyMateProfileFiles(), []);
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const row = db.prepare("SELECT avatar_file_path FROM mate_profile WHERE id = 'current'").get() as {
+          avatar_file_path: string;
+        };
+        assert.equal(row.avatar_file_path, "mate/avatar.png");
+      } finally {
+        db.close();
+      }
 
       const clearedProfile = await storage.setMateAvatar({ avatarFilePath: "" });
       assert.equal(clearedProfile.avatarFilePath, "");
@@ -734,7 +744,7 @@ describe("MateStorage", () => {
     }
   });
 
-  it("updateMateGrowthSettings は modelPreferences を置換し priority を正規化する", async () => {
+  it("updateMateGrowthSettings は memory_candidate modelPreference を置換し priority を 1 に固定する", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: MateStorage | null = null;
 
@@ -745,15 +755,8 @@ describe("MateStorage", () => {
       const updated = storage.updateMateGrowthSettings({
         modelPreferences: [
           {
-            purpose: "project_digest",
-            priority: 3,
-            provider: " p1 ",
-            model: " p1-model ",
-            depth: " high ",
-            enabled: false,
-          },
-          {
             purpose: "memory_candidate",
+            priority: 9,
             provider: "p2",
             model: "m2",
             depth: "low",
@@ -761,26 +764,20 @@ describe("MateStorage", () => {
         ],
       });
 
-      assert.equal(updated?.modelPreferences.length, 2);
+      assert.equal(updated?.modelPreferences.length, 1);
       assert.equal(updated?.modelPreferences[0]?.purpose, "memory_candidate");
       assert.equal(updated?.modelPreferences[0]?.priority, 1);
       assert.equal(updated?.modelPreferences[0]?.provider, "p2");
       assert.equal(updated?.modelPreferences[0]?.model, "m2");
       assert.equal(updated?.modelPreferences[0]?.depth, "low");
       assert.equal(updated?.modelPreferences[0]?.enabled, true);
-      assert.equal(updated?.modelPreferences[1]?.purpose, "project_digest");
-      assert.equal(updated?.modelPreferences[1]?.priority, 2);
-      assert.equal(updated?.modelPreferences[1]?.provider, "p1");
-      assert.equal(updated?.modelPreferences[1]?.model, "p1-model");
-      assert.equal(updated?.modelPreferences[1]?.depth, "high");
-      assert.equal(updated?.modelPreferences[1]?.enabled, false);
 
       const db = new DatabaseSync(dbPath);
       try {
         const count = db
           .prepare("SELECT COUNT(*) AS count FROM mate_growth_model_preferences WHERE mate_id = 'current'")
           .get() as { count: number };
-        assert.equal(count.count, 2);
+        assert.equal(count.count, 1);
 
         const rows = db
           .prepare(
@@ -795,13 +792,10 @@ describe("MateStorage", () => {
             enabled: number;
           }>;
 
-        assert.equal(rows.length, 2);
+        assert.equal(rows.length, 1);
         assert.equal(rows[0]?.purpose, "memory_candidate");
         assert.equal(rows[0]?.priority, 1);
         assert.equal(rows[0]?.enabled, 1);
-        assert.equal(rows[1]?.purpose, "project_digest");
-        assert.equal(rows[1]?.priority, 2);
-        assert.equal(rows[1]?.enabled, 0);
       } finally {
         db.close();
       }
@@ -819,7 +813,7 @@ describe("MateStorage", () => {
       storage = new MateStorage(dbPath, userDataPath);
       await storage.createMate({ displayName: "Mika" });
       const before = storage.getMateGrowthSettings();
-      assert.equal(before?.modelPreferences.length, 3);
+      assert.equal(before?.modelPreferences.length, 1);
 
       const updated = storage.updateMateGrowthSettings({ modelPreferences: [] });
       assert.equal(updated?.modelPreferences.length, 0);
@@ -877,7 +871,7 @@ describe("MateStorage", () => {
     }
   });
 
-  it("updateMateGrowthSettings は modelPreferences の purpose 以外を拒否する", async () => {
+  it("updateMateGrowthSettings は memory_candidate 以外の purpose を拒否する", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: MateStorage | null = null;
 
@@ -889,13 +883,60 @@ describe("MateStorage", () => {
         () =>
           storage!.updateMateGrowthSettings({
             modelPreferences: [{
-              purpose: "invalid" as never,
+              purpose: "profile_update",
               provider: "codex",
               model: "gpt-5.4",
               depth: "low",
             }],
           }),
-        /memory_candidate \/ profile_update \/ project_digest/,
+        /memory_candidate だけ/,
+      );
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
+  it("updateMateGrowthSettings は複数 modelPreferences と不正 depth を拒否する", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath);
+      await storage.createMate({ displayName: "Mika" });
+
+      assert.throws(
+        () =>
+          storage!.updateMateGrowthSettings({
+            modelPreferences: [
+              {
+                purpose: "memory_candidate",
+                provider: "codex",
+                model: "gpt-5.4",
+                depth: "low",
+              },
+              {
+                purpose: "memory_candidate",
+                provider: "codex",
+                model: "gpt-5.4-mini",
+                depth: "medium",
+              },
+            ],
+          }),
+        /1 件だけ/,
+      );
+
+      assert.throws(
+        () =>
+          storage!.updateMateGrowthSettings({
+            modelPreferences: [{
+              purpose: "memory_candidate",
+              provider: "codex",
+              model: "gpt-5.4",
+              depth: "deeper",
+            }],
+          }),
+        /minimal \/ low \/ medium \/ high \/ xhigh/,
       );
     } finally {
       storage?.close();

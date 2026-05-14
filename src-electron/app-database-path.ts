@@ -22,5 +22,10 @@ export function resolveAppDatabasePath(userDataPath: string): string {
     return v2Path;
   }
 
-  return path.join(userDataPath, APP_DATABASE_V1_FILENAME);
+  const v1Path = path.join(userDataPath, APP_DATABASE_V1_FILENAME);
+  if (existsSync(v1Path)) {
+    return v1Path;
+  }
+
+  return v4Path;
 }

@@ -164,6 +164,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "exportModelCatalogFile",
     "extractCharacterUpdateMemory",
     "forgetMateProfileItem",
+    "getAppDatabaseDiagnostics",
     "getAppSettings",
     "getCharacter",
     "getCharacterUpdateWorkspace",

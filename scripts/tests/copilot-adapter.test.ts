@@ -251,6 +251,29 @@ describe("CopilotAdapter env", () => {
     assert.equal(resolved, path.join("C:\\sdk", "copilot.exe"));
   });
 
+  it("Electron では package.json subpath が非公開でも Copilot native binary を優先して使う", () => {
+    const expected = path.join("C:\\sdk", "copilot.exe");
+    const resolved = resolveCopilotCliPath(
+      (specifier) => {
+        if (specifier === "@github/copilot-win32-x64/package.json") {
+          throw Object.assign(new Error("Package subpath './package.json' is not defined by exports"), {
+            code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
+          });
+        }
+        assert.equal(specifier, "@github/copilot-win32-x64");
+        return expected;
+      },
+      (candidate) =>
+        candidate === expected ||
+        candidate === path.resolve(process.cwd(), "node_modules", ".bin", "copilot.cmd"),
+      "win32",
+      "x64",
+      undefined,
+    );
+
+    assert.equal(resolved, expected);
+  });
+
   it("packaged runtime では staged Copilot CLI binary を最優先する", () => {
     const resourcesPath = "C:\\Program Files\\WithMate\\resources";
     const expected = path.join(

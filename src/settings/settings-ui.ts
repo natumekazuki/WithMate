@@ -30,7 +30,7 @@ export const SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL = "Instruction Re
 export const SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER = "Instruction file path (relative)";
 export const SETTINGS_PROVIDER_INSTRUCTION_HELP_SUMMARY = "Provider Instruction Sync のヘルプ";
 export const SETTINGS_PROVIDER_INSTRUCTION_MANAGED_BLOCK_HELP =
-  "managed_block は既存ファイル内の WithMate 管理ブロックだけを更新する。管理ブロック外の手書き内容は残す。";
+  "managed_block は既存ファイル内の WithMate 管理ブロックだけを更新する。管理ブロックがない場合は対象ファイルの末尾に追加し、管理ブロック外の手書き内容は残す。";
 export const SETTINGS_PROVIDER_INSTRUCTION_MANAGED_FILE_HELP =
   "managed_file は対象ファイル全体を WithMate 管理として上書きする。";
 export const SETTINGS_PROVIDER_INSTRUCTION_PATH_HELP =

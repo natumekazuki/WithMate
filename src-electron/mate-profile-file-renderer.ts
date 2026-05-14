@@ -1,25 +1,20 @@
 import type { MateProfile, MateProfileSectionState } from "../src/mate/mate-state.js";
+import {
+  getMateProfileSectionRule,
+  isMateProfileRuntimeSectionKey,
+  MATE_PROFILE_SECTION_KEYS,
+  type MateProfileRuntimeSectionKey,
+} from "../src/mate/mate-profile-sections.js";
 import type {
   MateProfileItem,
   MateProfileItemCategory,
   MateProfileItemSectionKey,
 } from "./mate-profile-item-storage.js";
 
-type RenderableSectionKey = Exclude<MateProfileItemSectionKey, "project_digest">;
-
 export type MateProfileRenderedFile = {
-  sectionKey: RenderableSectionKey;
+  sectionKey: MateProfileRuntimeSectionKey;
   relativePath: string;
   content: string;
-};
-
-const RENDERABLE_SECTION_KEYS: readonly RenderableSectionKey[] = ["core", "bond", "work_style", "notes"];
-
-const SECTION_TITLES: Readonly<Record<RenderableSectionKey, string>> = {
-  core: "Core",
-  bond: "Bond",
-  work_style: "Work Style",
-  notes: "Notes",
 };
 
 const CATEGORY_TITLES: Readonly<Record<MateProfileItemCategory, string>> = {
@@ -40,7 +35,7 @@ export function renderMateProfileFiles(
 ): MateProfileRenderedFile[] {
   const itemsBySection = groupRenderableItems(items);
 
-  return RENDERABLE_SECTION_KEYS.map((sectionKey) => {
+  return MATE_PROFILE_SECTION_KEYS.map((sectionKey) => {
     const section = findProfileSection(profile.sections, sectionKey);
     const sectionItems = itemsBySection.get(sectionKey) ?? [];
 
@@ -77,8 +72,8 @@ export function renderProjectDigestProjectionText(
   ].join("\n");
 }
 
-function groupRenderableItems(items: readonly MateProfileItem[]): Map<RenderableSectionKey, MateProfileItem[]> {
-  const itemsBySection = new Map<RenderableSectionKey, MateProfileItem[]>();
+function groupRenderableItems(items: readonly MateProfileItem[]): Map<MateProfileRuntimeSectionKey, MateProfileItem[]> {
+  const itemsBySection = new Map<MateProfileRuntimeSectionKey, MateProfileItem[]>();
 
   for (const item of items) {
     if (!isRenderableSection(item.sectionKey) || item.state !== "active" || !item.projectionAllowed) {
@@ -99,10 +94,10 @@ function groupRenderableItems(items: readonly MateProfileItem[]): Map<Renderable
 
 function renderSection(
   profile: MateProfile,
-  sectionKey: RenderableSectionKey,
+  sectionKey: MateProfileRuntimeSectionKey,
   items: readonly MateProfileItem[],
 ): string {
-  const lines: string[] = [`# ${SECTION_TITLES[sectionKey]}`];
+  const lines: string[] = [`# ${getMateProfileSectionRule(sectionKey).title}`];
 
   if (sectionKey === "core") {
     lines.push("", "## Identity", `- Name: ${singleLine(profile.displayName)}`);
@@ -156,7 +151,7 @@ function compareProfileItemsForRender(left: MateProfileItem, right: MateProfileI
 
 function findProfileSection(
   sections: readonly MateProfileSectionState[],
-  sectionKey: RenderableSectionKey,
+  sectionKey: MateProfileRuntimeSectionKey,
 ): MateProfileSectionState {
   const section = sections.find((candidate) => candidate.sectionKey === sectionKey);
   if (!section) {
@@ -165,8 +160,8 @@ function findProfileSection(
   return section;
 }
 
-function isRenderableSection(sectionKey: MateProfileItemSectionKey): sectionKey is RenderableSectionKey {
-  return (RENDERABLE_SECTION_KEYS as readonly string[]).includes(sectionKey);
+function isRenderableSection(sectionKey: MateProfileItemSectionKey): sectionKey is MateProfileRuntimeSectionKey {
+  return isMateProfileRuntimeSectionKey(sectionKey);
 }
 
 function relativeProfilePath(filePath: string): string {

@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { buildMateTalkProfileContextText } from "../../src-electron/mate-talk-profile-context.js";
 
 describe("buildMateTalkProfileContextText", () => {
-  it("優先セクション(core,bond,work_style,notes)とアルファベット順でセクションを並べる", async () => {
+  it("定義済みセクション(core,bond,work_style,notes)だけを優先順で並べる", async () => {
     const profile = {
       sections: [
         { sectionKey: "notes", filePath: "notes.md" },
@@ -44,14 +44,10 @@ describe("buildMateTalkProfileContextText", () => {
         "",
         "# notes",
         "補足\nnotes",
-        "",
-        "# alpha",
-        "補助\nalpha",
-        "",
-        "# beta",
-        "補助2\nbeta",
       ].join("\n"),
     );
+    assert.equal(contextText?.includes("# alpha"), false);
+    assert.equal(contextText?.includes("# beta"), false);
   });
 
   it("空文字のセクションはスキップして内容付きだけを返す", async () => {

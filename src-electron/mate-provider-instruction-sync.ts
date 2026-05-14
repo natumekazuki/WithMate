@@ -7,7 +7,9 @@ import type { ProviderInstructionTarget as ProviderInstructionTargetState } from
 import {
   MATE_PROFILE_BLOCK_ID,
   MATE_PROFILE_BLOCK_TITLE,
+  type MateInstructionSectionContent,
   buildMateInstructionContent,
+  isProviderInstructionProfileSection,
 } from "./mate-instruction-projection.js";
 import { ProviderInstructionTargetStorage } from "./provider-instruction-target-storage.js";
 import {
@@ -31,6 +33,8 @@ export type ProviderInstructionTarget = {
 export type MateProviderInstructionSyncDeps = {
   readTextFile(filePath: string): Promise<string>;
   writeTextFile(filePath: string, content: string): Promise<void>;
+  profileRootDirectory?: string;
+  readProfileSectionText?(section: MateProfile["sections"][number]): Promise<string | null>;
 };
 
 export type ProviderInstructionSyncOptions = {
@@ -94,6 +98,7 @@ export async function syncMateInstructionFile(
 ): Promise<void> {
   const normalizedFilePath = path.normalize(target.filePath);
   const writeMode = target.writeMode ?? "managed_block";
+  const instructionContent = await buildMateInstructionContentWithSections(profile, deps);
 
   if (writeMode === "managed_file") {
     const markerAttributes = buildManagedBlockMarkerAttributes({
@@ -116,7 +121,7 @@ export async function syncMateInstructionFile(
     const nextText = buildManagedBlock({
       blockId: MATE_PROFILE_BLOCK_ID,
       title: MATE_PROFILE_BLOCK_TITLE,
-      content: buildMateInstructionContent(profile),
+      content: instructionContent,
       markerAttributes,
     });
 
@@ -137,7 +142,7 @@ export async function syncMateInstructionFile(
   const nextText = upsertManagedBlockWithMarkerAttributes(existingText, {
     blockId: MATE_PROFILE_BLOCK_ID,
     title: MATE_PROFILE_BLOCK_TITLE,
-    content: buildMateInstructionContent(profile),
+    content: instructionContent,
     markerAttributes: buildManagedBlockMarkerAttributes(target),
   });
 
@@ -147,6 +152,74 @@ export async function syncMateInstructionFile(
   }
 
   await deps.writeTextFile(normalizedFilePath, nextText);
+}
+
+async function buildMateInstructionContentWithSections(
+  profile: MateProfile,
+  deps: MateProviderInstructionSyncDeps,
+): Promise<string> {
+  const sectionContents = await readProviderInstructionSectionContents(profile, deps);
+  return buildMateInstructionContent(profile, { sectionContents });
+}
+
+async function readProviderInstructionSectionContents(
+  profile: MateProfile,
+  deps: MateProviderInstructionSyncDeps,
+): Promise<MateInstructionSectionContent[]> {
+  const sectionContents: MateInstructionSectionContent[] = [];
+  for (const section of profile.sections) {
+    if (!isProviderInstructionProfileSection(section)) {
+      continue;
+    }
+
+    const content = await readProfileSectionContent(section, deps);
+    if (content === null || !content.trim()) {
+      continue;
+    }
+
+    sectionContents.push({
+      sectionKey: section.sectionKey as MateInstructionSectionContent["sectionKey"],
+      content,
+    });
+  }
+
+  return sectionContents;
+}
+
+async function readProfileSectionContent(
+  section: MateProfile["sections"][number],
+  deps: MateProviderInstructionSyncDeps,
+): Promise<string | null> {
+  if (deps.readProfileSectionText) {
+    return deps.readProfileSectionText(section);
+  }
+
+  const filePath = resolveProfileSectionFilePath(section.filePath, deps.profileRootDirectory);
+  if (filePath === null) {
+    return null;
+  }
+
+  try {
+    return await deps.readTextFile(filePath);
+  } catch (error) {
+    const errnoError = error as NodeJS.ErrnoException | undefined;
+    if (errnoError?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function resolveProfileSectionFilePath(filePath: string, profileRootDirectory: string | undefined): string | null {
+  if (path.isAbsolute(filePath)) {
+    return filePath;
+  }
+
+  if (!profileRootDirectory) {
+    return null;
+  }
+
+  return path.resolve(profileRootDirectory, filePath);
 }
 
 export async function syncMateInstructionFiles(

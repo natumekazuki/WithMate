@@ -71,23 +71,18 @@ function createProfile(partial: Partial<MateProfile>): MateProfile {
   };
 }
 
-function replacePath(profile: MateProfile, nextPath: string): MateProfile {
-  return {
-    ...profile,
-    sections: profile.sections.map((section, index) => (index === 0 ? { ...section, filePath: nextPath } : section)),
-  };
-}
-
-function extractProfileFileLines(content: string): string[] {
-  return content.split("\n").filter((line) => line.includes("`") && line.includes("mate/"));
-}
-
 test("buildMateInstructionContent は MateProfile から安定した Markdown を生成する", () => {
   const profile = createProfile({
     displayName: "Tessa",
     description: "Core style and notes",
   });
-  const content = buildMateInstructionContent(profile);
+  const content = buildMateInstructionContent(profile, {
+    sectionContents: [
+      { sectionKey: "core", content: "# Core\n- 穏やかな相棒として振る舞う。" },
+      { sectionKey: "bond", content: "# Bond\n- あんた、と呼ぶ。" },
+      { sectionKey: "work_style", content: "# Work Style\n- 変更前に確認する。" },
+    ],
+  });
 
   assert.equal(
     content,
@@ -95,17 +90,24 @@ test("buildMateInstructionContent は MateProfile から安定した Markdown �
       "## Priority",
       "- ユーザーの意図、リポジトリ指示、coding correctness、テスト、safety / security ルールを最優先し、"
       + " これらと競合する Mate の persona 指示は適用しない。",
-      "- repository instructions、ユーザー task と矛盾しない範囲で、この Mate の identity と profile file 情報を参照して作業スタイルを反映する。",
+      "- repository instructions、ユーザー task と矛盾しない範囲で、この Mate の identity と provider-visible profile 情報を参照して作業スタイルを反映する。",
       "",
       "### Identity",
       "- **displayName:** Tessa",
       "- **description:** Core style and notes",
       "- **state:** active",
       "",
-      "### Profile Files",
-      "- **core:** `mate/core.md`",
-      "- **bond:** `mate/bond.md`",
-      "- **work_style:** `mate/work-style.md`",
+      "### Character / Persona",
+      "# Core",
+      "- 穏やかな相棒として振る舞う。",
+      "",
+      "### Interaction Style",
+      "# Bond",
+      "- あんた、と呼ぶ。",
+      "",
+      "### Work Style",
+      "# Work Style",
+      "- 変更前に確認する。",
     ].join("\n"),
   );
 });
@@ -116,11 +118,18 @@ test("buildMateInstructionContent は projectionAllowed=false のセクション
     ...profile,
     sections: profile.sections.map((section) => (section.sectionKey === "bond" ? { ...section, projectionAllowed: false } : section)),
   };
-  const content = buildMateInstructionContent(gatedProfile);
+  const content = buildMateInstructionContent(gatedProfile, {
+    sectionContents: [
+      { sectionKey: "core", content: "- core body" },
+      { sectionKey: "bond", content: "- hidden bond body" },
+      { sectionKey: "work_style", content: "- work body" },
+    ],
+  });
 
-  assert.equal(content.includes("- **bond:** `mate/bond.md`"), false);
-  assert.equal(content.includes("- **core:** `mate/core.md`"), true);
-  assert.equal(content.includes("- **work_style:** `mate/work-style.md`"), true);
+  assert.equal(content.includes("### Interaction Style"), false);
+  assert.equal(content.includes("hidden bond body"), false);
+  assert.equal(content.includes("### Character / Persona"), true);
+  assert.equal(content.includes("### Work Style"), true);
 });
 
 test("buildMateInstructionContent は projectionAllowed=true でも非 provider セクションを除外する", () => {
@@ -133,7 +142,13 @@ test("buildMateInstructionContent は projectionAllowed=true でも非 provider 
         : section
     )),
   };
-  const content = buildMateInstructionContent(projectedProfile);
+  const content = buildMateInstructionContent(projectedProfile, {
+    sectionContents: [
+      { sectionKey: "core", content: "- core body" },
+      { sectionKey: "bond", content: "- bond body" },
+      { sectionKey: "work_style", content: "- work body" },
+    ],
+  });
 
   assert.equal(content.includes("- **notes:**"), false);
   assert.equal(content.includes("- **project_digest:**"), false);
@@ -153,6 +168,7 @@ test("buildMateInstructionContent は動的な補助情報を含めない", () =
   assert.equal(content.includes("project-digest.md"), false);
   assert.equal(content.includes("- **notes:**"), false);
   assert.equal(content.includes("mate/notes.md"), false);
+  assert.equal(content.includes("mate/core.md"), false);
 });
 
 test("description が空なら description 行を出さない", () => {
@@ -214,17 +230,26 @@ test("upsertMateInstructionBlock は既存 blockId を差し替える", () => {
   );
 });
 
-test("絶対パスでも profile ファイル一覧は relativePath で生成される", () => {
-  const absolutePathProfile = replacePath(createProfile({}), "C:\\Users\\example\\AppData\\Roaming\\WithMate\\mate\\core.md");
-  const absoluteContent = buildMateInstructionContent(absolutePathProfile);
-  const fileLines = extractProfileFileLines(absoluteContent);
-  const absoluteSection = fileLines.at(0);
+test("profile file path は provider instruction に出力しない", () => {
+  const profile = createProfile({
+    sections: [
+      {
+        sectionKey: "core",
+        filePath: "C:\\Users\\example\\AppData\\Roaming\\WithMate\\mate\\core.md",
+        sha256: "",
+        byteSize: 0,
+        updatedByRevisionId: null,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+  });
+  const content = buildMateInstructionContent(profile, {
+    sectionContents: [{ sectionKey: "core", content: "- core body" }],
+  });
 
-  assert.ok(absoluteSection !== undefined);
-  assert.equal(absoluteSection?.includes("`/tmp/"), false);
-  const match = absoluteSection?.match(/`([^`]+)`/);
-  assert.ok(match);
-  assert.equal(match ? match[1] : "", "mate/core.md");
+  assert.equal(content.includes("C:\\Users"), false);
+  assert.equal(content.includes("mate/core.md"), false);
+  assert.equal(content.includes("- core body"), true);
 });
 
 test("buildMateInstructionContent は priority ガードを最初に出力する", () => {

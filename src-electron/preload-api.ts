@@ -39,6 +39,7 @@ import {
   WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
+  WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
   WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL,
@@ -495,6 +496,9 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
     },
     updateAppSettings(settings) {
       return ipcRenderer.invoke(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, settings);
+    },
+    getAppDatabaseDiagnostics() {
+      return ipcRenderer.invoke(WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL);
     },
     resetAppDatabase(request) {
       return ipcRenderer.invoke(WITHMATE_RESET_APP_DATABASE_CHANNEL, request);

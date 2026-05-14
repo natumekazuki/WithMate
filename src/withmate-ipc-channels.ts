@@ -84,6 +84,7 @@ export const WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL = "withmate
 export const WITHMATE_GET_COMPANION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL = "withmate:get-companion-audit-log-operation-detail";
 export const WITHMATE_GET_APP_SETTINGS_CHANNEL = "withmate:get-app-settings";
 export const WITHMATE_UPDATE_APP_SETTINGS_CHANNEL = "withmate:update-app-settings";
+export const WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL = "withmate:get-app-database-diagnostics";
 export const WITHMATE_RESET_APP_DATABASE_CHANNEL = "withmate:reset-app-database";
 export const WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL = "withmate:get-memory-management-snapshot";
 export const WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL = "withmate:get-memory-management-page";

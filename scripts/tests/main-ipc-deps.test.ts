@@ -82,6 +82,7 @@ test("createMainIpcRegistrationDeps は window open 系の戻り値を void 化�
       getAppSettings: () =>
         ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} }) as never,
       updateAppSettings: (settings) => settings,
+      getAppDatabaseDiagnostics: () => ({}) as never,
       listProviderInstructionTargets: () => [],
       upsertProviderInstructionTarget: (input) => input as never,
       async resetAppDatabase() {
