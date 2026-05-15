@@ -40,7 +40,7 @@ export class SessionMemoryStorageV2Read {
     return memory;
   }
 
-  ensureSessionMemory(session: Pick<Session, "id" | "workspacePath" | "threadId" | "taskTitle" | "taskSummary">): SessionMemory {
+  ensureSessionMemory(session: Pick<Session, "id" | "workspacePath" | "threadId" | "taskTitle">): SessionMemory {
     return createDefaultSessionMemory(session);
   }
 

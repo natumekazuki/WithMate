@@ -25,6 +25,7 @@ export function MateTalkChatModeApp() {
         mateAvatarFilePath: state.mateProfile.avatarFilePath,
         themeStyle: state.themeStyle,
         isHeaderExpanded: state.isHeaderExpanded,
+        isActionDockExpanded: state.isActionDockExpanded,
         messages: state.messages,
         input: state.input,
         feedback: state.feedback,
@@ -40,6 +41,8 @@ export function MateTalkChatModeApp() {
         onChangeReasoningEffort: state.onChangeReasoningEffort,
         onSubmit: state.onSubmit,
         onToggleHeaderExpanded: state.onToggleHeaderExpanded,
+        onCollapseActionDock: state.onCollapseActionDock,
+        onExpandActionDock: state.onExpandActionDock,
         sending: state.sending,
         composerCapabilityProps: {
           showAttachmentControls: true,

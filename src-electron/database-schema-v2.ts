@@ -67,7 +67,6 @@ export const CREATE_V2_SESSIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     task_title TEXT NOT NULL,
-    task_summary TEXT NOT NULL,
     status TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     provider TEXT NOT NULL,
@@ -239,7 +238,6 @@ export const CREATE_V2_SCHEMA_SQL = [
 export const V2_SESSION_SUMMARY_COLUMNS = [
   "id",
   "task_title",
-  "task_summary",
   "status",
   "updated_at",
   "provider",

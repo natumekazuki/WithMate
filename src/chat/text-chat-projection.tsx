@@ -54,6 +54,7 @@ export type TextChatWindowProjectionInput = {
   submitOnKey?: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean;
   headerWorkspaceActions?: ReactNode;
   isActionDockExpanded?: boolean;
+  onExpandActionDock?: () => void;
   rightPaneHeaderTitle?: string;
   rightPaneAriaLabel?: string;
   rightPaneClassName?: string;
@@ -116,6 +117,7 @@ export function buildTextChatWindowProps({
   submitOnKey,
   headerWorkspaceActions,
   isActionDockExpanded = true,
+  onExpandActionDock,
   rightPaneHeaderTitle = pageTitle,
   rightPaneAriaLabel = "補助情報",
   rightPaneClassName,
@@ -174,6 +176,7 @@ export function buildTextChatWindowProps({
     compactActionDockProps: createStaticTextChatCompactActionDockProps({
       draft,
       isRunning,
+      onExpand: onExpandActionDock,
       onSendOrCancel: onSubmit,
     }),
     splitter: <ChatWorkbenchSplitter />,

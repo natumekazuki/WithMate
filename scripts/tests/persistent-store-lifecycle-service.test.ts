@@ -44,7 +44,6 @@ function insertV3SessionHeader(dbPath: string, sessionId: string): void {
       INSERT INTO sessions (
         id,
         task_title,
-        task_summary,
         status,
         updated_at,
         provider,
@@ -69,11 +68,10 @@ function insertV3SessionHeader(dbPath: string, sessionId: string): void {
         message_count,
         audit_log_count,
         last_active_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId,
       "Runtime task",
-      "runtime summary",
       "idle",
       "2026-04-27T00:00:00.000Z",
       "codex",

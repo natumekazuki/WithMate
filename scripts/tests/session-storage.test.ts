@@ -190,7 +190,6 @@ describe("SessionStorage", () => {
         {
           id: session.id,
           taskTitle: session.taskTitle,
-          taskSummary: session.taskSummary,
           status: session.status,
           updatedAt: session.updatedAt,
           provider: session.provider,

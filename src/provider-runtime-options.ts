@@ -19,11 +19,7 @@ export function getApprovalOptionsForProvider(providerId: string | null | undefi
 }
 
 export function getSandboxOptionsForProvider(
-  providerId: string | null | undefined,
+  _providerId: string | null | undefined,
 ): RuntimeSelectOption<CodexSandboxMode>[] {
-  if (providerId !== "codex") {
-    return [];
-  }
-
   return codexSandboxModeOptions.map((option) => ({ value: option.id, label: option.label }));
 }

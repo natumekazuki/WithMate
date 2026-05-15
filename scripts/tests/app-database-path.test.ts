@@ -9,8 +9,8 @@ import { describe, it } from "node:test";
 import { APP_DATABASE_V1_FILENAME } from "../../src-electron/database-schema-v1.js";
 import { APP_DATABASE_V2_FILENAME, CREATE_V2_SCHEMA_SQL } from "../../src-electron/database-schema-v2.js";
 import { APP_DATABASE_V3_FILENAME, CREATE_V3_SCHEMA_SQL } from "../../src-electron/database-schema-v3.js";
-import { APP_DATABASE_V4_FILENAME, CREATE_V4_SCHEMA_SQL } from "../../src-electron/database-schema-v4.js";
-import { resolveAppDatabasePath } from "../../src-electron/app-database-path.js";
+import { APP_DATABASE_V4_FILENAME, CREATE_V4_SCHEMA_SQL, isValidV4Database } from "../../src-electron/database-schema-v4.js";
+import { resolveAppDatabasePath, resolveOrMigrateAppDatabasePath } from "../../src-electron/app-database-path.js";
 
 function createV2Database(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
@@ -219,6 +219,81 @@ describe("resolveAppDatabasePath", () => {
 
       const selectedPath = resolveAppDatabasePath(userDataPath);
       assert.equal(selectedPath, v1Path);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("resolveOrMigrateAppDatabasePath", () => {
+  it("withmate-v4.db が存在する場合は legacy DB を読まずに V4 を返す", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+
+    try {
+      const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      await writeFile(v3Path, "not sqlite");
+      await writeFile(v4Path, "not sqlite");
+
+      const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
+      assert.equal(selectedPath, v4Path);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("withmate-v4.db が無く V3 がある場合は同じ userData 内に V4 を作成し、V3 を残す", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+
+    try {
+      const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      createV3Database(v3Path);
+
+      const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
+      assert.equal(selectedPath, v4Path);
+      assert.equal(existsSync(v3Path), true);
+      assert.equal(isValidV4Database(v4Path), true);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("V2 しか無い場合は V2 を残したまま V3 経由で V4 を作成する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+
+    try {
+      const v2Path = path.join(userDataPath, APP_DATABASE_V2_FILENAME);
+      const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      createV2Database(v2Path);
+
+      const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
+      assert.equal(selectedPath, v4Path);
+      assert.equal(existsSync(v2Path), true);
+      assert.equal(existsSync(v3Path), true);
+      assert.equal(isValidV4Database(v4Path), true);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("V1 しか無い場合は V1 を残したまま V2/V3 経由で V4 を作成する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+
+    try {
+      const v1Path = path.join(userDataPath, APP_DATABASE_V1_FILENAME);
+      const v2Path = path.join(userDataPath, APP_DATABASE_V2_FILENAME);
+      const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      await writeFile(v1Path, "");
+
+      const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
+      assert.equal(selectedPath, v4Path);
+      assert.equal(existsSync(v1Path), true);
+      assert.equal(existsSync(v2Path), true);
+      assert.equal(existsSync(v3Path), true);
+      assert.equal(isValidV4Database(v4Path), true);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }

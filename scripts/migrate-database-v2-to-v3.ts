@@ -108,7 +108,6 @@ type CountRow = {
 type SessionHeaderRow = {
   id: string;
   task_title: string;
-  task_summary: string;
   status: string;
   updated_at: string;
   provider: string;
@@ -260,7 +259,6 @@ type CompanionMergeRunRow = {
 const SESSION_HEADER_COLUMNS = `
   id,
   task_title,
-  task_summary,
   status,
   updated_at,
   provider,
@@ -599,7 +597,6 @@ function rowToSession(row: SessionHeaderRow, messages: SessionMessageRow[]): Ses
   const session = normalizeSession({
     id: row.id,
     taskTitle: row.task_title,
-    taskSummary: row.task_summary,
     status: row.status,
     updatedAt: row.updated_at,
     provider: row.provider || DEFAULT_PROVIDER_ID,

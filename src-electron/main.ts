@@ -194,7 +194,7 @@ import { clearWorkspaceFileIndex, searchWorkspacePathCandidates } from "./worksp
 import { AppLogService } from "./app-log-service.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
 import { inspectAppDatabase } from "./app-database-diagnostics.js";
-import { resolveAppDatabasePath } from "./app-database-path.js";
+import { resolveOrMigrateAppDatabasePath } from "./app-database-path.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
 import {
@@ -3533,7 +3533,7 @@ async function openCompanionMergeWindow(sessionId: string): Promise<BrowserWindo
 }
 
 app.whenReady().then(async () => {
-  dbPath = resolveAppDatabasePath(app.getPath("userData"));
+  dbPath = await resolveOrMigrateAppDatabasePath(app.getPath("userData"));
   appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
   writeAppLog({
     level: "info",

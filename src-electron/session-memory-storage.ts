@@ -255,7 +255,7 @@ export class SessionMemoryStorage {
     return normalizeSessionMemory(normalized) as SessionMemory;
   }
 
-  ensureSessionMemory(session: Pick<Session, "id" | "workspacePath" | "threadId" | "taskTitle" | "taskSummary">): SessionMemory {
+  ensureSessionMemory(session: Pick<Session, "id" | "workspacePath" | "threadId" | "taskTitle">): SessionMemory {
     const existing = this.getSessionMemory(session.id);
     if (existing) {
       return existing;

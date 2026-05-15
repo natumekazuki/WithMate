@@ -180,7 +180,6 @@ function createSession(sessionIndex: number, options: ResolvedBenchmarkOptions):
   return {
     id: `benchmark-session-${sessionIndex}`,
     taskTitle: `benchmark session ${sessionIndex}`,
-    taskSummary: `summary ${sessionIndex}`,
     status: "saved",
     updatedAt: nowIso(sessionIndex),
     provider: "codex",

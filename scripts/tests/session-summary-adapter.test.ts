@@ -10,7 +10,6 @@ import {
 const summary = {
   id: "session-1",
   taskTitle: "Summary",
-  taskSummary: "",
   status: "idle",
   updatedAt: "2026-04-28T00:00:00.000Z",
   provider: "codex",

@@ -105,7 +105,6 @@ export type MigrationWriteReport = {
 type SessionSourceRow = {
   id: string;
   task_title: string;
-  task_summary: string;
   status: string;
   updated_at: string;
   provider: string;
@@ -682,7 +681,7 @@ export function createMigrationWriteReport(input: {
     const sessionColumnNames = tableColumnNames(v1Db, "sessions");
     const sessionRows = tableExists(v1Db, "sessions")
       ? (v1Db.prepare(
-          `SELECT id, task_title, task_summary, status, updated_at, provider, ${selectColumnOrDefault(sessionColumnNames, "catalog_revision", 1)}, workspace_label, workspace_path, branch, ${selectColumnOrDefault(sessionColumnNames, "session_kind", "default")}, character_id, character_name, character_icon_path, ${selectColumnOrDefault(sessionColumnNames, "character_theme_main", "#6f8cff")}, ${selectColumnOrDefault(sessionColumnNames, "character_theme_sub", "#6fb8c7")}, run_state, approval_mode, ${selectColumnOrDefault(sessionColumnNames, "codex_sandbox_mode", "workspace-write")}, ${selectColumnOrDefault(sessionColumnNames, "model", "gpt-5.4")}, ${selectColumnOrDefault(sessionColumnNames, "reasoning_effort", "high")}, ${selectColumnOrDefault(sessionColumnNames, "custom_agent_name", "")}, ${selectColumnOrDefault(sessionColumnNames, "allowed_additional_directories_json", "[]")}, ${selectColumnOrDefault(sessionColumnNames, "thread_id", "")}, last_active_at FROM sessions ORDER BY id`,
+          `SELECT id, task_title, status, updated_at, provider, ${selectColumnOrDefault(sessionColumnNames, "catalog_revision", 1)}, workspace_label, workspace_path, branch, ${selectColumnOrDefault(sessionColumnNames, "session_kind", "default")}, character_id, character_name, character_icon_path, ${selectColumnOrDefault(sessionColumnNames, "character_theme_main", "#6f8cff")}, ${selectColumnOrDefault(sessionColumnNames, "character_theme_sub", "#6fb8c7")}, run_state, approval_mode, ${selectColumnOrDefault(sessionColumnNames, "codex_sandbox_mode", "workspace-write")}, ${selectColumnOrDefault(sessionColumnNames, "model", "gpt-5.4")}, ${selectColumnOrDefault(sessionColumnNames, "reasoning_effort", "high")}, ${selectColumnOrDefault(sessionColumnNames, "custom_agent_name", "")}, ${selectColumnOrDefault(sessionColumnNames, "allowed_additional_directories_json", "[]")}, ${selectColumnOrDefault(sessionColumnNames, "thread_id", "")}, last_active_at FROM sessions ORDER BY id`,
         ).all() as SessionHeaderSourceRow[])
       : [];
 
@@ -772,7 +771,7 @@ export function createMigrationWriteReport(input: {
       }
 
       const sessionStmt = v2Db.prepare(
-        "INSERT INTO sessions (id, task_title, task_summary, status, updated_at, provider, catalog_revision, workspace_label, workspace_path, branch, session_kind, character_id, character_name, character_icon_path, character_theme_main, character_theme_sub, run_state, approval_mode, codex_sandbox_mode, model, reasoning_effort, custom_agent_name, allowed_additional_directories_json, thread_id, message_count, audit_log_count, last_active_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO sessions (id, task_title, status, updated_at, provider, catalog_revision, workspace_label, workspace_path, branch, session_kind, character_id, character_name, character_icon_path, character_theme_main, character_theme_sub, run_state, approval_mode, codex_sandbox_mode, model, reasoning_effort, custom_agent_name, allowed_additional_directories_json, thread_id, message_count, audit_log_count, last_active_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       );
       const messageStmt = v2Db.prepare(
         "INSERT INTO session_messages (session_id, seq, role, text, accent, artifact_available) VALUES (?, ?, ?, ?, ?, ?)",
@@ -844,7 +843,6 @@ export function createMigrationWriteReport(input: {
         sessionStmt.run(
           session.id,
           session.task_title,
-          session.task_summary,
           session.status,
           session.updated_at,
           session.provider,

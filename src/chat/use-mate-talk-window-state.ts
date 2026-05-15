@@ -57,6 +57,7 @@ export function useMateTalkWindowState({
   const [sending, setSending] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
+  const [isActionDockExpanded, setIsActionDockExpanded] = useState(true);
   const [providerId, setProviderId] = useState(launchParams.providerId);
   const [model, setModel] = useState(launchParams.model);
   const [reasoningEffort, setReasoningEffort] = useState<ModelReasoningEffort>(launchParams.reasoningEffort);
@@ -390,6 +391,7 @@ export function useMateTalkWindowState({
     mateProfile,
     themeStyle,
     isHeaderExpanded,
+    isActionDockExpanded,
     messages,
     input,
     feedback,
@@ -427,6 +429,8 @@ export function useMateTalkWindowState({
     onChangeReasoningEffort: handleChangeReasoningEffort,
     onSubmit: () => void handleSubmit(),
     onToggleHeaderExpanded: () => setIsHeaderExpanded((current) => !current),
+    onCollapseActionDock: () => setIsActionDockExpanded(false),
+    onExpandActionDock: () => setIsActionDockExpanded(true),
     sending,
   };
 }

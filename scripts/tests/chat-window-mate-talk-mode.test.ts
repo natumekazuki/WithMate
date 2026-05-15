@@ -28,6 +28,7 @@ function renderPanel(options?: {
         feedback: options?.feedback ?? "",
         sending: options?.sending ?? false,
         isHeaderExpanded: options?.isHeaderExpanded ?? false,
+        isActionDockExpanded: true,
         modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
         selectedModel: "gpt-test",
         selectedModelFallbackLabel: "GPT Test",
@@ -40,6 +41,8 @@ function renderPanel(options?: {
         onChangeReasoningEffort() {},
         onSubmit() {},
         onToggleHeaderExpanded() {},
+        onCollapseActionDock() {},
+        onExpandActionDock() {},
         composerCapabilityProps: {
           showAttachmentControls: true,
           showAdditionalDirectoryControls: true,
@@ -86,6 +89,7 @@ test("MateTalk は ChatWindow で Session 共通レイアウトの通常状態�
   assert.match(html, />File<\/button>/);
   assert.match(html, />Folder<\/button>/);
   assert.match(html, />Image<\/button>/);
+  assert.match(html, />Hide<\/button>/);
   assert.doesNotMatch(html, />Agent<\/button>/);
   assert.doesNotMatch(html, />Skills<\/button>/);
   assert.match(html, />Add Directory<\/button>/);
@@ -100,6 +104,42 @@ test("MateTalk は ChatWindow の初期状態でヘッダーを格納する", ()
   assert.match(html, /session-page-header-collapsed/);
   assert.doesNotMatch(html, /<header class="session-window-bar session-top-bar rise-1">/);
   assert.match(html, /<button class="session-header-handle" type="button"><span class="session-window-title session-title-accent">メイトーク<\/span><\/button>/);
+});
+
+test("MateTalk は ChatWindow で action dock の格納と復帰を共通 props に接続する", () => {
+  const messageListRef = React.createRef<HTMLDivElement>();
+  const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
+  const onCollapseActionDock = () => {};
+  const onExpandActionDock = () => {};
+
+  const props = buildMateTalkChatWindowProps({
+    mateName: "ユニバーサル",
+    messages: [],
+    input: "おはよう",
+    feedback: "",
+    sending: false,
+    isHeaderExpanded: false,
+    isActionDockExpanded: false,
+    modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+    selectedModel: "gpt-test",
+    selectedModelFallbackLabel: "GPT Test",
+    reasoningOptions: [{ value: "low", label: "low" }],
+    selectedReasoningEffort: "low",
+    messageListRef,
+    composerTextareaRef,
+    onChangeInput() {},
+    onChangeModel() {},
+    onChangeReasoningEffort() {},
+    onSubmit() {},
+    onToggleHeaderExpanded() {},
+    onCollapseActionDock,
+    onExpandActionDock,
+  });
+
+  assert.equal(props.isActionDockExpanded, false);
+  assert.equal(props.composerProps.canCollapseActionDock, true);
+  assert.equal(props.composerProps.onCollapse, onCollapseActionDock);
+  assert.equal(props.compactActionDockProps.onExpand, onExpandActionDock);
 });
 
 test("MateTalk は ChatWindow で空白入力の送信を抑制する", () => {

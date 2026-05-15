@@ -87,7 +87,6 @@ function buildProviderSession(session: CompanionSession): Session {
   return {
     id: session.id,
     taskTitle: session.taskTitle,
-    taskSummary: `${session.taskTitle} を Companion shadow worktree で進める。`,
     status: session.runState === "running" ? "running" : "idle",
     updatedAt: session.updatedAt,
     provider: session.provider,

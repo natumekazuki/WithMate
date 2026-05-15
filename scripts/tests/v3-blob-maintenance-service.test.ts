@@ -162,7 +162,6 @@ describe("repairV3Blobs", () => {
           INSERT INTO sessions (
             id,
             task_title,
-            task_summary,
             status,
             updated_at,
             provider,
@@ -187,10 +186,9 @@ describe("repairV3Blobs", () => {
             message_count,
             audit_log_count,
             last_active_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           "session-missing",
-          "missing",
           "missing",
           "idle",
           "2026-05-03T00:00:00.000Z",

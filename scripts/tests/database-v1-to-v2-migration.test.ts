@@ -73,7 +73,6 @@ function insertSession(db: DatabaseSync, input: {
     INSERT INTO sessions (
       id,
       task_title,
-      task_summary,
       status,
       updated_at,
       provider,
@@ -98,11 +97,10 @@ function insertSession(db: DatabaseSync, input: {
       messages_json,
       stream_json,
       last_active_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.id,
     "task",
-    "summary",
     "idle",
     "2026-04-27T00:00:00.000Z",
     "codex",

@@ -97,7 +97,6 @@ export const CREATE_V3_SESSIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     task_title TEXT NOT NULL,
-    task_summary TEXT NOT NULL,
     status TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     provider TEXT NOT NULL,

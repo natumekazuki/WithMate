@@ -163,7 +163,6 @@ export function HomeRecentSessionsPanel({
                   <span>{`Workspace : ${session.workspacePath || session.workspaceLabel}`}</span>
                   <span>{`updatedAt: ${session.updatedAt}`}</span>
                 </div>
-                {session.taskSummary.trim() ? <p className="session-card-summary home-session-card-summary">{session.taskSummary}</p> : null}
               </div>
             </button>
           );

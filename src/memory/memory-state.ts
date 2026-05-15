@@ -119,7 +119,6 @@ type CreateDefaultSessionMemoryInput = {
   workspacePath: string;
   threadId: string;
   taskTitle: string;
-  taskSummary: string;
 };
 
 function normalizeStringList(value: unknown): string[] {
@@ -147,7 +146,7 @@ function normalizeStringList(value: unknown): string[] {
 }
 
 export function createDefaultSessionMemory(input: CreateDefaultSessionMemoryInput): SessionMemory {
-  const goal = input.taskTitle.trim() || input.taskSummary.trim();
+  const goal = input.taskTitle.trim();
   return {
     sessionId: input.id,
     workspacePath: input.workspacePath,

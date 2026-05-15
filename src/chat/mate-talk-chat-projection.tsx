@@ -16,6 +16,7 @@ export type MateTalkChatProjectionInput = {
   mateAvatarFilePath?: string;
   themeStyle?: CSSProperties;
   isHeaderExpanded: boolean;
+  isActionDockExpanded: boolean;
   messages: MateTalkMessage[];
   input: string;
   modelOptions: ChatSelectOption[];
@@ -30,6 +31,8 @@ export type MateTalkChatProjectionInput = {
   onChangeReasoningEffort: (reasoningEffort: string) => void;
   onSubmit: () => void;
   onToggleHeaderExpanded: () => void;
+  onCollapseActionDock: () => void;
+  onExpandActionDock: () => void;
   sending: boolean;
   feedback: string;
   composerCapabilityProps?: Parameters<typeof buildTextChatWindowProps>[0]["composerCapabilityProps"];
@@ -40,6 +43,7 @@ export function buildMateTalkChatWindowProps({
   mateAvatarFilePath,
   themeStyle,
   isHeaderExpanded,
+  isActionDockExpanded,
   messages,
   input,
   modelOptions,
@@ -54,6 +58,8 @@ export function buildMateTalkChatWindowProps({
   onChangeReasoningEffort,
   onSubmit,
   onToggleHeaderExpanded,
+  onCollapseActionDock,
+  onExpandActionDock,
   sending,
   feedback,
   composerCapabilityProps,
@@ -67,6 +73,8 @@ export function buildMateTalkChatWindowProps({
     sessionId: "mate-talk",
     themeStyle,
     isHeaderExpanded,
+    isActionDockExpanded,
+    onExpandActionDock,
     messages,
     draft: input,
     placeholder: "今日はどうする？",
@@ -90,6 +98,10 @@ export function buildMateTalkChatWindowProps({
     submitOnKey: shouldSubmitMateTalkInputByKey,
     rightPaneHeaderTitle: "メイトーク",
     rightPaneAriaLabel: "補助情報",
-    composerCapabilityProps,
+    composerCapabilityProps: {
+      ...composerCapabilityProps,
+      canCollapseActionDock: true,
+      onCollapse: onCollapseActionDock,
+    },
   });
 }

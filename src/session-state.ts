@@ -49,7 +49,6 @@ export type SessionKind = "default" | "character-update";
 export type Session = {
   id: string;
   taskTitle: string;
-  taskSummary: string;
   status: "running" | "idle" | "saved";
   updatedAt: string;
   provider: string;
@@ -256,10 +255,7 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
     taskTitle:
       typeof candidate.taskTitle === "string" && candidate.taskTitle.trim()
         ? candidate.taskTitle
-        : typeof candidate.taskSummary === "string" && candidate.taskSummary.trim()
-          ? candidate.taskSummary
-          : "既存セッション",
-    taskSummary: typeof candidate.taskSummary === "string" ? candidate.taskSummary : "",
+        : "既存セッション",
     status:
       candidate.status === "running" || candidate.status === "idle" || candidate.status === "saved"
         ? candidate.status
@@ -392,7 +388,6 @@ export function buildNewSession(input: CreateSessionInput): Session {
   return {
     id: `launch-${Date.now()}`,
     taskTitle: normalizedTaskTitle,
-    taskSummary: `${input.workspaceLabel} で新規セッションを開始。${input.character} のロールを保ったまま、ここから最初の指示を待つ。`,
     status: "idle",
     updatedAt: currentTimestampLabel(),
     provider: normalizeProviderId(input.provider ?? DEFAULT_PROVIDER_ID),
@@ -481,7 +476,6 @@ export function buildSessionSummarySignature(summary: SessionSummary): string {
     summary.status,
     summary.runState,
     summary.taskTitle,
-    summary.taskSummary,
     summary.threadId,
     summary.provider,
     String(summary.catalogRevision),

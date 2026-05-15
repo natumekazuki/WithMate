@@ -155,6 +155,7 @@ type HiddenControlsTextChatComposerProps = Pick<
 type StaticTextChatCompactActionDockProps = Pick<ChatCompactActionDockProps, "draft" | "onSendOrCancel"> & {
   isRunning: boolean;
   emptyPreview?: string;
+  onExpand?: ChatCompactActionDockProps["onExpand"];
 };
 
 type LiveSessionMessageColumnProps = {
@@ -471,6 +472,7 @@ export function createStaticTextChatCompactActionDockProps({
   draft,
   isRunning,
   emptyPreview = "下書きなし",
+  onExpand,
   onSendOrCancel,
 }: StaticTextChatCompactActionDockProps): ChatCompactActionDockProps {
   return createStaticChatCompactActionDockProps({
@@ -478,6 +480,7 @@ export function createStaticTextChatCompactActionDockProps({
     actionDockCompactPreview: draft.trim() || emptyPreview,
     isRunning,
     isSendDisabled: isStaticChatSendDisabled({ draft, isRunning }),
+    onExpand,
     onSendOrCancel,
   });
 }

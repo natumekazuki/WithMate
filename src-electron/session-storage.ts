@@ -18,7 +18,6 @@ import { openAppDatabase } from "./sqlite-connection.js";
 type SessionRow = {
   id: string;
   task_title: string;
-  task_summary: string;
   status: string;
   updated_at: string;
   provider: string;
@@ -53,7 +52,6 @@ type TableColumnRow = {
 const SESSION_SELECT_COLUMNS = `
   id,
   task_title,
-  task_summary,
   status,
   updated_at,
   provider,
@@ -89,7 +87,6 @@ const LIST_SESSIONS_SQL = `
 const SESSION_SUMMARY_SELECT_COLUMNS = `
   id,
   task_title,
-  task_summary,
   status,
   updated_at,
   provider,
@@ -131,7 +128,6 @@ const UPSERT_SESSION_SQL = `
   INSERT INTO sessions (
     id,
     task_title,
-    task_summary,
     status,
     updated_at,
     provider,
@@ -156,10 +152,9 @@ const UPSERT_SESSION_SQL = `
     messages_json,
     stream_json,
     last_active_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     task_title = excluded.task_title,
-    task_summary = excluded.task_summary,
     status = excluded.status,
     updated_at = excluded.updated_at,
     provider = excluded.provider,
@@ -223,7 +218,6 @@ function rowToSession(row: SessionRow, mode: SessionRowParseMode = "skip"): Sess
   const session = normalizeSession({
     id: row.id,
     taskTitle: row.task_title,
-    taskSummary: row.task_summary,
     status: row.status,
     updatedAt: row.updated_at,
     provider: row.provider,
@@ -273,7 +267,6 @@ function rowToSessionSummary(row: SessionSummaryRow, mode: SessionRowParseMode =
   const summary = normalizeSessionSummary({
     id: row.id,
     taskTitle: row.task_title,
-    taskSummary: row.task_summary,
     status: row.status,
     updatedAt: row.updated_at,
     provider: row.provider,
@@ -322,7 +315,6 @@ export class SessionStorage {
     this.db.prepare(UPSERT_SESSION_SQL).run(
       normalized.id,
       normalized.taskTitle,
-      normalized.taskSummary,
       normalized.status,
       normalized.updatedAt,
       normalized.provider,

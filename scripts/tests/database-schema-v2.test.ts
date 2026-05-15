@@ -18,7 +18,6 @@ type TableInfoRow = {
 const EXPECTED_SESSION_SUMMARY_COLUMNS = [
   "id",
   "task_title",
-  "task_summary",
   "status",
   "updated_at",
   "provider",

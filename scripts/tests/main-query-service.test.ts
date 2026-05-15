@@ -12,7 +12,6 @@ function createSession(overrides?: Partial<Session>): Session {
     model: "gpt-5.4",
     reasoningEffort: "high",
     taskTitle: "task",
-    taskSummary: "",
     workspaceLabel: "workspace",
     workspacePath: "C:/workspace",
     branch: "main",

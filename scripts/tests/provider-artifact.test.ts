@@ -19,7 +19,6 @@ function createSession(): Session {
   return {
     id: "session-1",
     taskTitle: "CSV を作る",
-    taskSummary: "",
     status: "idle",
     updatedAt: "2026-03-23 00:00",
     provider: "copilot",
