@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 
 import type { AuditLogEntry } from "../src/app-state.js";
+import type { Session } from "../src/session-state.js";
 import { CREATE_APP_SETTINGS_TABLE_SQL, CREATE_MODEL_CATALOG_TABLES_SQL } from "../src-electron/database-schema-v1.js";
 import { APP_DATABASE_V3_FILENAME, isValidV3Database } from "../src-electron/database-schema-v3.js";
 import { APP_DATABASE_V4_FILENAME, CREATE_V4_SCHEMA_SQL } from "../src-electron/database-schema-v4.js";
@@ -254,6 +255,18 @@ function auditLogInput(entry: AuditLogEntry): Omit<AuditLogEntry, "id"> {
   return input;
 }
 
+function toLegacyReadOnlySession(session: Session): Session {
+  return {
+    ...session,
+    status: session.status === "running" ? "saved" : session.status,
+    runState: session.runState === "running" ? "idle" : session.runState,
+    accessMode: "legacy_readonly",
+    sourceSchemaVersion: 3,
+    characterIconPath: "",
+    threadId: session.threadId,
+  };
+}
+
 export function createMigrationDryRunReport(
   sourceDatabaseFile: string,
   options?: { blobRootPath?: string },
@@ -312,7 +325,7 @@ export async function createMigrationWriteReport(input: {
     targetSessionStorage = new SessionStorage(input.targetDatabaseFile);
     targetAuditStorage = new AuditLogStorage(input.targetDatabaseFile);
 
-    const sessions = await sourceSessionStorage.listSessions();
+    const sessions = (await sourceSessionStorage.listSessions()).map(toLegacyReadOnlySession);
     await targetSessionStorage.replaceSessions(sessions);
 
     let migratedAuditLogs = 0;

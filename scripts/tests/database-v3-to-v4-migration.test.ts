@@ -172,6 +172,9 @@ describe("migrate-database-v3-to-v4", () => {
       try {
         const importedSession = await sessionStorage.getSession("session-v3-to-v4");
         assert.ok(importedSession);
+        assert.equal(importedSession.accessMode, "legacy_readonly");
+        assert.equal(importedSession.sourceSchemaVersion, 3);
+        assert.equal(importedSession.characterIconPath, "");
         assert.match(importedSession.messages[0]?.text ?? "", /SENTINEL_V3_TO_V4:user/);
         const importedLogs = auditLogStorage.listSessionAuditLogs("session-v3-to-v4");
         assert.equal(importedLogs.length, 1);

@@ -28,6 +28,7 @@ import {
   type Message,
   applyCopilotCustomAgentSelection,
   applySessionModelMetadataUpdate,
+  isLegacyReadOnlySession,
   type Session,
 } from "./session-state.js";
 import {
@@ -645,6 +646,7 @@ export default function AgentSessionWindowApp() {
     [resolvedCharacter, selectedSession],
   );
   const isCharacterUpdateSession = selectedSession?.sessionKind === "character-update";
+  const isSelectedSessionReadOnly = selectedSession ? isLegacyReadOnlySession(selectedSession) : false;
   const sessionThemeStyle = useMemo(
     () => (selectedSession ? buildCharacterThemeStyle(selectedSession.characterThemeColors) : undefined),
     [selectedSession],
@@ -683,6 +685,10 @@ export default function AgentSessionWindowApp() {
       return "";
     }
 
+    if (isSelectedSessionReadOnly) {
+      return "この session は旧バージョンから移行された閲覧専用だよ。";
+    }
+
     if (isCharacterResolutionPending) {
       return "この session の Mate 状態を確認しているよ。少し待ってね。";
     }
@@ -696,7 +702,7 @@ export default function AgentSessionWindowApp() {
     }
 
     return "";
-  }, [isCharacterResolutionPending, isSelectedCharacterMissing, isSelectedProviderEnabled, selectedSession]);
+  }, [isCharacterResolutionPending, isSelectedCharacterMissing, isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession]);
   const composerBlockedReason = sessionExecutionBlockedReason;
 
   useEffect(() => {
@@ -1399,7 +1405,7 @@ export default function AgentSessionWindowApp() {
     ],
   );
   const retryBanner = useMemo<RetryBannerState | null>(() => {
-    if (!selectedSession || selectedSession.runState === "running" || !lastUserMessage) {
+    if (!selectedSession || selectedSession.runState === "running" || isSelectedSessionReadOnly || !lastUserMessage) {
       return null;
     }
 
@@ -1466,11 +1472,12 @@ export default function AgentSessionWindowApp() {
     selectedSessionCopy.retryCanceledTitle,
     selectedSessionCopy.retryFailedTitle,
     selectedSessionCopy.retryInterruptedTitle,
+    isSelectedSessionReadOnly,
     selectedSessionLiveRun,
   ]);
   const hasDraftText = draft.trim().length > 0;
   const shouldProtectDraftOnRetryEdit = !!retryBanner && hasDraftText && draft !== retryBanner.lastRequestText;
-  const isComposerDisabled = selectedSession?.runState === "running" || !!composerBlockedReason;
+  const isComposerDisabled = selectedSession?.runState === "running" || !!composerBlockedReason || isSelectedSessionReadOnly;
   const composerSendabilityBase = useMemo(
     () =>
       buildComposerSendabilityState({
@@ -1488,7 +1495,7 @@ export default function AgentSessionWindowApp() {
   const isSendDisabled = composerSendability.isSendDisabled;
   const composerSendButtonTitle = getComposerSendButtonTitle(composerSendability);
   const isRetryActionDisabled =
-    !retryBanner || !lastUserMessage || !!composerBlockedReason || selectedSession?.runState === "running";
+    !retryBanner || !lastUserMessage || !!composerBlockedReason || isSelectedSessionReadOnly || selectedSession?.runState === "running";
   const isRetryEditDisabled = isRetryActionDisabled || isComposerDisabled;
   const shouldForceActionDockExpanded =
     isAgentPickerOpen
@@ -1720,6 +1727,10 @@ export default function AgentSessionWindowApp() {
       throw new Error(composerBlockedReason);
     }
 
+    if (isSelectedSessionReadOnly) {
+      throw new Error("旧バージョンから移行された閲覧専用セッションには送信できないよ。");
+    }
+
     const nextMessage = messageText.trim();
     const preview = await withmateApi.previewComposerInput(selectedSession.id, messageText);
     setComposerPreview(preview);
@@ -1938,7 +1949,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleSelectCustomAgent = async (agent: DiscoveredCustomAgent | null) => {
-    if (!selectedSession || selectedSession.provider !== "copilot") {
+    if (!selectedSession || isSelectedSessionReadOnly || selectedSession.provider !== "copilot") {
       return;
     }
 
@@ -1959,8 +1970,12 @@ export default function AgentSessionWindowApp() {
   };
 
   const persistSession = async (nextSession: Session) => {
-    if (!withmateApi) {
-      throw new Error("Session Window は Electron から開いてね。");
+    if (!withmateApi || isSelectedSessionReadOnly) {
+      throw new Error(
+        isSelectedSessionReadOnly
+          ? "旧バージョンから移行された閲覧専用セッションは更新できないよ。"
+          : "Session Window は Electron から開いてね。",
+      );
     }
 
     const savedSession = await withmateApi.updateSession(nextSession);
@@ -1969,7 +1984,12 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleChangeApproval = async (approvalMode: Session["approvalMode"]) => {
-    if (!selectedSession || selectedSession.runState === "running" || approvalMode === selectedSession.approvalMode) {
+    if (
+      !selectedSession ||
+      isSelectedSessionReadOnly ||
+      selectedSession.runState === "running" ||
+      approvalMode === selectedSession.approvalMode
+    ) {
       return;
     }
 
@@ -1986,6 +2006,7 @@ export default function AgentSessionWindowApp() {
     if (
       !selectedSession ||
       selectedSession.provider !== "codex" ||
+      isSelectedSessionReadOnly ||
       selectedSession.runState === "running" ||
       codexSandboxMode === selectedSession.codexSandboxMode
     ) {
@@ -2002,7 +2023,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleStartTitleEdit = () => {
-    if (!selectedSession || selectedSession.runState === "running") {
+    if (!selectedSession || isSelectedSessionReadOnly || selectedSession.runState === "running") {
       return;
     }
 
@@ -2017,7 +2038,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleSaveTitle = async () => {
-    if (!selectedSession) {
+    if (!selectedSession || isSelectedSessionReadOnly) {
       return;
     }
 
@@ -2066,7 +2087,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleChangeModel = async (model: string) => {
-    if (!selectedSession || !selectedProviderCatalog || !modelCatalog) {
+    if (!selectedSession || isSelectedSessionReadOnly || !selectedProviderCatalog || !modelCatalog) {
       return;
     }
 
@@ -2082,7 +2103,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleChangeReasoningEffort = async (reasoningEffort: Session["reasoningEffort"]) => {
-    if (!selectedSession || !selectedProviderCatalog || !modelCatalog) {
+    if (!selectedSession || isSelectedSessionReadOnly || !selectedProviderCatalog || !modelCatalog) {
       return;
     }
 
@@ -2098,7 +2119,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleResendLastMessage = async () => {
-    if (!lastUserMessage || composerBlockedReason) {
+    if (!lastUserMessage || composerBlockedReason || isSelectedSessionReadOnly) {
       return;
     }
 
@@ -2254,7 +2275,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handlePickFile = async () => {
-    if (!withmateApi) {
+    if (!withmateApi || isSelectedSessionReadOnly) {
       return;
     }
 
@@ -2269,7 +2290,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handlePickFolder = async () => {
-    if (!withmateApi) {
+    if (!withmateApi || isSelectedSessionReadOnly) {
       return;
     }
 
@@ -2284,7 +2305,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handlePickImage = async () => {
-    if (!withmateApi) {
+    if (!withmateApi || isSelectedSessionReadOnly) {
       return;
     }
 
@@ -2299,7 +2320,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleAddAdditionalDirectory = async () => {
-    if (!withmateApi || !selectedSession || selectedSession.runState === "running") {
+    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly || selectedSession.runState === "running") {
       return;
     }
 
@@ -2318,7 +2339,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleRemoveAdditionalDirectory = async (directoryPath: string) => {
-    if (!selectedSession || selectedSession.provider !== "codex" || selectedSession.runState === "running") {
+    if (!selectedSession || isSelectedSessionReadOnly || selectedSession.provider !== "codex" || selectedSession.runState === "running") {
       return;
     }
 
@@ -2517,6 +2538,7 @@ export default function AgentSessionWindowApp() {
         isEditingTitle,
         titleDraft,
         isSelectedSessionRunning,
+        isSelectedSessionReadOnly,
         isCharacterUpdateSession,
         messageListRef,
         pendingRunIndicatorAnnouncement,

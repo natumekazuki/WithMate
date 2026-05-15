@@ -4,7 +4,9 @@ export {
   cloneSessions,
   getDiffTokenFromLocation,
   getSessionIdFromLocation,
+  isLegacyReadOnlySession,
   normalizeSession,
+  normalizeSessionAccessMode,
   normalizeSessionSummary,
   projectSessionSummary,
 } from "./session-state.js";
@@ -14,6 +16,7 @@ export type {
   Message,
   MessageArtifact,
   Session,
+  SessionAccessMode,
   SessionDetail,
   SessionKind,
   SessionSummary,

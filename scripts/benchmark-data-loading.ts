@@ -188,6 +188,8 @@ function createSession(sessionIndex: number, options: ResolvedBenchmarkOptions):
     workspacePath: "benchmark-workspace",
     branch: "benchmark",
     sessionKind: "default",
+    accessMode: "active",
+    sourceSchemaVersion: 4,
     characterId: "benchmark-character",
     character: "Benchmark Character",
     characterIconPath: "",

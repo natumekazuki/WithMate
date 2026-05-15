@@ -41,6 +41,7 @@ export type AgentSessionChatProjectionInput = {
   isEditingTitle: boolean;
   titleDraft: string;
   isSelectedSessionRunning: boolean;
+  isSelectedSessionReadOnly: boolean;
   isCharacterUpdateSession: boolean;
   messageListRef: RefObject<HTMLDivElement | null>;
   pendingRunIndicatorAnnouncement: string;
@@ -185,6 +186,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     isEditingTitle: input.isEditingTitle,
     titleDraft: input.titleDraft,
     isRunning: input.isSelectedSessionRunning,
+    isReadOnly: input.isSelectedSessionReadOnly,
     showTerminalButton: !input.isCharacterUpdateSession,
     onToggleExpanded: input.onToggleHeaderExpanded,
     onOpenAuditLog: input.onOpenAuditLog,

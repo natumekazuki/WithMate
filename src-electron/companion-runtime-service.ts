@@ -95,6 +95,8 @@ function buildProviderSession(session: CompanionSession): Session {
     workspacePath: session.worktreePath,
     branch: session.targetBranch,
     sessionKind: "default",
+    accessMode: "active",
+    sourceSchemaVersion: 4,
     characterId: session.characterId,
     character: session.character,
     characterIconPath: session.characterIconPath,

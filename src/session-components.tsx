@@ -565,6 +565,7 @@ export type SessionHeaderProps = {
   isEditingTitle: boolean;
   titleDraft: string;
   isRunning: boolean;
+  isReadOnly?: boolean;
   showRenameButton?: boolean;
   showAuditLogButton?: boolean;
   showTerminalButton?: boolean;
@@ -587,6 +588,7 @@ export function SessionHeader({
   isEditingTitle,
   titleDraft,
   isRunning,
+  isReadOnly = false,
   showRenameButton = true,
   showAuditLogButton = true,
   showTerminalButton = true,
@@ -626,7 +628,7 @@ export function SessionHeader({
         {!isEditingTitle ? (
           <div className="session-window-controls">
             {showRenameButton ? (
-              <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning}>
+              <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning || isReadOnly}>
                 Rename
               </button>
             ) : null}
@@ -3075,7 +3077,7 @@ export function SessionComposerExpanded({
               <select
                 value={selectedApprovalMode}
                 onChange={(event) => onChangeApprovalMode(event.target.value as ApprovalMode)}
-                disabled={isRunning}
+                disabled={isRunning || composerBlocked}
                 aria-label="Approval"
               >
                 {approvalOptions.map((option) => (
@@ -3092,7 +3094,7 @@ export function SessionComposerExpanded({
                 <select
                   value={selectedCodexSandboxMode}
                   onChange={(event) => onChangeCodexSandboxMode(event.target.value as CodexSandboxMode)}
-                  disabled={isRunning}
+                  disabled={isRunning || composerBlocked}
                   aria-label="Sandbox"
                 >
                   {sandboxOptions.map((option) => (
@@ -3111,7 +3113,7 @@ export function SessionComposerExpanded({
           <select
             value={selectedModel}
             onChange={(event) => onChangeModel(event.target.value)}
-            disabled={isRunning}
+            disabled={isRunning || composerBlocked}
           >
             {modelOptions.length > 0 ? (
               modelOptions.map((option) => (
@@ -3130,7 +3132,7 @@ export function SessionComposerExpanded({
           <select
             value={selectedReasoningEffort}
             onChange={(event) => onChangeReasoningEffort(event.target.value)}
-            disabled={isRunning}
+            disabled={isRunning || composerBlocked}
             aria-label="推論の深さ"
           >
             {reasoningOptions.map((option) => (

@@ -2,6 +2,7 @@ import { getProviderAppSettings, type AppSettings } from "../src/provider-settin
 import {
   buildNewSession,
   cloneSessions,
+  isLegacyReadOnlySession,
   type CreateSessionInput,
   type Session,
 } from "../src/session-state.js";
@@ -45,6 +46,12 @@ function upsertSessionInList(sessions: Session[], stored: Session): Session[] {
   return [stored, ...sessions.filter((session) => session.id !== stored.id)];
 }
 
+function assertSessionWritable(session: Session): void {
+  if (isLegacyReadOnlySession(session)) {
+    throw new Error("旧バージョンから移行された閲覧専用セッションは更新できないよ。");
+  }
+}
+
 export class SessionPersistenceService {
   constructor(private readonly deps: SessionPersistenceServiceDeps) {}
 
@@ -82,6 +89,8 @@ export class SessionPersistenceService {
     if (!currentSession) {
       throw new Error("対象セッションが見つからないよ。");
     }
+
+    assertSessionWritable(currentSession);
 
     if (this.deps.isSessionRunInFlight(nextSession.id) || isRunningSession(currentSession)) {
       throw new Error("実行中のセッションは更新できないよ。");
@@ -132,6 +141,11 @@ export class SessionPersistenceService {
   }
 
   async upsertSession(nextSession: Session): Promise<Session> {
+    const currentSession = this.deps.getSession(nextSession.id);
+    if (currentSession) {
+      assertSessionWritable(currentSession);
+    }
+
     const sessionToStore = await this.mergeStoredMessagesForSummaryOnlySession(nextSession);
     const stored = await this.deps.upsertStoredSession({
       ...sessionToStore,

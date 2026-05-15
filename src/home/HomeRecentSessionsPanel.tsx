@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import type { SessionSummary } from "../app-state.js";
+import { isLegacyReadOnlySession, type SessionSummary } from "../app-state.js";
 import type { CompanionSessionSummary } from "../companion-state.js";
 import { getHomeCompanionSessionState, type HomeSessionState } from "./home-session-projection.js";
 import { buildCardThemeStyle, CharacterAvatar } from "../ui-utils.js";
@@ -140,6 +140,7 @@ export function HomeRecentSessionsPanel({
           }
 
           const { session, state } = item.entry;
+          const isReadOnly = isLegacyReadOnlySession(session);
           return (
             <button
               key={`agent-${session.id}`}
@@ -156,6 +157,7 @@ export function HomeRecentSessionsPanel({
                   <strong>{session.taskTitle}</strong>
                   <div className="home-session-card-badges">
                     <span className="session-mode-badge agent">Agent</span>
+                    {isReadOnly ? <span className="session-status home-session-status neutral">閲覧専用</span> : null}
                     <span className={`session-status home-session-status ${state.kind}`.trim()}>{state.label}</span>
                   </div>
                 </div>

@@ -28,6 +28,8 @@ export const CREATE_SESSIONS_TABLE_SQL = `
     workspace_path TEXT NOT NULL,
     branch TEXT NOT NULL,
     session_kind TEXT NOT NULL DEFAULT 'default',
+    access_mode TEXT NOT NULL DEFAULT 'active',
+    source_schema_version INTEGER NOT NULL DEFAULT 4,
     character_id TEXT NOT NULL,
     character_name TEXT NOT NULL,
     character_icon_path TEXT NOT NULL,
@@ -56,6 +58,8 @@ export const LEGACY_SESSION_COLUMN_DEFINITIONS = {
   allowed_additional_directories_json: "TEXT NOT NULL DEFAULT '[]'",
   character_theme_main: "TEXT NOT NULL DEFAULT '#6f8cff'",
   character_theme_sub: "TEXT NOT NULL DEFAULT '#6fb8c7'",
+  access_mode: "TEXT NOT NULL DEFAULT 'active'",
+  source_schema_version: "INTEGER NOT NULL DEFAULT 4",
 } as const;
 
 export const CREATE_AUDIT_LOGS_TABLE_SQL = `
