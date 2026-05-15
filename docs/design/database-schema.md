@@ -20,7 +20,7 @@ WithMate が現在どこに何を保存しているかを、1 枚で把握でき
 
 この文書は current 実装を対象にする。
 
-2026-05-14 時点で、4.0 runtime の新規作成 DB は `<userData>/withmate-v4.db` を canonical path とする。既存の有効な V3 / V2 / V1 DB がある場合は legacy fallback として開くが、起動時に暗黙 migration は行わない。current 実装の `<userData>/characters/` は 3.x legacy storage として記載し、Mate 関連の SQLite schema 詳細は `docs/design/mate-storage-schema.md` を参照する。
+2026-05-14 時点で、4.0 runtime の新規作成 DB は `<userData>/withmate-v4.db` を canonical path とする。`withmate-v4.db` が存在しない状態で既存の V3 / V2 / V1 DB がある場合は、起動時に同じ `<userData>` 配下へ V4 DB を自動作成する。migration 元の DB と blob / character file は削除せず、そのまま残す。current 実装の `<userData>/characters/` は 3.x legacy storage として記載し、Mate 関連の SQLite schema 詳細は `docs/design/mate-storage-schema.md` を参照する。
 
 V1 schema の SQL 正本は `src-electron/database-schema-v1.ts`、V2 schema の SQL 正本は `src-electron/database-schema-v2.ts`、V3 schema の SQL 正本は `src-electron/database-schema-v3.ts`、V4 schema の SQL 正本は `src-electron/database-schema-v4.ts` に置く。
 
@@ -40,9 +40,10 @@ future design だけで未実装のものは、最後に別枠で注記する。
   - `<userData>/withmate-v2.db`
   - `<userData>/withmate.db`
 - DB path selection:
-  - 有効な DB がある場合は `withmate-v4.db`、`withmate-v3.db`、`withmate-v2.db`、`withmate.db` の順に選ぶ
-  - どの DB も存在しない fresh install では `withmate-v4.db` を返す
-  - 空または未完成の上位世代 DB は、下位の有効な DB があれば shadow しない
+  - `withmate-v4.db` が存在する場合はそれを canonical DB として選び、V3 / V2 / V1 の migration check は行わない
+  - `withmate-v4.db` が存在しない場合だけ、`withmate-v3.db`、`withmate-v2.db`、`withmate.db` の順に migration source を探す
+  - migration source が見つかった場合は同じ `<userData>` 配下へ `withmate-v4.db` を自動作成し、作成後の V4 DB を開く
+  - どの DB も存在しない fresh install では `withmate-v4.db` path を返すが、path 解決だけでは DB file を作成しない
 - DB diagnostics:
   - V4 DB は作成時に `PRAGMA user_version = 4` を設定する
   - runtime は `withmate:get-app-database-diagnostics` で active DB path、`WITHMATE_USER_DATA_PATH` override の有無、schema version、compatibility mode、既知 DB 世代ごとの valid/invalid 状態を返す
@@ -59,10 +60,11 @@ future design だけで未実装のものは、最後に別枠で注記する。
 - V2 migration policy:
   - `docs/design/database-v2-migration.md`
 - V4 upgrade / import policy:
-  - runtime は V3 / V2 / V1 から V4 への暗黙 migration を行わない
-  - V3 から V4 へ持ち上げる supported path は `scripts/migrate-database-v3-to-v4.ts` の明示 import とする
+  - runtime は `withmate-v4.db` が存在しない場合に V3 / V2 / V1 から V4 への自動 migration を行う
+  - V3 から V4 へ持ち上げる処理は `scripts/migrate-database-v3-to-v4.ts` の write path を使う
   - V1 / V2 から V4 へ上げる場合は、既存の `scripts/migrate-database-v1-to-v2.ts`、`scripts/migrate-database-v2-to-v3.ts` で V3 へ上げた後、V3 -> V4 import を実行する
   - V3 -> V4 import は `session`、`audit log`、`app_settings`、`model_catalog_*` を V4 DB 内の runtime 互換 table へ取り込む。Mate profile / growth / provider instruction targets は V4 側で新規開始する
+  - migration 元の V3 / V2 / V1 DB、`<userData>/blobs/v3/`、`<userData>/characters/` は削除しない
   - dry-run: `npx tsx scripts/migrate-database-v3-to-v4.ts --dry-run --v3 <userData>/withmate-v3.db [--blob-root <userData>/blobs/v3]`
   - write: `npx tsx scripts/migrate-database-v3-to-v4.ts --write --v3 <userData>/withmate-v3.db --v4 <userData>/withmate-v4.db [--blob-root <userData>/blobs/v3] [--overwrite]`
   - `--overwrite` を指定した場合、既存 `withmate-v4.db` / `-wal` / `-shm` は rename backup してから import し、成功後に backup を破棄する
@@ -692,17 +694,19 @@ V4 DB 内の既存 runtime table:
 - `character_scopes`
 - `character_memory_entries`
 
-### Legacy runtime
+### Legacy migration sources
 
-有効な V4 DB がない場合だけ、既存世代 DB を legacy fallback として開く。
+4.0 runtime は legacy DB を通常運用の fallback として開かない。
+`withmate-v4.db` が存在しない場合だけ、既存世代 DB を V4 自動 migration の source として扱う。
 
 - V3: `<userData>/withmate-v3.db` と `<userData>/blobs/v3/`
 - V2: `<userData>/withmate-v2.db`
 - V1: `<userData>/withmate.db`
 - 3.x character catalog: `<userData>/characters/`
 
-legacy DB を開く場合、runtime は該当世代の読み書き境界に留まり、V4 Mate table を legacy DB に作成しない。
-V3 / V2 / V1 から V4 への暗黙 migration は行わない。
+runtime 起動時の自動 migration は V3 -> V4、V2 -> V3 -> V4、V1 -> V2 -> V3 -> V4 の順で実行する。
+migration 元の legacy DB と file storage は削除しない。
+V4 Mate table は legacy DB へ作成せず、新規 `withmate-v4.db` にだけ作成する。
 
 ### V2 migration target
 
@@ -726,7 +730,7 @@ V2 では Home 一覧と audit log modal 初期表示で巨大 JSON を読まな
 `src-electron/database-schema-v3.ts` で固定した V3 schema は、V2 schema を基礎にしつつ raw/detail payload を `<userData>/blobs/v3/` へ外出しする。
 V3 の詳細は `docs/design/database-v3-blob-storage.md` を参照する。
 
-V3 は 4.0 runtime では legacy fallback として読む。V4 へ移行する supported path は `scripts/migrate-database-v3-to-v4.ts` の明示 import であり、runtime 起動時の暗黙 migration ではない。
+V3 は 4.0 runtime で V4 自動 migration の source として読む。V4 へ移行する runtime path は `scripts/migrate-database-v3-to-v4.ts` の write path を使う。dry-run や overwrite を手動で制御したい場合は、同 script を明示実行する。
 
 ### V4 import target
 

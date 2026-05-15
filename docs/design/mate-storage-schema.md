@@ -14,8 +14,9 @@ WithMate 4.0.0 の完全 SingleMate 方針に合わせて、`withmate-v4.db` の
 - SingleMate product / API の正本は `docs/design/single-mate-architecture.md` を参照する
 - provider instruction sync の詳細は `docs/design/provider-instruction-sync.md` を参照する
 - current / future DB 全体の一覧は `docs/design/database-schema.md` を参照する
-- 4.0.0 は後方互換なしの破壊的変更として扱い、既存 V1 / V2 / V3 DB からの暗黙 migration は行わない
-- V3 以前から V4 へ上げる場合は `docs/design/database-schema.md` の明示 import path を使う。import 対象は session / audit log / app settings / model catalog であり、Mate Profile / Growth / provider instruction targets は V4 側で新規開始する
+- 4.0.0 は後方互換なしの破壊的変更として扱い、`withmate-v4.db` が存在しない場合は既存 V1 / V2 / V3 DB から V4 へ自動 migration する
+- V3 以前から V4 へ上げる場合の import 対象は session / audit log / app settings / model catalog であり、Mate Profile / Growth / provider instruction targets は V4 側で新規開始する
+- migration 元の V1 / V2 / V3 DB、blob、character file は削除せず残す
 
 ## Core Decisions
 

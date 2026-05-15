@@ -198,6 +198,8 @@ describe("SessionStorage", () => {
           workspacePath: session.workspacePath,
           branch: session.branch,
           sessionKind: session.sessionKind,
+          accessMode: session.accessMode,
+          sourceSchemaVersion: session.sourceSchemaVersion,
           characterId: session.characterId,
           character: session.character,
           characterIconPath: session.characterIconPath,
