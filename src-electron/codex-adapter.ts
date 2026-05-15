@@ -1064,13 +1064,20 @@ export class CodexAdapter implements ProviderTurnAdapter {
   }
 
   private buildBackgroundThreadOptions(input: RunBackgroundStructuredPromptInput) {
+    const additionalDirectories = normalizeAllowedAdditionalDirectories(
+      input.workspacePath,
+      input.additionalDirectories ?? [],
+    );
+    const sandboxOptions = resolveCodexSandboxThreadOptions(input.codexSandboxMode ?? "read-only");
     return {
       workingDirectory: input.workspacePath,
       skipGitRepoCheck: true as const,
-      sandboxMode: "read-only" as const,
-      approvalPolicy: "never" as const,
+      sandboxMode: sandboxOptions.sandboxMode,
+      approvalPolicy: mapApprovalModeToCodexPolicy(input.approvalMode ?? "never"),
       model: input.model,
       modelReasoningEffort: input.reasoningEffort,
+      ...(sandboxOptions.networkAccessEnabled ? { networkAccessEnabled: true } : {}),
+      ...(additionalDirectories.length > 0 ? { additionalDirectories } : {}),
     };
   }
 

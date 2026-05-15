@@ -22,6 +22,8 @@ import type {
   SessionMemoryDelta,
 } from "../src/app-state.js";
 import type { ModelReasoningEffort, ModelCatalogProvider } from "../src/model-catalog.js";
+import type { ApprovalMode } from "../src/approval-mode.js";
+import type { CodexSandboxMode } from "../src/codex-sandbox-mode.js";
 import type { CharacterReflectionPrompt, CharacterReflectionTriggerReason } from "./character-reflection.js";
 import type { SessionMemoryExtractionPrompt } from "./session-memory-extraction.js";
 
@@ -126,6 +128,9 @@ export type RunBackgroundStructuredPromptInput = {
   model: string;
   reasoningEffort: ModelReasoningEffort;
   timeoutMs: number;
+  additionalDirectories?: string[];
+  approvalMode?: ApprovalMode;
+  codexSandboxMode?: CodexSandboxMode;
   prompt: {
     systemText: string;
     userText: string;

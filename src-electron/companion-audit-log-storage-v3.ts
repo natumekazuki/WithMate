@@ -19,6 +19,7 @@ import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mo
 import { DEFAULT_MODEL_ID, DEFAULT_PROVIDER_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
 import { previewAuditLogicalPrompt } from "./audit-log-detail-preview.js";
 import {
+  CREATE_V3_BLOB_OBJECTS_TABLE_SQL,
   V3_DETAILS_PREVIEW_MAX_LENGTH,
   V3_OPERATION_SUMMARY_MAX_LENGTH,
   V3_TEXT_PREVIEW_MAX_LENGTH,
@@ -99,6 +100,52 @@ type OperationBlobIdRow = {
 
 const DEFAULT_AUDIT_LOG_PAGE_LIMIT = 50;
 const MAX_AUDIT_LOG_PAGE_LIMIT = 200;
+
+const CREATE_COMPANION_AUDIT_LOG_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS companion_audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES companion_sessions(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    reasoning_effort TEXT NOT NULL,
+    approval_mode TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    assistant_text_preview TEXT NOT NULL,
+    operation_count INTEGER NOT NULL DEFAULT 0,
+    raw_item_count INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER,
+    cached_input_tokens INTEGER,
+    output_tokens INTEGER,
+    has_error INTEGER NOT NULL DEFAULT 0,
+    error_message_preview TEXT NOT NULL DEFAULT '',
+    detail_available INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_companion_audit_logs_session_created
+    ON companion_audit_logs(session_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS companion_audit_log_details (
+    audit_log_id INTEGER PRIMARY KEY REFERENCES companion_audit_logs(id) ON DELETE CASCADE,
+    logical_prompt_blob_id TEXT,
+    transport_payload_blob_id TEXT,
+    assistant_text_blob_id TEXT,
+    raw_items_blob_id TEXT,
+    usage_metadata_json TEXT NOT NULL DEFAULT '',
+    usage_blob_id TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS companion_audit_log_operations (
+    audit_log_id INTEGER NOT NULL REFERENCES companion_audit_logs(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,
+    operation_type TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    details_preview TEXT NOT NULL DEFAULT '',
+    details_blob_id TEXT,
+    PRIMARY KEY (audit_log_id, seq)
+  );
+`;
 
 const DEFAULT_LOGICAL_PROMPT: AuditLogicalPrompt = {
   systemText: "",
@@ -659,8 +706,32 @@ function collectAllAuditLogBlobIds(db: DatabaseSync): string[] {
 function isBlobReferenced(db: DatabaseSync, blobId: string): boolean {
   return LIVE_BLOB_REF_QUERIES.some((query) => {
     const parameterCount = (query.match(/\?/g) ?? []).length;
-    return db.prepare(query).get(...Array.from({ length: parameterCount }, () => blobId)) !== undefined;
+    try {
+      return db.prepare(query).get(...Array.from({ length: parameterCount }, () => blobId)) !== undefined;
+    } catch (error) {
+      if (error instanceof Error && /no such table/i.test(error.message)) {
+        return false;
+      }
+      throw error;
+    }
   });
+}
+
+function tableExists(db: DatabaseSync, tableName: string): boolean {
+  return db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ? LIMIT 1").get(tableName) !== undefined;
+}
+
+function ensureCompanionSessionAuditLogCountColumn(db: DatabaseSync): void {
+  if (!tableExists(db, "companion_sessions")) {
+    return;
+  }
+
+  const columns = new Set(
+    (db.prepare("PRAGMA table_info(companion_sessions)").all() as { name: string }[]).map((column) => column.name),
+  );
+  if (!columns.has("audit_log_count")) {
+    db.exec("ALTER TABLE companion_sessions ADD COLUMN audit_log_count INTEGER NOT NULL DEFAULT 0;");
+  }
 }
 
 function deleteUnreferencedBlobObjectRows(db: DatabaseSync, blobIds: readonly string[]): string[] {
@@ -699,6 +770,11 @@ export class CompanionAuditLogStorageV3 {
   constructor(dbPath: string, blobRootPath: string) {
     this.dbPath = dbPath;
     this.blobStore = new TextBlobStore(blobRootPath);
+    this.withDb((db) => {
+      db.exec(CREATE_V3_BLOB_OBJECTS_TABLE_SQL);
+      db.exec(CREATE_COMPANION_AUDIT_LOG_TABLES_SQL);
+      ensureCompanionSessionAuditLogCountColumn(db);
+    });
   }
 
   private withDb<T>(runner: (db: DatabaseSync) => T): T {

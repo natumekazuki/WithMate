@@ -197,6 +197,7 @@ import { inspectAppDatabase } from "./app-database-diagnostics.js";
 import { resolveOrMigrateAppDatabasePath } from "./app-database-path.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
+import { isValidV4Database } from "./database-schema-v4.js";
 import {
   openAppDatabase,
   SQLITE_MAINTENANCE_BUSY_TIMEOUT_MS,
@@ -1642,7 +1643,7 @@ async function syncProviderInstructionTargetsForDisabledMateProfile(): Promise<v
         },
         error: appLogService.errorToLogError(error),
       });
-      return;
+      throw error;
     }
 
     writeAppLog({
@@ -1652,6 +1653,7 @@ async function syncProviderInstructionTargetsForDisabledMateProfile(): Promise<v
       message: "Mate reset 後の Provider Instruction cleanup が完了しませんでした。再同期を実行してください。",
       error: appLogService.errorToLogError(error),
     });
+    throw error;
   }
 }
 
@@ -1736,11 +1738,36 @@ function extractMateTalkAssistantMessage(value: unknown): string | null {
     : null;
 }
 
+function buildMateTalkSelectedContextText(input: {
+  attachments?: MateTalkTurnInput["attachments"];
+  additionalDirectories?: MateTalkTurnInput["additionalDirectories"];
+}): string {
+  const lines: string[] = [];
+  for (const attachment of input.attachments ?? []) {
+    const normalizedPath = attachment.path.trim();
+    if (normalizedPath) {
+      lines.push(`- ${attachment.kind}: ${normalizedPath}`);
+    }
+  }
+  for (const directory of input.additionalDirectories ?? []) {
+    const normalizedDirectory = directory.trim();
+    if (normalizedDirectory) {
+      lines.push(`- additional-directory: ${normalizedDirectory}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
 async function generateMateTalkAssistantMessage(input: {
   userMessage: string;
   provider?: string;
   model?: string;
   reasoningEffort?: MateMemoryGenerationProviderSettings["reasoningEffort"];
+  attachments?: MateTalkTurnInput["attachments"];
+  additionalDirectories?: MateTalkTurnInput["additionalDirectories"];
+  approvalMode?: MateTalkTurnInput["approvalMode"];
+  codexSandboxMode?: MateTalkTurnInput["codexSandboxMode"];
   mateProfile: {
     id: string;
     displayName: string;
@@ -1771,6 +1798,10 @@ async function generateMateTalkAssistantMessage(input: {
     preparedRun = await workspaceService.prepareRun();
     await workspaceService.regenerateInstructionFiles(buildMateTalkRuntimeInstructionFiles(input.mateProfile));
     const profileContextText = sanitizeMateTalkProfileContextText(input.mateProfile.contextText);
+    const selectedContextText = buildMateTalkSelectedContextText({
+      attachments: input.attachments,
+      additionalDirectories: input.additionalDirectories,
+    });
 
     for (const candidate of candidates) {
       const providerSettings = getProviderAppSettings(appSettings, candidate.provider);
@@ -1801,7 +1832,7 @@ async function generateMateTalkAssistantMessage(input: {
             systemText: [
               "あなたは WithMate の Mate として、ユーザーと自然に会話します。",
               "Mate の現在の定義を尊重し、まだ未確定な性格や口調は決めつけすぎないでください。",
-              "ファイル操作や外部操作は行わず、会話文だけを返してください。",
+              "指定された参照パスは必要な範囲で読み取り用の文脈として扱い、ファイルの作成・更新・削除は行わず、会話文だけを返してください。",
               "返答は JSON object のみを返してください。",
             ].join("\n"),
             userText: [
@@ -1810,6 +1841,7 @@ async function generateMateTalkAssistantMessage(input: {
               `name: ${input.mateProfile.displayName}`,
               `description: ${input.mateProfile.description || "(未設定)"}`,
               ...(profileContextText ? [``, "# Profile context", profileContextText] : []),
+              ...(selectedContextText ? [``, "# Selected context", selectedContextText] : []),
               "",
               "# User message",
               input.userMessage,
@@ -1819,6 +1851,9 @@ async function generateMateTalkAssistantMessage(input: {
             ].join("\n"),
             outputSchema: MATE_TALK_OUTPUT_SCHEMA,
           },
+          additionalDirectories: input.additionalDirectories,
+          approvalMode: input.approvalMode,
+          codexSandboxMode: input.codexSandboxMode,
         });
 
         const output = result.structuredOutput ?? result.parsedJson ?? result.output;
@@ -2077,13 +2112,13 @@ function requireCompanionStorage(): CompanionStorageHandle {
 }
 
 function canUseCompanionAuditLogStorage(): boolean {
-  return dbPath.length > 0 && isValidV3Database(dbPath);
+  return dbPath.length > 0 && (isValidV3Database(dbPath) || isValidV4Database(dbPath));
 }
 
 function requireCompanionAuditLogStorage(): CompanionAuditLogStorageV3 {
   if (!companionAuditLogStorage) {
     if (!canUseCompanionAuditLogStorage()) {
-      throw new Error("companion audit log storage は V3 DB でだけ利用できます。");
+      throw new Error("companion audit log storage は V3/V4 DB でだけ利用できます。");
     }
     companionAuditLogStorage = new CompanionAuditLogStorageV3(dbPath, path.join(path.dirname(dbPath), "blobs", "v3"));
   }

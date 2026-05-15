@@ -23,6 +23,10 @@ export type MateTalkServiceDeps = {
       themeSub: string;
       contextText?: string;
     };
+    attachments?: MateTalkTurnInput["attachments"];
+    additionalDirectories?: MateTalkTurnInput["additionalDirectories"];
+    approvalMode?: MateTalkTurnInput["approvalMode"];
+    codexSandboxMode?: MateTalkTurnInput["codexSandboxMode"];
   }) => Promise<string>;
   scheduleMemoryGeneration?(input: ScheduleMateTalkMemoryGenerationInput): unknown;
   onMemoryGenerationScheduleError?(error: unknown): void | Promise<void>;
@@ -72,6 +76,10 @@ export class MateTalkService {
       ...(input.provider ? { provider: input.provider } : {}),
       ...(input.model ? { model: input.model } : {}),
       ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+      ...(input.attachments ? { attachments: input.attachments } : {}),
+      ...(input.additionalDirectories ? { additionalDirectories: input.additionalDirectories } : {}),
+      ...(input.approvalMode ? { approvalMode: input.approvalMode } : {}),
+      ...(input.codexSandboxMode ? { codexSandboxMode: input.codexSandboxMode } : {}),
       mateProfile,
     }) ?? Promise.resolve(MateTalkService.fallbackMessage));
     const assistantMessage = assistantMessageRaw.trim() || MateTalkService.fallbackMessage;

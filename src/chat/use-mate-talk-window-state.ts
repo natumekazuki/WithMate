@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from "../approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE, normalizeCodexSandboxMode, type CodexSandboxMode } from "../codex-sandbox-mode.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
+import type { MateTalkPathReference } from "../mate/mate-state.js";
 import type { ModelCatalogSnapshot, ModelReasoningEffort } from "../model-catalog.js";
 import { getApprovalOptionsForProvider, getSandboxOptionsForProvider } from "../provider-runtime-options.js";
 import {
@@ -66,7 +67,7 @@ export function useMateTalkWindowState({
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [inputCaret, setInputCaret] = useState(0);
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
-  const [pathReferences, setPathReferences] = useState<Array<{ path: string; kind: "file" | "folder" | "image" }>>([]);
+  const [pathReferences, setPathReferences] = useState<MateTalkPathReference[]>([]);
   const [additionalDirectories, setAdditionalDirectories] = useState<string[]>([]);
   const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
   const [selectedApprovalMode, setSelectedApprovalMode] = useState<ApprovalMode>(DEFAULT_APPROVAL_MODE);
@@ -341,6 +342,10 @@ export function useMateTalkWindowState({
     setSending(true);
     setFeedback("");
     setMessages((current) => [...current, userMessage]);
+    const turnAttachments = pathReferences;
+    const turnAdditionalDirectories = additionalDirectories;
+    const turnApprovalMode = selectedApprovalMode;
+    const turnCodexSandboxMode = sandboxOptions.length > 0 ? selectedCodexSandboxMode : undefined;
     setInput("");
     setInputCaret(0);
     setPathReferences([]);
@@ -354,6 +359,10 @@ export function useMateTalkWindowState({
         provider: providerId,
         model,
         reasoningEffort,
+        attachments: turnAttachments,
+        additionalDirectories: turnAdditionalDirectories,
+        approvalMode: turnApprovalMode,
+        ...(turnCodexSandboxMode ? { codexSandboxMode: turnCodexSandboxMode } : {}),
       });
       if (!turnControllerRef.current.isLatestTurn(turnId)) {
         return;

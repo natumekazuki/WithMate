@@ -226,17 +226,35 @@ describe("resolveAppDatabasePath", () => {
 });
 
 describe("resolveOrMigrateAppDatabasePath", () => {
-  it("withmate-v4.db が存在する場合は legacy DB を読まずに V4 を返す", async () => {
+  it("有効な withmate-v4.db が存在する場合は legacy DB を読まずに V4 を返す", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
 
     try {
       const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
       const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
       await writeFile(v3Path, "not sqlite");
+      createV4Database(v4Path);
+
+      const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
+      assert.equal(selectedPath, v4Path);
+      assert.equal(isValidV4Database(v4Path), true);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("不正な withmate-v4.db が有効な V3 を shadow しない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+
+    try {
+      const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      createV3Database(v3Path);
       await writeFile(v4Path, "not sqlite");
 
       const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
       assert.equal(selectedPath, v4Path);
+      assert.equal(isValidV4Database(v4Path), true);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }

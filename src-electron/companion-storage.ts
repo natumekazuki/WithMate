@@ -477,6 +477,7 @@ export class CompanionStorage {
         character_icon_path TEXT NOT NULL,
         character_theme_main TEXT NOT NULL DEFAULT '#6f8cff',
         character_theme_sub TEXT NOT NULL DEFAULT '#6fb8c7',
+        audit_log_count INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -553,6 +554,9 @@ export class CompanionStorage {
     }
     if (!columns.has("character_role_markdown")) {
       this.db.exec("ALTER TABLE companion_sessions ADD COLUMN character_role_markdown TEXT NOT NULL DEFAULT '';");
+    }
+    if (!columns.has("audit_log_count")) {
+      this.db.exec("ALTER TABLE companion_sessions ADD COLUMN audit_log_count INTEGER NOT NULL DEFAULT 0;");
     }
 
     const mergeRunColumns = new Set(

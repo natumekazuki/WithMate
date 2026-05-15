@@ -26,15 +26,8 @@ export function isValidV2Database(dbPath: string): boolean {
   let db: DatabaseSync | null = null;
   try {
     db = new DatabaseSync(dbPath, { readOnly: true });
-    const placeholders = REQUIRED_V2_TABLES.map(() => "?").join(", ");
-    const rows = db.prepare(`
-      SELECT name
-      FROM sqlite_master
-      WHERE type = 'table'
-        AND name IN (${placeholders})
-    `).all(...REQUIRED_V2_TABLES) as Array<{ name: string }>;
-    const tableNames = new Set(rows.map((row) => row.name));
-    return REQUIRED_V2_TABLES.every((tableName) => tableNames.has(tableName));
+    const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+    return row?.user_version === APP_DATABASE_V2_SCHEMA_VERSION;
   } catch {
     return false;
   } finally {
@@ -225,6 +218,7 @@ export const CREATE_V2_MODEL_CATALOG_TABLES_SQL = `
 `;
 
 export const CREATE_V2_SCHEMA_SQL = [
+  `PRAGMA user_version = ${APP_DATABASE_V2_SCHEMA_VERSION};`,
   CREATE_V2_APP_SETTINGS_TABLE_SQL,
   CREATE_V2_SESSIONS_TABLE_SQL,
   CREATE_V2_SESSION_MESSAGES_TABLE_SQL,

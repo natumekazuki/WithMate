@@ -99,7 +99,7 @@ describe("database-schema-v3", () => {
     }
   });
 
-  it("isValidV3Database は filename と required tables の両方を検証する", () => {
+  it("isValidV3Database は filename と schema version を検証する", () => {
     const dirPath = mkdtempSync(join(tmpdir(), "withmate-v3-schema-"));
     try {
       const validDbPath = join(dirPath, APP_DATABASE_V3_FILENAME);
