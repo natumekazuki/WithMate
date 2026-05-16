@@ -4,7 +4,13 @@ import path from "node:path";
 import { APP_DATABASE_V1_FILENAME } from "./database-schema-v1.js";
 import { APP_DATABASE_V2_FILENAME, isValidV2Database } from "./database-schema-v2.js";
 import { APP_DATABASE_V3_FILENAME, isValidV3Database } from "./database-schema-v3.js";
-import { APP_DATABASE_V4_FILENAME, isValidV4Database } from "./database-schema-v4.js";
+import {
+  APP_DATABASE_V4_FILENAME,
+  APP_DATABASE_V4_SCHEMA_VERSION,
+  isUnsupportedNewerV4Database,
+  isValidV4Database,
+  readV4DatabaseUserVersion,
+} from "./database-schema-v4.js";
 
 function v3BlobRootPath(userDataPath: string): string {
   return path.join(userDataPath, "blobs", "v3");
@@ -39,6 +45,14 @@ export async function resolveOrMigrateAppDatabasePath(userDataPath: string): Pro
   const v4Exists = existsSync(v4Path);
   if (v4Exists && isValidV4Database(v4Path)) {
     return v4Path;
+  }
+  if (v4Exists && isUnsupportedNewerV4Database(v4Path)) {
+    const userVersion = readV4DatabaseUserVersion(v4Path);
+    throw new Error(
+      `${APP_DATABASE_V4_FILENAME} はこの WithMate が対応していない新しい DB バージョンです。`
+      + ` user_version=${userVersion} は対応バージョン ${APP_DATABASE_V4_SCHEMA_VERSION} より新しいため、`
+      + "legacy DB からの自動移行で上書きしません。",
+    );
   }
 
   const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);

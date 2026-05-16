@@ -339,8 +339,10 @@ mode ごとに切り替えるもの:
 - right pane に表示する内容
 - audit / task / command monitor の有無
 
-メイトークでは、Agent 作業用の file / folder / image / skill / custom agent / approval controls は表示しない。
-一方で Model / Depth selection、header collapse、right pane shell は Session と同じ UI 部品を使う。
+メイトークでは、通常 Session と同じ composer control のうち、file / folder / image / additional directory / approval / model / depth を表示し、選択値を background provider 実行 payload に渡す。
+Codex sandbox selector は Codex provider のときだけ表示し、Copilot など sandbox を解釈しない provider では表示しない。
+skill / custom agent など MateTalk 実行 payload に接続していない作業用操作は、接続するまで表示しない。
+MateTalk background 実行の provider capability 判定では structured output の保証を必須条件とし、file write / shell write / tool permission request は通常 Session と同じユーザー選択権限として扱う。
 right pane に出す情報がない場合は空の構造だけを保ち、説明文で埋めない。
 
 ## Growth Policy

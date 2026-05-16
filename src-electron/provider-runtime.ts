@@ -22,8 +22,8 @@ import type {
   SessionMemoryDelta,
 } from "../src/app-state.js";
 import type { ModelReasoningEffort, ModelCatalogProvider } from "../src/model-catalog.js";
-import type { ApprovalMode } from "../src/approval-mode.js";
-import type { CodexSandboxMode } from "../src/codex-sandbox-mode.js";
+import { normalizeApprovalMode, type ApprovalMode } from "../src/approval-mode.js";
+import { normalizeCodexSandboxMode, type CodexSandboxMode } from "../src/codex-sandbox-mode.js";
 import type { CharacterReflectionPrompt, CharacterReflectionTriggerReason } from "./character-reflection.js";
 import type { SessionMemoryExtractionPrompt } from "./session-memory-extraction.js";
 
@@ -214,6 +214,12 @@ export type ProviderBackgroundStructuredPromptCapability = {
   reasons: readonly ProviderBackgroundStructuredPromptIncompatibilityReason[];
 };
 
+export type ProviderBackgroundStructuredPromptEvaluationOptions = {
+  operationPermissionMode?: "read-only-required" | "user-selected";
+  approvalMode?: ApprovalMode;
+  codexSandboxMode?: CodexSandboxMode;
+};
+
 export type ProviderBackgroundStructuredPromptCapabilitySummary = {
   structuredOutputSupported: boolean;
   providerSchemaSupported: boolean;
@@ -242,25 +248,65 @@ export const MATE_TALK_SCHEMA_SUBMIT_TOOL_BACKGROUND_STRUCTURED_PROMPT_POLICY: P
 export const MATE_TALK_BACKGROUND_STRUCTURED_PROMPT_POLICY =
   MATE_TALK_PROVIDER_SCHEMA_BACKGROUND_STRUCTURED_PROMPT_POLICY;
 
+function selectedCodexSandboxAllowsWrites(mode: CodexSandboxMode | undefined): boolean {
+  if (!mode) {
+    return false;
+  }
+
+  const normalized = normalizeCodexSandboxMode(mode);
+  return normalized === "workspace-write"
+    || normalized === "workspace-write-network"
+    || normalized === "danger-full-access";
+}
+
+function selectedApprovalAllowsToolPermissionRequests(mode: ApprovalMode | undefined): boolean {
+  if (!mode) {
+    return false;
+  }
+
+  return normalizeApprovalMode(mode) !== "never";
+}
+
+export function resolveMateTalkBackgroundStructuredPromptPolicy(
+  policy: ProviderBackgroundStructuredPromptPolicy,
+  options: ProviderBackgroundStructuredPromptEvaluationOptions = {},
+): ProviderBackgroundStructuredPromptPolicy {
+  if (options.operationPermissionMode !== "user-selected") {
+    return policy;
+  }
+
+  const allowsCodexWrites = selectedCodexSandboxAllowsWrites(options.codexSandboxMode);
+  return {
+    ...policy,
+    allowsFileWrite: policy.allowsFileWrite || allowsCodexWrites,
+    allowsShellWrite: policy.allowsShellWrite || allowsCodexWrites,
+    allowsToolPermissionRequests: policy.allowsToolPermissionRequests
+      || selectedApprovalAllowsToolPermissionRequests(options.approvalMode),
+  };
+}
+
 export function evaluateMateTalkBackgroundStructuredPromptPolicy(
   policy: ProviderBackgroundStructuredPromptPolicy,
+  options: ProviderBackgroundStructuredPromptEvaluationOptions = {},
 ): ProviderBackgroundStructuredPromptCapability {
+  const effectivePolicy = resolveMateTalkBackgroundStructuredPromptPolicy(policy, options);
+  const requireReadOnly = options.operationPermissionMode !== "user-selected";
   const reasons: ProviderBackgroundStructuredPromptIncompatibilityReason[] = [];
-  if (policy.allowsFileWrite) {
+  if (requireReadOnly && effectivePolicy.allowsFileWrite) {
     reasons.push("file_write_allowed");
   }
-  if (policy.allowsShellWrite) {
+  if (requireReadOnly && effectivePolicy.allowsShellWrite) {
     reasons.push("shell_write_allowed");
   }
-  if (policy.allowsToolPermissionRequests) {
+  if (requireReadOnly && effectivePolicy.allowsToolPermissionRequests) {
     reasons.push("tool_permission_requests_allowed");
   }
-  if (!policy.structuredOutputOnly) {
+  if (!effectivePolicy.structuredOutputOnly) {
     reasons.push("structured_output_not_guaranteed");
   }
   return {
     compatible: reasons.length === 0,
-    policy,
+    policy: effectivePolicy,
     reasons,
   };
 }
@@ -280,18 +326,23 @@ export function summarizeMateTalkBackgroundStructuredPromptCapability(
 
 export function getMateTalkBackgroundStructuredPromptCapability(
   adapter: ProviderBackgroundAdapter,
+  options: ProviderBackgroundStructuredPromptEvaluationOptions = {},
 ): ProviderBackgroundStructuredPromptCapability {
-  return evaluateMateTalkBackgroundStructuredPromptPolicy(adapter.getBackgroundStructuredPromptPolicy());
+  return evaluateMateTalkBackgroundStructuredPromptPolicy(adapter.getBackgroundStructuredPromptPolicy(), options);
 }
 
 export function isMateTalkBackgroundStructuredPromptPolicyCompatible(
   policy: ProviderBackgroundStructuredPromptPolicy,
+  options: ProviderBackgroundStructuredPromptEvaluationOptions = {},
 ): boolean {
-  return evaluateMateTalkBackgroundStructuredPromptPolicy(policy).compatible;
+  return evaluateMateTalkBackgroundStructuredPromptPolicy(policy, options).compatible;
 }
 
-export function canUseProviderForMateTalkBackgroundPrompt(adapter: ProviderBackgroundAdapter): boolean {
-  return getMateTalkBackgroundStructuredPromptCapability(adapter).compatible;
+export function canUseProviderForMateTalkBackgroundPrompt(
+  adapter: ProviderBackgroundAdapter,
+  options: ProviderBackgroundStructuredPromptEvaluationOptions = {},
+): boolean {
+  return getMateTalkBackgroundStructuredPromptCapability(adapter, options).compatible;
 }
 
 export type ProviderTurnAdapter = ProviderCodingAdapter & ProviderBackgroundAdapter;

@@ -1810,7 +1810,11 @@ async function generateMateTalkAssistantMessage(input: {
       }
 
       const backgroundAdapter = getProviderBackgroundAdapter(candidate.provider);
-      const capability = getMateTalkBackgroundStructuredPromptCapability(backgroundAdapter);
+      const capability = getMateTalkBackgroundStructuredPromptCapability(backgroundAdapter, {
+        operationPermissionMode: "user-selected",
+        approvalMode: input.approvalMode,
+        codexSandboxMode: input.codexSandboxMode,
+      });
       if (!capability.compatible) {
         console.warn(
           "メイトーク背景 structured prompt の条件を満たさない provider をスキップしました:",

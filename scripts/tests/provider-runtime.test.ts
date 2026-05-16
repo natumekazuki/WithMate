@@ -8,6 +8,7 @@ import {
   isMateTalkBackgroundStructuredPromptPolicyCompatible,
   getMateTalkBackgroundStructuredPromptCapability,
   summarizeMateTalkBackgroundStructuredPromptCapability,
+  resolveMateTalkBackgroundStructuredPromptPolicy,
   type ProviderBackgroundStructuredPromptPolicy,
 } from "../../src-electron/provider-runtime.js";
 
@@ -87,6 +88,50 @@ describe("provider-runtime background structured prompt policy", () => {
     assert.equal(capability.compatible, true);
     assert.equal(capability.policy, MATE_TALK_SUPPORTED_POLICY);
     assert.deepEqual(capability.reasons, []);
+  });
+
+  it("MateTalk のユーザー選択権限では approval / sandbox の実効 policy を反映する", () => {
+    const capability = evaluateMateTalkBackgroundStructuredPromptPolicy(MATE_TALK_SUPPORTED_POLICY, {
+      operationPermissionMode: "user-selected",
+      approvalMode: "on-request",
+      codexSandboxMode: "workspace-write",
+    });
+
+    assert.equal(capability.compatible, true);
+    assert.deepEqual(capability.reasons, []);
+    assert.deepEqual(capability.policy, {
+      ...MATE_TALK_SUPPORTED_POLICY,
+      allowsFileWrite: true,
+      allowsShellWrite: true,
+      allowsToolPermissionRequests: true,
+    });
+  });
+
+  it("MateTalk のユーザー選択権限でも structured output が保証されない provider は対象外とする", () => {
+    const capability = evaluateMateTalkBackgroundStructuredPromptPolicy(
+      {
+        ...MATE_TALK_SUPPORTED_POLICY,
+        allowsFileWrite: true,
+        allowsShellWrite: true,
+        allowsToolPermissionRequests: true,
+        structuredOutputOnly: false,
+      },
+      {
+        operationPermissionMode: "user-selected",
+        approvalMode: "on-request",
+        codexSandboxMode: "danger-full-access",
+      },
+    );
+
+    assert.equal(capability.compatible, false);
+    assert.deepEqual(capability.reasons, ["structured_output_not_guaranteed"]);
+  });
+
+  it("実効 policy helper は read-only-required では provider policy をそのまま返す", () => {
+    assert.equal(
+      resolveMateTalkBackgroundStructuredPromptPolicy(MATE_TALK_SUPPORTED_POLICY),
+      MATE_TALK_SUPPORTED_POLICY,
+    );
   });
 
   it("file write 有効時の不適合理由を返す", () => {

@@ -38,21 +38,30 @@ export const REQUIRED_V4_TABLES = [
   "provider_instruction_sync_runs",
 ] as const;
 
-export function isValidV4Database(dbPath: string): boolean {
+export function readV4DatabaseUserVersion(dbPath: string): number | null {
   if (basename(dbPath) !== APP_DATABASE_V4_FILENAME) {
-    return false;
+    return null;
   }
 
   let db: DatabaseSync | null = null;
   try {
     db = new DatabaseSync(dbPath, { readOnly: true });
     const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
-    return row?.user_version === APP_DATABASE_V4_SCHEMA_VERSION;
+    return typeof row?.user_version === "number" ? row.user_version : null;
   } catch {
-    return false;
+    return null;
   } finally {
     db?.close();
   }
+}
+
+export function isValidV4Database(dbPath: string): boolean {
+  return readV4DatabaseUserVersion(dbPath) === APP_DATABASE_V4_SCHEMA_VERSION;
+}
+
+export function isUnsupportedNewerV4Database(dbPath: string): boolean {
+  const userVersion = readV4DatabaseUserVersion(dbPath);
+  return userVersion !== null && userVersion > APP_DATABASE_V4_SCHEMA_VERSION;
 }
 
 export function isLegacyAppDatabasePath(dbPath: string): boolean {

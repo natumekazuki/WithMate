@@ -9,7 +9,13 @@ import { describe, it } from "node:test";
 import { APP_DATABASE_V1_FILENAME } from "../../src-electron/database-schema-v1.js";
 import { APP_DATABASE_V2_FILENAME, CREATE_V2_SCHEMA_SQL } from "../../src-electron/database-schema-v2.js";
 import { APP_DATABASE_V3_FILENAME, CREATE_V3_SCHEMA_SQL } from "../../src-electron/database-schema-v3.js";
-import { APP_DATABASE_V4_FILENAME, CREATE_V4_SCHEMA_SQL, isValidV4Database } from "../../src-electron/database-schema-v4.js";
+import {
+  APP_DATABASE_V4_FILENAME,
+  APP_DATABASE_V4_SCHEMA_VERSION,
+  CREATE_V4_SCHEMA_SQL,
+  isValidV4Database,
+  readV4DatabaseUserVersion,
+} from "../../src-electron/database-schema-v4.js";
 import { resolveAppDatabasePath, resolveOrMigrateAppDatabasePath } from "../../src-electron/app-database-path.js";
 
 function createV2Database(dbPath: string): void {
@@ -40,6 +46,15 @@ function createV4Database(dbPath: string): void {
     for (const statement of CREATE_V4_SCHEMA_SQL) {
       db.exec(statement);
     }
+  } finally {
+    db.close();
+  }
+}
+
+function createV4DatabaseWithUserVersion(dbPath: string, userVersion: number): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec(`PRAGMA user_version = ${userVersion};`);
   } finally {
     db.close();
   }
@@ -255,6 +270,27 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
       assert.equal(selectedPath, v4Path);
       assert.equal(isValidV4Database(v4Path), true);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("対応外の新しい withmate-v4.db は legacy migration で上書きしない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+
+    try {
+      const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      const newerVersion = APP_DATABASE_V4_SCHEMA_VERSION + 1;
+      createV3Database(v3Path);
+      createV4DatabaseWithUserVersion(v4Path, newerVersion);
+
+      await assert.rejects(
+        () => resolveOrMigrateAppDatabasePath(userDataPath),
+        /対応していない新しい DB バージョン/,
+      );
+      assert.equal(readV4DatabaseUserVersion(v4Path), newerVersion);
+      assert.equal(isValidV4Database(v4Path), false);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }

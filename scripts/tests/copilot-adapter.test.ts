@@ -1488,6 +1488,149 @@ describe("CopilotAdapter background structured prompt", () => {
     assert.deepEqual(result.parsedJson, { answer: "ok" });
   });
 
+  it("background structured prompt は built-in read tools を塞がず approval mode を反映する", async () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      getOrCreateClientByAppSettings: () => {
+        start: () => Promise<void>;
+        createSession: (config: {
+          tools?: Array<{
+            name: string;
+            parameters?: unknown;
+            handler: (args: Record<string, unknown>) => string;
+          }>;
+          availableTools?: string[];
+          onPermissionRequest?: (
+            request: PermissionRequest,
+            context: { sessionId: string },
+          ) => Promise<unknown> | unknown;
+        }) => Promise<{
+          on: (_event: "assistant.usage", _listener: (event: { data: { usage: unknown } }) => void) => () => void;
+          sendAndWait: () => Promise<{ data: { content: string } }>;
+          disconnect: () => Promise<void>;
+        }>;
+      };
+      fetchProviderQuotaTelemetry: () => Promise<null>;
+      runBackgroundPromptFromInput: <TOutput>(
+        input: RunBackgroundStructuredPromptInput,
+        parse: (rawText: string) => TOutput | null,
+      ) => Promise<{
+        threadId: string | null;
+        rawText: string;
+        output: TOutput | null;
+        parsedJson: unknown | null;
+        structuredOutput: unknown | null;
+        rawItemsJson: string;
+        usage: null;
+        providerQuotaTelemetry: null;
+      }>;
+    };
+
+    let capturedConfig: {
+      tools?: Array<{
+        name: string;
+        handler: (args: Record<string, unknown>) => string;
+      }>;
+      availableTools?: string[];
+      onPermissionRequest?: (
+        request: PermissionRequest,
+        context: { sessionId: string },
+      ) => Promise<unknown> | unknown;
+    } | null = null;
+    adapter.getOrCreateClientByAppSettings = () => ({
+      start: async () => undefined,
+      createSession: async (config) => {
+        capturedConfig = config;
+        const submitTool = config.tools?.find((tool) => tool.name === "withmate_submit_structured_output");
+        assert.ok(submitTool);
+        return {
+          on: () => () => undefined,
+          sendAndWait: async () => {
+            submitTool.handler({ answer: "ok" });
+            return { data: { content: "" } };
+          },
+          disconnect: async () => undefined,
+        };
+      },
+    });
+    adapter.fetchProviderQuotaTelemetry = async () => null;
+
+    await adapter.runBackgroundPromptFromInput(
+      createBackgroundPromptInput({ approvalMode: "untrusted" }),
+      (rawText) => JSON.parse(rawText) as { answer: string },
+    );
+
+    assert.ok(capturedConfig);
+    assert.equal(capturedConfig.availableTools, undefined);
+    assert.ok(capturedConfig.onPermissionRequest);
+    const readResult = await capturedConfig.onPermissionRequest(createReadPermissionRequest(), { sessionId: "background" });
+    const writeResult = await capturedConfig.onPermissionRequest(createWritePermissionRequest(), { sessionId: "background" });
+    assert.deepEqual(readResult, { kind: "approve-once" });
+    assert.deepEqual(writeResult, { kind: "reject" });
+  });
+
+  it("background structured prompt の never approval は write permission を許可する", async () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      getOrCreateClientByAppSettings: () => {
+        start: () => Promise<void>;
+        createSession: (config: {
+          tools?: Array<{
+            name: string;
+            handler: (args: Record<string, unknown>) => string;
+          }>;
+          onPermissionRequest?: (
+            request: PermissionRequest,
+            context: { sessionId: string },
+          ) => Promise<unknown> | unknown;
+        }) => Promise<{
+          on: (_event: "assistant.usage", _listener: (event: { data: { usage: unknown } }) => void) => () => void;
+          sendAndWait: () => Promise<{ data: { content: string } }>;
+          disconnect: () => Promise<void>;
+        }>;
+      };
+      fetchProviderQuotaTelemetry: () => Promise<null>;
+      runBackgroundPromptFromInput: <TOutput>(
+        input: RunBackgroundStructuredPromptInput,
+        parse: (rawText: string) => TOutput | null,
+      ) => Promise<{
+        threadId: string | null;
+        rawText: string;
+        output: TOutput | null;
+        parsedJson: unknown | null;
+        structuredOutput: unknown | null;
+        rawItemsJson: string;
+        usage: null;
+        providerQuotaTelemetry: null;
+      }>;
+    };
+
+    let writeResult: unknown = null;
+    adapter.getOrCreateClientByAppSettings = () => ({
+      start: async () => undefined,
+      createSession: async (config) => {
+        const submitTool = config.tools?.find((tool) => tool.name === "withmate_submit_structured_output");
+        assert.ok(submitTool);
+        assert.ok(config.onPermissionRequest);
+        writeResult = await config.onPermissionRequest(createWritePermissionRequest(), { sessionId: "background" });
+        return {
+          on: () => () => undefined,
+          sendAndWait: async () => {
+            submitTool.handler({ answer: "ok" });
+            return { data: { content: "" } };
+          },
+          disconnect: async () => undefined,
+        };
+      },
+    });
+    adapter.fetchProviderQuotaTelemetry = async () => null;
+
+    await adapter.runBackgroundPromptFromInput(
+      createBackgroundPromptInput({ approvalMode: "never" }),
+      (rawText) => JSON.parse(rawText) as { answer: string },
+    );
+
+    assert.deepEqual(writeResult, { kind: "approve-once" });
+  });
+
   it("schema submit tool の args が実 schema の anyOf / oneOf / bounds 不一致なら失敗する", async () => {
     const adapter = new CopilotAdapter() as unknown as {
       getOrCreateClientByAppSettings: () => {

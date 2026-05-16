@@ -1237,6 +1237,27 @@ function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
   }
 }
 
+function buildBackgroundPermissionHandler(input: RunBackgroundStructuredPromptInput): PermissionHandler {
+  switch (normalizeApprovalMode(input.approvalMode ?? "never")) {
+    case "never":
+      return () => toPermissionDecision("approved");
+    case "untrusted":
+      return (request) => (
+        isReadOnlyPermissionRequest(request)
+          ? toPermissionDecision("approved")
+          : toPermissionDecision("denied-by-rules")
+      );
+    case "on-request":
+    case "on-failure":
+    default:
+      return (request) => (
+        isReadOnlyPermissionRequest(request)
+          ? toPermissionDecision("approved")
+          : toPermissionDecision("denied-no-approval-rule-and-could-not-request-from-user")
+      );
+  }
+}
+
 function buildCopilotBootstrapDebugItems(
   input: RunSessionTurnInput,
   cliPath: string,
@@ -1917,16 +1938,13 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     input: RunBackgroundStructuredPromptInput,
     tools?: Tool[],
   ): SessionConfig {
-    const denyAllPermissions: PermissionHandler = () =>
-      toPermissionDecision("denied-no-approval-rule-and-could-not-request-from-user");
     return {
       model: input.model,
       reasoningEffort: input.reasoningEffort === "minimal" ? "low" : input.reasoningEffort,
       workingDirectory: input.workspacePath,
       streaming: false,
       tools,
-      availableTools: tools?.map((tool) => tool.name),
-      onPermissionRequest: denyAllPermissions,
+      onPermissionRequest: buildBackgroundPermissionHandler(input),
       systemMessage: {
         mode: "append",
         content: input.prompt.systemText,
