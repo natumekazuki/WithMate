@@ -37,10 +37,24 @@ export function buildMateTalkModelSelection({
   model: string;
   reasoningEffort: ModelReasoningEffort;
 }): MateTalkModelSelection {
+  const defaultPriority = appSettings.mateMemoryGenerationSettings.priorityList[0] ?? null;
+  if (modelCatalog === null) {
+    return {
+      enabledProviders: [],
+      defaultPriority,
+      providerCatalog: null,
+      selectedModel: null,
+      modelOptions: [],
+      reasoningOptions: [],
+      providerId,
+      model,
+      reasoningEffort,
+    };
+  }
+
   const enabledProviders = (modelCatalog?.providers ?? []).filter(
     (provider) => getProviderAppSettings(appSettings, provider.id).enabled,
   );
-  const defaultPriority = appSettings.mateMemoryGenerationSettings.priorityList[0] ?? null;
   const preferredProviderId =
     enabledProviders.find((provider) => provider.id === defaultPriority?.provider)?.id ??
     enabledProviders[0]?.id ??

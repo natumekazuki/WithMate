@@ -82,6 +82,24 @@ function createSettings(): AppSettings {
 }
 
 describe("mate-talk model selection", () => {
+  it("catalog 未ロード時は launch selection を保持する", () => {
+    const selection = buildMateTalkModelSelection({
+      appSettings: createSettings(),
+      modelCatalog: null,
+      providerId: "codex",
+      model: "codex-fast",
+      reasoningEffort: "low",
+    });
+
+    assert.equal(selection.providerId, "codex");
+    assert.equal(selection.model, "codex-fast");
+    assert.equal(selection.reasoningEffort, "low");
+    assert.equal(selection.providerCatalog, null);
+    assert.equal(selection.selectedModel, null);
+    assert.deepEqual(selection.modelOptions, []);
+    assert.deepEqual(selection.reasoningOptions, []);
+  });
+
   it("未選択時は priority provider/model/reasoning effort を選ぶ", () => {
     const selection = buildMateTalkModelSelection({
       appSettings: createSettings(),
