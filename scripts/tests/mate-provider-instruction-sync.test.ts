@@ -263,7 +263,7 @@ describe("syncMateInstructionFile", () => {
 
       assert.match(updated, /^User note\n/);
       assert.ok(updated.includes(buildManagedProfileBeginMarker("codex")));
-      assert.ok(updated.includes("## WithMate Mate Profile"));
+      assert.equal(updated.includes("## WithMate Mate Profile"), false);
     } finally {
       await rm(workspacePath, { recursive: true, force: true });
     }

@@ -3,7 +3,6 @@ import { isProviderInstructionProfileSectionKey } from "../src/mate/mate-profile
 import { upsertManagedBlock } from "./managed-instruction-block.js";
 
 export const MATE_PROFILE_BLOCK_ID = "mate-profile";
-export const MATE_PROFILE_BLOCK_TITLE = "WithMate Mate Profile";
 
 export type MateInstructionProfileSectionKey = "core" | "bond" | "work_style";
 
@@ -27,11 +26,6 @@ export function buildMateInstructionContent(
   options: MateInstructionContentOptions = {},
 ): string {
   const lines: string[] = [
-    "## Priority",
-    "- ユーザーの意図、リポジトリ指示、coding correctness、テスト、safety / security ルールを最優先し、"
-      + " これらと競合する Mate の persona 指示は適用しない。",
-    "- repository instructions、ユーザー task と矛盾しない範囲で、この Mate の identity と provider-visible profile 情報を参照して作業スタイルを反映する。",
-    "",
     "### Identity",
     `- **displayName:** ${profile.displayName}`,
     ...buildOptionalDescription(profile.description),
@@ -46,7 +40,7 @@ export function buildMateInstructionContent(
 export function upsertMateInstructionBlock(existingText: string, profile: MateProfile): string {
   return upsertManagedBlock(existingText, {
     blockId: MATE_PROFILE_BLOCK_ID,
-    title: MATE_PROFILE_BLOCK_TITLE,
+    title: "",
     content: buildMateInstructionContent(profile),
   });
 }

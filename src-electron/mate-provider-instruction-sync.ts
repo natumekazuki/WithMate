@@ -6,7 +6,6 @@ import type { MateProfile } from "../src/mate/mate-state.js";
 import type { ProviderInstructionTarget as ProviderInstructionTargetState } from "../src/provider-instruction-target-state.js";
 import {
   MATE_PROFILE_BLOCK_ID,
-  MATE_PROFILE_BLOCK_TITLE,
   type MateInstructionSectionContent,
   buildMateInstructionContent,
   isProviderInstructionProfileSection,
@@ -56,7 +55,7 @@ export const PROVIDER_INSTRUCTION_FILE_BY_PROVIDER: Readonly<Record<string, stri
 };
 
 const PROVIDER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9_-]{0,63})$/;
-const DISABLED_PROFILE_CONTENT = "\nMate profile is currently not configured.";
+const DISABLED_PROFILE_CONTENT = "Mate profile is currently not configured.";
 
 export class MateProviderInstructionSyncBlockedError extends Error {
   public readonly providerId: string;
@@ -120,7 +119,7 @@ export async function syncMateInstructionFile(
 
     const nextText = buildManagedBlock({
       blockId: MATE_PROFILE_BLOCK_ID,
-      title: MATE_PROFILE_BLOCK_TITLE,
+      title: "",
       content: instructionContent,
       markerAttributes,
     });
@@ -141,7 +140,7 @@ export async function syncMateInstructionFile(
   const existingText = await readProviderInstructionText(normalizedFilePath, deps.readTextFile);
   const nextText = upsertManagedBlockWithMarkerAttributes(existingText, {
     blockId: MATE_PROFILE_BLOCK_ID,
-    title: MATE_PROFILE_BLOCK_TITLE,
+    title: "",
     content: instructionContent,
     markerAttributes: buildManagedBlockMarkerAttributes(target),
   });
@@ -501,7 +500,7 @@ async function syncDisabledProviderInstructionTargetProjection(
 
     const nextText = buildManagedBlock({
       blockId: MATE_PROFILE_BLOCK_ID,
-      title: MATE_PROFILE_BLOCK_TITLE,
+      title: "",
       content: DISABLED_PROFILE_CONTENT,
       markerAttributes,
     });
