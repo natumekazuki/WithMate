@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -81,20 +81,32 @@ async function pathExists(targetPath: string): Promise<boolean> {
   }
 }
 
+function normalizePathSeparators(targetPath: string): string {
+  return targetPath.replace(/\\/g, "/");
+}
+
+async function resolveCanonicalPath(targetPath: string): Promise<string> {
+  return normalizePathSeparators(await realpath(targetPath));
+}
+
 function toDisplayName(repoRoot: string): string {
   return path.basename(repoRoot.replace(/[\\/]+$/, "")) || repoRoot;
 }
 
 export async function resolveCompanionGitEligibility(workspacePath: string): Promise<CompanionGitEligibility> {
-  const normalizedWorkspacePath = workspacePath.trim();
-  if (!normalizedWorkspacePath) {
+  const trimmedWorkspacePath = workspacePath.trim();
+  if (!trimmedWorkspacePath) {
     return { ok: false, reason: "workspace path が空だよ。", warnings: [] };
   }
 
   const warnings: string[] = [];
+  const normalizedWorkspacePath = await resolveCanonicalPath(trimmedWorkspacePath).catch(() =>
+    normalizePathSeparators(trimmedWorkspacePath),
+  );
   let repoRoot = "";
   try {
-    repoRoot = (await runGit(normalizedWorkspacePath, ["rev-parse", "--show-toplevel"])).stdout;
+    const resolvedRepoRoot = (await runGit(normalizedWorkspacePath, ["rev-parse", "--show-toplevel"])).stdout;
+    repoRoot = await resolveCanonicalPath(resolvedRepoRoot).catch(() => normalizePathSeparators(resolvedRepoRoot));
   } catch {
     return { ok: false, reason: "Git repo root を解決できないよ。", warnings };
   }
@@ -133,7 +145,7 @@ export async function resolveCompanionGitEligibility(workspacePath: string): Pro
   const relativeFocusPath = path.relative(repoRoot, normalizedWorkspacePath);
   const focusPath =
     relativeFocusPath && !relativeFocusPath.startsWith("..") && !path.isAbsolute(relativeFocusPath)
-      ? relativeFocusPath
+      ? normalizePathSeparators(relativeFocusPath)
       : "";
 
   return {
