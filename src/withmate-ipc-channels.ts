@@ -121,3 +121,4 @@ export const WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT = "withmate:session-back
 export const WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT = "withmate:open-session-windows-changed";
 export const WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT = "withmate:open-companion-review-windows-changed";
 export const WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT = "withmate:companion-sessions-changed";
+export const WITHMATE_APP_BOOT_STATUS_EVENT = "withmate:app-boot-status";

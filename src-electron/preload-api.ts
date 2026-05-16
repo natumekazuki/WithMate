@@ -16,6 +16,7 @@ import type {
 } from "../src/withmate-window-api.js";
 import {
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
+  WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CHARACTERS_CHANGED_EVENT,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
@@ -587,6 +588,9 @@ function createPickerApi(ipcRenderer: IpcRendererLike): WithMateWindowPickerApi 
 
 function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubscriptionApi {
   return {
+    subscribeAppBootStatus(listener) {
+      return subscribe(ipcRenderer, WITHMATE_APP_BOOT_STATUS_EVENT, listener);
+    },
     subscribeSessionSummaries(listener) {
       return subscribe(ipcRenderer, WITHMATE_SESSIONS_CHANGED_EVENT, listener);
     },

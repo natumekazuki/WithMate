@@ -194,9 +194,11 @@ import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./win
 import { resolveCursorAnchoredPosition } from "./window-placement.js";
 import { clearWorkspaceFileIndex, searchWorkspacePathCandidates } from "./workspace-file-search.js";
 import { AppLogService } from "./app-log-service.js";
+import type { AppBootStatus } from "../src/app-boot-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
 import { inspectAppDatabase } from "./app-database-diagnostics.js";
 import { resolveOrMigrateAppDatabasePath } from "./app-database-path.js";
+import { WITHMATE_APP_BOOT_STATUS_EVENT } from "../src/withmate-ipc-channels.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
 import { isValidV4Database } from "./database-schema-v4.js";
@@ -280,6 +282,13 @@ let companionStorage: CompanionStorageHandle | null = null;
 let allowQuitWithInFlightRuns = false;
 let dbPath = "";
 let appDatabaseDiagnostics: AppDatabaseDiagnostics | null = null;
+let bootWindow: BrowserWindow | null = null;
+let appBootStatus: AppBootStatus = {
+  kind: "running",
+  stage: "starting",
+  title: "WithMate を起動しています",
+  detail: "起動状態を確認しています。",
+};
 const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
 let sessionRuntimeService: SessionRuntimeService | null = null;
 let sessionPersistenceService: SessionPersistenceService | null = null;
@@ -717,6 +726,61 @@ function createCursorPlacedWindow(
   });
 }
 
+function publishAppBootStatus(status: AppBootStatus): void {
+  appBootStatus = status;
+  if (bootWindow && !bootWindow.isDestroyed()) {
+    bootWindow.webContents.send(WITHMATE_APP_BOOT_STATUS_EVENT, status);
+  }
+}
+
+async function openBootWindow(): Promise<BrowserWindow> {
+  if (bootWindow && !bootWindow.isDestroyed()) {
+    return bootWindow;
+  }
+
+  const window = createBaseWindow({
+    width: 560,
+    height: 520,
+    minWidth: 460,
+    minHeight: 420,
+    title: "WithMate 起動中",
+    resizable: true,
+  });
+  bootWindow = window;
+  window.once("ready-to-show", () => window.show());
+  window.on("closed", () => {
+    if (bootWindow === window) {
+      bootWindow = null;
+    }
+  });
+  await requireWindowEntryLoader().loadBootEntry(window);
+  publishAppBootStatus(appBootStatus);
+  return window;
+}
+
+function closeBootWindow(): void {
+  if (!bootWindow || bootWindow.isDestroyed()) {
+    bootWindow = null;
+    return;
+  }
+  const window = bootWindow;
+  bootWindow = null;
+  window.close();
+}
+
+function serializeBootError(error: unknown): AppBootStatus["error"] {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+  return {
+    message: typeof error === "string" ? error : "Unknown startup error",
+  };
+}
+
 function listSessions(): Session[] {
   return sessions;
 }
@@ -916,6 +980,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             },
             createHomeWindow,
             broadcastModelCatalog,
+            onBootStatus: publishAppBootStatus,
             ipcRegistration: {
               window: {
                 resolveEventWindow: (event) => BrowserWindow.fromWebContents(event.sender) ?? null,
@@ -3596,40 +3661,92 @@ async function openCompanionMergeWindow(sessionId: string): Promise<BrowserWindo
 }
 
 app.whenReady().then(async () => {
-  dbPath = await resolveOrMigrateAppDatabasePath(app.getPath("userData"));
-  appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
-  writeAppLog({
-    level: "info",
-    kind: "app.ready",
-    process: "main",
-    message: "App ready",
-    data: {
-      userDataPath: app.getPath("userData"),
-      userDataPathOverrideApplied: appDatabaseDiagnostics.userDataPathOverrideApplied,
-      activeDatabasePath: appDatabaseDiagnostics.activeDatabasePath,
-      activeDatabaseSchemaVersion: appDatabaseDiagnostics.schemaVersion,
-      activeDatabaseCompatibilityMode: appDatabaseDiagnostics.compatibilityMode,
-      logsPath: appLogsPath,
-      crashDumpsPath,
-    },
-  });
-  writeAppLog({
-    level: appDatabaseDiagnostics.warnings.length > 0 ? "warn" : "info",
-    kind: "app.database.selected",
-    process: "main",
-    message: "App database selected",
-    data: appDatabaseDiagnostics,
-  });
-  await cleanupMemoryRuntimeWorkspaceOnStartup();
-  await requireMainBootstrapService().handleReady();
+  await openBootWindow();
 
-  if (process.env.WITHMATE_DEBUG_OPEN_SESSION_ID) {
-    await openSessionWindow(process.env.WITHMATE_DEBUG_OPEN_SESSION_ID);
+  try {
+    dbPath = await resolveOrMigrateAppDatabasePath(app.getPath("userData"), (progress) => {
+      publishAppBootStatus({
+        kind: "running",
+        stage: "database",
+        title: progress.title,
+        detail: progress.detail,
+      });
+    });
+    publishAppBootStatus({
+      kind: "running",
+      stage: "diagnostics",
+      title: "データベース診断を確認しています",
+      detail: "利用するデータベースと schema version を確認しています。",
+    });
+    appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
+    writeAppLog({
+      level: "info",
+      kind: "app.ready",
+      process: "main",
+      message: "App ready",
+      data: {
+        userDataPath: app.getPath("userData"),
+        userDataPathOverrideApplied: appDatabaseDiagnostics.userDataPathOverrideApplied,
+        activeDatabasePath: appDatabaseDiagnostics.activeDatabasePath,
+        activeDatabaseSchemaVersion: appDatabaseDiagnostics.schemaVersion,
+        activeDatabaseCompatibilityMode: appDatabaseDiagnostics.compatibilityMode,
+        logsPath: appLogsPath,
+        crashDumpsPath,
+      },
+    });
+    writeAppLog({
+      level: appDatabaseDiagnostics.warnings.length > 0 ? "warn" : "info",
+      kind: "app.database.selected",
+      process: "main",
+      message: "App database selected",
+      data: appDatabaseDiagnostics,
+    });
+    publishAppBootStatus({
+      kind: "running",
+      stage: "workspace-cleanup",
+      title: "起動前の作業領域を整理しています",
+      detail: "前回起動時の一時作業領域を確認しています。",
+    });
+    await cleanupMemoryRuntimeWorkspaceOnStartup();
+    await requireMainBootstrapService().handleReady();
+    publishAppBootStatus({
+      kind: "completed",
+      stage: "home",
+      title: "起動が完了しました",
+      detail: "Home を表示しました。",
+    });
+    closeBootWindow();
+
+    if (process.env.WITHMATE_DEBUG_OPEN_SESSION_ID) {
+      await openSessionWindow(process.env.WITHMATE_DEBUG_OPEN_SESSION_ID);
+    }
+
+    app.on("activate", async () => {
+      await requireAppLifecycleService().handleActivate();
+    });
+  } catch (error) {
+    const serializedError = serializeBootError(error);
+    writeAppLog({
+      level: "fatal",
+      kind: "app.boot.failed",
+      process: "main",
+      message: serializedError?.message ?? "App boot failed",
+      error: appLogService.errorToLogError(error),
+      data: {
+        userDataPath: app.getPath("userData"),
+        logsPath: appLogsPath,
+        crashDumpsPath,
+      },
+    });
+    await openBootWindow();
+    publishAppBootStatus({
+      kind: "failed",
+      stage: "failed",
+      title: "WithMate の起動に失敗しました",
+      detail: "データベース移行または起動初期化でエラーが発生しました。ログに詳細を記録しました。",
+      error: serializedError,
+    });
   }
-
-  app.on("activate", async () => {
-    await requireAppLifecycleService().handleActivate();
-  });
 });
 
 app.on("window-all-closed", () => {

@@ -16,6 +16,7 @@ export default defineConfig({
         character: path.resolve(projectRoot, "character.html"),
         diff: path.resolve(projectRoot, "diff.html"),
         review: path.resolve(projectRoot, "review.html"),
+        boot: path.resolve(projectRoot, "boot.html"),
       },
     },
   },

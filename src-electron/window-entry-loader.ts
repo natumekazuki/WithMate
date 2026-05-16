@@ -25,6 +25,10 @@ export class WindowEntryLoader {
     await this.load(window, "index.html", search);
   }
 
+  async loadBootEntry(window: WindowLike): Promise<void> {
+    await this.load(window, "boot.html", "");
+  }
+
   async loadCharacterEntry(window: WindowLike, characterId?: string | null): Promise<void> {
     const search = characterId ? `?characterId=${encodeURIComponent(characterId)}` : "?mode=create";
     await this.load(window, "character.html", search);

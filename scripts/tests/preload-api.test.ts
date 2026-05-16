@@ -251,6 +251,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "updateMateGrowthSettings",
     "stashCompanionTargetChanges",
     "subscribeAppSettings",
+    "subscribeAppBootStatus",
     "subscribeCharacters",
     "subscribeCompanionSessionSummaries",
     "subscribeLiveSessionRun",
@@ -282,6 +283,9 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   const disposeSummaries = api.subscribeSessionSummaries((summaries) => {
     received.push({ kind: "summaries", summaries });
   });
+  const disposeBoot = api.subscribeAppBootStatus((status) => {
+    received.push({ kind: "boot", status });
+  });
   const disposeInvalidation = api.subscribeSessionInvalidation((sessionIds) => {
     received.push({ kind: "invalidation", sessionIds });
   });
@@ -290,19 +294,23 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   });
 
   listeners.get("withmate:sessions-changed")?.({}, [{ id: "session-1", taskTitle: "task" }]);
+  listeners.get("withmate:app-boot-status")?.({}, { kind: "running", stage: "database", title: "DB" });
   listeners.get("withmate:sessions-invalidated")?.({}, ["session-1"]);
   listeners.get("withmate:live-session-run")?.({}, { sessionId: "session-1", state: { phase: "running" } });
   disposeSummaries();
+  disposeBoot();
   disposeInvalidation();
   disposeLiveRun();
 
   assert.deepEqual(received, [
     { kind: "summaries", summaries: [{ id: "session-1", taskTitle: "task" }] },
+    { kind: "boot", status: { kind: "running", stage: "database", title: "DB" } },
     { kind: "invalidation", sessionIds: ["session-1"] },
     { kind: "liveRun", sessionId: "session-1", state: { phase: "running" } },
   ]);
   assert.equal(listeners.has("withmate:live-session-run"), false);
   assert.equal(listeners.has("withmate:sessions-invalidated"), false);
+  assert.equal(listeners.has("withmate:app-boot-status"), false);
   assert.equal(listeners.has("withmate:sessions-changed"), false);
 });
 
