@@ -84,7 +84,7 @@ describe("database-schema-v4", () => {
     }
   });
 
-  it("isValidV4Database は filename と schema version を検証する", () => {
+  it("isValidV4Database は filename、schema version、required tables を検証する", () => {
     const dirPath = mkdtempSync(join(tmpdir(), "withmate-v4-schema-"));
     try {
       const validDbPath = join(dirPath, APP_DATABASE_V4_FILENAME);
@@ -101,9 +101,16 @@ describe("database-schema-v4", () => {
       mkdirSync(emptyDirPath);
       closeSync(openSync(emptyV4DbPath, "w"));
 
+      const partialV4DbPath = join(dirPath, "partial", APP_DATABASE_V4_FILENAME);
+      mkdirSync(join(dirPath, "partial"));
+      const partialV4Db = new DatabaseSync(partialV4DbPath);
+      partialV4Db.exec(`PRAGMA user_version = ${APP_DATABASE_V4_SCHEMA_VERSION};`);
+      partialV4Db.close();
+
       assert.equal(isValidV4Database(validDbPath), true);
       assert.equal(isValidV4Database(wrongNameDbPath), false);
       assert.equal(isValidV4Database(emptyV4DbPath), false);
+      assert.equal(isValidV4Database(partialV4DbPath), false);
     } finally {
       rmSync(dirPath, { recursive: true, force: true });
     }

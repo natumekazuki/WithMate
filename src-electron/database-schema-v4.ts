@@ -56,7 +56,29 @@ export function readV4DatabaseUserVersion(dbPath: string): number | null {
 }
 
 export function isValidV4Database(dbPath: string): boolean {
-  return readV4DatabaseUserVersion(dbPath) === APP_DATABASE_V4_SCHEMA_VERSION;
+  if (basename(dbPath) !== APP_DATABASE_V4_FILENAME) {
+    return false;
+  }
+
+  let db: DatabaseSync | null = null;
+  try {
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+    if (row?.user_version !== APP_DATABASE_V4_SCHEMA_VERSION) {
+      return false;
+    }
+
+    const existingTables = new Set(
+      (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all() as Array<{ name?: unknown }>)
+        .map((table) => table.name)
+        .filter((name): name is string => typeof name === "string"),
+    );
+    return REQUIRED_V4_TABLES.every((tableName) => existingTables.has(tableName));
+  } catch {
+    return false;
+  } finally {
+    db?.close();
+  }
 }
 
 export function isUnsupportedNewerV4Database(dbPath: string): boolean {
@@ -810,7 +832,6 @@ export const CREATE_V4_PROVIDER_INSTRUCTION_SYNC_RUNS_TABLE_SQL = `
 `;
 
 export const CREATE_V4_SCHEMA_SQL = [
-  `PRAGMA user_version = ${APP_DATABASE_V4_SCHEMA_VERSION};`,
   CREATE_V4_MATE_PROFILE_TABLE_SQL,
   CREATE_V4_MATE_PROFILE_SECTIONS_TABLE_SQL,
   CREATE_V4_MATE_PROFILE_REVISIONS_TABLE_SQL,
@@ -836,4 +857,5 @@ export const CREATE_V4_SCHEMA_SQL = [
   CREATE_V4_MATE_PROJECT_DIGESTS_TABLE_SQL,
   CREATE_V4_PROVIDER_INSTRUCTION_TARGETS_TABLE_SQL,
   CREATE_V4_PROVIDER_INSTRUCTION_SYNC_RUNS_TABLE_SQL,
+  `PRAGMA user_version = ${APP_DATABASE_V4_SCHEMA_VERSION};`,
 ] as const;

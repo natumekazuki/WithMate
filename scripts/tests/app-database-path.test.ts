@@ -339,6 +339,24 @@ describe("resolveOrMigrateAppDatabasePath", () => {
     }
   });
 
+  it("user_version=4 でも required tables が欠けた withmate-v4.db は有効な V3 を shadow しない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+
+    try {
+      const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      createV3Database(v3Path);
+      createV4DatabaseWithUserVersion(v4Path, APP_DATABASE_V4_SCHEMA_VERSION);
+
+      assert.equal(isValidV4Database(v4Path), false);
+      const selectedPath = await resolveOrMigrateAppDatabasePath(userDataPath);
+      assert.equal(selectedPath, v4Path);
+      assert.equal(isValidV4Database(v4Path), true);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
   it("対応外の新しい withmate-v4.db は legacy migration で上書きしない", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
 
