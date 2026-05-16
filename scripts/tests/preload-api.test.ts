@@ -42,6 +42,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:open-mate-talk-window",
     args: [],
   });
+  assert.deepEqual(await api.getAppBootStatus(), {
+    channel: "withmate:get-app-boot-status",
+    args: [],
+  });
   assert.deepEqual(await api.resetAppDatabase({ targets: ["appSettings"] }), {
     channel: "withmate:reset-app-database",
     args: [{ targets: ["appSettings"] }],
@@ -165,6 +169,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "extractCharacterUpdateMemory",
     "forgetMateProfileItem",
     "getAppDatabaseDiagnostics",
+    "getAppBootStatus",
     "getAppSettings",
     "getCharacter",
     "getCharacterUpdateWorkspace",

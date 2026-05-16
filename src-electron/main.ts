@@ -198,7 +198,10 @@ import type { AppBootStatus } from "../src/app-boot-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
 import { inspectAppDatabase } from "./app-database-diagnostics.js";
 import { resolveOrMigrateAppDatabasePath } from "./app-database-path.js";
-import { WITHMATE_APP_BOOT_STATUS_EVENT } from "../src/withmate-ipc-channels.js";
+import {
+  WITHMATE_APP_BOOT_STATUS_EVENT,
+  WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
+} from "../src/withmate-ipc-channels.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
 import { isValidV4Database } from "./database-schema-v4.js";
@@ -289,6 +292,8 @@ let appBootStatus: AppBootStatus = {
   title: "WithMate を起動しています",
   detail: "起動状態を確認しています。",
 };
+
+ipcMain.handle(WITHMATE_GET_APP_BOOT_STATUS_CHANNEL, () => appBootStatus);
 const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
 let sessionRuntimeService: SessionRuntimeService | null = null;
 let sessionPersistenceService: SessionPersistenceService | null = null;

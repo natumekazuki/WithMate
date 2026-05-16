@@ -40,7 +40,24 @@ export default function BootApp() {
 
   useEffect(() => {
     const api = getWithMateApi();
-    return api?.subscribeAppBootStatus(setStatus) ?? undefined;
+    if (!api) {
+      return undefined;
+    }
+
+    let disposed = false;
+    const dispose = api.subscribeAppBootStatus(setStatus);
+    void api.getAppBootStatus().then((currentStatus) => {
+      if (!disposed) {
+        setStatus(currentStatus);
+      }
+    }).catch((error) => {
+      console.warn("Failed to get app boot status", error);
+    });
+
+    return () => {
+      disposed = true;
+      dispose();
+    };
   }, []);
 
   return (
