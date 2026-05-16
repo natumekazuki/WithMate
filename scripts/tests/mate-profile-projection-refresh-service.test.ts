@@ -133,6 +133,60 @@ test("forgetProfileItemAndRefreshProjection は project digest item の Markdown
   assert.doesNotMatch(rewrittenContents[0], /忘れるProject情報/);
 });
 
+test("forgetProfileItemAndRefreshProjection は project digest 投影更新に失敗したら item を forgotten にしない", async () => {
+  const profile = createProfile();
+  const targetItem = createItem({
+    id: "project-item-forget",
+    sectionKey: "project_digest",
+    projectDigestId: "digest-1",
+    category: "project_context",
+    claimKey: "old",
+    renderedText: "忘れるProject情報",
+  });
+  const keptItem = createItem({
+    id: "project-item-keep",
+    sectionKey: "project_digest",
+    projectDigestId: "digest-1",
+    category: "project_context",
+    claimKey: "new",
+    renderedText: "残すProject情報",
+  });
+  let applyProfileFilesCalled = false;
+  let forgetCalled = false;
+
+  const service = new MateProfileProjectionRefreshService({
+    mateStorage: {
+      getMateProfile: () => profile,
+      getUserDataPath: () => "user-data",
+      applyProfileFiles: async () => {
+        applyProfileFilesCalled = true;
+        return profile;
+      },
+    },
+    profileItemStorage: {
+      assertProfileItemMutationAllowed: () => {},
+      listProfileItems: () => [targetItem, keptItem],
+      createForgottenTombstoneForProfileItemInTransaction: () => {},
+      forgetProfileItemInTransaction: () => {
+        forgetCalled = true;
+      },
+    },
+    projectDigestProjectionWriter: {
+      rewriteProjectDigestProjection: async () => {
+        throw new Error("project digest rewrite failed");
+      },
+    },
+  });
+
+  await assert.rejects(
+    () => service.forgetProfileItemAndRefreshProjection("project-item-forget"),
+    /project digest rewrite failed/,
+  );
+
+  assert.equal(applyProfileFilesCalled, false);
+  assert.equal(forgetCalled, false);
+});
+
 test("forgetProfileItemAndRefreshProjection は provider instruction 同期失敗を呼び出し元へ伝える", async () => {
   const profile = createProfile();
   const targetItem = createItem({ id: "item-forget", claimKey: "nickname", renderedText: "忘れる内容" });

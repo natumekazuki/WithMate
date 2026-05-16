@@ -61,6 +61,8 @@ export class MateProfileProjectionRefreshService {
     const projectedProfileItems = activeProfileItems.filter((item) => item.id !== targetId);
     const renderedFiles = renderMateProfileFiles(profile, projectedProfileItems);
 
+    await this.rewriteProjectDigestProjectionIfNeeded(targetItem, projectedProfileItems, profile.activeRevisionId);
+
     const updatedProfile = await this.deps.mateStorage.applyProfileFiles({
       summary: `forget profile item: ${targetItem.claimKey}`,
       files: renderedFiles,
@@ -75,7 +77,6 @@ export class MateProfileProjectionRefreshService {
       },
     });
 
-    await this.rewriteProjectDigestProjectionIfNeeded(targetItem, projectedProfileItems, updatedProfile.activeRevisionId);
     await this.deps.providerInstructionSyncer?.syncEnabledProviderInstructionTargetsForMateProfile(updatedProfile);
   }
 

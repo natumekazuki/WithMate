@@ -12,11 +12,19 @@ type ProviderInstructionTargetStorageLike = {
 
 function isProviderInstructionTargetDestinationChanged(
   previousTarget: ProviderInstructionTarget,
-  target: ProviderInstructionTarget,
+  target: Pick<ProviderInstructionTargetInput, "rootDirectory" | "instructionRelativePath" | "writeMode">,
 ): boolean {
   return previousTarget.rootDirectory !== target.rootDirectory
     || previousTarget.instructionRelativePath !== target.instructionRelativePath
     || previousTarget.writeMode !== target.writeMode;
+}
+
+function hasProviderInstructionCleanupFailures(result: unknown): boolean {
+  return typeof result === "object"
+    && result !== null
+    && "failedCount" in result
+    && typeof result.failedCount === "number"
+    && result.failedCount > 0;
 }
 
 export type UpsertProviderInstructionTargetCommandDeps<
@@ -47,23 +55,27 @@ export async function upsertProviderInstructionTargetCommand<TStorage extends Pr
   deps.assertProviderInstructionTargetRootNotProtected(input, deps.protectedRoots);
 
   const previousTarget = deps.storage.getTarget(input.providerId, input.targetId);
-  const target = deps.storage.upsertTarget(input);
-
   const shouldCleanupPreviousTarget = previousTarget?.enabled === true
-    && (!target.enabled || isProviderInstructionTargetDestinationChanged(previousTarget, target));
+    && (!input.enabled || isProviderInstructionTargetDestinationChanged(previousTarget, input));
 
   if (shouldCleanupPreviousTarget && previousTarget) {
     try {
-      await deps.syncDisabledProviderInstructionTarget(
+      const cleanupResult = await deps.syncDisabledProviderInstructionTarget(
         deps.storage,
         previousTarget,
         deps.syncDeps,
         { protectedRoots: deps.protectedRoots },
       );
+      if (hasProviderInstructionCleanupFailures(cleanupResult)) {
+        throw new Error("previous provider instruction target cleanup failed");
+      }
     } catch (error) {
       await deps.logDisabledCleanupFailure(error, previousTarget);
+      throw error;
     }
   }
+
+  const target = deps.storage.upsertTarget(input);
 
   if (target.enabled) {
     const profile = deps.getMateProfile();

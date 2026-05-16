@@ -155,32 +155,77 @@ describe("ProviderInstructionTargetCommandService", () => {
     assert.equal(storageState.calls.getTarget, 2);
   });
 
-  it("enabled->disabled のとき cleanup は previous enabled target を使い、失敗しても保存結果を返す", async () => {
+  it("enabled->disabled のとき cleanup が失敗したら保存せず例外を伝播する", async () => {
     const initialInput = createInput({ enabled: true });
     const storageState = createStorageState(buildStoredTarget(initialInput));
     const previousTarget = storageState.target;
     let cleanupTargetId: string | null = null;
     let logged = false;
 
-    const result = await upsertProviderInstructionTargetCommand(
-      createInput({ enabled: false }),
-      createDeps(storageState, {
-        syncDisabledProviderInstructionTarget: async (_, targetToClean) => {
-          cleanupTargetId = `${targetToClean.providerId}:${targetToClean.targetId}`;
-          throw new Error("cleanup failed");
-        },
-        logDisabledCleanupFailure: () => {
-          logged = true;
-        },
-      }),
+    await assert.rejects(
+      () => upsertProviderInstructionTargetCommand(
+        createInput({ enabled: false }),
+        createDeps(storageState, {
+          syncDisabledProviderInstructionTarget: async (_, targetToClean) => {
+            cleanupTargetId = `${targetToClean.providerId}:${targetToClean.targetId}`;
+            throw new Error("cleanup failed");
+          },
+          logDisabledCleanupFailure: () => {
+            logged = true;
+          },
+        }),
+      ),
+      /cleanup failed/,
     );
 
     assert.equal(cleanupTargetId, "codex:main");
     assert.equal(logged, true);
-    assert.equal(result.enabled, false);
+    assert.equal(storageState.target?.enabled, true);
     assert.equal(previousTarget?.enabled, true);
-    assert.equal(storageState.calls.upsertTarget, 1);
-    assert.equal(storageState.calls.getTarget, 2);
+    assert.equal(storageState.calls.upsertTarget, 0);
+    assert.equal(storageState.calls.getTarget, 1);
+  });
+
+  it("enabled target の同期先変更で cleanup failedCount があれば旧 target を保存したまま中断する", async () => {
+    const initialInput = createInput({
+      enabled: true,
+      rootDirectory: "C:/workspace-old",
+      instructionRelativePath: "AGENTS.md",
+      writeMode: "managed_block",
+    });
+    const storageState = createStorageState(buildStoredTarget(initialInput));
+    let logged = false;
+
+    await assert.rejects(
+      () => upsertProviderInstructionTargetCommand(
+        createInput({
+          enabled: true,
+          rootDirectory: "C:/workspace-new",
+          instructionRelativePath: ".github/copilot-instructions.md",
+          writeMode: "managed_block",
+        }),
+        createDeps(storageState, {
+          syncDisabledProviderInstructionTarget: async () => ({
+            targetCount: 1,
+            syncedCount: 0,
+            failedCount: 1,
+            skippedCount: 0,
+            runIds: [1],
+          }),
+          syncEnabledProviderInstructionTargetsForMateProfile: async () => {
+            throw new Error("enabled sync should not run");
+          },
+          logDisabledCleanupFailure: () => {
+            logged = true;
+          },
+        }),
+      ),
+      /previous provider instruction target cleanup failed/,
+    );
+
+    assert.equal(logged, true);
+    assert.equal(storageState.target?.rootDirectory, "C:/workspace-old");
+    assert.equal(storageState.calls.upsertTarget, 0);
   });
 
   it("enabled target の同期先を変更したときは旧 target の managed block を cleanup してから enabled sync する", async () => {
