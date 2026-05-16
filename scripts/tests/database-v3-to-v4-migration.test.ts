@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -285,6 +285,10 @@ describe("migrate-database-v3-to-v4", () => {
       assert.equal(report.migratedV4Counts.companionAuditLogs, 1);
       assert.equal(report.migratedV4Counts.modelCatalogModels, 1);
       assert.equal(isValidV4Database(targetDbPath), true);
+      assert.equal(
+        readdirSync(targetDirPath).some((entry) => entry.includes("withmate-v4.db.migration-")),
+        false,
+      );
 
       const sessionStorage = new SessionStorage(targetDbPath);
       const auditLogStorage = new AuditLogStorage(targetDbPath);
@@ -355,6 +359,10 @@ describe("migrate-database-v3-to-v4", () => {
       assert.equal(existsSync(targetDbPath), false);
       assert.equal(existsSync(`${targetDbPath}-wal`), false);
       assert.equal(existsSync(`${targetDbPath}-shm`), false);
+      assert.equal(
+        readdirSync(fixture.dirPath).some((entry) => entry.includes("withmate-v4.db.migration-")),
+        false,
+      );
     } finally {
       fixture.cleanup();
     }

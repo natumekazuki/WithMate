@@ -104,6 +104,10 @@ function sqliteDatabaseFilePaths(dbPath: string): string[] {
   return [dbPath, `${dbPath}-wal`, `${dbPath}-shm`];
 }
 
+function createMigrationTempDatabaseFilePath(targetDatabaseFile: string): string {
+  return `${targetDatabaseFile}.migration-${process.pid}-${Date.now()}.tmp`;
+}
+
 function backupExistingSqliteDatabaseFiles(dbPath: string): SqliteBackupFile[] {
   const suffix = `.migration-backup-${process.pid}-${Date.now()}`;
   const backups: SqliteBackupFile[] = [];
@@ -151,6 +155,18 @@ function restoreSqliteDatabaseBackups(dbPath: string, backups: SqliteBackupFile[
 function discardSqliteDatabaseBackups(backups: SqliteBackupFile[]): void {
   for (const backup of backups) {
     rmSync(backup.backupPath, { force: true });
+  }
+}
+
+function publishMigratedDatabase(tempDatabaseFile: string, targetDatabaseFile: string): void {
+  removeSqliteDatabaseFiles(targetDatabaseFile);
+  for (const tempFilePath of sqliteDatabaseFilePaths(tempDatabaseFile)) {
+    if (!existsSync(tempFilePath)) {
+      continue;
+    }
+
+    const suffix = tempFilePath.slice(tempDatabaseFile.length);
+    renameSync(tempFilePath, `${targetDatabaseFile}${suffix}`);
   }
 }
 
@@ -462,6 +478,7 @@ export async function createMigrationWriteReport(input: {
   const overwrite = input.overwrite === true;
   const sourceBlobRootPath = resolveBlobRootPath(input.sourceDatabaseFile, input.blobRootPath);
   const targetBlobRootPath = resolveBlobRootPath(input.targetDatabaseFile);
+  const tempTargetDatabaseFile = createMigrationTempDatabaseFilePath(input.targetDatabaseFile);
   const userDataPath = resolve(input.userDataPath ?? dirname(input.targetDatabaseFile));
   if (!overwrite && sqliteDatabaseFilePaths(input.targetDatabaseFile).some((filePath) => existsSync(filePath))) {
     throw new Error(`target database already exists: ${input.targetDatabaseFile}`);
@@ -479,12 +496,12 @@ export async function createMigrationWriteReport(input: {
   try {
     const v3Counts = readCounts(sourceDb);
     backups = overwrite ? backupExistingSqliteDatabaseFiles(input.targetDatabaseFile) : [];
-    createV4BaseSchema(input.targetDatabaseFile, userDataPath);
+    createV4BaseSchema(tempTargetDatabaseFile, userDataPath);
 
     sourceSessionStorage = new SessionStorageV3(input.sourceDatabaseFile, sourceBlobRootPath);
     sourceAuditStorage = new AuditLogStorageV3(input.sourceDatabaseFile, sourceBlobRootPath);
-    targetSessionStorage = new SessionStorage(input.targetDatabaseFile);
-    targetAuditStorage = new AuditLogStorage(input.targetDatabaseFile);
+    targetSessionStorage = new SessionStorage(tempTargetDatabaseFile);
+    targetAuditStorage = new AuditLogStorage(tempTargetDatabaseFile);
 
     const sessions = (await sourceSessionStorage.listSessions()).map(toLegacyReadOnlySession);
     await targetSessionStorage.replaceSessions(sessions);
@@ -501,13 +518,21 @@ export async function createMigrationWriteReport(input: {
     const companionCounts = await migrateCompanionData({
       sourceDb,
       sourceDatabaseFile: input.sourceDatabaseFile,
-      targetDatabaseFile: input.targetDatabaseFile,
+      targetDatabaseFile: tempTargetDatabaseFile,
       sourceBlobRootPath,
       targetBlobRootPath,
     });
 
-    targetDb = new DatabaseSync(input.targetDatabaseFile);
+    targetDb = new DatabaseSync(tempTargetDatabaseFile);
     const catalogCounts = copySettingsAndCatalog(sourceDb, targetDb);
+    targetDb.close();
+    targetDb = null;
+    targetSessionStorage.close();
+    targetSessionStorage = null;
+    targetAuditStorage.close();
+    targetAuditStorage = null;
+
+    publishMigratedDatabase(tempTargetDatabaseFile, input.targetDatabaseFile);
     migrationSucceeded = true;
 
     return {
@@ -542,6 +567,7 @@ export async function createMigrationWriteReport(input: {
       discardSqliteDatabaseBackups(backups);
     } else {
       restoreSqliteDatabaseBackups(input.targetDatabaseFile, backups);
+      removeSqliteDatabaseFiles(tempTargetDatabaseFile);
     }
   }
 }

@@ -127,6 +127,7 @@ import {
   MateTalkRuntimeWorkspaceService,
   sanitizeMateTalkProfileContextText,
 } from "./mate-talk-runtime-workspace.js";
+import { buildMateTalkProviderAdditionalDirectories } from "./mate-talk-reference-access.js";
 import { MateTalkService } from "./mate-talk-service.js";
 import { buildMateTalkProfileContextText } from "./mate-talk-profile-context.js";
 import { WindowEntryLoader } from "./window-entry-loader.js";
@@ -1814,6 +1815,10 @@ async function generateMateTalkAssistantMessage(input: {
       attachments: input.attachments,
       additionalDirectories: input.additionalDirectories,
     });
+    const providerAdditionalDirectories = buildMateTalkProviderAdditionalDirectories({
+      attachments: input.attachments,
+      additionalDirectories: input.additionalDirectories,
+    });
 
     for (const candidate of candidates) {
       const providerSettings = getProviderAppSettings(appSettings, candidate.provider);
@@ -1867,7 +1872,7 @@ async function generateMateTalkAssistantMessage(input: {
             ].join("\n"),
             outputSchema: MATE_TALK_OUTPUT_SCHEMA,
           },
-          additionalDirectories: input.additionalDirectories,
+          additionalDirectories: providerAdditionalDirectories,
           approvalMode: input.approvalMode,
           codexSandboxMode: input.codexSandboxMode,
         });
