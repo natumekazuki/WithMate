@@ -378,10 +378,12 @@ describe("migrate-database-v3-to-v4", () => {
     const fixture = createV3FixtureDatabase();
     const targetDirPath = mkdtempSync(join(tmpdir(), "withmate-v3-to-v4-missing-blob-"));
     const targetDbPath = join(targetDirPath, "withmate-v4.db");
+    const targetBlobRootPath = join(targetDirPath, "blobs", "v3");
     try {
       await seedV3Fixture(fixture);
       const sourceDb = new DatabaseSync(fixture.dbPath);
       let missingDetailPreview = "";
+      let missingCompanionDetailPreview = "";
       try {
         const operationRow = readRequiredRow<{ details_preview: string; details_blob_id: string }>(
           sourceDb,
@@ -389,6 +391,12 @@ describe("migrate-database-v3-to-v4", () => {
         );
         missingDetailPreview = operationRow.details_preview;
         removeBlobFiles(fixture.blobRootPath, operationRow.details_blob_id);
+        const companionOperationRow = readRequiredRow<{ details_preview: string; details_blob_id: string }>(
+          sourceDb,
+          "SELECT details_preview, details_blob_id FROM companion_audit_log_operations WHERE details_blob_id IS NOT NULL LIMIT 1",
+        );
+        missingCompanionDetailPreview = companionOperationRow.details_preview;
+        removeBlobFiles(fixture.blobRootPath, companionOperationRow.details_blob_id);
       } finally {
         sourceDb.close();
       }
@@ -400,12 +408,17 @@ describe("migrate-database-v3-to-v4", () => {
       });
 
       const auditLogStorage = new AuditLogStorage(targetDbPath);
+      const companionAuditLogStorage = new CompanionAuditLogStorageV3(targetDbPath, targetBlobRootPath);
       try {
         const importedLogs = auditLogStorage.listSessionAuditLogs("session-v3-to-v4");
         assert.equal(importedLogs.length, 1);
         assert.equal(importedLogs[0]?.operations[0]?.details, missingDetailPreview);
+        const importedCompanionLogs = await companionAuditLogStorage.listSessionAuditLogs("companion-session-v3-to-v4");
+        assert.equal(importedCompanionLogs.length, 1);
+        assert.equal(importedCompanionLogs[0]?.operations[0]?.details, missingCompanionDetailPreview);
       } finally {
         auditLogStorage.close();
+        companionAuditLogStorage.close();
       }
     } finally {
       fixture.cleanup();

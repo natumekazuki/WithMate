@@ -786,6 +786,28 @@ export class CompanionAuditLogStorageV3 {
     }
   }
 
+  private async getTextOrFallback(blobId: string, fallback: string): Promise<string> {
+    try {
+      return await this.blobStore.getText(blobId);
+    } catch (error) {
+      if (error instanceof Error && error.message === `Blob ${blobId} not found`) {
+        return fallback;
+      }
+      throw error;
+    }
+  }
+
+  private async getJsonOrFallback<T>(blobId: string, fallback: T): Promise<T> {
+    try {
+      return await this.blobStore.getJson<T>(blobId);
+    } catch (error) {
+      if (error instanceof Error && error.message === `Blob ${blobId} not found`) {
+        return fallback;
+      }
+      throw error;
+    }
+  }
+
   private async rowToAuditLogEntry(row: AuditLogDetailRow, operationRows: AuditLogOperationRow[]): Promise<AuditLogEntry> {
     const hasDetails = row.logical_prompt_blob_id !== null
       || row.transport_payload_blob_id !== null
@@ -795,7 +817,7 @@ export class CompanionAuditLogStorageV3 {
       type: operationRow.operation_type,
       summary: operationRow.summary,
       details: operationRow.details_blob_id
-        ? await this.blobStore.getText(operationRow.details_blob_id)
+        ? await this.getTextOrFallback(operationRow.details_blob_id, operationRow.details_preview || "")
         : operationRow.details_preview || undefined,
     })));
 
@@ -817,17 +839,17 @@ export class CompanionAuditLogStorageV3 {
       approvalMode: normalizeApprovalMode(row.approval_mode, DEFAULT_APPROVAL_MODE),
       threadId: row.thread_id || "",
       logicalPrompt: hasDetails && row.logical_prompt_blob_id
-        ? await this.blobStore.getJson<AuditLogicalPrompt>(row.logical_prompt_blob_id)
+        ? await this.getJsonOrFallback<AuditLogicalPrompt>(row.logical_prompt_blob_id, DEFAULT_LOGICAL_PROMPT)
         : DEFAULT_LOGICAL_PROMPT,
       transportPayload: hasDetails && row.transport_payload_blob_id
-        ? await this.blobStore.getJson<AuditTransportPayload>(row.transport_payload_blob_id)
+        ? await this.getJsonOrFallback<AuditTransportPayload | null>(row.transport_payload_blob_id, null)
         : null,
       assistantText: hasDetails && row.assistant_text_blob_id
-        ? await this.blobStore.getText(row.assistant_text_blob_id)
+        ? await this.getTextOrFallback(row.assistant_text_blob_id, row.assistant_text_preview || "")
         : "",
       operations,
       rawItemsJson: hasDetails && row.raw_items_blob_id
-        ? await this.blobStore.getText(row.raw_items_blob_id)
+        ? await this.getTextOrFallback(row.raw_items_blob_id, "[]")
         : "[]",
       usage: parseUsageFromMetadata(row.usage_metadata_json) ?? reconstructUsageFromSummary(row),
       errorMessage: row.error_message_preview || "",
@@ -944,18 +966,18 @@ export class CompanionAuditLogStorageV3 {
       case "logical":
         fragment.logicalPrompt = previewAuditLogicalPrompt(
           row.logical_prompt_blob_id
-            ? await this.blobStore.getJson<AuditLogicalPrompt>(row.logical_prompt_blob_id)
+            ? await this.getJsonOrFallback<AuditLogicalPrompt>(row.logical_prompt_blob_id, DEFAULT_LOGICAL_PROMPT)
             : DEFAULT_LOGICAL_PROMPT,
         );
         break;
       case "transport":
         fragment.transportPayload = row.transport_payload_blob_id
-          ? await this.blobStore.getJson<AuditTransportPayload>(row.transport_payload_blob_id)
+          ? await this.getJsonOrFallback<AuditTransportPayload | null>(row.transport_payload_blob_id, null)
           : null;
         break;
       case "response":
         fragment.assistantText = row.assistant_text_blob_id
-          ? await this.blobStore.getText(row.assistant_text_blob_id)
+          ? await this.getTextOrFallback(row.assistant_text_blob_id, row.assistant_text_preview || "")
           : "";
         break;
       case "operations":
@@ -967,7 +989,7 @@ export class CompanionAuditLogStorageV3 {
         break;
       case "raw":
         fragment.rawItemsJson = row.raw_items_blob_id
-          ? await this.blobStore.getText(row.raw_items_blob_id)
+          ? await this.getTextOrFallback(row.raw_items_blob_id, "[]")
           : "[]";
         break;
       default: {
@@ -1000,7 +1022,7 @@ export class CompanionAuditLogStorageV3 {
       sessionId,
       operationIndex,
       details: operationRow.details_blob_id
-        ? await this.blobStore.getText(operationRow.details_blob_id)
+        ? await this.getTextOrFallback(operationRow.details_blob_id, operationRow.details_preview)
         : operationRow.details_preview,
     };
   }
