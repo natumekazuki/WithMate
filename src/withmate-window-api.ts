@@ -51,6 +51,7 @@ import type {
   MateGrowthEventListResult,
 } from "./mate/mate-growth-events-state.js";
 import type { RendererLogInput } from "./app-log-types.js";
+import type { AppBootStatus } from "./app-boot-state.js";
 import type { AppDatabaseDiagnostics } from "./app-database-diagnostics-state.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import type { OpenPathOptions, ResetAppDatabaseRequest, ResetAppDatabaseResult } from "./withmate-window-types.js";
@@ -221,6 +222,8 @@ export type WithMateWindowPickerApi = {
 };
 
 export type WithMateWindowSubscriptionApi = {
+  getAppBootStatus(): Promise<AppBootStatus>;
+  subscribeAppBootStatus(listener: (status: AppBootStatus) => void): () => void;
   subscribeSessionSummaries(listener: (sessions: SessionSummary[]) => void): () => void;
   subscribeSessionInvalidation(listener: (sessionIds: string[]) => void): () => void;
   subscribeCharacters(listener: (characters: CharacterProfile[]) => void): () => void;

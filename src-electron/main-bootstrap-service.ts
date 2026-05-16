@@ -1,4 +1,5 @@
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
+import type { AppBootStatus } from "../src/app-boot-state.js";
 import type { MateGrowthApplyResult } from "../src/mate/mate-growth-apply-result.js";
 import type { MateStorageState } from "../src/mate/mate-state.js";
 
@@ -17,6 +18,7 @@ type MainBootstrapServiceDeps = {
   createGrowthApplyTimer?: (handler: () => void, intervalMs: number) => unknown;
   clearGrowthApplyTimer?: (timer: unknown) => void;
   shouldRunGrowthApplyTimer?: () => boolean | Promise<boolean>;
+  onBootStatus?: (status: AppBootStatus) => void;
 };
 
 const DEFAULT_GROWTH_APPLY_INTERVAL_MS = 60 * 60 * 1000;
@@ -99,6 +101,12 @@ export class MainBootstrapService {
   }
 
   async handleReady(): Promise<void> {
+    this.deps.onBootStatus?.({
+      kind: "running",
+      stage: "stores",
+      title: "保存領域を初期化しています",
+      detail: "セッション、設定、Mate 関連データを読み込んでいます。",
+    });
     const activeModelCatalog = await this.deps.initializePersistentStores();
     if (this.deps.cleanupStaleGrowthApplyRuns) {
       try {
@@ -110,6 +118,12 @@ export class MainBootstrapService {
     await this.deps.recoverInterruptedSessions();
     await this.deps.refreshCharactersFromStorage();
     this.deps.registerIpcHandlers();
+    this.deps.onBootStatus?.({
+      kind: "running",
+      stage: "home",
+      title: "Home を準備しています",
+      detail: "起動処理が完了したら Home を表示します。",
+    });
     await this.deps.createHomeWindow();
     this.deps.broadcastModelCatalog(activeModelCatalog);
     await this.ensureGrowthApplyTimer();

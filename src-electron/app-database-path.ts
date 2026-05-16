@@ -16,6 +16,13 @@ function v3BlobRootPath(userDataPath: string): string {
   return path.join(userDataPath, "blobs", "v3");
 }
 
+export type AppDatabaseMigrationProgress = {
+  title: string;
+  detail?: string;
+};
+
+type AppDatabaseMigrationProgressListener = (progress: AppDatabaseMigrationProgress) => void;
+
 export function resolveAppDatabasePath(userDataPath: string): string {
   const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
   if (existsSync(v4Path) && isValidV4Database(v4Path)) {
@@ -40,8 +47,15 @@ export function resolveAppDatabasePath(userDataPath: string): string {
   return v4Path;
 }
 
-export async function resolveOrMigrateAppDatabasePath(userDataPath: string): Promise<string> {
+export async function resolveOrMigrateAppDatabasePath(
+  userDataPath: string,
+  onProgress?: AppDatabaseMigrationProgressListener,
+): Promise<string> {
   const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+  onProgress?.({
+    title: "データベースを確認しています",
+    detail: `${APP_DATABASE_V4_FILENAME} を確認しています。`,
+  });
   const v4Exists = existsSync(v4Path);
   if (v4Exists && isValidV4Database(v4Path)) {
     return v4Path;
@@ -58,6 +72,10 @@ export async function resolveOrMigrateAppDatabasePath(userDataPath: string): Pro
   const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
   const v3Exists = existsSync(v3Path);
   if (v3Exists && isValidV3Database(v3Path)) {
+    onProgress?.({
+      title: "データベースを移行しています",
+      detail: `${APP_DATABASE_V3_FILENAME} から ${APP_DATABASE_V4_FILENAME} へ移行しています。`,
+    });
     await migrateV3ToV4(userDataPath, v3Path, v4Path, { overwrite: v4Exists });
     return v4Path;
   }
@@ -65,15 +83,35 @@ export async function resolveOrMigrateAppDatabasePath(userDataPath: string): Pro
   const v2Path = path.join(userDataPath, APP_DATABASE_V2_FILENAME);
   const v2Exists = existsSync(v2Path);
   if (v2Exists && isValidV2Database(v2Path)) {
+    onProgress?.({
+      title: "データベースを移行しています",
+      detail: `${APP_DATABASE_V2_FILENAME} から ${APP_DATABASE_V3_FILENAME} へ移行しています。`,
+    });
     await migrateV2ToV3(userDataPath, v2Path, v3Path, { overwrite: v3Exists });
+    onProgress?.({
+      title: "データベースを移行しています",
+      detail: `${APP_DATABASE_V3_FILENAME} から ${APP_DATABASE_V4_FILENAME} へ移行しています。`,
+    });
     await migrateV3ToV4(userDataPath, v3Path, v4Path, { overwrite: v4Exists });
     return v4Path;
   }
 
   const v1Path = path.join(userDataPath, APP_DATABASE_V1_FILENAME);
   if (existsSync(v1Path)) {
+    onProgress?.({
+      title: "データベースを移行しています",
+      detail: `${APP_DATABASE_V1_FILENAME} から ${APP_DATABASE_V2_FILENAME} へ移行しています。`,
+    });
     await migrateV1ToV2(v1Path, v2Path, { overwrite: v2Exists });
+    onProgress?.({
+      title: "データベースを移行しています",
+      detail: `${APP_DATABASE_V2_FILENAME} から ${APP_DATABASE_V3_FILENAME} へ移行しています。`,
+    });
     await migrateV2ToV3(userDataPath, v2Path, v3Path, { overwrite: v3Exists });
+    onProgress?.({
+      title: "データベースを移行しています",
+      detail: `${APP_DATABASE_V3_FILENAME} から ${APP_DATABASE_V4_FILENAME} へ移行しています。`,
+    });
     await migrateV3ToV4(userDataPath, v3Path, v4Path, { overwrite: v4Exists });
     return v4Path;
   }

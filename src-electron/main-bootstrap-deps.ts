@@ -3,6 +3,7 @@ import type { BrowserWindow, IpcMain } from "electron";
 import type { MateStorageState } from "../src/mate/mate-state.js";
 import type { MateGrowthApplyResult } from "../src/mate/mate-growth-apply-result.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
+import type { AppBootStatus } from "../src/app-boot-state.js";
 import {
   createMainIpcRegistrationDeps,
   type CreateMainIpcRegistrationDepsArgs,
@@ -24,6 +25,7 @@ type CreateMainBootstrapDepsArgs = {
   growthApplyIntervalMs?: number;
   getGrowthApplyIntervalMs?: () => number | Promise<number>;
   shouldRunGrowthApplyTimer?: () => boolean | Promise<boolean>;
+  onBootStatus?: (status: AppBootStatus) => void;
   createGrowthApplyTimer?: (handler: () => void, intervalMs: number) => unknown;
   clearGrowthApplyTimer?: (timer: unknown) => void;
   ipcRegistration: CreateMainIpcRegistrationDepsArgs;
@@ -42,6 +44,7 @@ export function createMainBootstrapDeps(
     growthApplyIntervalMs: args.growthApplyIntervalMs,
     getGrowthApplyIntervalMs: args.getGrowthApplyIntervalMs,
     shouldRunGrowthApplyTimer: args.shouldRunGrowthApplyTimer,
+    onBootStatus: args.onBootStatus,
     createGrowthApplyTimer: args.createGrowthApplyTimer,
     clearGrowthApplyTimer: args.clearGrowthApplyTimer,
     registerIpcHandlers: () => {

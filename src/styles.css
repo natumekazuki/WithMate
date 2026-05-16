@@ -141,6 +141,127 @@ button:disabled {
   grid-template-rows: minmax(0, 1fr);
 }
 
+.boot-page {
+  --surface: rgba(25, 29, 38, 0.96);
+  --surface-strong: rgba(28, 33, 43, 0.98);
+  --line: rgba(203, 213, 225, 0.14);
+  --ink: #edf2f7;
+  --muted: #a8b4c8;
+  --orange: #6f8cff;
+  --orange-soft: rgba(111, 140, 255, 0.16);
+  --shadow: 0 24px 48px rgba(0, 0, 0, 0.34);
+  background:
+    radial-gradient(circle at top left, rgba(111, 140, 255, 0.14), transparent 30%),
+    linear-gradient(180deg, #0f131a 0%, #151a22 100%);
+}
+
+.boot-page-shell {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: 28px;
+  color: var(--ink);
+}
+
+.boot-status-panel {
+  display: grid;
+  gap: 22px;
+  width: min(560px, 100%);
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.boot-status-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+}
+
+.boot-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: #2f3d56;
+  color: #fff;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.boot-status-head h1 {
+  color: #f8fbff;
+  font-size: 1.18rem;
+}
+
+.boot-status-detail {
+  color: #c8d2e2;
+  line-height: 1.6;
+}
+
+.boot-error-message {
+  max-height: 180px;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid rgba(255, 124, 124, 0.24);
+  border-radius: 10px;
+  background: rgba(44, 20, 24, 0.86);
+  color: #ffc4c4;
+  white-space: pre-wrap;
+}
+
+.boot-stage-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.boot-stage-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 28px;
+  color: #8fa0b8;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.boot-stage-dot {
+  width: 10px;
+  height: 10px;
+  border: 1px solid rgba(203, 213, 225, 0.22);
+  border-radius: 999px;
+  background: rgba(203, 213, 225, 0.12);
+}
+
+.boot-stage-list li.done,
+.boot-stage-list li.active {
+  color: #edf2fb;
+}
+
+.boot-stage-list li.done .boot-stage-dot {
+  border-color: rgba(111, 184, 199, 0.58);
+  background: #6fb8c7;
+}
+
+.boot-stage-list li.active .boot-stage-dot {
+  border-color: rgba(111, 140, 255, 0.72);
+  background: #6f8cff;
+  box-shadow: 0 0 0 5px rgba(111, 140, 255, 0.16);
+}
+
+.boot-page-shell.failed .boot-stage-list li {
+  color: #8fa0b8;
+}
+
 .session-page .panel {
   background: var(--surface);
 }
