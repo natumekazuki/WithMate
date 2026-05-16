@@ -143,8 +143,11 @@ export class TextBlobStore {
 
     try {
       await fsStat(paths.blobPath);
-    } catch {
-      return null;
+    } catch (error) {
+      if (isFileNotFoundError(error)) {
+        return null;
+      }
+      throw error;
     }
     return metadata;
   }
@@ -371,8 +374,11 @@ export class SyncTextBlobStore {
 
     try {
       statSync(paths.blobPath);
-    } catch {
-      return null;
+    } catch (error) {
+      if (isFileNotFoundError(error)) {
+        return null;
+      }
+      throw error;
     }
     return metadata;
   }
@@ -436,23 +442,38 @@ function assertWithinMax(ref: BlobRef, maxOriginalBytes: number | undefined): vo
 }
 
 async function readMetadata(metadataPath: string): Promise<BlobRef | null> {
+  let metadata: string;
   try {
-    return parseMetadata(await readFile(metadataPath, "utf8"));
-  } catch {
+    metadata = await readFile(metadataPath, "utf8");
+  } catch (error) {
+    if (!isFileNotFoundError(error)) {
+      throw error;
+    }
     return null;
   }
+  return parseMetadata(metadata);
 }
 
 function readMetadataSync(metadataPath: string): BlobRef | null {
+  let metadata: string;
   try {
-    return parseMetadata(readFileSync(metadataPath, "utf8"));
-  } catch {
+    metadata = readFileSync(metadataPath, "utf8");
+  } catch (error) {
+    if (!isFileNotFoundError(error)) {
+      throw error;
+    }
     return null;
   }
+  return parseMetadata(metadata);
 }
 
 function parseMetadata(metadata: string): BlobRef | null {
-  const parsed = JSON.parse(metadata) as Partial<BlobRef>;
+  let parsed: Partial<BlobRef>;
+  try {
+    parsed = JSON.parse(metadata) as Partial<BlobRef>;
+  } catch {
+    return null;
+  }
   if (
     typeof parsed.blobId === "string" &&
     BLOB_ID_PATTERN.test(parsed.blobId) &&
@@ -468,6 +489,10 @@ function parseMetadata(metadata: string): BlobRef | null {
     return parsed as BlobRef;
   }
   return null;
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
 async function writeAtomic(destinationPath: string, bytes: Buffer): Promise<void> {

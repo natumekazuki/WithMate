@@ -61,32 +61,33 @@ export default function BootApp() {
   }, []);
 
   return (
-    <main className={`boot-page-shell ${status.kind === "failed" ? "failed" : ""}`}>
-      <section className="boot-status-panel">
-        <div className="boot-status-head">
-          <span className="boot-brand-mark">WM</span>
-          <div>
-            <p className="kicker">WithMate</p>
-            <h1>{status.title}</h1>
+    <div className={`page-shell home-page boot-page${status.kind === "failed" ? " failed" : ""}`}>
+      <main className="home-layout home-layout-minimal boot-page-shell">
+        <section className="panel boot-status-panel rise-1" aria-live="polite">
+          <div className="home-panel-head boot-status-head">
+            <div className="home-panel-copy">
+              <p className="kicker">WithMate</p>
+              <h1>{status.title}</h1>
+            </div>
           </div>
-        </div>
-        {status.detail ? <p className="boot-status-detail">{status.detail}</p> : null}
-        {status.kind === "failed" && status.error ? (
-          <pre className="boot-error-message">{status.error.message}</pre>
-        ) : null}
-        <ol className="boot-stage-list" aria-label="起動処理の進捗">
-          {STAGES.map((stage, index) => {
-            const isDone = activeIndex > index || status.kind === "completed";
-            const isActive = status.stage === stage && status.kind === "running";
-            return (
-              <li key={stage} className={isDone ? "done" : isActive ? "active" : ""}>
-                <span className="boot-stage-dot" />
-                <span>{STAGE_LABELS[stage]}</span>
-              </li>
-            );
-          })}
-        </ol>
-      </section>
-    </main>
+          {status.detail ? <p className="boot-status-detail">{status.detail}</p> : null}
+          {status.kind === "failed" && status.error ? (
+            <pre className="boot-error-message">{status.error.message}</pre>
+          ) : null}
+          <ol className="boot-stage-list" aria-label="起動処理の進捗">
+            {STAGES.map((stage, index) => {
+              const isDone = activeIndex > index || status.kind === "completed";
+              const isActive = status.stage === stage && status.kind === "running";
+              return (
+                <li key={stage} className={isDone ? "done" : isActive ? "active" : ""}>
+                  <span className="boot-stage-dot" />
+                  <span>{STAGE_LABELS[stage]}</span>
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      </main>
+    </div>
   );
 }

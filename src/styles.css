@@ -141,65 +141,32 @@ button:disabled {
   grid-template-rows: minmax(0, 1fr);
 }
 
-.boot-page {
-  --surface: rgba(25, 29, 38, 0.96);
-  --surface-strong: rgba(28, 33, 43, 0.98);
-  --line: rgba(203, 213, 225, 0.14);
-  --ink: #edf2f7;
-  --muted: #a8b4c8;
-  --orange: #6f8cff;
-  --orange-soft: rgba(111, 140, 255, 0.16);
-  --shadow: 0 24px 48px rgba(0, 0, 0, 0.34);
-  background:
-    radial-gradient(circle at top left, rgba(111, 140, 255, 0.14), transparent 30%),
-    linear-gradient(180deg, #0f131a 0%, #151a22 100%);
-}
-
 .boot-page-shell {
   display: grid;
-  place-items: center;
-  min-height: 100dvh;
-  padding: 28px;
-  color: var(--ink);
+  align-content: center;
+  justify-items: center;
+  min-height: 0;
 }
 
 .boot-status-panel {
   display: grid;
-  gap: 22px;
-  width: min(560px, 100%);
-  padding: 28px;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
+  gap: 18px;
+  width: min(640px, 100%);
+  padding: 22px;
+  background: rgba(21, 26, 35, 0.92);
 }
 
 .boot-status-head {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 16px;
-  align-items: center;
-}
-
-.boot-brand-mark {
-  display: grid;
-  place-items: center;
-  width: 56px;
-  height: 56px;
-  border-radius: 16px;
-  background: #2f3d56;
-  color: #fff;
-  font-size: 0.86rem;
-  font-weight: 800;
+  margin: 4px 6px 0;
 }
 
 .boot-status-head h1 {
-  color: #f8fbff;
-  font-size: 1.18rem;
+  color: #f4f7fb;
+  font-size: 1.08rem;
 }
 
 .boot-status-detail {
-  color: #c8d2e2;
+  color: #c0cadb;
   line-height: 1.6;
 }
 
@@ -217,7 +184,7 @@ button:disabled {
 
 .boot-stage-list {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -226,9 +193,13 @@ button:disabled {
 .boot-stage-list li {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
+  gap: 12px;
   align-items: center;
-  min-height: 28px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid rgba(203, 213, 225, 0.1);
+  border-radius: 12px;
+  background: rgba(15, 19, 26, 0.72);
   color: #8fa0b8;
   font-size: 0.88rem;
   font-weight: 700;
@@ -244,6 +215,7 @@ button:disabled {
 
 .boot-stage-list li.done,
 .boot-stage-list li.active {
+  border-color: color-mix(in srgb, var(--character-sub) 22%, rgba(203, 213, 225, 0.16));
   color: #edf2fb;
 }
 
