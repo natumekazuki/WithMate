@@ -27,7 +27,19 @@ export function isValidV2Database(dbPath: string): boolean {
   try {
     db = new DatabaseSync(dbPath, { readOnly: true });
     const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
-    return row?.user_version === APP_DATABASE_V2_SCHEMA_VERSION;
+    if (row?.user_version === APP_DATABASE_V2_SCHEMA_VERSION) {
+      return true;
+    }
+    if (row?.user_version !== 0) {
+      return false;
+    }
+
+    const existingTables = new Set(
+      (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all() as Array<{ name?: unknown }>)
+        .map((table) => table.name)
+        .filter((name): name is string => typeof name === "string"),
+    );
+    return REQUIRED_V2_TABLES.every((tableName) => existingTables.has(tableName));
   } catch {
     return false;
   } finally {

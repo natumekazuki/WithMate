@@ -1568,6 +1568,69 @@ describe("CopilotAdapter background structured prompt", () => {
     assert.deepEqual(writeResult, { kind: "reject" });
   });
 
+  it("background structured prompt の未指定 approval は read-only に倒す", async () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      getOrCreateClientByAppSettings: () => {
+        start: () => Promise<void>;
+        createSession: (config: {
+          tools?: Array<{
+            name: string;
+            handler: (args: Record<string, unknown>) => string;
+          }>;
+          onPermissionRequest?: (
+            request: PermissionRequest,
+            context: { sessionId: string },
+          ) => Promise<unknown> | unknown;
+        }) => Promise<{
+          on: (_event: "assistant.usage", _listener: (event: { data: { usage: unknown } }) => void) => () => void;
+          sendAndWait: () => Promise<{ data: { content: string } }>;
+          disconnect: () => Promise<void>;
+        }>;
+      };
+      fetchProviderQuotaTelemetry: () => Promise<null>;
+      runBackgroundPromptFromInput: <TOutput>(
+        input: RunBackgroundStructuredPromptInput,
+        parse: (rawText: string) => TOutput | null,
+      ) => Promise<{
+        threadId: string | null;
+        rawText: string;
+        output: TOutput | null;
+        parsedJson: unknown | null;
+        structuredOutput: unknown | null;
+        rawItemsJson: string;
+        usage: null;
+        providerQuotaTelemetry: null;
+      }>;
+    };
+
+    let writeResult: unknown = null;
+    adapter.getOrCreateClientByAppSettings = () => ({
+      start: async () => undefined,
+      createSession: async (config) => {
+        const submitTool = config.tools?.find((tool) => tool.name === "withmate_submit_structured_output");
+        assert.ok(submitTool);
+        assert.ok(config.onPermissionRequest);
+        writeResult = await config.onPermissionRequest(createWritePermissionRequest(), { sessionId: "background" });
+        return {
+          on: () => () => undefined,
+          sendAndWait: async () => {
+            submitTool.handler({ answer: "ok" });
+            return { data: { content: "" } };
+          },
+          disconnect: async () => undefined,
+        };
+      },
+    });
+    adapter.fetchProviderQuotaTelemetry = async () => null;
+
+    await adapter.runBackgroundPromptFromInput(
+      createBackgroundPromptInput(),
+      (rawText) => JSON.parse(rawText) as { answer: string },
+    );
+
+    assert.deepEqual(writeResult, { kind: "reject" });
+  });
+
   it("background structured prompt の never approval は write permission を許可する", async () => {
     const adapter = new CopilotAdapter() as unknown as {
       getOrCreateClientByAppSettings: () => {
@@ -1629,6 +1692,57 @@ describe("CopilotAdapter background structured prompt", () => {
     );
 
     assert.deepEqual(writeResult, { kind: "approve-once" });
+  });
+
+  it("runBackgroundStructuredPrompt は optional 実行制御 fields を private runner へ渡す", async () => {
+    const adapter = {
+      runBackgroundStructuredPrompt: CopilotAdapter.prototype.runBackgroundStructuredPrompt,
+      runBackgroundPromptFromInput: async (
+        input: RunBackgroundStructuredPromptInput,
+        parse: (rawText: string) => { answer: string } | null,
+      ) => {
+        assert.deepEqual(input.additionalDirectories, ["F:/repo/docs"]);
+        assert.equal(input.approvalMode, "untrusted");
+        assert.equal(input.codexSandboxMode, "read-only");
+        const rawText = "{\"answer\":\"ok\"}";
+        return {
+          threadId: "thread-background",
+          rawText,
+          output: parse(rawText),
+          parsedJson: { answer: "ok" },
+          structuredOutput: { answer: "ok" },
+          rawItemsJson: "[]",
+          usage: null,
+          providerQuotaTelemetry: null,
+        };
+      },
+    } as unknown as {
+      runBackgroundStructuredPrompt: CopilotAdapter["runBackgroundStructuredPrompt"];
+      runBackgroundPromptFromInput: (
+        input: RunBackgroundStructuredPromptInput,
+        parse: (rawText: string) => { answer: string } | null,
+        signal?: AbortSignal,
+      ) => Promise<{
+        threadId: string | null;
+        rawText: string;
+        output: { answer: string } | null;
+        parsedJson: unknown | null;
+        structuredOutput: unknown | null;
+        rawItemsJson: string;
+        usage: null;
+        providerQuotaTelemetry: null;
+      }>;
+    };
+
+    const result = await adapter.runBackgroundStructuredPrompt<{ answer: string }>(
+      createBackgroundPromptInput({
+        additionalDirectories: ["F:/repo/docs"],
+        approvalMode: "untrusted",
+        codexSandboxMode: "read-only",
+      }),
+    );
+
+    assert.deepEqual(result.output, { answer: "ok" });
   });
 
   it("schema submit tool の args が実 schema の anyOf / oneOf / bounds 不一致なら失敗する", async () => {

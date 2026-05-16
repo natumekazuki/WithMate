@@ -1238,7 +1238,8 @@ function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
 }
 
 function buildBackgroundPermissionHandler(input: RunBackgroundStructuredPromptInput): PermissionHandler {
-  switch (normalizeApprovalMode(input.approvalMode ?? "never")) {
+  const approvalMode = input.approvalMode === undefined ? "untrusted" : normalizeApprovalMode(input.approvalMode);
+  switch (approvalMode) {
     case "never":
       return () => toPermissionDecision("approved");
     case "untrusted":
@@ -1836,6 +1837,9 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         model: input.model,
         reasoningEffort: input.reasoningEffort,
         timeoutMs: input.timeoutMs,
+        additionalDirectories: input.additionalDirectories,
+        approvalMode: input.approvalMode,
+        codexSandboxMode: input.codexSandboxMode,
         prompt: input.prompt,
       },
       (rawText) => parseStructuredPromptJson(rawText) as TOutput | null,
