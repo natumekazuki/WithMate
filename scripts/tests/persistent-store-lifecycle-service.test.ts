@@ -17,6 +17,7 @@ import {
   APP_DATABASE_V3_FILENAME,
   CREATE_V3_SCHEMA_SQL,
 } from "../../src-electron/database-schema-v3.js";
+import { APP_DATABASE_V4_FILENAME } from "../../src-electron/database-schema-v4.js";
 import { MateStorage } from "../../src-electron/mate-storage.js";
 import { AuditLogStorageV2 } from "../../src-electron/audit-log-storage-v2.js";
 import { AuditLogStorageV3 } from "../../src-electron/audit-log-storage-v3.js";
@@ -797,6 +798,51 @@ test("PersistentStoreLifecycleService は V3 DB 再生成時に blob root も削
     assert.equal(bundle.activeModelCatalog.revision, 7);
     assert.deepEqual(removedDirectories, [path.join(dir, "blobs", "v3")]);
     assert.equal(bundle.sessionStorage instanceof SessionStorageV3, true);
+    service.close(bundle, dbPath);
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
+test("PersistentStoreLifecycleService は V4 DB 再生成時にも blob root を削除する", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "withmate-v4-recreate-"));
+  const dbPath = path.join(dir, APP_DATABASE_V4_FILENAME);
+  const removedDirectories: string[] = [];
+
+  try {
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => ({ revision: 8, providers: [] }),
+          close() {},
+        }) as never,
+      createSessionStorage: () =>
+        ({
+          listSessions: () => [],
+          listSessionSummaries: () => [],
+          close() {},
+        }) as never,
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => ({ close() {} }) as never,
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () => ({ close() {} }) as never,
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile(filePath) {
+        await rm(filePath, { force: true });
+      },
+      async removeDirectory(directoryPath) {
+        removedDirectories.push(directoryPath);
+        await rm(directoryPath, { recursive: true, force: true });
+      },
+    });
+
+    const bundle = await service.recreate(dbPath, "model-catalog.json", {});
+
+    assert.equal(bundle.activeModelCatalog.revision, 8);
+    assert.deepEqual(removedDirectories, [path.join(dir, "blobs", "v3")]);
     service.close(bundle, dbPath);
   } finally {
     await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });

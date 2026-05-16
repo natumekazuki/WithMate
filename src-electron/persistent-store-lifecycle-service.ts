@@ -5,6 +5,7 @@ import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { Session } from "../src/session-state.js";
 import { APP_DATABASE_V2_FILENAME, CREATE_V2_SCHEMA_SQL, isValidV2Database } from "./database-schema-v2.js";
 import { APP_DATABASE_V3_FILENAME, CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
+import { APP_DATABASE_V4_FILENAME } from "./database-schema-v4.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogStorageV2 } from "./audit-log-storage-v2.js";
@@ -193,8 +194,8 @@ export class PersistentStoreLifecycleService {
       this.deps.removeFile(`${dbPath}-wal`),
       this.deps.removeFile(`${dbPath}-shm`),
       this.deps.removeFile(dbPath),
-      this.isV3DatabasePath(dbPath)
-        ? this.removeV3BlobRoot(dbPath)
+      this.isBlobBackedDatabasePath(dbPath)
+        ? this.removeBlobRoot(dbPath)
         : Promise.resolve(),
     ]);
 
@@ -215,9 +216,14 @@ export class PersistentStoreLifecycleService {
     return basename(dbPath) === APP_DATABASE_V3_FILENAME;
   }
 
-  private removeV3BlobRoot(dbPath: string): Promise<void> {
+  private isBlobBackedDatabasePath(dbPath: string): boolean {
+    const databaseFilename = basename(dbPath);
+    return databaseFilename === APP_DATABASE_V3_FILENAME || databaseFilename === APP_DATABASE_V4_FILENAME;
+  }
+
+  private removeBlobRoot(dbPath: string): Promise<void> {
     if (!this.deps.removeDirectory) {
-      throw new Error("V3 DB 再生成には blob root 削除 dependency が必要です。");
+      throw new Error("DB 再生成には blob root 削除 dependency が必要です。");
     }
 
     return this.deps.removeDirectory(this.v3BlobRootPath(dbPath));

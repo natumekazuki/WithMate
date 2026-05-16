@@ -335,7 +335,8 @@ async function migrateCompanionData(input: {
   sourceDb: DatabaseSync;
   sourceDatabaseFile: string;
   targetDatabaseFile: string;
-  blobRootPath: string;
+  sourceBlobRootPath: string;
+  targetBlobRootPath: string;
 }): Promise<Pick<
   V3ToV4MigrationCounts,
   | "companionGroups"
@@ -346,10 +347,16 @@ async function migrateCompanionData(input: {
   | "companionAuditLogDetails"
   | "companionAuditLogOperations"
 >> {
-  const sourceCompanionStorage = new CompanionStorageV3(input.sourceDatabaseFile, input.blobRootPath);
+  const sourceCompanionStorage = new CompanionStorageV3(input.sourceDatabaseFile, input.sourceBlobRootPath);
   const targetCompanionStorage = new CompanionStorage(input.targetDatabaseFile);
-  const sourceCompanionAuditStorage = new CompanionAuditLogStorageV3(input.sourceDatabaseFile, input.blobRootPath);
-  const targetCompanionAuditStorage = new CompanionAuditLogStorageV3(input.targetDatabaseFile, input.blobRootPath);
+  const sourceCompanionAuditStorage = new CompanionAuditLogStorageV3(
+    input.sourceDatabaseFile,
+    input.sourceBlobRootPath,
+  );
+  const targetCompanionAuditStorage = new CompanionAuditLogStorageV3(
+    input.targetDatabaseFile,
+    input.targetBlobRootPath,
+  );
 
   try {
     let companionGroups = 0;
@@ -453,7 +460,8 @@ export async function createMigrationWriteReport(input: {
   assertValidTarget(input.targetDatabaseFile);
 
   const overwrite = input.overwrite === true;
-  const blobRootPath = resolveBlobRootPath(input.sourceDatabaseFile, input.blobRootPath);
+  const sourceBlobRootPath = resolveBlobRootPath(input.sourceDatabaseFile, input.blobRootPath);
+  const targetBlobRootPath = resolveBlobRootPath(input.targetDatabaseFile);
   const userDataPath = resolve(input.userDataPath ?? dirname(input.targetDatabaseFile));
   if (!overwrite && sqliteDatabaseFilePaths(input.targetDatabaseFile).some((filePath) => existsSync(filePath))) {
     throw new Error(`target database already exists: ${input.targetDatabaseFile}`);
@@ -473,8 +481,8 @@ export async function createMigrationWriteReport(input: {
     backups = overwrite ? backupExistingSqliteDatabaseFiles(input.targetDatabaseFile) : [];
     createV4BaseSchema(input.targetDatabaseFile, userDataPath);
 
-    sourceSessionStorage = new SessionStorageV3(input.sourceDatabaseFile, blobRootPath);
-    sourceAuditStorage = new AuditLogStorageV3(input.sourceDatabaseFile, blobRootPath);
+    sourceSessionStorage = new SessionStorageV3(input.sourceDatabaseFile, sourceBlobRootPath);
+    sourceAuditStorage = new AuditLogStorageV3(input.sourceDatabaseFile, sourceBlobRootPath);
     targetSessionStorage = new SessionStorage(input.targetDatabaseFile);
     targetAuditStorage = new AuditLogStorage(input.targetDatabaseFile);
 
@@ -494,7 +502,8 @@ export async function createMigrationWriteReport(input: {
       sourceDb,
       sourceDatabaseFile: input.sourceDatabaseFile,
       targetDatabaseFile: input.targetDatabaseFile,
-      blobRootPath,
+      sourceBlobRootPath,
+      targetBlobRootPath,
     });
 
     targetDb = new DatabaseSync(input.targetDatabaseFile);
@@ -506,7 +515,7 @@ export async function createMigrationWriteReport(input: {
       input: {
         sourceDatabaseFile: input.sourceDatabaseFile,
         targetDatabaseFile: input.targetDatabaseFile,
-        blobRootPath,
+        blobRootPath: sourceBlobRootPath,
         overwrite,
       },
       v3Counts,

@@ -264,7 +264,9 @@ describe("migrate-database-v3-to-v4", () => {
 
   it("write で v4 DB を作成し、session / audit / settings / model catalog を import する", async () => {
     const fixture = createV3FixtureDatabase();
-    const targetDbPath = join(fixture.dirPath, "withmate-v4.db");
+    const targetDirPath = mkdtempSync(join(tmpdir(), "withmate-v3-to-v4-target-"));
+    const targetDbPath = join(targetDirPath, "withmate-v4.db");
+    const targetBlobRootPath = join(targetDirPath, "blobs", "v3");
     try {
       await seedV3Fixture(fixture);
       const report = await createMigrationWriteReport({
@@ -287,7 +289,7 @@ describe("migrate-database-v3-to-v4", () => {
       const sessionStorage = new SessionStorage(targetDbPath);
       const auditLogStorage = new AuditLogStorage(targetDbPath);
       const companionStorage = new CompanionStorage(targetDbPath);
-      const companionAuditLogStorage = new CompanionAuditLogStorageV3(targetDbPath, fixture.blobRootPath);
+      const companionAuditLogStorage = new CompanionAuditLogStorageV3(targetDbPath, targetBlobRootPath);
       const db = new DatabaseSync(targetDbPath);
       try {
         const importedSession = await sessionStorage.getSession("session-v3-to-v4");
@@ -309,6 +311,7 @@ describe("migrate-database-v3-to-v4", () => {
         const importedCompanionAuditLogs = await companionAuditLogStorage.listSessionAuditLogs("companion-session-v3-to-v4");
         assert.equal(importedCompanionAuditLogs.length, 1);
         assert.match(importedCompanionAuditLogs[0]?.assistantText ?? "", /SENTINEL_COMPANION_V3_TO_V4:audit-assistant/);
+        assert.equal(existsSync(targetBlobRootPath), true);
         const setting = readRequiredRow<{ setting_value: string }>(
           db,
           "SELECT setting_value FROM app_settings WHERE setting_key = ?",
@@ -331,6 +334,7 @@ describe("migrate-database-v3-to-v4", () => {
       }
     } finally {
       fixture.cleanup();
+      rmSync(targetDirPath, { recursive: true, force: true });
     }
   });
 
