@@ -117,6 +117,7 @@ import {
   syncDisabledProviderInstructionTarget,
   syncEnabledProviderInstructionTargets,
 } from "./mate-provider-instruction-sync.js";
+import { buildMateProviderInstructionProfileSectionReader } from "./mate-provider-instruction-profile-source.js";
 import { createMateMemoryGenerationRunner } from "./mate-memory-generation-runner.js";
 import { shouldScheduleMateMemoryGeneration } from "./mate-memory-generation-scheduling.js";
 import { validateMateGrowthSettingsAgainstModelCatalog } from "./mate-growth-settings-validation.js";
@@ -223,7 +224,6 @@ const MATE_TALK_OUTPUT_SCHEMA = {
   },
   required: ["assistantMessage"],
 } as const;
-const MATE_TALK_FALLBACK_MESSAGE = "受け取ったよ。";
 const appLogService = new AppLogService({
   logsPath: appLogsPath,
   runtimeInfo: {
@@ -1582,6 +1582,10 @@ async function syncEnabledProviderInstructionTargetsForMateProfile(
         readTextFile: async (filePath) => readFile(filePath, "utf8"),
         writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
         profileRootDirectory: app.getPath("userData"),
+        readProfileSectionText: buildMateProviderInstructionProfileSectionReader(
+          profile,
+          requireMateProfileItemStorage().listProfileItems({ state: "active" }),
+        ),
       },
       {
         protectedRoots: getProviderInstructionTargetProtectedRoots(),
@@ -1882,6 +1886,7 @@ async function generateMateTalkAssistantMessage(input: {
         if (assistantMessage) {
           return assistantMessage;
         }
+        lastFailure = new Error(`MateTalk provider returned an invalid assistantMessage: ${candidate.provider}`);
       } catch (error) {
         lastFailure = error instanceof Error ? error : new Error(String(error));
         console.warn("Failed to generate MateTalk response", candidate.provider, lastFailure);
@@ -1890,11 +1895,11 @@ async function generateMateTalkAssistantMessage(input: {
 
     if (lastFailure) {
       console.warn("Failed to generate MateTalk response.", lastFailure);
+      throw lastFailure;
     } else {
       console.warn("有効な MateTalk provider が見つかりませんでした。");
+      throw new Error("有効な MateTalk provider が見つかりませんでした。");
     }
-
-    return MATE_TALK_FALLBACK_MESSAGE;
   } finally {
     if (preparedRun) {
       await workspaceService.completeRun();

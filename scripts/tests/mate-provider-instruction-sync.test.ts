@@ -349,6 +349,41 @@ describe("syncMateInstructionFile", () => {
     }
   });
 
+  it("readProfileSectionText がある場合は投影ファイルではなく正本テキストを同期する", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-sync-"));
+    try {
+      const target = { providerId: "codex", filePath: path.join(workspacePath, "AGENTS.md") };
+      const profile = createProfile({
+        displayName: "Mia",
+        sections: [
+          {
+            sectionKey: "core",
+            filePath: path.join("mate", "core.md"),
+            sha256: "sha256-core",
+            byteSize: 18,
+            updatedByRevisionId: "revision-1",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      });
+      await mkdir(path.join(workspacePath, "mate"), { recursive: true });
+      await writeFile(path.join(workspacePath, "mate", "core.md"), "# Core\n- stale projection\n", "utf8");
+
+      await syncMateInstructionFile(target, profile, {
+        ...FILE_DEPENDENCIES,
+        profileRootDirectory: workspacePath,
+        readProfileSectionText: async (section) =>
+          section.sectionKey === "core" ? "# Core\n- canonical profile item\n" : null,
+      });
+      const updated = await readFile(target.filePath, "utf8");
+
+      assert.ok(updated.includes("- canonical profile item"));
+      assert.equal(updated.includes("- stale projection"), false);
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("copilot の parent directory を作成して同期できる", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-mate-instruction-sync-"));
     try {
