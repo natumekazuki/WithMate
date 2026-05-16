@@ -59,6 +59,12 @@ function readRequiredRow<T>(db: DatabaseSync, sql: string, ...params: SQLInputVa
   return row;
 }
 
+function removeBlobFiles(blobRootPath: string, blobId: string): void {
+  const blobDirectoryPath = join(blobRootPath, blobId.slice(0, 2), blobId.slice(2, 4));
+  rmSync(join(blobDirectoryPath, `${blobId}.br`), { force: true });
+  rmSync(join(blobDirectoryPath, `${blobId}.json`), { force: true });
+}
+
 function createCompanionGroup(): CompanionGroup {
   return {
     id: "companion-group-v3-to-v4",
@@ -365,6 +371,45 @@ describe("migrate-database-v3-to-v4", () => {
       );
     } finally {
       fixture.cleanup();
+    }
+  });
+
+  it("write は V3 audit operation detail blob が欠損していても preview で移行を継続する", async () => {
+    const fixture = createV3FixtureDatabase();
+    const targetDirPath = mkdtempSync(join(tmpdir(), "withmate-v3-to-v4-missing-blob-"));
+    const targetDbPath = join(targetDirPath, "withmate-v4.db");
+    try {
+      await seedV3Fixture(fixture);
+      const sourceDb = new DatabaseSync(fixture.dbPath);
+      let missingDetailPreview = "";
+      try {
+        const operationRow = readRequiredRow<{ details_preview: string; details_blob_id: string }>(
+          sourceDb,
+          "SELECT details_preview, details_blob_id FROM audit_log_operations WHERE details_blob_id IS NOT NULL LIMIT 1",
+        );
+        missingDetailPreview = operationRow.details_preview;
+        removeBlobFiles(fixture.blobRootPath, operationRow.details_blob_id);
+      } finally {
+        sourceDb.close();
+      }
+
+      await createMigrationWriteReport({
+        sourceDatabaseFile: fixture.dbPath,
+        targetDatabaseFile: targetDbPath,
+        blobRootPath: fixture.blobRootPath,
+      });
+
+      const auditLogStorage = new AuditLogStorage(targetDbPath);
+      try {
+        const importedLogs = auditLogStorage.listSessionAuditLogs("session-v3-to-v4");
+        assert.equal(importedLogs.length, 1);
+        assert.equal(importedLogs[0]?.operations[0]?.details, missingDetailPreview);
+      } finally {
+        auditLogStorage.close();
+      }
+    } finally {
+      fixture.cleanup();
+      rmSync(targetDirPath, { recursive: true, force: true });
     }
   });
 });
