@@ -231,7 +231,10 @@ const GET_SESSION_MESSAGE_ARTIFACT_SQL = `
 function parseAllowedAdditionalDirectories(row: SessionHeaderRow, mode: SessionRowParseMode): string[] | null {
   try {
     const parsed = JSON.parse(row.allowed_additional_directories_json);
-    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === "string") : null;
+    if (!Array.isArray(parsed) || !parsed.every((entry) => typeof entry === "string")) {
+      throw new Error("allowed_additional_directories_json is not a string array");
+    }
+    return parsed;
   } catch (error) {
     console.error("stored session JSON parse failed", {
       sessionId: row.id,
@@ -248,6 +251,9 @@ function parseAllowedAdditionalDirectories(row: SessionHeaderRow, mode: SessionR
 function rowToSessionSummary(row: SessionHeaderRow, mode: SessionRowParseMode = "skip"): SessionSummary | null {
   const allowedAdditionalDirectories = parseAllowedAdditionalDirectories(row, mode);
   if (!allowedAdditionalDirectories) {
+    if (mode === "throw") {
+      throw new Error(`保存済み session ${row.id} の allowed_additional_directories_json が壊れているよ。`);
+    }
     return null;
   }
 
