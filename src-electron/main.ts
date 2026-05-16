@@ -1614,15 +1614,26 @@ async function syncEnabledProviderInstructionTargetsForMateProfile(
   }
 }
 
+function assertProviderInstructionCleanupComplete(
+  result: { failedCount: number },
+  operationName: string,
+): void {
+  if (result.failedCount > 0) {
+    throw new Error(
+      `${operationName} の Provider Instruction cleanup に ${result.failedCount} 件失敗しました。`,
+    );
+  }
+}
+
 async function resetMate(): Promise<void> {
   requireMainBootstrapService().clearGrowthApplyTimer();
-  await requireMateStorage().resetMate();
   await syncProviderInstructionTargetsForDisabledMateProfile();
+  await requireMateStorage().resetMate();
 }
 
 async function syncProviderInstructionTargetsForDisabledMateProfile(): Promise<void> {
   try {
-    await syncDisabledProviderInstructionTargets(
+    const result = await syncDisabledProviderInstructionTargets(
       requireProviderInstructionTargetStorage(),
       {
         readTextFile: async (filePath) => readFile(filePath, "utf8"),
@@ -1630,13 +1641,14 @@ async function syncProviderInstructionTargetsForDisabledMateProfile(): Promise<v
       },
       { protectedRoots: getProviderInstructionTargetProtectedRoots() },
     );
+    assertProviderInstructionCleanupComplete(result, "Mate reset");
   } catch (error) {
     if (error instanceof MateProviderInstructionSyncBlockedError) {
       writeAppLog({
         level: "warn",
         kind: "mate.provider-instruction-sync.disabled-projection.failed",
         process: "main",
-        message: "Mate reset 後の Provider Instruction cleanup が完了しませんでした。再同期を実行してください。",
+        message: "Mate reset 前の Provider Instruction cleanup が完了しませんでした。reset を中止します。",
         data: {
           providerId: error.providerId,
           targetId: error.targetId,
@@ -1650,7 +1662,7 @@ async function syncProviderInstructionTargetsForDisabledMateProfile(): Promise<v
       level: "warn",
       kind: "mate.provider-instruction-sync.disabled-projection.failed",
       process: "main",
-      message: "Mate reset 後の Provider Instruction cleanup が完了しませんでした。再同期を実行してください。",
+      message: "Mate reset 前の Provider Instruction cleanup が完了しませんでした。reset を中止します。",
       error: appLogService.errorToLogError(error),
     });
     throw error;
@@ -2837,7 +2849,7 @@ function closePersistentStores(): void {
 }
 
 async function cleanupMateProjectionsBeforeDatabaseRecreate(): Promise<void> {
-  await syncDisabledProviderInstructionTargets(
+  const result = await syncDisabledProviderInstructionTargets(
     requireProviderInstructionTargetStorage(),
     {
       readTextFile: async (filePath) => readFile(filePath, "utf8"),
@@ -2845,6 +2857,7 @@ async function cleanupMateProjectionsBeforeDatabaseRecreate(): Promise<void> {
     },
     { protectedRoots: getProviderInstructionTargetProtectedRoots() },
   );
+  assertProviderInstructionCleanupComplete(result, "database reset");
 
   await requireMateStorage().deleteMateProjectionDirectory();
 }
