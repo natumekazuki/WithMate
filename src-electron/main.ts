@@ -104,7 +104,7 @@ import {
   resolveMateProjectContextTextForPrompt,
   resolveMateProjectDigestForSession,
 } from "./mate-project-context-resolver.js";
-import { MateProfileItemStorage } from "./mate-profile-item-storage.js";
+import { MateProfileItemStorage, type MateProfileItem } from "./mate-profile-item-storage.js";
 import { ProviderInstructionTargetStorage } from "./provider-instruction-target-storage.js";
 import { MateEmbeddingVectorizer } from "./mate-embedding-vectorizer.js";
 import { MateSemanticEmbeddingStorage } from "./mate-semantic-embedding-storage.js";
@@ -1572,9 +1572,10 @@ async function forgetMateProfileItemAndRefreshProjection(itemId: string): Promis
 
 async function syncEnabledProviderInstructionTargetsForMateProfile(
   profile: MateProfile,
-  options: { requireComplete?: boolean; force?: boolean } = {},
+  options: { requireComplete?: boolean; force?: boolean; profileItems?: readonly MateProfileItem[] } = {},
 ): Promise<void> {
   try {
+    const profileItems = options.profileItems ?? requireMateProfileItemStorage().listProfileItems({ state: "active" });
     const result = await syncEnabledProviderInstructionTargets(
       requireProviderInstructionTargetStorage(),
       profile,
@@ -1584,7 +1585,7 @@ async function syncEnabledProviderInstructionTargetsForMateProfile(
         profileRootDirectory: app.getPath("userData"),
         readProfileSectionText: buildMateProviderInstructionProfileSectionReader(
           profile,
-          requireMateProfileItemStorage().listProfileItems({ state: "active" }),
+          profileItems,
         ),
       },
       {

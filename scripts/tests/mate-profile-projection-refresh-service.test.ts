@@ -15,6 +15,7 @@ test("forgetProfileItemAndRefreshProjection は対象 item を除いた Mate fil
   const tombstoneCalls: Array<{ itemId: string; revisionId?: string; now?: string }> = [];
   const appliedInputs: ApplyMateProfileFilesInput[] = [];
   const syncedRevisionIds: Array<string | null> = [];
+  const syncedItemIds: string[][] = [];
 
   const service = new MateProfileProjectionRefreshService({
     mateStorage: {
@@ -22,6 +23,11 @@ test("forgetProfileItemAndRefreshProjection は対象 item を除いた Mate fil
       getUserDataPath: () => "user-data",
       applyProfileFiles: async (input) => {
         appliedInputs.push(input);
+        await input.beforeFinalize?.({
+          profile: { ...profile, activeRevisionId: "rev-forget", profileGeneration: 2 },
+          revisionId: "rev-forget",
+          now: "2026-05-10T00:00:00.000Z",
+        });
         input.finalizeInTransaction?.({
           db: {} as DatabaseSync,
           revisionId: "rev-forget",
@@ -41,8 +47,9 @@ test("forgetProfileItemAndRefreshProjection は対象 item を除いた Mate fil
       },
     },
     providerInstructionSyncer: {
-      syncEnabledProviderInstructionTargetsForMateProfile: async (updatedProfile) => {
+      syncEnabledProviderInstructionTargetsForMateProfile: async (updatedProfile, options) => {
         syncedRevisionIds.push(updatedProfile.activeRevisionId);
+        syncedItemIds.push((options?.profileItems ?? []).map((item) => item.id));
       },
     },
   });
@@ -71,6 +78,7 @@ test("forgetProfileItemAndRefreshProjection は対象 item を除いた Mate fil
     },
   ]);
   assert.deepEqual(syncedRevisionIds, ["rev-forget"]);
+  assert.deepEqual(syncedItemIds, [["item-keep"]]);
 });
 
 test("forgetProfileItemAndRefreshProjection は project digest item の Markdown 投影も更新する", async () => {
@@ -191,12 +199,19 @@ test("forgetProfileItemAndRefreshProjection は provider instruction 同期失�
   const profile = createProfile();
   const targetItem = createItem({ id: "item-forget", claimKey: "nickname", renderedText: "忘れる内容" });
   const keptItem = createItem({ id: "item-keep", claimKey: "tone", renderedText: "残す内容" });
+  let forgetCalled = false;
+  let tombstoneCalled = false;
 
   const service = new MateProfileProjectionRefreshService({
     mateStorage: {
       getMateProfile: () => profile,
       getUserDataPath: () => "user-data",
       applyProfileFiles: async (input) => {
+        await input.beforeFinalize?.({
+          profile: { ...profile, activeRevisionId: "rev-forget", profileGeneration: 2 },
+          revisionId: "rev-forget",
+          now: "2026-05-10T00:00:00.000Z",
+        });
         input.finalizeInTransaction?.({
           db: {} as DatabaseSync,
           revisionId: "rev-forget",
@@ -208,8 +223,12 @@ test("forgetProfileItemAndRefreshProjection は provider instruction 同期失�
     profileItemStorage: {
       assertProfileItemMutationAllowed: () => {},
       listProfileItems: () => [targetItem, keptItem],
-      createForgottenTombstoneForProfileItemInTransaction: () => {},
-      forgetProfileItemInTransaction: () => {},
+      createForgottenTombstoneForProfileItemInTransaction: () => {
+        tombstoneCalled = true;
+      },
+      forgetProfileItemInTransaction: () => {
+        forgetCalled = true;
+      },
     },
     providerInstructionSyncer: {
       syncEnabledProviderInstructionTargetsForMateProfile: async () => {
@@ -222,6 +241,9 @@ test("forgetProfileItemAndRefreshProjection は provider instruction 同期失�
     () => service.forgetProfileItemAndRefreshProjection("item-forget"),
     /provider sync failed/,
   );
+
+  assert.equal(tombstoneCalled, false);
+  assert.equal(forgetCalled, false);
 });
 
 function createProfile(): MateProfile {

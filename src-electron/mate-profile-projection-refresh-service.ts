@@ -7,7 +7,10 @@ import type { ApplyMateProfileFilesInput } from "./mate-storage.js";
 import type { ProjectDigestProjectionWriter } from "./mate-project-digest-storage.js";
 
 type ProviderInstructionSyncer = {
-  syncEnabledProviderInstructionTargetsForMateProfile(profile: MateProfile): Promise<void>;
+  syncEnabledProviderInstructionTargetsForMateProfile(
+    profile: MateProfile,
+    options?: { profileItems?: readonly MateProfileItem[] },
+  ): Promise<void>;
 };
 
 type MateProfileProjectionStorage = {
@@ -63,9 +66,15 @@ export class MateProfileProjectionRefreshService {
 
     await this.rewriteProjectDigestProjectionIfNeeded(targetItem, projectedProfileItems, profile.activeRevisionId);
 
-    const updatedProfile = await this.deps.mateStorage.applyProfileFiles({
+    await this.deps.mateStorage.applyProfileFiles({
       summary: `forget profile item: ${targetItem.claimKey}`,
       files: renderedFiles,
+      beforeFinalize: async ({ profile: pendingProfile }) => {
+        await this.deps.providerInstructionSyncer?.syncEnabledProviderInstructionTargetsForMateProfile(
+          pendingProfile,
+          { profileItems: projectedProfileItems },
+        );
+      },
       finalizeInTransaction: ({ db, revisionId, now }) => {
         this.deps.profileItemStorage.createForgottenTombstoneForProfileItemInTransaction(
           db,
@@ -76,8 +85,6 @@ export class MateProfileProjectionRefreshService {
         this.deps.profileItemStorage.forgetProfileItemInTransaction(db, targetId, revisionId, now);
       },
     });
-
-    await this.deps.providerInstructionSyncer?.syncEnabledProviderInstructionTargetsForMateProfile(updatedProfile);
   }
 
   private async rewriteProjectDigestProjectionIfNeeded(

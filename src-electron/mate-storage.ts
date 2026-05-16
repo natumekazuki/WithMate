@@ -151,6 +151,11 @@ export type ApplyMateProfileFilesInput = {
   sourceGrowthEventId?: string | null;
   summary: string;
   files: ApplyMateProfileFileInput[];
+  beforeFinalize?: (context: {
+    profile: MateProfile;
+    revisionId: string;
+    now: string;
+  }) => Promise<void> | void;
   finalizeInTransaction?: (context: {
     db: DatabaseSync;
     revisionId: string;
@@ -1319,6 +1324,31 @@ export class MateStorage {
     }
 
     try {
+      const nextSectionMetadataByKey = new Map(nextSections.map((section) => [section.sectionKey, section]));
+      const pendingProfile: MateProfile = {
+        ...profile,
+        activeRevisionId: revisionId,
+        profileGeneration: profile.profileGeneration + 1,
+        updatedAt: now,
+        sections: profile.sections.map((section) => {
+          const nextSection = nextSectionMetadataByKey.get(section.sectionKey);
+          if (!nextSection) {
+            return section;
+          }
+
+          return {
+            ...section,
+            filePath: nextSection.relativePath,
+            sha256: nextSection.afterSha256,
+            byteSize: nextSection.afterByteSize,
+            updatedByRevisionId: revisionId,
+            updatedAt: now,
+          };
+        }),
+      };
+
+      await input.beforeFinalize?.({ profile: pendingProfile, revisionId, now });
+
       this.withTransaction((db) => {
         db.prepare(`
           UPDATE mate_profile_revisions
