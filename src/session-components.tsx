@@ -28,8 +28,8 @@ import {
 } from "./ui-utils.js";
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import type { ApprovalMode } from "./approval-mode.js";
+import type { ChatWindowModeKind } from "./chat/chat-window-mode.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
-import type { SessionWindowModeKind } from "./session-window-mode.js";
 import {
   contextPaneTabLabel,
   liveRunStepToneClassName,
@@ -41,7 +41,7 @@ import {
   type SessionContextTelemetryProjection,
 } from "./session-ui-projection.js";
 import type { CharacterUpdateMemoryExtract } from "./character-update-state.js";
-import type { HomeMonitorEntry } from "./home-session-projection.js";
+import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
 
 function displayApprovalValue(value: string): string {
@@ -565,6 +565,7 @@ export type SessionHeaderProps = {
   isEditingTitle: boolean;
   titleDraft: string;
   isRunning: boolean;
+  isReadOnly?: boolean;
   showRenameButton?: boolean;
   showAuditLogButton?: boolean;
   showTerminalButton?: boolean;
@@ -587,6 +588,7 @@ export function SessionHeader({
   isEditingTitle,
   titleDraft,
   isRunning,
+  isReadOnly = false,
   showRenameButton = true,
   showAuditLogButton = true,
   showTerminalButton = true,
@@ -626,7 +628,7 @@ export function SessionHeader({
         {!isEditingTitle ? (
           <div className="session-window-controls">
             {showRenameButton ? (
-              <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning}>
+              <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning || isReadOnly}>
                 Rename
               </button>
             ) : null}
@@ -680,7 +682,7 @@ export function SessionHeaderHandle({ taskTitle, onClick }: SessionHeaderHandleP
 }
 
 export type SessionChatScreenProps = {
-  mode: SessionWindowModeKind;
+  mode: ChatWindowModeKind;
   className?: string;
   style?: CSSProperties;
   header: ReactNode;
@@ -728,42 +730,6 @@ export function SessionChatScreen({
 
       {modals}
     </div>
-  );
-}
-
-export type SessionChatWindowProps = Omit<SessionChatScreenProps, "header" | "messageColumn" | "actionDock"> & {
-  isHeaderExpanded: boolean;
-  headerProps: SessionHeaderProps;
-  messageColumnProps: SessionMessageColumnProps;
-  isActionDockExpanded: boolean;
-  composerProps: SessionComposerExpandedProps;
-  compactActionDockProps: SessionActionDockCompactRowProps;
-};
-
-export function SessionChatWindow({
-  isHeaderExpanded,
-  headerProps,
-  messageColumnProps,
-  isActionDockExpanded,
-  composerProps,
-  compactActionDockProps,
-  ...screenProps
-}: SessionChatWindowProps) {
-  return (
-    <SessionChatScreen
-      {...screenProps}
-      header={isHeaderExpanded ? <SessionHeader {...headerProps} /> : null}
-      messageColumn={<SessionMessageColumn {...messageColumnProps} />}
-      actionDock={(
-        <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
-          {isActionDockExpanded ? (
-            <SessionComposerExpanded {...composerProps} />
-          ) : (
-            <SessionActionDockCompactRow {...compactActionDockProps} />
-          )}
-        </div>
-      )}
-    />
   );
 }
 
@@ -1497,6 +1463,7 @@ export function SessionContextPane({
 
   const renderCompanionGroupMonitorEntry = (entry: Extract<HomeMonitorEntry, { kind: "companion" }>) => {
     const { session, state } = entry;
+    const companionSessionCharacterName = session.character.trim() || "Mate";
     return (
       <button
         key={session.id}
@@ -1504,10 +1471,16 @@ export function SessionContextPane({
         type="button"
         onClick={() => onOpenCompanionReview(session.id)}
       >
-        <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
+        <CharacterAvatar
+          character={{
+            name: companionSessionCharacterName,
+            iconPath: session.characterIconPath,
+          }}
+          size="tiny"
+        />
         <div className="companion-group-monitor-copy">
           <strong>{session.taskTitle}</strong>
-          <span>{session.character}</span>
+          <span>{companionSessionCharacterName}</span>
         </div>
         <div className="companion-group-monitor-badges">
           <span className={`session-status companion-group-monitor-status ${state.kind}`.trim()}>{state.label}</span>
@@ -2567,7 +2540,7 @@ export function SessionActionDockCompactRow({
   );
 }
 
-type SessionSelectOption = {
+export type SessionSelectOption = {
   value: string;
   label: string;
 };
@@ -2632,9 +2605,11 @@ export type SessionComposerExpandedProps = {
   isRunning: boolean;
   composerBlocked: boolean;
   canSelectCustomAgent: boolean;
+  showAttachmentControls?: boolean;
   showCustomAgentPicker?: boolean;
   showSkillPicker?: boolean;
   showAdditionalDirectoryControls?: boolean;
+  showExecutionModeControls?: boolean;
   isAgentPickerOpen: boolean;
   isSkillPickerOpen: boolean;
   isAdditionalDirectoryListOpen: boolean;
@@ -2651,6 +2626,7 @@ export type SessionComposerExpandedProps = {
   additionalDirectoryItems: SessionAdditionalDirectoryItem[];
   workspacePathMatchItems: SessionWorkspacePathMatchItem[];
   draft: string;
+  placeholder?: string;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   isComposerDisabled: boolean;
   isSendDisabled: boolean;
@@ -2699,9 +2675,11 @@ export function SessionComposerExpanded({
   isRunning,
   composerBlocked,
   canSelectCustomAgent,
+  showAttachmentControls = true,
   showCustomAgentPicker = true,
   showSkillPicker = true,
   showAdditionalDirectoryControls = true,
+  showExecutionModeControls = true,
   isAgentPickerOpen,
   isSkillPickerOpen,
   isAdditionalDirectoryListOpen,
@@ -2718,6 +2696,7 @@ export function SessionComposerExpanded({
   additionalDirectoryItems,
   workspacePathMatchItems,
   draft,
+  placeholder,
   composerTextareaRef,
   isComposerDisabled,
   isSendDisabled,
@@ -2786,22 +2765,32 @@ export function SessionComposerExpanded({
   const activeWorkspacePathMatchIndex = workspacePathMatchItems.findIndex((item) => item.isActive);
   const activeWorkspacePathMatchId =
     activeWorkspacePathMatchIndex >= 0 ? `composer-workspace-path-match-${activeWorkspacePathMatchIndex}` : undefined;
+  const showComposerToolbar =
+    showAttachmentControls ||
+    showCustomAgentPicker ||
+    showSkillPicker ||
+    showAdditionalDirectoryControls ||
+    showJumpToBottom ||
+    canCollapseActionDock;
 
   return (
     <div className="composer">
       {retryBanner}
-      <div className="composer-attachments-toolbar">
-        <div className="composer-attachment-button-group" role="group" aria-label="添付">
-          <button className="drawer-toggle compact secondary" type="button" onClick={onPickFile} disabled={isRunning || composerBlocked}>
-            File
-          </button>
-          <button className="drawer-toggle compact secondary" type="button" onClick={onPickFolder} disabled={isRunning || composerBlocked}>
-            Folder
-          </button>
-          <button className="drawer-toggle compact secondary" type="button" onClick={onPickImage} disabled={isRunning || composerBlocked}>
-            Image
-          </button>
-        </div>
+      {showComposerToolbar ? (
+        <div className="composer-attachments-toolbar">
+          {showAttachmentControls ? (
+            <div className="composer-attachment-button-group" role="group" aria-label="添付">
+              <button className="drawer-toggle compact secondary" type="button" onClick={onPickFile} disabled={isRunning || composerBlocked}>
+                File
+              </button>
+              <button className="drawer-toggle compact secondary" type="button" onClick={onPickFolder} disabled={isRunning || composerBlocked}>
+                Folder
+              </button>
+              <button className="drawer-toggle compact secondary" type="button" onClick={onPickImage} disabled={isRunning || composerBlocked}>
+                Image
+              </button>
+            </div>
+          ) : null}
         {showCustomAgentPicker ? (
           <div className="composer-agent-toolbar">
             <button
@@ -2867,7 +2856,8 @@ export function SessionComposerExpanded({
             Hide
           </button>
         ) : null}
-      </div>
+        </div>
+      ) : null}
 
       {showCustomAgentPicker && isAgentPickerOpen ? (
         <div
@@ -3005,6 +2995,7 @@ export function SessionComposerExpanded({
         <textarea
           ref={composerTextareaRef}
           value={draft}
+          placeholder={placeholder}
           onChange={(event) => onDraftChange(event.target.value, event.target.selectionStart ?? event.target.value.length)}
           onFocus={onDraftFocus}
           onKeyDown={onDraftKeyDown}
@@ -3079,38 +3070,42 @@ export function SessionComposerExpanded({
       ) : null}
 
       <div className="composer-settings">
-        <div className="composer-setting-field composer-setting-approval">
-          <span>Approval</span>
-          <select
-            value={selectedApprovalMode}
-            onChange={(event) => onChangeApprovalMode(event.target.value as ApprovalMode)}
-            disabled={isRunning}
-            aria-label="Approval"
-          >
-            {approvalOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        {showExecutionModeControls ? (
+          <>
+            <div className="composer-setting-field composer-setting-approval">
+              <span>Approval</span>
+              <select
+                value={selectedApprovalMode}
+                onChange={(event) => onChangeApprovalMode(event.target.value as ApprovalMode)}
+                disabled={isRunning || composerBlocked}
+                aria-label="Approval"
+              >
+                {approvalOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-        {sandboxOptions.length > 0 ? (
-          <div className="composer-setting-field composer-setting-sandbox">
-            <span>Sandbox</span>
-            <select
-              value={selectedCodexSandboxMode}
-              onChange={(event) => onChangeCodexSandboxMode(event.target.value as CodexSandboxMode)}
-              disabled={isRunning}
-              aria-label="Sandbox"
-            >
-              {sandboxOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
+            {sandboxOptions.length > 0 ? (
+              <div className="composer-setting-field composer-setting-sandbox">
+                <span>Sandbox</span>
+                <select
+                  value={selectedCodexSandboxMode}
+                  onChange={(event) => onChangeCodexSandboxMode(event.target.value as CodexSandboxMode)}
+                  disabled={isRunning || composerBlocked}
+                  aria-label="Sandbox"
+                >
+                  {sandboxOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+          </>
         ) : null}
 
         <div className="composer-setting-field composer-setting-model">
@@ -3118,7 +3113,7 @@ export function SessionComposerExpanded({
           <select
             value={selectedModel}
             onChange={(event) => onChangeModel(event.target.value)}
-            disabled={isRunning}
+            disabled={isRunning || composerBlocked}
           >
             {modelOptions.length > 0 ? (
               modelOptions.map((option) => (
@@ -3137,7 +3132,7 @@ export function SessionComposerExpanded({
           <select
             value={selectedReasoningEffort}
             onChange={(event) => onChangeReasoningEffort(event.target.value)}
-            disabled={isRunning}
+            disabled={isRunning || composerBlocked}
             aria-label="推論の深さ"
           >
             {reasoningOptions.map((option) => (

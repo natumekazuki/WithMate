@@ -5,7 +5,7 @@
 
 ## Goal
 
-Electron デスクトップアプリとして、`Home Window` / `Session Window` / `Character Editor Window` / `Diff Window` の責務を整理し、現行 UI の入口を 1 枚で把握できるようにする。`character-update` は独立した window ではなく `Session Window` の variant として扱う。
+Electron デスクトップアプリとして、`Home Window` / `Session Window` / `Mate Editor Window` / `Diff Window` の責務を整理し、現行 UI の入口を 1 枚で把握できるようにする。`character-update` と `mate-talk` は独立した chat layout ではなく `Session Window` の mode として扱う。
 
 ## Manual Test Maintenance
 
@@ -15,11 +15,11 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 
 ## Scope
 
-- Home の session / character 管理 UI
+- Home の session / mate 管理 UI
 - Session Monitor Window
 - Memory Management Window
 - Session の coding agent 作業 UI
-- Character Editor の編集 UI
+- Mate Editor の編集 UI
 - Diff Window の閲覧 UI
 - Settings Window と model catalog 操作
 - Session の監査ログ閲覧 UI
@@ -28,6 +28,19 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 
 - current UI の正本はこの文書とする
 - UI の経緯メモや旧検討文書は `docs/design/archive/2026/03/` へ移しており、この文書より優先しない
+
+## UI Implementation Boundary
+
+- 画面の実装ファイルは、表示される入口ではなく役割ごとの domain に置く
+- `Home` 配下に置くのは Home dashboard と Home から直接見える管理ハブだけとする
+- `Settings Window` の画面実装は `settings` domain に置き、Home の実装ファイルへ混ぜない
+- `Memory Management Window` の画面実装は `memory` domain に置き、Home の実装ファイルへ混ぜない
+- `Mate Setup` / `Mate Profile` / avatar picker は `mate` domain に置き、Home には要約、起動導線、routing だけを残す
+- chat layout の実装は 1 系統だけとし、`chat` domain を正本にする
+- Agent / Companion / メイトークは同じ chat layout に乗せ、各機能側には state / service / adapter だけを置く
+- `mate-talk` domain に専用 chat layout、専用 message list、専用 composer、専用 right pane shell を作らない
+- `Session` という名前の UI 実装に Agent / Companion / メイトーク固有処理を詰め込まない。必要な差分は mode / capability / adapter として注入する
+- right pane に表示する情報がない mode では、説明文や誘導文で埋めず、空の pane shell として扱う
 
 ## Runtime
 
@@ -39,14 +52,14 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 ## Home Window
 
 - 黒基調の管理ハブとして表示する
-- `Settings` は別 window で開く前提のため、Home は session / character 管理ハブを優先する
+- `Settings` は別 window で開く前提のため、Home は session / mate 管理ハブを優先する
 - 2 カラム構成
   - 左: `Recent Sessions`
-  - 右: `Memory / Settings` rail + `Session Monitor` または `Characters`
-- `Recent Sessions` / `Characters` 見出しは dark background 上で十分読める色を明示する
+  - 右: `Memory / Settings` rail + `Session Monitor` または `Your Mate`
+- `Recent Sessions` / `Your Mate` 見出しは dark background 上で十分読める色を明示する
 - `Monitor & Resume` / `Manage Cast` の補助ラベルは置かない
 - `Session Monitor`
-  - right pane 上部の segmented toggle で `Characters` と排他的に切り替える
+  - right pane 上部の segmented toggle で `Your Mate` と排他的に切り替える
   - 初期表示は `Session Monitor`
   - compact な session row を表示する
   - source は `src-electron/main.ts` の `sessionWindows: Map<string, BrowserWindow>` を truth source にした open session ids と、`Recent Sessions` と同じ filtered session list の交差集合を使う
@@ -76,24 +89,25 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
     - それ以外は neutral な non-active
     - 未知 state でも card は欠落させない
   - card theme
-    - background = character `main`
-    - left accent bar = character `sub`
+    - background = mate `main`
+    - left accent bar = mate `sub`
     - text color = WCAG AA の contrast ratio を満たす dark / light 候補から自動決定
-- `Characters`
+- `Your Mate`
   - right pane 上部の segmented toggle で `Session Monitor` と排他的に切り替える
-  - expanded 時だけ header action として `Add Character`
-  - 選択中に search input + list を表示
-  - `avatar / name`
-  - card 全体クリックで `Character Editor` を開く
+  - SingleMate の avatar / name / short profile summary を表示する
+  - primary action として `MateTalk` を開く
+  - secondary action として `Mate Profile` / avatar 設定を開く
+  - character catalog、複数 character search、character picker は表示しない
+  - `MateTalk` は Home inline ではなく、`Session Window` の `mate-talk` mode として別 window で開く
   - card theme
-    - background = character `main`
-    - left accent bar = character `sub`
+    - background = mate `main`
+    - left accent bar = mate `sub`
     - text color = WCAG AA の contrast ratio を満たす dark / light 候補から自動決定
 - `New Session` dialog
   - session title 入力
   - workspace picker
   - enabled provider の選択
-  - character 選択
+  - mate は SingleMate の現在値を使い、dialog では選択させない
   - approval mode は provider-neutral 3 mode を前提にし、default は `safety`
   - model / depth / custom agent は dialog には出さず、選択中 provider の直近 session があればその selection を継承する
   - open 時は dialog 内の最初の主要入力へ focus し、`Escape` で閉じる
@@ -125,8 +139,8 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 
 - `Home` または `Settings` から開く独立 window
 - renderer は `HomeApp` の `mode=memory` を再利用する
-- `Session / Project / Character Memory` の一覧、global search、domain tab、status / category filter、updatedAt sort
-- domain は `All / Session / Project / Character` の tab で切り替え、選択中 domain の section だけを表示する
+- `Session / Project / Mate Memory` の一覧、global search、domain tab、status / category filter、updatedAt sort
+- domain は `All / Session / Project / Mate` の tab で切り替え、選択中 domain の section だけを表示する
 - `Reload Memory`
 - `Delete`
 - `Home` / `Close`
@@ -148,7 +162,10 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 
 - Home と同じ dark base を使う
 - キャラカラーは限定的に使い、過度に Session 全体へ広げない
-- `sessionKind === "character-update"` の時は update 用 variant に切り替える
+- チャット UI の実装正本は `chat` domain の単一 UI 定義だけとする
+- Agent / Companion / メイトークは同じ chat screen / header / message list / composer / right pane shell を使い、mode と service adapter で差分を切り替える
+- 新しい会話機能を追加する場合も、chat layout 実装を増やさず、Session UI の mode を追加する
+- `sessionKind === "character-update"` の時は update 用 mode に切り替える
 - session title の rename / delete
 - `Audit Log` overlay
   - approval 表示は `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording を使う
@@ -193,10 +210,15 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
 - right pane は `Latest Command` を基本 tab とし、provider が `Copilot` の時だけ `Tasks` tab を追加する
 - right pane 上部には collapsed state の `title handle` を置く
+- right pane shell は Agent / Companion / メイトークで共有する。表示する内容がない mode では pane 構造だけを残し、説明文や空メッセージを常設しない
 - `Generate Memory` は current UI では表示しない
-- `character-update` variant では right pane を `LatestCommand / MemoryExtract` の 2 面に切り替える
-- `character-update` variant では expanded header の `Terminal` を出さない
-- `character-update` variant では composer の `Skill / Agent` picker を出さない
+- `character-update` mode では right pane を `LatestCommand / MemoryExtract` の 2 面に切り替える
+- `character-update` mode では expanded header の `Terminal` を出さない
+- `character-update` mode では composer の `Skill / Agent` picker を出さない
+- `mate-talk` mode では expanded header の作業用操作を出さず、Home へ戻る導線と header collapse だけを残す
+- `mate-talk` mode では composer 上の `File / Folder / Image / Skill / Agent` 操作を出さない
+- `mate-talk` mode では composer 下の `Model / Depth` selection を残し、通常 Session と同じ control を使う
+- `mate-talk` mode では right pane に command / task / memory extraction を出さない。将来表示する情報が決まるまでは空 pane として扱う
 - command 実行中は `Latest Command` を最優先で自動表示する
 - MemoryGeneration / 独り言の right pane 自動切り替えは行わない
 - right pane の empty / idle copy は説明過多にせず、使えば分かる最小表現を優先する
@@ -212,10 +234,10 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `assistantText` は pending bubble の会話本文としてのみ扱い、`agent_message` を activity row へ戻さない
 - pending bubble の実行中 indicator は本文の代替ではなく `runState === "running"` を示すフラグとして扱い、`assistantText` の出力開始後も run 中は維持する
 - pending bubble の実行中 indicator は `runState !== "running"` になった時点で消し、success 固定の完了表現にはしない
-- pending bubble の実行中 indicator copy は character ごとに `session copy` で差し替えられる
-- default fallback は bland な一般化表現を使い、character copy が未設定でも過剰にキャラ化しない
+- pending bubble の実行中 indicator copy は Mate ごとに `session copy` で差し替えられる
+- default fallback は bland な一般化表現を使い、Mate copy が未設定でも過剰にキャラ化しない
 - `assistantText` 未着でも right pane の `Latest Command` があれば raw command を表示し、command 未到着の局面では empty state と pending bubble の run indicator で待機を示す
-- `Latest Command` の waiting / empty copy、retry banner title、`Changed Files` empty copy も character ごとに差し替えられる
+- `Latest Command` の waiting / empty copy、retry banner title、`Changed Files` empty copy も Mate ごとに差し替えられる
 - pending bubble の実行中 indicator は本文と同居できる先頭 status row とし、screen reader には bubble 全体ではなく状態変化だけを最小限に通知して再アナウンス過多を避ける
 - explicit な `aria-live` は pending bubble の status change に寄せ、retry draft conflict、message follow banner、composer feedback は visible text を正本にして常時 live 通知しない
 - `command_execution` は通常 paragraph ではなく shell command と即判別できる専用の monospace block で表示する
@@ -232,6 +254,7 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - turn 内の `agent_message / command_execution / file_change / reasoning` を arrival 順に並べる operation timeline は item ごとに default closed とし、summary 1 行だけを先に見せる
 - composer 上の添付 toolbar (`File / Folder / Image`)
 - `File / Folder / Image` は attachment group として並べ、`Skill` は別カテゴリの単独 button として区別する
+- 添付 toolbar は Agent / Companion の作業 chat 用であり、メイトークでは表示しない
 - composer の attachment chip
   - basename を主表示にし、file / folder / image の kind と `ワークスペース内` / `ワークスペース外` を即判別できる
   - 補足 path は副次表示へ回し、long path でも basename を先に読める
@@ -249,10 +272,10 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - composer 下の `Approval / Model / Depth`
   - approval chip は `自動実行 / 安全寄り / プロバイダー判断`
   - approval chip は single-select control として矢印キーで切り替えられる
-- session title は character `main`
+- session title は mate `main`
 - assistant / pending bubble は `sub` ベースの薄い accent を持つ
 - `composer settings` の背景は `sub` ベースの薄い accent を持つ
-- `Send / Cancel` は character `main`
+- `Send / Cancel` は mate `main`
 - sendability 判定は `src/App.tsx` の単一導出に寄せ、`sessionExecutionBlockedReason` / `composerPreview.errors` を Send 近傍の単一 feedback area で扱う
 - 実行中の latest command 監視の詳細は `docs/design/session-live-activity-monitor.md` を参照する
 - Send disabled 条件は submit button / `Ctrl+Enter` / `Cmd+Enter` guard で一致させ、blank / whitespace-only draft の no-op 送信を通さない
@@ -282,9 +305,9 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - `Open In Window` による `Diff Window` popout
 - `Audit Log` overlay と inline `Diff Viewer` overlay は open 時に dialog 内へ focus を移し、`Escape` で閉じ、`Tab` / `Shift+Tab` を dialog 内で循環させる
 
-## Character Editor Window
+## Mate Editor Window
 
-- `Profile / character.md` の 2 モード切り替え
+- `Profile / mate.md` の 2 モード切り替え
 - Home と同じ dark base を使う
 - header action に `Reload / Open Folder / Open Update Workspace / Close`
 - 画面下部固定の action bar に `Save / Delete`
@@ -295,10 +318,10 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
   - `main`
   - `sub`
   - color picker + RGB 入力
-- `character.md`
+- `mate.md`
 - create / update / delete
 - 小さい window では縦積みと外側スクロールを優先し、内部スクロールの多重化を避ける
-- 既存 character では header action の `Open Update Workspace` から Character Editor 内で provider picker modal を開ける
+- 既存 mate では header action の `Open Update Workspace` から Mate Editor 内で provider picker modal を開ける
 - provider picker modal は `Escape` / focus trap / provider chip の矢印キー選択に対応する
 
 ## Diff Window
@@ -310,26 +333,26 @@ Electron デスクトップアプリとして、`Home Window` / `Session Window`
 - 狭幅では `Before / After` を縦 stack に倒し、必要な横 scroll は各 pane 内で扱う
 - current minimum は `900px` 台の split-screen を想定し、stack 後も読める下限に寄せる
 - `Before / After` の各 pane head / body は keyboard focus を受けられ、矢印キー、`PageUp` / `PageDown`、`Home` / `End` で scroll できる
-- Session から開いた Diff は character theme snapshot を引き継ぎ、`titlebar / subbar / pane header` にだけ薄い accent を持つ
+- Session から開いた Diff は mate theme snapshot を引き継ぎ、`titlebar / subbar / pane header` にだけ薄い accent を持つ
 - `Before / After` 見出しは差分面から独立した label chip として表示し、背景色に埋もれないコントラストを維持する
 
 ## Interaction Notes
 
-- Home から Session / Character Editor を開く
-- Character Editor から provider picker modal を開き、そのまま `character-update` session を開く
+- Home から Session / Mate Editor / MateTalk を開く
+- Mate Editor から provider picker modal を開き、そのまま `character-update` session を開く
 - Session の作成・更新・削除は Main Process 経由で永続化する
 - Session の実行中イベントは Main Process から live state として IPC 中継する
 - Home の `Session Monitor` は Main Process の `sessionWindows` を thin IPC bridge で参照し、開いている `Session Window` の session だけを表示する
 - `Session Monitor Window` も同じ IPC bridge と truth source を使い、`Home` と別 window でも monitor 内容を同期する
 - Session 実行の監査ログは SQLite に保存し、Session Window から閲覧する
 - chat message は限定的な rich text renderer で整形表示する
-- `Settings Window` の `System Prompt Prefix` は SQLite に保存し、次回 turn から prompt composition へ反映する
-- `Memory Management Window` は Main Process から `Session / Project / Character Memory` の snapshot を取得し、delete 後は再取得して整合を保つ
-- character は `userData/characters/` を正本とする
+- `Settings Window` は app 共通 system prompt を編集しない。Mate 定義は provider instruction sync の managed block へ投影する
+- `Memory Management Window` は Main Process から `Session / Project / Mate Memory` の snapshot を取得し、delete 後は再取得して整合を保つ
+- mate は `userData/mate/` を正本とする
 - `userData` は `<appData>/WithMate/` に固定する
-- `character-update` session も同じ character directory を workspace として再利用する
-- Session は character の `main / sub` theme color snapshot を保持し、現在は header title、assistant / pending bubble、composer settings、`Send / Cancel`、artifact block、Session から開く Diff の `titlebar / subbar / pane header` の限定的な accent に使う
-- theme 由来の前景色決定は輝度閾値ではなく共通 contrast helper を正本にし、Home / Session / Character Editor / Diff で同じ WCAG AA 基準を使う
+- `character-update` session も同じ mate directory を workspace として再利用する
+- Session は mate の `main / sub` theme color snapshot を保持し、現在は header title、assistant / pending bubble、composer settings、`Send / Cancel`、artifact block、Session から開く Diff の `titlebar / subbar / pane header` の限定的な accent に使う
+- theme 由来の前景色決定は輝度閾値ではなく共通 contrast helper を正本にし、Home / Session / Mate Editor / Diff で同じ WCAG AA 基準を使う
 - session は SQLite を正本とする
 - model catalog は DB の active revision を読む
 - message list follow mode は assistantText streaming / pending bubble 更新に反応し、command 監視は right pane の `Latest Command` へ分離する

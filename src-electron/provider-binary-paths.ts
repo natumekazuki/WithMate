@@ -147,9 +147,24 @@ function splitScopedPackageSpecifier(packageSpecifier: string): string[] {
   return packageSpecifier.split("/");
 }
 
+function resolveBinaryFromPackageRootExport(
+  resolvedPackagePath: string,
+  binaryRelativePath: string[],
+  fileExists: (candidate: string) => boolean,
+): string | null {
+  const normalizedResolvedPath = path.normalize(resolvedPackagePath);
+  const normalizedBinaryRelativePath = path.normalize(path.join(...binaryRelativePath));
+  if (normalizedResolvedPath.endsWith(normalizedBinaryRelativePath) && fileExists(resolvedPackagePath)) {
+    return resolvedPackagePath;
+  }
+
+  const candidate = path.join(path.dirname(resolvedPackagePath), ...binaryRelativePath);
+  return fileExists(candidate) ? candidate : null;
+}
+
 export function resolvePackagedProviderBinaryPath(
   provider: SupportedProviderBinary,
-  resourcesPath: string | undefined = process.resourcesPath,
+  resourcesPath: string | undefined = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath,
   fileExists: (candidate: string) => boolean = existsSync,
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
@@ -186,6 +201,11 @@ export function resolveDevelopmentProviderBinaryPath(
     const candidate = path.join(path.dirname(packageJsonPath), ...spec.binaryRelativePath);
     return fileExists(candidate) ? candidate : null;
   } catch {
-    return null;
+    try {
+      const packageRootExportPath = resolvePackagePath(spec.packageSpecifier);
+      return resolveBinaryFromPackageRootExport(packageRootExportPath, spec.binaryRelativePath, fileExists);
+    } catch {
+      return null;
+    }
   }
 }

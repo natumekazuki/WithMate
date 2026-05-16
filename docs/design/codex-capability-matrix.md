@@ -61,11 +61,9 @@
 ### 3. Prompt composition
 
 - `対応済み`
-- turn 実行時に次を合成して Codex へ渡す
-  - `System Prompt Prefix`
-  - character の `roleMarkdown`
-  - user message
-- text prompt 側は `# System Prompt` と `# User Input Prompt` を固定フォーマットで結合する
+- turn 実行時に user message と添付 reference を Codex へ渡す
+- Mate 定義は provider instruction sync の managed block 側へ投影し、app 共通 system prompt は挿入しない
+- text prompt 側は `# User Input Prompt` を中心にした最小フォーマットで結合する
 - 実行前の composed prompt は監査ログへ保存する
 
 主な実装:

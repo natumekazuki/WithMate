@@ -1,12 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import {
-  buildNewSession,
-  DEFAULT_CHARACTER_SESSION_COPY,
-  type CharacterProfile,
-} from "../../src/app-state.js";
-import { createDefaultSessionMemory, type ProjectMemoryEntry } from "../../src/memory-state.js";
+import { buildNewSession } from "../../src/app-state.js";
+import { createDefaultSessionMemory, type ProjectMemoryEntry } from "../../src/memory/memory-state.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import { composeProviderPrompt } from "../../src-electron/provider-prompt.js";
@@ -25,19 +21,9 @@ const providerCatalog: ModelCatalogProvider = {
   ],
 };
 
-const character: CharacterProfile = {
-  id: "character-1",
-  name: "Test",
-  description: "",
-  roleMarkdown: "あなたは丁寧に説明する。",
-  notesMarkdown: "",
-  iconPath: "",
-  themeColors: {
-    main: "#000000",
-    sub: "#111111",
-  },
-  sessionCopy: DEFAULT_CHARACTER_SESSION_COPY,
-  updatedAt: "2026-03-28T00:00:00.000Z",
+const characterThemeColors = {
+  main: "#000000",
+  sub: "#111111",
 };
 
 function makeProjectMemoryEntry(partial: Partial<ProjectMemoryEntry> & Pick<ProjectMemoryEntry, "id" | "category" | "detail">): ProjectMemoryEntry {
@@ -66,16 +52,16 @@ function assertSectionOrder(text: string, sections: string[]): void {
 }
 
 describe("composeProviderPrompt", () => {
-  it("System / Character / User Input の順で合成し、Memory は注入しない", () => {
+  it("System / User Input と Memory は注入しない", () => {
     const session = buildNewSession({
       taskTitle: "task",
       workspaceLabel: "workspace",
       workspacePath: "workspace",
       branch: "",
-      characterId: character.id,
-      character: character.name,
+      characterId: "character-1",
+      character: "Test",
       characterIconPath: "",
-      characterThemeColors: character.themeColors,
+      characterThemeColors,
       approvalMode: "untrusted",
     });
     const sessionMemory = {
@@ -97,46 +83,137 @@ describe("composeProviderPrompt", () => {
           detail: "Copilot の image は file attachment として扱う",
         }),
       ],
-      character,
       providerCatalog,
       userMessage: "approval UI の次を進めて",
-      appSettings: {
-        ...createDefaultAppSettings(),
-        systemPromptPrefix: "安全第一で進める。",
-      },
+      appSettings: createDefaultAppSettings(),
       attachments: [],
     });
 
-    assert.match(prompt.systemBodyText, /# System Prompt/);
-    assert.match(prompt.systemBodyText, /# Character/);
+    assert.equal(prompt.systemBodyText, "");
+    assert.doesNotMatch(prompt.systemBodyText, /# Character/);
     assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
-    assert.match(prompt.logicalPrompt.systemText, /# Character/);
+    assert.doesNotMatch(prompt.logicalPrompt.systemText, /# Character/);
+    assert.equal(prompt.inputBodyText, "approval UI の次を進めて");
     assert.equal(prompt.logicalPrompt.inputText, prompt.inputBodyText);
+    assert.equal(prompt.logicalPrompt.inputText, "approval UI の次を進めて");
     assert.equal(
       prompt.logicalPrompt.composedText,
-      `${prompt.logicalPrompt.systemText}\n\n${prompt.logicalPrompt.inputText}`,
+      prompt.logicalPrompt.systemText
+        ? `${prompt.logicalPrompt.systemText}\n\n${prompt.logicalPrompt.inputText}`
+        : prompt.logicalPrompt.inputText,
     );
-    assert.match(prompt.logicalPrompt.composedText, /# Character/);
+    assert.doesNotMatch(prompt.logicalPrompt.composedText, /# Character/);
     assert.doesNotMatch(prompt.inputBodyText, /# Session Memory/);
     assert.doesNotMatch(prompt.inputBodyText, /# Project Memory/);
-    assert.match(prompt.inputBodyText, /# User Input/);
-    assertSectionOrder(prompt.logicalPrompt.composedText, [
-      "# System Prompt",
-      "# Character",
-      "# User Input",
-    ]);
+    assert.doesNotMatch(prompt.inputBodyText, /# User Input/);
+    assertSectionOrder(prompt.logicalPrompt.composedText, ["approval UI の次を進めて"]);
   });
 
-  it("system prompt prefix が空でも character を Codex 用 logical prompt から落とさない", () => {
+  it("projectContextText がある場合、User Input より前に Project Context を注入する", () => {
     const session = buildNewSession({
       taskTitle: "task",
       workspaceLabel: "workspace",
       workspacePath: "workspace",
       branch: "",
-      characterId: character.id,
-      character: character.name,
+      characterId: "character-1",
+      character: "Test",
       characterIconPath: "",
-      characterThemeColors: character.themeColors,
+      characterThemeColors,
+      approvalMode: "untrusted",
+    });
+    const sessionMemory = createDefaultSessionMemory(session);
+
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory,
+      projectMemoryEntries: [],
+      projectContextText: "  # Digest\n- item 1\n- item 2  ",
+      providerCatalog,
+      userMessage: "次の実装を進めて",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+    });
+
+    assert.match(prompt.inputBodyText, /# Project Context/);
+    assert.match(prompt.inputBodyText, /このセクションは参照用のプロジェクト情報です/);
+    assert.match(prompt.inputBodyText, /# Digest/);
+    assert.match(prompt.inputBodyText, /- item 1/);
+    assert.match(prompt.inputBodyText, /- item 2/);
+    assertSectionOrder(prompt.inputBodyText, ["# Project Context", "ユーザー入力と上位指示が最優先です。", "# Digest", "# User Input"]);
+    assertSectionOrder(prompt.inputBodyText, ["# Project Context", "# Digest"]);
+    assertSectionOrder(prompt.logicalPrompt.composedText, [
+      "# Project Context",
+      "ユーザー入力と上位指示が最優先です。",
+      "# Digest",
+      "# User Input",
+    ]);
+  });
+
+  it("空文字/null/undefined の projectContextText は注入しない", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      characterId: "character-1",
+      character: "Test",
+      characterIconPath: "",
+      characterThemeColors,
+      approvalMode: "untrusted",
+    });
+    const sessionMemory = createDefaultSessionMemory(session);
+
+    const promptWithoutContext = composeProviderPrompt({
+      session,
+      sessionMemory,
+      projectMemoryEntries: [],
+      projectContextText: "",
+      providerCatalog,
+      userMessage: "次の実装を進めて",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+    });
+
+    assert.doesNotMatch(promptWithoutContext.inputBodyText, /# Project Context/);
+    assert.equal(promptWithoutContext.inputBodyText, "次の実装を進めて");
+    assert.equal(promptWithoutContext.logicalPrompt.inputText, "次の実装を進めて");
+    assert.doesNotMatch(promptWithoutContext.inputBodyText, /# User Input/);
+    assertSectionOrder(promptWithoutContext.logicalPrompt.composedText, ["次の実装を進めて"]);
+
+    const promptWithNullContext = composeProviderPrompt({
+      session,
+      sessionMemory,
+      projectMemoryEntries: [],
+      projectContextText: null,
+      providerCatalog,
+      userMessage: "次の実装を進めて",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+    });
+    assert.doesNotMatch(promptWithNullContext.inputBodyText, /# Project Context/);
+
+    const promptWithUndefinedContext = composeProviderPrompt({
+      session,
+      sessionMemory,
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "次の実装を進めて",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+    });
+    assert.doesNotMatch(promptWithUndefinedContext.inputBodyText, /# Project Context/);
+  });
+
+  it("共通 system prompt を空文字にする", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      characterId: "character-1",
+      character: "Test",
+      characterIconPath: "",
+      characterThemeColors,
       approvalMode: "untrusted",
     });
 
@@ -144,27 +221,29 @@ describe("composeProviderPrompt", () => {
       session,
       sessionMemory: createDefaultSessionMemory(session),
       projectMemoryEntries: [],
-      character,
       providerCatalog,
-      userMessage: "character が消えないことを確認する",
-      appSettings: {
-        ...createDefaultAppSettings(),
-        systemPromptPrefix: "",
-      },
+      userMessage: "system prompt が空でも user input は残ることを確認する",
+      appSettings: createDefaultAppSettings(),
       attachments: [],
     });
 
-    assert.equal(prompt.systemBodyText, "# Character\n\nあなたは丁寧に説明する。");
+    assert.equal(prompt.systemBodyText, "");
     assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
-    assert.match(prompt.logicalPrompt.systemText, /# Character/);
+    assert.equal(prompt.logicalPrompt.systemText, "");
+    assert.doesNotMatch(prompt.inputBodyText, /# Character/);
+    assert.doesNotMatch(prompt.inputBodyText, /あなたは丁寧に説明する。/);
+    assert.doesNotMatch(prompt.logicalPrompt.composedText, /# Character/);
+    assert.doesNotMatch(prompt.logicalPrompt.composedText, /あなたは丁寧に説明する。/);
     assert.equal(prompt.logicalPrompt.inputText, prompt.inputBodyText);
+    assert.equal(prompt.inputBodyText, "system prompt が空でも user input は残ることを確認する");
     assert.equal(
       prompt.logicalPrompt.composedText,
-      `${prompt.logicalPrompt.systemText}\n\n${prompt.logicalPrompt.inputText}`,
+      prompt.logicalPrompt.systemText
+        ? `${prompt.logicalPrompt.systemText}\n\n${prompt.logicalPrompt.inputText}`
+        : prompt.logicalPrompt.inputText,
     );
-    assert.match(prompt.logicalPrompt.composedText, /^# Character/);
-    assert.match(prompt.logicalPrompt.composedText, /あなたは丁寧に説明する。/);
-    assertSectionOrder(prompt.logicalPrompt.composedText, ["# Character", "# User Input"]);
+    assert.doesNotMatch(prompt.logicalPrompt.composedText, /# User Input/);
+    assert.match(prompt.logicalPrompt.composedText, /system prompt が空でも user input は残ることを確認する/);
+    assertSectionOrder(prompt.logicalPrompt.composedText, ["system prompt が空でも user input は残ることを確認する"]);
   });
 });
-

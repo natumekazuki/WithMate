@@ -18,7 +18,7 @@ import {
   cloneSessionSummaries,
   cloneSessions,
 } from "../src/app-state.js";
-import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
+import { getProviderAppSettings, resolveProviderSkillRootPath, type AppSettings } from "../src/provider-settings-state.js";
 import { extractTextReferenceCandidates } from "../src/path-reference.js";
 import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
@@ -123,7 +123,7 @@ export class MainQueryService {
   async listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]> {
     const appSettings = this.deps.getAppSettings();
     const providerSettings = getProviderAppSettings(appSettings, providerId);
-    return this.deps.discoverSessionSkills(workspacePath, providerSettings.skillRootPath);
+    return this.deps.discoverSessionSkills(workspacePath, resolveProviderSkillRootPath(providerSettings));
   }
 
   async listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]> {

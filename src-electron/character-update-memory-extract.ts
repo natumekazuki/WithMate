@@ -1,5 +1,5 @@
 import { createEmptyCharacterUpdateMemoryExtract, type CharacterUpdateMemoryExtract } from "../src/character-update-state.js";
-import type { CharacterMemoryCategory, CharacterMemoryEntry } from "../src/memory-state.js";
+import type { CharacterMemoryCategory, CharacterMemoryEntry } from "../src/memory/memory-state.js";
 
 const CATEGORY_ORDER: CharacterMemoryCategory[] = [
   "relationship",

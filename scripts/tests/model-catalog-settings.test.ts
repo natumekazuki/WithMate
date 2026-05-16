@@ -62,7 +62,7 @@ describe("resolveModelChangeSelection", () => {
 
 describe("app settings provider helpers", () => {
   it("settings 未設定でも codex は既定で enabled になる", () => {
-    const settings = normalizeAppSettings({ systemPromptPrefix: "" });
+    const settings = normalizeAppSettings({});
 
     assert.equal(getProviderAppSettings(settings, "codex").enabled, true);
     assert.equal(getProviderAppSettings(settings, "copilot").enabled, false);
@@ -88,17 +88,18 @@ describe("app settings provider helpers", () => {
       enabled: false,
       apiKey: "codex-key",
       skillRootPath: "",
+      skillRelativePath: "",
     });
     assert.deepEqual(getProviderAppSettings(settings, "copilot"), {
       enabled: true,
       apiKey: "copilot-key",
       skillRootPath: "",
+      skillRelativePath: "",
     });
   });
 
   it("canonical な codingProviderSettings だけを正本として扱う", () => {
     const settings = normalizeAppSettings({
-      systemPromptPrefix: "canonical",
       codingProviderSettings: {
         codex: {
           enabled: false,
@@ -113,18 +114,19 @@ describe("app settings provider helpers", () => {
       },
     });
 
-    assert.equal(settings.systemPromptPrefix, "canonical");
     assert.deepEqual(settings.codingProviderSettings, {
       codex: {
         enabled: false,
         apiKey: "canonical-key",
         skillRootPath: "",
+        skillRelativePath: "",
       },
     });
     assert.deepEqual(getProviderAppSettings(settings, "codex"), {
       enabled: false,
       apiKey: "canonical-key",
       skillRootPath: "",
+      skillRelativePath: "",
     });
   });
 
@@ -201,6 +203,7 @@ describe("app settings provider helpers", () => {
         enabled: false,
         apiKey: "codex-key",
         skillRootPath: "C:/skills",
+        skillRelativePath: "",
       },
       memoryExtraction: {
         model: "gpt-5.1-mini",

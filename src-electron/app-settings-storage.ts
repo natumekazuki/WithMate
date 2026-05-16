@@ -5,13 +5,13 @@ import { CREATE_APP_SETTINGS_TABLE_SQL } from "./database-schema-v1.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
-const SYSTEM_PROMPT_PREFIX_KEY = "system_prompt_prefix";
 const MEMORY_GENERATION_ENABLED_KEY = "memory_generation_enabled";
 const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
 const CHARACTER_REFLECTION_TRIGGER_SETTINGS_KEY = "character_reflection_trigger_settings_json";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
 const CHARACTER_REFLECTION_PROVIDER_SETTINGS_KEY = "character_reflection_provider_settings_json";
+const MATE_MEMORY_GENERATION_SETTINGS_KEY = "mate_memory_generation_settings_json";
 
 type AppSettingRow = {
   setting_key: string;
@@ -29,13 +29,6 @@ export class AppSettingsStorage {
 
   private ensureDefaults(): void {
     const updatedAt = new Date().toISOString();
-    this.db
-      .prepare(`
-        INSERT INTO app_settings (setting_key, setting_value, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(setting_key) DO NOTHING
-      `)
-      .run(SYSTEM_PROMPT_PREFIX_KEY, DEFAULT_APP_SETTINGS.systemPromptPrefix, updatedAt);
     this.db
       .prepare(`
         INSERT INTO app_settings (setting_key, setting_value, updated_at)
@@ -94,6 +87,17 @@ export class AppSettingsStorage {
         JSON.stringify(DEFAULT_APP_SETTINGS.characterReflectionProviderSettings),
         updatedAt,
       );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        MATE_MEMORY_GENERATION_SETTINGS_KEY,
+        JSON.stringify(DEFAULT_APP_SETTINGS.mateMemoryGenerationSettings),
+        updatedAt,
+      );
   }
 
   getSettings(): AppSettings {
@@ -106,10 +110,6 @@ export class AppSettingsStorage {
 
     const settings = createDefaultAppSettings();
     for (const row of rows) {
-      if (row.setting_key === SYSTEM_PROMPT_PREFIX_KEY) {
-        settings.systemPromptPrefix = row.setting_value;
-        continue;
-      }
       if (row.setting_key === MEMORY_GENERATION_ENABLED_KEY) {
         settings.memoryGenerationEnabled = row.setting_value === "true";
         continue;
@@ -174,6 +174,20 @@ export class AppSettingsStorage {
       }
     }
 
+    const mateMemoryGenerationSettingsJson = rows.find(
+      (row) => row.setting_key === MATE_MEMORY_GENERATION_SETTINGS_KEY,
+    )?.setting_value;
+    if (mateMemoryGenerationSettingsJson) {
+      try {
+        settings.mateMemoryGenerationSettings = normalizeAppSettings({
+          ...settings,
+          mateMemoryGenerationSettings: JSON.parse(mateMemoryGenerationSettingsJson),
+        }).mateMemoryGenerationSettings;
+      } catch {
+        settings.mateMemoryGenerationSettings = createDefaultAppSettings().mateMemoryGenerationSettings;
+      }
+    }
+
     return normalizeAppSettings(settings);
   }
 
@@ -183,15 +197,6 @@ export class AppSettingsStorage {
 
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      this.db
-        .prepare(`
-          INSERT INTO app_settings (setting_key, setting_value, updated_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(setting_key) DO UPDATE SET
-            setting_value = excluded.setting_value,
-            updated_at = excluded.updated_at
-        `)
-        .run(SYSTEM_PROMPT_PREFIX_KEY, normalized.systemPromptPrefix, updatedAt);
       this.db
         .prepare(`
           INSERT INTO app_settings (setting_key, setting_value, updated_at)
@@ -260,6 +265,19 @@ export class AppSettingsStorage {
         .run(
           CHARACTER_REFLECTION_PROVIDER_SETTINGS_KEY,
           JSON.stringify(normalized.characterReflectionProviderSettings),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          MATE_MEMORY_GENERATION_SETTINGS_KEY,
+          JSON.stringify(normalized.mateMemoryGenerationSettings),
           updatedAt,
         );
       this.db.exec("COMMIT");

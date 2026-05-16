@@ -18,7 +18,6 @@ import { openAppDatabase } from "./sqlite-connection.js";
 type SessionRow = {
   id: string;
   task_title: string;
-  task_summary: string;
   status: string;
   updated_at: string;
   provider: string;
@@ -27,6 +26,8 @@ type SessionRow = {
   workspace_path: string;
   branch: string;
   session_kind: string;
+  access_mode: string;
+  source_schema_version: number;
   character_id: string;
   character_name: string;
   character_icon_path: string;
@@ -53,7 +54,6 @@ type TableColumnRow = {
 const SESSION_SELECT_COLUMNS = `
   id,
   task_title,
-  task_summary,
   status,
   updated_at,
   provider,
@@ -62,6 +62,8 @@ const SESSION_SELECT_COLUMNS = `
   workspace_path,
   branch,
   session_kind,
+  access_mode,
+  source_schema_version,
   character_id,
   character_name,
   character_icon_path,
@@ -89,7 +91,6 @@ const LIST_SESSIONS_SQL = `
 const SESSION_SUMMARY_SELECT_COLUMNS = `
   id,
   task_title,
-  task_summary,
   status,
   updated_at,
   provider,
@@ -98,6 +99,8 @@ const SESSION_SUMMARY_SELECT_COLUMNS = `
   workspace_path,
   branch,
   session_kind,
+  access_mode,
+  source_schema_version,
   character_id,
   character_name,
   character_icon_path,
@@ -131,7 +134,6 @@ const UPSERT_SESSION_SQL = `
   INSERT INTO sessions (
     id,
     task_title,
-    task_summary,
     status,
     updated_at,
     provider,
@@ -140,6 +142,8 @@ const UPSERT_SESSION_SQL = `
     workspace_path,
     branch,
     session_kind,
+    access_mode,
+    source_schema_version,
     character_id,
     character_name,
     character_icon_path,
@@ -156,10 +160,9 @@ const UPSERT_SESSION_SQL = `
     messages_json,
     stream_json,
     last_active_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     task_title = excluded.task_title,
-    task_summary = excluded.task_summary,
     status = excluded.status,
     updated_at = excluded.updated_at,
     provider = excluded.provider,
@@ -168,6 +171,8 @@ const UPSERT_SESSION_SQL = `
     workspace_path = excluded.workspace_path,
     branch = excluded.branch,
     session_kind = excluded.session_kind,
+    access_mode = excluded.access_mode,
+    source_schema_version = excluded.source_schema_version,
     character_id = excluded.character_id,
     character_name = excluded.character_name,
     character_icon_path = excluded.character_icon_path,
@@ -223,7 +228,6 @@ function rowToSession(row: SessionRow, mode: SessionRowParseMode = "skip"): Sess
   const session = normalizeSession({
     id: row.id,
     taskTitle: row.task_title,
-    taskSummary: row.task_summary,
     status: row.status,
     updatedAt: row.updated_at,
     provider: row.provider,
@@ -232,6 +236,8 @@ function rowToSession(row: SessionRow, mode: SessionRowParseMode = "skip"): Sess
     workspacePath: row.workspace_path,
     branch: row.branch,
     sessionKind: row.session_kind,
+    accessMode: row.access_mode,
+    sourceSchemaVersion: row.source_schema_version,
     characterId: row.character_id,
     character: row.character_name,
     characterIconPath: row.character_icon_path,
@@ -273,7 +279,6 @@ function rowToSessionSummary(row: SessionSummaryRow, mode: SessionRowParseMode =
   const summary = normalizeSessionSummary({
     id: row.id,
     taskTitle: row.task_title,
-    taskSummary: row.task_summary,
     status: row.status,
     updatedAt: row.updated_at,
     provider: row.provider,
@@ -282,6 +287,8 @@ function rowToSessionSummary(row: SessionSummaryRow, mode: SessionRowParseMode =
     workspacePath: row.workspace_path,
     branch: row.branch,
     sessionKind: row.session_kind,
+    accessMode: row.access_mode,
+    sourceSchemaVersion: row.source_schema_version,
     characterId: row.character_id,
     character: row.character_name,
     characterIconPath: row.character_icon_path,
@@ -322,7 +329,6 @@ export class SessionStorage {
     this.db.prepare(UPSERT_SESSION_SQL).run(
       normalized.id,
       normalized.taskTitle,
-      normalized.taskSummary,
       normalized.status,
       normalized.updatedAt,
       normalized.provider,
@@ -331,6 +337,8 @@ export class SessionStorage {
       normalized.workspacePath,
       normalized.branch,
       normalized.sessionKind,
+      normalized.accessMode,
+      normalized.sourceSchemaVersion,
       normalized.characterId,
       normalized.character,
       normalized.characterIconPath,
@@ -385,6 +393,14 @@ export class SessionStorage {
 
     if (!columns.has("character_theme_sub")) {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN character_theme_sub ${LEGACY_SESSION_COLUMN_DEFINITIONS.character_theme_sub};`);
+    }
+
+    if (!columns.has("access_mode")) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN access_mode ${LEGACY_SESSION_COLUMN_DEFINITIONS.access_mode};`);
+    }
+
+    if (!columns.has("source_schema_version")) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN source_schema_version ${LEGACY_SESSION_COLUMN_DEFINITIONS.source_schema_version};`);
     }
 
   }

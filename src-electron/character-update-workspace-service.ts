@@ -3,7 +3,7 @@ import path from "node:path";
 import { DEFAULT_APPROVAL_MODE } from "../src/approval-mode.js";
 import type { CharacterProfile } from "../src/character-state.js";
 import { type CharacterUpdateMemoryExtract, type CharacterUpdateWorkspace } from "../src/character-update-state.js";
-import type { CharacterMemoryEntry, CharacterScope } from "../src/memory-state.js";
+import type { CharacterMemoryEntry, CharacterScope } from "../src/memory/memory-state.js";
 import type { Session } from "../src/session-state.js";
 import { buildCharacterUpdateMemoryExtract } from "./character-update-memory-extract.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";

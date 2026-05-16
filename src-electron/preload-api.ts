@@ -11,6 +11,7 @@ import type {
   WithMateWindowPickerApi,
   WithMateWindowSessionApi,
   WithMateWindowSettingsApi,
+  WithMateWindowMateApi,
   WithMateWindowSubscriptionApi,
 } from "../src/withmate-window-api.js";
 import {
@@ -19,19 +20,30 @@ import {
   WITHMATE_CHARACTERS_CHANGED_EVENT,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
+  WITHMATE_CREATE_MATE_CHANNEL,
+  WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
+  WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL,
+  WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL,
+  WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL,
+  WITHMATE_FORGET_MATE_GROWTH_EVENT_CHANNEL,
   WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
+  WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL,
   WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
+  WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
+  WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
+  WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL,
+  WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
@@ -44,6 +56,8 @@ import {
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
+  WITHMATE_GET_MATE_PROFILE_CHANNEL,
+  WITHMATE_GET_MATE_STATE_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
@@ -80,6 +94,7 @@ import {
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
+  WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
@@ -96,6 +111,10 @@ import {
   WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT,
   WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
+  WITHMATE_RESET_MATE_CHANNEL,
+  WITHMATE_SET_MATE_AVATAR_CHANNEL,
+  WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
+  WITHMATE_RUN_MATE_TALK_TURN_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
@@ -113,6 +132,9 @@ import {
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_MATE_CHANNEL,
+  WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL,
+  WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
@@ -191,6 +213,11 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     },
     openMemoryManagementWindow() {
       return ipcRenderer.invoke(WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL);
+    },
+    openMateTalkWindow(input) {
+      return input === undefined
+        ? ipcRenderer.invoke(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL)
+        : ipcRenderer.invoke(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL, input);
     },
     openCharacterEditor(characterId) {
       return ipcRenderer.invoke(WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL, characterId ?? null);
@@ -421,6 +448,47 @@ function createObservabilityApi(ipcRenderer: IpcRendererLike): Pick<
   };
 }
 
+function createMateApi(ipcRenderer: IpcRendererLike): WithMateWindowMateApi {
+  return {
+    getMateState() {
+      return ipcRenderer.invoke(WITHMATE_GET_MATE_STATE_CHANNEL);
+    },
+    getMateProfile() {
+      return ipcRenderer.invoke(WITHMATE_GET_MATE_PROFILE_CHANNEL);
+    },
+    createMate(input) {
+      return ipcRenderer.invoke(WITHMATE_CREATE_MATE_CHANNEL, input);
+    },
+    updateMate(input) {
+      return ipcRenderer.invoke(WITHMATE_UPDATE_MATE_CHANNEL, input);
+    },
+    setMateAvatar(input) {
+      return ipcRenderer.invoke(WITHMATE_SET_MATE_AVATAR_CHANNEL, input);
+    },
+    applyPendingGrowth() {
+      return ipcRenderer.invoke(WITHMATE_APPLY_MATE_GROWTH_CHANNEL);
+    },
+    listMateGrowthEvents(request) {
+      return ipcRenderer.invoke(WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL, request ?? null);
+    },
+    correctMateGrowthEvent(request) {
+      return ipcRenderer.invoke(WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL, request);
+    },
+    disableMateGrowthEvent(request) {
+      return ipcRenderer.invoke(WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL, request);
+    },
+    forgetMateGrowthEvent(request) {
+      return ipcRenderer.invoke(WITHMATE_FORGET_MATE_GROWTH_EVENT_CHANNEL, request);
+    },
+    runMateTalkTurn(input) {
+      return ipcRenderer.invoke(WITHMATE_RUN_MATE_TALK_TURN_CHANNEL, input);
+    },
+    resetMate() {
+      return ipcRenderer.invoke(WITHMATE_RESET_MATE_CHANNEL);
+    },
+  };
+}
+
 function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettingsApi {
   return {
     getAppSettings() {
@@ -428,6 +496,9 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
     },
     updateAppSettings(settings) {
       return ipcRenderer.invoke(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, settings);
+    },
+    getAppDatabaseDiagnostics() {
+      return ipcRenderer.invoke(WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL);
     },
     resetAppDatabase(request) {
       return ipcRenderer.invoke(WITHMATE_RESET_APP_DATABASE_CHANNEL, request);
@@ -438,6 +509,24 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
     getMemoryManagementPage(request) {
       return ipcRenderer.invoke(WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL, request);
     },
+    getMateGrowthSettings() {
+      return ipcRenderer.invoke(WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL);
+    },
+    getMateEmbeddingSettings() {
+      return ipcRenderer.invoke(WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL);
+    },
+    updateMateGrowthSettings(input) {
+      return ipcRenderer.invoke(WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL, input);
+    },
+    listProviderInstructionTargets() {
+      return ipcRenderer.invoke(WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL);
+    },
+    upsertProviderInstructionTarget(input) {
+      return ipcRenderer.invoke(WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL, input);
+    },
+    startMateEmbeddingDownload() {
+      return ipcRenderer.invoke(WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL);
+    },
     deleteSessionMemory(sessionId) {
       return ipcRenderer.invoke(WITHMATE_DELETE_SESSION_MEMORY_CHANNEL, sessionId);
     },
@@ -446,6 +535,9 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
     },
     deleteCharacterMemoryEntry(entryId) {
       return ipcRenderer.invoke(WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL, entryId);
+    },
+    forgetMateProfileItem(itemId) {
+      return ipcRenderer.invoke(WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL, itemId);
     },
   };
 }
@@ -616,5 +708,6 @@ export function createWithMateWindowApi(ipcRenderer: IpcRendererLike): WithMateW
     ...createCharacterApi(ipcRenderer),
     ...createPickerApi(ipcRenderer),
     ...createSubscriptionApi(ipcRenderer),
+    ...createMateApi(ipcRenderer),
   };
 }

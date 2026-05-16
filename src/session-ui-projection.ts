@@ -7,7 +7,7 @@ import type {
   ProviderQuotaTelemetry,
   SessionContextTelemetry,
 } from "./app-state.js";
-import type { HomeMonitorEntry } from "./home-session-projection.js";
+import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { liveRunStepStatusLabel } from "./ui-utils.js";
 
 export type ContextPaneTabKey = "latest-command" | "tasks" | "companion-group";

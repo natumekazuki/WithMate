@@ -1,5 +1,7 @@
 import type { BrowserWindow, IpcMain } from "electron";
 
+import type { MateStorageState } from "../src/mate/mate-state.js";
+import type { MateGrowthApplyResult } from "../src/mate/mate-growth-apply-result.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import {
   createMainIpcRegistrationDeps,
@@ -16,6 +18,14 @@ type CreateMainBootstrapDepsArgs = {
   refreshCharactersFromStorage(): Promise<void>;
   createHomeWindow(): Promise<BrowserWindow>;
   broadcastModelCatalog(snapshot: ModelCatalogSnapshot): void;
+  getMateState?: () => MateStorageState | Promise<MateStorageState>;
+  applyPendingGrowth?: () => Promise<MateGrowthApplyResult>;
+  cleanupStaleGrowthApplyRuns?: () => Promise<number>;
+  growthApplyIntervalMs?: number;
+  getGrowthApplyIntervalMs?: () => number | Promise<number>;
+  shouldRunGrowthApplyTimer?: () => boolean | Promise<boolean>;
+  createGrowthApplyTimer?: (handler: () => void, intervalMs: number) => unknown;
+  clearGrowthApplyTimer?: (timer: unknown) => void;
   ipcRegistration: CreateMainIpcRegistrationDepsArgs;
 };
 
@@ -26,6 +36,14 @@ export function createMainBootstrapDeps(
     initializePersistentStores: args.initializePersistentStores,
     recoverInterruptedSessions: args.recoverInterruptedSessions,
     refreshCharactersFromStorage: args.refreshCharactersFromStorage,
+    getMateState: args.getMateState ?? args.ipcRegistration.mate.getMateState,
+    applyPendingGrowth: args.applyPendingGrowth ?? args.ipcRegistration.mate.applyPendingGrowth,
+    cleanupStaleGrowthApplyRuns: args.cleanupStaleGrowthApplyRuns,
+    growthApplyIntervalMs: args.growthApplyIntervalMs,
+    getGrowthApplyIntervalMs: args.getGrowthApplyIntervalMs,
+    shouldRunGrowthApplyTimer: args.shouldRunGrowthApplyTimer,
+    createGrowthApplyTimer: args.createGrowthApplyTimer,
+    clearGrowthApplyTimer: args.clearGrowthApplyTimer,
     registerIpcHandlers: () => {
       args.registerMainIpcHandlers(args.ipcMain, createMainIpcRegistrationDeps(args.ipcRegistration));
     },

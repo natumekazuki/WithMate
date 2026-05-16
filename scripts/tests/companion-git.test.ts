@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -54,7 +54,7 @@ describe("companion-git", () => {
 
       assert.equal(eligibility.ok, true);
       if (eligibility.ok) {
-        assert.equal(eligibility.repoRoot, repoPath.replace(/\\/g, "/"));
+        assert.equal(eligibility.repoRoot, (await realpath(repoPath)).replace(/\\/g, "/"));
         assert.equal(eligibility.focusPath, "src");
         assert.equal(eligibility.targetBranch, "main");
       }

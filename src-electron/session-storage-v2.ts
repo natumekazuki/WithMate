@@ -15,7 +15,6 @@ import { openAppDatabase } from "./sqlite-connection.js";
 type SessionHeaderRow = {
   id: string;
   task_title: string;
-  task_summary: string;
   status: string;
   updated_at: string;
   provider: string;
@@ -66,7 +65,6 @@ const UPSERT_SESSION_SQL = `
   INSERT INTO sessions (
     id,
     task_title,
-    task_summary,
     status,
     updated_at,
     provider,
@@ -91,10 +89,9 @@ const UPSERT_SESSION_SQL = `
     message_count,
     audit_log_count,
     last_active_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     task_title = excluded.task_title,
-    task_summary = excluded.task_summary,
     status = excluded.status,
     updated_at = excluded.updated_at,
     provider = excluded.provider,
@@ -171,7 +168,6 @@ const LIST_SESSION_AUDIT_LOG_COUNTS_SQL = `
 const SESSION_HEADER_COLUMNS = `
   id,
   task_title,
-  task_summary,
   status,
   updated_at,
   provider,
@@ -235,7 +231,10 @@ const GET_SESSION_MESSAGE_ARTIFACT_SQL = `
 function parseAllowedAdditionalDirectories(row: SessionHeaderRow, mode: SessionRowParseMode): string[] | null {
   try {
     const parsed = JSON.parse(row.allowed_additional_directories_json);
-    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === "string") : null;
+    if (!Array.isArray(parsed) || !parsed.every((entry) => typeof entry === "string")) {
+      throw new Error("allowed_additional_directories_json is not a string array");
+    }
+    return parsed;
   } catch (error) {
     console.error("stored session JSON parse failed", {
       sessionId: row.id,
@@ -252,13 +251,15 @@ function parseAllowedAdditionalDirectories(row: SessionHeaderRow, mode: SessionR
 function rowToSessionSummary(row: SessionHeaderRow, mode: SessionRowParseMode = "skip"): SessionSummary | null {
   const allowedAdditionalDirectories = parseAllowedAdditionalDirectories(row, mode);
   if (!allowedAdditionalDirectories) {
+    if (mode === "throw") {
+      throw new Error(`保存済み session ${row.id} の allowed_additional_directories_json が壊れているよ。`);
+    }
     return null;
   }
 
   const summary = normalizeSessionSummary({
     id: row.id,
     taskTitle: row.task_title,
-    taskSummary: row.task_summary,
     status: row.status,
     updatedAt: row.updated_at,
     provider: row.provider,
@@ -355,7 +356,6 @@ function writeSessionHeader(
   statement.run(
     session.id,
     session.taskTitle,
-    session.taskSummary,
     session.status,
     session.updatedAt,
     session.provider,

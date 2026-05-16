@@ -51,7 +51,6 @@ function insertSessionHeader(db: DatabaseSync, input: SessionHeaderInput): strin
     INSERT INTO sessions (
       id,
       task_title,
-      task_summary,
       status,
       updated_at,
       provider,
@@ -76,11 +75,10 @@ function insertSessionHeader(db: DatabaseSync, input: SessionHeaderInput): strin
       message_count,
       audit_log_count,
       last_active_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     taskTitle,
-    "runtime summary",
     "idle",
     "2026-04-27T00:00:00.000Z",
     "codex",

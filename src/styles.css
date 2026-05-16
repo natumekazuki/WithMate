@@ -593,6 +593,91 @@ button:disabled {
   background: transparent;
 }
 
+.home-mate-setup-shell {
+  width: min(540px, 100%);
+  margin: 0 auto;
+}
+
+.home-mate-setup-panel {
+  padding: 22px;
+  display: grid;
+  gap: 16px;
+  min-height: auto;
+}
+
+.home-mate-setup-head {
+  margin: 0;
+  color: #f4f7fb;
+  font-size: 1.06rem;
+}
+
+.home-mate-setup-description,
+.home-mate-current-name {
+  margin: 0;
+  color: #c0cadb;
+  line-height: 1.45;
+}
+
+.home-mate-setup-form {
+  display: grid;
+  gap: 12px;
+}
+
+.home-mate-avatar-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(11, 16, 24, 0.74);
+}
+
+.home-mate-avatar-preview {
+  flex: 0 0 auto;
+}
+
+.home-mate-avatar-copy {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.home-mate-avatar-label {
+  color: #f4f7fb;
+  font-weight: 700;
+}
+
+.home-mate-setup-panel .settings-field > span {
+  color: #cbd5e1;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.home-mate-avatar-help {
+  margin: 0;
+  color: #c0cadb;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.home-mate-avatar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.home-mate-setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.home-mate-feedback {
+  margin: 0;
+}
+
 .home-page .home-pane-toggle {
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -664,6 +749,34 @@ button:disabled {
   margin: 0;
   color: #dce4f3;
   font-size: 0.92rem;
+}
+
+.home-page .home-monitor-section-head span {
+  color: #cbd5e1;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.home-page .home-mate-card {
+  background: color-mix(in srgb, var(--card-main, #1a2230) 24%, rgba(10, 14, 20, 0.86) 76%);
+  border-color: color-mix(in srgb, var(--card-sub, #6f8cff) 30%, rgba(203, 213, 225, 0.14) 70%);
+}
+
+.home-page .home-mate-card-body {
+  display: grid;
+  gap: 10px;
+  align-items: start;
+}
+
+.home-page .home-mate-card-body strong {
+  color: #f8fbff;
+  font-size: 0.96rem;
+}
+
+.home-page .home-mate-card-body p {
+  margin: 0;
+  color: #c0cadb;
+  line-height: 1.5;
 }
 
 .home-page .home-monitor-count {
@@ -788,7 +901,7 @@ button:disabled {
   padding: 12px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.04);
-  color: #99a6bb;
+  color: #b6c1d2;
   font-size: 0.82rem;
   line-height: 1.5;
 }
@@ -990,13 +1103,21 @@ button:disabled {
 }
 
 .home-page .launch-field-label {
-  color: #a8b4ca;
+  color: #cbd5e1;
 }
 
 .home-page .launch-field-input {
   border-color: rgba(203, 213, 225, 0.14);
   background: rgba(10, 14, 20, 0.96);
   color: var(--ink);
+}
+
+.home-page .launch-field-input::placeholder,
+.home-page .settings-field input::placeholder,
+.home-page .settings-field textarea::placeholder,
+.home-page .toolbar-search-input::placeholder {
+  color: #9aa8bd;
+  opacity: 1;
 }
 
 .home-page .launch-field-input:focus {
@@ -1011,7 +1132,7 @@ button:disabled {
 }
 
 .home-page .launch-path {
-  color: #a8b4ca;
+  color: #c0cadb;
 }
 
 .home-page .launch-path.selected {
@@ -1032,7 +1153,7 @@ button:disabled {
 }
 
 .home-page .choice-card-copy span {
-  color: var(--card-muted, #a8b4ca);
+  color: var(--card-muted, #c0cadb);
 }
 
 .home-page .settings-field textarea {
@@ -1597,6 +1718,12 @@ button:disabled {
   border-top: 0;
 }
 
+.settings-window-shell .launch-dialog-foot {
+  border-top: 1px solid rgba(203, 213, 225, 0.12);
+  background: rgba(21, 26, 35, 0.98);
+  box-shadow: 0 -18px 34px rgba(0, 0, 0, 0.24);
+}
+
 .settings-panel,
 .settings-section {
   display: grid;
@@ -1623,6 +1750,7 @@ button:disabled {
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   padding-right: 6px;
+  padding-bottom: 18px;
 }
 
 .settings-panel-memory-only {
@@ -1867,11 +1995,29 @@ button:disabled {
   gap: 10px;
 }
 
+.settings-growth-event-card {
+  align-items: stretch;
+}
+
 .settings-memory-card-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.settings-growth-event-head {
+  display: block;
+}
+
+.settings-growth-event-actions {
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.settings-growth-event-actions .launch-toggle,
+.settings-growth-event-actions .danger-button {
+  min-width: 88px;
 }
 
 .settings-memory-card-copy {
@@ -3217,6 +3363,12 @@ button:disabled {
   background: rgba(20, 27, 40, 0.98);
 }
 
+.session-message-empty {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .message-card.has-artifact {
   padding-top: 14px;
 }
@@ -3342,6 +3494,72 @@ button:disabled {
   color: var(--muted);
   font-size: 0.82rem;
   line-height: 1.5;
+}
+
+.settings-inline-help {
+  display: grid;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.settings-inline-help summary {
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(15, 61, 99, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: rgba(15, 61, 99, 0.72);
+  cursor: pointer;
+  font-weight: 700;
+  list-style: none;
+}
+
+.settings-inline-help summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-inline-help div {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-strong);
+  color: var(--ink);
+}
+
+.settings-inline-help p {
+  margin: 0;
+}
+
+.settings-field-label-with-help {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-field-label-with-help .settings-field-help-icon {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.settings-field-label-with-help .settings-field-help-icon summary {
+  width: 22px;
+  height: 22px;
+  font-size: 0.75rem;
+}
+
+.settings-field-label-with-help .settings-field-help-icon div {
+  position: absolute;
+  z-index: 10;
+  width: min(320px, calc(100vw - 48px));
+  margin-top: 6px;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.12);
 }
 
 .empty-chat-row {
@@ -7691,5 +7909,3 @@ button:disabled {
     max-height: min(20vh, 144px);
   }
 }
-
-

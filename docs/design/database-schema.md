@@ -1,7 +1,7 @@
 # Database Schema
 
 - 作成日: 2026-03-27
-- 更新日: 2026-04-27
+- 更新日: 2026-05-14
 - 対象: WithMate の current 保存構造
 
 ## Goal
@@ -20,7 +20,9 @@ WithMate が現在どこに何を保存しているかを、1 枚で把握でき
 
 この文書は current 実装を対象にする。
 
-2026-04-27 時点では、V1 `withmate.db` と V2 `withmate-v2.db` を分ける方針で進める。V1 schema の SQL 正本は `src-electron/database-schema-v1.ts` に切り出し済みで、V2 schema の SQL 正本は `src-electron/database-schema-v2.ts` に置く。V2 migration 方針は `docs/design/database-v2-migration.md` を正本にする。
+2026-05-14 時点で、4.0 runtime の新規作成 DB は `<userData>/withmate-v4.db` を canonical path とする。`withmate-v4.db` が存在しない状態で既存の V3 / V2 / V1 DB がある場合は、起動時に同じ `<userData>` 配下へ V4 DB を自動作成する。migration 元の DB と blob / character file は削除せず、そのまま残す。current 実装の `<userData>/characters/` は 3.x legacy storage として記載し、Mate 関連の SQLite schema 詳細は `docs/design/mate-storage-schema.md` を参照する。
+
+V1 schema の SQL 正本は `src-electron/database-schema-v1.ts`、V2 schema の SQL 正本は `src-electron/database-schema-v2.ts`、V3 schema の SQL 正本は `src-electron/database-schema-v3.ts`、V4 schema の SQL 正本は `src-electron/database-schema-v4.ts` に置く。
 
 - SQLite DB に存在する table
 - DB 外の file-based storage
@@ -33,14 +35,40 @@ future design だけで未実装のものは、最後に別枠で注記する。
 ### DB 本体
 
 - 保存先:
-  - `<userData>/withmate.db`
+  - `<userData>/withmate-v4.db`
+  - `<userData>/withmate-v3.db`
   - `<userData>/withmate-v2.db`
+  - `<userData>/withmate.db`
+- DB path selection:
+  - `withmate-v4.db` が存在する場合はそれを canonical DB として選び、V3 / V2 / V1 の migration check は行わない
+  - `withmate-v4.db` が存在しない場合だけ、`withmate-v3.db`、`withmate-v2.db`、`withmate.db` の順に migration source を探す
+  - migration source が見つかった場合は同じ `<userData>` 配下へ `withmate-v4.db` を自動作成し、作成後の V4 DB を開く
+  - どの DB も存在しない fresh install では `withmate-v4.db` path を返すが、path 解決だけでは DB file を作成しない
+- DB diagnostics:
+  - V4 DB は作成時に `PRAGMA user_version = 4` を設定する
+  - runtime は `withmate:get-app-database-diagnostics` で active DB path、`WITHMATE_USER_DATA_PATH` override の有無、schema version、compatibility mode、既知 DB 世代ごとの valid/invalid 状態を返す
+  - 起動時には同じ診断結果を `app.database.selected` として app log に出力する
+  - 複数世代の有効 DB や、壊れた上位世代 DB がある場合は warning として診断結果に含める
 - V1 schema source:
   - `src-electron/database-schema-v1.ts`
 - V2 schema source:
   - `src-electron/database-schema-v2.ts`
+- V3 schema source:
+  - `src-electron/database-schema-v3.ts`
+- V4 schema source:
+  - `src-electron/database-schema-v4.ts`
 - V2 migration policy:
   - `docs/design/database-v2-migration.md`
+- V4 upgrade / import policy:
+  - runtime は `withmate-v4.db` が存在しない場合に V3 / V2 / V1 から V4 への自動 migration を行う
+  - V3 から V4 へ持ち上げる処理は `scripts/migrate-database-v3-to-v4.ts` の write path を使う
+  - V1 / V2 から V4 へ上げる場合は、既存の `scripts/migrate-database-v1-to-v2.ts`、`scripts/migrate-database-v2-to-v3.ts` で V3 へ上げた後、V3 -> V4 import を実行する
+  - V3 -> V4 import は `session`、`audit log`、`app_settings`、`model_catalog_*` を V4 DB 内の runtime 互換 table へ取り込む。Mate profile / growth / provider instruction targets は V4 側で新規開始する
+  - migration 元の V3 / V2 / V1 DB、`<userData>/blobs/v3/`、`<userData>/characters/` は削除しない
+  - dry-run: `npx tsx scripts/migrate-database-v3-to-v4.ts --dry-run --v3 <userData>/withmate-v3.db [--blob-root <userData>/blobs/v3]`
+  - write: `npx tsx scripts/migrate-database-v3-to-v4.ts --write --v3 <userData>/withmate-v3.db --v4 <userData>/withmate-v4.db [--blob-root <userData>/blobs/v3] [--overwrite]`
+  - `--overwrite` を指定した場合、既存 `withmate-v4.db` / `-wal` / `-shm` は rename backup してから import し、成功後に backup を破棄する
+  - import 失敗時は作成中の V4 DB sidecar を削除し、backup があれば復元する。中途半端な V4 DB は残さない
 - driver:
   - Node 標準の `node:sqlite`
 - 共通設定:
@@ -357,14 +385,17 @@ current 実装の key:
 
 | setting_key | Meaning |
 | --- | --- |
-| `system_prompt_prefix` | app 共通の system prompt prefix |
+| `auto_collapse_action_dock_on_send` | Session 送信後に Action Dock を自動で閉じるか |
 | `coding_provider_settings_json` | coding plane provider 設定 |
 | `memory_extraction_provider_settings_json` | memory extraction provider 設定 |
 | `character_reflection_provider_settings_json` | character reflection provider 設定 |
+| `mate_memory_generation_settings_json` | Mate Memory Generation provider 設定 |
+| `character_reflection_trigger_settings_json` | character reflection trigger 設定 |
 
 補足:
 
 - `memory_extraction_provider_settings_json` と `character_reflection_provider_settings_json` は互換用の legacy key として残る場合がある
+- `system_prompt_prefix` は SingleMate 化で廃止する。V1 / V2 / V3 の履歴 migration では当時の app setting として保持し、V4 の新規 DB へは持ち込まない
 - current UI では MemoryGeneration / Character Reflection 設定を表示しない
 - current runtime ではこれらの設定を参照して background task を起動しない
 
@@ -637,9 +668,19 @@ Settings の `DB を初期化` で対象にできるのは次の 6 系統。
 - `characters` は DB 外保存なので reset 対象外
 - `session_memories` は `sessions` に従属して一緒に消える前提で扱う
 
-## Current / Future Boundary
+## Current / Legacy / Future Boundary
 
-### Current 実装
+### Current runtime
+
+4.0 runtime の current DB は `withmate-v4.db` である。
+
+- V4 DB は V1 互換 runtime table と V4 Mate table を同じ DB に持つ
+- V4 DB の作成時は `PRAGMA user_version = 4` を設定する
+- Mate Profile / Growth / provider instruction sync の SQLite schema は `docs/design/mate-storage-schema.md` を正本にする
+- `mate/*.md` と provider instruction block は generated projection であり、正本は SQLite の Mate table と revision である
+- fresh install では `withmate-v4.db` を選ぶが、path 解決だけでは DB file を作成しない
+
+V4 DB 内の既存 runtime table:
 
 - `sessions`
 - `session_memories`
@@ -652,7 +693,20 @@ Settings の `DB を初期化` で対象にできるのは次の 6 系統。
 - `project_memory_entries`
 - `character_scopes`
 - `character_memory_entries`
-- `<userData>/characters/`
+
+### Legacy migration sources
+
+4.0 runtime は legacy DB を通常運用の fallback として開かない。
+`withmate-v4.db` が存在しない場合だけ、既存世代 DB を V4 自動 migration の source として扱う。
+
+- V3: `<userData>/withmate-v3.db` と `<userData>/blobs/v3/`
+- V2: `<userData>/withmate-v2.db`
+- V1: `<userData>/withmate.db`
+- 3.x character catalog: `<userData>/characters/`
+
+runtime 起動時の自動 migration は V3 -> V4、V2 -> V3 -> V4、V1 -> V2 -> V3 -> V4 の順で実行する。
+migration 元の legacy DB と file storage は削除しない。
+V4 Mate table は legacy DB へ作成せず、新規 `withmate-v4.db` にだけ作成する。
 
 ### V2 migration target
 
@@ -671,16 +725,42 @@ Settings の `DB を初期化` で対象にできるのは次の 6 系統。
 
 V2 では Home 一覧と audit log modal 初期表示で巨大 JSON を読まない。session message 本文と audit detail payload は、session 選択時または detail 展開時に遅延取得する。
 
+### V3 blob target
+
+`src-electron/database-schema-v3.ts` で固定した V3 schema は、V2 schema を基礎にしつつ raw/detail payload を `<userData>/blobs/v3/` へ外出しする。
+V3 の詳細は `docs/design/database-v3-blob-storage.md` を参照する。
+
+V3 は 4.0 runtime で V4 自動 migration の source として読む。V4 へ移行する runtime path は `scripts/migrate-database-v3-to-v4.ts` の write path を使う。dry-run や overwrite を手動で制御したい場合は、同 script を明示実行する。
+
+### V4 import target
+
+`scripts/migrate-database-v3-to-v4.ts` は、V3 から次のデータを V4 DB の runtime 互換 table へ取り込む。
+
+- `sessions`
+- `audit_logs`
+- `app_settings`
+- `model_catalog_revisions`
+- `model_catalog_providers`
+- `model_catalog_models`
+
+Mate profile / growth / provider instruction targets は import 対象にしない。V4 側で新規開始する。
+import は write 前に dry-run でき、write 失敗時は作成中の V4 DB sidecar を削除し、backup があれば復元する。
+
 ### Future design only
 
 まだ未実装だが design があるもの:
 
 - `project_memory_entry_links`
 - FTS / embedding 系 index
-- `withmate-v3.db` と compressed blob store による raw/detail payload 外出し
 
 詳細は `docs/design/project-memory-storage.md` を参照する。
-V3 の DB 外 blob store 方針は `docs/design/database-v3-blob-storage.md` を参照する。
+SingleMate の保存方針は `docs/design/single-mate-architecture.md` を参照する。
+Mate 関連 SQLite schema は `docs/design/mate-storage-schema.md` を正本にする。
+| `mate_profile_item_relations` | Profile item 間の reinforce / update / contradict / supersede relation |
+| `mate_forgotten_tombstones` | 忘却済み内容の HMAC fingerprint |
+| `mate_project_digests` | project 単位 digest file metadata |
+| `provider_instruction_targets` | provider root と instruction file path の設定 |
+| `provider_instruction_sync_runs` | provider instruction sync の実行履歴 |
 
 ## Reading Order
 
@@ -690,6 +770,9 @@ V3 の DB 外 blob store 方針は `docs/design/database-v3-blob-storage.md` を
 2. `docs/design/electron-session-store.md`
 3. `docs/design/audit-log.md`
 4. `docs/design/model-catalog.md`
-5. `docs/design/character-storage.md`
-6. `docs/design/project-memory-storage.md`
-7. `docs/design/character-memory-storage.md`
+5. `docs/design/single-mate-architecture.md`
+6. `docs/design/mate-storage-schema.md`
+7. `docs/design/provider-instruction-sync.md`
+8. `docs/design/character-storage.md`
+9. `docs/design/project-memory-storage.md`
+10. `docs/design/character-memory-storage.md`

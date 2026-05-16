@@ -1,5 +1,9 @@
 # Character Management UI
 
+> 4.0.0 note:
+> WithMate 4.0.0 は完全 SingleMate とし、Home の character list、Add Character、New Session の character picker は廃止する。
+> この文書は 3.x の character management UI detail として扱い、4.0.0 の UI 正本は `docs/design/single-mate-architecture.md` と後続の desktop UI 更新へ移す。
+
 - 作成日: 2026-03-12
 - 対象: `Home Window` と `Character Editor Window` の責務分離
 

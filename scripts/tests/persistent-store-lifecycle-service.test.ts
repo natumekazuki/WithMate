@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -12,10 +12,13 @@ import {
   APP_DATABASE_V2_FILENAME,
   CREATE_V2_SCHEMA_SQL,
 } from "../../src-electron/database-schema-v2.js";
+import { APP_DATABASE_V1_FILENAME } from "../../src-electron/database-schema-v1.js";
 import {
   APP_DATABASE_V3_FILENAME,
   CREATE_V3_SCHEMA_SQL,
 } from "../../src-electron/database-schema-v3.js";
+import { APP_DATABASE_V4_FILENAME } from "../../src-electron/database-schema-v4.js";
+import { MateStorage } from "../../src-electron/mate-storage.js";
 import { AuditLogStorageV2 } from "../../src-electron/audit-log-storage-v2.js";
 import { AuditLogStorageV3 } from "../../src-electron/audit-log-storage-v3.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";
@@ -42,7 +45,6 @@ function insertV3SessionHeader(dbPath: string, sessionId: string): void {
       INSERT INTO sessions (
         id,
         task_title,
-        task_summary,
         status,
         updated_at,
         provider,
@@ -67,11 +69,10 @@ function insertV3SessionHeader(dbPath: string, sessionId: string): void {
         message_count,
         audit_log_count,
         last_active_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sessionId,
       "Runtime task",
-      "runtime summary",
       "idle",
       "2026-04-27T00:00:00.000Z",
       "codex",
@@ -155,6 +156,32 @@ async function withTempEmptyV2NamedDatabase<T>(fn: (dbPath: string) => T | Promi
   }
 }
 
+async function withTempDatabaseAndUserData<T>(fn: (dbPath: string, userDataPath: string) => T | Promise<T>): Promise<T> {
+  const dir = await mkdtemp(path.join(tmpdir(), "withmate-v4-lifecycle-"));
+  const dbPath = path.join(dir, "withmate-v4.db");
+  const userDataPath = path.join(dir, "user-data");
+
+  try {
+    return await fn(dbPath, userDataPath);
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+}
+
+async function withTempLegacyDatabase<T>(fn: (dbPath: string, userDataPath: string) => T | Promise<T>): Promise<T> {
+  const dir = await mkdtemp(path.join(tmpdir(), "withmate-v1-lifecycle-"));
+  const dbPath = path.join(dir, APP_DATABASE_V1_FILENAME);
+  const userDataPath = path.join(dir, "user-data");
+  const db = new DatabaseSync(dbPath);
+  db.close();
+
+  try {
+    return await fn(dbPath, userDataPath);
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+}
+
 test("PersistentStoreLifecycleService は store を初期化して session dependency を同期する", async () => {
   const closeCalls: string[] = [];
   const sessionSummaries = [
@@ -198,6 +225,7 @@ test("PersistentStoreLifecycleService は store を初期化して session depen
     createCharacterMemoryStorage: () => createClosableStore("character-memory", closeCalls) as never,
     createAuditLogStorage: () => createClosableStore("audit", closeCalls) as never,
     createAppSettingsStorage: () => createClosableStore("settings", closeCalls) as never,
+    createMateStorage: () => createClosableStore("mate", closeCalls) as never,
     onBeforeClose: () => {
       closeCalls.push("before-close");
     },
@@ -220,6 +248,278 @@ test("PersistentStoreLifecycleService は store を初期化して session depen
   assert.equal(listSessionsCallCount, 0);
 });
 
+test("PersistentStoreLifecycleService は起動時に Mate projection を復元し、残存 mismatch を警告ログに残す", async () => {
+  const warnCalls: unknown[][] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnCalls.push(args);
+  };
+
+  try {
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => ({ revision: 1, providers: [] }),
+          close() {},
+        }) as never,
+      createSessionStorage: () =>
+        ({
+          listSessions: () => [],
+          listSessionSummaries: () => [],
+          close() {},
+        }) as never,
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => ({ close() {} }) as never,
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () =>
+        ({
+          close() {},
+          recoverMateProfileFilesFromActiveRevision: async () => [
+            {
+              sectionKey: "core",
+              filePath: "mate/core.md",
+              expectedHash: "expected",
+              actualHash: "actual",
+              expectedByteSize: 10,
+              actualByteSize: 9,
+              reason: "hash_mismatch",
+            },
+          ],
+        }) as never,
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile() {},
+    });
+
+    const bundle = await service.initialize("withmate.db", "model-catalog.json");
+
+    service.close(bundle, "withmate.db");
+    assert.equal(warnCalls.length, 1);
+    assert.equal(warnCalls[0]?.[0], "Mate profile projection recovery has remaining mismatches");
+    assert.deepEqual(warnCalls[0]?.[1], {
+      count: 1,
+      mismatches: [
+        {
+          sectionKey: "core",
+          filePath: "mate/core.md",
+          expectedHash: "expected",
+          actualHash: "actual",
+          expectedByteSize: 10,
+          actualByteSize: 9,
+          reason: "hash_mismatch",
+        },
+      ],
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test("PersistentStoreLifecycleService は v4 DB 起動時に Mate schema を初期化する", async () => {
+  await withTempDatabaseAndUserData(async (dbPath, userDataPath) => {
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => ({ revision: 1, providers: [] }),
+          close() {},
+        }) as never,
+      createSessionStorage: () =>
+        ({
+          listSessions: () => [],
+          listSessionSummaries: () => [],
+          close() {},
+        }) as never,
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => ({ close() {} }) as never,
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile() {},
+    });
+
+    const bundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+
+    assert.equal(bundle.mateStorage.getMateState(), "not_created");
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      const mateProfileTable = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'mate_profile'")
+        .get();
+      assert.ok(mateProfileTable);
+    } finally {
+      db.close();
+    }
+
+    service.close(bundle, dbPath);
+  });
+});
+
+test("PersistentStoreLifecycleService は legacy DB 起動時に Mate schema を初期化しない", async () => {
+  await withTempLegacyDatabase(async (dbPath, userDataPath) => {
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => ({ revision: 1, providers: [] }),
+          close() {},
+        }) as never,
+      createSessionStorage: () =>
+        ({
+          listSessions: () => [],
+          listSessionSummaries: () => [],
+          close() {},
+        }) as never,
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => ({ close() {} }) as never,
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile() {},
+    });
+
+    const bundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+    try {
+      assert.equal(bundle.mateStorage.getMateState(), "not_created");
+
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const rows = db.prepare(`
+          SELECT name
+          FROM sqlite_master
+          WHERE type = 'table'
+            AND name IN ('mate_profile', 'provider_instruction_targets')
+          ORDER BY name
+        `).all() as Array<{ name: string }>;
+        assert.deepEqual(rows, []);
+      } finally {
+        db.close();
+      }
+    } finally {
+      service.close(bundle, dbPath);
+    }
+  });
+});
+
+test("PersistentStoreLifecycleService は V3 legacy DB 起動時に Mate schema を初期化しない", async () => {
+  await withTempV3Database(async (dbPath) => {
+    const userDataPath = path.join(path.dirname(dbPath), "user-data");
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => ({ revision: 1, providers: [] }),
+          close() {},
+        }) as never,
+      createSessionStorage: () =>
+        ({
+          listSessions: () => [],
+          listSessionSummaries: () => [],
+          close() {},
+        }) as never,
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => ({ close() {} }) as never,
+      createAppSettingsStorage: () =>
+        ({
+          get() {
+            return null;
+          },
+          set() {},
+          delete() {},
+          listAll() {
+            return [];
+          },
+          close() {},
+        }) as never,
+      createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile() {},
+    });
+
+    const bundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+    try {
+      assert.equal(bundle.mateStorage.getMateState(), "not_created");
+
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const rows = db.prepare(`
+          SELECT name
+          FROM sqlite_master
+          WHERE type = 'table'
+            AND name IN ('mate_profile', 'provider_instruction_targets')
+          ORDER BY name
+        `).all() as Array<{ name: string }>;
+        assert.deepEqual(rows, []);
+      } finally {
+        db.close();
+      }
+    } finally {
+      service.close(bundle, dbPath);
+    }
+  });
+});
+
+test("PersistentStoreLifecycleService は v4 DB 起動時に Mate projection を active revision snapshot から復元する", async () => {
+  await withTempDatabaseAndUserData(async (dbPath, userDataPath) => {
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => ({ revision: 1, providers: [] }),
+          close() {},
+        }) as never,
+      createSessionStorage: () =>
+        ({
+          listSessions: () => [],
+          listSessionSummaries: () => [],
+          close() {},
+        }) as never,
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => ({ close() {} }) as never,
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile() {},
+    });
+
+    const firstBundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+    try {
+      await firstBundle.mateStorage.createMate({ displayName: "Mika" });
+      await firstBundle.mateStorage.applyProfileFiles({
+        summary: "seed core",
+        files: [{ sectionKey: "core", relativePath: "mate/core.md", content: "# Core\n- Stable\n" }],
+      });
+    } finally {
+      service.close(firstBundle, dbPath);
+    }
+
+    const corePath = path.join(userDataPath, "mate/core.md");
+    await writeFile(corePath, "# Core\n- Broken\n", "utf8");
+
+    const secondBundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+    try {
+      const restoredCore = await readFile(corePath, "utf8");
+      const mismatches = await secondBundle.mateStorage.verifyMateProfileFiles();
+
+      assert.equal(restoredCore, "# Core\n- Stable\n");
+      assert.deepEqual(mismatches, []);
+    } finally {
+      service.close(secondBundle, dbPath);
+    }
+  });
+});
+
 test("PersistentStoreLifecycleService は close 時に hook と各 store close を呼ぶ", () => {
   const closeCalls: string[] = [];
   const service = new PersistentStoreLifecycleService({
@@ -230,6 +530,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     createCharacterMemoryStorage: () => null as never,
     createAuditLogStorage: () => null as never,
     createAppSettingsStorage: () => null as never,
+    createMateStorage: () => null as never,
     onBeforeClose: () => {
       closeCalls.push("before-close");
     },
@@ -247,6 +548,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     characterMemoryStorage: createClosableStore("character-memory", closeCalls) as never,
     auditLogStorage: createClosableStore("audit", closeCalls) as never,
     appSettingsStorage: createClosableStore("settings", closeCalls) as never,
+    mateStorage: createClosableStore("mate", closeCalls) as never,
   };
 
   service.close(bundle, "withmate.db");
@@ -260,6 +562,7 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     "character-memory",
     "audit",
     "settings",
+    "mate",
     "truncate-wal",
   ]);
 });
@@ -281,6 +584,7 @@ test("PersistentStoreLifecycleService は WAL truncate 失敗を close 呼び出
       createCharacterMemoryStorage: () => null as never,
       createAuditLogStorage: () => null as never,
       createAppSettingsStorage: () => null as never,
+      createMateStorage: () => null as never,
       onBeforeClose: () => {
         closeCalls.push("before-close");
       },
@@ -318,6 +622,7 @@ test("PersistentStoreLifecycleService は WAL truncate 失敗後も DB 再生成
     createCharacterMemoryStorage: () => ({ close() {} }) as never,
     createAuditLogStorage: () => ({ close() {} }) as never,
     createAppSettingsStorage: () => ({ close() {} }) as never,
+    createMateStorage: () => ({ close() {} }) as never,
     onBeforeClose: () => {},
     truncateWal: () => {
       throw new Error("checkpoint failed");
@@ -362,6 +667,7 @@ test("PersistentStoreLifecycleService は DB を再生成して再初期化す�
     createCharacterMemoryStorage: () => ({ close() {} }) as never,
     createAuditLogStorage: () => ({ close() {} }) as never,
     createAppSettingsStorage: () => ({ close() {} }) as never,
+    createMateStorage: () => ({ close() {} }) as never,
     onBeforeClose: () => {},
     truncateWal(dbPath) {
       truncateWalCalls.push(dbPath);
@@ -403,6 +709,7 @@ test("PersistentStoreLifecycleService は V2 DB 再生成後に V2 schema を作
         throw new Error("V2 DB では V1 audit log storage を生成しない");
       },
       createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () => ({ close() {} }) as never,
       ensureV2Schema(pathToDb) {
         const db = new DatabaseSync(pathToDb);
         try {
@@ -463,6 +770,7 @@ test("PersistentStoreLifecycleService は V3 DB 再生成時に blob root も削
       createCharacterMemoryStorage: () => ({ close() {} }) as never,
       createAuditLogStorage: () => ({ close() {} }) as never,
       createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () => ({ close() {} }) as never,
       ensureV3Schema(pathToDb) {
         const db = new DatabaseSync(pathToDb);
         try {
@@ -490,6 +798,51 @@ test("PersistentStoreLifecycleService は V3 DB 再生成時に blob root も削
     assert.equal(bundle.activeModelCatalog.revision, 7);
     assert.deepEqual(removedDirectories, [path.join(dir, "blobs", "v3")]);
     assert.equal(bundle.sessionStorage instanceof SessionStorageV3, true);
+    service.close(bundle, dbPath);
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
+test("PersistentStoreLifecycleService は V4 DB 再生成時にも blob root を削除する", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "withmate-v4-recreate-"));
+  const dbPath = path.join(dir, APP_DATABASE_V4_FILENAME);
+  const removedDirectories: string[] = [];
+
+  try {
+    const service = new PersistentStoreLifecycleService({
+      createModelCatalogStorage: () =>
+        ({
+          ensureSeeded: () => ({ revision: 8, providers: [] }),
+          close() {},
+        }) as never,
+      createSessionStorage: () =>
+        ({
+          listSessions: () => [],
+          listSessionSummaries: () => [],
+          close() {},
+        }) as never,
+      createSessionMemoryStorage: () => ({ close() {} }) as never,
+      createProjectMemoryStorage: () => ({ close() {} }) as never,
+      createCharacterMemoryStorage: () => ({ close() {} }) as never,
+      createAuditLogStorage: () => ({ close() {} }) as never,
+      createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () => ({ close() {} }) as never,
+      onBeforeClose: () => {},
+      truncateWal() {},
+      async removeFile(filePath) {
+        await rm(filePath, { force: true });
+      },
+      async removeDirectory(directoryPath) {
+        removedDirectories.push(directoryPath);
+        await rm(directoryPath, { recursive: true, force: true });
+      },
+    });
+
+    const bundle = await service.recreate(dbPath, "model-catalog.json", {});
+
+    assert.equal(bundle.activeModelCatalog.revision, 8);
+    assert.deepEqual(removedDirectories, [path.join(dir, "blobs", "v3")]);
     service.close(bundle, dbPath);
   } finally {
     await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -526,6 +879,7 @@ test("PersistentStoreLifecycleService は required V2 tables がない withmate-
         } as never;
       },
       createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () => ({ close() {} }) as never,
       onBeforeClose: () => {},
       truncateWal() {},
       async removeFile() {},
@@ -563,6 +917,7 @@ test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2 を使�
       createCharacterMemoryStorage: () => ({ close() {} }) as never,
       createAuditLogStorage: () => ({ close() {} }) as never,
       createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () => ({ close() {} }) as never,
       onBeforeClose: () => {},
       truncateWal() {},
       async removeFile() {},
@@ -612,6 +967,7 @@ test("PersistentStoreLifecycleService は V2 DB では V1 write-capable storages
         } as never;
       },
       createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () => ({ close() {} }) as never,
       onBeforeClose: () => {},
       truncateWal() {},
       async removeFile() {},
@@ -661,6 +1017,7 @@ test("PersistentStoreLifecycleService は V2 DB に legacy memory table を作�
         throw new Error("V2 DB では V1 audit log storage を生成しない");
       },
       createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () => ({ close() {} }) as never,
       onBeforeClose: () => {},
       truncateWal() {},
       async removeFile() {},
@@ -734,6 +1091,7 @@ test("PersistentStoreLifecycleService は V3 DB では V1 storages を生成せ�
         throw new Error("V3 DB では V1 audit log storage を生成しない");
       },
       createAppSettingsStorage: () => ({ close() {} }) as never,
+      createMateStorage: () => ({ close() {} }) as never,
       ensureV3Schema(pathToDb) {
         assert.equal(pathToDb, dbPath);
         ensureV3SchemaCallCount += 1;

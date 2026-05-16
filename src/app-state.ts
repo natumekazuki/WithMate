@@ -4,7 +4,9 @@ export {
   cloneSessions,
   getDiffTokenFromLocation,
   getSessionIdFromLocation,
+  isLegacyReadOnlySession,
   normalizeSession,
+  normalizeSessionAccessMode,
   normalizeSessionSummary,
   projectSessionSummary,
 } from "./session-state.js";
@@ -14,6 +16,7 @@ export type {
   Message,
   MessageArtifact,
   Session,
+  SessionAccessMode,
   SessionDetail,
   SessionKind,
   SessionSummary,
@@ -142,7 +145,7 @@ export {
   normalizeProjectScope,
   normalizeSessionMemory,
   normalizeSessionMemoryDelta,
-} from "./memory-state.js";
+} from "./memory/memory-state.js";
 export type {
   CharacterMemoryCategory,
   CharacterMemoryDelta,
@@ -161,7 +164,7 @@ export type {
   SessionBackgroundActivityStatus,
   SessionMemory,
   SessionMemoryDelta,
-} from "./memory-state.js";
+} from "./memory/memory-state.js";
 export {
   currentIsoTimestamp,
   currentTimestampLabel,

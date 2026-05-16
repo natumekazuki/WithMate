@@ -9,7 +9,13 @@ import type { AppSettings } from "../src/provider-settings-state.js";
 import type {
   ProviderBackgroundAdapter,
   ProviderCodingAdapter,
+  ProviderBackgroundStructuredPromptCapability,
+  ProviderBackgroundStructuredPromptCapabilitySummary,
   ProviderTurnAdapter,
+} from "./provider-runtime.js";
+import {
+  getMateTalkBackgroundStructuredPromptCapability,
+  summarizeMateTalkBackgroundStructuredPromptCapability,
 } from "./provider-runtime.js";
 
 type ResolveProviderCatalogArgs = {
@@ -30,6 +36,18 @@ type FetchProviderQuotaTelemetryArgs = {
   getAppSettings(): AppSettings;
   getProviderCodingAdapter(providerId: string): ProviderCodingAdapter;
 };
+
+export type ProviderRuntimeCapabilities = {
+  providerId: string;
+  providerSupported: boolean;
+  instructionSyncSupported: boolean;
+  tokenUsageSupported: boolean;
+  mateTalkBackgroundPromptSupported: boolean;
+  backgroundStructuredPrompt: ProviderBackgroundStructuredPromptCapability;
+  backgroundStructuredPromptSummary: ProviderBackgroundStructuredPromptCapabilitySummary;
+};
+
+const MATE_SUPPORTED_PROVIDER_IDS = new Set(["codex", "copilot"]);
 
 export function resolveProviderCatalogOrThrow(
   args: ResolveProviderCatalogArgs,
@@ -62,4 +80,23 @@ export async function fetchProviderQuotaTelemetry(
     providerId: args.providerId,
     appSettings: args.getAppSettings(),
   });
+}
+
+export function getProviderRuntimeCapabilities(args: {
+  providerId: string;
+  backgroundAdapter: ProviderBackgroundAdapter;
+}): ProviderRuntimeCapabilities {
+  const providerSupported = MATE_SUPPORTED_PROVIDER_IDS.has(args.providerId);
+  const backgroundStructuredPrompt = getMateTalkBackgroundStructuredPromptCapability(args.backgroundAdapter);
+  return {
+    providerId: args.providerId,
+    providerSupported,
+    instructionSyncSupported: providerSupported,
+    tokenUsageSupported: providerSupported,
+    mateTalkBackgroundPromptSupported: providerSupported && backgroundStructuredPrompt.compatible,
+    backgroundStructuredPrompt,
+    backgroundStructuredPromptSummary: summarizeMateTalkBackgroundStructuredPromptCapability(
+      backgroundStructuredPrompt.policy,
+    ),
+  };
 }

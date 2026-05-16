@@ -1,21 +1,44 @@
 # Product Direction
 
 - 作成日: 2026-03-11
-- 更新日: 2026-03-27
+- 更新日: 2026-05-03
 - 対象: WithMate 全体の体験設計方針
 
 ## Goal
 
-WithMate を「キャラ付きチャットアプリ」ではなく、`Codex CLI / GitHub Copilot CLI` 相当の coding agent 体験をベースに、
-キャラクター体験を上乗せするアプリとして定義する。
+WithMate を「キャラ付きチャットアプリ」や「複数 character catalog」ではなく、`Codex CLI / GitHub Copilot CLI` 相当の coding agent 体験をベースに、
+1 つの環境に 1 人の Mate が定着して育つ coding companion として定義する。
 
 この文書は、current milestone で何を主役にし、何をまだ主役にしないかを判断するための上位方針とする。
 
 ## Position
 
-- プロダクト全体の優先順位と Character / Memory / Monologue の位置づけの正本はこの文書とする
+- プロダクト全体の優先順位と Mate / Growth / Memory / Monologue の位置づけの正本はこの文書とする
+- WithMate 4.0.0 の SingleMate 詳細は `docs/design/single-mate-architecture.md` を参照する
+- provider instruction sync の詳細は `docs/design/provider-instruction-sync.md` を参照する
 - current UI の具体仕様は `docs/design/desktop-ui.md` を参照する
 - monologue / reflection backend の詳細は `docs/design/monologue-provider-policy.md` を参照する
+
+## 4.0.0 SingleMate Decision
+
+WithMate 4.0.0 は完全 SingleMate とする。
+
+- 1 つの環境に存在する Mate は 1 人だけとする
+- 既存 character catalog からの migration は行わない
+- 初回起動または初回 4.0.0 利用時は、必ず新しい Mate 作成から開始する
+- Mate が未作成の間は、Mate 作成と Settings 以外の全機能を block する
+- 初回 Mate 作成の必須入力は `name` のみにする
+- 初回作成時は必要な Mate Profile Markdown files をすべて作成するが、中身は空でよい
+- Mate avatar / icon は任意であり、未設定は Mate name と theme color の placeholder で表現する
+- Mate Profile storage / API は完全に単一化し、character catalog API の内部互換は維持しない
+- Mate Profile の metadata は SQLite に保存し、`profile.json` は作らない
+- Home / Session / Companion は常に現在の Mate を使う
+- session 起動時の character picker は廃止する
+- 実行時の Mate 定義注入は毎 turn prompt 合成ではなく provider instruction sync を主経路にする
+- provider instruction sync の MVP 対象は current 実装でサポートしている provider に限定する
+- Growth Candidate は 4.0.0 から実装し、毎回のユーザー承認ではなく Mate Profile の自律更新と revision として扱う
+
+詳細は `docs/design/single-mate-architecture.md` を正本にする。
 
 ## Product Thesis
 
@@ -26,11 +49,11 @@ WithMate で実現したい体験は次の三層で構成される。
 - workspace、session resume、run state、approval、変更ファイル、diff などの主要操作で違和感がないこと
 
 2. `characterized work experience`
-- キャラクター定義や UI copy によって、作業面が「誰と作業しているか」を感じられること
+- Mate Profile や UI copy によって、作業面が「同じ Mate と作業している」ことを感じられること
 - ただし作業面の可読性や判断性を壊さないこと
 
 3. `parallel character stream`
-- 作業本体とは別枠で、キャラクターの独り言や内心が流れ続けること
+- 作業本体とは別枠で、Mate の独り言や内心が流れ続けること
 - 作業の合間に眺めて楽しめるが、本体の coding agent 体験を邪魔しないこと
 
 ただし current milestone では主役を 1 層目に置く。
@@ -41,20 +64,20 @@ WithMate で実現したい体験は次の三層で構成される。
 今の WithMate は次の前提で判断する。
 
 1. 主役は `coding agent として成立していること`
-2. Character は `作業支援に被せる体験`
-3. Memory は `継続性を出すための基盤`
+2. Mate は `1 人の相棒として作業支援に定着する体験`
+3. Growth / Memory は `継続性を出すための基盤`
 4. Monologue / Character Stream は `将来価値だが current milestone の主役ではない`
 
-つまり current milestone では、Character や Memory を「キャラアプリのため」だけに先行させない。
-まず coding plane を成立させ、その上で Character と Memory を「継続性」と「体験の濃さ」を上げるために使う。
+つまり current milestone では、Mate や Growth / Memory を「キャラアプリのため」だけに先行させない。
+まず coding plane を成立させ、その上で Mate と Growth を「継続性」と「体験の濃さ」を上げるために使う。
 
 ## Priority Order
 
 主従関係は次の順序で固定する。
 
 1. coding agent として成立している
-2. Character が作業体験を壊さずに効いている
-3. Memory が継続性に寄与している
+2. Mate が作業体験を壊さずに効いている
+3. Growth / Memory が継続性に寄与している
 4. Character Stream が楽しい
 
 `Character Stream` は WithMate の固有価値だが、coding agent としての可読性や操作性を壊してまで優先しない。
@@ -96,10 +119,10 @@ WithMate が最低限維持すべき体験は次のとおり。
 
 CLI parity の上に、WithMate 固有の層として次を追加する。
 
-- `character definition management`
-- `characterized session copy`
-- `memory architecture`
-- 将来的なキャラクター切り替えや固定
+- `Mate Profile management`
+- `Mate-oriented session copy`
+- `Growth / Memory architecture`
+- provider instruction sync
 
 これらは coding agent の基本操作を置き換えるのではなく、上から重ねる。
 
@@ -107,14 +130,16 @@ CLI parity の上に、WithMate 固有の層として次を追加する。
 
 current milestone では WithMate 固有拡張を次のように読む。
 
-- `character definition management`
-  - Character Editor と session への反映
-- `characterized session copy`
-  - SessionWindow の固定文言や見た目でキャラ体験を出す
-- `memory architecture`
-  - まだ実装より責務定義が先
+- `Mate Profile management`
+  - 初回 Mate 作成、Mate Profile 編集、Growth 承認
+- `Mate-oriented session copy`
+  - SessionWindow の固定文言や見た目で同じ Mate と作業している体験を出す
+- `provider instruction sync`
+  - Mate projection を provider native instruction file へ同期する
+- `Growth / Memory architecture`
+  - 旧 Memory runtime の復活ではなく、Mate Profile の自律更新と revision として再設計する
 
-provider prompt 側の強いキャラ制御や Character Stream は、この層の future 側に置く。
+provider prompt 側の毎 turn 定義全文注入や Character Stream は、この層の future 側に置く。
 
 ## Provider Split
 
@@ -135,17 +160,17 @@ WithMate は provider を 1 つに統一しない。
 この分離により、本体の CLI parity を保ったまま、独り言機能のコスト管理と利用条件を独立して扱う。
 詳細は `docs/design/monologue-provider-policy.md` を参照する。
 
-## Character Responsibility
+## Mate Responsibility
 
-current milestone における Character の責務は次のとおり。
+current milestone における Mate の責務は次のとおり。
 
-- session に「誰と作業しているか」を与える
+- session に「同じ Mate と作業している」感覚を与える
 - UI copy、theme、icon、assistant 表現で体験を揃える
-- 将来 Memory や Monologue と接続できる単位になる
+- Growth / Memory / provider instruction sync と接続できる単位になる
 
-逆に、まだ Character の責務にしないものは次のとおり。
+逆に、まだ Mate の責務にしないものは次のとおり。
 
-- provider ごとの複雑な prompt 制御
+- provider ごとの複雑な prompt 制御を毎 turn WithMate 側で抱えること
 - 自律的な会話継続
 - coding plane と分離した独立 Character Stream 本体
 
@@ -159,7 +184,8 @@ coding plane において、Memory が解くべき問いは次の 2 つだけに
 2. 同じ session を再開した時に忘れてほしくないものは何か
 
 このため、coding plane ではまず `Project Memory` と `Session Memory` の 2 軸で考える。  
-`Character Memory` は monologue や将来の character update で使う別軸とし、main の session prompt には注入しない。
+`Character Memory` は 4.0.0 では旧概念として扱い、SingleMate では `Growth Event`、`Bond Profile`、`Work Style` へ再設計する。
+main の session prompt へ旧 Memory を注入しない方針は維持する。
 
 2026-04-27 時点では、`Session Memory` / `Project Memory` の coding plane prompt 注入と、`Character Memory` の background reflection は runtime から外している。再導入する場合は、token 効率と prompt 有用性を評価できる新設計として扱う。
 
@@ -189,8 +215,9 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 
 ### 必要な方向
 
-- キャラクターの存在感はセッション単位の識別と assistant 側の発話表現で出す
-- キャラクターアイコン、名前、トーン、ムードが継続して感じられる UI にする
+- Mate の存在感はセッション単位の識別と assistant 側の発話表現で出す
+- Mate のアイコン、名前、トーン、ムードが継続して感じられる UI にする
+- アイコン未設定を空白やエラーにせず、placeholder も正式な表現として扱う
 - 無機質な業務ツール感には寄せすぎない
 - ただし、作業面は読みやすさと情報密度を優先する
 
@@ -205,7 +232,7 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 
 ### 1. 作業面とキャラ面を分離する
 
-- `Home Window` は resume / new session / character selection を担う管理面
+- `Home Window` は resume / new session / Your Mate を担う管理面
 - `Session Window` は作業面
 - `Work Chat` は作業結果を読む面
 - `独り言` は current UI では表示しない
@@ -213,8 +240,8 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 
 ### 2. キャラ性は構造で出す
 
-- セッションにキャラクターが紐づいている
-- Session copy や theme が同じ character を感じさせる
+- セッションに Mate snapshot が紐づいている
+- Session copy や theme が同じ Mate を感じさせる
 - current 実装では `Session Window` 右ペインに `Monologue` host を置かない
 
 色や装飾だけで VTuber 感を作ろうとしない。
@@ -252,7 +279,7 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 - Home 側でも要素名ラベルを増やしすぎないこと
 - `Work Chat` の読みやすさ
 - `Artifact Summary` の実務的な有用性
-- キャラクター定義の安定注入前提
+- Mate projection の安定注入前提
 - 独り言 UI を current runtime へ戻さないこと
 - 非互換変更時の回復導線として Settings の DB reset を維持すること
 
@@ -260,11 +287,11 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 
 次の論点は、今すぐ 1 つに決めない。
 
-- Character Memory の保存粒度
-- MemoryGeneration を再設計する場合の評価指標
+- Growth Candidate の生成 timing
+- Growth / Memory を再設計する場合の評価指標
 - Monologue を再設計する場合の発火契機
 - Character Stream をどの window / pane に出すか
-- Character が prompt 制御まで担うかどうか
+- Mate projection を provider instruction sync へどこまで反映するか
 
 これらは current milestone で「必要になるまで確定しない」。
 
@@ -274,7 +301,7 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 
 - `Recent Sessions` は `Home Window` の resume picker として再設計する
 - `Session Window` の `Work Chat` は TUI 本体寄りに保つ
-- Character は `Session Copy`、theme、icon、assistant 表現で効かせる
+- Mate は `Session Copy`、theme、icon、assistant 表現で効かせる
 - 独り言 UI は current runtime では表示しない
 - Settings は coding plane 用 provider / credential と DB reset を持つ管理面として扱う
 - 見た目はキャラクターに合わせていくが、構造は coding agent 優先で崩さない
@@ -283,11 +310,13 @@ Character Stream は「WithMate の固有価値」ではあるが、current mile
 
 この doc を起点に、次は次の順で詰める。
 
-1. `Memory` は何を保存するか
-2. `Project / Session Memory` を coding plane へ再導入する条件は何か
-3. `Character Memory` を monologue / character update で再利用する価値があるか
+1. `Mate Profile` をどう保存するか
+2. provider instruction sync をどの provider から実装するか
+3. `Growth Candidate` をいつ生成し、どう profile へ安全に反映するか
 
 関連:
 
+- `docs/design/single-mate-architecture.md`
+- `docs/design/provider-instruction-sync.md`
 - `docs/design/memory-architecture.md`
 - `docs/design/monologue-provider-policy.md`

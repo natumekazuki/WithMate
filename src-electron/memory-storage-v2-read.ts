@@ -16,7 +16,7 @@ import type {
   ManagedProjectMemoryGroup,
   ManagedSessionMemoryItem,
   MemoryManagementPageRequest,
-} from "../src/memory-management-state.js";
+} from "../src/memory/memory-management-state.js";
 import type { ResolvedProjectScopeInput } from "./project-scope.js";
 
 function currentIsoTimestamp(): string {
@@ -40,7 +40,7 @@ export class SessionMemoryStorageV2Read {
     return memory;
   }
 
-  ensureSessionMemory(session: Pick<Session, "id" | "workspacePath" | "threadId" | "taskTitle" | "taskSummary">): SessionMemory {
+  ensureSessionMemory(session: Pick<Session, "id" | "workspacePath" | "threadId" | "taskTitle">): SessionMemory {
     return createDefaultSessionMemory(session);
   }
 

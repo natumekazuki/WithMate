@@ -17,20 +17,26 @@ import {
 import { type CharacterProfile } from "../src/character-state.js";
 import { buildLiveRunAuditOperations } from "../src/live-run-audit-operations.js";
 import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
-import { type Session } from "../src/session-state.js";
+import { isLegacyReadOnlySession, type Session } from "../src/session-state.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src/model-catalog.js";
+import type { MateStorageState } from "../src/mate/mate-state.js";
 import { ProviderTurnError, type ProviderCodingAdapter, type RunSessionTurnResult } from "./provider-runtime.js";
 import { appendQuotaTelemetryToTransportPayload } from "./audit-log-quota.js";
 import { appendTransportPayloadFields, calculateAuditDurationMs } from "./audit-log-metadata.js";
+import { estimateLogicalPromptTokens } from "./prompt-token-estimate.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
+type SessionMetadataForMemoryGeneration = Pick<
+  Session,
+  "id" | "workspacePath"
+>;
 
 export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(session: Session): Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
-  resolveSessionCharacter(session: Session): Promise<CharacterProfile | null>;
+  resolveSessionCharacter?: (session: Session) => Promise<CharacterProfile | null>;
   getAppSettings: () => AppSettings;
   resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): {
     snapshot: ModelCatalogSnapshot;
@@ -43,6 +49,11 @@ export type SessionRuntimeServiceDeps = {
     userMessage: string,
     sessionMemory: SessionMemory,
   ): ProjectMemoryEntry[];
+  resolveProjectContextTextForPrompt?(
+    session: Session,
+    userMessage: string,
+    sessionMemory: SessionMemory,
+  ): Awaitable<string | null>;
   createAuditLog(input: CreateAuditLogInput): Awaitable<AuditLogEntry>;
   updateAuditLog(id: number, entry: CreateAuditLogInput): Awaitable<void | AuditLogEntry>;
   setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void;
@@ -65,6 +76,17 @@ export type SessionRuntimeServiceDeps = {
   broadcastLiveSessionRun(sessionId: string): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
   resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
+  scheduleMateMemoryGeneration?: (params: {
+    session: SessionMetadataForMemoryGeneration;
+    userMessage: string;
+    assistantText: string;
+    auditLogId: number;
+    phase: "completed" | "failed" | "canceled";
+    provider: Session["provider"];
+    threadId: Session["threadId"];
+    logicalPrompt: CreateAuditLogInput["logicalPrompt"];
+  }) => Awaitable<void>;
+  getMateState?: () => MateStorageState;
   currentTimestampLabel?: () => string;
 };
 
@@ -266,6 +288,12 @@ function buildAuditOperationMergeKey(operation: CreateAuditLogInput["operations"
   return `${operation.type}\u0000${operation.summary}`;
 }
 
+function ensureAuditTransportPayload(
+  payload: CreateAuditLogInput["transportPayload"],
+): NonNullable<CreateAuditLogInput["transportPayload"]> {
+  return payload ?? { summary: "prompt estimate", fields: [] };
+}
+
 function mergeTerminalAuditOperations(
   baseOperations: CreateAuditLogInput["operations"],
   terminalOperations: CreateAuditLogInput["operations"] | null | undefined,
@@ -372,6 +400,10 @@ export class SessionRuntimeService {
       throw new Error("このセッションはまだ実行中だよ。");
     }
 
+    if (isLegacyReadOnlySession(session)) {
+      throw new Error("旧バージョンから移行された閲覧専用セッションには送信できないよ。");
+    }
+
     const nextMessage = request.userMessage.trim();
     if (!nextMessage) {
       throw new Error("送信するメッセージが空だよ。");
@@ -380,11 +412,6 @@ export class SessionRuntimeService {
     const composerPreview = await this.deps.resolveComposerPreview(session, request.userMessage);
     if (composerPreview.errors.length > 0) {
       throw new Error(composerPreview.errors[0] ?? "添付の解決に失敗したよ。");
-    }
-
-    const character = await this.deps.resolveSessionCharacter(session);
-    if (!character) {
-      throw new Error("キャラクター定義が見つからないよ。");
     }
 
     const appSettings = this.deps.getAppSettings();
@@ -396,11 +423,14 @@ export class SessionRuntimeService {
     const providerAdapter = this.deps.getProviderCodingAdapter(provider.id);
     const sessionMemory = this.deps.getSessionMemory(session);
     const projectMemoryEntries = this.deps.resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
+    const projectContextText = await Promise.resolve(
+      this.deps.resolveProjectContextTextForPrompt?.(session, nextMessage, sessionMemory) ?? null,
+    );
     const promptForAudit = providerAdapter.composePrompt({
       session,
       sessionMemory,
       projectMemoryEntries,
-      character,
+      projectContextText,
       providerCatalog: provider,
       userMessage: nextMessage,
       appSettings,
@@ -497,6 +527,34 @@ export class SessionRuntimeService {
 
       await enqueueAuditWrite(nextRunningAuditEntry, nextSignature);
     };
+    const scheduleMateMemoryGeneration = async (params: {
+      session: SessionMetadataForMemoryGeneration;
+      userMessage: string;
+      assistantText: string;
+      phase: "completed" | "failed" | "canceled";
+      threadId: Session["threadId"];
+      auditLogId: number;
+    }) => {
+      const { scheduleMateMemoryGeneration: schedule } = this.deps;
+      if (!schedule) {
+        return;
+      }
+      const appSettings = this.deps.getAppSettings();
+      const mateState = this.deps.getMateState?.();
+      if (!appSettings.memoryGenerationEnabled || (mateState && mateState !== "active")) {
+        return;
+      }
+
+      try {
+        await Promise.resolve(schedule({
+          ...params,
+          logicalPrompt: promptForAudit.logicalPrompt,
+          provider: activeRunningSession.provider,
+        }));
+      } catch {
+        console.warn("Failed to schedule Mate Memory generation", params.session.id);
+      }
+    };
     await syncRunningAuditFromLiveState(initialLiveState);
     const runProviderTurn = (turnSession: Session) => {
       const progressGeneration = ++liveProgressGeneration;
@@ -504,7 +562,7 @@ export class SessionRuntimeService {
         session: turnSession,
         sessionMemory,
         projectMemoryEntries,
-        character,
+        projectContextText,
         providerCatalog: provider,
         userMessage: nextMessage,
         appSettings,
@@ -608,6 +666,7 @@ export class SessionRuntimeService {
 
       const completedAt = new Date().toISOString();
       const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
+      const logicalPromptEstimate = estimateLogicalPromptTokens(result.logicalPrompt);
 
       await flushAuditWrites();
       terminalAuditSettled = true;
@@ -619,11 +678,17 @@ export class SessionRuntimeService {
         logicalPrompt: result.logicalPrompt,
         transportPayload: appendTransportPayloadFields(
           appendQuotaTelemetryToTransportPayload(
-            result.transportPayload,
+            ensureAuditTransportPayload(result.transportPayload),
             result.providerQuotaTelemetry,
           ),
           [
             { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
+            { label: "promptEstimatedChars", value: String(logicalPromptEstimate.composed.charCount) },
+            { label: "promptEstimatedTokens", value: String(logicalPromptEstimate.composed.estimatedTokens) },
+            { label: "promptSystemEstimatedChars", value: String(logicalPromptEstimate.system.charCount) },
+            { label: "promptSystemEstimatedTokens", value: String(logicalPromptEstimate.system.estimatedTokens) },
+            { label: "promptInputEstimatedChars", value: String(logicalPromptEstimate.input.charCount) },
+            { label: "promptInputEstimatedTokens", value: String(logicalPromptEstimate.input.estimatedTokens) },
             { label: "projectMemoryHits", value: String(projectMemoryEntries.length) },
             { label: "attachmentCount", value: String(composerPreview.attachments.length) },
           ],
@@ -654,6 +719,17 @@ export class SessionRuntimeService {
       };
 
       const storedCompletedSession = await this.deps.upsertSession(completedSession);
+      void scheduleMateMemoryGeneration({
+        session: {
+          id: storedCompletedSession.id,
+          workspacePath: storedCompletedSession.workspacePath,
+        },
+        userMessage: nextMessage,
+        assistantText: completedSession.messages.at(-1)?.text ?? "",
+        phase: "completed",
+        threadId: storedCompletedSession.threadId,
+        auditLogId: runningAuditLog.id,
+      });
       activeRunningSession = storedCompletedSession;
       return storedCompletedSession;
     } catch (error: unknown) {
@@ -676,6 +752,8 @@ export class SessionRuntimeService {
       const nextSessionThreadId = shouldResetFailedThread ? "" : failedAuditThreadId;
       const completedAt = new Date().toISOString();
       const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
+      const failedLogicalPrompt = partialResult?.logicalPrompt ?? promptForAudit.logicalPrompt;
+      const failedLogicalPromptEstimate = estimateLogicalPromptTokens(failedLogicalPrompt);
       if (canceled || shouldResetFailedThread) {
         this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId);
       }
@@ -690,11 +768,17 @@ export class SessionRuntimeService {
         logicalPrompt: partialResult?.logicalPrompt ?? promptForAudit.logicalPrompt,
         transportPayload: appendTransportPayloadFields(
           appendQuotaTelemetryToTransportPayload(
-            partialResult?.transportPayload ?? null,
+            ensureAuditTransportPayload(partialResult?.transportPayload ?? null),
             partialResult?.providerQuotaTelemetry,
           ),
           [
             { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
+            { label: "promptEstimatedChars", value: String(failedLogicalPromptEstimate.composed.charCount) },
+            { label: "promptEstimatedTokens", value: String(failedLogicalPromptEstimate.composed.estimatedTokens) },
+            { label: "promptSystemEstimatedChars", value: String(failedLogicalPromptEstimate.system.charCount) },
+            { label: "promptSystemEstimatedTokens", value: String(failedLogicalPromptEstimate.system.estimatedTokens) },
+            { label: "promptInputEstimatedChars", value: String(failedLogicalPromptEstimate.input.charCount) },
+            { label: "promptInputEstimatedTokens", value: String(failedLogicalPromptEstimate.input.estimatedTokens) },
             { label: "projectMemoryHits", value: String(projectMemoryEntries.length) },
             { label: "attachmentCount", value: String(composerPreview.attachments.length) },
           ],
@@ -730,6 +814,19 @@ export class SessionRuntimeService {
       };
 
       const storedFailedSession = await this.deps.upsertSession(failedSession);
+      if (!canceled || partialResult?.assistantText.trim()) {
+        void scheduleMateMemoryGeneration({
+          session: {
+            id: storedFailedSession.id,
+            workspacePath: storedFailedSession.workspacePath,
+          },
+          userMessage: nextMessage,
+          assistantText: failedSession.messages.at(-1)?.text ?? "",
+          phase: canceled ? "canceled" : "failed",
+          threadId: storedFailedSession.threadId,
+          auditLogId: runningAuditLog.id,
+        });
+      }
       activeRunningSession = storedFailedSession;
       return storedFailedSession;
     } finally {

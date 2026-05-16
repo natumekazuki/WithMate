@@ -170,7 +170,7 @@ npm run typecheck
 
 - Electron 実行を正本とする desktop アプリ構成です
 - セッション情報は Electron 側で保持され、キャラクター情報はアプリ管理領域のストレージから読み込みます
-- Settings Window では `System Prompt Prefix`、`Session Window`、`Coding Agent Providers`、`Skill Roots`、`Memory Extraction`、`Character Reflection`、`Diagnostics`、`Model Catalog` を管理します
+- Settings Window では `Session Window`、`Coding Agent Providers`、`Provider Instruction Sync`、`Skill Roots`、`Memory Extraction`、`Character Reflection`、`Diagnostics`、`Model Catalog` を管理します
 
 ## 補足
 

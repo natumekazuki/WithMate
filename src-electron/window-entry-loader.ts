@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { MateTalkLaunchInput } from "../src/mate/mate-state.js";
 
 export type WindowLike = {
   loadURL(url: string): Promise<unknown>;
@@ -6,6 +7,10 @@ export type WindowLike = {
 };
 
 export type HomeEntryMode = "home" | "monitor" | "settings" | "memory";
+export type ChatEntryMode =
+  | { kind: "agent"; sessionId: string }
+  | { kind: "companion"; sessionId: string }
+  | { kind: "mate-talk"; launch?: MateTalkLaunchInput | null };
 
 export type WindowEntryLoaderDeps = {
   devServerUrl?: string | null;
@@ -20,11 +25,6 @@ export class WindowEntryLoader {
     await this.load(window, "index.html", search);
   }
 
-  async loadSessionEntry(window: WindowLike, sessionId: string): Promise<void> {
-    const search = `?sessionId=${encodeURIComponent(sessionId)}`;
-    await this.load(window, "session.html", search);
-  }
-
   async loadCharacterEntry(window: WindowLike, characterId?: string | null): Promise<void> {
     const search = characterId ? `?characterId=${encodeURIComponent(characterId)}` : "?mode=create";
     await this.load(window, "character.html", search);
@@ -35,12 +35,11 @@ export class WindowEntryLoader {
     await this.load(window, "diff.html", search);
   }
 
-  async loadCompanionChatEntry(window: WindowLike, sessionId: string): Promise<void> {
-    const search = `?companionSessionId=${encodeURIComponent(sessionId)}&mode=companion`;
-    await this.load(window, "session.html", search);
+  async loadChatEntry(window: WindowLike, mode: ChatEntryMode): Promise<void> {
+    await this.load(window, "session.html", buildChatEntrySearch(mode));
   }
 
-  async loadCompanionMergeEntry(window: WindowLike, sessionId: string): Promise<void> {
+  async loadCompanionMergeReviewEntry(window: WindowLike, sessionId: string): Promise<void> {
     const search = `?companionSessionId=${encodeURIComponent(sessionId)}&view=merge`;
     await this.load(window, "review.html", search);
   }
@@ -60,4 +59,24 @@ export class WindowEntryLoader {
         : path.resolve(rendererDistPath, entryFileName);
     await window.loadFile(filePath, search ? { search } : undefined);
   }
+}
+
+export function buildChatEntrySearch(mode: ChatEntryMode): string {
+  if (mode.kind === "agent") {
+    return `?sessionId=${encodeURIComponent(mode.sessionId)}`;
+  }
+  if (mode.kind === "companion") {
+    return `?companionSessionId=${encodeURIComponent(mode.sessionId)}&mode=companion`;
+  }
+  const query = new URLSearchParams({ mode: "mate-talk" });
+  if (mode.launch?.provider) {
+    query.set("provider", mode.launch.provider);
+  }
+  if (mode.launch?.model) {
+    query.set("model", mode.launch.model);
+  }
+  if (mode.launch?.reasoningEffort) {
+    query.set("reasoningEffort", mode.launch.reasoningEffort);
+  }
+  return `?${query.toString()}`;
 }

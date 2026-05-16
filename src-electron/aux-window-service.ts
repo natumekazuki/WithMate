@@ -1,5 +1,6 @@
 import type { DiffPreviewPayload } from "../src/session-state.js";
-import type { HomeEntryMode, WindowLike } from "./window-entry-loader.js";
+import type { MateTalkLaunchInput } from "../src/mate/mate-state.js";
+import type { ChatEntryMode, HomeEntryMode, WindowLike } from "./window-entry-loader.js";
 import {
   COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
   COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
@@ -32,8 +33,8 @@ export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
   loadHomeEntry(window: TWindow, mode: HomeEntryMode): Promise<void>;
   loadCharacterEntry(window: TWindow, characterId?: string | null): Promise<void>;
   loadDiffEntry(window: TWindow, token: string): Promise<void>;
-  loadCompanionChatEntry(window: TWindow, sessionId: string): Promise<void>;
-  loadCompanionMergeEntry(window: TWindow, sessionId: string): Promise<void>;
+  loadChatEntry(window: TWindow, mode: ChatEntryMode): Promise<void>;
+  loadCompanionMergeReviewEntry(window: TWindow, sessionId: string): Promise<void>;
   generateDiffToken(): string;
   onCompanionReviewWindowsChanged(): void;
 };
@@ -43,6 +44,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   private sessionMonitorWindow: TWindow | null = null;
   private settingsWindow: TWindow | null = null;
   private memoryManagementWindow: TWindow | null = null;
+  private mateTalkWindow: TWindow | null = null;
   private readonly characterEditorWindows = new Map<string, TWindow>();
   private readonly diffWindows = new Map<string, TWindow>();
   private readonly companionReviewWindows = new Map<string, TWindow>();
@@ -61,6 +63,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       this.sessionMonitorWindow,
       this.settingsWindow,
       this.memoryManagementWindow,
+      this.mateTalkWindow,
     ].filter((window): window is TWindow => !!window && !window.isDestroyed());
   }
 
@@ -169,6 +172,25 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return window;
   }
 
+  async openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<TWindow> {
+    const existing = this.reuseWindow(this.mateTalkWindow);
+    if (existing) {
+      return existing;
+    }
+
+    const window = this.deps.createWindow({
+      ...COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
+      title: "WithMate MateTalk",
+    });
+    this.mateTalkWindow = window;
+    window.once("ready-to-show", () => window.show());
+    window.on("closed", () => {
+      this.mateTalkWindow = null;
+    });
+    await this.deps.loadChatEntry(window, input ? { kind: "mate-talk", launch: input } : { kind: "mate-talk" });
+    return window;
+  }
+
   async openCharacterEditorWindow(characterId?: string | null): Promise<TWindow> {
     const key = characterId ?? "__new__";
     const existing = this.reuseWindow(this.characterEditorWindows.get(key) ?? null);
@@ -227,7 +249,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       this.companionReviewWindows.delete(sessionId);
       this.deps.onCompanionReviewWindowsChanged();
     });
-    await this.deps.loadCompanionChatEntry(window, sessionId);
+    await this.deps.loadChatEntry(window, { kind: "companion", sessionId });
     return window;
   }
 
@@ -246,7 +268,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     window.on("closed", () => {
       this.companionMergeWindows.delete(sessionId);
     });
-    await this.deps.loadCompanionMergeEntry(window, sessionId);
+    await this.deps.loadCompanionMergeReviewEntry(window, sessionId);
     return window;
   }
 
@@ -279,6 +301,10 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       }
     }
     this.companionMergeWindows.clear();
+    if (this.mateTalkWindow && !this.mateTalkWindow.isDestroyed()) {
+      this.mateTalkWindow.close();
+    }
+    this.mateTalkWindow = null;
   }
 
   private reuseWindow(window: TWindow | null): TWindow | null {

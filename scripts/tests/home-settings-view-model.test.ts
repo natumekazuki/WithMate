@@ -4,11 +4,13 @@ import { describe, it } from "node:test";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import {
+  buildHomeProviderInstructionTargetUpsertInput,
   buildPersistedAppSettingsFromRows,
   buildHomeProviderSettingRows,
   buildNormalizedCharacterReflectionProviderSettings,
   buildNormalizedMemoryExtractionProviderSettings,
-} from "../../src/home-settings-view-model.js";
+  resolveInstructionRelativePathFromSelection,
+} from "../../src/settings/settings-view-model.js";
 
 function createSnapshot(): ModelCatalogSnapshot {
   return {
@@ -73,9 +75,82 @@ describe("home-settings-view-model", () => {
     });
   });
 
-  it("persisted settings は draft の system prompt を維持したまま resolved provider settings を埋め込む", () => {
+  it("buildHomeProviderSettingRows は instruction target の rootDirectory / instructionRelativePath を保持する", () => {
+    const rows = buildHomeProviderSettingRows(createSnapshot(), createDefaultAppSettings(), [
+      {
+        providerId: "codex",
+        targetId: "main",
+        enabled: true,
+        rootDirectory: "/workspace",
+        instructionRelativePath: ".github/copilot-custom.md",
+        writeMode: "managed_block",
+        projectionScope: "mate_only",
+        failPolicy: "warn_continue",
+        requiresRestart: false,
+        lastSyncState: "never",
+        lastSyncRunId: null,
+        lastSyncedRevisionId: null,
+        lastErrorPreview: "",
+        lastSyncedAt: null,
+      },
+    ]);
+
+    const instructionTarget = rows[0]?.instructionTarget;
+    assert.equal(instructionTarget?.rootDirectory, "/workspace");
+    assert.equal(instructionTarget?.instructionRelativePath, ".github/copilot-custom.md");
+  });
+
+  it("buildHomeProviderInstructionTargetUpsertInput に編集値を含める", () => {
+    const upsertInput = buildHomeProviderInstructionTargetUpsertInput({
+      providerId: "codex",
+      targetId: "main",
+      enabled: true,
+      rootDirectory: "/workspace",
+      instructionRelativePath: "docs/rules.md",
+      writeMode: "managed_file",
+      projectionScope: "mate_only",
+      failPolicy: "block_session",
+      requiresRestart: false,
+      lastSyncState: "never",
+      lastSyncRunId: null,
+      lastSyncedRevisionId: null,
+      lastErrorPreview: "",
+      lastSyncedAt: null,
+    });
+
+    assert.equal(upsertInput.rootDirectory, "/workspace");
+    assert.equal(upsertInput.instructionRelativePath, "docs/rules.md");
+  });
+
+  it("instruction file picker の選択結果を root からの相対 path に変換する", () => {
+    assert.equal(
+      resolveInstructionRelativePathFromSelection(
+        "C:\\workspace\\mate",
+        "C:\\workspace\\mate\\.github\\copilot-instructions.md",
+      ),
+      ".github/copilot-instructions.md",
+    );
+    assert.equal(
+      resolveInstructionRelativePathFromSelection(
+        "/workspace/mate/",
+        "/workspace/mate/AGENTS.md",
+      ),
+      "AGENTS.md",
+    );
+  });
+
+  it("instruction file picker は root 外の選択を拒否する", () => {
+    assert.equal(
+      resolveInstructionRelativePathFromSelection(
+        "C:\\workspace\\mate",
+        "C:\\workspace\\other\\AGENTS.md",
+      ),
+      null,
+    );
+  });
+
+  it("persisted settings は resolved provider settings を埋め込む", () => {
     const draft = createDefaultAppSettings();
-    draft.systemPromptPrefix = "prefix";
     draft.autoCollapseActionDockOnSend = false;
     draft.characterReflectionTriggerSettings.cooldownSeconds = 180;
     draft.memoryExtractionProviderSettings.codex = {
@@ -88,7 +163,6 @@ describe("home-settings-view-model", () => {
     const rows = buildHomeProviderSettingRows(createSnapshot(), draft);
     const persisted = buildPersistedAppSettingsFromRows(draft, rows);
 
-    assert.equal(persisted.systemPromptPrefix, "prefix");
     assert.equal(persisted.autoCollapseActionDockOnSend, false);
     assert.equal(persisted.characterReflectionTriggerSettings.cooldownSeconds, 180);
     assert.deepEqual(persisted.memoryExtractionProviderSettings.codex, {

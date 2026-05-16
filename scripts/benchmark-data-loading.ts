@@ -180,7 +180,6 @@ function createSession(sessionIndex: number, options: ResolvedBenchmarkOptions):
   return {
     id: `benchmark-session-${sessionIndex}`,
     taskTitle: `benchmark session ${sessionIndex}`,
-    taskSummary: `summary ${sessionIndex}`,
     status: "saved",
     updatedAt: nowIso(sessionIndex),
     provider: "codex",
@@ -189,6 +188,8 @@ function createSession(sessionIndex: number, options: ResolvedBenchmarkOptions):
     workspacePath: "benchmark-workspace",
     branch: "benchmark",
     sessionKind: "default",
+    accessMode: "active",
+    sourceSchemaVersion: 4,
     characterId: "benchmark-character",
     character: "Benchmark Character",
     characterIconPath: "",

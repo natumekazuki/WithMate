@@ -2,16 +2,63 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
+import type { MateGrowthApplyResult } from "../../src/mate/mate-growth-apply-result.js";
 import { MainBootstrapService } from "../../src-electron/main-bootstrap-service.js";
+
+const zeroGrowthResult: MateGrowthApplyResult = {
+  candidateCount: 0,
+  appliedCount: 0,
+  skippedCount: 0,
+  revisionId: null,
+};
+
+type GrowthTimerHandle = {
+  handler: () => void;
+  intervalMs: number;
+  cleared: boolean;
+};
+
+function createGrowthTimerSpies() {
+  const createdTimers: GrowthTimerHandle[] = [];
+  const events: string[] = [];
+
+  return {
+    createdTimers,
+    events,
+    createGrowthApplyTimer(handler: () => void, intervalMs: number) {
+      events.push("create");
+      const timer: GrowthTimerHandle = { handler, intervalMs, cleared: false };
+      createdTimers.push(timer);
+      return timer;
+    },
+    clearGrowthApplyTimer(timer: unknown) {
+      events.push("clear");
+      if (typeof timer === "object" && timer !== null && "cleared" in timer) {
+        (timer as GrowthTimerHandle).cleared = true;
+      }
+    },
+  };
+}
 
 test("MainBootstrapService は起動シーケンスを順に実行する", async () => {
   const calls: string[] = [];
   const activeModelCatalog = { revision: 1, providers: [] } as ModelCatalogSnapshot;
 
   const service = new MainBootstrapService({
+    getMateState() {
+      calls.push("getMateState");
+      return "not_created";
+    },
+    async applyPendingGrowth() {
+      return zeroGrowthResult;
+    },
     async initializePersistentStores() {
       calls.push("initializePersistentStores");
       return activeModelCatalog;
+    },
+    async cleanupStaleGrowthApplyRuns() {
+      calls.push("cleanupStaleGrowthApplyRuns");
+      return 1;
     },
     async recoverInterruptedSessions() {
       calls.push("recoverInterruptedSessions:start");
@@ -36,11 +83,429 @@ test("MainBootstrapService は起動シーケンスを順に実行する", async
 
   assert.deepEqual(calls, [
     "initializePersistentStores",
+    "cleanupStaleGrowthApplyRuns",
     "recoverInterruptedSessions:start",
     "recoverInterruptedSessions:end",
     "refreshCharactersFromStorage",
     "registerIpcHandlers",
     "createHomeWindow",
     "broadcastModelCatalog:1",
+    "getMateState",
   ]);
+});
+
+test("handleReady で stale growth apply cleanup が失敗しても bootstrap が続行される", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  const calls: string[] = [];
+
+  const service = new MainBootstrapService({
+    getMateState() {
+      calls.push("getMateState");
+      return "active";
+    },
+    async applyPendingGrowth() {
+      return zeroGrowthResult;
+    },
+    async initializePersistentStores() {
+      calls.push("initializePersistentStores");
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    cleanupStaleGrowthApplyRuns() {
+      calls.push("cleanupStaleGrowthApplyRuns");
+      return Promise.reject(new Error("cleanup failed"));
+    },
+    async recoverInterruptedSessions() {
+      calls.push("recoverInterruptedSessions");
+    },
+    async refreshCharactersFromStorage() {
+      calls.push("refreshCharactersFromStorage");
+    },
+    registerIpcHandlers() {
+      calls.push("registerIpcHandlers");
+    },
+    async createHomeWindow() {
+      calls.push("createHomeWindow");
+    },
+    broadcastModelCatalog() {},
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.handleReady();
+
+  assert.equal(calls[0], "initializePersistentStores");
+  assert.equal(calls[1], "cleanupStaleGrowthApplyRuns");
+  assert.equal(calls.includes("recoverInterruptedSessions"), true);
+  assert.equal(timerSpies.createdTimers.length, 1);
+});
+
+test("handleReady で Mate が active の場合は Growth timer が作成される", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "active";
+    },
+    async applyPendingGrowth() {
+      return zeroGrowthResult;
+    },
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+    growthApplyIntervalMs: 1234,
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.handleReady();
+
+  assert.equal(timerSpies.createdTimers.length, 1);
+  assert.equal(timerSpies.createdTimers[0]!.intervalMs, 1234);
+});
+
+test("handleReady で Mate が active の場合は Growth 設定由来の interval を使う", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "active";
+    },
+    async applyPendingGrowth() {
+      return zeroGrowthResult;
+    },
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+    growthApplyIntervalMs: 1234,
+    getGrowthApplyIntervalMs() {
+      return 2 * 60 * 1000;
+    },
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.handleReady();
+
+  assert.equal(timerSpies.createdTimers.length, 1);
+  assert.equal(timerSpies.createdTimers[0]!.intervalMs, 2 * 60 * 1000);
+});
+
+test("shouldRunGrowthApplyTimer が false の場合、Mate active でも growth timer は作られない", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  let getGrowthApplyIntervalMsCalls = 0;
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "active";
+    },
+    async applyPendingGrowth() {
+      return zeroGrowthResult;
+    },
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+    shouldRunGrowthApplyTimer() {
+      return false;
+    },
+    getGrowthApplyIntervalMs() {
+      getGrowthApplyIntervalMsCalls += 1;
+      return 2 * 60 * 1000;
+    },
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.ensureGrowthApplyTimer();
+
+  assert.equal(timerSpies.createdTimers.length, 0);
+  assert.equal(timerSpies.events.includes("create"), false);
+  assert.equal(getGrowthApplyIntervalMsCalls, 0);
+});
+
+test("getGrowthApplyIntervalMs が無効値の場合は 1h fallback の timer を作り、usage/token 情報なしでも apply を実行できる", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  let applied = 0;
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "active";
+    },
+    async applyPendingGrowth() {
+      applied += 1;
+      return zeroGrowthResult;
+    },
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+    getGrowthApplyIntervalMs() {
+      return Number.NaN;
+    },
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.ensureGrowthApplyTimer();
+  assert.equal(timerSpies.createdTimers.length, 1);
+  assert.equal(timerSpies.createdTimers[0]!.intervalMs, 60 * 60 * 1000);
+  assert.equal(timerSpies.events.filter((event) => event === "create").length, 1);
+
+  timerSpies.createdTimers[0]!.handler();
+  await Promise.resolve();
+
+  assert.equal(applied, 1);
+});
+
+test("handleReady で Mate が not_created の場合は Growth timer が作成されない", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "not_created";
+    },
+    async applyPendingGrowth() {
+      return zeroGrowthResult;
+    },
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+    growthApplyIntervalMs: 1234,
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.handleReady();
+
+  assert.equal(timerSpies.createdTimers.length, 0);
+  assert.equal(timerSpies.events.includes("create"), false);
+});
+
+test("ensureGrowthApplyTimer を複数回呼んでも timer は二重作成されない", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "active";
+    },
+    async applyPendingGrowth() {
+      return zeroGrowthResult;
+    },
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.ensureGrowthApplyTimer();
+  await service.ensureGrowthApplyTimer();
+
+  assert.equal(timerSpies.createdTimers.length, 1);
+  assert.equal(timerSpies.createdTimers[0]!.intervalMs, 60 * 60 * 1000);
+  assert.equal(timerSpies.events.filter((event) => event === "create").length, 1);
+});
+
+test("Growth timer handler 実行で applyPendingGrowth が呼ばれる", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  let applied = 0;
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "active";
+    },
+    async applyPendingGrowth() {
+      applied += 1;
+      return zeroGrowthResult;
+    },
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.ensureGrowthApplyTimer();
+  timerSpies.createdTimers[0]!.handler();
+
+  await Promise.resolve();
+
+  assert.equal(applied, 1);
+});
+
+test("Growth timer handler の連続実行時、同時実行は起きない", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  let applied = 0;
+  let finish!: () => void;
+  const applyWait = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "active";
+    },
+    async applyPendingGrowth() {
+      applied += 1;
+      await applyWait;
+      return zeroGrowthResult;
+    },
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.ensureGrowthApplyTimer();
+
+  timerSpies.createdTimers[0]!.handler();
+  timerSpies.createdTimers[0]!.handler();
+  await Promise.resolve();
+  assert.equal(applied, 1);
+
+  finish();
+  await applyWait;
+  await Promise.resolve();
+
+  timerSpies.createdTimers[0]!.handler();
+  await Promise.resolve();
+  assert.equal(applied, 2);
+});
+
+test("Growth apply が失敗した後も次の実行を開始できる", async () => {
+  let applied = 0;
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "active";
+    },
+    async applyPendingGrowth() {
+      applied += 1;
+      if (applied === 1) {
+        throw new Error("growth failed");
+      }
+      return {
+        candidateCount: applied,
+        appliedCount: applied,
+        skippedCount: 0,
+        revisionId: null,
+      };
+    },
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+  });
+
+  await assert.rejects(() => service.runGrowthApplyOnce(), /growth failed/);
+  assert.deepEqual(await service.runGrowthApplyOnce(), {
+    candidateCount: 2,
+    appliedCount: 2,
+    skippedCount: 0,
+    revisionId: null,
+  });
+  assert.equal(applied, 2);
+});
+
+test("clearGrowthApplyTimer で clear が呼ばれ、再度 ensure できる", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "active";
+    },
+    async applyPendingGrowth() {
+      return zeroGrowthResult;
+    },
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.ensureGrowthApplyTimer();
+  service.clearGrowthApplyTimer();
+  await service.ensureGrowthApplyTimer();
+
+  assert.equal(timerSpies.events.filter((event) => event === "clear").length, 1);
+  assert.equal(timerSpies.events.filter((event) => event === "create").length, 2);
+  assert.equal(timerSpies.createdTimers[0]!.cleared, true);
+  assert.equal(timerSpies.createdTimers[1]!.cleared, false);
+});
+
+test("restartGrowthApplyTimer は既存 timer を破棄して最新 interval で作り直す", async () => {
+  const timerSpies = createGrowthTimerSpies();
+  let intervalMs = 10 * 60 * 1000;
+  const service = new MainBootstrapService({
+    getMateState() {
+      return "active";
+    },
+    async applyPendingGrowth() {
+      return zeroGrowthResult;
+    },
+    async initializePersistentStores() {
+      return { revision: 1, providers: [] } as ModelCatalogSnapshot;
+    },
+    async recoverInterruptedSessions() {},
+    async refreshCharactersFromStorage() {},
+    registerIpcHandlers() {},
+    async createHomeWindow() {},
+    broadcastModelCatalog() {},
+    getGrowthApplyIntervalMs() {
+      return intervalMs;
+    },
+    createGrowthApplyTimer: timerSpies.createGrowthApplyTimer,
+    clearGrowthApplyTimer: timerSpies.clearGrowthApplyTimer,
+  });
+
+  await service.ensureGrowthApplyTimer();
+  intervalMs = 60 * 60 * 1000;
+  await service.restartGrowthApplyTimer();
+
+  assert.equal(timerSpies.events.filter((event) => event === "clear").length, 1);
+  assert.equal(timerSpies.events.filter((event) => event === "create").length, 2);
+  assert.equal(timerSpies.createdTimers[0]!.intervalMs, 10 * 60 * 1000);
+  assert.equal(timerSpies.createdTimers[0]!.cleared, true);
+  assert.equal(timerSpies.createdTimers[1]!.intervalMs, 60 * 60 * 1000);
+  assert.equal(timerSpies.createdTimers[1]!.cleared, false);
 });

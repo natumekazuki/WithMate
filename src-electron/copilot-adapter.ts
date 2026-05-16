@@ -10,6 +10,7 @@ import {
   type PermissionRequestResult,
   type SessionConfig,
   type SessionEvent,
+  type Tool,
 } from "@github/copilot-sdk";
 
 import type {
@@ -37,9 +38,12 @@ import { composeProviderPrompt, isCanceledProviderMessage } from "./provider-pro
 import {
   ProviderTurnError,
   resolveRunWorkspacePath,
+  MATE_TALK_SCHEMA_SUBMIT_TOOL_BACKGROUND_STRUCTURED_PROMPT_POLICY,
   type ExtractSessionMemoryResult,
   type ExtractSessionMemoryInput,
   type ProviderPromptComposition,
+  type RunBackgroundStructuredPromptInput,
+  type RunBackgroundStructuredPromptResult,
   type ProviderTurnAdapter,
   type RunSessionTurnInput,
   type RunSessionTurnProgressHandler,
@@ -56,6 +60,7 @@ import {
 } from "./snapshot-ignore.js";
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 import { resolveSessionCustomAgentConfigs } from "./custom-agent-discovery.js";
+import { normalizeCopilotTokenUsage } from "./provider-token-usage.js";
 import {
   resolveDevelopmentProviderBinaryPath,
   resolvePackagedProviderBinaryPath,
@@ -237,22 +242,6 @@ function stringifyUnknown(value: unknown): string | undefined {
   }
 }
 
-function toAuditUsageFromCopilot(data: { inputTokens?: number; cacheReadTokens?: number; outputTokens?: number }): AuditLogUsage | null {
-  if (
-    typeof data.inputTokens !== "number"
-    && typeof data.cacheReadTokens !== "number"
-    && typeof data.outputTokens !== "number"
-  ) {
-    return null;
-  }
-
-  return {
-    inputTokens: data.inputTokens ?? 0,
-    cachedInputTokens: data.cacheReadTokens ?? 0,
-    outputTokens: data.outputTokens ?? 0,
-  };
-}
-
 function createCopilotTurnStreamState(): CopilotTurnStreamState {
   return {
     liveSteps: new Map<string, LiveRunStep>(),
@@ -315,7 +304,7 @@ function applyCopilotTurnEvent(args: {
       break;
     }
     case "assistant.usage":
-      state.usage = toAuditUsageFromCopilot(event.data);
+      state.usage = normalizeCopilotTokenUsage(event.data);
       if (args.onProviderQuotaTelemetry) {
         const telemetry = buildCopilotProviderQuotaTelemetry(
           providerId,
@@ -528,6 +517,153 @@ function appendDetail(current: string | undefined, next: string | undefined): st
   }
 
   return `${current}\n${next}`;
+}
+
+function parseStructuredPromptJson(rawText: string): unknown | null {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const fencedMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const jsonText = fencedMatch ? fencedMatch[1] ?? "" : trimmed;
+
+  try {
+    return JSON.parse(jsonText);
+  } catch {
+    return null;
+  }
+}
+
+function validateStructuredPromptSchemaValue(schema: unknown, value: unknown, path = "$"): string[] {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    return [];
+  }
+
+  const schemaRecord = schema as Record<string, unknown>;
+  const errors: string[] = [];
+  const anyOf = schemaRecord.anyOf;
+  if (Array.isArray(anyOf)) {
+    if (!anyOf.some((candidate) => validateStructuredPromptSchemaValue(candidate, value, path).length === 0)) {
+      errors.push(`${path} must match at least one anyOf schema`);
+    }
+  }
+
+  const oneOf = schemaRecord.oneOf;
+  if (Array.isArray(oneOf)) {
+    const matchedCount = oneOf.filter((candidate) => validateStructuredPromptSchemaValue(candidate, value, path).length === 0)
+      .length;
+    if (matchedCount !== 1) {
+      errors.push(`${path} must match exactly one oneOf schema`);
+    }
+  }
+
+  const expectedType = schemaRecord.type;
+  if (typeof expectedType === "string" && !matchesJsonSchemaType(value, expectedType)) {
+    errors.push(`${path} must be ${expectedType}`);
+    return errors;
+  }
+
+  const enumValues = schemaRecord.enum;
+  if (Array.isArray(enumValues) && !enumValues.some((enumValue) => Object.is(enumValue, value))) {
+    errors.push(`${path} must match one of the enum values`);
+  }
+
+  if (typeof value === "number") {
+    if (typeof schemaRecord.minimum === "number" && value < schemaRecord.minimum) {
+      errors.push(`${path} must be >= ${schemaRecord.minimum}`);
+    }
+    if (typeof schemaRecord.maximum === "number" && value > schemaRecord.maximum) {
+      errors.push(`${path} must be <= ${schemaRecord.maximum}`);
+    }
+  }
+
+  if (typeof value === "string") {
+    if (typeof schemaRecord.minLength === "number" && value.length < schemaRecord.minLength) {
+      errors.push(`${path} length must be >= ${schemaRecord.minLength}`);
+    }
+    if (typeof schemaRecord.maxLength === "number" && value.length > schemaRecord.maxLength) {
+      errors.push(`${path} length must be <= ${schemaRecord.maxLength}`);
+    }
+  }
+
+  if (schemaRecord.type === "object" || schemaRecord.properties || schemaRecord.required) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      errors.push(`${path} must be object`);
+      return errors;
+    }
+
+    const valueRecord = value as Record<string, unknown>;
+    const properties = schemaRecord.properties && typeof schemaRecord.properties === "object" && !Array.isArray(schemaRecord.properties)
+      ? schemaRecord.properties as Record<string, unknown>
+      : {};
+    const required = Array.isArray(schemaRecord.required)
+      ? schemaRecord.required.filter((property): property is string => typeof property === "string")
+      : [];
+
+    for (const property of required) {
+      if (!Object.prototype.hasOwnProperty.call(valueRecord, property)) {
+        errors.push(`${path}.${property} is required`);
+      }
+    }
+
+    if (schemaRecord.additionalProperties === false) {
+      for (const property of Object.keys(valueRecord)) {
+        if (!Object.prototype.hasOwnProperty.call(properties, property)) {
+          errors.push(`${path}.${property} is not allowed`);
+        }
+      }
+    }
+
+    for (const [property, propertySchema] of Object.entries(properties)) {
+      if (Object.prototype.hasOwnProperty.call(valueRecord, property)) {
+        errors.push(...validateStructuredPromptSchemaValue(propertySchema, valueRecord[property], `${path}.${property}`));
+      }
+    }
+  }
+
+  if (schemaRecord.type === "array" || schemaRecord.items) {
+    if (!Array.isArray(value)) {
+      errors.push(`${path} must be array`);
+      return errors;
+    }
+
+    if (typeof schemaRecord.minItems === "number" && value.length < schemaRecord.minItems) {
+      errors.push(`${path} length must be >= ${schemaRecord.minItems}`);
+    }
+    if (typeof schemaRecord.maxItems === "number" && value.length > schemaRecord.maxItems) {
+      errors.push(`${path} length must be <= ${schemaRecord.maxItems}`);
+    }
+
+    if (schemaRecord.items) {
+      for (const [index, item] of value.entries()) {
+        errors.push(...validateStructuredPromptSchemaValue(schemaRecord.items, item, `${path}[${index}]`));
+      }
+    }
+  }
+
+  return errors;
+}
+
+function matchesJsonSchemaType(value: unknown, expectedType: string): boolean {
+  switch (expectedType) {
+    case "array":
+      return Array.isArray(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "integer":
+      return typeof value === "number" && Number.isInteger(value);
+    case "null":
+      return value === null;
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "object":
+      return !!value && typeof value === "object" && !Array.isArray(value);
+    case "string":
+      return typeof value === "string";
+    default:
+      return true;
+  }
 }
 
 function appendUniqueMessage(messages: string[], nextMessage: string): string[] {
@@ -1065,7 +1201,7 @@ function isReadOnlyPermissionRequest(request: PermissionRequest): boolean {
     case "read":
       return true;
     case "mcp":
-      return request.readOnly === true;
+      return isRecord(request) && request.readOnly === true;
     default:
       return false;
   }
@@ -1098,6 +1234,28 @@ function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
         );
         return toPermissionDecision(decision === "approve" ? "approved" : "denied-interactively-by-user");
       };
+  }
+}
+
+function buildBackgroundPermissionHandler(input: RunBackgroundStructuredPromptInput): PermissionHandler {
+  const approvalMode = input.approvalMode === undefined ? "untrusted" : normalizeApprovalMode(input.approvalMode);
+  switch (approvalMode) {
+    case "never":
+      return () => toPermissionDecision("approved");
+    case "untrusted":
+      return (request) => (
+        isReadOnlyPermissionRequest(request)
+          ? toPermissionDecision("approved")
+          : toPermissionDecision("denied-by-rules")
+      );
+    case "on-request":
+    case "on-failure":
+    default:
+      return (request) => (
+        isReadOnlyPermissionRequest(request)
+          ? toPermissionDecision("approved")
+          : toPermissionDecision("denied-no-approval-rule-and-could-not-request-from-user")
+      );
   }
 }
 
@@ -1644,6 +1802,10 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     return composeProviderPrompt(input);
   }
 
+  getBackgroundStructuredPromptPolicy() {
+    return MATE_TALK_SCHEMA_SUBMIT_TOOL_BACKGROUND_STRUCTURED_PROMPT_POLICY;
+  }
+
   invalidateSessionThread(sessionId: string): void {
     void this.disposeSessionCache(sessionId);
   }
@@ -1664,8 +1826,50 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     return this.fetchProviderQuotaTelemetry(providerId, appSettings);
   }
 
+  async runBackgroundStructuredPrompt<TOutput = unknown>(
+    input: RunBackgroundStructuredPromptInput,
+  ): Promise<RunBackgroundStructuredPromptResult<TOutput>> {
+    const result = await this.runBackgroundPromptFromInput(
+      {
+        providerId: input.providerId,
+        workspacePath: input.workspacePath,
+        appSettings: input.appSettings,
+        model: input.model,
+        reasoningEffort: input.reasoningEffort,
+        timeoutMs: input.timeoutMs,
+        additionalDirectories: input.additionalDirectories,
+        approvalMode: input.approvalMode,
+        codexSandboxMode: input.codexSandboxMode,
+        prompt: input.prompt,
+      },
+      (rawText) => parseStructuredPromptJson(rawText) as TOutput | null,
+      input.signal,
+    );
+    return {
+      threadId: result.threadId,
+      rawText: result.rawText,
+      output: result.output,
+      parsedJson: result.parsedJson,
+      structuredOutput: result.structuredOutput,
+      rawItemsJson: result.rawItemsJson,
+      usage: result.usage,
+      providerQuotaTelemetry: result.providerQuotaTelemetry,
+    };
+  }
+
   async extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult> {
-    const result = await this.runBackgroundPrompt(input, parseSessionMemoryDeltaText);
+    const result = await this.runBackgroundPromptFromInput(
+      {
+        providerId: input.session.provider,
+        workspacePath: input.session.workspacePath,
+        appSettings: input.appSettings,
+        model: input.model,
+        reasoningEffort: input.reasoningEffort,
+        timeoutMs: input.timeoutMs,
+        prompt: input.prompt,
+      },
+      parseSessionMemoryDeltaText,
+    );
     return {
       threadId: result.threadId,
       rawText: result.rawText,
@@ -1677,7 +1881,18 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   }
 
   async runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult> {
-    const result = await this.runBackgroundPrompt(input, parseCharacterReflectionOutputText);
+    const result = await this.runBackgroundPromptFromInput(
+      {
+        providerId: input.session.provider,
+        workspacePath: input.session.workspacePath,
+        appSettings: input.appSettings,
+        model: input.model,
+        reasoningEffort: input.reasoningEffort,
+        timeoutMs: input.timeoutMs,
+        prompt: input.prompt,
+      },
+      parseCharacterReflectionOutputText,
+    );
     return {
       threadId: result.threadId,
       rawText: result.rawText,
@@ -1723,14 +1938,17 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     return client;
   }
 
-  private buildBackgroundSessionConfig(input: ExtractSessionMemoryInput | RunCharacterReflectionInput): SessionConfig {
-    const denyAllPermissions: PermissionHandler = () => ({ kind: "denied-interactively-by-user" });
+  private buildBackgroundSessionConfig(
+    input: RunBackgroundStructuredPromptInput,
+    tools?: Tool[],
+  ): SessionConfig {
     return {
       model: input.model,
       reasoningEffort: input.reasoningEffort === "minimal" ? "low" : input.reasoningEffort,
-      workingDirectory: input.session.workspacePath,
+      workingDirectory: input.workspacePath,
       streaming: false,
-      onPermissionRequest: denyAllPermissions,
+      tools,
+      onPermissionRequest: buildBackgroundPermissionHandler(input),
       systemMessage: {
         mode: "append",
         content: input.prompt.systemText,
@@ -1738,39 +1956,86 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     };
   }
 
-  private async runBackgroundPrompt<TOutput>(
-    input: ExtractSessionMemoryInput | RunCharacterReflectionInput,
+  private async runBackgroundPromptFromInput<TOutput>(
+    input: RunBackgroundStructuredPromptInput,
     parse: (rawText: string) => TOutput | null,
+    signal?: AbortSignal,
   ): Promise<{
     threadId: string | null;
     rawText: string;
     output: TOutput | null;
+    parsedJson: unknown | null;
+    structuredOutput: unknown | null;
     rawItemsJson: string;
     usage: AuditLogUsage | null;
     providerQuotaTelemetry: ProviderQuotaTelemetry | null;
   }> {
-    const client = this.getOrCreateClientByAppSettings(input.session.provider, input.appSettings);
+    const client = this.getOrCreateClientByAppSettings(input.providerId, input.appSettings);
     await client.start();
     let usage: AuditLogUsage | null = null;
+    let structuredOutput: unknown = null;
+    let structuredOutputCallCount = 0;
+    const submitToolName = "withmate_submit_structured_output";
+    const submitTool: Tool = {
+      name: submitToolName,
+      description: "Submit the structured JSON output requested by WithMate.",
+      parameters: input.prompt.outputSchema as Tool["parameters"],
+      skipPermission: true,
+      handler: (args) => {
+        structuredOutput = args;
+        structuredOutputCallCount += 1;
+        return "structured output accepted";
+      },
+    };
 
-    const extractionSession = await client.createSession(this.buildBackgroundSessionConfig(input));
+    const extractionSession = await client.createSession(this.buildBackgroundSessionConfig(input, [submitTool]));
     const unsubscribeUsage = extractionSession.on("assistant.usage", (event) => {
-      usage = toAuditUsageFromCopilot(event.data);
+      usage = normalizeCopilotTokenUsage(event.data);
     });
+    const aborting = signal ?? null;
+    const handleAbort = () => {
+      void extractionSession.abort().catch(() => undefined);
+    };
+    if (aborting) {
+      aborting.addEventListener("abort", handleAbort, { once: true });
+    }
 
     try {
-      const response = await extractionSession.sendAndWait({ prompt: input.prompt.userText }, input.timeoutMs);
-      const rawText = response?.data.content ?? "";
-      const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.session.provider, input.appSettings)
+      await extractionSession.sendAndWait({
+        prompt: [
+          input.prompt.userText,
+          "",
+          "# Structured Output",
+          `Call the \`${submitToolName}\` tool exactly once with the requested JSON object.`,
+          "Do not answer in natural language.",
+        ].join("\n"),
+      }, input.timeoutMs);
+      if (structuredOutputCallCount === 0) {
+        throw new Error("Structured output tool was not called for schema submit workflow.");
+      }
+      if (structuredOutputCallCount > 1) {
+        throw new Error("Structured output tool was called multiple times for schema submit workflow.");
+      }
+
+      const validationErrors = validateStructuredPromptSchemaValue(input.prompt.outputSchema, structuredOutput);
+      if (validationErrors.length > 0) {
+        throw new Error(`Structured output tool arguments did not match schema: ${validationErrors.join("; ")}`);
+      }
+
+      const rawText = JSON.stringify(structuredOutput);
+      const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.providerId, input.appSettings)
         .catch(() => null);
       return {
         threadId: extractionSession.sessionId,
         rawText,
         output: parse(rawText),
+        parsedJson: structuredOutput,
+        structuredOutput,
         rawItemsJson: JSON.stringify({
           type: "copilot-background-response",
           sessionId: extractionSession.sessionId,
           content: rawText,
+          structuredOutputSource: "tool",
           quotaSnapshots: providerQuotaTelemetry?.snapshots ?? [],
         }, null, 2),
         usage,
@@ -1779,6 +2044,9 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     } finally {
       unsubscribeUsage();
       await extractionSession.disconnect().catch(() => undefined);
+      if (aborting) {
+        aborting.removeEventListener("abort", handleAbort);
+      }
     }
   }
 

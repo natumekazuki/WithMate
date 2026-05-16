@@ -73,7 +73,6 @@ function insertSession(db: DatabaseSync, input: {
     INSERT INTO sessions (
       id,
       task_title,
-      task_summary,
       status,
       updated_at,
       provider,
@@ -98,11 +97,10 @@ function insertSession(db: DatabaseSync, input: {
       messages_json,
       stream_json,
       last_active_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.id,
     "task",
-    "summary",
     "idle",
     "2026-04-27T00:00:00.000Z",
     "codex",
@@ -521,14 +519,14 @@ describe("V1 to V2 database migration write mode", () => {
         assert.equal(countRowsBySessionId(v2Db, "session_messages", "session-2"), 1);
         assert.equal(countRowsBySessionId(v2Db, "audit_logs", "session-2"), 0);
 
-        assert.equal(
-          v2Db.prepare("SELECT COUNT(*) AS count FROM app_settings WHERE setting_key = ?").get("system_prompt_prefix").count,
-          1,
-        );
-        assert.equal(
-          v2Db.prepare("SELECT COUNT(*) AS count FROM app_settings WHERE setting_key = ?").get("memory_generation_enabled").count,
-          0,
-        );
+        const migratedSystemPromptPrefixRow = v2Db
+          .prepare("SELECT COUNT(*) AS count FROM app_settings WHERE setting_key = ?")
+          .get("system_prompt_prefix") as { count: number };
+        const skippedMemoryGenerationEnabledRow = v2Db
+          .prepare("SELECT COUNT(*) AS count FROM app_settings WHERE setting_key = ?")
+          .get("memory_generation_enabled") as { count: number };
+        assert.equal(migratedSystemPromptPrefixRow.count, 1);
+        assert.equal(skippedMemoryGenerationEnabledRow.count, 0);
       } finally {
         v2Db.close();
       }
@@ -773,6 +771,7 @@ describe("V1 to V2 database migration write mode", () => {
           throw new Error("V2 lifecycle では V1 audit log storage を生成しない");
         },
         createAppSettingsStorage: () => ({ close() {} }) as never,
+        createMateStorage: () => ({ close() {} }) as never,
         ensureV2Schema(dbPath) {
           const db = new DatabaseSync(dbPath);
           try {

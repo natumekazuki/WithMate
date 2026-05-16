@@ -5,21 +5,51 @@ import {
   normalizeProviderId,
   type ModelReasoningEffort,
 } from "./model-catalog.js";
+import type {
+  ProviderInstructionFailPolicy,
+  ProviderInstructionLastSyncState,
+  ProviderInstructionTarget,
+  ProviderInstructionTargetInput,
+  ProviderInstructionWriteMode,
+} from "./provider-instruction-target-state.js";
 
 export type AppSettings = {
-  systemPromptPrefix: string;
   memoryGenerationEnabled: boolean;
   autoCollapseActionDockOnSend: boolean;
   characterReflectionTriggerSettings: CharacterReflectionTriggerSettings;
+  mateMemoryGenerationSettings: MateMemoryGenerationSettings;
   codingProviderSettings: Record<string, ProviderAppSettings>;
   memoryExtractionProviderSettings: Record<string, MemoryExtractionProviderSettings>;
   characterReflectionProviderSettings: Record<string, CharacterReflectionProviderSettings>;
 };
 
+export const DEFAULT_PROVIDER_INSTRUCTION_TARGET_ID = "main";
+export const DEFAULT_PROVIDER_INSTRUCTION_RELATIVE_PATH_BY_PROVIDER: Record<string, string> = {
+  codex: "AGENTS.md",
+  copilot: ".github/copilot-instructions.md",
+};
+
+export type ProviderInstructionTargetSyncState = ProviderInstructionLastSyncState;
+export type ProviderInstructionTargetSettings = ProviderInstructionTarget;
+export type ProviderInstructionTargetUpsertInput = ProviderInstructionTargetInput;
+export type {
+  ProviderInstructionFailPolicy,
+  ProviderInstructionWriteMode,
+};
+
+export function getDefaultProviderInstructionRelativePath(providerId: string): string {
+  const normalizedProviderId = providerId.trim().toLowerCase();
+  return (
+    DEFAULT_PROVIDER_INSTRUCTION_RELATIVE_PATH_BY_PROVIDER[normalizedProviderId] ??
+    `.github/${normalizedProviderId || "provider"}-instructions.md`
+  );
+}
+
 export type ProviderAppSettings = {
   enabled: boolean;
   apiKey: string;
   skillRootPath: string;
+  skillRelativePath?: string;
 };
 
 export type MemoryExtractionProviderSettings = {
@@ -33,6 +63,18 @@ export type CharacterReflectionProviderSettings = {
   model: string;
   reasoningEffort: ModelReasoningEffort;
   timeoutSeconds: number;
+};
+
+export type MateMemoryGenerationProviderSettings = {
+  provider: string;
+  model: string;
+  reasoningEffort: ModelReasoningEffort;
+  timeoutSeconds: number;
+};
+
+export type MateMemoryGenerationSettings = {
+  priorityList: MateMemoryGenerationProviderSettings[];
+  triggerIntervalMinutes: number;
 };
 
 export type CharacterReflectionTriggerSettings = {
@@ -51,6 +93,7 @@ export const DEFAULT_PROVIDER_APP_SETTINGS: ProviderAppSettings = {
   enabled: false,
   apiKey: "",
   skillRootPath: "",
+  skillRelativePath: "",
 };
 
 export const DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD = 300_000;
@@ -69,6 +112,18 @@ export const DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS: CharacterReflection
   timeoutSeconds: DEFAULT_BACKGROUND_TIMEOUT_SECONDS,
 };
 
+export const DEFAULT_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_MINUTES = 60;
+export const DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS: MateMemoryGenerationProviderSettings = {
+  provider: DEFAULT_PROVIDER_ID,
+  model: DEFAULT_MODEL_ID,
+  reasoningEffort: DEFAULT_REASONING_EFFORT,
+  timeoutSeconds: DEFAULT_BACKGROUND_TIMEOUT_SECONDS,
+};
+export const DEFAULT_MATE_MEMORY_GENERATION_SETTINGS: MateMemoryGenerationSettings = {
+  priorityList: [{ ...DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS }],
+  triggerIntervalMinutes: DEFAULT_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_MINUTES,
+};
+
 export const DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS: CharacterReflectionTriggerSettings = {
   cooldownSeconds: 120,
   charDeltaThreshold: 400,
@@ -77,15 +132,19 @@ export const DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS: CharacterReflectionT
 
 export function createDefaultAppSettings(): AppSettings {
   return {
-    systemPromptPrefix: "",
     memoryGenerationEnabled: true,
     autoCollapseActionDockOnSend: true,
     characterReflectionTriggerSettings: { ...DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS },
+    mateMemoryGenerationSettings: {
+      ...DEFAULT_MATE_MEMORY_GENERATION_SETTINGS,
+      priorityList: [{ ...DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS }],
+    },
     codingProviderSettings: {
       [DEFAULT_PROVIDER_ID]: {
         enabled: true,
         apiKey: "",
         skillRootPath: "",
+        skillRelativePath: "",
       },
     },
     memoryExtractionProviderSettings: {
@@ -148,12 +207,27 @@ function normalizeCharacterReflectionMessageDeltaThreshold(value: unknown): numb
   return normalized;
 }
 
+function normalizeReasoningEffort(value: unknown, fallback: ModelReasoningEffort): ModelReasoningEffort {
+  if (
+    value === "minimal" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh"
+  ) {
+    return value;
+  }
+
+  return fallback;
+}
+
 function normalizeProviderAppSettings(value: unknown, defaultEnabled: boolean): ProviderAppSettings {
   if (!value || typeof value !== "object") {
     return {
       enabled: defaultEnabled,
       apiKey: "",
       skillRootPath: "",
+      skillRelativePath: "",
     };
   }
 
@@ -162,7 +236,18 @@ function normalizeProviderAppSettings(value: unknown, defaultEnabled: boolean): 
     enabled: typeof candidate.enabled === "boolean" ? candidate.enabled : defaultEnabled,
     apiKey: typeof candidate.apiKey === "string" ? candidate.apiKey : "",
     skillRootPath: typeof candidate.skillRootPath === "string" ? candidate.skillRootPath : "",
+    skillRelativePath: typeof candidate.skillRelativePath === "string" ? candidate.skillRelativePath : "",
   };
+}
+
+export function resolveProviderSkillRootPath(settings: ProviderAppSettings): string {
+  const rootDirectory = settings.skillRootPath.trim().replace(/[\\/]+$/g, "");
+  const skillRelativePath = (settings.skillRelativePath ?? "").trim().replace(/^[\\/]+|[\\/]+$/g, "");
+  if (!rootDirectory || !skillRelativePath) {
+    return rootDirectory;
+  }
+
+  return `${rootDirectory}/${skillRelativePath}`;
 }
 
 function normalizeOutputTokensThreshold(value: unknown): number {
@@ -207,14 +292,7 @@ function normalizeMemoryExtractionProviderSettings(value: unknown): MemoryExtrac
   const candidate = value as Partial<MemoryExtractionProviderSettings>;
   return {
     model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
-    reasoningEffort:
-      candidate.reasoningEffort === "minimal" ||
-      candidate.reasoningEffort === "low" ||
-      candidate.reasoningEffort === "medium" ||
-      candidate.reasoningEffort === "high" ||
-      candidate.reasoningEffort === "xhigh"
-        ? candidate.reasoningEffort
-        : DEFAULT_REASONING_EFFORT,
+    reasoningEffort: normalizeReasoningEffort(candidate.reasoningEffort, DEFAULT_REASONING_EFFORT),
     outputTokensThreshold: normalizeOutputTokensThreshold(candidate.outputTokensThreshold),
     timeoutSeconds: normalizeBackgroundTimeoutSeconds(candidate.timeoutSeconds),
   };
@@ -228,15 +306,61 @@ function normalizeCharacterReflectionProviderSettings(value: unknown): Character
   const candidate = value as Partial<CharacterReflectionProviderSettings>;
   return {
     model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
-    reasoningEffort:
-      candidate.reasoningEffort === "minimal" ||
-      candidate.reasoningEffort === "low" ||
-      candidate.reasoningEffort === "medium" ||
-      candidate.reasoningEffort === "high" ||
-      candidate.reasoningEffort === "xhigh"
-        ? candidate.reasoningEffort
-        : DEFAULT_REASONING_EFFORT,
+    reasoningEffort: normalizeReasoningEffort(candidate.reasoningEffort, DEFAULT_REASONING_EFFORT),
     timeoutSeconds: normalizeBackgroundTimeoutSeconds(candidate.timeoutSeconds),
+  };
+}
+
+function normalizeMateMemoryGenerationTriggerIntervalMinutes(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_MINUTES;
+  }
+
+  const normalized = Math.trunc(value);
+  if (normalized < 1) {
+    return 1;
+  }
+
+  if (normalized > 14_400) {
+    return 14_400;
+  }
+
+  return normalized;
+}
+
+function normalizeMateMemoryGenerationProviderSettings(value: unknown): MateMemoryGenerationProviderSettings {
+  if (!value || typeof value !== "object") {
+    return { ...DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS };
+  }
+
+  const candidate = value as Partial<MateMemoryGenerationProviderSettings>;
+  return {
+    provider: normalizeProviderId(typeof candidate.provider === "string" ? candidate.provider : DEFAULT_PROVIDER_ID),
+    model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
+    reasoningEffort: normalizeReasoningEffort(candidate.reasoningEffort, DEFAULT_REASONING_EFFORT),
+    timeoutSeconds: normalizeBackgroundTimeoutSeconds(candidate.timeoutSeconds),
+  };
+}
+
+function normalizeMateMemoryGenerationSettings(value: unknown): MateMemoryGenerationSettings {
+  if (!value || typeof value !== "object") {
+    return {
+      ...DEFAULT_MATE_MEMORY_GENERATION_SETTINGS,
+      priorityList: [{ ...DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS }],
+    };
+  }
+
+  const candidate = value as Partial<MateMemoryGenerationSettings>;
+  const normalizedPriorityList = Array.isArray(candidate.priorityList)
+    ? candidate.priorityList.map((entry) => normalizeMateMemoryGenerationProviderSettings(entry))
+    : null;
+
+  return {
+    priorityList:
+      normalizedPriorityList && normalizedPriorityList.length > 0
+        ? normalizedPriorityList
+        : [{ ...DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS }],
+    triggerIntervalMinutes: normalizeMateMemoryGenerationTriggerIntervalMinutes(candidate.triggerIntervalMinutes),
   };
 }
 
@@ -308,12 +432,12 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   }
 
   return {
-    systemPromptPrefix: typeof candidate.systemPromptPrefix === "string" ? candidate.systemPromptPrefix : "",
     memoryGenerationEnabled:
       typeof candidate.memoryGenerationEnabled === "boolean" ? candidate.memoryGenerationEnabled : true,
     autoCollapseActionDockOnSend:
       typeof candidate.autoCollapseActionDockOnSend === "boolean" ? candidate.autoCollapseActionDockOnSend : true,
     characterReflectionTriggerSettings: normalizeCharacterReflectionTriggerSettings(candidate.characterReflectionTriggerSettings),
+    mateMemoryGenerationSettings: normalizeMateMemoryGenerationSettings(candidate.mateMemoryGenerationSettings),
     codingProviderSettings,
     memoryExtractionProviderSettings,
     characterReflectionProviderSettings,
@@ -354,6 +478,11 @@ export function getCharacterReflectionProviderSettings(
 export function getCharacterReflectionTriggerSettings(settings: AppSettings): CharacterReflectionTriggerSettings {
   const resolvedSettings = normalizeAppSettings(settings);
   return normalizeCharacterReflectionTriggerSettings(resolvedSettings.characterReflectionTriggerSettings);
+}
+
+export function getMateMemoryGenerationSettings(settings: AppSettings): MateMemoryGenerationSettings {
+  const resolvedSettings = normalizeAppSettings(settings);
+  return normalizeMateMemoryGenerationSettings(resolvedSettings.mateMemoryGenerationSettings);
 }
 
 export function getResolvedProviderSettingsBundle(

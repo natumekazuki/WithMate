@@ -45,6 +45,7 @@ import {
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
+import type { MateProfile } from "../src/mate/mate-state.js";
 import type { OpenPathOptions } from "../src/withmate-window-types.js";
 import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 import {
@@ -60,7 +61,7 @@ import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { CodexAdapter } from "./codex-adapter.js";
 import { CopilotAdapter } from "./copilot-adapter.js";
-import { ProviderTurnError } from "./provider-runtime.js";
+import { getMateTalkBackgroundStructuredPromptCapability } from "./provider-runtime.js";
 import { resolveComposerPreview } from "./composer-attachments.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import { resolveOpenPathTarget } from "./open-path.js";
@@ -89,8 +90,53 @@ import { SessionMemorySupportService } from "./session-memory-support-service.js
 import { MemoryManagementService } from "./memory-management-service.js";
 import { CharacterRuntimeService } from "./character-runtime-service.js";
 import { CharacterUpdateWorkspaceService } from "./character-update-workspace-service.js";
+import { MateStorage } from "./mate-storage.js";
+import { MateMemoryStorage } from "./mate-memory-storage.js";
+import { MateEmbeddingCacheService } from "./mate-embedding-cache.js";
+import { MateEmbeddingDownloadService } from "./mate-embedding-download-service.js";
+import { buildMateMemoryRuntimeInstructionFiles } from "./mate-memory-runtime-instructions.js";
+import { MateGrowthApplyService } from "./mate-growth-apply-service.js";
+import { MateGrowthStorage } from "./mate-growth-storage.js";
+import { MateProfileProjectionRefreshService } from "./mate-profile-projection-refresh-service.js";
+import { MateProjectContextService } from "./mate-project-context-service.js";
+import { MateProjectDigestStorage } from "./mate-project-digest-storage.js";
+import {
+  resolveMateProjectContextTextForPrompt,
+  resolveMateProjectDigestForSession,
+} from "./mate-project-context-resolver.js";
+import { MateProfileItemStorage, type MateProfileItem } from "./mate-profile-item-storage.js";
+import { ProviderInstructionTargetStorage } from "./provider-instruction-target-storage.js";
+import { MateEmbeddingVectorizer } from "./mate-embedding-vectorizer.js";
+import { MateSemanticEmbeddingStorage } from "./mate-semantic-embedding-storage.js";
+import { MateSemanticEmbeddingRetrievalService } from "./mate-semantic-embedding-retrieval-service.js";
+import { MateSemanticEmbeddingIndexService } from "./mate-semantic-embedding-index-service.js";
+import { upsertProviderInstructionTargetCommand } from "./provider-instruction-target-command-service.js";
+import {
+  MateProviderInstructionSyncBlockedError,
+  syncDisabledProviderInstructionTargets,
+  syncDisabledProviderInstructionTarget,
+  syncEnabledProviderInstructionTargets,
+} from "./mate-provider-instruction-sync.js";
+import { buildMateProviderInstructionProfileSectionReader } from "./mate-provider-instruction-profile-source.js";
+import { createMateMemoryGenerationRunner } from "./mate-memory-generation-runner.js";
+import { shouldScheduleMateMemoryGeneration } from "./mate-memory-generation-scheduling.js";
+import { validateMateGrowthSettingsAgainstModelCatalog } from "./mate-growth-settings-validation.js";
+import { MateMemoryGenerationService } from "./mate-memory-generation-service.js";
+import { MemoryRuntimeWorkspaceService } from "./memory-runtime-workspace.js";
+import {
+  buildMateTalkRuntimeInstructionFiles,
+  MateTalkRuntimeWorkspaceService,
+  sanitizeMateTalkProfileContextText,
+} from "./mate-talk-runtime-workspace.js";
+import { buildMateTalkProviderAdditionalDirectories } from "./mate-talk-reference-access.js";
+import { MateTalkService } from "./mate-talk-service.js";
+import { buildMateTalkProfileContextText } from "./mate-talk-profile-context.js";
 import { WindowEntryLoader } from "./window-entry-loader.js";
 import { AuxWindowService } from "./aux-window-service.js";
+import {
+  assertProviderInstructionTargetRootNotProtected,
+  buildProviderInstructionTargetProtectedRoots,
+} from "./provider-instruction-target-root-guard.js";
 import { registerMainIpcHandlers } from "./main-ipc-registration.js";
 import {
   PersistentStoreLifecycleService,
@@ -116,6 +162,27 @@ import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
 import {
+  DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS,
+  getMateMemoryGenerationSettings,
+  getProviderAppSettings,
+  type AppSettings,
+  type MateMemoryGenerationProviderSettings,
+} from "../src/provider-settings-state.js";
+import {
+  DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES,
+  type MateTalkLaunchInput,
+  type MateTalkTurnInput,
+  type MateTalkTurnResult,
+  type UpdateMateGrowthSettingsInput,
+} from "../src/mate/mate-state.js";
+import type {
+  MateGrowthEventActionRequest,
+  MateGrowthEventActionResult,
+  MateGrowthEventCorrectionRequest,
+  MateGrowthEventListRequest,
+  MateGrowthEventListResult,
+} from "../src/mate/mate-growth-events-state.js";
+import {
   type CharacterReflectionTriggerReason,
 } from "./character-reflection.js";
 import {
@@ -127,9 +194,12 @@ import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./win
 import { resolveCursorAnchoredPosition } from "./window-placement.js";
 import { clearWorkspaceFileIndex, searchWorkspacePathCandidates } from "./workspace-file-search.js";
 import { AppLogService } from "./app-log-service.js";
-import { resolveAppDatabasePath } from "./app-database-path.js";
+import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
+import { inspectAppDatabase } from "./app-database-diagnostics.js";
+import { resolveOrMigrateAppDatabasePath } from "./app-database-path.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
+import { isValidV4Database } from "./database-schema-v4.js";
 import {
   openAppDatabase,
   SQLITE_MAINTENANCE_BUSY_TIMEOUT_MS,
@@ -141,10 +211,19 @@ const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const preloadPath = path.resolve(currentDir, "preload.js");
 const rendererDistPath = path.resolve(currentDir, "../../dist");
 const appDataPath = app.getPath("appData");
-const fixedUserDataPath = path.join(appDataPath, "WithMate");
+const userDataPathOverride = process.env.WITHMATE_USER_DATA_PATH?.trim();
+const fixedUserDataPath = userDataPathOverride ? path.resolve(userDataPathOverride) : path.join(appDataPath, "WithMate");
 app.setAppUserModelId("com.natumekazuki.withmate");
 app.setPath("userData", fixedUserDataPath);
 const appLogsPath = path.join(fixedUserDataPath, "logs");
+const MATE_TALK_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    assistantMessage: { type: "string" },
+  },
+  required: ["assistantMessage"],
+} as const;
 const appLogService = new AppLogService({
   logsPath: appLogsPath,
   runtimeInfo: {
@@ -166,6 +245,10 @@ const codexAdapter = new CodexAdapter();
 const copilotAdapter = new CopilotAdapter();
 const WAL_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 
+function getProviderInstructionTargetProtectedRoots(): string[] {
+  return buildProviderInstructionTargetProtectedRoots(fixedUserDataPath);
+}
+
 let sessions: Session[] = [];
 let characters: CharacterProfile[] = [];
 let sessionStorage: SessionStorageRead | null = null;
@@ -175,11 +258,28 @@ let characterMemoryStorage: CharacterMemoryStorageAccess | null = null;
 let modelCatalogStorage: ModelCatalogStorage | null = null;
 let auditLogStorage: AuditLogStorageRead | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
+let mateStorage: MateStorage | null = null;
+let mateMemoryStorage: MateMemoryStorage | null = null;
+let mateEmbeddingCacheService: MateEmbeddingCacheService | null = null;
+let mateEmbeddingVectorizer: MateEmbeddingVectorizer | null = null;
+let mateSemanticEmbeddingStorage: MateSemanticEmbeddingStorage | null = null;
+let mateSemanticEmbeddingRetrievalService: MateSemanticEmbeddingRetrievalService | null = null;
+let mateSemanticEmbeddingIndexService: MateSemanticEmbeddingIndexService | null = null;
+let mateGrowthStorage: MateGrowthStorage | null = null;
+let mateProfileItemStorage: MateProfileItemStorage | null = null;
+let mateProjectDigestStorage: MateProjectDigestStorage | null = null;
+let providerInstructionTargetStorage: ProviderInstructionTargetStorage | null = null;
+let mateProjectContextService: MateProjectContextService | null = null;
+let mateGrowthApplyService: MateGrowthApplyService | null = null;
+let memoryRuntimeWorkspaceService: MemoryRuntimeWorkspaceService | null = null;
+let mateTalkRuntimeWorkspaceService: MateTalkRuntimeWorkspaceService | null = null;
+let mateMemoryGenerationService: MateMemoryGenerationService | null = null;
 type CompanionStorageHandle = CompanionStorage | CompanionStorageV3;
 
 let companionStorage: CompanionStorageHandle | null = null;
 let allowQuitWithInFlightRuns = false;
 let dbPath = "";
+let appDatabaseDiagnostics: AppDatabaseDiagnostics | null = null;
 const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
 let sessionRuntimeService: SessionRuntimeService | null = null;
 let sessionPersistenceService: SessionPersistenceService | null = null;
@@ -240,6 +340,16 @@ function writeAppLog(input: Parameters<AppLogService["write"]>[0]): void {
   } catch (error) {
     console.warn("App log write failed", error);
   }
+}
+
+function getAppDatabaseDiagnostics(): AppDatabaseDiagnostics {
+  if (!appDatabaseDiagnostics) {
+    if (!dbPath) {
+      throw new Error("DB path が初期化されていないよ。");
+    }
+    appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
+  }
+  return appDatabaseDiagnostics;
 }
 
 function resolveCrashDumpsPath(): string {
@@ -713,10 +823,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           loadCharacterEntry: (window, characterId) =>
             requireWindowEntryLoader().loadCharacterEntry(window, characterId),
           loadDiffEntry: (window, token) => requireWindowEntryLoader().loadDiffEntry(window, token),
-          loadCompanionChatEntry: (window, sessionId) =>
-            requireWindowEntryLoader().loadCompanionChatEntry(window, sessionId),
-          loadCompanionMergeEntry: (window, sessionId) =>
-            requireWindowEntryLoader().loadCompanionMergeEntry(window, sessionId),
+          loadChatEntry: (window, mode) => requireWindowEntryLoader().loadChatEntry(window, mode),
+          loadCompanionMergeReviewEntry: (window, sessionId) =>
+            requireWindowEntryLoader().loadCompanionMergeReviewEntry(window, sessionId),
           generateDiffToken: () => crypto.randomUUID(),
           onCompanionReviewWindowsChanged: () => broadcastOpenCompanionReviewWindowIds(),
         }),
@@ -730,6 +839,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           createCharacterMemoryStorage: (nextDbPath) => new CharacterMemoryStorage(nextDbPath),
           createAuditLogStorage: (nextDbPath) => new AuditLogStorage(nextDbPath),
           createAppSettingsStorage: (nextDbPath) => new AppSettingsStorage(nextDbPath),
+          createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
           ensureV2Schema: (nextDbPath) => {
             const db = openAppDatabase(nextDbPath);
             try {
@@ -815,6 +925,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openSessionMonitorWindow,
                 openSettingsWindow,
                 openMemoryManagementWindow,
+                openMateTalkWindow,
                 openCharacterEditorWindow,
                 openDiffWindow,
                 openCompanionReviewWindow,
@@ -843,13 +954,52 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               settings: {
                 getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
+                getAppDatabaseDiagnostics,
                 resetAppDatabase: async (request) => requireSettingsCatalogService().resetAppDatabase(request),
                 getMemoryManagementSnapshot: () => requireMemoryManagementService().getSnapshot(),
                 getMemoryManagementPage: (request) => requireMemoryManagementService().getPage(request),
+                getMateGrowthSettings: () => getMateGrowthSettings(),
+                updateMateGrowthSettings: (input) => updateMateGrowthSettings(input),
+                getMateEmbeddingSettings: () => requireMateEmbeddingCacheService().getEmbeddingSettings(),
+                listProviderInstructionTargets: () => requireProviderInstructionTargetStorage().listTargets(),
+                upsertProviderInstructionTarget: async (input) => {
+                  return upsertProviderInstructionTargetCommand(input, {
+                    storage: requireProviderInstructionTargetStorage(),
+                    getMateProfile: () => requireMateStorage().getMateProfile(),
+                    syncEnabledProviderInstructionTargetsForMateProfile,
+                    syncDisabledProviderInstructionTarget,
+                    protectedRoots: getProviderInstructionTargetProtectedRoots(),
+                    syncDeps: {
+                      readTextFile: async (filePath) => readFile(filePath, "utf8"),
+                      writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
+                    },
+                    assertProviderInstructionTargetRootNotProtected: (upsertInput, protectedRoots) =>
+                      assertProviderInstructionTargetRootNotProtected(
+                        upsertInput,
+                        protectedRoots,
+                      ),
+                    logDisabledCleanupFailure(error, previousTarget) {
+                      writeAppLog({
+                        level: "warn",
+                        kind: "mate.provider-instruction-sync.disabled-projection.failed",
+                        process: "main",
+                        message: "target を disabled にした際の Provider Instruction cleanup が完了しませんでした。",
+                        data: {
+                          providerId: previousTarget.providerId,
+                          targetId: previousTarget.targetId,
+                          syncBlocked: error instanceof MateProviderInstructionSyncBlockedError,
+                        },
+                        error: appLogService.errorToLogError(error),
+                      });
+                    },
+                  });
+                },
+                startMateEmbeddingDownload: () => startMateEmbeddingDownload(),
                 deleteSessionMemory: (sessionId) => requireMemoryManagementService().deleteSessionMemory(sessionId),
                 deleteProjectMemoryEntry: (entryId) => requireMemoryManagementService().deleteProjectMemoryEntry(entryId),
                 deleteCharacterMemoryEntry: (entryId) =>
                   requireMemoryManagementService().deleteCharacterMemoryEntry(entryId),
+                forgetMateProfileItem: (itemId) => requireMemoryManagementService().forgetMateProfileItem(itemId),
               },
               sessionQuery: {
                 listSessionSummaries: () => listSessionSummaries(),
@@ -985,13 +1135,52 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 updateCharacter,
                 deleteCharacter,
               },
+              mate: {
+                getMateState: () => requireMateStorage().getMateState(),
+                getMateProfile: () => requireMateStorage().getMateProfile(),
+                createMate,
+                updateMate,
+                setMateAvatar,
+                applyPendingGrowth,
+                listMateGrowthEvents,
+                correctMateGrowthEvent,
+                disableMateGrowthEvent,
+                forgetMateGrowthEvent,
+                runMateTalkTurn,
+                resetMate,
+              },
+            },
+            getMateState: () => requireMateStorage().getMateState(),
+            applyPendingGrowth: applyPendingGrowthCore,
+            cleanupStaleGrowthApplyRuns: async () => {
+              return requireMateGrowthStorage().cleanupStaleGrowthApplyRuns({
+                staleBeforeIso: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+                errorPreview: "アプリ起動時のGrowth apply 走行中ジョブ cleanup",
+              });
+            },
+            getGrowthApplyIntervalMs: () => resolveMateGrowthApplyIntervalMs(),
+            shouldRunGrowthApplyTimer: () => {
+              const settings = requireMateStorage().getMateGrowthSettings();
+              if (!settings) {
+                return true;
+              }
+              return settings.enabled !== false && settings.autoApplyEnabled !== false;
+            },
+            createGrowthApplyTimer: (handler, intervalMs) => setInterval(handler, intervalMs),
+            clearGrowthApplyTimer: (timer) => {
+              clearInterval(timer as ReturnType<typeof setInterval>);
             },
           }),
         ),
-    });
+      });
   }
 
   return mainInfrastructureRegistry;
+}
+
+function resolveMateGrowthApplyIntervalMs(): number {
+  const settings = requireMateStorage().getMateGrowthSettings();
+  return (settings?.applyIntervalMinutes ?? DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES) * 60 * 1000;
 }
 
 function requireSessionStorage(): SessionStorageRead {
@@ -1205,6 +1394,737 @@ function requireAppSettingsStorage(): AppSettingsStorage {
   return appSettingsStorage;
 }
 
+function getMateMemoryGenerationProviderIds(): string[] {
+  const growthSettings = getMateGrowthSettings();
+  const growthProviderIds = growthSettings?.modelPreferences
+    .filter((preference) => preference.purpose === "memory_candidate" && preference.enabled)
+    .sort((left, right) => left.priority - right.priority)
+    .map((preference) => preference.provider)
+    .filter((provider) => provider.trim().length > 0);
+
+  const settings = getMateMemoryGenerationSettings(requireAppSettingsStorage().getSettings());
+  const providerIds = settings.priorityList
+    .map((candidate) => candidate.provider)
+    .filter((provider) => provider.trim().length > 0);
+
+  return [...new Set([
+    ...(growthProviderIds ?? []),
+    ...providerIds,
+  ])];
+}
+
+function getMateGrowthSettings(): ReturnType<MateStorage["getMateGrowthSettings"]> {
+  return requireMateStorage().getMateGrowthSettings();
+}
+
+async function updateMateGrowthSettings(input: UpdateMateGrowthSettingsInput): Promise<ReturnType<MateStorage["updateMateGrowthSettings"]>> {
+  validateMateGrowthSettingsAgainstModelCatalog(input, requireModelCatalogStorage().ensureSeeded());
+  const updatedSettings = requireMateStorage().updateMateGrowthSettings(input);
+  await restartMateGrowthApplyTimerIfMateActive();
+  return updatedSettings;
+}
+
+async function restartMateGrowthApplyTimerIfMateActive(): Promise<void> {
+  if (requireMateStorage().getMateState() !== "active") {
+    return;
+  }
+
+  const bootstrapService = requireMainBootstrapService();
+  await bootstrapService.restartGrowthApplyTimer();
+}
+
+async function updateAppSettingsAndSyncMateGrowth(settings: AppSettings): Promise<AppSettings> {
+  const savedSettings = requireAppSettingsStorage().updateSettings(settings);
+  await restartMateGrowthApplyTimerIfMateActive();
+  return savedSettings;
+}
+
+async function resetAppSettingsAndSyncMateGrowth(): Promise<AppSettings> {
+  const savedSettings = requireAppSettingsStorage().resetSettings();
+  await restartMateGrowthApplyTimerIfMateActive();
+  return savedSettings;
+}
+
+function requireMemoryRuntimeWorkspaceService(): MemoryRuntimeWorkspaceService {
+  if (!memoryRuntimeWorkspaceService) {
+    memoryRuntimeWorkspaceService = new MemoryRuntimeWorkspaceService({
+      userDataPath: app.getPath("userData"),
+    });
+  }
+
+  return memoryRuntimeWorkspaceService;
+}
+
+async function cleanupMemoryRuntimeWorkspaceOnStartup(): Promise<void> {
+  try {
+    await requireMemoryRuntimeWorkspaceService().cleanupStaleRuns();
+  } catch (error) {
+    console.warn("Memory runtime workspace cleanup failed", error);
+  }
+}
+
+function requireMateTalkRuntimeWorkspaceService(): MateTalkRuntimeWorkspaceService {
+  if (!mateTalkRuntimeWorkspaceService) {
+    mateTalkRuntimeWorkspaceService = new MateTalkRuntimeWorkspaceService({
+      userDataPath: app.getPath("userData"),
+    });
+  }
+
+  return mateTalkRuntimeWorkspaceService;
+}
+
+function requireMateMemoryGenerationService(): MateMemoryGenerationService {
+  if (!mateMemoryGenerationService) {
+    const workspaceService = requireMemoryRuntimeWorkspaceService();
+    if (!mateMemoryStorage) {
+      throw new Error("mate memory storage が初期化されていないよ。");
+    }
+    const memoryStorage = mateMemoryStorage;
+    const RELEVANT_MEMORY_LIMIT = 20;
+    const RELEVANT_PROFILE_ITEM_LIMIT = 20;
+    const RELEVANT_FORGOTTEN_TOMBSTONE_LIMIT = 20;
+
+    mateMemoryGenerationService = new MateMemoryGenerationService({
+      workspace: workspaceService,
+      storage: memoryStorage,
+      growthStorage: requireMateGrowthStorage(),
+      growthModelPort: createMateMemoryGenerationRunner({
+        getAppSettings: () => requireAppSettingsStorage().getSettings(),
+        getProviderBackgroundAdapter,
+        getMateGrowthSettings,
+        getWorkspacePath: () => workspaceService.getWorkspacePath(),
+      }),
+      getTagCatalog: async () => memoryStorage.listMemoryTagCatalog(),
+      getRelevantMemories: () => Promise.resolve(memoryStorage.listRelevantMemoriesForGeneration({
+        limit: RELEVANT_MEMORY_LIMIT,
+      })),
+      getRelevantProfileItems: () => Promise.resolve(requireMateProfileItemStorage().listProfileItems({
+        state: "active",
+      }).sort((left, right) => (
+        right.salienceScore - left.salienceScore
+        || right.updatedAt.localeCompare(left.updatedAt)
+        || right.id.localeCompare(left.id)
+      )).slice(0, RELEVANT_PROFILE_ITEM_LIMIT).map((item) => ({
+        id: item.id,
+        sectionKey: item.sectionKey,
+        category: item.category,
+        claimKey: item.claimKey,
+        renderedText: item.renderedText,
+        salienceScore: item.salienceScore,
+        updatedAt: item.updatedAt,
+        tags: item.tags.map(({ type, value }) => ({ type, value })),
+      }))),
+      getForgottenTombstones: () => Promise.resolve(memoryStorage.listForgottenTombstonesForGeneration({
+        limit: RELEVANT_FORGOTTEN_TOMBSTONE_LIMIT,
+      })),
+      getInstructionFiles: async (input) => buildMateMemoryRuntimeInstructionFiles({
+        prompt: input.prompt,
+        logicalPrompt: input.logicalPrompt,
+        providerIds: input.providerIds,
+      }),
+      getRecentConversationText: async () => "",
+    });
+  }
+
+  return mateMemoryGenerationService;
+}
+
+function requireMateStorage(): MateStorage {
+  if (!mateStorage) {
+    throw new Error("mate storage が初期化されていないよ。");
+  }
+
+  return mateStorage;
+}
+
+async function createMate(input: Parameters<MateStorage["createMate"]>[0]): ReturnType<MateStorage["createMate"]> {
+  const profile = await requireMateStorage().createMate(input);
+  await requireMainBootstrapService().ensureGrowthApplyTimer();
+  await syncEnabledProviderInstructionTargetsForMateProfile(profile);
+  return profile;
+}
+
+async function updateMate(input: Parameters<MateStorage["updateMate"]>[0]): ReturnType<MateStorage["updateMate"]> {
+  const profile = await requireMateStorage().updateMate(input);
+  await syncEnabledProviderInstructionTargetsForMateProfile(profile, { force: true });
+  return profile;
+}
+
+async function setMateAvatar(input: Parameters<MateStorage["setMateAvatar"]>[0]): ReturnType<MateStorage["setMateAvatar"]> {
+  const profile = await requireMateStorage().setMateAvatar(input);
+  await syncEnabledProviderInstructionTargetsForMateProfile(profile);
+  return profile;
+}
+
+async function forgetMateProfileItemAndRefreshProjection(itemId: string): Promise<void> {
+  const service = new MateProfileProjectionRefreshService({
+    mateStorage: requireMateStorage(),
+    profileItemStorage: requireMateProfileItemStorage(),
+    projectDigestProjectionWriter: requireMateProjectDigestStorage(),
+    providerInstructionSyncer: {
+      syncEnabledProviderInstructionTargetsForMateProfile: (profile) =>
+        syncEnabledProviderInstructionTargetsForMateProfile(profile, { requireComplete: true }),
+    },
+  });
+
+  await service.forgetProfileItemAndRefreshProjection(itemId);
+}
+
+async function syncEnabledProviderInstructionTargetsForMateProfile(
+  profile: MateProfile,
+  options: { requireComplete?: boolean; force?: boolean; profileItems?: readonly MateProfileItem[] } = {},
+): Promise<void> {
+  try {
+    const profileItems = options.profileItems ?? requireMateProfileItemStorage().listProfileItems({ state: "active" });
+    const result = await syncEnabledProviderInstructionTargets(
+      requireProviderInstructionTargetStorage(),
+      profile,
+      {
+        readTextFile: async (filePath) => readFile(filePath, "utf8"),
+        writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
+        profileRootDirectory: app.getPath("userData"),
+        readProfileSectionText: buildMateProviderInstructionProfileSectionReader(
+          profile,
+          profileItems,
+        ),
+      },
+      {
+        protectedRoots: getProviderInstructionTargetProtectedRoots(),
+        force: options.force,
+      },
+    );
+
+    if (options.requireComplete && result.failedCount > 0) {
+      throw new Error(`Provider Instruction Target の同期に ${result.failedCount} 件失敗しました`);
+    }
+  } catch (error) {
+    if (error instanceof MateProviderInstructionSyncBlockedError) {
+      throw error;
+    }
+
+    if (options.requireComplete) {
+      throw error;
+    }
+
+    writeAppLog({
+      level: "warn",
+      kind: "mate.provider-instruction-sync.failed",
+      process: "main",
+      message: "有効な Provider Instruction Target の同期に失敗しました",
+      data: {
+        mateId: profile.id,
+        revisionId: profile.activeRevisionId,
+      },
+      error: appLogService.errorToLogError(error),
+    });
+  }
+}
+
+function assertProviderInstructionCleanupComplete(
+  result: { failedCount: number },
+  operationName: string,
+): void {
+  if (result.failedCount > 0) {
+    throw new Error(
+      `${operationName} の Provider Instruction cleanup に ${result.failedCount} 件失敗しました。`,
+    );
+  }
+}
+
+async function resetMate(): Promise<void> {
+  requireMainBootstrapService().clearGrowthApplyTimer();
+  await syncProviderInstructionTargetsForDisabledMateProfile();
+  await requireMateStorage().resetMate();
+}
+
+async function syncProviderInstructionTargetsForDisabledMateProfile(): Promise<void> {
+  try {
+    const result = await syncDisabledProviderInstructionTargets(
+      requireProviderInstructionTargetStorage(),
+      {
+        readTextFile: async (filePath) => readFile(filePath, "utf8"),
+        writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
+      },
+      { protectedRoots: getProviderInstructionTargetProtectedRoots() },
+    );
+    assertProviderInstructionCleanupComplete(result, "Mate reset");
+  } catch (error) {
+    if (error instanceof MateProviderInstructionSyncBlockedError) {
+      writeAppLog({
+        level: "warn",
+        kind: "mate.provider-instruction-sync.disabled-projection.failed",
+        process: "main",
+        message: "Mate reset 前の Provider Instruction cleanup が完了しませんでした。reset を中止します。",
+        data: {
+          providerId: error.providerId,
+          targetId: error.targetId,
+        },
+        error: appLogService.errorToLogError(error),
+      });
+      throw error;
+    }
+
+    writeAppLog({
+      level: "warn",
+      kind: "mate.provider-instruction-sync.disabled-projection.failed",
+      process: "main",
+      message: "Mate reset 前の Provider Instruction cleanup が完了しませんでした。reset を中止します。",
+      error: appLogService.errorToLogError(error),
+    });
+    throw error;
+  }
+}
+
+async function applyPendingGrowth(): ReturnType<MateGrowthApplyService["applyPendingGrowth"]> {
+  const result = await requireMainBootstrapService().runGrowthApplyOnce();
+  return result as Awaited<ReturnType<MateGrowthApplyService["applyPendingGrowth"]>>;
+}
+
+async function listMateGrowthEvents(request?: MateGrowthEventListRequest | null): Promise<MateGrowthEventListResult> {
+  return requireMateGrowthStorage().listEventsForReview(request ?? {});
+}
+
+function readMateGrowthReviewStringField(request: unknown, fieldName: "eventId" | "statement"): string {
+  if (request === null || typeof request !== "object") {
+    throw new Error("Growth Event review リクエストが不正です。");
+  }
+  const value = (request as Record<string, unknown>)[fieldName];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`Growth Event review リクエストの ${fieldName} が不正です。`);
+  }
+  return value;
+}
+
+async function disableMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult> {
+  return requireMateGrowthStorage().disableEventForReview(
+    readMateGrowthReviewStringField(request, "eventId"),
+  );
+}
+
+async function forgetMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult> {
+  return requireMateGrowthStorage().forgetEventForReview(
+    readMateGrowthReviewStringField(request, "eventId"),
+  );
+}
+
+async function correctMateGrowthEvent(request: MateGrowthEventCorrectionRequest): Promise<MateGrowthEventActionResult> {
+  return requireMateGrowthStorage().correctEventForReview(
+    readMateGrowthReviewStringField(request, "eventId"),
+    readMateGrowthReviewStringField(request, "statement"),
+  );
+}
+
+async function applyPendingGrowthCore(): ReturnType<MateGrowthApplyService["applyPendingGrowth"]> {
+  if (requireMateStorage().getMateState() === "not_created") {
+    return {
+      candidateCount: 0,
+      appliedCount: 0,
+      skippedCount: 0,
+      revisionId: null,
+    };
+  }
+
+  const result = await requireMateGrowthApplyService().applyPendingGrowth();
+  if (result.revisionId && requireMateStorage().getMateState() === "active") {
+    const profile = requireMateStorage().getMateProfile();
+    if (profile) {
+      await syncEnabledProviderInstructionTargetsForMateProfile(profile);
+    } else {
+      writeAppLog({
+        level: "warn",
+        kind: "mate.provider-instruction-sync.skipped",
+        process: "main",
+        message: "Provider Instruction Target の同期対象プロファイルが見つかりませんでした",
+        data: {
+          revisionId: result.revisionId,
+        },
+      });
+    }
+  }
+
+  return result;
+}
+
+function extractMateTalkAssistantMessage(value: unknown): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const assistantMessage = (value as { assistantMessage?: unknown }).assistantMessage;
+  return typeof assistantMessage === "string" && assistantMessage.trim()
+    ? assistantMessage.trim()
+    : null;
+}
+
+function buildMateTalkSelectedContextText(input: {
+  attachments?: MateTalkTurnInput["attachments"];
+  additionalDirectories?: MateTalkTurnInput["additionalDirectories"];
+}): string {
+  const lines: string[] = [];
+  for (const attachment of input.attachments ?? []) {
+    const normalizedPath = attachment.path.trim();
+    if (normalizedPath) {
+      lines.push(`- ${attachment.kind}: ${normalizedPath}`);
+    }
+  }
+  for (const directory of input.additionalDirectories ?? []) {
+    const normalizedDirectory = directory.trim();
+    if (normalizedDirectory) {
+      lines.push(`- additional-directory: ${normalizedDirectory}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+async function generateMateTalkAssistantMessage(input: {
+  userMessage: string;
+  provider?: string;
+  model?: string;
+  reasoningEffort?: MateMemoryGenerationProviderSettings["reasoningEffort"];
+  attachments?: MateTalkTurnInput["attachments"];
+  additionalDirectories?: MateTalkTurnInput["additionalDirectories"];
+  approvalMode?: MateTalkTurnInput["approvalMode"];
+  codexSandboxMode?: MateTalkTurnInput["codexSandboxMode"];
+  mateProfile: {
+    id: string;
+    displayName: string;
+    description: string;
+    themeMain: string;
+    themeSub: string;
+    contextText?: string;
+  };
+}): Promise<string> {
+  const appSettings = requireAppSettingsStorage().getSettings();
+  const settings = getMateMemoryGenerationSettings(appSettings);
+  const firstCandidate = settings.priorityList[0] ?? DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS;
+  const requestedCandidate =
+    input.provider || input.model || input.reasoningEffort
+      ? [{
+        ...firstCandidate,
+        provider: input.provider?.trim() || firstCandidate.provider,
+        model: input.model?.trim() || firstCandidate.model,
+        reasoningEffort: input.reasoningEffort ?? firstCandidate.reasoningEffort,
+      }]
+      : [];
+  const candidates = requestedCandidate.length > 0 ? requestedCandidate : settings.priorityList;
+  let lastFailure: Error | null = null;
+  const workspaceService = requireMateTalkRuntimeWorkspaceService();
+  let preparedRun: { workspacePath: string; lockPath: string } | null = null;
+
+  try {
+    preparedRun = await workspaceService.prepareRun();
+    await workspaceService.regenerateInstructionFiles(buildMateTalkRuntimeInstructionFiles(input.mateProfile));
+    const profileContextText = sanitizeMateTalkProfileContextText(input.mateProfile.contextText);
+    const selectedContextText = buildMateTalkSelectedContextText({
+      attachments: input.attachments,
+      additionalDirectories: input.additionalDirectories,
+    });
+    const providerAdditionalDirectories = buildMateTalkProviderAdditionalDirectories({
+      attachments: input.attachments,
+      additionalDirectories: input.additionalDirectories,
+    });
+
+    for (const candidate of candidates) {
+      const providerSettings = getProviderAppSettings(appSettings, candidate.provider);
+      if (!providerSettings.enabled) {
+        continue;
+      }
+
+      const backgroundAdapter = getProviderBackgroundAdapter(candidate.provider);
+      const capability = getMateTalkBackgroundStructuredPromptCapability(backgroundAdapter, {
+        operationPermissionMode: "user-selected",
+        approvalMode: input.approvalMode,
+        codexSandboxMode: input.codexSandboxMode,
+      });
+      if (!capability.compatible) {
+        console.warn(
+          "メイトーク背景 structured prompt の条件を満たさない provider をスキップしました:",
+          candidate.provider,
+          capability.reasons.join(", "),
+        );
+        continue;
+      }
+
+      try {
+        const result = await backgroundAdapter.runBackgroundStructuredPrompt({
+          providerId: candidate.provider,
+          workspacePath: preparedRun.workspacePath,
+          appSettings,
+          model: candidate.model,
+          reasoningEffort: candidate.reasoningEffort,
+          timeoutMs: candidate.timeoutSeconds * 1000,
+          prompt: {
+            systemText: [
+              "あなたは WithMate の Mate として、ユーザーと自然に会話します。",
+              "Mate の現在の定義を尊重し、まだ未確定な性格や口調は決めつけすぎないでください。",
+              "指定された参照パスは必要な範囲で読み取り用の文脈として扱い、ファイルの作成・更新・削除は行わず、会話文だけを返してください。",
+              "返答は JSON object のみを返してください。",
+            ].join("\n"),
+            userText: [
+              "# Mate",
+              `id: ${input.mateProfile.id}`,
+              `name: ${input.mateProfile.displayName}`,
+              `description: ${input.mateProfile.description || "(未設定)"}`,
+              ...(profileContextText ? [``, "# Profile context", profileContextText] : []),
+              ...(selectedContextText ? [``, "# Selected context", selectedContextText] : []),
+              "",
+              "# User message",
+              input.userMessage,
+              "",
+              "# Output JSON shape",
+              '{"assistantMessage":"..."}',
+            ].join("\n"),
+            outputSchema: MATE_TALK_OUTPUT_SCHEMA,
+          },
+          additionalDirectories: providerAdditionalDirectories,
+          approvalMode: input.approvalMode,
+          codexSandboxMode: input.codexSandboxMode,
+        });
+
+        const output = result.structuredOutput ?? result.parsedJson ?? result.output;
+        const assistantMessage = extractMateTalkAssistantMessage(output);
+        if (assistantMessage) {
+          return assistantMessage;
+        }
+        lastFailure = new Error(`MateTalk provider returned an invalid assistantMessage: ${candidate.provider}`);
+      } catch (error) {
+        lastFailure = error instanceof Error ? error : new Error(String(error));
+        console.warn("Failed to generate MateTalk response", candidate.provider, lastFailure);
+      }
+    }
+
+    if (lastFailure) {
+      console.warn("Failed to generate MateTalk response.", lastFailure);
+      throw lastFailure;
+    } else {
+      console.warn("有効な MateTalk provider が見つかりませんでした。");
+      throw new Error("有効な MateTalk provider が見つかりませんでした。");
+    }
+  } finally {
+    if (preparedRun) {
+      await workspaceService.completeRun();
+    }
+  }
+}
+
+function requireMateGrowthStorage(): MateGrowthStorage {
+  if (!dbPath) {
+    throw new Error("DB path が初期化されていないよ。");
+  }
+
+  if (!mateGrowthStorage) {
+    mateGrowthStorage = new MateGrowthStorage(dbPath);
+  }
+
+  return mateGrowthStorage;
+}
+
+function requireMateProfileItemStorage(): MateProfileItemStorage {
+  if (!dbPath) {
+    throw new Error("DB path が初期化されていないよ。");
+  }
+
+  if (!mateProfileItemStorage) {
+    mateProfileItemStorage = new MateProfileItemStorage(dbPath);
+  }
+
+  return mateProfileItemStorage;
+}
+
+function requireMateProjectDigestStorage(): MateProjectDigestStorage {
+  if (!dbPath) {
+    throw new Error("DB path が初期化されていないよ。");
+  }
+
+  if (!mateProjectDigestStorage) {
+    mateProjectDigestStorage = new MateProjectDigestStorage(dbPath);
+  }
+
+  return mateProjectDigestStorage;
+}
+
+function requireProviderInstructionTargetStorage(): ProviderInstructionTargetStorage {
+  if (!dbPath) {
+    throw new Error("DB path が初期化されていないよ。");
+  }
+
+  if (!providerInstructionTargetStorage) {
+    providerInstructionTargetStorage = new ProviderInstructionTargetStorage(dbPath);
+  }
+
+  return providerInstructionTargetStorage;
+}
+
+function requireMateProjectContextService(): MateProjectContextService {
+  if (!mateProjectContextService) {
+    mateProjectContextService = new MateProjectContextService(
+      requireMateProfileItemStorage(),
+      requireMateSemanticEmbeddingRetrievalService(),
+    );
+  }
+
+  return mateProjectContextService;
+}
+
+function requireMateGrowthApplyService(): MateGrowthApplyService {
+  if (!mateGrowthApplyService) {
+    mateGrowthApplyService = new MateGrowthApplyService(
+      requireMateGrowthStorage(),
+      requireMateProfileItemStorage(),
+      requireMateStorage(),
+      requireMateSemanticEmbeddingIndexService(),
+      requireProviderInstructionTargetStorage(),
+      requireMateProjectDigestStorage(),
+    );
+  }
+
+  return mateGrowthApplyService;
+}
+
+function requireMateEmbeddingVectorizer(): MateEmbeddingVectorizer {
+  if (!mateEmbeddingVectorizer) {
+    mateEmbeddingVectorizer = new MateEmbeddingVectorizer(requireMateEmbeddingCacheService());
+  }
+
+  return mateEmbeddingVectorizer;
+}
+
+function requireMateSemanticEmbeddingStorage(): MateSemanticEmbeddingStorage {
+  if (!dbPath) {
+    throw new Error("DB path が初期化されていないよ。");
+  }
+
+  if (!mateSemanticEmbeddingStorage) {
+    mateSemanticEmbeddingStorage = new MateSemanticEmbeddingStorage(dbPath);
+  }
+
+  return mateSemanticEmbeddingStorage;
+}
+
+function requireMateSemanticEmbeddingRetrievalService(): MateSemanticEmbeddingRetrievalService {
+  if (!mateSemanticEmbeddingRetrievalService) {
+    mateSemanticEmbeddingRetrievalService = new MateSemanticEmbeddingRetrievalService(
+      requireMateEmbeddingCacheService(),
+      requireMateEmbeddingVectorizer(),
+      requireMateSemanticEmbeddingStorage(),
+    );
+  }
+
+  return mateSemanticEmbeddingRetrievalService;
+}
+
+function requireMateSemanticEmbeddingIndexService(): MateSemanticEmbeddingIndexService {
+  if (!mateSemanticEmbeddingIndexService) {
+    mateSemanticEmbeddingIndexService = new MateSemanticEmbeddingIndexService(
+      requireMateEmbeddingCacheService(),
+      requireMateEmbeddingVectorizer(),
+      requireMateSemanticEmbeddingStorage(),
+    );
+  }
+
+  return mateSemanticEmbeddingIndexService;
+}
+
+function requireMateEmbeddingCacheService(): MateEmbeddingCacheService {
+  if (!dbPath) {
+    throw new Error("DB path が初期化されていないよ。");
+  }
+
+  if (!mateEmbeddingCacheService) {
+    mateEmbeddingCacheService = new MateEmbeddingCacheService(dbPath, app.getPath("userData"));
+  }
+
+  return mateEmbeddingCacheService;
+}
+
+async function startMateEmbeddingDownload(): Promise<void> {
+  const service = requireMateEmbeddingCacheService();
+  const settings = service.getEmbeddingSettings();
+  if (!settings) {
+    return;
+  }
+
+  const downloadService = new MateEmbeddingDownloadService({ cacheService: service });
+  await downloadService.downloadModel();
+}
+
+async function runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult> {
+  const writeMemoryGenerationErrorLog = (error: unknown): void => {
+    writeAppLog({
+      level: "warn",
+      kind: "mate-talk.memory-generation.schedule-failed",
+      process: "main",
+      message: "MateTalk の Memory 生成スケジュールに失敗しました",
+      error: appLogService.errorToLogError(error),
+    });
+  };
+
+  const service = new MateTalkService({
+    getMateProfile: () => requireMateStorage().getMateProfile(),
+    getAppSettings: () => requireAppSettingsStorage().getSettings(),
+    getMateProfileContextText: (profile) => {
+      try {
+        const profileItems = requireMateProfileItemStorage().listProfileItems({
+          state: "active",
+          projectionAllowed: true,
+          projectDigestId: null,
+          limit: 40,
+        }).map(({ sectionKey, claimKey, renderedText }) => ({
+          sectionKey,
+          claimKey,
+          renderedText,
+        }));
+        return buildMateTalkProfileContextText({
+          ...profile,
+          profileItems,
+        });
+      } catch (error) {
+        console.warn("Failed to load Mate profile items for MateTalk", error);
+        return buildMateTalkProfileContextText(profile);
+      }
+    },
+    generateAssistantMessage: generateMateTalkAssistantMessage,
+    scheduleMemoryGeneration: ({ userMessage, assistantText }) => {
+      const activeMateStorage = requireMateStorage();
+      const appSettings = requireAppSettingsStorage().getSettings();
+      const mateProfile = activeMateStorage.getMateProfile();
+      const growthSettings = activeMateStorage.getMateGrowthSettings();
+      if (!shouldScheduleMateMemoryGeneration({
+        appSettings,
+        mateState: mateProfile?.state ?? "not_created",
+        growthSettings,
+      })) {
+        return;
+      }
+      const recentConversationText = [
+        userMessage.trim() ? `User: ${userMessage.trim()}` : null,
+        assistantText.trim() ? `Assistant: ${assistantText.trim()}` : null,
+      ].filter((entry): entry is string => Boolean(entry)).join("\n\n");
+      const providerIds = getMateMemoryGenerationProviderIds();
+      if (!recentConversationText || providerIds.length === 0) {
+        return;
+      }
+
+      return requireMateMemoryGenerationService().runOnce({
+        recentConversationText,
+        providerIds,
+        sourceDefaults: {
+          sourceType: "mate_talk",
+          sourceSessionId: null,
+          sourceAuditLogId: null,
+          projectDigestId: null,
+        },
+        mateName: mateProfile?.displayName,
+        mateSummary: mateProfile?.description,
+      });
+    },
+    onMemoryGenerationScheduleError: writeMemoryGenerationErrorLog,
+  });
+
+  return service.runTurn(input);
+}
+
 function requireCompanionStorage(): CompanionStorageHandle {
   if (!companionStorage) {
     if (!dbPath) {
@@ -1219,13 +2139,13 @@ function requireCompanionStorage(): CompanionStorageHandle {
 }
 
 function canUseCompanionAuditLogStorage(): boolean {
-  return dbPath.length > 0 && isValidV3Database(dbPath);
+  return dbPath.length > 0 && (isValidV3Database(dbPath) || isValidV4Database(dbPath));
 }
 
 function requireCompanionAuditLogStorage(): CompanionAuditLogStorageV3 {
   if (!companionAuditLogStorage) {
     if (!canUseCompanionAuditLogStorage()) {
-      throw new Error("companion audit log storage は V3 DB でだけ利用できます。");
+      throw new Error("companion audit log storage は V3/V4 DB でだけ利用できます。");
     }
     companionAuditLogStorage = new CompanionAuditLogStorageV3(dbPath, path.join(path.dirname(dbPath), "blobs", "v3"));
   }
@@ -1281,6 +2201,22 @@ function requireMemoryManagementService(): MemoryManagementService {
         requireCharacterMemoryStorage().listCharacterMemoryEntries(characterScopeId),
       listCharacterMemoryPage: (request) => requireCharacterMemoryStorage().listCharacterMemoryPage(request),
       deleteCharacterMemoryEntry: (entryId) => requireCharacterMemoryStorage().deleteCharacterMemoryEntry(entryId),
+      listMateProfileItems: () => requireMateProfileItemStorage().listProfileItems({ state: "active" }).map((item) => ({
+        id: item.id,
+        sectionKey: item.sectionKey,
+        projectDigestId: item.projectDigestId,
+        category: item.category,
+        claimKey: item.claimKey,
+        claimValue: item.claimValue,
+        renderedText: item.renderedText,
+        normalizedClaim: item.normalizedClaim,
+        confidence: item.confidence,
+        salienceScore: item.salienceScore,
+        state: item.state,
+        tags: item.tags.map((tag) => `${tag.type}:${tag.value}`),
+        updatedAt: item.updatedAt,
+      })),
+      forgetMateProfileItem: (itemId) => forgetMateProfileItemAndRefreshProjection(itemId),
     });
   }
 
@@ -1347,15 +2283,24 @@ function requireSessionRuntimeService(): SessionRuntimeService {
   if (!sessionRuntimeService) {
     sessionRuntimeService = new SessionRuntimeService({
       getSession: getDisplaySession,
-        upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSession(session),
+      upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSession(session),
       resolveComposerPreview,
-      resolveSessionCharacter,
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
       getSessionMemory: (session) => requireSessionMemoryStorage().ensureSessionMemory(session),
       resolveProjectMemoryEntriesForPrompt: (session, userMessage, sessionMemory) =>
         requireSessionMemorySupportService().resolveProjectMemoryEntriesForPrompt(session, userMessage, sessionMemory),
+      resolveProjectContextTextForPrompt: (session, userMessage) =>
+        resolveMateProjectContextTextForPrompt({
+          session,
+          userMessage,
+          getMateState: () => requireMateStorage().getMateState(),
+          resolveProjectDigestForWorkspace: (workspacePath) =>
+            requireMateProjectDigestStorage().resolveProjectDigestForWorkspace(workspacePath),
+          getProjectDigestContextText: (projectDigestId, options) =>
+            requireMateProjectContextService().getProjectDigestContextText(projectDigestId, options),
+        }),
       createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
       updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
       setLiveSessionRun,
@@ -1369,6 +2314,51 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       },
       setSessionContextTelemetry: (telemetry) => {
         setSessionContextTelemetry(telemetry.sessionId, telemetry);
+      },
+      scheduleMateMemoryGeneration: (params) => {
+        const activeMateStorage = requireMateStorage();
+        const appSettings = requireAppSettingsStorage().getSettings();
+        const mateState = activeMateStorage.getMateState();
+        const growthSettings = activeMateStorage.getMateGrowthSettings();
+        if (!shouldScheduleMateMemoryGeneration({
+          appSettings,
+          mateState,
+          growthSettings,
+        })) {
+          return;
+        }
+
+        const mateProfile = activeMateStorage.getMateProfile();
+        const userMessage = params.userMessage.trim();
+        const assistantText = params.assistantText.trim();
+        const recentConversationText = [
+          userMessage ? `User: ${userMessage}` : null,
+          assistantText ? `Assistant: ${assistantText}` : null,
+        ].filter((entry): entry is string => Boolean(entry)).join("\n\n");
+        const providerIds = getMateMemoryGenerationProviderIds();
+        if (!recentConversationText || providerIds.length === 0) {
+          return;
+        }
+
+        void requireMateMemoryGenerationService().runOnce({
+          recentConversationText,
+          providerIds,
+          sourceDefaults: {
+            sourceType: "session",
+            sourceSessionId: params.session.id,
+            sourceAuditLogId: params.auditLogId,
+            projectDigestId: resolveMateProjectDigestForSession({
+              session: params.session,
+              getMateState: () => requireMateStorage().getMateState(),
+              resolveProjectDigestForWorkspace: (workspacePath) =>
+                requireMateProjectDigestStorage().resolveProjectDigestForWorkspace(workspacePath),
+            })?.id ?? null,
+          },
+          mateName: mateProfile?.displayName,
+          mateSummary: mateProfile?.description,
+        }).catch((error) => {
+          console.warn("Failed to run Mate Memory generation", params.session.id, error);
+        });
       },
       invalidateProviderSessionThread,
       scheduleProviderQuotaTelemetryRefresh,
@@ -1416,6 +2406,16 @@ function requireCompanionRuntimeService(): CompanionRuntimeService {
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
+      resolveProjectContextTextForPrompt: (session, userMessage) =>
+        resolveMateProjectContextTextForPrompt({
+          session,
+          userMessage,
+          getMateState: () => requireMateStorage().getMateState(),
+          resolveProjectDigestForWorkspace: (workspacePath) =>
+            requireMateProjectDigestStorage().resolveProjectDigestForWorkspace(workspacePath),
+          getProjectDigestContextText: (projectDigestId, options) =>
+            requireMateProjectContextService().getProjectDigestContextText(projectDigestId, options),
+        }),
       ...(canUseCompanionAuditLogStorage()
         ? {
             createAuditLog: (entry) => requireCompanionAuditLogService().createAuditLog(entry),
@@ -1516,7 +2516,7 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
           ...SESSION_WINDOW_DEFAULT_BOUNDS,
           title: `WithMate Session - ${sessionId}`,
         }),
-      loadSessionEntry: (window, sessionId) => requireWindowEntryLoader().loadSessionEntry(window, sessionId),
+      loadChatEntry: (window, mode) => requireWindowEntryLoader().loadChatEntry(window, mode),
       getSession,
       isRunInFlight: isSessionRunInFlight,
       getAllowQuitWithInFlightRuns: () => allowQuitWithInFlightRuns,
@@ -1578,7 +2578,7 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       isRunningSession,
       listSessions: listFullStoredSessions,
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
-      updateAppSettings: (settings) => requireAppSettingsStorage().updateSettings(settings),
+      updateAppSettings: updateAppSettingsAndSyncMateGrowth,
       getModelCatalog,
       ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
       importModelCatalogDocument: (document, source) => requireModelCatalogStorage().importCatalogDocument(document, source),
@@ -1594,7 +2594,7 @@ function requireSettingsCatalogService(): SettingsCatalogService {
           await requireCompanionAuditLogService().clearAuditLogs();
         }
       },
-      resetAppSettings: () => requireAppSettingsStorage().resetSettings(),
+      resetAppSettings: resetAppSettingsAndSyncMateGrowth,
       resetModelCatalogToBundled: () => requireModelCatalogStorage().resetToBundled(),
       clearProjectMemories: () => requireProjectMemoryStorage().clearProjectMemories(),
       clearCharacterMemories: () => requireCharacterMemoryStorage().clearCharacterMemories(),
@@ -1729,6 +2729,7 @@ function applyPersistentStoreBundle(bundle: PersistentStoreBundle): ModelCatalog
   characterMemoryStorage = bundle.characterMemoryStorage;
   auditLogStorage = bundle.auditLogStorage;
   appSettingsStorage = bundle.appSettingsStorage;
+  mateStorage = bundle.mateStorage;
   sessions = bundle.sessions;
   for (const session of sessions) {
     requireSessionMemorySupportService().syncSessionDependencies(session);
@@ -1769,16 +2770,36 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
   }
 
   closePersistentStores();
-  const bundle = await requirePersistentStoreLifecycleService().initialize(dbPath, bundledModelCatalogPath);
-  const activeModelCatalog = applyPersistentStoreBundle(bundle);
-  startWalMaintenance();
-  return activeModelCatalog;
+  const nextMateMemoryStorage = new MateMemoryStorage(dbPath);
+  try {
+    const bundle = await requirePersistentStoreLifecycleService().initialize(
+      dbPath,
+      bundledModelCatalogPath,
+      app.getPath("userData"),
+    );
+    mateMemoryStorage = nextMateMemoryStorage;
+    const activeModelCatalog = applyPersistentStoreBundle(bundle);
+    appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
+    startWalMaintenance();
+    return activeModelCatalog;
+  } catch (error) {
+    nextMateMemoryStorage.close();
+    throw error;
+  }
 }
 
 function closePersistentStores(): void {
   stopWalMaintenance();
+  mainInfrastructureRegistry?.getMainBootstrapService().clearGrowthApplyTimer();
   companionStorage?.close();
   companionAuditLogStorage?.close();
+  mateMemoryStorage?.close();
+  mateGrowthStorage?.close();
+  mateProfileItemStorage?.close();
+  mateProjectDigestStorage?.close();
+  providerInstructionTargetStorage?.close();
+  mateEmbeddingCacheService?.close();
+  mateSemanticEmbeddingStorage?.close();
   requirePersistentStoreLifecycleService().close({
     modelCatalogStorage,
     sessionStorage,
@@ -1787,6 +2808,7 @@ function closePersistentStores(): void {
     characterMemoryStorage,
     auditLogStorage,
     appSettingsStorage,
+    mateStorage,
   }, dbPath);
   modelCatalogStorage = null;
   sessionStorage = null;
@@ -1796,6 +2818,22 @@ function closePersistentStores(): void {
   auditLogStorage = null;
   auditLogService = null;
   appSettingsStorage = null;
+  mateStorage = null;
+  mateMemoryStorage = null;
+  mateGrowthStorage = null;
+  mateProfileItemStorage = null;
+  mateProjectDigestStorage = null;
+  providerInstructionTargetStorage = null;
+  mateProjectContextService = null;
+  mateSemanticEmbeddingRetrievalService = null;
+  mateGrowthApplyService = null;
+  mateEmbeddingVectorizer = null;
+  mateSemanticEmbeddingStorage = null;
+  mateSemanticEmbeddingIndexService = null;
+  mateEmbeddingCacheService = null;
+  memoryRuntimeWorkspaceService = null;
+  mateTalkRuntimeWorkspaceService = null;
+  mateMemoryGenerationService = null;
   companionStorage = null;
   companionAuditLogStorage = null;
   companionAuditLogService = null;
@@ -1821,12 +2859,47 @@ function closePersistentStores(): void {
   mainInfrastructureRegistry = null;
 }
 
+async function cleanupMateProjectionsBeforeDatabaseRecreate(): Promise<void> {
+  const result = await syncDisabledProviderInstructionTargets(
+    requireProviderInstructionTargetStorage(),
+    {
+      readTextFile: async (filePath) => readFile(filePath, "utf8"),
+      writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
+    },
+    { protectedRoots: getProviderInstructionTargetProtectedRoots() },
+  );
+  assertProviderInstructionCleanupComplete(result, "database reset");
+
+  await requireMateStorage().deleteMateProjectionDirectory();
+}
+
 async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   if (!dbPath) {
     throw new Error("DB path が初期化されていないよ。");
   }
 
   stopWalMaintenance();
+  mainInfrastructureRegistry?.getMainBootstrapService().clearGrowthApplyTimer();
+  await cleanupMateProjectionsBeforeDatabaseRecreate();
+  mateMemoryStorage?.close();
+  mateMemoryStorage = null;
+  mateGrowthStorage?.close();
+  mateGrowthStorage = null;
+  mateProfileItemStorage?.close();
+  mateProfileItemStorage = null;
+  mateProjectDigestStorage?.close();
+  mateProjectDigestStorage = null;
+  providerInstructionTargetStorage?.close();
+  providerInstructionTargetStorage = null;
+  mateSemanticEmbeddingStorage?.close();
+  mateSemanticEmbeddingStorage = null;
+  mateProjectContextService = null;
+  mateSemanticEmbeddingRetrievalService = null;
+  mateGrowthApplyService = null;
+  mateEmbeddingVectorizer = null;
+  mateSemanticEmbeddingIndexService = null;
+  mateEmbeddingCacheService?.close();
+  mateEmbeddingCacheService = null;
   companionStorage?.close();
   companionAuditLogStorage?.close();
   const bundle = await requirePersistentStoreLifecycleService().recreate(dbPath, bundledModelCatalogPath, {
@@ -1837,7 +2910,8 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
     characterMemoryStorage,
     auditLogStorage,
     appSettingsStorage,
-  });
+    mateStorage,
+  }, app.getPath("userData"));
 
   auditLogService = null;
   companionStorage = null;
@@ -1861,11 +2935,17 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   mainSessionPersistenceFacade = null;
   mainWindowFacade = null;
   mainQueryService = null;
+  memoryRuntimeWorkspaceService = null;
+  mateTalkRuntimeWorkspaceService = null;
+  mateMemoryGenerationService = null;
+  mateEmbeddingCacheService = null;
   mainInfrastructureRegistry?.reset();
   mainInfrastructureRegistry = null;
+  mateMemoryStorage = new MateMemoryStorage(dbPath);
   sessions = [];
 
   const activeModelCatalog = applyPersistentStoreBundle(bundle);
+  appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
   startWalMaintenance();
   return activeModelCatalog;
 }
@@ -2410,10 +3490,6 @@ async function deleteCharacter(characterId: string): Promise<void> {
   await requireMainCharacterFacade().deleteCharacter(characterId);
 }
 
-async function resolveSessionCharacter(session: Session): Promise<CharacterProfile | null> {
-  return requireMainCharacterFacade().resolveSessionCharacter(session);
-}
-
 async function previewComposerInput(
   sessionId: string,
   userMessage: string,
@@ -2461,6 +3537,10 @@ async function openSettingsWindow(): Promise<BrowserWindow> {
 
 async function openMemoryManagementWindow(): Promise<BrowserWindow> {
   return requireMainWindowFacade().openMemoryManagementWindow();
+}
+
+async function openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<BrowserWindow> {
+  return requireMainWindowFacade().openMateTalkWindow(input);
 }
 
 async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {
@@ -2516,7 +3596,8 @@ async function openCompanionMergeWindow(sessionId: string): Promise<BrowserWindo
 }
 
 app.whenReady().then(async () => {
-  dbPath = resolveAppDatabasePath(app.getPath("userData"));
+  dbPath = await resolveOrMigrateAppDatabasePath(app.getPath("userData"));
+  appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
   writeAppLog({
     level: "info",
     kind: "app.ready",
@@ -2524,10 +3605,22 @@ app.whenReady().then(async () => {
     message: "App ready",
     data: {
       userDataPath: app.getPath("userData"),
+      userDataPathOverrideApplied: appDatabaseDiagnostics.userDataPathOverrideApplied,
+      activeDatabasePath: appDatabaseDiagnostics.activeDatabasePath,
+      activeDatabaseSchemaVersion: appDatabaseDiagnostics.schemaVersion,
+      activeDatabaseCompatibilityMode: appDatabaseDiagnostics.compatibilityMode,
       logsPath: appLogsPath,
       crashDumpsPath,
     },
   });
+  writeAppLog({
+    level: appDatabaseDiagnostics.warnings.length > 0 ? "warn" : "info",
+    kind: "app.database.selected",
+    process: "main",
+    message: "App database selected",
+    data: appDatabaseDiagnostics,
+  });
+  await cleanupMemoryRuntimeWorkspaceOnStartup();
   await requireMainBootstrapService().handleReady();
 
   if (process.env.WITHMATE_DEBUG_OPEN_SESSION_ID) {
@@ -2561,4 +3654,3 @@ app.on("will-quit", () => {
     message: "App will quit",
   });
 });
-

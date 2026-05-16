@@ -1,153 +1,94 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { type CharacterProfile } from "./character-state.js";
 import {
   createDefaultAppSettings,
-  getProviderAppSettings,
   type AppSettings,
 } from "./provider-settings-state.js";
 import { type SessionSummary } from "./session-state.js";
-import { DEFAULT_APPROVAL_MODE } from "./approval-mode.js";
 import { type ModelCatalogSnapshot } from "./model-catalog.js";
 import {
   DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
   type MemoryManagementViewFilters,
-} from "./memory-management-view.js";
+} from "./memory/memory-management-view.js";
 import {
   buildMemoryManagementPageRequest,
-  mergeMemoryManagementSnapshots,
-  removeCharacterMemoryEntryFromSnapshot,
-  removeProjectMemoryEntryFromSnapshot,
-  removeSessionMemoryFromSnapshot,
-  type MemoryManagementDomain,
-  type MemoryManagementDomainPageInfo,
   type MemoryManagementSnapshot,
-} from "./memory-management-state.js";
+} from "./memory/memory-management-state.js";
 import {
   buildHomeLaunchProjection,
-} from "./home-launch-projection.js";
+} from "./home/home-launch-projection.js";
+import { buildHomeLaunchDialogProps } from "./home/home-launch-dialog-props.js";
 import {
-  buildHomeCharacterProjection,
-} from "./home-character-projection.js";
-import {
-  buildCreateCompanionSessionInputFromLaunchDraft,
-  buildCreateSessionInputFromLaunchDraft,
-  closeLaunchDraft,
   createClosedLaunchDraft,
-  openLaunchDraft,
-  resolveLastUsedSessionSelection,
-  setLaunchWorkspaceFromPath,
-  syncLaunchDraftCharacter,
   type HomeLaunchDraft,
-} from "./home-launch-state.js";
-import { createCompanionSessionSummary, type CompanionSessionSummary } from "./companion-state.js";
+} from "./home/home-launch-state.js";
+import { type CompanionSessionSummary } from "./companion-state.js";
+import { buildHomeMateProfileHandlers } from "./home/home-mate-profile-handlers.js";
 import {
   buildHomeSessionProjection,
-} from "./home-session-projection.js";
+} from "./home/home-session-projection.js";
+import { buildHomeLaunchHandlers } from "./home/home-launch-handlers.js";
 import {
   buildHomeProviderSettingRows,
   buildPersistedAppSettingsFromRows,
+  type HomeProviderInstructionTargetSettings,
   type HomeProviderSettingRow,
-} from "./home-settings-view-model.js";
+} from "./settings/settings-view-model.js";
+import { HomeAppRouter } from "./home/HomeAppRouter.js";
+import { buildHomeDashboardSlots } from "./home/HomeDashboardSlots.js";
+import { buildHomeRecentSessionsPanelProps } from "./home/home-recent-sessions-panel-props.js";
+import { buildHomeRightPaneProps } from "./home/home-right-pane-props.js";
+import { buildHomeWindowContentSlots } from "./home/HomeWindowContentSlots.js";
+import { getHomeWindowMode } from "./home/home-window-mode.js";
+import { useHomeOpenWindowSubscriptions } from "./home/use-home-open-window-subscriptions.js";
 import {
-  HomeLaunchDialog,
-  HomeMonitorContent,
-  HomeRecentSessionsPanel,
-  HomeRightPane,
-  HomeSettingsContent,
-} from "./home-components.js";
+  openCompanionReviewWindow,
+  openMateTalkWindow,
+  openMemoryManagementWindow,
+  openSessionMonitorWindow,
+  openSessionWindow,
+  openSettingsWindow,
+} from "./home/home-launch-commands.js";
 import {
-  exportHomeModelCatalog,
-  importHomeModelCatalog,
-  saveHomeSettings,
-} from "./home-settings-actions.js";
+  EMPTY_MEMORY_MANAGEMENT_PAGE_STATE,
+  normalizeMemoryManagementPages,
+  type MemoryManagementPageState,
+} from "./memory/memory-management-page-state.js";
 import {
-  updateCharacterReflectionCharDeltaThreshold,
-  updateCharacterReflectionCooldownSeconds,
-  updateCharacterReflectionModelDraft,
-  updateCharacterReflectionMessageDeltaThreshold,
-  updateCharacterReflectionReasoningEffortDraft,
-  updateCharacterReflectionTimeoutSecondsDraft,
-  updateAutoCollapseActionDockOnSend,
-  updateCodingProviderEnabledDraft,
-  updateCodingProviderSkillRootPathDraft,
-  updateMemoryExtractionModelDraft,
-  updateMemoryExtractionReasoningEffortDraft,
-  updateMemoryExtractionThresholdDraft,
-  updateMemoryExtractionTimeoutSecondsDraft,
-  updateMemoryGenerationEnabled,
-  updateSystemPromptPrefix,
-} from "./home-settings-draft.js";
+  normalizeProviderInstructionTarget,
+  type HomeProviderInstructionTargetDraft,
+} from "./settings/provider-instruction-target-draft.js";
+import {
+  buildHomeMemoryManagementContentProps,
+  buildHomeSettingsContentProps,
+  type HomeSettingsContentBaseProps,
+} from "./settings/home-settings-content-props.js";
+import { buildProviderInstructionTargetHandlers } from "./settings/provider-instruction-target-handlers.js";
+import { buildSettingsDraftHandlers } from "./settings/settings-draft-handlers.js";
+import { buildSettingsCommandHandlers } from "./settings/settings-command-handlers.js";
+import { buildMemoryManagementHandlers } from "./memory/memory-management-handlers.js";
 import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "./renderer-withmate-api.js";
+import {
+  type MateGrowthSettings,
+  type MateProfile,
+  type MateStorageState,
+} from "./mate/mate-state.js";
+import { buildHomeMateSetupContentProps } from "./mate/home-mate-setup-props.js";
+import { type MateEmbeddingSettings } from "./mate/mate-embedding-settings.js";
+import type { MateGrowthEventListItem } from "./mate/mate-growth-events-state.js";
+import {
+  upsertMateGrowthEventListItem as upsertMateGrowthEventListItemAction,
+} from "./mate/mate-growth-actions.js";
+import { buildMateGrowthHandlers } from "./mate/mate-growth-handlers.js";
+import { MEMORY_MANAGEMENT_PAGE_LIMIT } from "./memory/memory-management-actions.js";
+import { buildMateMaintenanceHandlers } from "./mate/mate-maintenance-handlers.js";
+import { buildMateStatusRefreshers } from "./mate/mate-status-refreshers.js";
+import { buildHomeMonitorContentProps } from "./home/home-monitor-content-props.js";
+import { renderHomeMonitorWindowIcon, renderHomeSearchIcon } from "./home/home-icons.js";
 
-async function openSessionWindow(sessionId: string) {
-  await withWithMateApi((api) => api.openSession(sessionId));
-}
+type HomeRightPaneView = "monitor" | "mate";
 
-async function openHomeWindow() {
-  await withWithMateApi((api) => api.openHomeWindow());
-}
-
-async function openSessionMonitorWindow() {
-  await withWithMateApi((api) => api.openSessionMonitorWindow());
-}
-
-async function openSettingsWindow() {
-  await withWithMateApi((api) => api.openSettingsWindow());
-}
-
-async function openMemoryManagementWindow() {
-  await withWithMateApi((api) => api.openMemoryManagementWindow());
-}
-
-async function openCharacterEditor(characterId?: string | null) {
-  await withWithMateApi((api) => api.openCharacterEditor(characterId));
-}
-
-function getMemoryManagementCursor(pages: MemoryManagementPageState, domain: MemoryManagementDomain): number | null {
-  if (domain === "session") {
-    return pages.session.nextCursor;
-  }
-  if (domain === "project") {
-    return pages.project.nextCursor;
-  }
-  if (domain === "character") {
-    return pages.character.nextCursor;
-  }
-  return null;
-}
-
-type HomeRightPaneView = "monitor" | "characters";
-type HomeWindowMode = "home" | "monitor" | "settings" | "memory";
-
-const MEMORY_MANAGEMENT_PAGE_LIMIT = 50;
-
-type MemoryManagementPageState = {
-  session: MemoryManagementDomainPageInfo;
-  project: MemoryManagementDomainPageInfo;
-  character: MemoryManagementDomainPageInfo;
-};
-
-const EMPTY_MEMORY_MANAGEMENT_PAGE_INFO: MemoryManagementDomainPageInfo = {
-  nextCursor: null,
-  hasMore: false,
-  total: 0,
-};
-
-const EMPTY_MEMORY_MANAGEMENT_PAGE_STATE: MemoryManagementPageState = {
-  session: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
-  project: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
-  character: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
-};
-
-function getHomeWindowMode(): HomeWindowMode {
-  if (typeof window === "undefined") {
-    return "home";
-  }
-
-  const mode = new URLSearchParams(window.location.search).get("mode");
-  return mode === "monitor" || mode === "settings" || mode === "memory" ? mode : "home";
-}
+const MATE_EMBEDDING_SETTINGS_POLL_INTERVAL_MS = 2000;
 
 export default function HomeApp() {
   const desktopRuntime = isDesktopRuntime();
@@ -158,15 +99,16 @@ export default function HomeApp() {
   const usesMemoryManagementWindow = isSettingsWindowMode || isMemoryWindowMode;
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
-  const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [openSessionWindowIds, setOpenSessionWindowIds] = useState<string[]>([]);
   const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const [sessionSearchText, setSessionSearchText] = useState("");
-  const [characterSearchText, setCharacterSearchText] = useState("");
   const [rightPaneView, setRightPaneView] = useState<HomeRightPaneView>("monitor");
   const [settingsFeedback, setSettingsFeedback] = useState("");
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(createDefaultAppSettings());
+  const [mateEmbeddingSettings, setMateEmbeddingSettings] = useState<MateEmbeddingSettings | null>(null);
+  const [mateEmbeddingFeedback, setMateEmbeddingFeedback] = useState("");
+  const [mateEmbeddingBusy, setMateEmbeddingBusy] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [settingsDraftLoaded, setSettingsDraftLoaded] = useState(!isSettingsWindowMode);
   const [modelCatalogLoaded, setModelCatalogLoaded] = useState(!isSettingsWindowMode);
@@ -178,12 +120,33 @@ export default function HomeApp() {
   const [memoryManagementLoaded, setMemoryManagementLoaded] = useState(!usesMemoryManagementWindow);
   const [memoryManagementBusyTarget, setMemoryManagementBusyTarget] = useState<string | null>(null);
   const [memoryManagementFeedback, setMemoryManagementFeedback] = useState("");
+  const [providerInstructionTargets, setProviderInstructionTargets] = useState<HomeProviderInstructionTargetDraft[]>([]);
+  const [providerInstructionTargetsLoaded, setProviderInstructionTargetsLoaded] = useState(!isSettingsWindowMode);
   const [launchDraft, setLaunchDraft] = useState<HomeLaunchDraft>(() => createClosedLaunchDraft());
   const [launchFeedback, setLaunchFeedback] = useState("");
   const [launchStarting, setLaunchStarting] = useState(false);
+  const [mateState, setMateState] = useState<MateStorageState | null>(null);
+  const [mateProfile, setMateProfile] = useState<MateProfile | null>(null);
+  const [mateDisplayName, setMateDisplayName] = useState("");
+  const [mateGrowthSettings, setMateGrowthSettings] = useState<MateGrowthSettings | null>(null);
+  const [mateGrowthFeedback, setMateGrowthFeedback] = useState("");
+  const [mateGrowthBusy, setMateGrowthBusy] = useState(false);
+  const [mateGrowthEvents, setMateGrowthEvents] = useState<MateGrowthEventListItem[]>([]);
+  const [mateGrowthEventsLoading, setMateGrowthEventsLoading] = useState(false);
+  const [mateGrowthEventsFeedback, setMateGrowthEventsFeedback] = useState("");
+  const [mateGrowthEventBusyTarget, setMateGrowthEventBusyTarget] = useState<string | null>(null);
+  const [correctingMateGrowthEventId, setCorrectingMateGrowthEventId] = useState<string | null>(null);
+  const [correctingMateGrowthEventStatement, setCorrectingMateGrowthEventStatement] = useState("");
+  const [mateCreating, setMateCreating] = useState(false);
+  const [mateAvatarUpdating, setMateAvatarUpdating] = useState(false);
+  const [mateGrowthApplying, setMateGrowthApplying] = useState(false);
+  const [mateResetting, setMateResetting] = useState(false);
+  const [mateCreationFeedback, setMateCreationFeedback] = useState("");
+  const [mateProfileEditorOpen, setMateProfileEditorOpen] = useState(false);
   const settingsDirtyRef = useRef(false);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const memoryManagementRequestIdRef = useRef(0);
+  const mateEmbeddingSettingsPollingIntervalRef = useRef<number | null>(null);
 
   const beginMemoryManagementRequest = () => {
     memoryManagementRequestIdRef.current += 1;
@@ -192,6 +155,15 @@ export default function HomeApp() {
 
   const isLatestMemoryManagementRequest = (requestId: number) =>
     memoryManagementRequestIdRef.current === requestId;
+
+  const stopMateEmbeddingSettingsPolling = () => {
+    if (mateEmbeddingSettingsPollingIntervalRef.current === null) {
+      return;
+    }
+
+    window.clearInterval(mateEmbeddingSettingsPollingIntervalRef.current);
+    mateEmbeddingSettingsPollingIntervalRef.current = null;
+  };
 
   const applyIncomingAppSettings = (settings: AppSettings, options?: { force?: boolean }) => {
     setAppSettings(settings);
@@ -206,6 +178,26 @@ export default function HomeApp() {
     }
   };
 
+  const { refreshMateStatus, refreshMateGrowthEvents } = buildMateStatusRefreshers({
+    setMateState,
+    setMateProfile,
+    setMateDisplayName,
+    setMateEmbeddingSettings,
+    setMateEmbeddingFeedback,
+    setMateEmbeddingBusy,
+    setMateGrowthSettings,
+    setMateGrowthFeedback,
+    setMateGrowthBusy,
+    setMateGrowthEvents,
+    setMateGrowthEventsFeedback,
+    setMateGrowthEventsLoading,
+    setMateGrowthEventBusyTarget,
+    setCorrectingMateGrowthEventId,
+    setCorrectingMateGrowthEventStatement,
+    setMateAvatarUpdating,
+    stopMateEmbeddingSettingsPolling,
+  });
+
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
@@ -216,76 +208,113 @@ export default function HomeApp() {
       };
     }
 
-    void withmateApi.listSessionSummaries().then((nextSessions) => {
-      if (active) {
-        setSessions(nextSessions);
-      }
-    });
-    void withmateApi.listCompanionSessionSummaries().then((nextSessions) => {
-      if (active) {
-        setCompanionSessions(nextSessions);
-      }
-    });
-    void Promise.all([withmateApi.getAppSettings(), withmateApi.getModelCatalog(null)]).then(([settings, snapshot]) => {
+    let unsubscribeSessions: (() => void) | null = null;
+    let unsubscribeCompanionSessions: (() => void) | null = null;
+
+    const hydrateOperationalHomeData = async () => {
+      const [nextSessions, nextCompanionSessions] = await Promise.all([
+        withmateApi.listSessionSummaries(),
+        withmateApi.listCompanionSessionSummaries(),
+      ]);
       if (!active) {
         return;
       }
 
-      applyIncomingAppSettings(settings, { force: isSettingsWindowMode });
-      setModelCatalog(snapshot);
-      setModelCatalogLoaded(true);
-    });
-    if (usesMemoryManagementWindow) {
-      void withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
-        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-      }))
-        .then((page) => {
+      setSessions(nextSessions);
+      setCompanionSessions(nextCompanionSessions);
+
+      if (usesMemoryManagementWindow) {
+        try {
+          const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
+            limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
+          }));
           if (!active) {
             return;
           }
 
           setMemoryManagementSnapshot(page.snapshot);
-          setMemoryManagementPages(page.pages);
+          setMemoryManagementPages(normalizeMemoryManagementPages(page.pages));
           setMemoryManagementLoaded(true);
-        })
-        .catch((error) => {
+        } catch (error) {
           if (!active) {
             return;
           }
 
           setMemoryManagementFeedback(error instanceof Error ? error.message : "Memory 一覧の読み込みに失敗したよ。");
           setMemoryManagementLoaded(true);
+        }
+      }
+
+      unsubscribeSessions = withmateApi.subscribeSessionSummaries((nextSessions) => {
+        if (active) {
+          setSessions(nextSessions);
+        }
+      });
+      unsubscribeCompanionSessions = withmateApi.subscribeCompanionSessionSummaries((nextSessions) => {
+        if (active) {
+          setCompanionSessions(nextSessions);
+        }
+      });
+
+    };
+
+    void Promise.all([
+      refreshMateStatus(withmateApi, { isActive: () => active }),
+      Promise.all([
+        withmateApi.getAppSettings(),
+        withmateApi.getModelCatalog(null),
+        withmateApi.getMateEmbeddingSettings(),
+        withmateApi.getMateGrowthSettings(),
+      ]),
+    ]).then(([nextMateState, [settings, snapshot, embeddingSettings, growthSettings]]) => {
+      if (!active) {
+        return;
+      }
+
+      applyIncomingAppSettings(settings, { force: isSettingsWindowMode });
+      setModelCatalog(snapshot);
+      setMateEmbeddingSettings(embeddingSettings);
+      setModelCatalogLoaded(true);
+      if (nextMateState === "not_created") {
+        setMateGrowthSettings(null);
+        setMateGrowthFeedback("");
+        setMateGrowthEvents([]);
+        setMateGrowthEventsFeedback("");
+        setCorrectingMateGrowthEventId(null);
+        setCorrectingMateGrowthEventStatement("");
+        if (usesMemoryManagementWindow) {
+          setMemoryManagementLoaded(true);
+        }
+      } else {
+        setMateGrowthSettings(growthSettings);
+        void refreshMateGrowthEvents(withmateApi, { isActive: () => active, silent: true });
+      }
+
+      if (nextMateState !== "not_created") {
+        void hydrateOperationalHomeData().catch((error) => {
+          if (!active) {
+            return;
+          }
+
+          setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
         });
-    }
-
-    void withmateApi.listCharacters().then((nextCharacters) => {
+      }
+    }).catch((error) => {
       if (!active) {
         return;
       }
 
-      setCharacters(nextCharacters);
-      setLaunchDraft((current) => syncLaunchDraftCharacter(current, nextCharacters));
+      setMateState("not_created");
+      setMateProfile(null);
+      setMateGrowthSettings(null);
+      setMateGrowthFeedback("");
+      setMateGrowthEvents([]);
+      setMateGrowthEventsFeedback("");
+      setCorrectingMateGrowthEventId(null);
+      setCorrectingMateGrowthEventStatement("");
+      setMateCreationFeedback(error instanceof Error ? error.message : "Mate 状態の取得に失敗したよ。");
     });
 
-    const unsubscribeSessions = withmateApi.subscribeSessionSummaries((nextSessions) => {
-      if (active) {
-        setSessions(nextSessions);
-      }
-    });
-    const unsubscribeCompanionSessions = withmateApi.subscribeCompanionSessionSummaries((nextSessions) => {
-      if (active) {
-        setCompanionSessions(nextSessions);
-      }
-    });
-
-    const unsubscribeCharacters = withmateApi.subscribeCharacters((nextCharacters) => {
-      if (!active) {
-        return;
-      }
-
-      setCharacters(nextCharacters);
-      setLaunchDraft((current) => syncLaunchDraftCharacter(current, nextCharacters));
-    });
     const unsubscribeModelCatalog = withmateApi.subscribeModelCatalog((snapshot) => {
       if (active) {
         setModelCatalog(snapshot);
@@ -300,9 +329,8 @@ export default function HomeApp() {
 
     return () => {
       active = false;
-      unsubscribeSessions();
-      unsubscribeCompanionSessions();
-      unsubscribeCharacters();
+      unsubscribeSessions?.();
+      unsubscribeCompanionSessions?.();
       unsubscribeModelCatalog();
       unsubscribeAppSettings();
     };
@@ -310,65 +338,91 @@ export default function HomeApp() {
 
   useEffect(() => {
     let active = true;
-    let receivedSubscriptionUpdate = false;
     const withmateApi = getWithMateApi();
 
     if (!withmateApi) {
+      setProviderInstructionTargetsLoaded(true);
       return () => {
         active = false;
       };
     }
 
-    const unsubscribeOpenSessionWindowIds = withmateApi.subscribeOpenSessionWindowIds((nextSessionIds) => {
+    void withmateApi.listProviderInstructionTargets().then((nextTargets) => {
       if (!active) {
         return;
       }
 
-      receivedSubscriptionUpdate = true;
-      setOpenSessionWindowIds(nextSessionIds);
-    });
-
-    void withmateApi.listOpenSessionWindowIds().then((nextSessionIds) => {
-      if (!active || receivedSubscriptionUpdate) {
+      setProviderInstructionTargets(nextTargets.map((target) => normalizeProviderInstructionTarget(target)));
+      setProviderInstructionTargetsLoaded(true);
+    }).catch((error) => {
+      if (!active) {
         return;
       }
-
-      setOpenSessionWindowIds(nextSessionIds);
+      setSettingsFeedback(error instanceof Error ? error.message : "Provider Instruction Sync の一覧取得に失敗したよ。");
+      setProviderInstructionTargetsLoaded(true);
     });
 
     return () => {
       active = false;
-      unsubscribeOpenSessionWindowIds();
     };
   }, []);
+
+  useHomeOpenWindowSubscriptions({
+    getApi: getWithMateApi,
+    setOpenSessionWindowIds,
+    setOpenCompanionReviewWindowIds,
+  });
 
   useEffect(() => {
-    let active = true;
-
     const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return () => {
-        active = false;
-      };
+    if (!withmateApi || mateEmbeddingSettings?.cacheState !== "downloading") {
+      stopMateEmbeddingSettingsPolling();
+      return;
     }
 
-    const unsubscribeOpenCompanionReviewWindowIds = withmateApi.subscribeOpenCompanionReviewWindowIds((nextSessionIds) => {
-      if (active) {
-        setOpenCompanionReviewWindowIds(nextSessionIds);
-      }
-    });
+    let active = true;
+    const refreshMateEmbeddingSettings = async () => {
+      try {
+        const nextMateEmbeddingSettings = await withmateApi.getMateEmbeddingSettings();
+        if (!active) {
+          return;
+        }
 
-    void withmateApi.listOpenCompanionReviewWindowIds().then((nextSessionIds) => {
-      if (active) {
-        setOpenCompanionReviewWindowIds(nextSessionIds);
+        setMateEmbeddingSettings(nextMateEmbeddingSettings);
+        if (!nextMateEmbeddingSettings) {
+          stopMateEmbeddingSettingsPolling();
+          return;
+        }
+
+        if (nextMateEmbeddingSettings.cacheState !== "downloading") {
+          stopMateEmbeddingSettingsPolling();
+        }
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        setMateEmbeddingFeedback(
+          error instanceof Error ? error.message : "Mate Embedding の状態取得に失敗したよ。",
+        );
+        stopMateEmbeddingSettingsPolling();
       }
-    });
+    };
+
+    void refreshMateEmbeddingSettings();
+    stopMateEmbeddingSettingsPolling();
+    mateEmbeddingSettingsPollingIntervalRef.current = window.setInterval(
+      () => {
+        void refreshMateEmbeddingSettings();
+      },
+      MATE_EMBEDDING_SETTINGS_POLL_INTERVAL_MS,
+    );
 
     return () => {
       active = false;
-      unsubscribeOpenCompanionReviewWindowIds();
+      stopMateEmbeddingSettingsPolling();
     };
-  }, []);
+  }, [mateEmbeddingSettings?.cacheState]);
 
   const sessionProjection = useMemo(
     () => buildHomeSessionProjection(
@@ -385,41 +439,19 @@ export default function HomeApp() {
     normalizedSessionSearch,
     runningMonitorEntries,
     nonRunningMonitorEntries,
-    monitorRunningEmptyMessage,
-    monitorCompletedEmptyMessage,
   } = sessionProjection;
   const launchProjection = useMemo(
     () => buildHomeLaunchProjection({
-      characters,
-      launchCharacterSearchText: launchDraft.characterSearchText,
-      launchCharacterId: launchDraft.characterId,
       launchProviderId: launchDraft.providerId,
+      launchMode: launchDraft.mode,
       launchTitle: launchDraft.title,
       launchWorkspace: launchDraft.workspace,
       appSettings,
       modelCatalog,
     }),
-    [
-      appSettings,
-      characterSearchText,
-      characters,
-      launchDraft,
-      modelCatalog,
-    ],
+    [appSettings, launchDraft, modelCatalog],
   );
-  const {
-    filteredLaunchCharacters,
-    selectedCharacter,
-    enabledLaunchProviders,
-    selectedLaunchProvider,
-    launchWorkspacePathLabel,
-    canStartSession,
-  } = launchProjection;
-  const characterProjection = useMemo(
-    () => buildHomeCharacterProjection(characters, characterSearchText),
-    [characterSearchText, characters],
-  );
-  const { filteredCharacters, emptyState: characterEmptyState } = characterProjection;
+  const { enabledLaunchProviders, selectedLaunchProvider } = launchProjection;
 
   useEffect(() => {
     setLaunchDraft((current) => {
@@ -434,427 +466,109 @@ export default function HomeApp() {
     });
   }, [enabledLaunchProviders]);
 
-  const renderSearchIcon = () => (
-    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-      <path
-        d="M13.9 12.5l3.6 3.6-1.4 1.4-3.6-3.6a6 6 0 1 1 1.4-1.4Zm-4.9.5a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-  const renderMonitorWindowIcon = () => (
-    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-      <path
-        d="M4 3.5h12A1.5 1.5 0 0 1 17.5 5v10a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 15V5A1.5 1.5 0 0 1 4 3.5Zm0 1a.5.5 0 0 0-.5.5v2h13V5a.5.5 0 0 0-.5-.5H4Zm-.5 10.5a.5.5 0 0 0 .5.5h12a.5.5 0 0 0 .5-.5V8h-13v7Zm2-5h4v1h-4v-1Zm0 2h6v1h-6v-1Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
   const homePageClassName = `page-shell home-page${isMonitorWindowMode ? " home-page-monitor-window" : ""}`;
 
-  const handleBrowseWorkspace = async () => {
-    const selectedPath = await withWithMateApi((api) => api.pickDirectory());
-    if (!selectedPath) {
-      return;
-    }
+  const homeLaunchHandlers = buildHomeLaunchHandlers({
+    launchDraft,
+    launchStarting,
+    mateState,
+    mateProfile,
+    enabledLaunchProviders,
+    selectedLaunchProviderId: selectedLaunchProvider?.id ?? null,
+    sessions,
+    setLaunchFeedback,
+    setLaunchStarting,
+    setLaunchDraft,
+    pickWorkspaceDirectory: async () => withWithMateApi((api) => api.pickDirectory()),
+    openSessionWindow,
+    openCompanionReviewWindow,
+    openMateTalkWindow,
+    createSession: async (input) => await withWithMateApi((api) => api.createSession(input)),
+    createCompanionSession: async (input) => await withWithMateApi((api) => api.createCompanionSession(input)),
+    upsertCompanionSessionSummary: (summary) => {
+      setCompanionSessions((current) => [
+        summary,
+        ...current.filter((session) => session.id !== summary.id),
+      ]);
+    },
+  });
 
-    setLaunchFeedback("");
-    setLaunchDraft((current) => setLaunchWorkspaceFromPath(current, selectedPath));
+  const mateProfileHandlers = buildHomeMateProfileHandlers({
+    getApi: getWithMateApi,
+    mateDisplayName,
+    mateState,
+    mateProfile,
+    setMateState,
+    setMateProfile,
+    setMateDisplayName,
+    setMateCreationFeedback,
+    setMateProfileEditorOpen,
+    setMateCreating,
+    setMateAvatarUpdating,
+    setLaunchFeedback,
+    setSessions,
+    setCompanionSessions,
+    setMateEmbeddingSettings,
+    setMateGrowthSettings,
+    setMateGrowthFeedback,
+    setMateGrowthEvents,
+    setMateGrowthEventsFeedback,
+    setCorrectingMateGrowthEventId,
+    setCorrectingMateGrowthEventStatement,
+    refreshMateGrowthEvents,
+  });
+
+  const upsertMateGrowthEventListItem = (nextEvent: MateGrowthEventListItem | null) => {
+    setMateGrowthEvents((current) => upsertMateGrowthEventListItemAction(current, nextEvent));
   };
 
-  const openLaunchDialog = () => {
-    setLaunchFeedback("");
-    setLaunchDraft((current) => openLaunchDraft(current, enabledLaunchProviders[0]?.id ?? ""));
-  };
+  const mateGrowthHandlers = buildMateGrowthHandlers({
+    getApi: getWithMateApi,
+    mateState,
+    mateGrowthApplying,
+    mateGrowthBusy,
+    mateGrowthEventBusyTarget,
+    setMateGrowthApplying,
+    setMateGrowthBusy,
+    setSettingsFeedback,
+    setMateGrowthFeedback,
+    setMateGrowthSettings,
+    setMateGrowthEventsFeedback,
+    setMateGrowthEventBusyTarget,
+    setCorrectingMateGrowthEventId,
+    setCorrectingMateGrowthEventStatement,
+    upsertMateGrowthEventListItem,
+    refreshMateStatus,
+    refreshMateGrowthEvents,
+  });
 
-  const closeLaunchDialog = () => {
-    setLaunchFeedback("");
-    setLaunchStarting(false);
-    setLaunchDraft((current) => closeLaunchDraft(current));
-  };
+  const providerInstructionTargetHandlers = buildProviderInstructionTargetHandlers({
+    providerInstructionTargets,
+    settingsDraft,
+    setProviderInstructionTargets,
+    setSettingsFeedback,
+    getApi: getWithMateApi,
+  });
 
-  const resolveLaunchValidationMessage = () => {
-    if (!launchDraft.title.trim()) {
-      return "タイトルを入力してね。";
-    }
-    if (!launchDraft.workspace) {
-      return "workspace を選んでね。";
-    }
-    if (!selectedCharacter) {
-      return "キャラを選んでね。";
-    }
-    if (!selectedLaunchProvider) {
-      return "有効な Coding Provider を選んでね。";
-    }
-    return "";
-  };
-
-  const handleStartSession = async (requestedMode: HomeLaunchDraft["mode"] = launchDraft.mode) => {
-    if (launchStarting) {
-      return;
-    }
-
-    const validationMessage = resolveLaunchValidationMessage();
-    if (validationMessage) {
-      setLaunchFeedback(validationMessage);
-      return;
-    }
-
-    setLaunchFeedback(requestedMode === "companion" ? "Companion を開始してるよ..." : "Session を開始してるよ...");
-    setLaunchStarting(true);
-    const lastUsedSelection = resolveLastUsedSessionSelection(sessions, selectedLaunchProvider?.id ?? null);
-    try {
-      if (requestedMode === "companion") {
-        const companionInput = buildCreateCompanionSessionInputFromLaunchDraft({
-          draft: launchDraft,
-          selectedCharacter,
-          selectedProviderId: selectedLaunchProvider?.id ?? null,
-          lastUsedSelection,
-        });
-        if (!companionInput) {
-          setLaunchFeedback("Companion の開始条件が揃ってないよ。");
-          return;
-        }
-
-        const createdSession = await withWithMateApi((api) => api.createCompanionSession(companionInput));
-        if (!createdSession) {
-          setLaunchFeedback("Companion を開始できなかったよ。");
-          return;
-        }
-
-        setCompanionSessions((current) => [
-          createCompanionSessionSummary(createdSession),
-          ...current.filter((session) => session.id !== createdSession.id),
-        ]);
-        closeLaunchDialog();
-        await withWithMateApi((api) => api.openCompanionReviewWindow(createdSession.id));
-        return;
-      }
-
-      const sessionInput = buildCreateSessionInputFromLaunchDraft({
-        draft: launchDraft,
-        selectedCharacter,
-        selectedProviderId: selectedLaunchProvider?.id ?? null,
-        approvalMode: DEFAULT_APPROVAL_MODE,
-        lastUsedSelection,
-      });
-      if (!sessionInput) {
-        setLaunchFeedback("Session の開始条件が揃ってないよ。");
-        return;
-      }
-
-      const createdSession = await withWithMateApi((api) => api.createSession(sessionInput));
-      if (!createdSession) {
-        setLaunchFeedback("Session を開始できなかったよ。");
-        return;
-      }
-      closeLaunchDialog();
-      await openSessionWindow(createdSession.id);
-    } catch (error) {
-      setLaunchFeedback(error instanceof Error ? error.message : "開始に失敗したよ。");
-    } finally {
-      setLaunchStarting(false);
-    }
-  };
-
-  const handleImportModelCatalog = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-
-    try {
-      setSettingsFeedback(await importHomeModelCatalog(withmateApi));
-    } catch (error) {
-      setSettingsFeedback(error instanceof Error ? error.message : "model catalog の読み込みに失敗したよ。");
-    }
-  };
-
-  const handleSaveSettings = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-
-    try {
-      const result = await saveHomeSettings(withmateApi, persistedSettingsDraft);
-      setAppSettings(result.nextSettings);
-      setSettingsDraft(result.nextSettings);
-      setSettingsFeedback(result.feedback);
-    } catch (error) {
-      setSettingsFeedback(error instanceof Error ? error.message : "設定の保存に失敗したよ。");
-    }
-  };
-
-  const handleChangeProviderEnabled = (providerId: string, enabled: boolean) => {
-    setSettingsDraft((current) => updateCodingProviderEnabledDraft(current, providerId, enabled));
-  };
-
-  const handleChangeProviderSkillRootPath = (providerId: string, skillRootPath: string) => {
-    setSettingsDraft((current) => updateCodingProviderSkillRootPathDraft(current, providerId, skillRootPath));
-  };
-
-  const handleBrowseProviderSkillRootPath = async (providerId: string) => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-
-    const currentSettings = getProviderAppSettings(settingsDraft, providerId);
-    const selectedPath = await withmateApi.pickDirectory(currentSettings.skillRootPath || null);
-    if (!selectedPath) {
-      return;
-    }
-
-    handleChangeProviderSkillRootPath(providerId, selectedPath);
-  };
-
-  const handleChangeMemoryExtractionModel = (providerId: string, model: string) => {
-    const providerCatalog = modelCatalog?.providers.find((provider) => provider.id === providerId);
-    if (!providerCatalog) {
-      return;
-    }
-
-    setSettingsDraft((current) => updateMemoryExtractionModelDraft(current, providerCatalog, providerId, model));
-  };
-
-  const handleChangeMemoryExtractionReasoningEffort = (
-    providerId: string,
-    reasoningEffort: AppSettings["memoryExtractionProviderSettings"][string]["reasoningEffort"],
-  ) => {
-    setSettingsDraft((current) => updateMemoryExtractionReasoningEffortDraft(current, providerId, reasoningEffort));
-  };
-
-  const handleChangeMemoryExtractionThreshold = (providerId: string, value: string) => {
-    setSettingsDraft((current) => updateMemoryExtractionThresholdDraft(current, providerId, value));
-  };
-
-  const handleChangeMemoryExtractionTimeoutSeconds = (providerId: string, value: string) => {
-    setSettingsDraft((current) => updateMemoryExtractionTimeoutSecondsDraft(current, providerId, value));
-  };
-
-  const handleChangeCharacterReflectionModel = (providerId: string, model: string) => {
-    const providerCatalog = modelCatalog?.providers.find((provider) => provider.id === providerId);
-    if (!providerCatalog) {
-      return;
-    }
-
-    setSettingsDraft((current) => updateCharacterReflectionModelDraft(current, providerCatalog, providerId, model));
-  };
-
-  const handleChangeCharacterReflectionReasoningEffort = (
-    providerId: string,
-    reasoningEffort: AppSettings["characterReflectionProviderSettings"][string]["reasoningEffort"],
-  ) => {
-    setSettingsDraft((current) => updateCharacterReflectionReasoningEffortDraft(current, providerId, reasoningEffort));
-  };
-
-  const handleChangeCharacterReflectionTimeoutSeconds = (providerId: string, value: string) => {
-    setSettingsDraft((current) => updateCharacterReflectionTimeoutSecondsDraft(current, providerId, value));
-  };
-
-  const handleChangeCharacterReflectionCooldownSeconds = (value: string) => {
-    setSettingsDraft((current) => updateCharacterReflectionCooldownSeconds(current, value));
-  };
-
-  const handleChangeCharacterReflectionCharDeltaThreshold = (value: string) => {
-    setSettingsDraft((current) => updateCharacterReflectionCharDeltaThreshold(current, value));
-  };
-
-  const handleChangeCharacterReflectionMessageDeltaThreshold = (value: string) => {
-    setSettingsDraft((current) => updateCharacterReflectionMessageDeltaThreshold(current, value));
-  };
-
-  const handleReloadMemoryManagement = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !usesMemoryManagementWindow) {
-      return;
-    }
-
-    const requestId = beginMemoryManagementRequest();
-    try {
-      setMemoryManagementLoaded(false);
-      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
-        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-      }));
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementSnapshot(page.snapshot);
-      setMemoryManagementPages(page.pages);
-      setMemoryManagementFeedback("Memory 管理ビューを更新したよ。");
-    } catch (error) {
-      setMemoryManagementFeedback(error instanceof Error ? error.message : "Memory 一覧の読み込みに失敗したよ。");
-    } finally {
-      setMemoryManagementLoaded(true);
-    }
-  };
-
-  const handleLoadMoreMemoryManagement = async (domain: MemoryManagementDomain) => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !usesMemoryManagementWindow || domain === "all") {
-      return;
-    }
-
-    const cursor = getMemoryManagementCursor(memoryManagementPages, domain);
-    if (cursor === null) {
-      return;
-    }
-
-    const requestId = beginMemoryManagementRequest();
-    try {
-      setMemoryManagementLoaded(false);
-      const page = await withmateApi.getMemoryManagementPage({
-        ...buildMemoryManagementPageRequest(memoryManagementFilters, {
-          domain,
-          cursor,
-          limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-        }),
-      });
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementSnapshot((current) => mergeMemoryManagementSnapshots(current, page.snapshot, domain));
-      setMemoryManagementPages((current) => ({
-        ...current,
-        [domain]: page.pages[domain],
-      }));
-      setMemoryManagementFeedback("Memory 管理ビューを追加読み込みしたよ。");
-    } catch (error) {
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementFeedback(error instanceof Error ? error.message : "Memory 一覧の追加読み込みに失敗したよ。");
-    } finally {
-      if (isLatestMemoryManagementRequest(requestId)) {
-        setMemoryManagementLoaded(true);
-      }
-    }
-  };
-
-  const handleChangeMemoryManagementViewFilters = useCallback(async (filters: MemoryManagementViewFilters) => {
-    setMemoryManagementFilters(filters);
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !usesMemoryManagementWindow) {
-      return;
-    }
-
-    const requestId = beginMemoryManagementRequest();
-    try {
-      setMemoryManagementLoaded(false);
-      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(filters, {
-        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-      }));
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementSnapshot(page.snapshot);
-      setMemoryManagementPages(page.pages);
-    } catch (error) {
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementFeedback(error instanceof Error ? error.message : "Memory 一覧の読み込みに失敗したよ。");
-    } finally {
-      if (isLatestMemoryManagementRequest(requestId)) {
-        setMemoryManagementLoaded(true);
-      }
-    }
-  }, [usesMemoryManagementWindow]);
-
-  const handleDeleteSessionMemory = async (sessionId: string) => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !usesMemoryManagementWindow) {
-      return;
-    }
-
-    try {
-      setMemoryManagementBusyTarget(`session:${sessionId}`);
-      await withmateApi.deleteSessionMemory(sessionId);
-      const requestId = beginMemoryManagementRequest();
-      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
-        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-      }));
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementSnapshot(removeSessionMemoryFromSnapshot(page.snapshot, sessionId));
-      setMemoryManagementPages(page.pages);
-      setMemoryManagementFeedback("Session Memory を削除したよ。");
-    } catch (error) {
-      setMemoryManagementFeedback(error instanceof Error ? error.message : "Session Memory の削除に失敗したよ。");
-    } finally {
-      setMemoryManagementBusyTarget(null);
-      setMemoryManagementLoaded(true);
-    }
-  };
-
-  const handleDeleteProjectMemoryEntry = async (entryId: string) => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !usesMemoryManagementWindow) {
-      return;
-    }
-
-    try {
-      setMemoryManagementBusyTarget(`project:${entryId}`);
-      await withmateApi.deleteProjectMemoryEntry(entryId);
-      const requestId = beginMemoryManagementRequest();
-      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
-        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-      }));
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementSnapshot(removeProjectMemoryEntryFromSnapshot(page.snapshot, entryId));
-      setMemoryManagementPages(page.pages);
-      setMemoryManagementFeedback("Project Memory を削除したよ。");
-    } catch (error) {
-      setMemoryManagementFeedback(error instanceof Error ? error.message : "Project Memory の削除に失敗したよ。");
-    } finally {
-      setMemoryManagementBusyTarget(null);
-      setMemoryManagementLoaded(true);
-    }
-  };
-
-  const handleDeleteCharacterMemoryEntry = async (entryId: string) => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi || !usesMemoryManagementWindow) {
-      return;
-    }
-
-    try {
-      setMemoryManagementBusyTarget(`character:${entryId}`);
-      await withmateApi.deleteCharacterMemoryEntry(entryId);
-      const requestId = beginMemoryManagementRequest();
-      const page = await withmateApi.getMemoryManagementPage(buildMemoryManagementPageRequest(memoryManagementFilters, {
-        limit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-      }));
-      if (!isLatestMemoryManagementRequest(requestId)) {
-        return;
-      }
-      setMemoryManagementSnapshot(removeCharacterMemoryEntryFromSnapshot(page.snapshot, entryId));
-      setMemoryManagementPages(page.pages);
-      setMemoryManagementFeedback("Character Memory を削除したよ。");
-    } catch (error) {
-      setMemoryManagementFeedback(error instanceof Error ? error.message : "Character Memory の削除に失敗したよ。");
-    } finally {
-      setMemoryManagementBusyTarget(null);
-      setMemoryManagementLoaded(true);
-    }
-  };
+  const settingsDraftHandlers = buildSettingsDraftHandlers({
+    modelCatalog,
+    setSettingsDraft,
+  });
 
   const providerSettingRows = useMemo<HomeProviderSettingRow[]>(
-    () => buildHomeProviderSettingRows(modelCatalog, settingsDraft),
+    () => buildHomeProviderSettingRows(modelCatalog, settingsDraft, providerInstructionTargets),
     [
       modelCatalog,
       settingsDraft,
+      providerInstructionTargets,
     ],
   );
   const persistedSettingsDraft = useMemo(
     () => buildPersistedAppSettingsFromRows(settingsDraft, providerSettingRows),
     [providerSettingRows, settingsDraft],
   );
-  const settingsWindowReady = settingsDraftLoaded && modelCatalogLoaded && memoryManagementLoaded;
+  const settingsWindowReady =
+    settingsDraftLoaded && modelCatalogLoaded && memoryManagementLoaded && providerInstructionTargetsLoaded;
   const settingsDirty = useMemo(() => {
     return JSON.stringify(persistedSettingsDraft) !== JSON.stringify(appSettings);
   }, [appSettings, persistedSettingsDraft]);
@@ -863,295 +577,188 @@ export default function HomeApp() {
     settingsDirtyRef.current = settingsDirty;
   }, [settingsDirty]);
 
-  const handleExportModelCatalog = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
+  const memoryManagementHandlers = buildMemoryManagementHandlers({
+    getApi: getWithMateApi,
+    usesMemoryManagementWindow,
+    memoryManagementFilters,
+    memoryManagementPages,
+    beginMemoryManagementRequest,
+    isLatestMemoryManagementRequest,
+    setMemoryManagementLoaded,
+    setMemoryManagementFilters,
+    setMemoryManagementSnapshot,
+    setMemoryManagementPages,
+    setMemoryManagementFeedback,
+    setMemoryManagementBusyTarget,
+  });
 
-    try {
-      setSettingsFeedback(await exportHomeModelCatalog(withmateApi));
-    } catch (error) {
-      setSettingsFeedback(error instanceof Error ? error.message : "model catalog の保存に失敗したよ。");
-    }
+  const settingsCommandHandlers = buildSettingsCommandHandlers({
+    getApi: getWithMateApi,
+    settingsDraft,
+    persistedSettingsDraft,
+    providerInstructionTargets,
+    setAppSettings,
+    setSettingsDraft,
+    setProviderInstructionTargets,
+    setSettingsFeedback,
+    onChangeProviderSkillRootPath: settingsDraftHandlers.onChangeProviderSkillRootPath,
+    onChangeProviderSkillRelativePath: settingsDraftHandlers.onChangeProviderSkillRelativePath,
+  });
+
+  const mateMaintenanceHandlers = buildMateMaintenanceHandlers({
+    getApi: getWithMateApi,
+    mateState,
+    mateResetting,
+    setMateResetting,
+    setSettingsFeedback,
+    setMateEmbeddingBusy,
+    setMateEmbeddingFeedback,
+    setMateEmbeddingSettings,
+    refreshMateStatus,
+  });
+
+  const isMateStateLoading = mateState === null;
+  const isMateNotCreated = mateState === "not_created";
+  const canUsePrimaryFeatures = mateState !== "not_created" && mateProfile !== null;
+
+  const baseSettingsContentProps: HomeSettingsContentBaseProps = {
+    settingsDraft,
+    providerSettingRows,
+    modelCatalogRevisionLabel: String(modelCatalog?.revision ?? "-"),
+    settingsDirty,
+    settingsFeedback,
+    memoryManagementSnapshot,
+    memoryManagementPages,
+    memoryManagementLoading: !memoryManagementLoaded,
+    memoryManagementBusyTarget,
+    memoryManagementFeedback,
+    mateGrowthSettings,
+    mateGrowthFeedback,
+    mateGrowthBusy,
+    mateGrowthEvents,
+    mateGrowthEventsLoading,
+    mateGrowthEventsFeedback,
+    mateGrowthEventBusyTarget,
+    correctingMateGrowthEventId,
+    correctingMateGrowthEventStatement,
+    mateEmbeddingSettings,
+    mateEmbeddingFeedback,
+    mateEmbeddingBusy,
+    ...settingsDraftHandlers,
+    ...providerInstructionTargetHandlers,
+    ...memoryManagementHandlers,
+    ...settingsCommandHandlers,
+    onStartMateEmbeddingDownload: mateMaintenanceHandlers.onStartMateEmbeddingDownload,
+    onReloadMateGrowthEvents: mateGrowthHandlers.onReloadMateGrowthEvents,
+    onBeginCorrectMateGrowthEvent: mateGrowthHandlers.onBeginCorrectMateGrowthEvent,
+    onChangeCorrectMateGrowthEventStatement: mateGrowthHandlers.onChangeCorrectMateGrowthEventStatement,
+    onCancelCorrectMateGrowthEvent: mateGrowthHandlers.onCancelCorrectMateGrowthEvent,
+    onCorrectMateGrowthEvent: mateGrowthHandlers.onCorrectMateGrowthEvent,
+    onDisableMateGrowthEvent: mateGrowthHandlers.onDisableMateGrowthEvent,
+    onForgetMateGrowthEvent: mateGrowthHandlers.onForgetMateGrowthEvent,
+    onUpdateMateGrowthSettings: mateGrowthHandlers.onUpdateMateGrowthSettings,
   };
 
-  const handleOpenAppLogFolder = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
+  const { settingsContent, memoryManagementContent, mateSetupContent, monitorContent } = buildHomeWindowContentSlots({
+    settingsContent: buildHomeSettingsContentProps({
+      ...baseSettingsContentProps,
+      onApplyPendingGrowth: mateGrowthHandlers.onApplyPendingGrowth,
+      applyPendingGrowthBusy: mateGrowthApplying,
+      canApplyPendingGrowth: mateState === "active",
+      onResetMate: mateMaintenanceHandlers.onResetMate,
+      mateResetBusy: mateResetting,
+      canResetMate: mateState !== "not_created",
+    }),
+    memoryManagementContent: buildHomeMemoryManagementContentProps(baseSettingsContentProps),
+    mateSetupContent: buildHomeMateSetupContentProps({
+      mateState,
+      mateProfile,
+      mateDisplayName,
+      mateCreating,
+      mateAvatarUpdating,
+      mateCreationFeedback,
+      onChangeDisplayName: mateProfileHandlers.onChangeDisplayName,
+      onSubmit: mateProfileHandlers.onSubmit,
+      onOpenSettings: () => void openSettingsWindow(),
+      onCancelEdit: mateProfileHandlers.onCancelEdit,
+      onSelectAvatar: mateProfileHandlers.onSelectAvatar,
+      onClearAvatar: mateProfileHandlers.onClearAvatar,
+    }),
+    monitorContent: buildHomeMonitorContentProps({
+      runningEntries: runningMonitorEntries,
+      nonRunningEntries: nonRunningMonitorEntries,
+      onOpenSession: (sessionId) => void openSessionWindow(sessionId),
+      onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
+    }),
+  });
 
-    try {
-      await withmateApi.openAppLogFolder();
-      setSettingsFeedback("ログフォルダを開いたよ。");
-    } catch (error) {
-      setSettingsFeedback(error instanceof Error ? error.message : "ログフォルダを開けなかったよ。");
-    }
-  };
-
-  const handleOpenCrashDumpFolder = async () => {
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      return;
-    }
-
-    try {
-      await withmateApi.openCrashDumpFolder();
-      setSettingsFeedback("クラッシュダンプフォルダを開いたよ。");
-    } catch (error) {
-      setSettingsFeedback(error instanceof Error ? error.message : "クラッシュダンプフォルダを開けなかったよ。");
-    }
-  };
-
-  const settingsContent = (
-    <HomeSettingsContent
-      settingsDraft={settingsDraft}
-      providerSettingRows={providerSettingRows}
-      modelCatalogRevisionLabel={String(modelCatalog?.revision ?? "-")}
-      settingsDirty={settingsDirty}
-      settingsFeedback={settingsFeedback}
-      memoryManagementSnapshot={memoryManagementSnapshot}
-      memoryManagementPages={memoryManagementPages}
-      memoryManagementLoading={!memoryManagementLoaded}
-      memoryManagementBusyTarget={memoryManagementBusyTarget}
-      memoryManagementFeedback={memoryManagementFeedback}
-      onChangeSystemPromptPrefix={(value) => setSettingsDraft((current) => updateSystemPromptPrefix(current, value))}
-      onChangeMemoryGenerationEnabled={(enabled) =>
-        setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled))
-      }
-      onChangeAutoCollapseActionDockOnSend={(enabled) =>
-        setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, enabled))
-      }
-      onChangeProviderEnabled={handleChangeProviderEnabled}
-      onChangeProviderSkillRootPath={handleChangeProviderSkillRootPath}
-      onBrowseProviderSkillRootPath={(providerId) => void handleBrowseProviderSkillRootPath(providerId)}
-      onChangeMemoryExtractionModel={handleChangeMemoryExtractionModel}
-      onChangeMemoryExtractionReasoningEffort={handleChangeMemoryExtractionReasoningEffort}
-      onChangeMemoryExtractionThreshold={handleChangeMemoryExtractionThreshold}
-      onChangeMemoryExtractionTimeoutSeconds={handleChangeMemoryExtractionTimeoutSeconds}
-      onChangeCharacterReflectionModel={handleChangeCharacterReflectionModel}
-      onChangeCharacterReflectionReasoningEffort={handleChangeCharacterReflectionReasoningEffort}
-      onChangeCharacterReflectionTimeoutSeconds={handleChangeCharacterReflectionTimeoutSeconds}
-      onChangeCharacterReflectionCooldownSeconds={handleChangeCharacterReflectionCooldownSeconds}
-      onChangeCharacterReflectionCharDeltaThreshold={handleChangeCharacterReflectionCharDeltaThreshold}
-      onChangeCharacterReflectionMessageDeltaThreshold={handleChangeCharacterReflectionMessageDeltaThreshold}
-      onImportModelCatalog={() => void handleImportModelCatalog()}
-      onExportModelCatalog={() => void handleExportModelCatalog()}
-      onOpenAppLogFolder={() => void handleOpenAppLogFolder()}
-      onOpenCrashDumpFolder={() => void handleOpenCrashDumpFolder()}
-      onReloadMemoryManagement={() => void handleReloadMemoryManagement()}
-      onChangeMemoryManagementViewFilters={handleChangeMemoryManagementViewFilters}
-      onLoadMoreMemoryManagement={(domain) => void handleLoadMoreMemoryManagement(domain)}
-      onDeleteSessionMemory={(sessionId) => void handleDeleteSessionMemory(sessionId)}
-      onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}
-      onDeleteCharacterMemoryEntry={(entryId) => void handleDeleteCharacterMemoryEntry(entryId)}
-      onSaveSettings={() => void handleSaveSettings()}
-    />
-  );
-
-  const memoryManagementContent = (
-    <HomeSettingsContent
-      settingsDraft={settingsDraft}
-      providerSettingRows={providerSettingRows}
-      modelCatalogRevisionLabel={String(modelCatalog?.revision ?? "-")}
-      settingsDirty={settingsDirty}
-      settingsFeedback={settingsFeedback}
-      memoryManagementSnapshot={memoryManagementSnapshot}
-      memoryManagementPages={memoryManagementPages}
-      memoryManagementLoading={!memoryManagementLoaded}
-      memoryManagementBusyTarget={memoryManagementBusyTarget}
-      memoryManagementFeedback={memoryManagementFeedback}
-      memoryManagementOnly
-      onChangeSystemPromptPrefix={(value) => setSettingsDraft((current) => updateSystemPromptPrefix(current, value))}
-      onChangeMemoryGenerationEnabled={(enabled) =>
-        setSettingsDraft((current) => updateMemoryGenerationEnabled(current, enabled))
-      }
-      onChangeAutoCollapseActionDockOnSend={(enabled) =>
-        setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, enabled))
-      }
-      onChangeProviderEnabled={handleChangeProviderEnabled}
-      onChangeProviderSkillRootPath={handleChangeProviderSkillRootPath}
-      onBrowseProviderSkillRootPath={(providerId) => void handleBrowseProviderSkillRootPath(providerId)}
-      onChangeMemoryExtractionModel={handleChangeMemoryExtractionModel}
-      onChangeMemoryExtractionReasoningEffort={handleChangeMemoryExtractionReasoningEffort}
-      onChangeMemoryExtractionThreshold={handleChangeMemoryExtractionThreshold}
-      onChangeMemoryExtractionTimeoutSeconds={handleChangeMemoryExtractionTimeoutSeconds}
-      onChangeCharacterReflectionModel={handleChangeCharacterReflectionModel}
-      onChangeCharacterReflectionReasoningEffort={handleChangeCharacterReflectionReasoningEffort}
-      onChangeCharacterReflectionTimeoutSeconds={handleChangeCharacterReflectionTimeoutSeconds}
-      onChangeCharacterReflectionCooldownSeconds={handleChangeCharacterReflectionCooldownSeconds}
-      onChangeCharacterReflectionCharDeltaThreshold={handleChangeCharacterReflectionCharDeltaThreshold}
-      onChangeCharacterReflectionMessageDeltaThreshold={handleChangeCharacterReflectionMessageDeltaThreshold}
-      onImportModelCatalog={() => void handleImportModelCatalog()}
-      onExportModelCatalog={() => void handleExportModelCatalog()}
-      onOpenAppLogFolder={() => void handleOpenAppLogFolder()}
-      onOpenCrashDumpFolder={() => void handleOpenCrashDumpFolder()}
-      onReloadMemoryManagement={() => void handleReloadMemoryManagement()}
-      onChangeMemoryManagementViewFilters={handleChangeMemoryManagementViewFilters}
-      onLoadMoreMemoryManagement={(domain) => void handleLoadMoreMemoryManagement(domain)}
-      onDeleteSessionMemory={(sessionId) => void handleDeleteSessionMemory(sessionId)}
-      onDeleteProjectMemoryEntry={(entryId) => void handleDeleteProjectMemoryEntry(entryId)}
-      onDeleteCharacterMemoryEntry={(entryId) => void handleDeleteCharacterMemoryEntry(entryId)}
-      onSaveSettings={() => void handleSaveSettings()}
-    />
-  );
-
-  if (!desktopRuntime) {
-    return (
-      <div className={homePageClassName}>
-        <main className="home-layout home-layout-minimal">
-          <section className="panel empty-list-card rise-1">
-            <p>Home は Electron から起動してね。</p>
-          </section>
-        </main>
-      </div>
-    );
-  }
-
-  if (isSettingsWindowMode) {
-    return (
-      <div className={`${homePageClassName} home-page-settings-window`.trim()}>
-        <main className="home-layout home-layout-settings-window">
-          <section className="launch-dialog settings-dialog panel settings-window-shell">
-            {settingsWindowReady ? (
-              settingsContent
-            ) : (
-              <div className="settings-loading-state">
-                <p>Settings を読み込み中...</p>
-              </div>
-            )}
-          </section>
-        </main>
-      </div>
-    );
-  }
-
-  if (isMemoryWindowMode) {
-    return (
-      <div className={`${homePageClassName} home-page-settings-window`.trim()}>
-        <main className="home-layout home-layout-settings-window">
-          <section className="launch-dialog settings-dialog panel settings-window-shell memory-window-shell">
-            {memoryManagementLoaded ? (
-              memoryManagementContent
-            ) : (
-              <div className="settings-loading-state">
-                <p>Memory 管理を読み込み中...</p>
-              </div>
-            )}
-          </section>
-        </main>
-      </div>
-    );
-  }
-
-  if (isMonitorWindowMode) {
-    return (
-      <div className={homePageClassName}>
-        <main className="home-layout home-layout-monitor-window">
-          <section className="panel home-monitor-window-panel rise-3">
-            <section className="home-monitor-panel compact" aria-label="Session Monitor">
-              <HomeMonitorContent
-                runningEntries={runningMonitorEntries}
-                nonRunningEntries={nonRunningMonitorEntries}
-                runningEmptyMessage={monitorRunningEmptyMessage}
-                completedEmptyMessage={monitorCompletedEmptyMessage}
-                onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
-                onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
-              />
-            </section>
-          </section>
-        </main>
-      </div>
-    );
-  }
+  const { recentSessionsPanel, rightPane, launchDialog } = buildHomeDashboardSlots({
+    recentSessionsPanel: buildHomeRecentSessionsPanelProps({
+      filteredSessionEntries,
+      companionSessions,
+      normalizedSessionSearch,
+      searchText: sessionSearchText,
+      searchIcon: renderHomeSearchIcon(),
+      handlers: {
+        onChangeSearchText: setSessionSearchText,
+        onOpenLaunchDialog: homeLaunchHandlers.onOpenLaunchDialog,
+        onOpenSession: (sessionId) => void openSessionWindow(sessionId),
+        onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
+      },
+      canUsePrimaryFeatures,
+    }),
+    rightPane: buildHomeRightPaneProps({
+      rightPaneView,
+      runningMonitorEntries,
+      nonRunningMonitorEntries,
+      mateProfile,
+      monitorWindowIcon: renderHomeMonitorWindowIcon(),
+      handlers: {
+        onChangeRightPaneView: setRightPaneView,
+        onOpenSessionMonitorWindow: () => void openSessionMonitorWindow(),
+        onOpenMemoryManagementWindow: () => void openMemoryManagementWindow(),
+        onOpenSettingsWindow: () => void openSettingsWindow(),
+        onOpenMateProfile: mateProfileHandlers.onOpenProfileEditor,
+        onOpenMateTalk: homeLaunchHandlers.onOpenMateTalkLaunchDialog,
+        onOpenSession: (sessionId) => void openSessionWindow(sessionId),
+        onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
+      },
+      canUsePrimaryFeatures,
+    }),
+    launchDialog: buildHomeLaunchDialogProps({
+      draft: launchDraft,
+      projection: launchProjection,
+      canUsePrimaryFeatures,
+      launchFeedback,
+      launchStarting,
+      onClose: homeLaunchHandlers.onCloseLaunchDialog,
+      onSelectMode: homeLaunchHandlers.onChangeMode,
+      onChangeTitle: homeLaunchHandlers.onChangeTitle,
+      onBrowseWorkspace: () => void homeLaunchHandlers.onBrowseWorkspace(),
+      onSelectProvider: homeLaunchHandlers.onSelectLaunchProvider,
+      onStartSession: (mode) => void homeLaunchHandlers.onStartSession(mode),
+    }),
+  });
 
   return (
-    <div className={homePageClassName}>
-      <main className="home-layout rise-2">
-        <HomeRecentSessionsPanel
-          filteredSessionEntries={filteredSessionEntries}
-          companionSessions={companionSessions}
-          normalizedSessionSearch={normalizedSessionSearch}
-          searchText={sessionSearchText}
-          searchIcon={renderSearchIcon()}
-          onChangeSearchText={setSessionSearchText}
-          onOpenLaunchDialog={openLaunchDialog}
-          onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
-          onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
-        />
-
-        <HomeRightPane
-          rightPaneView={rightPaneView}
-          runningMonitorEntries={runningMonitorEntries}
-          nonRunningMonitorEntries={nonRunningMonitorEntries}
-          monitorRunningEmptyMessage={monitorRunningEmptyMessage}
-          monitorCompletedEmptyMessage={monitorCompletedEmptyMessage}
-          filteredCharacters={filteredCharacters}
-          characterEmptyState={characterEmptyState}
-          characterSearchText={characterSearchText}
-          searchIcon={renderSearchIcon()}
-          monitorWindowIcon={renderMonitorWindowIcon()}
-          onChangeRightPaneView={setRightPaneView}
-          onOpenSessionMonitorWindow={() => void openSessionMonitorWindow()}
-          onOpenMemoryManagementWindow={() => void openMemoryManagementWindow()}
-          onOpenSettingsWindow={() => void openSettingsWindow()}
-          onChangeCharacterSearchText={setCharacterSearchText}
-          onOpenCharacterEditor={(characterId) => void openCharacterEditor(characterId)}
-          onOpenSession={(sessionId) => void openSessionWindow(sessionId)}
-          onOpenCompanionReview={(sessionId) => void withWithMateApi((api) => api.openCompanionReviewWindow(sessionId))}
-        />
-      </main>
-
-      <HomeLaunchDialog
-        open={launchDraft.open}
-        mode={launchDraft.mode}
-        title={launchDraft.title}
-        workspace={launchDraft.workspace}
-        launchWorkspacePathLabel={launchWorkspacePathLabel}
-        enabledLaunchProviders={enabledLaunchProviders}
-        selectedLaunchProviderId={selectedLaunchProvider?.id ?? null}
-        characters={characters}
-        filteredLaunchCharacters={filteredLaunchCharacters}
-        selectedCharacterId={selectedCharacter?.id ?? null}
-        launchCharacterSearchText={launchDraft.characterSearchText}
-        canStartSession={canStartSession}
-        launchFeedback={launchFeedback}
-        launchStarting={launchStarting}
-        searchIcon={renderSearchIcon()}
-        onClose={closeLaunchDialog}
-        onSelectMode={(mode) => {
-          setLaunchFeedback("");
-          setLaunchDraft((current) => ({ ...current, mode }));
-        }}
-        onChangeTitle={(value) => {
-          setLaunchFeedback("");
-          setLaunchDraft((current) => ({ ...current, title: value }));
-        }}
-        onBrowseWorkspace={() => void handleBrowseWorkspace()}
-        onSelectProvider={(providerId) => {
-          setLaunchFeedback("");
-          const provider = enabledLaunchProviders.find((candidate) => candidate.id === providerId) ?? null;
-          const model =
-            provider?.models.find((candidate) => candidate.id === provider.defaultModelId) ??
-            provider?.models[0] ??
-            null;
-          setLaunchDraft((current) => ({
-            ...current,
-            providerId,
-            model: model?.id ?? current.model,
-            reasoningEffort: model?.reasoningEfforts[0] ?? provider?.defaultReasoningEffort ?? current.reasoningEffort,
-          }));
-        }}
-        onChangeCharacterSearch={(value) => setLaunchDraft((current) => ({ ...current, characterSearchText: value }))}
-        onSelectCharacter={(characterId) => {
-          setLaunchFeedback("");
-          setLaunchDraft((current) => ({ ...current, characterId }));
-        }}
-        onOpenCharacterEditor={() => void openCharacterEditor()}
-        onStartSession={(mode) => void handleStartSession(mode)}
-      />
-
-    </div>
+    <HomeAppRouter
+      desktopRuntime={desktopRuntime}
+      homePageClassName={homePageClassName}
+      isSettingsWindowMode={isSettingsWindowMode}
+      settingsWindowReady={settingsWindowReady}
+      settingsContent={settingsContent}
+      isMateStateLoading={isMateStateLoading}
+      isMateNotCreated={isMateNotCreated}
+      mateProfileEditorOpen={mateProfileEditorOpen}
+      mateSetupContent={mateSetupContent}
+      isMemoryWindowMode={isMemoryWindowMode}
+      memoryManagementLoaded={memoryManagementLoaded}
+      memoryManagementContent={memoryManagementContent}
+      isMonitorWindowMode={isMonitorWindowMode}
+      monitorContent={monitorContent}
+      recentSessionsPanel={recentSessionsPanel}
+      rightPane={rightPane}
+      launchDialog={launchDialog}
+    />
   );
 }

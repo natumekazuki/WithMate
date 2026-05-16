@@ -5,11 +5,13 @@ import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { Session } from "../src/session-state.js";
 import { APP_DATABASE_V2_FILENAME, CREATE_V2_SCHEMA_SQL, isValidV2Database } from "./database-schema-v2.js";
 import { APP_DATABASE_V3_FILENAME, CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
+import { APP_DATABASE_V4_FILENAME } from "./database-schema-v4.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogStorageV2 } from "./audit-log-storage-v2.js";
 import { AuditLogStorageV3 } from "./audit-log-storage-v3.js";
 import { CharacterMemoryStorage } from "./character-memory-storage.js";
+import { MateStorage, type MateProfileFileMismatch } from "./mate-storage.js";
 import {
   CharacterMemoryStorageV2Read,
   ProjectMemoryStorageV2Read,
@@ -70,6 +72,7 @@ export type PersistentStoreBundle = {
   characterMemoryStorage: CharacterMemoryStorageAccess;
   auditLogStorage: AuditLogStorageRead;
   appSettingsStorage: AppSettingsStorage;
+  mateStorage: MateStorage;
   activeModelCatalog: ModelCatalogSnapshot;
   sessions: Session[];
 };
@@ -89,6 +92,7 @@ type PersistentStoreLifecycleDeps = {
   createCharacterMemoryStorage(dbPath: string): CharacterMemoryStorage;
   createAuditLogStorage(dbPath: string): AuditLogStorage;
   createAppSettingsStorage(dbPath: string): AppSettingsStorage;
+  createMateStorage(dbPath: string, userDataPath: string): MateStorage;
   ensureV2Schema?(dbPath: string): void;
   ensureV3Schema?(dbPath: string): void;
   onBeforeClose(): void;
@@ -100,9 +104,10 @@ type PersistentStoreLifecycleDeps = {
 export class PersistentStoreLifecycleService {
   constructor(private readonly deps: PersistentStoreLifecycleDeps) {}
 
-  async initialize(dbPath: string, bundledModelCatalogPath: string): Promise<PersistentStoreBundle> {
+  async initialize(dbPath: string, bundledModelCatalogPath: string, userDataPath?: string): Promise<PersistentStoreBundle> {
     const isV3Database = isValidV3Database(dbPath);
     const isV2Database = isValidV2Database(dbPath);
+    const resolvedUserDataPath = userDataPath ?? dirname(dbPath);
     if (isV3Database) {
       this.deps.ensureV3Schema?.(dbPath);
     } else if (isV2Database) {
@@ -131,6 +136,8 @@ export class PersistentStoreLifecycleService {
       ? new AuditLogStorageV2(dbPath)
       : this.deps.createAuditLogStorage(dbPath);
     const appSettingsStorage = this.deps.createAppSettingsStorage(dbPath);
+    const mateStorage = this.deps.createMateStorage(dbPath, resolvedUserDataPath);
+    await this.recoverActiveMateProfileProjection(mateStorage);
     const loadedSessionSummaries = await sessionStorage.listSessionSummaries();
     const sessions = loadedSessionSummaries.length === 0 ? [] : sessionSummariesToSessions(loadedSessionSummaries);
 
@@ -142,6 +149,7 @@ export class PersistentStoreLifecycleService {
       characterMemoryStorage,
       auditLogStorage,
       appSettingsStorage,
+      mateStorage,
       activeModelCatalog,
       sessions,
     };
@@ -158,6 +166,7 @@ export class PersistentStoreLifecycleService {
       bundle.characterMemoryStorage,
       bundle.auditLogStorage,
       bundle.appSettingsStorage,
+      bundle.mateStorage,
     ];
 
     for (const store of stores) {
@@ -177,6 +186,7 @@ export class PersistentStoreLifecycleService {
     dbPath: string,
     bundledModelCatalogPath: string,
     bundle: PersistentStoreBundleLike,
+    userDataPath?: string,
   ): Promise<PersistentStoreBundle> {
     this.close(bundle, dbPath);
 
@@ -184,8 +194,8 @@ export class PersistentStoreLifecycleService {
       this.deps.removeFile(`${dbPath}-wal`),
       this.deps.removeFile(`${dbPath}-shm`),
       this.deps.removeFile(dbPath),
-      this.isV3DatabasePath(dbPath)
-        ? this.removeV3BlobRoot(dbPath)
+      this.isBlobBackedDatabasePath(dbPath)
+        ? this.removeBlobRoot(dbPath)
         : Promise.resolve(),
     ]);
 
@@ -195,7 +205,7 @@ export class PersistentStoreLifecycleService {
       this.deps.ensureV2Schema?.(dbPath);
     }
 
-    return this.initialize(dbPath, bundledModelCatalogPath);
+    return this.initialize(dbPath, bundledModelCatalogPath, userDataPath);
   }
 
   private isV2DatabasePath(dbPath: string): boolean {
@@ -206,9 +216,14 @@ export class PersistentStoreLifecycleService {
     return basename(dbPath) === APP_DATABASE_V3_FILENAME;
   }
 
-  private removeV3BlobRoot(dbPath: string): Promise<void> {
+  private isBlobBackedDatabasePath(dbPath: string): boolean {
+    const databaseFilename = basename(dbPath);
+    return databaseFilename === APP_DATABASE_V3_FILENAME || databaseFilename === APP_DATABASE_V4_FILENAME;
+  }
+
+  private removeBlobRoot(dbPath: string): Promise<void> {
     if (!this.deps.removeDirectory) {
-      throw new Error("V3 DB 再生成には blob root 削除 dependency が必要です。");
+      throw new Error("DB 再生成には blob root 削除 dependency が必要です。");
     }
 
     return this.deps.removeDirectory(this.v3BlobRootPath(dbPath));
@@ -216,6 +231,28 @@ export class PersistentStoreLifecycleService {
 
   private v3BlobRootPath(dbPath: string): string {
     return join(dirname(dbPath), "blobs", "v3");
+  }
+
+  private async recoverActiveMateProfileProjection(mateStorage: MateStorage): Promise<void> {
+    const recoverFunc = (mateStorage as {
+      recoverMateProfileFilesFromActiveRevision?: () => Promise<MateProfileFileMismatch[]>;
+    }).recoverMateProfileFilesFromActiveRevision;
+
+    if (typeof recoverFunc !== "function") {
+      return;
+    }
+
+    try {
+      const mismatches = await recoverFunc.call(mateStorage);
+      if (mismatches.length > 0) {
+        console.warn("Mate profile projection recovery has remaining mismatches", {
+          count: mismatches.length,
+          mismatches,
+        });
+      }
+    } catch (error) {
+      console.warn("Mate profile projection recovery failed during initialization", error);
+    }
   }
 }
 
@@ -229,6 +266,7 @@ export function createPersistentStoreLifecycleService(): PersistentStoreLifecycl
     createCharacterMemoryStorage: (dbPath) => new CharacterMemoryStorage(dbPath),
     createAuditLogStorage: (dbPath) => new AuditLogStorage(dbPath),
     createAppSettingsStorage: (dbPath) => new AppSettingsStorage(dbPath),
+    createMateStorage: (dbPath, userDataPath) => new MateStorage(dbPath, userDataPath),
     ensureV2Schema: (dbPath) => {
       const db = openAppDatabase(dbPath);
       try {

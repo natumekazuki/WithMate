@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildHomeSettingsProjection } from "../../src/home-settings-projection.js";
+import { buildHomeSettingsProjection } from "../../src/settings/settings-projection.js";
 
 describe("home-settings-projection", () => {
   it("loading と reset target 派生状態を返す", () => {

@@ -469,6 +469,65 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(invalidatedThreads, []);
   });
 
+  it("legacy read-only session は update/upsert できない", async () => {
+    const legacySession = createSession({
+      accessMode: "legacy_readonly",
+      sourceSchemaVersion: 3,
+      characterIconPath: "",
+    });
+    const storedSessions: Session[] = [legacySession];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return storedSessions.find((session) => session.id === sessionId) ?? null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      upsertStoredSession(session) {
+        storedSessions.splice(0, storedSessions.length, session);
+        return session;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      deleteStoredSession() {},
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      clearCharacterReflectionCheckpoint() {},
+      clearInFlightCharacterReflection() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    await assert.rejects(
+      () => service.updateSession({ ...legacySession, taskTitle: "Blocked Update" }),
+      /閲覧専用セッションは更新できない/,
+    );
+    await assert.rejects(
+      () => service.upsertSession({ ...legacySession, taskTitle: "Blocked Upsert" }),
+      /閲覧専用セッションは更新できない/,
+    );
+    assert.equal(storedSessions[0]?.taskTitle, legacySession.taskTitle);
+  });
+
   it("deleteSession は関連状態を片付けて window close を呼ぶ", async () => {
     const session = createSession();
     const storedSessions: Session[] = [session];

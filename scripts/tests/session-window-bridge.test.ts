@@ -115,8 +115,7 @@ describe("SessionWindowBridge", () => {
     const session = createSession();
     const windows: StubWindow[] = [];
     const broadcasts: string[][] = [];
-    const reflections: Array<{ sessionId: string; triggerReason: string }> = [];
-    let loadedSessionId: string | null = null;
+    let loadedChatMode: unknown = null;
 
     const bridge = new SessionWindowBridge({
       createWindow() {
@@ -124,8 +123,8 @@ describe("SessionWindowBridge", () => {
         windows.push(window);
         return window;
       },
-      async loadSessionEntry(_window, sessionId) {
-        loadedSessionId = sessionId;
+      async loadChatEntry(_window, mode) {
+        loadedChatMode = mode;
       },
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
@@ -142,17 +141,13 @@ describe("SessionWindowBridge", () => {
       broadcastOpenSessionWindowIds(openIds) {
         broadcasts.push([...openIds]);
       },
-      runCharacterReflection(nextSession, options) {
-        reflections.push({ sessionId: nextSession.id, triggerReason: options.triggerReason });
-      },
     });
 
     const window = await bridge.openSessionWindow(session.id);
     window.emitReady();
 
-    assert.equal(loadedSessionId, session.id);
+    assert.deepEqual(loadedChatMode, { kind: "agent", sessionId: session.id });
     assert.deepEqual(broadcasts.at(-1), [session.id]);
-    assert.deepEqual(reflections, []);
     assert.equal(window.showCount, 1);
   });
 
@@ -167,7 +162,7 @@ describe("SessionWindowBridge", () => {
         createCount += 1;
         return createdWindow;
       },
-      async loadSessionEntry() {},
+      async loadChatEntry() {},
       getSession() {
         return session;
       },
@@ -181,7 +176,6 @@ describe("SessionWindowBridge", () => {
         return false;
       },
       broadcastOpenSessionWindowIds() {},
-      runCharacterReflection() {},
     });
 
     const first = await bridge.openSessionWindow(session.id);
@@ -202,7 +196,7 @@ describe("SessionWindowBridge", () => {
       createWindow() {
         return window;
       },
-      async loadSessionEntry() {},
+      async loadChatEntry() {},
       getSession() {
         return session;
       },
@@ -217,7 +211,6 @@ describe("SessionWindowBridge", () => {
         return true;
       },
       broadcastOpenSessionWindowIds() {},
-      runCharacterReflection() {},
     });
 
     await bridge.openSessionWindow(session.id);
@@ -236,7 +229,7 @@ describe("SessionWindowBridge", () => {
       createWindow() {
         return new StubWindow();
       },
-      async loadSessionEntry() {},
+      async loadChatEntry() {},
       getSession(sessionId) {
         return sessionId === session.id ? session : null;
       },
@@ -252,7 +245,6 @@ describe("SessionWindowBridge", () => {
       broadcastOpenSessionWindowIds(openIds) {
         broadcasts.push([...openIds]);
       },
-      runCharacterReflection() {},
     });
 
     const window = await bridge.openSessionWindow(session.id);

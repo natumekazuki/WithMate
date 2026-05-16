@@ -63,6 +63,27 @@ describe("provider-binary-paths", () => {
     assert.equal(resolved, expected);
   });
 
+  it("development runtime では package.json subpath が非公開でも root export から native binary を解決する", () => {
+    const expected = path.join("F:\\repo", "node_modules", "@github", "copilot-win32-x64", "copilot.exe");
+    const resolved = resolveDevelopmentProviderBinaryPath(
+      "copilot",
+      (specifier) => {
+        if (specifier === "@github/copilot-win32-x64/package.json") {
+          throw Object.assign(new Error("Package subpath './package.json' is not defined by exports"), {
+            code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
+          });
+        }
+        assert.equal(specifier, "@github/copilot-win32-x64");
+        return expected;
+      },
+      (candidate) => candidate === expected,
+      "win32",
+      "x64",
+    );
+
+    assert.equal(resolved, expected);
+  });
+
   it("stage 対象 package の一覧に provider native package を含む", () => {
     const specifiers = listSupportedProviderBinaryPackageSpecifiers();
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { CharacterMemoryEntry } from "../../src/memory-state.js";
+import type { CharacterMemoryEntry } from "../../src/memory/memory-state.js";
 import { buildCharacterUpdateMemoryExtract } from "../../src-electron/character-update-memory-extract.js";
 
 function createEntry(partial: Partial<CharacterMemoryEntry> & Pick<CharacterMemoryEntry, "id" | "category" | "title" | "detail">): CharacterMemoryEntry {

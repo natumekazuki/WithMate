@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { IpcMain } from "electron";
+import type { MateGrowthApplyResult } from "../../src/mate/mate-growth-apply-result.js";
 
-import { registerMainIpcHandlers } from "../../src-electron/main-ipc-registration.js";
+import {
+  MATE_NOT_CREATED_ERROR_MESSAGE,
+  registerMainIpcHandlers,
+} from "../../src-electron/main-ipc-registration.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
@@ -11,6 +15,12 @@ import {
   WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
+  WITHMATE_CREATE_MATE_CHANNEL,
+  WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
+  WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL,
+  WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL,
+  WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL,
+  WITHMATE_FORGET_MATE_GROWTH_EVENT_CHANNEL,
   WITHMATE_DELETE_CHARACTER_CHANNEL,
   WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
@@ -21,7 +31,11 @@ import {
   WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
+  WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL,
+  WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
+  WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
+  WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
@@ -34,6 +48,12 @@ import {
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
   WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
+  WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
+  WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_MATE_CHANNEL,
+  WITHMATE_GET_MATE_PROFILE_CHANNEL,
+  WITHMATE_GET_MATE_STATE_CHANNEL,
   WITHMATE_GET_MODEL_CATALOG_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_AUDIT_LOG_DETAIL_CHANNEL,
@@ -68,6 +88,7 @@ import {
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_HOME_WINDOW_CHANNEL,
+  WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL,
   WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
@@ -81,14 +102,18 @@ import {
   WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL,
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
+  WITHMATE_RESET_MATE_CHANNEL,
   WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
+  WITHMATE_RUN_MATE_TALK_TURN_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
+  WITHMATE_SET_MATE_AVATAR_CHANNEL,
   WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL,
+  WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
   WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_CHANNEL,
@@ -97,6 +122,13 @@ import {
 } from "../../src/withmate-ipc-channels.js";
 
 type Handler = (...args: unknown[]) => unknown;
+
+const zeroGrowthResult: MateGrowthApplyResult = {
+  candidateCount: 0,
+  appliedCount: 0,
+  skippedCount: 0,
+  revisionId: null,
+};
 
 function createIpcMainStub() {
   const handlers = new Map<string, Handler>();
@@ -116,6 +148,13 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   const { ipcMain, handlers } = createIpcMainStub();
   const calls: string[] = [];
   const auditPageRequests: unknown[] = [];
+  const expectedGrowthResult = {
+    candidateCount: 4,
+    appliedCount: 3,
+    skippedCount: 1,
+    revisionId: "rev-001",
+  };
+  let mateState: "active" | "not_created" | "draft" | "deleted" = "active";
 
   registerMainIpcHandlers(ipcMain, {
     resolveEventWindow: () => null,
@@ -134,6 +173,9 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     },
     async openMemoryManagementWindow() {
       calls.push("openMemory");
+    },
+    async openMateTalkWindow() {
+      calls.push("openMateTalk");
     },
     async openCharacterEditorWindow(characterId) {
       calls.push(`openCharacter:${characterId ?? ""}`);
@@ -172,6 +214,21 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     listOpenCompanionReviewWindowIds: () => [],
     getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
+    getAppDatabaseDiagnostics: () => ({}) as never,
+    getMateEmbeddingSettings: () => null,
+    getMateGrowthSettings: () => {
+      calls.push("getMateGrowthSettings");
+      return null;
+    },
+    updateMateGrowthSettings: () => {
+      calls.push("updateMateGrowthSettings");
+      return null;
+    },
+    listProviderInstructionTargets: () => [],
+    upsertProviderInstructionTarget: (input) => input as never,
+    startMateEmbeddingDownload: () => {
+      calls.push("startMateEmbeddingDownload");
+    },
     async resetAppDatabase() {
       return null;
     },
@@ -182,6 +239,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
         session: { nextCursor: null, hasMore: false, total: 0 },
         project: { nextCursor: null, hasMore: false, total: 0 },
         character: { nextCursor: null, hasMore: false, total: 0 },
+        mate_profile: { nextCursor: null, hasMore: false, total: 0 },
       },
     }),
     deleteSessionMemory: () => {
@@ -192,6 +250,9 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     },
     deleteCharacterMemoryEntry: () => {
       calls.push("deleteCharacterMemoryEntry");
+    },
+    forgetMateProfileItem: () => {
+      calls.push("forgetMateProfileItem");
     },
     async listCharacters() {
       return [];
@@ -323,18 +384,121 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     cancelCompanionSessionRun: () => {
       calls.push("cancelCompanionRun");
     },
+    getMateState() {
+      calls.push("getMateState");
+      return mateState;
+    },
+    getMateProfile() {
+      calls.push("getMateProfile");
+      return null;
+    },
+    async createMate(input) {
+      calls.push(`createMate:${input.displayName}`);
+      return {} as never;
+    },
+    async updateMate(input) {
+      calls.push(`updateMate:${input.displayName}`);
+      return {} as never;
+    },
+    async setMateAvatar(input) {
+      calls.push(`setMateAvatar:${input.avatarFilePath ?? "clear"}`);
+      return {} as never;
+    },
+    async applyPendingGrowth() {
+      calls.push("applyPendingGrowth");
+      return expectedGrowthResult;
+    },
+    async listMateGrowthEvents(request) {
+      calls.push(`listMateGrowthEvents:${request?.limit ?? "default"}`);
+      return {
+        events: [],
+        limit: request?.limit ?? 20,
+      };
+    },
+    async correctMateGrowthEvent(request) {
+      calls.push(`correctMateGrowthEvent:${request.eventId}:${request.statement}`);
+      return { event: null };
+    },
+    async disableMateGrowthEvent(request) {
+      calls.push(`disableMateGrowthEvent:${request.eventId}`);
+      return { event: null };
+    },
+    async forgetMateGrowthEvent(request) {
+      calls.push(`forgetMateGrowthEvent:${request.eventId}`);
+      return { event: null };
+    },
+    async runMateTalkTurn(input) {
+      calls.push(`runMateTalk:${input.message}`);
+      return {
+        mateId: "mate-1",
+        userMessage: input.message,
+        assistantMessage: "受け取ったよ。",
+        createdAt: "2026-05-04T00:00:00.000Z",
+      };
+    },
+    async resetMate() {
+      calls.push("resetMate");
+    },
   });
 
-    assert.ok(handlers.has("withmate:open-session"));
-    assert.ok(handlers.has("withmate:list-session-summaries"));
-    assert.ok(handlers.has("withmate:get-app-settings"));
+  assert.ok(handlers.has("withmate:open-session"));
+  assert.ok(handlers.has("withmate:list-session-summaries"));
+  assert.ok(handlers.has("withmate:get-app-settings"));
+  assert.ok(handlers.has(WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL));
   assert.ok(handlers.has("withmate:run-session-turn"));
+  assert.ok(handlers.has(WITHMATE_GET_MATE_STATE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_MATE_PROFILE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_CREATE_MATE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_UPDATE_MATE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_SET_MATE_AVATAR_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_APPLY_MATE_GROWTH_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_FORGET_MATE_GROWTH_EVENT_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_RUN_MATE_TALK_TURN_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_RESET_MATE_CHANNEL));
 
   await handlers.get("withmate:open-session")?.({}, "session-1");
   await handlers.get("withmate:open-memory-management-window")?.({});
-  handlers.get("withmate:cancel-session-run")?.({}, "session-1");
+  await handlers.get(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL)?.({});
+  await handlers.get("withmate:cancel-session-run")?.({}, "session-1");
   await handlers.get("withmate:open-path")?.({}, "target", null);
   await handlers.get(WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL)?.({});
+  await handlers.get(WITHMATE_GET_MATE_STATE_CHANNEL)?.();
+  await handlers.get(WITHMATE_GET_MATE_PROFILE_CHANNEL)?.();
+  await handlers.get(WITHMATE_CREATE_MATE_CHANNEL)?.({}, { displayName: "Buddy" });
+  await handlers.get(WITHMATE_UPDATE_MATE_CHANNEL)?.({}, { displayName: "Buddy 2" });
+  await handlers.get(WITHMATE_SET_MATE_AVATAR_CHANNEL)?.({}, { avatarFilePath: "C:/avatar.png" });
+  await handlers.get(WITHMATE_RUN_MATE_TALK_TURN_CHANNEL)?.({}, { message: "hello" });
+  assert.deepEqual(
+    await handlers.get(WITHMATE_APPLY_MATE_GROWTH_CHANNEL)?.(),
+    expectedGrowthResult,
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL)?.({}, { limit: 5 }),
+    { events: [], limit: 5 },
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL)?.({}, { eventId: "event-0", statement: "修正後" }),
+    { event: null },
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL)?.({}, { eventId: "event-1" }),
+    { event: null },
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_FORGET_MATE_GROWTH_EVENT_CHANNEL)?.({}, { eventId: "event-2" }),
+    { event: null },
+  );
+  await handlers.get(WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL)?.();
+  await handlers.get(WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL)?.({}, { enabled: false });
+  await handlers.get(WITHMATE_RESET_MATE_CHANNEL)?.();
   const auditPageResult = await handlers.get(WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL)?.(
     {},
     "session-1",
@@ -342,14 +506,171 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
   );
 
   assert.deepEqual(calls, [
+    "getMateState",
     "openSession:session-1",
+    "getMateState",
     "openMemory",
+    "getMateState",
+    "openMateTalk",
+    "getMateState",
     "cancelRun",
+    "getMateState",
     "openPath",
     "openLogs",
+    "getMateState",
+    "getMateProfile",
+    "createMate:Buddy",
+    "getMateState",
+    "updateMate:Buddy 2",
+    "getMateState",
+    "setMateAvatar:C:/avatar.png",
+    "getMateState",
+    "runMateTalk:hello",
+    "getMateState",
+    "applyPendingGrowth",
+    "getMateState",
+    "listMateGrowthEvents:5",
+    "getMateState",
+    "correctMateGrowthEvent:event-0:修正後",
+    "getMateState",
+    "disableMateGrowthEvent:event-1",
+    "getMateState",
+    "forgetMateGrowthEvent:event-2",
+    "getMateGrowthSettings",
+    "updateMateGrowthSettings",
+    "resetMate",
+    "getMateState",
+  ]);
+  mateState = "not_created";
+  await assert.rejects(
+    async () => handlers.get("withmate:open-session")?.({}, "session-1"),
+    { message: MATE_NOT_CREATED_ERROR_MESSAGE },
+  );
+  const applyPendingGrowthCallCountBefore = calls.filter((call) => call === "applyPendingGrowth").length;
+  await assert.rejects(
+    async () => handlers.get(WITHMATE_APPLY_MATE_GROWTH_CHANNEL)?.(),
+    { message: MATE_NOT_CREATED_ERROR_MESSAGE },
+  );
+  assert.strictEqual(
+    calls.filter((call) => call === "applyPendingGrowth").length,
+    applyPendingGrowthCallCountBefore,
+    "applyPendingGrowth should not be executed when mate is not_created",
+  );
+  const openMemoryCallCountBefore = calls.filter((call) => call === "openMemory").length;
+  await assert.rejects(
+    async () => handlers.get("withmate:open-memory-management-window")?.({}),
+    { message: MATE_NOT_CREATED_ERROR_MESSAGE },
+  );
+  assert.strictEqual(
+    calls.filter((call) => call === "openMemory").length,
+    openMemoryCallCountBefore,
+    "openMemoryManagementWindow should not be executed when mate is not_created",
+  );
+  const deleteSessionMemoryCallCountBefore = calls.filter((call) => call === "deleteSessionMemory").length;
+  await assert.rejects(
+    async () => handlers.get(WITHMATE_DELETE_SESSION_MEMORY_CHANNEL)?.({}, "memory-1"),
+    { message: MATE_NOT_CREATED_ERROR_MESSAGE },
+  );
+  assert.strictEqual(
+    calls.filter((call) => call === "deleteSessionMemory").length,
+    deleteSessionMemoryCallCountBefore,
+    "deleteSessionMemory should not be executed when mate is not_created",
+  );
+  const forgetMateProfileItemCallCountBefore = calls.filter((call) => call === "forgetMateProfileItem").length;
+  await assert.rejects(
+    async () => handlers.get(WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL)?.({}, "mate-profile-item-1"),
+    { message: MATE_NOT_CREATED_ERROR_MESSAGE },
+  );
+  assert.strictEqual(
+    calls.filter((call) => call === "forgetMateProfileItem").length,
+    forgetMateProfileItemCallCountBefore,
+    "forgetMateProfileItem should not be executed when mate is not_created",
+  );
+  await handlers.get(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL)?.({});
+  await handlers.get(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL)?.();
+  await handlers.get(WITHMATE_GET_APP_SETTINGS_CHANNEL)?.();
+  await handlers.get(WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL)?.();
+  await handlers.get(WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL)?.();
+
+  assert.deepEqual(calls, [
+    "getMateState",
+    "openSession:session-1",
+    "getMateState",
+    "openMemory",
+    "getMateState",
+    "openMateTalk",
+    "getMateState",
+    "cancelRun",
+    "getMateState",
+    "openPath",
+    "openLogs",
+    "getMateState",
+    "getMateProfile",
+    "createMate:Buddy",
+    "getMateState",
+    "updateMate:Buddy 2",
+    "getMateState",
+    "setMateAvatar:C:/avatar.png",
+    "getMateState",
+    "runMateTalk:hello",
+    "getMateState",
+    "applyPendingGrowth",
+    "getMateState",
+    "listMateGrowthEvents:5",
+    "getMateState",
+    "correctMateGrowthEvent:event-0:修正後",
+    "getMateState",
+    "disableMateGrowthEvent:event-1",
+    "getMateState",
+    "forgetMateGrowthEvent:event-2",
+    "getMateGrowthSettings",
+    "updateMateGrowthSettings",
+    "resetMate",
+    "getMateState",
+    "getMateState",
+    "getMateState",
+    "getMateState",
+    "getMateState",
+    "getMateState",
+    "openSettings",
+    "startMateEmbeddingDownload",
   ]);
   assert.deepEqual(auditPageRequests, [{ sessionId: "session-1", request: { cursor: 50, limit: 25 } }]);
   assert.deepEqual(auditPageResult, { entries: [], nextCursor: null, hasMore: false, total: 0 });
+
+  mateState = "draft";
+  const openSettingsCallCountBeforeDraft = calls.filter((call) => call === "openSettings").length;
+  await handlers.get(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL)?.({});
+  assert.strictEqual(
+    calls.filter((call) => call === "openSettings").length,
+    openSettingsCallCountBeforeDraft + 1,
+  );
+  const deleteSessionCallCountBeforeDraft = calls.filter((call) => call === "deleteSession").length;
+  await assert.rejects(
+    async () => handlers.get(WITHMATE_DELETE_SESSION_CHANNEL)?.({}, "session-1"),
+    { message: MATE_NOT_CREATED_ERROR_MESSAGE },
+  );
+  assert.strictEqual(
+    calls.filter((call) => call === "deleteSession").length,
+    deleteSessionCallCountBeforeDraft,
+  );
+
+  mateState = "deleted";
+  const getMateStateCallCountBeforeDeleted = calls.filter((call) => call === "getMateState").length;
+  await handlers.get(WITHMATE_GET_MATE_STATE_CHANNEL)?.();
+  assert.strictEqual(
+    calls.filter((call) => call === "getMateState").length,
+    getMateStateCallCountBeforeDeleted + 1,
+  );
+  const deleteCharacterCallCountBeforeDeleted = calls.filter((call) => call === "deleteCharacter").length;
+  await assert.rejects(
+    async () => handlers.get(WITHMATE_DELETE_CHARACTER_CHANNEL)?.({}, "char-1"),
+    { message: MATE_NOT_CREATED_ERROR_MESSAGE },
+  );
+  assert.strictEqual(
+    calls.filter((call) => call === "deleteCharacter").length,
+    deleteCharacterCallCountBeforeDeleted,
+  );
 });
 
 test("registerMainIpcHandlers は current invoke channel を domain ごとにすべて登録する", () => {
@@ -363,6 +684,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async openSessionMonitorWindow() {},
     async openSettingsWindow() {},
     async openMemoryManagementWindow() {},
+    async openMateTalkWindow() {},
     async openCharacterEditorWindow() {},
     async openDiffWindow() {},
     async openCompanionReviewWindow() {},
@@ -389,6 +711,13 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     listOpenCompanionReviewWindowIds: () => [],
     getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
+    getAppDatabaseDiagnostics: () => ({}) as never,
+    getMateEmbeddingSettings: () => null,
+    getMateGrowthSettings: () => null,
+    updateMateGrowthSettings: () => null,
+    listProviderInstructionTargets: () => [],
+    upsertProviderInstructionTarget: (input) => input as never,
+    startMateEmbeddingDownload: () => {},
     async resetAppDatabase() { return null; },
     getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], characterMemories: [] }),
     getMemoryManagementPage: () => ({
@@ -397,11 +726,13 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
         session: { nextCursor: null, hasMore: false, total: 0 },
         project: { nextCursor: null, hasMore: false, total: 0 },
         character: { nextCursor: null, hasMore: false, total: 0 },
+        mate_profile: { nextCursor: null, hasMore: false, total: 0 },
       },
     }),
     deleteSessionMemory() {},
     deleteProjectMemoryEntry() {},
     deleteCharacterMemoryEntry() {},
+    forgetMateProfileItem() {},
     async listCharacters() { return []; },
     getModelCatalog: () => null,
     importModelCatalogDocument: () => ({ revision: 1, providers: [] }),
@@ -454,6 +785,42 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async searchCompanionWorkspaceFiles() { return []; },
     async runCompanionSessionTurn() { return {} as never; },
     cancelCompanionSessionRun() {},
+    getMateState() {
+      return "not_created";
+    },
+    getMateProfile() {
+      return null;
+    },
+    async applyPendingGrowth() {
+      return zeroGrowthResult;
+    },
+    async listMateGrowthEvents() {
+      return { events: [], limit: 20 };
+    },
+    async correctMateGrowthEvent() {
+      return { event: null };
+    },
+    async disableMateGrowthEvent() {
+      return { event: null };
+    },
+    async forgetMateGrowthEvent() {
+      return { event: null };
+    },
+    async createMate() {
+      return {} as never;
+    },
+    async updateMate() {
+      return {} as never;
+    },
+    async setMateAvatar() {
+      return {} as never;
+    },
+    async runMateTalkTurn() {
+      return {} as never;
+    },
+    async resetMate() {
+      return;
+    },
   });
 
   const expectedChannels = [
@@ -462,6 +829,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
     WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
     WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
+    WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL,
     WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
     WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
     WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
@@ -480,13 +848,17 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
     WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
     WITHMATE_GET_APP_SETTINGS_CHANNEL,
+    WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
+    WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
     WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+    WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
     WITHMATE_RESET_APP_DATABASE_CHANNEL,
     WITHMATE_GET_MEMORY_MANAGEMENT_SNAPSHOT_CHANNEL,
     WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
     WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
     WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
     WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
+    WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL,
     WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
     WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
     WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
@@ -546,6 +918,22 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_CREATE_CHARACTER_CHANNEL,
     WITHMATE_UPDATE_CHARACTER_CHANNEL,
     WITHMATE_DELETE_CHARACTER_CHANNEL,
+    WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL,
+    WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL,
+    WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL,
+    WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
+    WITHMATE_GET_MATE_STATE_CHANNEL,
+    WITHMATE_GET_MATE_PROFILE_CHANNEL,
+    WITHMATE_CREATE_MATE_CHANNEL,
+    WITHMATE_UPDATE_MATE_CHANNEL,
+    WITHMATE_SET_MATE_AVATAR_CHANNEL,
+    WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
+    WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL,
+    WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL,
+    WITHMATE_FORGET_MATE_GROWTH_EVENT_CHANNEL,
+    WITHMATE_RUN_MATE_TALK_TURN_CHANNEL,
+    WITHMATE_RESET_MATE_CHANNEL,
+    WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
   ];
 
   assert.deepEqual([...handlers.keys()].sort(), [...expectedChannels].sort());

@@ -168,7 +168,6 @@ function makeSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
   return {
     id: "session-1",
     taskTitle: "task",
-    taskSummary: "summary",
     status: "idle",
     updatedAt: "2026-04-15 12:00",
     provider: "codex",

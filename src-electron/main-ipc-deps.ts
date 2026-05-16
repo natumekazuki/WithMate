@@ -20,6 +20,7 @@ import type {
   SessionContextTelemetry,
   SessionSummary,
 } from "../src/app-state.js";
+import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
 import type { CreateCharacterInput } from "../src/character-state.js";
 import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
@@ -34,13 +35,38 @@ import type {
   MemoryManagementPageRequest,
   MemoryManagementPageResult,
   MemoryManagementSnapshot,
-} from "../src/memory-management-state.js";
+} from "../src/memory/memory-management-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
+import type {
+  ProviderInstructionTarget,
+  ProviderInstructionTargetInput,
+} from "../src/provider-instruction-target-state.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionInput, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
 import type { OpenPathOptions, ResetAppDatabaseRequest } from "../src/withmate-window-types.js";
 import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
+import type {
+  CreateMateInput,
+  MateProfile,
+  MateStorageState,
+  MateTalkLaunchInput,
+  MateTalkTurnInput,
+  MateTalkTurnResult,
+  MateGrowthSettings,
+  SetMateAvatarInput,
+  UpdateMateInput,
+  UpdateMateGrowthSettingsInput,
+} from "../src/mate/mate-state.js";
+import type { MateGrowthApplyResult } from "../src/mate/mate-growth-apply-result.js";
+import type {
+  MateGrowthEventActionRequest,
+  MateGrowthEventActionResult,
+  MateGrowthEventCorrectionRequest,
+  MateGrowthEventListRequest,
+  MateGrowthEventListResult,
+} from "../src/mate/mate-growth-events-state.js";
+import type { MateEmbeddingSettings } from "../src/mate/mate-embedding-settings.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import type { MainIpcRegistrationDeps } from "./main-ipc-registration.js";
 
@@ -54,6 +80,7 @@ export type MainIpcWindowDepsArgs = {
   openSessionMonitorWindow(): Promise<BrowserWindow>;
   openSettingsWindow(): Promise<BrowserWindow>;
   openMemoryManagementWindow(): Promise<BrowserWindow>;
+  openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<BrowserWindow>;
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
   openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow>;
@@ -81,12 +108,20 @@ export type MainIpcCatalogDepsArgs = {
 export type MainIpcSettingsDepsArgs = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
+  getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
   getMemoryManagementSnapshot(): MemoryManagementSnapshot;
   getMemoryManagementPage(request: MemoryManagementPageRequest): MemoryManagementPageResult;
+  getMateEmbeddingSettings(): MateEmbeddingSettings | null;
+  getMateGrowthSettings(): MateGrowthSettings | null;
+  updateMateGrowthSettings(input: UpdateMateGrowthSettingsInput): Awaitable<MateGrowthSettings | null>;
+  listProviderInstructionTargets(): Awaitable<ProviderInstructionTarget[]>;
+  upsertProviderInstructionTarget(input: ProviderInstructionTargetInput): Awaitable<ProviderInstructionTarget>;
+  startMateEmbeddingDownload(): Awaitable<void>;
   deleteSessionMemory(sessionId: string): void;
   deleteProjectMemoryEntry(entryId: string): void;
   deleteCharacterMemoryEntry(entryId: string): void;
+  forgetMateProfileItem(itemId: string): Awaitable<void>;
 };
 
 export type MainIpcSessionQueryDepsArgs = {
@@ -185,6 +220,21 @@ export type MainIpcCharacterDepsArgs = {
   deleteCharacter(characterId: string): Promise<void>;
 };
 
+export type MainIpcMateDepsArgs = {
+  getMateState(): Awaitable<MateStorageState>;
+  getMateProfile(): Awaitable<MateProfile | null>;
+  createMate(input: CreateMateInput): Promise<MateProfile>;
+  updateMate(input: UpdateMateInput): Promise<MateProfile>;
+  setMateAvatar(input: SetMateAvatarInput): Promise<MateProfile>;
+  applyPendingGrowth(): Promise<MateGrowthApplyResult>;
+  listMateGrowthEvents(request?: MateGrowthEventListRequest | null): Promise<MateGrowthEventListResult>;
+  correctMateGrowthEvent(request: MateGrowthEventCorrectionRequest): Promise<MateGrowthEventActionResult>;
+  disableMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult>;
+  forgetMateGrowthEvent(request: MateGrowthEventActionRequest): Promise<MateGrowthEventActionResult>;
+  runMateTalkTurn(input: MateTalkTurnInput): Promise<MateTalkTurnResult>;
+  resetMate(): Promise<void>;
+};
+
 export type CreateMainIpcRegistrationDepsArgs = {
   window: MainIpcWindowDepsArgs;
   catalog: MainIpcCatalogDepsArgs;
@@ -193,6 +243,7 @@ export type CreateMainIpcRegistrationDepsArgs = {
   companion: MainIpcCompanionDepsArgs;
   sessionRuntime: MainIpcSessionRuntimeDepsArgs;
   character: MainIpcCharacterDepsArgs;
+  mate: MainIpcMateDepsArgs;
 };
 
 export function createMainIpcRegistrationDeps(
@@ -215,6 +266,9 @@ export function createMainIpcRegistrationDeps(
     },
     openMemoryManagementWindow: async () => {
       await args.window.openMemoryManagementWindow();
+    },
+    openMateTalkWindow: async (input) => {
+      await args.window.openMateTalkWindow(input);
     },
     openCharacterEditorWindow: async (characterId) => {
       await args.window.openCharacterEditorWindow(characterId);
@@ -245,12 +299,20 @@ export function createMainIpcRegistrationDeps(
     exportModelCatalogToFile: args.catalog.exportModelCatalogToFile,
     getAppSettings: args.settings.getAppSettings,
     updateAppSettings: args.settings.updateAppSettings,
+    getAppDatabaseDiagnostics: args.settings.getAppDatabaseDiagnostics,
     resetAppDatabase: args.settings.resetAppDatabase,
     getMemoryManagementSnapshot: args.settings.getMemoryManagementSnapshot,
     getMemoryManagementPage: args.settings.getMemoryManagementPage,
+    getMateEmbeddingSettings: args.settings.getMateEmbeddingSettings,
+    getMateGrowthSettings: args.settings.getMateGrowthSettings,
+    listProviderInstructionTargets: args.settings.listProviderInstructionTargets,
+    updateMateGrowthSettings: args.settings.updateMateGrowthSettings,
+    upsertProviderInstructionTarget: args.settings.upsertProviderInstructionTarget,
+    startMateEmbeddingDownload: args.settings.startMateEmbeddingDownload,
     deleteSessionMemory: args.settings.deleteSessionMemory,
     deleteProjectMemoryEntry: args.settings.deleteProjectMemoryEntry,
     deleteCharacterMemoryEntry: args.settings.deleteCharacterMemoryEntry,
+    forgetMateProfileItem: args.settings.forgetMateProfileItem,
     listSessionSummaries: args.sessionQuery.listSessionSummaries,
     listCompanionSessionSummaries: args.sessionQuery.listCompanionSessionSummaries,
     listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,
@@ -310,5 +372,17 @@ export function createMainIpcRegistrationDeps(
     createCharacter: args.character.createCharacter,
     updateCharacter: args.character.updateCharacter,
     deleteCharacter: args.character.deleteCharacter,
+    getMateState: args.mate.getMateState,
+    getMateProfile: args.mate.getMateProfile,
+    createMate: args.mate.createMate,
+    updateMate: args.mate.updateMate,
+    setMateAvatar: args.mate.setMateAvatar,
+    applyPendingGrowth: args.mate.applyPendingGrowth,
+    listMateGrowthEvents: args.mate.listMateGrowthEvents,
+    correctMateGrowthEvent: args.mate.correctMateGrowthEvent,
+    disableMateGrowthEvent: args.mate.disableMateGrowthEvent,
+    forgetMateGrowthEvent: args.mate.forgetMateGrowthEvent,
+    runMateTalkTurn: args.mate.runMateTalkTurn,
+    resetMate: args.mate.resetMate,
   };
 }

@@ -45,11 +45,12 @@ export type StreamEntry = {
 };
 
 export type SessionKind = "default" | "character-update";
+export const SESSION_ACCESS_MODE_VALUES = ["active", "legacy_readonly"] as const;
+export type SessionAccessMode = typeof SESSION_ACCESS_MODE_VALUES[number];
 
 export type Session = {
   id: string;
   taskTitle: string;
-  taskSummary: string;
   status: "running" | "idle" | "saved";
   updatedAt: string;
   provider: string;
@@ -58,6 +59,8 @@ export type Session = {
   workspacePath: string;
   branch: string;
   sessionKind: SessionKind;
+  accessMode: SessionAccessMode;
+  sourceSchemaVersion: number;
   characterId: string;
   character: string;
   characterIconPath: string;
@@ -102,6 +105,14 @@ export type CreateSessionInput = {
   customAgentName?: string;
   allowedAdditionalDirectories?: string[];
 };
+
+export function normalizeSessionAccessMode(value: unknown, fallback: SessionAccessMode = "active"): SessionAccessMode {
+  return SESSION_ACCESS_MODE_VALUES.includes(value as SessionAccessMode) ? value as SessionAccessMode : fallback;
+}
+
+export function isLegacyReadOnlySession(session: Pick<Session, "accessMode"> | Pick<SessionSummary, "accessMode">): boolean {
+  return session.accessMode === "legacy_readonly";
+}
 
 function getLocationSearch(): string {
   const browserWindow = (globalThis as typeof globalThis & { window?: { location?: { search?: string } } }).window;
@@ -256,10 +267,7 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
     taskTitle:
       typeof candidate.taskTitle === "string" && candidate.taskTitle.trim()
         ? candidate.taskTitle
-        : typeof candidate.taskSummary === "string" && candidate.taskSummary.trim()
-          ? candidate.taskSummary
-          : "既存セッション",
-    taskSummary: typeof candidate.taskSummary === "string" ? candidate.taskSummary : "",
+        : "既存セッション",
     status:
       candidate.status === "running" || candidate.status === "idle" || candidate.status === "saved"
         ? candidate.status
@@ -282,6 +290,13 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
     workspacePath: typeof candidate.workspacePath === "string" ? candidate.workspacePath : "",
     branch: typeof candidate.branch === "string" && candidate.branch.trim() ? candidate.branch : "main",
     sessionKind: candidate.sessionKind === "character-update" ? "character-update" : "default",
+    accessMode: normalizeSessionAccessMode((candidate as { accessMode?: unknown }).accessMode),
+    sourceSchemaVersion:
+      typeof candidate.sourceSchemaVersion === "number" &&
+      Number.isInteger(candidate.sourceSchemaVersion) &&
+      candidate.sourceSchemaVersion > 0
+        ? candidate.sourceSchemaVersion
+        : 4,
     characterId:
       typeof candidate.characterId === "string" && candidate.characterId.trim()
         ? candidate.characterId
@@ -392,7 +407,6 @@ export function buildNewSession(input: CreateSessionInput): Session {
   return {
     id: `launch-${Date.now()}`,
     taskTitle: normalizedTaskTitle,
-    taskSummary: `${input.workspaceLabel} で新規セッションを開始。${input.character} のロールを保ったまま、ここから最初の指示を待つ。`,
     status: "idle",
     updatedAt: currentTimestampLabel(),
     provider: normalizeProviderId(input.provider ?? DEFAULT_PROVIDER_ID),
@@ -404,6 +418,8 @@ export function buildNewSession(input: CreateSessionInput): Session {
     workspacePath: input.workspacePath,
     branch: input.branch,
     sessionKind: input.sessionKind ?? "default",
+    accessMode: "active",
+    sourceSchemaVersion: 4,
     characterId: input.characterId,
     character: input.character,
     characterIconPath: input.characterIconPath,
@@ -481,7 +497,6 @@ export function buildSessionSummarySignature(summary: SessionSummary): string {
     summary.status,
     summary.runState,
     summary.taskTitle,
-    summary.taskSummary,
     summary.threadId,
     summary.provider,
     String(summary.catalogRevision),
@@ -492,6 +507,8 @@ export function buildSessionSummarySignature(summary: SessionSummary): string {
     summary.workspacePath,
     summary.branch,
     summary.sessionKind,
+    summary.accessMode,
+    String(summary.sourceSchemaVersion),
     summary.characterId,
     summary.character,
     summary.characterIconPath,
