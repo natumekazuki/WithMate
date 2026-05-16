@@ -28,7 +28,7 @@ const MATE_TALK_RUNTIME_AGENTS = [
   "- ファイル編集、ファイル作成、ファイル削除を行わないでください。",
   "- 外部操作（ファイル以外のコマンド実行・ネットワーク通信・ブラウザー起動など）は行わないでください。",
   "- 応答は JSON structured output のみ返してください。",
-  "- 参照対象はこの workspace 配下のみです。",
+  "- 参照対象は、この workspace 配下のファイル、および呼び出しプロンプトの Selected context / additionalDirectories で明示されたパスに限定してください。",
 ].join("\n");
 
 const MATE_PROFILE_CONTEXT_GUARD =

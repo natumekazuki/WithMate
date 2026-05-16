@@ -34,6 +34,10 @@ describe("MateTalkRuntimeWorkspaceService", () => {
       assert.equal(await exists(path.join(expectedWorkspacePath, "AGENTS.md")), true);
       assert.equal(await exists(path.join(expectedWorkspacePath, "mate-profile.md")), true);
 
+      const agentsText = await readFile(path.join(expectedWorkspacePath, "AGENTS.md"), "utf8");
+      assert.match(agentsText, /Selected context \/ additionalDirectories/);
+      assert.doesNotMatch(agentsText, /参照対象はこの workspace 配下のみ/);
+
       const profileText = await readFile(path.join(expectedWorkspacePath, "mate-profile.md"), "utf8");
       assert.match(profileText, /id: mate-1/);
       assert.match(profileText, /name: タム/);

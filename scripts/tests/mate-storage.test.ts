@@ -1111,6 +1111,37 @@ describe("MateStorage", () => {
     }
   });
 
+  it("resetMate は mate ディレクトリ削除に失敗したら mate row を残す", async () => {
+    const { dbPath, userDataPath, cleanup } = await createTempPaths();
+    let storage: MateStorage | null = null;
+
+    try {
+      storage = new MateStorage(dbPath, userDataPath, {
+        rm: async () => {
+          const error = new Error("rm failed") as NodeJS.ErrnoException;
+          error.code = "EPERM";
+          throw error;
+        },
+      });
+      await storage.createMate({ displayName: "Mika" });
+
+      await assert.rejects(() => storage!.resetMate(), /rm failed/);
+
+      assert.equal(storage.getMateState(), "active");
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const profileCount = db.prepare("SELECT COUNT(*) AS count FROM mate_profile").get() as { count: number };
+        assert.equal(profileCount.count, 1);
+      } finally {
+        db.close();
+      }
+    } finally {
+      storage?.close();
+      await cleanup();
+    }
+  });
+
   it("applyProfileFiles は Mate ファイルを上書きし revision と section metadata を更新する", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: MateStorage | null = null;

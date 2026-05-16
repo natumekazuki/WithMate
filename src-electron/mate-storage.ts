@@ -340,14 +340,20 @@ function normalizeMateUpdate(input: UpdateMateInput): UpdateMateInput {
   return output;
 }
 
+type MateStorageFileSystem = {
+  rm?: typeof rm;
+};
+
 export class MateStorage {
   private db: DatabaseSync | null;
   private readonly userDataPath: string;
   private readonly isLegacyDatabase: boolean;
+  private readonly removeFileSystemEntry: typeof rm;
 
-  constructor(dbPath: string, userDataPath: string) {
+  constructor(dbPath: string, userDataPath: string, fileSystem: MateStorageFileSystem = {}) {
     this.userDataPath = userDataPath;
     this.isLegacyDatabase = isLegacyAppDatabasePath(dbPath);
+    this.removeFileSystemEntry = fileSystem.rm ?? rm;
     this.db = openAppDatabase(dbPath);
     if (!this.isLegacyDatabase) {
       this.initializeSchema();
@@ -1186,10 +1192,10 @@ export class MateStorage {
       return;
     }
 
+    await this.deleteMateDirectory();
     this.withTransaction((db) => {
       db.prepare("DELETE FROM mate_profile WHERE id = ?").run(MATE_ID);
     });
-    await this.deleteMateDirectory();
   }
 
   async deleteMateProjectionDirectory(): Promise<void> {
@@ -1460,7 +1466,7 @@ export class MateStorage {
   }
 
   private async deleteMateDirectory(): Promise<void> {
-    await rm(this.getMateDirectoryPath(), { recursive: true, force: true });
+    await this.removeFileSystemEntry(this.getMateDirectoryPath(), { recursive: true, force: true });
   }
 
   private async loadAvatarFromSourcePath(sourceAvatarFilePath: string): Promise<{
