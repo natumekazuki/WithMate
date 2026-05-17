@@ -2395,6 +2395,8 @@ button:disabled {
 
 .session-top-bar {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: stretch;
   gap: 10px;
   border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: 18px;
@@ -2411,7 +2413,11 @@ button:disabled {
 }
 
 .session-top-bar-row.is-editing-title {
+  position: relative;
+  display: block;
   align-items: stretch;
+  width: 100%;
+  padding-right: 154px;
 }
 
 .session-top-bar-drawer {
@@ -2437,18 +2443,19 @@ button:disabled {
 }
 
 .session-title-editor {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
+  display: flex;
+  align-items: stretch;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .session-page .session-title-editor {
-  flex: 1 1 auto;
   min-width: 0;
 }
 
 .session-title-editor input {
+  width: 100%;
   min-width: 0;
   border: 1px solid rgba(32, 36, 55, 0.08);
   border-radius: 14px;
@@ -2473,8 +2480,16 @@ button:disabled {
 .session-title-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   flex: 0 0 auto;
+}
+
+.session-top-bar-row.is-editing-title > .session-title-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
 }
 
 .session-approval-list {
@@ -7956,6 +7971,14 @@ button:disabled {
   .session-title-editor {
     width: 100%;
     grid-template-columns: 1fr;
+  }
+
+  .session-top-bar-row.is-editing-title {
+    padding-right: 0;
+  }
+
+  .session-top-bar-row.is-editing-title > .session-title-actions {
+    position: static;
   }
 
   .drawer-toggle,
