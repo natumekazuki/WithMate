@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ClipboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from "../approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE, normalizeCodexSandboxMode, type CodexSandboxMode } from "../codex-sandbox-mode.js";
@@ -19,6 +19,7 @@ import {
   toDirectoryPath,
 } from "../session-composer-paths.js";
 import { buildCharacterThemeStyle } from "../theme-utils.js";
+import { currentTimestampLabel } from "../time-state.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import type { MateTalkMessage } from "./mate-talk-chat-projection.js";
 import {
@@ -63,6 +64,7 @@ export function useMateTalkWindowState({
   const [model, setModel] = useState(launchParams.model);
   const [reasoningEffort, setReasoningEffort] = useState<ModelReasoningEffort>(launchParams.reasoningEffort);
   const turnControllerRef = useRef(new MateTalkTurnController());
+  const sessionFilesSessionIdRef = useRef(`mate-talk-${Date.now().toString(36)}`);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [inputCaret, setInputCaret] = useState(0);
@@ -181,14 +183,18 @@ export function useMateTalkWindowState({
     }
   };
 
-  const insertReferencePath = (selectedPath: string, kind: "file" | "folder" | "image") => {
+  const insertReferencePaths = (selectedPaths: string[], kind: "file" | "folder" | "image") => {
+    if (selectedPaths.length === 0) {
+      return;
+    }
+
     const textarea = composerTextareaRef.current;
-    const normalizedPath = normalizePathForReference(selectedPath);
-    const referenceToken = formatPathReference(normalizedPath);
+    const normalizedPaths = selectedPaths.map((selectedPath) => normalizePathForReference(selectedPath));
+    const referenceTokens = normalizedPaths.map((normalizedPath) => formatPathReference(normalizedPath));
     const caret = textarea?.selectionStart ?? inputCaret;
     const leadingSpacer = caret > 0 && !/\s/.test(input[caret - 1] ?? "") ? " " : "";
     const trailingSpacer = input.length > caret && !/\s/.test(input[caret] ?? "") ? " " : "";
-    const insertion = `${leadingSpacer}${referenceToken}${trailingSpacer}`;
+    const insertion = `${leadingSpacer}${referenceTokens.join(" ")}${trailingSpacer}`;
     const nextInput = `${input.slice(0, caret)}${insertion}${input.slice(caret)}`;
     const nextCaret = caret + insertion.length;
 
@@ -196,10 +202,14 @@ export function useMateTalkWindowState({
     setInputCaret(nextCaret);
     setFeedback("");
     setPathReferences((current) => {
-      if (current.some((entry) => entry.path === normalizedPath)) {
-        return current;
+      const existing = new Set(current.map((entry) => entry.path));
+      const next = [...current];
+      for (const normalizedPath of normalizedPaths) {
+        if (!existing.has(normalizedPath)) {
+          next.push({ path: normalizedPath, kind });
+        }
       }
-      return [...current, { path: normalizedPath, kind }];
+      return next;
     });
 
     window.requestAnimationFrame(() => {
@@ -210,6 +220,10 @@ export function useMateTalkWindowState({
       textarea.focus();
       textarea.setSelectionRange(nextCaret, nextCaret);
     });
+  };
+
+  const insertReferencePath = (selectedPath: string, kind: "file" | "folder" | "image") => {
+    insertReferencePaths([selectedPath], kind);
   };
 
   const pickAndInsertPath = async (kind: "file" | "folder" | "image") => {
@@ -229,6 +243,80 @@ export function useMateTalkWindowState({
 
     setPickerBaseDirectory(kind === "folder" ? selectedPath : toDirectoryPath(selectedPath));
     insertReferencePath(selectedPath, kind);
+  };
+
+  const addToSessionFiles = async () => {
+    if (!withmateApi || sending) {
+      return;
+    }
+
+    const selectedPaths = await withmateApi.pickFiles(pickerBaseDirectory || null);
+    if (selectedPaths.length === 0) {
+      return;
+    }
+
+    const savedPaths = await withmateApi.copyFilesToSessionFiles(sessionFilesSessionIdRef.current, selectedPaths);
+    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
+    insertReferencePaths(savedPaths, "file");
+  };
+
+  const pickSessionFiles = async () => {
+    if (!withmateApi || sending) {
+      return;
+    }
+
+    const selectedPaths = await withmateApi.pickSessionFiles(sessionFilesSessionIdRef.current);
+    if (selectedPaths.length === 0) {
+      return;
+    }
+
+    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
+    insertReferencePaths(selectedPaths, "file");
+  };
+
+  const handleDraftPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!withmateApi || sending) {
+      return;
+    }
+
+    const files = Array.from(event.clipboardData.files);
+    const itemFiles = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+    const pastedFiles = files.length > 0 ? files : itemFiles;
+    if (pastedFiles.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    const savedPaths: string[] = [];
+    for (const file of pastedFiles) {
+      const buffer = await file.arrayBuffer();
+      const fileName = file.name.trim() || `pasted-${currentTimestampLabel().replace(/[:/\\\s]+/g, "-")}.png`;
+      const savedPath = await withmateApi.savePastedSessionFile({
+        sessionId: sessionFilesSessionIdRef.current,
+        fileName,
+        data: buffer,
+      });
+      savedPaths.push(savedPath);
+    }
+
+    insertReferencePaths(savedPaths, "file");
+  };
+
+  const openSessionFilesDirectory = async () => {
+    if (!withmateApi) {
+      return;
+    }
+    await withmateApi.openSessionFilesDirectory(sessionFilesSessionIdRef.current);
+  };
+
+  const openSessionFilesTerminal = async () => {
+    if (!withmateApi) {
+      return;
+    }
+    await withmateApi.openSessionFilesTerminal(sessionFilesSessionIdRef.current);
   };
 
   const removePathReference = (targets: string[]) => {
@@ -423,6 +511,8 @@ export function useMateTalkWindowState({
     onPickFile: () => void pickAndInsertPath("file"),
     onPickFolder: () => void pickAndInsertPath("folder"),
     onPickImage: () => void pickAndInsertPath("image"),
+    onAddToSessionFiles: () => void addToSessionFiles(),
+    onPickSessionFiles: () => void pickSessionFiles(),
     onAddAdditionalDirectory: () => void addAdditionalDirectory(),
     onToggleAdditionalDirectoryList: () => setIsAdditionalDirectoryListOpen((current) => !current),
     onRemoveAttachment: removePathReference,
@@ -430,6 +520,7 @@ export function useMateTalkWindowState({
       setAdditionalDirectories((current) => current.filter((entry) => entry !== directoryPath));
     },
     onDraftFocus: () => {},
+    onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleDraftPaste(event),
     onDraftSelect: (selectionStart: number) => setInputCaret(selectionStart),
     onChangeApprovalMode: (value: ApprovalMode) => setSelectedApprovalMode(normalizeApprovalMode(value)),
     onChangeCodexSandboxMode: (value: CodexSandboxMode) =>
@@ -438,6 +529,8 @@ export function useMateTalkWindowState({
     onChangeReasoningEffort: handleChangeReasoningEffort,
     onSubmit: () => void handleSubmit(),
     onToggleHeaderExpanded: () => setIsHeaderExpanded((current) => !current),
+    onOpenSessionFilesExplorer: () => void openSessionFilesDirectory(),
+    onOpenSessionFilesTerminal: () => void openSessionFilesTerminal(),
     onCollapseActionDock: () => setIsActionDockExpanded(false),
     onExpandActionDock: () => setIsActionDockExpanded(true),
     sending,

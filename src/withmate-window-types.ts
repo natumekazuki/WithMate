@@ -2,6 +2,12 @@ import type { AppSettings } from "./provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "./model-catalog.js";
 import type { Session } from "./session-state.js";
 
+export type SavePastedSessionFileRequest = {
+  sessionId: string;
+  fileName: string;
+  data: ArrayBuffer;
+};
+
 export type OpenPathOptions = {
   baseDirectory?: string | null;
 };

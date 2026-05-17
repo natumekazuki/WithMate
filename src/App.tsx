@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
 
 import {
   type AuditLogSummary,
@@ -2223,16 +2223,22 @@ export default function AgentSessionWindowApp() {
     }
   };
 
-  const insertReferencePath = (selectedPath: string) => {
+  const insertReferencePaths = (selectedPaths: string[]) => {
+    if (selectedPaths.length === 0) {
+      return;
+    }
+
     const textarea = composerTextareaRef.current;
-    const referencePath = selectedSession
-      ? toWorkspaceRelativeReference(selectedSession.workspacePath, selectedPath) ?? normalizePathForReference(selectedPath)
-      : normalizePathForReference(selectedPath);
-    const referenceToken = formatPathReference(referencePath);
+    const referenceTokens = selectedPaths.map((selectedPath) => {
+      const referencePath = selectedSession
+        ? toWorkspaceRelativeReference(selectedSession.workspacePath, selectedPath) ?? normalizePathForReference(selectedPath)
+        : normalizePathForReference(selectedPath);
+      return formatPathReference(referencePath);
+    });
     const currentCaret = textarea?.selectionStart ?? composerCaret;
     const leadingSpacer = currentCaret > 0 && !/\s/.test(draft[currentCaret - 1] ?? "") ? " " : "";
     const trailingSpacer = draft.length > currentCaret && !/\s/.test(draft[currentCaret] ?? "") ? " " : "";
-    const insertion = `${leadingSpacer}${referenceToken}${trailingSpacer}`;
+    const insertion = `${leadingSpacer}${referenceTokens.join(" ")}${trailingSpacer}`;
     const nextDraft = `${draft.slice(0, currentCaret)}${insertion}${draft.slice(currentCaret)}`;
     const nextCaret = currentCaret + insertion.length;
 
@@ -2249,6 +2255,10 @@ export default function AgentSessionWindowApp() {
       textarea.focus();
       textarea.setSelectionRange(nextCaret, nextCaret);
     });
+  };
+
+  const insertReferencePath = (selectedPath: string) => {
+    insertReferencePaths([selectedPath]);
   };
 
   const handleRemoveAttachmentReference = (attachmentPathCandidates: string[]) => {
@@ -2317,6 +2327,72 @@ export default function AgentSessionWindowApp() {
 
     setPickerBaseDirectory(toDirectoryPath(selectedPath));
     insertReferencePath(selectedPath);
+  };
+
+  const handleAddToSessionFiles = async () => {
+    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly) {
+      return;
+    }
+
+    setIsSkillPickerOpen(false);
+    const selectedPaths = await withmateApi.pickFiles(pickerBaseDirectory || selectedSession.workspacePath || null);
+    if (selectedPaths.length === 0) {
+      return;
+    }
+
+    const savedPaths = await withmateApi.copyFilesToSessionFiles(selectedSession.id, selectedPaths);
+    if (savedPaths.length === 0) {
+      return;
+    }
+
+    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
+    insertReferencePaths(savedPaths);
+  };
+
+  const handlePickSessionFiles = async () => {
+    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly) {
+      return;
+    }
+
+    setIsSkillPickerOpen(false);
+    const selectedPaths = await withmateApi.pickSessionFiles(selectedSession.id);
+    if (selectedPaths.length === 0) {
+      return;
+    }
+
+    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
+    insertReferencePaths(selectedPaths);
+  };
+
+  const handleComposerPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!withmateApi || !selectedSession || isSelectedSessionReadOnly || selectedSession.runState === "running") {
+      return;
+    }
+
+    const files = Array.from(event.clipboardData.files);
+    const itemFiles = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+    const pastedFiles = files.length > 0 ? files : itemFiles;
+    if (pastedFiles.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    const savedPaths: string[] = [];
+    for (const file of pastedFiles) {
+      const buffer = await file.arrayBuffer();
+      const fileName = file.name.trim() || `pasted-${currentTimestampLabel().replace(/[:/\\\s]+/g, "-")}.png`;
+      const savedPath = await withmateApi.savePastedSessionFile({
+        sessionId: selectedSession.id,
+        fileName,
+        data: buffer,
+      });
+      savedPaths.push(savedPath);
+    }
+
+    insertReferencePaths(savedPaths);
   };
 
   const handleAddAdditionalDirectory = async () => {
@@ -2423,6 +2499,30 @@ export default function AgentSessionWindowApp() {
       await withmateApi.openPath(selectedSession.workspacePath);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "Explorer を開けなかったよ。");
+    }
+  };
+
+  const handleOpenSessionFilesTerminal = async () => {
+    if (!withmateApi || !selectedSession) {
+      return;
+    }
+
+    try {
+      await withmateApi.openSessionFilesTerminal(selectedSession.id);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "session files terminal の起動に失敗したよ。");
+    }
+  };
+
+  const handleOpenSessionFilesExplorer = async () => {
+    if (!withmateApi || !selectedSession) {
+      return;
+    }
+
+    try {
+      await withmateApi.openSessionFilesDirectory(selectedSession.id);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "session files directory を開けなかったよ。");
     }
   };
 
@@ -2618,6 +2718,7 @@ export default function AgentSessionWindowApp() {
         onToggleHeaderExpanded: handleToggleHeaderExpanded,
         onOpenAuditLog: () => setAuditLogsOpen(true),
         onOpenSessionTerminal: () => void handleOpenSessionTerminal(),
+        onOpenSessionFilesTerminal: () => void handleOpenSessionFilesTerminal(),
         onTitleDraftChange: setTitleDraft,
         onTitleInputKeyDown: handleTitleInputKeyDown,
         onSaveTitle: () => void handleSaveTitle(),
@@ -2625,6 +2726,7 @@ export default function AgentSessionWindowApp() {
         onStartTitleEdit: handleStartTitleEdit,
         onDeleteSession: () => void handleDeleteSession(),
         onOpenSessionExplorer: () => void handleOpenSessionExplorer(),
+        onOpenSessionFilesExplorer: () => void handleOpenSessionFilesExplorer(),
         onMessageListScroll: handleMessageListScroll,
         onToggleArtifact: toggleArtifact,
         onLoadArtifactDetail: (messageIndex) =>
@@ -2654,6 +2756,8 @@ export default function AgentSessionWindowApp() {
         onPickFile: () => void handlePickFile(),
         onPickFolder: () => void handlePickFolder(),
         onPickImage: () => void handlePickImage(),
+        onAddToSessionFiles: () => void handleAddToSessionFiles(),
+        onPickSessionFiles: () => void handlePickSessionFiles(),
         onToggleAgentPicker: () => {
           setIsSkillPickerOpen(false);
           setIsAgentPickerOpen((current) => !current);
@@ -2684,6 +2788,7 @@ export default function AgentSessionWindowApp() {
         },
         onDraftFocus: () => setIsActionDockPinnedExpanded(true),
         onDraftKeyDown: handleComposerKeyDown,
+        onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleComposerPaste(event),
         onDraftSelect: setComposerCaret,
         onDraftCompositionStart: () => setIsComposerImeComposing(true),
         onDraftCompositionEnd: () => {

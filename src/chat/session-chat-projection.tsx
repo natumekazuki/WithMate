@@ -119,6 +119,7 @@ export type AgentSessionChatProjectionInput = {
   onToggleHeaderExpanded: () => void;
   onOpenAuditLog: () => void;
   onOpenSessionTerminal: () => void;
+  onOpenSessionFilesTerminal: () => void;
   onTitleDraftChange: (value: string) => void;
   onTitleInputKeyDown: KeyboardEventHandler<HTMLInputElement>;
   onSaveTitle: () => void;
@@ -126,6 +127,7 @@ export type AgentSessionChatProjectionInput = {
   onStartTitleEdit: () => void;
   onDeleteSession: () => void;
   onOpenSessionExplorer: () => void;
+  onOpenSessionFilesExplorer: () => void;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
   onToggleArtifact: (artifactKey: string) => void;
   onLoadArtifactDetail: (messageIndex: number) => Promise<MessageArtifact | null>;
@@ -142,6 +144,8 @@ export type AgentSessionChatProjectionInput = {
   onPickFile: () => void;
   onPickFolder: () => void;
   onPickImage: () => void;
+  onAddToSessionFiles: NonNullable<SessionComposerExpandedProps["onAddToSessionFiles"]>;
+  onPickSessionFiles: NonNullable<SessionComposerExpandedProps["onPickSessionFiles"]>;
   onToggleAgentPicker: () => void;
   onToggleSkillPicker: () => void;
   onAddAdditionalDirectory: () => void;
@@ -155,6 +159,7 @@ export type AgentSessionChatProjectionInput = {
   onDraftChange: SessionComposerExpandedProps["onDraftChange"];
   onDraftFocus: () => void;
   onDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
+  onDraftPaste: SessionComposerExpandedProps["onDraftPaste"];
   onDraftSelect: (selectionStart: number) => void;
   onDraftCompositionStart: () => void;
   onDraftCompositionEnd: () => void;
@@ -191,6 +196,26 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onToggleExpanded: input.onToggleHeaderExpanded,
     onOpenAuditLog: input.onOpenAuditLog,
     onOpenTerminal: input.onOpenSessionTerminal,
+    sessionFilesActions: (
+      <>
+        <button
+          className="drawer-toggle compact secondary"
+          type="button"
+          onClick={input.onOpenSessionFilesExplorer}
+          title="Open session files directory"
+        >
+          Explorer
+        </button>
+        <button
+          className="drawer-toggle compact secondary"
+          type="button"
+          onClick={input.onOpenSessionFilesTerminal}
+          title="Open terminal in session files directory"
+        >
+          Terminal
+        </button>
+      </>
+    ),
     onTitleDraftChange: input.onTitleDraftChange,
     onTitleInputKeyDown: input.onTitleInputKeyDown,
     onSaveTitle: input.onSaveTitle,
@@ -286,6 +311,8 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onPickFile: input.onPickFile,
     onPickFolder: input.onPickFolder,
     onPickImage: input.onPickImage,
+    onAddToSessionFiles: input.onAddToSessionFiles,
+    onPickSessionFiles: input.onPickSessionFiles,
     onToggleAgentPicker: input.onToggleAgentPicker,
     onToggleSkillPicker: input.onToggleSkillPicker,
     onAddAdditionalDirectory: input.onAddAdditionalDirectory,
@@ -299,6 +326,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onDraftChange: input.onDraftChange,
     onDraftFocus: input.onDraftFocus,
     onDraftKeyDown: input.onDraftKeyDown,
+    onDraftPaste: input.onDraftPaste,
     onDraftSelect: input.onDraftSelect,
     onDraftCompositionStart: input.onDraftCompositionStart,
     onDraftCompositionEnd: input.onDraftCompositionEnd,

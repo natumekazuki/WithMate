@@ -44,7 +44,11 @@ import type {
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionInput, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
-import type { OpenPathOptions, ResetAppDatabaseRequest } from "../src/withmate-window-types.js";
+import type {
+  OpenPathOptions,
+  ResetAppDatabaseRequest,
+  SavePastedSessionFileRequest,
+} from "../src/withmate-window-types.js";
 import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 import type {
   CreateMateInput,
@@ -87,7 +91,13 @@ export type MainIpcWindowDepsArgs = {
   openCompanionMergeWindow(sessionId: string): Promise<BrowserWindow>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
+  pickFiles(targetWindow: MaybeWindow, initialPath: string | null): Promise<string[]>;
+  pickSessionFiles(targetWindow: MaybeWindow, sessionId: string): Promise<string[]>;
   pickImageFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
+  copyFilesToSessionFiles(sessionId: string, sourcePaths: string[]): Promise<string[]>;
+  savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string>;
+  openSessionFilesDirectory(sessionId: string): Promise<void>;
+  openSessionFilesTerminal(sessionId: string): Promise<void>;
   openPathTarget(target: string, options?: OpenPathOptions): Promise<void>;
   openAppLogFolder(): Promise<void>;
   openCrashDumpFolder(): Promise<void>;
@@ -284,7 +294,13 @@ export function createMainIpcRegistrationDeps(
     },
     pickDirectory: args.window.pickDirectory,
     pickFile: args.window.pickFile,
+    pickFiles: args.window.pickFiles,
+    pickSessionFiles: args.window.pickSessionFiles,
     pickImageFile: args.window.pickImageFile,
+    copyFilesToSessionFiles: args.window.copyFilesToSessionFiles,
+    savePastedSessionFile: args.window.savePastedSessionFile,
+    openSessionFilesDirectory: args.window.openSessionFilesDirectory,
+    openSessionFilesTerminal: args.window.openSessionFilesTerminal,
     openPathTarget: args.window.openPathTarget,
     openAppLogFolder: args.window.openAppLogFolder,
     openCrashDumpFolder: args.window.openCrashDumpFolder,

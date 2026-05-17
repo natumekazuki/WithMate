@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ClipboardEvent,
   type KeyboardEvent,
   type KeyboardEventHandler,
   type PointerEvent as ReactPointerEvent,
@@ -1145,16 +1146,22 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     await withmateApi.openDiffWindow(payload);
   }
 
-  function insertReferencePath(selectedPath: string): void {
+  function insertReferencePaths(selectedPaths: string[]): void {
+    if (selectedPaths.length === 0) {
+      return;
+    }
+
     const textarea = composerTextareaRef.current;
     const currentCaret = textarea?.selectionStart ?? composerCaret;
-    const referencePath = snapshot
-      ? toWorkspaceRelativeReference(snapshot.session.worktreePath, selectedPath) ?? normalizePathForReference(selectedPath)
-      : normalizePathForReference(selectedPath);
-    const referenceToken = formatPathReference(referencePath);
+    const referenceTokens = selectedPaths.map((selectedPath) => {
+      const referencePath = snapshot
+        ? toWorkspaceRelativeReference(snapshot.session.worktreePath, selectedPath) ?? normalizePathForReference(selectedPath)
+        : normalizePathForReference(selectedPath);
+      return formatPathReference(referencePath);
+    });
     const leadingSpacer = currentCaret > 0 && !/\s/.test(composerText[currentCaret - 1] ?? "") ? " " : "";
     const trailingSpacer = composerText.length > currentCaret && !/\s/.test(composerText[currentCaret] ?? "") ? " " : "";
-    const insertion = `${leadingSpacer}${referenceToken}${trailingSpacer}`;
+    const insertion = `${leadingSpacer}${referenceTokens.join(" ")}${trailingSpacer}`;
     const nextDraft = `${composerText.slice(0, currentCaret)}${insertion}${composerText.slice(currentCaret)}`;
     const nextCaret = currentCaret + insertion.length;
 
@@ -1172,6 +1179,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
   }
 
+  function insertReferencePath(selectedPath: string): void {
+    insertReferencePaths([selectedPath]);
+  }
+
   async function pickAndInsertPath(kind: "file" | "folder" | "image"): Promise<void> {
     const withmateApi = getWithMateApi();
     if (!withmateApi || !snapshot || runDisabled) {
@@ -1187,6 +1198,74 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       setPickerBaseDirectory(kind === "folder" ? selectedPath : toDirectoryPath(selectedPath));
       insertReferencePath(selectedPath);
     }
+  }
+
+  async function addToSessionFiles(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !snapshot || runDisabled) {
+      return;
+    }
+
+    const basePath = pickerBaseDirectory || snapshot.session.worktreePath || snapshot.session.repoRoot;
+    const selectedPaths = await withmateApi.pickFiles(basePath);
+    if (selectedPaths.length === 0) {
+      return;
+    }
+
+    const savedPaths = await withmateApi.copyFilesToSessionFiles(snapshot.session.id, selectedPaths);
+    if (savedPaths.length === 0) {
+      return;
+    }
+
+    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
+    insertReferencePaths(savedPaths);
+  }
+
+  async function pickSessionFiles(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !snapshot || runDisabled) {
+      return;
+    }
+
+    const selectedPaths = await withmateApi.pickSessionFiles(snapshot.session.id);
+    if (selectedPaths.length === 0) {
+      return;
+    }
+
+    setPickerBaseDirectory(toDirectoryPath(selectedPaths[0]));
+    insertReferencePaths(selectedPaths);
+  }
+
+  async function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !snapshot || runDisabled) {
+      return;
+    }
+
+    const files = Array.from(event.clipboardData.files);
+    const itemFiles = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+    const pastedFiles = files.length > 0 ? files : itemFiles;
+    if (pastedFiles.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    const savedPaths: string[] = [];
+    for (const file of pastedFiles) {
+      const buffer = await file.arrayBuffer();
+      const fileName = file.name.trim() || `pasted-${currentTimestampLabel().replace(/[:/\\\s]+/g, "-")}.png`;
+      const savedPath = await withmateApi.savePastedSessionFile({
+        sessionId: snapshot.session.id,
+        fileName,
+        data: buffer,
+      });
+      savedPaths.push(savedPath);
+    }
+
+    insertReferencePaths(savedPaths);
   }
 
   async function handleAddAdditionalDirectory(): Promise<void> {
@@ -1952,6 +2031,30 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
   }
 
+  async function openCompanionSessionFilesDirectory(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!snapshot || !withmateApi) {
+      return;
+    }
+    try {
+      await withmateApi.openSessionFilesDirectory(snapshot.session.id);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "session files directory を開けなかったよ。");
+    }
+  }
+
+  async function openCompanionSessionFilesTerminal(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!snapshot || !withmateApi) {
+      return;
+    }
+    try {
+      await withmateApi.openSessionFilesTerminal(snapshot.session.id);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "session files terminal を開けなかったよ。");
+    }
+  }
+
   async function openCompanionMergeWindow(): Promise<void> {
     const withmateApi = getWithMateApi();
     if (!snapshot || !withmateApi) {
@@ -2092,12 +2195,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onToggleContextPaneHeaderExpanded: () => setIsHeaderExpanded((current) => !current),
         onOpenAuditLog: () => setAuditLogsOpen(true),
         onOpenTerminal: () => void openCompanionTerminal(),
+        onOpenSessionFilesTerminal: () => void openCompanionSessionFilesTerminal(),
         onTitleDraftChange: setTitleDraft,
         onTitleInputKeyDown: handleTitleInputKeyDown,
         onSaveTitle: () => void handleSaveTitle(),
         onCancelTitleEdit: handleCancelTitleEdit,
         onStartTitleEdit: handleStartTitleEdit,
         onOpenWorktree: () => void openCompanionWorktree(),
+        onOpenSessionFilesExplorer: () => void openCompanionSessionFilesDirectory(),
         onOpenMergeWindow: () => void openCompanionMergeWindow(),
         onMessageListScroll: handleMessageListScroll,
         onToggleArtifact: toggleArtifact,
@@ -2115,6 +2220,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onPickFile: () => void pickAndInsertPath("file"),
         onPickFolder: () => void pickAndInsertPath("folder"),
         onPickImage: () => void pickAndInsertPath("image"),
+        onAddToSessionFiles: () => void addToSessionFiles(),
+        onPickSessionFiles: () => void pickSessionFiles(),
         onToggleAgentPicker: () => {
           setIsSkillPickerOpen(false);
           setIsAgentPickerOpen((current) => !current);
@@ -2145,6 +2252,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         },
         onDraftFocus: () => setIsActionDockPinnedExpanded(true),
         onDraftKeyDown: handleCompanionDraftKeyDown,
+        onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleComposerPaste(event),
         onDraftSelect: setComposerCaret,
         onDraftCompositionStart: () => setIsComposerImeComposing(true),
         onDraftCompositionEnd: () => {

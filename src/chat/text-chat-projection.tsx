@@ -53,6 +53,7 @@ export type TextChatWindowProjectionInput = {
   feedback: string;
   submitOnKey?: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean;
   headerWorkspaceActions?: ReactNode;
+  headerSessionFilesActions?: ReactNode;
   isActionDockExpanded?: boolean;
   onExpandActionDock?: () => void;
   rightPaneHeaderTitle?: string;
@@ -116,6 +117,7 @@ export function buildTextChatWindowProps({
   feedback,
   submitOnKey,
   headerWorkspaceActions,
+  headerSessionFilesActions,
   isActionDockExpanded = true,
   onExpandActionDock,
   rightPaneHeaderTitle = pageTitle,
@@ -135,6 +137,7 @@ export function buildTextChatWindowProps({
       titleDraft: pageTitleDraft ?? pageTitle,
       isRunning,
       workspaceActions: headerWorkspaceActions,
+      sessionFilesActions: headerSessionFilesActions,
       onToggleExpanded: onToggleHeaderExpanded,
     }),
     messageColumnProps: createStaticTextConversationMessageColumnProps({

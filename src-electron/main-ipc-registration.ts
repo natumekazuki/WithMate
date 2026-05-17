@@ -140,6 +140,8 @@ import {
   WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
+  WITHMATE_OPEN_SESSION_FILES_DIRECTORY_CHANNEL,
+  WITHMATE_OPEN_SESSION_FILES_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
@@ -147,7 +149,10 @@ import {
   WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
   WITHMATE_PICK_FILE_CHANNEL,
+  WITHMATE_PICK_FILES_CHANNEL,
+  WITHMATE_PICK_SESSION_FILES_CHANNEL,
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
+  WITHMATE_COPY_FILES_TO_SESSION_FILES_CHANNEL,
   WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL,
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
@@ -166,6 +171,7 @@ import {
   WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SET_MATE_AVATAR_CHANNEL,
+  WITHMATE_SAVE_PASTED_SESSION_FILE_CHANNEL,
   WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
   WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL,
   WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
@@ -179,7 +185,11 @@ import {
   WITHMATE_UPDATE_SESSION_CHANNEL,
   WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
 } from "../src/withmate-ipc-channels.js";
-import type { OpenPathOptions, ResetAppDatabaseRequest } from "../src/withmate-window-types.js";
+import type {
+  OpenPathOptions,
+  ResetAppDatabaseRequest,
+  SavePastedSessionFileRequest,
+} from "../src/withmate-window-types.js";
 import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
@@ -370,7 +380,13 @@ export type MainIpcRegistrationDeps = {
   resetMate(): Promise<void>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
+  pickFiles(targetWindow: MaybeWindow, initialPath: string | null): Promise<string[]>;
+  pickSessionFiles(targetWindow: MaybeWindow, sessionId: string): Promise<string[]>;
   pickImageFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
+  copyFilesToSessionFiles(sessionId: string, sourcePaths: string[]): Promise<string[]>;
+  savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string>;
+  openSessionFilesDirectory(sessionId: string): Promise<void>;
+  openSessionFilesTerminal(sessionId: string): Promise<void>;
   openPathTarget(target: string, options?: OpenPathOptions): Promise<void>;
   openAppLogFolder(): Promise<void>;
   openCrashDumpFolder(): Promise<void>;
@@ -401,7 +417,13 @@ type MainIpcWindowDeps = Pick<
   | "openTerminalAtPath"
   | "pickDirectory"
   | "pickFile"
+  | "pickFiles"
+  | "pickSessionFiles"
   | "pickImageFile"
+  | "copyFilesToSessionFiles"
+  | "savePastedSessionFile"
+  | "openSessionFilesDirectory"
+  | "openSessionFilesTerminal"
 >;
 
 type MainIpcCatalogDeps = Pick<
@@ -573,8 +595,31 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   ipcMain.handle(WITHMATE_PICK_FILE_CHANNEL, async (event, initialPath: string | null) =>
     deps.pickFile(resolveTargetWindow(event, deps), initialPath),
   );
+  ipcMain.handle(WITHMATE_PICK_FILES_CHANNEL, async (event, initialPath: string | null) =>
+    deps.pickFiles(resolveTargetWindow(event, deps), initialPath),
+  );
+  ipcMain.handle(WITHMATE_PICK_SESSION_FILES_CHANNEL, async (event, sessionId: string) =>
+    deps.pickSessionFiles(resolveTargetWindow(event, deps), sessionId),
+  );
   ipcMain.handle(WITHMATE_PICK_IMAGE_FILE_CHANNEL, async (event, initialPath: string | null) =>
     deps.pickImageFile(resolveTargetWindow(event, deps), initialPath),
+  );
+  ipcMain.handle(
+    WITHMATE_COPY_FILES_TO_SESSION_FILES_CHANNEL,
+    async (_event, sessionId: string, sourcePaths: string[]) =>
+      deps.copyFilesToSessionFiles(sessionId, sourcePaths),
+  );
+  ipcMain.handle(
+    WITHMATE_SAVE_PASTED_SESSION_FILE_CHANNEL,
+    async (_event, request: SavePastedSessionFileRequest) => deps.savePastedSessionFile(request),
+  );
+  ipcMain.handle(
+    WITHMATE_OPEN_SESSION_FILES_DIRECTORY_CHANNEL,
+    async (_event, sessionId: string) => deps.openSessionFilesDirectory(sessionId),
+  );
+  ipcMain.handle(
+    WITHMATE_OPEN_SESSION_FILES_TERMINAL_CHANNEL,
+    async (_event, sessionId: string) => deps.openSessionFilesTerminal(sessionId),
   );
   ipcMain.handle(WITHMATE_OPEN_PATH_CHANNEL, async (_event, target: string, options: OpenPathOptions | null) =>
     deps.openPathTarget(target, options ?? undefined),
