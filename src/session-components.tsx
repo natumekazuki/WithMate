@@ -615,8 +615,15 @@ export function SessionHeader({
             <span className="session-window-title session-title-accent">{taskTitle}</span>
           </button>
         ) : (
-          <label className="session-title-editor">
-            <input value={titleDraft} onChange={(event) => onTitleDraftChange(event.target.value)} onKeyDown={onTitleInputKeyDown} />
+          <>
+            <label className="session-title-editor">
+              <input
+                aria-label="Session title"
+                value={titleDraft}
+                onChange={(event) => onTitleDraftChange(event.target.value)}
+                onKeyDown={onTitleInputKeyDown}
+              />
+            </label>
             <div className="session-title-actions">
               <button className="drawer-toggle compact" type="button" onClick={onSaveTitle}>
                 Save
@@ -625,7 +632,7 @@ export function SessionHeader({
                 Cancel
               </button>
             </div>
-          </label>
+          </>
         )}
         {!isEditingTitle ? (
           <div className="session-window-controls">
