@@ -33,6 +33,7 @@ export type CompanionRuntimeServiceDeps = {
   listCompanionSessionSummaries?: () => Awaitable<CompanionSessionSummary[]>;
   updateCompanionSession(session: CompanionSession): Awaitable<CompanionSession>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
+  resolveProviderSession?: (session: Session) => Session;
   resolveProjectContextTextForPrompt?: (
     session: Session,
     userMessage: string,
@@ -228,7 +229,8 @@ export class CompanionRuntimeService {
       throw new Error("対象 CompanionSession が見つからないよ。");
     }
 
-    return this.deps.resolveComposerPreview(buildProviderSession(session), userMessage);
+    const providerSession = buildProviderSession(session);
+    return this.deps.resolveComposerPreview(this.deps.resolveProviderSession?.(providerSession) ?? providerSession, userMessage);
   }
 
   hasInFlightRuns(): boolean {
@@ -315,7 +317,8 @@ export class CompanionRuntimeService {
       approvalMode: request.approvalMode ?? session.approvalMode,
       codexSandboxMode: request.codexSandboxMode ?? session.codexSandboxMode,
     };
-    const providerSession = buildProviderSession(requestedSession);
+    const providerSession = this.deps.resolveProviderSession?.(buildProviderSession(requestedSession))
+      ?? buildProviderSession(requestedSession);
     const composerPreview = await this.deps.resolveComposerPreview(providerSession, request.userMessage);
     if (composerPreview.errors.length > 0) {
       throw new Error(composerPreview.errors[0] ?? "添付の解決に失敗したよ。");
@@ -342,7 +345,8 @@ export class CompanionRuntimeService {
     };
     const controller = new AbortController();
     const buildProviderInput = (turnSession: CompanionSession): RunSessionTurnInput => {
-      const turnProviderSession = buildProviderSession(turnSession);
+      const turnProviderSession = this.deps.resolveProviderSession?.(buildProviderSession(turnSession))
+        ?? buildProviderSession(turnSession);
       return {
         session: turnProviderSession,
         executionWorkspacePath: turnSession.worktreePath,

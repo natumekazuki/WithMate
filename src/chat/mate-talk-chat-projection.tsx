@@ -31,6 +31,8 @@ export type MateTalkChatProjectionInput = {
   onChangeReasoningEffort: (reasoningEffort: string) => void;
   onSubmit: () => void;
   onToggleHeaderExpanded: () => void;
+  onOpenSessionFilesExplorer: () => void;
+  onOpenSessionFilesTerminal: () => void;
   onCollapseActionDock: () => void;
   onExpandActionDock: () => void;
   sending: boolean;
@@ -58,6 +60,8 @@ export function buildMateTalkChatWindowProps({
   onChangeReasoningEffort,
   onSubmit,
   onToggleHeaderExpanded,
+  onOpenSessionFilesExplorer,
+  onOpenSessionFilesTerminal,
   onCollapseActionDock,
   onExpandActionDock,
   sending,
@@ -93,6 +97,26 @@ export function buildMateTalkChatWindowProps({
     onChangeReasoningEffort,
     onSubmit,
     onToggleHeaderExpanded,
+    headerSessionFilesActions: (
+      <>
+        <button
+          className="drawer-toggle compact secondary"
+          type="button"
+          onClick={onOpenSessionFilesExplorer}
+          title="Open session files directory"
+        >
+          Explorer
+        </button>
+        <button
+          className="drawer-toggle compact secondary"
+          type="button"
+          onClick={onOpenSessionFilesTerminal}
+          title="Open terminal in session files directory"
+        >
+          Terminal
+        </button>
+      </>
+    ),
     isRunning: sending,
     feedback,
     submitOnKey: shouldSubmitMateTalkInputByKey,

@@ -99,6 +99,8 @@ import {
   WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
+  WITHMATE_OPEN_SESSION_FILES_DIRECTORY_CHANNEL,
+  WITHMATE_OPEN_SESSION_FILES_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
@@ -107,7 +109,10 @@ import {
   WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
   WITHMATE_PICK_FILE_CHANNEL,
+  WITHMATE_PICK_FILES_CHANNEL,
+  WITHMATE_PICK_SESSION_FILES_CHANNEL,
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
+  WITHMATE_COPY_FILES_TO_SESSION_FILES_CHANNEL,
   WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL,
   WITHMATE_PREVIEW_COMPOSER_INPUT_CHANNEL,
   WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT,
@@ -115,6 +120,7 @@ import {
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESET_MATE_CHANNEL,
   WITHMATE_SET_MATE_AVATAR_CHANNEL,
+  WITHMATE_SAVE_PASTED_SESSION_FILE_CHANNEL,
   WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
   WITHMATE_RUN_MATE_TALK_TURN_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
@@ -581,8 +587,26 @@ function createPickerApi(ipcRenderer: IpcRendererLike): WithMateWindowPickerApi 
     pickFile(initialPath) {
       return ipcRenderer.invoke(WITHMATE_PICK_FILE_CHANNEL, initialPath ?? null);
     },
+    pickFiles(initialPath) {
+      return ipcRenderer.invoke(WITHMATE_PICK_FILES_CHANNEL, initialPath ?? null);
+    },
+    pickSessionFiles(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_PICK_SESSION_FILES_CHANNEL, sessionId);
+    },
     pickImageFile(initialPath) {
       return ipcRenderer.invoke(WITHMATE_PICK_IMAGE_FILE_CHANNEL, initialPath ?? null);
+    },
+    copyFilesToSessionFiles(sessionId, sourcePaths) {
+      return ipcRenderer.invoke(WITHMATE_COPY_FILES_TO_SESSION_FILES_CHANNEL, sessionId, sourcePaths);
+    },
+    savePastedSessionFile(request) {
+      return ipcRenderer.invoke(WITHMATE_SAVE_PASTED_SESSION_FILE_CHANNEL, request);
+    },
+    openSessionFilesDirectory(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_FILES_DIRECTORY_CHANNEL, sessionId);
+    },
+    openSessionFilesTerminal(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_FILES_TERMINAL_CHANNEL, sessionId);
     },
   };
 }

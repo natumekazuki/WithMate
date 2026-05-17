@@ -54,7 +54,12 @@ import type { RendererLogInput } from "./app-log-types.js";
 import type { AppBootStatus } from "./app-boot-state.js";
 import type { AppDatabaseDiagnostics } from "./app-database-diagnostics-state.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
-import type { OpenPathOptions, ResetAppDatabaseRequest, ResetAppDatabaseResult } from "./withmate-window-types.js";
+import type {
+  OpenPathOptions,
+  ResetAppDatabaseRequest,
+  ResetAppDatabaseResult,
+  SavePastedSessionFileRequest,
+} from "./withmate-window-types.js";
 import type {
   CreateMateInput,
   MateProfile,
@@ -218,7 +223,13 @@ export type WithMateWindowCharacterApi = {
 export type WithMateWindowPickerApi = {
   pickDirectory(initialPath?: string | null): Promise<string | null>;
   pickFile(initialPath?: string | null): Promise<string | null>;
+  pickFiles(initialPath?: string | null): Promise<string[]>;
+  pickSessionFiles(sessionId: string): Promise<string[]>;
   pickImageFile(initialPath?: string | null): Promise<string | null>;
+  copyFilesToSessionFiles(sessionId: string, sourcePaths: string[]): Promise<string[]>;
+  savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string>;
+  openSessionFilesDirectory(sessionId: string): Promise<void>;
+  openSessionFilesTerminal(sessionId: string): Promise<void>;
 };
 
 export type WithMateWindowSubscriptionApi = {

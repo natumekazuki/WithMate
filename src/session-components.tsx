@@ -1,4 +1,4 @@
-import { Component, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type SetStateAction, type UIEventHandler } from "react";
+import { Component, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEventHandler, type CSSProperties, type Dispatch, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type SetStateAction, type UIEventHandler } from "react";
 
 import type {
   AuditLogDetailFragment,
@@ -571,6 +571,7 @@ export type SessionHeaderProps = {
   showTerminalButton?: boolean;
   showDeleteButton?: boolean;
   workspaceActions?: ReactNode;
+  sessionFilesActions?: ReactNode;
   actions?: ReactNode;
   onToggleExpanded: () => void;
   onOpenAuditLog: () => void;
@@ -594,6 +595,7 @@ export function SessionHeader({
   showTerminalButton = true,
   showDeleteButton = true,
   workspaceActions,
+  sessionFilesActions,
   actions,
   onToggleExpanded,
   onOpenAuditLog,
@@ -627,15 +629,27 @@ export function SessionHeader({
         )}
         {!isEditingTitle ? (
           <div className="session-window-controls">
+            {workspaceActions || showTerminalButton ? (
+              <div className="session-window-control-group" role="group" aria-label="Workspace actions">
+                <span className="session-window-control-group-label">Workspace</span>
+                {workspaceActions}
+                {showTerminalButton ? (
+                  <button className="drawer-toggle compact secondary" type="button" onClick={onOpenTerminal}>
+                    Terminal
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            {sessionFilesActions ? (
+              <div className="session-window-control-group" role="group" aria-label="Session files actions">
+                <span className="session-window-control-group-label">Session</span>
+                {sessionFilesActions}
+              </div>
+            ) : null}
+            {actions}
             {showRenameButton ? (
               <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning || isReadOnly}>
                 Rename
-              </button>
-            ) : null}
-            {workspaceActions}
-            {showTerminalButton ? (
-              <button className="drawer-toggle compact secondary" type="button" onClick={onOpenTerminal}>
-                Terminal
               </button>
             ) : null}
             {showAuditLogButton ? (
@@ -643,7 +657,6 @@ export function SessionHeader({
                 Audit Log
               </button>
             ) : null}
-            {actions}
             {showDeleteButton ? (
               <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
                 Delete
@@ -2645,6 +2658,8 @@ export type SessionComposerExpandedProps = {
   onPickFile: () => void;
   onPickFolder: () => void;
   onPickImage: () => void;
+  onAddToSessionFiles?: () => void;
+  onPickSessionFiles?: () => void;
   onToggleAgentPicker: () => void;
   onToggleSkillPicker: () => void;
   onAddAdditionalDirectory: () => void;
@@ -2658,6 +2673,7 @@ export type SessionComposerExpandedProps = {
   onDraftChange: (value: string, selectionStart: number) => void;
   onDraftFocus: () => void;
   onDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
+  onDraftPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
   onDraftSelect: (selectionStart: number) => void;
   onDraftCompositionStart: () => void;
   onDraftCompositionEnd: () => void;
@@ -2715,6 +2731,8 @@ export function SessionComposerExpanded({
   onPickFile,
   onPickFolder,
   onPickImage,
+  onAddToSessionFiles = () => {},
+  onPickSessionFiles = () => {},
   onToggleAgentPicker,
   onToggleSkillPicker,
   onAddAdditionalDirectory,
@@ -2728,6 +2746,7 @@ export function SessionComposerExpanded({
   onDraftChange,
   onDraftFocus,
   onDraftKeyDown,
+  onDraftPaste,
   onDraftSelect,
   onDraftCompositionStart,
   onDraftCompositionEnd,
@@ -2791,71 +2810,93 @@ export function SessionComposerExpanded({
               </button>
             </div>
           ) : null}
-        {showCustomAgentPicker ? (
-          <div className="composer-agent-toolbar">
+          {showAttachmentControls ? (
+            <div className="composer-session-file-toolbar">
+              <button
+                className="drawer-toggle compact secondary composer-skill-button"
+                type="button"
+                onClick={onAddToSessionFiles}
+                disabled={isRunning || composerBlocked}
+                title="Copy file into session files and insert a reference"
+              >
+                Attach Copy
+              </button>
+              <button
+                className="drawer-toggle compact secondary composer-skill-button"
+                type="button"
+                onClick={onPickSessionFiles}
+                disabled={isRunning || composerBlocked}
+                title="Pick files already in the session files directory and insert references"
+              >
+                Session File
+              </button>
+            </div>
+          ) : null}
+          {showCustomAgentPicker ? (
+            <div className="composer-agent-toolbar">
+              <button
+                className={`drawer-toggle compact secondary composer-skill-button${isAgentPickerOpen ? " is-open" : ""}`}
+                type="button"
+                onClick={onToggleAgentPicker}
+                disabled={!canSelectCustomAgent || isRunning || composerBlocked}
+                aria-expanded={isAgentPickerOpen}
+                aria-haspopup="listbox"
+                aria-controls={isAgentPickerOpen ? "composer-agent-picker-list" : undefined}
+                aria-label="Copilot custom agent を選択"
+                title={selectedCustomAgentTitle}
+              >
+                {selectedCustomAgentLabel}
+              </button>
+            </div>
+          ) : null}
+          {showSkillPicker ? (
             <button
-              className={`drawer-toggle compact secondary composer-skill-button${isAgentPickerOpen ? " is-open" : ""}`}
+              className={`drawer-toggle compact secondary composer-skill-button${isSkillPickerOpen ? " is-open" : ""}`}
               type="button"
-              onClick={onToggleAgentPicker}
-              disabled={!canSelectCustomAgent || isRunning || composerBlocked}
-              aria-expanded={isAgentPickerOpen}
-              aria-haspopup="listbox"
-              aria-controls={isAgentPickerOpen ? "composer-agent-picker-list" : undefined}
-              aria-label="Copilot custom agent を選択"
-              title={selectedCustomAgentTitle}
-            >
-              {selectedCustomAgentLabel}
-            </button>
-          </div>
-        ) : null}
-        {showSkillPicker ? (
-          <button
-            className={`drawer-toggle compact secondary composer-skill-button${isSkillPickerOpen ? " is-open" : ""}`}
-            type="button"
-            onClick={onToggleSkillPicker}
-            disabled={isRunning || composerBlocked}
-            aria-expanded={isSkillPickerOpen}
-            aria-haspopup="listbox"
-            aria-controls={isSkillPickerOpen ? "composer-skill-picker-list" : undefined}
-          >
-            Skill
-          </button>
-        ) : null}
-        {showAdditionalDirectoryControls ? (
-          <div className="composer-additional-directory-toolbar">
-            <button
-              className="drawer-toggle compact secondary composer-skill-button"
-              type="button"
-              onClick={onAddAdditionalDirectory}
+              onClick={onToggleSkillPicker}
               disabled={isRunning || composerBlocked}
+              aria-expanded={isSkillPickerOpen}
+              aria-haspopup="listbox"
+              aria-controls={isSkillPickerOpen ? "composer-skill-picker-list" : undefined}
             >
-              Add Directory
+              Skill
             </button>
+          ) : null}
+          {showAdditionalDirectoryControls ? (
+            <div className="composer-additional-directory-toolbar">
+              <button
+                className="drawer-toggle compact secondary composer-skill-button"
+                type="button"
+                onClick={onAddAdditionalDirectory}
+                disabled={isRunning || composerBlocked}
+              >
+                Add Directory
+              </button>
+              <button
+                className={`drawer-toggle compact secondary composer-skill-button${isAdditionalDirectoryListOpen ? " is-open" : ""}`}
+                type="button"
+                onClick={onToggleAdditionalDirectoryList}
+                disabled={additionalDirectoryCount === 0}
+                aria-expanded={isAdditionalDirectoryListOpen}
+              >
+                {`Dirs ${additionalDirectoryCount}`}
+              </button>
+            </div>
+          ) : null}
+          {showJumpToBottom ? (
             <button
-              className={`drawer-toggle compact secondary composer-skill-button${isAdditionalDirectoryListOpen ? " is-open" : ""}`}
+              className="drawer-toggle compact secondary message-jump-bottom-button"
               type="button"
-              onClick={onToggleAdditionalDirectoryList}
-              disabled={additionalDirectoryCount === 0}
-              aria-expanded={isAdditionalDirectoryListOpen}
+              onClick={onJumpToBottom}
             >
-              {`Dirs ${additionalDirectoryCount}`}
+              末尾へ移動
             </button>
-          </div>
-        ) : null}
-        {showJumpToBottom ? (
-          <button
-            className="drawer-toggle compact secondary message-jump-bottom-button"
-            type="button"
-            onClick={onJumpToBottom}
-          >
-            末尾へ移動
-          </button>
-        ) : null}
-        {canCollapseActionDock ? (
-          <button className="drawer-toggle compact secondary composer-hide-button" type="button" onClick={onCollapse}>
-            Hide
-          </button>
-        ) : null}
+          ) : null}
+          {canCollapseActionDock ? (
+            <button className="drawer-toggle compact secondary composer-hide-button" type="button" onClick={onCollapse}>
+              Hide
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -2999,6 +3040,7 @@ export function SessionComposerExpanded({
           onChange={(event) => onDraftChange(event.target.value, event.target.selectionStart ?? event.target.value.length)}
           onFocus={onDraftFocus}
           onKeyDown={onDraftKeyDown}
+          onPaste={onDraftPaste}
           onSelect={(event) => onDraftSelect(event.currentTarget.selectionStart ?? 0)}
           onCompositionStart={onDraftCompositionStart}
           onCompositionEnd={onDraftCompositionEnd}

@@ -53,6 +53,18 @@ export class WindowDialogService {
     return result.filePaths[0] ?? null;
   }
 
+  async pickFiles(targetWindow?: BrowserWindow | null, initialPath?: string | null): Promise<string[]> {
+    const result = await this.deps.showOpenDialog(targetWindow ?? undefined, {
+      properties: ["openFile", "multiSelections"],
+      title: "ファイルを選択",
+      ...buildDefaultPathOption(initialPath),
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return [];
+    }
+    return [...result.filePaths];
+  }
+
   async pickImageFile(targetWindow?: BrowserWindow | null, initialPath?: string | null): Promise<string | null> {
     const result = await this.deps.showOpenDialog(targetWindow ?? undefined, {
       properties: ["openFile"],

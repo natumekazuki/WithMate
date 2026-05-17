@@ -46,7 +46,10 @@ import {
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
 import type { MateProfile } from "../src/mate/mate-state.js";
-import type { OpenPathOptions } from "../src/withmate-window-types.js";
+import type {
+  OpenPathOptions,
+  SavePastedSessionFileRequest,
+} from "../src/withmate-window-types.js";
 import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
 import {
   createStoredCharacter,
@@ -88,6 +91,14 @@ import { WindowBroadcastService } from "./window-broadcast-service.js";
 import { WindowDialogService } from "./window-dialog-service.js";
 import { SessionMemorySupportService } from "./session-memory-support-service.js";
 import { MemoryManagementService } from "./memory-management-service.js";
+import {
+  appendSessionFilesDirectory,
+  cleanupMateTalkSessionFilesDirectories,
+  copyFilesToSessionFiles as copyFilesToSessionFilesStorage,
+  deleteSessionFilesDirectory,
+  resolveSessionFilesDirectory,
+  saveSessionFile,
+} from "./session-files.js";
 import { CharacterRuntimeService } from "./character-runtime-service.js";
 import { CharacterUpdateWorkspaceService } from "./character-update-workspace-service.js";
 import { MateStorage } from "./mate-storage.js";
@@ -1004,8 +1015,15 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireWindowDialogService().pickDirectory(targetWindow, initialPath),
                 pickFile: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickFile(targetWindow, initialPath),
+                pickFiles: (targetWindow, initialPath) =>
+                  requireWindowDialogService().pickFiles(targetWindow, initialPath),
+                pickSessionFiles,
                 pickImageFile: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickImageFile(targetWindow, initialPath),
+                copyFilesToSessionFiles,
+                savePastedSessionFile,
+                openSessionFilesDirectory,
+                openSessionFilesTerminal,
                 openPathTarget,
                 openAppLogFolder: () => openDirectory(appLogsPath),
                 openCrashDumpFolder: () => openDirectory(crashDumpsPath),
@@ -1172,6 +1190,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 searchCompanionWorkspaceFiles,
                 discardCompanionSession: async (sessionId) => {
                   const session = await requireCompanionReviewService().discardSession(sessionId);
+                  await cleanupSessionFilesDirectory(sessionId);
                   broadcastCompanionSessions();
                   return session;
                 },
@@ -1188,7 +1207,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 resolveLiveElicitation,
                 createSession: (input) => requireMainSessionCommandFacade().createSession(input),
                 updateSession: (session) => requireMainSessionCommandFacade().updateSession(session),
-                deleteSession: (sessionId) => requireMainSessionCommandFacade().deleteSession(sessionId),
+                deleteSession: async (sessionId) => {
+                  await requireMainSessionCommandFacade().deleteSession(sessionId);
+                  await cleanupSessionFilesDirectory(sessionId);
+                },
                 runSessionTurn: (sessionId, request) => requireMainSessionCommandFacade().runSessionTurn(sessionId, request),
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
               },
@@ -1302,7 +1324,8 @@ function requireMainQueryService(): MainQueryService {
       discoverSessionCustomAgents,
       getStoredCharacter: (characterId) => requireCharacterRuntimeService().getCharacter(characterId),
       refreshCharactersFromStorage: () => requireCharacterRuntimeService().refreshCharactersFromStorage(),
-      resolveComposerPreview,
+      resolveComposerPreview: (session, userMessage) =>
+        resolveComposerPreview(appendSessionFilesDirectory(app.getPath("userData"), session), userMessage),
       searchWorkspaceFiles: (workspacePath, query) => searchWorkspacePathCandidates(workspacePath, query),
       launchTerminalAtPath,
     });
@@ -2355,6 +2378,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       getSession: getDisplaySession,
       upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSession(session),
       resolveComposerPreview,
+      resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
@@ -2473,6 +2497,7 @@ function requireCompanionRuntimeService(): CompanionRuntimeService {
       listCompanionSessionSummaries: () => requireCompanionStorage().listSessionSummaries(),
       updateCompanionSession: (session) => requireCompanionStorage().updateSession(session),
       resolveComposerPreview,
+      resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
@@ -2850,6 +2875,11 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
     mateMemoryStorage = nextMateMemoryStorage;
     const activeModelCatalog = applyPersistentStoreBundle(bundle);
     appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
+    try {
+      await cleanupMateTalkSessionFilesDirectories(app.getPath("userData"));
+    } catch (error) {
+      console.warn("MateTalk session files directory の cleanup に失敗しました:", error);
+    }
     startWalMaintenance();
     return activeModelCatalog;
   } catch (error) {
@@ -3578,6 +3608,56 @@ async function searchCompanionWorkspaceFiles(sessionId: string, query: string): 
   }
 
   return searchWorkspacePathCandidates(session.worktreePath, query);
+}
+
+async function copyFilesToSessionFiles(
+  sessionId: string,
+  sourcePaths: string[],
+): Promise<string[]> {
+  return copyFilesToSessionFilesStorage(app.getPath("userData"), sessionId, sourcePaths);
+}
+
+async function pickSessionFiles(targetWindow: BrowserWindow | null, sessionId: string): Promise<string[]> {
+  const directoryPath = ensureSessionFilesDirectory(sessionId);
+  const selectedPaths = await requireWindowDialogService().pickFiles(targetWindow, directoryPath);
+  return selectedPaths.filter((selectedPath) => isPathInsideOrEqual(directoryPath, selectedPath));
+}
+
+async function savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string> {
+  return saveSessionFile(app.getPath("userData"), {
+    sessionId: request.sessionId,
+    fileName: request.fileName,
+    data: new Uint8Array(request.data),
+  });
+}
+
+function ensureSessionFilesDirectory(sessionId: string): string {
+  const directoryPath = resolveSessionFilesDirectory(app.getPath("userData"), sessionId);
+  mkdirSync(directoryPath, { recursive: true });
+  return directoryPath;
+}
+
+function isPathInsideOrEqual(parentPath: string, targetPath: string): boolean {
+  const relativePath = path.relative(path.resolve(parentPath), path.resolve(targetPath));
+  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+}
+
+async function cleanupSessionFilesDirectory(sessionId: string): Promise<void> {
+  try {
+    await deleteSessionFilesDirectory(app.getPath("userData"), sessionId);
+  } catch (error) {
+    console.warn("Session files directory の cleanup に失敗しました:", sessionId, error);
+  }
+}
+
+async function openSessionFilesDirectory(sessionId: string): Promise<void> {
+  const directoryPath = ensureSessionFilesDirectory(sessionId);
+  await openDirectory(directoryPath);
+}
+
+async function openSessionFilesTerminal(sessionId: string): Promise<void> {
+  const directoryPath = ensureSessionFilesDirectory(sessionId);
+  await launchTerminalAtPath(directoryPath);
 }
 
 async function openPathTarget(target: string, options?: OpenPathOptions): Promise<void> {

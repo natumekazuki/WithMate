@@ -36,6 +36,7 @@ export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(session: Session): Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
+  resolveProviderSession?: (session: Session) => Session;
   resolveSessionCharacter?: (session: Session) => Promise<CharacterProfile | null>;
   getAppSettings: () => AppSettings;
   resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): {
@@ -409,7 +410,8 @@ export class SessionRuntimeService {
       throw new Error("送信するメッセージが空だよ。");
     }
 
-    const composerPreview = await this.deps.resolveComposerPreview(session, request.userMessage);
+    const providerSession = this.deps.resolveProviderSession?.(session) ?? session;
+    const composerPreview = await this.deps.resolveComposerPreview(providerSession, request.userMessage);
     if (composerPreview.errors.length > 0) {
       throw new Error(composerPreview.errors[0] ?? "添付の解決に失敗したよ。");
     }
@@ -427,7 +429,7 @@ export class SessionRuntimeService {
       this.deps.resolveProjectContextTextForPrompt?.(session, nextMessage, sessionMemory) ?? null,
     );
     const promptForAudit = providerAdapter.composePrompt({
-      session,
+      session: providerSession,
       sessionMemory,
       projectMemoryEntries,
       projectContextText,
@@ -558,8 +560,9 @@ export class SessionRuntimeService {
     await syncRunningAuditFromLiveState(initialLiveState);
     const runProviderTurn = (turnSession: Session) => {
       const progressGeneration = ++liveProgressGeneration;
+      const effectiveTurnSession = this.deps.resolveProviderSession?.(turnSession) ?? turnSession;
       return providerAdapter.runSessionTurn({
-        session: turnSession,
+        session: effectiveTurnSession,
         sessionMemory,
         projectMemoryEntries,
         projectContextText,

@@ -15,6 +15,9 @@ test("WindowDialogService は directory / file / image picker の選択結果を
       if ((options as { title?: string }).title === "画像を選択") {
         return { canceled: false, filePaths: ["C:/images/a.png"] };
       }
+      if ((options as { properties?: string[] }).properties?.includes("multiSelections")) {
+        return { canceled: false, filePaths: ["C:/file-a.txt", "C:/file-b.txt"] };
+      }
       return { canceled: false, filePaths: ["C:/file.txt"] };
     },
     async showSaveDialog() {
@@ -36,16 +39,20 @@ test("WindowDialogService は directory / file / image picker の選択結果を
 
   const directory = await service.pickDirectory(undefined, "C:/seed");
   const file = await service.pickFile(undefined, "C:/seed.txt");
+  const files = await service.pickFiles(undefined, "C:/seed.txt");
   const image = await service.pickImageFile();
 
   assert.equal(directory, "C:/workspace");
   assert.equal(file, "C:/file.txt");
+  assert.deepEqual(files, ["C:/file-a.txt", "C:/file-b.txt"]);
   assert.equal(image, "C:/images/a.png");
   assert.deepEqual(calls.map((entry) => (entry.options as { title?: string }).title), [
     "作業ディレクトリを選択",
     "ファイルを選択",
+    "ファイルを選択",
     "画像を選択",
   ]);
+  assert.deepEqual((calls[2]?.options as { properties?: string[] }).properties, ["openFile", "multiSelections"]);
 });
 
 test("WindowDialogService は model catalog import/export を file I/O と接続する", async () => {

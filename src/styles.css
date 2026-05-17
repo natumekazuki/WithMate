@@ -415,7 +415,32 @@ button:disabled {
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
+  row-gap: 8px;
+  flex-wrap: wrap;
   min-width: 0;
+}
+
+.session-window-control-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px;
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.session-window-control-group-label {
+  padding: 0 6px 0 8px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.session-window-control-group .drawer-toggle {
+  box-shadow: none;
 }
 
 .session-title-shell-toggle {
@@ -5138,7 +5163,8 @@ button:disabled {
   margin-bottom: 10px;
 }
 
-.composer-attachment-button-group {
+.composer-attachment-button-group,
+.composer-session-file-toolbar {
   display: inline-flex;
   align-items: stretch;
   border: 1px solid rgba(203, 213, 225, 0.12);
@@ -5147,13 +5173,15 @@ button:disabled {
   overflow: hidden;
 }
 
-.composer-attachment-button-group .drawer-toggle {
+.composer-attachment-button-group .drawer-toggle,
+.composer-session-file-toolbar .drawer-toggle {
   border-radius: 0;
   box-shadow: none;
   background: transparent;
 }
 
-.composer-attachment-button-group .drawer-toggle + .drawer-toggle {
+.composer-attachment-button-group .drawer-toggle + .drawer-toggle,
+.composer-session-file-toolbar .drawer-toggle + .drawer-toggle {
   border-left: 1px solid rgba(203, 213, 225, 0.12);
 }
 
@@ -7890,6 +7918,13 @@ button:disabled {
     width: 100%;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .session-window-control-group {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    border-radius: 16px;
   }
 
   .session-top-bar-row,

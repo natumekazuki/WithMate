@@ -142,6 +142,39 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:sync-companion-target",
     args: ["companion-1"],
   });
+  assert.deepEqual(await api.copyFilesToSessionFiles("session-1", ["C:/note.txt"]), {
+    channel: "withmate:copy-files-to-session-files",
+    args: ["session-1", ["C:/note.txt"]],
+  });
+  assert.deepEqual(await api.pickFiles("C:/seed"), {
+    channel: "withmate:pick-files",
+    args: ["C:/seed"],
+  });
+  assert.deepEqual(await api.pickSessionFiles("session-1"), {
+    channel: "withmate:pick-session-files",
+    args: ["session-1"],
+  });
+  const pastedBuffer = new ArrayBuffer(3);
+  assert.deepEqual(await api.savePastedSessionFile({
+    sessionId: "session-1",
+    fileName: "pasted.png",
+    data: pastedBuffer,
+  }), {
+    channel: "withmate:save-pasted-session-file",
+    args: [{
+      sessionId: "session-1",
+      fileName: "pasted.png",
+      data: pastedBuffer,
+    }],
+  });
+  assert.deepEqual(await api.openSessionFilesDirectory("companion-1"), {
+    channel: "withmate:open-session-files-directory",
+    args: ["companion-1"],
+  });
+  assert.deepEqual(await api.openSessionFilesTerminal("session-1"), {
+    channel: "withmate:open-session-files-terminal",
+    args: ["session-1"],
+  });
 });
 
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
@@ -152,6 +185,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
   const expectedKeys = [
     "cancelCompanionSessionRun",
     "cancelSessionRun",
+    "copyFilesToSessionFiles",
     "createCharacter",
     "createCharacterUpdateSession",
     "createMate",
@@ -230,12 +264,16 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "openMateTalkWindow",
     "openPath",
     "openSession",
+    "openSessionFilesDirectory",
+    "openSessionFilesTerminal",
     "openSessionMonitorWindow",
     "openSessionTerminal",
     "openSettingsWindow",
     "openTerminalAtPath",
     "pickDirectory",
     "pickFile",
+    "pickFiles",
+    "pickSessionFiles",
     "pickImageFile",
     "resetMate",
     "previewCompanionComposerInput",
@@ -249,6 +287,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "runCompanionSessionTurn",
     "runMateTalkTurn",
     "runSessionTurn",
+    "savePastedSessionFile",
     "searchCompanionWorkspaceFiles",
     "searchWorkspaceFiles",
     "setMateAvatar",
