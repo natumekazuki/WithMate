@@ -1816,9 +1816,22 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
+    const sessionId = selectedSession.id;
     setApprovalActionRequestId(request.requestId);
     try {
-      await withmateApi.resolveLiveApproval(selectedSession.id, request.requestId, decision);
+      await withmateApi.resolveLiveApproval(sessionId, request.requestId, decision);
+      const latestLiveRun = await withmateApi.getLiveSessionRun(sessionId);
+      setLiveRunState((current) => {
+        if (
+          current.ownerSessionId !== sessionId
+          || current.state?.approvalRequest?.requestId !== request.requestId
+        ) {
+          return current;
+        }
+
+        return { ownerSessionId: sessionId, state: latestLiveRun };
+      });
+      setApprovalActionRequestId(null);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "承認要求の処理に失敗したよ。");
       setApprovalActionRequestId(null);
@@ -1833,9 +1846,22 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
+    const sessionId = selectedSession.id;
     setElicitationActionRequestId(request.requestId);
     try {
-      await withmateApi.resolveLiveElicitation(selectedSession.id, request.requestId, response);
+      await withmateApi.resolveLiveElicitation(sessionId, request.requestId, response);
+      const latestLiveRun = await withmateApi.getLiveSessionRun(sessionId);
+      setLiveRunState((current) => {
+        if (
+          current.ownerSessionId !== sessionId
+          || current.state?.elicitationRequest?.requestId !== request.requestId
+        ) {
+          return current;
+        }
+
+        return { ownerSessionId: sessionId, state: latestLiveRun };
+      });
+      setElicitationActionRequestId(null);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "入力要求の処理に失敗したよ。");
       setElicitationActionRequestId(null);
