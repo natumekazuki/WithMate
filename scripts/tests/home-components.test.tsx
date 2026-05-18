@@ -4,8 +4,10 @@ import React, { isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { HomeLaunchDialog } from "../../src/home/HomeLaunchDialog.js";
+import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
 import { HomeRecentSessionsPanel } from "../../src/home/HomeRecentSessionsPanel.js";
 import { HomeRightPane } from "../../src/home/HomeRightPane.js";
+import type { HomeMonitorEntry } from "../../src/home/home-session-projection.js";
 import { HomeMateSetupPanel } from "../../src/mate/MateSetupPanel.js";
 import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
@@ -1438,6 +1440,54 @@ describe("HomeRecentSessionsPanel", () => {
     const html = renderHomeRecentSessions();
     const newSessionButtons = html.match(/<button class="start-session-button"/g);
     assert.equal(newSessionButtons?.length, 1);
+  });
+});
+
+describe("HomeMonitorContent", () => {
+  const noOp = (..._args: unknown[]) => undefined;
+
+  it("Monitor カードは Mate アイコン画像なしでセッション情報を表示する", () => {
+    const entries: HomeMonitorEntry[] = [
+      {
+        kind: "agent",
+        session: {
+          id: "session-1",
+          taskTitle: "Agent task",
+          workspaceLabel: "workspace",
+          workspacePath: "C:/workspace",
+          character: "Solo Mate",
+          characterIconPath: "mate.png",
+        },
+        state: { kind: "running", label: "実行中" },
+      } as HomeMonitorEntry,
+      {
+        kind: "companion",
+        session: {
+          id: "companion-1",
+          groupId: "group-1",
+          taskTitle: "Companion task",
+          character: "Solo Mate",
+          characterIconPath: "mate.png",
+        },
+        state: { kind: "neutral", label: "待機" },
+        groupLabel: "demo",
+      } as HomeMonitorEntry,
+    ];
+    const html = renderToStaticMarkup(
+      <HomeMonitorContent
+        runningEntries={entries}
+        nonRunningEntries={[]}
+        onOpenSession={noOp}
+        onOpenCompanionReview={noOp}
+      />,
+    );
+
+    assert.ok(html.includes("Agent task"));
+    assert.ok(html.includes("workspace"));
+    assert.ok(html.includes("Companion task"));
+    assert.ok(html.includes("demo"));
+    assert.ok(!html.includes("character-avatar"));
+    assert.ok(!html.includes("<img"));
   });
 });
 

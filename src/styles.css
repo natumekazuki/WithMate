@@ -919,13 +919,13 @@ button:disabled {
 
 .home-page .home-monitor-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
-  padding: 10px 12px;
+  padding: 12px;
   border: 1px solid rgba(203, 213, 225, 0.1);
-  border-radius: 16px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--ink);
   text-align: left;
@@ -938,6 +938,7 @@ button:disabled {
 }
 
 .home-page .home-monitor-row.companion {
+  border-left-color: color-mix(in srgb, var(--companion-group-accent, rgba(172, 139, 255, 0.72)) 72%, rgba(203, 213, 225, 0.1) 28%);
   box-shadow: inset 3px 0 0 var(--companion-group-accent, rgba(172, 139, 255, 0.72));
 }
 
