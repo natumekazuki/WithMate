@@ -47,6 +47,7 @@ import {
 import {
   getApprovalOptionsForProvider,
   getSandboxOptionsForProvider,
+  getSandboxOptionsForProviderSelection,
 } from "./provider-runtime-options.js";
 import {
   buildContextPaneProjection,
@@ -1528,14 +1529,9 @@ export default function AgentSessionWindowApp() {
     [selectedSession?.approvalMode, selectedSession?.provider],
   );
   const sandboxChoiceOptions = useMemo(
-    () => {
-      const options = getSandboxOptionsForProvider(selectedSession?.provider);
-      if (!selectedSession || options.some((option) => option.value === selectedSession.codexSandboxMode)) {
-        return options;
-      }
-
-      return [{ value: selectedSession.codexSandboxMode, label: selectedSession.codexSandboxMode }, ...options];
-    },
+    () => selectedSession
+      ? getSandboxOptionsForProviderSelection(selectedSession.provider, selectedSession.codexSandboxMode)
+      : getSandboxOptionsForProvider(undefined),
     [selectedSession?.codexSandboxMode, selectedSession?.provider],
   );
   const modelSelectOptions = useMemo(
