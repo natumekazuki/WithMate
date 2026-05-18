@@ -669,6 +669,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const stagedFileTree = useMemo(() => buildChangedFileTree(stagedChangedFiles), [stagedChangedFiles]);
   const selectedSessionLiveRun =
     snapshot && liveRunState.ownerSessionId === snapshot.session.id ? liveRunState.state : null;
+  useEffect(() => {
+    setApprovalActionRequestId(null);
+  }, [selectedSessionLiveRun?.approvalRequest?.requestId]);
+  useEffect(() => {
+    setElicitationActionRequestId(null);
+  }, [selectedSessionLiveRun?.elicitationRequest?.requestId]);
   const companionAuditLogApi = useMemo(() => withmateApi ? ({
     listSessionAuditLogSummaryPage: withmateApi.listCompanionAuditLogSummaryPage,
     getSessionAuditLogDetailSection: withmateApi.getCompanionAuditLogDetailSection,
@@ -1927,9 +1933,22 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
+    const sessionId = snapshot.session.id;
     setApprovalActionRequestId(request.requestId);
     try {
-      await withmateApi.resolveLiveApproval(snapshot.session.id, request.requestId, decision);
+      await withmateApi.resolveLiveApproval(sessionId, request.requestId, decision);
+      const latestLiveRun = await withmateApi.getLiveSessionRun(sessionId);
+      setLiveRunState((current) => {
+        if (
+          current.ownerSessionId !== sessionId
+          || current.state?.approvalRequest?.requestId !== request.requestId
+        ) {
+          return current;
+        }
+
+        return { ownerSessionId: sessionId, state: latestLiveRun };
+      });
+      setApprovalActionRequestId(null);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "承認要求の処理に失敗したよ。");
       setApprovalActionRequestId(null);
@@ -1945,9 +1964,22 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
+    const sessionId = snapshot.session.id;
     setElicitationActionRequestId(request.requestId);
     try {
-      await withmateApi.resolveLiveElicitation(snapshot.session.id, request.requestId, response);
+      await withmateApi.resolveLiveElicitation(sessionId, request.requestId, response);
+      const latestLiveRun = await withmateApi.getLiveSessionRun(sessionId);
+      setLiveRunState((current) => {
+        if (
+          current.ownerSessionId !== sessionId
+          || current.state?.elicitationRequest?.requestId !== request.requestId
+        ) {
+          return current;
+        }
+
+        return { ownerSessionId: sessionId, state: latestLiveRun };
+      });
+      setElicitationActionRequestId(null);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "入力要求の処理に失敗したよ。");
       setElicitationActionRequestId(null);
