@@ -108,7 +108,9 @@ describe("CompanionStorage", () => {
     try {
       storage = new CompanionStorage(dbPath);
       const group = storage.ensureGroup(createGroup());
-      const session = storage.createSession(createSession(group.id));
+      const session = storage.createSession(createSession(group.id, {
+        approvalMode: "never",
+      }));
 
       assert.equal(session.groupId, group.id);
       assert.deepEqual(storage.listActiveSessionSummaries(), [
@@ -132,7 +134,7 @@ describe("CompanionStorage", () => {
           provider: "codex",
           model: DEFAULT_MODEL_ID,
           reasoningEffort: DEFAULT_REASONING_EFFORT,
-          approvalMode: DEFAULT_APPROVAL_MODE,
+          approvalMode: "never",
           codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
           character: "Mia",
           characterRoleMarkdown: "落ち着いて伴走する。",
@@ -145,6 +147,7 @@ describe("CompanionStorage", () => {
         },
       ]);
       assert.equal(storage.getSession("session-1")?.companionBranch, "withmate/companion/session-1");
+      assert.equal(storage.getSession("session-1")?.approvalMode, "never");
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

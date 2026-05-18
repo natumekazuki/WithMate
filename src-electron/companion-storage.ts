@@ -18,7 +18,7 @@ import type { ChangedFile, DiffRow } from "../src/runtime-state.js";
 import type { Message, MessageArtifact } from "../src/session-state.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
-import { DEFAULT_APPROVAL_MODE } from "../src/approval-mode.js";
+import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 type CompanionGroupRow = {
@@ -177,10 +177,7 @@ function rowToSession(row: CompanionSessionRow): CompanionSession {
         ? row.reasoning_effort
         : DEFAULT_REASONING_EFFORT,
     customAgentName: row.custom_agent_name,
-    approvalMode:
-      row.approval_mode === "untrusted" || row.approval_mode === "on-failure" || row.approval_mode === "on-request"
-        ? row.approval_mode
-        : DEFAULT_APPROVAL_MODE,
+    approvalMode: normalizeApprovalMode(row.approval_mode, DEFAULT_APPROVAL_MODE),
     codexSandboxMode:
       row.codex_sandbox_mode === "read-only" ||
       row.codex_sandbox_mode === "workspace-write" ||
