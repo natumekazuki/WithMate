@@ -16,7 +16,7 @@ import {
 } from "../src/companion-state.js";
 import type { ChangedFile, DiffRow } from "../src/runtime-state.js";
 import { summarizeMessageArtifact, type Message, type MessageArtifact } from "../src/session-state.js";
-import { DEFAULT_APPROVAL_MODE } from "../src/approval-mode.js";
+import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../src/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../src/codex-sandbox-mode.js";
 import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../src/model-catalog.js";
 import {
@@ -442,10 +442,7 @@ async function rowToSession(row: CompanionSessionRow, blobStore: TextBlobStore):
         ? row.reasoning_effort
         : DEFAULT_REASONING_EFFORT,
     customAgentName: row.custom_agent_name,
-    approvalMode:
-      row.approval_mode === "untrusted" || row.approval_mode === "on-failure" || row.approval_mode === "on-request"
-        ? row.approval_mode
-        : DEFAULT_APPROVAL_MODE,
+    approvalMode: normalizeApprovalMode(row.approval_mode, DEFAULT_APPROVAL_MODE),
     codexSandboxMode:
       row.codex_sandbox_mode === "read-only" ||
       row.codex_sandbox_mode === "workspace-write" ||
@@ -579,10 +576,7 @@ function rowToSessionSummary(
       row.reasoning_effort === "xhigh"
       ? row.reasoning_effort
       : DEFAULT_REASONING_EFFORT,
-    approvalMode:
-      row.approval_mode === "untrusted" || row.approval_mode === "on-failure" || row.approval_mode === "on-request"
-        ? row.approval_mode
-        : DEFAULT_APPROVAL_MODE,
+    approvalMode: normalizeApprovalMode(row.approval_mode, DEFAULT_APPROVAL_MODE),
     codexSandboxMode: row.codex_sandbox_mode === "read-only" ||
       row.codex_sandbox_mode === "workspace-write" ||
       row.codex_sandbox_mode === "workspace-write-network" ||

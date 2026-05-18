@@ -156,6 +156,7 @@ describe("CompanionStorageV3", () => {
       storage = new CompanionStorageV3(dbPath, blobPath);
       const group = await storage.ensureGroup(createGroup());
       const session = await storage.createSession(createSession(group.id, {
+        approvalMode: "never",
         messages: [
           { role: "user", text: "Companion user text" },
           {
@@ -180,6 +181,8 @@ describe("CompanionStorageV3", () => {
       const mergeRun = await storage.createMergeRun(createMergeRun(group.id));
 
       assert.equal(session.groupId, group.id);
+      assert.equal((await storage.getSession(session.id))?.approvalMode, "never");
+      assert.equal((await storage.listActiveSessionSummaries())[0]?.approvalMode, "never");
       assert.equal((await storage.getSession(session.id))?.messages[1]?.artifact?.changedFiles[0]?.diffRows.length, 0);
       assert.equal((await storage.getMessageArtifact(session.id, 1))?.changedFiles[0]?.diffRows[0]?.rightText, "hello");
       assert.deepEqual(await storage.listMergeRunsForSession(session.id), [mergeRun]);
