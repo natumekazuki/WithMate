@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { resolveOpenPathTarget } from "../../src-electron/open-path.js";
+import { buildDirectoryOpenFallbackCommand, resolveOpenPathTarget } from "../../src-electron/open-path.js";
 
 describe("resolveOpenPathTarget", () => {
   it("http url はそのまま外部 URL として扱う", () => {
@@ -30,5 +30,16 @@ describe("resolveOpenPathTarget", () => {
       type: "local-path",
       targetPath: "C:\\workspace\\project\\docs\\spec.md",
     });
+  });
+
+  it("Windows の directory open fallback は explorer.exe を使う", () => {
+    assert.deepEqual(buildDirectoryOpenFallbackCommand("C:\\workspace\\project", "win32"), {
+      command: "explorer.exe",
+      args: ["C:\\workspace\\project"],
+    });
+  });
+
+  it("Windows 以外では directory open fallback を持たない", () => {
+    assert.equal(buildDirectoryOpenFallbackCommand("/workspace/project", "linux"), null);
   });
 });

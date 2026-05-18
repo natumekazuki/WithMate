@@ -13,6 +13,11 @@ export type ResolvedOpenPathTarget =
       targetPath: string;
     };
 
+export type OpenPathFallbackCommand = {
+  command: string;
+  args: string[];
+};
+
 function stripLocalPathFragment(target: string): string {
   const hashIndex = target.indexOf("#");
   const withoutFragment = hashIndex >= 0 ? target.slice(0, hashIndex) : target;
@@ -92,5 +97,19 @@ export function resolveOpenPathTarget(target: string, options: OpenPathOptions =
   return {
     type: "local-path",
     targetPath: normalizedTarget,
+  };
+}
+
+export function buildDirectoryOpenFallbackCommand(
+  targetPath: string,
+  platform: NodeJS.Platform = process.platform,
+): OpenPathFallbackCommand | null {
+  if (platform !== "win32") {
+    return null;
+  }
+
+  return {
+    command: "explorer.exe",
+    args: [targetPath],
   };
 }
