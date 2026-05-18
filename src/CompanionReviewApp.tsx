@@ -94,6 +94,7 @@ import { fileKindLabel, modelOptionLabel, reasoningDepthLabel } from "./ui-utils
 import {
   getApprovalOptionsForProvider,
   getSandboxOptionsForProvider,
+  getSandboxOptionsForProviderSelection,
 } from "./provider-runtime-options.js";
 import { extractTextReferenceCandidates } from "./path-reference.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
@@ -892,14 +893,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     [selectedApprovalMode, snapshot?.session.provider],
   );
   const sandboxSelectOptions = useMemo(
-    () => {
-      const options = getSandboxOptionsForProvider(snapshot?.session.provider);
-      if (!snapshot || options.some((option) => option.value === selectedCodexSandboxMode)) {
-        return options;
-      }
-
-      return [{ value: selectedCodexSandboxMode, label: selectedCodexSandboxMode }, ...options];
-    },
+    () => snapshot
+      ? getSandboxOptionsForProviderSelection(snapshot.session.provider, selectedCodexSandboxMode)
+      : getSandboxOptionsForProvider(undefined),
     [selectedCodexSandboxMode, snapshot?.session.provider],
   );
   const companionComposerBlockedReason = snapshot?.session.status !== "active"

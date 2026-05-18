@@ -27,3 +27,15 @@ export function getSandboxOptionsForProvider(
 
   return codexSandboxModeOptions.map((option) => ({ value: option.id, label: option.label }));
 }
+
+export function getSandboxOptionsForProviderSelection(
+  providerId: string | null | undefined,
+  selectedValue: CodexSandboxMode,
+): RuntimeSelectOption<CodexSandboxMode>[] {
+  const options = getSandboxOptionsForProvider(providerId);
+  if (options.length === 0 || options.some((option) => option.value === selectedValue)) {
+    return options;
+  }
+
+  return [{ value: selectedValue, label: selectedValue }, ...options];
+}
