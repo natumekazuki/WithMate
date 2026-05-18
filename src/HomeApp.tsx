@@ -485,6 +485,12 @@ export default function HomeApp() {
     openMateTalkWindow,
     createSession: async (input) => await withWithMateApi((api) => api.createSession(input)),
     createCompanionSession: async (input) => await withWithMateApi((api) => api.createCompanionSession(input)),
+    upsertSessionSummary: (summary) => {
+      setSessions((current) => [
+        summary,
+        ...current.filter((session) => session.id !== summary.id),
+      ]);
+    },
     upsertCompanionSessionSummary: (summary) => {
       setCompanionSessions((current) => [
         summary,

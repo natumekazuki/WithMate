@@ -9,6 +9,7 @@ import {
   type HomeLaunchDraft,
 } from "../../src/home/home-launch-state.js";
 import type { MateProfile } from "../../src/mate/mate-state.js";
+import type { SessionSummary } from "../../src/session-state.js";
 
 function createMateProfile(): MateProfile {
   return {
@@ -76,10 +77,40 @@ function createCompanionSession(): CompanionSession {
   };
 }
 
+function createSessionSummary(): SessionSummary {
+  return {
+    id: "session-1",
+    taskTitle: "Task",
+    status: "idle",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    provider: "codex",
+    catalogRevision: 1,
+    workspaceLabel: "demo",
+    workspacePath: "C:/work/demo",
+    branch: "main",
+    sessionKind: "default",
+    accessMode: "active",
+    sourceSchemaVersion: 4,
+    characterId: "mate-1",
+    character: "Mia",
+    characterIconPath: "avatar.png",
+    characterThemeColors: { main: "#111111", sub: "#f5f5f5" },
+    runState: "idle",
+    approvalMode: "on-request",
+    codexSandboxMode: "workspace-write",
+    model: "gpt-5.4-mini",
+    reasoningEffort: "medium",
+    customAgentName: "",
+    allowedAdditionalDirectories: [],
+    threadId: "",
+  };
+}
+
 function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof startHomeLaunch>[0]> = {}) {
   const feedback: string[] = [];
   const startingStates: boolean[] = [];
   const openedSessions: string[] = [];
+  const sessionSummaries: string[] = [];
   const openedCompanionSessions: string[] = [];
   const companionSummaries: string[] = [];
   let closeCount = 0;
@@ -88,6 +119,7 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
     feedback,
     startingStates,
     openedSessions,
+    sessionSummaries,
     openedCompanionSessions,
     companionSummaries,
     get closeCount() {
@@ -100,7 +132,7 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
       mateProfile: createMateProfile(),
       selectedProviderId: "codex",
       sessions: [],
-      createSession: async () => ({ id: "session-1" }),
+      createSession: async () => createSessionSummary(),
       createCompanionSession: async () => createCompanionSession(),
       openSessionWindow: async (sessionId: string) => {
         openedSessions.push(sessionId);
@@ -116,6 +148,9 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
       },
       setLaunchStarting: (launchStarting: boolean) => {
         startingStates.push(launchStarting);
+      },
+      upsertSessionSummary: (summary: SessionSummary) => {
+        sessionSummaries.push(summary.id);
       },
       upsertCompanionSessionSummary: (summary: CompanionSessionSummary) => {
         companionSummaries.push(summary.id);
@@ -155,6 +190,7 @@ describe("home-launch-actions", () => {
     assert.deepEqual(harness.feedback, ["Session を開始してるよ..."]);
     assert.deepEqual(harness.startingStates, [true, false]);
     assert.equal(harness.closeCount, 1);
+    assert.deepEqual(harness.sessionSummaries, ["session-1"]);
     assert.deepEqual(harness.openedSessions, ["session-1"]);
   });
 
