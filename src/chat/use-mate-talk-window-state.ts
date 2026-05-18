@@ -27,7 +27,10 @@ import {
   isMateTalkReasoningEffortAllowed,
   resolveMateTalkModelChange,
 } from "./mate-talk-model-selection.js";
-import { MateTalkTurnController } from "./mate-talk-state.js";
+import {
+  MateTalkTurnController,
+  resolveMateTalkActionDockExpandedAfterSubmit,
+} from "./mate-talk-state.js";
 
 function getMateTalkLaunchParams(): { providerId: string; model: string; reasoningEffort: ModelReasoningEffort } {
   if (typeof window === "undefined") {
@@ -437,6 +440,12 @@ export function useMateTalkWindowState({
     setInput("");
     setInputCaret(0);
     setPathReferences([]);
+    setIsActionDockExpanded((current) =>
+      resolveMateTalkActionDockExpandedAfterSubmit({
+        isActionDockExpanded: current,
+        appSettings,
+      }),
+    );
 
     try {
       if (!withmateApi) {
