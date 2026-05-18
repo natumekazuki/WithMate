@@ -62,7 +62,8 @@ import { parseCharacterReflectionOutputText } from "./character-reflection.js";
 import { parseSessionMemoryDeltaText } from "./session-memory-extraction.js";
 import { resolvePackagedProviderBinaryPath } from "./provider-binary-paths.js";
 import {
-  boundAuditData,
+  boundAuditRawItem,
+  stringifyBoundedAuditValue,
   stringifyBoundedAuditRawItems,
   toAuditTextPreview,
   type BoundedAuditRawItem,
@@ -551,7 +552,9 @@ function toAuditOperations(items: ThreadItem[]): AuditLogOperation[] {
         operations.push({
           type: item.type,
           summary: `${item.server}/${item.tool}`,
-          details: toAuditTextPreview(item.error?.message ?? stringifyUnknown(item.result?.structured_content ?? item.arguments)),
+          details: item.error?.message
+            ? toAuditTextPreview(item.error.message)
+            : stringifyBoundedAuditValue(item.result?.structured_content ?? item.arguments),
         });
         break;
       case "web_search":
@@ -598,10 +601,7 @@ function toAuditOperations(items: ThreadItem[]): AuditLogOperation[] {
 }
 
 function pushCodexRawItem(items: BoundedAuditRawItem[], item: BoundedAuditRawItem): void {
-  items.push({
-    ...item,
-    data: item.data ? boundAuditData(item.data) : undefined,
-  });
+  items.push(boundAuditRawItem(item));
 }
 
 export function buildCodexStableRawItems(items: ThreadItem[]): BoundedAuditRawItem[] {
@@ -743,7 +743,9 @@ function buildLiveStep(item: ThreadItem): LiveRunStep | null {
         id: item.id,
         type: item.type,
         summary: `${item.server}/${item.tool}`,
-        details: toAuditTextPreview(item.error?.message ?? stringifyUnknown(item.result?.structured_content ?? item.arguments)),
+        details: item.error?.message
+          ? toAuditTextPreview(item.error.message)
+          : stringifyBoundedAuditValue(item.result?.structured_content ?? item.arguments),
         status: toLiveStepStatus(item.status),
       };
     case "web_search":

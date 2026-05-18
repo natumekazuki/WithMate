@@ -67,7 +67,7 @@ import {
   resolveProviderBinarySpec,
 } from "./provider-binary-paths.js";
 import {
-  boundAuditData,
+  boundAuditRawItem,
   stringifyBoundedAuditRawItems,
   toAuditTextPreview,
   type BoundedAuditRawItem,
@@ -998,10 +998,7 @@ function pushCopilotRawItem(
   items: CopilotStableRawItem[],
   item: CopilotStableRawItem,
 ): void {
-  items.push({
-    ...item,
-    data: item.data ? boundAuditData(item.data) : undefined,
-  });
+  items.push(boundAuditRawItem(item) as CopilotStableRawItem);
 }
 
 function appendCopilotStableRawItem(

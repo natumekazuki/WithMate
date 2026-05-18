@@ -1,5 +1,6 @@
 export const AUDIT_TEXT_PREVIEW_LIMIT = 64 * 1024;
 export const AUDIT_RAW_ITEMS_JSON_LIMIT = 512 * 1024;
+export const AUDIT_RAW_ITEM_CLONE_LIMIT = 128 * 1024;
 
 type TruncatedText = {
   text: string;
@@ -56,33 +57,6 @@ function toTruncatedText(value: string, limit: number): string | TruncatedText {
     truncated: true,
     originalLength: value.length,
   };
-}
-
-export function boundAuditValue(value: unknown, limit = AUDIT_TEXT_PREVIEW_LIMIT): unknown {
-  if (typeof value === "string") {
-    return toTruncatedText(value, limit);
-  }
-
-  if (Array.isArray(value)) {
-    return value.map((entry) => boundAuditValue(entry, limit));
-  }
-
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
-        key,
-        boundAuditValue(entry, limit),
-      ]),
-    );
-  }
-
-  return value;
-}
-
-export function boundAuditData(data: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(data).map(([key, value]) => [key, boundAuditValue(value)]),
-  );
 }
 
 function measureBoundedJson(value: unknown): number {
@@ -253,6 +227,38 @@ function cloneRawItemWithinBudget(item: BoundedAuditRawItem, budget: number): Bo
   }
 
   return boundedItem;
+}
+
+export function boundAuditRawItem(
+  item: BoundedAuditRawItem,
+  limit = AUDIT_RAW_ITEM_CLONE_LIMIT,
+): BoundedAuditRawItem {
+  return cloneRawItemWithinBudget(
+    item,
+    Math.max(0, limit - RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE),
+  );
+}
+
+export function stringifyBoundedAuditValue(
+  value: unknown,
+  limit = AUDIT_TEXT_PREVIEW_LIMIT,
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    return toAuditTextPreview(value, limit);
+  }
+
+  const state: RawItemBudgetState = {
+    remaining: Math.max(0, limit - RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE),
+    truncated: false,
+    seen: new WeakSet<object>(),
+  };
+  const boundedValue = cloneValueWithinRawItemBudget(value, state);
+  const serialized = JSON.stringify(boundedValue);
+  return toAuditTextPreview(serialized, limit);
 }
 
 export function stringifyBoundedAuditRawItems(
