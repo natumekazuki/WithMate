@@ -1,4 +1,5 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,7 +68,7 @@ import { CopilotAdapter } from "./copilot-adapter.js";
 import { getMateTalkBackgroundStructuredPromptCapability } from "./provider-runtime.js";
 import { resolveComposerPreview } from "./composer-attachments.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
-import { resolveOpenPathTarget } from "./open-path.js";
+import { buildDirectoryOpenFallbackCommand, resolveOpenPathTarget } from "./open-path.js";
 import { launchTerminalAtPath } from "./open-terminal.js";
 import { SessionStorage } from "./session-storage.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
@@ -700,10 +701,7 @@ function writeRendererLog(input: RendererLogInput, windowId?: number): void {
 
 async function openDirectory(directoryPath: string): Promise<void> {
   mkdirSync(directoryPath, { recursive: true });
-  const errorMessage = await shell.openPath(directoryPath);
-  if (errorMessage) {
-    throw new Error(errorMessage);
-  }
+  await openLocalPath(directoryPath);
 }
 
 function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0]): BrowserWindow {
@@ -3660,6 +3658,52 @@ async function openSessionFilesTerminal(sessionId: string): Promise<void> {
   await launchTerminalAtPath(directoryPath);
 }
 
+async function openDirectoryWithExplorerFallback(directoryPath: string): Promise<boolean> {
+  let directoryStat;
+  try {
+    directoryStat = await stat(directoryPath);
+  } catch {
+    return false;
+  }
+
+  if (!directoryStat.isDirectory()) {
+    return false;
+  }
+
+  const fallbackCommand = buildDirectoryOpenFallbackCommand(directoryPath);
+  if (!fallbackCommand) {
+    return false;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(fallbackCommand.command, fallbackCommand.args, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: false,
+    });
+
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
+  return true;
+}
+
+async function openLocalPath(targetPath: string): Promise<void> {
+  const errorMessage = await shell.openPath(targetPath);
+  if (!errorMessage) {
+    return;
+  }
+
+  if (await openDirectoryWithExplorerFallback(targetPath)) {
+    return;
+  }
+
+  throw new Error(errorMessage);
+}
+
 async function openPathTarget(target: string, options?: OpenPathOptions): Promise<void> {
   const resolved = resolveOpenPathTarget(target, options);
   if (resolved.type === "external-url") {
@@ -3667,10 +3711,7 @@ async function openPathTarget(target: string, options?: OpenPathOptions): Promis
     return;
   }
 
-  const errorMessage = await shell.openPath(resolved.targetPath);
-  if (errorMessage) {
-    throw new Error(errorMessage);
-  }
+  await openLocalPath(resolved.targetPath);
 }
 
 async function createHomeWindow(): Promise<BrowserWindow> {
