@@ -1,5 +1,4 @@
 import type { HomeMonitorEntry } from "./home-session-projection.js";
-import { CharacterAvatar } from "../ui-utils.js";
 
 export type HomeMonitorContentProps = {
   runningEntries: HomeMonitorEntry[];
@@ -34,10 +33,9 @@ export function HomeMonitorContent({
             type="button"
             onClick={() => onOpenCompanionReview(session.id)}
           >
-            <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
             <div className="home-monitor-row-copy">
               <strong>{session.taskTitle}</strong>
-              <span>{session.character}</span>
+              <span>{entry.groupLabel}</span>
             </div>
             <div className="home-monitor-row-badges">
               <span className="session-mode-badge companion">Companion</span>
@@ -56,7 +54,6 @@ export function HomeMonitorContent({
           type="button"
           onClick={() => onOpenSession(session.id)}
         >
-          <CharacterAvatar character={{ name: session.character, iconPath: session.characterIconPath }} size="tiny" />
           <div className="home-monitor-row-copy">
             <strong>{session.taskTitle}</strong>
             <span>{session.workspaceLabel || session.workspacePath || "workspace 未設定"}</span>
