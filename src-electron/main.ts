@@ -701,10 +701,7 @@ function writeRendererLog(input: RendererLogInput, windowId?: number): void {
 
 async function openDirectory(directoryPath: string): Promise<void> {
   mkdirSync(directoryPath, { recursive: true });
-  const errorMessage = await shell.openPath(directoryPath);
-  if (errorMessage) {
-    throw new Error(errorMessage);
-  }
+  await openLocalPath(directoryPath);
 }
 
 function createBaseWindow(options: ConstructorParameters<typeof BrowserWindow>[0]): BrowserWindow {
@@ -3694,6 +3691,19 @@ async function openDirectoryWithExplorerFallback(directoryPath: string): Promise
   return true;
 }
 
+async function openLocalPath(targetPath: string): Promise<void> {
+  const errorMessage = await shell.openPath(targetPath);
+  if (!errorMessage) {
+    return;
+  }
+
+  if (await openDirectoryWithExplorerFallback(targetPath)) {
+    return;
+  }
+
+  throw new Error(errorMessage);
+}
+
 async function openPathTarget(target: string, options?: OpenPathOptions): Promise<void> {
   const resolved = resolveOpenPathTarget(target, options);
   if (resolved.type === "external-url") {
@@ -3701,13 +3711,7 @@ async function openPathTarget(target: string, options?: OpenPathOptions): Promis
     return;
   }
 
-  const errorMessage = await shell.openPath(resolved.targetPath);
-  if (errorMessage) {
-    if (await openDirectoryWithExplorerFallback(resolved.targetPath)) {
-      return;
-    }
-    throw new Error(errorMessage);
-  }
+  await openLocalPath(resolved.targetPath);
 }
 
 async function createHomeWindow(): Promise<BrowserWindow> {
