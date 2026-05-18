@@ -13,6 +13,19 @@ export type BoundedAuditRawItem = {
   data?: Record<string, unknown>;
 };
 
+type RawItemBudgetState = {
+  remaining: number;
+  truncated: boolean;
+  seen: WeakSet<object>;
+};
+
+const RAW_ITEM_TRUNCATION_MARKER = {
+  type: "withmate.value_truncated",
+  truncated: true,
+  reason: "audit raw item budget exceeded",
+};
+const RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE = 1024;
+
 function buildTruncationSuffix(originalLength: number, limit: number): string {
   return `\n...[truncated ${originalLength - limit} chars; originalLength=${originalLength}]`;
 }
@@ -72,6 +85,176 @@ export function boundAuditData(data: Record<string, unknown>): Record<string, un
   );
 }
 
+function measureBoundedJson(value: unknown): number {
+  return JSON.stringify(value)?.length ?? 4;
+}
+
+function consumeRawItemBudget(state: RawItemBudgetState, length: number): boolean {
+  if (length > state.remaining) {
+    state.remaining = 0;
+    state.truncated = true;
+    return false;
+  }
+
+  state.remaining -= length;
+  return true;
+}
+
+function cloneStringWithinRawItemBudget(value: string, state: RawItemBudgetState): unknown {
+  if (state.remaining <= 0) {
+    state.truncated = true;
+    return RAW_ITEM_TRUNCATION_MARKER;
+  }
+
+  const previewLimit = Math.max(0, Math.min(AUDIT_TEXT_PREVIEW_LIMIT, state.remaining - 256));
+  const boundedValue = previewLimit > 0 ? toTruncatedText(value, previewLimit) : RAW_ITEM_TRUNCATION_MARKER;
+  if (boundedValue !== value) {
+    state.truncated = true;
+  }
+
+  const length = measureBoundedJson(boundedValue);
+  if (consumeRawItemBudget(state, length)) {
+    return boundedValue;
+  }
+
+  return RAW_ITEM_TRUNCATION_MARKER;
+}
+
+function clonePrimitiveWithinRawItemBudget(value: unknown, state: RawItemBudgetState): unknown {
+  const length = measureBoundedJson(value);
+  if (consumeRawItemBudget(state, length)) {
+    return value;
+  }
+
+  return RAW_ITEM_TRUNCATION_MARKER;
+}
+
+function cloneArrayWithinRawItemBudget(value: unknown[], state: RawItemBudgetState): unknown[] {
+  if (state.seen.has(value)) {
+    state.truncated = true;
+    return [RAW_ITEM_TRUNCATION_MARKER];
+  }
+
+  state.seen.add(value);
+  const entries: unknown[] = [];
+
+  for (let index = 0; index < value.length; index += 1) {
+    if (state.remaining <= 0) {
+      state.truncated = true;
+      break;
+    }
+
+    entries.push(cloneValueWithinRawItemBudget(value[index], state));
+    if (state.remaining <= 0) {
+      break;
+    }
+  }
+
+  state.seen.delete(value);
+  if (entries.length < value.length) {
+    state.truncated = true;
+    entries.push({
+      ...RAW_ITEM_TRUNCATION_MARKER,
+      omittedItems: value.length - entries.length,
+    });
+  }
+
+  return entries;
+}
+
+function cloneObjectWithinRawItemBudget(
+  value: Record<string, unknown>,
+  state: RawItemBudgetState,
+): Record<string, unknown> {
+  if (state.seen.has(value)) {
+    state.truncated = true;
+    return { ...RAW_ITEM_TRUNCATION_MARKER };
+  }
+
+  state.seen.add(value);
+  const output: Record<string, unknown> = {};
+  let omittedEntries = 0;
+
+  for (const key in value) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      continue;
+    }
+
+    const keyLength = measureBoundedJson(key);
+    if (state.remaining <= keyLength) {
+      state.truncated = true;
+      omittedEntries += 1;
+      continue;
+    }
+
+    consumeRawItemBudget(state, keyLength);
+    output[key] = cloneValueWithinRawItemBudget(value[key], state);
+    if (state.remaining <= 0) {
+      state.truncated = true;
+      break;
+    }
+  }
+
+  state.seen.delete(value);
+  if (omittedEntries > 0) {
+    output.withmateTruncated = {
+      ...RAW_ITEM_TRUNCATION_MARKER,
+      omittedEntries,
+    };
+  }
+
+  return output;
+}
+
+function cloneValueWithinRawItemBudget(value: unknown, state: RawItemBudgetState): unknown {
+  if (typeof value === "string") {
+    return cloneStringWithinRawItemBudget(value, state);
+  }
+
+  if (
+    value === null
+    || typeof value === "number"
+    || typeof value === "boolean"
+  ) {
+    return clonePrimitiveWithinRawItemBudget(value, state);
+  }
+
+  if (Array.isArray(value)) {
+    return cloneArrayWithinRawItemBudget(value, state);
+  }
+
+  if (value && typeof value === "object") {
+    return cloneObjectWithinRawItemBudget(value as Record<string, unknown>, state);
+  }
+
+  return undefined;
+}
+
+function cloneRawItemWithinBudget(item: BoundedAuditRawItem, budget: number): BoundedAuditRawItem {
+  const state: RawItemBudgetState = {
+    remaining: Math.max(0, budget),
+    truncated: false,
+    seen: new WeakSet<object>(),
+  };
+  const boundedItem = cloneValueWithinRawItemBudget(item, state) as BoundedAuditRawItem;
+
+  if (state.truncated) {
+    return {
+      type: boundedItem.type ?? item.type,
+      timestamp: boundedItem.timestamp,
+      data: {
+        ...(boundedItem.data ?? {}),
+        withmateTruncated: {
+          ...RAW_ITEM_TRUNCATION_MARKER,
+          maxLength: budget,
+        },
+      },
+    };
+  }
+
+  return boundedItem;
+}
+
 export function stringifyBoundedAuditRawItems(
   items: BoundedAuditRawItem[],
   limit = AUDIT_RAW_ITEMS_JSON_LIMIT,
@@ -81,7 +264,12 @@ export function stringifyBoundedAuditRawItems(
   let currentLength = 2;
 
   for (const item of items) {
-    const serializedItem = JSON.stringify(item);
+    const commaLength = currentLength === 2 ? 0 : 1;
+    const remainingItemBudget = Math.max(
+      0,
+      limit - currentLength - commaLength - RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE,
+    );
+    const serializedItem = JSON.stringify(cloneRawItemWithinBudget(item, remainingItemBudget));
     const nextLength = currentLength === 2
       ? currentLength + serializedItem.length
       : currentLength + 1 + serializedItem.length;
