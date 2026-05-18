@@ -1,3 +1,5 @@
+import type { AppSettings } from "../provider-settings-state.js";
+
 export type MateTalkTurnState = {
   turnId: number;
   messageSequence: number;
@@ -43,3 +45,13 @@ export const shouldSubmitMateTalkInputByKey = (eventLike: {
   }
   return eventLike.ctrlKey === true || eventLike.metaKey === true;
 };
+
+export function resolveMateTalkActionDockExpandedAfterSubmit({
+  isActionDockExpanded,
+  appSettings,
+}: {
+  isActionDockExpanded: boolean;
+  appSettings: Pick<AppSettings, "autoCollapseActionDockOnSend">;
+}): boolean {
+  return appSettings.autoCollapseActionDockOnSend ? false : isActionDockExpanded;
+}

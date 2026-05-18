@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { MateTalkTurnController, shouldSubmitMateTalkInputByKey } from "../../src/chat/mate-talk-state.js";
+import {
+  MateTalkTurnController,
+  resolveMateTalkActionDockExpandedAfterSubmit,
+  shouldSubmitMateTalkInputByKey,
+} from "../../src/chat/mate-talk-state.js";
 
 test("MateTalkTurnController は beginTurn で turnId と messageSequence を増やす", () => {
   const controller = new MateTalkTurnController();
@@ -90,6 +94,33 @@ test("shouldSubmitMateTalkInputByKey は composing 中は送信しない", () =>
       key: "Enter",
       ctrlKey: true,
       isComposing: true,
+    }),
+    false,
+  );
+});
+
+test("resolveMateTalkActionDockExpandedAfterSubmit は自動格納設定が有効なら送信時に閉じる", () => {
+  assert.equal(
+    resolveMateTalkActionDockExpandedAfterSubmit({
+      isActionDockExpanded: true,
+      appSettings: { autoCollapseActionDockOnSend: true },
+    }),
+    false,
+  );
+});
+
+test("resolveMateTalkActionDockExpandedAfterSubmit は自動格納設定が無効なら現在の状態を保つ", () => {
+  assert.equal(
+    resolveMateTalkActionDockExpandedAfterSubmit({
+      isActionDockExpanded: true,
+      appSettings: { autoCollapseActionDockOnSend: false },
+    }),
+    true,
+  );
+  assert.equal(
+    resolveMateTalkActionDockExpandedAfterSubmit({
+      isActionDockExpanded: false,
+      appSettings: { autoCollapseActionDockOnSend: false },
     }),
     false,
   );
