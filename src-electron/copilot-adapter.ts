@@ -66,6 +66,12 @@ import {
   resolvePackagedProviderBinaryPath,
   resolveProviderBinarySpec,
 } from "./provider-binary-paths.js";
+import {
+  boundAuditRawItem,
+  stringifyBoundedAuditRawItems,
+  toAuditTextPreview,
+  type BoundedAuditRawItem,
+} from "./audit-payload-limits.js";
 
 type CachedCopilotSession = {
   session: CopilotSession;
@@ -81,18 +87,14 @@ type CopilotCommandStepState = {
   status: LiveRunStep["status"];
 };
 
-type CopilotStableRawItem = {
-  type: string;
-  timestamp?: string;
-  data?: Record<string, unknown>;
-};
+type CopilotStableRawItem = BoundedAuditRawItem;
 
 type CopilotTurnStreamState = {
   liveSteps: Map<string, LiveRunStep>;
   backgroundTasks: Map<string, LiveBackgroundTask>;
   permissionToStepId: Map<string, string>;
   toolNamesByCallId: Map<string, string>;
-  events: SessionEvent[];
+  rawItems: CopilotStableRawItem[];
   assistantText: string;
   assistantMessages: string[];
   assistantDraft: string;
@@ -248,7 +250,7 @@ function createCopilotTurnStreamState(): CopilotTurnStreamState {
     backgroundTasks: new Map<string, LiveBackgroundTask>(),
     permissionToStepId: new Map<string, string>(),
     toolNamesByCallId: new Map<string, string>(),
-    events: [],
+    rawItems: [],
     assistantText: "",
     assistantMessages: [],
     assistantDraft: "",
@@ -262,7 +264,7 @@ function updateCopilotCommandStep(state: CopilotTurnStreamState, nextState: Copi
     id: nextState.stepId,
     type: "command_execution",
     summary: nextState.summary,
-    details: nextState.details,
+    details: toAuditTextPreview(nextState.details),
     status: nextState.status,
   });
 }
@@ -292,7 +294,6 @@ function applyCopilotTurnEvent(args: {
   onSessionContextTelemetry?: RunSessionTurnInput["onSessionContextTelemetry"];
 }): void {
   const { event, state, providerId, sessionId, workspacePath } = args;
-  state.events.push(event);
 
   switch (event.type) {
     case "assistant.message_delta":
@@ -417,6 +418,8 @@ function applyCopilotTurnEvent(args: {
     default:
       break;
   }
+
+  appendCopilotStableRawItem(state.rawItems, event, workspacePath, state.toolNamesByCallId);
 }
 
 type CopilotQuotaSnapshotLike = {
@@ -985,116 +988,132 @@ export function buildCopilotStableRawItems(
   const toolNamesByCallId = new Map<string, string>();
 
   for (const event of events) {
-    if (shouldDropCopilotRawEvent(event)) {
-      continue;
-    }
-
-    switch (event.type) {
-      case "user.message":
-        stableItems.push({
-          type: event.type,
-          timestamp: event.timestamp,
-          data: {
-            content: event.data.content,
-          },
-        });
-        break;
-      case "assistant.message":
-        stableItems.push({
-          type: event.type,
-          timestamp: event.timestamp,
-          data: {
-            content: event.data.content,
-            parentToolCallId: event.data.parentToolCallId ?? null,
-          },
-        });
-        break;
-      case "assistant.usage":
-        stableItems.push({
-          type: event.type,
-          timestamp: event.timestamp,
-          data: {
-            inputTokens: event.data.inputTokens ?? null,
-            cacheReadTokens: event.data.cacheReadTokens ?? null,
-            outputTokens: event.data.outputTokens ?? null,
-          },
-        });
-        break;
-      case "session.error":
-        stableItems.push({
-          type: event.type,
-          timestamp: event.timestamp,
-          data: {
-            message: event.data.message,
-          },
-        });
-        break;
-      case "session.idle":
-        stableItems.push({
-          type: event.type,
-          timestamp: event.timestamp,
-        });
-        break;
-      case "permission.requested": {
-        const summary = buildCopilotPermissionSummary(event.data.permissionRequest, workspacePath);
-        stableItems.push({
-          type: event.type,
-          timestamp: event.timestamp,
-          data: {
-            requestId: event.data.requestId,
-            kind: event.data.permissionRequest.kind,
-            summary: summary ?? event.data.permissionRequest.kind,
-          },
-        });
-        break;
-      }
-      case "permission.completed":
-        stableItems.push({
-          type: event.type,
-          timestamp: event.timestamp,
-          data: {
-            requestId: event.data.requestId,
-            resultKind: event.data.result.kind,
-          },
-        });
-        break;
-      case "tool.execution_start":
-        toolNamesByCallId.set(event.data.toolCallId, event.data.toolName);
-        stableItems.push({
-          type: event.type,
-          timestamp: event.timestamp,
-          data: {
-            toolCallId: event.data.toolCallId,
-            toolName: event.data.toolName,
-            summary: buildCopilotToolSummary(event.data.toolName, event.data.arguments, workspacePath),
-          },
-        });
-        break;
-      case "tool.execution_complete": {
-        const toolName = toolNamesByCallId.get(event.data.toolCallId) ?? null;
-        stableItems.push({
-          type: event.type,
-          timestamp: event.timestamp,
-          data: {
-            toolCallId: event.data.toolCallId,
-            toolName,
-            success: event.data.success,
-            content: event.data.result?.content ?? null,
-            errorMessage: event.data.error?.message ?? null,
-          },
-        });
-        break;
-      }
-      default:
-        stableItems.push({
-          type: event.type,
-          timestamp: event.timestamp,
-        });
-        break;
-    }
+    appendCopilotStableRawItem(stableItems, event, workspacePath, toolNamesByCallId);
   }
 
   return stableItems;
+}
+
+function pushCopilotRawItem(
+  items: CopilotStableRawItem[],
+  item: CopilotStableRawItem,
+): void {
+  items.push(boundAuditRawItem(item) as CopilotStableRawItem);
+}
+
+function appendCopilotStableRawItem(
+  stableItems: CopilotStableRawItem[],
+  event: SessionEvent,
+  workspacePath: string,
+  toolNamesByCallId: Map<string, string>,
+): void {
+  if (shouldDropCopilotRawEvent(event)) {
+    return;
+  }
+
+  switch (event.type) {
+    case "user.message":
+      pushCopilotRawItem(stableItems, {
+        type: event.type,
+        timestamp: event.timestamp,
+        data: {
+          content: event.data.content,
+        },
+      });
+      break;
+    case "assistant.message":
+      pushCopilotRawItem(stableItems, {
+        type: event.type,
+        timestamp: event.timestamp,
+        data: {
+          content: event.data.content,
+          parentToolCallId: event.data.parentToolCallId ?? null,
+        },
+      });
+      break;
+    case "assistant.usage":
+      pushCopilotRawItem(stableItems, {
+        type: event.type,
+        timestamp: event.timestamp,
+        data: {
+          inputTokens: event.data.inputTokens ?? null,
+          cacheReadTokens: event.data.cacheReadTokens ?? null,
+          outputTokens: event.data.outputTokens ?? null,
+        },
+      });
+      break;
+    case "session.error":
+      pushCopilotRawItem(stableItems, {
+        type: event.type,
+        timestamp: event.timestamp,
+        data: {
+          message: event.data.message,
+        },
+      });
+      break;
+    case "session.idle":
+      stableItems.push({
+        type: event.type,
+        timestamp: event.timestamp,
+      });
+      break;
+    case "permission.requested": {
+      const summary = buildCopilotPermissionSummary(event.data.permissionRequest, workspacePath);
+      pushCopilotRawItem(stableItems, {
+        type: event.type,
+        timestamp: event.timestamp,
+        data: {
+          requestId: event.data.requestId,
+          kind: event.data.permissionRequest.kind,
+          summary: summary ?? event.data.permissionRequest.kind,
+        },
+      });
+      break;
+    }
+    case "permission.completed":
+      pushCopilotRawItem(stableItems, {
+        type: event.type,
+        timestamp: event.timestamp,
+        data: {
+          requestId: event.data.requestId,
+          resultKind: event.data.result.kind,
+        },
+      });
+      break;
+    case "tool.execution_start":
+      toolNamesByCallId.set(event.data.toolCallId, event.data.toolName);
+      pushCopilotRawItem(stableItems, {
+        type: event.type,
+        timestamp: event.timestamp,
+        data: {
+          toolCallId: event.data.toolCallId,
+          toolName: event.data.toolName,
+          summary: buildCopilotToolSummary(event.data.toolName, event.data.arguments, workspacePath),
+        },
+      });
+      break;
+    case "tool.execution_complete": {
+      const toolName = toolNamesByCallId.get(event.data.toolCallId) ?? null;
+      pushCopilotRawItem(stableItems, {
+        type: event.type,
+        timestamp: event.timestamp,
+        data: {
+          toolCallId: event.data.toolCallId,
+          toolName,
+          success: event.data.success,
+          content: event.data.result?.content ?? null,
+          errorMessage: event.data.error?.message ?? null,
+        },
+      });
+      break;
+    }
+    default:
+      stableItems.push({
+        type: event.type,
+        timestamp: event.timestamp,
+      });
+      break;
+  }
 }
 
 function extractShellCommandFromArguments(argumentsValue: Record<string, unknown> | undefined): string | null {
@@ -1304,7 +1323,7 @@ async function emitLiveState(
   await handler({
     sessionId,
     threadId: threadId ?? "",
-    assistantText,
+    assistantText: toAuditTextPreview(assistantText) ?? "",
     steps: Array.from(steps.values()),
     backgroundTasks: sortLiveBackgroundTasks(backgroundTasks.values()),
     usage,
@@ -2127,7 +2146,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     assistantText: string,
     steps: Map<string, LiveRunStep>,
     usage: AuditLogUsage | null,
-    events: SessionEvent[],
+    rawItems: CopilotStableRawItem[],
     workspacePath: string,
     session: Session,
     providerCatalog: RunSessionTurnInput["providerCatalog"],
@@ -2161,7 +2180,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       logicalPrompt: prompt.logicalPrompt,
       transportPayload: buildCopilotTransportPayload(prompt, messageAttachments),
       operations,
-      rawItemsJson: JSON.stringify(buildCopilotStableRawItems(events, workspacePath), null, 2),
+      rawItemsJson: stringifyBoundedAuditRawItems(rawItems),
       usage,
       providerQuotaTelemetry,
     };
@@ -2296,7 +2315,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           streamState.assistantText,
           streamState.liveSteps,
           streamState.usage,
-          streamState.events,
+          streamState.rawItems,
           workspacePath,
           input.session,
           input.providerCatalog,
@@ -2321,7 +2340,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         streamState.assistantText,
         streamState.liveSteps,
         streamState.usage,
-        streamState.events,
+        streamState.rawItems,
         workspacePath,
         input.session,
         input.providerCatalog,
@@ -2345,7 +2364,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         streamState.assistantText,
         streamState.liveSteps,
         streamState.usage,
-        streamState.events,
+        streamState.rawItems,
         workspacePath,
         input.session,
         input.providerCatalog,

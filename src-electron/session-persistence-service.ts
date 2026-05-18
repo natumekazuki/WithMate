@@ -3,6 +3,7 @@ import {
   buildNewSession,
   cloneSessions,
   isLegacyReadOnlySession,
+  projectSessionSummary,
   type CreateSessionInput,
   type Session,
 } from "../src/session-state.js";
@@ -15,6 +16,7 @@ import {
 } from "../src/model-catalog.js";
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
+import { sessionSummaryToSession } from "./session-summary-adapter.js";
 
 export type SessionPersistenceServiceDeps = {
   getSessions(): Session[];
@@ -44,6 +46,14 @@ function isRunningSession(session: Session): boolean {
 
 function upsertSessionInList(sessions: Session[], stored: Session): Session[] {
   return [stored, ...sessions.filter((session) => session.id !== stored.id)];
+}
+
+function toCachedSession(session: Session): Session {
+  return sessionSummaryToSession(projectSessionSummary(session));
+}
+
+function toCachedSessions(sessions: Session[]): Session[] {
+  return sessions.map(toCachedSession);
 }
 
 function assertSessionWritable(session: Session): void {
@@ -155,7 +165,7 @@ export class SessionPersistenceService {
       ),
     });
     this.syncStoredSession(stored);
-    this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), stored));
+    this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
     this.deps.broadcastSessions([stored.id]);
     return cloneSessions([stored])[0];
   }
@@ -177,7 +187,7 @@ export class SessionPersistenceService {
     }));
 
     await this.deps.replaceStoredSessions(normalizedSessions);
-    this.deps.setSessions(normalizedSessions);
+    this.deps.setSessions(toCachedSessions(normalizedSessions));
     const storedSessions = normalizedSessions;
     for (const session of storedSessions) {
       this.syncStoredSession(session);

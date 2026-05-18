@@ -12,6 +12,7 @@ import type { ModelCatalogProvider } from "../../src/model-catalog.js";
 import {
   CodexAdapter,
   buildCodexThreadSettings,
+  buildCodexStableRawItems,
   collectCodexAssistantTextSnapshotsFromEventsForTesting,
   collectCodexAssistantTextFromEventsForTesting,
   resolveCodexThreadForSettings,
@@ -212,6 +213,44 @@ describe("CodexAdapter thread settings", () => {
     ]);
 
     assert.deepEqual(snapshots, ["こん", "こんにちは", "こんにちは"]);
+  });
+
+  it("rawItems は final item 全体ではなく bounded projection に変換する", () => {
+    const longOutput = "x".repeat(70 * 1024);
+    const items = buildCodexStableRawItems([
+      {
+        id: "cmd-1",
+        type: "command_execution",
+        command: "npm test",
+        status: "completed",
+        exit_code: 0,
+        aggregated_output: longOutput,
+      } as never,
+      {
+        id: "message-1",
+        type: "agent_message",
+        text: "done",
+      } as never,
+    ]);
+
+    assert.deepEqual(items[0]?.data?.command, "npm test");
+    assert.equal("aggregated_output" in (items[0]?.data ?? {}), false);
+
+    const output = items[0]?.data?.output as {
+      text: string;
+      truncated: true;
+      originalLength: number;
+    };
+    assert.equal(output.truncated, true);
+    assert.equal(output.originalLength, longOutput.length);
+    assert.equal(output.text.includes("...[truncated "), true);
+    assert.deepEqual(items[1], {
+      type: "agent_message",
+      data: {
+        id: "message-1",
+        text: "done",
+      },
+    });
   });
 
   it("model / reasoning 変更後の thread settings は新 options と settingsKey を反映する", () => {

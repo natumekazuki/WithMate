@@ -61,6 +61,13 @@ import {
 import { parseCharacterReflectionOutputText } from "./character-reflection.js";
 import { parseSessionMemoryDeltaText } from "./session-memory-extraction.js";
 import { resolvePackagedProviderBinaryPath } from "./provider-binary-paths.js";
+import {
+  boundAuditRawItem,
+  stringifyBoundedAuditValue,
+  stringifyBoundedAuditRawItems,
+  toAuditTextPreview,
+  type BoundedAuditRawItem,
+} from "./audit-payload-limits.js";
 const MAX_DIFF_MATRIX_CELLS = 2_000_000;
 
 function summarizeChangedFile(kind: ChangedFile["kind"], filePath: string): string {
@@ -527,8 +534,10 @@ function toAuditOperations(items: ThreadItem[]): AuditLogOperation[] {
       case "command_execution":
         operations.push({
           type: item.type,
-          summary: item.command,
-          details: item.aggregated_output || (typeof item.exit_code === "number" ? `exit code: ${item.exit_code}` : undefined),
+          summary: toAuditTextPreview(item.command) ?? item.command,
+          details: toAuditTextPreview(
+            item.aggregated_output || (typeof item.exit_code === "number" ? `exit code: ${item.exit_code}` : undefined),
+          ),
         });
         break;
       case "file_change":
@@ -543,7 +552,9 @@ function toAuditOperations(items: ThreadItem[]): AuditLogOperation[] {
         operations.push({
           type: item.type,
           summary: `${item.server}/${item.tool}`,
-          details: item.error?.message ?? stringifyUnknown(item.result?.structured_content ?? item.arguments),
+          details: item.error?.message
+            ? toAuditTextPreview(item.error.message)
+            : stringifyBoundedAuditValue(item.result?.structured_content ?? item.arguments),
         });
         break;
       case "web_search":
@@ -556,25 +567,25 @@ function toAuditOperations(items: ThreadItem[]): AuditLogOperation[] {
         operations.push({
           type: item.type,
           summary: `${item.items.filter((entry) => entry.completed).length}/${item.items.length} completed`,
-          details: item.items.map((entry) => `${entry.completed ? "[x]" : "[ ]"} ${entry.text}`).join("\n"),
+          details: toAuditTextPreview(item.items.map((entry) => `${entry.completed ? "[x]" : "[ ]"} ${entry.text}`).join("\n")),
         });
         break;
       case "reasoning":
         operations.push({
           type: item.type,
-          summary: item.text,
+          summary: toAuditTextPreview(item.text) ?? item.text,
         });
         break;
       case "error":
         operations.push({
           type: item.type,
-          summary: item.message,
+          summary: toAuditTextPreview(item.message) ?? item.message,
         });
         break;
       case "agent_message":
         operations.push({
           type: item.type,
-          summary: item.text,
+          summary: toAuditTextPreview(item.text) ?? item.text,
         });
         break;
       default:
@@ -587,6 +598,115 @@ function toAuditOperations(items: ThreadItem[]): AuditLogOperation[] {
   }
 
   return operations;
+}
+
+function pushCodexRawItem(items: BoundedAuditRawItem[], item: BoundedAuditRawItem): void {
+  items.push(boundAuditRawItem(item));
+}
+
+export function buildCodexStableRawItems(items: ThreadItem[]): BoundedAuditRawItem[] {
+  const rawItems: BoundedAuditRawItem[] = [];
+
+  for (const item of items) {
+    switch (item.type) {
+      case "command_execution":
+        pushCodexRawItem(rawItems, {
+          type: item.type,
+          data: {
+            id: item.id,
+            command: item.command,
+            status: item.status ?? null,
+            exitCode: item.exit_code ?? null,
+            output: item.aggregated_output ?? null,
+          },
+        });
+        break;
+      case "file_change":
+        pushCodexRawItem(rawItems, {
+          type: item.type,
+          data: {
+            id: item.id,
+            status: item.status ?? null,
+            changes: item.changes.map((change) => ({
+              kind: change.kind,
+              path: change.path,
+            })),
+          },
+        });
+        break;
+      case "mcp_tool_call":
+        pushCodexRawItem(rawItems, {
+          type: item.type,
+          data: {
+            id: item.id,
+            status: item.status ?? null,
+            server: item.server,
+            tool: item.tool,
+            arguments: item.arguments,
+            result: item.result?.structured_content ?? null,
+            errorMessage: item.error?.message ?? null,
+          },
+        });
+        break;
+      case "web_search":
+        pushCodexRawItem(rawItems, {
+          type: item.type,
+          data: {
+            id: item.id,
+            query: item.query,
+          },
+        });
+        break;
+      case "todo_list":
+        pushCodexRawItem(rawItems, {
+          type: item.type,
+          data: {
+            id: item.id,
+            items: item.items,
+          },
+        });
+        break;
+      case "reasoning":
+        pushCodexRawItem(rawItems, {
+          type: item.type,
+          data: {
+            id: item.id,
+            text: item.text,
+          },
+        });
+        break;
+      case "error":
+        pushCodexRawItem(rawItems, {
+          type: item.type,
+          data: {
+            id: item.id,
+            message: item.message,
+          },
+        });
+        break;
+      case "agent_message":
+        pushCodexRawItem(rawItems, {
+          type: item.type,
+          data: {
+            id: item.id,
+            text: item.text,
+          },
+        });
+        break;
+      default: {
+        const unknownItem = item as Record<string, unknown>;
+        pushCodexRawItem(rawItems, {
+          type: typeof unknownItem.type === "string" ? unknownItem.type : "unknown",
+          data: {
+            item: unknownItem,
+          },
+        });
+        break;
+      }
+    }
+  }
+
+  return rawItems;
 }
 
 function toLiveStepStatus(value: string | undefined): LiveRunStep["status"] {
@@ -607,8 +727,8 @@ function buildLiveStep(item: ThreadItem): LiveRunStep | null {
       return {
         id: item.id,
         type: item.type,
-        summary: item.command,
-        details: item.aggregated_output || undefined,
+        summary: toAuditTextPreview(item.command) ?? item.command,
+        details: toAuditTextPreview(item.aggregated_output),
         status: toLiveStepStatus(item.status),
       };
     case "file_change":
@@ -623,7 +743,9 @@ function buildLiveStep(item: ThreadItem): LiveRunStep | null {
         id: item.id,
         type: item.type,
         summary: `${item.server}/${item.tool}`,
-        details: item.error?.message ?? stringifyUnknown(item.result?.structured_content ?? item.arguments),
+        details: item.error?.message
+          ? toAuditTextPreview(item.error.message)
+          : stringifyBoundedAuditValue(item.result?.structured_content ?? item.arguments),
         status: toLiveStepStatus(item.status),
       };
     case "web_search":
@@ -638,21 +760,21 @@ function buildLiveStep(item: ThreadItem): LiveRunStep | null {
         id: item.id,
         type: item.type,
         summary: `${item.items.filter((entry) => entry.completed).length}/${item.items.length} completed`,
-        details: item.items.map((entry) => `${entry.completed ? "[x]" : "[ ]"} ${entry.text}`).join("\n"),
+        details: toAuditTextPreview(item.items.map((entry) => `${entry.completed ? "[x]" : "[ ]"} ${entry.text}`).join("\n")),
         status: "completed",
       };
     case "reasoning":
       return {
         id: item.id,
         type: item.type,
-        summary: item.text,
+        summary: toAuditTextPreview(item.text) ?? item.text,
         status: "completed",
       };
     case "error":
       return {
         id: item.id,
         type: item.type,
-        summary: item.message,
+        summary: toAuditTextPreview(item.message) ?? item.message,
         status: "failed",
       };
     case "agent_message":
@@ -678,7 +800,7 @@ async function emitLiveState(
   await handler({
     sessionId,
     threadId: threadId ?? "",
-    assistantText,
+    assistantText: toAuditTextPreview(assistantText) ?? "",
     steps: Array.from(steps.values()),
     backgroundTasks: [],
     usage,
@@ -1272,7 +1394,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       logicalPrompt: prompt.logicalPrompt,
       transportPayload: buildCodexTransportPayload(prompt),
       operations: toAuditOperations(finalItems),
-      rawItemsJson: JSON.stringify(finalItems, null, 2),
+      rawItemsJson: stringifyBoundedAuditRawItems(buildCodexStableRawItems(finalItems)),
       usage: normalizeCodexTokenUsage(usage),
       providerQuotaTelemetry: null,
     };

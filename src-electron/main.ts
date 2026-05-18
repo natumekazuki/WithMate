@@ -3351,10 +3351,7 @@ function getSession(sessionId: string): Session | null {
 
 async function getDisplaySession(sessionId: string): Promise<Session | null> {
   const liveSession = getSession(sessionId);
-  if (
-    liveSession
-    && (liveSession.messages.length > 0 || liveSession.stream.length > 0 || isSessionRunInFlight(sessionId))
-  ) {
+  if (liveSession && (liveSession.messages.length > 0 || liveSession.stream.length > 0)) {
     return liveSession;
   }
 

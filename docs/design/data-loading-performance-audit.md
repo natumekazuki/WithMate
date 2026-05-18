@@ -37,6 +37,7 @@
 - 起動時の session 初期 state は `listSessionSummaries()` から復元し、V1 fallback でも `messages_json` / `stream_json` を初期一覧ロードで読まない。
 - running session 復旧時だけ対象 session を `getSession(id)` で詳細 hydrate し、既存 messages に interrupted message を追加して保存する。
 - settings / model catalog の一括保存経路は、summary-derived empty messages を保存しないように `listSessionSummaries()` + `getSession(id)` で full detail hydrate した session を使う。
+- session 保存後の main process 常駐 `sessions` cache は summary-only session に戻し、表示や実行で履歴本体が必要な時だけ `getSession(id)` で詳細 hydrate する。
 
 ---
 

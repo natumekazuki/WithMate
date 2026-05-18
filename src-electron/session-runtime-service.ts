@@ -24,6 +24,7 @@ import { ProviderTurnError, type ProviderCodingAdapter, type RunSessionTurnResul
 import { appendQuotaTelemetryToTransportPayload } from "./audit-log-quota.js";
 import { appendTransportPayloadFields, calculateAuditDurationMs } from "./audit-log-metadata.js";
 import { estimateLogicalPromptTokens } from "./prompt-token-estimate.js";
+import { toAuditTextPreview } from "./audit-payload-limits.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
@@ -514,13 +515,17 @@ export class SessionRuntimeService {
         reasoningEffort: activeRunningSession.reasoningEffort,
         approvalMode: activeRunningSession.approvalMode,
         threadId: pickPreferredThreadId(nextLiveState.threadId, runningAuditEntry.threadId, activeRunningSession.threadId),
-        assistantText: nextLiveState.assistantText.trim() ? nextLiveState.assistantText : runningAuditEntry.assistantText,
+        assistantText: nextLiveState.assistantText.trim()
+          ? toAuditTextPreview(nextLiveState.assistantText) ?? ""
+          : runningAuditEntry.assistantText,
         operations: (() => {
           const operations = buildLiveRunAuditOperations(nextLiveState);
           return operations.length > 0 ? operations : runningAuditEntry.operations;
         })(),
         usage: nextLiveState.usage ?? runningAuditEntry.usage,
-        errorMessage: nextLiveState.errorMessage.trim() ? nextLiveState.errorMessage : runningAuditEntry.errorMessage,
+        errorMessage: nextLiveState.errorMessage.trim()
+          ? toAuditTextPreview(nextLiveState.errorMessage) ?? ""
+          : runningAuditEntry.errorMessage,
       };
       const nextSignature = buildRunningAuditProgressSignature(nextRunningAuditEntry);
       if (nextSignature === runningAuditProgressSignature) {

@@ -624,6 +624,31 @@ describe("CopilotAdapter env", () => {
     ]);
   });
 
+  it("rawItems の大きな text payload は preview と metadata に畳み込む", () => {
+    const longContent = "x".repeat(70 * 1024);
+    const items = buildCopilotStableRawItems([
+      {
+        type: "assistant.message",
+        timestamp: "2026-03-23T00:00:00.000Z",
+        data: {
+          content: longContent,
+          parentToolCallId: undefined,
+        },
+      } as never,
+    ], "F:/repo");
+
+    const content = items[0]?.data?.content as {
+      text: string;
+      truncated: true;
+      originalLength: number;
+    };
+
+    assert.equal(content.truncated, true);
+    assert.equal(content.originalLength, longContent.length);
+    assert.equal(content.text.includes("...[truncated "), true);
+    assert.equal(content.text.length < longContent.length, true);
+  });
+
   it("top-level assistant message は arrival 順に空行区切りで連結する", () => {
     const first = applyCopilotAssistantEvent([], "", {
       type: "assistant.message",

@@ -204,6 +204,7 @@ describe("SessionPersistenceService", () => {
       ["残すメッセージ", "残す返答"],
     );
     assert.deepEqual(updated.messages.map((message) => message.text), ["残すメッセージ", "残す返答"]);
+    assert.deepEqual(inMemorySessions[0]?.messages, []);
   });
 
   it("createSession は last-used model / reasoning / customAgentName を正規化して保存する", async () => {
