@@ -28,8 +28,9 @@ type HomeLaunchHandlersContext = {
   openSessionWindow: (sessionId: string) => Promise<void>;
   openCompanionReviewWindow: (sessionId: string) => Promise<void>;
   openMateTalkWindow: (input: ReturnType<typeof buildMateTalkLaunchInputFromLaunchDraft>) => Promise<void>;
-  createSession: (input: CreateSessionInput) => Promise<{ id: string } | null>;
+  createSession: (input: CreateSessionInput) => Promise<SessionSummary | null>;
   createCompanionSession: (input: CreateCompanionSessionInput) => Promise<CompanionSession | null>;
+  upsertSessionSummary: (summary: SessionSummary) => void;
   upsertCompanionSessionSummary: (summary: CompanionSessionSummary) => void;
 };
 
@@ -61,6 +62,7 @@ export function buildHomeLaunchHandlers({
   openMateTalkWindow,
   createSession,
   createCompanionSession,
+  upsertSessionSummary,
   upsertCompanionSessionSummary,
 }: HomeLaunchHandlersContext): HomeLaunchHandlers {
   const onBrowseWorkspace = async () => {
@@ -152,6 +154,7 @@ export function buildHomeLaunchHandlers({
       closeLaunchDialog: onCloseLaunchDialog,
       setLaunchFeedback,
       setLaunchStarting,
+      upsertSessionSummary,
       upsertCompanionSessionSummary,
     });
   };

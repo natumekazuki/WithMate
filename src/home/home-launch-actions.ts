@@ -3,6 +3,7 @@ import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionI
 import { createCompanionSessionSummary } from "../companion-state.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { CreateSessionInput, SessionSummary } from "../session-state.js";
+import { projectSessionSummary } from "../session-state.js";
 import {
   buildCreateCompanionSessionInputFromLaunchDraft,
   buildCreateSessionInputFromLaunchDraft,
@@ -11,7 +12,7 @@ import {
   type HomeLaunchDraft,
 } from "./home-launch-state.js";
 
-export type HomeLaunchSessionCreator = (input: CreateSessionInput) => Promise<{ id: string } | null>;
+export type HomeLaunchSessionCreator = (input: CreateSessionInput) => Promise<SessionSummary | null>;
 
 export type HomeLaunchCompanionSessionCreator = (input: CreateCompanionSessionInput) => Promise<CompanionSession | null>;
 
@@ -30,6 +31,7 @@ export type StartHomeLaunchInput = {
   closeLaunchDialog: () => void;
   setLaunchFeedback: (message: string) => void;
   setLaunchStarting: (launchStarting: boolean) => void;
+  upsertSessionSummary: (summary: SessionSummary) => void;
   upsertCompanionSessionSummary: (summary: CompanionSessionSummary) => void;
 };
 
@@ -97,6 +99,7 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
       return;
     }
 
+    input.upsertSessionSummary(projectSessionSummary(createdSession));
     input.closeLaunchDialog();
     await input.openSessionWindow(createdSession.id);
   } catch (error) {
