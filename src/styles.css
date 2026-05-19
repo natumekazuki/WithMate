@@ -3584,34 +3584,6 @@ button:disabled {
   color: var(--ink);
 }
 
-.message-inline-link {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border: 1px solid rgba(32, 36, 55, 0.12);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.82);
-  color: #0f3d63;
-  font: inherit;
-  cursor: pointer;
-}
-
-.session-page .message-inline-link {
-  border-color: rgba(203, 213, 225, 0.12);
-  background: rgba(255, 255, 255, 0.06);
-  color: #c8d4ff;
-}
-
-.message-inline-link:hover {
-  background: rgba(255, 255, 255, 0.96);
-  border-color: rgba(15, 61, 99, 0.24);
-}
-
-.session-page .message-inline-link:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(143, 169, 255, 0.28);
-}
-
 .message-code-block {
   margin: 0;
   overflow: auto;
@@ -3622,6 +3594,15 @@ button:disabled {
   color: rgba(245, 245, 247, 0.94);
   font: 0.84rem/1.6 "IBM Plex Mono", monospace;
   white-space: pre;
+}
+
+.message-code-block .message-inline-code {
+  display: inline;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
 }
 
 .settings-help {
