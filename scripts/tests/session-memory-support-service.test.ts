@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type {
-  CharacterMemoryEntry,
   ProjectMemoryEntry,
   Session,
   SessionMemory,
@@ -72,23 +71,6 @@ function createProjectMemoryEntry(overrides?: Partial<ProjectMemoryEntry>): Proj
   };
 }
 
-function createCharacterMemoryEntry(overrides?: Partial<CharacterMemoryEntry>): CharacterMemoryEntry {
-  return {
-    id: "character-entry-1",
-    characterScopeId: "character-scope-1",
-    sourceSessionId: "session-1",
-    category: "preference",
-    title: "説明は短めが好み",
-    detail: "説明は短めが好み",
-    keywords: ["短め", "説明"],
-    evidence: [],
-    createdAt: "2026-03-28T00:00:00.000Z",
-    updatedAt: "2026-03-28T00:00:00.000Z",
-    lastUsedAt: null,
-    ...overrides,
-  };
-}
-
 test("SessionMemorySupportService は session 依存の memory/scope を同期する", () => {
   const calls: string[] = [];
   const service = new SessionMemorySupportService({
@@ -113,17 +95,6 @@ test("SessionMemorySupportService は session 依存の memory/scope を同期�
       return createProjectMemoryEntry(entry);
     },
     markProjectMemoryEntriesUsed() {},
-    ensureCharacterScope(input) {
-      calls.push(`ensureCharacterScope:${input.characterId}`);
-      return { id: "character-scope-1" };
-    },
-    listCharacterMemoryEntries() {
-      return [];
-    },
-    upsertCharacterMemoryEntry(entry) {
-      return createCharacterMemoryEntry(entry);
-    },
-    markCharacterMemoryEntriesUsed() {},
     upsertSession(session) {
       return session;
     },
@@ -135,7 +106,6 @@ test("SessionMemorySupportService は session 依存の memory/scope を同期�
     "getSessionMemory:session-1",
     "upsertSessionMemory:Memory 設計を進める",
     "ensureProjectScope:directory:C:/workspace",
-    "ensureCharacterScope:char-1",
   ]);
 });
 
@@ -164,17 +134,6 @@ test("SessionMemorySupportService は削除済み session memory を起動同期
       return createProjectMemoryEntry(entry);
     },
     markProjectMemoryEntriesUsed() {},
-    ensureCharacterScope(input) {
-      calls.push(`ensureCharacterScope:${input.characterId}`);
-      return { id: "character-scope-1" };
-    },
-    listCharacterMemoryEntries() {
-      return [];
-    },
-    upsertCharacterMemoryEntry(entry) {
-      return createCharacterMemoryEntry(entry);
-    },
-    markCharacterMemoryEntriesUsed() {},
     upsertSession(session) {
       return session;
     },
@@ -185,14 +144,12 @@ test("SessionMemorySupportService は削除済み session memory を起動同期
   assert.deepEqual(calls, [
     "getSessionMemory:session-1",
     "ensureProjectScope:directory:C:/workspace",
-    "ensureCharacterScope:char-1",
   ]);
 });
 
-test("SessionMemorySupportService は project promotion と monologue append を扱う", async () => {
+test("SessionMemorySupportService は project promotion と prompt retrieval を扱う", async () => {
   const promoted: Array<string> = [];
   const marked: string[][] = [];
-  let updatedSession: Session | null = null;
   const service = new SessionMemorySupportService({
     getSessionMemory() {
       return createSessionMemory();
@@ -214,20 +171,6 @@ test("SessionMemorySupportService は project promotion と monologue append を
     markProjectMemoryEntriesUsed(entryIds) {
       marked.push(entryIds);
     },
-    ensureCharacterScope() {
-      return { id: "character-scope-1" };
-    },
-    listCharacterMemoryEntries() {
-      return [createCharacterMemoryEntry()];
-    },
-    upsertCharacterMemoryEntry(entry) {
-      return createCharacterMemoryEntry(entry);
-    },
-    markCharacterMemoryEntriesUsed() {},
-    upsertSession(session) {
-      updatedSession = session;
-      return session;
-    },
   });
 
   const delta: SessionMemoryDelta = {
@@ -241,10 +184,6 @@ test("SessionMemorySupportService は project promotion と monologue append を
     "Memory は段階的に入れる方針を確認したい",
     createSessionMemory({ goal: "Memory 設計を整理する" }),
   );
-  const appended = await service.appendMonologueToSession(createSession(), {
-    mood: "calm",
-    text: "今日は少し整理が進んだ。",
-  });
 
   assert.deepEqual(promoted, [
     "decision:Memory は段階的に入れる",
@@ -253,7 +192,5 @@ test("SessionMemorySupportService は project promotion と monologue append を
   assert.equal(promotedCount, 2);
   assert.deepEqual(resolved.map((entry) => entry.id), ["project-entry-1"]);
   assert.deepEqual(marked, [["project-entry-1"]]);
-  assert.equal(updatedSession?.stream.length, 1);
-  assert.equal(appended.stream[0]?.text, "今日は少し整理が進んだ。");
 });
 

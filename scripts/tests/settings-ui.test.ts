@@ -4,13 +4,6 @@ import { describe, it } from "node:test";
 import {
   SETTINGS_API_KEY_LABEL,
   SETTINGS_API_KEY_PLACEHOLDER,
-  SETTINGS_CHARACTER_REFLECTION_CHAR_DELTA_LABEL,
-  SETTINGS_CHARACTER_REFLECTION_COOLDOWN_LABEL,
-  SETTINGS_CHARACTER_REFLECTION_HELP,
-  SETTINGS_CHARACTER_REFLECTION_MESSAGE_DELTA_LABEL,
-  SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL,
-  SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL,
-  SETTINGS_CHARACTER_REFLECTION_TIMEOUT_LABEL,
   SETTINGS_CODING_CREDENTIALS_FUTURE_NOTE,
   SETTINGS_CODING_CREDENTIALS_HELP,
   SETTINGS_MATE_GROWTH_LABEL,
@@ -47,10 +40,9 @@ describe("Settings UI constants", () => {
     assert.match(SETTINGS_RELEASE_COMPATIBILITY_NOTE, /後方互換性は考慮しない/);
     assert.equal(SETTINGS_RESET_DATABASE_LABEL, "DB を初期化");
     assert.match(SETTINGS_RESET_DATABASE_HELP, /Danger Zone/);
-    assert.match(SETTINGS_RESET_DATABASE_HELP, /characters は DB 外ファイルなので保持/);
     assert.match(buildResetDatabaseConfirmMessage(ALL_RESET_APP_DATABASE_TARGETS), /本当に続ける/);
     assert.match(buildResetDatabaseConfirmMessage(ALL_RESET_APP_DATABASE_TARGETS), /実行中の session がある間は初期化できない/);
-    assert.match(buildResetDatabaseSuccessMessage(ALL_RESET_APP_DATABASE_TARGETS), /characters は保持した/);
+    assert.match(buildResetDatabaseSuccessMessage(ALL_RESET_APP_DATABASE_TARGETS), /初期状態へ戻した/);
   });
 
   it("memory extraction の設定項目は model / reasoning / threshold / timeout を持つ", () => {
@@ -63,18 +55,6 @@ describe("Settings UI constants", () => {
     assert.match(SETTINGS_MEMORY_EXTRACTION_HELP, /turn 完了後/);
     assert.match(SETTINGS_MEMORY_EXTRACTION_HELP, /Generate Memory/);
     assert.match(SETTINGS_MEMORY_EXTRACTION_HELP, /timeout/);
-  });
-
-  it("character reflection は provider 設定に加えて app-wide trigger 条件を持つ", () => {
-    assert.equal(SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL, "Model");
-    assert.equal(SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL, "Reasoning Depth");
-    assert.equal(SETTINGS_CHARACTER_REFLECTION_TIMEOUT_LABEL, "Timeout Seconds");
-    assert.equal(SETTINGS_CHARACTER_REFLECTION_COOLDOWN_LABEL, "Cooldown Seconds");
-    assert.equal(SETTINGS_CHARACTER_REFLECTION_CHAR_DELTA_LABEL, "Min Char Delta");
-    assert.equal(SETTINGS_CHARACTER_REFLECTION_MESSAGE_DELTA_LABEL, "Min Message Delta");
-    assert.match(SETTINGS_CHARACTER_REFLECTION_HELP, /app-wide/);
-    assert.match(SETTINGS_CHARACTER_REFLECTION_HELP, /SessionStart/);
-    assert.match(SETTINGS_CHARACTER_REFLECTION_HELP, /timeout/);
   });
 
   it("Mate Growth は未適用成長を手動で適用する導線を示す", () => {

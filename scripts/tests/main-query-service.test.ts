@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile, type Session, type SessionSummary } from "../../src/app-state.js";
+import type { Session, SessionSummary } from "../../src/app-state.js";
 import { MainQueryService } from "../../src-electron/main-query-service.js";
 
 function createSession(overrides?: Partial<Session>): Session {
@@ -33,20 +33,6 @@ function createSession(overrides?: Partial<Session>): Session {
   };
 }
 
-function createCharacter(): CharacterProfile {
-  return {
-    id: "char-1",
-    name: "A",
-    iconPath: "",
-    roleMarkdown: "",
-    notesMarkdown: "",
-    description: "",
-    themeColors: { main: "#111", sub: "#222" },
-    sessionCopy: DEFAULT_CHARACTER_SESSION_COPY,
-    updatedAt: "2026-03-28T00:00:00.000Z",
-  };
-}
-
 function createSessionSummary(overrides?: Partial<SessionSummary>): SessionSummary {
   const session = createSession(overrides);
   const { messages: _messages, stream: _stream, ...summary } = session;
@@ -67,7 +53,6 @@ test("MainQueryService は session skills/custom agents と preview/search/termi
       return sourceSessions.find((session) => session.id === sessionId) ?? null;
     },
     getSessionMessageArtifact: () => null,
-    getCharacters: () => [createCharacter()],
     getAuditLogs: () => [],
     getAuditLogSummaries: () => [],
     getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
@@ -89,13 +74,6 @@ test("MainQueryService は session skills/custom agents と preview/search/termi
       calls.push(`agents:${workspacePath}`);
       return [];
     },
-    async getStoredCharacter() {
-      return createCharacter();
-    },
-    async refreshCharactersFromStorage() {
-      calls.push("refresh");
-      return [createCharacter()];
-    },
     async resolveComposerPreview(session, userMessage) {
       calls.push(`preview:${session.id}:${userMessage}`);
       return { attachments: [], errors: [] };
@@ -110,13 +88,11 @@ test("MainQueryService は session skills/custom agents と preview/search/termi
   });
 
   assert.equal((await service.listSessionSummaries()).length, 2);
-  assert.equal((await service.listCharacters()).length, 1);
   const session = await service.getSession("session-1");
   assert.notEqual(session, sourceSessions[0]);
   assert.equal(session?.workspacePath, "C:/workspace");
   await service.listSessionSkills("session-1");
   await service.listSessionCustomAgents("session-2");
-  await service.refreshCharactersFromStorage();
   await service.previewComposerInput("session-1", "@src/main.ts");
   await service.searchWorkspaceFiles("session-1", "main");
   await service.openSessionTerminal("session-1");
@@ -124,7 +100,6 @@ test("MainQueryService は session skills/custom agents と preview/search/termi
   assert.deepEqual(calls, [
     "skills:C:/workspace",
     "agents:C:/copilot",
-    "refresh",
     "preview:session-1:@src/main.ts",
     "search:C:/workspace:main",
     "terminal:C:/workspace",
@@ -141,7 +116,6 @@ test("MainQueryService は path 参照なし draft の preview を早期 return 
     },
     getSession: () => createSession(),
     getSessionMessageArtifact: () => null,
-    getCharacters: () => [createCharacter()],
     getAuditLogs: () => [],
     getAuditLogSummaries: () => [],
     getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
@@ -157,12 +131,6 @@ test("MainQueryService は path 参照なし draft の preview を早期 return 
       }) as never,
     discoverSessionSkills: async () => [],
     discoverSessionCustomAgents: async () => [],
-    async getStoredCharacter() {
-      return createCharacter();
-    },
-    async refreshCharactersFromStorage() {
-      return [createCharacter()];
-    },
     async resolveComposerPreview() {
       throw new Error("path 参照なしでは preview 解決まで進まないはず");
     },
@@ -182,7 +150,6 @@ test("MainQueryService は一覧を summary に射影して detail payload を�
     getSessionSummaries: () => [createSessionSummary()],
     getSession: () => createSession(),
     getSessionMessageArtifact: () => null,
-    getCharacters: () => [createCharacter()],
     getAuditLogs: () => [],
     getAuditLogSummaries: () => [],
     getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
@@ -198,12 +165,6 @@ test("MainQueryService は一覧を summary に射影して detail payload を�
       }) as never,
     discoverSessionSkills: async () => [],
     discoverSessionCustomAgents: async () => [],
-    async getStoredCharacter() {
-      return createCharacter();
-    },
-    async refreshCharactersFromStorage() {
-      return [createCharacter()];
-    },
     async resolveComposerPreview() {
       return { attachments: [], errors: [] };
     },
@@ -228,7 +189,6 @@ test("MainQueryService は対象 session detail だけを clone して返す", a
       return sessionId === targetSession.id ? targetSession : null;
     },
     getSessionMessageArtifact: () => null,
-    getCharacters: () => [createCharacter()],
     getAuditLogs: () => [],
     getAuditLogSummaries: () => [],
     getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
@@ -244,12 +204,6 @@ test("MainQueryService は対象 session detail だけを clone して返す", a
       }) as never,
     discoverSessionSkills: async () => [],
     discoverSessionCustomAgents: async () => [],
-    async getStoredCharacter() {
-      return createCharacter();
-    },
-    async refreshCharactersFromStorage() {
-      return [createCharacter()];
-    },
     async resolveComposerPreview() {
       return { attachments: [], errors: [] };
     },
