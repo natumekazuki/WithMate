@@ -196,7 +196,6 @@ export class SessionObservabilityService {
 
   public clearSessionBackgroundActivities(sessionId: string): void {
     this.setSessionBackgroundActivity(sessionId, "memory-generation", null);
-    this.setSessionBackgroundActivity(sessionId, "character-memory-generation", null);
     this.setSessionBackgroundActivity(sessionId, "monologue", null);
   }
 

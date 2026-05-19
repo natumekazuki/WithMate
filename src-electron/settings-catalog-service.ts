@@ -53,7 +53,6 @@ export type SettingsCatalogServiceDeps = {
   resetAppSettings(): Awaitable<AppSettings>;
   resetModelCatalogToBundled(): ModelCatalogSnapshot;
   clearProjectMemories(): void;
-  clearCharacterMemories(): void;
   resetSessionRuntime(): void;
   resetMemoryOrchestration(): void;
   clearAllProviderQuotaTelemetry(): void;
@@ -297,10 +296,6 @@ export class SettingsCatalogService {
       if (appliedTargets.has("projectMemory")) {
         this.deps.clearProjectMemories();
       }
-      if (appliedTargets.has("characterMemory")) {
-        this.deps.clearCharacterMemories();
-      }
-
       modelCatalog = this.deps.getModelCatalog(null) ?? this.deps.ensureModelCatalogSeeded();
       appSettings = this.deps.getAppSettings();
     }

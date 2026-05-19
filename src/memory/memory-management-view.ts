@@ -1,22 +1,18 @@
 import type {
-  CharacterMemoryEntry,
-  CharacterMemoryCategory,
   ProjectMemoryEntry,
   ProjectMemoryCategory,
 } from "./memory-state.js";
 import type {
-  ManagedCharacterMemoryGroup,
   ManagedProjectMemoryGroup,
   ManagedMateProfileItem,
   ManagedSessionMemoryItem,
   MemoryManagementSnapshot,
 } from "./memory-management-state.js";
 
-export type MemoryManagementDomainFilter = "all" | "session" | "project" | "character" | "mate_profile";
+export type MemoryManagementDomainFilter = "all" | "session" | "project" | "mate_profile";
 export type MemoryManagementSort = "updated-desc" | "updated-asc";
 export type SessionMemoryStatusFilter = "all" | "running" | "idle" | "saved";
 export type ProjectMemoryCategoryFilter = "all" | ProjectMemoryCategory;
-export type CharacterMemoryCategoryFilter = "all" | CharacterMemoryCategory;
 
 export type MemoryManagementViewFilters = {
   searchText: string;
@@ -24,7 +20,6 @@ export type MemoryManagementViewFilters = {
   sort: MemoryManagementSort;
   sessionStatus: SessionMemoryStatusFilter;
   projectCategory: ProjectMemoryCategoryFilter;
-  characterCategory: CharacterMemoryCategoryFilter;
 };
 
 export const DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS: MemoryManagementViewFilters = {
@@ -33,7 +28,6 @@ export const DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS: MemoryManagementViewFilters
   sort: "updated-desc",
   sessionStatus: "all",
   projectCategory: "all",
-  characterCategory: "all",
 };
 
 function normalizeSearchText(value: string): string {
@@ -98,7 +92,6 @@ type PreparedGroupCollection<TScope, TEntry extends { category: TCategory }, TCa
 type PreparedMemoryManagementSnapshot = {
   sessionMemoriesByStatus: Record<SessionMemoryStatusFilter, SortedItems<PreparedSessionMemoryItem>>;
   projectMemories: PreparedGroupCollection<ManagedProjectMemoryGroup["scope"], ProjectMemoryEntry, ProjectMemoryCategory>;
-  characterMemories: PreparedGroupCollection<ManagedCharacterMemoryGroup["scope"], CharacterMemoryEntry, CharacterMemoryCategory>;
   mateProfileItems: SortedItems<PreparedMateProfileItem>;
 };
 
@@ -274,16 +267,6 @@ function getPreparedSnapshot(snapshot: MemoryManagementSnapshot): PreparedMemory
         ...entry.keywords,
         ...entry.evidence,
       ])),
-    characterMemories: buildPreparedGroupCollection(snapshot.characterMemories, (scope, entry) =>
-      buildSearchKey([
-        scope.displayName,
-        scope.characterId,
-        entry.title,
-        entry.detail,
-        entry.category,
-        ...entry.keywords,
-        ...entry.evidence,
-      ])),
     mateProfileItems: buildSortedItems(
       (snapshot.mateProfileItems ?? []).map((item) => ({
         item,
@@ -377,17 +360,6 @@ function filterProjectMemories(
   });
 }
 
-function filterCharacterMemories(
-  groups: PreparedGroupCollection<ManagedCharacterMemoryGroup["scope"], CharacterMemoryEntry, CharacterMemoryCategory>,
-  { searchText, characterCategory, sort }: Pick<MemoryManagementViewFilters, "searchText" | "characterCategory" | "sort">,
-): ManagedCharacterMemoryGroup[] {
-  return filterGroupedMemories(groups, {
-    searchText,
-    category: characterCategory,
-    sort,
-  });
-}
-
 function filterMateProfileItems(
   items: SortedItems<PreparedMateProfileItem>,
   { searchText, sort }: Pick<MemoryManagementViewFilters, "searchText" | "sort">,
@@ -414,7 +386,6 @@ export function buildFilteredMemoryManagementSnapshot(
   const searchText = normalizeSearchText(filters.searchText);
   const includeSession = filters.domain === "all" || filters.domain === "session";
   const includeProject = filters.domain === "all" || filters.domain === "project";
-  const includeCharacter = filters.domain === "all" || filters.domain === "character";
   const includeMateProfile = filters.domain === "all" || filters.domain === "mate_profile";
 
   return {
@@ -429,13 +400,6 @@ export function buildFilteredMemoryManagementSnapshot(
       ? filterProjectMemories(preparedSnapshot.projectMemories, {
           searchText,
           projectCategory: filters.projectCategory,
-          sort: filters.sort,
-        })
-      : [],
-    characterMemories: includeCharacter
-      ? filterCharacterMemories(preparedSnapshot.characterMemories, {
-          searchText,
-          characterCategory: filters.characterCategory,
           sort: filters.sort,
         })
       : [],

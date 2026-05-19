@@ -11,8 +11,6 @@ import {
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
-  WITHMATE_CREATE_CHARACTER_CHANNEL,
-  WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
@@ -22,14 +20,11 @@ import {
   WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL,
   WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL,
   WITHMATE_FORGET_MATE_GROWTH_EVENT_CHANNEL,
-  WITHMATE_DELETE_CHARACTER_CHANNEL,
-  WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
-  WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL,
@@ -37,8 +32,6 @@ import {
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
   WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
-  WITHMATE_GET_CHARACTER_CHANNEL,
-  WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
@@ -66,7 +59,6 @@ import {
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
-  WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_COMPANION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARIES_CHANNEL,
   WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
@@ -82,7 +74,6 @@ import {
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
   WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
-  WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL,
   WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL,
   WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
@@ -122,7 +113,6 @@ import {
   WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
   WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
-  WITHMATE_UPDATE_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
 } from "../../src/withmate-ipc-channels.js";
@@ -183,9 +173,6 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     async openMateTalkWindow() {
       calls.push("openMateTalk");
     },
-    async openCharacterEditorWindow(characterId) {
-      calls.push(`openCharacter:${characterId ?? ""}`);
-    },
     async openDiffWindow() {
       calls.push("openDiff");
     },
@@ -218,7 +205,7 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     async listWorkspaceCustomAgents() { return []; },
     listOpenSessionWindowIds: () => ["session-1"],
     listOpenCompanionReviewWindowIds: () => [],
-    getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
+    getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
     getAppDatabaseDiagnostics: () => ({}) as never,
     getMateEmbeddingSettings: () => null,
@@ -238,13 +225,12 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     async resetAppDatabase() {
       return null;
     },
-    getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], characterMemories: [] }),
+    getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], mateProfileItems: [] }),
     getMemoryManagementPage: () => ({
-      snapshot: { sessionMemories: [], projectMemories: [], characterMemories: [] },
+      snapshot: { sessionMemories: [], projectMemories: [], mateProfileItems: [] },
       pages: {
         session: { nextCursor: null, hasMore: false, total: 0 },
         project: { nextCursor: null, hasMore: false, total: 0 },
-        character: { nextCursor: null, hasMore: false, total: 0 },
         mate_profile: { nextCursor: null, hasMore: false, total: 0 },
       },
     }),
@@ -254,14 +240,8 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     deleteProjectMemoryEntry: () => {
       calls.push("deleteProjectMemoryEntry");
     },
-    deleteCharacterMemoryEntry: () => {
-      calls.push("deleteCharacterMemoryEntry");
-    },
     forgetMateProfileItem: () => {
       calls.push("forgetMateProfileItem");
-    },
-    async listCharacters() {
-      return [];
     },
     getModelCatalog: () => null,
     importModelCatalogDocument: () => ({ revision: 1, providers: [] }),
@@ -287,18 +267,6 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     resolveLiveElicitation: () => {
       calls.push("resolveElicitation");
     },
-    async getCharacter() {
-      return null;
-    },
-    async getCharacterUpdateWorkspace() {
-      return null;
-    },
-    async extractCharacterUpdateMemory() {
-      return { characterId: "c-1", generatedAt: "", entryCount: 0, text: "" };
-    },
-    async createCharacterUpdateSession() {
-      return {} as never;
-    },
     createSession: () => ({}) as never,
     updateSession: () => ({}) as never,
     deleteSession: () => {
@@ -315,15 +283,6 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     },
     cancelSessionRun: () => {
       calls.push("cancelRun");
-    },
-    async createCharacter() {
-      return {} as never;
-    },
-    async updateCharacter() {
-      return {} as never;
-    },
-    async deleteCharacter() {
-      calls.push("deleteCharacter");
     },
     async pickDirectory() {
       return "dir";
@@ -674,15 +633,6 @@ test("registerMainIpcHandlers は主要 channel を登録して delegate を呼�
     calls.filter((call) => call === "getMateState").length,
     getMateStateCallCountBeforeDeleted + 1,
   );
-  const deleteCharacterCallCountBeforeDeleted = calls.filter((call) => call === "deleteCharacter").length;
-  await assert.rejects(
-    async () => handlers.get(WITHMATE_DELETE_CHARACTER_CHANNEL)?.({}, "char-1"),
-    { message: MATE_NOT_CREATED_ERROR_MESSAGE },
-  );
-  assert.strictEqual(
-    calls.filter((call) => call === "deleteCharacter").length,
-    deleteCharacterCallCountBeforeDeleted,
-  );
 });
 
 test("registerMainIpcHandlers は current invoke channel を domain ごとにすべて登録する", () => {
@@ -697,7 +647,6 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async openSettingsWindow() {},
     async openMemoryManagementWindow() {},
     async openMateTalkWindow() {},
-    async openCharacterEditorWindow() {},
     async openDiffWindow() {},
     async openCompanionReviewWindow() {},
     async openCompanionMergeWindow() {},
@@ -721,7 +670,7 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async listWorkspaceCustomAgents() { return []; },
     listOpenSessionWindowIds: () => [],
     listOpenCompanionReviewWindowIds: () => [],
-    getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} } as never),
+    getAppSettings: () => ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {} } as never),
     updateAppSettings: (settings) => settings,
     getAppDatabaseDiagnostics: () => ({}) as never,
     getMateEmbeddingSettings: () => null,
@@ -731,21 +680,18 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     upsertProviderInstructionTarget: (input) => input as never,
     startMateEmbeddingDownload: () => {},
     async resetAppDatabase() { return null; },
-    getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], characterMemories: [] }),
+    getMemoryManagementSnapshot: () => ({ sessionMemories: [], projectMemories: [], mateProfileItems: [] }),
     getMemoryManagementPage: () => ({
-      snapshot: { sessionMemories: [], projectMemories: [], characterMemories: [] },
+      snapshot: { sessionMemories: [], projectMemories: [], mateProfileItems: [] },
       pages: {
         session: { nextCursor: null, hasMore: false, total: 0 },
         project: { nextCursor: null, hasMore: false, total: 0 },
-        character: { nextCursor: null, hasMore: false, total: 0 },
         mate_profile: { nextCursor: null, hasMore: false, total: 0 },
       },
     }),
     deleteSessionMemory() {},
     deleteProjectMemoryEntry() {},
-    deleteCharacterMemoryEntry() {},
     forgetMateProfileItem() {},
-    async listCharacters() { return []; },
     getModelCatalog: () => null,
     importModelCatalogDocument: () => ({ revision: 1, providers: [] }),
     async importModelCatalogFromFile() { return null; },
@@ -760,10 +706,6 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     getSessionBackgroundActivity: () => null,
     resolveLiveApproval() {},
     resolveLiveElicitation() {},
-    async getCharacter() { return null; },
-    async getCharacterUpdateWorkspace() { return null; },
-    async extractCharacterUpdateMemory() { return { characterId: "c-1", generatedAt: "", entryCount: 0, text: "" }; },
-    async createCharacterUpdateSession() { return {} as never; },
     createSession: () => ({}) as never,
     updateSession: () => ({}) as never,
     deleteSession() {},
@@ -771,9 +713,6 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     async searchWorkspaceFiles() { return []; },
     async runSessionTurn() { return {} as never; },
     cancelSessionRun() {},
-    async createCharacter() { return {} as never; },
-    async updateCharacter() { return {} as never; },
-    async deleteCharacter() {},
     async pickDirectory() { return null; },
     async pickFile() { return null; },
     async pickFiles() { return []; },
@@ -844,7 +783,6 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
     WITHMATE_OPEN_MEMORY_MANAGEMENT_WINDOW_CHANNEL,
     WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL,
-    WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
     WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
     WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
     WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL,
@@ -877,7 +815,6 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_GET_MEMORY_MANAGEMENT_PAGE_CHANNEL,
     WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
     WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
-    WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
     WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL,
     WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
     WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
@@ -930,14 +867,6 @@ test("registerMainIpcHandlers は current invoke channel を domain ごとにす
     WITHMATE_DELETE_SESSION_CHANNEL,
     WITHMATE_RUN_SESSION_TURN_CHANNEL,
     WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
-    WITHMATE_LIST_CHARACTERS_CHANNEL,
-    WITHMATE_GET_CHARACTER_CHANNEL,
-    WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
-    WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
-    WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
-    WITHMATE_CREATE_CHARACTER_CHANNEL,
-    WITHMATE_UPDATE_CHARACTER_CHANNEL,
-    WITHMATE_DELETE_CHARACTER_CHANNEL,
     WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL,
     WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL,
     WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL,

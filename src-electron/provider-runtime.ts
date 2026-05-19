@@ -5,8 +5,6 @@ import type {
   AuditLogUsage,
   AuditTransportPayload,
   CharacterProfile,
-  CharacterMemoryEntry,
-  CharacterReflectionOutput,
   ComposerAttachment,
   LiveApprovalDecision,
   LiveApprovalRequest,
@@ -24,7 +22,6 @@ import type {
 import type { ModelReasoningEffort, ModelCatalogProvider } from "../src/model-catalog.js";
 import { normalizeApprovalMode, type ApprovalMode } from "../src/approval-mode.js";
 import { normalizeCodexSandboxMode, type CodexSandboxMode } from "../src/codex-sandbox-mode.js";
-import type { CharacterReflectionPrompt, CharacterReflectionTriggerReason } from "./character-reflection.js";
 import type { SessionMemoryExtractionPrompt } from "./session-memory-extraction.js";
 
 export type ProviderPromptComposition = {
@@ -99,28 +96,6 @@ export type ExtractSessionMemoryResult = {
   providerQuotaTelemetry?: ProviderQuotaTelemetry | null;
 };
 
-export type RunCharacterReflectionInput = {
-  session: Session;
-  sessionMemory: SessionMemory;
-  character: CharacterProfile;
-  characterMemoryEntries: CharacterMemoryEntry[];
-  appSettings: AppSettings;
-  model: string;
-  reasoningEffort: ModelReasoningEffort;
-  timeoutMs: number;
-  triggerReason: CharacterReflectionTriggerReason;
-  prompt: CharacterReflectionPrompt;
-};
-
-export type RunCharacterReflectionResult = {
-  threadId: string | null;
-  rawText: string;
-  output: CharacterReflectionOutput | null;
-  rawItemsJson: string;
-  usage: AuditLogUsage | null;
-  providerQuotaTelemetry?: ProviderQuotaTelemetry | null;
-};
-
 export type RunBackgroundStructuredPromptInput = {
   providerId: string;
   workspacePath: string;
@@ -188,7 +163,6 @@ export type ProviderCodingAdapter = {
 export type ProviderBackgroundAdapter = {
   getBackgroundStructuredPromptPolicy(): ProviderBackgroundStructuredPromptPolicy;
   extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult>;
-  runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult>;
   runBackgroundStructuredPrompt<TOutput = unknown>(
     input: RunBackgroundStructuredPromptInput,
   ): Promise<RunBackgroundStructuredPromptResult<TOutput>>;

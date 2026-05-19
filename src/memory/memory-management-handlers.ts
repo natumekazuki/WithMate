@@ -3,7 +3,6 @@ import type { MemoryManagementPageState } from "./memory-management-page-state.j
 import type { MemoryManagementViewFilters } from "./memory-management-view.js";
 import {
   handleChangeMemoryManagementViewFilters as handleChangeMemoryManagementViewFiltersAction,
-  handleDeleteCharacterMemoryEntry as handleDeleteCharacterMemoryEntryAction,
   handleDeleteMateProfileItem as handleDeleteMateProfileItemAction,
   handleDeleteProjectMemoryEntry as handleDeleteProjectMemoryEntryAction,
   handleDeleteSessionMemory as handleDeleteSessionMemoryAction,
@@ -36,7 +35,6 @@ export type MemoryManagementHandlers = Pick<
   | "onLoadMoreMemoryManagement"
   | "onDeleteSessionMemory"
   | "onDeleteProjectMemoryEntry"
-  | "onDeleteCharacterMemoryEntry"
   | "onDeleteMateProfileItem"
 >;
 
@@ -95,12 +93,6 @@ export function buildMemoryManagementHandlers({
     },
     onDeleteProjectMemoryEntry: (entryId) => {
       void handleDeleteProjectMemoryEntryAction({
-        ...buildContext(),
-        entryId,
-      });
-    },
-    onDeleteCharacterMemoryEntry: (entryId) => {
-      void handleDeleteCharacterMemoryEntryAction({
         ...buildContext(),
         entryId,
       });

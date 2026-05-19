@@ -16,11 +16,9 @@ import type {
 export type AppSettings = {
   memoryGenerationEnabled: boolean;
   autoCollapseActionDockOnSend: boolean;
-  characterReflectionTriggerSettings: CharacterReflectionTriggerSettings;
   mateMemoryGenerationSettings: MateMemoryGenerationSettings;
   codingProviderSettings: Record<string, ProviderAppSettings>;
   memoryExtractionProviderSettings: Record<string, MemoryExtractionProviderSettings>;
-  characterReflectionProviderSettings: Record<string, CharacterReflectionProviderSettings>;
 };
 
 export const DEFAULT_PROVIDER_INSTRUCTION_TARGET_ID = "main";
@@ -59,12 +57,6 @@ export type MemoryExtractionProviderSettings = {
   timeoutSeconds: number;
 };
 
-export type CharacterReflectionProviderSettings = {
-  model: string;
-  reasoningEffort: ModelReasoningEffort;
-  timeoutSeconds: number;
-};
-
 export type MateMemoryGenerationProviderSettings = {
   provider: string;
   model: string;
@@ -77,16 +69,9 @@ export type MateMemoryGenerationSettings = {
   triggerIntervalMinutes: number;
 };
 
-export type CharacterReflectionTriggerSettings = {
-  cooldownSeconds: number;
-  charDeltaThreshold: number;
-  messageDeltaThreshold: number;
-};
-
 export type ResolvedProviderSettingsBundle = {
   coding: ProviderAppSettings;
   memoryExtraction: MemoryExtractionProviderSettings;
-  characterReflection: CharacterReflectionProviderSettings;
 };
 
 export const DEFAULT_PROVIDER_APP_SETTINGS: ProviderAppSettings = {
@@ -106,12 +91,6 @@ export const DEFAULT_MEMORY_EXTRACTION_PROVIDER_SETTINGS: MemoryExtractionProvid
   timeoutSeconds: DEFAULT_BACKGROUND_TIMEOUT_SECONDS,
 };
 
-export const DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS: CharacterReflectionProviderSettings = {
-  model: DEFAULT_MODEL_ID,
-  reasoningEffort: DEFAULT_REASONING_EFFORT,
-  timeoutSeconds: DEFAULT_BACKGROUND_TIMEOUT_SECONDS,
-};
-
 export const DEFAULT_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_MINUTES = 60;
 export const DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS: MateMemoryGenerationProviderSettings = {
   provider: DEFAULT_PROVIDER_ID,
@@ -124,17 +103,10 @@ export const DEFAULT_MATE_MEMORY_GENERATION_SETTINGS: MateMemoryGenerationSettin
   triggerIntervalMinutes: DEFAULT_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_MINUTES,
 };
 
-export const DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS: CharacterReflectionTriggerSettings = {
-  cooldownSeconds: 120,
-  charDeltaThreshold: 400,
-  messageDeltaThreshold: 2,
-};
-
 export function createDefaultAppSettings(): AppSettings {
   return {
     memoryGenerationEnabled: true,
     autoCollapseActionDockOnSend: true,
-    characterReflectionTriggerSettings: { ...DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS },
     mateMemoryGenerationSettings: {
       ...DEFAULT_MATE_MEMORY_GENERATION_SETTINGS,
       priorityList: [{ ...DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS }],
@@ -150,61 +122,7 @@ export function createDefaultAppSettings(): AppSettings {
     memoryExtractionProviderSettings: {
       [DEFAULT_PROVIDER_ID]: { ...DEFAULT_MEMORY_EXTRACTION_PROVIDER_SETTINGS },
     },
-    characterReflectionProviderSettings: {
-      [DEFAULT_PROVIDER_ID]: { ...DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS },
-    },
   };
-}
-
-function normalizeCharacterReflectionCooldownSeconds(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS.cooldownSeconds;
-  }
-
-  const normalized = Math.trunc(value);
-  if (normalized < 30) {
-    return 30;
-  }
-
-  if (normalized > 3_600) {
-    return 3_600;
-  }
-
-  return normalized;
-}
-
-function normalizeCharacterReflectionCharDeltaThreshold(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS.charDeltaThreshold;
-  }
-
-  const normalized = Math.trunc(value);
-  if (normalized < 1) {
-    return 1;
-  }
-
-  if (normalized > 20_000) {
-    return 20_000;
-  }
-
-  return normalized;
-}
-
-function normalizeCharacterReflectionMessageDeltaThreshold(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS.messageDeltaThreshold;
-  }
-
-  const normalized = Math.trunc(value);
-  if (normalized < 1) {
-    return 1;
-  }
-
-  if (normalized > 100) {
-    return 100;
-  }
-
-  return normalized;
 }
 
 function normalizeReasoningEffort(value: unknown, fallback: ModelReasoningEffort): ModelReasoningEffort {
@@ -298,19 +216,6 @@ function normalizeMemoryExtractionProviderSettings(value: unknown): MemoryExtrac
   };
 }
 
-function normalizeCharacterReflectionProviderSettings(value: unknown): CharacterReflectionProviderSettings {
-  if (!value || typeof value !== "object") {
-    return { ...DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS };
-  }
-
-  const candidate = value as Partial<CharacterReflectionProviderSettings>;
-  return {
-    model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
-    reasoningEffort: normalizeReasoningEffort(candidate.reasoningEffort, DEFAULT_REASONING_EFFORT),
-    timeoutSeconds: normalizeBackgroundTimeoutSeconds(candidate.timeoutSeconds),
-  };
-}
-
 function normalizeMateMemoryGenerationTriggerIntervalMinutes(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return DEFAULT_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_MINUTES;
@@ -364,19 +269,6 @@ function normalizeMateMemoryGenerationSettings(value: unknown): MateMemoryGenera
   };
 }
 
-function normalizeCharacterReflectionTriggerSettings(value: unknown): CharacterReflectionTriggerSettings {
-  if (!value || typeof value !== "object") {
-    return { ...DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS };
-  }
-
-  const candidate = value as Partial<CharacterReflectionTriggerSettings>;
-  return {
-    cooldownSeconds: normalizeCharacterReflectionCooldownSeconds(candidate.cooldownSeconds),
-    charDeltaThreshold: normalizeCharacterReflectionCharDeltaThreshold(candidate.charDeltaThreshold),
-    messageDeltaThreshold: normalizeCharacterReflectionMessageDeltaThreshold(candidate.messageDeltaThreshold),
-  };
-}
-
 export function normalizeAppSettings(value: unknown): AppSettings {
   const defaults = createDefaultAppSettings();
   if (!value || typeof value !== "object") {
@@ -392,13 +284,8 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     candidate.memoryExtractionProviderSettings && typeof candidate.memoryExtractionProviderSettings === "object"
       ? candidate.memoryExtractionProviderSettings
       : null;
-  const rawCharacterReflectionProviderSettings =
-    candidate.characterReflectionProviderSettings && typeof candidate.characterReflectionProviderSettings === "object"
-      ? candidate.characterReflectionProviderSettings
-      : null;
   const codingProviderSettings: Record<string, ProviderAppSettings> = {};
   const memoryExtractionProviderSettings: Record<string, MemoryExtractionProviderSettings> = {};
-  const characterReflectionProviderSettings: Record<string, CharacterReflectionProviderSettings> = {};
   if (rawCodingProviderSettings) {
     for (const [providerId, providerSettingsValue] of Object.entries(rawCodingProviderSettings)) {
       const normalizedProviderId = normalizeProviderId(providerId);
@@ -414,33 +301,20 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       memoryExtractionProviderSettings[normalizedProviderId] = normalizeMemoryExtractionProviderSettings(providerSettingsValue);
     }
   }
-  if (rawCharacterReflectionProviderSettings) {
-    for (const [providerId, providerSettingsValue] of Object.entries(rawCharacterReflectionProviderSettings)) {
-      const normalizedProviderId = normalizeProviderId(providerId);
-      characterReflectionProviderSettings[normalizedProviderId] = normalizeCharacterReflectionProviderSettings(providerSettingsValue);
-    }
-  }
-
   if (!codingProviderSettings[DEFAULT_PROVIDER_ID]) {
     codingProviderSettings[DEFAULT_PROVIDER_ID] = { ...defaults.codingProviderSettings[DEFAULT_PROVIDER_ID] };
   }
   if (!memoryExtractionProviderSettings[DEFAULT_PROVIDER_ID]) {
     memoryExtractionProviderSettings[DEFAULT_PROVIDER_ID] = { ...defaults.memoryExtractionProviderSettings[DEFAULT_PROVIDER_ID] };
   }
-  if (!characterReflectionProviderSettings[DEFAULT_PROVIDER_ID]) {
-    characterReflectionProviderSettings[DEFAULT_PROVIDER_ID] = { ...defaults.characterReflectionProviderSettings[DEFAULT_PROVIDER_ID] };
-  }
-
   return {
     memoryGenerationEnabled:
       typeof candidate.memoryGenerationEnabled === "boolean" ? candidate.memoryGenerationEnabled : true,
     autoCollapseActionDockOnSend:
       typeof candidate.autoCollapseActionDockOnSend === "boolean" ? candidate.autoCollapseActionDockOnSend : true,
-    characterReflectionTriggerSettings: normalizeCharacterReflectionTriggerSettings(candidate.characterReflectionTriggerSettings),
     mateMemoryGenerationSettings: normalizeMateMemoryGenerationSettings(candidate.mateMemoryGenerationSettings),
     codingProviderSettings,
     memoryExtractionProviderSettings,
-    characterReflectionProviderSettings,
   };
 }
 
@@ -464,22 +338,6 @@ export function getMemoryExtractionProviderSettings(
   );
 }
 
-export function getCharacterReflectionProviderSettings(
-  settings: AppSettings,
-  providerId: string | null | undefined,
-): CharacterReflectionProviderSettings {
-  const normalizedProviderId = normalizeProviderId(providerId);
-  const resolvedSettings = normalizeAppSettings(settings);
-  return normalizeCharacterReflectionProviderSettings(
-    resolvedSettings.characterReflectionProviderSettings[normalizedProviderId],
-  );
-}
-
-export function getCharacterReflectionTriggerSettings(settings: AppSettings): CharacterReflectionTriggerSettings {
-  const resolvedSettings = normalizeAppSettings(settings);
-  return normalizeCharacterReflectionTriggerSettings(resolvedSettings.characterReflectionTriggerSettings);
-}
-
 export function getMateMemoryGenerationSettings(settings: AppSettings): MateMemoryGenerationSettings {
   const resolvedSettings = normalizeAppSettings(settings);
   return normalizeMateMemoryGenerationSettings(resolvedSettings.mateMemoryGenerationSettings);
@@ -492,6 +350,5 @@ export function getResolvedProviderSettingsBundle(
   return {
     coding: getProviderAppSettings(settings, providerId),
     memoryExtraction: getMemoryExtractionProviderSettings(settings, providerId),
-    characterReflection: getCharacterReflectionProviderSettings(settings, providerId),
   };
 }

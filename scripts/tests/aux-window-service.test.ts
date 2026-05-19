@@ -68,7 +68,6 @@ function createDiffPreview(): DiffPreviewPayload {
 test("AuxWindowService は singleton window を再利用する", async () => {
   const created: unknown[] = [];
   const homeLoads: string[] = [];
-  const characterLoads: Array<string | null | undefined> = [];
   const service = new AuxWindowService({
     createWindow() {
       const stub = createWindowStub();
@@ -77,9 +76,6 @@ test("AuxWindowService は singleton window を再利用する", async () => {
     },
     async loadHomeEntry(_window, mode) {
       homeLoads.push(mode);
-    },
-    async loadCharacterEntry(_window, characterId) {
-      characterLoads.push(characterId);
     },
     async loadDiffEntry() {},
     async loadChatEntry() {},
@@ -102,10 +98,6 @@ test("AuxWindowService は singleton window を再利用する", async () => {
   assert.equal(memory, memoryReopened);
   assert.deepEqual(homeLoads, ["home", "settings", "memory"]);
   assert.equal(created.length, 3);
-  await service.openCharacterEditorWindow("char-1");
-  const reopened = await service.openCharacterEditorWindow("char-1");
-  assert.equal(created[3], reopened);
-  assert.deepEqual(characterLoads, ["char-1"]);
 });
 
 test("AuxWindowService は diff preview を保持し reset 時に close する", async () => {
@@ -118,7 +110,6 @@ test("AuxWindowService は diff preview を保持し reset 時に close する",
       return diffStub.window;
     },
     async loadHomeEntry() {},
-    async loadCharacterEntry() {},
     async loadDiffEntry(_window, token) {
       diffLoads.push(token);
     },
@@ -156,7 +147,6 @@ test("AuxWindowService は companion chat と merge の entry を分けて開く
       return stub.window;
     },
     async loadHomeEntry() {},
-    async loadCharacterEntry() {},
     async loadDiffEntry() {},
     async loadChatEntry(_window, mode) {
       chatLoads.push(mode);
@@ -206,7 +196,6 @@ test("AuxWindowService は MateTalk を chat entry として開く", async () =>
       return stub.window;
     },
     async loadHomeEntry() {},
-    async loadCharacterEntry() {},
     async loadDiffEntry() {},
     async loadChatEntry(_window, mode) {
       chatLoads.push(mode);

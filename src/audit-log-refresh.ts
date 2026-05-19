@@ -12,7 +12,6 @@ type BuildAuditLogRefreshSignatureInput = {
   selectedSession: Pick<Session, "id" | "runState" | "updatedAt"> | null;
   displayedMessagesLength: number;
   selectedMemoryGenerationActivity?: AuditLogRefreshActivity;
-  selectedCharacterMemoryGenerationActivity?: AuditLogRefreshActivity;
   selectedMonologueActivity?: AuditLogRefreshActivity;
 };
 
@@ -121,7 +120,6 @@ export function buildAuditLogRefreshSignature(input: BuildAuditLogRefreshSignatu
     input.selectedSession.runState,
     input.selectedSession.updatedAt,
     serializeBackgroundActivity(input.selectedMemoryGenerationActivity),
-    serializeBackgroundActivity(input.selectedCharacterMemoryGenerationActivity),
     serializeBackgroundActivity(input.selectedMonologueActivity),
   ].join("|");
 }

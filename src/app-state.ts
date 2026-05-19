@@ -78,14 +78,11 @@ export type {
   SessionContextTelemetry,
 } from "./runtime-state.js";
 export {
-  buildCharacterEditorUrl,
   cloneCharacterProfiles,
   cloneCharacterSessionCopy,
   DEFAULT_CHARACTER_SESSION_COPY,
   DEFAULT_CHARACTER_THEME_COLORS,
-  getCharacterIdFromLocation,
   getCharacterById as getCharacterProfile,
-  isCharacterCreateMode,
   normalizeCharacterSessionCopy,
   normalizeCharacterThemeColors,
 } from "./character-state.js";
@@ -108,13 +105,9 @@ export type {
 } from "./codex-sandbox-mode.js";
 export {
   createDefaultAppSettings,
-  DEFAULT_CHARACTER_REFLECTION_PROVIDER_SETTINGS,
-  DEFAULT_CHARACTER_REFLECTION_TRIGGER_SETTINGS,
   DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD,
   DEFAULT_MEMORY_EXTRACTION_PROVIDER_SETTINGS,
   DEFAULT_PROVIDER_APP_SETTINGS,
-  getCharacterReflectionProviderSettings,
-  getCharacterReflectionTriggerSettings,
   getMemoryExtractionProviderSettings,
   getProviderAppSettings,
   getResolvedProviderSettingsBundle,
@@ -122,39 +115,21 @@ export {
 } from "./provider-settings-state.js";
 export type {
   AppSettings,
-  CharacterReflectionProviderSettings,
-  CharacterReflectionTriggerSettings,
   MemoryExtractionProviderSettings,
   ProviderAppSettings,
   ResolvedProviderSettingsBundle,
 } from "./provider-settings-state.js";
 export {
-  cloneCharacterMemoryEntries,
-  cloneCharacterScopes,
   cloneProjectMemoryEntries,
   cloneProjectScopes,
   createDefaultSessionMemory,
   mergeSessionMemory,
-  normalizeCharacterMemoryDelta,
-  normalizeCharacterMemoryDeltaEntry,
-  normalizeCharacterMemoryEntry,
-  normalizeCharacterReflectionMonologue,
-  normalizeCharacterReflectionOutput,
-  normalizeCharacterScope,
   normalizeProjectMemoryEntry,
   normalizeProjectScope,
   normalizeSessionMemory,
   normalizeSessionMemoryDelta,
 } from "./memory/memory-state.js";
 export type {
-  CharacterMemoryCategory,
-  CharacterMemoryDelta,
-  CharacterMemoryDeltaEntry,
-  CharacterMemoryEntry,
-  CharacterReflectionMonologue,
-  CharacterReflectionMonologueMood,
-  CharacterReflectionOutput,
-  CharacterScope,
   ProjectMemoryCategory,
   ProjectMemoryEntry,
   ProjectScope,

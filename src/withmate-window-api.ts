@@ -10,7 +10,6 @@ import type {
   AppSettings,
   CharacterProfile,
   ComposerPreview,
-  CreateCharacterInput,
   CreateSessionInput,
   DiscoveredCustomAgent,
   DiscoveredSkill,
@@ -35,7 +34,6 @@ import type {
   CompanionSyncTargetResult,
   CompanionTargetWorkspaceStashResult,
 } from "./companion-review-state.js";
-import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "./character-update-state.js";
 import type {
   MemoryManagementPageRequest,
   MemoryManagementPageResult,
@@ -85,7 +83,6 @@ export type WithMateWindowNavigationApi = {
   openSettingsWindow(): Promise<void>;
   openMemoryManagementWindow(): Promise<void>;
   openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<void>;
-  openCharacterEditor(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
@@ -205,19 +202,7 @@ export type WithMateWindowSettingsApi = {
   startMateEmbeddingDownload(): Promise<void>;
   deleteSessionMemory(sessionId: string): Promise<void>;
   deleteProjectMemoryEntry(entryId: string): Promise<void>;
-  deleteCharacterMemoryEntry(entryId: string): Promise<void>;
   forgetMateProfileItem(itemId: string): Promise<void>;
-};
-
-export type WithMateWindowCharacterApi = {
-  listCharacters(): Promise<CharacterProfile[]>;
-  getCharacter(characterId: string): Promise<CharacterProfile | null>;
-  getCharacterUpdateWorkspace(characterId: string): Promise<CharacterUpdateWorkspace | null>;
-  extractCharacterUpdateMemory(characterId: string): Promise<CharacterUpdateMemoryExtract>;
-  createCharacterUpdateSession(characterId: string, providerId: string): Promise<Session>;
-  createCharacter(input: CreateCharacterInput): Promise<CharacterProfile>;
-  updateCharacter(character: CharacterProfile): Promise<CharacterProfile>;
-  deleteCharacter(characterId: string): Promise<void>;
 };
 
 export type WithMateWindowPickerApi = {
@@ -237,7 +222,6 @@ export type WithMateWindowSubscriptionApi = {
   subscribeAppBootStatus(listener: (status: AppBootStatus) => void): () => void;
   subscribeSessionSummaries(listener: (sessions: SessionSummary[]) => void): () => void;
   subscribeSessionInvalidation(listener: (sessionIds: string[]) => void): () => void;
-  subscribeCharacters(listener: (characters: CharacterProfile[]) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
   subscribeAppSettings(listener: (settings: AppSettings) => void): () => void;
   subscribeLiveSessionRun(listener: (sessionId: string, state: LiveSessionRunState | null) => void): () => void;
@@ -277,7 +261,6 @@ export type WithMateWindowApi =
   & WithMateWindowCompanionApi
   & WithMateWindowObservabilityApi
   & WithMateWindowSettingsApi
-  & WithMateWindowCharacterApi
   & WithMateWindowPickerApi
   & WithMateWindowSubscriptionApi
   & WithMateWindowMateApi;

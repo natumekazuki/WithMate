@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   type AppSettings,
-  type CharacterReflectionProviderSettings,
   type MemoryExtractionProviderSettings,
 } from "../app-state.js";
 import type { MateEmbeddingSettings } from "../mate/mate-embedding-settings.js";
@@ -21,7 +20,6 @@ import type {
 import {
   buildFilteredMemoryManagementSnapshot,
   DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
-  type CharacterMemoryCategoryFilter,
   type MemoryManagementDomainFilter,
   type MemoryManagementSort,
   type MemoryManagementViewFilters,
@@ -44,12 +42,6 @@ import {
   SETTINGS_PROVIDER_INSTRUCTION_MANAGED_BLOCK_HELP,
   SETTINGS_PROVIDER_INSTRUCTION_MANAGED_FILE_HELP,
   SETTINGS_PROVIDER_INSTRUCTION_PATH_HELP,
-  SETTINGS_CHARACTER_REFLECTION_CHAR_DELTA_LABEL,
-  SETTINGS_CHARACTER_REFLECTION_COOLDOWN_LABEL,
-  SETTINGS_CHARACTER_REFLECTION_MESSAGE_DELTA_LABEL,
-  SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL,
-  SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL,
-  SETTINGS_CHARACTER_REFLECTION_TIMEOUT_LABEL,
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
   SETTINGS_MEMORY_GENERATION_LABEL,
   SETTINGS_MATE_MEMORY_GENERATION_LABEL,
@@ -99,7 +91,6 @@ export type HomeSettingsContentProps = {
   memoryManagementPages: {
     session: MemoryManagementDomainPageInfo;
     project: MemoryManagementDomainPageInfo;
-    character: MemoryManagementDomainPageInfo;
     mate_profile: MemoryManagementDomainPageInfo;
   };
   memoryManagementLoading: boolean;
@@ -145,15 +136,6 @@ export type HomeSettingsContentProps = {
   ) => void;
   onChangeMemoryExtractionThreshold: (providerId: string, value: string) => void;
   onChangeMemoryExtractionTimeoutSeconds: (providerId: string, value: string) => void;
-  onChangeCharacterReflectionModel: (providerId: string, model: string) => void;
-  onChangeCharacterReflectionReasoningEffort: (
-    providerId: string,
-    reasoningEffort: CharacterReflectionProviderSettings["reasoningEffort"],
-  ) => void;
-  onChangeCharacterReflectionTimeoutSeconds: (providerId: string, value: string) => void;
-  onChangeCharacterReflectionCooldownSeconds: (value: string) => void;
-  onChangeCharacterReflectionCharDeltaThreshold: (value: string) => void;
-  onChangeCharacterReflectionMessageDeltaThreshold: (value: string) => void;
   onImportModelCatalog: () => void;
   onExportModelCatalog: () => void;
   onOpenAppLogFolder: () => void;
@@ -163,7 +145,6 @@ export type HomeSettingsContentProps = {
   onLoadMoreMemoryManagement: (domain: MemoryManagementDomain) => void;
   onDeleteSessionMemory: (sessionId: string) => void;
   onDeleteProjectMemoryEntry: (entryId: string) => void;
-  onDeleteCharacterMemoryEntry: (entryId: string) => void;
   onDeleteMateProfileItem: (itemId: string) => void;
   onStartMateEmbeddingDownload: () => void;
   onApplyPendingGrowth?: () => void;
@@ -283,12 +264,6 @@ export function HomeSettingsContent({
   onChangeMemoryExtractionReasoningEffort,
   onChangeMemoryExtractionThreshold,
   onChangeMemoryExtractionTimeoutSeconds,
-  onChangeCharacterReflectionModel,
-  onChangeCharacterReflectionReasoningEffort,
-  onChangeCharacterReflectionTimeoutSeconds,
-  onChangeCharacterReflectionCooldownSeconds,
-  onChangeCharacterReflectionCharDeltaThreshold,
-  onChangeCharacterReflectionMessageDeltaThreshold,
   onImportModelCatalog,
   onExportModelCatalog,
   onOpenAppLogFolder,
@@ -298,7 +273,6 @@ export function HomeSettingsContent({
   onLoadMoreMemoryManagement,
   onDeleteSessionMemory,
   onDeleteProjectMemoryEntry,
-  onDeleteCharacterMemoryEntry,
   onDeleteMateProfileItem,
   onStartMateEmbeddingDownload,
   onApplyPendingGrowth,
@@ -334,7 +308,6 @@ export function HomeSettingsContent({
             onLoadMore={onLoadMoreMemoryManagement}
             onDeleteSessionMemory={onDeleteSessionMemory}
             onDeleteProjectMemoryEntry={onDeleteProjectMemoryEntry}
-            onDeleteCharacterMemoryEntry={onDeleteCharacterMemoryEntry}
             onDeleteMateProfileItem={onDeleteMateProfileItem}
             standalone
           />
@@ -1199,7 +1172,6 @@ type SettingsMemoryManagementSectionProps = {
   pages: {
     session: MemoryManagementDomainPageInfo;
     project: MemoryManagementDomainPageInfo;
-    character: MemoryManagementDomainPageInfo;
     mate_profile: MemoryManagementDomainPageInfo;
   };
   loading: boolean;
@@ -1211,7 +1183,6 @@ type SettingsMemoryManagementSectionProps = {
   onLoadMore: (domain: MemoryManagementDomain) => void;
   onDeleteSessionMemory: (sessionId: string) => void;
   onDeleteProjectMemoryEntry: (entryId: string) => void;
-  onDeleteCharacterMemoryEntry: (entryId: string) => void;
   onDeleteMateProfileItem: (itemId: string) => void;
 };
 
@@ -1219,7 +1190,6 @@ const MEMORY_DOMAIN_OPTIONS: Array<{ value: MemoryManagementDomainFilter; label:
   { value: "all", label: "All Domains" },
   { value: "session", label: "Session" },
   { value: "project", label: "Project" },
-  { value: "character", label: "Character" },
   { value: "mate_profile", label: "Mate Profile" },
 ];
 
@@ -1244,15 +1214,6 @@ const PROJECT_CATEGORY_OPTIONS: Array<{ value: ProjectMemoryCategoryFilter; labe
   { value: "deferred", label: "deferred" },
 ];
 
-const CHARACTER_CATEGORY_OPTIONS: Array<{ value: CharacterMemoryCategoryFilter; label: string }> = [
-  { value: "all", label: "全カテゴリ" },
-  { value: "preference", label: "preference" },
-  { value: "relationship", label: "relationship" },
-  { value: "shared_moment", label: "shared_moment" },
-  { value: "tone", label: "tone" },
-  { value: "boundary", label: "boundary" },
-];
-
 function areMemoryManagementFiltersEqual(
   left: MemoryManagementViewFilters,
   right: MemoryManagementViewFilters,
@@ -1262,8 +1223,7 @@ function areMemoryManagementFiltersEqual(
     left.domain === right.domain &&
     left.sort === right.sort &&
     left.sessionStatus === right.sessionStatus &&
-    left.projectCategory === right.projectCategory &&
-    left.characterCategory === right.characterCategory
+    left.projectCategory === right.projectCategory
   );
 }
 
@@ -1279,7 +1239,6 @@ function SettingsMemoryManagementSection({
   onLoadMore,
   onDeleteSessionMemory,
   onDeleteProjectMemoryEntry,
-  onDeleteCharacterMemoryEntry,
   onDeleteMateProfileItem,
 }: SettingsMemoryManagementSectionProps) {
   const [searchText, setSearchText] = useState(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.searchText);
@@ -1289,9 +1248,6 @@ function SettingsMemoryManagementSection({
   const [projectCategory, setProjectCategory] = useState<ProjectMemoryCategoryFilter>(
     DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.projectCategory,
   );
-  const [characterCategory, setCharacterCategory] = useState<CharacterMemoryCategoryFilter>(
-    DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.characterCategory,
-  );
   const activeFilters = useMemo<MemoryManagementViewFilters>(
     () => ({
       searchText,
@@ -1299,9 +1255,8 @@ function SettingsMemoryManagementSection({
       sort,
       sessionStatus,
       projectCategory,
-      characterCategory,
     }),
-    [characterCategory, domain, projectCategory, searchText, sessionStatus, sort],
+    [domain, projectCategory, searchText, sessionStatus, sort],
   );
   const lastNotifiedFiltersRef = useRef<MemoryManagementViewFilters>(activeFilters);
 
@@ -1320,19 +1275,15 @@ function SettingsMemoryManagementSection({
   );
   const sessionCount = filteredSnapshot?.sessionMemories.length ?? 0;
   const projectEntryCount = filteredSnapshot?.projectMemories.reduce((count, group) => count + group.entries.length, 0) ?? 0;
-  const characterEntryCount =
-    filteredSnapshot?.characterMemories.reduce((count, group) => count + group.entries.length, 0) ?? 0;
   const mateProfileItemCount = filteredSnapshot?.mateProfileItems?.length ?? 0;
   const hasActiveFilters =
     searchText.trim().length > 0 ||
     domain !== DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.domain ||
     sort !== DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.sort ||
     sessionStatus !== DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.sessionStatus ||
-    projectCategory !== DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.projectCategory ||
-    characterCategory !== DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.characterCategory;
+    projectCategory !== DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.projectCategory;
   const showSessionDomain = domain === "all" || domain === "session";
   const showProjectDomain = domain === "all" || domain === "project";
-  const showCharacterDomain = domain === "all" || domain === "character";
   const showMateProfileDomain = domain === "all" || domain === "mate_profile";
 
   const clearFilters = () => {
@@ -1341,7 +1292,6 @@ function SettingsMemoryManagementSection({
     setSort(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.sort);
     setSessionStatus(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.sessionStatus);
     setProjectCategory(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.projectCategory);
-    setCharacterCategory(DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS.characterCategory);
   };
 
   return (
@@ -1350,7 +1300,7 @@ function SettingsMemoryManagementSection({
         <strong>Memory 管理</strong>
         <div className="settings-actions settings-memory-actions">
           <span className="settings-memory-summary">
-            {`Session ${sessionCount} / Project ${projectEntryCount} / Character ${characterEntryCount} / Mate Profile ${mateProfileItemCount}`}
+            {`Session ${sessionCount} / Project ${projectEntryCount} / Mate Profile ${mateProfileItemCount}`}
           </span>
           <div className="settings-actions">
             {hasActiveFilters ? (
@@ -1411,7 +1361,7 @@ function SettingsMemoryManagementSection({
               <span>Session Status</span>
               <select
                 value={sessionStatus}
-                disabled={domain === "project" || domain === "character" || domain === "mate_profile"}
+                disabled={domain === "project" || domain === "mate_profile"}
                 onChange={(event) => setSessionStatus(event.target.value as SessionMemoryStatusFilter)}
               >
                 {SESSION_STATUS_OPTIONS.map((option) => (
@@ -1425,24 +1375,10 @@ function SettingsMemoryManagementSection({
               <span>Project Category</span>
               <select
                 value={projectCategory}
-                disabled={domain === "session" || domain === "character" || domain === "mate_profile"}
+                disabled={domain === "session" || domain === "mate_profile"}
                 onChange={(event) => setProjectCategory(event.target.value as ProjectMemoryCategoryFilter)}
               >
                 {PROJECT_CATEGORY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="settings-provider-input">
-              <span>Character Category</span>
-              <select
-                value={characterCategory}
-                disabled={domain === "session" || domain === "project" || domain === "mate_profile"}
-                onChange={(event) => setCharacterCategory(event.target.value as CharacterMemoryCategoryFilter)}
-              >
-                {CHARACTER_CATEGORY_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -1581,68 +1517,6 @@ function SettingsMemoryManagementSection({
                 onClick={() => onLoadMore("project")}
               >
                 {loading ? "追加読み込み中..." : `Load More (${pages.project.total - (pages.project.nextCursor ?? pages.project.total)} left)`}
-              </button>
-            ) : null}
-            </section>
-          ) : null}
-
-          {showCharacterDomain ? (
-            <section className="settings-memory-domain">
-            <div className="settings-memory-domain-head">
-              <h3>Character Memory</h3>
-              <span>{characterEntryCount}</span>
-            </div>
-            {filteredSnapshot && filteredSnapshot.characterMemories.length > 0 ? (
-              <div className="settings-memory-group-list">
-                {filteredSnapshot.characterMemories.map((group) => (
-                  <article key={group.scope.id} className="settings-memory-group-card">
-                    <div className="settings-memory-card-copy">
-                      <strong>{group.scope.displayName || group.scope.characterId}</strong>
-                      <span>{group.scope.characterId}</span>
-                    </div>
-                    <div className="settings-memory-card-list">
-                      {group.entries.map((entry) => {
-                        const targetKey = `character:${entry.id}`;
-                        const deleting = busyTarget === targetKey;
-                        return (
-                          <article key={entry.id} className="settings-memory-card compact">
-                            <div className="settings-memory-card-head">
-                              <div className="settings-memory-card-copy">
-                                <strong>{entry.title}</strong>
-                                <span>{entry.category}</span>
-                              </div>
-                              <button
-                                className="danger-button"
-                                type="button"
-                                disabled={loading || deleting}
-                                onClick={() => onDeleteCharacterMemoryEntry(entry.id)}
-                              >
-                                {deleting ? "削除中..." : "Delete"}
-                              </button>
-                            </div>
-                            <p className="settings-memory-detail">{entry.detail || "detail なし"}</p>
-                            <SettingsMemoryTagLine label="Keywords" items={entry.keywords} />
-                            <SettingsMemoryTagLine label="Evidence" items={entry.evidence} />
-                          </article>
-                        );
-                      })}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <article className="empty-list-card compact">
-                <p>{loading ? "Character Memory を読み込み中..." : "一致する Character Memory はないよ。"}</p>
-              </article>
-            )}
-            {pages.character.hasMore ? (
-              <button
-                className="launch-toggle compact"
-                type="button"
-                disabled={loading}
-                onClick={() => onLoadMore("character")}
-              >
-                {loading ? "追加読み込み中..." : `Load More (${pages.character.total - (pages.character.nextCursor ?? pages.character.total)} left)`}
               </button>
             ) : null}
             </section>

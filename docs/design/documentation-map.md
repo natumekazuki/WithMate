@@ -41,14 +41,9 @@ current 実装の正本として維持する文書。
 
 | Doc | Role |
 | --- | --- |
-| `character-management-ui.md` | Character Editor の UI 詳細 |
-| `character-storage.md` | character catalog の保存詳細 |
-| `character-definition-format.md` | `character.md` / `character-notes.md` の標準構成 |
-| `character-update-workspace.md` | character 更新用 workspace と memory extract helper の詳細 |
 | `project-memory-storage.md` | Project Memory の storage / promotion / retrieval detail |
-| `character-memory-storage.md` | Character Memory と reflection cycle の detail |
 | `prompt-composition.md` | coding plane prompt の section / format detail |
-| `monologue-provider-policy.md` | 独り言 / character reflection backend の provider 方針 |
+| `monologue-provider-policy.md` | 独り言 provider 方針 |
 | `message-rich-text.md` | message renderer の仕様 |
 | `session-character-copy.md` | Session copy slot の詳細 |
 | `session-live-activity-monitor.md` | Session 右ペイン activity 表示の詳細 |
@@ -59,6 +54,18 @@ current 実装の正本として維持する文書。
 | `provider-usage-telemetry.md` | Copilot quota / context telemetry の詳細 |
 | `distribution-packaging.md` | installer / app bundle の packaging 方針 |
 | `refactor-roadmap.md` | current リファクタの進行管理 |
+
+### B-legacy. Removed Character Documents
+
+SingleMate 化に伴い、次の文書は current runtime の正本・supporting doc ではない。旧 3.x の調査・履歴参照に限って読む。
+
+| Doc | Legacy Scope |
+| --- | --- |
+| `character-management-ui.md` | 削除済み Character Editor の UI 詳細 |
+| `character-storage.md` | 削除済み character catalog の保存詳細 |
+| `character-definition-format.md` | 削除済み `character.md` / `character-notes.md` の標準構成 |
+| `character-update-workspace.md` | 削除済み character 更新 workspace と memory extract helper |
+| `character-memory-storage.md` | 削除済み Character Memory と reflection cycle |
 
 ### B2. Future Design / Migration Candidate
 

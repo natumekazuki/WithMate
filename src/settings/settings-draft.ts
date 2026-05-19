@@ -1,11 +1,8 @@
 import {
-  getCharacterReflectionProviderSettings,
-  getCharacterReflectionTriggerSettings,
   getMemoryExtractionProviderSettings,
   getMateMemoryGenerationSettings,
   getProviderAppSettings,
   type AppSettings,
-  type CharacterReflectionProviderSettings,
   type MemoryExtractionProviderSettings,
   type MateMemoryGenerationProviderSettings,
   type ProviderAppSettings,
@@ -29,48 +26,6 @@ export function updateAutoCollapseActionDockOnSend(
   return {
     ...draft,
     autoCollapseActionDockOnSend: enabled,
-  };
-}
-
-export function updateCharacterReflectionCooldownSeconds(
-  draft: AppSettings,
-  rawValue: string,
-): AppSettings {
-  const normalized = Number.parseInt(rawValue, 10);
-  return {
-    ...draft,
-    characterReflectionTriggerSettings: {
-      ...getCharacterReflectionTriggerSettings(draft),
-      cooldownSeconds: Number.isFinite(normalized) && normalized > 0 ? normalized : 30,
-    },
-  };
-}
-
-export function updateCharacterReflectionCharDeltaThreshold(
-  draft: AppSettings,
-  rawValue: string,
-): AppSettings {
-  const normalized = Number.parseInt(rawValue, 10);
-  return {
-    ...draft,
-    characterReflectionTriggerSettings: {
-      ...getCharacterReflectionTriggerSettings(draft),
-      charDeltaThreshold: Number.isFinite(normalized) && normalized > 0 ? normalized : 1,
-    },
-  };
-}
-
-export function updateCharacterReflectionMessageDeltaThreshold(
-  draft: AppSettings,
-  rawValue: string,
-): AppSettings {
-  const normalized = Number.parseInt(rawValue, 10);
-  return {
-    ...draft,
-    characterReflectionTriggerSettings: {
-      ...getCharacterReflectionTriggerSettings(draft),
-      messageDeltaThreshold: Number.isFinite(normalized) && normalized > 0 ? normalized : 1,
-    },
   };
 }
 
@@ -278,87 +233,6 @@ export function updateMemoryExtractionTimeoutSecondsDraft(
   return {
     ...draft,
     memoryExtractionProviderSettings: updateMemoryExtractionTimeoutSeconds(draft, providerId, rawValue),
-  };
-}
-
-export function updateCharacterReflectionModel(
-  draft: AppSettings,
-  providerCatalog: ModelCatalogProvider,
-  providerId: string,
-  model: string,
-): Record<string, CharacterReflectionProviderSettings> {
-  const currentSettings = getCharacterReflectionProviderSettings(draft, providerId);
-  const selection = coerceModelSelection(providerCatalog, model, currentSettings.reasoningEffort);
-  return {
-    ...draft.characterReflectionProviderSettings,
-    [providerId]: {
-      ...currentSettings,
-      model: selection.resolvedModel,
-      reasoningEffort: selection.resolvedReasoningEffort,
-    },
-  };
-}
-
-export function updateCharacterReflectionReasoningEffort(
-  draft: AppSettings,
-  providerId: string,
-  reasoningEffort: CharacterReflectionProviderSettings["reasoningEffort"],
-): Record<string, CharacterReflectionProviderSettings> {
-  return {
-    ...draft.characterReflectionProviderSettings,
-    [providerId]: {
-      ...getCharacterReflectionProviderSettings(draft, providerId),
-      reasoningEffort,
-    },
-  };
-}
-
-export function updateCharacterReflectionTimeoutSeconds(
-  draft: AppSettings,
-  providerId: string,
-  rawValue: string,
-): Record<string, CharacterReflectionProviderSettings> {
-  const normalized = Number.parseInt(rawValue, 10);
-  return {
-    ...draft.characterReflectionProviderSettings,
-    [providerId]: {
-      ...getCharacterReflectionProviderSettings(draft, providerId),
-      timeoutSeconds: Number.isFinite(normalized) && normalized > 0 ? normalized : 30,
-    },
-  };
-}
-
-export function updateCharacterReflectionModelDraft(
-  draft: AppSettings,
-  providerCatalog: ModelCatalogProvider,
-  providerId: string,
-  model: string,
-): AppSettings {
-  return {
-    ...draft,
-    characterReflectionProviderSettings: updateCharacterReflectionModel(draft, providerCatalog, providerId, model),
-  };
-}
-
-export function updateCharacterReflectionReasoningEffortDraft(
-  draft: AppSettings,
-  providerId: string,
-  reasoningEffort: CharacterReflectionProviderSettings["reasoningEffort"],
-): AppSettings {
-  return {
-    ...draft,
-    characterReflectionProviderSettings: updateCharacterReflectionReasoningEffort(draft, providerId, reasoningEffort),
-  };
-}
-
-export function updateCharacterReflectionTimeoutSecondsDraft(
-  draft: AppSettings,
-  providerId: string,
-  rawValue: string,
-): AppSettings {
-  return {
-    ...draft,
-    characterReflectionProviderSettings: updateCharacterReflectionTimeoutSeconds(draft, providerId, rawValue),
   };
 }
 

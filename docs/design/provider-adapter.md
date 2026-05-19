@@ -56,7 +56,6 @@ type ProviderCodingAdapter = {
 ```ts
 type ProviderBackgroundAdapter = {
   extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult>;
-  runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult>;
 };
 ```
 

@@ -20,6 +20,7 @@ import { isValidV4Database } from "../../src-electron/database-schema-v4.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";
 import { SessionStorageV3 } from "../../src-electron/session-storage-v3.js";
 import {
+  OBSOLETE_V4_IMPORT_TARGET_TABLES,
   createMigrationDryRunReport,
   createMigrationWriteReport,
 } from "../migrate-database-v3-to-v4.js";
@@ -57,6 +58,12 @@ function readRequiredRow<T>(db: DatabaseSync, sql: string, ...params: SQLInputVa
   const row = db.prepare(sql).get(...params) as T | undefined;
   assert.ok(row);
   return row;
+}
+
+function tableExists(db: DatabaseSync, tableName: string): boolean {
+  return db
+    .prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ? LIMIT 1")
+    .get(tableName) !== undefined;
 }
 
 function removeBlobFiles(blobRootPath: string, blobId: string): void {
@@ -335,6 +342,12 @@ describe("migrate-database-v3-to-v4", () => {
           "codex",
         );
         assert.equal(catalog.model_id, "gpt-5.4-mini");
+        for (const tableName of OBSOLETE_V4_IMPORT_TARGET_TABLES) {
+          assert.equal(tableExists(db, tableName), false, `${tableName} は V4 import target に残さない`);
+        }
+        assert.equal(tableExists(db, "blob_objects"), true);
+        assert.equal(tableExists(db, "companion_audit_log_details"), true);
+        assert.equal(tableExists(db, "companion_audit_log_operations"), true);
       } finally {
         db.close();
         sessionStorage.close();

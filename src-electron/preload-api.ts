@@ -4,7 +4,6 @@ import type { RendererLogInput } from "../src/app-log-types.js";
 import type {
   WithMateWindowApi,
   WithMateWindowCatalogApi,
-  WithMateWindowCharacterApi,
   WithMateWindowCompanionApi,
   WithMateWindowNavigationApi,
   WithMateWindowObservabilityApi,
@@ -18,26 +17,20 @@ import {
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
-  WITHMATE_CHARACTERS_CHANGED_EVENT,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
-  WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_APPLY_MATE_GROWTH_CHANNEL,
   WITHMATE_LIST_MATE_GROWTH_EVENTS_CHANNEL,
   WITHMATE_CORRECT_MATE_GROWTH_EVENT_CHANNEL,
   WITHMATE_DISABLE_MATE_GROWTH_EVENT_CHANNEL,
   WITHMATE_FORGET_MATE_GROWTH_EVENT_CHANNEL,
-  WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
-  WITHMATE_DELETE_CHARACTER_CHANNEL,
-  WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
   WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL,
   WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
-  WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
@@ -46,8 +39,6 @@ import {
   WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
   WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL,
   WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
-  WITHMATE_GET_CHARACTER_CHANNEL,
-  WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
@@ -71,7 +62,6 @@ import {
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
-  WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_COMPANION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARIES_CHANNEL,
   WITHMATE_LIST_COMPANION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
@@ -88,7 +78,6 @@ import {
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
-  WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL,
   WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
@@ -143,7 +132,6 @@ import {
   WITHMATE_UPDATE_MATE_CHANNEL,
   WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL,
   WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
-  WITHMATE_UPDATE_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
 } from "../src/withmate-ipc-channels.js";
@@ -226,9 +214,6 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
       return input === undefined
         ? ipcRenderer.invoke(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL)
         : ipcRenderer.invoke(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL, input);
-    },
-    openCharacterEditor(characterId) {
-      return ipcRenderer.invoke(WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL, characterId ?? null);
     },
     openDiffWindow(diffPreview) {
       return ipcRenderer.invoke(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, diffPreview);
@@ -541,40 +526,8 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
     deleteProjectMemoryEntry(entryId) {
       return ipcRenderer.invoke(WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL, entryId);
     },
-    deleteCharacterMemoryEntry(entryId) {
-      return ipcRenderer.invoke(WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL, entryId);
-    },
     forgetMateProfileItem(itemId) {
       return ipcRenderer.invoke(WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL, itemId);
-    },
-  };
-}
-
-function createCharacterApi(ipcRenderer: IpcRendererLike): WithMateWindowCharacterApi {
-  return {
-    listCharacters() {
-      return ipcRenderer.invoke(WITHMATE_LIST_CHARACTERS_CHANNEL);
-    },
-    getCharacter(characterId) {
-      return ipcRenderer.invoke(WITHMATE_GET_CHARACTER_CHANNEL, characterId);
-    },
-    getCharacterUpdateWorkspace(characterId) {
-      return ipcRenderer.invoke(WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL, characterId);
-    },
-    extractCharacterUpdateMemory(characterId) {
-      return ipcRenderer.invoke(WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL, characterId);
-    },
-    createCharacterUpdateSession(characterId, providerId) {
-      return ipcRenderer.invoke(WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL, characterId, providerId);
-    },
-    createCharacter(input) {
-      return ipcRenderer.invoke(WITHMATE_CREATE_CHARACTER_CHANNEL, input);
-    },
-    updateCharacter(character) {
-      return ipcRenderer.invoke(WITHMATE_UPDATE_CHARACTER_CHANNEL, character);
-    },
-    deleteCharacter(characterId) {
-      return ipcRenderer.invoke(WITHMATE_DELETE_CHARACTER_CHANNEL, characterId);
     },
   };
 }
@@ -624,9 +577,6 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
     },
     subscribeSessionInvalidation(listener) {
       return subscribe(ipcRenderer, WITHMATE_SESSIONS_INVALIDATED_EVENT, listener);
-    },
-    subscribeCharacters(listener) {
-      return subscribe(ipcRenderer, WITHMATE_CHARACTERS_CHANGED_EVENT, listener);
     },
     subscribeModelCatalog(listener) {
       return subscribe(ipcRenderer, WITHMATE_MODEL_CATALOG_CHANGED_EVENT, (catalog: ModelCatalogChangedPayload) => {
@@ -737,7 +687,6 @@ export function createWithMateWindowApi(ipcRenderer: IpcRendererLike): WithMateW
     ...createCompanionApi(ipcRenderer),
     ...createObservabilityApi(ipcRenderer),
     ...createSettingsApi(ipcRenderer),
-    ...createCharacterApi(ipcRenderer),
     ...createPickerApi(ipcRenderer),
     ...createSubscriptionApi(ipcRenderer),
     ...createMateApi(ipcRenderer),

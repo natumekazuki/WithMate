@@ -25,7 +25,7 @@ function createSession(id: string, overrides?: Partial<ReturnType<typeof buildNe
 }
 
 describe("MemoryManagementService", () => {
-  it("session / project / character memory を snapshot に集約する", () => {
+  it("session / project memory を snapshot に集約する", () => {
     const deleted: string[] = [];
     const service = new MemoryManagementService({
       listSessionSummaries: () => [createSession("session-1")],
@@ -71,29 +71,6 @@ describe("MemoryManagementService", () => {
       deleteProjectMemoryEntry: (entryId) => {
         deleted.push(`project:${entryId}`);
       },
-      listCharacterScopes: () => [{
-        id: "character-scope-1",
-        characterId: "char-session-1",
-        displayName: "Character session-1",
-        createdAt: "2026-04-02T09:00:00.000Z",
-        updatedAt: "2026-04-02T10:00:00.000Z",
-      }],
-      listCharacterMemoryEntries: () => [{
-        id: "character-entry-1",
-        characterScopeId: "character-scope-1",
-        sourceSessionId: "session-1",
-        category: "tone",
-        title: "話し方",
-        detail: "detail",
-        keywords: ["tone"],
-        evidence: [],
-        createdAt: "2026-04-02T09:00:00.000Z",
-        updatedAt: "2026-04-02T10:00:00.000Z",
-        lastUsedAt: null,
-      }],
-      deleteCharacterMemoryEntry: (entryId) => {
-        deleted.push(`character:${entryId}`);
-      },
       listMateProfileItems: () => [],
       forgetMateProfileItem: () => {},
     });
@@ -102,16 +79,13 @@ describe("MemoryManagementService", () => {
 
     assert.equal(snapshot.sessionMemories[0]?.taskTitle, "Session session-1");
     assert.equal(snapshot.projectMemories[0]?.entries.length, 1);
-    assert.equal(snapshot.characterMemories[0]?.entries.length, 1);
 
     service.deleteSessionMemory("session-1");
     service.deleteProjectMemoryEntry("project-entry-1");
-    service.deleteCharacterMemoryEntry("character-entry-1");
 
     assert.deepEqual(deleted, [
       "session:session-1",
       "project:project-entry-1",
-      "character:character-entry-1",
     ]);
   });
 
@@ -151,9 +125,6 @@ describe("MemoryManagementService", () => {
       listProjectScopes: () => [],
       listProjectMemoryEntries: () => [],
       deleteProjectMemoryEntry: () => {},
-      listCharacterScopes: () => [],
-      listCharacterMemoryEntries: () => [],
-      deleteCharacterMemoryEntry: () => {},
     });
 
     const firstPage = service.getPage({ domain: "session", limit: 1 });
@@ -167,7 +138,7 @@ describe("MemoryManagementService", () => {
     assert.equal(secondPage.pages.session.hasMore, false);
   });
 
-  it("project / character page は filter 後に entry updatedAt 順で返す", () => {
+  it("project page は filter 後に entry updatedAt 順で返す", () => {
     const service = new MemoryManagementService({
       listSessionSummaries: () => [],
       listSessionMemories: () => [],
@@ -224,52 +195,12 @@ describe("MemoryManagementService", () => {
             lastUsedAt: null,
           }],
       deleteProjectMemoryEntry: () => {},
-      listCharacterScopes: () => [{
-        id: "character-scope-1",
-        characterId: "char-1",
-        displayName: "Character",
-        createdAt: "2026-04-02T09:00:00.000Z",
-        updatedAt: "2026-04-02T09:00:00.000Z",
-      }],
-      listCharacterMemoryEntries: () => [
-        {
-          id: "character-entry-old",
-          characterScopeId: "character-scope-1",
-          sourceSessionId: null,
-          category: "tone",
-          title: "old tone",
-          detail: "target",
-          keywords: [],
-          evidence: [],
-          createdAt: "2026-04-02T09:00:00.000Z",
-          updatedAt: "2026-04-01T10:00:00.000Z",
-          lastUsedAt: null,
-        },
-        {
-          id: "character-entry-new",
-          characterScopeId: "character-scope-1",
-          sourceSessionId: null,
-          category: "tone",
-          title: "new tone",
-          detail: "target",
-          keywords: [],
-          evidence: [],
-          createdAt: "2026-04-02T09:00:00.000Z",
-          updatedAt: "2026-04-03T10:00:00.000Z",
-          lastUsedAt: null,
-        },
-      ],
-      deleteCharacterMemoryEntry: () => {},
     });
 
     const projectPage = service.getPage({ domain: "project", limit: 1, projectCategory: "decision", searchText: "target" });
-    const characterPage = service.getPage({ domain: "character", limit: 1, characterCategory: "tone", searchText: "target" });
 
     assert.deepEqual(projectPage.snapshot.projectMemories.flatMap((group) => group.entries.map((entry) => entry.id)), [
       "project-entry-new",
-    ]);
-    assert.deepEqual(characterPage.snapshot.characterMemories.flatMap((group) => group.entries.map((entry) => entry.id)), [
-      "character-entry-new",
     ]);
   });
 
@@ -281,9 +212,6 @@ describe("MemoryManagementService", () => {
       listProjectScopes: () => [],
       listProjectMemoryEntries: () => [],
       deleteProjectMemoryEntry: () => {},
-      listCharacterScopes: () => [],
-      listCharacterMemoryEntries: () => [],
-      deleteCharacterMemoryEntry: () => {},
       listMateProfileItems: () => [
         {
           id: "mate-profile-item-1",
@@ -334,9 +262,6 @@ describe("MemoryManagementService", () => {
       listProjectScopes: () => [],
       listProjectMemoryEntries: () => [],
       deleteProjectMemoryEntry: () => {},
-      listCharacterScopes: () => [],
-      listCharacterMemoryEntries: () => [],
-      deleteCharacterMemoryEntry: () => {},
       listMateProfileItems: () => [],
       forgetMateProfileItem: (itemId) => {
         deleted.push(itemId);

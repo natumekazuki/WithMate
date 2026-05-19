@@ -33,8 +33,6 @@ export type SessionPersistenceServiceDeps = {
   syncSessionDependencies(session: Session): void;
   clearSessionContextTelemetry(sessionId: string): void;
   clearSessionBackgroundActivities(sessionId: string): void;
-  clearCharacterReflectionCheckpoint(sessionId: string): void;
-  clearInFlightCharacterReflection(sessionId: string): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
   closeSessionWindow(sessionId: string): void;
   broadcastSessions(sessionIds?: Iterable<string>): void;
@@ -144,8 +142,6 @@ export class SessionPersistenceService {
     this.deps.setSessions(this.deps.getSessions().filter((entry) => entry.id !== sessionId));
     this.deps.clearSessionContextTelemetry(sessionId);
     this.deps.clearSessionBackgroundActivities(sessionId);
-    this.deps.clearCharacterReflectionCheckpoint(sessionId);
-    this.deps.clearInFlightCharacterReflection(sessionId);
     this.deps.closeSessionWindow(sessionId);
     this.deps.broadcastSessions([sessionId]);
   }
@@ -202,8 +198,6 @@ export class SessionPersistenceService {
       }
       if (!nextSession) {
         this.deps.clearSessionBackgroundActivities(previousSession.id);
-        this.deps.clearCharacterReflectionCheckpoint(previousSession.id);
-        this.deps.clearInFlightCharacterReflection(previousSession.id);
       }
     }
 

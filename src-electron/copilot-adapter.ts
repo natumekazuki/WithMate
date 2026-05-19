@@ -48,10 +48,7 @@ import {
   type RunSessionTurnInput,
   type RunSessionTurnProgressHandler,
   type RunSessionTurnResult,
-  type RunCharacterReflectionInput,
-  type RunCharacterReflectionResult,
 } from "./provider-runtime.js";
-import { parseCharacterReflectionOutputText } from "./character-reflection.js";
 import { parseSessionMemoryDeltaText } from "./session-memory-extraction.js";
 import {
   captureWorkspaceSnapshot,
@@ -1893,29 +1890,6 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       threadId: result.threadId,
       rawText: result.rawText,
       delta: result.output,
-      rawItemsJson: result.rawItemsJson,
-      usage: result.usage,
-      providerQuotaTelemetry: result.providerQuotaTelemetry,
-    };
-  }
-
-  async runCharacterReflection(input: RunCharacterReflectionInput): Promise<RunCharacterReflectionResult> {
-    const result = await this.runBackgroundPromptFromInput(
-      {
-        providerId: input.session.provider,
-        workspacePath: input.session.workspacePath,
-        appSettings: input.appSettings,
-        model: input.model,
-        reasoningEffort: input.reasoningEffort,
-        timeoutMs: input.timeoutMs,
-        prompt: input.prompt,
-      },
-      parseCharacterReflectionOutputText,
-    );
-    return {
-      threadId: result.threadId,
-      rawText: result.rawText,
-      output: result.output,
       rawItemsJson: result.rawItemsJson,
       usage: result.usage,
       providerQuotaTelemetry: result.providerQuotaTelemetry,

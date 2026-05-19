@@ -7,7 +7,6 @@ import {
   buildHomeProviderInstructionTargetUpsertInput,
   buildPersistedAppSettingsFromRows,
   buildHomeProviderSettingRows,
-  buildNormalizedCharacterReflectionProviderSettings,
   buildNormalizedMemoryExtractionProviderSettings,
   resolveInstructionRelativePathFromSelection,
 } from "../../src/settings/settings-view-model.js";
@@ -39,20 +38,12 @@ describe("home-settings-view-model", () => {
       outputTokensThreshold: 222,
       timeoutSeconds: 240,
     };
-    settings.characterReflectionProviderSettings.codex = {
-      model: "gpt-5.4-mini",
-      reasoningEffort: "high",
-      timeoutSeconds: 210,
-    };
 
     const rows = buildHomeProviderSettingRows(createSnapshot(), settings);
 
     assert.equal(rows[0]?.resolvedMemoryExtractionModel, "gpt-5.4");
     assert.equal(rows[0]?.resolvedMemoryExtractionReasoningEffort, "high");
     assert.equal(rows[0]?.memoryExtractionSettings.timeoutSeconds, 240);
-    assert.equal(rows[0]?.resolvedCharacterReflectionModel, "gpt-5.4-mini");
-    assert.equal(rows[0]?.resolvedCharacterReflectionReasoningEffort, "low");
-    assert.equal(rows[0]?.characterReflectionSettings.timeoutSeconds, 210);
   });
 
   it("normalized settings は resolved 値を provider ごとに再構成する", () => {
@@ -63,13 +54,6 @@ describe("home-settings-view-model", () => {
         model: "gpt-5.4",
         reasoningEffort: "high",
         outputTokensThreshold: 300000,
-        timeoutSeconds: 180,
-      },
-    });
-    assert.deepEqual(buildNormalizedCharacterReflectionProviderSettings(rows), {
-      codex: {
-        model: "gpt-5.4",
-        reasoningEffort: "high",
         timeoutSeconds: 180,
       },
     });
@@ -152,7 +136,6 @@ describe("home-settings-view-model", () => {
   it("persisted settings は resolved provider settings を埋め込む", () => {
     const draft = createDefaultAppSettings();
     draft.autoCollapseActionDockOnSend = false;
-    draft.characterReflectionTriggerSettings.cooldownSeconds = 180;
     draft.memoryExtractionProviderSettings.codex = {
       model: "missing-model",
       reasoningEffort: "high",
@@ -164,7 +147,6 @@ describe("home-settings-view-model", () => {
     const persisted = buildPersistedAppSettingsFromRows(draft, rows);
 
     assert.equal(persisted.autoCollapseActionDockOnSend, false);
-    assert.equal(persisted.characterReflectionTriggerSettings.cooldownSeconds, 180);
     assert.deepEqual(persisted.memoryExtractionProviderSettings.codex, {
       model: "gpt-5.4",
       reasoningEffort: "high",

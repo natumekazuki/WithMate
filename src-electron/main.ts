@@ -31,10 +31,6 @@ import {
   type SessionContextTelemetry,
 } from "../src/app-state.js";
 import {
-  type CharacterProfile,
-  type CreateCharacterInput,
-} from "../src/character-state.js";
-import {
   type DiffPreviewPayload,
   type MessageArtifact,
   projectSessionSummary,
@@ -52,14 +48,6 @@ import type {
   SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
 import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js";
-import {
-  createStoredCharacter,
-  deleteStoredCharacter,
-  getStoredCharacterDirectoryPath,
-  getStoredCharacter,
-  listStoredCharacters,
-  updateStoredCharacter,
-} from "./character-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
@@ -73,7 +61,6 @@ import { launchTerminalAtPath } from "./open-terminal.js";
 import { SessionStorage } from "./session-storage.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
 import { ProjectMemoryStorage } from "./project-memory-storage.js";
-import { CharacterMemoryStorage } from "./character-memory-storage.js";
 import { CompanionReviewService } from "./companion-review-service.js";
 import { CompanionRuntimeService } from "./companion-runtime-service.js";
 import { CompanionSessionService } from "./companion-session-service.js";
@@ -100,8 +87,6 @@ import {
   resolveSessionFilesDirectory,
   saveSessionFile,
 } from "./session-files.js";
-import { CharacterRuntimeService } from "./character-runtime-service.js";
-import { CharacterUpdateWorkspaceService } from "./character-update-workspace-service.js";
 import { MateStorage } from "./mate-storage.js";
 import { MateMemoryStorage } from "./mate-memory-storage.js";
 import { MateEmbeddingCacheService } from "./mate-embedding-cache.js";
@@ -153,7 +138,6 @@ import { registerMainIpcHandlers } from "./main-ipc-registration.js";
 import {
   PersistentStoreLifecycleService,
   type AuditLogStorageRead,
-  type CharacterMemoryStorageAccess,
   type PersistentStoreBundle,
   type ProjectMemoryStorageAccess,
   type SessionMemoryStorageAccess,
@@ -165,7 +149,6 @@ import { createMainBootstrapDeps } from "./main-bootstrap-deps.js";
 import { MainInfrastructureRegistry } from "./main-infrastructure-registry.js";
 import { MainBootstrapService } from "./main-bootstrap-service.js";
 import { MainBroadcastFacade } from "./main-broadcast-facade.js";
-import { MainCharacterFacade } from "./main-character-facade.js";
 import { MainObservabilityFacade } from "./main-observability-facade.js";
 import { MainProviderFacade } from "./main-provider-facade.js";
 import { MainSessionCommandFacade } from "./main-session-command-facade.js";
@@ -194,9 +177,6 @@ import type {
   MateGrowthEventListRequest,
   MateGrowthEventListResult,
 } from "../src/mate/mate-growth-events-state.js";
-import {
-  type CharacterReflectionTriggerReason,
-} from "./character-reflection.js";
 import {
   type SessionMemoryExtractionTriggerReason,
 } from "./session-memory-extraction.js";
@@ -267,11 +247,9 @@ function getProviderInstructionTargetProtectedRoots(): string[] {
 }
 
 let sessions: Session[] = [];
-let characters: CharacterProfile[] = [];
 let sessionStorage: SessionStorageRead | null = null;
 let sessionMemoryStorage: SessionMemoryStorageAccess | null = null;
 let projectMemoryStorage: ProjectMemoryStorageAccess | null = null;
-let characterMemoryStorage: CharacterMemoryStorageAccess | null = null;
 let modelCatalogStorage: ModelCatalogStorage | null = null;
 let auditLogStorage: AuditLogStorageRead | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
@@ -318,15 +296,12 @@ let sessionElicitationService: SessionElicitationService | null = null;
 let auditLogService: AuditLogService | null = null;
 let sessionMemorySupportService: SessionMemorySupportService | null = null;
 let memoryManagementService: MemoryManagementService | null = null;
-let characterRuntimeService: CharacterRuntimeService | null = null;
-let characterUpdateWorkspaceService: CharacterUpdateWorkspaceService | null = null;
 let companionSessionService: CompanionSessionService | null = null;
 let companionAuditLogStorage: CompanionAuditLogStorageV3 | null = null;
 let companionAuditLogService: AuditLogService | null = null;
 let companionRuntimeService: CompanionRuntimeService | null = null;
 let companionReviewService: CompanionReviewService | null = null;
 let mainBroadcastFacade: MainBroadcastFacade<BrowserWindow> | null = null;
-let mainCharacterFacade: MainCharacterFacade | null = null;
 let mainObservabilityFacade: MainObservabilityFacade | null = null;
 let mainProviderFacade: MainProviderFacade | null = null;
 let mainSessionCommandFacade: MainSessionCommandFacade | null = null;
@@ -898,8 +873,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             });
           },
           loadHomeEntry: (window, mode) => requireWindowEntryLoader().loadHomeEntry(window, mode),
-          loadCharacterEntry: (window, characterId) =>
-            requireWindowEntryLoader().loadCharacterEntry(window, characterId),
           loadDiffEntry: (window, token) => requireWindowEntryLoader().loadDiffEntry(window, token),
           loadChatEntry: (window, mode) => requireWindowEntryLoader().loadChatEntry(window, mode),
           loadCompanionMergeReviewEntry: (window, sessionId) =>
@@ -914,7 +887,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           createSessionStorage: (nextDbPath) => new SessionStorage(nextDbPath),
           createSessionMemoryStorage: (nextDbPath) => new SessionMemoryStorage(nextDbPath),
           createProjectMemoryStorage: (nextDbPath) => new ProjectMemoryStorage(nextDbPath),
-          createCharacterMemoryStorage: (nextDbPath) => new CharacterMemoryStorage(nextDbPath),
           createAuditLogStorage: (nextDbPath) => new AuditLogStorage(nextDbPath),
           createAppSettingsStorage: (nextDbPath) => new AppSettingsStorage(nextDbPath),
           createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
@@ -989,9 +961,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             registerMainIpcHandlers,
             initializePersistentStores,
             recoverInterruptedSessions,
-            refreshCharactersFromStorage: async () => {
-              await refreshCharactersFromStorage();
-            },
             createHomeWindow,
             broadcastModelCatalog,
             onBootStatus: publishAppBootStatus,
@@ -1005,7 +974,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openSettingsWindow,
                 openMemoryManagementWindow,
                 openMateTalkWindow,
-                openCharacterEditorWindow,
                 openDiffWindow,
                 openCompanionReviewWindow,
                 openCompanionMergeWindow,
@@ -1083,8 +1051,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 startMateEmbeddingDownload: () => startMateEmbeddingDownload(),
                 deleteSessionMemory: (sessionId) => requireMemoryManagementService().deleteSessionMemory(sessionId),
                 deleteProjectMemoryEntry: (entryId) => requireMemoryManagementService().deleteProjectMemoryEntry(entryId),
-                deleteCharacterMemoryEntry: (entryId) =>
-                  requireMemoryManagementService().deleteCharacterMemoryEntry(entryId),
                 forgetMateProfileItem: (itemId) => requireMemoryManagementService().forgetMateProfileItem(itemId),
               },
               sessionQuery: {
@@ -1212,19 +1178,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 runSessionTurn: (sessionId, request) => requireMainSessionCommandFacade().runSessionTurn(sessionId, request),
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
               },
-              character: {
-                listCharacters: async () => refreshCharactersFromStorage(),
-                getCharacter,
-                getCharacterUpdateWorkspace: (characterId) =>
-                  requireMainCharacterFacade().getCharacterUpdateWorkspace(characterId),
-                extractCharacterUpdateMemory: (characterId) =>
-                  requireMainCharacterFacade().extractCharacterUpdateMemory(characterId),
-                createCharacterUpdateSession: (characterId, providerId) =>
-                  requireMainCharacterFacade().createCharacterUpdateSession(characterId, providerId),
-                createCharacter,
-                updateCharacter,
-                deleteCharacter,
-              },
               mate: {
                 getMateState: () => requireMateStorage().getMateState(),
                 getMateProfile: () => requireMateStorage().getMateProfile(),
@@ -1307,7 +1260,6 @@ function requireMainQueryService(): MainQueryService {
       getSession: (sessionId) => requireSessionStorage().getSession(sessionId),
       getSessionMessageArtifact: (sessionId, messageIndex) =>
         requireSessionStorage().getSessionMessageArtifact(sessionId, messageIndex),
-      getCharacters: () => characters,
       getAuditLogs: (sessionId) => requireAuditLogStorage().listSessionAuditLogs(sessionId),
       getAuditLogSummaries: (sessionId) => requireAuditLogStorage().listSessionAuditLogSummaries(sessionId),
       getAuditLogSummaryPage: (sessionId, request) =>
@@ -1320,8 +1272,6 @@ function requireMainQueryService(): MainQueryService {
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       discoverSessionSkills,
       discoverSessionCustomAgents,
-      getStoredCharacter: (characterId) => requireCharacterRuntimeService().getCharacter(characterId),
-      refreshCharactersFromStorage: () => requireCharacterRuntimeService().refreshCharactersFromStorage(),
       resolveComposerPreview: (session, userMessage) =>
         resolveComposerPreview(appendSessionFilesDirectory(app.getPath("userData"), session), userMessage),
       searchWorkspaceFiles: (workspacePath, query) => searchWorkspacePathCandidates(workspacePath, query),
@@ -1337,7 +1287,6 @@ function requireMainBroadcastFacade(): MainBroadcastFacade<BrowserWindow> {
     mainBroadcastFacade = new MainBroadcastFacade({
       getWindowBroadcastService: () => requireWindowBroadcastService(),
       listSessionSummaries: () => listSessionSummaries(),
-      listCharacters: () => listCharacters(),
       getModelCatalog: () => getModelCatalog(),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       listOpenSessionWindowIds: () => listOpenSessionWindowIds(),
@@ -1346,18 +1295,6 @@ function requireMainBroadcastFacade(): MainBroadcastFacade<BrowserWindow> {
   }
 
   return mainBroadcastFacade;
-}
-
-function requireMainCharacterFacade(): MainCharacterFacade {
-  if (!mainCharacterFacade) {
-    mainCharacterFacade = new MainCharacterFacade({
-      getMainQueryService: () => requireMainQueryService(),
-      getCharacterRuntimeService: () => requireCharacterRuntimeService(),
-      getCharacterUpdateWorkspaceService: () => requireCharacterUpdateWorkspaceService(),
-    });
-  }
-
-  return mainCharacterFacade;
 }
 
 function requireMainWindowFacade(): MainWindowFacade {
@@ -2263,13 +2200,6 @@ function requireSessionMemorySupportService(): SessionMemorySupportService {
         requireProjectMemoryStorage().listProjectMemoryEntries(projectScopeId),
       upsertProjectMemoryEntry: (entry) => requireProjectMemoryStorage().upsertProjectMemoryEntry(entry),
       markProjectMemoryEntriesUsed: (entryIds) => requireProjectMemoryStorage().markProjectMemoryEntriesUsed(entryIds),
-      ensureCharacterScope: ({ characterId, displayName }) =>
-        requireCharacterMemoryStorage().ensureCharacterScope({ characterId, displayName }),
-      listCharacterMemoryEntries: (characterScopeId) =>
-        requireCharacterMemoryStorage().listCharacterMemoryEntries(characterScopeId),
-      upsertCharacterMemoryEntry: (entry) => requireCharacterMemoryStorage().upsertCharacterMemoryEntry(entry),
-      markCharacterMemoryEntriesUsed: (entryIds) => requireCharacterMemoryStorage().markCharacterMemoryEntriesUsed(entryIds),
-      upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSession(session),
     });
   }
 
@@ -2287,11 +2217,6 @@ function requireMemoryManagementService(): MemoryManagementService {
       listProjectMemoryEntries: (projectScopeId) => requireProjectMemoryStorage().listProjectMemoryEntries(projectScopeId),
       listProjectMemoryPage: (request) => requireProjectMemoryStorage().listProjectMemoryPage(request),
       deleteProjectMemoryEntry: (entryId) => requireProjectMemoryStorage().deleteProjectMemoryEntry(entryId),
-      listCharacterScopes: () => requireCharacterMemoryStorage().listCharacterScopes(),
-      listCharacterMemoryEntries: (characterScopeId) =>
-        requireCharacterMemoryStorage().listCharacterMemoryEntries(characterScopeId),
-      listCharacterMemoryPage: (request) => requireCharacterMemoryStorage().listCharacterMemoryPage(request),
-      deleteCharacterMemoryEntry: (entryId) => requireCharacterMemoryStorage().deleteCharacterMemoryEntry(entryId),
       listMateProfileItems: () => requireMateProfileItemStorage().listProfileItems({ state: "active" }).map((item) => ({
         id: item.id,
         sectionKey: item.sectionKey,
@@ -2312,54 +2237,6 @@ function requireMemoryManagementService(): MemoryManagementService {
   }
 
   return memoryManagementService;
-}
-
-function requireCharacterRuntimeService(): CharacterRuntimeService {
-  if (!characterRuntimeService) {
-    characterRuntimeService = new CharacterRuntimeService({
-      getCharacters: () => characters,
-      setCharacters: (nextCharacters) => {
-        characters = nextCharacters;
-      },
-      listStoredCharacters,
-      getStoredCharacter,
-      createStoredCharacter,
-      updateStoredCharacter,
-      deleteStoredCharacter,
-      listSessions: () => listFullStoredSessions(),
-      upsertStoredSession: (session) => requireSessionStorageForWrite().upsertSession(session),
-      reloadStoredSessions: () => listFullStoredSessions(),
-      setSessions: (nextSessions) => {
-        sessions = nextSessions;
-      },
-      closeCharacterEditor: (characterId) => {
-        requireAuxWindowService().closeCharacterEditor(characterId);
-      },
-      broadcastCharacters,
-      broadcastSessions,
-    });
-  }
-
-  return characterRuntimeService;
-}
-
-function requireCharacterUpdateWorkspaceService(): CharacterUpdateWorkspaceService {
-  if (!characterUpdateWorkspaceService) {
-    characterUpdateWorkspaceService = new CharacterUpdateWorkspaceService({
-      getCharacter: (characterId) => requireCharacterRuntimeService().getCharacter(characterId),
-      getCharacterDirectoryPath: (characterId) => getStoredCharacterDirectoryPath(characterId),
-      getCharacterScopeByCharacterId: (characterId) =>
-        requireCharacterMemoryStorage().getCharacterScopeByCharacterId(characterId),
-      listCharacterMemoryEntries: (characterScopeId) =>
-        requireCharacterMemoryStorage().listCharacterMemoryEntries(characterScopeId),
-      writeTextFile: async (filePath, content) => {
-        await writeFile(filePath, content, "utf8");
-      },
-      createSession: (input) => requireMainSessionCommandFacade().createSession(input),
-    });
-  }
-
-  return characterUpdateWorkspaceService;
 }
 
 function requireWindowEntryLoader(): WindowEntryLoader {
@@ -2584,12 +2461,6 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       syncSessionDependencies: (session) => requireSessionMemorySupportService().syncSessionDependencies(session),
       clearSessionContextTelemetry,
       clearSessionBackgroundActivities,
-      clearCharacterReflectionCheckpoint: (sessionId) => {
-        requireMemoryOrchestrationService().clearCharacterReflectionCheckpoint(sessionId);
-      },
-      clearInFlightCharacterReflection: (sessionId) => {
-        requireMemoryOrchestrationService().clearInFlightCharacterReflection(sessionId);
-      },
       invalidateProviderSessionThread,
       closeSessionWindow: (sessionId) => {
         requireSessionWindowBridge().closeSessionWindow(sessionId);
@@ -2639,21 +2510,12 @@ function requireMemoryOrchestrationService(): MemoryOrchestrationService {
       getSession,
       isSessionRunInFlight,
       isRunningSession,
-      resolveSessionCharacter: (session) => requireCharacterRuntimeService().resolveSessionCharacter(session),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       getProviderBackgroundAdapter,
       ensureSessionMemory: (session) => requireSessionMemoryStorage().ensureSessionMemory(session),
       upsertSessionMemory: (memory) => requireSessionMemoryStorage().upsertSessionMemory(memory),
       promoteSessionMemoryDeltaToProjectMemory: (session, delta) =>
         requireSessionMemorySupportService().promoteSessionMemoryDeltaToProjectMemory(session, delta),
-      resolveCharacterMemoryEntriesForReflection: (session) =>
-        requireSessionMemorySupportService().resolveCharacterMemoryEntriesForReflection(session),
-      markCharacterMemoryEntriesUsed: (entryIds) =>
-        requireSessionMemorySupportService().markCharacterMemoryEntriesUsed(entryIds),
-      saveCharacterMemoryDelta: (session, entries) =>
-        requireSessionMemorySupportService().saveCharacterMemoryDelta(session, entries),
-      appendMonologueToSession: (session, monologue) =>
-        requireSessionMemorySupportService().appendMonologueToSession(session, monologue),
       createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
       updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
       setSessionBackgroundActivity,
@@ -2690,7 +2552,6 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       resetAppSettings: resetAppSettingsAndSyncMateGrowth,
       resetModelCatalogToBundled: () => requireModelCatalogStorage().resetToBundled(),
       clearProjectMemories: () => requireProjectMemoryStorage().clearProjectMemories(),
-      clearCharacterMemories: () => requireCharacterMemoryStorage().clearCharacterMemories(),
       resetSessionRuntime: () => requireSessionRuntimeService().reset(),
       resetMemoryOrchestration: () => requireMemoryOrchestrationService().reset(),
       clearAllProviderQuotaTelemetry,
@@ -2794,14 +2655,6 @@ function requireProjectMemoryStorage(): ProjectMemoryStorageAccess {
   return projectMemoryStorage;
 }
 
-function requireCharacterMemoryStorage(): CharacterMemoryStorageAccess {
-  if (!characterMemoryStorage) {
-    throw new Error("character memory storage が初期化されていないよ。");
-  }
-
-  return characterMemoryStorage;
-}
-
 function requirePersistentStoreLifecycleService(): PersistentStoreLifecycleService {
   return requireMainInfrastructureRegistry().getPersistentStoreLifecycleService();
 }
@@ -2819,7 +2672,6 @@ function applyPersistentStoreBundle(bundle: PersistentStoreBundle): ModelCatalog
   sessionStorage = bundle.sessionStorage;
   sessionMemoryStorage = bundle.sessionMemoryStorage;
   projectMemoryStorage = bundle.projectMemoryStorage;
-  characterMemoryStorage = bundle.characterMemoryStorage;
   auditLogStorage = bundle.auditLogStorage;
   appSettingsStorage = bundle.appSettingsStorage;
   mateStorage = bundle.mateStorage;
@@ -2903,7 +2755,6 @@ function closePersistentStores(): void {
     sessionStorage,
     sessionMemoryStorage,
     projectMemoryStorage,
-    characterMemoryStorage,
     auditLogStorage,
     appSettingsStorage,
     mateStorage,
@@ -2912,7 +2763,6 @@ function closePersistentStores(): void {
   sessionStorage = null;
   sessionMemoryStorage = null;
   projectMemoryStorage = null;
-  characterMemoryStorage = null;
   auditLogStorage = null;
   auditLogService = null;
   appSettingsStorage = null;
@@ -2943,10 +2793,7 @@ function closePersistentStores(): void {
   sessionApprovalService = null;
   sessionElicitationService = null;
   sessionMemorySupportService = null;
-  characterRuntimeService = null;
-  characterUpdateWorkspaceService = null;
   mainBroadcastFacade = null;
-  mainCharacterFacade = null;
   mainObservabilityFacade = null;
   mainProviderFacade = null;
   mainSessionCommandFacade = null;
@@ -3005,7 +2852,6 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
     sessionStorage,
     sessionMemoryStorage,
     projectMemoryStorage,
-    characterMemoryStorage,
     auditLogStorage,
     appSettingsStorage,
     mateStorage,
@@ -3023,10 +2869,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   sessionApprovalService = null;
   sessionElicitationService = null;
   sessionMemorySupportService = null;
-  characterRuntimeService = null;
-  characterUpdateWorkspaceService = null;
   mainBroadcastFacade = null;
-  mainCharacterFacade = null;
   mainObservabilityFacade = null;
   mainProviderFacade = null;
   mainSessionCommandFacade = null;
@@ -3073,10 +2916,6 @@ function invalidateProviderSessionThread(providerId: string | null | undefined, 
 
 function invalidateAllProviderSessionThreads(): void {
   requireMainProviderFacade().invalidateAllProviderSessionThreads();
-}
-
-function listCharacters(): CharacterProfile[] {
-  return requireMainCharacterFacade().listCharacters();
 }
 
 async function listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]> {
@@ -3376,24 +3215,12 @@ async function openSessionTerminal(sessionId: string): Promise<void> {
   await requireMainQueryService().openSessionTerminal(sessionId);
 }
 
-async function refreshCharactersFromStorage(): Promise<CharacterProfile[]> {
-  return requireMainCharacterFacade().refreshCharactersFromStorage();
-}
-
-async function getCharacter(characterId: string): Promise<CharacterProfile | null> {
-  return requireMainCharacterFacade().getCharacter(characterId);
-}
-
 function broadcastSessions(sessionIds?: Iterable<string>): void {
   requireMainBroadcastFacade().broadcastSessions(sessionIds);
 }
 
 async function broadcastCompanionSessions(): Promise<void> {
   requireWindowBroadcastService().broadcastCompanionSessionSummaries(await listCompanionSessionSummaries());
-}
-
-function broadcastCharacters(): void {
-  requireMainBroadcastFacade().broadcastCharacters();
 }
 
 function broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): void {
@@ -3573,18 +3400,6 @@ async function recoverInterruptedSessions(): Promise<void> {
   await requireCompanionRuntimeService().recoverInterruptedSessions();
 }
 
-async function createCharacter(input: CreateCharacterInput): Promise<CharacterProfile> {
-  return requireMainCharacterFacade().createCharacter(input);
-}
-
-async function updateCharacter(nextCharacter: CharacterProfile): Promise<CharacterProfile> {
-  return requireMainCharacterFacade().updateCharacter(nextCharacter);
-}
-
-async function deleteCharacter(characterId: string): Promise<void> {
-  await requireMainCharacterFacade().deleteCharacter(characterId);
-}
-
 async function previewComposerInput(
   sessionId: string,
   userMessage: string,
@@ -3733,10 +3548,6 @@ async function openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<B
 
 async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {
   return requireMainWindowFacade().openSessionWindow(sessionId);
-}
-
-async function openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {
-  return requireMainWindowFacade().openCharacterEditorWindow(characterId);
 }
 
 async function openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow> {
