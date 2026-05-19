@@ -20,6 +20,7 @@
     "preview": "vite preview",
     "benchmark:data-loading": "tsx scripts/benchmark-data-loading.ts",
     "test": "tsx --test scripts/tests/*.test.ts scripts/tests/*.test.tsx",
+    "test:shard": "node --import tsx scripts/run-test-shard.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "validate:snapshot-ignore": "tsx scripts/validate-snapshot-ignore.ts"
   },
