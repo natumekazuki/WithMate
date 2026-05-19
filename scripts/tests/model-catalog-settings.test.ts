@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  getCharacterReflectionProviderSettings,
   createDefaultAppSettings,
   getMemoryExtractionProviderSettings,
   getProviderAppSettings,
@@ -151,26 +150,7 @@ describe("app settings provider helpers", () => {
     });
   });
 
-  it("character reflection settings を provider ごとに保持する", () => {
-    const settings = normalizeAppSettings({
-      ...createDefaultAppSettings(),
-      characterReflectionProviderSettings: {
-        codex: {
-          model: "gpt-5.1-mini",
-          reasoningEffort: "medium",
-          timeoutSeconds: 210,
-        },
-      },
-    });
-
-    assert.deepEqual(getCharacterReflectionProviderSettings(settings, "codex"), {
-      model: "gpt-5.1-mini",
-      reasoningEffort: "medium",
-      timeoutSeconds: 210,
-    });
-  });
-
-  it("resolved provider settings bundle で 3 種の設定をまとめて取得できる", () => {
+  it("resolved provider settings bundle で provider 設定をまとめて取得できる", () => {
     const settings = normalizeAppSettings({
       ...createDefaultAppSettings(),
       memoryGenerationEnabled: false,
@@ -189,13 +169,6 @@ describe("app settings provider helpers", () => {
           timeoutSeconds: 240,
         },
       },
-      characterReflectionProviderSettings: {
-        codex: {
-          model: "gpt-5.1-mini",
-          reasoningEffort: "medium",
-          timeoutSeconds: 210,
-        },
-      },
     });
 
     assert.deepEqual(getResolvedProviderSettingsBundle(settings, "codex"), {
@@ -210,11 +183,6 @@ describe("app settings provider helpers", () => {
         reasoningEffort: "medium",
         outputTokensThreshold: 280,
         timeoutSeconds: 240,
-      },
-      characterReflection: {
-        model: "gpt-5.1-mini",
-        reasoningEffort: "medium",
-        timeoutSeconds: 210,
       },
     });
     assert.equal(settings.memoryGenerationEnabled, false);

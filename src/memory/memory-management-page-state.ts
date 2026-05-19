@@ -7,7 +7,6 @@ import type {
 export type MemoryManagementPageState = {
   session: MemoryManagementDomainPageInfo;
   project: MemoryManagementDomainPageInfo;
-  character: MemoryManagementDomainPageInfo;
   mate_profile: MemoryManagementDomainPageInfo;
 };
 
@@ -20,7 +19,6 @@ const EMPTY_MEMORY_MANAGEMENT_PAGE_INFO: MemoryManagementDomainPageInfo = {
 export const EMPTY_MEMORY_MANAGEMENT_PAGE_STATE: MemoryManagementPageState = {
   session: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
   project: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
-  character: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
   mate_profile: EMPTY_MEMORY_MANAGEMENT_PAGE_INFO,
 };
 
@@ -29,7 +27,6 @@ export function normalizeMemoryManagementPages(pages: MemoryManagementPageResult
     ...EMPTY_MEMORY_MANAGEMENT_PAGE_STATE,
     session: pages.session,
     project: pages.project,
-    character: pages.character,
     mate_profile: pages.mate_profile ?? EMPTY_MEMORY_MANAGEMENT_PAGE_STATE.mate_profile,
   };
 }
@@ -43,9 +40,6 @@ export function getMemoryManagementCursor(
   }
   if (domain === "project") {
     return pages.project.nextCursor;
-  }
-  if (domain === "character") {
-    return pages.character.nextCursor;
   }
   if (domain === "mate_profile") {
     return pages.mate_profile.nextCursor;

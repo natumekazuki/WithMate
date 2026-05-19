@@ -18,7 +18,6 @@ export const ALL_RESET_APP_DATABASE_TARGETS = [
   "appSettings",
   "modelCatalog",
   "projectMemory",
-  "characterMemory",
 ] as const;
 
 export type ResetAppDatabaseTarget = (typeof ALL_RESET_APP_DATABASE_TARGETS)[number];

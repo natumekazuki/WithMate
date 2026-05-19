@@ -100,32 +100,6 @@ function createSnapshot(): MemoryManagementSnapshot {
         ],
       },
     ],
-    characterMemories: [
-      {
-        scope: {
-          id: "character-scope-1",
-          characterId: "char-a",
-          displayName: "A",
-          createdAt: "2026-04-01T09:00:00.000Z",
-          updatedAt: "2026-04-02T10:00:00.000Z",
-        },
-        entries: [
-          {
-            id: "character-entry-1",
-            characterScopeId: "character-scope-1",
-            sourceSessionId: "session-1",
-            category: "tone",
-            title: "話し方",
-            detail: "落ち着いた調子",
-            keywords: ["tone"],
-            evidence: [],
-            createdAt: "2026-04-01T09:00:00.000Z",
-            updatedAt: "2026-04-02T10:00:00.000Z",
-            lastUsedAt: null,
-          },
-        ],
-      },
-    ],
     mateProfileItems: [
       {
         id: "mate-profile-item-1",
@@ -155,7 +129,6 @@ describe("memory-management-view", () => {
 
     assert.equal(filtered?.sessionMemories.length, 0);
     assert.equal(filtered?.projectMemories.length, 1);
-    assert.equal(filtered?.characterMemories.length, 0);
     assert.equal(filtered?.mateProfileItems?.length ?? 0, 0);
   });
 
@@ -167,7 +140,6 @@ describe("memory-management-view", () => {
 
     assert.equal(filtered?.sessionMemories.length, 0);
     assert.equal(filtered?.projectMemories.length, 0);
-    assert.equal(filtered?.characterMemories.length, 0);
     assert.equal(filtered?.mateProfileItems?.[0]?.id, "mate-profile-item-1");
   });
 
@@ -187,13 +159,11 @@ describe("memory-management-view", () => {
       ...DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
       sessionStatus: "running",
       projectCategory: "decision",
-      characterCategory: "tone",
     });
 
     assert.equal(filtered?.sessionMemories.length, 1);
     assert.equal(filtered?.sessionMemories[0]?.sessionId, "session-1");
     assert.equal(filtered?.projectMemories[0]?.entries.length, 1);
-    assert.equal(filtered?.characterMemories[0]?.entries.length, 1);
   });
 
   it("updated-asc で古い順に並べ替える", () => {
@@ -281,7 +251,7 @@ describe("memory-management-view", () => {
           ],
         },
       ],
-      characterMemories: [],
+      mateProfileItems: [],
     }, {
       ...DEFAULT_MEMORY_MANAGEMENT_VIEW_FILTERS,
       domain: "project",

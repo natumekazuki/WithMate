@@ -100,6 +100,14 @@ const MODEL_CATALOG_MODEL_COLUMNS = [
   "sort_order",
 ] as const;
 
+export const OBSOLETE_V4_IMPORT_TARGET_TABLES = [
+  "companion_message_artifacts",
+  "session_message_artifacts",
+  "session_messages",
+  "audit_log_details",
+  "audit_log_operations",
+] as const;
+
 function sqliteDatabaseFilePaths(dbPath: string): string[] {
   return [dbPath, `${dbPath}-wal`, `${dbPath}-shm`];
 }
@@ -297,6 +305,12 @@ function copySettingsAndCatalog(sourceDb: DatabaseSync, targetDb: DatabaseSync):
   } catch (error) {
     targetDb.exec("ROLLBACK");
     throw error;
+  }
+}
+
+function dropObsoleteV4ImportTargetTables(targetDb: DatabaseSync): void {
+  for (const tableName of OBSOLETE_V4_IMPORT_TARGET_TABLES) {
+    targetDb.exec(`DROP TABLE IF EXISTS ${tableName}`);
   }
 }
 
@@ -525,6 +539,7 @@ export async function createMigrationWriteReport(input: {
 
     targetDb = new DatabaseSync(tempTargetDatabaseFile);
     const catalogCounts = copySettingsAndCatalog(sourceDb, targetDb);
+    dropObsoleteV4ImportTargetTables(targetDb);
     targetDb.close();
     targetDb = null;
     targetSessionStorage.close();

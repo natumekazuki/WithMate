@@ -31,7 +31,6 @@ export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
     homeBounds?: boolean;
   }): TWindow;
   loadHomeEntry(window: TWindow, mode: HomeEntryMode): Promise<void>;
-  loadCharacterEntry(window: TWindow, characterId?: string | null): Promise<void>;
   loadDiffEntry(window: TWindow, token: string): Promise<void>;
   loadChatEntry(window: TWindow, mode: ChatEntryMode): Promise<void>;
   loadCompanionMergeReviewEntry(window: TWindow, sessionId: string): Promise<void>;
@@ -45,7 +44,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   private settingsWindow: TWindow | null = null;
   private memoryManagementWindow: TWindow | null = null;
   private mateTalkWindow: TWindow | null = null;
-  private readonly characterEditorWindows = new Map<string, TWindow>();
   private readonly diffWindows = new Map<string, TWindow>();
   private readonly companionReviewWindows = new Map<string, TWindow>();
   private readonly companionMergeWindows = new Map<string, TWindow>();
@@ -191,29 +189,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return window;
   }
 
-  async openCharacterEditorWindow(characterId?: string | null): Promise<TWindow> {
-    const key = characterId ?? "__new__";
-    const existing = this.reuseWindow(this.characterEditorWindows.get(key) ?? null);
-    if (existing) {
-      return existing;
-    }
-
-    const window = this.deps.createWindow({
-      width: 980,
-      height: 840,
-      minWidth: 760,
-      minHeight: 680,
-      title: characterId ? `Character Editor - ${characterId}` : "Character Editor - New",
-    });
-    this.characterEditorWindows.set(key, window);
-    window.once("ready-to-show", () => window.show());
-    window.on("closed", () => {
-      this.characterEditorWindows.delete(key);
-    });
-    await this.deps.loadCharacterEntry(window, characterId ?? null);
-    return window;
-  }
-
   async openDiffWindow(diffPreview: DiffPreviewPayload): Promise<TWindow> {
     const token = this.deps.generateDiffToken();
     const window = this.deps.createWindow({
@@ -270,15 +245,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     });
     await this.deps.loadCompanionMergeReviewEntry(window, sessionId);
     return window;
-  }
-
-  closeCharacterEditor(characterId: string): void {
-    const window = this.characterEditorWindows.get(characterId);
-    if (!window || window.isDestroyed()) {
-      this.characterEditorWindows.delete(characterId);
-      return;
-    }
-    window.close();
   }
 
   closeResetTargetWindows(): void {

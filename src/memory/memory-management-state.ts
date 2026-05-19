@@ -1,5 +1,5 @@
-import type { CharacterMemoryEntry, CharacterScope, ProjectMemoryEntry, ProjectScope, SessionMemory } from "./memory-state.js";
-import type { CharacterMemoryCategory, ProjectMemoryCategory } from "./memory-state.js";
+import type { ProjectMemoryEntry, ProjectScope, SessionMemory } from "./memory-state.js";
+import type { ProjectMemoryCategory } from "./memory-state.js";
 import type { Session } from "../session-state.js";
 
 export type ManagedSessionMemoryItem = {
@@ -18,11 +18,6 @@ export type ManagedSessionMemoryItem = {
 export type ManagedProjectMemoryGroup = {
   scope: ProjectScope;
   entries: ProjectMemoryEntry[];
-};
-
-export type ManagedCharacterMemoryGroup = {
-  scope: CharacterScope;
-  entries: CharacterMemoryEntry[];
 };
 
 export type ManagedMateProfileItem = {
@@ -44,11 +39,10 @@ export type ManagedMateProfileItem = {
 export type MemoryManagementSnapshot = {
   sessionMemories: ManagedSessionMemoryItem[];
   projectMemories: ManagedProjectMemoryGroup[];
-  characterMemories: ManagedCharacterMemoryGroup[];
   mateProfileItems?: ManagedMateProfileItem[];
 };
 
-export type MemoryManagementDomain = "all" | "session" | "project" | "character" | "mate_profile";
+export type MemoryManagementDomain = "all" | "session" | "project" | "mate_profile";
 
 export type MemoryManagementPageRequest = {
   domain?: MemoryManagementDomain;
@@ -58,7 +52,6 @@ export type MemoryManagementPageRequest = {
   sort?: "updated-desc" | "updated-asc";
   sessionStatus?: "all" | "running" | "idle" | "saved";
   projectCategory?: "all" | ProjectMemoryCategory;
-  characterCategory?: "all" | CharacterMemoryCategory;
 };
 
 export type MemoryManagementDomainPageInfo = {
@@ -72,7 +65,6 @@ export type MemoryManagementPageResult = {
   pages: {
     session: MemoryManagementDomainPageInfo;
     project: MemoryManagementDomainPageInfo;
-    character: MemoryManagementDomainPageInfo;
     mate_profile?: MemoryManagementDomainPageInfo;
   };
 };
@@ -80,7 +72,7 @@ export type MemoryManagementPageResult = {
 export function buildMemoryManagementPageRequest(
   filters: Pick<
     MemoryManagementPageRequest,
-    "domain" | "searchText" | "sort" | "sessionStatus" | "projectCategory" | "characterCategory"
+    "domain" | "searchText" | "sort" | "sessionStatus" | "projectCategory"
   >,
   options?: { domain?: MemoryManagementDomain; cursor?: number | null; limit?: number },
 ): MemoryManagementPageRequest {
@@ -92,7 +84,6 @@ export function buildMemoryManagementPageRequest(
     sort: filters.sort,
     sessionStatus: filters.sessionStatus,
     projectCategory: filters.projectCategory,
-    characterCategory: filters.characterCategory,
   };
 }
 
@@ -116,9 +107,6 @@ export function mergeMemoryManagementSnapshots(
     projectMemories: domain === "project"
       ? mergeGroupedMemories(current.projectMemories, next.projectMemories)
       : current.projectMemories,
-    characterMemories: domain === "character"
-      ? mergeGroupedMemories(current.characterMemories, next.characterMemories)
-      : current.characterMemories,
     mateProfileItems: domain === "mate_profile"
       ? mergeMateProfileItems(current.mateProfileItems ?? [], next.mateProfileItems ?? [])
       : (current.mateProfileItems ?? []),
@@ -249,21 +237,6 @@ export function removeProjectMemoryEntryFromSnapshot(
   return {
     ...snapshot,
     projectMemories: nextProjectMemories,
-  };
-}
-
-export function removeCharacterMemoryEntryFromSnapshot(
-  snapshot: MemoryManagementSnapshot,
-  entryId: string,
-): MemoryManagementSnapshot {
-  const nextCharacterMemories = removeGroupedEntry(snapshot.characterMemories, entryId);
-  if (nextCharacterMemories === snapshot.characterMemories) {
-    return snapshot;
-  }
-
-  return {
-    ...snapshot,
-    characterMemories: nextCharacterMemories,
   };
 }
 

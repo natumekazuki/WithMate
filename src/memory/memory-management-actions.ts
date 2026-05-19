@@ -3,7 +3,6 @@ import { getMemoryManagementCursor, normalizeMemoryManagementPages, type MemoryM
 import {
   buildMemoryManagementPageRequest,
   mergeMemoryManagementSnapshots,
-  removeCharacterMemoryEntryFromSnapshot,
   removeMateProfileItemFromSnapshot,
   removeProjectMemoryEntryFromSnapshot,
   removeSessionMemoryFromSnapshot,
@@ -20,7 +19,6 @@ export type HomeMemoryManagementApi = Pick<
   | "getMemoryManagementPage"
   | "deleteSessionMemory"
   | "deleteProjectMemoryEntry"
-  | "deleteCharacterMemoryEntry"
   | "forgetMateProfileItem"
 >;
 
@@ -158,7 +156,7 @@ export async function changeMemoryManagementViewFilters(input: ChangeMemoryManag
   }
 }
 
-type DeleteMemoryManagementItemKind = "session" | "project" | "character" | "mate_profile";
+type DeleteMemoryManagementItemKind = "session" | "project" | "mate_profile";
 
 type DeleteMemoryManagementItemConfig = {
   busyPrefix: string;
@@ -182,13 +180,6 @@ const DELETE_ITEM_CONFIG: Record<DeleteMemoryManagementItemKind, DeleteMemoryMan
     failureFeedback: "Project Memory の削除に失敗したよ。",
     deleteItem: (api, itemId) => api.deleteProjectMemoryEntry(itemId),
     removeFromSnapshot: removeProjectMemoryEntryFromSnapshot,
-  },
-  character: {
-    busyPrefix: "character",
-    successFeedback: "Character Memory を削除したよ。",
-    failureFeedback: "Character Memory の削除に失敗したよ。",
-    deleteItem: (api, itemId) => api.deleteCharacterMemoryEntry(itemId),
-    removeFromSnapshot: removeCharacterMemoryEntryFromSnapshot,
   },
   mate_profile: {
     busyPrefix: "mate_profile",
@@ -375,37 +366,6 @@ export async function handleDeleteProjectMemoryEntry(input: {
     setBusyTarget: input.setMemoryManagementBusyTarget,
     itemId: input.entryId,
     kind: "project",
-  });
-}
-
-export async function handleDeleteCharacterMemoryEntry(input: {
-  api: HomeMemoryManagementApi | null;
-  usesMemoryManagementWindow: boolean;
-  memoryManagementFilters: MemoryManagementViewFilters;
-  memoryManagementPages: MemoryManagementPageState;
-  beginMemoryManagementRequest: () => number;
-  isLatestMemoryManagementRequest: (requestId: number) => boolean;
-  setMemoryManagementLoaded: (loaded: boolean) => void;
-  setMemoryManagementSnapshot: SetMemoryManagementSnapshot;
-  setMemoryManagementPages: SetMemoryManagementPages;
-  setMemoryManagementFeedback: (feedback: string) => void;
-  setMemoryManagementBusyTarget: (target: string | null) => void;
-  entryId: string;
-}): Promise<void> {
-  await deleteMemoryManagementItem({
-    api: input.api,
-    enabled: input.usesMemoryManagementWindow,
-    filters: input.memoryManagementFilters,
-    pageLimit: MEMORY_MANAGEMENT_PAGE_LIMIT,
-    beginRequest: input.beginMemoryManagementRequest,
-    isLatestRequest: input.isLatestMemoryManagementRequest,
-    setLoaded: input.setMemoryManagementLoaded,
-    setSnapshot: input.setMemoryManagementSnapshot,
-    setPages: input.setMemoryManagementPages,
-    setFeedback: input.setMemoryManagementFeedback,
-    setBusyTarget: input.setMemoryManagementBusyTarget,
-    itemId: input.entryId,
-    kind: "character",
   });
 }
 

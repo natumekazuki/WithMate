@@ -4,12 +4,6 @@ import type { HomeSettingsContentBaseProps } from "./home-settings-content-props
 import {
   handleAddMateMemoryGenerationPriority,
   handleChangeAutoCollapseActionDockOnSend,
-  handleChangeCharacterReflectionCharDeltaThreshold,
-  handleChangeCharacterReflectionCooldownSeconds,
-  handleChangeCharacterReflectionMessageDeltaThreshold,
-  handleChangeCharacterReflectionModel,
-  handleChangeCharacterReflectionReasoningEffort,
-  handleChangeCharacterReflectionTimeoutSeconds,
   handleChangeMateMemoryGenerationPriorityModel,
   handleChangeMateMemoryGenerationPriorityProvider,
   handleChangeMateMemoryGenerationPriorityReasoningEffort,
@@ -49,12 +43,6 @@ export type SettingsDraftHandlers = Pick<
   | "onChangeMemoryExtractionReasoningEffort"
   | "onChangeMemoryExtractionThreshold"
   | "onChangeMemoryExtractionTimeoutSeconds"
-  | "onChangeCharacterReflectionModel"
-  | "onChangeCharacterReflectionReasoningEffort"
-  | "onChangeCharacterReflectionTimeoutSeconds"
-  | "onChangeCharacterReflectionCooldownSeconds"
-  | "onChangeCharacterReflectionCharDeltaThreshold"
-  | "onChangeCharacterReflectionMessageDeltaThreshold"
 >;
 
 export function buildSettingsDraftHandlers({
@@ -109,24 +97,6 @@ export function buildSettingsDraftHandlers({
     },
     onChangeMemoryExtractionTimeoutSeconds: (providerId, value) => {
       handleChangeMemoryExtractionTimeoutSeconds({ providerId, value, setSettingsDraft });
-    },
-    onChangeCharacterReflectionModel: (providerId, model) => {
-      handleChangeCharacterReflectionModel({ providerId, model, modelCatalog, setSettingsDraft });
-    },
-    onChangeCharacterReflectionReasoningEffort: (providerId, reasoningEffort) => {
-      handleChangeCharacterReflectionReasoningEffort({ providerId, reasoningEffort, setSettingsDraft });
-    },
-    onChangeCharacterReflectionTimeoutSeconds: (providerId, value) => {
-      handleChangeCharacterReflectionTimeoutSeconds({ providerId, value, setSettingsDraft });
-    },
-    onChangeCharacterReflectionCooldownSeconds: (value) => {
-      handleChangeCharacterReflectionCooldownSeconds({ value, setSettingsDraft });
-    },
-    onChangeCharacterReflectionCharDeltaThreshold: (value) => {
-      handleChangeCharacterReflectionCharDeltaThreshold({ value, setSettingsDraft });
-    },
-    onChangeCharacterReflectionMessageDeltaThreshold: (value) => {
-      handleChangeCharacterReflectionMessageDeltaThreshold({ value, setSettingsDraft });
     },
   };
 }

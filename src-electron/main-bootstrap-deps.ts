@@ -16,7 +16,6 @@ type CreateMainBootstrapDepsArgs = {
   registerMainIpcHandlers: typeof registerMainIpcHandlers;
   initializePersistentStores(): Promise<ModelCatalogSnapshot>;
   recoverInterruptedSessions(): Promise<void>;
-  refreshCharactersFromStorage(): Promise<void>;
   createHomeWindow(): Promise<BrowserWindow>;
   broadcastModelCatalog(snapshot: ModelCatalogSnapshot): void;
   getMateState?: () => MateStorageState | Promise<MateStorageState>;
@@ -37,7 +36,6 @@ export function createMainBootstrapDeps(
   return {
     initializePersistentStores: args.initializePersistentStores,
     recoverInterruptedSessions: args.recoverInterruptedSessions,
-    refreshCharactersFromStorage: args.refreshCharactersFromStorage,
     getMateState: args.getMateState ?? args.ipcRegistration.mate.getMateState,
     applyPendingGrowth: args.applyPendingGrowth ?? args.ipcRegistration.mate.applyPendingGrowth,
     cleanupStaleGrowthApplyRuns: args.cleanupStaleGrowthApplyRuns,

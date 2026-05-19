@@ -1,7 +1,6 @@
 import {
   getResolvedProviderSettingsBundle,
   type AppSettings,
-  type CharacterReflectionProviderSettings,
   type MemoryExtractionProviderSettings,
   type ProviderInstructionFailPolicy,
   type ProviderInstructionTargetUpsertInput,
@@ -22,14 +21,10 @@ export type HomeProviderSettingRow = {
   provider: ModelCatalogProvider;
   settings: ProviderAppSettings;
   memoryExtractionSettings: MemoryExtractionProviderSettings;
-  characterReflectionSettings: CharacterReflectionProviderSettings;
   instructionTarget: HomeProviderInstructionTargetSettings;
   resolvedMemoryExtractionModel: string;
   resolvedMemoryExtractionReasoningEffort: MemoryExtractionProviderSettings["reasoningEffort"];
-  resolvedCharacterReflectionModel: string;
-  resolvedCharacterReflectionReasoningEffort: CharacterReflectionProviderSettings["reasoningEffort"];
   availableMemoryExtractionReasoningEfforts: readonly MemoryExtractionProviderSettings["reasoningEffort"][];
-  availableCharacterReflectionReasoningEfforts: readonly CharacterReflectionProviderSettings["reasoningEffort"][];
 };
 
 export type HomeProviderInstructionTargetSettings = ProviderInstructionTargetSettings;
@@ -89,17 +84,11 @@ export function buildHomeProviderSettingRows(
     const resolvedSettings = getResolvedProviderSettingsBundle(appSettings, provider.id);
     const settings = resolvedSettings.coding;
     const memoryExtractionSettings = resolvedSettings.memoryExtraction;
-    const characterReflectionSettings = resolvedSettings.characterReflection;
     const instructionTarget = resolveProviderInstructionTarget(provider.id, instructionTargetByProvider.get(provider.id));
     const memoryExtractionSelection = coerceModelSelection(
       provider,
       memoryExtractionSettings.model,
       memoryExtractionSettings.reasoningEffort,
-    );
-    const characterReflectionSelection = coerceModelSelection(
-      provider,
-      characterReflectionSettings.model,
-      characterReflectionSettings.reasoningEffort,
     );
 
     return {
@@ -107,18 +96,11 @@ export function buildHomeProviderSettingRows(
       settings,
       memoryExtractionSettings,
       instructionTarget,
-      characterReflectionSettings,
       resolvedMemoryExtractionModel: memoryExtractionSelection.resolvedModel,
       resolvedMemoryExtractionReasoningEffort: memoryExtractionSelection.resolvedReasoningEffort,
-      resolvedCharacterReflectionModel: characterReflectionSelection.resolvedModel,
-      resolvedCharacterReflectionReasoningEffort: characterReflectionSelection.resolvedReasoningEffort,
       availableMemoryExtractionReasoningEfforts: getReasoningEffortOptionsForModel(
         provider,
         memoryExtractionSelection.resolvedModel,
-      ),
-      availableCharacterReflectionReasoningEfforts: getReasoningEffortOptionsForModel(
-        provider,
-        characterReflectionSelection.resolvedModel,
       ),
     };
   });
@@ -166,21 +148,6 @@ export function buildNormalizedMemoryExtractionProviderSettings(
   );
 }
 
-export function buildNormalizedCharacterReflectionProviderSettings(
-  rows: readonly HomeProviderSettingRow[],
-): Record<string, CharacterReflectionProviderSettings> {
-  return Object.fromEntries(
-    rows.map((row) => [
-      row.provider.id,
-      {
-        model: row.resolvedCharacterReflectionModel,
-        reasoningEffort: row.resolvedCharacterReflectionReasoningEffort,
-        timeoutSeconds: row.characterReflectionSettings.timeoutSeconds,
-      } satisfies CharacterReflectionProviderSettings,
-    ]),
-  );
-}
-
 export function buildPersistedAppSettingsFromRows(
   draft: AppSettings,
   rows: readonly HomeProviderSettingRow[],
@@ -188,6 +155,5 @@ export function buildPersistedAppSettingsFromRows(
   return {
     ...draft,
     memoryExtractionProviderSettings: buildNormalizedMemoryExtractionProviderSettings(rows),
-    characterReflectionProviderSettings: buildNormalizedCharacterReflectionProviderSettings(rows),
   };
 }

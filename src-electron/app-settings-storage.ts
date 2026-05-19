@@ -7,10 +7,8 @@ import { openAppDatabase } from "./sqlite-connection.js";
 const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
 const MEMORY_GENERATION_ENABLED_KEY = "memory_generation_enabled";
 const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
-const CHARACTER_REFLECTION_TRIGGER_SETTINGS_KEY = "character_reflection_trigger_settings_json";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
-const CHARACTER_REFLECTION_PROVIDER_SETTINGS_KEY = "character_reflection_provider_settings_json";
 const MATE_MEMORY_GENERATION_SETTINGS_KEY = "mate_memory_generation_settings_json";
 
 type AppSettingRow = {
@@ -53,17 +51,6 @@ export class AppSettingsStorage {
         VALUES (?, ?, ?)
         ON CONFLICT(setting_key) DO NOTHING
       `)
-      .run(
-        CHARACTER_REFLECTION_TRIGGER_SETTINGS_KEY,
-        JSON.stringify(DEFAULT_APP_SETTINGS.characterReflectionTriggerSettings),
-        updatedAt,
-      );
-    this.db
-      .prepare(`
-        INSERT INTO app_settings (setting_key, setting_value, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(setting_key) DO NOTHING
-      `)
       .run(CODING_PROVIDER_SETTINGS_KEY, JSON.stringify(DEFAULT_APP_SETTINGS.codingProviderSettings), updatedAt);
     this.db
       .prepare(`
@@ -74,17 +61,6 @@ export class AppSettingsStorage {
       .run(
         MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY,
         JSON.stringify(DEFAULT_APP_SETTINGS.memoryExtractionProviderSettings),
-        updatedAt,
-      );
-    this.db
-      .prepare(`
-        INSERT INTO app_settings (setting_key, setting_value, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(setting_key) DO NOTHING
-      `)
-      .run(
-        CHARACTER_REFLECTION_PROVIDER_SETTINGS_KEY,
-        JSON.stringify(DEFAULT_APP_SETTINGS.characterReflectionProviderSettings),
         updatedAt,
       );
     this.db
@@ -120,20 +96,6 @@ export class AppSettingsStorage {
       }
     }
 
-    const characterReflectionTriggerSettingsJson = rows.find(
-      (row) => row.setting_key === CHARACTER_REFLECTION_TRIGGER_SETTINGS_KEY,
-    )?.setting_value;
-    if (characterReflectionTriggerSettingsJson) {
-      try {
-        settings.characterReflectionTriggerSettings = normalizeAppSettings({
-          ...settings,
-          characterReflectionTriggerSettings: JSON.parse(characterReflectionTriggerSettingsJson),
-        }).characterReflectionTriggerSettings;
-      } catch {
-        settings.characterReflectionTriggerSettings = createDefaultAppSettings().characterReflectionTriggerSettings;
-      }
-    }
-
     const providerSettingsJson = rows.find((row) => row.setting_key === CODING_PROVIDER_SETTINGS_KEY)?.setting_value;
     if (providerSettingsJson) {
       try {
@@ -157,20 +119,6 @@ export class AppSettingsStorage {
         }).memoryExtractionProviderSettings;
       } catch {
         settings.memoryExtractionProviderSettings = createDefaultAppSettings().memoryExtractionProviderSettings;
-      }
-    }
-
-    const characterReflectionProviderSettingsJson = rows.find(
-      (row) => row.setting_key === CHARACTER_REFLECTION_PROVIDER_SETTINGS_KEY,
-    )?.setting_value;
-    if (characterReflectionProviderSettingsJson) {
-      try {
-        settings.characterReflectionProviderSettings = normalizeAppSettings({
-          ...settings,
-          characterReflectionProviderSettings: JSON.parse(characterReflectionProviderSettingsJson),
-        }).characterReflectionProviderSettings;
-      } catch {
-        settings.characterReflectionProviderSettings = createDefaultAppSettings().characterReflectionProviderSettings;
       }
     }
 
@@ -227,19 +175,6 @@ export class AppSettingsStorage {
             setting_value = excluded.setting_value,
             updated_at = excluded.updated_at
         `)
-        .run(
-          CHARACTER_REFLECTION_TRIGGER_SETTINGS_KEY,
-          JSON.stringify(normalized.characterReflectionTriggerSettings),
-          updatedAt,
-        );
-      this.db
-        .prepare(`
-          INSERT INTO app_settings (setting_key, setting_value, updated_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(setting_key) DO UPDATE SET
-            setting_value = excluded.setting_value,
-            updated_at = excluded.updated_at
-        `)
         .run(CODING_PROVIDER_SETTINGS_KEY, JSON.stringify(normalized.codingProviderSettings), updatedAt);
       this.db
         .prepare(`
@@ -252,19 +187,6 @@ export class AppSettingsStorage {
         .run(
           MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY,
           JSON.stringify(normalized.memoryExtractionProviderSettings),
-          updatedAt,
-        );
-      this.db
-        .prepare(`
-          INSERT INTO app_settings (setting_key, setting_value, updated_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(setting_key) DO UPDATE SET
-            setting_value = excluded.setting_value,
-            updated_at = excluded.updated_at
-        `)
-        .run(
-          CHARACTER_REFLECTION_PROVIDER_SETTINGS_KEY,
-          JSON.stringify(normalized.characterReflectionProviderSettings),
           updatedAt,
         );
       this.db

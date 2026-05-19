@@ -188,7 +188,6 @@ export function useSessionAuditLogs({
         selectedSession,
         displayedMessagesLength: selectedSession?.messages.length ?? 0,
         selectedMemoryGenerationActivity: null,
-        selectedCharacterMemoryGenerationActivity: null,
         selectedMonologueActivity: null,
       }),
     [selectedSession],

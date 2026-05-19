@@ -10,10 +10,8 @@ import { AppSettingsStorage } from "./app-settings-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogStorageV2 } from "./audit-log-storage-v2.js";
 import { AuditLogStorageV3 } from "./audit-log-storage-v3.js";
-import { CharacterMemoryStorage } from "./character-memory-storage.js";
 import { MateStorage, type MateProfileFileMismatch } from "./mate-storage.js";
 import {
-  CharacterMemoryStorageV2Read,
   ProjectMemoryStorageV2Read,
   SessionMemoryStorageV2Read,
 } from "./memory-storage-v2-read.js";
@@ -62,14 +60,12 @@ export type AuditLogStorageWrite = AwaitableStorageMethods<
 > & AuditLogStorageRead;
 export type SessionMemoryStorageAccess = SessionMemoryStorage | SessionMemoryStorageV2Read;
 export type ProjectMemoryStorageAccess = ProjectMemoryStorage | ProjectMemoryStorageV2Read;
-export type CharacterMemoryStorageAccess = CharacterMemoryStorage | CharacterMemoryStorageV2Read;
 
 export type PersistentStoreBundle = {
   modelCatalogStorage: ModelCatalogStorage;
   sessionStorage: SessionStorageRead;
   sessionMemoryStorage: SessionMemoryStorageAccess;
   projectMemoryStorage: ProjectMemoryStorageAccess;
-  characterMemoryStorage: CharacterMemoryStorageAccess;
   auditLogStorage: AuditLogStorageRead;
   appSettingsStorage: AppSettingsStorage;
   mateStorage: MateStorage;
@@ -89,7 +85,6 @@ type PersistentStoreLifecycleDeps = {
   createSessionStorage(dbPath: string): SessionStorage;
   createSessionMemoryStorage(dbPath: string): SessionMemoryStorage;
   createProjectMemoryStorage(dbPath: string): ProjectMemoryStorage;
-  createCharacterMemoryStorage(dbPath: string): CharacterMemoryStorage;
   createAuditLogStorage(dbPath: string): AuditLogStorage;
   createAppSettingsStorage(dbPath: string): AppSettingsStorage;
   createMateStorage(dbPath: string, userDataPath: string): MateStorage;
@@ -127,9 +122,6 @@ export class PersistentStoreLifecycleService {
     const projectMemoryStorage = isV3Database || isV2Database
       ? new ProjectMemoryStorageV2Read()
       : this.deps.createProjectMemoryStorage(dbPath);
-    const characterMemoryStorage = isV3Database || isV2Database
-      ? new CharacterMemoryStorageV2Read()
-      : this.deps.createCharacterMemoryStorage(dbPath);
     const auditLogStorage = isV3Database
       ? new AuditLogStorageV3(dbPath, this.v3BlobRootPath(dbPath))
       : isV2Database
@@ -146,7 +138,6 @@ export class PersistentStoreLifecycleService {
       sessionStorage,
       sessionMemoryStorage,
       projectMemoryStorage,
-      characterMemoryStorage,
       auditLogStorage,
       appSettingsStorage,
       mateStorage,
@@ -163,7 +154,6 @@ export class PersistentStoreLifecycleService {
       bundle.sessionStorage,
       bundle.sessionMemoryStorage,
       bundle.projectMemoryStorage,
-      bundle.characterMemoryStorage,
       bundle.auditLogStorage,
       bundle.appSettingsStorage,
       bundle.mateStorage,
@@ -263,7 +253,6 @@ export function createPersistentStoreLifecycleService(): PersistentStoreLifecycl
     createSessionStorage: (dbPath) => new SessionStorage(dbPath),
     createSessionMemoryStorage: (dbPath) => new SessionMemoryStorage(dbPath),
     createProjectMemoryStorage: (dbPath) => new ProjectMemoryStorage(dbPath),
-    createCharacterMemoryStorage: (dbPath) => new CharacterMemoryStorage(dbPath),
     createAuditLogStorage: (dbPath) => new AuditLogStorage(dbPath),
     createAppSettingsStorage: (dbPath) => new AppSettingsStorage(dbPath),
     createMateStorage: (dbPath, userDataPath) => new MateStorage(dbPath, userDataPath),

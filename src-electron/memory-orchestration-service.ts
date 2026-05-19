@@ -1,33 +1,17 @@
 import {
   mergeSessionMemory,
   type AuditLogEntry,
-  type CharacterMemoryDelta,
-  type CharacterMemoryEntry,
-  type CharacterReflectionMonologue,
   type SessionBackgroundActivityKind,
   type SessionBackgroundActivityState,
   type SessionMemory,
   type SessionMemoryDelta,
 } from "../src/app-state.js";
-import { type CharacterProfile } from "../src/character-state.js";
 import {
-  getCharacterReflectionTriggerSettings,
   getProviderAppSettings,
   type AppSettings,
 } from "../src/provider-settings-state.js";
 import { type Session } from "../src/session-state.js";
 import type { ProviderBackgroundAdapter } from "./provider-runtime.js";
-import {
-  buildCharacterReflectionContextSnapshot,
-  buildCharacterReflectionLogicalPrompt,
-  buildCharacterReflectionPrompt,
-  buildCharacterReflectionTransportPayload,
-  getCharacterReflectionSettings,
-  hasCharacterMemoryDeltaContent,
-  shouldTriggerCharacterReflection,
-  type CharacterReflectionCheckpoint,
-  type CharacterReflectionTriggerReason,
-} from "./character-reflection.js";
 import {
   buildSessionMemoryExtractionLogicalPrompt,
   buildSessionMemoryExtractionPrompt,
@@ -47,16 +31,11 @@ export type MemoryOrchestrationServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
   isSessionRunInFlight(sessionId: string): boolean;
   isRunningSession(session: Session): boolean;
-  resolveSessionCharacter(session: Session): Promise<CharacterProfile | null>;
   getAppSettings(): AppSettings;
   getProviderBackgroundAdapter(providerId: string): ProviderBackgroundAdapter;
   ensureSessionMemory(session: Session): SessionMemory;
   upsertSessionMemory(memory: SessionMemory): void;
   promoteSessionMemoryDeltaToProjectMemory(session: Session, delta: SessionMemoryDelta): number;
-  resolveCharacterMemoryEntriesForReflection(session: Session): CharacterMemoryEntry[];
-  markCharacterMemoryEntriesUsed(entryIds: string[]): void;
-  saveCharacterMemoryDelta(session: Session, entries: CharacterMemoryDelta["entries"]): number;
-  appendMonologueToSession(session: Session, monologue: CharacterReflectionMonologue): Awaitable<Session>;
   createAuditLog(input: CreateAuditLogInput): Awaitable<AuditLogEntry>;
   updateAuditLog(id: number, entry: CreateAuditLogInput): Awaitable<void | AuditLogEntry>;
   setSessionBackgroundActivity(
@@ -65,14 +44,6 @@ export type MemoryOrchestrationServiceDeps = {
     state: SessionBackgroundActivityState | null,
   ): void;
 };
-
-function buildMonologueSummary(monologue: CharacterReflectionMonologue | null): string {
-  if (!monologue) {
-    return "更新はありませんでした。";
-  }
-
-  return monologue.text.length > 72 ? `${monologue.text.slice(0, 72)}…` : monologue.text;
-}
 
 function buildBackgroundActivityMetadataLines(input: {
   triggerReason: string;
@@ -127,328 +98,13 @@ function buildSessionMemoryActivityDetails(input: {
   return lines.join("\n");
 }
 
-function buildCharacterMemoryEntryDetail(entry: CharacterMemoryDelta["entries"][number]): string {
-  const title = entry.title.trim();
-  const detail = entry.detail.trim();
-  return detail.length > 0
-    ? `[${entry.category}] ${title} | ${detail}`
-    : `[${entry.category}] ${title}`;
-}
-
-function buildCharacterMemoryActivityDetails(input: {
-  triggerReason: string;
-  model: string;
-  reasoningEffort: string;
-  timeoutSeconds?: number;
-  entries: CharacterMemoryDelta["entries"];
-  monologueUpdated?: boolean;
-}): string {
-  const lines = buildBackgroundActivityMetadataLines(input);
-  if (input.monologueUpdated) {
-    lines.push("", "monologue: updated");
-  }
-
-  const detailEntries = input.entries
-    .slice(0, 5)
-    .map((entry) => buildCharacterMemoryEntryDetail(entry));
-  appendDetailBlock(lines, "updated entries", detailEntries);
-  if (input.entries.length > 5) {
-    lines.push(`- ...and ${input.entries.length - 5} more`);
-  }
-
-  return lines.join("\n");
-}
-
 export class MemoryOrchestrationService {
   private readonly inFlightSessionMemoryExtractions = new Set<string>();
-  private readonly inFlightCharacterReflections = new Set<string>();
-  private readonly characterReflectionCheckpoints = new Map<string, CharacterReflectionCheckpoint>();
 
   constructor(private readonly deps: MemoryOrchestrationServiceDeps) {}
 
-  clearCharacterReflectionCheckpoint(sessionId: string): void {
-    this.characterReflectionCheckpoints.delete(sessionId);
-  }
-
-  clearInFlightCharacterReflection(sessionId: string): void {
-    this.inFlightCharacterReflections.delete(sessionId);
-  }
-
   reset(): void {
     this.inFlightSessionMemoryExtractions.clear();
-    this.inFlightCharacterReflections.clear();
-    this.characterReflectionCheckpoints.clear();
-  }
-
-  async runCharacterReflection(
-    session: Session,
-    options: { triggerReason: CharacterReflectionTriggerReason },
-  ): Promise<void> {
-    if (this.inFlightCharacterReflections.has(session.id)) {
-      return;
-    }
-
-    const latestSession = (await this.deps.getSession(session.id)) ?? session;
-    if (this.deps.isSessionRunInFlight(latestSession.id) || this.deps.isRunningSession(latestSession)) {
-      return;
-    }
-
-    const appSettings = this.deps.getAppSettings();
-    const checkpoint = this.characterReflectionCheckpoints.get(latestSession.id) ?? null;
-    const currentSnapshot = buildCharacterReflectionContextSnapshot(latestSession);
-    const triggerSettings = getCharacterReflectionTriggerSettings(appSettings);
-    if (!shouldTriggerCharacterReflection(currentSnapshot, checkpoint, options.triggerReason, triggerSettings)) {
-      return;
-    }
-
-    const character = await this.deps.resolveSessionCharacter(latestSession);
-    if (!character) {
-      return;
-    }
-
-    if (!appSettings.memoryGenerationEnabled) {
-      return;
-    }
-    if (!getProviderAppSettings(appSettings, latestSession.provider).enabled) {
-      return;
-    }
-
-    const providerAdapter = this.deps.getProviderBackgroundAdapter(latestSession.provider);
-    const sessionMemory = this.deps.ensureSessionMemory(latestSession);
-    const characterMemoryEntries = this.deps.resolveCharacterMemoryEntriesForReflection(latestSession);
-    const reflectionSettings = getCharacterReflectionSettings(appSettings, latestSession.provider);
-    const prompt = buildCharacterReflectionPrompt({
-      session: latestSession,
-      sessionMemory,
-      character,
-      characterMemoryEntries,
-      triggerReason: options.triggerReason,
-    });
-    const logicalPrompt = buildCharacterReflectionLogicalPrompt(prompt);
-    const transportPayload = buildCharacterReflectionTransportPayload(
-      latestSession.provider,
-      reflectionSettings,
-      options.triggerReason,
-    );
-    const runningAuditLog = await this.deps.createAuditLog({
-      sessionId: latestSession.id,
-      createdAt: new Date().toISOString(),
-      phase: "background-running",
-      provider: latestSession.provider,
-      model: reflectionSettings.model,
-      reasoningEffort: reflectionSettings.reasoningEffort,
-      approvalMode: latestSession.approvalMode,
-      threadId: latestSession.threadId,
-      logicalPrompt,
-      transportPayload,
-      assistantText: "",
-      operations: [],
-      rawItemsJson: "[]",
-      usage: null,
-      errorMessage: "",
-    });
-
-    this.inFlightCharacterReflections.add(latestSession.id);
-    if (options.triggerReason !== "session-start") {
-      this.deps.setSessionBackgroundActivity(latestSession.id, "character-memory-generation", {
-        sessionId: latestSession.id,
-        kind: "character-memory-generation",
-        status: "running",
-        title: "CharacterMemory",
-        summary: "Character Memory を整理しています。",
-        details: buildCharacterMemoryActivityDetails({
-          triggerReason: options.triggerReason,
-          model: reflectionSettings.model,
-          reasoningEffort: reflectionSettings.reasoningEffort,
-          timeoutSeconds: reflectionSettings.timeoutSeconds,
-          entries: [],
-        }),
-        errorMessage: "",
-        updatedAt: new Date().toISOString(),
-      });
-    }
-    this.deps.setSessionBackgroundActivity(latestSession.id, "monologue", {
-      sessionId: latestSession.id,
-      kind: "monologue",
-      status: "running",
-      title: "Monologue",
-      summary: options.triggerReason === "session-start"
-        ? "SessionStart の独り言を生成しています。"
-        : "独り言と Character Memory を整理しています。",
-      details: buildBackgroundActivityMetadataLines({
-        triggerReason: options.triggerReason,
-        model: reflectionSettings.model,
-        reasoningEffort: reflectionSettings.reasoningEffort,
-        timeoutSeconds: reflectionSettings.timeoutSeconds,
-      }).join("\n"),
-      errorMessage: "",
-      updatedAt: new Date().toISOString(),
-    });
-
-    try {
-      const reflectionResult = await providerAdapter.runCharacterReflection({
-        session: latestSession,
-        sessionMemory,
-        character,
-        characterMemoryEntries,
-        appSettings,
-        model: reflectionSettings.model,
-        reasoningEffort: reflectionSettings.reasoningEffort,
-        timeoutMs: reflectionSettings.timeoutSeconds * 1000,
-        triggerReason: options.triggerReason,
-        prompt,
-      });
-
-      if (!reflectionResult.output) {
-        throw new Error("Character reflection の JSON parse に失敗したよ。");
-      }
-
-      const memoryEntries = reflectionResult.output.memoryDelta?.entries ?? [];
-      const monologue = reflectionResult.output.monologue;
-      const completedAt = new Date().toISOString();
-      const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
-      await this.deps.updateAuditLog(runningAuditLog.id, {
-        sessionId: latestSession.id,
-        createdAt: runningAuditLog.createdAt,
-        phase: "background-completed",
-        provider: latestSession.provider,
-        model: reflectionSettings.model,
-        reasoningEffort: reflectionSettings.reasoningEffort,
-        approvalMode: latestSession.approvalMode,
-        threadId: reflectionResult.threadId ?? latestSession.threadId,
-        logicalPrompt,
-        transportPayload: appendTransportPayloadFields(
-          appendQuotaTelemetryToTransportPayload(transportPayload, reflectionResult.providerQuotaTelemetry),
-          [
-            { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
-            { label: "characterMemoryReferenced", value: String(characterMemoryEntries.length) },
-            { label: "characterMemorySaved", value: String(options.triggerReason === "session-start" ? 0 : memoryEntries.length) },
-            { label: "monologueUpdated", value: monologue ? "true" : "false" },
-          ],
-        ),
-        assistantText: reflectionResult.rawText,
-        operations: [],
-        rawItemsJson: reflectionResult.rawItemsJson,
-        usage: reflectionResult.usage,
-        errorMessage: "",
-      });
-
-      if (characterMemoryEntries.length > 0) {
-        this.deps.markCharacterMemoryEntriesUsed(characterMemoryEntries.map((entry) => entry.id));
-      }
-
-      const savedCount = options.triggerReason === "session-start" || !hasCharacterMemoryDeltaContent(reflectionResult.output.memoryDelta)
-        ? 0
-        : this.deps.saveCharacterMemoryDelta(latestSession, memoryEntries);
-      if (monologue) {
-        await this.deps.appendMonologueToSession((await this.deps.getSession(latestSession.id)) ?? latestSession, monologue);
-      }
-
-      this.characterReflectionCheckpoints.set(latestSession.id, {
-        ...currentSnapshot,
-        reflectedAt: new Date().toISOString(),
-      });
-      if (options.triggerReason !== "session-start") {
-        this.deps.setSessionBackgroundActivity(latestSession.id, "character-memory-generation", {
-          sessionId: latestSession.id,
-          kind: "character-memory-generation",
-          status: "completed",
-          title: "CharacterMemory",
-          summary: savedCount > 0 ? `Character Memory を更新しました: ${savedCount}件` : "更新は不要でした。",
-          details: buildCharacterMemoryActivityDetails({
-            triggerReason: options.triggerReason,
-            model: reflectionSettings.model,
-            reasoningEffort: reflectionSettings.reasoningEffort,
-            timeoutSeconds: reflectionSettings.timeoutSeconds,
-            entries: savedCount > 0 ? memoryEntries : [],
-            monologueUpdated: !!monologue,
-          }),
-          errorMessage: "",
-          updatedAt: new Date().toISOString(),
-        });
-      }
-      this.deps.setSessionBackgroundActivity(latestSession.id, "monologue", {
-        sessionId: latestSession.id,
-        kind: "monologue",
-        status: "completed",
-        title: "Monologue",
-        summary: buildMonologueSummary(monologue),
-        details: [
-          ...buildBackgroundActivityMetadataLines({
-            triggerReason: options.triggerReason,
-            model: reflectionSettings.model,
-            reasoningEffort: reflectionSettings.reasoningEffort,
-            timeoutSeconds: reflectionSettings.timeoutSeconds,
-          }),
-          ...(savedCount > 0 ? ["", `characterMemory: ${savedCount}件更新`] : []),
-        ].join("\n"),
-        errorMessage: "",
-        updatedAt: new Date().toISOString(),
-      });
-    } catch (error) {
-      const completedAt = new Date().toISOString();
-      const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
-      if (options.triggerReason !== "session-start") {
-        this.deps.setSessionBackgroundActivity(latestSession.id, "character-memory-generation", {
-          sessionId: latestSession.id,
-          kind: "character-memory-generation",
-          status: isCanceledRunError(error) ? "canceled" : "failed",
-          title: "CharacterMemory",
-          summary: isCanceledRunError(error) ? "Character Memory 更新はキャンセルされました。" : "Character Memory 更新に失敗しました。",
-          details: buildCharacterMemoryActivityDetails({
-            triggerReason: options.triggerReason,
-            model: reflectionSettings.model,
-            reasoningEffort: reflectionSettings.reasoningEffort,
-            timeoutSeconds: reflectionSettings.timeoutSeconds,
-            entries: [],
-          }),
-          errorMessage: error instanceof Error ? error.message : String(error),
-          updatedAt: new Date().toISOString(),
-        });
-      }
-      await this.deps.updateAuditLog(runningAuditLog.id, {
-        sessionId: latestSession.id,
-        createdAt: runningAuditLog.createdAt,
-        phase: isCanceledRunError(error) ? "background-canceled" : "background-failed",
-        provider: latestSession.provider,
-        model: reflectionSettings.model,
-        reasoningEffort: reflectionSettings.reasoningEffort,
-        approvalMode: latestSession.approvalMode,
-        threadId: latestSession.threadId,
-        logicalPrompt,
-        transportPayload: appendTransportPayloadFields(transportPayload, [
-          { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
-          { label: "characterMemoryReferenced", value: String(characterMemoryEntries.length) },
-        ]),
-        assistantText: "",
-        operations: [],
-        rawItemsJson: runningAuditLog.rawItemsJson,
-        usage: null,
-        errorMessage: error instanceof Error ? error.message : String(error),
-      });
-      this.deps.setSessionBackgroundActivity(latestSession.id, "monologue", {
-        sessionId: latestSession.id,
-        kind: "monologue",
-        status: isCanceledRunError(error) ? "canceled" : "failed",
-        title: "Monologue",
-        summary: isCanceledRunError(error) ? "独り言生成はキャンセルされました。" : "独り言生成に失敗しました。",
-        details: buildBackgroundActivityMetadataLines({
-          triggerReason: options.triggerReason,
-          model: reflectionSettings.model,
-          reasoningEffort: reflectionSettings.reasoningEffort,
-          timeoutSeconds: reflectionSettings.timeoutSeconds,
-        }).join("\n"),
-        errorMessage: error instanceof Error ? error.message : String(error),
-        updatedAt: new Date().toISOString(),
-      });
-      console.error("character reflection failed", {
-        sessionId: latestSession.id,
-        provider: latestSession.provider,
-        error,
-      });
-    } finally {
-      this.inFlightCharacterReflections.delete(latestSession.id);
-    }
   }
 
   async runSessionMemoryExtraction(

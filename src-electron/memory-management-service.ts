@@ -2,7 +2,6 @@ import type { SessionSummary } from "../src/app-state.js";
 import {
   cloneMemoryManagementSnapshot,
   type ManagedMateProfileItem,
-  type ManagedCharacterMemoryGroup,
   type ManagedProjectMemoryGroup,
   type ManagedSessionMemoryItem,
   type MemoryManagementDomain,
@@ -11,7 +10,7 @@ import {
   type MemoryManagementPageResult,
   type MemoryManagementSnapshot,
 } from "../src/memory/memory-management-state.js";
-import type { CharacterMemoryEntry, CharacterScope, ProjectMemoryEntry, ProjectScope, SessionMemory } from "../src/memory/memory-state.js";
+import type { ProjectMemoryEntry, ProjectScope, SessionMemory } from "../src/memory/memory-state.js";
 
 const DEFAULT_MEMORY_MANAGEMENT_PAGE_LIMIT = 50;
 const MAX_MEMORY_MANAGEMENT_PAGE_LIMIT = 200;
@@ -25,10 +24,6 @@ type MemoryManagementServiceDeps = {
   listProjectMemoryEntries(projectScopeId: string): ProjectMemoryEntry[];
   listProjectMemoryPage?(request: MemoryManagementPageRequest): { groups: ManagedProjectMemoryGroup[]; total: number };
   deleteProjectMemoryEntry(entryId: string): void;
-  listCharacterScopes(): CharacterScope[];
-  listCharacterMemoryEntries(characterScopeId: string): CharacterMemoryEntry[];
-  listCharacterMemoryPage?(request: MemoryManagementPageRequest): { groups: ManagedCharacterMemoryGroup[]; total: number };
-  deleteCharacterMemoryEntry(entryId: string): void;
   listMateProfileItems?: () => ManagedMateProfileItem[];
   listMateProfileItemPage?:
     (request: MemoryManagementPageRequest) => { items: ManagedMateProfileItem[]; total: number };
@@ -65,18 +60,11 @@ export class MemoryManagementService {
       }))
       .filter((group) => group.entries.length > 0);
 
-    const characterMemories = this.deps.listCharacterScopes()
-      .map((scope): ManagedCharacterMemoryGroup => ({
-        scope,
-        entries: this.deps.listCharacterMemoryEntries(scope.id),
-      }))
-      .filter((group) => group.entries.length > 0);
     const mateProfileItems = this.deps.listMateProfileItems?.() ?? [];
 
     return cloneMemoryManagementSnapshot({
       sessionMemories,
       projectMemories,
-      characterMemories,
       mateProfileItems,
     });
   }
@@ -87,25 +75,21 @@ export class MemoryManagementService {
     const limit = normalizeLimit(request.limit);
     const includeSession = domain === "all" || domain === "session";
     const includeProject = domain === "all" || domain === "project";
-    const includeCharacter = domain === "all" || domain === "character";
     const includeMateProfile = domain === "all" || domain === "mate_profile";
 
     const sessionPage = includeSession ? this.getSessionPage(request, cursor, limit) : emptyPage(0);
     const projectPage = includeProject ? this.getProjectPage(request, cursor, limit) : emptyGroupedPage([]);
-    const characterPage = includeCharacter ? this.getCharacterPage(request, cursor, limit) : emptyGroupedPage([]);
     const mateProfilePage = includeMateProfile ? this.getMateProfilePage(request, cursor, limit) : emptyPage(0);
 
     return {
       snapshot: cloneMemoryManagementSnapshot({
         sessionMemories: sessionPage.items,
         projectMemories: projectPage.groups,
-        characterMemories: characterPage.groups,
         mateProfileItems: mateProfilePage.items,
       }),
       pages: {
         session: sessionPage.page,
         project: projectPage.page,
-        character: characterPage.page,
         mate_profile: mateProfilePage.page,
       },
     };
@@ -145,23 +129,6 @@ export class MemoryManagementService {
     return sliceGroupedEntries(groups, cursor, limit, request);
   }
 
-  private getCharacterPage(
-    request: MemoryManagementPageRequest,
-    cursor: number,
-    limit: number,
-  ): { groups: ManagedCharacterMemoryGroup[]; page: MemoryManagementDomainPageInfo } {
-    const storagePage = this.deps.listCharacterMemoryPage?.({ ...request, cursor, limit });
-    if (storagePage) {
-      return {
-        groups: storagePage.groups,
-        page: buildPageInfo(cursor, limit, storagePage.total),
-      };
-    }
-
-    const groups = filterCharacterMemories(this.getSnapshot().characterMemories, request);
-    return sliceGroupedEntries(groups, cursor, limit, request);
-  }
-
   private getMateProfilePage(
     request: MemoryManagementPageRequest,
     cursor: number,
@@ -187,17 +154,13 @@ export class MemoryManagementService {
     this.deps.deleteProjectMemoryEntry(entryId);
   }
 
-  deleteCharacterMemoryEntry(entryId: string): void {
-    this.deps.deleteCharacterMemoryEntry(entryId);
-  }
-
   async forgetMateProfileItem(itemId: string): Promise<void> {
     await this.deps.forgetMateProfileItem?.(itemId);
   }
 }
 
 function normalizeDomain(domain: MemoryManagementPageRequest["domain"]): MemoryManagementDomain {
-  return domain === "session" || domain === "project" || domain === "character" || domain === "mate_profile"
+  return domain === "session" || domain === "project" || domain === "mate_profile"
     ? domain
     : "all";
 }
@@ -316,33 +279,6 @@ function filterProjectMemories(
     .filter((group) => group.entries.length > 0);
 }
 
-function filterCharacterMemories(
-  groups: ManagedCharacterMemoryGroup[],
-  request: MemoryManagementPageRequest,
-): ManagedCharacterMemoryGroup[] {
-  const searchText = normalizeSearchText(request.searchText);
-  const category = request.characterCategory;
-  return groups
-    .map((group): ManagedCharacterMemoryGroup => ({
-      scope: group.scope,
-      entries: group.entries.filter((entry) => {
-        if (category && category !== "all" && entry.category !== category) {
-          return false;
-        }
-        return matchesSearch([
-          group.scope.displayName,
-          group.scope.characterId,
-          entry.title,
-          entry.detail,
-          entry.category,
-          ...entry.keywords,
-          ...entry.evidence,
-        ], searchText);
-      }),
-  }))
-    .filter((group) => group.entries.length > 0);
-}
-
 function filterMateProfileItems(
   items: ManagedMateProfileItem[],
   request: MemoryManagementPageRequest,
@@ -400,7 +336,7 @@ function emptyGroupedPage<TGroup extends { entries: unknown[] }>(
   };
 }
 
-function sliceGroupedEntries<TGroup extends ManagedProjectMemoryGroup | ManagedCharacterMemoryGroup>(
+function sliceGroupedEntries<TGroup extends ManagedProjectMemoryGroup>(
   groups: TGroup[],
   cursor: number,
   limit: number,

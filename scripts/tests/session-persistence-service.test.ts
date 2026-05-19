@@ -603,8 +603,6 @@ describe("SessionPersistenceService", () => {
     const storedSessions: Session[] = [sessionA, sessionB];
     const clearedTelemetry: string[] = [];
     const clearedBackground: string[] = [];
-    const clearedCheckpoints: string[] = [];
-    const clearedInflight: string[] = [];
     const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
     const broadcastedSessionIds: string[][] = [];
     const replaceOrder: string[] = [];
@@ -650,12 +648,6 @@ describe("SessionPersistenceService", () => {
       clearSessionBackgroundActivities(sessionId) {
         clearedBackground.push(sessionId);
       },
-      clearCharacterReflectionCheckpoint(sessionId) {
-        clearedCheckpoints.push(sessionId);
-      },
-      clearInFlightCharacterReflection(sessionId) {
-        clearedInflight.push(sessionId);
-      },
       invalidateProviderSessionThread(providerId, sessionId) {
         invalidated.push({ providerId, sessionId });
       },
@@ -672,8 +664,6 @@ describe("SessionPersistenceService", () => {
     assert.equal(replaced.length, 1);
     assert.deepEqual(clearedTelemetry.sort(), ["session-a", "session-b"]);
     assert.deepEqual(clearedBackground, ["session-b"]);
-    assert.deepEqual(clearedCheckpoints, ["session-b"]);
-    assert.deepEqual(clearedInflight, ["session-b"]);
     assert.deepEqual(invalidated, [{ providerId: "copilot", sessionId: "session-a" }]);
     assert.deepEqual(broadcastedSessionIds, [["session-a", "session-b"]]);
     assert.deepEqual(replaceOrder, ["replaceStoredSessions:start", "replaceStoredSessions:end", "setSessions"]);

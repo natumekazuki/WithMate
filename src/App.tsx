@@ -16,7 +16,6 @@ import {
   type SessionContextTelemetry,
 } from "./app-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
-import type { CharacterUpdateMemoryExtract } from "./character-update-state.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
 import {
   createDefaultAppSettings,
@@ -118,11 +117,6 @@ type ProviderOwnedQuotaTelemetry = {
 type SessionOwnedContextTelemetry = {
   ownerSessionId: string | null;
   telemetry: SessionContextTelemetry | null;
-};
-
-type CharacterOwnedMemoryExtract = {
-  ownerCharacterId: string | null;
-  extract: CharacterUpdateMemoryExtract | null;
 };
 
 const EMPTY_COMPOSER_PREVIEW: ComposerPreview = { attachments: [], errors: [] };
@@ -415,14 +409,7 @@ export default function AgentSessionWindowApp() {
     telemetry: null,
   });
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
-  const [activeCharacterUpdatePaneTab, setActiveCharacterUpdatePaneTab] = useState<"latest-command" | "memory-extract">("latest-command");
-  const [characterUpdateMemoryExtractState, setCharacterUpdateMemoryExtractState] = useState<CharacterOwnedMemoryExtract>({
-    ownerCharacterId: null,
-    extract: null,
-  });
-  const [isCharacterUpdateMemoryExtractLoading, setIsCharacterUpdateMemoryExtractLoading] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
-  const [resolvedCharacter, setResolvedCharacter] = useState<CharacterProfile | null | undefined>(undefined);
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>({ attachments: [], errors: [] });
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [composerCaret, setComposerCaret] = useState(0);
@@ -632,21 +619,19 @@ export default function AgentSessionWindowApp() {
     () =>
       selectedSession
         ? {
-            id: resolvedCharacter?.id ?? selectedSession.characterId,
-            name:
-              resolvedCharacter?.name?.trim() || selectedSession.character.trim() || DEFAULT_SESSION_RUNTIME_NAME,
-            iconPath: resolvedCharacter?.iconPath ?? selectedSession.characterIconPath,
-            description: resolvedCharacter?.description ?? "",
-            roleMarkdown: resolvedCharacter?.roleMarkdown ?? "",
-            notesMarkdown: resolvedCharacter?.notesMarkdown ?? "",
-            updatedAt: resolvedCharacter?.updatedAt ?? selectedSession.updatedAt,
-            themeColors: resolvedCharacter?.themeColors ?? selectedSession.characterThemeColors,
-            sessionCopy: resolvedCharacter?.sessionCopy ?? DEFAULT_CHARACTER_SESSION_COPY,
+            id: selectedSession.characterId,
+            name: selectedSession.character.trim() || DEFAULT_SESSION_RUNTIME_NAME,
+            iconPath: selectedSession.characterIconPath,
+            description: "",
+            roleMarkdown: "",
+            notesMarkdown: "",
+            updatedAt: selectedSession.updatedAt,
+            themeColors: selectedSession.characterThemeColors,
+            sessionCopy: DEFAULT_CHARACTER_SESSION_COPY,
           }
         : null,
-    [resolvedCharacter, selectedSession],
+    [selectedSession],
   );
-  const isCharacterUpdateSession = selectedSession?.sessionKind === "character-update";
   const isSelectedSessionReadOnly = selectedSession ? isLegacyReadOnlySession(selectedSession) : false;
   const sessionThemeStyle = useMemo(
     () => (selectedSession ? buildCharacterThemeStyle(selectedSession.characterThemeColors) : undefined),
@@ -656,27 +641,7 @@ export default function AgentSessionWindowApp() {
     () => (selectedDiff ? buildCharacterThemeStyle(selectedDiff.themeColors) : {}),
     [selectedDiff],
   );
-  const isSelectedCharacterMissing = useMemo(
-    () => !!selectedSession && !!selectedSession.characterId && selectedSession.characterId !== "current" && resolvedCharacter === null,
-    [resolvedCharacter, selectedSession],
-  );
-  const isCharacterResolutionPending = useMemo(
-    () => !!selectedSession && !!selectedSession.characterId && resolvedCharacter === undefined,
-    [resolvedCharacter, selectedSession],
-  );
-  const selectedSessionCopy = useMemo(
-    () => resolvedCharacter?.sessionCopy ?? DEFAULT_CHARACTER_SESSION_COPY,
-    [resolvedCharacter],
-  );
-  const selectedCharacterUpdateMemoryExtract = useMemo(
-    () => (
-      selectedSession?.characterId
-      && characterUpdateMemoryExtractState.ownerCharacterId === selectedSession.characterId
-        ? characterUpdateMemoryExtractState.extract
-        : null
-    ),
-    [characterUpdateMemoryExtractState.extract, characterUpdateMemoryExtractState.ownerCharacterId, selectedSession?.characterId],
-  );
+  const selectedSessionCopy = DEFAULT_CHARACTER_SESSION_COPY;
   const isSelectedProviderEnabled = useMemo(
     () => !!selectedSession && getProviderAppSettings(appSettings, selectedSession.provider).enabled,
     [appSettings, selectedSession],
@@ -690,20 +655,12 @@ export default function AgentSessionWindowApp() {
       return "この session は旧バージョンから移行された閲覧専用だよ。";
     }
 
-    if (isCharacterResolutionPending) {
-      return "この session の Mate 状態を確認しているよ。少し待ってね。";
-    }
-
-    if (isSelectedCharacterMissing) {
-      return "この session は元の Mate 情報が見つからないため、過去ログの閲覧のみできるよ。";
-    }
-
     if (!isSelectedProviderEnabled) {
       return "この provider は Settings の Coding Agent Providers で無効になっているよ。Home の Settings で有効化してね。";
     }
 
     return "";
-  }, [isCharacterResolutionPending, isSelectedCharacterMissing, isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession]);
+  }, [isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession]);
   const composerBlockedReason = sessionExecutionBlockedReason;
 
   useEffect(() => {
@@ -773,43 +730,6 @@ export default function AgentSessionWindowApp() {
   }, [appSettings, selectedSession]);
 
   useEffect(() => {
-    let active = true;
-
-    if (!withmateApi || !selectedSession?.characterId || !isCharacterUpdateSession) {
-      setCharacterUpdateMemoryExtractState({ ownerCharacterId: null, extract: null });
-      setIsCharacterUpdateMemoryExtractLoading(false);
-      return () => {
-        active = false;
-      };
-    }
-
-    setIsCharacterUpdateMemoryExtractLoading(true);
-    void withmateApi.extractCharacterUpdateMemory(selectedSession.characterId).then((extract) => {
-      if (!active) {
-        return;
-      }
-      setCharacterUpdateMemoryExtractState({
-        ownerCharacterId: selectedSession.characterId,
-        extract,
-      });
-      setIsCharacterUpdateMemoryExtractLoading(false);
-    }).catch(() => {
-      if (!active) {
-        return;
-      }
-      setCharacterUpdateMemoryExtractState({
-        ownerCharacterId: selectedSession.characterId,
-        extract: null,
-      });
-      setIsCharacterUpdateMemoryExtractLoading(false);
-    });
-
-    return () => {
-      active = false;
-    };
-  }, [isCharacterUpdateSession, selectedSession?.characterId, withmateApi]);
-
-  useEffect(() => {
     setIsAgentPickerOpen(false);
     setIsSkillPickerOpen(false);
   }, [selectedSessionId]);
@@ -820,12 +740,6 @@ export default function AgentSessionWindowApp() {
       setIsSkillPickerOpen(false);
     }
   }, [selectedSession?.runState]);
-
-  useEffect(() => {
-    if (isCharacterUpdateSession && selectedSession?.runState === "running") {
-      setActiveCharacterUpdatePaneTab("latest-command");
-    }
-  }, [isCharacterUpdateSession, selectedSession?.runState]);
 
   useEffect(() => {
     let active = true;
@@ -880,35 +794,6 @@ export default function AgentSessionWindowApp() {
       unsubscribe();
     };
   }, []);
-
-  useEffect(() => {
-    let active = true;
-    if (!withmateApi || !selectedSession?.characterId) {
-      setResolvedCharacter(selectedSession ? null : undefined);
-      return () => {
-        active = false;
-      };
-    }
-
-    setResolvedCharacter(undefined);
-    const refreshCharacterResolution = () => {
-      void withmateApi.getCharacter(selectedSession.characterId).then((character) => {
-        if (active) {
-          setResolvedCharacter(character);
-        }
-      });
-    };
-
-    refreshCharacterResolution();
-    const unsubscribe = withmateApi.subscribeCharacters(() => {
-      refreshCharacterResolution();
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [selectedSession?.characterId, selectedSession?.id]);
 
   const displayedMessages: Message[] = selectedSession ? selectedSession.messages : [];
   const displayedMessagesScrollSignature = useMemo(
@@ -1385,12 +1270,12 @@ export default function AgentSessionWindowApp() {
   const isElicitationRequestPending = !!liveElicitationRequest;
   const hasLiveRunAssistantText = liveRunAssistantText.length > 0;
   const pendingIndicatorCharacterName = useMemo(() => {
-    const candidateNames = [selectedSessionCharacter?.name, resolvedCharacter?.name]
+    const candidateNames = [selectedSessionCharacter?.name]
       .map((name) => name?.trim() ?? "")
       .filter(Boolean);
 
     return candidateNames[0] ?? "";
-  }, [resolvedCharacter?.name, selectedSessionCharacter?.name]);
+  }, [selectedSessionCharacter?.name]);
   const selectedContextEmptyText = useMemo(
     () =>
       renderCharacterSessionCopy(
@@ -2614,30 +2499,6 @@ export default function AgentSessionWindowApp() {
     setActiveContextPaneTab((current) => cycleContextPaneTab(current, direction, availableContextPaneTabs));
   };
 
-  const handleRefreshCharacterUpdateMemoryExtract = async () => {
-    if (!withmateApi || !selectedSession?.characterId || !isCharacterUpdateSession || isCharacterUpdateMemoryExtractLoading) {
-      return;
-    }
-
-    setIsCharacterUpdateMemoryExtractLoading(true);
-    try {
-      const extract = await withmateApi.extractCharacterUpdateMemory(selectedSession.characterId);
-      setCharacterUpdateMemoryExtractState({
-        ownerCharacterId: selectedSession.characterId,
-        extract,
-      });
-    } finally {
-      setIsCharacterUpdateMemoryExtractLoading(false);
-    }
-  };
-  const handleCopyCharacterUpdateMemoryExtract = async () => {
-    if (!selectedCharacterUpdateMemoryExtract?.text) {
-      return;
-    }
-
-    await navigator.clipboard.writeText(selectedCharacterUpdateMemoryExtract.text);
-  };
-
   if (!desktopRuntime) {
     return <ChatWindowStatusScreen message="Session Window は Electron から開いてね。" />;
   }
@@ -2661,7 +2522,6 @@ export default function AgentSessionWindowApp() {
         titleDraft,
         isSelectedSessionRunning,
         isSelectedSessionReadOnly,
-        isCharacterUpdateSession,
         messageListRef,
         pendingRunIndicatorAnnouncement,
         pendingRunIndicatorText,
@@ -2708,11 +2568,8 @@ export default function AgentSessionWindowApp() {
         attachmentCount: composerPreview.attachments.length,
         isActionDockExpanded,
         isContextRailResizing,
-        activeCharacterUpdatePaneTab,
         latestCommandView,
         runningDetailsEntries,
-        selectedCharacterUpdateMemoryExtract,
-        isCharacterUpdateMemoryExtractLoading,
         activeContextPaneTab,
         availableContextPaneTabs,
         contextPaneProjection,
@@ -2826,9 +2683,6 @@ export default function AgentSessionWindowApp() {
         onChangeModel: (value) => void handleChangeModel(value),
         onChangeReasoningEffort: (value) => void handleChangeReasoningEffort(value as Session["reasoningEffort"]),
         onStartContextRailResize: handleStartContextRailResize,
-        onSelectCharacterUpdatePaneTab: setActiveCharacterUpdatePaneTab,
-        onRefreshCharacterUpdateMemoryExtract: () => void handleRefreshCharacterUpdateMemoryExtract(),
-        onCopyCharacterUpdateMemoryExtract: () => void handleCopyCharacterUpdateMemoryExtract(),
         onCycleContextPaneTab: handleCycleContextPaneTab,
         onOpenCompanionReview: (sessionId) => void withmateApi?.openCompanionReviewWindow(sessionId),
         onCloseDiff: () => setSelectedDiff(null),

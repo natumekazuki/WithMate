@@ -86,7 +86,6 @@ test("MainBootstrapService は起動シーケンスを順に実行する", async
     "cleanupStaleGrowthApplyRuns",
     "recoverInterruptedSessions:start",
     "recoverInterruptedSessions:end",
-    "refreshCharactersFromStorage",
     "registerIpcHandlers",
     "createHomeWindow",
     "broadcastModelCatalog:1",

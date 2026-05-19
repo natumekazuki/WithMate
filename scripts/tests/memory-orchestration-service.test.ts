@@ -5,8 +5,6 @@ import {
   buildNewSession,
   createDefaultSessionMemory,
   type AuditLogEntry,
-  type CharacterMemoryEntry,
-  type CharacterProfile,
   type Session,
   type SessionBackgroundActivityState,
   type SessionMemory,
@@ -33,32 +31,6 @@ function createSession(overrides?: Partial<Session>): Session {
   };
 }
 
-function createCharacter(): CharacterProfile {
-  return {
-    id: "char-a",
-    name: "A",
-    iconPath: "",
-    roleMarkdown: "落ち着いて伴走する。",
-    description: "",
-    themeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-    sessionCopy: {
-      pendingApproval: [],
-      pendingWorking: [],
-      pendingResponding: [],
-      pendingPreparing: [],
-      retryInterruptedTitle: [],
-      retryFailedTitle: [],
-      retryCanceledTitle: [],
-      latestCommandWaiting: [],
-      latestCommandEmpty: [],
-      changedFilesEmpty: [],
-      contextEmpty: [],
-    },
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-}
-
 function createAuditLogBase(input: Omit<AuditLogEntry, "id">): AuditLogEntry {
   return {
     id: 1,
@@ -66,27 +38,10 @@ function createAuditLogBase(input: Omit<AuditLogEntry, "id">): AuditLogEntry {
   };
 }
 
-function createMemoryEntry(): CharacterMemoryEntry {
-  return {
-    id: "entry-1",
-    characterScopeId: "scope-1",
-    sourceSessionId: "session-1",
-    category: "relationship",
-    title: "前提",
-    detail: "既存の関係性",
-    keywords: ["関係"],
-    evidence: [],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    lastUsedAt: null,
-  };
-}
-
 describe("MemoryOrchestrationService", () => {
-  it("memory generation が OFF の時は Session Memory extraction も Character reflection も走らない", async () => {
+  it("memory generation が OFF の時は Session Memory extraction が走らない", async () => {
     const session = createSession({ id: "memory-disabled" });
     let extractionCalled = 0;
-    let reflectionCalled = 0;
     let auditCreated = 0;
 
     const providerAdapter: ProviderBackgroundAdapter = {
@@ -103,8 +58,7 @@ describe("MemoryOrchestrationService", () => {
         extractionCalled += 1;
         throw new Error("should not run");
       },
-      async runCharacterReflection() {
-        reflectionCalled += 1;
+      async runBackgroundStructuredPrompt() {
         throw new Error("should not run");
       },
     };
@@ -119,9 +73,6 @@ describe("MemoryOrchestrationService", () => {
       isRunningSession() {
         return false;
       },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
       getAppSettings() {
         return normalizeAppSettings({ memoryGenerationEnabled: false });
       },
@@ -134,16 +85,6 @@ describe("MemoryOrchestrationService", () => {
       upsertSessionMemory() {},
       promoteSessionMemoryDeltaToProjectMemory() {
         return 0;
-      },
-      resolveCharacterMemoryEntriesForReflection() {
-        return [createMemoryEntry()];
-      },
-      markCharacterMemoryEntriesUsed() {},
-      saveCharacterMemoryDelta() {
-        return 0;
-      },
-      appendMonologueToSession(nextSession) {
-        return nextSession;
       },
       createAuditLog(input) {
         auditCreated += 1;
@@ -158,10 +99,8 @@ describe("MemoryOrchestrationService", () => {
       { inputTokens: 1, cachedInputTokens: 0, outputTokens: 400 },
       { triggerReason: "outputTokensThreshold" },
     );
-    await service.runCharacterReflection(session, { triggerReason: "session-start" });
 
     assert.equal(extractionCalled, 0);
-    assert.equal(reflectionCalled, 0);
     assert.equal(auditCreated, 0);
   });
 
@@ -212,6 +151,9 @@ describe("MemoryOrchestrationService", () => {
       async runCharacterReflection() {
         throw new Error("not used");
       },
+      async runBackgroundStructuredPrompt() {
+        throw new Error("not used");
+      },
     };
 
     const service = new MemoryOrchestrationService({
@@ -223,9 +165,6 @@ describe("MemoryOrchestrationService", () => {
       },
       isRunningSession() {
         return false;
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
       },
       getAppSettings() {
         return normalizeAppSettings({});
@@ -242,16 +181,6 @@ describe("MemoryOrchestrationService", () => {
       promoteSessionMemoryDeltaToProjectMemory(nextSession, delta) {
         promoted.push({ sessionId: nextSession.id, goal: delta.goal });
         return 1;
-      },
-      resolveCharacterMemoryEntriesForReflection() {
-        return [];
-      },
-      markCharacterMemoryEntriesUsed() {},
-      saveCharacterMemoryDelta() {
-        return 0;
-      },
-      appendMonologueToSession(nextSession) {
-        return nextSession;
       },
       createAuditLog(input) {
         return createAuditLogBase(input);
@@ -293,223 +222,5 @@ describe("MemoryOrchestrationService", () => {
     assert.match(activities.at(-1)?.details ?? "", /updated nextActions:/);
     assert.match(activities.at(-1)?.details ?? "", /次をやる/);
     assert.match(activities.at(-1)?.details ?? "", /projectMemoryPromotions: 1/);
-  });
-
-  it("Character reflection の session-start は monologue のみを保存する", async () => {
-    const session = createSession({ id: "session-start" });
-    const auditUpdates: AuditLogEntry[] = [];
-    const activities: SessionBackgroundActivityState[] = [];
-    const appendedMonologues: string[] = [];
-    let savedCharacterCount = 0;
-    let observedTimeoutMs = 0;
-
-    const providerAdapter: ProviderBackgroundAdapter = {
-      getBackgroundStructuredPromptPolicy() {
-        return {
-          allowsFileWrite: false,
-          allowsShellWrite: false,
-          allowsToolPermissionRequests: false,
-          structuredOutputOnly: true,
-          structuredOutputMode: "schema_submit_tool",
-        };
-      },
-      async extractSessionMemoryDelta() {
-        throw new Error("not used");
-      },
-      async runCharacterReflection(input) {
-        observedTimeoutMs = input.timeoutMs;
-        return {
-          threadId: "thread-char",
-          rawText: "{\"memoryDelta\":null,\"monologue\":{\"text\":\"今日はよろしく。\",\"mood\":\"warm\"}}",
-          output: {
-            memoryDelta: null,
-            monologue: { text: "今日はよろしく。", mood: "warm" },
-          },
-          rawItemsJson: "{\"type\":\"background-response\"}",
-          usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 80 },
-          providerQuotaTelemetry: null,
-        };
-      },
-    };
-
-    const service = new MemoryOrchestrationService({
-      getSession(sessionId) {
-        return sessionId === session.id ? session : null;
-      },
-      isSessionRunInFlight() {
-        return false;
-      },
-      isRunningSession() {
-        return false;
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      getProviderBackgroundAdapter() {
-        return providerAdapter;
-      },
-      ensureSessionMemory(current) {
-        return createDefaultSessionMemory(current);
-      },
-      upsertSessionMemory() {},
-      promoteSessionMemoryDeltaToProjectMemory() {
-        return 0;
-      },
-      resolveCharacterMemoryEntriesForReflection() {
-        return [createMemoryEntry()];
-      },
-      markCharacterMemoryEntriesUsed() {},
-      saveCharacterMemoryDelta() {
-        savedCharacterCount += 1;
-        return 1;
-      },
-      appendMonologueToSession(nextSession, monologue) {
-        appendedMonologues.push(monologue.text);
-        return nextSession;
-      },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
-      },
-      updateAuditLog(_id, entry) {
-        auditUpdates.push(entry);
-      },
-      setSessionBackgroundActivity(_sessionId, _kind, state) {
-        if (state) {
-          activities.push(state);
-        }
-      },
-    });
-
-    await service.runCharacterReflection(session, { triggerReason: "session-start" });
-
-    assert.equal(auditUpdates.at(-1)?.phase, "background-completed");
-    assert.equal(observedTimeoutMs, 180_000);
-    assert.deepEqual(appendedMonologues, ["今日はよろしく。"]);
-    assert.equal(savedCharacterCount, 0);
-    assert.equal(activities.at(-1)?.status, "completed");
-  });
-
-  it("Character reflection の context-growth は memory 保存と used mark を行う", async () => {
-    const session = createSession({ id: "session-growth" });
-    const usedEntryIds: string[][] = [];
-    const savedCharacterMemory: Array<{ sessionId: string; count: number }> = [];
-    const activities: SessionBackgroundActivityState[] = [];
-    let observedTimeoutMs = 0;
-
-    const providerAdapter: ProviderBackgroundAdapter = {
-      getBackgroundStructuredPromptPolicy() {
-        return {
-          allowsFileWrite: false,
-          allowsShellWrite: false,
-          allowsToolPermissionRequests: false,
-          structuredOutputOnly: true,
-          structuredOutputMode: "schema_submit_tool",
-        };
-      },
-      async extractSessionMemoryDelta() {
-        throw new Error("not used");
-      },
-      async runCharacterReflection(input) {
-        observedTimeoutMs = input.timeoutMs;
-        return {
-          threadId: "thread-char-growth",
-          rawText: "{\"memoryDelta\":{\"entries\":[{\"category\":\"relationship\",\"title\":\"距離感\",\"detail\":\"少し砕けた会話を好む\",\"keywords\":[\"距離感\"],\"evidence\":[\"会話\"]}]},\"monologue\":null}",
-          output: {
-            memoryDelta: {
-              entries: [
-                {
-                  category: "relationship",
-                  title: "距離感",
-                  detail: "少し砕けた会話を好む",
-                  keywords: ["距離感"],
-                  evidence: ["会話"],
-                },
-              ],
-            },
-            monologue: null,
-          },
-          rawItemsJson: "{\"type\":\"background-response\"}",
-          usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 120 },
-          providerQuotaTelemetry: null,
-        };
-      },
-    };
-
-    const service = new MemoryOrchestrationService({
-      getSession(sessionId) {
-        if (sessionId !== session.id) {
-          return null;
-        }
-        return {
-          ...session,
-          messages: [
-            ...session.messages,
-            { role: "user", text: "もう少し砕けた感じで話して" },
-            { role: "assistant", text: "わかった。少しくだけて話すね。" },
-            { role: "user", text: "そうそう、その感じ" },
-            { role: "assistant", text: "この距離感でいこう。" },
-            { role: "user", text: "助かる" },
-            { role: "assistant", text: "まかせて" },
-          ],
-        };
-      },
-      isSessionRunInFlight() {
-        return false;
-      },
-      isRunningSession() {
-        return false;
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      getProviderBackgroundAdapter() {
-        return providerAdapter;
-      },
-      ensureSessionMemory(current) {
-        return createDefaultSessionMemory(current);
-      },
-      upsertSessionMemory() {},
-      promoteSessionMemoryDeltaToProjectMemory() {
-        return 0;
-      },
-      resolveCharacterMemoryEntriesForReflection() {
-        return [createMemoryEntry()];
-      },
-      markCharacterMemoryEntriesUsed(entryIds) {
-        usedEntryIds.push(entryIds);
-      },
-      saveCharacterMemoryDelta(nextSession, entries) {
-        savedCharacterMemory.push({ sessionId: nextSession.id, count: entries.length });
-        return entries.length;
-      },
-      appendMonologueToSession(nextSession) {
-        return nextSession;
-      },
-      createAuditLog(input) {
-        return createAuditLogBase(input);
-      },
-      updateAuditLog() {},
-      setSessionBackgroundActivity(_sessionId, _kind, state) {
-        if (state) {
-          activities.push(state);
-        }
-      },
-    });
-
-    await service.runCharacterReflection(session, { triggerReason: "context-growth" });
-
-    assert.equal(observedTimeoutMs, 180_000);
-    assert.deepEqual(usedEntryIds, [["entry-1"]]);
-    assert.deepEqual(savedCharacterMemory, [{ sessionId: session.id, count: 1 }]);
-    assert.equal(activities.at(-2)?.kind, "character-memory-generation");
-    assert.equal(activities.at(-2)?.status, "completed");
-    assert.match(activities.at(-2)?.details ?? "", /updated entries:/);
-    assert.match(activities.at(-2)?.details ?? "", /\[relationship\] 距離感 \| 少し砕けた会話を好む/);
   });
 });

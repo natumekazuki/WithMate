@@ -1,6 +1,4 @@
 import {
-  cloneCharacterProfiles,
-  type CharacterProfile,
   type ComposerPreview,
   type DiscoveredCustomAgent,
   type DiscoveredSkill,
@@ -27,7 +25,6 @@ type MainQueryServiceDeps = {
   getSessionSummaries(): Awaitable<SessionSummary[]>;
   getSession(sessionId: string): Awaitable<Session | null>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
-  getCharacters(): CharacterProfile[];
   getAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
   getAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
   getAuditLogSummaryPage(sessionId: string, request?: AuditLogSummaryPageRequest | null): Awaitable<AuditLogSummaryPageResult>;
@@ -45,8 +42,6 @@ type MainQueryServiceDeps = {
   getAppSettings(): AppSettings;
   discoverSessionSkills(workspacePath: string, skillRootPath: string | null): Promise<DiscoveredSkill[]>;
   discoverSessionCustomAgents(workspacePath: string): Promise<DiscoveredCustomAgent[]>;
-  getStoredCharacter(characterId: string): Promise<CharacterProfile | null>;
-  refreshCharactersFromStorage(): Promise<CharacterProfile[]>;
   resolveComposerPreview(session: SessionSummary, userMessage: string): Promise<ComposerPreview>;
   searchWorkspaceFiles(workspacePath: string, query: string): Promise<WorkspacePathCandidate[]>;
   launchTerminalAtPath(workspacePath: string): Promise<void>;
@@ -70,10 +65,6 @@ export class MainQueryService {
 
   async listSessionSummaries(): Promise<SessionSummary[]> {
     return cloneSessionSummaries(await this.deps.getSessionSummaries());
-  }
-
-  listCharacters(): CharacterProfile[] {
-    return cloneCharacterProfiles(this.deps.getCharacters());
   }
 
   async listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]> {
@@ -155,14 +146,6 @@ export class MainQueryService {
 
     const artifact = await this.deps.getSessionMessageArtifact(sessionId, messageIndex);
     return artifact ? JSON.parse(JSON.stringify(artifact)) as MessageArtifact : null;
-  }
-
-  async getCharacter(characterId: string): Promise<CharacterProfile | null> {
-    return this.deps.getStoredCharacter(characterId);
-  }
-
-  async refreshCharactersFromStorage(): Promise<CharacterProfile[]> {
-    return this.deps.refreshCharactersFromStorage();
   }
 
   async previewComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview> {

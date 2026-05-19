@@ -5,7 +5,6 @@ import {
   buildMemoryManagementPageRequest,
   cloneMemoryManagementSnapshot,
   mergeMemoryManagementSnapshots,
-  removeCharacterMemoryEntryFromSnapshot,
   removeMateProfileItemFromSnapshot,
   removeProjectMemoryEntryFromSnapshot,
   removeSessionMemoryFromSnapshot,
@@ -133,32 +132,6 @@ function createSnapshot(): MemoryManagementSnapshot {
         ],
       },
     ],
-    characterMemories: [
-      {
-        scope: {
-          id: "character-scope-1",
-          characterId: "char-a",
-          displayName: "A",
-          createdAt: "2026-04-01T09:00:00.000Z",
-          updatedAt: "2026-04-02T10:00:00.000Z",
-        },
-        entries: [
-          {
-            id: "character-entry-1",
-            characterScopeId: "character-scope-1",
-            sourceSessionId: "session-1",
-            category: "tone",
-            title: "tone",
-            detail: "detail",
-            keywords: [],
-            evidence: [],
-            createdAt: "2026-04-01T09:00:00.000Z",
-            updatedAt: "2026-04-02T10:00:00.000Z",
-            lastUsedAt: null,
-          },
-        ],
-      },
-    ],
     mateProfileItems: [
       {
         id: "profile-item-1",
@@ -202,7 +175,6 @@ describe("memory-management-state", () => {
       sort: "updated-desc",
       sessionStatus: "all",
       projectCategory: "decision",
-      characterCategory: "all",
     }, {
       limit: 50,
     });
@@ -219,7 +191,6 @@ describe("memory-management-state", () => {
       sort: "updated-desc",
       sessionStatus: "all",
       projectCategory: "all",
-      characterCategory: "all",
     }, {
       domain: "session",
       cursor: 50,
@@ -263,22 +234,6 @@ describe("memory-management-state", () => {
     );
   });
 
-  it("character entry を削除した結果 empty になった group を落とす", () => {
-    const snapshot = createSnapshot();
-
-    const nextSnapshot = removeCharacterMemoryEntryFromSnapshot(snapshot, "character-entry-1");
-
-    assert.equal(nextSnapshot.characterMemories.length, 0);
-  });
-
-  it("存在しない character entry を削除する時は snapshot をそのまま返す", () => {
-    const snapshot = createSnapshot();
-
-    const nextSnapshot = removeCharacterMemoryEntryFromSnapshot(snapshot, "missing-entry");
-
-    assert.equal(nextSnapshot, snapshot);
-  });
-
   it("mate profile item を削除する", () => {
     const snapshot = createSnapshot();
 
@@ -301,13 +256,12 @@ describe("memory-management-state", () => {
         },
       ],
       projectMemories: [],
-      characterMemories: [],
     }, "session");
 
     assert.deepEqual(nextSnapshot.sessionMemories.map((item) => item.sessionId), ["session-1", "session-2", "session-3"]);
   });
 
-  it("project / character page merge は entry id で重複を落とす", () => {
+  it("project / mate profile page merge は entry id で重複を落とす", () => {
     const snapshot = createSnapshot();
 
     const nextProjectSnapshot = mergeMemoryManagementSnapshots(snapshot, {
@@ -323,29 +277,11 @@ describe("memory-management-state", () => {
           },
         ],
       }],
-      characterMemories: [],
     }, "project");
-    const nextCharacterSnapshot = mergeMemoryManagementSnapshots(snapshot, {
-      sessionMemories: [],
-      projectMemories: [],
-      characterMemories: [{
-        scope: snapshot.characterMemories[0].scope,
-        entries: [
-          snapshot.characterMemories[0].entries[0],
-          {
-            ...snapshot.characterMemories[0].entries[0],
-            id: "character-entry-2",
-            title: "tone-2",
-          },
-        ],
-      }],
-      mateProfileItems: [],
-    }, "character");
 
     const nextProfileItemSnapshot = mergeMemoryManagementSnapshots(snapshot, {
       sessionMemories: [],
       projectMemories: [],
-      characterMemories: [],
       mateProfileItems: [
         {
           ...snapshot.mateProfileItems?.[1],
@@ -361,10 +297,6 @@ describe("memory-management-state", () => {
     assert.deepEqual(nextProjectSnapshot.projectMemories[0]?.entries.map((entry) => entry.id), [
       "project-entry-1",
       "project-entry-4",
-    ]);
-    assert.deepEqual(nextCharacterSnapshot.characterMemories[0]?.entries.map((entry) => entry.id), [
-      "character-entry-1",
-      "character-entry-2",
     ]);
     assert.deepEqual(nextProfileItemSnapshot.mateProfileItems?.map((item) => item.id), [
       "profile-item-1",

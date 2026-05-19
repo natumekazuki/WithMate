@@ -9,7 +9,6 @@ import type {
   AuditLogSummary,
   AuditLogSummaryPageRequest,
   AuditLogSummaryPageResult,
-  CharacterProfile,
   LiveApprovalDecision,
   LiveElicitationResponse,
   LiveSessionRunState,
@@ -21,8 +20,6 @@ import type {
   SessionSummary,
 } from "../src/app-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
-import type { CreateCharacterInput } from "../src/character-state.js";
-import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
 import type {
   CompanionMergeSelectedFilesRequest,
@@ -85,7 +82,6 @@ export type MainIpcWindowDepsArgs = {
   openSettingsWindow(): Promise<BrowserWindow>;
   openMemoryManagementWindow(): Promise<BrowserWindow>;
   openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<BrowserWindow>;
-  openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
   openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow>;
   openCompanionMergeWindow(sessionId: string): Promise<BrowserWindow>;
@@ -130,7 +126,6 @@ export type MainIpcSettingsDepsArgs = {
   startMateEmbeddingDownload(): Awaitable<void>;
   deleteSessionMemory(sessionId: string): void;
   deleteProjectMemoryEntry(entryId: string): void;
-  deleteCharacterMemoryEntry(entryId: string): void;
   forgetMateProfileItem(itemId: string): Awaitable<void>;
 };
 
@@ -219,17 +214,6 @@ export type MainIpcSessionRuntimeDepsArgs = {
   cancelSessionRun(sessionId: string): void;
 };
 
-export type MainIpcCharacterDepsArgs = {
-  listCharacters(): Promise<CharacterProfile[]>;
-  getCharacter(characterId: string): Promise<CharacterProfile | null>;
-  getCharacterUpdateWorkspace(characterId: string): Promise<CharacterUpdateWorkspace | null>;
-  extractCharacterUpdateMemory(characterId: string): Promise<CharacterUpdateMemoryExtract>;
-  createCharacterUpdateSession(characterId: string, providerId: string): Promise<Session>;
-  createCharacter(input: CreateCharacterInput): Promise<CharacterProfile>;
-  updateCharacter(character: CharacterProfile): Promise<CharacterProfile>;
-  deleteCharacter(characterId: string): Promise<void>;
-};
-
 export type MainIpcMateDepsArgs = {
   getMateState(): Awaitable<MateStorageState>;
   getMateProfile(): Awaitable<MateProfile | null>;
@@ -252,7 +236,6 @@ export type CreateMainIpcRegistrationDepsArgs = {
   sessionQuery: MainIpcSessionQueryDepsArgs;
   companion: MainIpcCompanionDepsArgs;
   sessionRuntime: MainIpcSessionRuntimeDepsArgs;
-  character: MainIpcCharacterDepsArgs;
   mate: MainIpcMateDepsArgs;
 };
 
@@ -279,9 +262,6 @@ export function createMainIpcRegistrationDeps(
     },
     openMateTalkWindow: async (input) => {
       await args.window.openMateTalkWindow(input);
-    },
-    openCharacterEditorWindow: async (characterId) => {
-      await args.window.openCharacterEditorWindow(characterId);
     },
     openDiffWindow: async (diffPreview) => {
       await args.window.openDiffWindow(diffPreview);
@@ -327,7 +307,6 @@ export function createMainIpcRegistrationDeps(
     startMateEmbeddingDownload: args.settings.startMateEmbeddingDownload,
     deleteSessionMemory: args.settings.deleteSessionMemory,
     deleteProjectMemoryEntry: args.settings.deleteProjectMemoryEntry,
-    deleteCharacterMemoryEntry: args.settings.deleteCharacterMemoryEntry,
     forgetMateProfileItem: args.settings.forgetMateProfileItem,
     listSessionSummaries: args.sessionQuery.listSessionSummaries,
     listCompanionSessionSummaries: args.sessionQuery.listCompanionSessionSummaries,
@@ -380,14 +359,6 @@ export function createMainIpcRegistrationDeps(
     deleteSession: args.sessionRuntime.deleteSession,
     runSessionTurn: args.sessionRuntime.runSessionTurn,
     cancelSessionRun: args.sessionRuntime.cancelSessionRun,
-    listCharacters: args.character.listCharacters,
-    getCharacter: args.character.getCharacter,
-    getCharacterUpdateWorkspace: args.character.getCharacterUpdateWorkspace,
-    extractCharacterUpdateMemory: args.character.extractCharacterUpdateMemory,
-    createCharacterUpdateSession: args.character.createCharacterUpdateSession,
-    createCharacter: args.character.createCharacter,
-    updateCharacter: args.character.updateCharacter,
-    deleteCharacter: args.character.deleteCharacter,
     getMateState: args.mate.getMateState,
     getMateProfile: args.mate.getMateProfile,
     createMate: args.mate.createMate,

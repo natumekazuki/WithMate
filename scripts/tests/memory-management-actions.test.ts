@@ -11,7 +11,6 @@ import { type MemoryManagementViewFilters } from "../../src/memory/memory-manage
 import type { MateEmbeddingSettings } from "../../src/mate/mate-embedding-settings.js";
 import {
   handleChangeMemoryManagementViewFilters,
-  handleDeleteCharacterMemoryEntry,
   handleDeleteMateProfileItem,
   handleDeleteProjectMemoryEntry,
   handleDeleteSessionMemory,
@@ -27,7 +26,6 @@ type MemoryManagementRequestApi = Pick<WithMateWindowApi, "getMemoryManagementPa
     WithMateWindowApi,
     | "deleteSessionMemory"
     | "deleteProjectMemoryEntry"
-    | "deleteCharacterMemoryEntry"
     | "forgetMateProfileItem"
     | "startMateEmbeddingDownload"
     | "getMateEmbeddingSettings"
@@ -489,34 +487,6 @@ describe("memory-management-actions", () => {
 
     assert.deepEqual(busy, ["project:project-entry-1", null]);
     assert.deepEqual(feedback, ["Project Memory を削除したよ。"]);
-  });
-
-  it("deleteCharacterMemoryEntry は character entry を削除して feedback を返す", async () => {
-    const tracker = createRequestTracker();
-    const feedback: FeedbackCapture = [];
-    const busy: Array<string | null> = [];
-
-    await handleDeleteCharacterMemoryEntry({
-      api: createApi({
-        deleteCharacterMemoryEntry: async (entryId) => {
-          assert.equal(entryId, "character-entry-1");
-        },
-      }) as WithMateWindowApi,
-      usesMemoryManagementWindow: true,
-      memoryManagementFilters: defaultFilters,
-      memoryManagementPages: createPages(),
-      beginMemoryManagementRequest: tracker.begin,
-      isLatestMemoryManagementRequest: tracker.isLatest,
-      setMemoryManagementLoaded: () => {},
-      setMemoryManagementFeedback: (value) => feedback.push(value),
-      setMemoryManagementSnapshot: createSetState<MemoryManagementSnapshot | null>(createSnapshot()).set,
-      setMemoryManagementPages: createSetState(createPages()).set,
-      setMemoryManagementBusyTarget: (target) => busy.push(target),
-      entryId: "character-entry-1",
-    });
-
-    assert.deepEqual(busy, ["character:character-entry-1", null]);
-    assert.deepEqual(feedback, ["Character Memory を削除したよ。"]);
   });
 
   it("deleteMateProfileItem は item を snapshot から削除して feedback を返す", async () => {

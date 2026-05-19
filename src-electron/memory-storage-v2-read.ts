@@ -1,18 +1,13 @@
 import {
   createDefaultSessionMemory,
-  normalizeCharacterMemoryEntry,
-  normalizeCharacterScope,
   normalizeProjectMemoryEntry,
   normalizeProjectScope,
-  type CharacterMemoryEntry,
-  type CharacterScope,
   type ProjectMemoryEntry,
   type ProjectScope,
   type Session,
   type SessionMemory,
 } from "../src/app-state.js";
 import type {
-  ManagedCharacterMemoryGroup,
   ManagedProjectMemoryGroup,
   ManagedSessionMemoryItem,
   MemoryManagementPageRequest,
@@ -56,7 +51,6 @@ export class SessionMemoryStorageV2Read {
     return;
   }
 }
-
 export class ProjectMemoryStorageV2Read {
   listProjectScopes(): ProjectScope[] {
     return [];
@@ -123,76 +117,6 @@ export class ProjectMemoryStorageV2Read {
   }
 
   clearProjectMemories(): void {
-    return;
-  }
-
-  close(): void {
-    return;
-  }
-}
-
-export class CharacterMemoryStorageV2Read {
-  listCharacterScopes(): CharacterScope[] {
-    return [];
-  }
-
-  getCharacterScopeById(_characterScopeId: string): CharacterScope | null {
-    return null;
-  }
-
-  getCharacterScopeByCharacterId(_characterId: string): CharacterScope | null {
-    return null;
-  }
-
-  ensureCharacterScope(input: Pick<CharacterScope, "characterId" | "displayName">): CharacterScope {
-    const now = currentIsoTimestamp();
-    const normalized = normalizeCharacterScope({
-      id: `v2-readonly:${input.characterId}`,
-      characterId: input.characterId,
-      displayName: input.displayName,
-      createdAt: now,
-      updatedAt: now,
-    });
-    if (!normalized) {
-      throw new Error("V2 read-only character scope の形式が不正だよ。");
-    }
-    return normalized;
-  }
-
-  listCharacterMemoryEntries(_characterScopeId: string): CharacterMemoryEntry[] {
-    return [];
-  }
-
-  listCharacterMemoryPage(_request: MemoryManagementPageRequest): { groups: ManagedCharacterMemoryGroup[]; total: number } {
-    return { groups: [], total: 0 };
-  }
-
-  deleteCharacterMemoryEntry(_entryId: string): void {
-    return;
-  }
-
-  markCharacterMemoryEntriesUsed(_entryIds: string[]): void {
-    return;
-  }
-
-  upsertCharacterMemoryEntry(
-    input: Omit<CharacterMemoryEntry, "id" | "createdAt" | "updatedAt" | "lastUsedAt"> & { id?: string },
-  ): CharacterMemoryEntry {
-    const now = currentIsoTimestamp();
-    const normalized = normalizeCharacterMemoryEntry({
-      ...input,
-      id: input.id ?? `v2-readonly:${input.characterScopeId}:${input.category}:${input.title}`,
-      createdAt: now,
-      updatedAt: now,
-      lastUsedAt: null,
-    });
-    if (!normalized) {
-      throw new Error("V2 read-only character memory entry の形式が不正だよ。");
-    }
-    return normalized;
-  }
-
-  clearCharacterMemories(): void {
     return;
   }
 

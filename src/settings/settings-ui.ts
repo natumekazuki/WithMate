@@ -76,17 +76,9 @@ export const SETTINGS_MEMORY_GENERATION_HELP =
 export const SETTINGS_MEMORY_EXTRACTION_HELP =
   "turn 完了後に Generate Memory を実行する際に使う memory extraction の設定。timeout に達したらその回の抽出は中断する。";
 export const SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL = "送信後に Action Dock を自動で閉じる";
-export const SETTINGS_CHARACTER_REFLECTION_MODEL_LABEL = "Model";
-export const SETTINGS_CHARACTER_REFLECTION_REASONING_LABEL = "Reasoning Depth";
-export const SETTINGS_CHARACTER_REFLECTION_TIMEOUT_LABEL = "Timeout Seconds";
-export const SETTINGS_CHARACTER_REFLECTION_COOLDOWN_LABEL = "Cooldown Seconds";
-export const SETTINGS_CHARACTER_REFLECTION_CHAR_DELTA_LABEL = "Min Char Delta";
-export const SETTINGS_CHARACTER_REFLECTION_MESSAGE_DELTA_LABEL = "Min Message Delta";
-export const SETTINGS_CHARACTER_REFLECTION_HELP =
-  "app-wide な character reflection を SessionStart などで評価する設定。timeout に達したらその回は中断する。";
 export const SETTINGS_RESET_DATABASE_LABEL = "DB を初期化";
 export const SETTINGS_RESET_DATABASE_HELP =
-  "Danger Zone: app settings などの DB 内容を初期化する。characters は DB 外ファイルなので保持される。";
+  "Danger Zone: app settings などの DB 内容を初期化する。";
 export const SETTINGS_DIAGNOSTICS_LABEL = "Diagnostics";
 export const SETTINGS_OPEN_LOG_FOLDER_LABEL = "Open Logs";
 export const SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL = "Open Crash Dumps";
@@ -105,7 +97,6 @@ export const SETTINGS_RESET_DATABASE_TARGET_LABELS: Record<ResetAppDatabaseTarge
   appSettings: "app settings",
   modelCatalog: "model catalog",
   projectMemory: "project memory",
-  characterMemory: "character memory",
 };
 
 export function describeResetDatabaseTargets(targets: readonly ResetAppDatabaseTarget[]): string {

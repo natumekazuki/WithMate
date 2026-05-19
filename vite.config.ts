@@ -13,7 +13,6 @@ export default defineConfig({
       input: {
         home: path.resolve(projectRoot, "index.html"),
         session: path.resolve(projectRoot, "session.html"),
-        character: path.resolve(projectRoot, "character.html"),
         diff: path.resolve(projectRoot, "diff.html"),
         review: path.resolve(projectRoot, "review.html"),
         boot: path.resolve(projectRoot, "boot.html"),

@@ -16,11 +16,9 @@ import {
 } from "../../src-electron/database-schema-v1.js";
 import { CREATE_V2_SCHEMA_SQL } from "../../src-electron/database-schema-v2.js";
 import { AuditLogStorageV2 } from "../../src-electron/audit-log-storage-v2.js";
-import { CharacterRuntimeService } from "../../src-electron/character-runtime-service.js";
 import { PersistentStoreLifecycleService, type PersistentStoreBundle } from "../../src-electron/persistent-store-lifecycle-service.js";
 import { SessionStorageV2 } from "../../src-electron/session-storage-v2.js";
 import { hydrateSessionsFromSummaries } from "../../src-electron/session-summary-adapter.js";
-import type { CharacterProfile } from "../../src/character-state.js";
 import { createMigrationDryRunReport, createMigrationWriteReport } from "../migrate-database-v1-to-v2.js";
 
 function createV1FixtureDatabase(): { dbPath: string; dirPath: string; cleanup: () => void } {
@@ -173,34 +171,6 @@ function insertAuditLog(db: DatabaseSync, input: {
     input.usageJson ?? "",
     "",
   );
-}
-
-function createCharacterProfile(overrides?: Partial<CharacterProfile>): CharacterProfile {
-  return {
-    id: "character",
-    name: "Character",
-    iconPath: "",
-    description: "",
-    roleMarkdown: "",
-    notesMarkdown: "",
-    themeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-    sessionCopy: {
-      pendingApproval: [],
-      pendingWorking: [],
-      pendingResponding: [],
-      pendingPreparing: [],
-      retryInterruptedTitle: [],
-      retryFailedTitle: [],
-      retryCanceledTitle: [],
-      latestCommandEmpty: [],
-      latestCommandWaiting: [],
-      contextEmpty: [],
-      changedFilesEmpty: [],
-    },
-    createdAt: "2026-04-27T00:00:00.000Z",
-    updatedAt: "2026-04-27T00:00:00.000Z",
-    ...overrides,
-  };
 }
 
 describe("V1 to V2 database migration dry-run", () => {
@@ -856,46 +826,8 @@ describe("V1 to V2 database migration write mode", () => {
         });
         assert.equal(auditLogStorage.getSessionAuditLogDetail("session-1", createdAuditLog.id)?.assistantText, "new assistant detail");
 
-        let runtimeSessions = bundle.sessions;
         const listFullSessions = () => hydrateSessionsFromSummaries(sessionStorage);
-        const characterRuntime = new CharacterRuntimeService({
-          getCharacters: () => [createCharacterProfile()],
-          setCharacters() {},
-          async listStoredCharacters() {
-            return [createCharacterProfile({ name: "Character+" })];
-          },
-          async getStoredCharacter() {
-            return createCharacterProfile();
-          },
-          async createStoredCharacter(input) {
-            return createCharacterProfile({ id: "character-2", name: input.name });
-          },
-          async updateStoredCharacter(character) {
-            return createCharacterProfile(character);
-          },
-          async deleteStoredCharacter() {},
-          listSessions: listFullSessions,
-          upsertStoredSession(session) {
-            return sessionStorage.upsertSession(session);
-          },
-          reloadStoredSessions: listFullSessions,
-          setSessions(nextSessions) {
-            runtimeSessions = nextSessions;
-          },
-          closeCharacterEditor() {},
-          broadcastCharacters() {},
-          broadcastSessions() {},
-        });
-
-        await characterRuntime.updateCharacter(createCharacterProfile({ name: "Character+" }));
-
-        const characterUpdatedSession = sessionStorage.getSession("session-1");
-        assert.equal(characterUpdatedSession?.character, "Character+");
-        assert.deepEqual(characterUpdatedSession?.messages.map((message) => message.text), [
-          "hello from v1",
-          "done from v1",
-        ]);
-        assert.equal(characterUpdatedSession?.messages[1]?.artifact?.title, "runtime artifact");
+        const runtimeSessions = listFullSessions();
         assert.equal(runtimeSessions[0]?.messages.length, 2);
         assert.equal(runtimeSessions[0]?.messages[1]?.artifact?.title, "runtime artifact");
 
@@ -915,7 +847,7 @@ describe("V1 to V2 database migration write mode", () => {
           const recreatedSessionStorage = recreated.sessionStorage as SessionStorageV2;
           const recreatedAuditLogStorage = recreated.auditLogStorage as AuditLogStorageV2;
           recreatedSessionStorage.upsertSession({
-            ...characterUpdatedSession,
+            ...updatedSession,
             id: "session-after-recreate",
             messages: [{ role: "user", text: "after recreate" }],
           });

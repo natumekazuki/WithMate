@@ -3,12 +3,6 @@ import type { AppSettings } from "../provider-settings-state.js";
 import {
   addMateMemoryGenerationPriorityDraft,
   removeMateMemoryGenerationPriorityDraft,
-  updateCharacterReflectionCharDeltaThreshold,
-  updateCharacterReflectionCooldownSeconds,
-  updateCharacterReflectionMessageDeltaThreshold,
-  updateCharacterReflectionModelDraft,
-  updateCharacterReflectionReasoningEffortDraft,
-  updateCharacterReflectionTimeoutSecondsDraft,
   updateAutoCollapseActionDockOnSend,
   updateCodingProviderEnabledDraft,
   updateCodingProviderSkillRelativePathDraft,
@@ -104,50 +98,6 @@ export function handleChangeMemoryExtractionTimeoutSeconds(input: SettingsDraftA
   value: string;
 }): void {
   input.setSettingsDraft((current) => updateMemoryExtractionTimeoutSecondsDraft(current, input.providerId, input.value));
-}
-
-export function handleChangeCharacterReflectionModel(input: ModelCatalogActionInput & {
-  providerId: string;
-  model: string;
-}): void {
-  const providerCatalog = getProviderCatalog(input.modelCatalog, input.providerId);
-  if (!providerCatalog) {
-    return;
-  }
-
-  input.setSettingsDraft((current) => updateCharacterReflectionModelDraft(current, providerCatalog, input.providerId, input.model));
-}
-
-export function handleChangeCharacterReflectionReasoningEffort(input: SettingsDraftActionInput & {
-  providerId: string;
-  reasoningEffort: AppSettings["characterReflectionProviderSettings"][string]["reasoningEffort"];
-}): void {
-  input.setSettingsDraft((current) => updateCharacterReflectionReasoningEffortDraft(current, input.providerId, input.reasoningEffort));
-}
-
-export function handleChangeCharacterReflectionTimeoutSeconds(input: SettingsDraftActionInput & {
-  providerId: string;
-  value: string;
-}): void {
-  input.setSettingsDraft((current) => updateCharacterReflectionTimeoutSecondsDraft(current, input.providerId, input.value));
-}
-
-export function handleChangeCharacterReflectionCooldownSeconds(input: SettingsDraftActionInput & {
-  value: string;
-}): void {
-  input.setSettingsDraft((current) => updateCharacterReflectionCooldownSeconds(current, input.value));
-}
-
-export function handleChangeCharacterReflectionCharDeltaThreshold(input: SettingsDraftActionInput & {
-  value: string;
-}): void {
-  input.setSettingsDraft((current) => updateCharacterReflectionCharDeltaThreshold(current, input.value));
-}
-
-export function handleChangeCharacterReflectionMessageDeltaThreshold(input: SettingsDraftActionInput & {
-  value: string;
-}): void {
-  input.setSettingsDraft((current) => updateCharacterReflectionMessageDeltaThreshold(current, input.value));
 }
 
 export function handleChangeMateMemoryGenerationPriorityProvider(input: SettingsDraftActionInput & {

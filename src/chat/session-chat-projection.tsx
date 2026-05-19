@@ -1,15 +1,12 @@
 import type { CSSProperties, KeyboardEventHandler, PointerEventHandler, RefObject, UIEventHandler } from "react";
 
 import type { CharacterProfile, DiffPreviewPayload, Message, MessageArtifact } from "../app-state.js";
-import type { CharacterUpdateMemoryExtract } from "../character-update-state.js";
 import type { HomeMonitorEntry } from "../home/home-session-projection.js";
 import type { Session } from "../session-state.js";
 import {
-  CharacterUpdateContextPane,
   SessionContextPane,
   SessionPaneErrorBoundary,
   SessionRetryBanner,
-  type CharacterUpdateContextPaneProps,
   type SessionActionDockCompactRowProps,
   type SessionAuditLogModalProps,
   type SessionComposerExpandedProps,
@@ -42,7 +39,6 @@ export type AgentSessionChatProjectionInput = {
   titleDraft: string;
   isSelectedSessionRunning: boolean;
   isSelectedSessionReadOnly: boolean;
-  isCharacterUpdateSession: boolean;
   messageListRef: RefObject<HTMLDivElement | null>;
   pendingRunIndicatorAnnouncement: string;
   pendingRunIndicatorText: string;
@@ -89,11 +85,8 @@ export type AgentSessionChatProjectionInput = {
   attachmentCount: number;
   isActionDockExpanded: boolean;
   isContextRailResizing: boolean;
-  activeCharacterUpdatePaneTab: CharacterUpdateContextPaneProps["activePaneTab"];
   latestCommandView: SessionContextPaneProps["latestCommandView"];
   runningDetailsEntries: SessionContextPaneProps["runningDetailsEntries"];
-  selectedCharacterUpdateMemoryExtract: CharacterUpdateMemoryExtract | null;
-  isCharacterUpdateMemoryExtractLoading: boolean;
   activeContextPaneTab: ContextPaneTabKey;
   availableContextPaneTabs: ContextPaneTabKey[];
   contextPaneProjection: SessionContextPaneProps["contextPaneProjection"];
@@ -172,9 +165,6 @@ export type AgentSessionChatProjectionInput = {
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
   onChangeReasoningEffort: SessionComposerExpandedProps["onChangeReasoningEffort"];
   onStartContextRailResize: PointerEventHandler<HTMLButtonElement>;
-  onSelectCharacterUpdatePaneTab: CharacterUpdateContextPaneProps["onSelectPaneTab"];
-  onRefreshCharacterUpdateMemoryExtract: () => void;
-  onCopyCharacterUpdateMemoryExtract: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onOpenCompanionReview: (sessionId: string) => void;
   onCloseDiff: () => void;
@@ -192,7 +182,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     titleDraft: input.titleDraft,
     isRunning: input.isSelectedSessionRunning,
     isReadOnly: input.isSelectedSessionReadOnly,
-    showTerminalButton: !input.isCharacterUpdateSession,
+    showTerminalButton: true,
     onToggleExpanded: input.onToggleHeaderExpanded,
     onOpenAuditLog: input.onOpenAuditLog,
     onOpenTerminal: input.onOpenSessionTerminal,
@@ -222,11 +212,11 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onCancelTitleEdit: input.onCancelTitleEdit,
     onStartTitleEdit: input.onStartTitleEdit,
     onDeleteSession: input.onDeleteSession,
-    workspaceActions: !input.isCharacterUpdateSession ? (
+    workspaceActions: (
       <button className="drawer-toggle compact secondary" type="button" onClick={input.onOpenSessionExplorer}>
         Explorer
       </button>
-    ) : null,
+    ),
   };
 
   const messageColumnProps = buildLiveSessionMessageColumnProps({
@@ -274,9 +264,9 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     ),
     isRunning: input.selectedSession.runState === "running",
     composerBlocked: input.composerBlocked,
-    canSelectCustomAgent: !input.isCharacterUpdateSession && input.selectedSession.provider === "copilot",
-    showCustomAgentPicker: !input.isCharacterUpdateSession,
-    showSkillPicker: !input.isCharacterUpdateSession,
+    canSelectCustomAgent: input.selectedSession.provider === "copilot",
+    showCustomAgentPicker: true,
+    showSkillPicker: true,
     isAgentPickerOpen: input.isAgentPickerOpen,
     isSkillPickerOpen: input.isSkillPickerOpen,
     isAdditionalDirectoryListOpen: input.isAdditionalDirectoryListOpen,
@@ -372,46 +362,29 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     ),
     rightPane: (
       <SessionPaneErrorBoundary>
-        {input.isCharacterUpdateSession ? (
-          <CharacterUpdateContextPane
-            taskTitle={input.selectedSession.taskTitle}
-            isHeaderExpanded={input.isSessionHeaderExpanded}
-            activePaneTab={input.activeCharacterUpdatePaneTab}
-            latestCommandView={input.latestCommandView}
-            runningDetailsEntries={input.runningDetailsEntries}
-            selectedSessionLiveRunErrorMessage={input.liveRunErrorMessage}
-            memoryExtract={input.selectedCharacterUpdateMemoryExtract}
-            isLoadingMemoryExtract={input.isCharacterUpdateMemoryExtractLoading}
-            onToggleHeaderExpanded={input.onToggleHeaderExpanded}
-            onSelectPaneTab={input.onSelectCharacterUpdatePaneTab}
-            onRefreshMemoryExtract={input.onRefreshCharacterUpdateMemoryExtract}
-            onCopyMemoryExtract={input.onCopyCharacterUpdateMemoryExtract}
-          />
-        ) : (
-          <SessionContextPane
-            taskTitle={input.selectedSession.taskTitle}
-            isHeaderExpanded={input.isSessionHeaderExpanded}
-            activeContextPaneTab={input.activeContextPaneTab}
-            availableContextPaneTabs={input.availableContextPaneTabs}
-            contextPaneProjection={input.contextPaneProjection}
-            latestCommandView={input.latestCommandView}
-            runningDetailsEntries={input.runningDetailsEntries}
-            backgroundTasks={input.selectedBackgroundTasks}
-            companionGroupMonitorEntries={input.selectedCompanionGroupMonitorEntries}
-            selectedSessionLiveRunErrorMessage={input.liveRunErrorMessage}
-            isSelectedSessionRunning={input.isSelectedSessionRunning}
-            isCopilotSession={input.isCopilotSession}
-            selectedCopilotRemainingPercentLabel={input.selectedCopilotRemainingPercentLabel}
-            selectedCopilotRemainingRequestsLabel={input.selectedCopilotRemainingRequestsLabel}
-            selectedCopilotQuotaResetLabel={input.selectedCopilotQuotaResetLabel}
-            selectedSessionContextTelemetry={input.selectedSessionContextTelemetry}
-            selectedSessionContextTelemetryProjection={input.selectedSessionContextTelemetryProjection}
-            contextEmptyText={input.selectedContextEmptyText}
-            onToggleHeaderExpanded={input.onToggleHeaderExpanded}
-            onCycleContextPaneTab={input.onCycleContextPaneTab}
-            onOpenCompanionReview={input.onOpenCompanionReview}
-          />
-        )}
+        <SessionContextPane
+          taskTitle={input.selectedSession.taskTitle}
+          isHeaderExpanded={input.isSessionHeaderExpanded}
+          activeContextPaneTab={input.activeContextPaneTab}
+          availableContextPaneTabs={input.availableContextPaneTabs}
+          contextPaneProjection={input.contextPaneProjection}
+          latestCommandView={input.latestCommandView}
+          runningDetailsEntries={input.runningDetailsEntries}
+          backgroundTasks={input.selectedBackgroundTasks}
+          companionGroupMonitorEntries={input.selectedCompanionGroupMonitorEntries}
+          selectedSessionLiveRunErrorMessage={input.liveRunErrorMessage}
+          isSelectedSessionRunning={input.isSelectedSessionRunning}
+          isCopilotSession={input.isCopilotSession}
+          selectedCopilotRemainingPercentLabel={input.selectedCopilotRemainingPercentLabel}
+          selectedCopilotRemainingRequestsLabel={input.selectedCopilotRemainingRequestsLabel}
+          selectedCopilotQuotaResetLabel={input.selectedCopilotQuotaResetLabel}
+          selectedSessionContextTelemetry={input.selectedSessionContextTelemetry}
+          selectedSessionContextTelemetryProjection={input.selectedSessionContextTelemetryProjection}
+          contextEmptyText={input.selectedContextEmptyText}
+          onToggleHeaderExpanded={input.onToggleHeaderExpanded}
+          onCycleContextPaneTab={input.onCycleContextPaneTab}
+          onOpenCompanionReview={input.onOpenCompanionReview}
+        />
       </SessionPaneErrorBoundary>
     ),
     modals: <ChatSessionModals {...input} />,

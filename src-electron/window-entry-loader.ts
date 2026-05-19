@@ -29,11 +29,6 @@ export class WindowEntryLoader {
     await this.load(window, "boot.html", "");
   }
 
-  async loadCharacterEntry(window: WindowLike, characterId?: string | null): Promise<void> {
-    const search = characterId ? `?characterId=${encodeURIComponent(characterId)}` : "?mode=create";
-    await this.load(window, "character.html", search);
-  }
-
   async loadDiffEntry(window: WindowLike, token: string): Promise<void> {
     const search = `?token=${encodeURIComponent(token)}`;
     await this.load(window, "diff.html", search);

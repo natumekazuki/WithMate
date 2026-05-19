@@ -9,15 +9,6 @@ import {
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import {
   updateAutoCollapseActionDockOnSend,
-  updateCharacterReflectionCharDeltaThreshold,
-  updateCharacterReflectionCooldownSeconds,
-  updateCharacterReflectionModel,
-  updateCharacterReflectionModelDraft,
-  updateCharacterReflectionMessageDeltaThreshold,
-  updateCharacterReflectionReasoningEffort,
-  updateCharacterReflectionReasoningEffortDraft,
-  updateCharacterReflectionTimeoutSeconds,
-  updateCharacterReflectionTimeoutSecondsDraft,
   updateCodingProviderApiKey,
   updateCodingProviderApiKeyDraft,
   updateCodingProviderEnabled,
@@ -45,12 +36,6 @@ import {
 } from "../../src/settings/settings-draft.js";
 import {
   handleChangeAutoCollapseActionDockOnSend as handleChangeAutoCollapseActionDockOnSendAction,
-  handleChangeCharacterReflectionCharDeltaThreshold as handleChangeCharacterReflectionCharDeltaThresholdAction,
-  handleChangeCharacterReflectionCooldownSeconds as handleChangeCharacterReflectionCooldownSecondsAction,
-  handleChangeCharacterReflectionMessageDeltaThreshold as handleChangeCharacterReflectionMessageDeltaThresholdAction,
-  handleChangeCharacterReflectionModel as handleChangeCharacterReflectionModelAction,
-  handleChangeCharacterReflectionReasoningEffort as handleChangeCharacterReflectionReasoningEffortAction,
-  handleChangeCharacterReflectionTimeoutSeconds as handleChangeCharacterReflectionTimeoutSecondsAction,
   handleChangeMateMemoryGenerationPriorityModel as handleChangeMateMemoryGenerationPriorityModelAction,
   handleChangeMateMemoryGenerationPriorityProvider as handleChangeMateMemoryGenerationPriorityProviderAction,
   handleChangeMateMemoryGenerationPriorityReasoningEffort as handleChangeMateMemoryGenerationPriorityReasoningEffortAction,
@@ -210,121 +195,55 @@ describe("home-settings-draft", () => {
     assert.equal(nextThreshold.codex.outputTokensThreshold, 300000);
   });
 
-  it("character reflection model / reasoning を更新できる", () => {
-    const draft = createDefaultAppSettings();
-    draft.characterReflectionProviderSettings.codex = {
-      model: "gpt-5.4",
-      reasoningEffort: "high",
-      timeoutSeconds: 180,
-    };
-
-    const nextModel = updateCharacterReflectionModel(draft, providerCatalog, "codex", "gpt-5.4-mini");
-    const nextReasoning = updateCharacterReflectionReasoningEffort(
-      { ...draft, characterReflectionProviderSettings: nextModel },
-      "codex",
-      "medium",
-    );
-
-    assert.equal(nextModel.codex.model, "gpt-5.4-mini");
-    assert.equal(nextModel.codex.reasoningEffort, "low");
-    assert.equal(nextReasoning.codex.reasoningEffort, "medium");
-  });
-
-  it("character reflection timeout を更新できる", () => {
-    const draft = createDefaultAppSettings();
-
-    const nextTimeout = updateCharacterReflectionTimeoutSeconds(draft, "codex", "240");
-
-    assert.equal(nextTimeout.codex.timeoutSeconds, 240);
-  });
-
-  it("character reflection trigger settings を更新できる", () => {
-    const draft = createDefaultAppSettings();
-
-    const nextCooldown = updateCharacterReflectionCooldownSeconds(draft, "180");
-    const nextCharDelta = updateCharacterReflectionCharDeltaThreshold(nextCooldown, "600");
-    const nextMessageDelta = updateCharacterReflectionMessageDeltaThreshold(nextCharDelta, "3");
-
-    assert.deepEqual(nextMessageDelta.characterReflectionTriggerSettings, {
-      cooldownSeconds: 180,
-      charDeltaThreshold: 600,
-      messageDeltaThreshold: 3,
-    });
-  });
-
   it("draft wrapper は AppSettings 全体を更新する", () => {
     const draft = createDefaultAppSettings();
 
-    const next = updateCharacterReflectionReasoningEffortDraft(
-      updateCharacterReflectionModelDraft(
-        updateMemoryExtractionThresholdDraft(
-          updateMemoryExtractionTimeoutSecondsDraft(
-          updateMemoryExtractionReasoningEffortDraft(
-            updateMemoryExtractionModelDraft(
-              updateCodingProviderSkillRelativePathDraft(
-                updateCodingProviderSkillRootPathDraft(
-                  updateCodingProviderApiKeyDraft(
-                    updateCodingProviderEnabledDraft(
-                      updateAutoCollapseActionDockOnSend(
-                        updateMemoryGenerationEnabled(draft, false),
-                        false,
-                      ),
-                      "codex",
+    const next = updateMemoryExtractionThresholdDraft(
+      updateMemoryExtractionTimeoutSecondsDraft(
+        updateMemoryExtractionReasoningEffortDraft(
+          updateMemoryExtractionModelDraft(
+            updateCodingProviderSkillRelativePathDraft(
+              updateCodingProviderSkillRootPathDraft(
+                updateCodingProviderApiKeyDraft(
+                  updateCodingProviderEnabledDraft(
+                    updateAutoCollapseActionDockOnSend(
+                      updateMemoryGenerationEnabled(draft, false),
                       false,
                     ),
                     "codex",
-                    "key",
+                    false,
                   ),
                   "codex",
-                  "C:/skills",
+                  "key",
                 ),
                 "codex",
-                "skills/codex",
+                "C:/skills",
               ),
-              providerCatalog,
               "codex",
-              "gpt-5.4-mini",
+              "skills/codex",
             ),
+            providerCatalog,
             "codex",
-            "medium",
+            "gpt-5.4-mini",
           ),
           "codex",
-          "240",
+          "medium",
         ),
-          "codex",
-          "321",
-        ),
-        providerCatalog,
         "codex",
-        "gpt-5.4-mini",
+        "240",
       ),
       "codex",
-      "medium",
-    );
-    const nextWithTriggers = updateCharacterReflectionMessageDeltaThreshold(
-      updateCharacterReflectionCharDeltaThreshold(
-        updateCharacterReflectionCooldownSeconds(
-          updateCharacterReflectionTimeoutSecondsDraft(next, "codex", "210"),
-          "180",
-        ),
-        "600",
-      ),
-      "3",
+      "321",
     );
 
-    assert.equal(nextWithTriggers.memoryGenerationEnabled, false);
-    assert.equal(nextWithTriggers.autoCollapseActionDockOnSend, false);
-    assert.equal(nextWithTriggers.codingProviderSettings.codex.enabled, false);
-    assert.equal(nextWithTriggers.codingProviderSettings.codex.apiKey, "key");
-    assert.equal(nextWithTriggers.codingProviderSettings.codex.skillRootPath, "C:/skills");
-    assert.equal(nextWithTriggers.codingProviderSettings.codex.skillRelativePath, "skills/codex");
-    assert.equal(nextWithTriggers.memoryExtractionProviderSettings.codex.outputTokensThreshold, 321);
-    assert.equal(nextWithTriggers.memoryExtractionProviderSettings.codex.timeoutSeconds, 240);
-    assert.equal(nextWithTriggers.characterReflectionProviderSettings.codex.reasoningEffort, "medium");
-    assert.equal(nextWithTriggers.characterReflectionProviderSettings.codex.timeoutSeconds, 210);
-    assert.equal(nextWithTriggers.characterReflectionTriggerSettings.cooldownSeconds, 180);
-    assert.equal(nextWithTriggers.characterReflectionTriggerSettings.charDeltaThreshold, 600);
-    assert.equal(nextWithTriggers.characterReflectionTriggerSettings.messageDeltaThreshold, 3);
+    assert.equal(next.memoryGenerationEnabled, false);
+    assert.equal(next.autoCollapseActionDockOnSend, false);
+    assert.equal(next.codingProviderSettings.codex.enabled, false);
+    assert.equal(next.codingProviderSettings.codex.apiKey, "key");
+    assert.equal(next.codingProviderSettings.codex.skillRootPath, "C:/skills");
+    assert.equal(next.codingProviderSettings.codex.skillRelativePath, "skills/codex");
+    assert.equal(next.memoryExtractionProviderSettings.codex.outputTokensThreshold, 321);
+    assert.equal(next.memoryExtractionProviderSettings.codex.timeoutSeconds, 240);
   });
 
   it("action dock auto close を toggle できる", () => {
@@ -464,46 +383,6 @@ describe("home-settings-draft", () => {
     assert.equal(state.draft.memoryExtractionProviderSettings.codex.reasoningEffort, "medium");
     assert.equal(state.draft.memoryExtractionProviderSettings.codex.outputTokensThreshold, 42);
     assert.equal(state.draft.memoryExtractionProviderSettings.codex.timeoutSeconds, 90);
-  });
-
-  it("action: character reflection model と trigger を更新できる", () => {
-    const state = createDraftTracker();
-
-    handleChangeCharacterReflectionModelAction({
-      providerId: "codex",
-      model: "gpt-5.4-mini",
-      modelCatalog: modelCatalogSnapshot,
-      setSettingsDraft: state.setSettingsDraft,
-    });
-    handleChangeCharacterReflectionReasoningEffortAction({
-      providerId: "codex",
-      reasoningEffort: "low",
-      setSettingsDraft: state.setSettingsDraft,
-    });
-    handleChangeCharacterReflectionTimeoutSecondsAction({
-      providerId: "codex",
-      value: "210",
-      setSettingsDraft: state.setSettingsDraft,
-    });
-    handleChangeCharacterReflectionCooldownSecondsAction({
-      value: "120",
-      setSettingsDraft: state.setSettingsDraft,
-    });
-    handleChangeCharacterReflectionCharDeltaThresholdAction({
-      value: "99",
-      setSettingsDraft: state.setSettingsDraft,
-    });
-    handleChangeCharacterReflectionMessageDeltaThresholdAction({
-      value: "4",
-      setSettingsDraft: state.setSettingsDraft,
-    });
-
-    assert.equal(state.draft.characterReflectionProviderSettings.codex.model, "gpt-5.4-mini");
-    assert.equal(state.draft.characterReflectionProviderSettings.codex.reasoningEffort, "low");
-    assert.equal(state.draft.characterReflectionProviderSettings.codex.timeoutSeconds, 210);
-    assert.equal(state.draft.characterReflectionTriggerSettings.cooldownSeconds, 120);
-    assert.equal(state.draft.characterReflectionTriggerSettings.charDeltaThreshold, 99);
-    assert.equal(state.draft.characterReflectionTriggerSettings.messageDeltaThreshold, 4);
   });
 
   it("action: mate memory generation priority の add/update/remove/interval を更新できる", () => {

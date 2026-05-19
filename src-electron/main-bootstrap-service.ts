@@ -6,7 +6,6 @@ import type { MateStorageState } from "../src/mate/mate-state.js";
 type MainBootstrapServiceDeps = {
   initializePersistentStores(): Promise<ModelCatalogSnapshot>;
   recoverInterruptedSessions(): Promise<void>;
-  refreshCharactersFromStorage(): Promise<void>;
   registerIpcHandlers(): void;
   createHomeWindow(): Promise<void>;
   broadcastModelCatalog(snapshot: ModelCatalogSnapshot): void;
@@ -114,10 +113,9 @@ export class MainBootstrapService {
       } catch (error) {
         console.warn("Failed to cleanup stale growth apply runs", error);
       }
-    }
-    await this.deps.recoverInterruptedSessions();
-    await this.deps.refreshCharactersFromStorage();
-    this.deps.registerIpcHandlers();
+      }
+      await this.deps.recoverInterruptedSessions();
+      this.deps.registerIpcHandlers();
     this.deps.onBootStatus?.({
       kind: "running",
       stage: "home",

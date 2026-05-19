@@ -11,7 +11,6 @@ import type {
   AuditLogSummary,
   AuditLogSummaryPageRequest,
   AuditLogSummaryPageResult,
-  CharacterProfile,
   LiveApprovalDecision,
   LiveElicitationResponse,
   LiveSessionRunState,
@@ -22,7 +21,6 @@ import type {
   SessionContextTelemetry,
   SessionSummary,
 } from "../src/app-state.js";
-import type { CreateCharacterInput } from "../src/character-state.js";
 import type {
   CreateMateInput,
   MateProfile,
@@ -41,7 +39,6 @@ import type {
   MateGrowthEventListRequest,
   MateGrowthEventListResult,
 } from "../src/mate/mate-growth-events-state.js";
-import type { CharacterUpdateMemoryExtract, CharacterUpdateWorkspace } from "../src/character-update-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
 import type {
   CompanionMergeSelectedFilesRequest,
@@ -69,25 +66,18 @@ import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
-  WITHMATE_CREATE_CHARACTER_CHANNEL,
-  WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_UPDATE_MATE_CHANNEL,
-  WITHMATE_DELETE_CHARACTER_CHANNEL,
-  WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL,
   WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
-  WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
-  WITHMATE_GET_CHARACTER_CHANNEL,
-  WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL,
   WITHMATE_GET_COMPANION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_GET_COMPANION_REVIEW_SNAPSHOT_CHANNEL,
   WITHMATE_GET_COMPANION_SESSION_CHANNEL,
@@ -113,7 +103,6 @@ import {
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
-  WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL,
   WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
@@ -129,7 +118,6 @@ import {
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
-  WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
   WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL,
   WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL,
@@ -180,7 +168,6 @@ import {
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_MATE_GROWTH_SETTINGS_CHANNEL,
   WITHMATE_UPSERT_PROVIDER_INSTRUCTION_TARGET_CHANNEL,
-  WITHMATE_UPDATE_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
   WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
@@ -257,7 +244,6 @@ export type MainIpcRegistrationDeps = {
   openSettingsWindow(): Promise<void>;
   openMemoryManagementWindow(): Promise<void>;
   openMateTalkWindow(input?: MateTalkLaunchInput | null): Promise<void>;
-  openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
@@ -317,9 +303,7 @@ export type MainIpcRegistrationDeps = {
   getMemoryManagementPage(request: MemoryManagementPageRequest): MemoryManagementPageResult;
   deleteSessionMemory(sessionId: string): void;
   deleteProjectMemoryEntry(entryId: string): void;
-  deleteCharacterMemoryEntry(entryId: string): void;
   forgetMateProfileItem(itemId: string): Awaitable<void>;
-  listCharacters(): Promise<CharacterProfile[]>;
   getModelCatalog(revision: number | null): ModelCatalogSnapshot | null;
   importModelCatalogDocument(document: ModelCatalogDocument): Awaitable<ModelCatalogSnapshot>;
   importModelCatalogFromFile(targetWindow?: MaybeWindow): Promise<ModelCatalogSnapshot | null>;
@@ -337,10 +321,6 @@ export type MainIpcRegistrationDeps = {
   ): SessionBackgroundActivityState | null;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void;
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): void;
-  getCharacter(characterId: string): Promise<CharacterProfile | null>;
-  getCharacterUpdateWorkspace(characterId: string): Promise<CharacterUpdateWorkspace | null>;
-  extractCharacterUpdateMemory(characterId: string): Promise<CharacterUpdateMemoryExtract>;
-  createCharacterUpdateSession(characterId: string, providerId: string): Promise<Session>;
   createSession(input: CreateSessionInput): Awaitable<Session>;
   createCompanionSession(input: CreateCompanionSessionInput): Promise<CompanionSession>;
   getCompanionSession(sessionId: string): Awaitable<CompanionSession | null>;
@@ -363,9 +343,6 @@ export type MainIpcRegistrationDeps = {
   searchWorkspaceFiles(sessionId: string, query: string): Promise<WorkspacePathCandidate[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   cancelSessionRun(sessionId: string): void;
-  createCharacter(input: CreateCharacterInput): Promise<CharacterProfile>;
-  updateCharacter(character: CharacterProfile): Promise<CharacterProfile>;
-  deleteCharacter(characterId: string): Promise<void>;
   getMateState(): Awaitable<MateStorageState>;
   getMateProfile(): Awaitable<MateProfile | null>;
   createMate(input: CreateMateInput): Promise<MateProfile>;
@@ -406,7 +383,6 @@ type MainIpcWindowDeps = Pick<
   | "openSettingsWindow"
   | "openMemoryManagementWindow"
   | "openMateTalkWindow"
-  | "openCharacterEditorWindow"
   | "openDiffWindow"
   | "openCompanionReviewWindow"
   | "openCompanionMergeWindow"
@@ -453,7 +429,6 @@ type MainIpcSettingsDeps = Pick<
   | "getMemoryManagementPage"
   | "deleteSessionMemory"
   | "deleteProjectMemoryEntry"
-  | "deleteCharacterMemoryEntry"
   | "forgetMateProfileItem"
 >;
 
@@ -520,18 +495,6 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "cancelSessionRun"
 >;
 
-type MainIpcCharacterDeps = Pick<
-  MainIpcRegistrationDeps,
-  | "listCharacters"
-  | "getCharacter"
-  | "getCharacterUpdateWorkspace"
-  | "extractCharacterUpdateMemory"
-  | "createCharacterUpdateSession"
-  | "createCharacter"
-  | "updateCharacter"
-  | "deleteCharacter"
->;
-
 type MainIpcMateDeps = Pick<
   MainIpcRegistrationDeps,
   | "getMateState"
@@ -576,9 +539,6 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   });
   ipcMain.handle(WITHMATE_OPEN_MATE_TALK_WINDOW_CHANNEL, async (_event, input?: MateTalkLaunchInput | null) => {
     await deps.openMateTalkWindow(input ?? null);
-  });
-  ipcMain.handle(WITHMATE_OPEN_CHARACTER_EDITOR_CHANNEL, async (_event, characterId: string | null) => {
-    await deps.openCharacterEditorWindow(characterId);
   });
   ipcMain.handle(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, async (_event, diffPreview: DiffPreviewPayload) => {
     await deps.openDiffWindow(diffPreview);
@@ -674,9 +634,6 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
   ipcMain.handle(WITHMATE_DELETE_SESSION_MEMORY_CHANNEL, (_event, sessionId: string) => deps.deleteSessionMemory(sessionId));
   ipcMain.handle(WITHMATE_DELETE_PROJECT_MEMORY_ENTRY_CHANNEL, (_event, entryId: string) =>
     deps.deleteProjectMemoryEntry(entryId),
-  );
-  ipcMain.handle(WITHMATE_DELETE_CHARACTER_MEMORY_ENTRY_CHANNEL, (_event, entryId: string) =>
-    deps.deleteCharacterMemoryEntry(entryId),
   );
   ipcMain.handle(WITHMATE_FORGET_MATE_PROFILE_ITEM_CHANNEL, (_event, itemId: string) =>
     deps.forgetMateProfileItem(itemId),
@@ -878,32 +835,6 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
   });
 }
 
-function registerCharacterHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCharacterDeps): void {
-  ipcMain.handle(WITHMATE_LIST_CHARACTERS_CHANNEL, async () => deps.listCharacters());
-  ipcMain.handle(WITHMATE_GET_CHARACTER_CHANNEL, async (_event, characterId: string) => {
-    if (!characterId) {
-      return null;
-    }
-    return deps.getCharacter(characterId);
-  });
-  ipcMain.handle(WITHMATE_GET_CHARACTER_UPDATE_WORKSPACE_CHANNEL, async (_event, characterId: string) => {
-    if (!characterId) {
-      return null;
-    }
-    return deps.getCharacterUpdateWorkspace(characterId);
-  });
-  ipcMain.handle(WITHMATE_EXTRACT_CHARACTER_UPDATE_MEMORY_CHANNEL, async (_event, characterId: string) =>
-    deps.extractCharacterUpdateMemory(characterId),
-  );
-  ipcMain.handle(
-    WITHMATE_CREATE_CHARACTER_UPDATE_SESSION_CHANNEL,
-    async (_event, characterId: string, providerId: string) => deps.createCharacterUpdateSession(characterId, providerId),
-  );
-  ipcMain.handle(WITHMATE_CREATE_CHARACTER_CHANNEL, async (_event, input: CreateCharacterInput) => deps.createCharacter(input));
-  ipcMain.handle(WITHMATE_UPDATE_CHARACTER_CHANNEL, async (_event, character: CharacterProfile) => deps.updateCharacter(character));
-  ipcMain.handle(WITHMATE_DELETE_CHARACTER_CHANNEL, async (_event, characterId: string) => deps.deleteCharacter(characterId));
-}
-
 function registerMateHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcMateDeps): void {
   ipcMain.handle(WITHMATE_GET_MATE_STATE_CHANNEL, () => deps.getMateState());
   ipcMain.handle(WITHMATE_GET_MATE_PROFILE_CHANNEL, () => deps.getMateProfile());
@@ -937,7 +868,6 @@ export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrat
   registerSessionQueryHandlers(wrappedIpcMain, deps);
   registerCompanionHandlers(wrappedIpcMain, deps);
   registerSessionRuntimeHandlers(wrappedIpcMain, deps);
-  registerCharacterHandlers(wrappedIpcMain, deps);
   registerMateHandlers(wrappedIpcMain, deps);
   ipcMain.on(WITHMATE_RENDERER_LOG_CHANNEL, (event, input: RendererLogInput) => {
     const windowId = deps.resolveEventWindow(event)?.id;
