@@ -57,7 +57,6 @@ import {
   cycleContextPaneTab,
   type ContextPaneTabKey,
   resolveAvailableContextPaneTabs,
-  resolveAutoContextPaneTab,
 } from "./session-ui-projection.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import {
@@ -314,6 +313,7 @@ function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): strin
 
   return [
     liveRun.assistantText,
+    liveRun.reasoningText ?? "",
     liveRun.errorMessage,
     liveRun.approvalRequest
       ? [
@@ -352,6 +352,7 @@ function createPendingLiveSessionRunState(
     sessionId: session.id,
     threadId: session.threadId,
     assistantText: "",
+    reasoningText: "",
     steps: [],
     backgroundTasks: previousState?.backgroundTasks ?? [],
     usage: null,
@@ -611,9 +612,8 @@ export default function AgentSessionWindowApp() {
     () => previewPathReferenceCandidates.join("\u001f"),
     [previewPathReferenceCandidates],
   );
-  const selectedSessionRunState: Session["runState"] | null = selectedSessionLiveRun
-    ? "running"
-    : selectedSession?.runState ?? null;
+  const selectedSessionRunState: Session["runState"] | null = selectedSession?.runState
+    ?? (selectedSessionLiveRun ? "running" : null);
 
   const selectedSessionCharacter = useMemo(
     () =>
@@ -1250,12 +1250,15 @@ export default function AgentSessionWindowApp() {
     () => selectedSessionLiveRun?.backgroundTasks ?? [],
     [selectedSessionLiveRun?.backgroundTasks],
   );
+  const liveRunReasoningText = selectedSessionLiveRun?.reasoningText ?? "";
+  const hasLiveRunReasoningText = liveRunReasoningText.trim().length > 0;
   const availableContextPaneTabs = useMemo(
     () => resolveAvailableContextPaneTabs({
       isCopilotSession,
       hasCompanionGroupMonitor: selectedCompanionGroupMonitorEntries.length > 0,
+      hasReasoningText: hasLiveRunReasoningText,
     }),
-    [isCopilotSession, selectedCompanionGroupMonitorEntries.length],
+    [hasLiveRunReasoningText, isCopilotSession, selectedCompanionGroupMonitorEntries.length],
   );
 
   const hasInProgressLiveRunStep = useMemo(
@@ -2473,21 +2476,18 @@ export default function AgentSessionWindowApp() {
       latestCommandView,
       backgroundTasks: selectedBackgroundTasks,
       companionGroupMonitorEntries: selectedCompanionGroupMonitorEntries,
-    }),
-    [activeContextPaneTab, latestCommandView, selectedBackgroundTasks, selectedCompanionGroupMonitorEntries],
-  );
-
-  useEffect(() => {
-    const nextTab = resolveAutoContextPaneTab({
+      hasReasoningText: hasLiveRunReasoningText,
       isSelectedSessionRunning,
-      isCopilotSession,
-      backgroundTasks: selectedBackgroundTasks,
-      hasCompanionGroupMonitor: selectedCompanionGroupMonitorEntries.length > 0,
-    });
-    if (nextTab) {
-      setActiveContextPaneTab(nextTab);
-    }
-  }, [isSelectedSessionRunning, isCopilotSession, selectedBackgroundTasks, selectedCompanionGroupMonitorEntries.length]);
+    }),
+    [
+      activeContextPaneTab,
+      hasLiveRunReasoningText,
+      isSelectedSessionRunning,
+      latestCommandView,
+      selectedBackgroundTasks,
+      selectedCompanionGroupMonitorEntries,
+    ],
+  );
 
   useEffect(() => {
     if (!availableContextPaneTabs.includes(activeContextPaneTab)) {
@@ -2570,6 +2570,7 @@ export default function AgentSessionWindowApp() {
         isContextRailResizing,
         latestCommandView,
         runningDetailsEntries,
+        liveRunReasoningText,
         activeContextPaneTab,
         availableContextPaneTabs,
         contextPaneProjection,

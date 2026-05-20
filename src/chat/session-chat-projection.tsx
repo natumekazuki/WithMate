@@ -87,6 +87,7 @@ export type AgentSessionChatProjectionInput = {
   isContextRailResizing: boolean;
   latestCommandView: SessionContextPaneProps["latestCommandView"];
   runningDetailsEntries: SessionContextPaneProps["runningDetailsEntries"];
+  liveRunReasoningText: SessionContextPaneProps["liveRunReasoningText"];
   activeContextPaneTab: ContextPaneTabKey;
   availableContextPaneTabs: ContextPaneTabKey[];
   contextPaneProjection: SessionContextPaneProps["contextPaneProjection"];
@@ -370,6 +371,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
           contextPaneProjection={input.contextPaneProjection}
           latestCommandView={input.latestCommandView}
           runningDetailsEntries={input.runningDetailsEntries}
+          liveRunReasoningText={input.liveRunReasoningText}
           backgroundTasks={input.selectedBackgroundTasks}
           companionGroupMonitorEntries={input.selectedCompanionGroupMonitorEntries}
           selectedSessionLiveRunErrorMessage={input.liveRunErrorMessage}

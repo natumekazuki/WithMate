@@ -107,6 +107,7 @@ type CodexTurnStreamState = {
   threadId: string | null;
   streamedAssistantText: string;
   finalAssistantText: string;
+  reasoningText: string;
   usage: Usage | null;
   liveUsage: AuditLogUsage | null;
   streamErrorMessage: string;
@@ -459,11 +460,6 @@ function toActivitySummary(items: ThreadItem[]): string[] {
           summary.push(`todo: ${item.items.filter((entry) => entry.completed).length}/${item.items.length} completed`);
         }
         break;
-      case "reasoning":
-        if (item.text.trim()) {
-          summary.push(item.text.trim());
-        }
-        break;
       default:
         break;
     }
@@ -566,12 +562,6 @@ function toAuditOperations(items: ThreadItem[]): AuditLogOperation[] {
           details: toAuditTextPreview(item.items.map((entry) => `${entry.completed ? "[x]" : "[ ]"} ${entry.text}`).join("\n")),
         });
         break;
-      case "reasoning":
-        operations.push({
-          type: item.type,
-          summary: toAuditTextPreview(item.text) ?? item.text,
-        });
-        break;
       case "error":
         operations.push({
           type: item.type,
@@ -663,13 +653,6 @@ export function buildCodexStableRawItems(items: ThreadItem[]): BoundedAuditRawIt
         });
         break;
       case "reasoning":
-        pushCodexRawItem(rawItems, {
-          type: item.type,
-          data: {
-            id: item.id,
-            text: item.text,
-          },
-        });
         break;
       case "error":
         pushCodexRawItem(rawItems, {
@@ -760,12 +743,7 @@ function buildLiveStep(item: ThreadItem): LiveRunStep | null {
         status: "completed",
       };
     case "reasoning":
-      return {
-        id: item.id,
-        type: item.type,
-        summary: toAuditTextPreview(item.text) ?? item.text,
-        status: "completed",
-      };
+      return null;
     case "error":
       return {
         id: item.id,
@@ -786,6 +764,7 @@ async function emitLiveState(
   threadId: string | null,
   steps: Map<string, LiveRunStep>,
   assistantText: string,
+  reasoningText: string,
   usage: AuditLogUsage | null,
   errorMessage: string,
 ): Promise<void> {
@@ -797,6 +776,7 @@ async function emitLiveState(
     sessionId,
     threadId: threadId ?? "",
     assistantText: toAuditTextPreview(assistantText) ?? "",
+    reasoningText: toAuditTextPreview(reasoningText) ?? "",
     steps: Array.from(steps.values()),
     backgroundTasks: [],
     usage,
@@ -813,6 +793,7 @@ function createCodexTurnStreamState(threadId: string | null): CodexTurnStreamSta
     threadId,
     streamedAssistantText: "",
     finalAssistantText: "",
+    reasoningText: "",
     usage: null,
     liveUsage: null,
     streamErrorMessage: "",
@@ -900,6 +881,14 @@ function getLiveAssistantText(state: CodexTurnStreamState): string {
   return state.finalAssistantText || state.streamedAssistantText;
 }
 
+function collectReasoningText(items: Iterable<ThreadItem>): string {
+  return Array.from(items)
+    .filter((item): item is Extract<ThreadItem, { type: "reasoning" }> => item.type === "reasoning")
+    .map((item) => item.text.trim())
+    .filter((text) => text.length > 0)
+    .join("\n\n");
+}
+
 function applyCodexTurnEvent(state: CodexTurnStreamState, event: ThreadEvent): void {
   const assistantDelta = readCodexAssistantDelta(event);
   if (assistantDelta !== null) {
@@ -930,6 +919,9 @@ function applyCodexTurnEvent(state: CodexTurnStreamState, event: ThreadEvent): v
           state.finalAssistantText = itemAssistantText;
         }
       }
+      if (event.item.type === "reasoning") {
+        state.reasoningText = collectReasoningText(state.items.values());
+      }
 
       const liveStep = buildLiveStep(event.item);
       if (liveStep) {
@@ -958,6 +950,14 @@ export function collectCodexAssistantTextSnapshotsFromEventsForTesting(events: T
     snapshots.push(getLiveAssistantText(state));
   }
   return snapshots;
+}
+
+export function collectCodexReasoningTextFromEventsForTesting(events: ThreadEvent[]): string {
+  const state = createCodexTurnStreamState(null);
+  for (const event of events) {
+    applyCodexTurnEvent(state, event);
+  }
+  return state.reasoningText;
 }
 
 function buildCodexTransportPayload(prompt: ProviderPromptComposition): AuditTransportPayload {
@@ -1392,6 +1392,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       streamState.threadId,
       streamState.liveSteps,
       getLiveAssistantText(streamState),
+      streamState.reasoningText,
       streamState.liveUsage,
       streamState.streamErrorMessage,
     );
@@ -1409,6 +1410,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
           streamState.threadId,
           streamState.liveSteps,
           getLiveAssistantText(streamState),
+          streamState.reasoningText,
           streamState.liveUsage,
           streamState.streamErrorMessage,
         );

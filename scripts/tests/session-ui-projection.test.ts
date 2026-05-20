@@ -14,7 +14,6 @@ import {
   buildSessionContextTelemetryProjection,
   cycleContextPaneTab,
   resolveAvailableContextPaneTabs,
-  resolveAutoContextPaneTab,
 } from "../../src/session-ui-projection.js";
 
 function makeBackgroundTask(partial: Partial<LiveBackgroundTask> & Pick<LiveBackgroundTask, "id" | "kind" | "status" | "title" | "updatedAt">): LiveBackgroundTask {
@@ -75,53 +74,6 @@ describe("session-ui-projection", () => {
     assert.equal(projection.remainingPercentLabel, "40% left");
     assert.equal(projection.remainingRequestsLabel, "80 / 200 left");
     assert.match(projection.resetLabel, /\d{2}\/\d{2} \d{2}:\d{2}/);
-  });
-
-  it("実行中 session があれば LatestCommand を自動選択する", () => {
-    const tab = resolveAutoContextPaneTab({
-      isSelectedSessionRunning: true,
-      isCopilotSession: true,
-      backgroundTasks: [
-        makeBackgroundTask({
-          id: "agent:1",
-          kind: "agent",
-          status: "running",
-          title: "sub agent",
-          updatedAt: "2026-03-28T00:00:00.000Z",
-        }),
-      ],
-    });
-
-    assert.equal(tab, "latest-command");
-  });
-
-  it("Copilot background task が走っていれば Tasks を自動選択する", () => {
-    const tab = resolveAutoContextPaneTab({
-      isSelectedSessionRunning: false,
-      isCopilotSession: true,
-      backgroundTasks: [
-        makeBackgroundTask({
-          id: "shell:1",
-          kind: "shell",
-          status: "running",
-          title: "npm test",
-          updatedAt: "2026-03-28T00:00:00.000Z",
-        }),
-      ],
-    });
-
-    assert.equal(tab, "tasks");
-  });
-
-  it("CompanionGroup monitor があれば CompanionGroup を自動選択する", () => {
-    const tab = resolveAutoContextPaneTab({
-      isSelectedSessionRunning: false,
-      isCopilotSession: false,
-      backgroundTasks: [],
-      hasCompanionGroupMonitor: true,
-    });
-
-    assert.equal(tab, "companion-group");
   });
 
   it("ContextPaneProjection は LatestCommand tab の表示情報を作る", () => {
@@ -342,7 +294,7 @@ describe("session-ui-projection", () => {
   });
 
   it("cycleContextPaneTab は利用可能な command pane を循環する", () => {
-    assert.equal(cycleContextPaneTab("latest-command", 1), "tasks");
+    assert.equal(cycleContextPaneTab("latest-command", 1), "reasoning");
     assert.equal(cycleContextPaneTab("latest-command", -1), "companion-group");
   });
 
@@ -352,6 +304,11 @@ describe("session-ui-projection", () => {
     ]);
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true }), [
       "latest-command",
+      "tasks",
+    ]);
+    assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true, hasReasoningText: true }), [
+      "latest-command",
+      "reasoning",
       "tasks",
     ]);
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false, hasCompanionGroupMonitor: true }), [

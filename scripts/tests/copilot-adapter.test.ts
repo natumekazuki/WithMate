@@ -17,6 +17,9 @@ import {
   buildCopilotSessionSettings,
   buildCopilotMessageAttachments,
   buildCopilotProviderQuotaTelemetry,
+  collectCopilotAuditOperationsFromEventsForTesting,
+  collectCopilotLiveStepsFromEventsForTesting,
+  collectCopilotReasoningTextFromEventsForTesting,
   getCopilotPermissionCompletedLiveStatus,
   buildCopilotSessionContextTelemetry,
   buildCopilotSystemMessage,
@@ -622,6 +625,65 @@ describe("CopilotAdapter env", () => {
         },
       },
     ]);
+  });
+
+  it("assistant.reasoning / reasoning_delta は rawItems に残さない", () => {
+    const items = buildCopilotStableRawItems([
+      {
+        type: "assistant.reasoning_delta",
+        timestamp: "2026-03-23T00:00:00.000Z",
+        ephemeral: true,
+        data: {
+          reasoningId: "reasoning-1",
+          deltaContent: "調査",
+        },
+      } as never,
+      {
+        type: "assistant.reasoning",
+        timestamp: "2026-03-23T00:00:01.000Z",
+        data: {
+          reasoningId: "reasoning-1",
+          content: "調査してから実装する",
+        },
+      } as never,
+    ], "F:/repo");
+
+    assert.deepEqual(items, []);
+  });
+
+  it("assistant.reasoning_delta / assistant.reasoning は live reasoning text にだけ変換する", () => {
+    const events = [
+      {
+        type: "assistant.reasoning_delta",
+        timestamp: "2026-03-23T00:00:00.000Z",
+        ephemeral: true,
+        data: {
+          reasoningId: "reasoning-1",
+          deltaContent: "調査して",
+        },
+      },
+      {
+        type: "assistant.reasoning_delta",
+        timestamp: "2026-03-23T00:00:01.000Z",
+        ephemeral: true,
+        data: {
+          reasoningId: "reasoning-1",
+          deltaContent: "から実装する",
+        },
+      },
+      {
+        type: "assistant.reasoning",
+        timestamp: "2026-03-23T00:00:02.000Z",
+        data: {
+          reasoningId: "reasoning-1",
+          content: "調査してから実装する",
+        },
+      },
+    ] as never[];
+
+    assert.deepEqual(collectCopilotLiveStepsFromEventsForTesting(events, "F:/repo"), []);
+    assert.deepEqual(collectCopilotAuditOperationsFromEventsForTesting(events, "F:/repo"), []);
+    assert.equal(collectCopilotReasoningTextFromEventsForTesting(events, "F:/repo"), "調査してから実装する");
   });
 
   it("rawItems の大きな text payload は preview と metadata に畳み込む", () => {

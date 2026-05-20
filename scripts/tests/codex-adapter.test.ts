@@ -15,6 +15,7 @@ import {
   buildCodexStableRawItems,
   collectCodexAssistantTextSnapshotsFromEventsForTesting,
   collectCodexAssistantTextFromEventsForTesting,
+  collectCodexReasoningTextFromEventsForTesting,
   resolveCodexThreadForSettings,
   type CodexThreadOptions,
 } from "../../src-electron/codex-adapter.js";
@@ -251,6 +252,36 @@ describe("CodexAdapter thread settings", () => {
         text: "done",
       },
     });
+  });
+
+  it("reasoning item は rawItems に残さず live reasoning text にだけ流す", () => {
+    const events = [
+      {
+        type: "item.updated",
+        item: {
+          id: "reasoning-1",
+          type: "reasoning",
+          text: "既存経路を確認する",
+        },
+      },
+      {
+        type: "item.completed",
+        item: {
+          id: "reasoning-1",
+          type: "reasoning",
+          text: "既存経路を確認してから UI に流す",
+        },
+      },
+    ] as never[];
+
+    assert.deepEqual(buildCodexStableRawItems([
+      {
+        id: "reasoning-1",
+        type: "reasoning",
+        text: "既存経路を確認してから UI に流す",
+      } as never,
+    ]), []);
+    assert.equal(collectCodexReasoningTextFromEventsForTesting(events), "既存経路を確認してから UI に流す");
   });
 
   it("model / reasoning 変更後の thread settings は新 options と settingsKey を反映する", () => {

@@ -91,6 +91,8 @@ type CopilotTurnStreamState = {
   backgroundTasks: Map<string, LiveBackgroundTask>;
   permissionToStepId: Map<string, string>;
   toolNamesByCallId: Map<string, string>;
+  reasoningDraftsById: Map<string, string>;
+  reasoningText: string;
   rawItems: CopilotStableRawItem[];
   assistantText: string;
   assistantMessages: string[];
@@ -247,6 +249,8 @@ function createCopilotTurnStreamState(): CopilotTurnStreamState {
     backgroundTasks: new Map<string, LiveBackgroundTask>(),
     permissionToStepId: new Map<string, string>(),
     toolNamesByCallId: new Map<string, string>(),
+    reasoningDraftsById: new Map<string, string>(),
+    reasoningText: "",
     rawItems: [],
     assistantText: "",
     assistantMessages: [],
@@ -264,6 +268,13 @@ function updateCopilotCommandStep(state: CopilotTurnStreamState, nextState: Copi
     details: toAuditTextPreview(nextState.details),
     status: nextState.status,
   });
+}
+
+function refreshCopilotReasoningText(state: CopilotTurnStreamState): void {
+  state.reasoningText = Array.from(state.reasoningDraftsById.values())
+    .map((content) => content.trim())
+    .filter((content) => content.length > 0)
+    .join("\n\n");
 }
 
 const COPILOT_APPROVED_PERMISSION_COMPLETED_KINDS = new Set([
@@ -313,6 +324,17 @@ function applyCopilotTurnEvent(args: {
           void args.onProviderQuotaTelemetry(telemetry);
         }
       }
+      break;
+    case "assistant.reasoning_delta": {
+      const currentDraft = state.reasoningDraftsById.get(event.data.reasoningId) ?? "";
+      const nextDraft = currentDraft + event.data.deltaContent;
+      state.reasoningDraftsById.set(event.data.reasoningId, nextDraft);
+      refreshCopilotReasoningText(state);
+      break;
+    }
+    case "assistant.reasoning":
+      state.reasoningDraftsById.set(event.data.reasoningId, event.data.content);
+      refreshCopilotReasoningText(state);
       break;
     case "session.usage_info":
       if (args.onSessionContextTelemetry) {
@@ -417,6 +439,50 @@ function applyCopilotTurnEvent(args: {
   }
 
   appendCopilotStableRawItem(state.rawItems, event, workspacePath, state.toolNamesByCallId);
+}
+
+export function collectCopilotLiveStepsFromEventsForTesting(
+  events: SessionEvent[],
+  workspacePath = "C:/workspace",
+): LiveRunStep[] {
+  const state = createCopilotTurnStreamState();
+  for (const event of events) {
+    applyCopilotTurnEvent({
+      event,
+      state,
+      providerId: "copilot",
+      sessionId: "session-1",
+      workspacePath,
+    });
+  }
+
+  return Array.from(state.liveSteps.values());
+}
+
+export function collectCopilotAuditOperationsFromEventsForTesting(
+  events: SessionEvent[],
+  workspacePath = "C:/workspace",
+): AuditLogOperation[] {
+  const steps = collectCopilotLiveStepsFromEventsForTesting(events, workspacePath);
+  return toAuditOperations(new Map(steps.map((step) => [step.id, step])));
+}
+
+export function collectCopilotReasoningTextFromEventsForTesting(
+  events: SessionEvent[],
+  workspacePath = "C:/workspace",
+): string {
+  const state = createCopilotTurnStreamState();
+  for (const event of events) {
+    applyCopilotTurnEvent({
+      event,
+      state,
+      providerId: "copilot",
+      sessionId: "session-1",
+      workspacePath,
+    });
+  }
+
+  return state.reasoningText;
 }
 
 type CopilotQuotaSnapshotLike = {
@@ -1036,6 +1102,7 @@ function appendCopilotStableRawItem(
           inputTokens: event.data.inputTokens ?? null,
           cacheReadTokens: event.data.cacheReadTokens ?? null,
           outputTokens: event.data.outputTokens ?? null,
+          reasoningTokens: event.data.reasoningTokens ?? null,
         },
       });
       break;
@@ -1162,7 +1229,7 @@ function extractToolExecutionDetails(event: Extract<SessionEvent, { type: "tool.
   return normalized.length > 0 ? normalized.join("\n\n") : undefined;
 }
 
-function toCommandOperations(steps: Map<string, LiveRunStep>): AuditLogOperation[] {
+function toAuditOperations(steps: Map<string, LiveRunStep>): AuditLogOperation[] {
   return Array.from(steps.values())
     .filter((step) =>
       step.type === "command_execution"
@@ -1310,6 +1377,7 @@ async function emitLiveState(
   steps: Map<string, LiveRunStep>,
   backgroundTasks: Map<string, LiveBackgroundTask>,
   assistantText: string,
+  reasoningText: string,
   usage: AuditLogUsage | null,
   errorMessage: string,
 ): Promise<void> {
@@ -1321,6 +1389,7 @@ async function emitLiveState(
     sessionId,
     threadId: threadId ?? "",
     assistantText: toAuditTextPreview(assistantText) ?? "",
+    reasoningText: toAuditTextPreview(reasoningText) ?? "",
     steps: Array.from(steps.values()),
     backgroundTasks: sortLiveBackgroundTasks(backgroundTasks.values()),
     usage,
@@ -2133,7 +2202,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       workspacePath,
       ...normalizeAllowedAdditionalDirectories(workspacePath, session.allowedAdditionalDirectories),
     ]);
-    const operations = toCommandOperations(steps);
+    const operations = toAuditOperations(steps);
     const artifact = buildArtifactFromOperations({
       session,
       operations,
@@ -2213,6 +2282,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           streamState.liveSteps,
           streamState.backgroundTasks,
           streamState.assistantText,
+          streamState.reasoningText,
           streamState.usage,
           streamState.streamErrorMessage,
         ),
@@ -2227,6 +2297,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       streamState.liveSteps,
       streamState.backgroundTasks,
       streamState.assistantText,
+      streamState.reasoningText,
       streamState.usage,
       streamState.streamErrorMessage,
     );

@@ -1303,6 +1303,7 @@ export type SessionContextPaneProps = {
   contextPaneProjection: ContextPaneProjection;
   latestCommandView: LatestCommandView | null;
   runningDetailsEntries: RunningDetailsEntry[];
+  liveRunReasoningText: string;
   backgroundTasks: LiveBackgroundTask[];
   companionGroupMonitorEntries: HomeMonitorEntry[];
   selectedSessionLiveRunErrorMessage: string;
@@ -1414,6 +1415,7 @@ export function SessionContextPane({
   contextPaneProjection,
   latestCommandView,
   runningDetailsEntries,
+  liveRunReasoningText,
   backgroundTasks,
   companionGroupMonitorEntries,
   selectedSessionLiveRunErrorMessage,
@@ -1449,6 +1451,8 @@ export function SessionContextPane({
         return taskEntries
           .map((task) => `${task.id}:${task.kind}:${task.status}:${task.title}:${task.details?.length ?? 0}:${task.updatedAt}`)
           .join("|");
+      case "reasoning":
+        return `${isSelectedSessionRunning ? "running" : "idle"}:${liveRunReasoningText.length}`;
       case "companion-group":
         return companionGroupMonitorEntries
           .map((entry) => `${entry.kind}:${entry.session.id}:${entry.session.taskTitle}:${entry.state.kind}:${entry.state.label}:${entry.session.updatedAt}`)
@@ -1460,7 +1464,9 @@ export function SessionContextPane({
     activeContextPaneTab,
     companionGroupMonitorEntries,
     latestCommandView,
+    liveRunReasoningText,
     runningDetailsEntries,
+    isSelectedSessionRunning,
     taskEntries,
     selectedSessionLiveRunErrorMessage,
   ]);
@@ -1667,6 +1673,31 @@ export function SessionContextPane({
                 <div className="command-monitor-empty-shell">
                   <p className="command-monitor-empty">まだ background task はないよ。</p>
                   <p className="command-monitor-empty-subtle">Copilot の sub-agent や background shell がある時だけここへ出るよ。</p>
+                </div>
+              )
+            ) : null}
+
+            {activeContextPaneTab === "reasoning" ? (
+              liveRunReasoningText.trim().length > 0 ? (
+                <div className="command-monitor-card">
+                  <div className="command-monitor-card-head">
+                    <div className="command-monitor-meta">
+                      <span className={`live-run-step-status ${contextPaneProjection.reasoningToneClassName}`}>
+                        {isSelectedSessionRunning ? "実行中" : "保持中"}
+                      </span>
+                      <span className="live-run-step-type">Reasoning</span>
+                      <span className="command-monitor-source">
+                        {isSelectedSessionRunning ? "RUN LIVE" : "LAST RUN"}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="command-monitor-details live-run-step-details live-reasoning-details">
+                    <pre>{liveRunReasoningText}</pre>
+                  </div>
+                </div>
+              ) : (
+                <div className="command-monitor-empty-shell">
+                  <p className="command-monitor-empty">まだ Reasoning はないよ。</p>
                 </div>
               )
             ) : null}
