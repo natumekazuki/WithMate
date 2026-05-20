@@ -1901,24 +1901,13 @@ export function SessionMessageColumn({
     Math.max(0, messages.length - SESSION_MESSAGE_INITIAL_RENDER_COUNT),
   );
   const prependAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
-  const liveAssistantMessage = useMemo<Message | null>(
-    () => (isRunning && hasLiveRunAssistantText ? { role: "assistant", text: liveRunAssistantText } : null),
-    [hasLiveRunAssistantText, isRunning, liveRunAssistantText],
-  );
-  const displayedMessageCount = messages.length + (liveAssistantMessage ? 1 : 0);
   const latestMessageWindowStartIndex = Math.min(
     Math.max(0, messageWindowStartIndex),
-    Math.max(0, displayedMessageCount - SESSION_MESSAGE_INITIAL_RENDER_COUNT),
+    Math.max(0, messages.length - SESSION_MESSAGE_INITIAL_RENDER_COUNT),
   );
   const renderedMessages = useMemo(
-    () => {
-      const rendered = messages.slice(latestMessageWindowStartIndex);
-      if (liveAssistantMessage && latestMessageWindowStartIndex <= messages.length) {
-        rendered.push(liveAssistantMessage);
-      }
-      return rendered;
-    },
-    [latestMessageWindowStartIndex, liveAssistantMessage, messages],
+    () => messages.slice(latestMessageWindowStartIndex),
+    [latestMessageWindowStartIndex, messages],
   );
   const hasOlderMessages = latestMessageWindowStartIndex > 0;
 
@@ -2289,6 +2278,7 @@ export function SessionMessageColumn({
                         onOpenPath={onOpenPath}
                       />
                     ) : null}
+                    {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} /> : null}
                     {liveRunErrorMessage ? (
                       <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
                     ) : null}
