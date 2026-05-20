@@ -1,3 +1,5 @@
+@import "katex/dist/katex.min.css";
+
 :root {
   --bg-top: #f5f6f8;
   --bg-bottom: #eceff3;
@@ -3579,6 +3581,44 @@ button:disabled {
   font-weight: 700;
 }
 
+.message-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid rgba(18, 24, 39, 0.12);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.message-table-heading,
+.message-table-cell {
+  padding: 7px 10px;
+  border: 1px solid rgba(18, 24, 39, 0.12);
+  text-align: left;
+  vertical-align: top;
+}
+
+.message-table-heading {
+  background: rgba(18, 24, 39, 0.06);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.message-table-cell {
+  color: var(--ink);
+}
+
+.session-page .message-table,
+.session-page .message-table-heading,
+.session-page .message-table-cell {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.session-page .message-table-heading {
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .session-page .message-inline-code {
   background: rgba(255, 255, 255, 0.08);
   color: var(--ink);
@@ -3603,6 +3643,45 @@ button:disabled {
   background: transparent;
   color: inherit;
   font: inherit;
+}
+
+.message-mermaid {
+  overflow-x: auto;
+  padding: 12px;
+  border: 1px solid rgba(18, 24, 39, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.message-mermaid.fallback {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.message-mermaid svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.message-mermaid-error {
+  margin: 0;
+  color: #9b1c1c;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.session-page .message-mermaid {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.session-page .message-mermaid.fallback {
+  background: transparent;
 }
 
 .settings-help {

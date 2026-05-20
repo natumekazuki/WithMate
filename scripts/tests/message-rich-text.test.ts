@@ -27,6 +27,98 @@ test("MessageRichText は inline code と link を優先しつつ bold を併用
   assert.match(html, /<a href="src\/App\.tsx">file<\/a>/);
 });
 
+test("MessageRichText は GFM table を table 要素として render する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: ["| 置き場 | 持つもの |", "| --- | --- |", "| `history` | 状態が変わった時だけのイベント |"].join("\n"),
+    }),
+  );
+
+  assert.match(html, /<table class="message-table">/);
+  assert.match(html, /<th class="message-table-heading">置き場<\/th>/);
+  assert.match(html, /<td class="message-table-cell"><code class="message-inline-code">history<\/code><\/td>/);
+  assert.doesNotMatch(html, /\| --- \| --- \|/);
+});
+
+test("MessageRichText は GFM 拡張記法を render する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: ["~~old~~", "", "- [x] done", "", "https://example.test", "", "note[^1]", "", "[^1]: footnote"].join("\n"),
+    }),
+  );
+
+  assert.match(html, /<del>old<\/del>/);
+  assert.match(html, /<li class="task-list-item"><input type="checkbox" disabled="" checked=""/);
+  assert.match(html, /<a href="https:\/\/example\.test">https:\/\/example\.test<\/a>/);
+  assert.match(html, /data-footnote-ref="true"/);
+  assert.match(html, /id="message-footnote-[^"]+-fn-1"/);
+});
+
+test("MessageRichText は footnote の DOM ID と aria 参照を message ごとに分離する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(MessageRichText, {
+        text: ["note[^1]", "", "[^1]: first"].join("\n"),
+      }),
+      React.createElement(MessageRichText, {
+        text: ["note[^1]", "", "[^1]: second"].join("\n"),
+      }),
+    ),
+  );
+
+  const footnoteIds = [...html.matchAll(/id="(message-footnote-[^"]+-fn-1)"/g)].map((match) => match[1]);
+  const footnoteLabelIds = [...html.matchAll(/id="(message-footnote-[^"]+-footnote-label)"/g)].map((match) => match[1]);
+  const ariaLabelIds = [...html.matchAll(/aria-describedby="(message-footnote-[^"]+-footnote-label)"/g)].map(
+    (match) => match[1],
+  );
+
+  assert.equal(new Set(footnoteIds).size, 2);
+  assert.equal(new Set(footnoteLabelIds).size, 2);
+  assert.deepEqual(ariaLabelIds, footnoteLabelIds);
+  assert.doesNotMatch(html, /id="footnote-label"/);
+  assert.doesNotMatch(html, /aria-describedby="footnote-label"/);
+});
+
+test("MessageRichText は GFM table alignment を th と td に引き継ぐ", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: ["| left | center | right |", "| :--- | :---: | ---: |", "| a | b | c |"].join("\n"),
+    }),
+  );
+
+  assert.match(html, /<th style="text-align:left" class="message-table-heading">left<\/th>/);
+  assert.match(html, /<th style="text-align:center" class="message-table-heading">center<\/th>/);
+  assert.match(html, /<th style="text-align:right" class="message-table-heading">right<\/th>/);
+  assert.match(html, /<td style="text-align:left" class="message-table-cell">a<\/td>/);
+  assert.match(html, /<td style="text-align:center" class="message-table-cell">b<\/td>/);
+  assert.match(html, /<td style="text-align:right" class="message-table-cell">c<\/td>/);
+});
+
+test("MessageRichText は double-dollar math を render し、金額表現の single dollar は維持する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: ["Inline $$a^2 + b^2$$ math", "", "$$", "a^2 + b^2 = c^2", "$$", "", "$5 and $10"].join("\n"),
+    }),
+  );
+
+  assert.match(html, /class="katex"/);
+  assert.match(html, /class="katex-display"/);
+  assert.match(html, /\$5 and \$10/);
+});
+
+test("MessageRichText は Mermaid code block を diagram 用 container として render する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: ["```mermaid", "flowchart TD", "  A --> B", "```"].join("\n"),
+    }),
+  );
+
+  assert.match(html, /<div class="message-mermaid fallback">/);
+  assert.match(html, /<code class="message-inline-code language-mermaid">flowchart TD\n  A --&gt; B\n<\/code>/);
+});
+
 test("MessageRichText は code literal 内の local path link 風テキストを改変しない", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
