@@ -4553,6 +4553,11 @@ button:disabled {
   white-space: pre-wrap;
 }
 
+.live-reasoning-details pre {
+  max-height: none;
+  overflow: visible;
+}
+
 .command-monitor-card-head.compact {
   margin-bottom: 8px;
 }

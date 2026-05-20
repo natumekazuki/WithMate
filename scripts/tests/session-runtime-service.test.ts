@@ -128,6 +128,7 @@ function createLiveRunState(overrides?: Partial<LiveSessionRunState>): LiveSessi
     sessionId: overrides?.sessionId ?? "session-1",
     threadId: overrides?.threadId ?? "",
     assistantText: overrides?.assistantText ?? "",
+    reasoningText: overrides?.reasoningText ?? "",
     steps: overrides?.steps ?? [],
     backgroundTasks: overrides?.backgroundTasks ?? [],
     usage: overrides?.usage ?? null,
@@ -780,6 +781,104 @@ describe("SessionRuntimeService", () => {
     assert.equal(storedSessions[1]?.threadId, "thread-new");
     assert.equal(liveStates.at(-1)?.threadId, "thread-new");
     assert.deepEqual(liveStates.at(-1)?.backgroundTasks, backgroundTasks);
+  });
+
+  it("成功後も Reasoning は live state に保持し、次の prompt 用 state で空にする", async () => {
+    const session = createSession({ provider: "codex", threadId: "thread-old" });
+    let liveState: LiveSessionRunState | null = null;
+    const liveStates: Array<LiveSessionRunState | null> = [];
+
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn(_input, onProgress) {
+        await onProgress?.(createLiveRunState({
+          sessionId: session.id,
+          threadId: "thread-new",
+          reasoningText: "既存経路を確認してから表示へ流す",
+        }));
+        return createPartialResult({
+          threadId: "thread-new",
+          assistantText: "完了したよ。",
+        });
+      },
+    };
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === session.id ? session : null;
+      },
+      upsertSession(next) {
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] } satisfies ComposerPreview;
+      },
+      async resolveSessionCharacter() {
+        return createCharacter();
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(current) {
+        return createSessionMemory(current.id);
+      },
+      resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
+        return [];
+      },
+      createAuditLog(input) {
+        return createAuditLogBase(input);
+      },
+      updateAuditLog() {},
+      setLiveSessionRun(_sessionId, next) {
+        liveState = next;
+        liveStates.push(next);
+      },
+      getLiveSessionRun() {
+        return liveState;
+      },
+      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+        return "approve";
+      },
+      async waitForElicitationResponse() {
+        return { action: "cancel" } as const;
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      runSessionMemoryExtraction() {},
+      runCharacterReflection() {},
+      clearWorkspaceFileIndex() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+
+    assert.equal(liveStates[0]?.reasoningText, "");
+    assert.equal(liveStates.at(-1)?.threadId, "thread-new");
+    assert.equal(liveStates.at(-1)?.reasoningText, "既存経路を確認してから表示へ流す");
   });
 
   it("provider failure 時は error session を保存し、cancel 時は idle へ戻す", async () => {

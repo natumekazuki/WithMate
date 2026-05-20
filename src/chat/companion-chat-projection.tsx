@@ -88,6 +88,7 @@ export type CompanionChatProjectionInput = {
   contextPaneProjection: SessionContextPaneProps["contextPaneProjection"];
   latestCommandView: SessionContextPaneProps["latestCommandView"];
   runningDetailsEntries: SessionContextPaneProps["runningDetailsEntries"];
+  liveRunReasoningText: SessionContextPaneProps["liveRunReasoningText"];
   backgroundTasks: SessionContextPaneProps["backgroundTasks"];
   companionGroupMonitorEntries: SessionContextPaneProps["companionGroupMonitorEntries"];
   isCopilotSession: boolean;
@@ -371,6 +372,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
           contextPaneProjection={input.contextPaneProjection}
           latestCommandView={input.latestCommandView}
           runningDetailsEntries={input.runningDetailsEntries}
+          liveRunReasoningText={input.liveRunReasoningText}
           backgroundTasks={input.backgroundTasks}
           companionGroupMonitorEntries={input.companionGroupMonitorEntries}
           selectedSessionLiveRunErrorMessage={input.liveRunErrorMessage}

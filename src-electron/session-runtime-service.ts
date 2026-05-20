@@ -221,6 +221,7 @@ function buildEmptyLiveSessionRunState(sessionId: string, threadId: string): Liv
     sessionId,
     threadId,
     assistantText: "",
+    reasoningText: "",
     steps: [],
     backgroundTasks: [],
     usage: null,
@@ -456,6 +457,7 @@ export class SessionRuntimeService {
     const initialLiveState: LiveSessionRunState = {
       ...buildEmptyLiveSessionRunState(sessionId, runningSession.threadId),
       backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
+      reasoningText: "",
     };
     this.deps.setLiveSessionRun(sessionId, initialLiveState);
 
@@ -611,10 +613,12 @@ export class SessionRuntimeService {
           return;
         }
 
+        const currentLiveState = this.deps.getLiveSessionRun(sessionId);
         const nextLiveState: LiveSessionRunState = {
           ...state,
-          approvalRequest: this.deps.getLiveSessionRun(sessionId)?.approvalRequest ?? null,
-          elicitationRequest: this.deps.getLiveSessionRun(sessionId)?.elicitationRequest ?? null,
+          reasoningText: state.reasoningText ?? currentLiveState?.reasoningText ?? "",
+          approvalRequest: currentLiveState?.approvalRequest ?? null,
+          elicitationRequest: currentLiveState?.elicitationRequest ?? null,
         };
         void syncRunningAuditFromLiveState(nextLiveState).catch((error) => {
           console.warn("Audit progress update failed", error);
@@ -845,11 +849,14 @@ export class SessionRuntimeService {
       this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
       this.inFlightSessionRuns.delete(sessionId);
       this.sessionRunControllers.delete(sessionId);
-      const preservedBackgroundTasks = this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [];
-      if (preservedBackgroundTasks.length > 0) {
+      const currentLiveState = this.deps.getLiveSessionRun(sessionId);
+      const preservedBackgroundTasks = currentLiveState?.backgroundTasks ?? [];
+      const preservedReasoningText = currentLiveState?.reasoningText ?? "";
+      if (preservedBackgroundTasks.length > 0 || preservedReasoningText.trim().length > 0) {
         this.deps.setLiveSessionRun(sessionId, {
           ...buildEmptyLiveSessionRunState(sessionId, activeRunningSession.threadId),
           backgroundTasks: preservedBackgroundTasks,
+          reasoningText: preservedReasoningText,
         });
       } else {
         this.deps.setLiveSessionRun(sessionId, null);

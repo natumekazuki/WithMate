@@ -85,7 +85,6 @@ import {
   buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
   cycleContextPaneTab,
-  resolveAutoContextPaneTab,
   resolveAvailableContextPaneTabs,
   type ContextPaneTabKey,
 } from "./session-ui-projection.js";
@@ -697,7 +696,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     liveRun: selectedSessionLiveRun,
     enabled: !isMergeView,
   });
-  const selectedSessionRunState = selectedSessionLiveRun ? "running" : snapshot?.session.runState ?? null;
+  const selectedSessionRunState = snapshot?.session.runState ?? (selectedSessionLiveRun ? "running" : null);
   const isSelectedSessionRunning = selectedSessionRunState === "running" || turnRunning;
   const activePathReference = useMemo(
     () => (snapshot ? getActivePathReference(composerText, composerCaret) : null),
@@ -839,10 +838,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         snapshot?.session.runState ?? "",
         snapshot?.session.messages.map((message) => `${message.role}:${message.text.length}:${message.text}`).join("\u001d") ?? "",
         selectedSessionLiveRun?.assistantText ?? "",
+        selectedSessionLiveRun?.reasoningText ?? "",
         selectedSessionLiveRun?.errorMessage ?? "",
       ].join("\u001a"),
     [
       selectedSessionLiveRun?.assistantText,
+      selectedSessionLiveRun?.reasoningText,
       selectedSessionLiveRun?.errorMessage,
       snapshot?.session.id,
       snapshot?.session.messages,
@@ -1087,6 +1088,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     () => selectedSessionLiveRun?.backgroundTasks ?? [],
     [selectedSessionLiveRun?.backgroundTasks],
   );
+  const liveRunReasoningText = selectedSessionLiveRun?.reasoningText ?? "";
+  const hasLiveRunReasoningText = liveRunReasoningText.trim().length > 0;
   const companionGroupMonitorEntries = useMemo(() => {
     if (!snapshot) {
       return [];
@@ -1101,26 +1104,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     latestCommandView,
     backgroundTasks: selectedBackgroundTasks,
     companionGroupMonitorEntries,
+    hasReasoningText: hasLiveRunReasoningText,
+    isSelectedSessionRunning,
   });
   const availableContextPaneTabs = useMemo(
     () => resolveAvailableContextPaneTabs({
       isCopilotSession,
       hasCompanionGroupMonitor: companionGroupMonitorEntries.length > 0,
+      hasReasoningText: hasLiveRunReasoningText,
     }),
-    [isCopilotSession, companionGroupMonitorEntries.length],
+    [hasLiveRunReasoningText, isCopilotSession, companionGroupMonitorEntries.length],
   );
-
-  useEffect(() => {
-    const nextTab = resolveAutoContextPaneTab({
-      isSelectedSessionRunning,
-      isCopilotSession,
-      backgroundTasks: selectedBackgroundTasks,
-      hasCompanionGroupMonitor: companionGroupMonitorEntries.length > 0,
-    });
-    if (nextTab) {
-      setActiveContextPaneTab(nextTab);
-    }
-  }, [isSelectedSessionRunning, isCopilotSession, selectedBackgroundTasks, companionGroupMonitorEntries.length]);
 
   useEffect(() => {
     if (!availableContextPaneTabs.includes(activeContextPaneTab)) {
@@ -2197,6 +2191,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         contextPaneProjection,
         latestCommandView,
         runningDetailsEntries,
+        liveRunReasoningText,
         backgroundTasks: selectedBackgroundTasks,
         companionGroupMonitorEntries,
         isCopilotSession,

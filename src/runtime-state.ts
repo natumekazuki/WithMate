@@ -235,6 +235,7 @@ export type LiveSessionRunState = {
   sessionId: string;
   threadId: string;
   assistantText: string;
+  reasoningText?: string;
   steps: LiveRunStep[];
   backgroundTasks: LiveBackgroundTask[];
   usage: AuditLogUsage | null;

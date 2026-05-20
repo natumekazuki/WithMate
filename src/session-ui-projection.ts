@@ -10,9 +10,9 @@ import type {
 import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { liveRunStepStatusLabel } from "./ui-utils.js";
 
-export type ContextPaneTabKey = "latest-command" | "tasks" | "companion-group";
+export type ContextPaneTabKey = "latest-command" | "reasoning" | "tasks" | "companion-group";
 
-export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = ["latest-command", "tasks", "companion-group"];
+export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = ["latest-command", "reasoning", "tasks", "companion-group"];
 
 export type LatestCommandView = {
   status: string;
@@ -58,6 +58,7 @@ export type ContextPaneProjection = {
   latestCommandToneClassName: string;
   latestCommandStatusLabel: string;
   latestCommandSourceCopy: string;
+  reasoningToneClassName: string;
   tasksToneClassName: string;
 };
 
@@ -285,6 +286,8 @@ export function contextPaneTabLabel(tab: ContextPaneTabKey): string {
   switch (tab) {
     case "latest-command":
       return "LatestCommand";
+    case "reasoning":
+      return "Reasoning";
     case "tasks":
       return "Tasks";
     case "companion-group":
@@ -294,40 +297,20 @@ export function contextPaneTabLabel(tab: ContextPaneTabKey): string {
   }
 }
 
-export function resolveAutoContextPaneTab({
-  isSelectedSessionRunning,
-  isCopilotSession,
-  backgroundTasks,
-  hasCompanionGroupMonitor = false,
-}: {
-  isSelectedSessionRunning: boolean;
-  isCopilotSession: boolean;
-  backgroundTasks: LiveBackgroundTask[];
-  hasCompanionGroupMonitor?: boolean;
-}): ContextPaneTabKey | null {
-  if (isSelectedSessionRunning) {
-    return "latest-command";
-  }
-
-  if (isCopilotSession && backgroundTasks.some((task) => task.status === "running")) {
-    return "tasks";
-  }
-
-  if (hasCompanionGroupMonitor) {
-    return "companion-group";
-  }
-
-  return null;
-}
-
 export function resolveAvailableContextPaneTabs({
   isCopilotSession,
   hasCompanionGroupMonitor = false,
+  hasReasoningText = false,
 }: {
   isCopilotSession: boolean;
   hasCompanionGroupMonitor?: boolean;
+  hasReasoningText?: boolean;
 }): ContextPaneTabKey[] {
   return CONTEXT_PANE_TAB_ORDER.filter((tab) => {
+    if (tab === "reasoning") {
+      return hasReasoningText;
+    }
+
     if (tab === "tasks") {
       return isCopilotSession;
     }
@@ -357,16 +340,23 @@ export function buildContextPaneProjection({
   latestCommandView,
   backgroundTasks,
   companionGroupMonitorEntries = [],
+  hasReasoningText = false,
+  isSelectedSessionRunning = false,
 }: {
   activeContextPaneTab: ContextPaneTabKey;
   latestCommandView: LatestCommandView | null;
   backgroundTasks: LiveBackgroundTask[];
   companionGroupMonitorEntries?: HomeMonitorEntry[];
+  hasReasoningText?: boolean;
+  isSelectedSessionRunning?: boolean;
 }): ContextPaneProjection {
   const latestCommandToneClassName = latestCommandView ? liveRunStepToneClassName(latestCommandView.status) : "unknown";
   const latestCommandStatusLabel = latestCommandView ? liveRunStepStatusLabel(latestCommandView.status) : "待機";
   const latestCommandSourceCopy = latestCommandView?.sourceLabel === "live" ? "RUN LIVE" : "LAST RUN";
   const tasksToneClassName = summarizeBackgroundTasksStatus(backgroundTasks);
+  const reasoningToneClassName = hasReasoningText
+    ? (isSelectedSessionRunning ? "in_progress" : "completed")
+    : "unknown";
   const companionGroupToneClassName = companionGroupMonitorEntries.some((entry) => entry.state.kind === "running")
     ? "running"
     : companionGroupMonitorEntries.some((entry) => entry.state.kind === "error")
@@ -379,6 +369,9 @@ export function buildContextPaneProjection({
       badgeLabel = backgroundTasks.length > 0
         ? sessionBackgroundActivityStatusLabel(tasksToneClassName)
         : "";
+      break;
+    case "reasoning":
+      badgeLabel = hasReasoningText ? (isSelectedSessionRunning ? "Live" : "Hold") : "";
       break;
     case "companion-group":
       badgeLabel = companionGroupMonitorEntries.length > 0 ? String(companionGroupMonitorEntries.length) : "";
@@ -396,6 +389,9 @@ export function buildContextPaneProjection({
     case "tasks":
       toneClassName = tasksToneClassName;
       break;
+    case "reasoning":
+      toneClassName = reasoningToneClassName;
+      break;
     case "companion-group":
       toneClassName = companionGroupToneClassName;
       break;
@@ -411,6 +407,7 @@ export function buildContextPaneProjection({
     latestCommandToneClassName,
     latestCommandStatusLabel,
     latestCommandSourceCopy,
+    reasoningToneClassName,
     tasksToneClassName,
   };
 }
