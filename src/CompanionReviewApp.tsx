@@ -1090,6 +1090,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   );
   const liveRunReasoningText = selectedSessionLiveRun?.reasoningText ?? "";
   const hasLiveRunReasoningText = liveRunReasoningText.trim().length > 0;
+  const hasReasoningCapability =
+    reasoningEffortOptions.length > 0 || Boolean(snapshot?.session.reasoningEffort);
   const companionGroupMonitorEntries = useMemo(() => {
     if (!snapshot) {
       return [];
@@ -1111,9 +1113,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     () => resolveAvailableContextPaneTabs({
       isCopilotSession,
       hasCompanionGroupMonitor: companionGroupMonitorEntries.length > 0,
+      hasReasoningCapability,
       hasReasoningText: hasLiveRunReasoningText,
     }),
-    [hasLiveRunReasoningText, isCopilotSession, companionGroupMonitorEntries.length],
+    [hasLiveRunReasoningText, hasReasoningCapability, isCopilotSession, companionGroupMonitorEntries.length],
   );
 
   useEffect(() => {

@@ -298,12 +298,21 @@ describe("session-ui-projection", () => {
     assert.equal(cycleContextPaneTab("latest-command", -1), "companion-group");
   });
 
-  it("available tabs は non-Copilot で Tasks を除外する", () => {
+  it("available tabs は non-Copilot で Tasks を除外し、Reasoning は capability がある時点で表示する", () => {
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false }), [
       "latest-command",
     ]);
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true }), [
       "latest-command",
+      "tasks",
+    ]);
+    assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false, hasReasoningCapability: true }), [
+      "latest-command",
+      "reasoning",
+    ]);
+    assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true, hasReasoningCapability: true }), [
+      "latest-command",
+      "reasoning",
       "tasks",
     ]);
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true, hasReasoningText: true }), [
