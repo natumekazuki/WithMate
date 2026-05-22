@@ -37,13 +37,80 @@ function isWindowsFileUrl(url: URL): boolean {
   return /^\/[a-zA-Z]:\//.test(url.pathname);
 }
 
+function isSupportedExternalUrlScheme(scheme: string): boolean {
+  return scheme === "http" || scheme === "https" || scheme === "mailto" || scheme === "tel";
+}
+
+function isProtocolRelativeExternalUrl(target: string): boolean {
+  const match = /^\/\/([^/?#]+)(\/[^?#]*)?/.exec(target);
+  const authority = match?.[1] ?? "";
+  if (authority.includes(".") || authority.includes(":") || authority.toLowerCase() === "localhost") {
+    return true;
+  }
+
+  const pathSegments = (match?.[2] ?? "").split("/").filter(Boolean);
+  return pathSegments.length === 1;
+}
+
+function decodeLocalPathTarget(target: string): string {
+  try {
+    return decodeURIComponent(target);
+  } catch {
+    return target;
+  }
+}
+
+function isForwardSlashUncPath(target: string): boolean {
+  return /^\/\/[^/?#]+\/[^/?#]+(?:\/|$)/.test(target);
+}
+
+// Inputs that already look like protocol-relative URLs must not trigger UNC network probes.
+export function resolveForwardSlashUncPathCandidate(target: string): string | null {
+  const trimmed = target.trim();
+  if (isProtocolRelativeExternalUrl(trimmed)) {
+    return null;
+  }
+
+  const normalizedTarget = stripLocalPathFragment(trimmed).trim();
+  if (!normalizedTarget) {
+    return null;
+  }
+  const decodedTarget = decodeLocalPathTarget(normalizedTarget);
+  if (!isForwardSlashUncPath(decodedTarget)) {
+    return null;
+  }
+  return decodedTarget;
+}
+
+export function resolveProtocolRelativeExternalFallback(target: string): string | null {
+  const trimmed = target.trim();
+  return /^\/\/[^/?#]+/.test(trimmed) ? `https:${trimmed}` : null;
+}
+
 export function resolveOpenPathTarget(target: string, options: OpenPathOptions = {}): ResolvedOpenPathTarget {
   const trimmed = target.trim();
   if (!trimmed) {
     throw new Error("開く対象が空だよ。");
   }
 
-  if (/^https?:\/\//i.test(trimmed)) {
+  const normalizedTarget = stripLocalPathFragment(trimmed).trim();
+  const decodedTarget = normalizedTarget ? decodeLocalPathTarget(normalizedTarget) : "";
+  if (isForwardSlashUncPath(decodedTarget) && !isProtocolRelativeExternalUrl(trimmed)) {
+    return {
+      type: "local-path",
+      targetPath: decodedTarget,
+    };
+  }
+
+  if (isProtocolRelativeExternalUrl(trimmed)) {
+    return {
+      type: "external-url",
+      target: `https:${trimmed}`,
+    };
+  }
+
+  const externalUrlSchemeMatch = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(trimmed);
+  if (externalUrlSchemeMatch && isSupportedExternalUrlScheme(externalUrlSchemeMatch[1].toLowerCase())) {
     return {
       type: "external-url",
       target: trimmed,
@@ -56,7 +123,13 @@ export function resolveOpenPathTarget(target: string, options: OpenPathOptions =
     fileUrl.search = "";
     if (isWindowsFileUrl(fileUrl)) {
       const pathname = decodeURIComponent(fileUrl.pathname).replace(/\//g, "\\");
-      const targetPath = /^[\\][a-zA-Z]:\\/.test(pathname) ? pathname.slice(1) : pathname;
+      const hostname = fileUrl.hostname;
+      const targetPath =
+        hostname && hostname !== "localhost"
+          ? `\\\\${hostname}${pathname}`
+          : /^[\\][a-zA-Z]:\\/.test(pathname)
+            ? pathname.slice(1)
+            : pathname;
       return {
         type: "local-path",
         targetPath,
@@ -68,15 +141,14 @@ export function resolveOpenPathTarget(target: string, options: OpenPathOptions =
     };
   }
 
-  const normalizedTarget = stripLocalPathFragment(trimmed).trim();
   if (!normalizedTarget) {
     throw new Error("開く対象の path が空だよ。");
   }
 
-  if (path.isAbsolute(normalizedTarget) || isWindowsAbsolutePath(normalizedTarget)) {
+  if (path.isAbsolute(decodedTarget) || isWindowsAbsolutePath(decodedTarget)) {
     return {
       type: "local-path",
-      targetPath: normalizedTarget,
+      targetPath: decodedTarget,
     };
   }
 
@@ -85,18 +157,18 @@ export function resolveOpenPathTarget(target: string, options: OpenPathOptions =
     if (isWindowsAbsolutePath(baseDirectory)) {
       return {
         type: "local-path",
-        targetPath: path.win32.resolve(baseDirectory, normalizedTarget),
+        targetPath: path.win32.resolve(baseDirectory, decodedTarget),
       };
     }
     return {
       type: "local-path",
-      targetPath: path.resolve(baseDirectory, normalizedTarget),
+      targetPath: path.resolve(baseDirectory, decodedTarget),
     };
   }
 
   return {
     type: "local-path",
-    targetPath: normalizedTarget,
+    targetPath: decodedTarget,
   };
 }
 

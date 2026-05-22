@@ -56,7 +56,11 @@ import { CopilotAdapter } from "./copilot-adapter.js";
 import { getMateTalkBackgroundStructuredPromptCapability } from "./provider-runtime.js";
 import { resolveComposerPreview } from "./composer-attachments.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
-import { buildDirectoryOpenFallbackCommand, resolveOpenPathTarget } from "./open-path.js";
+import {
+  buildDirectoryOpenFallbackCommand,
+  resolveProtocolRelativeExternalFallback,
+  resolveOpenPathTarget,
+} from "./open-path.js";
 import { launchTerminalAtPath } from "./open-terminal.js";
 import { SessionStorage } from "./session-storage.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
@@ -3517,13 +3521,22 @@ async function openLocalPath(targetPath: string): Promise<void> {
 }
 
 async function openPathTarget(target: string, options?: OpenPathOptions): Promise<void> {
+  const protocolRelativeExternalFallback = resolveProtocolRelativeExternalFallback(target);
   const resolved = resolveOpenPathTarget(target, options);
   if (resolved.type === "external-url") {
     await shell.openExternal(resolved.target);
     return;
   }
 
-  await openLocalPath(resolved.targetPath);
+  try {
+    await openLocalPath(resolved.targetPath);
+  } catch (error) {
+    if (protocolRelativeExternalFallback) {
+      await shell.openExternal(protocolRelativeExternalFallback);
+      return;
+    }
+    throw error;
+  }
 }
 
 async function createHomeWindow(): Promise<BrowserWindow> {
