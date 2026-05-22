@@ -154,8 +154,10 @@ test("MateTalk は ChatWindow で sending 中に共通の pending 表示と disa
 
   assert.match(html, /<span class="session-window-title session-title-accent">メイトーク<\/span>/);
   assert.doesNotMatch(html, /まだ会話は開始してないよ。まずは入力してね。/);
-  assert.match(html, /<article class="message-row assistant pending-row">/);
-  assert.match(html, /ユニバーサル が返信を準備中/);
+  assert.doesNotMatch(html, /<article class="message-row assistant pending-row">/);
+  assert.doesNotMatch(html, /ユニバーサル が返信を準備中/);
+  assert.doesNotMatch(html, /composer-toolbar-progress/);
+  assert.doesNotMatch(html, /composer-toolbar-cancel-button/);
   assert.match(html, /<button class="session-send-button" type="button" disabled="">Send<\/button>/);
   assert.match(html, /<textarea[^>]*disabled=""/);
 });
@@ -205,7 +207,7 @@ test("MateTalk は ChatWindow で feedback を共通 composer feedback で表示
   assert.match(html, /<div id="composer-sendability-feedback" class="composer-sendability-feedback helper"><p>返信を待っています<\/p><\/div>/);
 });
 
-test("MateTalk は ChatWindow で送信中に共通メッセージリストへ pending row を追加する", () => {
+test("MateTalk は ChatWindow で送信中でも空の pending row を追加しない", () => {
   const html = renderPanel({
     sending: true,
     input: "おはよう",
@@ -214,5 +216,5 @@ test("MateTalk は ChatWindow で送信中に共通メッセージリストへ p
 
   assert.match(html, /<div class="session-message-list">/);
   assert.match(html, /<p class="message-paragraph">最初のメッセージ<\/p>/);
-  assert.match(html, /<article class="message-row assistant pending-row">/);
+  assert.doesNotMatch(html, /<article class="message-row assistant pending-row">/);
 });

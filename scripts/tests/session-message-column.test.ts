@@ -121,8 +121,6 @@ function renderSessionMessageColumn(options: {
       expandedArtifacts: options.expandedArtifacts ?? {},
       messageListRef: createRef<HTMLDivElement>(),
       isRunning: options.isRunning ?? false,
-      pendingRunIndicatorAnnouncement: "",
-      pendingRunIndicatorText: "処理を実行中",
       liveApprovalRequest: options.liveApprovalRequest ?? null,
       approvalActionRequestId: null,
       liveElicitationRequest: options.liveElicitationRequest ?? null,
@@ -220,10 +218,17 @@ test("SessionMessageColumn は実行中の assistant text を pending bubble 内
     html.indexOf("pending-row") < html.indexOf("ストリーミング中の返答"),
     "streaming assistant text は pending row 内に描画する",
   );
-  assert.ok(
-    html.indexOf("処理を実行中") < html.indexOf("ストリーミング中の返答"),
-    "progress 表示は streaming assistant text より前に描画する",
-  );
+  assert.doesNotMatch(html, /処理を実行中/);
+});
+
+test("SessionMessageColumn は inline content のない pending bubble を描画しない", () => {
+  const html = renderSessionMessageColumn({
+    messages: createMessages(1),
+    isRunning: true,
+  });
+
+  assert.doesNotMatch(html, /pending-row/);
+  assert.match(html, /message-list-bottom-anchor/);
 });
 
 test("SessionComposerExpanded は jump button を Hide の左に描画する", () => {
@@ -231,6 +236,8 @@ test("SessionComposerExpanded は jump button を Hide の左に描画する", (
     React.createElement(SessionComposerExpanded, {
       retryBanner: null,
       isRunning: false,
+      pendingRunIndicatorAnnouncement: "処理を実行中",
+      pendingRunIndicatorText: "処理を実行中",
       composerBlocked: false,
       canSelectCustomAgent: true,
       showCustomAgentPicker: true,
@@ -303,6 +310,90 @@ test("SessionComposerExpanded は jump button を Hide の左に描画する", (
   assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Hide"));
 });
 
+test("SessionComposerExpanded は実行中の progress と Cancel を上部 toolbar に描画し、下段の送信ボタンを隠す", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(SessionComposerExpanded, {
+      retryBanner: null,
+      isRunning: true,
+      pendingRunIndicatorAnnouncement: "処理を実行中",
+      pendingRunIndicatorText: "処理を実行中",
+      composerBlocked: false,
+      canSelectCustomAgent: true,
+      showCustomAgentPicker: true,
+      showSkillPicker: true,
+      isAgentPickerOpen: false,
+      isSkillPickerOpen: false,
+      isAdditionalDirectoryListOpen: false,
+      selectedCustomAgentLabel: "Agent",
+      selectedCustomAgentTitle: "Agent",
+      additionalDirectoryCount: 0,
+      canCollapseActionDock: true,
+      showJumpToBottom: false,
+      isCustomAgentListLoading: false,
+      isSkillListLoading: false,
+      customAgentItems: [],
+      skillItems: [],
+      attachmentItems: [],
+      additionalDirectoryItems: [],
+      workspacePathMatchItems: [],
+      draft: "実行中の下書き",
+      composerTextareaRef: createRef<HTMLTextAreaElement>(),
+      isComposerDisabled: true,
+      isSendDisabled: true,
+      composerSendability: {
+        primaryFeedback: "",
+        secondaryFeedback: [],
+        feedbackTone: null,
+        shouldShowFeedback: false,
+      },
+      sendButtonTitle: "実行をキャンセル",
+      isComposerBlockedFeedbackActive: false,
+      approvalOptions: [{ value: "untrusted", label: "untrusted" }],
+      selectedApprovalMode: "untrusted",
+      sandboxOptions: [{ value: "workspace-write", label: "workspace-write" }],
+      selectedCodexSandboxMode: "workspace-write",
+      modelOptions: [{ value: "gpt-5.4", label: "GPT-5.4" }],
+      selectedModel: "gpt-5.4",
+      selectedModelFallbackLabel: "gpt-5.4",
+      reasoningOptions: [{ value: "high", label: "high" }],
+      selectedReasoningEffort: "high",
+      onPickFile() {},
+      onPickFolder() {},
+      onPickImage() {},
+      onToggleAgentPicker() {},
+      onToggleSkillPicker() {},
+      onAddAdditionalDirectory() {},
+      onToggleAdditionalDirectoryList() {},
+      onCollapse() {},
+      onJumpToBottom() {},
+      onSelectCustomAgent() {},
+      onSelectSkill() {},
+      onRemoveAttachment() {},
+      onRemoveAdditionalDirectory() {},
+      onDraftChange() {},
+      onDraftFocus() {},
+      onDraftKeyDown() {},
+      onDraftSelect() {},
+      onDraftCompositionStart() {},
+      onDraftCompositionEnd() {},
+      onSendOrCancel() {},
+      onSelectWorkspacePathMatch() {},
+      onActivateWorkspacePathMatch() {},
+      onChangeApprovalMode() {},
+      onChangeCodexSandboxMode() {},
+      onChangeModel() {},
+      onChangeReasoningEffort() {},
+    }),
+  );
+
+  assert.match(html, /composer-toolbar-progress/);
+  assert.match(html, /処理を実行中/);
+  assert.match(html, /composer-toolbar-cancel-button/);
+  assert.ok(html.indexOf("File") < html.indexOf("処理を実行中"));
+  assert.ok(html.indexOf("処理を実行中") < html.indexOf("Cancel"));
+  assert.doesNotMatch(html, />Send<\/button>/);
+});
+
 test("SessionActionDockCompactRow は jump button を Send の左に描画する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
@@ -320,4 +411,31 @@ test("SessionActionDockCompactRow は jump button を Send の左に描画する
   );
 
   assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Send"));
+});
+
+test("SessionActionDockCompactRow は実行中の compact 表示を progress と Cancel だけにする", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(SessionActionDockCompactRow, {
+      draft: "draft",
+      actionDockCompactPreview: "draft",
+      attachmentCount: 2,
+      isRunning: true,
+      pendingRunIndicatorAnnouncement: "処理を実行中",
+      pendingRunIndicatorText: "処理を実行中",
+      isSendDisabled: false,
+      showJumpToBottom: true,
+      sendButtonTitle: "実行をキャンセル",
+      onExpand() {},
+      onJumpToBottom() {},
+      onSendOrCancel() {},
+    }),
+  );
+
+  assert.match(html, /session-action-dock-compact-progress/);
+  assert.match(html, /処理を実行中/);
+  assert.match(html, /session-action-dock-compact-actions/);
+  assert.match(html, />Cancel<\/button>/);
+  assert.doesNotMatch(html, /Draft/);
+  assert.doesNotMatch(html, /添付 2/);
+  assert.doesNotMatch(html, /末尾へ移動/);
 });

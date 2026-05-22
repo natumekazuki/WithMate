@@ -68,8 +68,6 @@ test("createIdleChatMessageColumnProps は approval や diff のない message c
     messages: [{ role: "assistant", text: "こんにちは" }],
     messageListRef,
     isRunning: false,
-    pendingRunIndicatorAnnouncement: "返信待ち",
-    pendingRunIndicatorText: "返信準備中",
   });
 
   assert.deepEqual(messageColumnProps.expandedArtifacts, {});
@@ -96,8 +94,6 @@ test("createStaticTextConversationMessageColumnProps は text conversation を�
     ],
     messageListRef,
     isRunning: true,
-    pendingRunIndicatorAnnouncement: "返信待ち",
-    pendingRunIndicatorText: "返信準備中",
   });
 
   assert.equal(messageColumnProps.sessionId, "mate-talk");
@@ -108,8 +104,6 @@ test("createStaticTextConversationMessageColumnProps は text conversation を�
     { role: "user", text: "おはよう" },
     { role: "assistant", text: "やあ" },
   ]);
-  assert.equal(messageColumnProps.pendingRunIndicatorAnnouncement, "返信待ち");
-  assert.equal(messageColumnProps.pendingRunIndicatorText, "返信準備中");
   assert.equal(messageColumnProps.isRunning, true);
 });
 
@@ -122,8 +116,6 @@ test("buildLiveSessionMessageColumnProps は live message props を共通形式�
     expandedArtifacts: {},
     messageListRef,
     isRunning: false,
-    pendingRunIndicatorAnnouncement: "待機中",
-    pendingRunIndicatorText: "応答待ち",
     liveApprovalRequest: null,
     approvalActionRequestId: null,
     liveElicitationRequest: null,
@@ -328,6 +320,7 @@ test("createHiddenControlsTextChatComposerProps は text chat 用の送信可否
   });
 
   assert.equal(composerProps.composerBlocked, false);
+  assert.equal(composerProps.isRunning, false);
   assert.equal(composerProps.isComposerDisabled, false);
   assert.equal(composerProps.isSendDisabled, false);
   assert.equal(composerProps.placeholder, "今日はどうする？");
@@ -338,6 +331,32 @@ test("createHiddenControlsTextChatComposerProps は text chat 用の送信可否
     feedbackTone: "helper",
     shouldShowFeedback: true,
   });
+});
+
+test("createHiddenControlsTextChatComposerProps は running 中も cancel 表示へ切り替えない", () => {
+  const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
+  const composerProps = createHiddenControlsTextChatComposerProps({
+    draft: "おはよう",
+    placeholder: "今日はどうする？",
+    composerTextareaRef,
+    isRunning: true,
+    feedback: "",
+    modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+    selectedModel: "gpt-test",
+    selectedModelFallbackLabel: "GPT Test",
+    reasoningOptions: [{ value: "low", label: "low" }],
+    selectedReasoningEffort: "low",
+    onDraftChange: noop,
+    onDraftKeyDown: noop,
+    onSendOrCancel: noop,
+    onChangeModel: noop,
+    onChangeReasoningEffort: noop,
+  });
+
+  assert.equal(composerProps.isRunning, false);
+  assert.equal(composerProps.composerBlocked, true);
+  assert.equal(composerProps.isComposerDisabled, true);
+  assert.equal(composerProps.isSendDisabled, true);
 });
 
 test("createHiddenControlsTextChatComposerProps は必要な共通操作だけを再表示できる", () => {
@@ -411,7 +430,7 @@ test("createStaticChatCompactActionDockProps は静的 compact dock の既定値
 test("createStaticTextChatCompactActionDockProps は text chat 用の compact dock を補う", () => {
   const compactProps = createStaticTextChatCompactActionDockProps({
     draft: "  ",
-    isRunning: false,
+    isRunning: true,
     onSendOrCancel: noop,
   });
 
