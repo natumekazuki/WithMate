@@ -300,15 +300,17 @@ export function contextPaneTabLabel(tab: ContextPaneTabKey): string {
 export function resolveAvailableContextPaneTabs({
   isCopilotSession,
   hasCompanionGroupMonitor = false,
+  hasReasoningCapability = false,
   hasReasoningText = false,
 }: {
   isCopilotSession: boolean;
   hasCompanionGroupMonitor?: boolean;
+  hasReasoningCapability?: boolean;
   hasReasoningText?: boolean;
 }): ContextPaneTabKey[] {
   return CONTEXT_PANE_TAB_ORDER.filter((tab) => {
     if (tab === "reasoning") {
-      return hasReasoningText;
+      return hasReasoningCapability || hasReasoningText;
     }
 
     if (tab === "tasks") {

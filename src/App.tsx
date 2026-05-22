@@ -1252,13 +1252,16 @@ export default function AgentSessionWindowApp() {
   );
   const liveRunReasoningText = selectedSessionLiveRun?.reasoningText ?? "";
   const hasLiveRunReasoningText = liveRunReasoningText.trim().length > 0;
+  const hasReasoningCapability =
+    availableReasoningEfforts.length > 0 || Boolean(selectedSession?.reasoningEffort);
   const availableContextPaneTabs = useMemo(
     () => resolveAvailableContextPaneTabs({
       isCopilotSession,
       hasCompanionGroupMonitor: selectedCompanionGroupMonitorEntries.length > 0,
+      hasReasoningCapability,
       hasReasoningText: hasLiveRunReasoningText,
     }),
-    [hasLiveRunReasoningText, isCopilotSession, selectedCompanionGroupMonitorEntries.length],
+    [hasLiveRunReasoningText, hasReasoningCapability, isCopilotSession, selectedCompanionGroupMonitorEntries.length],
   );
 
   const hasInProgressLiveRunStep = useMemo(
