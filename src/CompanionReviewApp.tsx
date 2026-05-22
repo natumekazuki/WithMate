@@ -51,6 +51,7 @@ import { buildCompanionGroupMonitorEntries } from "./home/home-session-projectio
 import { SessionHeader } from "./session-components.js";
 import { ChatHeaderHandle, ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
+import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
 import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,
@@ -2242,7 +2243,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           }),
         onResolveLiveApproval: (request, decision) => void handleResolveCompanionLiveApproval(request, decision),
         onResolveLiveElicitation: (request, response) => void handleResolveCompanionLiveElicitation(request, response),
-        onOpenInlinePath: (target) => void getWithMateApi()?.openPath(target),
+        onOpenInlinePath: (target) => openCompanionInlinePath(getWithMateApi(), target, snapshot.session.worktreePath),
         onPickFile: () => void pickAndInsertPath("file"),
         onPickFolder: () => void pickAndInsertPath("folder"),
         onPickImage: () => void pickAndInsertPath("image"),

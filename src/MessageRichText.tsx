@@ -1,12 +1,15 @@
-import { Children, isValidElement, useEffect, useId, useMemo, useState, type ReactNode } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import { Children, isValidElement, useEffect, useId, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 
+import { getWithMateApi } from "./renderer-withmate-api.js";
+
 type MessageRichTextProps = {
   text: string;
   className?: string;
+  onOpenPath?: (target: string) => void;
 };
 
 type MermaidRenderState =
@@ -57,6 +60,66 @@ function resolveCodeLanguage(className?: string) {
 
 function mergeClassName(baseClassName: string, className?: string) {
   return className ? `${baseClassName} ${className}` : baseClassName;
+}
+
+function hasUnsupportedUrlScheme(target: string): boolean {
+  if (/^[a-zA-Z]:[\\/]/.test(target)) {
+    return false;
+  }
+
+  const schemeMatch = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(target);
+  if (!schemeMatch) {
+    return false;
+  }
+
+  const scheme = schemeMatch[1].toLowerCase();
+  return scheme !== "http" && scheme !== "https" && scheme !== "file" && scheme !== "mailto" && scheme !== "tel";
+}
+
+function isWindowsAbsolutePathTarget(target: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(target) || /^\\\\[^\\]+\\[^\\]+/.test(target);
+}
+
+function isAllowedMarkdownHref(target: string): boolean {
+  if (!target || target.startsWith("#") || target.startsWith("//") || isWindowsAbsolutePathTarget(target)) {
+    return true;
+  }
+  return !hasUnsupportedUrlScheme(target);
+}
+
+const markdownUrlTransform: UrlTransform = (url, key) => {
+  if (key !== "href") {
+    return defaultUrlTransform(url);
+  }
+  return isAllowedMarkdownHref(url) ? url : "";
+};
+
+export function openMarkdownLink(target: string, onOpenPath?: (target: string) => void): void {
+  if (onOpenPath) {
+    onOpenPath(target);
+    return;
+  }
+
+  void getWithMateApi()?.openPath(target);
+}
+
+export function handleMarkdownLinkClick(
+  event: Pick<MouseEvent<HTMLAnchorElement>, "button" | "defaultPrevented" | "preventDefault">,
+  target: string,
+  onOpenPath?: (target: string) => void,
+): void {
+  if (
+    !target ||
+    target.startsWith("#") ||
+    hasUnsupportedUrlScheme(target) ||
+    event.defaultPrevented ||
+    event.button !== 0
+  ) {
+    return;
+  }
+
+  event.preventDefault();
+  openMarkdownLink(target, onOpenPath);
 }
 
 function replaceFootnoteLabelReference(value: unknown, footnoteLabelId: string) {
@@ -232,17 +295,37 @@ const markdownComponents: Components = {
   img: () => null,
 };
 
-export function MessageRichText({ text, className = "message-body" }: MessageRichTextProps) {
+function createMarkdownComponents(onOpenPath?: (target: string) => void): Components {
+  return {
+    ...markdownComponents,
+    a: ({ children, href, node, ...props }) => {
+      const target = href?.trim() ?? "";
+      const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
+        handleMarkdownLinkClick(event, target, onOpenPath);
+      };
+
+      return (
+        <a {...props} href={href} onClick={handleClick}>
+          {children}
+        </a>
+      );
+    },
+  };
+}
+
+export function MessageRichText({ text, className = "message-body", onOpenPath }: MessageRichTextProps) {
   const reactId = useId();
   const footnotePrefix = useMemo(() => `message-footnote-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}-`, [reactId]);
   const footnoteLabelId = `${footnotePrefix}footnote-label`;
+  const components = useMemo(() => createMarkdownComponents(onOpenPath), [onOpenPath]);
   const rehypePlugins = useMemo(() => [rehypeKatex, createFootnoteLabelIdPlugin(footnoteLabelId)], [footnoteLabelId]);
 
   return (
     <div className={`${className} rich-text`.trim()}>
       <ReactMarkdown
-        components={markdownComponents}
+        components={components}
         rehypePlugins={rehypePlugins}
+        urlTransform={markdownUrlTransform}
         remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]}
         remarkRehypeOptions={{ clobberPrefix: footnotePrefix }}
       >

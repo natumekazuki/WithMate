@@ -3,7 +3,28 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { MessageRichText } from "../../src/MessageRichText.js";
+import { handleMarkdownLinkClick, MessageRichText } from "../../src/MessageRichText.js";
+
+function clickMarkdownLink(target: string) {
+  const opened: string[] = [];
+  let defaultPrevented = false;
+
+  handleMarkdownLinkClick(
+    {
+      button: 0,
+      defaultPrevented: false,
+      preventDefault: () => {
+        defaultPrevented = true;
+      },
+    },
+    target,
+    (openedTarget) => {
+      opened.push(openedTarget);
+    },
+  );
+
+  return { defaultPrevented, opened };
+}
 
 test("MessageRichText は **bold** を strong として render する", () => {
   const html = renderToStaticMarkup(
@@ -25,6 +46,97 @@ test("MessageRichText は inline code と link を優先しつつ bold を併用
   assert.match(html, /<code class="message-inline-code">\*\*literal\*\*<\/code>/);
   assert.match(html, /<strong class="message-inline-strong">/);
   assert.match(html, /<a href="src\/App\.tsx">file<\/a>/);
+});
+
+test("handleMarkdownLinkClick は Markdown link を既定ナビゲーションではなく openPath 経路へ流す", () => {
+  const { defaultPrevented, opened } = clickMarkdownLink("https://example.test/docs#intro");
+
+  assert.equal(defaultPrevented, true);
+  assert.deepEqual(opened, ["https://example.test/docs#intro"]);
+});
+
+test("handleMarkdownLinkClick は encoded HTTP URL を decode せず openPath 経路へ流す", () => {
+  const { defaultPrevented, opened } = clickMarkdownLink("https://example.test/docs/my%20file.md");
+
+  assert.equal(defaultPrevented, true);
+  assert.deepEqual(opened, ["https://example.test/docs/my%20file.md"]);
+});
+
+test("handleMarkdownLinkClick は encoded local link を decode せず openPath 経路へ流す", () => {
+  const { defaultPrevented, opened } = clickMarkdownLink("docs/my%20file-%E4%BB%95%E6%A7%98.md");
+
+  assert.equal(defaultPrevented, true);
+  assert.deepEqual(opened, ["docs/my%20file-%E4%BB%95%E6%A7%98.md"]);
+});
+
+test("MessageRichText は local/file href の encode を保持して render する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: [
+        "[relative](docs/my%20file.md)",
+        "[unicode](docs/%E4%BB%95%E6%A7%98.md)",
+        "[file](file:///C:/tmp/a%20b.txt)",
+        "[windows](C:/tmp/a%20b.txt)",
+      ].join("\n"),
+    }),
+  );
+
+  assert.match(html, /<a href="docs\/my%20file\.md">relative<\/a>/);
+  assert.match(html, /<a href="docs\/%E4%BB%95%E6%A7%98\.md">unicode<\/a>/);
+  assert.match(html, /<a href="file:\/\/\/C:\/tmp\/a%20b\.txt">file<\/a>/);
+  assert.match(html, /<a href="C:\/tmp\/a%20b\.txt">windows<\/a>/);
+});
+
+test("MessageRichText は unsafe href を render しない", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: "[x](javascript:alert(1))",
+    }),
+  );
+
+  assert.doesNotMatch(html, /href="javascript:/i);
+});
+
+test("handleMarkdownLinkClick は footnote などの同一ページアンカーを既定動作に任せる", () => {
+  const { defaultPrevented, opened } = clickMarkdownLink("#message-footnote-example-fn-1");
+
+  assert.equal(defaultPrevented, false);
+  assert.deepEqual(opened, []);
+});
+
+test("handleMarkdownLinkClick は mailto を openPath 経路へ流す", () => {
+  const { defaultPrevented, opened } = clickMarkdownLink("mailto:alice@example.test");
+
+  assert.equal(defaultPrevented, true);
+  assert.deepEqual(opened, ["mailto:alice@example.test"]);
+});
+
+test("handleMarkdownLinkClick は encoded mailto を decode せず openPath 経路へ流す", () => {
+  const { defaultPrevented, opened } = clickMarkdownLink("mailto:alice@example.test?subject=hello%20world%0D%0A");
+
+  assert.equal(defaultPrevented, true);
+  assert.deepEqual(opened, ["mailto:alice@example.test?subject=hello%20world%0D%0A"]);
+});
+
+test("handleMarkdownLinkClick は protocol-relative URL を openPath 経路へ流す", () => {
+  const { defaultPrevented, opened } = clickMarkdownLink("//example.test/docs");
+
+  assert.equal(defaultPrevented, true);
+  assert.deepEqual(opened, ["//example.test/docs"]);
+});
+
+test("handleMarkdownLinkClick は forward-slash UNC path を local path として openPath 経路へ流す", () => {
+  const { defaultPrevented, opened } = clickMarkdownLink("//server/share/my%20file.txt");
+
+  assert.equal(defaultPrevented, true);
+  assert.deepEqual(opened, ["//server/share/my%20file.txt"]);
+});
+
+test("handleMarkdownLinkClick は Windows absolute path を scheme と誤判定せず openPath 経路へ流す", () => {
+  const { defaultPrevented, opened } = clickMarkdownLink("C:/workspace/project/src/App.tsx");
+
+  assert.equal(defaultPrevented, true);
+  assert.deepEqual(opened, ["C:/workspace/project/src/App.tsx"]);
 });
 
 test("MessageRichText は GFM table を table 要素として render する", () => {

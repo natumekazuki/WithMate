@@ -1896,7 +1896,7 @@ export function SessionRetryBanner({
           </p>
           <div className="resume-banner-request">
             <span>前回の依頼</span>
-            <MessageRichText text={retryBanner.lastRequestText} />
+            <MessageRichText text={retryBanner.lastRequestText} onOpenPath={onOpenPath} />
           </div>
         </div>
       ) : null}
@@ -2146,7 +2146,7 @@ export function SessionMessageColumn({
                       {artifactExpanded ? "−" : "i"}
                     </button>
                   ) : null}
-                  <MessageRichText text={message.text} />
+                  <MessageRichText text={message.text} onOpenPath={onOpenPath} />
 
                   {artifact ? (
                     <section className="artifact-shell">
@@ -2257,7 +2257,7 @@ export function SessionMessageColumn({
                                         <div className="artifact-operation-body">
                                           {operation.type === "agent_message" ? (
                                             <div className="artifact-operation-message">
-                                              <MessageRichText text={operation.summary} />
+                                              <MessageRichText text={operation.summary} onOpenPath={onOpenPath} />
                                             </div>
                                           ) : (
                                             <p>{operation.summary}</p>
@@ -2330,7 +2330,7 @@ export function SessionMessageColumn({
                         onOpenPath={onOpenPath}
                       />
                     ) : null}
-                    {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} /> : null}
+                    {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} onOpenPath={onOpenPath} /> : null}
                     {liveRunErrorMessage ? (
                       <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
                     ) : null}
