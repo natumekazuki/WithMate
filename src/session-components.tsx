@@ -78,6 +78,38 @@ function liveElicitationModeLabel(mode: LiveElicitationRequest["mode"]): string 
   return mode === "url" ? "URL" : "Form";
 }
 
+type PendingRunIndicatorProps = {
+  announcement?: string;
+  text?: string;
+  className?: string;
+};
+
+function PendingRunIndicator({
+  announcement,
+  text = "処理を実行中",
+  className = "",
+}: PendingRunIndicatorProps) {
+  const indicatorText = text.trim() || "処理を実行中";
+  const statusText = announcement?.trim() || indicatorText;
+
+  return (
+    <>
+      <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+        {statusText}
+      </span>
+      <div className={`live-run-shell-status pending-run-indicator${className ? ` ${className}` : ""}`} aria-hidden="true">
+        <span className="live-run-shell-status-badge">実行中</span>
+        <span className="live-run-shell-status-text">{indicatorText}</span>
+        <span className="typing-dots pending-run-indicator-dots">
+          <span />
+          <span />
+          <span />
+        </span>
+      </div>
+    </>
+  );
+}
+
 type LiveElicitationFieldValue = string | number | boolean | string[];
 type LiveElicitationContentEntry = readonly [string, LiveElicitationFieldValue];
 
@@ -1879,8 +1911,6 @@ export type SessionMessageColumnProps = {
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
   isRunning: boolean;
-  pendingRunIndicatorAnnouncement: string;
-  pendingRunIndicatorText: string;
   liveApprovalRequest: LiveApprovalRequest | null;
   approvalActionRequestId: string | null;
   liveElicitationRequest: LiveElicitationRequest | null;
@@ -1906,8 +1936,6 @@ export function SessionMessageColumn({
   expandedArtifacts,
   messageListRef,
   isRunning,
-  pendingRunIndicatorAnnouncement,
-  pendingRunIndicatorText,
   liveApprovalRequest,
   approvalActionRequestId,
   liveElicitationRequest,
@@ -1941,6 +1969,11 @@ export function SessionMessageColumn({
     [latestMessageWindowStartIndex, messages],
   );
   const hasOlderMessages = latestMessageWindowStartIndex > 0;
+  const hasPendingInlineContent =
+    liveApprovalRequest !== null ||
+    liveElicitationRequest !== null ||
+    hasLiveRunAssistantText ||
+    liveRunErrorMessage.trim().length > 0;
 
   const loadOlderMessages = useCallback((listElement: HTMLDivElement | null = messageListRef.current) => {
     if (!listElement || latestMessageWindowStartIndex <= 0) {
@@ -2247,22 +2280,10 @@ export function SessionMessageColumn({
             );
           })}
 
-              {isRunning ? (
+              {isRunning && hasPendingInlineContent ? (
                 <article className="message-row assistant pending-row">
                   <CharacterAvatar character={character} size="small" className="message-avatar" />
                   <div className="message-card assistant pending-message-card">
-                    <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
-                      {pendingRunIndicatorAnnouncement}
-                    </span>
-                    <div className="live-run-shell-status pending-run-indicator" aria-hidden="true">
-                      <span className="live-run-shell-status-badge">実行中</span>
-                      <span className="live-run-shell-status-text">{pendingRunIndicatorText}</span>
-                      <span className="typing-dots pending-run-indicator-dots">
-                        <span />
-                        <span />
-                        <span />
-                      </span>
-                    </div>
                     {liveApprovalRequest ? (
                       <section className="live-approval-card" role="group" aria-label="承認要求">
                         <div className="live-approval-head">
@@ -2330,6 +2351,8 @@ export type SessionActionDockCompactRowProps = {
   actionDockCompactPreview: string;
   attachmentCount: number;
   isRunning: boolean;
+  pendingRunIndicatorAnnouncement?: string;
+  pendingRunIndicatorText?: string;
   isSendDisabled: boolean;
   showJumpToBottom: boolean;
   sendButtonTitle?: string;
@@ -2343,6 +2366,8 @@ export function SessionActionDockCompactRow({
   actionDockCompactPreview,
   attachmentCount,
   isRunning,
+  pendingRunIndicatorAnnouncement,
+  pendingRunIndicatorText,
   isSendDisabled,
   showJumpToBottom,
   sendButtonTitle,
@@ -2350,6 +2375,29 @@ export function SessionActionDockCompactRow({
   onJumpToBottom,
   onSendOrCancel,
 }: SessionActionDockCompactRowProps) {
+  if (isRunning) {
+    return (
+      <div className="session-action-dock-compact-row running">
+        <div className="session-action-dock-compact-progress">
+          <PendingRunIndicator
+            announcement={pendingRunIndicatorAnnouncement}
+            text={pendingRunIndicatorText}
+          />
+        </div>
+        <div className="session-action-dock-compact-actions">
+          <button
+            className="danger session-send-button"
+            type="button"
+            onClick={onSendOrCancel}
+            title={sendButtonTitle}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="session-action-dock-compact-row">
       <button
@@ -2458,6 +2506,8 @@ type SessionComposerSendabilityView = {
 export type SessionComposerExpandedProps = {
   retryBanner: ReactNode;
   isRunning: boolean;
+  pendingRunIndicatorAnnouncement?: string;
+  pendingRunIndicatorText?: string;
   composerBlocked: boolean;
   canSelectCustomAgent: boolean;
   showAttachmentControls?: boolean;
@@ -2531,6 +2581,8 @@ export type SessionComposerExpandedProps = {
 export function SessionComposerExpanded({
   retryBanner,
   isRunning,
+  pendingRunIndicatorAnnouncement,
+  pendingRunIndicatorText,
   composerBlocked,
   canSelectCustomAgent,
   showAttachmentControls = true,
@@ -2632,7 +2684,8 @@ export function SessionComposerExpanded({
     showSkillPicker ||
     showAdditionalDirectoryControls ||
     showJumpToBottom ||
-    canCollapseActionDock;
+    canCollapseActionDock ||
+    isRunning;
 
   return (
     <div className="composer">
@@ -2733,6 +2786,24 @@ export function SessionComposerExpanded({
             >
               末尾へ移動
             </button>
+          ) : null}
+          {isRunning ? (
+            <>
+              <div className="composer-toolbar-progress">
+                <PendingRunIndicator
+                  announcement={pendingRunIndicatorAnnouncement}
+                  text={pendingRunIndicatorText}
+                />
+              </div>
+              <button
+                className="drawer-toggle compact danger composer-toolbar-cancel-button"
+                type="button"
+                onClick={onSendOrCancel}
+                title={sendButtonTitle}
+              >
+                Cancel
+              </button>
+            </>
           ) : null}
           {canCollapseActionDock ? (
             <button className="drawer-toggle compact secondary composer-hide-button" type="button" onClick={onCollapse}>
@@ -2838,7 +2909,11 @@ export function SessionComposerExpanded({
                   <span className="composer-attachment-secondary">{item.secondaryLabel}</span>
                 </span>
               </span>
-              <button type="button" onClick={() => onRemoveAttachment(item.removeTargets)}>
+              <button
+                type="button"
+                onClick={() => onRemoveAttachment(item.removeTargets)}
+                disabled={isRunning || composerBlocked}
+              >
                 ×
               </button>
             </div>
@@ -2863,7 +2938,7 @@ export function SessionComposerExpanded({
                   type="button"
                   className="composer-additional-directory-remove"
                   onClick={() => onRemoveAdditionalDirectory(item.path)}
-                  disabled={isRunning}
+                  disabled={isRunning || composerBlocked}
                   aria-label={`${item.primaryLabel} を削除`}
                 >
                   ×
@@ -2874,7 +2949,7 @@ export function SessionComposerExpanded({
         </div>
       ) : null}
 
-      <div className={`composer-box${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
+      <div className={`composer-box${isRunning ? " running" : ""}${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
         <textarea
           ref={composerTextareaRef}
           value={draft}
@@ -2894,15 +2969,17 @@ export function SessionComposerExpanded({
           aria-describedby={composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined}
           aria-invalid={composerSendability.feedbackTone === "blocked" ? true : undefined}
         />
-        <button
-          className={isRunning ? "danger session-send-button" : "session-send-button"}
-          type="button"
-          onClick={onSendOrCancel}
-          disabled={!isRunning && isSendDisabled}
-          title={sendButtonTitle}
-        >
-          {isRunning ? "Cancel" : "Send"}
-        </button>
+        {isRunning ? null : (
+          <button
+            className="session-send-button"
+            type="button"
+            onClick={onSendOrCancel}
+            disabled={isSendDisabled}
+            title={sendButtonTitle}
+          >
+            Send
+          </button>
+        )}
         {composerSendability.shouldShowFeedback ? (
           <div
             id="composer-sendability-feedback"

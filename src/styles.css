@@ -2877,6 +2877,19 @@ button:disabled {
   min-width: 0;
 }
 
+.session-action-dock-compact-row.running {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.session-action-dock-compact-progress {
+  min-width: 0;
+}
+
+.session-action-dock-compact-progress .pending-run-indicator {
+  min-height: 40px;
+  padding: 8px 10px;
+}
+
 .session-action-dock-compact-preview {
   display: grid;
   gap: 4px;
@@ -5053,6 +5066,15 @@ button:disabled {
   background: var(--surface-strong);
 }
 
+.composer-box.running {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.composer-box.running textarea {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
 .resume-banner {
   display: grid;
   gap: 10px;
@@ -5290,6 +5312,22 @@ button:disabled {
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.composer-toolbar-progress {
+  flex: 1 1 260px;
+  min-width: min(100%, 240px);
+}
+
+.composer-toolbar-progress .pending-run-indicator {
+  min-height: 40px;
+  padding: 8px 10px;
+}
+
+.composer-toolbar-cancel-button {
+  border-color: rgba(248, 113, 113, 0.32);
+  background: color-mix(in srgb, #f87171 82%, var(--character-main));
+  color: #fff5f5;
 }
 
 .composer-hide-button {

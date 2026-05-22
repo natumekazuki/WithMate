@@ -41,8 +41,6 @@ type IdleChatMessageColumnProps = Pick<
   | "messages"
   | "messageListRef"
   | "isRunning"
-  | "pendingRunIndicatorAnnouncement"
-  | "pendingRunIndicatorText"
 > &
   Partial<
     Omit<
@@ -52,8 +50,6 @@ type IdleChatMessageColumnProps = Pick<
       | "messages"
       | "messageListRef"
       | "isRunning"
-      | "pendingRunIndicatorAnnouncement"
-      | "pendingRunIndicatorText"
     >
   >;
 
@@ -110,8 +106,6 @@ type StaticTextConversationMessageColumnProps = {
   messages: ChatRoleMessage[];
   messageListRef: ChatMessageColumnProps["messageListRef"];
   isRunning: boolean;
-  pendingRunIndicatorAnnouncement: string;
-  pendingRunIndicatorText: string;
 } & Partial<Omit<IdleChatMessageColumnProps, "sessionId" | "character" | "messages" | "messageListRef" | "isRunning">>;
 
 type HiddenControlsTextChatComposerProps = Pick<
@@ -154,6 +148,8 @@ type HiddenControlsTextChatComposerProps = Pick<
 
 type StaticTextChatCompactActionDockProps = Pick<ChatCompactActionDockProps, "draft" | "onSendOrCancel"> & {
   isRunning: boolean;
+  pendingRunIndicatorAnnouncement?: ChatCompactActionDockProps["pendingRunIndicatorAnnouncement"];
+  pendingRunIndicatorText?: ChatCompactActionDockProps["pendingRunIndicatorText"];
   emptyPreview?: string;
   onExpand?: ChatCompactActionDockProps["onExpand"];
 };
@@ -165,8 +161,6 @@ type LiveSessionMessageColumnProps = {
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
   isRunning: boolean;
-  pendingRunIndicatorAnnouncement: string;
-  pendingRunIndicatorText: string;
   liveApprovalRequest: ChatMessageColumnProps["liveApprovalRequest"];
   approvalActionRequestId: ChatMessageColumnProps["approvalActionRequestId"];
   liveElicitationRequest: ChatMessageColumnProps["liveElicitationRequest"];
@@ -213,8 +207,6 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     expandedArtifacts: input.expandedArtifacts,
     messageListRef: input.messageListRef,
     isRunning: input.isRunning,
-    pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
-    pendingRunIndicatorText: input.pendingRunIndicatorText,
     liveApprovalRequest: input.liveApprovalRequest,
     approvalActionRequestId: input.approvalActionRequestId,
     liveElicitationRequest: input.liveElicitationRequest,
@@ -347,8 +339,6 @@ export function createStaticTextConversationMessageColumnProps({
   messages,
   messageListRef,
   isRunning,
-  pendingRunIndicatorAnnouncement,
-  pendingRunIndicatorText,
   ...props
 }: StaticTextConversationMessageColumnProps): ChatMessageColumnProps {
   return createIdleChatMessageColumnProps({
@@ -357,8 +347,6 @@ export function createStaticTextConversationMessageColumnProps({
     messages: toConversationMessages(messages),
     messageListRef,
     isRunning,
-    pendingRunIndicatorAnnouncement,
-    pendingRunIndicatorText,
     ...props,
   });
 }
@@ -471,6 +459,8 @@ export function createStaticChatCompactActionDockProps(
 export function createStaticTextChatCompactActionDockProps({
   draft,
   isRunning,
+  pendingRunIndicatorAnnouncement,
+  pendingRunIndicatorText,
   emptyPreview = "下書きなし",
   onExpand,
   onSendOrCancel,
@@ -478,7 +468,9 @@ export function createStaticTextChatCompactActionDockProps({
   return createStaticChatCompactActionDockProps({
     draft,
     actionDockCompactPreview: draft.trim() || emptyPreview,
-    isRunning,
+    isRunning: false,
+    pendingRunIndicatorAnnouncement,
+    pendingRunIndicatorText,
     isSendDisabled: isStaticChatSendDisabled({ draft, isRunning }),
     onExpand,
     onSendOrCancel,

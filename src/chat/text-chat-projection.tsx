@@ -148,8 +148,6 @@ export function buildTextChatWindowProps({
       messages,
       messageListRef,
       isRunning,
-      pendingRunIndicatorAnnouncement,
-      pendingRunIndicatorText,
     }),
     isActionDockExpanded,
     composerProps: createHiddenControlsTextChatComposerProps({
@@ -157,6 +155,8 @@ export function buildTextChatWindowProps({
       placeholder,
       composerTextareaRef,
       isRunning,
+      pendingRunIndicatorAnnouncement,
+      pendingRunIndicatorText,
       feedback,
       sendButtonTitleWhenEnabled,
       modelOptions,
@@ -179,6 +179,8 @@ export function buildTextChatWindowProps({
     compactActionDockProps: createStaticTextChatCompactActionDockProps({
       draft,
       isRunning,
+      pendingRunIndicatorAnnouncement,
+      pendingRunIndicatorText,
       onExpand: onExpandActionDock,
       onSendOrCancel: onSubmit,
     }),
