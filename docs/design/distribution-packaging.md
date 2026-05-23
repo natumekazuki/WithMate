@@ -76,7 +76,8 @@ current milestone では、署名や notarization まで確定せず、まず未
 ## Asset Policy
 
 - packaging icon は `build/` 配下で管理する
-- source asset は `build/icon.svg`
+- source asset は `scripts/generate-app-icon.ts`
+- `build/icon.svg` は生成物として扱い、Git 管理しない
 - Windows packaging は `build/icon.ico` を使う
 - macOS packaging は `build/icon.png` を source asset として使う
 - icon asset の再生成は `npm run icon:generate` を正本にする
