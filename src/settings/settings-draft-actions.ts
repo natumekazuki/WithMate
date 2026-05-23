@@ -1,4 +1,5 @@
 import type { ModelCatalogSnapshot } from "../model-catalog.js";
+import type { MicrocopySlot } from "../microcopy-state.js";
 import type { AppSettings } from "../provider-settings-state.js";
 import {
   addMateMemoryGenerationPriorityDraft,
@@ -17,6 +18,7 @@ import {
   updateMemoryExtractionThresholdDraft,
   updateMemoryExtractionTimeoutSecondsDraft,
   updateMemoryGenerationEnabled,
+  updateUserMicrocopySlotDraft,
 } from "./settings-draft.js";
 
 type SetSettingsDraft = (updater: (current: AppSettings) => AppSettings) => void;
@@ -65,6 +67,13 @@ export function handleChangeAutoCollapseActionDockOnSend(input: SettingsDraftAct
   enabled: boolean;
 }): void {
   input.setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, input.enabled));
+}
+
+export function handleChangeUserMicrocopySlot(input: SettingsDraftActionInput & {
+  slot: MicrocopySlot;
+  value: string;
+}): void {
+  input.setSettingsDraft((current) => updateUserMicrocopySlotDraft(current, input.slot, input.value));
 }
 
 export function handleChangeMemoryExtractionModel(input: ModelCatalogActionInput & {

@@ -193,6 +193,7 @@ describe("HomeSettingsContent", () => {
     onRemoveMateMemoryGenerationPriority: noOp,
     onChangeMateMemoryGenerationTriggerIntervalMinutes: noOp,
     onChangeAutoCollapseActionDockOnSend: noOp,
+    onChangeUserMicrocopySlot: noOp,
     onChangeProviderEnabled: noOp,
     onChangeProviderInstructionEnabled: noOp,
     onChangeProviderInstructionWriteMode: noOp,
@@ -860,6 +861,7 @@ describe("HomeSettingsContent", () => {
         onRemoveMateMemoryGenerationPriority={noOp}
         onChangeMateMemoryGenerationTriggerIntervalMinutes={noOp}
         onChangeAutoCollapseActionDockOnSend={noOp}
+        onChangeUserMicrocopySlot={noOp}
         onChangeProviderEnabled={noOp}
         onChangeProviderInstructionEnabled={noOp}
         onChangeProviderInstructionWriteMode={noOp}
@@ -973,6 +975,7 @@ describe("HomeSettingsContent", () => {
         onRemoveMateMemoryGenerationPriority={noOp}
         onChangeMateMemoryGenerationTriggerIntervalMinutes={noOp}
         onChangeAutoCollapseActionDockOnSend={noOp}
+        onChangeUserMicrocopySlot={noOp}
         onChangeProviderEnabled={noOp}
         onChangeProviderInstructionEnabled={noOp}
         onChangeProviderInstructionWriteMode={noOp}
@@ -1085,6 +1088,7 @@ describe("HomeSettingsContent", () => {
         onRemoveMateMemoryGenerationPriority={noOp}
         onChangeMateMemoryGenerationTriggerIntervalMinutes={noOp}
         onChangeAutoCollapseActionDockOnSend={noOp}
+        onChangeUserMicrocopySlot={noOp}
         onChangeProviderEnabled={noOp}
         onChangeProviderInstructionEnabled={noOp}
         onChangeProviderInstructionWriteMode={noOp}

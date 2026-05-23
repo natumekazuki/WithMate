@@ -10,6 +10,7 @@ const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
 const MATE_MEMORY_GENERATION_SETTINGS_KEY = "mate_memory_generation_settings_json";
+const USER_MICROCOPY_CATALOG_KEY = "user_microcopy_catalog_json";
 
 type AppSettingRow = {
   setting_key: string;
@@ -74,6 +75,17 @@ export class AppSettingsStorage {
         JSON.stringify(DEFAULT_APP_SETTINGS.mateMemoryGenerationSettings),
         updatedAt,
       );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        USER_MICROCOPY_CATALOG_KEY,
+        JSON.stringify(DEFAULT_APP_SETTINGS.userMicrocopyCatalog),
+        updatedAt,
+      );
   }
 
   getSettings(): AppSettings {
@@ -133,6 +145,18 @@ export class AppSettingsStorage {
         }).mateMemoryGenerationSettings;
       } catch {
         settings.mateMemoryGenerationSettings = createDefaultAppSettings().mateMemoryGenerationSettings;
+      }
+    }
+
+    const userMicrocopyCatalogJson = rows.find((row) => row.setting_key === USER_MICROCOPY_CATALOG_KEY)?.setting_value;
+    if (userMicrocopyCatalogJson) {
+      try {
+        settings.userMicrocopyCatalog = normalizeAppSettings({
+          ...settings,
+          userMicrocopyCatalog: JSON.parse(userMicrocopyCatalogJson),
+        }).userMicrocopyCatalog;
+      } catch {
+        settings.userMicrocopyCatalog = createDefaultAppSettings().userMicrocopyCatalog;
       }
     }
 
@@ -200,6 +224,19 @@ export class AppSettingsStorage {
         .run(
           MATE_MEMORY_GENERATION_SETTINGS_KEY,
           JSON.stringify(normalized.mateMemoryGenerationSettings),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          USER_MICROCOPY_CATALOG_KEY,
+          JSON.stringify(normalized.userMicrocopyCatalog),
           updatedAt,
         );
       this.db.exec("COMMIT");

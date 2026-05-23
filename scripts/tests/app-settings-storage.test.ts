@@ -18,6 +18,10 @@ describe("AppSettingsStorage", () => {
         ...createDefaultAppSettings(),
         memoryGenerationEnabled: false,
         autoCollapseActionDockOnSend: false,
+        userMicrocopyCatalog: {
+          ...createDefaultAppSettings().userMicrocopyCatalog,
+          "chat.pending.response_waiting": ["応答待機中", "出力待機中"],
+        },
         codingProviderSettings: {
           codex: {
             enabled: false,
@@ -96,6 +100,10 @@ describe("AppSettingsStorage", () => {
         ...createDefaultAppSettings(),
         memoryGenerationEnabled: false,
         autoCollapseActionDockOnSend: false,
+        userMicrocopyCatalog: {
+          ...createDefaultAppSettings().userMicrocopyCatalog,
+          "dock.status.preparing": ["準備中"],
+        },
         codingProviderSettings: {
           codex: {
             enabled: false,

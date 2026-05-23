@@ -4,6 +4,7 @@ import {
   type AppSettings,
   type MemoryExtractionProviderSettings,
 } from "../app-state.js";
+import { MICROCOPY_SLOTS, type MicrocopySlot } from "../microcopy-state.js";
 import type { MateEmbeddingSettings } from "../mate/mate-embedding-settings.js";
 import {
   DEFAULT_MATE_GROWTH_APPLY_INTERVAL_MINUTES,
@@ -119,6 +120,7 @@ export type HomeSettingsContentProps = {
   onRemoveMateMemoryGenerationPriority: (index: number) => void;
   onChangeMateMemoryGenerationTriggerIntervalMinutes: (value: string) => void;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
+  onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
   onChangeProviderInstructionEnabled: (providerId: string, enabled: boolean) => void;
   onChangeProviderInstructionWriteMode: (providerId: string, value: string) => void;
@@ -186,6 +188,29 @@ const GROWTH_EVENT_STATE_LABEL: Record<MateGrowthEventListItem["state"], string>
   failed: "失敗",
 };
 
+const MICROCOPY_SLOT_LABEL: Record<MicrocopySlot, string> = {
+  "chat.pending.response_waiting": "Chat / 応答待機",
+  "dock.status.approval": "ActionDock / 承認待機",
+  "dock.status.working": "ActionDock / 処理中",
+  "dock.status.responding": "ActionDock / 応答生成中",
+  "dock.status.preparing": "ActionDock / 応答準備中",
+  "retry.interrupted.title": "Retry / 中断",
+  "retry.failed.title": "Retry / 失敗",
+  "retry.canceled.title": "Retry / キャンセル",
+  "empty.latest_command.waiting": "Empty / command 待機",
+  "empty.latest_command": "Empty / command なし",
+  "empty.changed_files": "Empty / 変更なし",
+  "empty.context": "Empty / context なし",
+};
+
+const microcopyTextareaValue = (value: AppSettings["userMicrocopyCatalog"][MicrocopySlot]): string => {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  return (value ?? []).join("\n");
+};
+
 const normalizeProviderInstructionErrorPreview = (errorPreview: string): string => {
   const trimmed = errorPreview.trim();
   if (trimmed.length <= MAX_PROVIDER_INSTRUCTION_ERROR_PREVIEW_LENGTH) {
@@ -250,6 +275,7 @@ export function HomeSettingsContent({
   onRemoveMateMemoryGenerationPriority,
   onChangeMateMemoryGenerationTriggerIntervalMinutes,
   onChangeAutoCollapseActionDockOnSend,
+  onChangeUserMicrocopySlot,
   onChangeProviderEnabled,
   onChangeProviderInstructionEnabled,
   onChangeProviderInstructionWriteMode,
@@ -428,6 +454,27 @@ export function HomeSettingsContent({
                   onChange={(event) => onChangeAutoCollapseActionDockOnSend(event.target.checked)}
                 />
               </label>
+            </div>
+          </section>
+
+          <section className="settings-section-card">
+            <div className="settings-field">
+              <strong>Default Microcopy</strong>
+              <p className="settings-note">1 行を 1 候補として保存する。空の slot は system default に戻る。</p>
+              <div className="settings-provider-list">
+                {MICROCOPY_SLOTS.map((slot) => (
+                  <label key={slot} className="settings-provider-input">
+                    <span>{MICROCOPY_SLOT_LABEL[slot]}</span>
+                    <textarea
+                      className="settings-microcopy-textarea"
+                      value={microcopyTextareaValue(settingsDraft.userMicrocopyCatalog[slot])}
+                      onChange={(event) => onChangeUserMicrocopySlot(slot, event.target.value)}
+                      rows={3}
+                      spellCheck={false}
+                    />
+                  </label>
+                ))}
+              </div>
             </div>
           </section>
 

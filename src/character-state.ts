@@ -51,17 +51,17 @@ export const DEFAULT_CHARACTER_THEME_COLORS: CharacterThemeColors = {
 };
 
 export const DEFAULT_CHARACTER_SESSION_COPY: CharacterSessionCopy = {
-  pendingApproval: ["承認を待機中"],
-  pendingWorking: ["処理を実行中"],
-  pendingResponding: ["応答を生成中"],
-  pendingPreparing: ["応答を準備中"],
-  retryInterruptedTitle: ["前回の依頼は中断されたままです"],
-  retryFailedTitle: ["前回の依頼は完了できませんでした"],
-  retryCanceledTitle: ["この依頼は途中で停止しました"],
-  latestCommandWaiting: ["最初の command を待機中"],
-  latestCommandEmpty: ["直近 run の command 記録はありません"],
-  changedFilesEmpty: ["ファイル変更はありません"],
-  contextEmpty: ["context usage はまだありません"],
+  pendingApproval: [...BUILT_IN_MICROCOPY_CATALOG["dock.status.approval"]],
+  pendingWorking: [...BUILT_IN_MICROCOPY_CATALOG["dock.status.working"]],
+  pendingResponding: [...BUILT_IN_MICROCOPY_CATALOG["dock.status.responding"]],
+  pendingPreparing: [...BUILT_IN_MICROCOPY_CATALOG["dock.status.preparing"]],
+  retryInterruptedTitle: [...BUILT_IN_MICROCOPY_CATALOG["retry.interrupted.title"]],
+  retryFailedTitle: [...BUILT_IN_MICROCOPY_CATALOG["retry.failed.title"]],
+  retryCanceledTitle: [...BUILT_IN_MICROCOPY_CATALOG["retry.canceled.title"]],
+  latestCommandWaiting: [...BUILT_IN_MICROCOPY_CATALOG["empty.latest_command.waiting"]],
+  latestCommandEmpty: [...BUILT_IN_MICROCOPY_CATALOG["empty.latest_command"]],
+  changedFilesEmpty: [...BUILT_IN_MICROCOPY_CATALOG["empty.changed_files"]],
+  contextEmpty: [...BUILT_IN_MICROCOPY_CATALOG["empty.context"]],
 };
 
 export function cloneCharacterSessionCopy(copy: CharacterSessionCopy): CharacterSessionCopy {
@@ -157,3 +157,4 @@ export function cloneCharacterProfiles(characters: CharacterProfile[]): Characte
 export function getCharacterById(characters: CharacterProfile[], characterId: string): CharacterProfile | null {
   return cloneCharacterProfiles(characters).find((character) => character.id === characterId) ?? null;
 }
+import { BUILT_IN_MICROCOPY_CATALOG } from "./microcopy-state.js";

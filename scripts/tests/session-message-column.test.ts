@@ -5,9 +5,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   SessionActionDockCompactRow,
+  SessionContextPane,
   SessionComposerExpanded,
   SessionMessageColumn,
 } from "../../src/session-components.js";
+import { buildContextPaneProjection } from "../../src/session-ui-projection.js";
 import type { CharacterProfile, LiveApprovalRequest, LiveElicitationRequest, Message } from "../../src/app-state.js";
 
 function createCharacterProfile(): CharacterProfile {
@@ -112,6 +114,7 @@ function renderSessionMessageColumn(options: {
   liveApprovalRequest?: LiveApprovalRequest | null;
   liveElicitationRequest?: LiveElicitationRequest | null;
   liveRunAssistantText?: string;
+  pendingMessageText?: string;
 }): string {
   return renderToStaticMarkup(
     React.createElement(SessionMessageColumn, {
@@ -128,6 +131,7 @@ function renderSessionMessageColumn(options: {
       liveRunAssistantText: options.liveRunAssistantText ?? "",
       hasLiveRunAssistantText: !!options.liveRunAssistantText,
       liveRunErrorMessage: "",
+      pendingMessageText: options.pendingMessageText,
       isMessageListFollowing: options.isMessageListFollowing ?? false,
       onMessageListScroll() {},
       onToggleArtifact() {},
@@ -229,6 +233,21 @@ test("SessionMessageColumn は inline content のない pending bubble を描画
 
   assert.doesNotMatch(html, /pending-row/);
   assert.match(html, /message-list-bottom-anchor/);
+});
+
+test("SessionMessageColumn は pending message text があれば実行開始直後の assistant row を描画する", () => {
+  const html = renderSessionMessageColumn({
+    messages: createMessages(1),
+    isRunning: true,
+    pendingMessageText: "応答を準備しています",
+  });
+
+  assert.match(html, /pending-row/);
+  assert.match(html, /応答を準備しています/);
+  assert.ok(
+    html.indexOf("message 1") < html.indexOf("pending-row"),
+    "pending row は既存メッセージの後に描画する",
+  );
 });
 
 test("SessionComposerExpanded は jump button を Hide の左に描画する", () => {
@@ -431,6 +450,8 @@ test("SessionActionDockCompactRow は実行中の compact 表示を progress と
     }),
   );
 
+  assert.match(html, /aria-label="ActionDock を展開"/);
+  assert.match(html, /session-action-dock-compact-progress-button/);
   assert.match(html, /session-action-dock-compact-progress/);
   assert.match(html, /処理を実行中/);
   assert.match(html, /session-action-dock-compact-actions/);
@@ -438,4 +459,48 @@ test("SessionActionDockCompactRow は実行中の compact 表示を progress と
   assert.doesNotMatch(html, /Draft/);
   assert.doesNotMatch(html, /添付 2/);
   assert.doesNotMatch(html, /末尾へ移動/);
+});
+
+test("SessionContextPane は latest command がないとき empty text を表示する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(SessionContextPane, {
+      taskTitle: "task",
+      isHeaderExpanded: false,
+      activeContextPaneTab: "latest-command",
+      availableContextPaneTabs: ["latest-command"],
+      contextPaneProjection: buildContextPaneProjection({
+        activeContextPaneTab: "latest-command",
+        latestCommandView: null,
+        backgroundTasks: [],
+      }),
+      latestCommandView: null,
+      latestCommandEmptyText: "直近 run の command 記録はありません",
+      runningDetailsEntries: [],
+      liveRunReasoningText: "",
+      backgroundTasks: [],
+      companionGroupMonitorEntries: [],
+      selectedSessionLiveRunErrorMessage: "",
+      isSelectedSessionRunning: false,
+      isCopilotSession: false,
+      selectedCopilotRemainingPercentLabel: "",
+      selectedCopilotRemainingRequestsLabel: "",
+      selectedCopilotQuotaResetLabel: "",
+      selectedSessionContextTelemetry: null,
+      selectedSessionContextTelemetryProjection: {
+        summaryLabel: "",
+        currentTokensLabel: "",
+        tokenLimitLabel: "",
+        messagesLengthLabel: "",
+        systemTokensLabel: "",
+        conversationTokensLabel: "",
+      },
+      contextEmptyText: "context usage はまだありません",
+      onToggleHeaderExpanded() {},
+      onCycleContextPaneTab() {},
+      onOpenCompanionReview() {},
+    }),
+  );
+
+  assert.match(html, /直近 run の command 記録はありません/);
+  assert.match(html, /command-monitor-empty-shell/);
 });
