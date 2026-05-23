@@ -11,6 +11,10 @@ import {
   normalizeAllowedAdditionalDirectories,
 } from "../../src-electron/additional-directories.js";
 import { resolveComposerPreview } from "../../src-electron/composer-attachments.js";
+import {
+  appendSessionFilesDirectory,
+  resolveSessionFilesDirectory,
+} from "../../src-electron/session-files.js";
 import { captureWorkspaceSnapshot } from "../../src-electron/snapshot-ignore.js";
 
 function createSession(workspacePath: string, allowedAdditionalDirectories: string[] = []) {
@@ -72,6 +76,53 @@ describe("additional directories", () => {
       assert.equal(allowedPreview.errors.length, 0);
       assert.equal(allowedPreview.attachments.length, 1);
       assert.equal(allowedPreview.attachments[0]?.isOutsideWorkspace, true);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("workspace root 自体を @path で添付できる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-workspace-root-"));
+    const workspacePath = path.join(tempDirectory, "workspace");
+    await mkdir(workspacePath, { recursive: true });
+
+    try {
+      const preview = await resolveComposerPreview(
+        createSession(workspacePath),
+        `確認して @${workspacePath.replace(/\\/g, "/")}`,
+      );
+
+      assert.equal(preview.errors.length, 0);
+      assert.equal(preview.attachments.length, 1);
+      assert.equal(preview.attachments[0]?.kind, "folder");
+      assert.equal(preview.attachments[0]?.workspaceRelativePath, ".");
+      assert.equal(preview.attachments[0]?.isOutsideWorkspace, false);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("session files directory 自体を @path で添付できる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-files-root-"));
+    const workspacePath = path.join(tempDirectory, "workspace");
+    const userDataPath = path.join(tempDirectory, "user-data");
+    await mkdir(workspacePath, { recursive: true });
+
+    try {
+      const session = createSession(workspacePath);
+      const sessionFilesPath = resolveSessionFilesDirectory(userDataPath, session.id);
+      await mkdir(sessionFilesPath, { recursive: true });
+
+      const preview = await resolveComposerPreview(
+        appendSessionFilesDirectory(userDataPath, session),
+        `確認して @${sessionFilesPath.replace(/\\/g, "/")}`,
+      );
+
+      assert.equal(preview.errors.length, 0);
+      assert.equal(preview.attachments.length, 1);
+      assert.equal(preview.attachments[0]?.kind, "folder");
+      assert.equal(preview.attachments[0]?.absolutePath, sessionFilesPath);
+      assert.equal(preview.attachments[0]?.isOutsideWorkspace, true);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
