@@ -29,7 +29,11 @@ function resolveCandidatePath(workspacePath: string, rawPath: string): string {
 
 function toWorkspaceRelativePath(workspacePath: string, absolutePath: string): string | null {
   const relativePath = path.relative(workspacePath, absolutePath);
-  if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+  if (relativePath === "") {
+    return ".";
+  }
+
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
     return null;
   }
 
