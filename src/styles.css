@@ -1927,6 +1927,10 @@ button:disabled {
   line-height: 1.55;
 }
 
+.settings-field textarea.settings-microcopy-textarea {
+  min-height: 86px;
+}
+
 .settings-field input {
   width: 100%;
   border: 1px solid rgba(32, 36, 55, 0.12);
@@ -2883,6 +2887,20 @@ button:disabled {
 
 .session-action-dock-compact-progress {
   min-width: 0;
+}
+
+.session-action-dock-compact-progress-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-action-dock-compact-progress-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--character-main) 72%, #ffffff 28%);
+  outline-offset: 3px;
 }
 
 .session-action-dock-compact-progress .pending-run-indicator {

@@ -5,6 +5,11 @@ import {
   normalizeProviderId,
   type ModelReasoningEffort,
 } from "./model-catalog.js";
+import {
+  createDefaultUserMicrocopyCatalog,
+  normalizeUserMicrocopyCatalog,
+  type MicrocopyCatalog,
+} from "./microcopy-state.js";
 import type {
   ProviderInstructionFailPolicy,
   ProviderInstructionLastSyncState,
@@ -16,6 +21,7 @@ import type {
 export type AppSettings = {
   memoryGenerationEnabled: boolean;
   autoCollapseActionDockOnSend: boolean;
+  userMicrocopyCatalog: MicrocopyCatalog;
   mateMemoryGenerationSettings: MateMemoryGenerationSettings;
   codingProviderSettings: Record<string, ProviderAppSettings>;
   memoryExtractionProviderSettings: Record<string, MemoryExtractionProviderSettings>;
@@ -107,6 +113,7 @@ export function createDefaultAppSettings(): AppSettings {
   return {
     memoryGenerationEnabled: true,
     autoCollapseActionDockOnSend: true,
+    userMicrocopyCatalog: createDefaultUserMicrocopyCatalog(),
     mateMemoryGenerationSettings: {
       ...DEFAULT_MATE_MEMORY_GENERATION_SETTINGS,
       priorityList: [{ ...DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS }],
@@ -312,6 +319,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       typeof candidate.memoryGenerationEnabled === "boolean" ? candidate.memoryGenerationEnabled : true,
     autoCollapseActionDockOnSend:
       typeof candidate.autoCollapseActionDockOnSend === "boolean" ? candidate.autoCollapseActionDockOnSend : true,
+    userMicrocopyCatalog: normalizeUserMicrocopyCatalog(candidate.userMicrocopyCatalog),
     mateMemoryGenerationSettings: normalizeMateMemoryGenerationSettings(candidate.mateMemoryGenerationSettings),
     codingProviderSettings,
     memoryExtractionProviderSettings,

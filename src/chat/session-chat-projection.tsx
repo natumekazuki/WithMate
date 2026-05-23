@@ -42,6 +42,7 @@ export type AgentSessionChatProjectionInput = {
   messageListRef: RefObject<HTMLDivElement | null>;
   pendingRunIndicatorAnnouncement: string;
   pendingRunIndicatorText: string;
+  pendingMessageText: string;
   liveApprovalRequest: SessionMessageColumnProps["liveApprovalRequest"];
   approvalActionRequestId: string | null;
   liveElicitationRequest: SessionMessageColumnProps["liveElicitationRequest"];
@@ -100,6 +101,7 @@ export type AgentSessionChatProjectionInput = {
   selectedSessionContextTelemetry: SessionContextPaneProps["selectedSessionContextTelemetry"];
   selectedSessionContextTelemetryProjection: SessionContextPaneProps["selectedSessionContextTelemetryProjection"];
   selectedContextEmptyText: string;
+  latestCommandEmptyText: string;
   selectedDiff: DiffPreviewPayload | null;
   selectedDiffThemeStyle: CSSProperties;
   auditLogsOpen: boolean;
@@ -234,6 +236,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     liveRunAssistantText: input.liveRunAssistantText,
     hasLiveRunAssistantText: input.hasLiveRunAssistantText,
     liveRunErrorMessage: input.liveRunErrorMessage,
+    pendingMessageText: input.pendingMessageText,
     isMessageListFollowing: input.isMessageListFollowing,
     onMessageListScroll: input.onMessageListScroll,
     onToggleArtifact: input.onToggleArtifact,
@@ -385,6 +388,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
           selectedSessionContextTelemetry={input.selectedSessionContextTelemetry}
           selectedSessionContextTelemetryProjection={input.selectedSessionContextTelemetryProjection}
           contextEmptyText={input.selectedContextEmptyText}
+          latestCommandEmptyText={input.latestCommandEmptyText}
           onToggleHeaderExpanded={input.onToggleHeaderExpanded}
           onCycleContextPaneTab={input.onCycleContextPaneTab}
           onOpenCompanionReview={input.onOpenCompanionReview}

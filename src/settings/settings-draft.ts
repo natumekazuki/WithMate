@@ -8,6 +8,7 @@ import {
   type ProviderAppSettings,
 } from "../provider-settings-state.js";
 import { coerceModelSelection, type ModelCatalogProvider } from "../model-catalog.js";
+import type { MicrocopySlot } from "../microcopy-state.js";
 
 export function updateMemoryGenerationEnabled(
   draft: AppSettings,
@@ -26,6 +27,20 @@ export function updateAutoCollapseActionDockOnSend(
   return {
     ...draft,
     autoCollapseActionDockOnSend: enabled,
+  };
+}
+
+export function updateUserMicrocopySlotDraft(
+  draft: AppSettings,
+  slot: MicrocopySlot,
+  rawValue: string,
+): AppSettings {
+  return {
+    ...draft,
+    userMicrocopyCatalog: {
+      ...draft.userMicrocopyCatalog,
+      [slot]: rawValue,
+    },
   };
 }
 

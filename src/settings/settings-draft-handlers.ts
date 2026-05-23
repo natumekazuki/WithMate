@@ -1,4 +1,5 @@
 import type { ModelCatalogSnapshot } from "../model-catalog.js";
+import type { MicrocopySlot } from "../microcopy-state.js";
 import type { AppSettings } from "../provider-settings-state.js";
 import type { HomeSettingsContentBaseProps } from "./home-settings-content-props.js";
 import {
@@ -17,6 +18,7 @@ import {
   handleChangeProviderEnabled,
   handleChangeProviderSkillRelativePath,
   handleChangeProviderSkillRootPath,
+  handleChangeUserMicrocopySlot,
   handleRemoveMateMemoryGenerationPriority,
 } from "./settings-draft-actions.js";
 
@@ -36,6 +38,7 @@ export type SettingsDraftHandlers = Pick<
   | "onRemoveMateMemoryGenerationPriority"
   | "onChangeMateMemoryGenerationTriggerIntervalMinutes"
   | "onChangeAutoCollapseActionDockOnSend"
+  | "onChangeUserMicrocopySlot"
   | "onChangeProviderEnabled"
   | "onChangeProviderSkillRelativePath"
   | "onChangeProviderSkillRootPath"
@@ -76,6 +79,9 @@ export function buildSettingsDraftHandlers({
     },
     onChangeAutoCollapseActionDockOnSend: (enabled) => {
       handleChangeAutoCollapseActionDockOnSend({ enabled, setSettingsDraft });
+    },
+    onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => {
+      handleChangeUserMicrocopySlot({ slot, value, setSettingsDraft });
     },
     onChangeProviderEnabled: (providerId, enabled) => {
       handleChangeProviderEnabled({ providerId, enabled, setSettingsDraft });

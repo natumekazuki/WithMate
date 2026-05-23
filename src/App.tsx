@@ -22,6 +22,7 @@ import {
   getProviderAppSettings,
   type AppSettings,
 } from "./provider-settings-state.js";
+import { resolveMicrocopy, type MicrocopySlot } from "./microcopy-state.js";
 import {
   type DiffPreviewPayload,
   type Message,
@@ -362,31 +363,6 @@ function createPendingLiveSessionRunState(
   };
 }
 
-function hashStringToPositiveInt(value: string): number {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
-  }
-
-  return Math.abs(hash);
-}
-
-function renderCharacterSessionCopy(
-  templates: string[],
-  characterName?: string | null,
-  seed = "",
-): string {
-  const normalizedTemplates = templates
-    .map((template) => template.trim())
-    .filter((template) => template.length > 0);
-  if (normalizedTemplates.length === 0) {
-    return "";
-  }
-
-  const selectedTemplate = normalizedTemplates[hashStringToPositiveInt(seed || normalizedTemplates.join("\u001f")) % normalizedTemplates.length];
-  return selectedTemplate.replaceAll("{name}", characterName?.trim() || DEFAULT_SESSION_RUNTIME_NAME);
-}
-
 export default function AgentSessionWindowApp() {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();
@@ -641,7 +617,15 @@ export default function AgentSessionWindowApp() {
     () => (selectedDiff ? buildCharacterThemeStyle(selectedDiff.themeColors) : {}),
     [selectedDiff],
   );
-  const selectedSessionCopy = DEFAULT_CHARACTER_SESSION_COPY;
+  const resolveSessionMicrocopy = (
+    slot: MicrocopySlot,
+    seedParts: Array<string | number | null | undefined>,
+  ) => resolveMicrocopy({
+    slot,
+    userCatalog: appSettings.userMicrocopyCatalog,
+    seedParts,
+    replacements: { name: selectedSessionCharacter?.name || DEFAULT_SESSION_RUNTIME_NAME },
+  });
   const isSelectedProviderEnabled = useMemo(
     () => !!selectedSession && getProviderAppSettings(appSettings, selectedSession.provider).enabled,
     [appSettings, selectedSession],
@@ -1275,25 +1259,36 @@ export default function AgentSessionWindowApp() {
   const isApprovalRequestPending = !!liveApprovalRequest;
   const isElicitationRequestPending = !!liveElicitationRequest;
   const hasLiveRunAssistantText = liveRunAssistantText.length > 0;
-  const pendingIndicatorCharacterName = useMemo(() => {
-    const candidateNames = [selectedSessionCharacter?.name]
-      .map((name) => name?.trim() ?? "")
-      .filter(Boolean);
-
-    return candidateNames[0] ?? "";
-  }, [selectedSessionCharacter?.name]);
   const selectedContextEmptyText = useMemo(
     () =>
-      renderCharacterSessionCopy(
-        selectedSessionCopy.contextEmpty,
-        pendingIndicatorCharacterName,
-        `context-empty:${selectedSession?.id ?? ""}:${selectedSession?.updatedAt ?? ""}`,
-      ),
+      resolveSessionMicrocopy("empty.context", [
+        "context-empty",
+        selectedSession?.id,
+        selectedSession?.updatedAt,
+      ]),
     [
-      pendingIndicatorCharacterName,
+      appSettings.userMicrocopyCatalog,
       selectedSession?.id,
       selectedSession?.updatedAt,
-      selectedSessionCopy.contextEmpty,
+      selectedSessionCharacter?.name,
+    ],
+  );
+  const latestCommandEmptyText = useMemo(
+    () => resolveSessionMicrocopy(
+      selectedSessionRunState === "running" ? "empty.latest_command.waiting" : "empty.latest_command",
+      [
+        "latest-command-empty",
+        selectedSession?.id,
+        selectedSessionRunState,
+        latestTerminalAuditLog?.id,
+      ],
+    ),
+    [
+      appSettings.userMicrocopyCatalog,
+      latestTerminalAuditLog?.id,
+      selectedSession?.id,
+      selectedSessionCharacter?.name,
+      selectedSessionRunState,
     ],
   );
   const retryBanner = useMemo<RetryBannerState | null>(() => {
@@ -1320,11 +1315,12 @@ export default function AgentSessionWindowApp() {
         return {
           kind,
           badge: "中断",
-          title: renderCharacterSessionCopy(
-            selectedSessionCopy.retryInterruptedTitle,
-            pendingIndicatorCharacterName,
-            `retry:interrupted:${selectedSession.id}:${lastUserMessage.text}`,
-          ),
+          title: resolveSessionMicrocopy("retry.interrupted.title", [
+            "retry",
+            "interrupted",
+            selectedSession.id,
+            lastUserMessage.text,
+          ]),
           stopSummary,
           lastRequestText: lastUserMessage.text,
         };
@@ -1332,11 +1328,12 @@ export default function AgentSessionWindowApp() {
         return {
           kind,
           badge: "失敗",
-          title: renderCharacterSessionCopy(
-            selectedSessionCopy.retryFailedTitle,
-            pendingIndicatorCharacterName,
-            `retry:failed:${selectedSession.id}:${lastUserMessage.text}`,
-          ),
+          title: resolveSessionMicrocopy("retry.failed.title", [
+            "retry",
+            "failed",
+            selectedSession.id,
+            lastUserMessage.text,
+          ]),
           stopSummary,
           lastRequestText: lastUserMessage.text,
         };
@@ -1344,11 +1341,13 @@ export default function AgentSessionWindowApp() {
         return {
           kind,
           badge: "キャンセル",
-          title: renderCharacterSessionCopy(
-            selectedSessionCopy.retryCanceledTitle,
-            pendingIndicatorCharacterName,
-            `retry:canceled:${selectedSession.id}:${lastUserMessage.text}:${latestTerminalAuditLog?.id ?? ""}`,
-          ),
+          title: resolveSessionMicrocopy("retry.canceled.title", [
+            "retry",
+            "canceled",
+            selectedSession.id,
+            lastUserMessage.text,
+            latestTerminalAuditLog?.id,
+          ]),
           stopSummary,
           lastRequestText: lastUserMessage.text,
         };
@@ -1359,11 +1358,9 @@ export default function AgentSessionWindowApp() {
     lastAssistantMessage,
     lastUserMessage,
     latestTerminalAuditLog,
-    pendingIndicatorCharacterName,
+    appSettings.userMicrocopyCatalog,
     selectedSession,
-    selectedSessionCopy.retryCanceledTitle,
-    selectedSessionCopy.retryFailedTitle,
-    selectedSessionCopy.retryInterruptedTitle,
+    selectedSessionCharacter?.name,
     isSelectedSessionReadOnly,
     selectedSessionLiveRun,
   ]);
@@ -2446,32 +2443,41 @@ export default function AgentSessionWindowApp() {
   };
 
   const pendingRunIndicatorText = isApprovalRequestPending || isElicitationRequestPending
-    ? renderCharacterSessionCopy(
-      selectedSessionCopy.pendingApproval,
-      pendingIndicatorCharacterName,
-      [
-        `pending:approval:${selectedSession?.id ?? ""}:${liveApprovalRequest?.requestId ?? ""}`,
-        `pending:elicitation:${selectedSession?.id ?? ""}:${liveElicitationRequest?.requestId ?? ""}`,
-      ].join("|"),
-    )
+    ? resolveSessionMicrocopy("dock.status.approval", [
+      "pending",
+      "approval",
+      selectedSession?.id,
+      liveApprovalRequest?.requestId,
+      liveElicitationRequest?.requestId,
+    ])
     : hasInProgressLiveRunStep
-      ? renderCharacterSessionCopy(
-        selectedSessionCopy.pendingWorking,
-        pendingIndicatorCharacterName,
-        `pending:working:${selectedSession?.id ?? ""}:${selectedSessionLiveRun?.threadId ?? ""}:${orderedLiveRunSteps.map((step) => `${step.id}:${step.status}`).join("|")}`,
-      )
+      ? resolveSessionMicrocopy("dock.status.working", [
+        "pending",
+        "working",
+        selectedSession?.id,
+        selectedSessionLiveRun?.threadId,
+        orderedLiveRunSteps.map((step) => `${step.id}:${step.status}`).join("|"),
+      ])
       : hasLiveRunAssistantText
-        ? renderCharacterSessionCopy(
-          selectedSessionCopy.pendingResponding,
-          pendingIndicatorCharacterName,
-          `pending:responding:${selectedSession?.id ?? ""}:${selectedSessionLiveRun?.threadId ?? ""}:${liveRunAssistantText.length}`,
-        )
-        : renderCharacterSessionCopy(
-          selectedSessionCopy.pendingPreparing,
-          pendingIndicatorCharacterName,
-          `pending:preparing:${selectedSession?.id ?? ""}:${selectedSessionLiveRun?.threadId ?? ""}`,
-        );
+        ? resolveSessionMicrocopy("dock.status.responding", [
+          "pending",
+          "responding",
+          selectedSession?.id,
+          selectedSessionLiveRun?.threadId,
+        ])
+        : resolveSessionMicrocopy("dock.status.preparing", [
+          "pending",
+          "preparing",
+          selectedSession?.id,
+          selectedSessionLiveRun?.threadId,
+        ]);
   const pendingRunIndicatorAnnouncement = pendingRunIndicatorText;
+  const pendingMessageText = resolveSessionMicrocopy("chat.pending.response_waiting", [
+    "chat",
+    "pending",
+    selectedSession?.id,
+    selectedSessionLiveRun?.threadId,
+  ]);
   const isSelectedSessionRunning = selectedSessionRunState === "running";
   const contextPaneProjection = useMemo(
     () => buildContextPaneProjection({
@@ -2528,6 +2534,7 @@ export default function AgentSessionWindowApp() {
         messageListRef,
         pendingRunIndicatorAnnouncement,
         pendingRunIndicatorText,
+        pendingMessageText,
         liveApprovalRequest,
         approvalActionRequestId,
         liveElicitationRequest,
@@ -2586,6 +2593,7 @@ export default function AgentSessionWindowApp() {
         selectedSessionContextTelemetry,
         selectedSessionContextTelemetryProjection,
         selectedContextEmptyText,
+        latestCommandEmptyText,
         selectedDiff,
         selectedDiffThemeStyle,
         auditLogsOpen,
@@ -2626,11 +2634,7 @@ export default function AgentSessionWindowApp() {
         getChangedFilesEmptyText: (artifactKey, artifactHasSnapshotRisk) =>
           artifactHasSnapshotRisk
             ? "差分は見つからなかったけど、snapshot の上限や省略で取りこぼしがあるかもしれないよ。"
-            : renderCharacterSessionCopy(
-              selectedSessionCopy.changedFilesEmpty,
-              pendingIndicatorCharacterName,
-              `changed-files-empty:${artifactKey}`,
-            ),
+            : resolveSessionMicrocopy("empty.changed_files", ["changed-files-empty", artifactKey]),
         onToggleRetryDetails: () => setIsRetryDetailsOpen((current) => !current),
         onResendLastMessage: () => void handleResendLastMessage(),
         onEditLastMessage: handleEditLastMessage,
@@ -2679,7 +2683,7 @@ export default function AgentSessionWindowApp() {
           setComposerCaret(composerTextareaRef.current?.selectionStart ?? draft.length);
         },
         onSendOrCancel: () => void (selectedSession.runState === "running" ? handleCancelRun() : handleSend()),
-        onExpandActionDock: () => handleExpandActionDock({ focusComposer: true }),
+        onExpandActionDock: () => handleExpandActionDock({ focusComposer: selectedSession.runState !== "running" }),
         onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
         onActivateWorkspacePathMatch: setActiveWorkspacePathMatchIndex,
         onChangeApprovalMode: (value) => void handleChangeApproval(value),

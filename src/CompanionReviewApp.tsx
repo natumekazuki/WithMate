@@ -2287,7 +2287,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           setComposerCaret(composerTextareaRef.current?.selectionStart ?? composerText.length);
         },
         onSendOrCancel: () => void (isSelectedSessionRunning ? cancelCompanionTurn() : sendCompanionTurn()),
-        onExpandActionDock: () => handleExpandActionDock({ focusComposer: true }),
+        onExpandActionDock: () => handleExpandActionDock({ focusComposer: !isSelectedSessionRunning }),
         onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
         onActivateWorkspacePathMatch: setActiveWorkspacePathMatchIndex,
         onChangeApprovalMode: (value) => void handleChangeApproval(value),

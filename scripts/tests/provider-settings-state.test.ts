@@ -92,4 +92,16 @@ describe("provider-settings-state", () => {
     assert.equal(normalizeAppSettings({ autoCollapseActionDockOnSend: false }).autoCollapseActionDockOnSend, false);
     assert.equal(normalizeAppSettings({}).autoCollapseActionDockOnSend, true);
   });
+
+  it("user microcopy catalog は複数 copy を保持し、空 slot は default に戻す", () => {
+    const settings = normalizeAppSettings({
+      userMicrocopyCatalog: {
+        "chat.pending.response_waiting": ["応答待機中", "出力待機中"],
+        "dock.status.preparing": [],
+      },
+    });
+
+    assert.deepEqual(settings.userMicrocopyCatalog["chat.pending.response_waiting"], ["応答待機中", "出力待機中"]);
+    assert.deepEqual(settings.userMicrocopyCatalog["dock.status.preparing"], ["応答を準備中"]);
+  });
 });

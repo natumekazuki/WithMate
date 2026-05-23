@@ -31,6 +31,7 @@ import {
   updateMateMemoryGenerationPriorityModelDraft,
   updateMateMemoryGenerationPriorityReasoningEffortDraft,
   updateMateMemoryGenerationPriorityTimeoutSecondsDraft,
+  updateUserMicrocopySlotDraft,
   addMateMemoryGenerationPriorityDraft,
   removeMateMemoryGenerationPriorityDraft,
 } from "../../src/settings/settings-draft.js";
@@ -49,6 +50,7 @@ import {
   handleChangeProviderEnabled as handleChangeProviderEnabledAction,
   handleChangeProviderSkillRelativePath as handleChangeProviderSkillRelativePathAction,
   handleChangeProviderSkillRootPath as handleChangeProviderSkillRootPathAction,
+  handleChangeUserMicrocopySlot as handleChangeUserMicrocopySlotAction,
   handleAddMateMemoryGenerationPriority as handleAddMateMemoryGenerationPriorityAction,
   handleRemoveMateMemoryGenerationPriority as handleRemoveMateMemoryGenerationPriorityAction,
 } from "../../src/settings/settings-draft-actions.js";
@@ -254,6 +256,14 @@ describe("home-settings-draft", () => {
     assert.equal(next.autoCollapseActionDockOnSend, false);
   });
 
+  it("microcopy slot draft は編集中の末尾改行を保持する", () => {
+    const draft = createDefaultAppSettings();
+
+    const next = updateUserMicrocopySlotDraft(draft, "chat.pending.response_waiting", "応答待機中\n");
+
+    assert.equal(next.userMicrocopyCatalog["chat.pending.response_waiting"], "応答待機中\n");
+  });
+
   it("mate memory generation の priority 1 を provider / model / reasoning / timeout / interval で更新できる", () => {
     const draft = createDefaultAppSettings();
 
@@ -335,9 +345,15 @@ describe("home-settings-draft", () => {
       enabled: false,
       setSettingsDraft: state.setSettingsDraft,
     });
+    handleChangeUserMicrocopySlotAction({
+      slot: "dock.status.responding",
+      value: "応答生成中\n",
+      setSettingsDraft: state.setSettingsDraft,
+    });
 
     assert.equal(state.draft.memoryGenerationEnabled, false);
     assert.equal(state.draft.autoCollapseActionDockOnSend, false);
+    assert.equal(state.draft.userMicrocopyCatalog["dock.status.responding"], "応答生成中\n");
   });
 
   it("action: catalog 不在時は memory extraction model 更新を反映しない", () => {

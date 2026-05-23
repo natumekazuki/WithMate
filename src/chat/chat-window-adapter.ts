@@ -168,6 +168,7 @@ type LiveSessionMessageColumnProps = {
   liveRunAssistantText: string;
   hasLiveRunAssistantText: boolean;
   liveRunErrorMessage: string;
+  pendingMessageText?: string;
   isMessageListFollowing: boolean;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
   onToggleArtifact: (artifactKey: string) => void;
@@ -214,6 +215,7 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     liveRunAssistantText: input.liveRunAssistantText,
     hasLiveRunAssistantText: input.hasLiveRunAssistantText,
     liveRunErrorMessage: input.liveRunErrorMessage,
+    pendingMessageText: input.pendingMessageText,
     isMessageListFollowing: input.isMessageListFollowing,
     onMessageListScroll: input.onMessageListScroll,
     onToggleArtifact: input.onToggleArtifact,

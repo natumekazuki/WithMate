@@ -1347,6 +1347,7 @@ export type SessionContextPaneProps = {
   selectedSessionContextTelemetry: SessionContextTelemetry | null;
   selectedSessionContextTelemetryProjection: SessionContextTelemetryProjection;
   contextEmptyText: string;
+  latestCommandEmptyText?: string;
   onToggleHeaderExpanded: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onOpenCompanionReview: (sessionId: string) => void;
@@ -1459,6 +1460,7 @@ export function SessionContextPane({
   selectedSessionContextTelemetry,
   selectedSessionContextTelemetryProjection,
   contextEmptyText,
+  latestCommandEmptyText = "",
   onToggleHeaderExpanded,
   onCycleContextPaneTab,
   onOpenCompanionReview,
@@ -1659,6 +1661,9 @@ export function SessionContextPane({
                 </div>
               ) : (
                 <div className="command-monitor-empty-shell">
+                  {latestCommandEmptyText.trim() ? (
+                    <p className="provider-context-empty">{latestCommandEmptyText}</p>
+                  ) : null}
                   {selectedSessionLiveRunErrorMessage ? (
                     <div className="live-run-error-block" role="alert">
                       <strong>実行エラー</strong>
@@ -1918,6 +1923,7 @@ export type SessionMessageColumnProps = {
   liveRunAssistantText: string;
   hasLiveRunAssistantText: boolean;
   liveRunErrorMessage: string;
+  pendingMessageText?: string;
   isMessageListFollowing: boolean;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
   onToggleArtifact: (artifactKey: string) => void;
@@ -1943,6 +1949,7 @@ export function SessionMessageColumn({
   liveRunAssistantText,
   hasLiveRunAssistantText,
   liveRunErrorMessage,
+  pendingMessageText = "",
   isMessageListFollowing,
   onMessageListScroll,
   onToggleArtifact,
@@ -1973,7 +1980,8 @@ export function SessionMessageColumn({
     liveApprovalRequest !== null ||
     liveElicitationRequest !== null ||
     hasLiveRunAssistantText ||
-    liveRunErrorMessage.trim().length > 0;
+    liveRunErrorMessage.trim().length > 0 ||
+    pendingMessageText.trim().length > 0;
 
   const loadOlderMessages = useCallback((listElement: HTMLDivElement | null = messageListRef.current) => {
     if (!listElement || latestMessageWindowStartIndex <= 0) {
@@ -2331,6 +2339,9 @@ export function SessionMessageColumn({
                       />
                     ) : null}
                     {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} onOpenPath={onOpenPath} /> : null}
+                    {!liveApprovalRequest && !liveElicitationRequest && !hasLiveRunAssistantText && !liveRunErrorMessage.trim() && pendingMessageText.trim() ? (
+                      <MessageRichText text={pendingMessageText} onOpenPath={onOpenPath} />
+                    ) : null}
                     {liveRunErrorMessage ? (
                       <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
                     ) : null}
@@ -2378,12 +2389,18 @@ export function SessionActionDockCompactRow({
   if (isRunning) {
     return (
       <div className="session-action-dock-compact-row running">
-        <div className="session-action-dock-compact-progress">
+        <button
+          className="session-action-dock-compact-progress session-action-dock-compact-progress-button"
+          type="button"
+          onClick={onExpand}
+          aria-label="ActionDock を展開"
+          title="ActionDock を展開"
+        >
           <PendingRunIndicator
             announcement={pendingRunIndicatorAnnouncement}
             text={pendingRunIndicatorText}
           />
-        </div>
+        </button>
         <div className="session-action-dock-compact-actions">
           <button
             className="danger session-send-button"
