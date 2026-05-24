@@ -22,6 +22,7 @@ export type AuxiliarySession = {
   threadId: string;
   composerDraft: string;
   messages: Message[];
+  displayAfterMessageIndex: number | null;
   createdAt: string;
   updatedAt: string;
   closedAt: string;
@@ -81,6 +82,10 @@ export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | nu
           .map((message) => normalizeMessage(message))
           .filter((message): message is Message => message !== null)
       : [],
+    displayAfterMessageIndex:
+      typeof candidate.displayAfterMessageIndex === "number" && Number.isInteger(candidate.displayAfterMessageIndex)
+        ? candidate.displayAfterMessageIndex
+        : null,
     createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : "",
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : "",
     closedAt: typeof candidate.closedAt === "string" ? candidate.closedAt : "",

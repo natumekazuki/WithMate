@@ -1917,9 +1917,9 @@ export type SessionMessageColumnProps = {
   character: CharacterProfile;
   messages: Message[];
   messageKeys?: string[];
-  messageBoundaries?: Array<{
+  messageGroups?: Array<{
+    id: string;
     label: string;
-    statusLabel?: string;
   } | null>;
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
@@ -1973,7 +1973,7 @@ export function SessionMessageColumn({
   character,
   messages,
   messageKeys,
-  messageBoundaries,
+  messageGroups,
   expandedArtifacts,
   messageListRef,
   isRunning,
@@ -2129,7 +2129,11 @@ export function SessionMessageColumn({
           {renderedMessages.map((message, index) => {
             const absoluteIndex = latestMessageWindowStartIndex + index;
             const messageKey = messageKeys?.[absoluteIndex] ?? `${sessionId}-${absoluteIndex}`;
-            const messageBoundary = messageBoundaries?.[absoluteIndex] ?? null;
+            const messageGroup = messageGroups?.[absoluteIndex] ?? null;
+            const previousMessageGroup = absoluteIndex > 0 ? messageGroups?.[absoluteIndex - 1] ?? null : null;
+            const nextMessageGroup = messageGroups?.[absoluteIndex + 1] ?? null;
+            const isMessageGroupStart = !!messageGroup && previousMessageGroup?.id !== messageGroup.id;
+            const isMessageGroupEnd = !!messageGroup && nextMessageGroup?.id !== messageGroup.id;
             const artifactKey = messageKey;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
@@ -2155,20 +2159,21 @@ export function SessionMessageColumn({
 
             return (
               <Fragment key={`${message.role}-${messageKey}`}>
-                {messageBoundary ? (
+                {isMessageGroupStart && messageGroup ? (
                   <div
-                    className="auxiliary-message-boundary"
+                    className="auxiliary-message-group-label"
                     role="separator"
-                    aria-label={`${messageBoundary.label}${messageBoundary.statusLabel ? ` ${messageBoundary.statusLabel}` : ""}`}
+                    aria-label={messageGroup.label}
                   >
-                    <span className="auxiliary-message-boundary-label">{messageBoundary.label}</span>
-                    {messageBoundary.statusLabel ? (
-                      <span className="auxiliary-message-boundary-status">{messageBoundary.statusLabel}</span>
-                    ) : null}
+                    <span>{messageGroup.label}</span>
                   </div>
                 ) : null}
               <article
-                className={`message-row ${message.role}${message.accent ? " accent" : ""}`}
+                className={`message-row ${message.role}${message.accent ? " accent" : ""}${
+                  messageGroup ? " auxiliary-message-group-item" : ""
+                }${isMessageGroupStart ? " auxiliary-message-group-start" : ""}${
+                  isMessageGroupEnd ? " auxiliary-message-group-end" : ""
+                }`}
               >
                 {isAssistant ? (
                   <div className="message-avatar-stack">
@@ -2447,6 +2452,7 @@ export type SessionActionDockCompactRowProps = {
   isRunning: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
+  modeLabel?: string;
   isSendDisabled: boolean;
   showJumpToBottom: boolean;
   sendButtonTitle?: string;
@@ -2462,6 +2468,7 @@ export function SessionActionDockCompactRow({
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
+  modeLabel,
   isSendDisabled,
   showJumpToBottom,
   sendButtonTitle,
@@ -2471,7 +2478,8 @@ export function SessionActionDockCompactRow({
 }: SessionActionDockCompactRowProps) {
   if (isRunning) {
     return (
-      <div className="session-action-dock-compact-row running">
+      <div className={`session-action-dock-compact-row running${modeLabel ? " has-mode-label" : ""}`}>
+        {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}
         <button
           className="session-action-dock-compact-progress session-action-dock-compact-progress-button"
           type="button"
@@ -2499,7 +2507,8 @@ export function SessionActionDockCompactRow({
   }
 
   return (
-    <div className="session-action-dock-compact-row">
+    <div className={`session-action-dock-compact-row${modeLabel ? " has-mode-label" : ""}`}>
+      {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}
       <button
         className="session-action-dock-compact-preview"
         type="button"
@@ -2608,6 +2617,7 @@ export type SessionComposerExpandedProps = {
   isRunning: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
+  modeLabel?: string;
   composerBlocked: boolean;
   canSelectCustomAgent: boolean;
   showAttachmentControls?: boolean;
@@ -2683,6 +2693,7 @@ export function SessionComposerExpanded({
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
+  modeLabel,
   composerBlocked,
   canSelectCustomAgent,
   showAttachmentControls = true,
@@ -2785,6 +2796,7 @@ export function SessionComposerExpanded({
     showAdditionalDirectoryControls ||
     showJumpToBottom ||
     canCollapseActionDock ||
+    !!modeLabel ||
     isRunning;
 
   return (
@@ -2792,6 +2804,7 @@ export function SessionComposerExpanded({
       {retryBanner}
       {showComposerToolbar ? (
         <div className="composer-attachments-toolbar">
+          {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}
           {showAttachmentControls ? (
             <div className="composer-attachment-button-group" role="group" aria-label="添付">
               <button className="drawer-toggle compact secondary" type="button" onClick={onPickFile} disabled={isRunning || composerBlocked}>

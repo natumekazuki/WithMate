@@ -113,6 +113,7 @@ export class AuxiliarySessionService {
       threadId: "",
       composerDraft: "",
       messages: [],
+      displayAfterMessageIndex: parent.messages.length - 1,
       createdAt: now,
       updatedAt: now,
       closedAt: "",

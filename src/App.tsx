@@ -909,7 +909,7 @@ export default function AgentSessionWindowApp() {
   const messageListMessages = messageListProjection.messages;
   const messageListSources = messageListProjection.sources;
   const messageListKeys = messageListProjection.keys;
-  const messageListBoundaries = messageListProjection.boundaries;
+  const messageListGroups = messageListProjection.groups;
   const displayedMessagesScrollSignature = useMemo(
     () => buildDisplayedMessagesScrollSignature(messageListMessages),
     [messageListMessages],
@@ -3196,7 +3196,7 @@ export default function AgentSessionWindowApp() {
         selectedSessionCharacter,
         displayedMessages: renderedMessages,
         displayedMessageKeys: messageListKeys,
-        displayedMessageBoundaries: messageListBoundaries,
+        displayedMessageGroups: messageListGroups,
         expandedArtifacts,
         sessionThemeStyle,
         sessionWorkbenchRef,

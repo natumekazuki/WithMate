@@ -117,14 +117,14 @@ function renderSessionMessageColumn(options: {
   liveRunAssistantText?: string;
   pendingMessageText?: string;
   withResponseActions?: boolean;
-  messageBoundaries?: SessionMessageColumnProps["messageBoundaries"];
+  messageGroups?: SessionMessageColumnProps["messageGroups"];
 }): string {
   return renderToStaticMarkup(
     React.createElement(SessionMessageColumn, {
       sessionId: "session-1",
       character: createCharacterProfile(),
       messages: options.messages,
-      messageBoundaries: options.messageBoundaries,
+      messageGroups: options.messageGroups,
       expandedArtifacts: options.expandedArtifacts ?? {},
       messageListRef: createRef<HTMLDivElement>(),
       isRunning: options.isRunning ?? false,
@@ -203,24 +203,25 @@ test("SessionMessageColumn は assistant response action を assistant message �
   assert.equal((html.match(/message-response-actions/g) ?? []).length, 1);
 });
 
-test("SessionMessageColumn は Auxiliary transcript 境界を message list 内に描画する", () => {
+test("SessionMessageColumn は Auxiliary transcript group を message list 内に描画する", () => {
   const html = renderSessionMessageColumn({
     messages: [
       { role: "user", text: "aux prompt", accent: true },
       { role: "assistant", text: "aux response", accent: true },
     ],
-    messageBoundaries: [
-      { label: "Auxiliary", statusLabel: "Closed" },
-      null,
+    messageGroups: [
+      { id: "aux-1", label: "Auxiliary" },
+      { id: "aux-1", label: "Auxiliary" },
     ],
   });
 
-  assert.match(html, /auxiliary-message-boundary/);
+  assert.match(html, /auxiliary-message-group-label/);
+  assert.match(html, /auxiliary-message-group-item/);
   assert.match(html, />Auxiliary</);
-  assert.match(html, />Closed</);
+  assert.doesNotMatch(html, />Closed</);
   assert.ok(
-    html.indexOf("auxiliary-message-boundary") < html.indexOf("aux prompt"),
-    "Auxiliary 境界は対象 transcript の先頭 message より前に描画する",
+    html.indexOf("auxiliary-message-group-label") < html.indexOf("aux prompt"),
+    "Auxiliary group label は対象 transcript の先頭 message より前に描画する",
   );
 });
 

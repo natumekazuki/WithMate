@@ -26,9 +26,10 @@ function createAuxiliarySession(
     threadId: "thread-1",
     composerDraft: "",
     messages,
-    createdAt: "2026-05-24T00:00:00.000Z",
-    updatedAt: "2026-05-24T00:00:01.000Z",
-    closedAt: "2026-05-24T00:00:01.000Z",
+    displayAfterMessageIndex: overrides.displayAfterMessageIndex ?? 0,
+    createdAt: overrides.createdAt ?? "2026-05-24T00:00:00.000Z",
+    updatedAt: overrides.updatedAt ?? "2026-05-24T00:00:01.000Z",
+    closedAt: overrides.closedAt ?? "2026-05-24T00:00:01.000Z",
   };
 }
 
@@ -86,24 +87,26 @@ test("buildMessageListProjection は Auxiliary transcript を message 単位で�
     "auxiliary-aux-1-0",
     "auxiliary-aux-1-1",
   ]);
-  assert.deepEqual(projection.boundaries, [
+  assert.deepEqual(projection.groups, [
     null,
-    { label: "Auxiliary", statusLabel: "Closed" },
-    null,
+    { id: "aux-1", label: "Auxiliary" },
+    { id: "aux-1", label: "Auxiliary" },
   ]);
 });
 
-test("buildMessageListProjection は Auxiliary session ごとの境界を保持する", () => {
+test("buildMessageListProjection は Auxiliary session ごとの group を保持する", () => {
   const projection = buildMessageListProjection(
     [],
     [
       createAuxiliarySession([{ role: "user", text: "first aux prompt" }], {
         id: "aux-1",
         status: "closed",
+        createdAt: "2026-05-24T00:00:00.000Z",
       }),
       createAuxiliarySession([{ role: "user", text: "second aux prompt" }], {
         id: "aux-2",
         status: "active",
+        createdAt: "2026-05-24T00:00:01.000Z",
       }),
     ],
     "session-1",
@@ -113,8 +116,48 @@ test("buildMessageListProjection は Auxiliary session ごとの境界を保持�
     "auxiliary-aux-1-0",
     "auxiliary-aux-2-0",
   ]);
-  assert.deepEqual(projection.boundaries, [
-    { label: "Auxiliary", statusLabel: "Closed" },
-    { label: "Auxiliary", statusLabel: "Active" },
+  assert.deepEqual(projection.groups, [
+    { id: "aux-1", label: "Auxiliary" },
+    { id: "aux-2", label: "Auxiliary" },
   ]);
+});
+
+test("buildMessageListProjection は Auxiliary を parent message の保存位置へ差し込む", () => {
+  const projection = buildMessageListProjection(
+    [
+      { role: "user", text: "main prompt 1" },
+      { role: "assistant", text: "main response 1" },
+      { role: "user", text: "main prompt 2" },
+      { role: "assistant", text: "main response 2" },
+    ],
+    [
+      createAuxiliarySession([{ role: "user", text: "aux prompt 2" }], {
+        id: "aux-2",
+        displayAfterMessageIndex: 3,
+        createdAt: "2026-05-24T00:00:02.000Z",
+      }),
+      createAuxiliarySession([
+        { role: "user", text: "aux prompt 1" },
+        { role: "assistant", text: "aux response 1" },
+      ], {
+        id: "aux-1",
+        displayAfterMessageIndex: 1,
+        createdAt: "2026-05-24T00:00:01.000Z",
+      }),
+    ],
+    "session-1",
+  );
+
+  assert.deepEqual(
+    projection.messages.map((message) => message.text),
+    [
+      "main prompt 1",
+      "main response 1",
+      "aux prompt 1",
+      "aux response 1",
+      "main prompt 2",
+      "main response 2",
+      "aux prompt 2",
+    ],
+  );
 });

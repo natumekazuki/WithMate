@@ -51,6 +51,7 @@ function createAuxiliarySession(overrides?: Partial<AuxiliarySession>): Auxiliar
     threadId: "aux-thread-1",
     composerDraft: "",
     messages: [{ role: "assistant", text: "aux result" }],
+    displayAfterMessageIndex: 0,
     createdAt: "2026-03-28T00:00:00.000Z",
     updatedAt: "2026-03-28T00:00:00.000Z",
     closedAt: "",
