@@ -17,12 +17,12 @@ export type MessageListProjection = {
   messages: Message[];
   sources: MessageListSource[];
   keys: string[];
-  boundaries: Array<MessageListBoundary | null>;
+  groups: Array<MessageListGroup | null>;
 };
 
-export type MessageListBoundary = {
+export type MessageListGroup = {
+  id: string;
   label: string;
-  statusLabel: string;
 };
 
 export function buildMessageListProjection(
@@ -33,16 +33,22 @@ export function buildMessageListProjection(
   const messages: Message[] = [];
   const sources: MessageListSource[] = [];
   const keys: string[] = [];
-  const boundaries: Array<MessageListBoundary | null> = [];
+  const groups: Array<MessageListGroup | null> = [];
+  const auxiliaryBuckets = new Map<number, AuxiliarySession[]>();
+  const fallbackAuxiliarySessions: AuxiliarySession[] = [];
 
-  sessionMessages.forEach((message, messageIndex) => {
+  const addSessionMessage = (message: Message, messageIndex: number) => {
     messages.push(message);
     sources.push({ kind: "session", messageIndex });
     keys.push(`session-${sessionId}-${messageIndex}`);
-    boundaries.push(null);
-  });
+    groups.push(null);
+  };
 
-  for (const auxiliarySession of auxiliarySessions) {
+  const addAuxiliarySession = (auxiliarySession: AuxiliarySession) => {
+    const group = {
+      id: auxiliarySession.id,
+      label: "Auxiliary",
+    };
     auxiliarySession.messages.forEach((message, messageIndex) => {
       messages.push({
         ...message,
@@ -55,14 +61,55 @@ export function buildMessageListProjection(
         artifact: message.artifact,
       });
       keys.push(`auxiliary-${auxiliarySession.id}-${messageIndex}`);
-      boundaries.push(messageIndex === 0
-        ? {
-            label: "Auxiliary",
-            statusLabel: auxiliarySession.status === "active" ? "Active" : "Closed",
-          }
-        : null);
+      groups.push(group);
     });
+  };
+
+  const sortedAuxiliarySessions = [...auxiliarySessions].sort(compareAuxiliarySessions);
+  for (const auxiliarySession of sortedAuxiliarySessions) {
+    if (auxiliarySession.displayAfterMessageIndex === null) {
+      fallbackAuxiliarySessions.push(auxiliarySession);
+      continue;
+    }
+
+    const maxAnchor = sessionMessages.length - 1;
+    const displayAfterMessageIndex = sessionMessages.length === 0
+      ? -1
+      : Math.min(Math.max(auxiliarySession.displayAfterMessageIndex, -1), maxAnchor);
+    auxiliaryBuckets.set(displayAfterMessageIndex, [
+      ...(auxiliaryBuckets.get(displayAfterMessageIndex) ?? []),
+      auxiliarySession,
+    ]);
   }
 
-  return { messages, sources, keys, boundaries };
+  for (let index = -1; index < sessionMessages.length; index += 1) {
+    if (index >= 0) {
+      addSessionMessage(sessionMessages[index], index);
+    }
+
+    for (const auxiliarySession of auxiliaryBuckets.get(index) ?? []) {
+      addAuxiliarySession(auxiliarySession);
+    }
+  }
+
+  for (const auxiliarySession of fallbackAuxiliarySessions) {
+    addAuxiliarySession(auxiliarySession);
+  }
+
+  return { messages, sources, keys, groups };
+}
+
+function compareAuxiliarySessions(left: AuxiliarySession, right: AuxiliarySession): number {
+  const leftCreatedAt = Date.parse(left.createdAt);
+  const rightCreatedAt = Date.parse(right.createdAt);
+  const createdAtComparison = safeTimestamp(leftCreatedAt) - safeTimestamp(rightCreatedAt);
+  if (createdAtComparison !== 0) {
+    return createdAtComparison;
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
+function safeTimestamp(value: number): number {
+  return Number.isFinite(value) ? value : Number.MAX_SAFE_INTEGER;
 }

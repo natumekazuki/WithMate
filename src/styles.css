@@ -2881,8 +2881,32 @@ button:disabled {
   min-width: 0;
 }
 
+.session-action-dock-compact-row.has-mode-label {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
 .session-action-dock-compact-row.running {
   grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.session-action-dock-compact-row.running.has-mode-label {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.action-dock-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--character-sub) 42%, rgba(148, 163, 184, 0.28));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--character-sub-soft) 28%, rgba(15, 23, 42, 0.72));
+  color: color-mix(in srgb, var(--ink) 92%, var(--character-sub) 8%);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .session-action-dock-compact-progress {
@@ -3496,41 +3520,45 @@ button:disabled {
   transform: translateY(-2px);
 }
 
-.auxiliary-message-boundary {
+.auxiliary-message-group-label {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 2px 0 -2px;
-  color: var(--muted);
-  font-size: 0.76rem;
+  margin: 8px 0 -6px 54px;
+  color: color-mix(in srgb, var(--ink) 88%, var(--character-sub) 12%);
+  font-size: 0.74rem;
   font-weight: 700;
 }
 
-.auxiliary-message-boundary::before,
-.auxiliary-message-boundary::after {
-  content: "";
-  flex: 1 1 auto;
-  height: 1px;
-  background: rgba(148, 163, 184, 0.22);
-}
-
-.auxiliary-message-boundary-label,
-.auxiliary-message-boundary-status {
+.auxiliary-message-group-label span {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   min-height: 20px;
-  border-radius: 999px;
-}
-
-.auxiliary-message-boundary-label {
   padding: 2px 8px;
-  border: 1px solid rgba(148, 163, 184, 0.26);
-  background: rgba(15, 23, 42, 0.28);
-  color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--character-sub) 44%, rgba(148, 163, 184, 0.28));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 82%, var(--character-sub) 18%);
 }
 
-.auxiliary-message-boundary-status {
-  color: var(--muted);
+.message-row.auxiliary-message-group-item {
+  margin-inline: 4px;
+  padding: 10px 12px;
+  border-inline: 1px solid color-mix(in srgb, var(--character-sub) 34%, rgba(148, 163, 184, 0.20));
+  background: color-mix(in srgb, var(--character-sub-soft) 8%, rgba(15, 23, 42, 0.34));
+}
+
+.message-row.auxiliary-message-group-start {
+  border-top: 1px solid color-mix(in srgb, var(--character-sub) 38%, rgba(148, 163, 184, 0.24));
+  border-top-left-radius: 18px;
+  border-top-right-radius: 18px;
+  padding-top: 16px;
+}
+
+.message-row.auxiliary-message-group-end {
+  border-bottom: 1px solid color-mix(in srgb, var(--character-sub) 38%, rgba(148, 163, 184, 0.24));
+  border-bottom-left-radius: 18px;
+  border-bottom-right-radius: 18px;
+  padding-bottom: 16px;
 }
 
 .message-card,
@@ -3629,22 +3657,6 @@ button:disabled {
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--character-sub) 20%, transparent),
     var(--shadow);
-}
-
-.session-page.auxiliary-session-mode .session-work-surface::before {
-  content: "Auxiliary";
-  position: absolute;
-  top: 10px;
-  left: 16px;
-  z-index: 2;
-  padding: 2px 8px;
-  border: 1px solid color-mix(in srgb, var(--character-sub) 42%, rgba(148, 163, 184, 0.28));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface) 88%, var(--character-sub) 12%);
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0;
 }
 
 .auxiliary-session-control-group {

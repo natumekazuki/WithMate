@@ -159,7 +159,7 @@ type LiveSessionMessageColumnProps = {
   character: ChatMessageColumnProps["character"];
   messages: Message[];
   messageKeys?: ChatMessageColumnProps["messageKeys"];
-  messageBoundaries?: ChatMessageColumnProps["messageBoundaries"];
+  messageGroups?: ChatMessageColumnProps["messageGroups"];
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
   isRunning: boolean;
@@ -210,7 +210,7 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     character: input.character,
     messages: input.messages,
     messageKeys: input.messageKeys,
-    messageBoundaries: input.messageBoundaries,
+    messageGroups: input.messageGroups,
     expandedArtifacts: input.expandedArtifacts,
     messageListRef: input.messageListRef,
     isRunning: input.isRunning,

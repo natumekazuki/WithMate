@@ -1,7 +1,7 @@
 # Database Schema
 
 - 作成日: 2026-03-27
-- 更新日: 2026-05-19
+- 更新日: 2026-05-25
 - 対象: WithMate の current 保存構造
 
 ## Goal
@@ -15,6 +15,20 @@ WithMate が現在どこに何を保存しているかを、1 枚で把握でき
 - current 実装と future design を混ぜない
 - future design しかない項目は `Current / Future Boundary` に分けて書く
 - service 責務、IPC、window lifecycle の説明はこの文書で持たず、`electron-session-store.md`、`session-run-lifecycle.md`、`electron-window-runtime.md` に分ける
+
+## Column Conventions
+
+新規の first-class entity table は、原則として `id`、`created_at`、`updated_at` を持つ。
+
+- `created_at`: row の生成時刻。復元順、履歴表示、debug の基準に使う。
+- `updated_at`: row の意味ある内容が最後に変わった時刻。一覧 sort、summary 更新、stale 判定、差分検知に使う。
+
+例外:
+
+- append-only event / audit log 系は `created_at` を必須とし、完了時刻や状態遷移は `completed_at` など domain 固有 column で表してよい。
+- join table や pure mapping table は、個別 row の lifecycle を UI や同期で扱わない場合 `updated_at` を省略してよい。
+- blob / artifact reference table は、内容が immutable なら `created_at` のみでよい。
+- legacy table へは即時に retroactive 適用しない。schema migration または新規 table 追加時に、この規約へ寄せる。
 
 ## Scope
 

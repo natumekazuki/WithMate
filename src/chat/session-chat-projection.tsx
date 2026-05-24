@@ -31,7 +31,7 @@ export type AgentSessionChatProjectionInput = {
   selectedSessionCharacter: CharacterProfile;
   displayedMessages: Message[];
   displayedMessageKeys?: SessionMessageColumnProps["messageKeys"];
-  displayedMessageBoundaries?: SessionMessageColumnProps["messageBoundaries"];
+  displayedMessageGroups?: SessionMessageColumnProps["messageGroups"];
   expandedArtifacts: Record<string, boolean>;
   sessionThemeStyle: CSSProperties | undefined;
   sessionWorkbenchRef: RefObject<HTMLDivElement | null>;
@@ -237,7 +237,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     character: input.selectedSessionCharacter,
     messages: input.displayedMessages,
     messageKeys: input.displayedMessageKeys,
-    messageBoundaries: input.displayedMessageBoundaries,
+    messageGroups: input.displayedMessageGroups,
     expandedArtifacts: input.expandedArtifacts,
     messageListRef: input.messageListRef,
     isRunning: input.isSelectedSessionRunning,
@@ -281,6 +281,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     isRunning: input.selectedSession.runState === "running",
     pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
     pendingRunIndicatorText: input.pendingRunIndicatorText,
+    modeLabel: input.isAuxiliaryMode ? "Auxiliary" : undefined,
     composerBlocked: input.composerBlocked,
     canSelectCustomAgent: input.selectedSession.provider === "copilot",
     showAttachmentControls: true,
@@ -355,6 +356,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     isRunning: input.selectedSession.runState === "running",
     pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
     pendingRunIndicatorText: input.pendingRunIndicatorText,
+    modeLabel: input.isAuxiliaryMode ? "Auxiliary" : undefined,
     isSendDisabled: input.isSendDisabled,
     showJumpToBottom: !input.isMessageListFollowing,
     sendButtonTitle: input.composerSendButtonTitle,
