@@ -21,7 +21,11 @@ import type {
   SessionContextTelemetry,
   SessionSummary,
 } from "../src/app-state.js";
-import type { AuxiliarySession, AuxiliarySessionSummary } from "../src/auxiliary-session-state.js";
+import type {
+  AuxiliarySession,
+  AuxiliarySessionSummary,
+  CreateAuxiliarySessionInput,
+} from "../src/auxiliary-session-state.js";
 import type {
   CreateMateInput,
   MateProfile,
@@ -301,7 +305,7 @@ export type MainIpcRegistrationDeps = {
   listAuxiliarySessions?(parentSessionId: string): Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession?(parentSessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliarySession?(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
-  createAuxiliarySession?(parentSessionId: string): Awaitable<AuxiliarySession>;
+  createAuxiliarySession?(input: CreateAuxiliarySessionInput): Awaitable<AuxiliarySession>;
   updateAuxiliarySession?(session: AuxiliarySession): Awaitable<AuxiliarySession>;
   closeAuxiliarySession?(auxiliarySessionId: string): Awaitable<AuxiliarySession>;
   runAuxiliarySessionTurn?(auxiliarySessionId: string, request: RunSessionTurnRequest): Awaitable<AuxiliarySession>;
@@ -465,7 +469,7 @@ type MainIpcAuxiliaryDepsRequired = {
   listAuxiliarySessions: (parentSessionId: string) => Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession: (parentSessionId: string) => Awaitable<AuxiliarySession | null>;
   getAuxiliarySession: (auxiliarySessionId: string) => Awaitable<AuxiliarySession | null>;
-  createAuxiliarySession: (parentSessionId: string) => Awaitable<AuxiliarySession>;
+  createAuxiliarySession: (input: CreateAuxiliarySessionInput) => Awaitable<AuxiliarySession>;
   updateAuxiliarySession: (session: AuxiliarySession) => Awaitable<AuxiliarySession>;
   closeAuxiliarySession: (auxiliarySessionId: string) => Awaitable<AuxiliarySession>;
   runAuxiliarySessionTurn: (
@@ -689,8 +693,8 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     }
     return auxiliaryDeps.getAuxiliarySession(auxiliarySessionId);
   });
-  ipcMain.handle(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, (_event, parentSessionId: string) =>
-    getAuxiliaryDeps(deps).createAuxiliarySession(parentSessionId),
+  ipcMain.handle(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, (_event, input: CreateAuxiliarySessionInput) =>
+    getAuxiliaryDeps(deps).createAuxiliarySession(input),
   );
   ipcMain.handle(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL, (_event, session: AuxiliarySession) =>
     getAuxiliaryDeps(deps).updateAuxiliarySession(session),

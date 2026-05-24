@@ -5,6 +5,11 @@ import { normalizeMessage, type Message } from "./session-state.js";
 
 export type AuxiliarySessionStatus = "active" | "closed";
 
+export type CreateAuxiliarySessionInput = {
+  parentSessionId: string;
+  provider: string;
+};
+
 export type AuxiliarySession = {
   id: string;
   parentSessionId: string;

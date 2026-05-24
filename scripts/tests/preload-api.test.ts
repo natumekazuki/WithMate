@@ -175,9 +175,9 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:open-session-files-terminal",
     args: ["session-1"],
   });
-  assert.deepEqual(await api.createAuxiliarySession("session-1"), {
+  assert.deepEqual(await api.createAuxiliarySession({ parentSessionId: "session-1", provider: "copilot" }), {
     channel: "withmate:create-auxiliary-session",
-    args: ["session-1"],
+    args: [{ parentSessionId: "session-1", provider: "copilot" }],
   });
   assert.deepEqual(await api.runAuxiliarySessionTurn("aux-1", { userMessage: "review" }), {
     channel: "withmate:run-auxiliary-session-turn",

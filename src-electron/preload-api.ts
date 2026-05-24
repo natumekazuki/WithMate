@@ -359,8 +359,8 @@ function createAuxiliaryApi(ipcRenderer: IpcRendererLike): WithMateWindowAuxilia
     getAuxiliarySession(auxiliarySessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_AUXILIARY_SESSION_CHANNEL, auxiliarySessionId);
     },
-    createAuxiliarySession(parentSessionId) {
-      return ipcRenderer.invoke(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, parentSessionId);
+    createAuxiliarySession(input) {
+      return ipcRenderer.invoke(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, input);
     },
     updateAuxiliarySession(session) {
       return ipcRenderer.invoke(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL, session);
