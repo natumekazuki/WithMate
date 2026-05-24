@@ -2908,6 +2908,25 @@ button:disabled {
   padding: 8px 10px;
 }
 
+.session-action-dock-compact-progress .pending-run-indicator,
+.composer-toolbar-progress .pending-run-indicator {
+  flex-wrap: nowrap;
+}
+
+.session-action-dock-compact-progress .pending-run-indicator .live-run-shell-status-badge,
+.composer-toolbar-progress .pending-run-indicator .live-run-shell-status-badge {
+  flex-shrink: 0;
+}
+
+.session-action-dock-compact-progress .pending-run-indicator .live-run-shell-status-text,
+.composer-toolbar-progress .pending-run-indicator .live-run-shell-status-text {
+  flex-basis: auto;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .session-action-dock-compact-preview {
   display: grid;
   gap: 4px;
