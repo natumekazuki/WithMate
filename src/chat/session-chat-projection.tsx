@@ -1,4 +1,4 @@
-import type { CSSProperties, KeyboardEventHandler, PointerEventHandler, RefObject, UIEventHandler } from "react";
+import type { CSSProperties, KeyboardEventHandler, PointerEventHandler, ReactNode, RefObject, UIEventHandler } from "react";
 
 import type { CharacterProfile, DiffPreviewPayload, Message, MessageArtifact } from "../app-state.js";
 import type { HomeMonitorEntry } from "../home/home-session-projection.js";
@@ -30,6 +30,8 @@ export type AgentSessionChatProjectionInput = {
   selectedSession: Session;
   selectedSessionCharacter: CharacterProfile;
   displayedMessages: Message[];
+  displayedMessageKeys?: SessionMessageColumnProps["messageKeys"];
+  displayedMessageBoundaries?: SessionMessageColumnProps["messageBoundaries"];
   expandedArtifacts: Record<string, boolean>;
   sessionThemeStyle: CSSProperties | undefined;
   sessionWorkbenchRef: RefObject<HTMLDivElement | null>;
@@ -106,6 +108,7 @@ export type AgentSessionChatProjectionInput = {
   selectedDiffThemeStyle: CSSProperties;
   auditLogsOpen: boolean;
   displayedSessionAuditLogs: SessionAuditLogModalProps["entries"];
+  auditLogSourceLabel?: SessionAuditLogModalProps["sourceLabel"];
   auditLogDetails: SessionAuditLogModalProps["details"];
   auditLogOperationDetails: SessionAuditLogModalProps["operationDetails"];
   auditLogsHasMore: boolean;
@@ -132,6 +135,8 @@ export type AgentSessionChatProjectionInput = {
   onResolveLiveElicitation: SessionMessageColumnProps["onResolveLiveElicitation"];
   onOpenInlinePath: (target: string) => void;
   getChangedFilesEmptyText: SessionMessageColumnProps["getChangedFilesEmptyText"];
+  onCopyMessageText: NonNullable<SessionMessageColumnProps["onCopyMessageText"]>;
+  onQuoteMessageText: NonNullable<SessionMessageColumnProps["onQuoteMessageText"]>;
   onToggleRetryDetails: () => void;
   onResendLastMessage: () => void;
   onEditLastMessage: () => void;
@@ -176,6 +181,8 @@ export type AgentSessionChatProjectionInput = {
   onLoadAuditLogDetail: SessionAuditLogModalProps["onLoadDetail"];
   onLoadAuditLogOperationDetail: SessionAuditLogModalProps["onLoadOperationDetail"];
   onCloseAuditLog: () => void;
+  headerActions?: ReactNode;
+  isAuxiliaryMode?: boolean;
 };
 
 export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjectionInput): ChatWindowProps {
@@ -185,6 +192,8 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     titleDraft: input.titleDraft,
     isRunning: input.isSelectedSessionRunning,
     isReadOnly: input.isSelectedSessionReadOnly,
+    showRenameButton: !input.isAuxiliaryMode,
+    showDeleteButton: !input.isAuxiliaryMode,
     showTerminalButton: true,
     onToggleExpanded: input.onToggleHeaderExpanded,
     onOpenAuditLog: input.onOpenAuditLog,
@@ -215,6 +224,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onCancelTitleEdit: input.onCancelTitleEdit,
     onStartTitleEdit: input.onStartTitleEdit,
     onDeleteSession: input.onDeleteSession,
+    actions: input.headerActions,
     workspaceActions: (
       <button className="drawer-toggle compact secondary" type="button" onClick={input.onOpenSessionExplorer}>
         Explorer
@@ -226,6 +236,8 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     sessionId: input.selectedSession.id,
     character: input.selectedSessionCharacter,
     messages: input.displayedMessages,
+    messageKeys: input.displayedMessageKeys,
+    messageBoundaries: input.displayedMessageBoundaries,
     expandedArtifacts: input.expandedArtifacts,
     messageListRef: input.messageListRef,
     isRunning: input.isSelectedSessionRunning,
@@ -246,6 +258,8 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onResolveLiveElicitation: input.onResolveLiveElicitation,
     onOpenPath: input.onOpenInlinePath,
     getChangedFilesEmptyText: input.getChangedFilesEmptyText,
+    onCopyMessageText: input.onCopyMessageText,
+    onQuoteMessageText: input.onQuoteMessageText,
   });
 
   const composerProps = buildLiveSessionComposerProps({
@@ -269,6 +283,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     pendingRunIndicatorText: input.pendingRunIndicatorText,
     composerBlocked: input.composerBlocked,
     canSelectCustomAgent: input.selectedSession.provider === "copilot",
+    showAttachmentControls: true,
     showCustomAgentPicker: true,
     showSkillPicker: true,
     isAgentPickerOpen: input.isAgentPickerOpen,
@@ -350,7 +365,9 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
 
   return {
     mode: "agent",
-    className: buildChatPageClassName({ isHeaderExpanded: input.isSessionHeaderExpanded }),
+    className: `${buildChatPageClassName({ isHeaderExpanded: input.isSessionHeaderExpanded })}${
+      input.isAuxiliaryMode ? " auxiliary-session-mode" : ""
+    }`,
     style: input.sessionThemeStyle,
     workbenchRef: input.sessionWorkbenchRef,
     workbenchStyle: input.sessionWorkbenchStyle,

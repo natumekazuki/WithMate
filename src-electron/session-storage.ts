@@ -196,6 +196,8 @@ const DELETE_SESSION_SQL = `
   WHERE id = ?
 `;
 
+const AUXILIARY_SESSIONS_TABLE_NAME = "auxiliary_sessions";
+
 type SessionRowParseMode = "skip" | "throw";
 
 function parseSessionJson<T>(row: SessionRow, columnName: keyof Pick<
@@ -459,6 +461,7 @@ export class SessionStorage {
       normalizedSessions.forEach((session, index) => {
         this.writeSession(session, baseLastActiveAt - index);
       });
+      this.deleteOrphanedAuxiliarySessionsForRetainedParents(normalizedSessions.map((session) => session.id));
       this.db.exec("COMMIT");
       return cloneSessions(normalizedSessions);
     } catch (error) {
@@ -468,14 +471,71 @@ export class SessionStorage {
   }
 
   deleteSession(sessionId: string): void {
-    this.db.prepare(DELETE_SESSION_SQL).run(sessionId);
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      this.db.prepare(DELETE_SESSION_SQL).run(sessionId);
+      this.deleteAuxiliarySessionsForParentIfTableExists(sessionId);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   clearSessions(): void {
-    this.db.exec("DELETE FROM sessions;");
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      this.db.exec("DELETE FROM sessions;");
+      this.deleteAllAuxiliarySessionsIfTableExists();
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   close(): void {
     this.db.close();
+  }
+
+  private auxiliarySessionsTableExists(): boolean {
+    return Boolean(this.db.prepare(`
+      SELECT 1
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name = ?
+    `).get(AUXILIARY_SESSIONS_TABLE_NAME));
+  }
+
+  private deleteAuxiliarySessionsForParentIfTableExists(parentSessionId: string): void {
+    if (!this.auxiliarySessionsTableExists()) {
+      return;
+    }
+
+    this.db.prepare("DELETE FROM auxiliary_sessions WHERE parent_session_id = ?").run(parentSessionId);
+  }
+
+  private deleteAllAuxiliarySessionsIfTableExists(): void {
+    if (!this.auxiliarySessionsTableExists()) {
+      return;
+    }
+
+    this.db.prepare("DELETE FROM auxiliary_sessions").run();
+  }
+
+  private deleteOrphanedAuxiliarySessionsForRetainedParents(parentSessionIds: Iterable<string>): void {
+    if (!this.auxiliarySessionsTableExists()) {
+      return;
+    }
+
+    const retainedParentSessionIds = Array.from(new Set(parentSessionIds));
+    if (retainedParentSessionIds.length === 0) {
+      this.db.prepare("DELETE FROM auxiliary_sessions").run();
+      return;
+    }
+
+    const placeholders = retainedParentSessionIds.map(() => "?").join(", ");
+    this.db.prepare(`DELETE FROM auxiliary_sessions WHERE parent_session_id NOT IN (${placeholders})`)
+      .run(...retainedParentSessionIds);
   }
 }

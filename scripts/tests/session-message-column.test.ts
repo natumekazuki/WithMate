@@ -8,6 +8,7 @@ import {
   SessionContextPane,
   SessionComposerExpanded,
   SessionMessageColumn,
+  type SessionMessageColumnProps,
 } from "../../src/session-components.js";
 import { buildContextPaneProjection } from "../../src/session-ui-projection.js";
 import type { CharacterProfile, LiveApprovalRequest, LiveElicitationRequest, Message } from "../../src/app-state.js";
@@ -115,12 +116,15 @@ function renderSessionMessageColumn(options: {
   liveElicitationRequest?: LiveElicitationRequest | null;
   liveRunAssistantText?: string;
   pendingMessageText?: string;
+  withResponseActions?: boolean;
+  messageBoundaries?: SessionMessageColumnProps["messageBoundaries"];
 }): string {
   return renderToStaticMarkup(
     React.createElement(SessionMessageColumn, {
       sessionId: "session-1",
       character: createCharacterProfile(),
       messages: options.messages,
+      messageBoundaries: options.messageBoundaries,
       expandedArtifacts: options.expandedArtifacts ?? {},
       messageListRef: createRef<HTMLDivElement>(),
       isRunning: options.isRunning ?? false,
@@ -142,6 +146,8 @@ function renderSessionMessageColumn(options: {
       getChangedFilesEmptyText() {
         return "変更ファイルはありません";
       },
+      onCopyMessageText: options.withResponseActions ? () => {} : undefined,
+      onQuoteMessageText: options.withResponseActions ? () => {} : undefined,
     }),
   );
 }
@@ -180,6 +186,42 @@ test("SessionMessageColumn は artifact 展開と diff 起動に必要な表示�
   assert.match(html, /src\/App\.tsx/);
   assert.match(html, /Open Diff/);
   assert.match(html, /snapshot files/);
+});
+
+test("SessionMessageColumn は assistant response action を assistant message にだけ描画する", () => {
+  const html = renderSessionMessageColumn({
+    messages: [
+      { role: "assistant", text: "assistant result" },
+      { role: "user", text: "user prompt" },
+    ],
+    withResponseActions: true,
+  });
+
+  assert.match(html, /message-response-actions/);
+  assert.match(html, />Copy</);
+  assert.match(html, />Quote</);
+  assert.equal((html.match(/message-response-actions/g) ?? []).length, 1);
+});
+
+test("SessionMessageColumn は Auxiliary transcript 境界を message list 内に描画する", () => {
+  const html = renderSessionMessageColumn({
+    messages: [
+      { role: "user", text: "aux prompt", accent: true },
+      { role: "assistant", text: "aux response", accent: true },
+    ],
+    messageBoundaries: [
+      { label: "Auxiliary", statusLabel: "Closed" },
+      null,
+    ],
+  });
+
+  assert.match(html, /auxiliary-message-boundary/);
+  assert.match(html, />Auxiliary</);
+  assert.match(html, />Closed</);
+  assert.ok(
+    html.indexOf("auxiliary-message-boundary") < html.indexOf("aux prompt"),
+    "Auxiliary 境界は対象 transcript の先頭 message より前に描画する",
+  );
 });
 
 test("SessionMessageColumn は pending と live approval\/elicitation を message window の末尾で維持する", () => {

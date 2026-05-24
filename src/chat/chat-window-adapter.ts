@@ -158,6 +158,8 @@ type LiveSessionMessageColumnProps = {
   sessionId: string;
   character: ChatMessageColumnProps["character"];
   messages: Message[];
+  messageKeys?: ChatMessageColumnProps["messageKeys"];
+  messageBoundaries?: ChatMessageColumnProps["messageBoundaries"];
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
   isRunning: boolean;
@@ -178,6 +180,8 @@ type LiveSessionMessageColumnProps = {
   onResolveLiveElicitation: ChatMessageColumnProps["onResolveLiveElicitation"];
   onOpenPath: (target: string) => void;
   getChangedFilesEmptyText: ChatMessageColumnProps["getChangedFilesEmptyText"];
+  onCopyMessageText?: ChatMessageColumnProps["onCopyMessageText"];
+  onQuoteMessageText?: ChatMessageColumnProps["onQuoteMessageText"];
 };
 
 type LiveSessionComposerProps = Omit<
@@ -205,6 +209,8 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     sessionId: input.sessionId,
     character: input.character,
     messages: input.messages,
+    messageKeys: input.messageKeys,
+    messageBoundaries: input.messageBoundaries,
     expandedArtifacts: input.expandedArtifacts,
     messageListRef: input.messageListRef,
     isRunning: input.isRunning,
@@ -225,6 +231,8 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     onResolveLiveElicitation: input.onResolveLiveElicitation,
     onOpenPath: input.onOpenPath,
     getChangedFilesEmptyText: input.getChangedFilesEmptyText,
+    onCopyMessageText: input.onCopyMessageText,
+    onQuoteMessageText: input.onQuoteMessageText,
   };
 }
 

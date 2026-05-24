@@ -12,6 +12,7 @@ export type ChatSessionModalsProps = {
   selectedDiffThemeStyle: CSSProperties;
   auditLogsOpen: boolean;
   displayedSessionAuditLogs: SessionAuditLogModalProps["entries"];
+  auditLogSourceLabel?: SessionAuditLogModalProps["sourceLabel"];
   auditLogDetails: SessionAuditLogModalProps["details"];
   auditLogOperationDetails: SessionAuditLogModalProps["operationDetails"];
   auditLogsHasMore: boolean;
@@ -32,6 +33,7 @@ export function ChatSessionModals({
   selectedDiffThemeStyle,
   auditLogsOpen,
   displayedSessionAuditLogs,
+  auditLogSourceLabel,
   auditLogDetails,
   auditLogOperationDetails,
   auditLogsHasMore,
@@ -58,6 +60,7 @@ export function ChatSessionModals({
       <SessionAuditLogModal
         open={auditLogsOpen}
         entries={displayedSessionAuditLogs}
+        sourceLabel={auditLogSourceLabel}
         details={auditLogDetails}
         operationDetails={auditLogOperationDetails}
         hasMore={auditLogsHasMore}

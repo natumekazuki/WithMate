@@ -7,6 +7,7 @@ import type {
   WithMateWindowCompanionApi,
   WithMateWindowNavigationApi,
   WithMateWindowObservabilityApi,
+  WithMateWindowAuxiliaryApi,
   WithMateWindowPickerApi,
   WithMateWindowSessionApi,
   WithMateWindowSettingsApi,
@@ -31,13 +32,20 @@ import {
   WITHMATE_DELETE_SESSION_MEMORY_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
+  WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
+  WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
   WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
+  WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_MATE_EMBEDDING_SETTINGS_CHANNEL,
   WITHMATE_GET_MATE_GROWTH_SETTINGS_CHANNEL,
+  WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
   WITHMATE_LIST_PROVIDER_INSTRUCTION_TARGETS_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_CHANNEL,
   WITHMATE_GET_COMPANION_AUDIT_LOG_DETAIL_SECTION_CHANNEL,
@@ -112,6 +120,7 @@ import {
   WITHMATE_SAVE_PASTED_SESSION_FILE_CHANNEL,
   WITHMATE_START_MATE_EMBEDDING_DOWNLOAD_CHANNEL,
   WITHMATE_RUN_MATE_TALK_TURN_CHANNEL,
+  WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
@@ -335,6 +344,35 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     resolveLiveElicitation(sessionId, requestId, response) {
       return ipcRenderer.invoke(WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL, sessionId, requestId, response);
+    },
+  };
+}
+
+function createAuxiliaryApi(ipcRenderer: IpcRendererLike): WithMateWindowAuxiliaryApi {
+  return {
+    listAuxiliarySessions(parentSessionId) {
+      return ipcRenderer.invoke(WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL, parentSessionId);
+    },
+    getActiveAuxiliarySession(parentSessionId) {
+      return ipcRenderer.invoke(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL, parentSessionId);
+    },
+    getAuxiliarySession(auxiliarySessionId) {
+      return ipcRenderer.invoke(WITHMATE_GET_AUXILIARY_SESSION_CHANNEL, auxiliarySessionId);
+    },
+    createAuxiliarySession(parentSessionId) {
+      return ipcRenderer.invoke(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, parentSessionId);
+    },
+    updateAuxiliarySession(session) {
+      return ipcRenderer.invoke(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL, session);
+    },
+    closeAuxiliarySession(auxiliarySessionId) {
+      return ipcRenderer.invoke(WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL, auxiliarySessionId);
+    },
+    runAuxiliarySessionTurn(auxiliarySessionId, request) {
+      return ipcRenderer.invoke(WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL, auxiliarySessionId, request);
+    },
+    cancelAuxiliarySessionRun(auxiliarySessionId) {
+      return ipcRenderer.invoke(WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL, auxiliarySessionId);
     },
   };
 }
@@ -684,6 +722,7 @@ export function createWithMateWindowApi(ipcRenderer: IpcRendererLike): WithMateW
     ...createWindowApi(ipcRenderer),
     ...createCatalogApi(ipcRenderer),
     ...createSessionApi(ipcRenderer),
+    ...createAuxiliaryApi(ipcRenderer),
     ...createCompanionApi(ipcRenderer),
     ...createObservabilityApi(ipcRenderer),
     ...createSettingsApi(ipcRenderer),

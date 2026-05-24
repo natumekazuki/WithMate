@@ -236,7 +236,7 @@ function normalizeMessageArtifact(value: unknown): MessageArtifact | undefined {
   };
 }
 
-function normalizeMessage(value: unknown): Message | null {
+export function normalizeMessage(value: unknown): Message | null {
   if (!value || typeof value !== "object") {
     return null;
   }
