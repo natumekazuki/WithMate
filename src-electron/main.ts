@@ -18,6 +18,7 @@ import {
   type AuditLogSummaryPageRequest,
   type AuditLogSummaryPageResult,
   currentTimestampLabel,
+  createDefaultSessionMemory,
   type DiscoveredCustomAgent,
   type DiscoveredSkill,
   type LiveApprovalDecision,
@@ -26,6 +27,7 @@ import {
   type LiveElicitationResponse,
   type LiveSessionRunState,
   type ProviderQuotaTelemetry,
+  type RunSessionTurnRequest,
   type SessionBackgroundActivityKind,
   type SessionBackgroundActivityState,
   type SessionContextTelemetry,
@@ -51,6 +53,8 @@ import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js"
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
+import { AuxiliarySessionService } from "./auxiliary-session-service.js";
+import { AuxiliarySessionStorage } from "./auxiliary-session-storage.js";
 import { CodexAdapter } from "./codex-adapter.js";
 import { CopilotAdapter } from "./copilot-adapter.js";
 import { getMateTalkBackgroundStructuredPromptCapability } from "./provider-runtime.js";
@@ -85,6 +89,7 @@ import { SessionMemorySupportService } from "./session-memory-support-service.js
 import { MemoryManagementService } from "./memory-management-service.js";
 import {
   appendSessionFilesDirectory,
+  appendSessionFilesDirectoryForSessionId,
   cleanupMateTalkSessionFilesDirectories,
   copyFilesToSessionFiles as copyFilesToSessionFilesStorage,
   deleteSessionFilesDirectory,
@@ -142,6 +147,7 @@ import { registerMainIpcHandlers } from "./main-ipc-registration.js";
 import {
   PersistentStoreLifecycleService,
   type AuditLogStorageRead,
+  type AuxiliarySessionStorageAccess,
   type PersistentStoreBundle,
   type ProjectMemoryStorageAccess,
   type SessionMemoryStorageAccess,
@@ -256,6 +262,7 @@ let sessionMemoryStorage: SessionMemoryStorageAccess | null = null;
 let projectMemoryStorage: ProjectMemoryStorageAccess | null = null;
 let modelCatalogStorage: ModelCatalogStorage | null = null;
 let auditLogStorage: AuditLogStorageRead | null = null;
+let auxiliarySessionStorage: AuxiliarySessionStorageAccess | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
 let mateStorage: MateStorage | null = null;
 let mateMemoryStorage: MateMemoryStorage | null = null;
@@ -290,6 +297,8 @@ let appBootStatus: AppBootStatus = {
 ipcMain.handle(WITHMATE_GET_APP_BOOT_STATUS_CHANNEL, () => appBootStatus);
 const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
 let sessionRuntimeService: SessionRuntimeService | null = null;
+let auxiliarySessionService: AuxiliarySessionService | null = null;
+let auxiliarySessionRuntimeService: SessionRuntimeService | null = null;
 let sessionPersistenceService: SessionPersistenceService | null = null;
 let sessionWindowBridge: SessionWindowBridge<BrowserWindow> | null = null;
 let memoryOrchestrationService: MemoryOrchestrationService | null = null;
@@ -798,11 +807,23 @@ function isRunningSession(session: Session): boolean {
 }
 
 function hasInFlightSessionRuns(): boolean {
-  return requireSessionRuntimeService().hasInFlightRuns() || requireCompanionRuntimeService().hasInFlightRuns();
+  return requireSessionRuntimeService().hasInFlightRuns()
+    || requireCompanionRuntimeService().hasInFlightRuns()
+    || requireAuxiliarySessionRuntimeService().hasInFlightRuns();
 }
 
 function isSessionRunInFlight(sessionId: string): boolean {
-  return requireSessionRuntimeService().isRunInFlight(sessionId);
+  if (requireSessionRuntimeService().isRunInFlight(sessionId)) {
+    return true;
+  }
+  if (!auxiliarySessionStorage) {
+    return false;
+  }
+
+  const activeAuxiliarySession = requireAuxiliarySessionService().getActiveAuxiliarySession(sessionId);
+  return activeAuxiliarySession
+    ? requireAuxiliarySessionRuntimeService().isRunInFlight(activeAuxiliarySession.id)
+    : false;
 }
 
 function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
@@ -892,6 +913,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           createSessionMemoryStorage: (nextDbPath) => new SessionMemoryStorage(nextDbPath),
           createProjectMemoryStorage: (nextDbPath) => new ProjectMemoryStorage(nextDbPath),
           createAuditLogStorage: (nextDbPath) => new AuditLogStorage(nextDbPath),
+          createAuxiliarySessionStorage: (nextDbPath) => new AuxiliarySessionStorage(nextDbPath),
           createAppSettingsStorage: (nextDbPath) => new AppSettingsStorage(nextDbPath),
           createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
           ensureV2Schema: (nextDbPath) => {
@@ -1091,6 +1113,30 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getDiffPreview: (token) => requireAuxWindowService().getDiffPreview(token),
                 previewComposerInput,
                 searchWorkspaceFiles,
+              },
+              auxiliary: {
+                listAuxiliarySessions: (parentSessionId) =>
+                  requireAuxiliarySessionService().listAuxiliarySessions(parentSessionId),
+                getActiveAuxiliarySession: (parentSessionId) =>
+                  requireAuxiliarySessionService().getActiveAuxiliarySession(parentSessionId),
+                getAuxiliarySession: (auxiliarySessionId) =>
+                  requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId),
+                createAuxiliarySession: (parentSessionId) =>
+                  requireAuxiliarySessionService().createAuxiliarySession(parentSessionId),
+                updateAuxiliarySession: (session) =>
+                  requireAuxiliarySessionService().updateAuxiliarySession(session),
+                closeAuxiliarySession: (auxiliarySessionId) =>
+                  requireAuxiliarySessionService().closeAuxiliarySession(auxiliarySessionId),
+                runAuxiliarySessionTurn: async (auxiliarySessionId, request) => {
+                  await requireAuxiliarySessionRuntimeService().runSessionTurn(auxiliarySessionId, request);
+                  const session = requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
+                  if (!session) {
+                    throw new Error("Auxiliary Session が見つからないよ。");
+                  }
+                  return session;
+                },
+                cancelAuxiliarySessionRun: (auxiliarySessionId) =>
+                  requireAuxiliarySessionRuntimeService().cancelRun(auxiliarySessionId),
               },
               companion: {
                 createCompanionSession: async (input) => {
@@ -1382,6 +1428,26 @@ function requireAuditLogStorage(): AuditLogStorageRead {
   }
 
   return auditLogStorage;
+}
+
+function requireAuxiliarySessionStorage(): AuxiliarySessionStorageAccess {
+  if (!auxiliarySessionStorage) {
+    throw new Error("Auxiliary Session storage が初期化されていないよ。");
+  }
+
+  return auxiliarySessionStorage;
+}
+
+function requireAuxiliarySessionService(): AuxiliarySessionService {
+  if (!auxiliarySessionService) {
+    auxiliarySessionService = new AuxiliarySessionService({
+      getSession: (sessionId) => getSession(sessionId),
+      getStorage: () => requireAuxiliarySessionStorage(),
+      getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
+    });
+  }
+
+  return auxiliarySessionService;
 }
 
 function requireAuditLogStorageForWrite(): AuditLogStorage {
@@ -2358,6 +2424,81 @@ function requireSessionRuntimeService(): SessionRuntimeService {
   return sessionRuntimeService;
 }
 
+function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
+  if (!auxiliarySessionRuntimeService) {
+    auxiliarySessionRuntimeService = new SessionRuntimeService({
+      getSession: (sessionId) => requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId),
+      upsertSession: (session) => {
+        const auxiliaryService = requireAuxiliarySessionService();
+        auxiliaryService.upsertAuxiliaryRuntimeSession(session);
+        const storedSession = auxiliaryService.getAuxiliaryRuntimeSession(session.id);
+        if (!storedSession) {
+          throw new Error("Auxiliary Session の保存結果を読み戻せなかったよ。");
+        }
+        return storedSession;
+      },
+      resolveComposerPreview,
+      resolveProviderSession: (session) => {
+        const auxiliarySession = requireAuxiliarySessionService().getAuxiliarySession(session.id);
+        return appendSessionFilesDirectoryForSessionId(
+          app.getPath("userData"),
+          session,
+          auxiliarySession?.parentSessionId ?? session.id,
+        );
+      },
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      resolveProviderCatalog,
+      getProviderCodingAdapter,
+      getSessionMemory: (session) => createDefaultSessionMemory({
+        id: session.id,
+        workspacePath: session.workspacePath,
+        threadId: session.threadId,
+        taskTitle: session.taskTitle,
+      }),
+      resolveProjectMemoryEntriesForPrompt: () => [],
+      resolveProjectContextTextForPrompt: () => null,
+      createAuditLog: (entry) => ({
+        id: 0,
+        ...entry,
+      }),
+      updateAuditLog: () => {},
+      setLiveSessionRun,
+      getLiveSessionRun,
+      waitForApprovalDecision: (sessionId, request, signal) =>
+        waitForLiveApprovalDecision(sessionId, request, signal),
+      waitForElicitationResponse: (sessionId, request, signal) =>
+        waitForLiveElicitationResponse(sessionId, request, signal),
+      setProviderQuotaTelemetry: (telemetry) => {
+        setProviderQuotaTelemetry(telemetry.provider, telemetry);
+      },
+      setSessionContextTelemetry: (telemetry) => {
+        setSessionContextTelemetry(telemetry.sessionId, telemetry);
+      },
+      invalidateProviderSessionThread,
+      scheduleProviderQuotaTelemetryRefresh,
+      clearWorkspaceFileIndex,
+      broadcastLiveSessionRun,
+      resolvePendingApprovalRequest: (sessionId, decision) => {
+        const liveRun = getLiveSessionRun(sessionId);
+        const requestId = liveRun?.approvalRequest?.requestId;
+        if (requestId) {
+          requireSessionApprovalService().resolveLiveApproval(sessionId, requestId, decision);
+        }
+      },
+      resolvePendingElicitationRequest: (sessionId, response) => {
+        const liveRun = getLiveSessionRun(sessionId);
+        const requestId = liveRun?.elicitationRequest?.requestId;
+        if (requestId) {
+          requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response);
+        }
+      },
+      currentTimestampLabel,
+    });
+  }
+
+  return auxiliarySessionRuntimeService;
+}
+
 function requireCompanionSessionService(): CompanionSessionService {
   if (!companionSessionService) {
     companionSessionService = new CompanionSessionService({
@@ -2536,6 +2677,7 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       isSessionRunInFlight,
       isRunningSession,
       listSessions: listFullStoredSessions,
+      listAuxiliarySessions: () => requireAuxiliarySessionService().listAllAuxiliarySessions(),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       updateAppSettings: updateAppSettingsAndSyncMateGrowth,
       getModelCatalog,
@@ -2544,6 +2686,8 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       exportModelCatalogDocument: (revision) => requireModelCatalogStorage().exportCatalogDocument(revision),
       replaceAllSessions: (nextSessions, options) =>
         requireMainSessionPersistenceFacade().replaceAllSessions(nextSessions, options),
+      replaceAuxiliarySessions: (nextSessions) =>
+        requireAuxiliarySessionService().replaceAuxiliarySessions(nextSessions),
       clearProviderQuotaTelemetry,
       clearSessionContextTelemetry,
       invalidateProviderSessionThread,
@@ -2677,6 +2821,7 @@ function applyPersistentStoreBundle(bundle: PersistentStoreBundle): ModelCatalog
   sessionMemoryStorage = bundle.sessionMemoryStorage;
   projectMemoryStorage = bundle.projectMemoryStorage;
   auditLogStorage = bundle.auditLogStorage;
+  auxiliarySessionStorage = bundle.auxiliarySessionStorage;
   appSettingsStorage = bundle.appSettingsStorage;
   mateStorage = bundle.mateStorage;
   sessions = bundle.sessions;
@@ -2760,6 +2905,7 @@ function closePersistentStores(): void {
     sessionMemoryStorage,
     projectMemoryStorage,
     auditLogStorage,
+    auxiliarySessionStorage,
     appSettingsStorage,
     mateStorage,
   }, dbPath);
@@ -2769,6 +2915,9 @@ function closePersistentStores(): void {
   projectMemoryStorage = null;
   auditLogStorage = null;
   auditLogService = null;
+  auxiliarySessionStorage = null;
+  auxiliarySessionService = null;
+  auxiliarySessionRuntimeService = null;
   appSettingsStorage = null;
   mateStorage = null;
   mateMemoryStorage = null;
@@ -2857,6 +3006,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
     sessionMemoryStorage,
     projectMemoryStorage,
     auditLogStorage,
+    auxiliarySessionStorage,
     appSettingsStorage,
     mateStorage,
   }, app.getPath("userData"));
@@ -2865,6 +3015,8 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   companionStorage = null;
   companionAuditLogService = null;
   companionAuditLogStorage = null;
+  auxiliarySessionService = null;
+  auxiliarySessionRuntimeService = null;
   companionSessionService = null;
   companionRuntimeService = null;
   companionReviewService = null;
@@ -3402,12 +3554,29 @@ async function replaceAllSessions(
 async function recoverInterruptedSessions(): Promise<void> {
   await requireMainSessionPersistenceFacade().recoverInterruptedSessions();
   await requireCompanionRuntimeService().recoverInterruptedSessions();
+  requireAuxiliarySessionService().recoverInterruptedSessions();
 }
 
 async function previewComposerInput(
   sessionId: string,
   userMessage: string,
 ) {
+  const auxiliaryService = requireAuxiliarySessionService();
+  const auxiliarySession = auxiliaryService.getAuxiliarySession(sessionId);
+  const auxiliaryRuntimeSession = auxiliarySession
+    ? auxiliaryService.getAuxiliaryRuntimeSession(sessionId)
+    : null;
+  if (auxiliaryRuntimeSession) {
+    return resolveComposerPreview(
+      appendSessionFilesDirectoryForSessionId(
+        app.getPath("userData"),
+        auxiliaryRuntimeSession,
+        auxiliarySession?.parentSessionId ?? sessionId,
+      ),
+      userMessage,
+    );
+  }
+
   return requireMainQueryService().previewComposerInput(sessionId, userMessage);
 }
 

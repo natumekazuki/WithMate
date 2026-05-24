@@ -52,6 +52,7 @@ import { SessionHeader } from "./session-components.js";
 import { ChatHeaderHandle, ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
+import { formatMarkdownQuote, insertComposerTextAtCaret } from "./chat/message-text-actions.js";
 import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,
@@ -1144,6 +1145,51 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
 
     await withmateApi.openDiffWindow(payload);
+  }
+
+  function handleCopyMessageText(text: string): void {
+    const normalized = text.trim();
+    if (!normalized) {
+      return;
+    }
+
+    void navigator.clipboard.writeText(normalized).catch((error) => {
+      console.error(error);
+      setErrorMessage("コピーに失敗したよ。");
+    });
+  }
+
+  function handleQuoteMessageText(text: string): void {
+    if (runDisabled) {
+      setForceComposerBlockedFeedback(true);
+      composerTextareaRef.current?.focus();
+      return;
+    }
+
+    const quote = formatMarkdownQuote(text);
+    if (!quote) {
+      return;
+    }
+
+    const textarea = composerTextareaRef.current;
+    const { draft: nextDraft, caret: nextCaret } = insertComposerTextAtCaret(
+      composerText,
+      quote,
+      textarea?.selectionStart ?? composerCaret,
+    );
+    setComposerText(nextDraft);
+    setComposerCaret(nextCaret);
+    setWorkspacePathMatches([]);
+    setActiveWorkspacePathMatchIndex(-1);
+
+    window.requestAnimationFrame(() => {
+      if (!textarea) {
+        return;
+      }
+
+      textarea.focus();
+      textarea.setSelectionRange(nextCaret, nextCaret);
+    });
   }
 
   function insertReferencePaths(selectedPaths: string[]): void {
@@ -2244,6 +2290,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onResolveLiveApproval: (request, decision) => void handleResolveCompanionLiveApproval(request, decision),
         onResolveLiveElicitation: (request, response) => void handleResolveCompanionLiveElicitation(request, response),
         onOpenInlinePath: (target) => openCompanionInlinePath(getWithMateApi(), target, snapshot.session.worktreePath),
+        onCopyMessageText: handleCopyMessageText,
+        onQuoteMessageText: handleQuoteMessageText,
         onPickFile: () => void pickAndInsertPath("file"),
         onPickFolder: () => void pickAndInsertPath("folder"),
         onPickImage: () => void pickAndInsertPath("image"),

@@ -829,6 +829,7 @@ export function SessionDiffModal({
 export type SessionAuditLogModalProps = {
   open: boolean;
   entries: AuditLogSummary[];
+  sourceLabel?: string;
   details: Record<number, {
     detail: AuditLogDetailFragment | null;
     loadedSections: Partial<Record<AuditLogDetailSection, boolean>>;
@@ -854,6 +855,7 @@ export type SessionAuditLogModalProps = {
 export function SessionAuditLogModal({
   open,
   entries,
+  sourceLabel,
   details,
   operationDetails,
   hasMore,
@@ -1065,6 +1067,7 @@ export function SessionAuditLogModal({
                   }`}>
                     {auditPhaseLabel(entry.phase)}
                   </span>
+                  {sourceLabel ? <span className="audit-log-source-tag">{sourceLabel}</span> : null}
                   <span className="audit-log-time">{entry.createdAt}</span>
                 </div>
 
@@ -1913,6 +1916,11 @@ export type SessionMessageColumnProps = {
   sessionId: string;
   character: CharacterProfile;
   messages: Message[];
+  messageKeys?: string[];
+  messageBoundaries?: Array<{
+    label: string;
+    statusLabel?: string;
+  } | null>;
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
   isRunning: boolean;
@@ -1933,12 +1941,39 @@ export type SessionMessageColumnProps = {
   onResolveLiveElicitation: (request: LiveElicitationRequest, response: LiveElicitationResponse) => void;
   onOpenPath?: (target: string) => void;
   getChangedFilesEmptyText: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
+  onCopyMessageText?: (text: string) => void;
+  onQuoteMessageText?: (text: string) => void;
 };
+
+function getSelectedTextWithin(element: Element | null): string {
+  if (!element || typeof window === "undefined") {
+    return "";
+  }
+
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+    return "";
+  }
+
+  const range = selection.getRangeAt(0);
+  const commonAncestor = range.commonAncestorContainer;
+  const commonElement =
+    commonAncestor.nodeType === Node.ELEMENT_NODE
+      ? commonAncestor
+      : commonAncestor.parentElement;
+  if (!commonElement || !element.contains(commonElement)) {
+    return "";
+  }
+
+  return selection.toString().trim();
+}
 
 export function SessionMessageColumn({
   sessionId,
   character,
   messages,
+  messageKeys,
+  messageBoundaries,
   expandedArtifacts,
   messageListRef,
   isRunning,
@@ -1959,6 +1994,8 @@ export function SessionMessageColumn({
   onResolveLiveElicitation,
   onOpenPath,
   getChangedFilesEmptyText,
+  onCopyMessageText,
+  onQuoteMessageText,
 }: SessionMessageColumnProps) {
   const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
   const [loadedArtifactDetails, setLoadedArtifactDetails] = useState<Record<string, MessageArtifact>>({});
@@ -2091,7 +2128,9 @@ export function SessionMessageColumn({
             <div className="session-message-list-window-items">
           {renderedMessages.map((message, index) => {
             const absoluteIndex = latestMessageWindowStartIndex + index;
-            const artifactKey = `${sessionId}-${absoluteIndex}`;
+            const messageKey = messageKeys?.[absoluteIndex] ?? `${sessionId}-${absoluteIndex}`;
+            const messageBoundary = messageBoundaries?.[absoluteIndex] ?? null;
+            const artifactKey = messageKey;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
             const artifact = loadedArtifactDetails[artifactKey] ?? message.artifact;
@@ -2106,10 +2145,29 @@ export function SessionMessageColumn({
                 details: undefined,
               })) ??
               [];
+            const hasMessageTextActions = isAssistant && (onCopyMessageText || onQuoteMessageText);
+            const pickMessageActionText = (button: HTMLButtonElement) => {
+              const messageBody = button
+                .closest(".message-card")
+                ?.querySelector("[data-message-body='true']") ?? null;
+              return getSelectedTextWithin(messageBody) || message.text;
+            };
 
             return (
+              <Fragment key={`${message.role}-${messageKey}`}>
+                {messageBoundary ? (
+                  <div
+                    className="auxiliary-message-boundary"
+                    role="separator"
+                    aria-label={`${messageBoundary.label}${messageBoundary.statusLabel ? ` ${messageBoundary.statusLabel}` : ""}`}
+                  >
+                    <span className="auxiliary-message-boundary-label">{messageBoundary.label}</span>
+                    {messageBoundary.statusLabel ? (
+                      <span className="auxiliary-message-boundary-status">{messageBoundary.statusLabel}</span>
+                    ) : null}
+                  </div>
+                ) : null}
               <article
-                key={`${message.role}-${absoluteIndex}`}
                 className={`message-row ${message.role}${message.accent ? " accent" : ""}`}
               >
                 {isAssistant ? (
@@ -2154,7 +2212,31 @@ export function SessionMessageColumn({
                       {artifactExpanded ? "−" : "i"}
                     </button>
                   ) : null}
-                  <MessageRichText text={message.text} onOpenPath={onOpenPath} />
+                  <div data-message-body="true">
+                    <MessageRichText text={message.text} onOpenPath={onOpenPath} />
+                  </div>
+                  {hasMessageTextActions ? (
+                    <div className="message-response-actions" aria-label="Response actions">
+                      {onCopyMessageText ? (
+                        <button
+                          className="message-response-action"
+                          type="button"
+                          onClick={(event) => onCopyMessageText(pickMessageActionText(event.currentTarget))}
+                        >
+                          Copy
+                        </button>
+                      ) : null}
+                      {onQuoteMessageText ? (
+                        <button
+                          className="message-response-action"
+                          type="button"
+                          onClick={(event) => onQuoteMessageText(pickMessageActionText(event.currentTarget))}
+                        >
+                          Quote
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   {artifact ? (
                     <section className="artifact-shell">
@@ -2285,6 +2367,7 @@ export function SessionMessageColumn({
                   ) : null}
                 </div>
               </article>
+              </Fragment>
             );
           })}
 

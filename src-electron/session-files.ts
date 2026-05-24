@@ -35,7 +35,15 @@ export function appendSessionFilesDirectory<TSession extends { id: string; allow
   userDataPath: string,
   session: TSession,
 ): TSession {
-  const sessionFilesDirectory = resolveSessionFilesDirectory(userDataPath, session.id);
+  return appendSessionFilesDirectoryForSessionId(userDataPath, session, session.id);
+}
+
+export function appendSessionFilesDirectoryForSessionId<TSession extends { allowedAdditionalDirectories: string[] }>(
+  userDataPath: string,
+  session: TSession,
+  sessionId: string,
+): TSession {
+  const sessionFilesDirectory = resolveSessionFilesDirectory(userDataPath, sessionId);
   if (session.allowedAdditionalDirectories.some((entry) => path.resolve(entry) === path.resolve(sessionFilesDirectory))) {
     return session;
   }

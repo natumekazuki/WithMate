@@ -83,6 +83,8 @@ test("createIdleChatMessageColumnProps は approval や diff のない message c
 
 test("createStaticTextConversationMessageColumnProps は text conversation を共通 message column に変換する", () => {
   const messageListRef = React.createRef<HTMLDivElement>();
+  const onCopyMessageText = () => {};
+  const onQuoteMessageText = () => {};
   const messageColumnProps = createStaticTextConversationMessageColumnProps({
     sessionId: "mate-talk",
     characterId: "mate",
@@ -94,6 +96,8 @@ test("createStaticTextConversationMessageColumnProps は text conversation を�
     ],
     messageListRef,
     isRunning: true,
+    onCopyMessageText,
+    onQuoteMessageText,
   });
 
   assert.equal(messageColumnProps.sessionId, "mate-talk");
@@ -105,10 +109,14 @@ test("createStaticTextConversationMessageColumnProps は text conversation を�
     { role: "assistant", text: "やあ" },
   ]);
   assert.equal(messageColumnProps.isRunning, true);
+  assert.equal(messageColumnProps.onCopyMessageText, onCopyMessageText);
+  assert.equal(messageColumnProps.onQuoteMessageText, onQuoteMessageText);
 });
 
 test("buildLiveSessionMessageColumnProps は live message props を共通形式で組み立てる", () => {
   const messageListRef = React.createRef<HTMLDivElement>();
+  const onCopyMessageText = () => {};
+  const onQuoteMessageText = () => {};
   const composerMessageColumnProps = buildLiveSessionMessageColumnProps({
     sessionId: "session-id",
     character: createCharacter(),
@@ -132,11 +140,15 @@ test("buildLiveSessionMessageColumnProps は live message props を共通形式�
     onResolveLiveElicitation: () => {},
     onOpenPath: () => {},
     getChangedFilesEmptyText: () => "",
+    onCopyMessageText,
+    onQuoteMessageText,
   });
 
   assert.equal(composerMessageColumnProps.sessionId, "session-id");
   assert.equal(composerMessageColumnProps.liveRunAssistantText, "");
   assert.equal(composerMessageColumnProps.hasLiveRunAssistantText, false);
+  assert.equal(composerMessageColumnProps.onCopyMessageText, onCopyMessageText);
+  assert.equal(composerMessageColumnProps.onQuoteMessageText, onQuoteMessageText);
 });
 
 test("buildLiveSessionComposerProps は composer の表示デフォルトを反映する", () => {

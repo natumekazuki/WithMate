@@ -129,6 +129,8 @@ export type CompanionChatProjectionInput = {
   onResolveLiveApproval: SessionMessageColumnProps["onResolveLiveApproval"];
   onResolveLiveElicitation: SessionMessageColumnProps["onResolveLiveElicitation"];
   onOpenInlinePath: (target: string) => void;
+  onCopyMessageText: SessionMessageColumnProps["onCopyMessageText"];
+  onQuoteMessageText: SessionMessageColumnProps["onQuoteMessageText"];
   onPickFile: () => void;
   onPickFolder: () => void;
   onPickImage: () => void;
@@ -254,6 +256,8 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     onResolveLiveElicitation: input.onResolveLiveElicitation,
     onOpenPath: input.onOpenInlinePath,
     getChangedFilesEmptyText: () => "差分はまだないよ。",
+    onCopyMessageText: input.onCopyMessageText,
+    onQuoteMessageText: input.onQuoteMessageText,
   });
 
   const composerProps = buildLiveSessionComposerProps({

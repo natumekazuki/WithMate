@@ -20,6 +20,7 @@ import type {
   SessionSummary,
 } from "../src/app-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
+import type { AuxiliarySession, AuxiliarySessionSummary } from "../src/auxiliary-session-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
 import type {
   CompanionMergeSelectedFilesRequest,
@@ -197,6 +198,17 @@ export type MainIpcCompanionDepsArgs = {
   cancelCompanionSessionRun(sessionId: string): void;
 };
 
+export type MainIpcAuxiliaryDepsArgs = {
+  listAuxiliarySessions(parentSessionId: string): Awaitable<AuxiliarySessionSummary[]>;
+  getActiveAuxiliarySession(parentSessionId: string): Awaitable<AuxiliarySession | null>;
+  getAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
+  createAuxiliarySession(parentSessionId: string): Awaitable<AuxiliarySession>;
+  updateAuxiliarySession(session: AuxiliarySession): Awaitable<AuxiliarySession>;
+  closeAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession>;
+  runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Awaitable<AuxiliarySession>;
+  cancelAuxiliarySessionRun(auxiliarySessionId: string): Awaitable<void>;
+};
+
 export type MainIpcSessionRuntimeDepsArgs = {
   getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
   getProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
@@ -234,14 +246,34 @@ export type CreateMainIpcRegistrationDepsArgs = {
   catalog: MainIpcCatalogDepsArgs;
   settings: MainIpcSettingsDepsArgs;
   sessionQuery: MainIpcSessionQueryDepsArgs;
+  auxiliary?: MainIpcAuxiliaryDepsArgs;
   companion: MainIpcCompanionDepsArgs;
   sessionRuntime: MainIpcSessionRuntimeDepsArgs;
   mate: MainIpcMateDepsArgs;
 };
 
+function createUnavailableAuxiliaryDeps(): MainIpcAuxiliaryDepsArgs {
+  const throwUnavailable = (): never => {
+    throw new Error("Auxiliary Session dependency is not configured.");
+  };
+
+  return {
+    listAuxiliarySessions: () => [],
+    getActiveAuxiliarySession: () => null,
+    getAuxiliarySession: () => null,
+    createAuxiliarySession: throwUnavailable,
+    updateAuxiliarySession: throwUnavailable,
+    closeAuxiliarySession: throwUnavailable,
+    runAuxiliarySessionTurn: throwUnavailable,
+    cancelAuxiliarySessionRun: throwUnavailable,
+  };
+}
+
 export function createMainIpcRegistrationDeps(
   args: CreateMainIpcRegistrationDepsArgs,
 ): MainIpcRegistrationDeps {
+  const auxiliary = args.auxiliary ?? createUnavailableAuxiliaryDeps();
+
   return {
     resolveEventWindow: args.window.resolveEventWindow,
     resolveHomeWindow: args.window.resolveHomeWindow,
@@ -333,6 +365,14 @@ export function createMainIpcRegistrationDeps(
     getDiffPreview: args.sessionQuery.getDiffPreview,
     previewComposerInput: args.sessionQuery.previewComposerInput,
     searchWorkspaceFiles: args.sessionQuery.searchWorkspaceFiles,
+    listAuxiliarySessions: auxiliary.listAuxiliarySessions,
+    getActiveAuxiliarySession: auxiliary.getActiveAuxiliarySession,
+    getAuxiliarySession: auxiliary.getAuxiliarySession,
+    createAuxiliarySession: auxiliary.createAuxiliarySession,
+    updateAuxiliarySession: auxiliary.updateAuxiliarySession,
+    closeAuxiliarySession: auxiliary.closeAuxiliarySession,
+    runAuxiliarySessionTurn: auxiliary.runAuxiliarySessionTurn,
+    cancelAuxiliarySessionRun: auxiliary.cancelAuxiliarySessionRun,
     createCompanionSession: args.companion.createCompanionSession,
     getCompanionSession: args.companion.getCompanionSession,
     getCompanionMessageArtifact: args.companion.getCompanionMessageArtifact,

@@ -37,6 +37,8 @@ export function MateTalkChatModeApp() {
         messageListRef: state.messageListRef,
         composerTextareaRef: state.composerTextareaRef,
         onChangeInput: state.onChangeInput,
+        onCopyMessageText: state.onCopyMessageText,
+        onQuoteMessageText: state.onQuoteMessageText,
         onChangeModel: state.onChangeModel,
         onChangeReasoningEffort: state.onChangeReasoningEffort,
         onSubmit: state.onSubmit,

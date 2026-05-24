@@ -27,6 +27,8 @@ export type MateTalkChatProjectionInput = {
   messageListRef: RefObject<HTMLDivElement | null>;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   onChangeInput: (value: string) => void;
+  onCopyMessageText?: ChatWindowProps["messageColumnProps"]["onCopyMessageText"];
+  onQuoteMessageText?: ChatWindowProps["messageColumnProps"]["onQuoteMessageText"];
   onChangeModel: (model: string) => void;
   onChangeReasoningEffort: (reasoningEffort: string) => void;
   onSubmit: () => void;
@@ -56,6 +58,8 @@ export function buildMateTalkChatWindowProps({
   messageListRef,
   composerTextareaRef,
   onChangeInput,
+  onCopyMessageText,
+  onQuoteMessageText,
   onChangeModel,
   onChangeReasoningEffort,
   onSubmit,
@@ -93,6 +97,8 @@ export function buildMateTalkChatWindowProps({
     messageListRef,
     composerTextareaRef,
     onDraftChange: onChangeInput,
+    onCopyMessageText,
+    onQuoteMessageText,
     onChangeModel,
     onChangeReasoningEffort,
     onSubmit,

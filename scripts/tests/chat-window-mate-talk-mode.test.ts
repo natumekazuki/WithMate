@@ -13,6 +13,7 @@ function renderPanel(options?: {
   feedback?: string;
   isHeaderExpanded?: boolean;
   mateAvatarFilePath?: string;
+  withResponseActions?: boolean;
 }) {
   const messageListRef = React.createRef<HTMLDivElement>();
   const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
@@ -37,6 +38,8 @@ function renderPanel(options?: {
         messageListRef,
         composerTextareaRef,
         onChangeInput() {},
+        onCopyMessageText: options?.withResponseActions ? () => {} : undefined,
+        onQuoteMessageText: options?.withResponseActions ? () => {} : undefined,
         onChangeModel() {},
         onChangeReasoningEffort() {},
         onSubmit() {},
@@ -185,6 +188,21 @@ test("MateTalk は ChatWindow で user/mate メッセージを共通 message row
   assert.match(html, /class="character-avatar small message-avatar"/);
   assert.match(html, /<p class="message-paragraph">やあ、元気？<\/p>/);
   assert.doesNotMatch(html, /session-plain-message-speaker/);
+});
+
+test("MateTalk は mate response に共通 Copy / Quote action を表示する", () => {
+  const html = renderPanel({
+    withResponseActions: true,
+    messages: [
+      { id: "m1", role: "user", text: "おはよう" },
+      { id: "m2", role: "mate", text: "やあ、元気？" },
+    ],
+    input: "test",
+  });
+
+  assert.match(html, /<div class="message-response-actions" aria-label="Response actions">/);
+  assert.match(html, />Copy<\/button>/);
+  assert.match(html, />Quote<\/button>/);
 });
 
 test("MateTalk は Mate avatar path を返信メッセージの avatar に渡す", () => {

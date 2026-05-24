@@ -51,6 +51,7 @@ import type {
 import type { RendererLogInput } from "./app-log-types.js";
 import type { AppBootStatus } from "./app-boot-state.js";
 import type { AppDatabaseDiagnostics } from "./app-database-diagnostics-state.js";
+import type { AuxiliarySession, AuxiliarySessionSummary } from "./auxiliary-session-state.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import type {
   OpenPathOptions,
@@ -137,6 +138,17 @@ export type WithMateWindowSessionApi = {
   getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): Promise<void>;
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): Promise<void>;
+};
+
+export type WithMateWindowAuxiliaryApi = {
+  listAuxiliarySessions(parentSessionId: string): Promise<AuxiliarySessionSummary[]>;
+  getActiveAuxiliarySession(parentSessionId: string): Promise<AuxiliarySession | null>;
+  getAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession | null>;
+  createAuxiliarySession(parentSessionId: string): Promise<AuxiliarySession>;
+  updateAuxiliarySession(session: AuxiliarySession): Promise<AuxiliarySession>;
+  closeAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession>;
+  runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Promise<AuxiliarySession>;
+  cancelAuxiliarySessionRun(auxiliarySessionId: string): Promise<void>;
 };
 
 export type WithMateWindowCompanionApi = {
@@ -257,6 +269,7 @@ export type WithMateWindowMateApi = {
 export type WithMateWindowApi =
   & WithMateWindowNavigationApi
   & WithMateWindowCatalogApi
+  & WithMateWindowAuxiliaryApi
   & WithMateWindowSessionApi
   & WithMateWindowCompanionApi
   & WithMateWindowObservabilityApi

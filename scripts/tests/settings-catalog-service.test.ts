@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import type { Session } from "../../src/app-state.js";
+import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 import { createDefaultAppSettings, type AppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { SettingsCatalogService } from "../../src-electron/settings-catalog-service.js";
@@ -29,6 +30,31 @@ function createSession(overrides?: Partial<Session>): Session {
     messages: [{ role: "user", text: "hello" }],
     stream: [],
     allowedAdditionalDirectories: [],
+  };
+}
+
+function createAuxiliarySession(overrides?: Partial<AuxiliarySession>): AuxiliarySession {
+  return {
+    id: "aux-1",
+    parentSessionId: "session-1",
+    status: "active",
+    runState: "idle",
+    title: "Auxiliary",
+    provider: "codex",
+    catalogRevision: 1,
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+    approvalMode: "on-request",
+    codexSandboxMode: "workspace-write",
+    customAgentName: "",
+    allowedAdditionalDirectories: [],
+    threadId: "aux-thread-1",
+    composerDraft: "",
+    messages: [{ role: "assistant", text: "aux result" }],
+    createdAt: "2026-03-28T00:00:00.000Z",
+    updatedAt: "2026-03-28T00:00:00.000Z",
+    closedAt: "",
+    ...overrides,
   };
 }
 
@@ -75,6 +101,9 @@ describe("SettingsCatalogService", () => {
       listSessions() {
         return [createSession()];
       },
+      listAuxiliarySessions() {
+        return [];
+      },
       getAppSettings() {
         return previousSettings;
       },
@@ -95,6 +124,9 @@ describe("SettingsCatalogService", () => {
       },
       replaceAllSessions() {
         return [];
+      },
+      replaceAuxiliarySessions(nextSessions) {
+        return nextSessions;
       },
       clearProviderQuotaTelemetry() {},
       clearSessionContextTelemetry() {},
@@ -142,6 +174,9 @@ describe("SettingsCatalogService", () => {
       listSessions() {
         return previousSessions;
       },
+      listAuxiliarySessions() {
+        return [];
+      },
       getAppSettings() {
         return previousSettings;
       },
@@ -163,6 +198,9 @@ describe("SettingsCatalogService", () => {
       },
       replaceAllSessions(nextSessions) {
         replacedSessions = nextSessions;
+        return nextSessions;
+      },
+      replaceAuxiliarySessions(nextSessions) {
         return nextSessions;
       },
       clearProviderQuotaTelemetry(providerId) {
@@ -199,6 +237,84 @@ describe("SettingsCatalogService", () => {
     assert.deepEqual(invalidated, []);
   });
 
+  it("settings 更新時に API key 変更 provider の auxiliary thread も無効化する", async () => {
+    const previousSettings = createDefaultAppSettings();
+    const previousSessions = [createSession({ threadId: "" })];
+    const previousAuxiliarySessions = [createAuxiliarySession()];
+    const clearContextCalls: string[] = [];
+    const invalidated: string[] = [];
+    let replacedAuxiliarySessions: AuxiliarySession[] = [];
+
+    const service = new SettingsCatalogService({
+      hasInFlightSessionRuns() {
+        return false;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      isRunningSession() {
+        return false;
+      },
+      listSessions() {
+        return previousSessions;
+      },
+      listAuxiliarySessions() {
+        return previousAuxiliarySessions;
+      },
+      getAppSettings() {
+        return previousSettings;
+      },
+      updateAppSettings(settings) {
+        return settings;
+      },
+      getModelCatalog() {
+        return createCatalogSnapshot();
+      },
+      ensureModelCatalogSeeded() {
+        return createCatalogSnapshot();
+      },
+      importModelCatalogDocument() {
+        return createCatalogSnapshot();
+      },
+      exportModelCatalogDocument() {
+        return { providers: createCatalogSnapshot().providers };
+      },
+      replaceAllSessions(nextSessions) {
+        return nextSessions;
+      },
+      replaceAuxiliarySessions(nextSessions) {
+        replacedAuxiliarySessions = nextSessions;
+        return nextSessions;
+      },
+      clearProviderQuotaTelemetry() {},
+      clearSessionContextTelemetry(sessionId) {
+        clearContextCalls.push(sessionId);
+      },
+      invalidateProviderSessionThread(providerId, sessionId) {
+        invalidated.push(`${providerId}:${sessionId}`);
+      },
+      broadcastSessions() {},
+      broadcastAppSettings() {},
+      broadcastModelCatalog() {},
+    });
+
+    await service.updateAppSettings({
+      ...previousSettings,
+      codingProviderSettings: {
+        ...previousSettings.codingProviderSettings,
+        codex: {
+          ...previousSettings.codingProviderSettings.codex,
+          apiKey: "changed-key",
+        },
+      },
+    });
+
+    assert.equal(replacedAuxiliarySessions[0]?.threadId, "");
+    assert.deepEqual(replacedAuxiliarySessions[0]?.messages, previousAuxiliarySessions[0].messages);
+    assert.deepEqual(clearContextCalls, ["session-1", "aux-1"]);
+    assert.deepEqual(invalidated, ["codex:aux-1"]);
+  });
+
   it("model catalog import で session を新 revision に移行して broadcast する", async () => {
     const previousSessions = [
       createSession({
@@ -227,6 +343,9 @@ describe("SettingsCatalogService", () => {
       listSessions() {
         return previousSessions;
       },
+      listAuxiliarySessions() {
+        return [];
+      },
       getAppSettings() {
         return createDefaultAppSettings();
       },
@@ -253,6 +372,9 @@ describe("SettingsCatalogService", () => {
         replacedSessions = nextSessions;
         return nextSessions;
       },
+      replaceAuxiliarySessions(nextSessions) {
+        return nextSessions;
+      },
       clearProviderQuotaTelemetry() {},
       clearSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
@@ -275,6 +397,84 @@ describe("SettingsCatalogService", () => {
     assert.equal(broadcasted, true);
   });
 
+  it("model catalog import で auxiliary metadata も新 revision に移行する", async () => {
+    const previousSessions = [createSession()];
+    const previousAuxiliarySessions = [
+      createAuxiliarySession({
+        model: "missing-model",
+        reasoningEffort: "high",
+        threadId: "aux-thread-1",
+      }),
+    ];
+    const importedDocument: ModelCatalogDocument = {
+      providers: createCatalogSnapshot(2).providers,
+    };
+    const invalidated: string[] = [];
+    let replacedAuxiliarySessions: AuxiliarySession[] = [];
+
+    const service = new SettingsCatalogService({
+      hasInFlightSessionRuns() {
+        return false;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      isRunningSession() {
+        return false;
+      },
+      listSessions() {
+        return previousSessions;
+      },
+      listAuxiliarySessions() {
+        return previousAuxiliarySessions;
+      },
+      getAppSettings() {
+        return createDefaultAppSettings();
+      },
+      updateAppSettings(settings) {
+        return settings;
+      },
+      getModelCatalog() {
+        return createCatalogSnapshot(1);
+      },
+      ensureModelCatalogSeeded() {
+        return createCatalogSnapshot(1);
+      },
+      importModelCatalogDocument(document) {
+        return {
+          revision: 2,
+          providers: document.providers,
+        };
+      },
+      exportModelCatalogDocument() {
+        return { providers: createCatalogSnapshot(1).providers };
+      },
+      replaceAllSessions(nextSessions) {
+        return nextSessions;
+      },
+      replaceAuxiliarySessions(nextSessions) {
+        replacedAuxiliarySessions = nextSessions;
+        return nextSessions;
+      },
+      clearProviderQuotaTelemetry() {},
+      clearSessionContextTelemetry() {},
+      invalidateProviderSessionThread(providerId, sessionId) {
+        invalidated.push(`${providerId}:${sessionId}`);
+      },
+      broadcastSessions() {},
+      broadcastAppSettings() {},
+      broadcastModelCatalog() {},
+    });
+
+    await service.importModelCatalogDocument(importedDocument);
+
+    assert.equal(replacedAuxiliarySessions[0]?.catalogRevision, 2);
+    assert.equal(replacedAuxiliarySessions[0]?.model, "gpt-5.4");
+    assert.equal(replacedAuxiliarySessions[0]?.threadId, "");
+    assert.deepEqual(replacedAuxiliarySessions[0]?.messages, previousAuxiliarySessions[0].messages);
+    assert.deepEqual(invalidated, ["codex:aux-1"]);
+  });
+
   it("model catalog export は storage の document をそのまま返す", () => {
     const document = { providers: createCatalogSnapshot(1).providers };
     const service = new SettingsCatalogService({
@@ -288,6 +488,9 @@ describe("SettingsCatalogService", () => {
         return false;
       },
       listSessions() {
+        return [];
+      },
+      listAuxiliarySessions() {
         return [];
       },
       getAppSettings() {
@@ -309,6 +512,9 @@ describe("SettingsCatalogService", () => {
         return document;
       },
       replaceAllSessions(nextSessions) {
+        return nextSessions;
+      },
+      replaceAuxiliarySessions(nextSessions) {
         return nextSessions;
       },
       clearProviderQuotaTelemetry() {},
@@ -357,6 +563,9 @@ describe("SettingsCatalogService", () => {
       listSessions() {
         return sessions;
       },
+      listAuxiliarySessions() {
+        return [];
+      },
       getAppSettings() {
         return createDefaultAppSettings();
       },
@@ -377,6 +586,10 @@ describe("SettingsCatalogService", () => {
       },
       replaceAllSessions(nextSessions) {
         calls.push(`replace:${nextSessions.length}`);
+        return nextSessions;
+      },
+      replaceAuxiliarySessions(nextSessions) {
+        calls.push(`replaceAux:${nextSessions.length}`);
         return nextSessions;
       },
       clearProviderQuotaTelemetry(providerId) {
@@ -461,6 +674,97 @@ describe("SettingsCatalogService", () => {
       "broadcastSettings",
       "broadcastCatalog",
     ]);
+  });
+
+  it("model catalog reset で auxiliary metadata も bundled catalog へ移行する", async () => {
+    const sessions = [createSession()];
+    const auxiliarySessions = [
+      createAuxiliarySession({
+        model: "missing-model",
+        reasoningEffort: "high",
+        threadId: "aux-thread-1",
+      }),
+    ];
+    const invalidated: string[] = [];
+    let replacedAuxiliarySessions: AuxiliarySession[] = [];
+
+    const service = new SettingsCatalogService({
+      hasInFlightSessionRuns() {
+        return false;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      isRunningSession() {
+        return false;
+      },
+      listSessions() {
+        return sessions;
+      },
+      listAuxiliarySessions() {
+        return auxiliarySessions;
+      },
+      getAppSettings() {
+        return createDefaultAppSettings();
+      },
+      updateAppSettings(settings) {
+        return settings;
+      },
+      getModelCatalog() {
+        return createCatalogSnapshot(3);
+      },
+      ensureModelCatalogSeeded() {
+        return createCatalogSnapshot(3);
+      },
+      importModelCatalogDocument() {
+        return createCatalogSnapshot(3);
+      },
+      exportModelCatalogDocument() {
+        return { providers: createCatalogSnapshot(3).providers };
+      },
+      replaceAllSessions(nextSessions) {
+        return nextSessions;
+      },
+      replaceAuxiliarySessions(nextSessions) {
+        replacedAuxiliarySessions = nextSessions;
+        return nextSessions;
+      },
+      clearProviderQuotaTelemetry() {},
+      clearSessionContextTelemetry() {},
+      invalidateProviderSessionThread(providerId, sessionId) {
+        invalidated.push(`${providerId}:${sessionId}`);
+      },
+      clearAuditLogs() {},
+      resetAppSettings() {
+        return createDefaultAppSettings();
+      },
+      resetModelCatalogToBundled() {
+        return createCatalogSnapshot(3);
+      },
+      clearProjectMemories() {},
+      clearCharacterMemories() {},
+      resetSessionRuntime() {},
+      resetMemoryOrchestration() {},
+      clearAllProviderQuotaTelemetry() {},
+      clearAllSessionContextTelemetry() {},
+      clearAllSessionBackgroundActivities() {},
+      invalidateAllProviderSessionThreads() {},
+      closeResetTargetWindows() {},
+      async recreateDatabaseFile() {
+        return createCatalogSnapshot(3);
+      },
+      broadcastSessions() {},
+      broadcastAppSettings() {},
+      broadcastModelCatalog() {},
+    });
+
+    await service.resetAppDatabase({ targets: ["modelCatalog"] });
+
+    assert.equal(replacedAuxiliarySessions[0]?.catalogRevision, 3);
+    assert.equal(replacedAuxiliarySessions[0]?.model, "gpt-5.4");
+    assert.equal(replacedAuxiliarySessions[0]?.threadId, "");
+    assert.deepEqual(replacedAuxiliarySessions[0]?.messages, auxiliarySessions[0].messages);
+    assert.deepEqual(invalidated, ["codex:aux-1"]);
   });
 });
 

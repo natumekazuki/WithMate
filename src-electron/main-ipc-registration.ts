@@ -21,6 +21,7 @@ import type {
   SessionContextTelemetry,
   SessionSummary,
 } from "../src/app-state.js";
+import type { AuxiliarySession, AuxiliarySessionSummary } from "../src/auxiliary-session-state.js";
 import type {
   CreateMateInput,
   MateProfile,
@@ -113,6 +114,13 @@ import {
   WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
+  WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
+  WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
@@ -156,6 +164,7 @@ import {
   WITHMATE_RUN_MATE_TALK_TURN_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
+  WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_COMPANION_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SEARCH_WORKSPACE_FILES_CHANNEL,
   WITHMATE_SET_MATE_AVATAR_CHANNEL,
@@ -289,6 +298,14 @@ export type MainIpcRegistrationDeps = {
   listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   listOpenSessionWindowIds(): string[];
   listOpenCompanionReviewWindowIds(): string[];
+  listAuxiliarySessions?(parentSessionId: string): Awaitable<AuxiliarySessionSummary[]>;
+  getActiveAuxiliarySession?(parentSessionId: string): Awaitable<AuxiliarySession | null>;
+  getAuxiliarySession?(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
+  createAuxiliarySession?(parentSessionId: string): Awaitable<AuxiliarySession>;
+  updateAuxiliarySession?(session: AuxiliarySession): Awaitable<AuxiliarySession>;
+  closeAuxiliarySession?(auxiliarySessionId: string): Awaitable<AuxiliarySession>;
+  runAuxiliarySessionTurn?(auxiliarySessionId: string, request: RunSessionTurnRequest): Awaitable<AuxiliarySession>;
+  cancelAuxiliarySessionRun?(auxiliarySessionId: string): Awaitable<void>;
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
@@ -431,6 +448,32 @@ type MainIpcSettingsDeps = Pick<
   | "deleteProjectMemoryEntry"
   | "forgetMateProfileItem"
 >;
+
+type MainIpcAuxiliaryDeps = Pick<
+  MainIpcRegistrationDeps,
+  | "listAuxiliarySessions"
+  | "getActiveAuxiliarySession"
+  | "getAuxiliarySession"
+  | "createAuxiliarySession"
+  | "updateAuxiliarySession"
+  | "closeAuxiliarySession"
+  | "runAuxiliarySessionTurn"
+  | "cancelAuxiliarySessionRun"
+>;
+
+type MainIpcAuxiliaryDepsRequired = {
+  listAuxiliarySessions: (parentSessionId: string) => Awaitable<AuxiliarySessionSummary[]>;
+  getActiveAuxiliarySession: (parentSessionId: string) => Awaitable<AuxiliarySession | null>;
+  getAuxiliarySession: (auxiliarySessionId: string) => Awaitable<AuxiliarySession | null>;
+  createAuxiliarySession: (parentSessionId: string) => Awaitable<AuxiliarySession>;
+  updateAuxiliarySession: (session: AuxiliarySession) => Awaitable<AuxiliarySession>;
+  closeAuxiliarySession: (auxiliarySessionId: string) => Awaitable<AuxiliarySession>;
+  runAuxiliarySessionTurn: (
+    auxiliarySessionId: string,
+    request: RunSessionTurnRequest,
+  ) => Awaitable<AuxiliarySession>;
+  cancelAuxiliarySessionRun: (auxiliarySessionId: string) => Awaitable<void>;
+};
 
 type MainIpcSessionQueryDeps = Pick<
   MainIpcRegistrationDeps,
@@ -591,6 +634,77 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   );
   ipcMain.handle(WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL, async (_event, target: string) =>
     deps.openTerminalAtPath(target),
+  );
+}
+
+function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAuxiliaryDeps): void {
+  const getAuxiliaryDeps = (deps: MainIpcAuxiliaryDeps): MainIpcAuxiliaryDepsRequired => {
+    if (
+      !deps.listAuxiliarySessions ||
+      !deps.getActiveAuxiliarySession ||
+      !deps.getAuxiliarySession ||
+      !deps.createAuxiliarySession ||
+      !deps.updateAuxiliarySession ||
+      !deps.closeAuxiliarySession ||
+      !deps.runAuxiliarySessionTurn ||
+      !deps.cancelAuxiliarySessionRun
+    ) {
+      throw new Error(
+        "Auxiliary session IPC is not wired. listAuxiliarySessions, getActiveAuxiliarySession, getAuxiliarySession, "
+        + "createAuxiliarySession, updateAuxiliarySession, closeAuxiliarySession, runAuxiliarySessionTurn, "
+        + "and cancelAuxiliarySessionRun are required.",
+      );
+    }
+
+    return {
+      listAuxiliarySessions: deps.listAuxiliarySessions,
+      getActiveAuxiliarySession: deps.getActiveAuxiliarySession,
+      getAuxiliarySession: deps.getAuxiliarySession,
+      createAuxiliarySession: deps.createAuxiliarySession,
+      updateAuxiliarySession: deps.updateAuxiliarySession,
+      closeAuxiliarySession: deps.closeAuxiliarySession,
+      runAuxiliarySessionTurn: deps.runAuxiliarySessionTurn,
+      cancelAuxiliarySessionRun: deps.cancelAuxiliarySessionRun,
+    };
+  };
+
+  ipcMain.handle(WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL, (_event, parentSessionId: string) => {
+    const auxiliaryDeps = getAuxiliaryDeps(deps);
+    if (!parentSessionId) {
+      return [];
+    }
+    return auxiliaryDeps.listAuxiliarySessions(parentSessionId);
+  });
+  ipcMain.handle(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL, (_event, parentSessionId: string) => {
+    const auxiliaryDeps = getAuxiliaryDeps(deps);
+    if (!parentSessionId) {
+      return null;
+    }
+    return auxiliaryDeps.getActiveAuxiliarySession(parentSessionId);
+  });
+  ipcMain.handle(WITHMATE_GET_AUXILIARY_SESSION_CHANNEL, (_event, auxiliarySessionId: string) => {
+    const auxiliaryDeps = getAuxiliaryDeps(deps);
+    if (!auxiliarySessionId) {
+      return null;
+    }
+    return auxiliaryDeps.getAuxiliarySession(auxiliarySessionId);
+  });
+  ipcMain.handle(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL, (_event, parentSessionId: string) =>
+    getAuxiliaryDeps(deps).createAuxiliarySession(parentSessionId),
+  );
+  ipcMain.handle(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL, (_event, session: AuxiliarySession) =>
+    getAuxiliaryDeps(deps).updateAuxiliarySession(session),
+  );
+  ipcMain.handle(WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL, (_event, auxiliarySessionId: string) =>
+    getAuxiliaryDeps(deps).closeAuxiliarySession(auxiliarySessionId),
+  );
+  ipcMain.handle(
+    WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
+    (_event, auxiliarySessionId: string, request: RunSessionTurnRequest) =>
+      getAuxiliaryDeps(deps).runAuxiliarySessionTurn(auxiliarySessionId, request),
+  );
+  ipcMain.handle(WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL, (_event, auxiliarySessionId: string) =>
+    getAuxiliaryDeps(deps).cancelAuxiliarySessionRun(auxiliarySessionId),
   );
 }
 
@@ -863,6 +977,7 @@ function registerMateHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcMateDeps
 export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrationDeps): void {
   const wrappedIpcMain = createErrorLoggingIpcMain(ipcMain, deps);
   registerWindowHandlers(wrappedIpcMain, deps);
+  registerAuxiliaryHandlers(wrappedIpcMain, deps);
   registerCatalogHandlers(wrappedIpcMain, deps);
   registerSettingsHandlers(wrappedIpcMain, deps);
   registerSessionQueryHandlers(wrappedIpcMain, deps);

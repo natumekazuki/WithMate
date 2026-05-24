@@ -45,6 +45,8 @@ export type TextChatWindowProjectionInput = {
   messageListRef: RefObject<HTMLDivElement | null>;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   onDraftChange: (value: string) => void;
+  onCopyMessageText?: ChatWindowProps["messageColumnProps"]["onCopyMessageText"];
+  onQuoteMessageText?: ChatWindowProps["messageColumnProps"]["onQuoteMessageText"];
   onChangeModel: (model: string) => void;
   onChangeReasoningEffort: (reasoningEffort: string) => void;
   onSubmit: () => void;
@@ -109,6 +111,8 @@ export function buildTextChatWindowProps({
   messageListRef,
   composerTextareaRef,
   onDraftChange,
+  onCopyMessageText,
+  onQuoteMessageText,
   onChangeModel,
   onChangeReasoningEffort,
   onSubmit,
@@ -148,6 +152,8 @@ export function buildTextChatWindowProps({
       messages,
       messageListRef,
       isRunning,
+      onCopyMessageText,
+      onQuoteMessageText,
     }),
     isActionDockExpanded,
     composerProps: createHiddenControlsTextChatComposerProps({

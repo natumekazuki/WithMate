@@ -97,4 +97,32 @@ describe("SessionAuditLogModal", () => {
     assert.doesNotMatch(html, /Details/);
     assert.doesNotMatch(html, /OPERATION_DETAIL_SENTINEL/);
   });
+
+  it("sourceLabel を phase の隣にタグとして描画する", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SessionAuditLogModal, {
+        open: true,
+        entries: [createAuditLogSummary(1)],
+        sourceLabel: "Main Session",
+        details: {},
+        operationDetails: {},
+        hasMore: false,
+        loadingMore: false,
+        total: 1,
+        errorMessage: null,
+        onLoadMore() {},
+        onLoadDetail() {},
+        onLoadOperationDetail() {},
+        onClose() {},
+      }),
+    );
+
+    assert.match(html, /audit-log-source-tag/);
+    assert.match(html, />DONE</);
+    assert.match(html, />Main Session</);
+    assert.ok(
+      html.indexOf("DONE") < html.indexOf("Main Session"),
+      "source tag は phase label の後に描画する",
+    );
+  });
 });

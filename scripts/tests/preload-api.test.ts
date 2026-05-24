@@ -175,6 +175,18 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:open-session-files-terminal",
     args: ["session-1"],
   });
+  assert.deepEqual(await api.createAuxiliarySession("session-1"), {
+    channel: "withmate:create-auxiliary-session",
+    args: ["session-1"],
+  });
+  assert.deepEqual(await api.runAuxiliarySessionTurn("aux-1", { userMessage: "review" }), {
+    channel: "withmate:run-auxiliary-session-turn",
+    args: ["aux-1", { userMessage: "review" }],
+  });
+  assert.deepEqual(await api.cancelAuxiliarySessionRun("aux-1"), {
+    channel: "withmate:cancel-auxiliary-session-run",
+    args: ["aux-1"],
+  });
 });
 
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
@@ -184,9 +196,12 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
   const keys = Object.keys(api).sort();
   const expectedKeys = [
     "cancelCompanionSessionRun",
+    "cancelAuxiliarySessionRun",
     "cancelSessionRun",
+    "closeAuxiliarySession",
     "copyFilesToSessionFiles",
     "createMate",
+    "createAuxiliarySession",
     "createCompanionSession",
     "createSession",
     "deleteProjectMemoryEntry",
@@ -197,9 +212,11 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "exportModelCatalog",
     "exportModelCatalogFile",
     "forgetMateProfileItem",
+    "getActiveAuxiliarySession",
     "getAppDatabaseDiagnostics",
     "getAppBootStatus",
     "getAppSettings",
+    "getAuxiliarySession",
     "getCompanionAuditLogDetail",
     "getCompanionAuditLogDetailSection",
     "getCompanionAuditLogOperationDetail",
@@ -230,6 +247,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getSessionMessageArtifact",
     "importModelCatalog",
     "importModelCatalogFile",
+    "listAuxiliarySessions",
     "listCompanionAuditLogSummaries",
     "listCompanionAuditLogSummaryPage",
     "listCompanionAuditLogs",
@@ -275,6 +293,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "restoreCompanionTargetStash",
     "resolveLiveApproval",
     "resolveLiveElicitation",
+    "runAuxiliarySessionTurn",
     "runCompanionSessionTurn",
     "runMateTalkTurn",
     "runSessionTurn",
@@ -299,6 +318,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeSessionContextTelemetry",
     "syncCompanionTarget",
     "updateAppSettings",
+    "updateAuxiliarySession",
     "upsertProviderInstructionTarget",
     "updateCompanionSession",
     "updateMate",

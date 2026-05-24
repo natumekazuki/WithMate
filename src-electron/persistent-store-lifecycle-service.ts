@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { Session } from "../src/session-state.js";
+import type { AuxiliarySession, AuxiliarySessionSummary } from "../src/auxiliary-session-state.js";
 import { APP_DATABASE_V2_FILENAME, CREATE_V2_SCHEMA_SQL, isValidV2Database } from "./database-schema-v2.js";
 import { APP_DATABASE_V3_FILENAME, CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
 import { APP_DATABASE_V4_FILENAME } from "./database-schema-v4.js";
@@ -10,6 +11,7 @@ import { AppSettingsStorage } from "./app-settings-storage.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogStorageV2 } from "./audit-log-storage-v2.js";
 import { AuditLogStorageV3 } from "./audit-log-storage-v3.js";
+import { AuxiliarySessionStorage } from "./auxiliary-session-storage.js";
 import { MateStorage, type MateProfileFileMismatch } from "./mate-storage.js";
 import {
   ProjectMemoryStorageV2Read,
@@ -60,6 +62,17 @@ export type AuditLogStorageWrite = AwaitableStorageMethods<
 > & AuditLogStorageRead;
 export type SessionMemoryStorageAccess = SessionMemoryStorage | SessionMemoryStorageV2Read;
 export type ProjectMemoryStorageAccess = ProjectMemoryStorage | ProjectMemoryStorageV2Read;
+export type AuxiliarySessionStorageAccess = {
+  listAllAuxiliarySessions(): AuxiliarySession[];
+  listAuxiliarySessions(parentSessionId: string): AuxiliarySessionSummary[];
+  listRunningActiveAuxiliarySessions(): AuxiliarySessionSummary[];
+  getActiveAuxiliarySession(parentSessionId: string): AuxiliarySession | null;
+  getAuxiliarySession(auxiliarySessionId: string): AuxiliarySession | null;
+  upsertAuxiliarySession(session: AuxiliarySession): AuxiliarySession;
+  deleteAuxiliarySessionsForParent(parentSessionId: string): void;
+  deleteAuxiliarySessionsExceptParents(parentSessionIds: Iterable<string>): void;
+  close(): void;
+};
 
 export type PersistentStoreBundle = {
   modelCatalogStorage: ModelCatalogStorage;
@@ -67,6 +80,7 @@ export type PersistentStoreBundle = {
   sessionMemoryStorage: SessionMemoryStorageAccess;
   projectMemoryStorage: ProjectMemoryStorageAccess;
   auditLogStorage: AuditLogStorageRead;
+  auxiliarySessionStorage: AuxiliarySessionStorageAccess;
   appSettingsStorage: AppSettingsStorage;
   mateStorage: MateStorage;
   activeModelCatalog: ModelCatalogSnapshot;
@@ -86,6 +100,7 @@ type PersistentStoreLifecycleDeps = {
   createSessionMemoryStorage(dbPath: string): SessionMemoryStorage;
   createProjectMemoryStorage(dbPath: string): ProjectMemoryStorage;
   createAuditLogStorage(dbPath: string): AuditLogStorage;
+  createAuxiliarySessionStorage?(dbPath: string): AuxiliarySessionStorageAccess;
   createAppSettingsStorage(dbPath: string): AppSettingsStorage;
   createMateStorage(dbPath: string, userDataPath: string): MateStorage;
   ensureV2Schema?(dbPath: string): void;
@@ -127,6 +142,9 @@ export class PersistentStoreLifecycleService {
       : isV2Database
       ? new AuditLogStorageV2(dbPath)
       : this.deps.createAuditLogStorage(dbPath);
+    const auxiliarySessionStorage = isV3Database || isV2Database || basename(dbPath) !== APP_DATABASE_V4_FILENAME
+      ? new LegacyAuxiliarySessionStorage()
+      : this.deps.createAuxiliarySessionStorage?.(dbPath) ?? new AuxiliarySessionStorage(dbPath);
     const appSettingsStorage = this.deps.createAppSettingsStorage(dbPath);
     const mateStorage = this.deps.createMateStorage(dbPath, resolvedUserDataPath);
     await this.recoverActiveMateProfileProjection(mateStorage);
@@ -139,6 +157,7 @@ export class PersistentStoreLifecycleService {
       sessionMemoryStorage,
       projectMemoryStorage,
       auditLogStorage,
+      auxiliarySessionStorage,
       appSettingsStorage,
       mateStorage,
       activeModelCatalog,
@@ -155,6 +174,7 @@ export class PersistentStoreLifecycleService {
       bundle.sessionMemoryStorage,
       bundle.projectMemoryStorage,
       bundle.auditLogStorage,
+      bundle.auxiliarySessionStorage,
       bundle.appSettingsStorage,
       bundle.mateStorage,
     ];
@@ -246,6 +266,38 @@ export class PersistentStoreLifecycleService {
   }
 }
 
+class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
+  listAllAuxiliarySessions(): AuxiliarySession[] {
+    return [];
+  }
+
+  listAuxiliarySessions(): AuxiliarySessionSummary[] {
+    return [];
+  }
+
+  listRunningActiveAuxiliarySessions(): AuxiliarySessionSummary[] {
+    return [];
+  }
+
+  getActiveAuxiliarySession(): AuxiliarySession | null {
+    return null;
+  }
+
+  getAuxiliarySession(): AuxiliarySession | null {
+    return null;
+  }
+
+  upsertAuxiliarySession(): AuxiliarySession {
+    throw new Error("Auxiliary Session は legacy DB では利用できません。");
+  }
+
+  deleteAuxiliarySessionsForParent(): void {}
+
+  deleteAuxiliarySessionsExceptParents(): void {}
+
+  close(): void {}
+}
+
 export function createPersistentStoreLifecycleService(): PersistentStoreLifecycleService {
   return new PersistentStoreLifecycleService({
     createModelCatalogStorage: (dbPath, bundledModelCatalogPath) =>
@@ -254,6 +306,7 @@ export function createPersistentStoreLifecycleService(): PersistentStoreLifecycl
     createSessionMemoryStorage: (dbPath) => new SessionMemoryStorage(dbPath),
     createProjectMemoryStorage: (dbPath) => new ProjectMemoryStorage(dbPath),
     createAuditLogStorage: (dbPath) => new AuditLogStorage(dbPath),
+    createAuxiliarySessionStorage: (dbPath) => new AuxiliarySessionStorage(dbPath),
     createAppSettingsStorage: (dbPath) => new AppSettingsStorage(dbPath),
     createMateStorage: (dbPath, userDataPath) => new MateStorage(dbPath, userDataPath),
     ensureV2Schema: (dbPath) => {
