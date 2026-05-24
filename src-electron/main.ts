@@ -1121,8 +1121,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireAuxiliarySessionService().getActiveAuxiliarySession(parentSessionId),
                 getAuxiliarySession: (auxiliarySessionId) =>
                   requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId),
-                createAuxiliarySession: (parentSessionId) =>
-                  requireAuxiliarySessionService().createAuxiliarySession(parentSessionId),
+                createAuxiliarySession: (input) =>
+                  requireAuxiliarySessionService().createAuxiliarySession(input),
                 updateAuxiliarySession: (session) =>
                   requireAuxiliarySessionService().updateAuxiliarySession(session),
                 closeAuxiliarySession: (auxiliarySessionId) =>

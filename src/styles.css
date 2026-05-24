@@ -1781,6 +1781,10 @@ button:disabled {
   background: rgba(251, 248, 244, 0.97);
 }
 
+.auxiliary-provider-dialog {
+  width: min(560px, 100%);
+}
+
 .settings-dialog {
   width: min(720px, 100%);
   max-height: min(760px, calc(100vh - 52px));

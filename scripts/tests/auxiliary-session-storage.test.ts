@@ -26,6 +26,15 @@ function buildTestModelCatalogSnapshot(revision: number): ModelCatalogSnapshot {
           { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", reasoningEfforts: ["medium"] },
         ],
       },
+      {
+        id: "copilot",
+        label: "Copilot",
+        defaultModelId: "claude-sonnet-4.5",
+        defaultReasoningEffort: "medium",
+        models: [
+          { id: "claude-sonnet-4.5", label: "Claude Sonnet 4.5", reasoningEfforts: ["medium"] },
+        ],
+      },
     ],
   };
 }
@@ -83,7 +92,7 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
       getModelCatalogSnapshot: () => activeModelCatalog,
     });
 
-    const auxiliary = service.createAuxiliarySession(parent.id);
+    const auxiliary = service.createAuxiliarySession({ parentSessionId: parent.id, provider: parent.provider });
     assert.equal(auxiliary.parentSessionId, parent.id);
     assert.equal(auxiliary.status, "active");
     assert.equal(auxiliary.runState, "idle");
@@ -93,7 +102,7 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
     assert.deepEqual(auxiliary.allowedAdditionalDirectories, ["C:/shared"]);
     assert.equal(auxiliary.displayAfterMessageIndex, parent.messages.length - 1);
 
-    const sameActive = service.createAuxiliarySession(parent.id);
+    const sameActive = service.createAuxiliarySession({ parentSessionId: parent.id, provider: "copilot" });
     assert.equal(sameActive.id, auxiliary.id);
 
     const updated = service.updateAuxiliarySession({
@@ -253,7 +262,10 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
 
     const orphanedParent = { ...parent, id: "session-orphaned", taskTitle: "orphaned main task" };
     sessionStorage.upsertSession(orphanedParent);
-    const orphanedAuxiliary = service.createAuxiliarySession(orphanedParent.id);
+    const orphanedAuxiliary = service.createAuxiliarySession({
+      parentSessionId: orphanedParent.id,
+      provider: orphanedParent.provider,
+    });
     assert.equal(service.listAuxiliarySessions(orphanedParent.id)[0]?.id, orphanedAuxiliary.id);
 
     sessionStorage.replaceSessions([{ ...parent, taskTitle: "retained main task" }]);
@@ -262,6 +274,60 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
 
     sessionStorage.deleteSession(parent.id);
     assert.deepEqual(service.listAuxiliarySessions(parent.id), []);
+  } finally {
+    auxiliaryStorage?.close();
+    sessionStorage?.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+test("AuxiliarySessionService は指定 Provider の既定 model で active session を作成する", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-provider-"));
+  const dbPath = path.join(tempDirectory, "withmate.db");
+  let sessionStorage: SessionStorage | null = null;
+  let auxiliaryStorage: AuxiliarySessionStorage | null = null;
+
+  try {
+    sessionStorage = new SessionStorage(dbPath);
+    auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+    const parent = {
+      ...buildNewSession({
+        taskTitle: "main task",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "mate",
+        character: "Mate",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      }),
+      id: "session-main",
+      provider: "codex",
+      model: "gpt-5.4",
+      reasoningEffort: "high" as const,
+    };
+    sessionStorage.upsertSession(parent);
+    const activeModelCatalog = buildTestModelCatalogSnapshot(parent.catalogRevision);
+
+    const service = new AuxiliarySessionService({
+      getSession: (sessionId) => sessionStorage?.getSession(sessionId) ?? null,
+      getStorage: () => auxiliaryStorage!,
+      getModelCatalogSnapshot: () => activeModelCatalog,
+    });
+
+    const auxiliary = service.createAuxiliarySession({
+      parentSessionId: parent.id,
+      provider: "copilot",
+    });
+
+    assert.equal(auxiliary.parentSessionId, parent.id);
+    assert.equal(auxiliary.provider, "copilot");
+    assert.equal(auxiliary.catalogRevision, activeModelCatalog.revision);
+    assert.equal(auxiliary.model, "claude-sonnet-4.5");
+    assert.equal(auxiliary.reasoningEffort, "medium");
+    assert.equal(auxiliary.approvalMode, parent.approvalMode);
+    assert.equal(auxiliary.displayAfterMessageIndex, parent.messages.length - 1);
   } finally {
     auxiliaryStorage?.close();
     sessionStorage?.close();
@@ -297,8 +363,9 @@ test("AuxiliarySessionService は起動時に running active session を復旧�
     const service = new AuxiliarySessionService({
       getSession: (sessionId) => sessionStorage?.getSession(sessionId) ?? null,
       getStorage: () => auxiliaryStorage!,
+      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
     });
-    const auxiliary = service.createAuxiliarySession(parent.id);
+    const auxiliary = service.createAuxiliarySession({ parentSessionId: parent.id, provider: parent.provider });
     auxiliaryStorage.upsertAuxiliarySession({
       ...auxiliary,
       runState: "running",

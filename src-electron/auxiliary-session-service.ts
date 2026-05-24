@@ -4,8 +4,10 @@ import { currentTimestampLabel } from "../src/time-state.js";
 import type {
   AuxiliarySession,
   AuxiliarySessionSummary,
+  CreateAuxiliarySessionInput,
 } from "../src/auxiliary-session-state.js";
 import {
+  coerceModelSelection,
   getModelCatalogItem,
   getProviderCatalog,
   type ModelCatalogSnapshot,
@@ -84,16 +86,27 @@ export class AuxiliarySessionService {
     return this.deps.getStorage().listRunningActiveAuxiliarySessions();
   }
 
-  createAuxiliarySession(parentSessionId: string): AuxiliarySession {
-    const parent = this.deps.getSession(parentSessionId);
+  createAuxiliarySession(input: CreateAuxiliarySessionInput): AuxiliarySession {
+    const parent = this.deps.getSession(input.parentSessionId);
     if (!parent) {
       throw new Error("親セッションが見つからないよ。");
     }
 
-    const currentActive = this.getActiveAuxiliarySession(parentSessionId);
+    const currentActive = this.getActiveAuxiliarySession(input.parentSessionId);
     if (currentActive) {
       return currentActive;
     }
+
+    const snapshot = this.deps.getModelCatalogSnapshot?.();
+    const providerCatalog = getProviderCatalog(snapshot?.providers ?? [], input.provider);
+    if (!snapshot || !providerCatalog || providerCatalog.id !== input.provider.trim()) {
+      throw new Error("Auxiliary Session の Provider が model catalog に存在しないよ。");
+    }
+    const modelSelection = coerceModelSelection(
+      providerCatalog,
+      providerCatalog.defaultModelId,
+      providerCatalog.defaultReasoningEffort,
+    );
 
     const now = currentTimestampLabel();
     return this.deps.getStorage().upsertAuxiliarySession({
@@ -102,10 +115,10 @@ export class AuxiliarySessionService {
       status: "active",
       runState: "idle",
       title: buildAuxiliaryTitle(parent),
-      provider: parent.provider,
-      catalogRevision: parent.catalogRevision,
-      model: parent.model,
-      reasoningEffort: parent.reasoningEffort,
+      provider: providerCatalog.id,
+      catalogRevision: snapshot.revision,
+      model: modelSelection.resolvedModel,
+      reasoningEffort: modelSelection.resolvedReasoningEffort,
       approvalMode: parent.approvalMode,
       codexSandboxMode: parent.codexSandboxMode,
       customAgentName: parent.customAgentName,

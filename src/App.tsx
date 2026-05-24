@@ -60,6 +60,7 @@ import {
   resolveAvailableContextPaneTabs,
 } from "./session-ui-projection.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
 import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,
@@ -456,6 +457,9 @@ export default function AgentSessionWindowApp() {
   const [activeAuxiliarySession, setActiveAuxiliarySession] = useState<AuxiliarySession | null>(null);
   const [closedAuxiliarySessions, setClosedAuxiliarySessions] = useState<AuxiliarySession[]>([]);
   const [isAuxiliaryActionPending, setIsAuxiliaryActionPending] = useState(false);
+  const [auxiliaryLaunchDialogOpen, setAuxiliaryLaunchDialogOpen] = useState(false);
+  const [auxiliaryLaunchProviderId, setAuxiliaryLaunchProviderId] = useState<string | null>(null);
+  const [auxiliaryLaunchFeedback, setAuxiliaryLaunchFeedback] = useState("");
   const activityMonitorRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const activityMonitorSignatureRef = useRef("");
@@ -667,12 +671,12 @@ export default function AgentSessionWindowApp() {
   });
   const selectedProviderQuotaTelemetry = useMemo(
     () => (
-      selectedSession?.provider
-      && providerQuotaTelemetryState.ownerProviderId === selectedSession.provider
+      displayedSession?.provider
+      && providerQuotaTelemetryState.ownerProviderId === displayedSession.provider
         ? providerQuotaTelemetryState.telemetry
         : null
     ),
-    [providerQuotaTelemetryState.ownerProviderId, providerQuotaTelemetryState.telemetry, selectedSession?.provider],
+    [displayedSession?.provider, providerQuotaTelemetryState.ownerProviderId, providerQuotaTelemetryState.telemetry],
   );
   const selectedSessionContextTelemetry = useMemo(
     () => (
@@ -745,8 +749,18 @@ export default function AgentSessionWindowApp() {
     replacements: { name: selectedSessionCharacter?.name || DEFAULT_SESSION_RUNTIME_NAME },
   });
   const isSelectedProviderEnabled = useMemo(
-    () => !!selectedSession && getProviderAppSettings(appSettings, selectedSession.provider).enabled,
-    [appSettings, selectedSession],
+    () => !!displayedSession && getProviderAppSettings(appSettings, displayedSession.provider).enabled,
+    [appSettings, displayedSession],
+  );
+  const auxiliaryLaunchProviders = useMemo(
+    () => (modelCatalog?.providers ?? []).filter(
+      (provider) => getProviderAppSettings(appSettings, provider.id).enabled,
+    ),
+    [appSettings, modelCatalog],
+  );
+  const auxiliaryLaunchProviderItems = useMemo(
+    () => auxiliaryLaunchProviders.map((provider) => ({ id: provider.id, label: provider.label })),
+    [auxiliaryLaunchProviders],
   );
   const sessionExecutionBlockedReason = useMemo(() => {
     if (!selectedSession) {
@@ -776,7 +790,7 @@ export default function AgentSessionWindowApp() {
   useEffect(() => {
     let active = true;
 
-    if (!withmateApi || !selectedSession || selectedSession.provider !== "copilot") {
+    if (!withmateApi || !activeRunSessionId || displayedSession?.provider !== "copilot") {
       setAvailableCustomAgents([]);
       setIsCustomAgentListLoading(false);
       return () => {
@@ -785,7 +799,7 @@ export default function AgentSessionWindowApp() {
     }
 
     setIsCustomAgentListLoading(true);
-    void withmateApi.listSessionCustomAgents(selectedSession.id).then((agents) => {
+    void withmateApi.listSessionCustomAgents(activeRunSessionId).then((agents) => {
       if (active) {
         setAvailableCustomAgents(agents);
         setIsCustomAgentListLoading(false);
@@ -800,12 +814,12 @@ export default function AgentSessionWindowApp() {
     return () => {
       active = false;
     };
-  }, [selectedSession]);
+  }, [activeRunSessionId, displayedSession?.provider, withmateApi]);
 
   useEffect(() => {
     let active = true;
 
-    if (!withmateApi || !selectedSession) {
+    if (!withmateApi || !activeRunSessionId) {
       setAvailableSkills([]);
       setIsSkillListLoading(false);
       return () => {
@@ -814,7 +828,7 @@ export default function AgentSessionWindowApp() {
     }
 
     setIsSkillListLoading(true);
-    void withmateApi.listSessionSkills(selectedSession.id).then((skills) => {
+    void withmateApi.listSessionSkills(activeRunSessionId).then((skills) => {
       if (active) {
         setAvailableSkills(skills);
         setIsSkillListLoading(false);
@@ -829,7 +843,7 @@ export default function AgentSessionWindowApp() {
     return () => {
       active = false;
     };
-  }, [appSettings, selectedSession]);
+  }, [activeRunSessionId, appSettings, withmateApi]);
 
   useEffect(() => {
     setIsAgentPickerOpen(false);
@@ -1126,7 +1140,7 @@ export default function AgentSessionWindowApp() {
 
   useEffect(() => {
     let active = true;
-    const providerId = selectedSession?.provider ?? null;
+    const providerId = displayedSession?.provider ?? null;
 
     if (!withmateApi || providerId !== "copilot") {
       setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry: null });
@@ -1163,7 +1177,7 @@ export default function AgentSessionWindowApp() {
       active = false;
       unsubscribe();
     };
-  }, [selectedSession?.provider]);
+  }, [displayedSession?.provider, withmateApi]);
 
   useEffect(() => {
     let active = true;
@@ -1297,7 +1311,7 @@ export default function AgentSessionWindowApp() {
     () => (modelCatalog && displayedSession ? getProviderCatalog(modelCatalog.providers, displayedSession.provider) : null),
     [displayedSession, modelCatalog],
   );
-  const isCopilotSession = selectedSession?.provider === "copilot";
+  const isCopilotSession = displayedSession?.provider === "copilot";
   const selectedCopilotQuotaProjection = useMemo(
     () => (isCopilotSession ? buildCopilotQuotaProjection(selectedProviderQuotaTelemetry) : null),
     [isCopilotSession, selectedProviderQuotaTelemetry],
@@ -1580,20 +1594,20 @@ export default function AgentSessionWindowApp() {
   );
   const approvalChoiceOptions = useMemo(
     () => {
-      const options = getApprovalOptionsForProvider(selectedSession?.provider);
-      if (!selectedSession || options.some((option) => option.value === selectedSession.approvalMode)) {
+      const options = getApprovalOptionsForProvider(displayedSession?.provider);
+      if (!displayedSession || options.some((option) => option.value === displayedSession.approvalMode)) {
         return options;
       }
 
-      return [{ value: selectedSession.approvalMode, label: selectedSession.approvalMode }, ...options];
+      return [{ value: displayedSession.approvalMode, label: displayedSession.approvalMode }, ...options];
     },
-    [selectedSession?.approvalMode, selectedSession?.provider],
+    [displayedSession?.approvalMode, displayedSession?.provider],
   );
   const sandboxChoiceOptions = useMemo(
-    () => selectedSession
-      ? getSandboxOptionsForProviderSelection(selectedSession.provider, selectedSession.codexSandboxMode)
+    () => displayedSession
+      ? getSandboxOptionsForProviderSelection(displayedSession.provider, displayedSession.codexSandboxMode)
       : getSandboxOptionsForProvider(undefined),
-    [selectedSession?.codexSandboxMode, selectedSession?.provider],
+    [displayedSession?.codexSandboxMode, displayedSession?.provider],
   );
   const modelSelectOptions = useMemo(
     () => modelOptions.map((model) => ({ value: model.id, label: modelOptionLabel(model) })),
@@ -2474,8 +2488,40 @@ export default function AgentSessionWindowApp() {
     }
   };
 
+  const handleOpenAuxiliaryLaunchDialog = () => {
+    if (!selectedSession || isAuxiliaryActionPending) {
+      return;
+    }
+
+    const providerId =
+      auxiliaryLaunchProviders.find((provider) => provider.id === selectedSession.provider)?.id ??
+      auxiliaryLaunchProviders[0]?.id ??
+      null;
+    setAuxiliaryLaunchProviderId(providerId);
+    setAuxiliaryLaunchFeedback(providerId ? "" : "有効な Coding Provider がないよ。");
+    setAuxiliaryLaunchDialogOpen(true);
+  };
+
+  const handleCloseAuxiliaryLaunchDialog = () => {
+    if (isAuxiliaryActionPending) {
+      return;
+    }
+
+    setAuxiliaryLaunchDialogOpen(false);
+    setAuxiliaryLaunchFeedback("");
+  };
+
+  const handleSelectAuxiliaryLaunchProvider = (providerId: string) => {
+    setAuxiliaryLaunchProviderId(providerId);
+    setAuxiliaryLaunchFeedback("");
+  };
+
   const handleStartAuxiliarySession = async () => {
     if (!withmateApi || !selectedSession || isAuxiliaryActionPending) {
+      return;
+    }
+    if (!auxiliaryLaunchProviderId) {
+      setAuxiliaryLaunchFeedback("有効な Coding Provider を選んでね。");
       return;
     }
 
@@ -2486,12 +2532,17 @@ export default function AgentSessionWindowApp() {
 
     setIsAuxiliaryActionPending(true);
     try {
-      const session = await withmateApi.createAuxiliarySession(parentSessionId);
+      const session = await withmateApi.createAuxiliarySession({
+        parentSessionId,
+        provider: auxiliaryLaunchProviderId,
+      });
       setActiveAuxiliarySession(session);
       setIsActionDockPinnedExpanded(true);
       setForceComposerBlockedFeedback(false);
+      setAuxiliaryLaunchDialogOpen(false);
+      setAuxiliaryLaunchFeedback("");
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "Auxiliary Session の開始に失敗したよ。");
+      setAuxiliaryLaunchFeedback(error instanceof Error ? error.message : "Auxiliary Session の開始に失敗したよ。");
     } finally {
       void loadClosedAuxiliarySessions(parentSessionId, canApplyLoadResult);
       setIsAuxiliaryActionPending(false);
@@ -3172,7 +3223,7 @@ export default function AgentSessionWindowApp() {
       <button
         className="drawer-toggle compact secondary"
         type="button"
-        onClick={() => void handleStartAuxiliarySession()}
+        onClick={handleOpenAuxiliaryLaunchDialog}
         disabled={isAuxiliaryActionPending || isSelectedSessionRunning || isSelectedSessionReadOnly}
       >
         Auxiliary
@@ -3427,6 +3478,16 @@ export default function AgentSessionWindowApp() {
         onLoadAuditLogOperationDetail: handleLoadAuditLogOperationDetail,
         onCloseAuditLog: () => setAuditLogsOpen(false),
       })}
+      />
+      <AuxiliaryLaunchProviderDialog
+        open={auxiliaryLaunchDialogOpen}
+        providers={auxiliaryLaunchProviderItems}
+        selectedProviderId={auxiliaryLaunchProviderId}
+        feedback={auxiliaryLaunchFeedback}
+        starting={isAuxiliaryActionPending}
+        onClose={handleCloseAuxiliaryLaunchDialog}
+        onSelectProvider={handleSelectAuxiliaryLaunchProvider}
+        onStart={() => void handleStartAuxiliarySession()}
       />
     </>
   );

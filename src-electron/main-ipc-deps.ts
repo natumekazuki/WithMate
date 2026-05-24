@@ -20,7 +20,11 @@ import type {
   SessionSummary,
 } from "../src/app-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
-import type { AuxiliarySession, AuxiliarySessionSummary } from "../src/auxiliary-session-state.js";
+import type {
+  AuxiliarySession,
+  AuxiliarySessionSummary,
+  CreateAuxiliarySessionInput,
+} from "../src/auxiliary-session-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
 import type {
   CompanionMergeSelectedFilesRequest,
@@ -202,7 +206,7 @@ export type MainIpcAuxiliaryDepsArgs = {
   listAuxiliarySessions(parentSessionId: string): Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession(parentSessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
-  createAuxiliarySession(parentSessionId: string): Awaitable<AuxiliarySession>;
+  createAuxiliarySession(input: CreateAuxiliarySessionInput): Awaitable<AuxiliarySession>;
   updateAuxiliarySession(session: AuxiliarySession): Awaitable<AuxiliarySession>;
   closeAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession>;
   runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Awaitable<AuxiliarySession>;
