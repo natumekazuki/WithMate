@@ -301,6 +301,37 @@ test("buildCompanionChatWindowProps は retry draft 上書き確認を共通 com
   assert.match(html, />今の下書きを続ける<\/button>/);
 });
 
+test("buildCompanionChatWindowProps は通常 Companion の header action を維持する", () => {
+  const props = buildCompanionChatWindowProps(createProjectionInput());
+  const headerActionsHtml = renderToStaticMarkup(React.createElement(React.Fragment, null, props.headerProps.actions));
+
+  assert.equal(props.headerProps.showRenameButton, true);
+  assert.doesNotMatch(props.className, /auxiliary-session-mode/);
+  assert.match(headerActionsHtml, />Merge<\/button>/);
+  assert.equal(props.composerProps.modeLabel, undefined);
+  assert.equal(props.compactActionDockProps.modeLabel, undefined);
+});
+
+test("buildCompanionChatWindowProps は Auxiliary mode の header action slot と mode label を渡す", () => {
+  const props = buildCompanionChatWindowProps(createProjectionInput({
+    headerActions: React.createElement(
+      "button",
+      { className: "drawer-toggle compact secondary", type: "button" },
+      "Return to main",
+    ),
+    isAuxiliaryMode: true,
+  }));
+
+  const headerActionsHtml = renderToStaticMarkup(React.createElement(React.Fragment, null, props.headerProps.actions));
+
+  assert.equal(props.headerProps.showRenameButton, false);
+  assert.match(props.className, /auxiliary-session-mode/);
+  assert.match(headerActionsHtml, />Return to main<\/button>/);
+  assert.doesNotMatch(headerActionsHtml, />Merge<\/button>/);
+  assert.equal(props.composerProps.modeLabel, "Auxiliary");
+  assert.equal(props.compactActionDockProps.modeLabel, "Auxiliary");
+});
+
 test("Companion の optimistic running state は user prompt と pending live run を同じ session に紐づける", () => {
   const session = createCompanionSession();
   const runningSession = createOptimisticRunningSessionState(

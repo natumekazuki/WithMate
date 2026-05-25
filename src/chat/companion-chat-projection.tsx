@@ -2,6 +2,7 @@ import type {
   CSSProperties,
   KeyboardEventHandler,
   PointerEventHandler,
+  ReactNode,
   RefObject,
   UIEventHandler,
 } from "react";
@@ -180,6 +181,8 @@ export type CompanionChatProjectionInput = {
   onLoadAuditLogDetail: SessionAuditLogModalProps["onLoadDetail"];
   onLoadAuditLogOperationDetail: SessionAuditLogModalProps["onLoadOperationDetail"];
   onCloseAuditLog: () => void;
+  headerActions?: ReactNode;
+  isAuxiliaryMode?: boolean;
 };
 
 export function buildCompanionChatWindowProps(input: CompanionChatProjectionInput): ChatWindowProps {
@@ -188,7 +191,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     isEditingTitle: input.isEditingTitle,
     titleDraft: input.titleDraft,
     isRunning: input.isRunning,
-    showRenameButton: true,
+    showRenameButton: !input.isAuxiliaryMode,
     showAuditLogButton: true,
     showTerminalButton: true,
     showDeleteButton: false,
@@ -232,14 +235,19 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       </button>
     ),
     actions: (
-      <button
-        className="drawer-toggle compact secondary"
-        type="button"
-        disabled={input.isHeaderActionDisabled || input.session.status !== "active"}
-        onClick={input.onOpenMergeWindow}
-      >
-        Merge
-      </button>
+      <>
+        {input.headerActions}
+        {input.isAuxiliaryMode ? null : (
+          <button
+            className="drawer-toggle compact secondary"
+            type="button"
+            disabled={input.isHeaderActionDisabled || input.session.status !== "active"}
+            onClick={input.onOpenMergeWindow}
+          >
+            Merge
+          </button>
+        )}
+      </>
     ),
   };
 
@@ -288,6 +296,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       isRunning: input.isRunning,
       pendingRunIndicatorAnnouncement: "Companion が実行中",
       pendingRunIndicatorText: "Companion が応答を生成中...",
+      modeLabel: input.isAuxiliaryMode ? "Auxiliary" : undefined,
       composerBlocked: input.composerBlocked,
       canSelectCustomAgent: input.session.provider === "copilot",
       showCustomAgentPicker: true,
@@ -360,6 +369,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       isRunning: input.isRunning,
       pendingRunIndicatorAnnouncement: "Companion が実行中",
       pendingRunIndicatorText: "Companion が応答を生成中...",
+      modeLabel: input.isAuxiliaryMode ? "Auxiliary" : undefined,
       isSendDisabled: input.isSendDisabled,
       showJumpToBottom: !input.isMessageListFollowing,
       sendButtonTitle: input.sendButtonTitle,
@@ -375,10 +385,10 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
 
   return {
     mode: "companion",
-    className: buildChatPageClassName({
+    className: `${buildChatPageClassName({
       baseClassName: "theme-accent",
       isHeaderExpanded: input.isHeaderExpanded,
-    }),
+    })}${input.isAuxiliaryMode ? " auxiliary-session-mode" : ""}`,
     style: input.themeStyle,
     workbenchRef: input.workbenchRef,
     workbenchStyle: input.workbenchStyle,
