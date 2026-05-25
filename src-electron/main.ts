@@ -53,6 +53,7 @@ import type { WorkspacePathCandidate } from "../src/workspace-path-candidate.js"
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
+import { companionSessionToAuxiliaryParentSession } from "./auxiliary-parent-session.js";
 import { AuxiliarySessionService } from "./auxiliary-session-service.js";
 import { AuxiliarySessionStorage } from "./auxiliary-session-storage.js";
 import { CodexAdapter } from "./codex-adapter.js";
@@ -1441,7 +1442,7 @@ function requireAuxiliarySessionStorage(): AuxiliarySessionStorageAccess {
 function requireAuxiliarySessionService(): AuxiliarySessionService {
   if (!auxiliarySessionService) {
     auxiliarySessionService = new AuxiliarySessionService({
-      getSession: (sessionId) => getSession(sessionId),
+      getParentSession: getAuxiliaryParentSession,
       getStorage: () => requireAuxiliarySessionStorage(),
       getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
     });
@@ -2428,10 +2429,10 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
   if (!auxiliarySessionRuntimeService) {
     auxiliarySessionRuntimeService = new SessionRuntimeService({
       getSession: (sessionId) => requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId),
-      upsertSession: (session) => {
+      upsertSession: async (session) => {
         const auxiliaryService = requireAuxiliarySessionService();
         auxiliaryService.upsertAuxiliaryRuntimeSession(session);
-        const storedSession = auxiliaryService.getAuxiliaryRuntimeSession(session.id);
+        const storedSession = await auxiliaryService.getAuxiliaryRuntimeSession(session.id);
         if (!storedSession) {
           throw new Error("Auxiliary Session の保存結果を読み戻せなかったよ。");
         }
@@ -3344,6 +3345,16 @@ function getSession(sessionId: string): Session | null {
   return sessions.find((session) => session.id === sessionId) ?? null;
 }
 
+async function getAuxiliaryParentSession(parentSessionId: string): Promise<Session | null> {
+  const session = getSession(parentSessionId);
+  if (session) {
+    return session;
+  }
+
+  const companionSession = await requireCompanionStorage().getSession(parentSessionId);
+  return companionSession ? companionSessionToAuxiliaryParentSession(companionSession) : null;
+}
+
 async function getDisplaySession(sessionId: string): Promise<Session | null> {
   const liveSession = getSession(sessionId);
   if (liveSession && (liveSession.messages.length > 0 || liveSession.stream.length > 0)) {
@@ -3564,7 +3575,7 @@ async function previewComposerInput(
   const auxiliaryService = requireAuxiliarySessionService();
   const auxiliarySession = auxiliaryService.getAuxiliarySession(sessionId);
   const auxiliaryRuntimeSession = auxiliarySession
-    ? auxiliaryService.getAuxiliaryRuntimeSession(sessionId)
+    ? await auxiliaryService.getAuxiliaryRuntimeSession(sessionId)
     : null;
   if (auxiliaryRuntimeSession) {
     return resolveComposerPreview(
