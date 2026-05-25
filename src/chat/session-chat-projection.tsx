@@ -6,7 +6,6 @@ import type { Session } from "../session-state.js";
 import {
   SessionContextPane,
   SessionPaneErrorBoundary,
-  SessionRetryBanner,
   type SessionActionDockCompactRowProps,
   type SessionAuditLogModalProps,
   type SessionComposerExpandedProps,
@@ -22,6 +21,7 @@ import {
   buildChatPageClassName,
   buildLiveSessionChatBodyProps,
 } from "./chat-window-adapter.js";
+import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
 
 export type AgentSessionChatProjectionInput = {
   selectedSession: Session;
@@ -262,21 +262,19 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onQuoteMessageText: input.onQuoteMessageText,
     },
     composer: {
-      retryBanner: (
-        <SessionRetryBanner
-          retryBanner={input.retryBanner}
-          isRetryDetailsOpen={input.isRetryDetailsOpen}
-          isRetryActionDisabled={input.isRetryActionDisabled}
-          isRetryEditDisabled={input.isRetryEditDisabled}
-          isRetryDraftReplacePending={input.isRetryDraftReplacePending}
-          onToggleDetails={input.onToggleRetryDetails}
-          onResendLastMessage={input.onResendLastMessage}
-          onEditLastMessage={input.onEditLastMessage}
-          onConfirmRetryDraftReplace={input.onConfirmRetryDraftReplace}
-          onCancelRetryDraftReplace={input.onCancelRetryDraftReplace}
-          onOpenPath={input.onOpenInlinePath}
-        />
-      ),
+      retryBanner: buildLiveSessionRetryBanner({
+        retryBanner: input.retryBanner,
+        isRetryDetailsOpen: input.isRetryDetailsOpen,
+        isRetryActionDisabled: input.isRetryActionDisabled,
+        isRetryEditDisabled: input.isRetryEditDisabled,
+        isRetryDraftReplacePending: input.isRetryDraftReplacePending,
+        onToggleDetails: input.onToggleRetryDetails,
+        onResendLastMessage: input.onResendLastMessage,
+        onEditLastMessage: input.onEditLastMessage,
+        onConfirmRetryDraftReplace: input.onConfirmRetryDraftReplace,
+        onCancelRetryDraftReplace: input.onCancelRetryDraftReplace,
+        onOpenPath: input.onOpenInlinePath,
+      }),
       isRunning: input.selectedSession.runState === "running",
       pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: input.pendingRunIndicatorText,

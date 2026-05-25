@@ -105,17 +105,16 @@ import {
   createQuotedMessageInsertion,
   insertComposerTextAtCaret,
 } from "./chat/message-text-actions.js";
+import {
+  buildRetryStopSummary,
+  defaultRetryBannerDetailsOpen,
+  isRetryActionDisabled as resolveRetryActionDisabled,
+  resolveRetryBannerKind,
+  shouldProtectRetryEditDraft,
+  type RetryBannerKind,
+  type RetryBannerState,
+} from "./chat/retry-state.js";
 import { buildMessageListProjection } from "./auxiliary-session-message-projection.js";
-
-type RetryBannerKind = "interrupted" | "failed" | "canceled";
-
-type RetryBannerState = {
-  kind: RetryBannerKind;
-  badge: string;
-  title: string;
-  stopSummary: string;
-  lastRequestText: string;
-};
 
 type SessionOwnedLiveRun = {
   ownerSessionId: string | null;
@@ -158,10 +157,6 @@ function buildAuxiliaryRuntimeSession(parent: Session, auxiliary: AuxiliarySessi
     messages: auxiliary.messages,
     stream: [],
   };
-}
-
-function defaultRetryBannerDetailsOpen(kind: RetryBannerKind): boolean {
-  return kind !== "canceled";
 }
 
 function liveRunStepBucketPriority(status: string): number {
@@ -276,17 +271,6 @@ function isTerminalAuditLogPhase(phase: AuditLogSummary["phase"]): boolean {
   );
 }
 
-function getLastNonEmptyValue(values: Array<string | null | undefined>): string {
-  for (let index = values.length - 1; index >= 0; index -= 1) {
-    const candidate = values[index]?.trim();
-    if (candidate) {
-      return candidate;
-    }
-  }
-
-  return "";
-}
-
 function areStringArraysEqual(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
@@ -309,57 +293,6 @@ function hasSameAuxiliaryDraftSaveContext(current: AuxiliarySession, request: Au
 
 function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
-}
-
-function buildRetryStopSummary(
-  kind: RetryBannerKind,
-  liveRun: LiveSessionRunState | null,
-  latestTerminalAuditLog: AuditLogSummary | null,
-  lastAssistantMessage: Message | null,
-): string {
-  const liveRunSummary = getLastNonEmptyValue((liveRun?.steps ?? []).map((step) => step.summary));
-  if (liveRunSummary) {
-    return liveRunSummary;
-  }
-
-  if (kind === "interrupted") {
-    return "停止地点は復元できませんでした。";
-  }
-
-  const auditOperationSummary = getLastNonEmptyValue(
-    (latestTerminalAuditLog?.operations ?? []).map((operation) => operation.summary),
-  );
-  if (auditOperationSummary) {
-    return auditOperationSummary;
-  }
-
-  const artifactOperationSummary = getLastNonEmptyValue(
-    (lastAssistantMessage?.artifact?.operationTimeline ?? []).map((operation) => operation.summary),
-  );
-  if (artifactOperationSummary) {
-    return artifactOperationSummary;
-  }
-
-  const artifactActivitySummary = getLastNonEmptyValue(lastAssistantMessage?.artifact?.activitySummary ?? []);
-  if (artifactActivitySummary) {
-    return artifactActivitySummary;
-  }
-
-  if (kind === "failed") {
-    const errorSummary = latestTerminalAuditLog?.errorMessage.trim() ?? "";
-    if (errorSummary && errorSummary !== "ユーザーがキャンセルしたよ。") {
-      return errorSummary;
-    }
-  }
-
-  switch (kind) {
-    case "failed":
-      return "エラー箇所は復元できませんでした。";
-    case "canceled":
-      return "停止位置は記録されていません。";
-    default:
-      return "";
-  }
 }
 
 function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): string {
@@ -1473,14 +1406,10 @@ export default function AgentSessionWindowApp() {
       return null;
     }
 
-    let kind: RetryBannerKind | null = null;
-    if (selectedSession.runState === "interrupted") {
-      kind = "interrupted";
-    } else if (selectedSession.runState === "error") {
-      kind = "failed";
-    } else if (selectedSession.runState === "idle" && latestTerminalAuditLog?.phase === "canceled") {
-      kind = "canceled";
-    }
+    const kind = resolveRetryBannerKind({
+      runState: selectedSession.runState,
+      latestTerminalAuditLogPhase: latestTerminalAuditLog?.phase,
+    });
 
     if (!kind) {
       return null;
@@ -1541,8 +1470,7 @@ export default function AgentSessionWindowApp() {
     isSelectedSessionReadOnly,
     selectedSessionLiveRun,
   ]);
-  const hasDraftText = draft.trim().length > 0;
-  const shouldProtectDraftOnRetryEdit = !!retryBanner && hasDraftText && draft !== retryBanner.lastRequestText;
+  const shouldProtectDraftOnRetryEdit = shouldProtectRetryEditDraft({ retryBanner, draft });
   const isComposerDisabled = selectedSession?.runState === "running" || !!composerBlockedReason || isSelectedSessionReadOnly;
   const composerSendabilityBase = useMemo(
     () =>
@@ -1560,8 +1488,13 @@ export default function AgentSessionWindowApp() {
   );
   const isSendDisabled = composerSendability.isSendDisabled;
   const composerSendButtonTitle = getComposerSendButtonTitle(composerSendability);
-  const isRetryActionDisabled =
-    !retryBanner || !lastUserMessage || !!composerBlockedReason || isSelectedSessionReadOnly || selectedSession?.runState === "running";
+  const isRetryActionDisabled = resolveRetryActionDisabled({
+    retryBanner,
+    hasLastUserMessage: !!lastUserMessage,
+    composerBlocked: !!composerBlockedReason,
+    isReadOnly: isSelectedSessionReadOnly,
+    runState: selectedSession?.runState,
+  });
   const isRetryEditDisabled = isRetryActionDisabled || isComposerDisabled;
   const shouldForceActionDockExpanded =
     isAgentPickerOpen
