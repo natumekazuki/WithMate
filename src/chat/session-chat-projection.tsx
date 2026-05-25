@@ -53,6 +53,7 @@ export type AgentSessionChatProjectionInput = {
   hasLiveRunAssistantText: boolean;
   liveRunErrorMessage: string;
   isMessageListFollowing: boolean;
+  pendingMessageGroupId?: SessionMessageColumnProps["pendingMessageGroupId"];
   retryBanner: SessionRetryBannerProps["retryBanner"];
   isRetryDetailsOpen: boolean;
   isRetryActionDisabled: boolean;
@@ -249,6 +250,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     hasLiveRunAssistantText: input.hasLiveRunAssistantText,
     liveRunErrorMessage: input.liveRunErrorMessage,
     pendingMessageText: input.pendingMessageText,
+    pendingMessageGroupId: input.pendingMessageGroupId,
     isMessageListFollowing: input.isMessageListFollowing,
     onMessageListScroll: input.onMessageListScroll,
     onToggleArtifact: input.onToggleArtifact,

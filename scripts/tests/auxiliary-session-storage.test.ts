@@ -98,6 +98,7 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
     assert.equal(auxiliary.runState, "idle");
     assert.equal(auxiliary.provider, parent.provider);
     assert.equal(auxiliary.model, parent.model);
+    assert.equal(auxiliary.reasoningEffort, parent.reasoningEffort);
     assert.equal(auxiliary.codexSandboxMode, "workspace-write-network");
     assert.deepEqual(auxiliary.allowedAdditionalDirectories, ["C:/shared"]);
     assert.equal(auxiliary.displayAfterMessageIndex, parent.messages.length - 1);
@@ -113,7 +114,18 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
     assert.equal(service.getActiveAuxiliarySession(parent.id)?.composerDraft, "review this diff");
     assert.equal(service.listAuxiliarySessions(parent.id)[0]?.id, updated.id);
 
-    const runtimeSession = service.getAuxiliaryRuntimeSession(updated.id);
+    const movedDisplayAnchor = service.updateAuxiliarySession({
+      ...updated,
+      displayAfterMessageIndex: 3,
+    });
+    assert.equal(movedDisplayAnchor.displayAfterMessageIndex, 3);
+    const staleDraftWithOldDisplayAnchor = service.updateAuxiliarySession({
+      ...updated,
+      composerDraft: "stale draft with old anchor",
+    });
+    assert.equal(staleDraftWithOldDisplayAnchor.displayAfterMessageIndex, 3);
+
+    const runtimeSession = service.getAuxiliaryRuntimeSession(movedDisplayAnchor.id);
     assert.ok(runtimeSession);
     const persistedRuntime = service.upsertAuxiliaryRuntimeSession({
       ...runtimeSession,
@@ -274,6 +286,61 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
 
     sessionStorage.deleteSession(parent.id);
     assert.deepEqual(service.listAuxiliarySessions(parent.id), []);
+  } finally {
+    auxiliaryStorage?.close();
+    sessionStorage?.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+test("AuxiliarySessionService は通常起動と同じ選択済み model context で active session を作成する", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-model-selection-"));
+  const dbPath = path.join(tempDirectory, "withmate.db");
+  let sessionStorage: SessionStorage | null = null;
+  let auxiliaryStorage: AuxiliarySessionStorage | null = null;
+
+  try {
+    sessionStorage = new SessionStorage(dbPath);
+    auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+    const parent = {
+      ...buildNewSession({
+        taskTitle: "main task",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "mate",
+        character: "Mate",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      }),
+      id: "session-main",
+      provider: "codex",
+      model: "gpt-5.4",
+      reasoningEffort: "high" as const,
+      customAgentName: "parent-agent",
+    };
+    sessionStorage.upsertSession(parent);
+    const activeModelCatalog = buildTestModelCatalogSnapshot(parent.catalogRevision);
+
+    const service = new AuxiliarySessionService({
+      getSession: (sessionId) => sessionStorage?.getSession(sessionId) ?? null,
+      getStorage: () => auxiliaryStorage!,
+      getModelCatalogSnapshot: () => activeModelCatalog,
+    });
+
+    const auxiliary = service.createAuxiliarySession({
+      parentSessionId: parent.id,
+      provider: parent.provider,
+      model: "gpt-5.4-mini",
+      reasoningEffort: "medium",
+      customAgentName: "last-used-agent",
+    });
+
+    assert.equal(auxiliary.provider, parent.provider);
+    assert.equal(auxiliary.model, "gpt-5.4-mini");
+    assert.equal(auxiliary.reasoningEffort, "medium");
+    assert.equal(auxiliary.customAgentName, "last-used-agent");
   } finally {
     auxiliaryStorage?.close();
     sessionStorage?.close();

@@ -91,6 +91,7 @@ import {
 import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
+import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import { extractTextReferenceCandidates } from "./path-reference.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
@@ -2532,9 +2533,14 @@ export default function AgentSessionWindowApp() {
 
     setIsAuxiliaryActionPending(true);
     try {
+      const launchSelectionSessions = await withmateApi.listSessionSummaries().catch(() => sessions);
+      const lastUsedSelection = resolveLastUsedSessionSelection(launchSelectionSessions, auxiliaryLaunchProviderId);
       const session = await withmateApi.createAuxiliarySession({
         parentSessionId,
         provider: auxiliaryLaunchProviderId,
+        model: lastUsedSelection?.model,
+        reasoningEffort: lastUsedSelection?.reasoningEffort,
+        customAgentName: lastUsedSelection?.customAgentName,
       });
       setActiveAuxiliarySession(session);
       setIsActionDockPinnedExpanded(true);
@@ -2644,13 +2650,27 @@ export default function AgentSessionWindowApp() {
       throw new Error(composerBlockedReason);
     }
 
+    await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
+    const currentAuxiliarySession = activeAuxiliarySessionRef.current ?? activeAuxiliarySession;
+    if (currentAuxiliarySession.id !== activeAuxiliarySession.id) {
+      return;
+    }
+    if (currentAuxiliarySession.runState === "running") {
+      throw new Error("Auxiliary Session はまだ実行中だよ。");
+    }
+
     setIsActionDockPinnedExpanded(false);
+    const displayAfterMessageIndex =
+      currentAuxiliarySession.messages.length === 0 && selectedSession
+        ? selectedSession.messages.length - 1
+        : currentAuxiliarySession.displayAfterMessageIndex;
     const runningSession: AuxiliarySession = {
-      ...activeAuxiliarySession,
+      ...currentAuxiliarySession,
       runState: "running",
       composerDraft: "",
       updatedAt: currentTimestampLabel(),
-      messages: [...activeAuxiliarySession.messages, { role: "user", text: nextMessage }],
+      messages: [...currentAuxiliarySession.messages, { role: "user", text: nextMessage }],
+      displayAfterMessageIndex,
     };
     activeAuxiliarySessionRef.current = runningSession;
     setActiveAuxiliarySession(runningSession);
@@ -2661,7 +2681,13 @@ export default function AgentSessionWindowApp() {
     ));
 
     try {
-      const saved = await withmateApi.runAuxiliarySessionTurn(activeAuxiliarySession.id, { userMessage: nextMessage });
+      if (displayAfterMessageIndex !== currentAuxiliarySession.displayAfterMessageIndex) {
+        await withmateApi.updateAuxiliarySession({
+          ...currentAuxiliarySession,
+          displayAfterMessageIndex,
+        });
+      }
+      const saved = await withmateApi.runAuxiliarySessionTurn(currentAuxiliarySession.id, { userMessage: nextMessage });
       activeAuxiliarySessionRef.current = saved;
       setActiveAuxiliarySession(saved);
     } catch (error) {
@@ -2669,8 +2695,8 @@ export default function AgentSessionWindowApp() {
       setLiveRunState((current) => (
         current.ownerSessionId === runningSession.id ? { ownerSessionId: runningSession.id, state: null } : current
       ));
-      activeAuxiliarySessionRef.current = activeAuxiliarySession;
-      setActiveAuxiliarySession(activeAuxiliarySession);
+      activeAuxiliarySessionRef.current = currentAuxiliarySession;
+      setActiveAuxiliarySession(currentAuxiliarySession);
       throw error;
     }
   };
@@ -3268,6 +3294,7 @@ export default function AgentSessionWindowApp() {
         liveRunAssistantText,
         hasLiveRunAssistantText,
         liveRunErrorMessage: selectedSessionLiveRun?.errorMessage ?? "",
+        pendingMessageGroupId: activeAuxiliarySession?.runState === "running" ? activeAuxiliarySession.id : null,
         isMessageListFollowing,
         retryBanner: activeAuxiliarySession ? null : retryBanner,
         isRetryDetailsOpen,

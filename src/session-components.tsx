@@ -1932,6 +1932,7 @@ export type SessionMessageColumnProps = {
   hasLiveRunAssistantText: boolean;
   liveRunErrorMessage: string;
   pendingMessageText?: string;
+  pendingMessageGroupId?: string | null;
   isMessageListFollowing: boolean;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
   onToggleArtifact: (artifactKey: string) => void;
@@ -1985,6 +1986,7 @@ export function SessionMessageColumn({
   hasLiveRunAssistantText,
   liveRunErrorMessage,
   pendingMessageText = "",
+  pendingMessageGroupId = null,
   isMessageListFollowing,
   onMessageListScroll,
   onToggleArtifact,
@@ -2019,6 +2021,24 @@ export function SessionMessageColumn({
     hasLiveRunAssistantText ||
     liveRunErrorMessage.trim().length > 0 ||
     pendingMessageText.trim().length > 0;
+  const canRenderGroupedPendingInlineContent = useMemo(
+    () =>
+      hasPendingInlineContent &&
+      pendingMessageGroupId !== null &&
+      renderedMessages.some((_, index) => {
+        const absoluteIndex = latestMessageWindowStartIndex + index;
+        const messageGroup = messageGroups?.[absoluteIndex] ?? null;
+        const nextMessageGroup = messageGroups?.[absoluteIndex + 1] ?? null;
+        return messageGroup?.id === pendingMessageGroupId && nextMessageGroup?.id !== messageGroup.id;
+      }),
+    [
+      hasPendingInlineContent,
+      latestMessageWindowStartIndex,
+      messageGroups,
+      pendingMessageGroupId,
+      renderedMessages,
+    ],
+  );
 
   const loadOlderMessages = useCallback((listElement: HTMLDivElement | null = messageListRef.current) => {
     if (!listElement || latestMessageWindowStartIndex <= 0) {
@@ -2111,6 +2131,67 @@ export function SessionMessageColumn({
     });
   };
 
+  const renderPendingRow = (className = "") => (
+    <article className={`message-row assistant pending-row${className ? ` ${className}` : ""}`}>
+      <CharacterAvatar character={character} size="small" className="message-avatar" />
+      <div className="message-card assistant pending-message-card">
+        {liveApprovalRequest ? (
+          <section className="live-approval-card" role="group" aria-label="承認要求">
+            <div className="live-approval-head">
+              <div className="live-approval-copy">
+                <span className="live-approval-badge">承認待ち</span>
+                <p className="live-approval-title">{liveApprovalRequest.title}</p>
+              </div>
+              <span className="live-approval-kind">{liveApprovalKindLabel(liveApprovalRequest.kind)}</span>
+            </div>
+            <pre className="live-approval-summary">{liveApprovalRequest.summary}</pre>
+            {liveApprovalRequest.warning ? (
+              <p className="live-approval-warning" role="alert">{liveApprovalRequest.warning}</p>
+            ) : null}
+            {liveApprovalRequest.details ? (
+              <details className="live-approval-details">
+                <summary>Details</summary>
+                <pre>{liveApprovalRequest.details}</pre>
+              </details>
+            ) : null}
+            <div className="live-approval-actions">
+              <button
+                type="button"
+                onClick={() => onResolveLiveApproval(liveApprovalRequest, "approve")}
+                disabled={approvalActionRequestId === liveApprovalRequest.requestId}
+              >
+                今回だけ許可
+              </button>
+              <button
+                className="drawer-toggle secondary"
+                type="button"
+                onClick={() => onResolveLiveApproval(liveApprovalRequest, "deny")}
+                disabled={approvalActionRequestId === liveApprovalRequest.requestId}
+              >
+                拒否
+              </button>
+            </div>
+          </section>
+        ) : null}
+        {liveElicitationRequest ? (
+          <LiveElicitationCard
+            request={liveElicitationRequest}
+            elicitationActionRequestId={elicitationActionRequestId}
+            onResolveLiveElicitation={onResolveLiveElicitation}
+            onOpenPath={onOpenPath}
+          />
+        ) : null}
+        {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} onOpenPath={onOpenPath} /> : null}
+        {!liveApprovalRequest && !liveElicitationRequest && !hasLiveRunAssistantText && !liveRunErrorMessage.trim() && pendingMessageText.trim() ? (
+          <MessageRichText text={pendingMessageText} onOpenPath={onOpenPath} />
+        ) : null}
+        {liveRunErrorMessage ? (
+          <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
+        ) : null}
+      </div>
+    </article>
+  );
+
   return (
     <div className="session-message-column">
       <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
@@ -2134,6 +2215,12 @@ export function SessionMessageColumn({
             const nextMessageGroup = messageGroups?.[absoluteIndex + 1] ?? null;
             const isMessageGroupStart = !!messageGroup && previousMessageGroup?.id !== messageGroup.id;
             const isMessageGroupEnd = !!messageGroup && nextMessageGroup?.id !== messageGroup.id;
+            const shouldRenderGroupedPending =
+              isRunning &&
+              canRenderGroupedPendingInlineContent &&
+              isMessageGroupEnd &&
+              messageGroup?.id === pendingMessageGroupId;
+            const shouldCloseMessageGroup = isMessageGroupEnd && !shouldRenderGroupedPending;
             const artifactKey = messageKey;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
@@ -2172,7 +2259,7 @@ export function SessionMessageColumn({
                 className={`message-row ${message.role}${message.accent ? " accent" : ""}${
                   messageGroup ? " auxiliary-message-group-item" : ""
                 }${isMessageGroupStart ? " auxiliary-message-group-start" : ""}${
-                  isMessageGroupEnd ? " auxiliary-message-group-end" : ""
+                  shouldCloseMessageGroup ? " auxiliary-message-group-end" : ""
                 }`}
               >
                 {isAssistant ? (
@@ -2371,71 +2458,13 @@ export function SessionMessageColumn({
                     </section>
                   ) : null}
                 </div>
-              </article>
+                </article>
+                {shouldRenderGroupedPending ? renderPendingRow("auxiliary-message-group-item auxiliary-message-group-end") : null}
               </Fragment>
             );
           })}
 
-              {isRunning && hasPendingInlineContent ? (
-                <article className="message-row assistant pending-row">
-                  <CharacterAvatar character={character} size="small" className="message-avatar" />
-                  <div className="message-card assistant pending-message-card">
-                    {liveApprovalRequest ? (
-                      <section className="live-approval-card" role="group" aria-label="承認要求">
-                        <div className="live-approval-head">
-                          <div className="live-approval-copy">
-                            <span className="live-approval-badge">承認待ち</span>
-                            <p className="live-approval-title">{liveApprovalRequest.title}</p>
-                          </div>
-                          <span className="live-approval-kind">{liveApprovalKindLabel(liveApprovalRequest.kind)}</span>
-                        </div>
-                        <pre className="live-approval-summary">{liveApprovalRequest.summary}</pre>
-                        {liveApprovalRequest.warning ? (
-                          <p className="live-approval-warning" role="alert">{liveApprovalRequest.warning}</p>
-                        ) : null}
-                        {liveApprovalRequest.details ? (
-                          <details className="live-approval-details">
-                            <summary>Details</summary>
-                            <pre>{liveApprovalRequest.details}</pre>
-                          </details>
-                        ) : null}
-                        <div className="live-approval-actions">
-                          <button
-                            type="button"
-                            onClick={() => onResolveLiveApproval(liveApprovalRequest, "approve")}
-                            disabled={approvalActionRequestId === liveApprovalRequest.requestId}
-                          >
-                            今回だけ許可
-                          </button>
-                          <button
-                            className="drawer-toggle secondary"
-                            type="button"
-                            onClick={() => onResolveLiveApproval(liveApprovalRequest, "deny")}
-                            disabled={approvalActionRequestId === liveApprovalRequest.requestId}
-                          >
-                            拒否
-                          </button>
-                        </div>
-                      </section>
-                    ) : null}
-                    {liveElicitationRequest ? (
-                      <LiveElicitationCard
-                        request={liveElicitationRequest}
-                        elicitationActionRequestId={elicitationActionRequestId}
-                        onResolveLiveElicitation={onResolveLiveElicitation}
-                        onOpenPath={onOpenPath}
-                      />
-                    ) : null}
-                    {hasLiveRunAssistantText ? <MessageRichText text={liveRunAssistantText} onOpenPath={onOpenPath} /> : null}
-                    {!liveApprovalRequest && !liveElicitationRequest && !hasLiveRunAssistantText && !liveRunErrorMessage.trim() && pendingMessageText.trim() ? (
-                      <MessageRichText text={pendingMessageText} onOpenPath={onOpenPath} />
-                    ) : null}
-                    {liveRunErrorMessage ? (
-                      <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
-                    ) : null}
-                  </div>
-                </article>
-              ) : null}
+              {isRunning && hasPendingInlineContent && !canRenderGroupedPendingInlineContent ? renderPendingRow() : null}
               <div className="message-list-bottom-anchor" aria-hidden="true" />
             </div>
           </div>
