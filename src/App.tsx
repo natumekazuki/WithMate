@@ -88,6 +88,10 @@ import {
   useSessionContextRail,
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
+import {
+  createOptimisticRunningSessionState,
+  createOwnedPendingLiveSessionRunState,
+} from "./session-live-run-state.js";
 import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
@@ -390,24 +394,6 @@ function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): strin
       .map((task) => [task.id, task.kind, task.status, task.title, task.details ?? "", task.updatedAt].join("\u001d"))
       .join("\u001c"),
   ].join("\u001b");
-}
-
-function createPendingLiveSessionRunState(
-  session: Pick<Session, "id" | "threadId">,
-  previousState?: LiveSessionRunState | null,
-): LiveSessionRunState {
-  return {
-    sessionId: session.id,
-    threadId: session.threadId,
-    assistantText: "",
-    reasoningText: "",
-    steps: [],
-    backgroundTasks: previousState?.backgroundTasks ?? [],
-    usage: null,
-    errorMessage: "",
-    approvalRequest: null,
-    elicitationRequest: null,
-  };
 }
 
 export default function AgentSessionWindowApp() {
@@ -1822,19 +1808,11 @@ export default function AgentSessionWindowApp() {
     if (options?.clearDraft ?? true) {
       setDraft("");
     }
-    const updatedSession: Session = {
-      ...selectedSession,
-      updatedAt: currentTimestampLabel(),
+    const updatedSession = createOptimisticRunningSessionState(selectedSession, nextMessage, currentTimestampLabel(), {
       status: "running",
-      runState: "running",
-      messages: [...selectedSession.messages, { role: "user", text: nextMessage }],
-    };
+    });
 
-    setLiveRunState((current) => (
-      current.ownerSessionId === updatedSession.id
-        ? { ownerSessionId: updatedSession.id, state: createPendingLiveSessionRunState(updatedSession, current.state) }
-        : { ownerSessionId: updatedSession.id, state: createPendingLiveSessionRunState(updatedSession) }
-    ));
+    setLiveRunState((current) => createOwnedPendingLiveSessionRunState(updatedSession, current));
     setSessions([updatedSession]);
 
     try {
@@ -2674,10 +2652,9 @@ export default function AgentSessionWindowApp() {
     };
     activeAuxiliarySessionRef.current = runningSession;
     setActiveAuxiliarySession(runningSession);
-    setLiveRunState((current) => (
-      current.ownerSessionId === runningSession.id
-        ? { ownerSessionId: runningSession.id, state: createPendingLiveSessionRunState(buildAuxiliaryRuntimeSession(selectedSession!, runningSession), current.state) }
-        : { ownerSessionId: runningSession.id, state: createPendingLiveSessionRunState(buildAuxiliaryRuntimeSession(selectedSession!, runningSession)) }
+    setLiveRunState((current) => createOwnedPendingLiveSessionRunState(
+      buildAuxiliaryRuntimeSession(selectedSession!, runningSession),
+      current,
     ));
 
     try {

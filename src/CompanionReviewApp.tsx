@@ -79,6 +79,10 @@ import {
   useSessionContextRail,
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
+import {
+  createOptimisticRunningSessionState,
+  createOwnedPendingLiveSessionRunState,
+} from "./session-live-run-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   buildContextPaneProjection,
@@ -112,6 +116,7 @@ const MERGE_FILE_LIST_DEFAULT_PERCENT = 32;
 const MERGE_STAGE_DEFAULT_PERCENT = 50;
 const MERGE_PANE_MIN_PERCENT = 30;
 const MERGE_PANE_MAX_PERCENT = 70;
+const COMPANION_PENDING_MESSAGE_TEXT = "Companion の応答を待っています。";
 
 type ChangedFileTreeAction = "stage" | "unstage";
 
@@ -1926,6 +1931,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
+    const previousSnapshot = snapshot;
+    let appliedOptimisticState = false;
     setTurnRunning(true);
     setForceComposerBlockedFeedback(false);
     setErrorMessage("");
@@ -1943,6 +1950,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         throw new Error(sendability.primaryFeedback || "送信できない状態だよ。");
       }
 
+      const runningSession = createOptimisticRunningSessionState(
+        snapshot.session,
+        userMessage,
+        currentTimestampLabel(),
+      );
+      setComposerText("");
+      setLiveRunState((current) => createOwnedPendingLiveSessionRunState(runningSession, current));
+      setSnapshot((current) => current ? { ...current, session: runningSession } : current);
+      appliedOptimisticState = true;
+
       const nextSession = await withmateApi.runCompanionSessionTurn(snapshot.session.id, {
         userMessage,
         model: selectedModel,
@@ -1950,10 +1967,22 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         approvalMode: selectedApprovalMode,
         codexSandboxMode: selectedCodexSandboxMode,
       });
-      setComposerText("");
       setSnapshot((current) => current ? { ...current, session: nextSession } : current);
-      await reloadSnapshot();
+      try {
+        await reloadSnapshot();
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Companion の再読み込みに失敗したよ。");
+      }
     } catch (error) {
+      if (appliedOptimisticState) {
+        setComposerText(userMessage);
+        setLiveRunState((current) => (
+          current.ownerSessionId === previousSnapshot.session.id
+            ? { ownerSessionId: previousSnapshot.session.id, state: null }
+            : current
+        ));
+        setSnapshot((current) => current?.session.id === previousSnapshot.session.id ? previousSnapshot : current);
+      }
       setErrorMessage(error instanceof Error ? error.message : "Companion の実行に失敗したよ。");
     } finally {
       setTurnRunning(false);
@@ -2201,6 +2230,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         elicitationActionRequestId,
         liveRunAssistantText: selectedSessionLiveRun?.assistantText ?? "",
         liveRunErrorMessage: selectedSessionLiveRun?.errorMessage ?? "",
+        pendingMessageText: COMPANION_PENDING_MESSAGE_TEXT,
         isMessageListFollowing,
         isActionDockExpanded,
         composerBlocked: snapshot.session.status !== "active" || operationRunning,

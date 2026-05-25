@@ -48,6 +48,7 @@ export type CompanionChatProjectionInput = {
   elicitationActionRequestId: string | null;
   liveRunAssistantText: string;
   liveRunErrorMessage: string;
+  pendingMessageText: string;
   isMessageListFollowing: boolean;
   isActionDockExpanded: boolean;
   composerBlocked: boolean;
@@ -247,6 +248,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     liveRunAssistantText: input.liveRunAssistantText,
     hasLiveRunAssistantText: input.liveRunAssistantText.length > 0,
     liveRunErrorMessage: input.liveRunErrorMessage,
+    pendingMessageText: input.pendingMessageText,
     isMessageListFollowing: input.isMessageListFollowing,
     onMessageListScroll: input.onMessageListScroll,
     onToggleArtifact: input.onToggleArtifact,
