@@ -154,7 +154,7 @@ type StaticTextChatCompactActionDockProps = Pick<ChatCompactActionDockProps, "dr
   onExpand?: ChatCompactActionDockProps["onExpand"];
 };
 
-type LiveSessionMessageColumnProps = {
+export type LiveSessionMessageColumnProps = {
   sessionId: string;
   character: ChatMessageColumnProps["character"];
   messages: Message[];
@@ -185,7 +185,7 @@ type LiveSessionMessageColumnProps = {
   onQuoteMessageText?: ChatMessageColumnProps["onQuoteMessageText"];
 };
 
-type LiveSessionComposerProps = Omit<
+export type LiveSessionComposerProps = Omit<
   ChatComposerProps,
   | "showAttachmentControls"
   | "showAdditionalDirectoryControls"
@@ -196,14 +196,35 @@ type LiveSessionComposerProps = Omit<
   showExecutionModeControls?: boolean;
 };
 
-type LiveSessionCompactActionDockProps = Omit<ChatCompactActionDockProps, "showJumpToBottom"> & {
+export type LiveSessionCompactActionDockProps = Omit<ChatCompactActionDockProps, "showJumpToBottom"> & {
   showJumpToBottom: boolean;
 };
 
-type LiveSessionSplitterProps = {
+export type LiveSessionSplitterProps = {
   isContextRailResizing: boolean;
   onStartContextRailResize?: PointerEventHandler<HTMLButtonElement>;
 };
+
+export type LiveSessionChatBodyPropsInput = {
+  messageColumn: LiveSessionMessageColumnProps;
+  composer: LiveSessionComposerProps;
+  compactActionDock: LiveSessionCompactActionDockProps;
+  splitter: LiveSessionSplitterProps;
+};
+
+export function buildLiveSessionChatBodyProps(input: LiveSessionChatBodyPropsInput): Pick<
+  ChatWindowProps,
+  "messageColumnProps" | "composerProps" | "compactActionDockProps"
+> & {
+  splitterProps: ReturnType<typeof buildLiveSessionSplitterProps>;
+} {
+  return {
+    messageColumnProps: buildLiveSessionMessageColumnProps(input.messageColumn),
+    composerProps: buildLiveSessionComposerProps(input.composer),
+    compactActionDockProps: buildLiveSessionCompactActionDockProps(input.compactActionDock),
+    splitterProps: buildLiveSessionSplitterProps(input.splitter),
+  };
+}
 
 export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColumnProps): ChatMessageColumnProps {
   return {
