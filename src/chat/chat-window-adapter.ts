@@ -171,6 +171,7 @@ type LiveSessionMessageColumnProps = {
   hasLiveRunAssistantText: boolean;
   liveRunErrorMessage: string;
   pendingMessageText?: string;
+  pendingMessageGroupId?: ChatMessageColumnProps["pendingMessageGroupId"];
   isMessageListFollowing: boolean;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
   onToggleArtifact: (artifactKey: string) => void;
@@ -222,6 +223,7 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     hasLiveRunAssistantText: input.hasLiveRunAssistantText,
     liveRunErrorMessage: input.liveRunErrorMessage,
     pendingMessageText: input.pendingMessageText,
+    pendingMessageGroupId: input.pendingMessageGroupId,
     isMessageListFollowing: input.isMessageListFollowing,
     onMessageListScroll: input.onMessageListScroll,
     onToggleArtifact: input.onToggleArtifact,

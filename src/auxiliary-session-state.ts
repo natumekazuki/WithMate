@@ -8,6 +8,9 @@ export type AuxiliarySessionStatus = "active" | "closed";
 export type CreateAuxiliarySessionInput = {
   parentSessionId: string;
   provider: string;
+  model?: string;
+  reasoningEffort?: ModelReasoningEffort;
+  customAgentName?: string;
 };
 
 export type AuxiliarySession = {

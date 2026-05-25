@@ -10,6 +10,7 @@ import {
   coerceModelSelection,
   getModelCatalogItem,
   getProviderCatalog,
+  type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
 import type { Session } from "../src/session-state.js";
@@ -63,6 +64,14 @@ function isRuntimeMetadataInCatalog(
   return model?.reasoningEfforts.includes(session.reasoningEffort) ?? false;
 }
 
+function resolveInitialModelSelection(input: CreateAuxiliarySessionInput, providerCatalog: ModelCatalogProvider) {
+  return coerceModelSelection(
+    providerCatalog,
+    input.model ?? providerCatalog.defaultModelId,
+    input.reasoningEffort ?? providerCatalog.defaultReasoningEffort,
+  );
+}
+
 export class AuxiliarySessionService {
   constructor(private readonly deps: AuxiliarySessionServiceDeps) {}
 
@@ -102,11 +111,7 @@ export class AuxiliarySessionService {
     if (!snapshot || !providerCatalog || providerCatalog.id !== input.provider.trim()) {
       throw new Error("Auxiliary Session の Provider が model catalog に存在しないよ。");
     }
-    const modelSelection = coerceModelSelection(
-      providerCatalog,
-      providerCatalog.defaultModelId,
-      providerCatalog.defaultReasoningEffort,
-    );
+    const modelSelection = resolveInitialModelSelection(input, providerCatalog);
 
     const now = currentTimestampLabel();
     return this.deps.getStorage().upsertAuxiliarySession({
@@ -121,7 +126,7 @@ export class AuxiliarySessionService {
       reasoningEffort: modelSelection.resolvedReasoningEffort,
       approvalMode: parent.approvalMode,
       codexSandboxMode: parent.codexSandboxMode,
-      customAgentName: parent.customAgentName,
+      customAgentName: input.customAgentName?.trim() ?? "",
       allowedAdditionalDirectories: [...parent.allowedAdditionalDirectories],
       threadId: "",
       composerDraft: "",
@@ -199,6 +204,7 @@ export class AuxiliarySessionService {
       session.model !== current.model ||
       session.reasoningEffort !== current.reasoningEffort;
     const hasComposerDraftChange = session.composerDraft !== current.composerDraft;
+    const hasDisplayAfterMessageIndexChange = session.displayAfterMessageIndex !== current.displayAfterMessageIndex;
     const hasEditableSettingsChange =
       session.title !== current.title ||
       session.approvalMode !== current.approvalMode ||
@@ -218,6 +224,8 @@ export class AuxiliarySessionService {
         hasEditableSettingsChange ||
         (hasRuntimeMetadataChange && (isExplicitRuntimeMetadataUpdate || session.catalogRevision === current.catalogRevision))
       );
+    const shouldPreserveDisplayAfterMessageIndex =
+      hasComposerDraftChange && hasDisplayAfterMessageIndexChange;
 
     return this.deps.getStorage().upsertAuxiliarySession({
       ...current,
@@ -233,6 +241,9 @@ export class AuxiliarySessionService {
         ? [...current.allowedAdditionalDirectories]
         : [...session.allowedAdditionalDirectories],
       composerDraft: shouldPreserveComposerDraft ? current.composerDraft : session.composerDraft,
+      displayAfterMessageIndex: shouldPreserveDisplayAfterMessageIndex
+        ? current.displayAfterMessageIndex
+        : session.displayAfterMessageIndex,
       updatedAt: currentTimestampLabel(),
     });
   }
