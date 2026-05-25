@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -31,7 +32,7 @@ import {
   type CompanionSessionWindowView,
   getCompanionWindowViewFromSearch,
 } from "./companion-session-mode-adapter.js";
-import type { ChangedFile, DiscoveredCustomAgent, DiscoveredSkill } from "./runtime-state.js";
+import type { AuditLogSummary, ChangedFile, DiscoveredCustomAgent, DiscoveredSkill } from "./runtime-state.js";
 import type {
   CompanionMergeReadinessIssue,
   CompanionReviewSnapshot,
@@ -52,6 +53,14 @@ import { SessionHeader } from "./session-components.js";
 import { ChatHeaderHandle, ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
+import {
+  buildRetryStopSummary,
+  defaultRetryBannerDetailsOpen,
+  isRetryActionDisabled as resolveRetryActionDisabled,
+  resolveRetryBannerKind,
+  shouldProtectRetryEditDraft,
+  type RetryBannerState,
+} from "./chat/retry-state.js";
 import {
   copyMessageTextToClipboard,
   createQuotedMessageInsertion,
@@ -121,6 +130,17 @@ const MERGE_STAGE_DEFAULT_PERCENT = 50;
 const MERGE_PANE_MIN_PERCENT = 30;
 const MERGE_PANE_MAX_PERCENT = 70;
 const COMPANION_PENDING_MESSAGE_TEXT = "Companion の応答を待っています。";
+
+function isTerminalAuditLogPhase(phase: AuditLogSummary["phase"]): boolean {
+  return (
+    phase === "completed"
+    || phase === "failed"
+    || phase === "canceled"
+    || phase === "background-completed"
+    || phase === "background-failed"
+    || phase === "background-canceled"
+  );
+}
 
 type ChangedFileTreeAction = "stage" | "unstage";
 
@@ -302,6 +322,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [workspacePathMatches, setWorkspacePathMatches] = useState<WorkspacePathCandidate[]>([]);
   const [activeWorkspacePathMatchIndex, setActiveWorkspacePathMatchIndex] = useState(-1);
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
+  const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
+  const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
   const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
   const [elicitationActionRequestId, setElicitationActionRequestId] = useState<string | null>(null);
   const [liveRunState, setLiveRunState] = useState<{ ownerSessionId: string | null; state: LiveSessionRunState | null }>({
@@ -376,6 +398,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setWorkspacePathMatches([]);
     setActiveWorkspacePathMatchIndex(-1);
     setIsComposerImeComposing(false);
+    setIsRetryDraftReplacePending(false);
   }, [snapshot?.session.id]);
 
   useEffect(() => {
@@ -696,6 +719,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     auditLogsState,
     auditLogDetails,
     auditLogOperationDetails,
+    persistedEntries: companionSessionAuditLogs,
     displayedEntries: displayedSessionAuditLogs,
     handleLoadMoreAuditLogs,
     handleLoadAuditLogDetail,
@@ -709,6 +733,21 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   });
   const selectedSessionRunState = snapshot?.session.runState ?? (selectedSessionLiveRun ? "running" : null);
   const isSelectedSessionRunning = selectedSessionRunState === "running" || turnRunning;
+  const lastUserMessage = useMemo(
+    () => snapshot ? [...snapshot.session.messages].reverse().find((message) => message.role === "user") ?? null : null,
+    [snapshot],
+  );
+  const lastAssistantMessage = useMemo(
+    () =>
+      snapshot
+        ? [...snapshot.session.messages].reverse().find((message) => message.role === "assistant") ?? null
+        : null,
+    [snapshot],
+  );
+  const latestTerminalAuditLog = useMemo(
+    () => companionSessionAuditLogs.find((entry) => isTerminalAuditLogPhase(entry.phase)) ?? null,
+    [companionSessionAuditLogs],
+  );
   const activePathReference = useMemo(
     () => (snapshot ? getActivePathReference(composerText, composerCaret) : null),
     [composerCaret, composerText, snapshot],
@@ -919,6 +958,58 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const companionComposerBlockedReason = snapshot?.session.status !== "active"
     ? "この Companion は active ではないよ。"
     : "";
+  const retryBanner = useMemo<RetryBannerState | null>(() => {
+    if (!snapshot || snapshot.session.runState === "running" || snapshot.session.status !== "active" || !lastUserMessage) {
+      return null;
+    }
+
+    const kind = resolveRetryBannerKind({
+      runState: snapshot.session.runState,
+      latestTerminalAuditLogPhase: latestTerminalAuditLog?.phase,
+    });
+    if (!kind) {
+      return null;
+    }
+
+    const stopSummary = buildRetryStopSummary(kind, selectedSessionLiveRun, latestTerminalAuditLog, lastAssistantMessage);
+    switch (kind) {
+      case "interrupted":
+        return {
+          kind,
+          badge: "中断",
+          title: "前回の依頼は中断されたままです",
+          stopSummary,
+          lastRequestText: lastUserMessage.text,
+        };
+      case "failed":
+        return {
+          kind,
+          badge: "失敗",
+          title: "前回の依頼は完了できませんでした",
+          stopSummary,
+          lastRequestText: lastUserMessage.text,
+        };
+      case "canceled":
+        return {
+          kind,
+          badge: "停止",
+          title: "この依頼は途中で停止しました",
+          stopSummary,
+          lastRequestText: lastUserMessage.text,
+        };
+      default:
+        return null;
+    }
+  }, [lastAssistantMessage, lastUserMessage, latestTerminalAuditLog, selectedSessionLiveRun, snapshot]);
+  const shouldProtectDraftOnRetryEdit = shouldProtectRetryEditDraft({ retryBanner, draft: composerText });
+  const isRetryActionDisabled = resolveRetryActionDisabled({
+    retryBanner,
+    hasLastUserMessage: !!lastUserMessage,
+    composerBlocked: !!companionComposerBlockedReason || operationRunning || turnRunning,
+    isReadOnly: snapshot?.session.status !== "active",
+    runState: selectedSessionRunState,
+  });
+  const isRetryEditDisabled = isRetryActionDisabled || runDisabled;
   const companionComposerSendabilityBase = useMemo(
     () =>
       buildComposerSendabilityState({
@@ -940,9 +1031,39 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     isSkillPickerOpen ||
     isAdditionalDirectoryListOpen ||
     workspacePathMatches.length > 0 ||
+    isRetryDraftReplacePending ||
+    !!retryBanner ||
     companionComposerSendability.shouldShowFeedback;
   const isActionDockExpanded = isActionDockPinnedExpanded || shouldForceActionDockExpanded;
   const canCollapseActionDock = !shouldForceActionDockExpanded;
+  const retryBannerIdentity = useMemo(() => {
+    if (!retryBanner || !snapshot || !lastUserMessage) {
+      return null;
+    }
+
+    const lastUserMessageIdentity = `${
+      snapshot.session.messages.filter((message) => message.role === "user").length
+    }:${lastUserMessage.text}`;
+    const canceledAuditLogIdentity =
+      retryBanner.kind === "canceled" && latestTerminalAuditLog
+        ? `${latestTerminalAuditLog.id}:${latestTerminalAuditLog.phase}:${latestTerminalAuditLog.createdAt}`
+        : "";
+
+    return [retryBanner.kind, lastUserMessageIdentity, canceledAuditLogIdentity].join("\u001f");
+  }, [lastUserMessage, latestTerminalAuditLog, retryBanner, snapshot]);
+  useEffect(() => {
+    if (!composerText.trim() || !retryBanner) {
+      setIsRetryDraftReplacePending(false);
+    }
+  }, [composerText, retryBanner]);
+  useLayoutEffect(() => {
+    if (!retryBanner) {
+      setIsRetryDetailsOpen(false);
+      return;
+    }
+
+    setIsRetryDetailsOpen(defaultRetryBannerDetailsOpen(retryBanner.kind));
+  }, [retryBanner?.kind, retryBannerIdentity, snapshot?.session.id]);
   const actionDockCompactPreview = useMemo(() => {
     const normalizedDraft = composerText.replace(/\s+/g, " ").trim();
     if (normalizedDraft) {
@@ -1924,10 +2045,22 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
   }
 
-  async function sendCompanionTurn(): Promise<void> {
+  async function sendCompanionTurn(
+    messageText = composerText,
+    options: { clearDraft?: boolean } = {},
+  ): Promise<void> {
     const withmateApi = getWithMateApi();
-    const userMessage = composerText.trim();
-    if (!snapshot || !withmateApi || isCompanionSendDisabled || !userMessage) {
+    const shouldClearDraft = options.clearDraft ?? true;
+    const userMessage = messageText.trim();
+    if (
+      !snapshot
+      || !withmateApi
+      || operationRunning
+      || turnRunning
+      || selectedSessionRunState === "running"
+      || snapshot.session.status !== "active"
+      || !userMessage
+    ) {
       setForceComposerBlockedFeedback(true);
       return;
     }
@@ -1939,13 +2072,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setErrorMessage("");
     setOperationMessage("");
     try {
-      const preview = await withmateApi.previewCompanionComposerInput(snapshot.session.id, composerText);
-      setComposerPreview(preview);
+      const preview = await withmateApi.previewCompanionComposerInput(snapshot.session.id, messageText);
+      if (shouldClearDraft || messageText === composerText) {
+        setComposerPreview(preview);
+      }
       const sendability = buildComposerSendabilityState({
         runState: selectedSessionRunState,
         blockedReason: companionComposerBlockedReason,
         inputErrors: preview.errors,
-        draftText: composerText,
+        draftText: messageText,
       });
       if (sendability.isSendDisabled) {
         throw new Error(sendability.primaryFeedback || "送信できない状態だよ。");
@@ -1956,7 +2091,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         userMessage,
         currentTimestampLabel(),
       );
-      setComposerText("");
+      if (shouldClearDraft) {
+        setComposerText("");
+      }
       setLiveRunState((current) => createOwnedPendingLiveSessionRunState(runningSession, current));
       setSnapshot((current) => current ? { ...current, session: runningSession } : current);
       appliedOptimisticState = true;
@@ -1976,7 +2113,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       }
     } catch (error) {
       if (appliedOptimisticState) {
-        setComposerText(userMessage);
+        if (shouldClearDraft) {
+          setComposerText(userMessage);
+        }
         setLiveRunState((current) => (
           current.ownerSessionId === previousSnapshot.session.id
             ? { ownerSessionId: previousSnapshot.session.id, state: null }
@@ -1996,6 +2135,61 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
     await withmateApi.cancelCompanionSessionRun(snapshot.session.id);
+  }
+
+  async function handleResendLastMessage(): Promise<void> {
+    if (!lastUserMessage || isRetryActionDisabled) {
+      return;
+    }
+
+    await sendCompanionTurn(lastUserMessage.text, { clearDraft: false });
+  }
+
+  function restoreLastUserMessageToDraft(messageText: string): void {
+    const textarea = composerTextareaRef.current;
+    const nextDraft = messageText;
+    const nextCaret = nextDraft.length;
+
+    setIsActionDockPinnedExpanded(true);
+    setComposerText(nextDraft);
+    setComposerCaret(nextCaret);
+    setWorkspacePathMatches([]);
+    setActiveWorkspacePathMatchIndex(-1);
+    setIsRetryDraftReplacePending(false);
+
+    window.requestAnimationFrame(() => {
+      if (!textarea) {
+        return;
+      }
+
+      textarea.focus();
+      textarea.setSelectionRange(nextCaret, nextCaret);
+    });
+  }
+
+  function handleEditLastMessage(): void {
+    if (!retryBanner || !lastUserMessage || isRetryEditDisabled) {
+      return;
+    }
+
+    if (shouldProtectDraftOnRetryEdit) {
+      setIsRetryDraftReplacePending(true);
+      return;
+    }
+
+    restoreLastUserMessageToDraft(lastUserMessage.text);
+  }
+
+  function handleConfirmRetryDraftReplace(): void {
+    if (!retryBanner || !lastUserMessage || isRetryEditDisabled) {
+      return;
+    }
+
+    restoreLastUserMessageToDraft(lastUserMessage.text);
+  }
+
+  function handleCancelRetryDraftReplace(): void {
+    setIsRetryDraftReplacePending(false);
   }
 
   async function handleResolveCompanionLiveApproval(
@@ -2233,6 +2427,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         liveRunErrorMessage: selectedSessionLiveRun?.errorMessage ?? "",
         pendingMessageText: COMPANION_PENDING_MESSAGE_TEXT,
         isMessageListFollowing,
+        retryBanner,
+        isRetryDetailsOpen,
+        isRetryActionDisabled,
+        isRetryEditDisabled,
+        isRetryDraftReplacePending,
         isActionDockExpanded,
         composerBlocked: snapshot.session.status !== "active" || operationRunning,
         isAgentPickerOpen,
@@ -2323,6 +2522,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onOpenInlinePath: (target) => openCompanionInlinePath(getWithMateApi(), target, snapshot.session.worktreePath),
         onCopyMessageText: handleCopyMessageText,
         onQuoteMessageText: handleQuoteMessageText,
+        onToggleRetryDetails: () => setIsRetryDetailsOpen((current) => !current),
+        onResendLastMessage: () => void handleResendLastMessage(),
+        onEditLastMessage: handleEditLastMessage,
+        onConfirmRetryDraftReplace: handleConfirmRetryDraftReplace,
+        onCancelRetryDraftReplace: handleCancelRetryDraftReplace,
         onPickFile: () => void pickAndInsertPath("file"),
         onPickFolder: () => void pickAndInsertPath("folder"),
         onPickImage: () => void pickAndInsertPath("image"),

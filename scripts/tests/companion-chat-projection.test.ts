@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   buildCompanionChatWindowProps,
@@ -102,6 +103,11 @@ function createProjectionInput(
     liveRunErrorMessage: "",
     pendingMessageText: "Companion の応答を待っています。",
     isMessageListFollowing: true,
+    retryBanner: null,
+    isRetryDetailsOpen: false,
+    isRetryActionDisabled: true,
+    isRetryEditDisabled: true,
+    isRetryDraftReplacePending: false,
     isActionDockExpanded: true,
     composerBlocked: false,
     isAgentPickerOpen: false,
@@ -195,6 +201,11 @@ function createProjectionInput(
     onOpenInlinePath: noop,
     onCopyMessageText: noop,
     onQuoteMessageText: noop,
+    onToggleRetryDetails: noop,
+    onResendLastMessage: noop,
+    onEditLastMessage: noop,
+    onConfirmRetryDraftReplace: noop,
+    onCancelRetryDraftReplace: noop,
     onPickFile: noop,
     onPickFolder: noop,
     onPickImage: noop,
@@ -244,6 +255,50 @@ test("buildCompanionChatWindowProps は running 中の response 待機文を mes
   assert.equal(props.messageColumnProps.isRunning, true);
   assert.equal(props.messageColumnProps.pendingMessageText, "Companion の応答を待っています。");
   assert.deepEqual(props.messageColumnProps.messages, [{ role: "user", text: "調べて" }]);
+});
+
+test("buildCompanionChatWindowProps は retry banner を共通 composer に渡す", () => {
+  const props = buildCompanionChatWindowProps(createProjectionInput({
+    retryBanner: {
+      kind: "failed",
+      badge: "失敗",
+      title: "前回の依頼は完了できませんでした",
+      stopSummary: "assistant error",
+      lastRequestText: "調べて",
+    },
+    isRetryDetailsOpen: true,
+    isRetryActionDisabled: false,
+    isRetryEditDisabled: false,
+    isRetryDraftReplacePending: false,
+  }));
+
+  const html = renderToStaticMarkup(React.createElement(React.Fragment, null, props.composerProps.retryBanner));
+
+  assert.match(html, /retry-banner failed/);
+  assert.match(html, />同じ依頼を再送<\/button>/);
+  assert.match(html, />編集して再送<\/button>/);
+});
+
+test("buildCompanionChatWindowProps は retry draft 上書き確認を共通 composer に渡す", () => {
+  const props = buildCompanionChatWindowProps(createProjectionInput({
+    retryBanner: {
+      kind: "failed",
+      badge: "失敗",
+      title: "前回の依頼は完了できませんでした",
+      stopSummary: "assistant error",
+      lastRequestText: "調べて",
+    },
+    isRetryDetailsOpen: true,
+    isRetryActionDisabled: false,
+    isRetryEditDisabled: false,
+    isRetryDraftReplacePending: true,
+  }));
+
+  const html = renderToStaticMarkup(React.createElement(React.Fragment, null, props.composerProps.retryBanner));
+
+  assert.match(html, /今の下書きは残しています/);
+  assert.match(html, />前回の依頼で置き換える<\/button>/);
+  assert.match(html, />今の下書きを続ける<\/button>/);
 });
 
 test("Companion の optimistic running state は user prompt と pending live run を同じ session に紐づける", () => {

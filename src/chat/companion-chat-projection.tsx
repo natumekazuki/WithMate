@@ -17,6 +17,7 @@ import {
   type SessionContextPaneProps,
   type SessionHeaderProps,
   type SessionMessageColumnProps,
+  type SessionRetryBannerProps,
 } from "../session-components.js";
 import type { ContextPaneTabKey } from "../session-ui-projection.js";
 import { ChatSessionModals } from "./chat-session-modals.js";
@@ -25,6 +26,7 @@ import {
   buildChatPageClassName,
   buildLiveSessionChatBodyProps,
 } from "./chat-window-adapter.js";
+import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
 
 export type CompanionChatProjectionInput = {
   session: CompanionSession;
@@ -47,6 +49,11 @@ export type CompanionChatProjectionInput = {
   liveRunErrorMessage: string;
   pendingMessageText: string;
   isMessageListFollowing: boolean;
+  retryBanner: SessionRetryBannerProps["retryBanner"];
+  isRetryDetailsOpen: boolean;
+  isRetryActionDisabled: boolean;
+  isRetryEditDisabled: boolean;
+  isRetryDraftReplacePending: boolean;
   isActionDockExpanded: boolean;
   composerBlocked: boolean;
   isAgentPickerOpen: boolean;
@@ -129,6 +136,11 @@ export type CompanionChatProjectionInput = {
   onOpenInlinePath: (target: string) => void;
   onCopyMessageText: SessionMessageColumnProps["onCopyMessageText"];
   onQuoteMessageText: SessionMessageColumnProps["onQuoteMessageText"];
+  onToggleRetryDetails: () => void;
+  onResendLastMessage: () => void;
+  onEditLastMessage: () => void;
+  onConfirmRetryDraftReplace: () => void;
+  onCancelRetryDraftReplace: () => void;
   onPickFile: () => void;
   onPickFolder: () => void;
   onPickImage: () => void;
@@ -260,7 +272,19 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       onQuoteMessageText: input.onQuoteMessageText,
     },
     composer: {
-      retryBanner: null,
+      retryBanner: buildLiveSessionRetryBanner({
+        retryBanner: input.retryBanner,
+        isRetryDetailsOpen: input.isRetryDetailsOpen,
+        isRetryActionDisabled: input.isRetryActionDisabled,
+        isRetryEditDisabled: input.isRetryEditDisabled,
+        isRetryDraftReplacePending: input.isRetryDraftReplacePending,
+        onToggleDetails: input.onToggleRetryDetails,
+        onResendLastMessage: input.onResendLastMessage,
+        onEditLastMessage: input.onEditLastMessage,
+        onConfirmRetryDraftReplace: input.onConfirmRetryDraftReplace,
+        onCancelRetryDraftReplace: input.onCancelRetryDraftReplace,
+        onOpenPath: input.onOpenInlinePath,
+      }),
       isRunning: input.isRunning,
       pendingRunIndicatorAnnouncement: "Companion が実行中",
       pendingRunIndicatorText: "Companion が応答を生成中...",
