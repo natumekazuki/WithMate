@@ -21,7 +21,11 @@ import {
 import { buildCharacterThemeStyle } from "../theme-utils.js";
 import { currentTimestampLabel } from "../time-state.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
-import { formatMarkdownQuote, insertComposerTextAtCaret } from "./message-text-actions.js";
+import {
+  copyMessageTextToClipboard,
+  createQuotedMessageInsertion,
+  insertComposerTextAtCaret,
+} from "./message-text-actions.js";
 import type { MateTalkMessage } from "./mate-talk-chat-projection.js";
 import {
   buildMateTalkModelSelection,
@@ -188,12 +192,10 @@ export function useMateTalkWindowState({
   };
 
   const handleCopyMessageText = (text: string) => {
-    const normalized = text.trim();
-    if (!normalized) {
-      return;
-    }
-
-    void navigator.clipboard.writeText(normalized).catch((error) => {
+    void copyMessageTextToClipboard(
+      text,
+      (normalized) => navigator.clipboard.writeText(normalized),
+    ).catch((error) => {
       console.error(error);
       setFeedback("コピーに失敗したよ。");
     });
@@ -204,17 +206,16 @@ export function useMateTalkWindowState({
       return;
     }
 
-    const quote = formatMarkdownQuote(text);
-    if (!quote) {
-      return;
-    }
-
     const textarea = composerTextareaRef.current;
-    const { draft: nextInput, caret: nextCaret } = insertComposerTextAtCaret(
+    const insertion = createQuotedMessageInsertion(
+      text,
       input,
-      quote,
       textarea?.selectionStart ?? inputCaret,
     );
+    if (!insertion) {
+      return;
+    }
+    const { draft: nextInput, caret: nextCaret } = insertion;
     setInput(nextInput);
     setInputCaret(nextCaret);
     setFeedback("");

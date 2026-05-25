@@ -52,7 +52,11 @@ import { SessionHeader } from "./session-components.js";
 import { ChatHeaderHandle, ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
-import { formatMarkdownQuote, insertComposerTextAtCaret } from "./chat/message-text-actions.js";
+import {
+  copyMessageTextToClipboard,
+  createQuotedMessageInsertion,
+  insertComposerTextAtCaret,
+} from "./chat/message-text-actions.js";
 import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,
@@ -1153,12 +1157,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   function handleCopyMessageText(text: string): void {
-    const normalized = text.trim();
-    if (!normalized) {
-      return;
-    }
-
-    void navigator.clipboard.writeText(normalized).catch((error) => {
+    void copyMessageTextToClipboard(
+      text,
+      (normalized) => navigator.clipboard.writeText(normalized),
+    ).catch((error) => {
       console.error(error);
       setErrorMessage("コピーに失敗したよ。");
     });
@@ -1171,17 +1173,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const quote = formatMarkdownQuote(text);
-    if (!quote) {
-      return;
-    }
-
     const textarea = composerTextareaRef.current;
-    const { draft: nextDraft, caret: nextCaret } = insertComposerTextAtCaret(
+    const insertion = createQuotedMessageInsertion(
+      text,
       composerText,
-      quote,
       textarea?.selectionStart ?? composerCaret,
     );
+    if (!insertion) {
+      return;
+    }
+    const { draft: nextDraft, caret: nextCaret } = insertion;
     setComposerText(nextDraft);
     setComposerCaret(nextCaret);
     setWorkspacePathMatches([]);

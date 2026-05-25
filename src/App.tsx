@@ -100,7 +100,11 @@ import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import { extractTextReferenceCandidates } from "./path-reference.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import type { AuxiliarySession } from "./auxiliary-session-state.js";
-import { formatMarkdownQuote, insertComposerTextAtCaret } from "./chat/message-text-actions.js";
+import {
+  copyMessageTextToClipboard,
+  createQuotedMessageInsertion,
+  insertComposerTextAtCaret,
+} from "./chat/message-text-actions.js";
 import { buildMessageListProjection } from "./auxiliary-session-message-projection.js";
 
 type RetryBannerKind = "interrupted" | "failed" | "canceled";
@@ -2679,28 +2683,30 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleCopyMessageText = (text: string) => {
-    const normalized = text.trim();
-    if (!normalized) {
-      return;
-    }
-
-    void navigator.clipboard.writeText(normalized).catch((error) => {
+    void copyMessageTextToClipboard(
+      text,
+      (normalized) => navigator.clipboard.writeText(normalized),
+    ).catch((error) => {
       console.error(error);
       window.alert("コピーに失敗したよ。");
     });
   };
 
-  const insertTextIntoMainComposer = (text: string) => {
-    if (!text) {
+  const insertQuoteIntoMainComposer = (messageText: string) => {
+    if (!messageText) {
       return;
     }
 
     const textarea = activeAuxiliarySession ? null : composerTextareaRef.current;
-    const { draft: nextDraft, caret: nextCaret } = insertComposerTextAtCaret(
+    const insertion = createQuotedMessageInsertion(
+      messageText,
       draft,
-      text,
       textarea?.selectionStart ?? mainComposerCaretRef.current,
     );
+    if (!insertion) {
+      return;
+    }
+    const { draft: nextDraft, caret: nextCaret } = insertion;
 
     setDraft(nextDraft);
     mainComposerCaretRef.current = nextCaret;
@@ -2720,17 +2726,21 @@ export default function AgentSessionWindowApp() {
     });
   };
 
-  const insertTextIntoAuxiliaryComposer = (text: string) => {
-    if (!text || !activeAuxiliarySession) {
+  const insertQuoteIntoAuxiliaryComposer = (messageText: string) => {
+    if (!messageText || !activeAuxiliarySession) {
       return;
     }
 
     const textarea = composerTextareaRef.current;
-    const { draft: nextDraft, caret: nextCaret } = insertComposerTextAtCaret(
+    const insertion = createQuotedMessageInsertion(
+      messageText,
       activeAuxiliarySession.composerDraft,
-      text,
       textarea?.selectionStart ?? composerCaret,
     );
+    if (!insertion) {
+      return;
+    }
+    const { draft: nextDraft, caret: nextCaret } = insertion;
 
     void handleAuxiliaryDraftChange(nextDraft, nextCaret);
     window.requestAnimationFrame(() => {
@@ -2740,14 +2750,13 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleQuoteMessageText = (text: string) => {
-    const quote = formatMarkdownQuote(text);
     if (activeAuxiliarySession) {
       if (activeAuxiliarySession.runState === "running" || isAuxiliaryActionPending || composerBlockedReason) {
         triggerComposerBlockedFeedback();
         return;
       }
 
-      insertTextIntoAuxiliaryComposer(quote);
+      insertQuoteIntoAuxiliaryComposer(text);
       return;
     }
 
@@ -2756,7 +2765,7 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    insertTextIntoMainComposer(quote);
+    insertQuoteIntoMainComposer(text);
   };
 
   const insertReferencePaths = (selectedPaths: string[]) => {

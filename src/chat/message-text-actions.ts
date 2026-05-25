@@ -1,3 +1,20 @@
+export function normalizeMessageTextForCopy(text: string): string {
+  return text.trim();
+}
+
+export async function copyMessageTextToClipboard(
+  text: string,
+  writeText: (text: string) => Promise<void>,
+): Promise<boolean> {
+  const normalized = normalizeMessageTextForCopy(text);
+  if (!normalized) {
+    return false;
+  }
+
+  await writeText(normalized);
+  return true;
+}
+
 export function formatMarkdownQuote(text: string): string {
   const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
   if (!normalized) {
@@ -5,6 +22,19 @@ export function formatMarkdownQuote(text: string): string {
   }
 
   return `${normalized.split("\n").map((line) => `> ${line}`).join("\n")}\n\n`;
+}
+
+export function createQuotedMessageInsertion(
+  messageText: string,
+  draft: string,
+  caret: number,
+): { draft: string; caret: number } | null {
+  const quote = formatMarkdownQuote(messageText);
+  if (!quote) {
+    return null;
+  }
+
+  return insertComposerTextAtCaret(draft, quote, caret);
 }
 
 export function insertComposerTextAtCaret(
