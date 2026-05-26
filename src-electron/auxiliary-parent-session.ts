@@ -1,7 +1,11 @@
 import type { CompanionSession } from "../src/companion-state.js";
 import type { Session } from "../src/session-state.js";
 
-export function companionSessionToAuxiliaryParentSession(session: CompanionSession): Session {
+export function companionSessionToAuxiliaryParentSession(session: CompanionSession): Session | null {
+  if (session.status !== "active") {
+    return null;
+  }
+
   return {
     id: session.id,
     taskTitle: session.taskTitle,

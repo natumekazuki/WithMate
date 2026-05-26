@@ -11,6 +11,7 @@ import type { CompanionSession } from "../../src/companion-state.js";
 import { companionSessionToAuxiliaryParentSession } from "../../src-electron/auxiliary-parent-session.js";
 import { AuxiliarySessionService } from "../../src-electron/auxiliary-session-service.js";
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary-session-storage.js";
+import { CompanionStorage } from "../../src-electron/companion-storage.js";
 import { appendSessionFilesDirectoryForSessionId, resolveSessionFilesDirectory } from "../../src-electron/session-files.js";
 import { SessionStorage } from "../../src-electron/session-storage.js";
 
@@ -100,10 +101,12 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
   const dbPath = path.join(tempDirectory, "withmate.db");
   let sessionStorage: SessionStorage | null = null;
   let auxiliaryStorage: AuxiliarySessionStorage | null = null;
+  let companionStorage: CompanionStorage | null = null;
 
   try {
     sessionStorage = new SessionStorage(dbPath);
     auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
+    companionStorage = new CompanionStorage(dbPath);
     const parent = {
       ...buildNewSession({
         taskTitle: "main task",
@@ -319,14 +322,49 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
       provider: orphanedParent.provider,
     });
     assert.equal(service.listAuxiliarySessions(orphanedParent.id)[0]?.id, orphanedAuxiliary.id);
+    const activeCompanion = buildCompanionSession({
+      id: "companion-active-parent",
+      groupId: "companion-group",
+    });
+    const mergedCompanion = buildCompanionSession({
+      id: "companion-merged-parent",
+      groupId: activeCompanion.groupId,
+      status: "merged",
+    });
+    companionStorage.ensureGroup({
+      id: activeCompanion.groupId,
+      repoRoot: activeCompanion.repoRoot,
+      displayName: "Companion Group",
+      createdAt: activeCompanion.createdAt,
+      updatedAt: activeCompanion.updatedAt,
+    });
+    companionStorage.createSession(activeCompanion);
+    companionStorage.createSession(mergedCompanion);
+    auxiliaryStorage.upsertAuxiliarySession({
+      ...orphanedAuxiliary,
+      id: "aux-companion-parent",
+      parentSessionId: activeCompanion.id,
+      createdAt: "2026-05-25T00:00:00.000Z",
+      updatedAt: "2026-05-25T00:00:00.000Z",
+    });
+    auxiliaryStorage.upsertAuxiliarySession({
+      ...orphanedAuxiliary,
+      id: "aux-inactive-companion-parent",
+      parentSessionId: mergedCompanion.id,
+      createdAt: "2026-05-25T00:00:00.000Z",
+      updatedAt: "2026-05-25T00:00:00.000Z",
+    });
 
     sessionStorage.replaceSessions([{ ...parent, taskTitle: "retained main task" }]);
     assert.equal(service.listAuxiliarySessions(parent.id).length, 1);
     assert.deepEqual(service.listAuxiliarySessions(orphanedParent.id), []);
+    assert.equal(service.listAuxiliarySessions(activeCompanion.id)[0]?.id, "aux-companion-parent");
+    assert.deepEqual(service.listAuxiliarySessions(mergedCompanion.id), []);
 
     sessionStorage.deleteSession(parent.id);
     assert.deepEqual(service.listAuxiliarySessions(parent.id), []);
   } finally {
+    companionStorage?.close();
     auxiliaryStorage?.close();
     sessionStorage?.close();
     await removeDirectoryWithRetry(tempDirectory);
@@ -477,6 +515,8 @@ test("AuxiliarySessionService は Companion 由来の parent runtime session か
     assert.equal(runtimeSession.branch, companion.companionBranch);
     assert.equal(runtimeSession.threadId, "");
     assert.deepEqual(runtimeSession.messages, []);
+    assert.equal(companionSessionToAuxiliaryParentSession({ ...companion, status: "merged" }), null);
+    assert.equal(companionSessionToAuxiliaryParentSession({ ...companion, status: "discarded" }), null);
   } finally {
     auxiliaryStorage?.close();
     await removeDirectoryWithRetry(tempDirectory);
