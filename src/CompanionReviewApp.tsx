@@ -1910,10 +1910,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     const loadRevision = auxiliaryLoadRevisionRef.current + 1;
     auxiliaryLoadRevisionRef.current = loadRevision;
+    const parentSessionId = snapshot.session.id;
+    const canApplyLoadResult = () => auxiliaryLoadRevisionRef.current === loadRevision;
     setIsAuxiliaryActionPending(true);
     try {
       const session = await withmateApi.createAuxiliarySession({
-        parentSessionId: snapshot.session.id,
+        parentSessionId,
         provider: auxiliaryLaunchProviderId,
         model: auxiliaryLaunchProviderId === snapshot.session.provider ? selectedModel : undefined,
         reasoningEffort: auxiliaryLaunchProviderId === snapshot.session.provider ? selectedReasoningEffort : undefined,
@@ -1928,6 +1930,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     } catch (error) {
       setAuxiliaryLaunchFeedback(error instanceof Error ? error.message : "Auxiliary Session の開始に失敗したよ。");
     } finally {
+      void loadClosedAuxiliarySessions(parentSessionId, canApplyLoadResult);
       setIsAuxiliaryActionPending(false);
     }
   }
