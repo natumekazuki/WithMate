@@ -2,7 +2,7 @@ import type { CompanionSession } from "../src/companion-state.js";
 import type { Session } from "../src/session-state.js";
 
 export function companionSessionToAuxiliaryParentSession(session: CompanionSession): Session | null {
-  if (session.status !== "active") {
+  if (session.status !== "active" && session.status !== "recovery-required") {
     return null;
   }
 

@@ -537,12 +537,14 @@ export class SessionStorage {
     `).get(COMPANION_SESSIONS_TABLE_NAME));
   }
 
-  private listActiveCompanionSessionIds(): string[] {
+  private listRetainedCompanionSessionIds(): string[] {
     if (!this.companionSessionsTableExists()) {
       return [];
     }
 
-    const rows = this.db.prepare("SELECT id FROM companion_sessions WHERE status = 'active'").all() as SessionIdRow[];
+    const rows = this.db
+      .prepare("SELECT id FROM companion_sessions WHERE status IN ('active', 'recovery-required')")
+      .all() as SessionIdRow[];
     return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
   }
 
@@ -553,7 +555,7 @@ export class SessionStorage {
 
     const validParentSessionIds = Array.from(new Set([
       ...retainedParentSessionIds,
-      ...this.listActiveCompanionSessionIds(),
+      ...this.listRetainedCompanionSessionIds(),
     ]));
     if (validParentSessionIds.length === 0) {
       this.db.prepare("DELETE FROM auxiliary_sessions").run();

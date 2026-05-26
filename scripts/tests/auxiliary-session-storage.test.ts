@@ -331,6 +331,21 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
       groupId: activeCompanion.groupId,
       status: "merged",
     });
+    const discardedCompanion = buildCompanionSession({
+      id: "companion-discarded-parent",
+      groupId: activeCompanion.groupId,
+      status: "discarded",
+    });
+    const recoveryRequiredCompanion = buildCompanionSession({
+      id: "companion-recovery-parent",
+      groupId: activeCompanion.groupId,
+      status: "recovery-required",
+    });
+    const unknownStatusCompanion = buildCompanionSession({
+      id: "companion-unknown-parent",
+      groupId: activeCompanion.groupId,
+      status: "unknown-status" as CompanionSession["status"],
+    });
     companionStorage.ensureGroup({
       id: activeCompanion.groupId,
       repoRoot: activeCompanion.repoRoot,
@@ -339,7 +354,10 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
       updatedAt: activeCompanion.updatedAt,
     });
     companionStorage.createSession(activeCompanion);
+    companionStorage.createSession(recoveryRequiredCompanion);
     companionStorage.createSession(mergedCompanion);
+    companionStorage.createSession(discardedCompanion);
+    companionStorage.createSession(unknownStatusCompanion);
     auxiliaryStorage.upsertAuxiliarySession({
       ...orphanedAuxiliary,
       id: "aux-companion-parent",
@@ -349,8 +367,29 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
     });
     auxiliaryStorage.upsertAuxiliarySession({
       ...orphanedAuxiliary,
-      id: "aux-inactive-companion-parent",
+      id: "aux-recovery-companion-parent",
+      parentSessionId: recoveryRequiredCompanion.id,
+      createdAt: "2026-05-25T00:00:00.000Z",
+      updatedAt: "2026-05-25T00:00:00.000Z",
+    });
+    auxiliaryStorage.upsertAuxiliarySession({
+      ...orphanedAuxiliary,
+      id: "aux-merged-companion-parent",
       parentSessionId: mergedCompanion.id,
+      createdAt: "2026-05-25T00:00:00.000Z",
+      updatedAt: "2026-05-25T00:00:00.000Z",
+    });
+    auxiliaryStorage.upsertAuxiliarySession({
+      ...orphanedAuxiliary,
+      id: "aux-discarded-companion-parent",
+      parentSessionId: discardedCompanion.id,
+      createdAt: "2026-05-25T00:00:00.000Z",
+      updatedAt: "2026-05-25T00:00:00.000Z",
+    });
+    auxiliaryStorage.upsertAuxiliarySession({
+      ...orphanedAuxiliary,
+      id: "aux-unknown-status-companion-parent",
+      parentSessionId: unknownStatusCompanion.id,
       createdAt: "2026-05-25T00:00:00.000Z",
       updatedAt: "2026-05-25T00:00:00.000Z",
     });
@@ -359,7 +398,10 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
     assert.equal(service.listAuxiliarySessions(parent.id).length, 1);
     assert.deepEqual(service.listAuxiliarySessions(orphanedParent.id), []);
     assert.equal(service.listAuxiliarySessions(activeCompanion.id)[0]?.id, "aux-companion-parent");
+    assert.equal(service.listAuxiliarySessions(recoveryRequiredCompanion.id)[0]?.id, "aux-recovery-companion-parent");
     assert.deepEqual(service.listAuxiliarySessions(mergedCompanion.id), []);
+    assert.deepEqual(service.listAuxiliarySessions(discardedCompanion.id), []);
+    assert.deepEqual(service.listAuxiliarySessions(unknownStatusCompanion.id), []);
 
     sessionStorage.deleteSession(parent.id);
     assert.deepEqual(service.listAuxiliarySessions(parent.id), []);
@@ -515,8 +557,13 @@ test("AuxiliarySessionService は Companion 由来の parent runtime session か
     assert.equal(runtimeSession.branch, companion.companionBranch);
     assert.equal(runtimeSession.threadId, "");
     assert.deepEqual(runtimeSession.messages, []);
+    assert.ok(companionSessionToAuxiliaryParentSession({ ...companion, status: "recovery-required" }));
     assert.equal(companionSessionToAuxiliaryParentSession({ ...companion, status: "merged" }), null);
     assert.equal(companionSessionToAuxiliaryParentSession({ ...companion, status: "discarded" }), null);
+    assert.equal(
+      companionSessionToAuxiliaryParentSession({ ...companion, status: "unknown-status" as typeof companion.status }),
+      null,
+    );
   } finally {
     auxiliaryStorage?.close();
     await removeDirectoryWithRetry(tempDirectory);
