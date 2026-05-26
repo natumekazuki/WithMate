@@ -2,6 +2,10 @@ import { type CSSProperties, type RefObject } from "react";
 
 import { type ChatSelectOption, type ChatWindowProps } from "./chat-window.js";
 import {
+  buildStaticTextChatComposerCapabilityProps,
+  type StaticTextChatComposerCapabilityProps,
+} from "./chat-window-adapter.js";
+import {
   buildTextChatWindowProps,
   type TextChatWindowMessage,
 } from "./text-chat-projection.js";
@@ -39,7 +43,7 @@ export type MateTalkChatProjectionInput = {
   onExpandActionDock: () => void;
   sending: boolean;
   feedback: string;
-  composerCapabilityProps?: Parameters<typeof buildTextChatWindowProps>[0]["composerCapabilityProps"];
+  composerCapabilityProps?: StaticTextChatComposerCapabilityProps;
 };
 
 export function buildMateTalkChatWindowProps({
@@ -128,10 +132,15 @@ export function buildMateTalkChatWindowProps({
     submitOnKey: shouldSubmitMateTalkInputByKey,
     rightPaneHeaderTitle: "メイトーク",
     rightPaneAriaLabel: "補助情報",
-    composerCapabilityProps: {
+    composerCapabilityProps: buildStaticTextChatComposerCapabilityProps({
       ...composerCapabilityProps,
+      showAttachmentControls: true,
+      showAdditionalDirectoryControls: true,
+      showExecutionModeControls: true,
+      showCustomAgentPicker: false,
+      showSkillPicker: false,
       canCollapseActionDock: true,
       onCollapse: onCollapseActionDock,
-    },
+    }),
   });
 }

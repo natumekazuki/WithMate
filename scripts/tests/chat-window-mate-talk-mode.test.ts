@@ -137,9 +137,21 @@ test("MateTalk は ChatWindow で action dock の格納と復帰を共通 props 
     onToggleHeaderExpanded() {},
     onCollapseActionDock,
     onExpandActionDock,
+    composerCapabilityProps: {
+      showAttachmentControls: false,
+      showAdditionalDirectoryControls: false,
+      showExecutionModeControls: false,
+      showCustomAgentPicker: true,
+      showSkillPicker: true,
+    },
   });
 
   assert.equal(props.isActionDockExpanded, false);
+  assert.equal(props.composerProps.showAttachmentControls, true);
+  assert.equal(props.composerProps.showAdditionalDirectoryControls, true);
+  assert.equal(props.composerProps.showExecutionModeControls, true);
+  assert.equal(props.composerProps.showCustomAgentPicker, false);
+  assert.equal(props.composerProps.showSkillPicker, false);
   assert.equal(props.composerProps.canCollapseActionDock, true);
   assert.equal(props.composerProps.onCollapse, onCollapseActionDock);
   assert.equal(props.compactActionDockProps.onExpand, onExpandActionDock);

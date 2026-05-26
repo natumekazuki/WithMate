@@ -49,11 +49,6 @@ export function MateTalkChatModeApp() {
         onExpandActionDock: state.onExpandActionDock,
         sending: state.sending,
         composerCapabilityProps: {
-          showAttachmentControls: true,
-          showAdditionalDirectoryControls: true,
-          showExecutionModeControls: true,
-          showCustomAgentPicker: false,
-          showSkillPicker: false,
           isAdditionalDirectoryListOpen: state.isAdditionalDirectoryListOpen,
           additionalDirectoryCount: state.additionalDirectoryCount,
           attachmentItems: state.attachmentItems,

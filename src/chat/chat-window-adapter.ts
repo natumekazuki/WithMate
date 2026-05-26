@@ -196,6 +196,31 @@ export type LiveSessionComposerProps = Omit<
   showExecutionModeControls?: boolean;
 };
 
+export type StaticTextChatComposerCapabilityProps = Partial<
+  Omit<
+    ChatComposerProps,
+    | "draft"
+    | "placeholder"
+    | "composerTextareaRef"
+    | "isRunning"
+    | "composerBlocked"
+    | "isComposerDisabled"
+    | "isSendDisabled"
+    | "composerSendability"
+    | "sendButtonTitle"
+    | "modelOptions"
+    | "selectedModel"
+    | "selectedModelFallbackLabel"
+    | "reasoningOptions"
+    | "selectedReasoningEffort"
+    | "onDraftChange"
+    | "onDraftKeyDown"
+    | "onSendOrCancel"
+    | "onChangeModel"
+    | "onChangeReasoningEffort"
+  >
+>;
+
 export type LiveSessionCompactActionDockProps = Omit<ChatCompactActionDockProps, "showJumpToBottom"> & {
   showJumpToBottom: boolean;
 };
@@ -265,6 +290,19 @@ export function buildLiveSessionComposerProps(input: LiveSessionComposerProps): 
     showAdditionalDirectoryControls: true,
     showExecutionModeControls: true,
     ...input,
+  };
+}
+
+export function buildStaticTextChatComposerCapabilityProps(
+  props: StaticTextChatComposerCapabilityProps = {},
+): StaticTextChatComposerCapabilityProps {
+  return {
+    showAttachmentControls: false,
+    showAdditionalDirectoryControls: false,
+    showExecutionModeControls: false,
+    showCustomAgentPicker: false,
+    showSkillPicker: false,
+    ...props,
   };
 }
 
