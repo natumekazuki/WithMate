@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import type { ApprovalMode } from "./approval-mode.js";
+import type { AuxiliarySession } from "./auxiliary-session-state.js";
 import type {
   ComposerPreview,
   DiffPreviewPayload,
@@ -51,6 +52,7 @@ import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { SessionHeader } from "./session-components.js";
 import { ChatHeaderHandle, ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
 import {
@@ -130,6 +132,48 @@ const MERGE_STAGE_DEFAULT_PERCENT = 50;
 const MERGE_PANE_MIN_PERCENT = 30;
 const MERGE_PANE_MAX_PERCENT = 70;
 const COMPANION_PENDING_MESSAGE_TEXT = "Companion の応答を待っています。";
+
+function buildAuxiliaryCompanionSession(parent: CompanionSession, auxiliary: AuxiliarySession): CompanionSession {
+  return {
+    ...parent,
+    id: auxiliary.id,
+    taskTitle: auxiliary.title,
+    status: "active",
+    runState: auxiliary.runState,
+    provider: auxiliary.provider,
+    catalogRevision: auxiliary.catalogRevision,
+    model: auxiliary.model,
+    reasoningEffort: auxiliary.reasoningEffort,
+    customAgentName: auxiliary.customAgentName,
+    approvalMode: auxiliary.approvalMode,
+    codexSandboxMode: auxiliary.codexSandboxMode,
+    allowedAdditionalDirectories: [...auxiliary.allowedAdditionalDirectories],
+    threadId: auxiliary.threadId,
+    messages: auxiliary.messages,
+    updatedAt: auxiliary.updatedAt,
+  };
+}
+
+function areStringArraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function hasSameAuxiliaryDraftSaveContext(current: AuxiliarySession, request: AuxiliarySession): boolean {
+  return current.id === request.id
+    && current.runState === request.runState
+    && current.status === request.status
+    && current.messages.length === request.messages.length
+    && current.composerDraft === request.composerDraft
+    && current.provider === request.provider
+    && current.catalogRevision === request.catalogRevision
+    && current.model === request.model
+    && current.reasoningEffort === request.reasoningEffort
+    && current.threadId === request.threadId
+    && current.approvalMode === request.approvalMode
+    && current.codexSandboxMode === request.codexSandboxMode
+    && current.customAgentName === request.customAgentName
+    && areStringArraysEqual(current.allowedAdditionalDirectories, request.allowedAdditionalDirectories);
+}
 
 function isTerminalAuditLogPhase(phase: AuditLogSummary["phase"]): boolean {
   return (
@@ -324,6 +368,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
   const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
+  const [activeAuxiliarySession, setActiveAuxiliarySession] = useState<AuxiliarySession | null>(null);
+  const [isAuxiliaryActionPending, setIsAuxiliaryActionPending] = useState(false);
+  const [auxiliaryLaunchDialogOpen, setAuxiliaryLaunchDialogOpen] = useState(false);
+  const [auxiliaryLaunchProviderId, setAuxiliaryLaunchProviderId] = useState<string | null>(null);
+  const [auxiliaryLaunchFeedback, setAuxiliaryLaunchFeedback] = useState("");
   const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
   const [elicitationActionRequestId, setElicitationActionRequestId] = useState<string | null>(null);
   const [liveRunState, setLiveRunState] = useState<{ ownerSessionId: string | null; state: LiveSessionRunState | null }>({
@@ -340,6 +389,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }>({ ownerSessionId: null, telemetry: null });
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const activeAuxiliarySessionRef = useRef<AuxiliarySession | null>(null);
+  const auxiliaryDraftSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const auxiliaryLoadRevisionRef = useRef(0);
   const mergeDiffLayoutRef = useRef<HTMLDivElement | null>(null);
   const mergeFileSelectionRef = useRef<HTMLDivElement | null>(null);
 
@@ -402,6 +454,38 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }, [snapshot?.session.id]);
 
   useEffect(() => {
+    activeAuxiliarySessionRef.current = activeAuxiliarySession;
+  }, [activeAuxiliarySession]);
+
+  useEffect(() => {
+    let active = true;
+    const loadRevision = auxiliaryLoadRevisionRef.current + 1;
+    auxiliaryLoadRevisionRef.current = loadRevision;
+    const canApplyLoadResult = () => active && auxiliaryLoadRevisionRef.current === loadRevision;
+    const sessionId = snapshot?.session.id ?? null;
+    if (!withmateApi || !sessionId || isMergeView) {
+      setActiveAuxiliarySession(null);
+      return () => {
+        active = false;
+      };
+    }
+
+    void withmateApi.getActiveAuxiliarySession(sessionId).then((session) => {
+      if (canApplyLoadResult()) {
+        setActiveAuxiliarySession(session);
+      }
+    }).catch(() => {
+      if (canApplyLoadResult()) {
+        setActiveAuxiliarySession(null);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [isMergeView, snapshot?.session.id, withmateApi]);
+
+  useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
 
@@ -445,10 +529,46 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     void withmateApi.getModelCatalog(null).then(setModelCatalog).catch(() => setModelCatalog(null));
   }, [isMergeView]);
 
+  const activeRunSessionId = activeAuxiliarySession?.id ?? snapshot?.session.id ?? null;
+  const displayedSession = useMemo(
+    () => snapshot
+      ? (activeAuxiliarySession
+        ? buildAuxiliaryCompanionSession(snapshot.session, activeAuxiliarySession)
+        : snapshot.session)
+      : null,
+    [activeAuxiliarySession, snapshot],
+  );
+  const isAuxiliaryMode = activeAuxiliarySession?.status === "active";
+  const activeComposerText = activeAuxiliarySession?.composerDraft ?? composerText;
+
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
-    const sessionId = snapshot?.session.id ?? null;
+    const sessionId = activeRunSessionId;
+    const activeAuxiliarySessionId = activeAuxiliarySession?.id ?? null;
+    const refreshCompletedAuxiliarySession = (updatedSessionId: string) => {
+      if (!withmateApi || activeAuxiliarySessionId !== updatedSessionId) {
+        return;
+      }
+
+      void withmateApi.getAuxiliarySession(updatedSessionId).then((saved) => {
+        if (!active) {
+          return;
+        }
+
+        setActiveAuxiliarySession((current) => {
+          if (current?.id !== updatedSessionId) {
+            return current;
+          }
+          if (!saved || saved.runState !== "running" || current.runState !== "running") {
+            activeAuxiliarySessionRef.current = saved;
+            return saved;
+          }
+
+          return current;
+        });
+      }).catch(() => undefined);
+    };
     if (!withmateApi || !sessionId || isMergeView) {
       setLiveRunState({ ownerSessionId: sessionId, state: null });
       return () => {
@@ -460,12 +580,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     void withmateApi.getLiveSessionRun(sessionId).then((state) => {
       if (active) {
         setLiveRunState({ ownerSessionId: sessionId, state });
+        refreshCompletedAuxiliarySession(sessionId);
       }
     });
 
     const unsubscribe = withmateApi.subscribeLiveSessionRun((nextSessionId, state) => {
       if (active && nextSessionId === sessionId) {
         setLiveRunState({ ownerSessionId: nextSessionId, state });
+        refreshCompletedAuxiliarySession(nextSessionId);
       }
     });
 
@@ -473,7 +595,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       active = false;
       unsubscribe();
     };
-  }, [isMergeView, snapshot?.session.id]);
+  }, [activeAuxiliarySession?.id, activeRunSessionId, isMergeView]);
 
   useEffect(() => {
     if (!isMergePaneResizing) {
@@ -552,7 +674,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
-    const session = snapshot?.session ?? null;
+    const session = displayedSession;
     if (!withmateApi || !session || isMergeView) {
       setAvailableSkills([]);
       setIsSkillListLoading(false);
@@ -577,12 +699,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     return () => {
       active = false;
     };
-  }, [isMergeView, snapshot?.session.provider, snapshot?.session.worktreePath]);
+  }, [displayedSession, isMergeView]);
 
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
-    const session = snapshot?.session ?? null;
+    const session = displayedSession;
     if (!withmateApi || !session || session.provider !== "copilot" || isMergeView) {
       setAvailableCustomAgents([]);
       setIsCustomAgentListLoading(false);
@@ -607,12 +729,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     return () => {
       active = false;
     };
-  }, [isMergeView, snapshot?.session.provider, snapshot?.session.worktreePath]);
+  }, [displayedSession, isMergeView]);
 
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
-    const providerId = snapshot?.session.provider ?? null;
+    const providerId = displayedSession?.provider ?? null;
     if (!withmateApi || !providerId || isMergeView) {
       setProviderQuotaTelemetryState({ ownerProviderId: providerId, telemetry: null });
       return () => {
@@ -641,12 +763,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       active = false;
       unsubscribe();
     };
-  }, [isMergeView, snapshot?.session.provider]);
+  }, [displayedSession?.provider, isMergeView]);
 
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
-    const sessionId = snapshot?.session.id ?? null;
+    const sessionId = activeRunSessionId;
     if (!withmateApi || !sessionId || isMergeView) {
       setSessionContextTelemetryState({ ownerSessionId: sessionId, telemetry: null });
       return () => {
@@ -675,7 +797,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       active = false;
       unsubscribe();
     };
-  }, [isMergeView, snapshot?.session.id]);
+  }, [activeRunSessionId, isMergeView]);
 
   const themeStyle = useMemo(
     () => (snapshot ? buildCharacterThemeStyle(snapshot.session.characterThemeColors) : undefined),
@@ -701,7 +823,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const unstagedFileTree = useMemo(() => buildChangedFileTree(unstagedChangedFiles), [unstagedChangedFiles]);
   const stagedFileTree = useMemo(() => buildChangedFileTree(stagedChangedFiles), [stagedChangedFiles]);
   const selectedSessionLiveRun =
-    snapshot && liveRunState.ownerSessionId === snapshot.session.id ? liveRunState.state : null;
+    activeRunSessionId !== null && liveRunState.ownerSessionId === activeRunSessionId ? liveRunState.state : null;
   useEffect(() => {
     setApprovalActionRequestId(null);
   }, [selectedSessionLiveRun?.approvalRequest?.requestId]);
@@ -731,36 +853,43 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     liveRun: selectedSessionLiveRun,
     enabled: !isMergeView,
   });
-  const selectedSessionRunState = snapshot?.session.runState ?? (selectedSessionLiveRun ? "running" : null);
+  useEffect(() => {
+    if (isAuxiliaryMode) {
+      setAuditLogsOpen(false);
+    }
+  }, [isAuxiliaryMode, setAuditLogsOpen]);
+  const selectedSessionRunState = activeAuxiliarySession
+    ? activeAuxiliarySession.runState
+    : (snapshot?.session.runState ?? (turnRunning || selectedSessionLiveRun ? "running" : null));
   const isSelectedSessionRunning = selectedSessionRunState === "running" || turnRunning;
   const lastUserMessage = useMemo(
-    () => snapshot ? [...snapshot.session.messages].reverse().find((message) => message.role === "user") ?? null : null,
-    [snapshot],
+    () => displayedSession ? [...displayedSession.messages].reverse().find((message) => message.role === "user") ?? null : null,
+    [displayedSession],
   );
   const lastAssistantMessage = useMemo(
     () =>
-      snapshot
-        ? [...snapshot.session.messages].reverse().find((message) => message.role === "assistant") ?? null
+      displayedSession
+        ? [...displayedSession.messages].reverse().find((message) => message.role === "assistant") ?? null
         : null,
-    [snapshot],
+    [displayedSession],
   );
   const latestTerminalAuditLog = useMemo(
     () => companionSessionAuditLogs.find((entry) => isTerminalAuditLogPhase(entry.phase)) ?? null,
     [companionSessionAuditLogs],
   );
   const activePathReference = useMemo(
-    () => (snapshot ? getActivePathReference(composerText, composerCaret) : null),
-    [composerCaret, composerText, snapshot],
+    () => (snapshot ? getActivePathReference(activeComposerText, composerCaret) : null),
+    [activeComposerText, composerCaret, snapshot],
   );
   const isEditingPathReference = activePathReference !== null;
   const normalizedActivePathQuery = activePathReference?.query.trim() ?? "";
   const previewDraft = useMemo(
-    () => removeActivePathReference(composerText, activePathReference),
-    [activePathReference, composerText],
+    () => removeActivePathReference(activeComposerText, activePathReference),
+    [activeComposerText, activePathReference],
   );
   const previewUserMessage = useMemo(
-    () => (isEditingPathReference ? previewDraft : composerText),
-    [composerText, isEditingPathReference, previewDraft],
+    () => (isEditingPathReference ? previewDraft : activeComposerText),
+    [activeComposerText, isEditingPathReference, previewDraft],
   );
   const previewPathReferenceCandidates = useMemo(
     () => extractTextReferenceCandidates(previewDraft),
@@ -774,7 +903,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
-    const sessionId = snapshot?.session.id ?? null;
+    const sessionId = activeRunSessionId;
     if (!withmateApi || !sessionId || isMergeView) {
       setComposerPreview(EMPTY_COMPOSER_PREVIEW);
       return () => {
@@ -796,7 +925,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
 
     const timeoutId = window.setTimeout(() => {
-      void withmateApi.previewCompanionComposerInput(sessionId, previewUserMessage).then((preview) => {
+      const previewRequest = activeAuxiliarySession
+        ? withmateApi.previewComposerInput(sessionId, previewUserMessage)
+        : withmateApi.previewCompanionComposerInput(sessionId, previewUserMessage);
+      void previewRequest.then((preview) => {
         if (active) {
           setComposerPreview(preview);
         }
@@ -821,7 +953,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     isMergeView,
     previewPathReferenceSignature,
     previewUserMessage,
-    snapshot?.session.id,
+    activeAuxiliarySession,
+    activeRunSessionId,
   ]);
   useEffect(() => {
     let active = true;
@@ -884,9 +1017,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const companionMessageListScrollSignature = useMemo(
     () =>
       [
-        snapshot?.session.id ?? "",
-        snapshot?.session.runState ?? "",
-        snapshot?.session.messages.map((message) => `${message.role}:${message.text.length}:${message.text}`).join("\u001d") ?? "",
+        displayedSession?.id ?? "",
+        displayedSession?.runState ?? "",
+        displayedSession?.messages.map((message) => `${message.role}:${message.text.length}:${message.text}`).join("\u001d") ?? "",
         selectedSessionLiveRun?.assistantText ?? "",
         selectedSessionLiveRun?.reasoningText ?? "",
         selectedSessionLiveRun?.errorMessage ?? "",
@@ -895,9 +1028,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       selectedSessionLiveRun?.assistantText,
       selectedSessionLiveRun?.reasoningText,
       selectedSessionLiveRun?.errorMessage,
-      snapshot?.session.id,
-      snapshot?.session.messages,
-      snapshot?.session.runState,
+      displayedSession?.id,
+      displayedSession?.messages,
+      displayedSession?.runState,
     ],
   );
   const {
@@ -906,7 +1039,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     handleMessageListScroll,
     handleJumpToMessageListBottom,
   } = useSessionMessageListFollowing({
-    ownerKey: snapshot?.session.id ?? null,
+    ownerKey: activeRunSessionId,
     scrollSignature: companionMessageListScrollSignature,
     enabled: !isMergeView,
   });
@@ -922,9 +1055,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const visibleMergeWarnings =
     snapshot?.mergeReadiness.warnings.filter((warning) => warning.kind !== "merge-simulation") ?? [];
   const runDisabled = isSelectedSessionRunning || operationRunning || !snapshot || snapshot.session.status !== "active";
-  const selectedProviderCatalog = getProviderCatalog(modelCatalog?.providers ?? [], snapshot?.session.provider);
+  const selectedProviderCatalog = getProviderCatalog(modelCatalog?.providers ?? [], displayedSession?.provider);
+  const selectedRuntimeModel = activeAuxiliarySession?.model ?? selectedModel;
+  const selectedRuntimeReasoningEffort = activeAuxiliarySession?.reasoningEffort ?? selectedReasoningEffort;
+  const selectedRuntimeApprovalMode = activeAuxiliarySession?.approvalMode ?? selectedApprovalMode;
+  const selectedRuntimeCodexSandboxMode = activeAuxiliarySession?.codexSandboxMode ?? selectedCodexSandboxMode;
   const selectedModelEntry =
-    selectedProviderCatalog?.models.find((model) => model.id === selectedModel) ??
+    selectedProviderCatalog?.models.find((model) => model.id === selectedRuntimeModel) ??
     selectedProviderCatalog?.models.find((model) => model.id === selectedProviderCatalog.defaultModelId) ??
     selectedProviderCatalog?.models[0] ??
     null;
@@ -933,33 +1070,41 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     value: model.id,
     label: modelOptionLabel(model),
   }));
-  const selectedModelFallbackLabel = selectedModelEntry ? modelOptionLabel(selectedModelEntry) : selectedModel;
+  const auxiliaryLaunchProviders = useMemo(
+    () => (modelCatalog?.providers ?? []).filter((provider) => provider.models.length > 0),
+    [modelCatalog],
+  );
+  const auxiliaryLaunchProviderItems = useMemo(
+    () => auxiliaryLaunchProviders.map((provider) => ({ id: provider.id, label: provider.label })),
+    [auxiliaryLaunchProviders],
+  );
+  const selectedModelFallbackLabel = selectedModelEntry ? modelOptionLabel(selectedModelEntry) : selectedRuntimeModel;
   const reasoningSelectOptions = reasoningEffortOptions.map((reasoningEffort) => ({
     value: reasoningEffort,
     label: reasoningDepthLabel(reasoningEffort),
   }));
   const approvalSelectOptions = useMemo(
     () => {
-      const options = getApprovalOptionsForProvider(snapshot?.session.provider);
-      if (!snapshot || options.some((option) => option.value === selectedApprovalMode)) {
+      const options = getApprovalOptionsForProvider(displayedSession?.provider);
+      if (!displayedSession || options.some((option) => option.value === selectedRuntimeApprovalMode)) {
         return options;
       }
 
-      return [{ value: selectedApprovalMode, label: selectedApprovalMode }, ...options];
+      return [{ value: selectedRuntimeApprovalMode, label: selectedRuntimeApprovalMode }, ...options];
     },
-    [selectedApprovalMode, snapshot?.session.provider],
+    [displayedSession, selectedRuntimeApprovalMode],
   );
   const sandboxSelectOptions = useMemo(
-    () => snapshot
-      ? getSandboxOptionsForProviderSelection(snapshot.session.provider, selectedCodexSandboxMode)
+    () => displayedSession
+      ? getSandboxOptionsForProviderSelection(displayedSession.provider, selectedRuntimeCodexSandboxMode)
       : getSandboxOptionsForProvider(undefined),
-    [selectedCodexSandboxMode, snapshot?.session.provider],
+    [displayedSession, selectedRuntimeCodexSandboxMode],
   );
   const companionComposerBlockedReason = snapshot?.session.status !== "active"
     ? "この Companion は active ではないよ。"
     : "";
   const retryBanner = useMemo<RetryBannerState | null>(() => {
-    if (!snapshot || snapshot.session.runState === "running" || snapshot.session.status !== "active" || !lastUserMessage) {
+    if (activeAuxiliarySession || !snapshot || snapshot.session.runState === "running" || snapshot.session.status !== "active" || !lastUserMessage) {
       return null;
     }
 
@@ -1000,7 +1145,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       default:
         return null;
     }
-  }, [lastAssistantMessage, lastUserMessage, latestTerminalAuditLog, selectedSessionLiveRun, snapshot]);
+  }, [activeAuxiliarySession, lastAssistantMessage, lastUserMessage, latestTerminalAuditLog, selectedSessionLiveRun, snapshot]);
   const shouldProtectDraftOnRetryEdit = shouldProtectRetryEditDraft({ retryBanner, draft: composerText });
   const isRetryActionDisabled = resolveRetryActionDisabled({
     retryBanner,
@@ -1016,15 +1161,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         runState: selectedSessionRunState,
         blockedReason: companionComposerBlockedReason,
         inputErrors: composerPreview.errors,
-        draftText: composerText,
+        draftText: activeComposerText,
       }),
-    [companionComposerBlockedReason, composerPreview.errors, composerText, selectedSessionRunState],
+    [activeComposerText, companionComposerBlockedReason, composerPreview.errors, selectedSessionRunState],
   );
   const companionComposerSendability = useMemo(
     () => withForcedComposerBlockedFeedback(companionComposerSendabilityBase, forceComposerBlockedFeedback),
     [companionComposerSendabilityBase, forceComposerBlockedFeedback],
   );
-  const isCompanionSendDisabled = companionComposerSendability.isSendDisabled || operationRunning;
+  const isCompanionSendDisabled = companionComposerSendability.isSendDisabled || operationRunning || isAuxiliaryActionPending;
   const companionSendButtonTitle = getComposerSendButtonTitle(companionComposerSendability);
   const shouldForceActionDockExpanded =
     isAgentPickerOpen ||
@@ -1065,7 +1210,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setIsRetryDetailsOpen(defaultRetryBannerDetailsOpen(retryBanner.kind));
   }, [retryBanner?.kind, retryBannerIdentity, snapshot?.session.id]);
   const actionDockCompactPreview = useMemo(() => {
-    const normalizedDraft = composerText.replace(/\s+/g, " ").trim();
+    const normalizedDraft = activeComposerText.replace(/\s+/g, " ").trim();
     if (normalizedDraft) {
       return normalizedDraft.length > 84 ? `${normalizedDraft.slice(0, 84)}...` : normalizedDraft;
     }
@@ -1075,18 +1220,18 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
 
     return "下書きなし";
-  }, [composerText, isSelectedSessionRunning]);
-  const companionCharacterProfile = snapshot ? buildCompanionCharacterProfile(snapshot.session) : null;
+  }, [activeComposerText, isSelectedSessionRunning]);
+  const companionCharacterProfile = displayedSession ? buildCompanionCharacterProfile(displayedSession) : null;
   const selectedCustomAgent = useMemo(() => {
-    if (!snapshot?.session.customAgentName.trim()) {
+    if (!displayedSession?.customAgentName.trim()) {
       return null;
     }
 
-    return availableCustomAgents.find((agent) => agent.name === snapshot.session.customAgentName) ?? null;
-  }, [availableCustomAgents, snapshot?.session.customAgentName]);
+    return availableCustomAgents.find((agent) => agent.name === displayedSession.customAgentName) ?? null;
+  }, [availableCustomAgents, displayedSession]);
   const selectedCustomAgentDisplay = useMemo(
-    () => buildSelectedCustomAgentDisplay(snapshot?.session ?? null, selectedCustomAgent),
-    [selectedCustomAgent, snapshot?.session],
+    () => buildSelectedCustomAgentDisplay(displayedSession, selectedCustomAgent),
+    [displayedSession, selectedCustomAgent],
   );
   const customAgentItems = useMemo(
     () => [
@@ -1096,7 +1241,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         primaryLabel: "Default Agent",
         secondaryLabel: "Copilot 標準 agent",
         title: "Copilot の標準 agent を使う",
-        isSelected: !snapshot?.session.customAgentName.trim(),
+        isSelected: !displayedSession?.customAgentName.trim(),
       },
       ...availableCustomAgents.map((agent) => {
         const agentDisplay = buildCustomAgentMatchDisplay(agent);
@@ -1106,11 +1251,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           primaryLabel: agentDisplay.primaryLabel,
           secondaryLabel: agentDisplay.secondaryLabel,
           title: agentDisplay.title,
-          isSelected: snapshot?.session.customAgentName === agent.name,
+          isSelected: displayedSession?.customAgentName === agent.name,
         };
       }),
     ],
-    [availableCustomAgents, snapshot?.session.customAgentName],
+    [availableCustomAgents, displayedSession],
   );
   const skillItems = useMemo(
     () =>
@@ -1128,7 +1273,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   );
   const additionalDirectoryItems = useMemo(
     () =>
-      (snapshot?.session.allowedAdditionalDirectories ?? []).map((directoryPath) => {
+      (displayedSession?.allowedAdditionalDirectories ?? []).map((directoryPath) => {
         const directoryDisplay = buildAdditionalDirectoryDisplay(directoryPath);
         return {
           key: directoryPath,
@@ -1136,10 +1281,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           primaryLabel: directoryDisplay.primaryLabel,
           secondaryLabel: directoryDisplay.secondaryLabel,
           title: directoryDisplay.title,
-          canRemove: snapshot?.session.provider === "codex",
+          canRemove: displayedSession?.provider === "codex",
         };
       }),
-    [snapshot?.session.allowedAdditionalDirectories],
+    [displayedSession],
   );
   const composerAttachmentItems = useMemo(
     () =>
@@ -1180,14 +1325,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     [activeWorkspacePathMatchIndex, workspacePathMatches],
   );
   const selectedProviderQuotaTelemetry =
-    snapshot?.session.provider && providerQuotaTelemetryState.ownerProviderId === snapshot.session.provider
+    displayedSession?.provider && providerQuotaTelemetryState.ownerProviderId === displayedSession.provider
       ? providerQuotaTelemetryState.telemetry
       : null;
   const selectedSessionContextTelemetry =
-    snapshot && sessionContextTelemetryState.ownerSessionId === snapshot.session.id
+    displayedSession && sessionContextTelemetryState.ownerSessionId === displayedSession.id
       ? sessionContextTelemetryState.telemetry
       : null;
-  const isCopilotSession = snapshot?.session.provider === "copilot";
+  const isCopilotSession = displayedSession?.provider === "copilot";
   const selectedCopilotQuotaProjection = buildCopilotQuotaProjection(selectedProviderQuotaTelemetry);
   const selectedSessionContextTelemetryProjection =
     buildSessionContextTelemetryProjection(selectedSessionContextTelemetry);
@@ -1297,17 +1442,21 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     const textarea = composerTextareaRef.current;
     const insertion = createQuotedMessageInsertion(
       text,
-      composerText,
+      activeComposerText,
       textarea?.selectionStart ?? composerCaret,
     );
     if (!insertion) {
       return;
     }
     const { draft: nextDraft, caret: nextCaret } = insertion;
-    setComposerText(nextDraft);
     setComposerCaret(nextCaret);
     setWorkspacePathMatches([]);
     setActiveWorkspacePathMatchIndex(-1);
+    if (activeAuxiliarySession) {
+      void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+    } else {
+      setComposerText(nextDraft);
+    }
 
     window.requestAnimationFrame(() => {
       if (!textarea) {
@@ -1332,16 +1481,20 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         : normalizePathForReference(selectedPath);
       return formatPathReference(referencePath);
     });
-    const leadingSpacer = currentCaret > 0 && !/\s/.test(composerText[currentCaret - 1] ?? "") ? " " : "";
-    const trailingSpacer = composerText.length > currentCaret && !/\s/.test(composerText[currentCaret] ?? "") ? " " : "";
+    const leadingSpacer = currentCaret > 0 && !/\s/.test(activeComposerText[currentCaret - 1] ?? "") ? " " : "";
+    const trailingSpacer = activeComposerText.length > currentCaret && !/\s/.test(activeComposerText[currentCaret] ?? "") ? " " : "";
     const insertion = `${leadingSpacer}${referenceTokens.join(" ")}${trailingSpacer}`;
-    const nextDraft = `${composerText.slice(0, currentCaret)}${insertion}${composerText.slice(currentCaret)}`;
+    const nextDraft = `${activeComposerText.slice(0, currentCaret)}${insertion}${activeComposerText.slice(currentCaret)}`;
     const nextCaret = currentCaret + insertion.length;
 
-    setComposerText(nextDraft);
     setComposerCaret(nextCaret);
     setWorkspacePathMatches([]);
     setActiveWorkspacePathMatchIndex(-1);
+    if (activeAuxiliarySession) {
+      void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+    } else {
+      setComposerText(nextDraft);
+    }
 
     window.requestAnimationFrame(() => {
       if (!textarea) {
@@ -1482,18 +1635,22 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   function handleSelectWorkspacePathMatch(match: string): void {
     const textarea = composerTextareaRef.current;
-    const activeReference = getActivePathReference(composerText, composerCaret);
+    const activeReference = getActivePathReference(activeComposerText, composerCaret);
     if (!textarea || !activeReference) {
       return;
     }
 
     const replacement = formatPathReference(match);
-    const nextDraft = `${composerText.slice(0, activeReference.start)}${replacement}${composerText.slice(activeReference.end)}`;
+    const nextDraft = `${activeComposerText.slice(0, activeReference.start)}${replacement}${activeComposerText.slice(activeReference.end)}`;
     const nextCaret = activeReference.start + replacement.length;
-    setComposerText(nextDraft);
     setComposerCaret(nextCaret);
     setWorkspacePathMatches([]);
     setActiveWorkspacePathMatchIndex(-1);
+    if (activeAuxiliarySession) {
+      void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+    } else {
+      setComposerText(nextDraft);
+    }
 
     window.requestAnimationFrame(() => {
       textarea.focus();
@@ -1506,7 +1663,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       .map((candidate) => formatPathReference(candidate))
       .map((candidate) => candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
 
-    let nextDraft = composerText;
+    let nextDraft = activeComposerText;
     for (const escapedCandidate of escapedCandidates) {
       nextDraft = nextDraft.replace(
         new RegExp(`(^|[\\s(])${escapedCandidate}(?=\\s|$|[),.;:!?])`),
@@ -1518,10 +1675,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       .replace(/[ \t]{2,}/g, " ")
       .replace(/\n{3,}/g, "\n\n");
 
-    setComposerText(nextDraft);
     setComposerCaret(nextDraft.length);
     setWorkspacePathMatches([]);
     setActiveWorkspacePathMatchIndex(-1);
+    if (activeAuxiliarySession) {
+      void handleAuxiliaryDraftChange(nextDraft, nextDraft.length);
+    } else {
+      setComposerText(nextDraft);
+    }
   }
 
   function handleSelectSkill(skill: DiscoveredSkill): void {
@@ -1641,6 +1802,348 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setSelectedApprovalMode(savedSession.approvalMode);
     setSelectedCodexSandboxMode(savedSession.codexSandboxMode);
     return savedSession;
+  }
+
+  async function updateActiveAuxiliarySession(recipe: (current: AuxiliarySession) => AuxiliarySession): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !activeAuxiliarySession) {
+      return;
+    }
+
+    await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
+    const currentSession = activeAuxiliarySessionRef.current ?? activeAuxiliarySession;
+    if (currentSession.id !== activeAuxiliarySession.id || currentSession.runState === "running") {
+      return;
+    }
+
+    const nextSession = recipe(currentSession);
+    activeAuxiliarySessionRef.current = nextSession;
+    setActiveAuxiliarySession(nextSession);
+    const saved = await withmateApi.updateAuxiliarySession(nextSession);
+    activeAuxiliarySessionRef.current = saved;
+    setActiveAuxiliarySession(saved);
+  }
+
+  function handleOpenAuxiliaryLaunchDialog(): void {
+    if (!snapshot || isAuxiliaryActionPending || operationRunning || isSelectedSessionRunning) {
+      return;
+    }
+
+    const providerId =
+      auxiliaryLaunchProviders.find((provider) => provider.id === snapshot.session.provider)?.id ??
+      auxiliaryLaunchProviders[0]?.id ??
+      null;
+    setAuxiliaryLaunchProviderId(providerId);
+    setAuxiliaryLaunchFeedback(providerId ? "" : "有効な Coding Provider がないよ。");
+    setAuxiliaryLaunchDialogOpen(true);
+  }
+
+  function handleCloseAuxiliaryLaunchDialog(): void {
+    if (isAuxiliaryActionPending) {
+      return;
+    }
+
+    setAuxiliaryLaunchDialogOpen(false);
+    setAuxiliaryLaunchFeedback("");
+  }
+
+  function handleSelectAuxiliaryLaunchProvider(providerId: string): void {
+    setAuxiliaryLaunchProviderId(providerId);
+    setAuxiliaryLaunchFeedback("");
+  }
+
+  async function handleStartAuxiliarySession(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !snapshot || isAuxiliaryActionPending) {
+      return;
+    }
+    if (operationRunning || isSelectedSessionRunning || snapshot.session.status !== "active") {
+      setAuxiliaryLaunchFeedback("Companion が操作中のため Auxiliary Session を開始できないよ。");
+      return;
+    }
+    if (!auxiliaryLaunchProviderId) {
+      setAuxiliaryLaunchFeedback("有効な Coding Provider を選んでね。");
+      return;
+    }
+
+    const loadRevision = auxiliaryLoadRevisionRef.current + 1;
+    auxiliaryLoadRevisionRef.current = loadRevision;
+    setIsAuxiliaryActionPending(true);
+    try {
+      const session = await withmateApi.createAuxiliarySession({
+        parentSessionId: snapshot.session.id,
+        provider: auxiliaryLaunchProviderId,
+        model: auxiliaryLaunchProviderId === snapshot.session.provider ? selectedModel : undefined,
+        reasoningEffort: auxiliaryLaunchProviderId === snapshot.session.provider ? selectedReasoningEffort : undefined,
+        customAgentName: auxiliaryLaunchProviderId === snapshot.session.provider ? snapshot.session.customAgentName : undefined,
+      });
+      activeAuxiliarySessionRef.current = session;
+      setActiveAuxiliarySession(session);
+      setIsActionDockPinnedExpanded(true);
+      setForceComposerBlockedFeedback(false);
+      setAuxiliaryLaunchDialogOpen(false);
+      setAuxiliaryLaunchFeedback("");
+    } catch (error) {
+      setAuxiliaryLaunchFeedback(error instanceof Error ? error.message : "Auxiliary Session の開始に失敗したよ。");
+    } finally {
+      setIsAuxiliaryActionPending(false);
+    }
+  }
+
+  async function handleReturnToMainSession(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !activeAuxiliarySession || isAuxiliaryActionPending) {
+      return;
+    }
+
+    setIsAuxiliaryActionPending(true);
+    try {
+      auxiliaryLoadRevisionRef.current += 1;
+      await withmateApi.closeAuxiliarySession(activeAuxiliarySession.id);
+      activeAuxiliarySessionRef.current = null;
+      setActiveAuxiliarySession(null);
+      setComposerCaret(Math.min(composerCaret, composerText.length));
+      setIsActionDockPinnedExpanded(false);
+      setForceComposerBlockedFeedback(false);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Auxiliary Session の終了に失敗したよ。");
+    } finally {
+      setIsAuxiliaryActionPending(false);
+    }
+  }
+
+  async function handleAuxiliaryDraftChange(value: string, selectionStart: number): Promise<void> {
+    setForceComposerBlockedFeedback(false);
+    setComposerCaret(selectionStart);
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !activeAuxiliarySession) {
+      return;
+    }
+
+    const nextSession = {
+      ...activeAuxiliarySession,
+      composerDraft: value,
+      updatedAt: currentTimestampLabel(),
+    };
+    activeAuxiliarySessionRef.current = nextSession;
+    setActiveAuxiliarySession(nextSession);
+    const saveOperation = auxiliaryDraftSaveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const current = activeAuxiliarySessionRef.current;
+        if (!current || current.id !== nextSession.id || current.composerDraft !== value) {
+          return null;
+        }
+
+        const request = {
+          ...current,
+          composerDraft: value,
+          updatedAt: currentTimestampLabel(),
+        };
+        const saved = await withmateApi.updateAuxiliarySession(request);
+        return { request, saved };
+      });
+    auxiliaryDraftSaveQueueRef.current = saveOperation.then(() => undefined, () => undefined);
+    const result = await saveOperation;
+    if (!result) {
+      return;
+    }
+
+    const { request, saved } = result;
+    setActiveAuxiliarySession((current) => {
+      if (!current || !hasSameAuxiliaryDraftSaveContext(current, request)) {
+        return current;
+      }
+
+      activeAuxiliarySessionRef.current = saved;
+      return saved;
+    });
+  }
+
+  async function sendAuxiliaryMessage(messageText: string): Promise<void> {
+    const withmateApi = getWithMateApi();
+    const userMessage = messageText.trim();
+    if (!withmateApi || !snapshot || !activeAuxiliarySession || !userMessage) {
+      setForceComposerBlockedFeedback(true);
+      return;
+    }
+    if (activeAuxiliarySession.runState === "running") {
+      setForceComposerBlockedFeedback(true);
+      return;
+    }
+
+    await auxiliaryDraftSaveQueueRef.current.catch(() => undefined);
+    const currentAuxiliarySession = activeAuxiliarySessionRef.current ?? activeAuxiliarySession;
+    if (currentAuxiliarySession.id !== activeAuxiliarySession.id || currentAuxiliarySession.runState === "running") {
+      return;
+    }
+
+    const displayAfterMessageIndex =
+      currentAuxiliarySession.messages.length === 0
+        ? snapshot.session.messages.length - 1
+        : currentAuxiliarySession.displayAfterMessageIndex;
+    const runningSession: AuxiliarySession = {
+      ...currentAuxiliarySession,
+      runState: "running",
+      composerDraft: "",
+      updatedAt: currentTimestampLabel(),
+      messages: [...currentAuxiliarySession.messages, { role: "user", text: userMessage }],
+      displayAfterMessageIndex,
+    };
+    activeAuxiliarySessionRef.current = runningSession;
+    setActiveAuxiliarySession(runningSession);
+    setLiveRunState((current) => createOwnedPendingLiveSessionRunState(
+      buildAuxiliaryCompanionSession(snapshot.session, runningSession),
+      current,
+    ));
+    setForceComposerBlockedFeedback(false);
+
+    try {
+      if (displayAfterMessageIndex !== currentAuxiliarySession.displayAfterMessageIndex) {
+        await withmateApi.updateAuxiliarySession({
+          ...currentAuxiliarySession,
+          displayAfterMessageIndex,
+        });
+      }
+      const saved = await withmateApi.runAuxiliarySessionTurn(currentAuxiliarySession.id, { userMessage });
+      activeAuxiliarySessionRef.current = saved;
+      setActiveAuxiliarySession(saved);
+    } catch (error) {
+      console.error(error);
+      setLiveRunState((current) => (
+        current.ownerSessionId === currentAuxiliarySession.id
+          ? { ownerSessionId: currentAuxiliarySession.id, state: null }
+          : current
+      ));
+      activeAuxiliarySessionRef.current = currentAuxiliarySession;
+      setActiveAuxiliarySession(currentAuxiliarySession);
+      setErrorMessage(error instanceof Error ? error.message : "Auxiliary Session の実行に失敗したよ。");
+    }
+  }
+
+  async function cancelAuxiliaryRun(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !activeAuxiliarySession || activeAuxiliarySession.runState !== "running") {
+      return;
+    }
+
+    await withmateApi.cancelAuxiliarySessionRun(activeAuxiliarySession.id);
+  }
+
+  async function handleChangeAuxiliaryApproval(approvalMode: ApprovalMode): Promise<void> {
+    await updateActiveAuxiliarySession((current) => ({
+      ...current,
+      approvalMode,
+      updatedAt: currentTimestampLabel(),
+    }));
+  }
+
+  async function handleChangeAuxiliarySandboxMode(codexSandboxMode: CodexSandboxMode): Promise<void> {
+    await updateActiveAuxiliarySession((current) => ({
+      ...current,
+      codexSandboxMode,
+      updatedAt: currentTimestampLabel(),
+    }));
+  }
+
+  async function handleChangeAuxiliaryModel(model: string): Promise<void> {
+    if (!selectedProviderCatalog || !modelCatalog) {
+      return;
+    }
+
+    await updateActiveAuxiliarySession((current) => {
+      const selection = resolveModelChangeSelection(selectedProviderCatalog, model, current.reasoningEffort);
+      return {
+        ...current,
+        catalogRevision: modelCatalog.revision,
+        model: selection.resolvedModel,
+        reasoningEffort: selection.resolvedReasoningEffort,
+        updatedAt: currentTimestampLabel(),
+      };
+    });
+  }
+
+  async function handleChangeAuxiliaryReasoningEffort(reasoningEffort: ModelReasoningEffort): Promise<void> {
+    if (!selectedProviderCatalog || !modelCatalog) {
+      return;
+    }
+
+    await updateActiveAuxiliarySession((current) => {
+      const selection = resolveModelSelection(selectedProviderCatalog, current.model, reasoningEffort);
+      return {
+        ...current,
+        catalogRevision: modelCatalog.revision,
+        model: selection.resolvedModel,
+        reasoningEffort: selection.resolvedReasoningEffort,
+        updatedAt: currentTimestampLabel(),
+      };
+    });
+  }
+
+  async function handleSelectAuxiliaryCustomAgent(agent: DiscoveredCustomAgent | null): Promise<void> {
+    if (!activeAuxiliarySession || activeAuxiliarySession.provider !== "copilot") {
+      return;
+    }
+
+    const nextCustomAgentName = agent?.name ?? "";
+    if (nextCustomAgentName === activeAuxiliarySession.customAgentName) {
+      setIsAgentPickerOpen(false);
+      return;
+    }
+
+    await updateActiveAuxiliarySession((current) => ({
+      ...current,
+      customAgentName: nextCustomAgentName,
+      updatedAt: currentTimestampLabel(),
+    }));
+    setIsAgentPickerOpen(false);
+  }
+
+  async function handleSelectAuxiliarySkill(skill: DiscoveredSkill): Promise<void> {
+    if (!activeAuxiliarySession) {
+      return;
+    }
+
+    const snippet = buildSkillPromptSnippet(activeAuxiliarySession.provider, skill.name);
+    const trimmedDraft = activeAuxiliarySession.composerDraft.trimStart();
+    const nextDraft = trimmedDraft ? `${snippet}\n\n${trimmedDraft}` : `${snippet}\n`;
+    const nextCaret = nextDraft.length;
+
+    setIsActionDockPinnedExpanded(true);
+    setComposerCaret(nextCaret);
+    setIsSkillPickerOpen(false);
+    await updateActiveAuxiliarySession((current) => ({
+      ...current,
+      composerDraft: nextDraft,
+      updatedAt: currentTimestampLabel(),
+    }));
+  }
+
+  async function handleAddAuxiliaryAdditionalDirectory(): Promise<void> {
+    const withmateApi = getWithMateApi();
+    if (!withmateApi || !snapshot || !activeAuxiliarySession || activeAuxiliarySession.runState === "running") {
+      return;
+    }
+
+    const selectedPath = await withmateApi.pickDirectory(pickerBaseDirectory || snapshot.session.worktreePath || snapshot.session.repoRoot);
+    if (!selectedPath) {
+      return;
+    }
+
+    setPickerBaseDirectory(selectedPath);
+    await updateActiveAuxiliarySession((current) => ({
+      ...current,
+      allowedAdditionalDirectories: Array.from(new Set([...current.allowedAdditionalDirectories, selectedPath])),
+      updatedAt: currentTimestampLabel(),
+    }));
+  }
+
+  async function handleRemoveAuxiliaryAdditionalDirectory(directoryPath: string): Promise<void> {
+    await updateActiveAuxiliarySession((current) => ({
+      ...current,
+      allowedAdditionalDirectories: current.allowedAdditionalDirectories.filter((entry) => entry !== directoryPath),
+      updatedAt: currentTimestampLabel(),
+    }));
   }
 
   function handleStartTitleEdit(): void {
@@ -2201,7 +2704,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const sessionId = snapshot.session.id;
+    const sessionId = activeRunSessionId ?? snapshot.session.id;
     setApprovalActionRequestId(request.requestId);
     try {
       await withmateApi.resolveLiveApproval(sessionId, request.requestId, decision);
@@ -2232,7 +2735,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const sessionId = snapshot.session.id;
+    const sessionId = activeRunSessionId ?? snapshot.session.id;
     setElicitationActionRequestId(request.requestId);
     try {
       await withmateApi.resolveLiveElicitation(sessionId, request.requestId, response);
@@ -2299,7 +2802,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       event.preventDefault();
-      void sendCompanionTurn();
+      void (activeAuxiliarySession ? sendAuxiliaryMessage(activeAuxiliarySession.composerDraft) : sendCompanionTurn());
     }
   };
 
@@ -2379,6 +2882,31 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
   }
 
+  const auxiliaryHeaderActions = snapshot ? (
+    <div className="session-window-control-group auxiliary-session-control-group" role="group" aria-label="Auxiliary session actions">
+      <span className="session-window-control-group-label">Auxiliary</span>
+      {activeAuxiliarySession ? (
+        <button
+          className="drawer-toggle compact secondary"
+          type="button"
+          onClick={() => void handleReturnToMainSession()}
+          disabled={isAuxiliaryActionPending || activeAuxiliarySession.runState === "running"}
+        >
+          Return to main
+        </button>
+      ) : (
+        <button
+          className="drawer-toggle compact secondary"
+          type="button"
+          onClick={handleOpenAuxiliaryLaunchDialog}
+          disabled={isAuxiliaryActionPending || operationRunning || isSelectedSessionRunning || snapshot.session.status !== "active"}
+        >
+          Auxiliary
+        </button>
+      )}
+    </div>
+  ) : null;
+
   if (!desktopRuntime) {
     return isMergeView ? (
       <div className="page-shell companion-review-page">
@@ -2406,9 +2934,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   if (!isMergeView) {
     return (
+      <>
       <ChatWindow {...buildCompanionChatWindowProps({
-        session: snapshot.session,
-        character: companionCharacterProfile ?? buildCompanionCharacterProfile(snapshot.session),
+        session: displayedSession ?? snapshot.session,
+        character: companionCharacterProfile ?? buildCompanionCharacterProfile(displayedSession ?? snapshot.session),
         expandedArtifacts,
         themeStyle,
         workbenchRef: sessionWorkbenchRef,
@@ -2417,7 +2946,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         isEditingTitle,
         titleDraft,
         isRunning: isSelectedSessionRunning,
-        isHeaderActionDisabled: operationRunning || turnRunning,
+        isHeaderActionDisabled: operationRunning || turnRunning || isAuxiliaryActionPending,
         messageListRef,
         liveApprovalRequest: selectedSessionLiveRun?.approvalRequest ?? null,
         approvalActionRequestId,
@@ -2437,7 +2966,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         isAgentPickerOpen,
         isSkillPickerOpen,
         isAdditionalDirectoryListOpen,
-        selectedCustomAgentLabel: snapshot.session.provider === "copilot" ? selectedCustomAgentDisplay.label : "Agent",
+        selectedCustomAgentLabel: displayedSession?.provider === "copilot" ? selectedCustomAgentDisplay.label : "Agent",
         selectedCustomAgentTitle: selectedCustomAgentDisplay.title ?? "Copilot custom agent を選択",
         canCollapseActionDock,
         isCustomAgentListLoading,
@@ -2447,22 +2976,24 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         attachmentItems: composerAttachmentItems,
         additionalDirectoryItems,
         workspacePathMatchItems,
-        draft: composerText,
+        draft: activeComposerText,
         composerTextareaRef,
         isComposerDisabled: runDisabled,
         isSendDisabled: isCompanionSendDisabled,
         composerSendability: companionComposerSendability,
-        sendButtonTitle: isSelectedSessionRunning ? "Companion を停止" : companionSendButtonTitle,
+        sendButtonTitle: isSelectedSessionRunning
+          ? (activeAuxiliarySession ? "Auxiliary を停止" : "Companion を停止")
+          : companionSendButtonTitle,
         isComposerBlockedFeedbackActive: companionComposerSendability.shouldShowFeedback,
         approvalOptions: approvalSelectOptions,
-        selectedApprovalMode,
+        selectedApprovalMode: selectedRuntimeApprovalMode,
         sandboxOptions: sandboxSelectOptions,
-        selectedCodexSandboxMode,
+        selectedCodexSandboxMode: selectedRuntimeCodexSandboxMode,
         modelOptions: modelSelectOptions,
-        selectedModel: selectedModelEntry?.id ?? selectedModel,
+        selectedModel: selectedModelEntry?.id ?? selectedRuntimeModel,
         selectedModelFallbackLabel,
         reasoningOptions: reasoningSelectOptions,
-        selectedReasoningEffort,
+        selectedReasoningEffort: selectedRuntimeReasoningEffort,
         actionDockCompactPreview,
         attachmentCount: composerPreview.attachments.length,
         isContextRailResizing,
@@ -2494,6 +3025,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         auditLogsErrorMessage: auditLogsState.ownerSessionId === snapshot.session.id ? auditLogsState.errorMessage : null,
         toastMessage: errorMessage || operationMessage,
         toastTone: errorMessage ? "error" : "success",
+        headerActions: auxiliaryHeaderActions,
+        isAuxiliaryMode,
         onToggleHeaderExpanded: handleToggleHeaderExpanded,
         onToggleContextPaneHeaderExpanded: () => setIsHeaderExpanded((current) => !current),
         onOpenAuditLog: () => setAuditLogsOpen(true),
@@ -2509,8 +3042,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onOpenMergeWindow: () => void openCompanionMergeWindow(),
         onMessageListScroll: handleMessageListScroll,
         onToggleArtifact: toggleArtifact,
-        onLoadArtifactDetail: (messageIndex) =>
-          withmateApi?.getCompanionMessageArtifact(snapshot.session.id, messageIndex) ?? Promise.resolve(null),
+        onLoadArtifactDetail: (messageIndex) => activeAuxiliarySession
+          ? Promise.resolve(activeAuxiliarySession.messages[messageIndex]?.artifact ?? null)
+          : withmateApi?.getCompanionMessageArtifact(snapshot.session.id, messageIndex) ?? Promise.resolve(null),
         onOpenDiff: (title, file) =>
           setSelectedDiff({
             title,
@@ -2540,22 +3074,35 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           setIsAgentPickerOpen(false);
           setIsSkillPickerOpen((current) => !current);
         },
-        onAddAdditionalDirectory: () => void handleAddAdditionalDirectory(),
+        onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
         onToggleAdditionalDirectoryList: () => setIsAdditionalDirectoryListOpen((current) => !current),
         onCollapseActionDock: handleCollapseActionDock,
         onJumpToMessageListBottom: handleJumpToMessageListBottom,
-        onSelectCustomAgent: (value) => void handleSelectCustomAgent(
-          value ? availableCustomAgents.find((agent) => agent.name === value) ?? null : null,
-        ),
+        onSelectCustomAgent: (value) => {
+          const agent = value ? availableCustomAgents.find((entry) => entry.name === value) ?? null : null;
+          if (activeAuxiliarySession) {
+            void handleSelectAuxiliaryCustomAgent(agent);
+            return;
+          }
+          void handleSelectCustomAgent(agent);
+        },
         onSelectSkill: (skillId) => {
           const skill = availableSkills.find((entry) => entry.id === skillId);
           if (skill) {
+            if (activeAuxiliarySession) {
+              void handleSelectAuxiliarySkill(skill);
+              return;
+            }
             handleSelectSkill(skill);
           }
         },
         onRemoveAttachment: handleRemoveAttachmentReference,
-        onRemoveAdditionalDirectory: (path) => void handleRemoveAdditionalDirectory(path),
+        onRemoveAdditionalDirectory: (path) => void (activeAuxiliarySession ? handleRemoveAuxiliaryAdditionalDirectory(path) : handleRemoveAdditionalDirectory(path)),
         onDraftChange: (value, selectionStart) => {
+          if (activeAuxiliarySession) {
+            void handleAuxiliaryDraftChange(value, selectionStart);
+            return;
+          }
           setForceComposerBlockedFeedback(false);
           setComposerText(value);
           setComposerCaret(selectionStart);
@@ -2567,16 +3114,28 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onDraftCompositionStart: () => setIsComposerImeComposing(true),
         onDraftCompositionEnd: () => {
           setIsComposerImeComposing(false);
-          setComposerCaret(composerTextareaRef.current?.selectionStart ?? composerText.length);
+          setComposerCaret(composerTextareaRef.current?.selectionStart ?? activeComposerText.length);
         },
-        onSendOrCancel: () => void (isSelectedSessionRunning ? cancelCompanionTurn() : sendCompanionTurn()),
+        onSendOrCancel: () => void (
+          activeAuxiliarySession?.runState === "running"
+            ? cancelAuxiliaryRun()
+            : isSelectedSessionRunning
+              ? cancelCompanionTurn()
+              : activeAuxiliarySession
+                ? sendAuxiliaryMessage(activeAuxiliarySession.composerDraft)
+                : sendCompanionTurn()
+        ),
         onExpandActionDock: () => handleExpandActionDock({ focusComposer: !isSelectedSessionRunning }),
         onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
         onActivateWorkspacePathMatch: setActiveWorkspacePathMatchIndex,
-        onChangeApprovalMode: (value) => void handleChangeApproval(value),
-        onChangeCodexSandboxMode: (value) => void handleChangeCodexSandboxMode(value),
-        onChangeModel: (value) => void handleChangeSelectedModel(value),
-        onChangeReasoningEffort: (value) => void handleChangeReasoningEffort(value as ModelReasoningEffort),
+        onChangeApprovalMode: (value) => void (activeAuxiliarySession ? handleChangeAuxiliaryApproval(value) : handleChangeApproval(value)),
+        onChangeCodexSandboxMode: (value) => void (activeAuxiliarySession ? handleChangeAuxiliarySandboxMode(value) : handleChangeCodexSandboxMode(value)),
+        onChangeModel: (value) => void (activeAuxiliarySession ? handleChangeAuxiliaryModel(value) : handleChangeSelectedModel(value)),
+        onChangeReasoningEffort: (value) => void (
+          activeAuxiliarySession
+            ? handleChangeAuxiliaryReasoningEffort(value as ModelReasoningEffort)
+            : handleChangeReasoningEffort(value as ModelReasoningEffort)
+        ),
         onStartContextRailResize: handleStartContextRailResize,
         onCycleContextPaneTab: handleCycleContextPaneTab,
         onOpenCompanionReview: (sessionId) => void getWithMateApi()?.openCompanionReviewWindow(sessionId),
@@ -2587,6 +3146,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onLoadAuditLogOperationDetail: handleLoadAuditLogOperationDetail,
         onCloseAuditLog: () => setAuditLogsOpen(false),
       })} />
+      <AuxiliaryLaunchProviderDialog
+        open={auxiliaryLaunchDialogOpen}
+        providers={auxiliaryLaunchProviderItems}
+        selectedProviderId={auxiliaryLaunchProviderId}
+        feedback={auxiliaryLaunchFeedback}
+        starting={isAuxiliaryActionPending}
+        onClose={handleCloseAuxiliaryLaunchDialog}
+        onSelectProvider={handleSelectAuxiliaryLaunchProvider}
+        onStart={() => void handleStartAuxiliarySession()}
+      />
+      </>
     );
   }
 

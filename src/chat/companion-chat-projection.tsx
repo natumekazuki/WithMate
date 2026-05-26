@@ -192,7 +192,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     titleDraft: input.titleDraft,
     isRunning: input.isRunning,
     showRenameButton: !input.isAuxiliaryMode,
-    showAuditLogButton: true,
+    showAuditLogButton: !input.isAuxiliaryMode,
     showTerminalButton: true,
     showDeleteButton: false,
     onToggleExpanded: input.onToggleHeaderExpanded,

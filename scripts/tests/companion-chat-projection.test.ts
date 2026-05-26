@@ -306,6 +306,7 @@ test("buildCompanionChatWindowProps は通常 Companion の header action を維
   const headerActionsHtml = renderToStaticMarkup(React.createElement(React.Fragment, null, props.headerProps.actions));
 
   assert.equal(props.headerProps.showRenameButton, true);
+  assert.equal(props.headerProps.showAuditLogButton, true);
   assert.doesNotMatch(props.className, /auxiliary-session-mode/);
   assert.match(headerActionsHtml, />Merge<\/button>/);
   assert.equal(props.composerProps.modeLabel, undefined);
@@ -325,6 +326,7 @@ test("buildCompanionChatWindowProps は Auxiliary mode の header action slot �
   const headerActionsHtml = renderToStaticMarkup(React.createElement(React.Fragment, null, props.headerProps.actions));
 
   assert.equal(props.headerProps.showRenameButton, false);
+  assert.equal(props.headerProps.showAuditLogButton, false);
   assert.match(props.className, /auxiliary-session-mode/);
   assert.match(headerActionsHtml, />Return to main<\/button>/);
   assert.doesNotMatch(headerActionsHtml, />Merge<\/button>/);
