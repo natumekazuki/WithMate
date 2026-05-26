@@ -61,6 +61,7 @@ import {
   isRetryActionDisabled as resolveRetryActionDisabled,
   resolveRetryBannerKind,
   shouldProtectRetryEditDraft,
+  shouldShowRetryBanner,
   type RetryBannerState,
 } from "./chat/retry-state.js";
 import {
@@ -1146,7 +1147,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     ? "この Companion は active ではないよ。"
     : "";
   const retryBanner = useMemo<RetryBannerState | null>(() => {
-    if (activeAuxiliarySession || !snapshot || snapshot.session.runState === "running" || snapshot.session.status !== "active" || !lastUserMessage) {
+    if (!snapshot || !shouldShowRetryBanner({
+      hasActiveAuxiliarySession: !!activeAuxiliarySession,
+      hasLastUserMessage: !!lastUserMessage,
+      isReadOnly: snapshot.session.status !== "active",
+      runState: snapshot.session.runState,
+    })) {
+      return null;
+    }
+
+    const retryLastUserMessage = lastUserMessage;
+    if (!retryLastUserMessage) {
       return null;
     }
 
@@ -1166,7 +1177,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           badge: "中断",
           title: "前回の依頼は中断されたままです",
           stopSummary,
-          lastRequestText: lastUserMessage.text,
+          lastRequestText: retryLastUserMessage.text,
         };
       case "failed":
         return {
@@ -1174,7 +1185,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           badge: "失敗",
           title: "前回の依頼は完了できませんでした",
           stopSummary,
-          lastRequestText: lastUserMessage.text,
+          lastRequestText: retryLastUserMessage.text,
         };
       case "canceled":
         return {
@@ -1182,7 +1193,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           badge: "停止",
           title: "この依頼は途中で停止しました",
           stopSummary,
-          lastRequestText: lastUserMessage.text,
+          lastRequestText: retryLastUserMessage.text,
         };
       default:
         return null;

@@ -43,6 +43,18 @@ export function shouldProtectRetryEditDraft(input: {
     && input.draft !== input.retryBanner.lastRequestText;
 }
 
+export function shouldShowRetryBanner(input: {
+  hasActiveAuxiliarySession: boolean;
+  hasLastUserMessage: boolean;
+  isReadOnly: boolean;
+  runState: string | null | undefined;
+}): boolean {
+  return !input.hasActiveAuxiliarySession
+    && input.hasLastUserMessage
+    && !input.isReadOnly
+    && input.runState !== "running";
+}
+
 export function isRetryActionDisabled(input: {
   retryBanner: RetryBannerState | null;
   hasLastUserMessage: boolean;

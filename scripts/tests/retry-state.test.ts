@@ -7,6 +7,7 @@ import {
   isRetryActionDisabled,
   resolveRetryBannerKind,
   shouldProtectRetryEditDraft,
+  shouldShowRetryBanner,
 } from "../../src/chat/retry-state.js";
 import type { AuditLogSummary, LiveSessionRunState } from "../../src/runtime-state.js";
 import type { Message } from "../../src/session-state.js";
@@ -117,6 +118,39 @@ test("shouldProtectRetryEditDraft は既存 draft の暗黙上書きを避ける
   assert.equal(shouldProtectRetryEditDraft({ retryBanner, draft: "前回の依頼" }), false);
   assert.equal(shouldProtectRetryEditDraft({ retryBanner, draft: "今の下書き" }), true);
   assert.equal(shouldProtectRetryEditDraft({ retryBanner: null, draft: "今の下書き" }), false);
+});
+
+test("shouldShowRetryBanner は mode-neutral な表示 precondition を評価する", () => {
+  assert.equal(shouldShowRetryBanner({
+    hasActiveAuxiliarySession: false,
+    hasLastUserMessage: true,
+    isReadOnly: false,
+    runState: "error",
+  }), true);
+  assert.equal(shouldShowRetryBanner({
+    hasActiveAuxiliarySession: true,
+    hasLastUserMessage: true,
+    isReadOnly: false,
+    runState: "error",
+  }), false);
+  assert.equal(shouldShowRetryBanner({
+    hasActiveAuxiliarySession: false,
+    hasLastUserMessage: false,
+    isReadOnly: false,
+    runState: "error",
+  }), false);
+  assert.equal(shouldShowRetryBanner({
+    hasActiveAuxiliarySession: false,
+    hasLastUserMessage: true,
+    isReadOnly: true,
+    runState: "error",
+  }), false);
+  assert.equal(shouldShowRetryBanner({
+    hasActiveAuxiliarySession: false,
+    hasLastUserMessage: true,
+    isReadOnly: false,
+    runState: "running",
+  }), false);
 });
 
 test("isRetryActionDisabled は shared precondition を評価する", () => {

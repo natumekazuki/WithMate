@@ -111,6 +111,7 @@ import {
   isRetryActionDisabled as resolveRetryActionDisabled,
   resolveRetryBannerKind,
   shouldProtectRetryEditDraft,
+  shouldShowRetryBanner,
   type RetryBannerKind,
   type RetryBannerState,
 } from "./chat/retry-state.js";
@@ -1402,7 +1403,17 @@ export default function AgentSessionWindowApp() {
     ],
   );
   const retryBanner = useMemo<RetryBannerState | null>(() => {
-    if (!selectedSession || selectedSession.runState === "running" || isSelectedSessionReadOnly || !lastUserMessage) {
+    if (!selectedSession || !shouldShowRetryBanner({
+      hasActiveAuxiliarySession: !!activeAuxiliarySession,
+      hasLastUserMessage: !!lastUserMessage,
+      isReadOnly: isSelectedSessionReadOnly,
+      runState: selectedSession.runState,
+    })) {
+      return null;
+    }
+
+    const retryLastUserMessage = lastUserMessage;
+    if (!retryLastUserMessage) {
       return null;
     }
 
@@ -1425,10 +1436,10 @@ export default function AgentSessionWindowApp() {
             "retry",
             "interrupted",
             selectedSession.id,
-            lastUserMessage.text,
+            retryLastUserMessage.text,
           ]),
           stopSummary,
-          lastRequestText: lastUserMessage.text,
+          lastRequestText: retryLastUserMessage.text,
         };
       case "failed":
         return {
@@ -1438,10 +1449,10 @@ export default function AgentSessionWindowApp() {
             "retry",
             "failed",
             selectedSession.id,
-            lastUserMessage.text,
+            retryLastUserMessage.text,
           ]),
           stopSummary,
-          lastRequestText: lastUserMessage.text,
+          lastRequestText: retryLastUserMessage.text,
         };
       case "canceled":
         return {
@@ -1451,11 +1462,11 @@ export default function AgentSessionWindowApp() {
             "retry",
             "canceled",
             selectedSession.id,
-            lastUserMessage.text,
+            retryLastUserMessage.text,
             latestTerminalAuditLog?.id,
           ]),
           stopSummary,
-          lastRequestText: lastUserMessage.text,
+          lastRequestText: retryLastUserMessage.text,
         };
       default:
         return null;
@@ -1469,6 +1480,7 @@ export default function AgentSessionWindowApp() {
     selectedSessionCharacter?.name,
     isSelectedSessionReadOnly,
     selectedSessionLiveRun,
+    activeAuxiliarySession,
   ]);
   const shouldProtectDraftOnRetryEdit = shouldProtectRetryEditDraft({ retryBanner, draft });
   const isComposerDisabled = selectedSession?.runState === "running" || !!composerBlockedReason || isSelectedSessionReadOnly;
