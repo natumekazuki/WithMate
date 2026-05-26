@@ -257,6 +257,26 @@ test("buildCompanionChatWindowProps は running 中の response 待機文を mes
   assert.deepEqual(props.messageColumnProps.messages, [{ role: "user", text: "調べて" }]);
 });
 
+test("buildCompanionChatWindowProps は投影済み transcript と group を message column に渡す", () => {
+  const props = buildCompanionChatWindowProps(createProjectionInput({
+    displayedMessages: [
+      { role: "user", text: "親の依頼" },
+      { role: "assistant", text: "Auxiliary の回答", accent: true },
+    ],
+    displayedMessageKeys: ["session-companion-session-1-0", "auxiliary-aux-1-0"],
+    displayedMessageGroups: [null, { id: "aux-1", label: "Auxiliary" }],
+    pendingMessageGroupId: "aux-1",
+  }));
+
+  assert.deepEqual(props.messageColumnProps.messages, [
+    { role: "user", text: "親の依頼" },
+    { role: "assistant", text: "Auxiliary の回答", accent: true },
+  ]);
+  assert.deepEqual(props.messageColumnProps.messageKeys, ["session-companion-session-1-0", "auxiliary-aux-1-0"]);
+  assert.deepEqual(props.messageColumnProps.messageGroups, [null, { id: "aux-1", label: "Auxiliary" }]);
+  assert.equal(props.messageColumnProps.pendingMessageGroupId, "aux-1");
+});
+
 test("buildCompanionChatWindowProps は retry banner を共通 composer に渡す", () => {
   const props = buildCompanionChatWindowProps(createProjectionInput({
     retryBanner: {

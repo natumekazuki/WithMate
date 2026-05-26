@@ -98,6 +98,7 @@ import {
   createOptimisticRunningSessionState,
   createOwnedPendingLiveSessionRunState,
 } from "./session-live-run-state.js";
+import { buildMessageListProjection } from "./auxiliary-session-message-projection.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   buildContextPaneProjection,
@@ -369,6 +370,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
   const [activeAuxiliarySession, setActiveAuxiliarySession] = useState<AuxiliarySession | null>(null);
+  const [closedAuxiliarySessions, setClosedAuxiliarySessions] = useState<AuxiliarySession[]>([]);
   const [isAuxiliaryActionPending, setIsAuxiliaryActionPending] = useState(false);
   const [auxiliaryLaunchDialogOpen, setAuxiliaryLaunchDialogOpen] = useState(false);
   const [auxiliaryLaunchProviderId, setAuxiliaryLaunchProviderId] = useState<string | null>(null);
@@ -457,6 +459,32 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     activeAuxiliarySessionRef.current = activeAuxiliarySession;
   }, [activeAuxiliarySession]);
 
+  const loadClosedAuxiliarySessions = async (
+    parentSessionId: string,
+    canApplyLoadResult: () => boolean,
+  ) => {
+    if (!withmateApi) {
+      return;
+    }
+
+    try {
+      const summaries = await withmateApi.listAuxiliarySessions(parentSessionId);
+      const closedSummaries = summaries
+        .filter((summary) => summary.status === "closed")
+        .reverse();
+      const sessions = await Promise.all(
+        closedSummaries.map((summary) => withmateApi.getAuxiliarySession(summary.id)),
+      );
+      if (canApplyLoadResult()) {
+        setClosedAuxiliarySessions(sessions.filter((session): session is AuxiliarySession => session !== null));
+      }
+    } catch {
+      if (canApplyLoadResult()) {
+        setClosedAuxiliarySessions([]);
+      }
+    }
+  };
+
   useEffect(() => {
     let active = true;
     const loadRevision = auxiliaryLoadRevisionRef.current + 1;
@@ -465,6 +493,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     const sessionId = snapshot?.session.id ?? null;
     if (!withmateApi || !sessionId || isMergeView) {
       setActiveAuxiliarySession(null);
+      setClosedAuxiliarySessions([]);
       return () => {
         active = false;
       };
@@ -479,6 +508,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         setActiveAuxiliarySession(null);
       }
     });
+
+    void loadClosedAuxiliarySessions(sessionId, canApplyLoadResult);
 
     return () => {
       active = false;
@@ -540,6 +571,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   );
   const isAuxiliaryMode = activeAuxiliarySession?.status === "active";
   const activeComposerText = activeAuxiliarySession?.composerDraft ?? composerText;
+  const messageListProjection = useMemo(
+    () => buildMessageListProjection(snapshot?.session.messages ?? [], [
+      ...closedAuxiliarySessions,
+      ...(activeAuxiliarySession ? [activeAuxiliarySession] : []),
+    ], snapshot?.session.id),
+    [activeAuxiliarySession, closedAuxiliarySessions, snapshot?.session.id, snapshot?.session.messages],
+  );
+  const messageListMessages = messageListProjection.messages;
+  const messageListSources = messageListProjection.sources;
+  const messageListKeys = messageListProjection.keys;
+  const messageListGroups = messageListProjection.groups;
 
   useEffect(() => {
     let active = true;
@@ -1019,7 +1061,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       [
         displayedSession?.id ?? "",
         displayedSession?.runState ?? "",
-        displayedSession?.messages.map((message) => `${message.role}:${message.text.length}:${message.text}`).join("\u001d") ?? "",
+        messageListMessages.map((message) => `${message.role}:${message.text.length}:${message.text}`).join("\u001d"),
         selectedSessionLiveRun?.assistantText ?? "",
         selectedSessionLiveRun?.reasoningText ?? "",
         selectedSessionLiveRun?.errorMessage ?? "",
@@ -1029,8 +1071,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       selectedSessionLiveRun?.reasoningText,
       selectedSessionLiveRun?.errorMessage,
       displayedSession?.id,
-      displayedSession?.messages,
       displayedSession?.runState,
+      messageListMessages,
     ],
   );
   const {
@@ -1899,7 +1941,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setIsAuxiliaryActionPending(true);
     try {
       auxiliaryLoadRevisionRef.current += 1;
-      await withmateApi.closeAuxiliarySession(activeAuxiliarySession.id);
+      const closedSession = await withmateApi.closeAuxiliarySession(activeAuxiliarySession.id);
+      setClosedAuxiliarySessions((current) => [
+        ...current.filter((session) => session.id !== closedSession.id),
+        closedSession,
+      ]);
       activeAuxiliarySessionRef.current = null;
       setActiveAuxiliarySession(null);
       setComposerCaret(Math.min(composerCaret, composerText.length));
@@ -2938,6 +2984,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       <ChatWindow {...buildCompanionChatWindowProps({
         session: displayedSession ?? snapshot.session,
         character: companionCharacterProfile ?? buildCompanionCharacterProfile(displayedSession ?? snapshot.session),
+        displayedMessages: messageListMessages,
+        displayedMessageKeys: messageListKeys,
+        displayedMessageGroups: messageListGroups,
         expandedArtifacts,
         themeStyle,
         workbenchRef: sessionWorkbenchRef,
@@ -2955,6 +3004,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         liveRunAssistantText: selectedSessionLiveRun?.assistantText ?? "",
         liveRunErrorMessage: selectedSessionLiveRun?.errorMessage ?? "",
         pendingMessageText: COMPANION_PENDING_MESSAGE_TEXT,
+        pendingMessageGroupId: activeAuxiliarySession?.runState === "running" ? activeAuxiliarySession.id : null,
         isMessageListFollowing,
         retryBanner,
         isRetryDetailsOpen,
@@ -3042,9 +3092,17 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onOpenMergeWindow: () => void openCompanionMergeWindow(),
         onMessageListScroll: handleMessageListScroll,
         onToggleArtifact: toggleArtifact,
-        onLoadArtifactDetail: (messageIndex) => activeAuxiliarySession
-          ? Promise.resolve(activeAuxiliarySession.messages[messageIndex]?.artifact ?? null)
-          : withmateApi?.getCompanionMessageArtifact(snapshot.session.id, messageIndex) ?? Promise.resolve(null),
+        onLoadArtifactDetail: (messageIndex) => {
+          const source = messageListSources[messageIndex];
+          if (!source) {
+            return Promise.resolve(null);
+          }
+          if (source.kind === "auxiliary") {
+            return Promise.resolve(source.artifact ?? null);
+          }
+
+          return withmateApi?.getCompanionMessageArtifact(snapshot.session.id, source.messageIndex) ?? Promise.resolve(null);
+        },
         onOpenDiff: (title, file) =>
           setSelectedDiff({
             title,

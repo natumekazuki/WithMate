@@ -401,7 +401,7 @@ test("AuxiliarySessionService は親 session から実行 context を継承し�
     assert.equal(service.listAuxiliarySessions(recoveryRequiredCompanion.id)[0]?.id, "aux-recovery-companion-parent");
     assert.deepEqual(service.listAuxiliarySessions(mergedCompanion.id), []);
     assert.deepEqual(service.listAuxiliarySessions(discardedCompanion.id), []);
-    assert.deepEqual(service.listAuxiliarySessions(unknownStatusCompanion.id), []);
+    assert.equal(service.listAuxiliarySessions(unknownStatusCompanion.id)[0]?.id, "aux-unknown-status-companion-parent");
 
     sessionStorage.deleteSession(parent.id);
     assert.deepEqual(service.listAuxiliarySessions(parent.id), []);

@@ -32,6 +32,9 @@ import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
 export type CompanionChatProjectionInput = {
   session: CompanionSession;
   character: CharacterProfile;
+  displayedMessages?: CompanionSession["messages"];
+  displayedMessageKeys?: SessionMessageColumnProps["messageKeys"];
+  displayedMessageGroups?: SessionMessageColumnProps["messageGroups"];
   expandedArtifacts: Record<string, boolean>;
   themeStyle: CSSProperties | undefined;
   workbenchRef: RefObject<HTMLDivElement | null>;
@@ -49,6 +52,7 @@ export type CompanionChatProjectionInput = {
   liveRunAssistantText: string;
   liveRunErrorMessage: string;
   pendingMessageText: string;
+  pendingMessageGroupId?: SessionMessageColumnProps["pendingMessageGroupId"];
   isMessageListFollowing: boolean;
   retryBanner: SessionRetryBannerProps["retryBanner"];
   isRetryDetailsOpen: boolean;
@@ -255,7 +259,9 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     messageColumn: {
       sessionId: input.session.id,
       character: input.character,
-      messages: input.session.messages,
+      messages: input.displayedMessages ?? input.session.messages,
+      messageKeys: input.displayedMessageKeys,
+      messageGroups: input.displayedMessageGroups,
       expandedArtifacts: input.expandedArtifacts,
       messageListRef: input.messageListRef,
       isRunning: input.isRunning,
@@ -267,6 +273,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       hasLiveRunAssistantText: input.liveRunAssistantText.length > 0,
       liveRunErrorMessage: input.liveRunErrorMessage,
       pendingMessageText: input.pendingMessageText,
+      pendingMessageGroupId: input.pendingMessageGroupId,
       isMessageListFollowing: input.isMessageListFollowing,
       onMessageListScroll: input.onMessageListScroll,
       onToggleArtifact: input.onToggleArtifact,

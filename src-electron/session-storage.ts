@@ -543,7 +543,7 @@ export class SessionStorage {
     }
 
     const rows = this.db
-      .prepare("SELECT id FROM companion_sessions WHERE status IN ('active', 'recovery-required')")
+      .prepare("SELECT id FROM companion_sessions WHERE status NOT IN ('merged', 'discarded')")
       .all() as SessionIdRow[];
     return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
   }
