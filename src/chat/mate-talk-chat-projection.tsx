@@ -10,6 +10,7 @@ import {
   type TextChatWindowMessage,
 } from "./text-chat-projection.js";
 import { shouldSubmitMateTalkInputByKey } from "./mate-talk-state.js";
+import { createSessionFilesActions } from "./session-files-actions.js";
 
 export type MateTalkMessage = TextChatWindowMessage & {
   role: "user" | "mate";
@@ -107,26 +108,10 @@ export function buildMateTalkChatWindowProps({
     onChangeReasoningEffort,
     onSubmit,
     onToggleHeaderExpanded,
-    headerSessionFilesActions: (
-      <>
-        <button
-          className="drawer-toggle compact secondary"
-          type="button"
-          onClick={onOpenSessionFilesExplorer}
-          title="Open session files directory"
-        >
-          Explorer
-        </button>
-        <button
-          className="drawer-toggle compact secondary"
-          type="button"
-          onClick={onOpenSessionFilesTerminal}
-          title="Open terminal in session files directory"
-        >
-          Terminal
-        </button>
-      </>
-    ),
+    headerSessionFilesActions: createSessionFilesActions({
+      onOpenExplorer: onOpenSessionFilesExplorer,
+      onOpenTerminal: onOpenSessionFilesTerminal,
+    }),
     isRunning: sending,
     feedback,
     submitOnKey: shouldSubmitMateTalkInputByKey,

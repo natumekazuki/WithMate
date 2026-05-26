@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   buildChatPageClassName,
@@ -22,8 +23,20 @@ import {
   toConversationMessages,
 } from "../../src/chat/chat-window-adapter.js";
 import type { ChatWindowProps } from "../../src/chat/chat-window.js";
+import { createSessionFilesActions } from "../../src/chat/session-files-actions.js";
 
 const noop = () => {};
+
+test("createSessionFilesActions は共通の session files action group を描画する", () => {
+  const html = renderToStaticMarkup(createSessionFilesActions({
+    onOpenExplorer: noop,
+    onOpenTerminal: noop,
+  }));
+
+  assert.match(html, /title="Open session files directory">Explorer<\/button>/);
+  assert.match(html, /title="Open terminal in session files directory">Terminal<\/button>/);
+  assert.match(html, /class="drawer-toggle compact secondary"/);
+});
 
 test("buildChatPageClassName は header collapse class を共通形式で組み立てる", () => {
   assert.equal(buildChatPageClassName({ isHeaderExpanded: true }), "");

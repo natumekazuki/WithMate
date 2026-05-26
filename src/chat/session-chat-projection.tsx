@@ -22,6 +22,7 @@ import {
   buildLiveSessionChatBodyProps,
 } from "./chat-window-adapter.js";
 import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
+import { createSessionFilesActions } from "./session-files-actions.js";
 
 export type AgentSessionChatProjectionInput = {
   selectedSession: Session;
@@ -196,26 +197,10 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onToggleExpanded: input.onToggleHeaderExpanded,
     onOpenAuditLog: input.onOpenAuditLog,
     onOpenTerminal: input.onOpenSessionTerminal,
-    sessionFilesActions: (
-      <>
-        <button
-          className="drawer-toggle compact secondary"
-          type="button"
-          onClick={input.onOpenSessionFilesExplorer}
-          title="Open session files directory"
-        >
-          Explorer
-        </button>
-        <button
-          className="drawer-toggle compact secondary"
-          type="button"
-          onClick={input.onOpenSessionFilesTerminal}
-          title="Open terminal in session files directory"
-        >
-          Terminal
-        </button>
-      </>
-    ),
+    sessionFilesActions: createSessionFilesActions({
+      onOpenExplorer: input.onOpenSessionFilesExplorer,
+      onOpenTerminal: input.onOpenSessionFilesTerminal,
+    }),
     onTitleDraftChange: input.onTitleDraftChange,
     onTitleInputKeyDown: input.onTitleInputKeyDown,
     onSaveTitle: input.onSaveTitle,
