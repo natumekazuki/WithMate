@@ -7,6 +7,7 @@ import {
   type AgentSessionChatProjectionInput,
 } from "../../src/chat/session-chat-projection.js";
 import type { CharacterProfile } from "../../src/app-state.js";
+import type { SessionContextPaneProps } from "../../src/session-components.js";
 import type { Session } from "../../src/session-state.js";
 
 const noop = () => {};
@@ -294,4 +295,27 @@ test("buildAgentSessionChatWindowProps は Auxiliary mode で parent header 操�
   assert.equal(auxiliaryProps.headerProps.showRenameButton, false);
   assert.equal(auxiliaryProps.headerProps.showAuditLogButton, true);
   assert.equal(auxiliaryProps.headerProps.showDeleteButton, false);
+});
+
+test("buildAgentSessionChatWindowProps は right pane props を共通 pane に渡す", () => {
+  const onToggleHeaderExpanded = () => {};
+  const onCycleContextPaneTab = () => {};
+  const onOpenCompanionReview = () => {};
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    selectedContextEmptyText: "Agent context empty",
+    latestCommandEmptyText: "Agent latest command empty",
+    onToggleHeaderExpanded,
+    onCycleContextPaneTab,
+    onOpenCompanionReview,
+  }));
+  const rightPane = props.rightPane as React.ReactElement<{
+    children: React.ReactElement<SessionContextPaneProps>;
+  }>;
+  const paneProps = rightPane.props.children.props;
+
+  assert.equal(paneProps.contextEmptyText, "Agent context empty");
+  assert.equal(paneProps.latestCommandEmptyText, "Agent latest command empty");
+  assert.equal(paneProps.onToggleHeaderExpanded, onToggleHeaderExpanded);
+  assert.equal(paneProps.onCycleContextPaneTab, onCycleContextPaneTab);
+  assert.equal(paneProps.onOpenCompanionReview, onOpenCompanionReview);
 });

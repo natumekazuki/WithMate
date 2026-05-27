@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   buildChatPageClassName,
+  buildLiveSessionContextPaneProps,
   buildLiveSessionChatBodyProps,
   buildLiveSessionCompactActionDockProps,
   buildLiveSessionComposerProps,
@@ -391,6 +392,50 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
   assert.equal(bodyProps.compactActionDockProps.onSendOrCancel, onSendOrCancel);
   assert.equal(bodyProps.splitterProps.isActive, true);
   assert.equal(bodyProps.splitterProps.onPointerDown, onPointerDown);
+});
+
+test("buildLiveSessionContextPaneProps は right pane props を共通形式で保持する", () => {
+  const onToggleHeaderExpanded = () => {};
+  const onCycleContextPaneTab = () => {};
+  const onOpenCompanionReview = () => {};
+  const props = buildLiveSessionContextPaneProps({
+    taskTitle: "Right pane",
+    isHeaderExpanded: true,
+    activeContextPaneTab: "latest-command",
+    availableContextPaneTabs: ["latest-command"],
+    contextPaneProjection: {
+      latestCommand: { state: "empty", tone: "muted", label: "No command" },
+      tasks: { state: "empty", tone: "muted", label: "No tasks" },
+      reasoning: { state: "empty", tone: "muted", label: "No reasoning" },
+      context: { state: "empty", tone: "muted", label: "No context" },
+      companion: { state: "empty", tone: "muted", label: "No companion" },
+    },
+    latestCommandView: null,
+    runningDetailsEntries: [],
+    liveRunReasoningText: "",
+    backgroundTasks: [],
+    companionGroupMonitorEntries: [],
+    selectedSessionLiveRunErrorMessage: "",
+    isSelectedSessionRunning: false,
+    isCopilotSession: false,
+    selectedCopilotRemainingPercentLabel: "",
+    selectedCopilotRemainingRequestsLabel: "",
+    selectedCopilotQuotaResetLabel: "",
+    selectedSessionContextTelemetry: null,
+    selectedSessionContextTelemetryProjection: null,
+    contextEmptyText: "context empty",
+    latestCommandEmptyText: "latest command empty",
+    onToggleHeaderExpanded,
+    onCycleContextPaneTab,
+    onOpenCompanionReview,
+  });
+
+  assert.equal(props.taskTitle, "Right pane");
+  assert.equal(props.contextEmptyText, "context empty");
+  assert.equal(props.latestCommandEmptyText, "latest command empty");
+  assert.equal(props.onToggleHeaderExpanded, onToggleHeaderExpanded);
+  assert.equal(props.onCycleContextPaneTab, onCycleContextPaneTab);
+  assert.equal(props.onOpenCompanionReview, onOpenCompanionReview);
 });
 
 test("createStaticChatCharacterProfile は静的 chat 用 CharacterProfile 既定値を補う", () => {

@@ -8,6 +8,7 @@ import {
   type MessageArtifact,
 } from "../app-state.js";
 import { type PointerEventHandler, type RefObject, type UIEventHandler } from "react";
+import type { SessionContextPaneProps } from "../session-components.js";
 import type { ChatWindowProps } from "./chat-window.js";
 
 export const chatWindowNoop = () => {};
@@ -241,6 +242,8 @@ export type LiveSessionChatBodyPropsInput = {
   splitter: LiveSessionSplitterProps;
 };
 
+export type LiveSessionContextPanePropsInput = SessionContextPaneProps;
+
 export function buildLiveSessionChatBodyProps(input: LiveSessionChatBodyPropsInput): Pick<
   ChatWindowProps,
   "messageColumnProps" | "composerProps" | "compactActionDockProps"
@@ -252,6 +255,36 @@ export function buildLiveSessionChatBodyProps(input: LiveSessionChatBodyPropsInp
     composerProps: buildLiveSessionComposerProps(input.composer),
     compactActionDockProps: buildLiveSessionCompactActionDockProps(input.compactActionDock),
     splitterProps: buildLiveSessionSplitterProps(input.splitter),
+  };
+}
+
+export function buildLiveSessionContextPaneProps(
+  input: LiveSessionContextPanePropsInput,
+): SessionContextPaneProps {
+  return {
+    taskTitle: input.taskTitle,
+    isHeaderExpanded: input.isHeaderExpanded,
+    activeContextPaneTab: input.activeContextPaneTab,
+    availableContextPaneTabs: input.availableContextPaneTabs,
+    contextPaneProjection: input.contextPaneProjection,
+    latestCommandView: input.latestCommandView,
+    runningDetailsEntries: input.runningDetailsEntries,
+    liveRunReasoningText: input.liveRunReasoningText,
+    backgroundTasks: input.backgroundTasks,
+    companionGroupMonitorEntries: input.companionGroupMonitorEntries,
+    selectedSessionLiveRunErrorMessage: input.selectedSessionLiveRunErrorMessage,
+    isSelectedSessionRunning: input.isSelectedSessionRunning,
+    isCopilotSession: input.isCopilotSession,
+    selectedCopilotRemainingPercentLabel: input.selectedCopilotRemainingPercentLabel,
+    selectedCopilotRemainingRequestsLabel: input.selectedCopilotRemainingRequestsLabel,
+    selectedCopilotQuotaResetLabel: input.selectedCopilotQuotaResetLabel,
+    selectedSessionContextTelemetry: input.selectedSessionContextTelemetry,
+    selectedSessionContextTelemetryProjection: input.selectedSessionContextTelemetryProjection,
+    contextEmptyText: input.contextEmptyText,
+    latestCommandEmptyText: input.latestCommandEmptyText,
+    onToggleHeaderExpanded: input.onToggleHeaderExpanded,
+    onCycleContextPaneTab: input.onCycleContextPaneTab,
+    onOpenCompanionReview: input.onOpenCompanionReview,
   };
 }
 

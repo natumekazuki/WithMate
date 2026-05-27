@@ -13,6 +13,7 @@ import {
 } from "../../src/session-live-run-state.js";
 import type { CharacterProfile } from "../../src/app-state.js";
 import type { CompanionSession } from "../../src/companion-state.js";
+import type { SessionContextPaneProps } from "../../src/session-components.js";
 
 const noop = () => {};
 
@@ -362,6 +363,27 @@ test("buildCompanionChatWindowProps は Auxiliary mode の header action slot �
   assert.doesNotMatch(headerActionsHtml, />Merge<\/button>/);
   assert.equal(props.composerProps.modeLabel, "Auxiliary");
   assert.equal(props.compactActionDockProps.modeLabel, "Auxiliary");
+});
+
+test("buildCompanionChatWindowProps は Companion right pane props を共通 pane に渡す", () => {
+  const onToggleContextPaneHeaderExpanded = () => {};
+  const onCycleContextPaneTab = () => {};
+  const onOpenCompanionReview = () => {};
+  const props = buildCompanionChatWindowProps(createProjectionInput({
+    onToggleContextPaneHeaderExpanded,
+    onCycleContextPaneTab,
+    onOpenCompanionReview,
+  }));
+  const rightPane = props.rightPane as React.ReactElement<{
+    children: React.ReactElement<SessionContextPaneProps>;
+  }>;
+  const paneProps = rightPane.props.children.props;
+
+  assert.equal(paneProps.contextEmptyText, "context usage はまだありません。");
+  assert.equal(paneProps.latestCommandEmptyText, undefined);
+  assert.equal(paneProps.onToggleHeaderExpanded, onToggleContextPaneHeaderExpanded);
+  assert.equal(paneProps.onCycleContextPaneTab, onCycleContextPaneTab);
+  assert.equal(paneProps.onOpenCompanionReview, onOpenCompanionReview);
 });
 
 test("Companion の optimistic running state は user prompt と pending live run を同じ session に紐づける", () => {

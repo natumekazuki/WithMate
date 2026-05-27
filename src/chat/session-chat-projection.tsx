@@ -19,9 +19,11 @@ import { ChatSessionModals } from "./chat-session-modals.js";
 import { ChatWorkbenchSplitter, type ChatWindowProps } from "./chat-window.js";
 import {
   buildChatPageClassName,
+  buildLiveSessionContextPaneProps,
   buildLiveSessionChatBodyProps,
   resolveAuxiliaryModeLabel,
 } from "./chat-window-adapter.js";
+import { createWorkspaceExplorerAction } from "./chat-header-actions.js";
 import { resolveChatHeaderVisibility } from "./chat-header-visibility.js";
 import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
 import { createSessionFilesActions } from "./session-files-actions.js";
@@ -214,11 +216,9 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onStartTitleEdit: input.onStartTitleEdit,
     onDeleteSession: input.onDeleteSession,
     actions: input.headerActions,
-    workspaceActions: (
-      <button className="drawer-toggle compact secondary" type="button" onClick={input.onOpenSessionExplorer}>
-        Explorer
-      </button>
-    ),
+    workspaceActions: createWorkspaceExplorerAction({
+      onOpenExplorer: input.onOpenSessionExplorer,
+    }),
   };
 
   const chatBodyProps = buildLiveSessionChatBodyProps({
@@ -355,6 +355,31 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onStartContextRailResize: input.onStartContextRailResize,
     },
   });
+  const rightPaneProps = buildLiveSessionContextPaneProps({
+    taskTitle: input.selectedSession.taskTitle,
+    isHeaderExpanded: input.isSessionHeaderExpanded,
+    activeContextPaneTab: input.activeContextPaneTab,
+    availableContextPaneTabs: input.availableContextPaneTabs,
+    contextPaneProjection: input.contextPaneProjection,
+    latestCommandView: input.latestCommandView,
+    runningDetailsEntries: input.runningDetailsEntries,
+    liveRunReasoningText: input.liveRunReasoningText,
+    backgroundTasks: input.selectedBackgroundTasks,
+    companionGroupMonitorEntries: input.selectedCompanionGroupMonitorEntries,
+    selectedSessionLiveRunErrorMessage: input.liveRunErrorMessage,
+    isSelectedSessionRunning: input.isSelectedSessionRunning,
+    isCopilotSession: input.isCopilotSession,
+    selectedCopilotRemainingPercentLabel: input.selectedCopilotRemainingPercentLabel,
+    selectedCopilotRemainingRequestsLabel: input.selectedCopilotRemainingRequestsLabel,
+    selectedCopilotQuotaResetLabel: input.selectedCopilotQuotaResetLabel,
+    selectedSessionContextTelemetry: input.selectedSessionContextTelemetry,
+    selectedSessionContextTelemetryProjection: input.selectedSessionContextTelemetryProjection,
+    contextEmptyText: input.selectedContextEmptyText,
+    latestCommandEmptyText: input.latestCommandEmptyText,
+    onToggleHeaderExpanded: input.onToggleHeaderExpanded,
+    onCycleContextPaneTab: input.onCycleContextPaneTab,
+    onOpenCompanionReview: input.onOpenCompanionReview,
+  });
 
   return {
     mode: "agent",
@@ -373,31 +398,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     splitter: <ChatWorkbenchSplitter {...chatBodyProps.splitterProps} />,
     rightPane: (
       <SessionPaneErrorBoundary>
-        <SessionContextPane
-          taskTitle={input.selectedSession.taskTitle}
-          isHeaderExpanded={input.isSessionHeaderExpanded}
-          activeContextPaneTab={input.activeContextPaneTab}
-          availableContextPaneTabs={input.availableContextPaneTabs}
-          contextPaneProjection={input.contextPaneProjection}
-          latestCommandView={input.latestCommandView}
-          runningDetailsEntries={input.runningDetailsEntries}
-          liveRunReasoningText={input.liveRunReasoningText}
-          backgroundTasks={input.selectedBackgroundTasks}
-          companionGroupMonitorEntries={input.selectedCompanionGroupMonitorEntries}
-          selectedSessionLiveRunErrorMessage={input.liveRunErrorMessage}
-          isSelectedSessionRunning={input.isSelectedSessionRunning}
-          isCopilotSession={input.isCopilotSession}
-          selectedCopilotRemainingPercentLabel={input.selectedCopilotRemainingPercentLabel}
-          selectedCopilotRemainingRequestsLabel={input.selectedCopilotRemainingRequestsLabel}
-          selectedCopilotQuotaResetLabel={input.selectedCopilotQuotaResetLabel}
-          selectedSessionContextTelemetry={input.selectedSessionContextTelemetry}
-          selectedSessionContextTelemetryProjection={input.selectedSessionContextTelemetryProjection}
-          contextEmptyText={input.selectedContextEmptyText}
-          latestCommandEmptyText={input.latestCommandEmptyText}
-          onToggleHeaderExpanded={input.onToggleHeaderExpanded}
-          onCycleContextPaneTab={input.onCycleContextPaneTab}
-          onOpenCompanionReview={input.onOpenCompanionReview}
-        />
+        <SessionContextPane {...rightPaneProps} />
       </SessionPaneErrorBoundary>
     ),
     modals: <ChatSessionModals {...input} />,

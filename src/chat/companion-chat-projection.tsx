@@ -25,9 +25,11 @@ import { ChatSessionModals } from "./chat-session-modals.js";
 import { ChatWorkbenchSplitter, type ChatWindowProps } from "./chat-window.js";
 import {
   buildChatPageClassName,
+  buildLiveSessionContextPaneProps,
   buildLiveSessionChatBodyProps,
   resolveAuxiliaryModeLabel,
 } from "./chat-window-adapter.js";
+import { createWorkspaceExplorerAction } from "./chat-header-actions.js";
 import { resolveChatHeaderVisibility } from "./chat-header-visibility.js";
 import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
 import { createSessionFilesActions } from "./session-files-actions.js";
@@ -218,16 +220,10 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     onCancelTitleEdit: input.onCancelTitleEdit,
     onStartTitleEdit: input.onStartTitleEdit,
     onDeleteSession: () => {},
-    workspaceActions: (
-      <button
-        className="drawer-toggle compact secondary"
-        type="button"
-        disabled={input.isHeaderActionDisabled}
-        onClick={input.onOpenWorktree}
-      >
-        Explorer
-      </button>
-    ),
+    workspaceActions: createWorkspaceExplorerAction({
+      disabled: input.isHeaderActionDisabled,
+      onOpenExplorer: input.onOpenWorktree,
+    }),
     actions: (
       <>
         {input.headerActions}
@@ -379,6 +375,30 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       onStartContextRailResize: input.onStartContextRailResize,
     },
   });
+  const rightPaneProps = buildLiveSessionContextPaneProps({
+    taskTitle: input.session.taskTitle,
+    isHeaderExpanded: input.isHeaderExpanded,
+    activeContextPaneTab: input.activeContextPaneTab,
+    availableContextPaneTabs: input.availableContextPaneTabs,
+    contextPaneProjection: input.contextPaneProjection,
+    latestCommandView: input.latestCommandView,
+    runningDetailsEntries: input.runningDetailsEntries,
+    liveRunReasoningText: input.liveRunReasoningText,
+    backgroundTasks: input.backgroundTasks,
+    companionGroupMonitorEntries: input.companionGroupMonitorEntries,
+    selectedSessionLiveRunErrorMessage: input.liveRunErrorMessage,
+    isSelectedSessionRunning: input.isRunning,
+    isCopilotSession: input.isCopilotSession,
+    selectedCopilotRemainingPercentLabel: input.selectedCopilotRemainingPercentLabel,
+    selectedCopilotRemainingRequestsLabel: input.selectedCopilotRemainingRequestsLabel,
+    selectedCopilotQuotaResetLabel: input.selectedCopilotQuotaResetLabel,
+    selectedSessionContextTelemetry: input.selectedSessionContextTelemetry,
+    selectedSessionContextTelemetryProjection: input.selectedSessionContextTelemetryProjection,
+    contextEmptyText: "context usage はまだありません。",
+    onToggleHeaderExpanded: input.onToggleContextPaneHeaderExpanded,
+    onCycleContextPaneTab: input.onCycleContextPaneTab,
+    onOpenCompanionReview: input.onOpenCompanionReview,
+  });
 
   return {
     mode: "companion",
@@ -398,30 +418,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     splitter: <ChatWorkbenchSplitter {...chatBodyProps.splitterProps} />,
     rightPane: (
       <SessionPaneErrorBoundary>
-        <SessionContextPane
-          taskTitle={input.session.taskTitle}
-          isHeaderExpanded={input.isHeaderExpanded}
-          activeContextPaneTab={input.activeContextPaneTab}
-          availableContextPaneTabs={input.availableContextPaneTabs}
-          contextPaneProjection={input.contextPaneProjection}
-          latestCommandView={input.latestCommandView}
-          runningDetailsEntries={input.runningDetailsEntries}
-          liveRunReasoningText={input.liveRunReasoningText}
-          backgroundTasks={input.backgroundTasks}
-          companionGroupMonitorEntries={input.companionGroupMonitorEntries}
-          selectedSessionLiveRunErrorMessage={input.liveRunErrorMessage}
-          isSelectedSessionRunning={input.isRunning}
-          isCopilotSession={input.isCopilotSession}
-          selectedCopilotRemainingPercentLabel={input.selectedCopilotRemainingPercentLabel}
-          selectedCopilotRemainingRequestsLabel={input.selectedCopilotRemainingRequestsLabel}
-          selectedCopilotQuotaResetLabel={input.selectedCopilotQuotaResetLabel}
-          selectedSessionContextTelemetry={input.selectedSessionContextTelemetry}
-          selectedSessionContextTelemetryProjection={input.selectedSessionContextTelemetryProjection}
-          contextEmptyText="context usage はまだありません。"
-          onToggleHeaderExpanded={input.onToggleContextPaneHeaderExpanded}
-          onCycleContextPaneTab={input.onCycleContextPaneTab}
-          onOpenCompanionReview={input.onOpenCompanionReview}
-        />
+        <SessionContextPane {...rightPaneProps} />
       </SessionPaneErrorBoundary>
     ),
     modals: (
