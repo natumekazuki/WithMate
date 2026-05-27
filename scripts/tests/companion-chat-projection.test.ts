@@ -171,6 +171,7 @@ function createProjectionInput(
     selectedDiffThemeStyle: {},
     auditLogsOpen: false,
     displayedSessionAuditLogs: [],
+    auditLogSourceLabel: "Companion",
     auditLogDetails: {},
     auditLogOperationDetails: {},
     auditLogsHasMore: false,
@@ -327,10 +328,18 @@ test("buildCompanionChatWindowProps は通常 Companion の header action を維
 
   assert.equal(props.headerProps.showRenameButton, true);
   assert.equal(props.headerProps.showAuditLogButton, true);
+  assert.equal(props.headerProps.showDeleteButton, false);
   assert.doesNotMatch(props.className, /auxiliary-session-mode/);
   assert.match(headerActionsHtml, />Merge<\/button>/);
   assert.equal(props.composerProps.modeLabel, undefined);
   assert.equal(props.compactActionDockProps.modeLabel, undefined);
+});
+
+test("buildCompanionChatWindowProps は Audit Log modal に source label を渡す", () => {
+  const props = buildCompanionChatWindowProps(createProjectionInput());
+  const modalsElement = props.modals as React.ReactElement<{ auditLogSourceLabel?: string }>;
+
+  assert.equal(modalsElement.props.auditLogSourceLabel, "Companion");
 });
 
 test("buildCompanionChatWindowProps は Auxiliary mode の header action slot と mode label を渡す", () => {
@@ -347,6 +356,7 @@ test("buildCompanionChatWindowProps は Auxiliary mode の header action slot �
 
   assert.equal(props.headerProps.showRenameButton, false);
   assert.equal(props.headerProps.showAuditLogButton, false);
+  assert.equal(props.headerProps.showDeleteButton, false);
   assert.match(props.className, /auxiliary-session-mode/);
   assert.match(headerActionsHtml, />Return to main<\/button>/);
   assert.doesNotMatch(headerActionsHtml, />Merge<\/button>/);

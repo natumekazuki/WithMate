@@ -21,6 +21,7 @@ import {
   buildChatPageClassName,
   buildLiveSessionChatBodyProps,
 } from "./chat-window-adapter.js";
+import { resolveChatHeaderVisibility } from "./chat-header-visibility.js";
 import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
 import { createSessionFilesActions } from "./session-files-actions.js";
 
@@ -191,8 +192,12 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     titleDraft: input.titleDraft,
     isRunning: input.isSelectedSessionRunning,
     isReadOnly: input.isSelectedSessionReadOnly,
-    showRenameButton: !input.isAuxiliaryMode,
-    showDeleteButton: !input.isAuxiliaryMode,
+    ...resolveChatHeaderVisibility({
+      isAuxiliaryMode: input.isAuxiliaryMode,
+      canViewAuxiliaryAuditLog: true,
+      canDeleteSession: true,
+      canViewAuditLog: true,
+    }),
     showTerminalButton: true,
     onToggleExpanded: input.onToggleHeaderExpanded,
     onOpenAuditLog: input.onOpenAuditLog,

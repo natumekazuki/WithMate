@@ -283,3 +283,15 @@ test("buildAgentSessionChatWindowProps は Auxiliary mode でも attachment 経�
   assert.equal(props.composerProps.onDraftPaste, onDraftPaste);
   assert.equal(props.compactActionDockProps.attachmentCount, 1);
 });
+
+test("buildAgentSessionChatWindowProps は Auxiliary mode で parent header 操作だけ隠す", () => {
+  const normalProps = buildAgentSessionChatWindowProps(createProjectionInput());
+  const auxiliaryProps = buildAgentSessionChatWindowProps(createProjectionInput({ isAuxiliaryMode: true }));
+
+  assert.equal(normalProps.headerProps.showRenameButton, true);
+  assert.equal(normalProps.headerProps.showAuditLogButton, true);
+  assert.equal(normalProps.headerProps.showDeleteButton, true);
+  assert.equal(auxiliaryProps.headerProps.showRenameButton, false);
+  assert.equal(auxiliaryProps.headerProps.showAuditLogButton, true);
+  assert.equal(auxiliaryProps.headerProps.showDeleteButton, false);
+});

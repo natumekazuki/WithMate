@@ -3082,6 +3082,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         selectedDiffThemeStyle,
         auditLogsOpen,
         displayedSessionAuditLogs,
+        auditLogSourceLabel: "Companion",
         auditLogDetails,
         auditLogOperationDetails,
         auditLogsHasMore: auditLogsState.ownerSessionId === snapshot.session.id ? auditLogsState.hasMore : false,

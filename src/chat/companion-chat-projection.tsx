@@ -27,6 +27,7 @@ import {
   buildChatPageClassName,
   buildLiveSessionChatBodyProps,
 } from "./chat-window-adapter.js";
+import { resolveChatHeaderVisibility } from "./chat-header-visibility.js";
 import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
 import { createSessionFilesActions } from "./session-files-actions.js";
 
@@ -112,6 +113,7 @@ export type CompanionChatProjectionInput = {
   selectedDiffThemeStyle: CSSProperties;
   auditLogsOpen: boolean;
   displayedSessionAuditLogs: SessionAuditLogModalProps["entries"];
+  auditLogSourceLabel?: SessionAuditLogModalProps["sourceLabel"];
   auditLogDetails: SessionAuditLogModalProps["details"];
   auditLogOperationDetails: SessionAuditLogModalProps["operationDetails"];
   auditLogsHasMore: boolean;
@@ -196,10 +198,12 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     isEditingTitle: input.isEditingTitle,
     titleDraft: input.titleDraft,
     isRunning: input.isRunning,
-    showRenameButton: !input.isAuxiliaryMode,
-    showAuditLogButton: !input.isAuxiliaryMode,
+    ...resolveChatHeaderVisibility({
+      isAuxiliaryMode: input.isAuxiliaryMode,
+      canDeleteSession: false,
+      canViewAuditLog: true,
+    }),
     showTerminalButton: true,
-    showDeleteButton: false,
     onToggleExpanded: input.onToggleHeaderExpanded,
     onOpenAuditLog: input.onOpenAuditLog,
     onOpenTerminal: input.onOpenTerminal,
