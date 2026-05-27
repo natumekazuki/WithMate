@@ -9,6 +9,15 @@ export type WorkspaceExplorerActionOptions = {
   onOpenExplorer: () => void;
 };
 
+export type AuxiliaryHeaderActionsOptions = {
+  isActive: boolean;
+  showIdleLabel?: boolean;
+  startDisabled?: boolean;
+  returnDisabled?: boolean;
+  onStart: () => void;
+  onReturnToMain: () => void;
+};
+
 export type LiveSessionHeaderPropsInput = {
   taskTitle: string;
   isEditingTitle: boolean;
@@ -49,6 +58,42 @@ export function createWorkspaceExplorerAction({
     >
       Explorer
     </button>
+  );
+}
+
+export function createAuxiliaryHeaderActions({
+  isActive,
+  showIdleLabel = false,
+  startDisabled = false,
+  returnDisabled = false,
+  onStart,
+  onReturnToMain,
+}: AuxiliaryHeaderActionsOptions) {
+  const shouldShowLabel = isActive || showIdleLabel;
+
+  return (
+    <div className="session-window-control-group auxiliary-session-control-group" role="group" aria-label="Auxiliary session actions">
+      {shouldShowLabel ? <span className="session-window-control-group-label">Auxiliary</span> : null}
+      {isActive ? (
+        <button
+          className="drawer-toggle compact secondary"
+          type="button"
+          onClick={onReturnToMain}
+          disabled={returnDisabled}
+        >
+          Return to main
+        </button>
+      ) : (
+        <button
+          className="drawer-toggle compact secondary"
+          type="button"
+          onClick={onStart}
+          disabled={startDisabled}
+        >
+          Auxiliary
+        </button>
+      )}
+    </div>
   );
 }
 

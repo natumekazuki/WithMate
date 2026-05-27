@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildMessageListProjection,
   loadProjectedMessageArtifact,
+  resolvePendingAuxiliaryMessageGroupId,
 } from "../../src/auxiliary-session-message-projection.js";
 import type { AuxiliarySession } from "../../src/auxiliary-session-state.js";
 import type { Message, MessageArtifact } from "../../src/session-state.js";
@@ -16,7 +17,7 @@ function createAuxiliarySession(
     id: overrides.id ?? "aux-1",
     parentSessionId: "session-1",
     status: overrides.status ?? "closed",
-    runState: "idle",
+    runState: overrides.runState ?? "idle",
     title: "Auxiliary",
     provider: "codex",
     catalogRevision: 1,
@@ -123,6 +124,17 @@ test("buildMessageListProjection は Auxiliary session ごとの group を保持
     { id: "aux-1", label: "Auxiliary" },
     { id: "aux-2", label: "Auxiliary" },
   ]);
+});
+
+test("resolvePendingAuxiliaryMessageGroupId は実行中 Auxiliary だけ group id を返す", () => {
+  assert.equal(resolvePendingAuxiliaryMessageGroupId(null), null);
+  assert.equal(resolvePendingAuxiliaryMessageGroupId(undefined), null);
+  assert.equal(resolvePendingAuxiliaryMessageGroupId(createAuxiliarySession([], { runState: "idle" })), null);
+  assert.equal(resolvePendingAuxiliaryMessageGroupId(createAuxiliarySession([], { runState: "error" })), null);
+  assert.equal(
+    resolvePendingAuxiliaryMessageGroupId(createAuxiliarySession([], { id: "aux-running", runState: "running" })),
+    "aux-running",
+  );
 });
 
 test("buildMessageListProjection は Auxiliary を parent message の保存位置へ差し込む", () => {

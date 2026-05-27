@@ -61,6 +61,7 @@ import {
 } from "./session-ui-projection.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
+import { createAuxiliaryHeaderActions } from "./chat/chat-header-actions.js";
 import {
   buildComposerSendabilityState,
   getComposerSendButtonTitle,
@@ -118,6 +119,7 @@ import {
 import {
   buildMessageListProjection,
   loadProjectedMessageArtifact,
+  resolvePendingAuxiliaryMessageGroupId,
 } from "./auxiliary-session-message-projection.js";
 
 type SessionOwnedLiveRun = {
@@ -3166,30 +3168,13 @@ export default function AgentSessionWindowApp() {
   const renderedComposerButtonTitle = activeAuxiliarySession
     ? getComposerSendButtonTitle(auxiliaryComposerSendability)
     : composerSendButtonTitle;
-  const auxiliaryHeaderActions = activeAuxiliarySession ? (
-    <div className="session-window-control-group auxiliary-session-control-group" role="group" aria-label="Auxiliary session actions">
-      <span className="session-window-control-group-label">Auxiliary</span>
-      <button
-        className="drawer-toggle compact secondary"
-        type="button"
-        onClick={() => void handleReturnToMainSession()}
-        disabled={isAuxiliaryActionPending || activeAuxiliarySession.runState === "running"}
-      >
-        Return to main
-      </button>
-    </div>
-  ) : (
-    <div className="session-window-control-group auxiliary-session-control-group" role="group" aria-label="Auxiliary session actions">
-      <button
-        className="drawer-toggle compact secondary"
-        type="button"
-        onClick={handleOpenAuxiliaryLaunchDialog}
-        disabled={isAuxiliaryActionPending || isSelectedSessionRunning || isSelectedSessionReadOnly}
-      >
-        Auxiliary
-      </button>
-    </div>
-  );
+  const auxiliaryHeaderActions = createAuxiliaryHeaderActions({
+    isActive: !!activeAuxiliarySession,
+    startDisabled: isAuxiliaryActionPending || isSelectedSessionRunning || isSelectedSessionReadOnly,
+    returnDisabled: isAuxiliaryActionPending || activeAuxiliarySession?.runState === "running",
+    onStart: handleOpenAuxiliaryLaunchDialog,
+    onReturnToMain: () => void handleReturnToMainSession(),
+  });
 
   if (!desktopRuntime) {
     return <ChatWindowStatusScreen message="Session Window は Electron から開いてね。" />;
@@ -3228,7 +3213,7 @@ export default function AgentSessionWindowApp() {
         liveRunAssistantText,
         hasLiveRunAssistantText,
         liveRunErrorMessage: selectedSessionLiveRun?.errorMessage ?? "",
-        pendingMessageGroupId: activeAuxiliarySession?.runState === "running" ? activeAuxiliarySession.id : null,
+        pendingMessageGroupId: resolvePendingAuxiliaryMessageGroupId(activeAuxiliarySession),
         isMessageListFollowing,
         retryBanner: activeAuxiliarySession ? null : retryBanner,
         isRetryDetailsOpen,

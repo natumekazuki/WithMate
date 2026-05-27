@@ -53,6 +53,7 @@ import { buildCompanionGroupMonitorEntries } from "./home/home-session-projectio
 import { SessionHeader } from "./session-components.js";
 import { ChatHeaderHandle, ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
+import { createAuxiliaryHeaderActions } from "./chat/chat-header-actions.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
 import { COMPANION_PENDING_MESSAGE_TEXT } from "./chat/pending-run-indicator.js";
@@ -103,6 +104,7 @@ import {
 import {
   buildMessageListProjection,
   loadProjectedMessageArtifact,
+  resolvePendingAuxiliaryMessageGroupId,
 } from "./auxiliary-session-message-projection.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
@@ -2945,30 +2947,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
   }
 
-  const auxiliaryHeaderActions = snapshot ? (
-    <div className="session-window-control-group auxiliary-session-control-group" role="group" aria-label="Auxiliary session actions">
-      <span className="session-window-control-group-label">Auxiliary</span>
-      {activeAuxiliarySession ? (
-        <button
-          className="drawer-toggle compact secondary"
-          type="button"
-          onClick={() => void handleReturnToMainSession()}
-          disabled={isAuxiliaryActionPending || activeAuxiliarySession.runState === "running"}
-        >
-          Return to main
-        </button>
-      ) : (
-        <button
-          className="drawer-toggle compact secondary"
-          type="button"
-          onClick={handleOpenAuxiliaryLaunchDialog}
-          disabled={isAuxiliaryActionPending || operationRunning || isSelectedSessionRunning || snapshot.session.status !== "active"}
-        >
-          Auxiliary
-        </button>
-      )}
-    </div>
-  ) : null;
+  const auxiliaryHeaderActions = snapshot
+    ? createAuxiliaryHeaderActions({
+        isActive: !!activeAuxiliarySession,
+        showIdleLabel: true,
+        startDisabled: isAuxiliaryActionPending || operationRunning || isSelectedSessionRunning || snapshot.session.status !== "active",
+        returnDisabled: isAuxiliaryActionPending || activeAuxiliarySession?.runState === "running",
+        onStart: handleOpenAuxiliaryLaunchDialog,
+        onReturnToMain: () => void handleReturnToMainSession(),
+      })
+    : null;
 
   if (!desktopRuntime) {
     return isMergeView ? (
@@ -3021,7 +3009,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         liveRunAssistantText: selectedSessionLiveRun?.assistantText ?? "",
         liveRunErrorMessage: selectedSessionLiveRun?.errorMessage ?? "",
         pendingMessageText: COMPANION_PENDING_MESSAGE_TEXT,
-        pendingMessageGroupId: activeAuxiliarySession?.runState === "running" ? activeAuxiliarySession.id : null,
+        pendingMessageGroupId: resolvePendingAuxiliaryMessageGroupId(activeAuxiliarySession),
         isMessageListFollowing,
         retryBanner,
         isRetryDetailsOpen,

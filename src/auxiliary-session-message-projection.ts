@@ -27,6 +27,8 @@ export type MessageListGroup = {
 
 type ProjectedMessageArtifact = NonNullable<Message["artifact"]>;
 
+type PendingAuxiliaryMessageGroupSession = Pick<AuxiliarySession, "id" | "runState">;
+
 export type LoadProjectedMessageArtifactOptions = {
   source: MessageListSource | undefined;
   loadSessionArtifact: (
@@ -47,6 +49,12 @@ export function loadProjectedMessageArtifact({
   }
 
   return Promise.resolve(loadSessionArtifact(source.messageIndex)).then((artifact) => artifact ?? null);
+}
+
+export function resolvePendingAuxiliaryMessageGroupId(
+  auxiliarySession: PendingAuxiliaryMessageGroupSession | null | undefined,
+): string | null {
+  return auxiliarySession?.runState === "running" ? auxiliarySession.id : null;
 }
 
 export function buildMessageListProjection(
