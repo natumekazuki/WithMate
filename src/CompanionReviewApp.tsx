@@ -99,7 +99,10 @@ import {
   createOptimisticRunningSessionState,
   createOwnedPendingLiveSessionRunState,
 } from "./session-live-run-state.js";
-import { buildMessageListProjection } from "./auxiliary-session-message-projection.js";
+import {
+  buildMessageListProjection,
+  loadProjectedMessageArtifact,
+} from "./auxiliary-session-message-projection.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   buildContextPaneProjection,
@@ -3106,17 +3109,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onOpenMergeWindow: () => void openCompanionMergeWindow(),
         onMessageListScroll: handleMessageListScroll,
         onToggleArtifact: toggleArtifact,
-        onLoadArtifactDetail: (messageIndex) => {
-          const source = messageListSources[messageIndex];
-          if (!source) {
-            return Promise.resolve(null);
-          }
-          if (source.kind === "auxiliary") {
-            return Promise.resolve(source.artifact ?? null);
-          }
-
-          return withmateApi?.getCompanionMessageArtifact(snapshot.session.id, source.messageIndex) ?? Promise.resolve(null);
-        },
+        onLoadArtifactDetail: (messageIndex) =>
+          loadProjectedMessageArtifact({
+            source: messageListSources[messageIndex],
+            loadSessionArtifact: (sourceMessageIndex) =>
+              withmateApi?.getCompanionMessageArtifact(snapshot.session.id, sourceMessageIndex) ?? null,
+          }),
         onOpenDiff: (title, file) =>
           setSelectedDiff({
             title,

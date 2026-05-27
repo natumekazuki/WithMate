@@ -115,7 +115,10 @@ import {
   type RetryBannerKind,
   type RetryBannerState,
 } from "./chat/retry-state.js";
-import { buildMessageListProjection } from "./auxiliary-session-message-projection.js";
+import {
+  buildMessageListProjection,
+  loadProjectedMessageArtifact,
+} from "./auxiliary-session-message-projection.js";
 
 type SessionOwnedLiveRun = {
   ownerSessionId: string | null;
@@ -3311,20 +3314,12 @@ export default function AgentSessionWindowApp() {
         onOpenSessionFilesExplorer: () => void handleOpenSessionFilesExplorer(),
         onMessageListScroll: handleMessageListScroll,
         onToggleArtifact: toggleArtifact,
-        onLoadArtifactDetail: (messageIndex) => {
-          const source = messageListSources[messageIndex];
-          if (!source) {
-            return Promise.resolve(null);
-          }
-          if (source.kind === "auxiliary") {
-            return Promise.resolve(source.artifact ?? null);
-          }
-
-          return (
-            withmateApi?.getSessionMessageArtifact(selectedSession.id, source.messageIndex) ??
-            Promise.resolve(null)
-          );
-        },
+        onLoadArtifactDetail: (messageIndex) =>
+          loadProjectedMessageArtifact({
+            source: messageListSources[messageIndex],
+            loadSessionArtifact: (sourceMessageIndex) =>
+              withmateApi?.getSessionMessageArtifact(selectedSession.id, sourceMessageIndex) ?? null,
+          }),
         onOpenDiff: (title, file) =>
           setSelectedDiff({
             title,
