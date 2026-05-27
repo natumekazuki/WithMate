@@ -8,6 +8,7 @@ import {
   buildLiveSessionContextPaneProps,
   buildLiveSessionChatBodyProps,
   buildLiveSessionCompactActionDockProps,
+  buildLiveSessionComposerDockProps,
   buildLiveSessionComposerProps,
   buildLiveSessionMessageColumnProps,
   buildLiveSessionSplitterProps,
@@ -254,6 +255,102 @@ test("buildLiveSessionComposerProps は composer の表示デフォルトを反�
   assert.equal(composerProps.showAttachmentControls, true);
   assert.equal(composerProps.showAdditionalDirectoryControls, true);
   assert.equal(composerProps.showExecutionModeControls, true);
+});
+
+test("buildLiveSessionComposerDockProps は composer と compact dock の共通 props を対応付ける", () => {
+  const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
+  const onCollapseActionDock = () => {};
+  const onExpandActionDock = () => {};
+  const onJumpToBottom = () => {};
+  const onSendOrCancel = () => {};
+  const props = buildLiveSessionComposerDockProps({
+    retryBanner: null,
+    isRunning: true,
+    pendingRunIndicatorAnnouncement: "実行中",
+    pendingRunIndicatorText: "応答を生成中",
+    modeLabel: "Auxiliary",
+    composerBlocked: false,
+    canSelectCustomAgent: true,
+    showCustomAgentPicker: true,
+    showSkillPicker: true,
+    isAgentPickerOpen: false,
+    isSkillPickerOpen: false,
+    isAdditionalDirectoryListOpen: false,
+    selectedCustomAgentLabel: "Agent",
+    selectedCustomAgentTitle: "",
+    additionalDirectoryCount: 2,
+    canCollapseActionDock: true,
+    isMessageListFollowing: false,
+    isCustomAgentListLoading: false,
+    isSkillListLoading: false,
+    customAgentItems: [],
+    skillItems: [],
+    attachmentItems: [],
+    additionalDirectoryItems: [],
+    workspacePathMatchItems: [],
+    draft: "draft",
+    composerTextareaRef,
+    isComposerDisabled: false,
+    isSendDisabled: false,
+    composerSendability: {
+      primaryFeedback: "",
+      secondaryFeedback: [],
+      feedbackTone: null,
+      shouldShowFeedback: false,
+    },
+    sendButtonTitle: "Stop",
+    isComposerBlockedFeedbackActive: false,
+    approvalOptions: [{ value: "never", label: "never" }],
+    selectedApprovalMode: "never",
+    sandboxOptions: [],
+    selectedCodexSandboxMode: "workspace-write",
+    modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+    selectedModel: "gpt-test",
+    selectedModelFallbackLabel: "GPT Test",
+    reasoningOptions: [{ value: "low", label: "low" }],
+    selectedReasoningEffort: "low",
+    actionDockCompactPreview: "preview",
+    attachmentCount: 1,
+    onPickFile: () => {},
+    onPickFolder: () => {},
+    onPickImage: () => {},
+    onToggleAgentPicker: () => {},
+    onToggleSkillPicker: () => {},
+    onAddAdditionalDirectory: () => {},
+    onToggleAdditionalDirectoryList: () => {},
+    onCollapseActionDock,
+    onExpandActionDock,
+    onJumpToBottom,
+    onSelectCustomAgent: () => {},
+    onSelectSkill: () => {},
+    onRemoveAttachment: () => {},
+    onRemoveAdditionalDirectory: () => {},
+    onDraftChange: () => {},
+    onDraftFocus: () => {},
+    onDraftKeyDown: () => {},
+    onDraftSelect: () => {},
+    onDraftCompositionStart: () => {},
+    onDraftCompositionEnd: () => {},
+    onSendOrCancel,
+    onSelectWorkspacePathMatch: () => {},
+    onActivateWorkspacePathMatch: () => {},
+    onChangeApprovalMode: () => {},
+    onChangeCodexSandboxMode: () => {},
+    onChangeModel: () => {},
+    onChangeReasoningEffort: () => {},
+  });
+
+  assert.equal(props.composer.showJumpToBottom, true);
+  assert.equal(props.composer.onCollapse, onCollapseActionDock);
+  assert.equal(props.compactActionDock.draft, "draft");
+  assert.equal(props.compactActionDock.actionDockCompactPreview, "preview");
+  assert.equal(props.compactActionDock.attachmentCount, 1);
+  assert.equal(props.compactActionDock.modeLabel, "Auxiliary");
+  assert.equal(props.compactActionDock.showJumpToBottom, true);
+  assert.equal(props.compactActionDock.sendButtonTitle, "Stop");
+  assert.equal(props.compactActionDock.onExpand, onExpandActionDock);
+  assert.equal(props.compactActionDock.onJumpToBottom, onJumpToBottom);
+  assert.equal(props.compactActionDock.onSendOrCancel, onSendOrCancel);
 });
 
 test("buildLiveSessionSplitterProps は context rail resize state を反映する", () => {

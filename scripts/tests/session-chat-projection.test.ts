@@ -343,3 +343,54 @@ test("buildAgentSessionChatWindowProps は header action callbacks を維持す�
   assert.equal(sessionFilesExplorer.props.onClick, onOpenSessionFilesExplorer);
   assert.equal(sessionFilesTerminal.props.onClick, onOpenSessionFilesTerminal);
 });
+
+test("buildAgentSessionChatWindowProps は composer と compact dock の live props を維持する", () => {
+  const onCollapseActionDock = () => {};
+  const onExpandActionDock = () => {};
+  const onJumpToMessageListBottom = () => {};
+  const onSendOrCancel = () => {};
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    selectedSession: {
+      ...createSession(),
+      provider: "copilot",
+      runState: "running",
+      model: "gpt-agent",
+      reasoningEffort: "medium",
+      allowedAdditionalDirectories: ["C:/extra"],
+    },
+    selectedCustomAgentLabel: "Copilot Agent",
+    pendingRunIndicatorAnnouncement: "Agent running",
+    pendingRunIndicatorText: "Agent responding",
+    isMessageListFollowing: false,
+    composerSendButtonTitle: "Agent stop",
+    actionDockCompactPreview: "Agent preview",
+    attachmentCount: 2,
+    onCollapseActionDock,
+    onExpandActionDock,
+    onJumpToMessageListBottom,
+    onSendOrCancel,
+  }));
+
+  assert.equal(props.composerProps.isRunning, true);
+  assert.equal(props.composerProps.pendingRunIndicatorAnnouncement, "Agent running");
+  assert.equal(props.composerProps.pendingRunIndicatorText, "Agent responding");
+  assert.equal(props.composerProps.canSelectCustomAgent, true);
+  assert.equal(props.composerProps.selectedCustomAgentLabel, "Copilot Agent");
+  assert.equal(props.composerProps.additionalDirectoryCount, 1);
+  assert.equal(props.composerProps.showJumpToBottom, true);
+  assert.equal(props.composerProps.selectedApprovalMode, "never");
+  assert.equal(props.composerProps.selectedCodexSandboxMode, "workspace-write");
+  assert.equal(props.composerProps.selectedModel, "gpt-agent");
+  assert.equal(props.composerProps.selectedReasoningEffort, "medium");
+  assert.equal(props.composerProps.sendButtonTitle, "Agent stop");
+  assert.equal(props.composerProps.onCollapse, onCollapseActionDock);
+  assert.equal(props.compactActionDockProps.actionDockCompactPreview, "Agent preview");
+  assert.equal(props.compactActionDockProps.attachmentCount, 2);
+  assert.equal(props.compactActionDockProps.isRunning, true);
+  assert.equal(props.compactActionDockProps.pendingRunIndicatorText, "Agent responding");
+  assert.equal(props.compactActionDockProps.showJumpToBottom, true);
+  assert.equal(props.compactActionDockProps.sendButtonTitle, "Agent stop");
+  assert.equal(props.compactActionDockProps.onExpand, onExpandActionDock);
+  assert.equal(props.compactActionDockProps.onJumpToBottom, onJumpToMessageListBottom);
+  assert.equal(props.compactActionDockProps.onSendOrCancel, onSendOrCancel);
+});

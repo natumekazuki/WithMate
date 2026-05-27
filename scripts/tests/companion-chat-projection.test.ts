@@ -427,6 +427,47 @@ test("buildCompanionChatWindowProps は header action callbacks と Merge disabl
   assert.match(headerActionsHtml, />Merge<\/button>/);
 });
 
+test("buildCompanionChatWindowProps は composer と compact dock の live props を維持する", () => {
+  const onCollapseActionDock = () => {};
+  const onExpandActionDock = () => {};
+  const onJumpToMessageListBottom = () => {};
+  const onSendOrCancel = () => {};
+  const props = buildCompanionChatWindowProps(createProjectionInput({
+    isMessageListFollowing: false,
+    selectedCustomAgentLabel: "Companion Agent",
+    selectedApprovalMode: "never",
+    selectedCodexSandboxMode: "workspace-write",
+    selectedModel: "gpt-companion",
+    selectedReasoningEffort: "medium",
+    sendButtonTitle: "Companion stop",
+    actionDockCompactPreview: "Companion preview",
+    attachmentCount: 3,
+    onCollapseActionDock,
+    onExpandActionDock,
+    onJumpToMessageListBottom,
+    onSendOrCancel,
+  }));
+
+  assert.equal(props.composerProps.pendingRunIndicatorAnnouncement, "Companion が実行中");
+  assert.equal(props.composerProps.pendingRunIndicatorText, "Companion が応答を生成中...");
+  assert.equal(props.composerProps.selectedCustomAgentLabel, "Companion Agent");
+  assert.equal(props.composerProps.showJumpToBottom, true);
+  assert.equal(props.composerProps.selectedApprovalMode, "never");
+  assert.equal(props.composerProps.selectedCodexSandboxMode, "workspace-write");
+  assert.equal(props.composerProps.selectedModel, "gpt-companion");
+  assert.equal(props.composerProps.selectedReasoningEffort, "medium");
+  assert.equal(props.composerProps.sendButtonTitle, "Companion stop");
+  assert.equal(props.composerProps.onCollapse, onCollapseActionDock);
+  assert.equal(props.compactActionDockProps.actionDockCompactPreview, "Companion preview");
+  assert.equal(props.compactActionDockProps.attachmentCount, 3);
+  assert.equal(props.compactActionDockProps.pendingRunIndicatorText, "Companion が応答を生成中...");
+  assert.equal(props.compactActionDockProps.showJumpToBottom, true);
+  assert.equal(props.compactActionDockProps.sendButtonTitle, "Companion stop");
+  assert.equal(props.compactActionDockProps.onExpand, onExpandActionDock);
+  assert.equal(props.compactActionDockProps.onJumpToBottom, onJumpToMessageListBottom);
+  assert.equal(props.compactActionDockProps.onSendOrCancel, onSendOrCancel);
+});
+
 test("Companion の optimistic running state は user prompt と pending live run を同じ session に紐づける", () => {
   const session = createCompanionSession();
   const runningSession = createOptimisticRunningSessionState(

@@ -230,6 +230,17 @@ export type LiveSessionCompactActionDockProps = Omit<ChatCompactActionDockProps,
   showJumpToBottom: boolean;
 };
 
+export type LiveSessionComposerDockPropsInput = Omit<
+  LiveSessionComposerProps,
+  "onCollapse" | "showJumpToBottom"
+> & {
+  actionDockCompactPreview: string;
+  attachmentCount: number;
+  isMessageListFollowing: boolean;
+  onCollapseActionDock: () => void;
+  onExpandActionDock: () => void;
+};
+
 export type LiveSessionSplitterProps = {
   isContextRailResizing: boolean;
   onStartContextRailResize?: PointerEventHandler<HTMLButtonElement>;
@@ -255,6 +266,46 @@ export function buildLiveSessionChatBodyProps(input: LiveSessionChatBodyPropsInp
     composerProps: buildLiveSessionComposerProps(input.composer),
     compactActionDockProps: buildLiveSessionCompactActionDockProps(input.compactActionDock),
     splitterProps: buildLiveSessionSplitterProps(input.splitter),
+  };
+}
+
+export function buildLiveSessionComposerDockProps(
+  input: LiveSessionComposerDockPropsInput,
+): {
+  composer: LiveSessionComposerProps;
+  compactActionDock: LiveSessionCompactActionDockProps;
+} {
+  const {
+    actionDockCompactPreview,
+    attachmentCount,
+    isMessageListFollowing,
+    onCollapseActionDock,
+    onExpandActionDock,
+    ...composerInput
+  } = input;
+  const showJumpToBottom = !isMessageListFollowing;
+
+  return {
+    composer: {
+      ...composerInput,
+      showJumpToBottom,
+      onCollapse: onCollapseActionDock,
+    },
+    compactActionDock: {
+      draft: input.draft,
+      actionDockCompactPreview,
+      attachmentCount,
+      isRunning: input.isRunning,
+      pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
+      pendingRunIndicatorText: input.pendingRunIndicatorText,
+      modeLabel: input.modeLabel,
+      isSendDisabled: input.isSendDisabled,
+      showJumpToBottom,
+      sendButtonTitle: input.sendButtonTitle,
+      onExpand: onExpandActionDock,
+      onJumpToBottom: input.onJumpToBottom,
+      onSendOrCancel: input.onSendOrCancel,
+    },
   };
 }
 
