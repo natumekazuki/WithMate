@@ -20,6 +20,7 @@ import { ChatWorkbenchSplitter, type ChatWindowProps } from "./chat-window.js";
 import {
   buildChatPageClassName,
   buildLiveSessionChatBodyProps,
+  resolveAuxiliaryModeLabel,
 } from "./chat-window-adapter.js";
 import { resolveChatHeaderVisibility } from "./chat-header-visibility.js";
 import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
@@ -268,7 +269,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       isRunning: input.selectedSession.runState === "running",
       pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: input.pendingRunIndicatorText,
-      modeLabel: input.isAuxiliaryMode ? "Auxiliary" : undefined,
+      modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
       composerBlocked: input.composerBlocked,
       canSelectCustomAgent: input.selectedSession.provider === "copilot",
       showCustomAgentPicker: true,
@@ -341,7 +342,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       isRunning: input.selectedSession.runState === "running",
       pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: input.pendingRunIndicatorText,
-      modeLabel: input.isAuxiliaryMode ? "Auxiliary" : undefined,
+      modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
       isSendDisabled: input.isSendDisabled,
       showJumpToBottom: !input.isMessageListFollowing,
       sendButtonTitle: input.composerSendButtonTitle,

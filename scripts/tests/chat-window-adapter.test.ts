@@ -20,6 +20,7 @@ import {
   createStaticTextChatCompactActionDockProps,
   createStaticTextConversationMessageColumnProps,
   isStaticChatSendDisabled,
+  resolveAuxiliaryModeLabel,
   toConversationMessages,
 } from "../../src/chat/chat-window-adapter.js";
 import type { ChatWindowProps } from "../../src/chat/chat-window.js";
@@ -52,6 +53,12 @@ test("buildChatPageClassName は header collapse class を共通形式で組み�
     buildChatPageClassName({ baseClassName: "theme-accent", isHeaderExpanded: false }),
     "theme-accent session-page-header-collapsed",
   );
+});
+
+test("resolveAuxiliaryModeLabel は Auxiliary mode だけ label を返す", () => {
+  assert.equal(resolveAuxiliaryModeLabel(true), "Auxiliary");
+  assert.equal(resolveAuxiliaryModeLabel(false), undefined);
+  assert.equal(resolveAuxiliaryModeLabel(undefined), undefined);
 });
 
 function createCharacter(): ChatWindowProps["messageColumnProps"]["character"] {

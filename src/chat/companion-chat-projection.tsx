@@ -26,6 +26,7 @@ import { ChatWorkbenchSplitter, type ChatWindowProps } from "./chat-window.js";
 import {
   buildChatPageClassName,
   buildLiveSessionChatBodyProps,
+  resolveAuxiliaryModeLabel,
 } from "./chat-window-adapter.js";
 import { resolveChatHeaderVisibility } from "./chat-header-visibility.js";
 import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
@@ -292,7 +293,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       isRunning: input.isRunning,
       pendingRunIndicatorAnnouncement: "Companion が実行中",
       pendingRunIndicatorText: "Companion が応答を生成中...",
-      modeLabel: input.isAuxiliaryMode ? "Auxiliary" : undefined,
+      modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
       composerBlocked: input.composerBlocked,
       canSelectCustomAgent: input.session.provider === "copilot",
       showCustomAgentPicker: true,
@@ -365,7 +366,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       isRunning: input.isRunning,
       pendingRunIndicatorAnnouncement: "Companion が実行中",
       pendingRunIndicatorText: "Companion が応答を生成中...",
-      modeLabel: input.isAuxiliaryMode ? "Auxiliary" : undefined,
+      modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
       isSendDisabled: input.isSendDisabled,
       showJumpToBottom: !input.isMessageListFollowing,
       sendButtonTitle: input.sendButtonTitle,

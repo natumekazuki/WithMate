@@ -17,6 +17,10 @@ type ChatMessageColumnProps = ChatWindowProps["messageColumnProps"];
 type ChatComposerProps = ChatWindowProps["composerProps"];
 type ChatCompactActionDockProps = ChatWindowProps["compactActionDockProps"];
 
+export function resolveAuxiliaryModeLabel(isAuxiliaryMode?: boolean): string | undefined {
+  return isAuxiliaryMode ? "Auxiliary" : undefined;
+}
+
 type StaticChatCharacterInput = {
   id: string;
   name: string;
