@@ -41,8 +41,8 @@ export type TextChatWindowProjectionInput = {
   selectedModelFallbackLabel: string;
   reasoningOptions: ChatSelectOption[];
   selectedReasoningEffort: string;
-  pendingRunIndicatorAnnouncement: string;
-  pendingRunIndicatorText: string;
+  pendingRunIndicatorAnnouncement?: string;
+  pendingRunIndicatorText?: string;
   messageListRef: RefObject<HTMLDivElement | null>;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   onDraftChange: (value: string) => void;

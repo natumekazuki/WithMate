@@ -31,6 +31,7 @@ import {
   resolveAuxiliaryModeLabel,
 } from "./chat-window-adapter.js";
 import { buildLiveSessionHeaderProps } from "./chat-header-actions.js";
+import { COMPANION_PENDING_RUN_INDICATOR_TEXT } from "./pending-run-indicator.js";
 import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
 
 export type CompanionChatProjectionInput = {
@@ -248,8 +249,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       onOpenPath: input.onOpenInlinePath,
     }),
     isRunning: input.isRunning,
-    pendingRunIndicatorAnnouncement: "Companion が実行中",
-    pendingRunIndicatorText: "Companion が応答を生成中...",
+    ...COMPANION_PENDING_RUN_INDICATOR_TEXT,
     modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
     composerBlocked: input.composerBlocked,
     canSelectCustomAgent: input.session.provider === "copilot",

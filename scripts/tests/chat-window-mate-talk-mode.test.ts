@@ -177,6 +177,41 @@ test("MateTalk は ChatWindow で sending 中に共通の pending 表示と disa
   assert.match(html, /<textarea[^>]*disabled=""/);
 });
 
+test("MateTalk は pending run indicator props を渡さない", () => {
+  const messageListRef = React.createRef<HTMLDivElement>();
+  const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
+  const props = buildMateTalkChatWindowProps({
+    mateName: "ユニバーサル",
+    messages: [],
+    input: "おはよう",
+    feedback: "",
+    sending: true,
+    isHeaderExpanded: false,
+    isActionDockExpanded: true,
+    modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+    selectedModel: "gpt-test",
+    selectedModelFallbackLabel: "GPT Test",
+    reasoningOptions: [{ value: "low", label: "low" }],
+    selectedReasoningEffort: "low",
+    messageListRef,
+    composerTextareaRef,
+    onChangeInput() {},
+    onChangeModel() {},
+    onChangeReasoningEffort() {},
+    onSubmit() {},
+    onToggleHeaderExpanded() {},
+    onOpenSessionFilesExplorer() {},
+    onOpenSessionFilesTerminal() {},
+    onCollapseActionDock() {},
+    onExpandActionDock() {},
+  });
+
+  assert.equal(props.composerProps.pendingRunIndicatorAnnouncement, undefined);
+  assert.equal(props.composerProps.pendingRunIndicatorText, undefined);
+  assert.equal(props.compactActionDockProps.pendingRunIndicatorAnnouncement, undefined);
+  assert.equal(props.compactActionDockProps.pendingRunIndicatorText, undefined);
+});
+
 test("MateTalk は ChatWindow で Session と同じヘッダー格納ハンドルを使う", () => {
   const html = renderPanel({ input: "おはよう", isHeaderExpanded: false });
 

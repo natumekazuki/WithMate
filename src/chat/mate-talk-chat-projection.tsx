@@ -97,8 +97,6 @@ export function buildMateTalkChatWindowProps({
     selectedModelFallbackLabel,
     reasoningOptions,
     selectedReasoningEffort,
-    pendingRunIndicatorAnnouncement: `${mateName} の返信を待っています`,
-    pendingRunIndicatorText: `${mateName} が返信を準備中`,
     messageListRef,
     composerTextareaRef,
     onDraftChange: onChangeInput,

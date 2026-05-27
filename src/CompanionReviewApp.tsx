@@ -55,6 +55,7 @@ import { ChatHeaderHandle, ChatWindow, ChatWindowStatusScreen } from "./chat/cha
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
 import { buildCompanionChatWindowProps } from "./chat/companion-chat-projection.js";
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
+import { COMPANION_PENDING_MESSAGE_TEXT } from "./chat/pending-run-indicator.js";
 import {
   buildRetryStopSummary,
   defaultRetryBannerDetailsOpen,
@@ -136,7 +137,6 @@ const MERGE_FILE_LIST_DEFAULT_PERCENT = 32;
 const MERGE_STAGE_DEFAULT_PERCENT = 50;
 const MERGE_PANE_MIN_PERCENT = 30;
 const MERGE_PANE_MAX_PERCENT = 70;
-const COMPANION_PENDING_MESSAGE_TEXT = "Companion の応答を待っています。";
 
 function buildAuxiliaryCompanionSession(parent: CompanionSession, auxiliary: AuxiliarySession): CompanionSession {
   return {
