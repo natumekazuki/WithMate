@@ -1,6 +1,6 @@
 import type { ModelCatalogItem, ModelCatalogProvider, ModelCatalogSnapshot, ModelReasoningEffort } from "../model-catalog.js";
+import { buildModelSelectOptions, buildReasoningEffortSelectOptions } from "../model-select-options.js";
 import { getProviderAppSettings, type AppSettings, type MateMemoryGenerationProviderSettings } from "../provider-settings-state.js";
-import { modelOptionLabel } from "../ui-utils.js";
 
 export type MateTalkModelOption = {
   value: string;
@@ -9,7 +9,7 @@ export type MateTalkModelOption = {
 
 export type MateTalkReasoningOption = {
   value: ModelReasoningEffort;
-  label: ModelReasoningEffort;
+  label: string;
 };
 
 export type MateTalkModelSelection = {
@@ -92,8 +92,8 @@ export function buildMateTalkModelSelection({
     defaultPriority,
     providerCatalog,
     selectedModel,
-    modelOptions: providerCatalog?.models.map((candidate) => ({ value: candidate.id, label: modelOptionLabel(candidate) })) ?? [],
-    reasoningOptions: selectedModel?.reasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? [],
+    modelOptions: buildModelSelectOptions(providerCatalog?.models ?? [], selectedModel?.id ?? ""),
+    reasoningOptions: buildReasoningEffortSelectOptions(selectedModel?.reasoningEfforts ?? []),
     providerId: nextProviderId,
     model: selectedModel?.id ?? "",
     reasoningEffort: nextReasoningEffort,

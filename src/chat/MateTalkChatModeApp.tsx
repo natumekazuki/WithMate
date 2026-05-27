@@ -1,5 +1,5 @@
 import { getWithMateApi, isDesktopRuntime } from "../renderer-withmate-api.js";
-import { modelDisplayLabel } from "../ui-utils.js";
+import { resolveModelFallbackLabel } from "../model-select-options.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat-window.js";
 import { buildMateTalkChatWindowProps } from "./mate-talk-chat-projection.js";
 import { useMateTalkWindowState } from "./use-mate-talk-window-state.js";
@@ -31,7 +31,7 @@ export function MateTalkChatModeApp() {
         feedback: state.feedback,
         modelOptions: state.modelOptions,
         selectedModel: state.selectedModel?.id ?? "",
-        selectedModelFallbackLabel: modelDisplayLabel(state.providerCatalog, state.selectedModel?.id ?? ""),
+        selectedModelFallbackLabel: resolveModelFallbackLabel(state.providerCatalog, state.selectedModel?.id ?? ""),
         reasoningOptions: state.reasoningOptions,
         selectedReasoningEffort: state.selectedReasoningEffort,
         messageListRef: state.messageListRef,

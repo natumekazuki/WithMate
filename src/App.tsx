@@ -38,11 +38,14 @@ import {
   resolveModelSelection,
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
+import {
+  buildModelSelectOptions,
+  buildReasoningEffortSelectOptions,
+  resolveModelFallbackLabel,
+} from "./model-select-options.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import {
   approvalModeLabel,
-  modelDisplayLabel,
-  modelOptionLabel,
 } from "./ui-utils.js";
 import {
   getApprovalOptionsForProvider,
@@ -1551,15 +1554,15 @@ export default function AgentSessionWindowApp() {
     [displayedSession?.codexSandboxMode, displayedSession?.provider],
   );
   const modelSelectOptions = useMemo(
-    () => modelOptions.map((model) => ({ value: model.id, label: modelOptionLabel(model) })),
-    [modelOptions],
+    () => buildModelSelectOptions(modelOptions, displayedSession?.model ?? ""),
+    [displayedSession?.model, modelOptions],
   );
   const selectedModelFallbackLabel = useMemo(
-    () => modelDisplayLabel(selectedProviderCatalog, displayedSession?.model ?? ""),
+    () => resolveModelFallbackLabel(selectedProviderCatalog, displayedSession?.model ?? ""),
     [displayedSession?.model, selectedProviderCatalog],
   );
   const reasoningSelectOptions = useMemo(
-    () => availableReasoningEfforts.map((reasoningEffort) => ({ value: reasoningEffort, label: reasoningEffort })),
+    () => buildReasoningEffortSelectOptions(availableReasoningEfforts),
     [availableReasoningEfforts],
   );
   const customAgentItems = useMemo(

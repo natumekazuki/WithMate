@@ -48,6 +48,11 @@ import {
   type ModelCatalogSnapshot,
   type ModelReasoningEffort,
 } from "./model-catalog.js";
+import {
+  buildModelSelectOptions,
+  buildReasoningEffortSelectOptions,
+  resolveModelFallbackLabel,
+} from "./model-select-options.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { SessionHeader } from "./session-components.js";
@@ -118,7 +123,7 @@ import {
   type ContextPaneTabKey,
 } from "./session-ui-projection.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
-import { fileKindLabel, modelOptionLabel, reasoningDepthLabel } from "./ui-utils.js";
+import { fileKindLabel } from "./ui-utils.js";
 import {
   getApprovalOptionsForProvider,
   getSandboxOptionsForProvider,
@@ -1114,10 +1119,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     selectedProviderCatalog?.models[0] ??
     null;
   const reasoningEffortOptions = selectedModelEntry?.reasoningEfforts ?? [];
-  const modelSelectOptions = (selectedProviderCatalog?.models ?? []).map((model) => ({
-    value: model.id,
-    label: modelOptionLabel(model),
-  }));
+  const modelSelectOptions = buildModelSelectOptions(selectedProviderCatalog?.models ?? [], selectedRuntimeModel);
   const auxiliaryLaunchProviders = useMemo(
     () => (modelCatalog?.providers ?? []).filter((provider) => provider.models.length > 0),
     [modelCatalog],
@@ -1126,11 +1128,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     () => auxiliaryLaunchProviders.map((provider) => ({ id: provider.id, label: provider.label })),
     [auxiliaryLaunchProviders],
   );
-  const selectedModelFallbackLabel = selectedModelEntry ? modelOptionLabel(selectedModelEntry) : selectedRuntimeModel;
-  const reasoningSelectOptions = reasoningEffortOptions.map((reasoningEffort) => ({
-    value: reasoningEffort,
-    label: reasoningDepthLabel(reasoningEffort),
-  }));
+  const selectedModelFallbackLabel = resolveModelFallbackLabel(selectedProviderCatalog, selectedRuntimeModel);
+  const reasoningSelectOptions = buildReasoningEffortSelectOptions(reasoningEffortOptions);
   const approvalSelectOptions = useMemo(
     () => {
       const options = getApprovalOptionsForProvider(displayedSession?.provider);
@@ -3045,7 +3044,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         sandboxOptions: sandboxSelectOptions,
         selectedCodexSandboxMode: selectedRuntimeCodexSandboxMode,
         modelOptions: modelSelectOptions,
-        selectedModel: selectedModelEntry?.id ?? selectedRuntimeModel,
+        selectedModel: selectedRuntimeModel,
         selectedModelFallbackLabel,
         reasoningOptions: reasoningSelectOptions,
         selectedReasoningEffort: selectedRuntimeReasoningEffort,
