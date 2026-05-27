@@ -23,10 +23,8 @@ import {
   buildLiveSessionChatBodyProps,
   resolveAuxiliaryModeLabel,
 } from "./chat-window-adapter.js";
-import { createWorkspaceExplorerAction } from "./chat-header-actions.js";
-import { resolveChatHeaderVisibility } from "./chat-header-visibility.js";
+import { buildLiveSessionHeaderProps } from "./chat-header-actions.js";
 import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
-import { createSessionFilesActions } from "./session-files-actions.js";
 
 export type AgentSessionChatProjectionInput = {
   selectedSession: Session;
@@ -189,26 +187,21 @@ export type AgentSessionChatProjectionInput = {
 };
 
 export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjectionInput): ChatWindowProps {
-  const headerProps: SessionHeaderProps = {
+  const headerProps: SessionHeaderProps = buildLiveSessionHeaderProps({
     taskTitle: input.selectedSession.taskTitle,
     isEditingTitle: input.isEditingTitle,
     titleDraft: input.titleDraft,
     isRunning: input.isSelectedSessionRunning,
     isReadOnly: input.isSelectedSessionReadOnly,
-    ...resolveChatHeaderVisibility({
-      isAuxiliaryMode: input.isAuxiliaryMode,
-      canViewAuxiliaryAuditLog: true,
-      canDeleteSession: true,
-      canViewAuditLog: true,
-    }),
-    showTerminalButton: true,
+    isAuxiliaryMode: input.isAuxiliaryMode,
+    canViewAuxiliaryAuditLog: true,
+    canDeleteSession: true,
+    canViewAuditLog: true,
     onToggleExpanded: input.onToggleHeaderExpanded,
     onOpenAuditLog: input.onOpenAuditLog,
     onOpenTerminal: input.onOpenSessionTerminal,
-    sessionFilesActions: createSessionFilesActions({
-      onOpenExplorer: input.onOpenSessionFilesExplorer,
-      onOpenTerminal: input.onOpenSessionFilesTerminal,
-    }),
+    onOpenSessionFilesExplorer: input.onOpenSessionFilesExplorer,
+    onOpenSessionFilesTerminal: input.onOpenSessionFilesTerminal,
     onTitleDraftChange: input.onTitleDraftChange,
     onTitleInputKeyDown: input.onTitleInputKeyDown,
     onSaveTitle: input.onSaveTitle,
@@ -216,10 +209,8 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onStartTitleEdit: input.onStartTitleEdit,
     onDeleteSession: input.onDeleteSession,
     actions: input.headerActions,
-    workspaceActions: createWorkspaceExplorerAction({
-      onOpenExplorer: input.onOpenSessionExplorer,
-    }),
-  };
+    onOpenWorkspaceExplorer: input.onOpenSessionExplorer,
+  });
 
   const chatBodyProps = buildLiveSessionChatBodyProps({
     messageColumn: {

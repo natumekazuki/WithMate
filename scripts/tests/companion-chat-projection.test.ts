@@ -259,6 +259,15 @@ test("buildCompanionChatWindowProps は running 中の response 待機文を mes
   assert.deepEqual(props.messageColumnProps.messages, [{ role: "user", text: "調べて" }]);
 });
 
+test("buildCompanionChatWindowProps は live assistant text の有無を共通 message column helper に委ねる", () => {
+  const props = buildCompanionChatWindowProps(createProjectionInput({
+    liveRunAssistantText: "途中応答",
+  }));
+
+  assert.equal(props.messageColumnProps.liveRunAssistantText, "途中応答");
+  assert.equal(props.messageColumnProps.hasLiveRunAssistantText, true);
+});
+
 test("buildCompanionChatWindowProps は投影済み transcript と group を message column に渡す", () => {
   const props = buildCompanionChatWindowProps(createProjectionInput({
     displayedMessages: [
@@ -384,6 +393,38 @@ test("buildCompanionChatWindowProps は Companion right pane props を共通 pan
   assert.equal(paneProps.onToggleHeaderExpanded, onToggleContextPaneHeaderExpanded);
   assert.equal(paneProps.onCycleContextPaneTab, onCycleContextPaneTab);
   assert.equal(paneProps.onOpenCompanionReview, onOpenCompanionReview);
+});
+
+test("buildCompanionChatWindowProps は header action callbacks と Merge disabled state を維持する", () => {
+  const onOpenWorktree = () => {};
+  const onOpenSessionFilesExplorer = () => {};
+  const onOpenSessionFilesTerminal = () => {};
+  const inactiveSession: CompanionSession = {
+    ...createCompanionSession(),
+    status: "recovery-required",
+  };
+  const props = buildCompanionChatWindowProps(createProjectionInput({
+    session: inactiveSession,
+    onOpenWorktree,
+    onOpenSessionFilesExplorer,
+    onOpenSessionFilesTerminal,
+  }));
+  const workspaceAction = props.headerProps.workspaceActions as React.ReactElement<{
+    onClick: () => void;
+  }>;
+  const sessionFilesActions = props.headerProps.sessionFilesActions as React.ReactElement<{
+    children: React.ReactNode;
+  }>;
+  const [sessionFilesExplorer, sessionFilesTerminal] = React.Children.toArray(
+    sessionFilesActions.props.children,
+  ) as Array<React.ReactElement<{ onClick: () => void }>>;
+  const headerActionsHtml = renderToStaticMarkup(React.createElement(React.Fragment, null, props.headerProps.actions));
+
+  assert.equal(workspaceAction.props.onClick, onOpenWorktree);
+  assert.equal(sessionFilesExplorer.props.onClick, onOpenSessionFilesExplorer);
+  assert.equal(sessionFilesTerminal.props.onClick, onOpenSessionFilesTerminal);
+  assert.match(headerActionsHtml, /disabled=""/);
+  assert.match(headerActionsHtml, />Merge<\/button>/);
 });
 
 test("Companion の optimistic running state は user prompt と pending live run を同じ session に紐づける", () => {

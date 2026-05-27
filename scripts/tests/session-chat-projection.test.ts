@@ -319,3 +319,27 @@ test("buildAgentSessionChatWindowProps は right pane props を共通 pane に�
   assert.equal(paneProps.onCycleContextPaneTab, onCycleContextPaneTab);
   assert.equal(paneProps.onOpenCompanionReview, onOpenCompanionReview);
 });
+
+test("buildAgentSessionChatWindowProps は header action callbacks を維持する", () => {
+  const onOpenSessionExplorer = () => {};
+  const onOpenSessionFilesExplorer = () => {};
+  const onOpenSessionFilesTerminal = () => {};
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    onOpenSessionExplorer,
+    onOpenSessionFilesExplorer,
+    onOpenSessionFilesTerminal,
+  }));
+  const workspaceAction = props.headerProps.workspaceActions as React.ReactElement<{
+    onClick: () => void;
+  }>;
+  const sessionFilesActions = props.headerProps.sessionFilesActions as React.ReactElement<{
+    children: React.ReactNode;
+  }>;
+  const [sessionFilesExplorer, sessionFilesTerminal] = React.Children.toArray(
+    sessionFilesActions.props.children,
+  ) as Array<React.ReactElement<{ onClick: () => void }>>;
+
+  assert.equal(workspaceAction.props.onClick, onOpenSessionExplorer);
+  assert.equal(sessionFilesExplorer.props.onClick, onOpenSessionFilesExplorer);
+  assert.equal(sessionFilesTerminal.props.onClick, onOpenSessionFilesTerminal);
+});

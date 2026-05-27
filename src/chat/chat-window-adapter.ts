@@ -173,7 +173,7 @@ export type LiveSessionMessageColumnProps = {
   liveElicitationRequest: ChatMessageColumnProps["liveElicitationRequest"];
   elicitationActionRequestId: ChatMessageColumnProps["elicitationActionRequestId"];
   liveRunAssistantText: string;
-  hasLiveRunAssistantText: boolean;
+  hasLiveRunAssistantText?: boolean;
   liveRunErrorMessage: string;
   pendingMessageText?: string;
   pendingMessageGroupId?: ChatMessageColumnProps["pendingMessageGroupId"];
@@ -303,7 +303,7 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     liveElicitationRequest: input.liveElicitationRequest,
     elicitationActionRequestId: input.elicitationActionRequestId,
     liveRunAssistantText: input.liveRunAssistantText,
-    hasLiveRunAssistantText: input.hasLiveRunAssistantText,
+    hasLiveRunAssistantText: input.hasLiveRunAssistantText ?? input.liveRunAssistantText.length > 0,
     liveRunErrorMessage: input.liveRunErrorMessage,
     pendingMessageText: input.pendingMessageText,
     pendingMessageGroupId: input.pendingMessageGroupId,

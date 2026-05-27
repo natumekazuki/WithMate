@@ -29,10 +29,8 @@ import {
   buildLiveSessionChatBodyProps,
   resolveAuxiliaryModeLabel,
 } from "./chat-window-adapter.js";
-import { createWorkspaceExplorerAction } from "./chat-header-actions.js";
-import { resolveChatHeaderVisibility } from "./chat-header-visibility.js";
+import { buildLiveSessionHeaderProps } from "./chat-header-actions.js";
 import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
-import { createSessionFilesActions } from "./session-files-actions.js";
 
 export type CompanionChatProjectionInput = {
   session: CompanionSession;
@@ -196,34 +194,27 @@ export type CompanionChatProjectionInput = {
 };
 
 export function buildCompanionChatWindowProps(input: CompanionChatProjectionInput): ChatWindowProps {
-  const headerProps: SessionHeaderProps = {
+  const headerProps: SessionHeaderProps = buildLiveSessionHeaderProps({
     taskTitle: input.session.taskTitle,
     isEditingTitle: input.isEditingTitle,
     titleDraft: input.titleDraft,
     isRunning: input.isRunning,
-    ...resolveChatHeaderVisibility({
-      isAuxiliaryMode: input.isAuxiliaryMode,
-      canDeleteSession: false,
-      canViewAuditLog: true,
-    }),
-    showTerminalButton: true,
+    isAuxiliaryMode: input.isAuxiliaryMode,
+    canDeleteSession: false,
+    canViewAuditLog: true,
     onToggleExpanded: input.onToggleHeaderExpanded,
     onOpenAuditLog: input.onOpenAuditLog,
     onOpenTerminal: input.onOpenTerminal,
-    sessionFilesActions: createSessionFilesActions({
-      onOpenExplorer: input.onOpenSessionFilesExplorer,
-      onOpenTerminal: input.onOpenSessionFilesTerminal,
-    }),
+    onOpenSessionFilesExplorer: input.onOpenSessionFilesExplorer,
+    onOpenSessionFilesTerminal: input.onOpenSessionFilesTerminal,
     onTitleDraftChange: input.onTitleDraftChange,
     onTitleInputKeyDown: input.onTitleInputKeyDown,
     onSaveTitle: input.onSaveTitle,
     onCancelTitleEdit: input.onCancelTitleEdit,
     onStartTitleEdit: input.onStartTitleEdit,
     onDeleteSession: () => {},
-    workspaceActions: createWorkspaceExplorerAction({
-      disabled: input.isHeaderActionDisabled,
-      onOpenExplorer: input.onOpenWorktree,
-    }),
+    onOpenWorkspaceExplorer: input.onOpenWorktree,
+    isWorkspaceExplorerDisabled: input.isHeaderActionDisabled,
     actions: (
       <>
         {input.headerActions}
@@ -239,7 +230,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
         )}
       </>
     ),
-  };
+  });
 
   const chatBodyProps = buildLiveSessionChatBodyProps({
     messageColumn: {
@@ -256,7 +247,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       liveElicitationRequest: input.liveElicitationRequest,
       elicitationActionRequestId: input.elicitationActionRequestId,
       liveRunAssistantText: input.liveRunAssistantText,
-      hasLiveRunAssistantText: input.liveRunAssistantText.length > 0,
       liveRunErrorMessage: input.liveRunErrorMessage,
       pendingMessageText: input.pendingMessageText,
       pendingMessageGroupId: input.pendingMessageGroupId,

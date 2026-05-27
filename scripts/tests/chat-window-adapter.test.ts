@@ -139,7 +139,7 @@ test("buildLiveSessionMessageColumnProps は live message props を共通形式�
   const messageListRef = React.createRef<HTMLDivElement>();
   const onCopyMessageText = () => {};
   const onQuoteMessageText = () => {};
-  const composerMessageColumnProps = buildLiveSessionMessageColumnProps({
+  const messageColumnInput = {
     sessionId: "session-id",
     character: createCharacter(),
     messages: [{ role: "assistant", text: "こんにちは" }],
@@ -150,8 +150,7 @@ test("buildLiveSessionMessageColumnProps は live message props を共通形式�
     approvalActionRequestId: null,
     liveElicitationRequest: null,
     elicitationActionRequestId: null,
-    liveRunAssistantText: "",
-    hasLiveRunAssistantText: false,
+    liveRunAssistantText: "生成中",
     liveRunErrorMessage: "",
     isMessageListFollowing: true,
     onMessageListScroll: () => {},
@@ -164,11 +163,17 @@ test("buildLiveSessionMessageColumnProps は live message props を共通形式�
     getChangedFilesEmptyText: () => "",
     onCopyMessageText,
     onQuoteMessageText,
+  };
+  const composerMessageColumnProps = buildLiveSessionMessageColumnProps(messageColumnInput);
+  const explicitEmptyMessageColumnProps = buildLiveSessionMessageColumnProps({
+    ...messageColumnInput,
+    hasLiveRunAssistantText: false,
   });
 
   assert.equal(composerMessageColumnProps.sessionId, "session-id");
-  assert.equal(composerMessageColumnProps.liveRunAssistantText, "");
-  assert.equal(composerMessageColumnProps.hasLiveRunAssistantText, false);
+  assert.equal(composerMessageColumnProps.liveRunAssistantText, "生成中");
+  assert.equal(composerMessageColumnProps.hasLiveRunAssistantText, true);
+  assert.equal(explicitEmptyMessageColumnProps.hasLiveRunAssistantText, false);
   assert.equal(composerMessageColumnProps.onCopyMessageText, onCopyMessageText);
   assert.equal(composerMessageColumnProps.onQuoteMessageText, onQuoteMessageText);
 });
