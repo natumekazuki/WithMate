@@ -1,6 +1,7 @@
 import { useRef } from "react";
 
-import { focusRovingItemByKey, useDialogA11y } from "../a11y.js";
+import { useDialogA11y } from "../a11y.js";
+import { ProviderLaunchPicker } from "../launch/provider-launch-picker.js";
 
 type AuxiliaryLaunchProviderDialogProps = {
   open: boolean;
@@ -54,36 +55,12 @@ export function AuxiliaryLaunchProviderDialog({
               <label className="launch-field-label" htmlFor="auxiliary-provider-picker">
                 Coding Provider
               </label>
-              {providers.length > 0 ? (
-                <div
-                  id="auxiliary-provider-picker"
-                  className="choice-list launch-provider-list"
-                  role="listbox"
-                  aria-label="Coding Provider"
-                  aria-orientation="horizontal"
-                  onKeyDown={(event) => {
-                    focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
-                  }}
-                >
-                  {providers.map((provider) => (
-                    <button
-                      key={provider.id}
-                      className={`choice-chip${provider.id === selectedProviderId ? " active" : ""}`}
-                      type="button"
-                      role="option"
-                      aria-selected={provider.id === selectedProviderId}
-                      tabIndex={provider.id === selectedProviderId ? 0 : -1}
-                      onClick={() => onSelectProvider(provider.id)}
-                    >
-                      {provider.label}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <article className="empty-list-card compact">
-                  <p>有効な Coding Provider がないよ。</p>
-                </article>
-              )}
+              <ProviderLaunchPicker
+                id="auxiliary-provider-picker"
+                providers={providers}
+                selectedProviderId={selectedProviderId}
+                onSelectProvider={onSelectProvider}
+              />
             </div>
           </section>
         </div>

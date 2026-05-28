@@ -1,6 +1,7 @@
 import { useRef } from "react";
 
 import { focusRovingItemByKey, useDialogA11y } from "../a11y.js";
+import { ProviderLaunchPicker } from "../launch/provider-launch-picker.js";
 import type { LaunchWorkspace } from "./home-launch-projection.js";
 
 export type HomeLaunchDialogProps = {
@@ -131,36 +132,12 @@ export function HomeLaunchDialog({
               <label className="launch-field-label" htmlFor="launch-provider-picker">
                 Coding Provider
               </label>
-              {enabledLaunchProviders.length > 0 ? (
-                <div
-                  id="launch-provider-picker"
-                  className="choice-list launch-provider-list"
-                  role="listbox"
-                  aria-label="Coding Provider"
-                  aria-orientation="horizontal"
-                  onKeyDown={(event) => {
-                    focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
-                  }}
-                >
-                  {enabledLaunchProviders.map((provider) => (
-                    <button
-                      key={provider.id}
-                      className={`choice-chip${provider.id === selectedLaunchProviderId ? " active" : ""}`}
-                      type="button"
-                      role="option"
-                      aria-selected={provider.id === selectedLaunchProviderId}
-                      tabIndex={provider.id === selectedLaunchProviderId ? 0 : -1}
-                      onClick={() => onSelectProvider(provider.id)}
-                    >
-                      {provider.label}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <article className="empty-list-card compact">
-                  <p>有効な Coding Provider がないよ。</p>
-                </article>
-              )}
+              <ProviderLaunchPicker
+                id="launch-provider-picker"
+                providers={enabledLaunchProviders}
+                selectedProviderId={selectedLaunchProviderId}
+                onSelectProvider={onSelectProvider}
+              />
             </div>
           </section>
         </div>
