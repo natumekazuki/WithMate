@@ -48,11 +48,6 @@ import {
   type ModelCatalogSnapshot,
   type ModelReasoningEffort,
 } from "./model-catalog.js";
-import {
-  buildModelSelectOptions,
-  buildReasoningEffortSelectOptions,
-  resolveModelFallbackLabel,
-} from "./model-select-options.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { SessionHeader } from "./session-components.js";
@@ -124,11 +119,7 @@ import {
 } from "./session-ui-projection.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import { fileKindLabel } from "./ui-utils.js";
-import {
-  getApprovalOptionsForProvider,
-  getSandboxOptionsForProvider,
-  getSandboxOptionsForProviderSelection,
-} from "./provider-runtime-options.js";
+import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
 import { extractTextReferenceCandidates } from "./path-reference.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 
@@ -1119,7 +1110,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     selectedProviderCatalog?.models[0] ??
     null;
   const reasoningEffortOptions = selectedModelEntry?.reasoningEfforts ?? [];
-  const modelSelectOptions = buildModelSelectOptions(selectedProviderCatalog?.models ?? [], selectedRuntimeModel);
   const auxiliaryLaunchProviders = useMemo(
     () => (modelCatalog?.providers ?? []).filter((provider) => provider.models.length > 0),
     [modelCatalog],
@@ -1128,24 +1118,30 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     () => auxiliaryLaunchProviders.map((provider) => ({ id: provider.id, label: provider.label })),
     [auxiliaryLaunchProviders],
   );
-  const selectedModelFallbackLabel = resolveModelFallbackLabel(selectedProviderCatalog, selectedRuntimeModel);
-  const reasoningSelectOptions = buildReasoningEffortSelectOptions(reasoningEffortOptions);
-  const approvalSelectOptions = useMemo(
-    () => {
-      const options = getApprovalOptionsForProvider(displayedSession?.provider);
-      if (!displayedSession || options.some((option) => option.value === selectedRuntimeApprovalMode)) {
-        return options;
-      }
-
-      return [{ value: selectedRuntimeApprovalMode, label: selectedRuntimeApprovalMode }, ...options];
-    },
-    [displayedSession, selectedRuntimeApprovalMode],
-  );
-  const sandboxSelectOptions = useMemo(
-    () => displayedSession
-      ? getSandboxOptionsForProviderSelection(displayedSession.provider, selectedRuntimeCodexSandboxMode)
-      : getSandboxOptionsForProvider(undefined),
-    [displayedSession, selectedRuntimeCodexSandboxMode],
+  const {
+    approvalChoiceOptions: approvalSelectOptions,
+    sandboxChoiceOptions: sandboxSelectOptions,
+    modelSelectOptions,
+    selectedModelFallbackLabel,
+    reasoningSelectOptions,
+  } = useMemo(
+    () => buildRuntimeSelectionOptions({
+      providerId: displayedSession?.provider,
+      providerCatalog: selectedProviderCatalog,
+      models: selectedProviderCatalog?.models ?? [],
+      selectedModel: selectedRuntimeModel,
+      reasoningEfforts: reasoningEffortOptions,
+      selectedApprovalMode: selectedRuntimeApprovalMode,
+      selectedCodexSandboxMode: selectedRuntimeCodexSandboxMode,
+    }),
+    [
+      displayedSession?.provider,
+      selectedRuntimeModel,
+      selectedProviderCatalog,
+      reasoningEffortOptions,
+      selectedRuntimeApprovalMode,
+      selectedRuntimeCodexSandboxMode,
+    ],
   );
   const companionComposerBlockedReason = snapshot?.session.status !== "active"
     ? "この Companion は active ではないよ。"

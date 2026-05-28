@@ -38,20 +38,11 @@ import {
   resolveModelSelection,
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
-import {
-  buildModelSelectOptions,
-  buildReasoningEffortSelectOptions,
-  resolveModelFallbackLabel,
-} from "./model-select-options.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import {
   approvalModeLabel,
 } from "./ui-utils.js";
-import {
-  getApprovalOptionsForProvider,
-  getSandboxOptionsForProvider,
-  getSandboxOptionsForProviderSelection,
-} from "./provider-runtime-options.js";
+import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
 import {
   buildContextPaneProjection,
   buildCopilotQuotaProjection,
@@ -1536,34 +1527,31 @@ export default function AgentSessionWindowApp() {
     () => buildSelectedCustomAgentDisplay(displayedSession, selectedCustomAgent),
     [displayedSession, selectedCustomAgent],
   );
-  const approvalChoiceOptions = useMemo(
-    () => {
-      const options = getApprovalOptionsForProvider(displayedSession?.provider);
-      if (!displayedSession || options.some((option) => option.value === displayedSession.approvalMode)) {
-        return options;
-      }
-
-      return [{ value: displayedSession.approvalMode, label: displayedSession.approvalMode }, ...options];
-    },
-    [displayedSession?.approvalMode, displayedSession?.provider],
-  );
-  const sandboxChoiceOptions = useMemo(
-    () => displayedSession
-      ? getSandboxOptionsForProviderSelection(displayedSession.provider, displayedSession.codexSandboxMode)
-      : getSandboxOptionsForProvider(undefined),
-    [displayedSession?.codexSandboxMode, displayedSession?.provider],
-  );
-  const modelSelectOptions = useMemo(
-    () => buildModelSelectOptions(modelOptions, displayedSession?.model ?? ""),
-    [displayedSession?.model, modelOptions],
-  );
-  const selectedModelFallbackLabel = useMemo(
-    () => resolveModelFallbackLabel(selectedProviderCatalog, displayedSession?.model ?? ""),
-    [displayedSession?.model, selectedProviderCatalog],
-  );
-  const reasoningSelectOptions = useMemo(
-    () => buildReasoningEffortSelectOptions(availableReasoningEfforts),
-    [availableReasoningEfforts],
+  const {
+    approvalChoiceOptions,
+    sandboxChoiceOptions,
+    modelSelectOptions,
+    selectedModelFallbackLabel,
+    reasoningSelectOptions,
+  } = useMemo(
+    () => buildRuntimeSelectionOptions({
+      providerId: displayedSession?.provider,
+      providerCatalog: selectedProviderCatalog,
+      models: modelOptions,
+      selectedModel: displayedSession?.model ?? "",
+      reasoningEfforts: availableReasoningEfforts,
+      selectedApprovalMode: displayedSession?.approvalMode ?? "untrusted",
+      selectedCodexSandboxMode: displayedSession?.codexSandboxMode ?? "workspace-write",
+    }),
+    [
+      displayedSession?.provider,
+      displayedSession?.approvalMode,
+      displayedSession?.codexSandboxMode,
+      displayedSession?.model,
+      modelOptions,
+      selectedProviderCatalog,
+      availableReasoningEfforts,
+    ],
   );
   const customAgentItems = useMemo(
     () => {
