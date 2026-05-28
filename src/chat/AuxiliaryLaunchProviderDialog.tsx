@@ -1,7 +1,7 @@
 import { useRef } from "react";
 
 import { useDialogA11y } from "../a11y.js";
-import { LaunchDialogShell } from "../launch/launch-dialog-shell.js";
+import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-shell.js";
 import { ProviderLaunchField } from "../launch/provider-launch-picker.js";
 
 type AuxiliaryLaunchProviderDialogProps = {
@@ -43,18 +43,13 @@ export function AuxiliaryLaunchProviderDialog({
       onKeyDown={handleDialogKeyDown}
       dialogClassName="auxiliary-provider-dialog"
       footer={
-        <>
-          {feedback ? <p className="launch-feedback">{feedback}</p> : null}
-          <button
-            ref={startButtonRef}
-            className="start-session-button"
-            type="button"
-            disabled={!selectedProviderId || starting}
-            onClick={onStart}
-          >
-            {starting ? "Starting..." : "Start Auxiliary"}
-          </button>
-        </>
+        <LaunchDialogFooter
+          feedback={feedback}
+          startButtonLabel={starting ? "Starting..." : "Start Auxiliary"}
+          startButtonDisabled={!selectedProviderId || starting}
+          onStart={onStart}
+          startButtonRef={startButtonRef}
+        />
       }
     >
       <ProviderLaunchField

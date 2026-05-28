@@ -10,6 +10,40 @@ type LaunchDialogShellProps = {
   footer?: ReactNode;
 };
 
+export type LaunchDialogFooterProps = {
+  feedback: string;
+  startButtonLabel: string;
+  startButtonDisabled: boolean;
+  startButtonAriaDisabled?: boolean;
+  onStart: () => void;
+  startButtonRef?: RefObject<HTMLButtonElement | null>;
+};
+
+export function LaunchDialogFooter({
+  feedback,
+  startButtonLabel,
+  startButtonDisabled,
+  startButtonAriaDisabled,
+  onStart,
+  startButtonRef,
+}: LaunchDialogFooterProps) {
+  return (
+    <>
+      {feedback ? <p className="launch-feedback">{feedback}</p> : null}
+      <button
+        ref={startButtonRef}
+        className="start-session-button"
+        type="button"
+        disabled={startButtonDisabled}
+        aria-disabled={startButtonAriaDisabled}
+        onClick={onStart}
+      >
+        {startButtonLabel}
+      </button>
+    </>
+  );
+}
+
 export function LaunchDialogShell({
   onClose,
   dialogRef,

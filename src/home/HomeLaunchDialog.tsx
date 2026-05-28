@@ -1,7 +1,7 @@
 import { useRef } from "react";
 
 import { focusRovingItemByKey, useDialogA11y } from "../a11y.js";
-import { LaunchDialogShell } from "../launch/launch-dialog-shell.js";
+import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-shell.js";
 import { ProviderLaunchField } from "../launch/provider-launch-picker.js";
 import type { LaunchWorkspace } from "./home-launch-projection.js";
 
@@ -61,24 +61,21 @@ export function HomeLaunchDialog({
       dialogRef={dialogRef}
       onKeyDown={handleDialogKeyDown}
       footer={
-        <>
-          {launchFeedback ? <p className="launch-feedback">{launchFeedback}</p> : null}
-          <button
-            className="start-session-button"
-            type="button"
-            aria-disabled={!canStartSession || launchStarting}
-            disabled={!canStartSession || launchStarting}
-            onClick={() => onStartSession(mode)}
-          >
-            {launchStarting
+        <LaunchDialogFooter
+          feedback={launchFeedback}
+          startButtonLabel={
+            launchStarting
               ? "Starting..."
               : mode === "mate-talk"
                 ? "Start MateTalk"
                 : mode === "companion"
                   ? "Start Companion"
-                  : "Start New Session"}
-          </button>
-        </>
+                  : "Start New Session"
+          }
+          startButtonDisabled={!canStartSession || launchStarting}
+          startButtonAriaDisabled={!canStartSession || launchStarting}
+          onStart={() => onStartSession(mode)}
+        />
       }
     >
       {!isMateTalkMode ? (
