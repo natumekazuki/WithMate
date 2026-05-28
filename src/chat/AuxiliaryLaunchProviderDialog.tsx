@@ -1,6 +1,7 @@
 import { useRef } from "react";
 
 import { useDialogA11y } from "../a11y.js";
+import { LaunchDialogShell } from "../launch/launch-dialog-shell.js";
 import { ProviderLaunchField } from "../launch/provider-launch-picker.js";
 
 type AuxiliaryLaunchProviderDialogProps = {
@@ -36,29 +37,13 @@ export function AuxiliaryLaunchProviderDialog({
   }
 
   return (
-    <div className="launch-modal" role="dialog" aria-modal="true" onClick={onClose}>
-      <section
-        ref={dialogRef}
-        className="launch-dialog panel auxiliary-provider-dialog"
-        onClick={(event) => event.stopPropagation()}
-        onKeyDown={handleDialogKeyDown}
-      >
-        <div className="launch-dialog-head minimal">
-          <button className="diff-close" type="button" onClick={onClose}>
-            Close
-          </button>
-        </div>
-
-        <div className="launch-panel minimal">
-          <ProviderLaunchField
-            fieldId="auxiliary-provider-picker"
-            providers={providers}
-            selectedProviderId={selectedProviderId}
-            onSelectProvider={onSelectProvider}
-          />
-        </div>
-
-        <div className="launch-dialog-foot minimal">
+    <LaunchDialogShell
+      onClose={onClose}
+      dialogRef={dialogRef}
+      onKeyDown={handleDialogKeyDown}
+      dialogClassName="auxiliary-provider-dialog"
+      footer={
+        <>
           {feedback ? <p className="launch-feedback">{feedback}</p> : null}
           <button
             ref={startButtonRef}
@@ -69,8 +54,15 @@ export function AuxiliaryLaunchProviderDialog({
           >
             {starting ? "Starting..." : "Start Auxiliary"}
           </button>
-        </div>
-      </section>
-    </div>
+        </>
+      }
+    >
+      <ProviderLaunchField
+        fieldId="auxiliary-provider-picker"
+        providers={providers}
+        selectedProviderId={selectedProviderId}
+        onSelectProvider={onSelectProvider}
+      />
+    </LaunchDialogShell>
   );
 }

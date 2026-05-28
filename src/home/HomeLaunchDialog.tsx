@@ -1,6 +1,7 @@
 import { useRef } from "react";
 
 import { focusRovingItemByKey, useDialogA11y } from "../a11y.js";
+import { LaunchDialogShell } from "../launch/launch-dialog-shell.js";
 import { ProviderLaunchField } from "../launch/provider-launch-picker.js";
 import type { LaunchWorkspace } from "./home-launch-projection.js";
 
@@ -51,91 +52,16 @@ export function HomeLaunchDialog({
   if (!open) {
     return null;
   }
+
   const isMateTalkMode = mode === "mate-talk";
 
   return (
-    <div className="launch-modal" role="dialog" aria-modal="true" onClick={onClose}>
-      <section
-        ref={dialogRef}
-        className="launch-dialog panel"
-        onClick={(event) => event.stopPropagation()}
-        onKeyDown={handleDialogKeyDown}
-      >
-        <div className="launch-dialog-head minimal">
-          <button className="diff-close" type="button" onClick={onClose}>
-            Close
-          </button>
-        </div>
-
-        <div className="launch-panel minimal">
-          {!isMateTalkMode ? (
-          <section className="launch-section minimal">
-            <div
-              className="choice-list launch-provider-list"
-              role="tablist"
-              aria-label="Session mode"
-              onKeyDown={(event) => {
-                focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
-              }}
-            >
-              {[
-                { value: "session" as const, label: "Agent Mode" },
-                { value: "companion" as const, label: "Companion Mode" },
-              ].map((option) => (
-                <button
-                  key={option.value}
-                  className={`choice-chip${mode === option.value ? " active" : ""}`}
-                  type="button"
-                  role="tab"
-                  aria-selected={mode === option.value}
-                  tabIndex={mode === option.value ? 0 : -1}
-                  onClick={() => onSelectMode(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </section>
-          ) : null}
-
-          {!isMateTalkMode ? (
-          <section className="launch-section minimal">
-            <div className="launch-field">
-              <label className="launch-field-label" htmlFor="launch-session-title">
-                セッションタイトル
-              </label>
-              <input
-                id="launch-session-title"
-                ref={titleInputRef}
-                className="launch-field-input"
-                type="text"
-                value={title}
-                onChange={(event) => onChangeTitle(event.target.value)}
-              />
-            </div>
-          </section>
-          ) : null}
-
-          {!isMateTalkMode ? (
-          <section className="launch-section workspace-picker minimal">
-            <div className="section-head compact-actions">
-              <button className="browse-button" type="button" onClick={onBrowseWorkspace}>
-                Browse
-              </button>
-            </div>
-            <p className={`launch-path${workspace ? " selected" : ""}`}>{launchWorkspacePathLabel}</p>
-          </section>
-          ) : null}
-
-          <ProviderLaunchField
-            fieldId="launch-provider-picker"
-            providers={enabledLaunchProviders}
-            selectedProviderId={selectedLaunchProviderId}
-            onSelectProvider={onSelectProvider}
-          />
-        </div>
-
-        <div className="launch-dialog-foot minimal">
+    <LaunchDialogShell
+      onClose={onClose}
+      dialogRef={dialogRef}
+      onKeyDown={handleDialogKeyDown}
+      footer={
+        <>
           {launchFeedback ? <p className="launch-feedback">{launchFeedback}</p> : null}
           <button
             className="start-session-button"
@@ -144,10 +70,82 @@ export function HomeLaunchDialog({
             disabled={!canStartSession || launchStarting}
             onClick={() => onStartSession(mode)}
           >
-            {launchStarting ? "Starting..." : mode === "mate-talk" ? "Start MateTalk" : mode === "companion" ? "Start Companion" : "Start New Session"}
+            {launchStarting
+              ? "Starting..."
+              : mode === "mate-talk"
+                ? "Start MateTalk"
+                : mode === "companion"
+                  ? "Start Companion"
+                  : "Start New Session"}
           </button>
-        </div>
-      </section>
-    </div>
+        </>
+      }
+    >
+      {!isMateTalkMode ? (
+        <section className="launch-section minimal">
+          <div
+            className="choice-list launch-provider-list"
+            role="tablist"
+            aria-label="Session mode"
+            onKeyDown={(event) => {
+              focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
+            }}
+          >
+            {[
+              { value: "session" as const, label: "Agent Mode" },
+              { value: "companion" as const, label: "Companion Mode" },
+            ].map((option) => (
+              <button
+                key={option.value}
+                className={`choice-chip${mode === option.value ? " active" : ""}`}
+                type="button"
+                role="tab"
+                aria-selected={mode === option.value}
+                tabIndex={mode === option.value ? 0 : -1}
+                onClick={() => onSelectMode(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {!isMateTalkMode ? (
+        <section className="launch-section minimal">
+          <div className="launch-field">
+            <label className="launch-field-label" htmlFor="launch-session-title">
+              セッションタイトル
+            </label>
+            <input
+              id="launch-session-title"
+              ref={titleInputRef}
+              className="launch-field-input"
+              type="text"
+              value={title}
+              onChange={(event) => onChangeTitle(event.target.value)}
+            />
+          </div>
+        </section>
+      ) : null}
+
+      {!isMateTalkMode ? (
+        <section className="launch-section workspace-picker minimal">
+          <div className="section-head compact-actions">
+            <button className="browse-button" type="button" onClick={onBrowseWorkspace}>
+              Browse
+            </button>
+          </div>
+          <p className={`launch-path${workspace ? " selected" : ""}`}>{launchWorkspacePathLabel}</p>
+        </section>
+      ) : null}
+
+      <ProviderLaunchField
+        fieldId="launch-provider-picker"
+        providers={enabledLaunchProviders}
+        selectedProviderId={selectedLaunchProviderId}
+        onSelectProvider={onSelectProvider}
+      />
+    </LaunchDialogShell>
   );
 }
