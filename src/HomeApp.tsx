@@ -22,6 +22,7 @@ import {
   createClosedLaunchDraft,
   type HomeLaunchDraft,
 } from "./home/home-launch-state.js";
+import { resolveSelectedLaunchProviderDraftId } from "./launch/launch-provider-selection.js";
 import { type CompanionSessionSummary } from "./companion-state.js";
 import { buildHomeMateProfileHandlers } from "./home/home-mate-profile-handlers.js";
 import {
@@ -455,13 +456,18 @@ export default function HomeApp() {
 
   useEffect(() => {
     setLaunchDraft((current) => {
-      if (enabledLaunchProviders.find((provider) => provider.id === current.providerId)) {
+      const nextProviderId = resolveSelectedLaunchProviderDraftId(
+        enabledLaunchProviders,
+        current.providerId,
+      );
+
+      if (current.providerId === nextProviderId) {
         return current;
       }
 
       return {
         ...current,
-        providerId: enabledLaunchProviders[0]?.id ?? "",
+        providerId: nextProviderId,
       };
     });
   }, [enabledLaunchProviders]);

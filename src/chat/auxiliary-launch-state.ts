@@ -1,4 +1,5 @@
 import type { ModelCatalogProvider } from "../model-catalog.js";
+import { resolveSelectedLaunchProviderId } from "../launch/launch-provider-selection.js";
 import { LAUNCH_EMPTY_PROVIDER_MESSAGE, LAUNCH_NO_PROVIDER_SELECTED_MESSAGE } from "../launch/launch-feedback.js";
 
 export type AuxiliaryLaunchProviderItem = {
@@ -20,9 +21,5 @@ export function resolveAuxiliaryLaunchProviderId(
   providers: readonly AuxiliaryLaunchProviderItem[],
   selectedProviderId: string | null | undefined,
 ): string | null {
-  if (!providers.length) {
-    return null;
-  }
-
-  return providers.find((provider) => provider.id === selectedProviderId)?.id ?? providers[0]!.id;
+  return resolveSelectedLaunchProviderId(providers, selectedProviderId);
 }

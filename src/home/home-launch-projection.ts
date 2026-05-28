@@ -1,5 +1,6 @@
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../model-catalog.js";
 import { getProviderAppSettings, type AppSettings } from "../provider-settings-state.js";
+import { resolveSelectedLaunchProviderId } from "../launch/launch-provider-selection.js";
 
 export type LaunchWorkspace = {
   label: string;
@@ -44,8 +45,9 @@ export function buildHomeLaunchProjection({
   const enabledLaunchProviders = (modelCatalog?.providers ?? []).filter(
     (provider) => getProviderAppSettings(appSettings, provider.id).enabled,
   );
+  const selectedLaunchProviderId = resolveSelectedLaunchProviderId(enabledLaunchProviders, launchProviderId);
   const selectedLaunchProvider =
-    enabledLaunchProviders.find((provider) => provider.id === launchProviderId) ?? enabledLaunchProviders[0] ?? null;
+    enabledLaunchProviders.find((provider) => provider.id === selectedLaunchProviderId) ?? null;
 
   return {
     enabledLaunchProviders,
