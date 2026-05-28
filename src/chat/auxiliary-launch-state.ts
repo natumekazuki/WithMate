@@ -1,12 +1,13 @@
 import type { ModelCatalogProvider } from "../model-catalog.js";
+import { LAUNCH_EMPTY_PROVIDER_MESSAGE, LAUNCH_NO_PROVIDER_SELECTED_MESSAGE } from "../launch/launch-feedback.js";
 
 export type AuxiliaryLaunchProviderItem = {
   id: string;
   label: string;
 };
 
-export const AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK = "有効な Coding Provider がないよ。";
-export const AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK = "有効な Coding Provider を選んでね。";
+export const AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK = LAUNCH_EMPTY_PROVIDER_MESSAGE;
+export const AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK = LAUNCH_NO_PROVIDER_SELECTED_MESSAGE;
 
 export function buildAuxiliaryLaunchProviderItems(
   providers: readonly ModelCatalogProvider[],

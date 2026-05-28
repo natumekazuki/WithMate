@@ -10,6 +10,7 @@ import {
   type ModelCatalogProvider,
   type ModelReasoningEffort,
 } from "../model-catalog.js";
+import { LAUNCH_NO_PROVIDER_SELECTED_MESSAGE } from "../launch/launch-feedback.js";
 import type { MateProfile, MateStorageState, MateTalkLaunchInput } from "../mate/mate-state.js";
 
 type LastUsedSessionSelectionSource = Pick<
@@ -157,7 +158,7 @@ export function resolveLaunchValidationMessage({
       return "Mate を確認してから開始してね。";
     }
     if (!selectedProviderId) {
-      return "有効な Coding Provider を選んでね。";
+      return LAUNCH_NO_PROVIDER_SELECTED_MESSAGE;
     }
     return "";
   }
@@ -171,7 +172,7 @@ export function resolveLaunchValidationMessage({
     return "Mate を確認してから開始してね。";
   }
   if (!selectedProviderId) {
-    return "有効な Coding Provider を選んでね。";
+    return LAUNCH_NO_PROVIDER_SELECTED_MESSAGE;
   }
   return "";
 }

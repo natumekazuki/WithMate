@@ -1,4 +1,5 @@
 import { focusRovingItemByKey } from "../a11y.js";
+import { LAUNCH_EMPTY_PROVIDER_MESSAGE } from "./launch-feedback.js";
 
 type Provider = {
   id: string;
@@ -13,8 +14,6 @@ export type ProviderLaunchPickerProps = {
   ariaLabel?: string;
 };
 
-const emptyProviderMessage = "有効な Coding Provider がないよ。";
-
 export function ProviderLaunchPicker({
   id,
   providers,
@@ -25,7 +24,7 @@ export function ProviderLaunchPicker({
   if (providers.length === 0) {
     return (
       <article className="empty-list-card compact">
-        <p>{emptyProviderMessage}</p>
+        <p>{LAUNCH_EMPTY_PROVIDER_MESSAGE}</p>
       </article>
     );
   }
