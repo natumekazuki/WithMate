@@ -352,6 +352,17 @@ test("buildCompanionChatWindowProps は Audit Log modal に source label を渡�
   assert.equal(modalsElement.props.auditLogSourceLabel, "Companion");
 });
 
+test("buildCompanionChatWindowProps は Companion toast を modal child として維持する", () => {
+  const props = buildCompanionChatWindowProps(createProjectionInput({
+    toastMessage: "保存しました",
+    toastTone: "success",
+  }));
+  const html = renderToStaticMarkup(React.createElement(React.Fragment, null, props.modals));
+
+  assert.match(html, /class="companion-session-toast success"/);
+  assert.match(html, />保存しました<\/div>/);
+});
+
 test("buildCompanionChatWindowProps は Auxiliary mode の header action slot と mode label を渡す", () => {
   const props = buildCompanionChatWindowProps(createProjectionInput({
     headerActions: React.createElement(

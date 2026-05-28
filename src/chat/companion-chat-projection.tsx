@@ -10,8 +10,6 @@ import type {
 import type { CharacterProfile, DiffPreviewPayload, MessageArtifact } from "../app-state.js";
 import type { CompanionSession } from "../companion-state.js";
 import {
-  SessionContextPane,
-  SessionPaneErrorBoundary,
   type SessionActionDockCompactRowProps,
   type SessionAuditLogModalProps,
   type SessionComposerExpandedProps,
@@ -22,14 +20,14 @@ import {
 } from "../session-components.js";
 import type { ContextPaneTabKey } from "../session-ui-projection.js";
 import { ChatSessionModals } from "./chat-session-modals.js";
-import { ChatWorkbenchSplitter, type ChatWindowProps } from "./chat-window.js";
 import {
-  buildChatPageClassName,
   buildLiveSessionContextPaneProps,
   buildLiveSessionChatBodyProps,
   buildLiveSessionComposerDockProps,
   resolveAuxiliaryModeLabel,
 } from "./chat-window-adapter.js";
+import type { ChatWindowProps } from "./chat-window.js";
+import { buildLiveSessionWindowShellProps } from "./live-session-window-props.js";
 import { buildLiveSessionHeaderProps } from "./chat-header-actions.js";
 import { COMPANION_PENDING_RUN_INDICATOR_TEXT } from "./pending-run-indicator.js";
 import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
@@ -380,27 +378,20 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     onOpenCompanionReview: input.onOpenCompanionReview,
   });
 
-  return {
+  return buildLiveSessionWindowShellProps({
     mode: "companion",
-    className: `${buildChatPageClassName({
-      baseClassName: "theme-accent",
-      isHeaderExpanded: input.isHeaderExpanded,
-    })}${input.isAuxiliaryMode ? " auxiliary-session-mode" : ""}`,
+    baseClassName: "theme-accent",
     style: input.themeStyle,
+    isHeaderExpanded: input.isHeaderExpanded,
     workbenchRef: input.workbenchRef,
     workbenchStyle: input.workbenchStyle,
-    isHeaderExpanded: input.isHeaderExpanded,
     headerProps,
     messageColumnProps: chatBodyProps.messageColumnProps,
     isActionDockExpanded: input.isActionDockExpanded,
     composerProps: chatBodyProps.composerProps,
     compactActionDockProps: chatBodyProps.compactActionDockProps,
-    splitter: <ChatWorkbenchSplitter {...chatBodyProps.splitterProps} />,
-    rightPane: (
-      <SessionPaneErrorBoundary>
-        <SessionContextPane {...rightPaneProps} />
-      </SessionPaneErrorBoundary>
-    ),
+    splitterProps: chatBodyProps.splitterProps,
+    rightPaneProps,
     modals: (
       <ChatSessionModals {...input}>
         {input.toastMessage ? (
@@ -410,5 +401,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
         ) : null}
       </ChatSessionModals>
     ),
-  };
+    isAuxiliaryMode: input.isAuxiliaryMode,
+  });
 }

@@ -28,6 +28,7 @@ import {
   toConversationMessages,
 } from "../../src/chat/chat-window-adapter.js";
 import type { ChatWindowProps } from "../../src/chat/chat-window.js";
+import { buildLiveSessionWindowShellProps } from "../../src/chat/live-session-window-props.js";
 import { createSessionFilesActions } from "../../src/chat/session-files-actions.js";
 
 const noop = () => {};
@@ -380,6 +381,119 @@ test("buildLiveSessionSplitterProps は context rail resize state を反映す�
 
   assert.equal(splitterProps.isActive, true);
   assert.equal(splitterProps.onPointerDown, onPointerDown);
+});
+
+test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む shell を組み立てる", () => {
+  const headerProps = createStaticChatHeaderProps({
+    taskTitle: "agent session",
+    isRunning: false,
+    onToggleExpanded: noop,
+  });
+  const messageColumnProps = createIdleChatMessageColumnProps({
+    sessionId: "session-id",
+    character: createCharacter(),
+    messages: [],
+    messageListRef: React.createRef<HTMLDivElement>(),
+    isRunning: false,
+  });
+  const composerProps = createHiddenControlsChatComposerProps({
+    draft: "",
+    composerTextareaRef: React.createRef<HTMLTextAreaElement>(),
+    isRunning: false,
+    feedback: "",
+    modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+    selectedModel: "gpt-test",
+    selectedModelFallbackLabel: "GPT Test",
+    reasoningOptions: [{ value: "low", label: "low" }],
+    selectedReasoningEffort: "low",
+    onDraftChange: noop,
+    onDraftKeyDown: noop,
+    onSendOrCancel: noop,
+    onChangeModel: noop,
+    onChangeReasoningEffort: noop,
+  });
+  const compactActionDockProps = createStaticChatCompactActionDockProps({
+    draft: "",
+    isRunning: false,
+    isSendDisabled: true,
+    onSendOrCancel: noop,
+  });
+  const rightPaneProps = buildLiveSessionContextPaneProps({
+    taskTitle: "Right pane",
+    isHeaderExpanded: false,
+    activeContextPaneTab: "latest-command",
+    availableContextPaneTabs: ["latest-command"],
+    contextPaneProjection: {
+      latestCommand: { state: "empty", tone: "muted", label: "No command" },
+      tasks: { state: "empty", tone: "muted", label: "No tasks" },
+      reasoning: { state: "empty", tone: "muted", label: "No reasoning" },
+      context: { state: "empty", tone: "muted", label: "No context" },
+      companion: { state: "empty", tone: "muted", label: "No companion" },
+    },
+    latestCommandView: null,
+    runningDetailsEntries: [],
+    liveRunReasoningText: "",
+    backgroundTasks: [],
+    companionGroupMonitorEntries: [],
+    selectedSessionLiveRunErrorMessage: "",
+    isSelectedSessionRunning: false,
+    isCopilotSession: false,
+    selectedCopilotRemainingPercentLabel: "",
+    selectedCopilotRemainingRequestsLabel: "",
+    selectedCopilotQuotaResetLabel: "",
+    selectedSessionContextTelemetry: null,
+    selectedSessionContextTelemetryProjection: null,
+    contextEmptyText: "context empty",
+    latestCommandEmptyText: "latest command empty",
+    onToggleHeaderExpanded: noop,
+    onCycleContextPaneTab: noop,
+    onOpenCompanionReview: noop,
+  });
+
+  const agentProps = buildLiveSessionWindowShellProps({
+    mode: "agent",
+    isHeaderExpanded: false,
+    workbenchRef: React.createRef<HTMLDivElement>(),
+    headerProps,
+    messageColumnProps,
+    isActionDockExpanded: true,
+    composerProps,
+    compactActionDockProps,
+    splitterProps: {
+      isActive: false,
+      onPointerDown: noop,
+    },
+    rightPaneProps,
+    modals: React.createElement("div"),
+  });
+  const companionProps = buildLiveSessionWindowShellProps({
+    mode: "companion",
+    baseClassName: "theme-accent",
+    isHeaderExpanded: false,
+    workbenchRef: React.createRef<HTMLDivElement>(),
+    headerProps,
+    messageColumnProps,
+    isActionDockExpanded: true,
+    composerProps,
+    compactActionDockProps,
+    splitterProps: {
+      isActive: false,
+      onPointerDown: noop,
+    },
+    rightPaneProps,
+    modals: React.createElement("div"),
+    isAuxiliaryMode: true,
+  });
+
+  const rightPane = agentProps.rightPane as React.ReactElement<{
+    children: React.ReactElement;
+  }>;
+
+  assert.equal(agentProps.mode, "agent");
+  assert.equal(agentProps.className, "session-page-header-collapsed");
+  assert.equal(companionProps.className, "theme-accent session-page-header-collapsed auxiliary-session-mode");
+  assert.equal(rightPane.props.children.props.taskTitle, "Right pane");
+  assert.equal(rightPane.type, companionProps.rightPane.type);
 });
 
 test("buildLiveSessionChatBodyProps は live session body props をまとめて組み立てる", () => {

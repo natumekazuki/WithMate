@@ -4,8 +4,6 @@ import type { CharacterProfile, DiffPreviewPayload, Message, MessageArtifact } f
 import type { HomeMonitorEntry } from "../home/home-session-projection.js";
 import type { Session } from "../session-state.js";
 import {
-  SessionContextPane,
-  SessionPaneErrorBoundary,
   type SessionActionDockCompactRowProps,
   type SessionAuditLogModalProps,
   type SessionComposerExpandedProps,
@@ -16,9 +14,9 @@ import {
 } from "../session-components.js";
 import type { ContextPaneTabKey } from "../session-ui-projection.js";
 import { ChatSessionModals } from "./chat-session-modals.js";
-import { ChatWorkbenchSplitter, type ChatWindowProps } from "./chat-window.js";
+import type { ChatWindowProps } from "./chat-window.js";
+import { buildLiveSessionWindowShellProps } from "./live-session-window-props.js";
 import {
-  buildChatPageClassName,
   buildLiveSessionContextPaneProps,
   buildLiveSessionChatBodyProps,
   buildLiveSessionComposerDockProps,
@@ -362,26 +360,20 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onOpenCompanionReview: input.onOpenCompanionReview,
   });
 
-  return {
+  return buildLiveSessionWindowShellProps({
     mode: "agent",
-    className: `${buildChatPageClassName({ isHeaderExpanded: input.isSessionHeaderExpanded })}${
-      input.isAuxiliaryMode ? " auxiliary-session-mode" : ""
-    }`,
     style: input.sessionThemeStyle,
+    isHeaderExpanded: input.isSessionHeaderExpanded,
     workbenchRef: input.sessionWorkbenchRef,
     workbenchStyle: input.sessionWorkbenchStyle,
-    isHeaderExpanded: input.isSessionHeaderExpanded,
     headerProps,
     messageColumnProps: chatBodyProps.messageColumnProps,
     isActionDockExpanded: input.isActionDockExpanded,
     composerProps: chatBodyProps.composerProps,
     compactActionDockProps: chatBodyProps.compactActionDockProps,
-    splitter: <ChatWorkbenchSplitter {...chatBodyProps.splitterProps} />,
-    rightPane: (
-      <SessionPaneErrorBoundary>
-        <SessionContextPane {...rightPaneProps} />
-      </SessionPaneErrorBoundary>
-    ),
+    splitterProps: chatBodyProps.splitterProps,
+    rightPaneProps,
     modals: <ChatSessionModals {...input} />,
-  };
+    isAuxiliaryMode: input.isAuxiliaryMode,
+  });
 }
