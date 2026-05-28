@@ -12,6 +12,7 @@ import {
   buildLiveSessionComposerProps,
   buildLiveSessionMessageColumnProps,
   buildLiveSessionSplitterProps,
+  buildStaticTextChatComposerCapabilityProps,
   createStaticChatCharacterProfile,
   createStaticChatComposerSendability,
   createHiddenControlsChatComposerProps,
@@ -23,6 +24,7 @@ import {
   createStaticTextConversationMessageColumnProps,
   isStaticChatSendDisabled,
   resolveAuxiliaryModeLabel,
+  staticTextChatRuntimeComposerCapabilityDefaults,
   toConversationMessages,
 } from "../../src/chat/chat-window-adapter.js";
 import type { ChatWindowProps } from "../../src/chat/chat-window.js";
@@ -186,8 +188,6 @@ test("buildLiveSessionComposerProps は composer の表示デフォルトを反�
     isRunning: false,
     composerBlocked: false,
     canSelectCustomAgent: false,
-    showCustomAgentPicker: true,
-    showSkillPicker: true,
     isAgentPickerOpen: false,
     isSkillPickerOpen: false,
     isAdditionalDirectoryListOpen: false,
@@ -255,6 +255,26 @@ test("buildLiveSessionComposerProps は composer の表示デフォルトを反�
   assert.equal(composerProps.showAttachmentControls, true);
   assert.equal(composerProps.showAdditionalDirectoryControls, true);
   assert.equal(composerProps.showExecutionModeControls, true);
+  assert.equal(composerProps.showCustomAgentPicker, true);
+  assert.equal(composerProps.showSkillPicker, true);
+});
+
+test("buildStaticTextChatComposerCapabilityProps は静的 chat の controls を既定で隠す", () => {
+  const composerProps = buildStaticTextChatComposerCapabilityProps();
+
+  assert.equal(composerProps.showAttachmentControls, false);
+  assert.equal(composerProps.showAdditionalDirectoryControls, false);
+  assert.equal(composerProps.showExecutionModeControls, false);
+  assert.equal(composerProps.showCustomAgentPicker, false);
+  assert.equal(composerProps.showSkillPicker, false);
+});
+
+test("staticTextChatRuntimeComposerCapabilityDefaults は runtime controls だけを表示する", () => {
+  assert.equal(staticTextChatRuntimeComposerCapabilityDefaults.showAttachmentControls, true);
+  assert.equal(staticTextChatRuntimeComposerCapabilityDefaults.showAdditionalDirectoryControls, true);
+  assert.equal(staticTextChatRuntimeComposerCapabilityDefaults.showExecutionModeControls, true);
+  assert.equal(staticTextChatRuntimeComposerCapabilityDefaults.showCustomAgentPicker, false);
+  assert.equal(staticTextChatRuntimeComposerCapabilityDefaults.showSkillPicker, false);
 });
 
 test("buildLiveSessionComposerDockProps は composer と compact dock の共通 props を対応付ける", () => {
@@ -271,8 +291,6 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
     modeLabel: "Auxiliary",
     composerBlocked: false,
     canSelectCustomAgent: true,
-    showCustomAgentPicker: true,
-    showSkillPicker: true,
     isAgentPickerOpen: false,
     isSkillPickerOpen: false,
     isAdditionalDirectoryListOpen: false,

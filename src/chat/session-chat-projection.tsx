@@ -233,8 +233,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
     composerBlocked: input.composerBlocked,
     canSelectCustomAgent: input.selectedSession.provider === "copilot",
-    showCustomAgentPicker: true,
-    showSkillPicker: true,
     isAgentPickerOpen: input.isAgentPickerOpen,
     isSkillPickerOpen: input.isSkillPickerOpen,
     isAdditionalDirectoryListOpen: input.isAdditionalDirectoryListOpen,

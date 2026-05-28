@@ -195,10 +195,14 @@ export type LiveSessionComposerProps = Omit<
   | "showAttachmentControls"
   | "showAdditionalDirectoryControls"
   | "showExecutionModeControls"
+  | "showCustomAgentPicker"
+  | "showSkillPicker"
 > & {
   showAttachmentControls?: boolean;
   showAdditionalDirectoryControls?: boolean;
   showExecutionModeControls?: boolean;
+  showCustomAgentPicker?: boolean;
+  showSkillPicker?: boolean;
 };
 
 export type StaticTextChatComposerCapabilityProps = Partial<
@@ -225,6 +229,22 @@ export type StaticTextChatComposerCapabilityProps = Partial<
     | "onChangeReasoningEffort"
   >
 >;
+
+const liveSessionComposerCapabilityDefaults = {
+  showAttachmentControls: true,
+  showAdditionalDirectoryControls: true,
+  showExecutionModeControls: true,
+  showCustomAgentPicker: true,
+  showSkillPicker: true,
+} as const;
+
+export const staticTextChatRuntimeComposerCapabilityDefaults = {
+  showAttachmentControls: true,
+  showAdditionalDirectoryControls: true,
+  showExecutionModeControls: true,
+  showCustomAgentPicker: false,
+  showSkillPicker: false,
+} as const;
 
 export type LiveSessionCompactActionDockProps = Omit<ChatCompactActionDockProps, "showJumpToBottom"> & {
   showJumpToBottom: boolean;
@@ -374,9 +394,7 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
 
 export function buildLiveSessionComposerProps(input: LiveSessionComposerProps): ChatComposerProps {
   return {
-    showAttachmentControls: true,
-    showAdditionalDirectoryControls: true,
-    showExecutionModeControls: true,
+    ...liveSessionComposerCapabilityDefaults,
     ...input,
   };
 }

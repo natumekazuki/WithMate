@@ -253,8 +253,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
     composerBlocked: input.composerBlocked,
     canSelectCustomAgent: input.session.provider === "copilot",
-    showCustomAgentPicker: true,
-    showSkillPicker: true,
     isAgentPickerOpen: input.isAgentPickerOpen,
     isSkillPickerOpen: input.isSkillPickerOpen,
     isAdditionalDirectoryListOpen: input.isAdditionalDirectoryListOpen,
