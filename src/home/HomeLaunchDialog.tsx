@@ -1,7 +1,7 @@
 import { useRef } from "react";
 
 import { focusRovingItemByKey, useDialogA11y } from "../a11y.js";
-import { ProviderLaunchPicker } from "../launch/provider-launch-picker.js";
+import { ProviderLaunchField } from "../launch/provider-launch-picker.js";
 import type { LaunchWorkspace } from "./home-launch-projection.js";
 
 export type HomeLaunchDialogProps = {
@@ -127,19 +127,12 @@ export function HomeLaunchDialog({
           </section>
           ) : null}
 
-          <section className="launch-section minimal">
-            <div className="launch-field">
-              <label className="launch-field-label" htmlFor="launch-provider-picker">
-                Coding Provider
-              </label>
-              <ProviderLaunchPicker
-                id="launch-provider-picker"
-                providers={enabledLaunchProviders}
-                selectedProviderId={selectedLaunchProviderId}
-                onSelectProvider={onSelectProvider}
-              />
-            </div>
-          </section>
+          <ProviderLaunchField
+            fieldId="launch-provider-picker"
+            providers={enabledLaunchProviders}
+            selectedProviderId={selectedLaunchProviderId}
+            onSelectProvider={onSelectProvider}
+          />
         </div>
 
         <div className="launch-dialog-foot minimal">

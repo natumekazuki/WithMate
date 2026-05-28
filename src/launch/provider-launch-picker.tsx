@@ -57,3 +57,32 @@ export function ProviderLaunchPicker({
     </div>
   );
 }
+
+export type ProviderLaunchFieldProps = Omit<ProviderLaunchPickerProps, "id"> & {
+  fieldId: string;
+};
+
+export function ProviderLaunchField({
+  fieldId,
+  providers,
+  selectedProviderId,
+  onSelectProvider,
+  ariaLabel,
+}: ProviderLaunchFieldProps) {
+  return (
+    <section className="launch-section minimal">
+      <div className="launch-field">
+        <label className="launch-field-label" htmlFor={fieldId}>
+          Coding Provider
+        </label>
+        <ProviderLaunchPicker
+          id={fieldId}
+          providers={providers}
+          selectedProviderId={selectedProviderId}
+          onSelectProvider={onSelectProvider}
+          ariaLabel={ariaLabel}
+        />
+      </div>
+    </section>
+  );
+}

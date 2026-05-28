@@ -1,7 +1,7 @@
 import { useRef } from "react";
 
 import { useDialogA11y } from "../a11y.js";
-import { ProviderLaunchPicker } from "../launch/provider-launch-picker.js";
+import { ProviderLaunchField } from "../launch/provider-launch-picker.js";
 
 type AuxiliaryLaunchProviderDialogProps = {
   open: boolean;
@@ -50,19 +50,12 @@ export function AuxiliaryLaunchProviderDialog({
         </div>
 
         <div className="launch-panel minimal">
-          <section className="launch-section minimal">
-            <div className="launch-field">
-              <label className="launch-field-label" htmlFor="auxiliary-provider-picker">
-                Coding Provider
-              </label>
-              <ProviderLaunchPicker
-                id="auxiliary-provider-picker"
-                providers={providers}
-                selectedProviderId={selectedProviderId}
-                onSelectProvider={onSelectProvider}
-              />
-            </div>
-          </section>
+          <ProviderLaunchField
+            fieldId="auxiliary-provider-picker"
+            providers={providers}
+            selectedProviderId={selectedProviderId}
+            onSelectProvider={onSelectProvider}
+          />
         </div>
 
         <div className="launch-dialog-foot minimal">
