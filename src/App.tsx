@@ -55,10 +55,9 @@ import {
 } from "./session-ui-projection.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import {
-  AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK,
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   buildAuxiliaryLaunchProviderItems,
-  resolveAuxiliaryLaunchProviderId,
+  resolveAuxiliaryLaunchInitialState,
 } from "./chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
 import { createAuxiliaryHeaderActions } from "./chat/chat-header-actions.js";
@@ -2420,9 +2419,12 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const providerId = resolveAuxiliaryLaunchProviderId(auxiliaryLaunchProviderItems, selectedSession.provider);
+    const { providerId, feedback } = resolveAuxiliaryLaunchInitialState(
+      auxiliaryLaunchProviderItems,
+      selectedSession.provider,
+    );
     setAuxiliaryLaunchProviderId(providerId);
-    setAuxiliaryLaunchFeedback(providerId ? "" : AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK);
+    setAuxiliaryLaunchFeedback(feedback);
     setAuxiliaryLaunchDialogOpen(true);
   };
 

@@ -6,6 +6,7 @@ import {
   AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK,
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   buildAuxiliaryLaunchProviderItems,
+  resolveAuxiliaryLaunchInitialState,
   resolveAuxiliaryLaunchProviderId,
 } from "../../src/chat/auxiliary-launch-state.js";
 
@@ -56,10 +57,35 @@ describe("auxiliary-launch-state", () => {
     assert.equal(resolveAuxiliaryLaunchProviderId(items, "missing"), "b");
   });
 
+  it("初期 state は provider 解決と feedback を同時に返す", () => {
+    const items = [
+      { id: "b", label: "B" },
+      { id: "d", label: "D" },
+    ];
+
+    assert.deepEqual(resolveAuxiliaryLaunchInitialState(items, "d"), {
+      providerId: "d",
+      feedback: "",
+    });
+    assert.deepEqual(resolveAuxiliaryLaunchInitialState(items, "missing"), {
+      providerId: "b",
+      feedback: "",
+    });
+  });
+
   it("provider が空のときは resolveAuxiliaryLaunchProviderId が null を返す", () => {
     const emptyItems: Array<{ id: string; label: string }> = [];
 
     assert.equal(resolveAuxiliaryLaunchProviderId(emptyItems, "codex"), null);
+  });
+
+  it("provider が空のときは初期 state の feedback が空 provider 用になる", () => {
+    const emptyItems: Array<{ id: string; label: string }> = [];
+
+    assert.deepEqual(resolveAuxiliaryLaunchInitialState(emptyItems, "codex"), {
+      providerId: null,
+      feedback: AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK,
+    });
   });
 
   it("feedback 文言は固定文言を使う", () => {

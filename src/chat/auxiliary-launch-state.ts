@@ -23,3 +23,19 @@ export function resolveAuxiliaryLaunchProviderId(
 ): string | null {
   return resolveSelectedLaunchProviderId(providers, selectedProviderId);
 }
+
+export type AuxiliaryLaunchInitialState = {
+  providerId: string | null;
+  feedback: string;
+};
+
+export function resolveAuxiliaryLaunchInitialState(
+  providers: readonly AuxiliaryLaunchProviderItem[],
+  selectedProviderId: string | null | undefined,
+): AuxiliaryLaunchInitialState {
+  const providerId = resolveAuxiliaryLaunchProviderId(providers, selectedProviderId);
+  return {
+    providerId,
+    feedback: providerId ? "" : AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK,
+  };
+}

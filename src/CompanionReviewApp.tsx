@@ -77,10 +77,9 @@ import {
   withForcedComposerBlockedFeedback,
 } from "./session-composer-feedback.js";
 import {
-  AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK,
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   buildAuxiliaryLaunchProviderItems,
-  resolveAuxiliaryLaunchProviderId,
+  resolveAuxiliaryLaunchInitialState,
 } from "./chat/auxiliary-launch-state.js";
 import {
   buildCustomAgentMatchDisplay,
@@ -1887,9 +1886,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const providerId = resolveAuxiliaryLaunchProviderId(auxiliaryLaunchProviderItems, snapshot.session.provider);
+    const { providerId, feedback } = resolveAuxiliaryLaunchInitialState(
+      auxiliaryLaunchProviderItems,
+      snapshot.session.provider,
+    );
     setAuxiliaryLaunchProviderId(providerId);
-    setAuxiliaryLaunchFeedback(providerId ? "" : AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK);
+    setAuxiliaryLaunchFeedback(feedback);
     setAuxiliaryLaunchDialogOpen(true);
   }
 
