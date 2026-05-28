@@ -54,6 +54,12 @@ import {
   resolveAvailableContextPaneTabs,
 } from "./session-ui-projection.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import {
+  AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK,
+  AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
+  buildAuxiliaryLaunchProviderItems,
+  resolveAuxiliaryLaunchProviderId,
+} from "./chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
 import { createAuxiliaryHeaderActions } from "./chat/chat-header-actions.js";
 import {
@@ -676,15 +682,12 @@ export default function AgentSessionWindowApp() {
     () => !!displayedSession && getProviderAppSettings(appSettings, displayedSession.provider).enabled,
     [appSettings, displayedSession],
   );
-  const auxiliaryLaunchProviders = useMemo(
-    () => (modelCatalog?.providers ?? []).filter(
+  const auxiliaryLaunchProviderItems = useMemo(
+    () => buildAuxiliaryLaunchProviderItems(
+      modelCatalog?.providers ?? [],
       (provider) => getProviderAppSettings(appSettings, provider.id).enabled,
     ),
     [appSettings, modelCatalog],
-  );
-  const auxiliaryLaunchProviderItems = useMemo(
-    () => auxiliaryLaunchProviders.map((provider) => ({ id: provider.id, label: provider.label })),
-    [auxiliaryLaunchProviders],
   );
   const sessionExecutionBlockedReason = useMemo(() => {
     if (!selectedSession) {
@@ -2417,12 +2420,9 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const providerId =
-      auxiliaryLaunchProviders.find((provider) => provider.id === selectedSession.provider)?.id ??
-      auxiliaryLaunchProviders[0]?.id ??
-      null;
+    const providerId = resolveAuxiliaryLaunchProviderId(auxiliaryLaunchProviderItems, selectedSession.provider);
     setAuxiliaryLaunchProviderId(providerId);
-    setAuxiliaryLaunchFeedback(providerId ? "" : "有効な Coding Provider がないよ。");
+    setAuxiliaryLaunchFeedback(providerId ? "" : AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK);
     setAuxiliaryLaunchDialogOpen(true);
   };
 
@@ -2445,7 +2445,7 @@ export default function AgentSessionWindowApp() {
       return;
     }
     if (!auxiliaryLaunchProviderId) {
-      setAuxiliaryLaunchFeedback("有効な Coding Provider を選んでね。");
+      setAuxiliaryLaunchFeedback(AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK);
       return;
     }
 

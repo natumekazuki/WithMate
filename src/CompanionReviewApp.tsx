@@ -77,6 +77,12 @@ import {
   withForcedComposerBlockedFeedback,
 } from "./session-composer-feedback.js";
 import {
+  AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK,
+  AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
+  buildAuxiliaryLaunchProviderItems,
+  resolveAuxiliaryLaunchProviderId,
+} from "./chat/auxiliary-launch-state.js";
+import {
   buildCustomAgentMatchDisplay,
   buildSelectedCustomAgentDisplay,
   buildSkillMatchDisplay,
@@ -1110,13 +1116,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     selectedProviderCatalog?.models[0] ??
     null;
   const reasoningEffortOptions = selectedModelEntry?.reasoningEfforts ?? [];
-  const auxiliaryLaunchProviders = useMemo(
-    () => (modelCatalog?.providers ?? []).filter((provider) => provider.models.length > 0),
-    [modelCatalog],
-  );
   const auxiliaryLaunchProviderItems = useMemo(
-    () => auxiliaryLaunchProviders.map((provider) => ({ id: provider.id, label: provider.label })),
-    [auxiliaryLaunchProviders],
+    () => buildAuxiliaryLaunchProviderItems(
+      modelCatalog?.providers ?? [],
+      (provider) => provider.models.length > 0,
+    ),
+    [modelCatalog],
   );
   const {
     approvalChoiceOptions: approvalSelectOptions,
@@ -1882,12 +1887,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const providerId =
-      auxiliaryLaunchProviders.find((provider) => provider.id === snapshot.session.provider)?.id ??
-      auxiliaryLaunchProviders[0]?.id ??
-      null;
+    const providerId = resolveAuxiliaryLaunchProviderId(auxiliaryLaunchProviderItems, snapshot.session.provider);
     setAuxiliaryLaunchProviderId(providerId);
-    setAuxiliaryLaunchFeedback(providerId ? "" : "有効な Coding Provider がないよ。");
+    setAuxiliaryLaunchFeedback(providerId ? "" : AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK);
     setAuxiliaryLaunchDialogOpen(true);
   }
 
@@ -1915,7 +1917,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
     if (!auxiliaryLaunchProviderId) {
-      setAuxiliaryLaunchFeedback("有効な Coding Provider を選んでね。");
+      setAuxiliaryLaunchFeedback(AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK);
       return;
     }
 
