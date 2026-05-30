@@ -105,8 +105,8 @@ import {
   buildAdditionalDirectoryDisplay,
   buildComposerAttachmentDisplay,
   buildPathReferenceInsertionState,
+  buildPathReferenceReplacementState,
   buildWorkspacePathMatchDisplay,
-  formatPathReference,
   getActivePathReference,
   normalizePathForReference,
   pickComposerReferencePath,
@@ -1660,9 +1660,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    const replacement = formatPathReference(match);
-    const nextDraft = `${activeComposerText.slice(0, activeReference.start)}${replacement}${activeComposerText.slice(activeReference.end)}`;
-    const nextCaret = activeReference.start + replacement.length;
+    const { draft: nextDraft, caret: nextCaret } = buildPathReferenceReplacementState(
+      activeComposerText,
+      activeReference,
+      match,
+    );
     setComposerCaret(nextCaret);
     setWorkspacePathMatches([]);
     setActiveWorkspacePathMatchIndex(-1);

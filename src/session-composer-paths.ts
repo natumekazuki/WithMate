@@ -93,6 +93,18 @@ export function buildPathReferenceInsertionState(
   };
 }
 
+export function buildPathReferenceReplacementState(
+  draft: string,
+  activeReference: ActivePathReference,
+  referencePath: string,
+): PathReferenceInsertionState {
+  const replacement = formatPathReference(referencePath);
+  return {
+    draft: `${draft.slice(0, activeReference.start)}${replacement}${draft.slice(activeReference.end)}`,
+    caret: activeReference.start + replacement.length,
+  };
+}
+
 export function removePathReferenceTokensFromDraft(
   draft: string,
   referencePaths: readonly string[],

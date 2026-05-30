@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildPathReferenceInsertionState,
+  buildPathReferenceReplacementState,
   pickComposerReferencePath,
   removePathReferenceTokensFromDraft,
   resolvePickedPathBaseDirectory,
@@ -41,6 +42,34 @@ test("buildPathReferenceInsertionState は空白を含む path reference を quo
 
 test("buildPathReferenceInsertionState は reference path が空なら null を返す", () => {
   assert.equal(buildPathReferenceInsertionState("draft", 0, []), null);
+});
+
+test("buildPathReferenceReplacementState は active path reference を置換する", () => {
+  assert.deepEqual(
+    buildPathReferenceReplacementState(
+      "確認 @sr して",
+      { query: "sr", start: "確認 ".length, end: "確認 @sr".length },
+      "src/App.tsx",
+    ),
+    {
+      draft: "確認 @src/App.tsx して",
+      caret: "確認 @src/App.tsx".length,
+    },
+  );
+});
+
+test("buildPathReferenceReplacementState は空白を含む path を quote する", () => {
+  assert.deepEqual(
+    buildPathReferenceReplacementState(
+      "確認 @docs して",
+      { query: "docs", start: "確認 ".length, end: "確認 @docs".length },
+      "docs/my note.md",
+    ),
+    {
+      draft: "確認 @\"docs/my note.md\" して",
+      caret: "確認 @\"docs/my note.md\"".length,
+    },
+  );
 });
 
 test("removePathReferenceTokensFromDraft は path reference token を draft から削除する", () => {

@@ -90,8 +90,8 @@ import {
   buildAdditionalDirectoryDisplay,
   buildComposerAttachmentDisplay,
   buildPathReferenceInsertionState,
+  buildPathReferenceReplacementState,
   buildWorkspacePathMatchDisplay,
-  formatPathReference,
   getActivePathReference,
   normalizePathForReference,
   pickComposerReferencePath,
@@ -1917,13 +1917,11 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    const replacement = formatPathReference(match);
-    const nextDraft = [
-      activeComposerDraft.slice(0, activeReference.start),
-      replacement,
-      activeComposerDraft.slice(activeReference.end),
-    ].join("");
-    const nextCaret = activeReference.start + replacement.length;
+    const { draft: nextDraft, caret: nextCaret } = buildPathReferenceReplacementState(
+      activeComposerDraft,
+      activeReference,
+      match,
+    );
     setComposerCaret(nextCaret);
     if (activeAuxiliarySession) {
       void handleAuxiliaryDraftChange(nextDraft, nextCaret);
