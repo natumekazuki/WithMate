@@ -295,6 +295,14 @@ export function resolveActiveWorkspacePathMatch(
   return pathMatches[activeIndex] ?? pathMatches[0] ?? null;
 }
 
+export function canNavigateWorkspacePathMatches(input: {
+  isComposerImeComposing: boolean;
+  isNativeComposing: boolean;
+  matchCount: number;
+}): boolean {
+  return input.matchCount > 0 && !input.isComposerImeComposing && !input.isNativeComposing;
+}
+
 export function buildAdditionalDirectoryDisplay(directoryPath: string): AdditionalDirectoryDisplay {
   const normalizedPath = normalizePathForReference(directoryPath).replace(/\/+$/, "");
   const { basename, parentPath } = splitPathForDisplay(normalizedPath);

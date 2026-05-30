@@ -107,6 +107,7 @@ import {
   buildPathReferenceInsertionState,
   buildPathReferenceReplacementState,
   buildWorkspacePathMatchItems,
+  canNavigateWorkspacePathMatches,
   getActivePathReference,
   getInitialWorkspacePathMatchIndex,
   getNextWorkspacePathMatchIndex,
@@ -2713,10 +2714,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   const handleCompanionDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (event) => {
-    const canNavigatePathMatches =
-      workspacePathMatches.length > 0 &&
-      !isComposerImeComposing &&
-      !event.nativeEvent.isComposing;
+    const canNavigatePathMatches = canNavigateWorkspacePathMatches({
+      matchCount: workspacePathMatches.length,
+      isComposerImeComposing,
+      isNativeComposing: event.nativeEvent.isComposing,
+    });
 
     if (canNavigatePathMatches) {
       if (event.key === "ArrowDown") {

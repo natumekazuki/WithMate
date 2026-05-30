@@ -7,6 +7,7 @@ import {
   buildPathReferenceInsertionState,
   buildPathReferenceReplacementState,
   buildWorkspacePathMatchItems,
+  canNavigateWorkspacePathMatches,
   getInitialWorkspacePathMatchIndex,
   getNextWorkspacePathMatchIndex,
   getPreviousWorkspacePathMatchIndex,
@@ -154,6 +155,41 @@ test("resolveActiveWorkspacePathMatch は active index の候補または先頭�
   assert.deepEqual(resolveActiveWorkspacePathMatch(pathMatches, -1), pathMatches[0]);
   assert.deepEqual(resolveActiveWorkspacePathMatch(pathMatches, 9), pathMatches[0]);
   assert.equal(resolveActiveWorkspacePathMatch([], 0), null);
+});
+
+test("canNavigateWorkspacePathMatches は候補数と IME 状態から navigation 可否を返す", () => {
+  assert.equal(
+    canNavigateWorkspacePathMatches({
+      matchCount: 1,
+      isComposerImeComposing: false,
+      isNativeComposing: false,
+    }),
+    true,
+  );
+  assert.equal(
+    canNavigateWorkspacePathMatches({
+      matchCount: 0,
+      isComposerImeComposing: false,
+      isNativeComposing: false,
+    }),
+    false,
+  );
+  assert.equal(
+    canNavigateWorkspacePathMatches({
+      matchCount: 1,
+      isComposerImeComposing: true,
+      isNativeComposing: false,
+    }),
+    false,
+  );
+  assert.equal(
+    canNavigateWorkspacePathMatches({
+      matchCount: 1,
+      isComposerImeComposing: false,
+      isNativeComposing: true,
+    }),
+    false,
+  );
 });
 
 test("buildAdditionalDirectoryItems は additional directory display と remove state を作る", () => {
