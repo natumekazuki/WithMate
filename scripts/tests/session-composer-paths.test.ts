@@ -8,6 +8,7 @@ import {
   buildWorkspacePathMatchItems,
   pickComposerReferencePath,
   removePathReferenceTokensFromDraft,
+  resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
 } from "../../src/session-composer-paths.js";
@@ -112,6 +113,36 @@ test("buildAdditionalDirectoryItems は additional directory display と remove 
   assert.equal(
     buildAdditionalDirectoryItems(["C:/workspace/readonly"], false)[0]?.canRemove,
     false,
+  );
+});
+
+test("resolveReferencePathsForInsertion は workspace 内 path を相対化し workspace 外 path を正規化する", () => {
+  assert.deepEqual(
+    resolveReferencePathsForInsertion(
+      [
+        "C:\\workspace\\project\\src\\App.tsx",
+        "D:\\external\\note.md",
+      ],
+      "C:/workspace/project",
+    ),
+    [
+      "src/App.tsx",
+      "D:/external/note.md",
+    ],
+  );
+});
+
+test("resolveReferencePathsForInsertion は workspace がない場合 selected path を正規化する", () => {
+  assert.deepEqual(
+    resolveReferencePathsForInsertion(["C:\\workspace\\project\\src\\App.tsx"], null),
+    ["C:/workspace/project/src/App.tsx"],
+  );
+});
+
+test("resolveReferencePathsForInsertion は空 workspace path を旧 workspace-relative 判定として扱う", () => {
+  assert.deepEqual(
+    resolveReferencePathsForInsertion(["/workspace/project/src/App.tsx"], ""),
+    ["workspace/project/src/App.tsx"],
   );
 });
 

@@ -17,6 +17,7 @@ import {
   normalizePathForReference,
   pickComposerReferencePath,
   removePathReferenceTokensFromDraft,
+  resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   splitPathForDisplay,
   type ComposerPathPickerKind,
@@ -240,7 +241,7 @@ export function useMateTalkWindowState({
     }
 
     const textarea = composerTextareaRef.current;
-    const normalizedPaths = selectedPaths.map((selectedPath) => normalizePathForReference(selectedPath));
+    const normalizedPaths = resolveReferencePathsForInsertion(selectedPaths, null);
     const caret = textarea?.selectionStart ?? inputCaret;
     const insertionState = buildPathReferenceInsertionState(input, caret, normalizedPaths);
     if (!insertionState) {

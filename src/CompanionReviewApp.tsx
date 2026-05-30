@@ -112,10 +112,10 @@ import {
   pickComposerReferencePath,
   removeActivePathReference,
   removePathReferenceTokensFromDraft,
+  resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
   toDirectoryPath,
-  toWorkspaceRelativeReference,
 } from "./session-composer-paths.js";
 import {
   useSessionContextRail,
@@ -1485,12 +1485,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     const textarea = composerTextareaRef.current;
     const currentCaret = textarea?.selectionStart ?? composerCaret;
-    const referencePaths = selectedPaths.map((selectedPath) => {
-      const referencePath = snapshot
-        ? toWorkspaceRelativeReference(snapshot.session.worktreePath, selectedPath) ?? normalizePathForReference(selectedPath)
-        : normalizePathForReference(selectedPath);
-      return referencePath;
-    });
+    const referencePaths = resolveReferencePathsForInsertion(
+      selectedPaths,
+      snapshot?.session.worktreePath ?? null,
+    );
     const insertionState = buildPathReferenceInsertionState(activeComposerText, currentCaret, referencePaths);
     if (!insertionState) {
       return;

@@ -279,6 +279,17 @@ export function toWorkspaceRelativeReference(workspacePath: string, selectedPath
   return normalizedSelectedPath.slice(workspacePrefix.length);
 }
 
+export function resolveReferencePathsForInsertion(
+  selectedPaths: readonly string[],
+  workspacePath: string | null,
+): string[] {
+  return selectedPaths.map((selectedPath) => (
+    workspacePath !== null
+      ? toWorkspaceRelativeReference(workspacePath, selectedPath) ?? normalizePathForReference(selectedPath)
+      : normalizePathForReference(selectedPath)
+  ));
+}
+
 export function toDirectoryPath(selectedPath: string): string {
   const normalized = selectedPath.replace(/[\\/]+$/, "");
   const lastSlashIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));

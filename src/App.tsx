@@ -97,10 +97,10 @@ import {
   pickComposerReferencePath,
   removeActivePathReference,
   removePathReferenceTokensFromDraft,
+  resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
   toDirectoryPath,
-  toWorkspaceRelativeReference,
 } from "./session-composer-paths.js";
 import {
   buildOnDraftCompositionEndHandler,
@@ -2622,12 +2622,10 @@ export default function AgentSessionWindowApp() {
     const textarea = composerTextareaRef.current;
     const targetAuxiliarySession = activeAuxiliarySession;
     const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
-    const referencePaths = selectedPaths.map((selectedPath) => {
-      const referencePath = selectedSession
-        ? toWorkspaceRelativeReference(selectedSession.workspacePath, selectedPath) ?? normalizePathForReference(selectedPath)
-        : normalizePathForReference(selectedPath);
-      return referencePath;
-    });
+    const referencePaths = resolveReferencePathsForInsertion(
+      selectedPaths,
+      selectedSession?.workspacePath ?? null,
+    );
     const currentCaret = textarea?.selectionStart ?? composerCaret;
     const insertionState = buildPathReferenceInsertionState(currentDraft, currentCaret, referencePaths);
     if (!insertionState) {
