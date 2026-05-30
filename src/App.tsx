@@ -75,6 +75,10 @@ import {
 } from "./session-composer-feedback.js";
 import { buildActionDockCompactPreview } from "./action-dock-preview.js";
 import {
+  buildActionDockCollapseState,
+  buildActionDockExpandState,
+} from "./action-dock-state.js";
+import {
   buildCustomAgentMatchDisplay,
   buildSelectedCustomAgentDisplay,
   buildSkillMatchDisplay,
@@ -2281,9 +2285,10 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleExpandActionDock = (options?: { focusComposer?: boolean }) => {
-    setIsActionDockPinnedExpanded(true);
+    const nextState = buildActionDockExpandState(options);
+    setIsActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
 
-    if (!options?.focusComposer) {
+    if (!nextState.shouldFocusComposer) {
       return;
     }
 
@@ -2291,11 +2296,12 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleCollapseActionDock = () => {
-    if (!canCollapseActionDock) {
+    const nextState = buildActionDockCollapseState(canCollapseActionDock);
+    if (!nextState) {
       return;
     }
 
-    setIsActionDockPinnedExpanded(false);
+    setIsActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
   };
 
   const handleOpenInlinePath = async (target: string) => {

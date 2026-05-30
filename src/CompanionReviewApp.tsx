@@ -83,6 +83,10 @@ import {
 } from "./session-composer-feedback.js";
 import { buildActionDockCompactPreview } from "./action-dock-preview.js";
 import {
+  buildActionDockCollapseState,
+  buildActionDockExpandState,
+} from "./action-dock-state.js";
+import {
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   buildAuxiliaryLaunchProviderItems,
 } from "./chat/auxiliary-launch-state.js";
@@ -2205,9 +2209,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   function handleExpandActionDock(options?: { focusComposer?: boolean }): void {
-    setIsActionDockPinnedExpanded(true);
+    const nextState = buildActionDockExpandState(options);
+    setIsActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
 
-    if (!options?.focusComposer) {
+    if (!nextState.shouldFocusComposer) {
       return;
     }
 
@@ -2215,11 +2220,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   function handleCollapseActionDock(): void {
-    if (!canCollapseActionDock) {
+    const nextState = buildActionDockCollapseState(canCollapseActionDock);
+    if (!nextState) {
       return;
     }
 
-    setIsActionDockPinnedExpanded(false);
+    setIsActionDockPinnedExpanded(nextState.isActionDockPinnedExpanded);
   }
 
   async function reloadSnapshot(preferredPath = selectedPath, options: { preserveSelectionOnly?: boolean } = {}): Promise<void> {
