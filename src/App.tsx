@@ -44,6 +44,10 @@ import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-
 import {
   approvalModeLabel,
 } from "./ui-utils.js";
+import {
+  restoreComposerTextareaFocusAndCaret,
+  restoreCurrentComposerTextareaFocusToEnd,
+} from "./composer-textarea-focus.js";
 import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
 import {
   buildContextPaneProjection,
@@ -1985,10 +1989,7 @@ export default function AgentSessionWindowApp() {
     setWorkspacePathMatches([]);
     setActiveWorkspacePathMatchIndex(-1);
 
-    window.requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
+    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
 
   const handleSelectSkill = (skill: DiscoveredSkill) => {
@@ -2008,14 +2009,7 @@ export default function AgentSessionWindowApp() {
     mainComposerCaretRef.current = nextCaret;
     setIsSkillPickerOpen(false);
 
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
+    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
 
   const handleSelectCustomAgent = async (agent: DiscoveredCustomAgent | null) => {
@@ -2296,14 +2290,7 @@ export default function AgentSessionWindowApp() {
       updatedAt: currentTimestampLabel(),
     }));
 
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
+    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
 
   const handleResendLastMessage = async () => {
@@ -2326,14 +2313,7 @@ export default function AgentSessionWindowApp() {
     setActiveWorkspacePathMatchIndex(-1);
     setIsRetryDraftReplacePending(false);
 
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
+    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
 
   const handleEditLastMessage = () => {
@@ -2380,16 +2360,7 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    window.requestAnimationFrame(() => {
-      const textarea = composerTextareaRef.current;
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      const caret = textarea.value.length;
-      textarea.setSelectionRange(caret, caret);
-    });
+    restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current);
   };
 
   const handleCollapseActionDock = () => {
@@ -2665,14 +2636,7 @@ export default function AgentSessionWindowApp() {
     setWorkspacePathMatches([]);
     setActiveWorkspacePathMatchIndex(-1);
 
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
+    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
 
   const insertQuoteIntoAuxiliaryComposer = (messageText: string) => {
@@ -2692,10 +2656,7 @@ export default function AgentSessionWindowApp() {
     const { draft: nextDraft, caret: nextCaret } = insertion;
 
     void handleAuxiliaryDraftChange(nextDraft, nextCaret);
-    window.requestAnimationFrame(() => {
-      textarea?.focus();
-      textarea?.setSelectionRange(nextCaret, nextCaret);
-    });
+    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
 
   const handleQuoteMessageText = (text: string) => {
@@ -2748,14 +2709,7 @@ export default function AgentSessionWindowApp() {
     setWorkspacePathMatches([]);
     setActiveWorkspacePathMatchIndex(-1);
 
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
+    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
 
   const insertReferencePath = (selectedPath: string) => {

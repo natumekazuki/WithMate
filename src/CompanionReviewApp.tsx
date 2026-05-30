@@ -42,6 +42,10 @@ import type {
 import { getCompanionSessionIdFromLocation } from "./companion-review-state.js";
 import { DiffViewer } from "./DiffViewer.js";
 import {
+  restoreComposerTextareaFocusAndCaret,
+  restoreCurrentComposerTextareaFocusToEnd,
+} from "./composer-textarea-focus.js";
+import {
   getProviderCatalog,
   resolveModelChangeSelection,
   resolveModelSelection,
@@ -1525,14 +1529,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       setComposerText(nextDraft);
     }
 
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
+    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   }
 
   function insertReferencePaths(selectedPaths: string[]): void {
@@ -1563,13 +1560,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       setComposerText(nextDraft);
     }
 
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
+    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   }
 
   function insertReferencePath(selectedPath: string): void {
@@ -1719,10 +1710,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       setComposerText(nextDraft);
     }
 
-    window.requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
+    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   }
 
   function handleRemoveAttachmentReference(attachmentPathCandidates: string[]): void {
@@ -1768,14 +1756,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setComposerCaret(nextCaret);
     setIsSkillPickerOpen(false);
 
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
+    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   }
 
   async function handleSelectCustomAgent(agent: DiscoveredCustomAgent | null): Promise<void> {
@@ -2281,16 +2262,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    window.requestAnimationFrame(() => {
-      const textarea = composerTextareaRef.current;
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      const caret = textarea.value.length;
-      textarea.setSelectionRange(caret, caret);
-    });
+    restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current);
   }
 
   function handleCollapseActionDock(): void {
@@ -2730,14 +2702,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setActiveWorkspacePathMatchIndex(-1);
     setIsRetryDraftReplacePending(false);
 
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
+    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   }
 
   function handleEditLastMessage(): void {
