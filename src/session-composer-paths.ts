@@ -35,6 +35,12 @@ export type WorkspacePathMatchItem = WorkspacePathMatchDisplay & {
   path: string;
 };
 
+export type WorkspacePathMatchKeyAction =
+  | { kind: "dismiss"; shouldPreventDefault: boolean }
+  | { kind: "next"; shouldPreventDefault: true }
+  | { kind: "previous"; shouldPreventDefault: true }
+  | { kind: "select"; shouldPreventDefault: true };
+
 export type AdditionalDirectoryDisplay = {
   primaryLabel: string;
   secondaryLabel: string;
@@ -301,6 +307,29 @@ export function canNavigateWorkspacePathMatches(input: {
   matchCount: number;
 }): boolean {
   return input.matchCount > 0 && !input.isComposerImeComposing && !input.isNativeComposing;
+}
+
+export function resolveWorkspacePathMatchKeyAction(input: {
+  ctrlKey: boolean;
+  key: string;
+  metaKey: boolean;
+}): WorkspacePathMatchKeyAction | null {
+  switch (input.key) {
+    case "ArrowDown":
+      return { kind: "next", shouldPreventDefault: true };
+    case "ArrowUp":
+      return { kind: "previous", shouldPreventDefault: true };
+    case "Escape":
+      return { kind: "dismiss", shouldPreventDefault: true };
+    case "Tab":
+      return { kind: "dismiss", shouldPreventDefault: false };
+    case "Enter":
+      return input.ctrlKey || input.metaKey
+        ? null
+        : { kind: "select", shouldPreventDefault: true };
+    default:
+      return null;
+  }
 }
 
 export function buildAdditionalDirectoryDisplay(directoryPath: string): AdditionalDirectoryDisplay {

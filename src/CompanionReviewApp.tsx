@@ -118,6 +118,7 @@ import {
   resolveActiveWorkspacePathMatch,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
+  resolveWorkspacePathMatchKeyAction,
   type ComposerPathPickerKind,
   toDirectoryPath,
 } from "./session-composer-paths.js";
@@ -2721,7 +2722,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     });
 
     if (canNavigatePathMatches) {
-      if (event.key === "ArrowDown") {
+      const pathMatchKeyAction = resolveWorkspacePathMatchKeyAction({
+        key: event.key,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+      });
+      if (pathMatchKeyAction?.kind === "next") {
         event.preventDefault();
         setActiveWorkspacePathMatchIndex((current) => (
           getNextWorkspacePathMatchIndex(current, workspacePathMatches.length)
@@ -2729,26 +2735,22 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         return;
       }
 
-      if (event.key === "ArrowUp") {
+      if (pathMatchKeyAction?.kind === "previous") {
         event.preventDefault();
         setActiveWorkspacePathMatchIndex(getPreviousWorkspacePathMatchIndex);
         return;
       }
 
-      if (event.key === "Escape") {
-        event.preventDefault();
+      if (pathMatchKeyAction?.kind === "dismiss") {
+        if (pathMatchKeyAction.shouldPreventDefault) {
+          event.preventDefault();
+        }
         setWorkspacePathMatches([]);
         setActiveWorkspacePathMatchIndex(-1);
         return;
       }
 
-      if (event.key === "Tab") {
-        setWorkspacePathMatches([]);
-        setActiveWorkspacePathMatchIndex(-1);
-        return;
-      }
-
-      if (event.key === "Enter" && !event.ctrlKey && !event.metaKey) {
+      if (pathMatchKeyAction?.kind === "select") {
         const activeMatch = resolveActiveWorkspacePathMatch(
           workspacePathMatches,
           activeWorkspacePathMatchIndex,

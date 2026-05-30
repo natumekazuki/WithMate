@@ -16,6 +16,7 @@ import {
   resolveActiveWorkspacePathMatch,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
+  resolveWorkspacePathMatchKeyAction,
   type ComposerPathPickerKind,
 } from "../../src/session-composer-paths.js";
 
@@ -190,6 +191,32 @@ test("canNavigateWorkspacePathMatches は候補数と IME 状態から navigatio
     }),
     false,
   );
+});
+
+test("resolveWorkspacePathMatchKeyAction は path match navigation key を action に変換する", () => {
+  assert.deepEqual(
+    resolveWorkspacePathMatchKeyAction({ key: "ArrowDown", ctrlKey: false, metaKey: false }),
+    { kind: "next", shouldPreventDefault: true },
+  );
+  assert.deepEqual(
+    resolveWorkspacePathMatchKeyAction({ key: "ArrowUp", ctrlKey: false, metaKey: false }),
+    { kind: "previous", shouldPreventDefault: true },
+  );
+  assert.deepEqual(
+    resolveWorkspacePathMatchKeyAction({ key: "Escape", ctrlKey: false, metaKey: false }),
+    { kind: "dismiss", shouldPreventDefault: true },
+  );
+  assert.deepEqual(
+    resolveWorkspacePathMatchKeyAction({ key: "Tab", ctrlKey: false, metaKey: false }),
+    { kind: "dismiss", shouldPreventDefault: false },
+  );
+  assert.deepEqual(
+    resolveWorkspacePathMatchKeyAction({ key: "Enter", ctrlKey: false, metaKey: false }),
+    { kind: "select", shouldPreventDefault: true },
+  );
+  assert.equal(resolveWorkspacePathMatchKeyAction({ key: "Enter", ctrlKey: true, metaKey: false }), null);
+  assert.equal(resolveWorkspacePathMatchKeyAction({ key: "Enter", ctrlKey: false, metaKey: true }), null);
+  assert.equal(resolveWorkspacePathMatchKeyAction({ key: "a", ctrlKey: false, metaKey: false }), null);
 });
 
 test("buildAdditionalDirectoryItems は additional directory display と remove state を作る", () => {
