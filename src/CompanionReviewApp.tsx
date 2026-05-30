@@ -81,6 +81,7 @@ import {
   buildAuxiliaryLaunchProviderItems,
 } from "./chat/auxiliary-launch-state.js";
 import { buildAuxiliaryAwareSendOrCancelHandler } from "./chat/send-or-cancel.js";
+import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-runtime-option-routing.js";
 import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
 import {
   buildCustomAgentMatchDisplay,
@@ -3190,14 +3191,26 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onExpandActionDock: () => handleExpandActionDock({ focusComposer: !isSelectedSessionRunning }),
         onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
         onActivateWorkspacePathMatch: setActiveWorkspacePathMatchIndex,
-        onChangeApprovalMode: (value) => void (activeAuxiliarySession ? handleChangeAuxiliaryApproval(value) : handleChangeApproval(value)),
-        onChangeCodexSandboxMode: (value) => void (activeAuxiliarySession ? handleChangeAuxiliarySandboxMode(value) : handleChangeCodexSandboxMode(value)),
-        onChangeModel: (value) => void (activeAuxiliarySession ? handleChangeAuxiliaryModel(value) : handleChangeSelectedModel(value)),
-        onChangeReasoningEffort: (value) => void (
-          activeAuxiliarySession
-            ? handleChangeAuxiliaryReasoningEffort(value as ModelReasoningEffort)
-            : handleChangeReasoningEffort(value as ModelReasoningEffort)
-        ),
+        onChangeApprovalMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<ApprovalMode>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliaryApproval,
+          onSelectedSessionChange: handleChangeApproval,
+        }),
+        onChangeCodexSandboxMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<CodexSandboxMode>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliarySandboxMode,
+          onSelectedSessionChange: handleChangeCodexSandboxMode,
+        }),
+        onChangeModel: buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliaryModel,
+          onSelectedSessionChange: handleChangeSelectedModel,
+        }),
+        onChangeReasoningEffort: buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: (value) => handleChangeAuxiliaryReasoningEffort(value as ModelReasoningEffort),
+          onSelectedSessionChange: (value) => handleChangeReasoningEffort(value as ModelReasoningEffort),
+        }),
         onStartContextRailResize: handleStartContextRailResize,
         onCycleContextPaneTab: handleCycleContextPaneTab,
         onOpenCompanionReview: (sessionId) => void getWithMateApi()?.openCompanionReviewWindow(sessionId),

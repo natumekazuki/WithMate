@@ -27,6 +27,9 @@ import {
   staticTextChatRuntimeComposerCapabilityDefaults,
   toConversationMessages,
 } from "../../src/chat/chat-window-adapter.js";
+import {
+  buildAuxiliaryAwareRuntimeOptionChangeHandler,
+} from "../../src/chat/auxiliary-runtime-option-routing.js";
 import { buildAuxiliaryAwareSendOrCancelHandler } from "../../src/chat/send-or-cancel.js";
 import type { ChatWindowProps } from "../../src/chat/chat-window.js";
 import { buildLiveSessionWindowShellProps } from "../../src/chat/live-session-window-props.js";
@@ -211,6 +214,54 @@ test("buildAuxiliaryAwareSendOrCancelHandler は auxiliary/main どちらもな�
 
   handler();
   assert.deepEqual(calls, ["send-main"]);
+});
+
+test("buildAuxiliaryAwareRuntimeOptionChangeHandler は auxiliary があるとき auxiliary handler を使う", () => {
+  const calls: string[] = [];
+  const handler = buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
+    shouldUseAuxiliary: true,
+    onAuxiliaryChange: (value) => {
+      calls.push(`aux:${value}`);
+    },
+    onSelectedSessionChange: (value) => {
+      calls.push(`main:${value}`);
+    },
+  });
+
+  handler("codex-4");
+  assert.deepEqual(calls, ["aux:codex-4"]);
+});
+
+test("buildAuxiliaryAwareRuntimeOptionChangeHandler は auxiliary がないとき main handler を使う", () => {
+  const calls: string[] = [];
+  const handler = buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
+    shouldUseAuxiliary: false,
+    onAuxiliaryChange: (value) => {
+      calls.push(`aux:${value}`);
+    },
+    onSelectedSessionChange: (value) => {
+      calls.push(`main:${value}`);
+    },
+  });
+
+  handler("codex-4");
+  assert.deepEqual(calls, ["main:codex-4"]);
+});
+
+test("buildAuxiliaryAwareRuntimeOptionChangeHandler は reasoningEffort 型も generic で扱える", () => {
+  const calls: string[] = [];
+  const handler = buildAuxiliaryAwareRuntimeOptionChangeHandler<"low" | "medium" | "high">({
+    shouldUseAuxiliary: true,
+    onAuxiliaryChange: (value) => {
+      calls.push(`aux:${value}`);
+    },
+    onSelectedSessionChange: (value) => {
+      calls.push(`main:${value}`);
+    },
+  });
+
+  handler("high");
+  assert.deepEqual(calls, ["aux:high"]);
 });
 
 function createCharacter(): ChatWindowProps["messageColumnProps"]["character"] {

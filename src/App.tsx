@@ -40,6 +40,7 @@ import {
 } from "./model-catalog.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import { buildAuxiliaryAwareSendOrCancelHandler } from "./chat/send-or-cancel.js";
+import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "./chat/auxiliary-runtime-option-routing.js";
 import {
   approvalModeLabel,
 } from "./ui-utils.js";
@@ -3402,10 +3403,26 @@ export default function AgentSessionWindowApp() {
         onExpandActionDock: () => handleExpandActionDock({ focusComposer: renderedSession.runState !== "running" }),
         onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
         onActivateWorkspacePathMatch: setActiveWorkspacePathMatchIndex,
-        onChangeApprovalMode: (value) => void (activeAuxiliarySession ? handleChangeAuxiliaryApproval(value) : handleChangeApproval(value)),
-        onChangeCodexSandboxMode: (value) => void (activeAuxiliarySession ? handleChangeAuxiliarySandboxMode(value) : handleChangeCodexSandboxMode(value)),
-        onChangeModel: (value) => void (activeAuxiliarySession ? handleChangeAuxiliaryModel(value) : handleChangeModel(value)),
-        onChangeReasoningEffort: (value) => void (activeAuxiliarySession ? handleChangeAuxiliaryReasoningEffort(value as Session["reasoningEffort"]) : handleChangeReasoningEffort(value as Session["reasoningEffort"])),
+        onChangeApprovalMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<Session["approvalMode"]>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliaryApproval,
+          onSelectedSessionChange: handleChangeApproval,
+        }),
+        onChangeCodexSandboxMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<Session["codexSandboxMode"]>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliarySandboxMode,
+          onSelectedSessionChange: handleChangeCodexSandboxMode,
+        }),
+        onChangeModel: buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: handleChangeAuxiliaryModel,
+          onSelectedSessionChange: handleChangeModel,
+        }),
+        onChangeReasoningEffort: buildAuxiliaryAwareRuntimeOptionChangeHandler<string>({
+          shouldUseAuxiliary: !!activeAuxiliarySession,
+          onAuxiliaryChange: (value) => handleChangeAuxiliaryReasoningEffort(value as Session["reasoningEffort"]),
+          onSelectedSessionChange: (value) => handleChangeReasoningEffort(value as Session["reasoningEffort"]),
+        }),
         onStartContextRailResize: handleStartContextRailResize,
         onCycleContextPaneTab: handleCycleContextPaneTab,
         onOpenCompanionReview: (sessionId) => void withmateApi?.openCompanionReviewWindow(sessionId),
