@@ -133,6 +133,7 @@ import {
   loadProjectedMessageArtifact,
   resolvePendingAuxiliaryMessageGroupId,
 } from "./auxiliary-session-message-projection.js";
+import { hasSameAuxiliaryDraftSaveContext } from "./auxiliary-draft-save-context.js";
 
 type SessionOwnedLiveRun = {
   ownerSessionId: string | null;
@@ -269,26 +270,6 @@ function isTerminalAuditLogPhase(phase: AuditLogSummary["phase"]): boolean {
     || phase === "background-failed"
     || phase === "background-canceled"
   );
-}
-
-function areStringArraysEqual(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-function hasSameAuxiliaryDraftSaveContext(current: AuxiliarySession, request: AuxiliarySession): boolean {
-  return current.id === request.id
-    && current.runState === request.runState
-    && current.threadId === request.threadId
-    && current.messages.length === request.messages.length
-    && current.composerDraft === request.composerDraft
-    && current.provider === request.provider
-    && current.model === request.model
-    && current.reasoningEffort === request.reasoningEffort
-    && current.approvalMode === request.approvalMode
-    && current.codexSandboxMode === request.codexSandboxMode
-    && current.customAgentName === request.customAgentName
-    && current.catalogRevision === request.catalogRevision
-    && areStringArraysEqual(current.allowedAdditionalDirectories, request.allowedAdditionalDirectories);
 }
 
 function displayApprovalValue(value: string): string {

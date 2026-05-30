@@ -139,6 +139,7 @@ import {
   buildOnDraftSelectHandler,
 } from "./chat/composer-draft-handlers.js";
 import { extractTextReferenceCandidates } from "./path-reference.js";
+import { hasSameAuxiliaryDraftSaveContext } from "./auxiliary-draft-save-context.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 
 function pickInitialFile(files: ChangedFile[]): ChangedFile | null {
@@ -156,27 +157,6 @@ const MERGE_PANE_MAX_PERCENT = 70;
 
 function buildAuxiliaryCompanionSession(parent: CompanionSession, auxiliary: AuxiliarySession): CompanionSession {
   return buildAuxiliaryRuntimeSessionProjection("companion", parent, auxiliary);
-}
-
-function areStringArraysEqual(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-function hasSameAuxiliaryDraftSaveContext(current: AuxiliarySession, request: AuxiliarySession): boolean {
-  return current.id === request.id
-    && current.runState === request.runState
-    && current.status === request.status
-    && current.messages.length === request.messages.length
-    && current.composerDraft === request.composerDraft
-    && current.provider === request.provider
-    && current.catalogRevision === request.catalogRevision
-    && current.model === request.model
-    && current.reasoningEffort === request.reasoningEffort
-    && current.threadId === request.threadId
-    && current.approvalMode === request.approvalMode
-    && current.codexSandboxMode === request.codexSandboxMode
-    && current.customAgentName === request.customAgentName
-    && areStringArraysEqual(current.allowedAdditionalDirectories, request.allowedAdditionalDirectories);
 }
 
 function isTerminalAuditLogPhase(phase: AuditLogSummary["phase"]): boolean {
@@ -1986,7 +1966,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     const { request, saved } = result;
     setActiveAuxiliarySession((current) => {
-      if (!current || !hasSameAuxiliaryDraftSaveContext(current, request)) {
+      if (!current || !hasSameAuxiliaryDraftSaveContext(current, request, { compareStatus: true })) {
         return current;
       }
 
