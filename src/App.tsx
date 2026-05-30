@@ -126,8 +126,7 @@ import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import type { AuxiliarySession } from "./auxiliary-session-state.js";
 import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolution.js";
 import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
-import { useWorkspacePathMatchSearchRequest } from "./chat/use-workspace-path-match-search-request.js";
-import { useWorkspacePathMatchSearch } from "./chat/use-workspace-path-match-search.js";
+import { useWorkspacePathMatchSearchFlow } from "./chat/use-workspace-path-match-search-flow.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
 import {
   copyMessageTextToClipboard,
@@ -1135,13 +1134,10 @@ export default function AgentSessionWindowApp() {
     previewPathReferenceSignature,
     previewUserMessage,
   });
-  const searchWorkspacePathMatches = useWorkspacePathMatchSearchRequest({
+  useWorkspacePathMatchSearchFlow({
     searchSource: "session",
     sessionId: selectedSessionId,
     withmateApi,
-  });
-  useWorkspacePathMatchSearch({
-    searchWorkspacePathMatches,
     isSearchBlocked: selectedSessionRunState === "running" || !!composerBlockedReason,
     isComposerImeComposing,
     isEditingPathReference,
