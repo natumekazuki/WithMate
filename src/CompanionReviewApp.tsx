@@ -351,7 +351,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const {
     workspacePathMatches,
     activeWorkspacePathMatchIndex,
-    setWorkspacePathMatches,
     setActiveWorkspacePathMatchIndex,
     applyWorkspacePathMatchState,
     workspacePathMatchItems,
@@ -446,12 +445,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setComposerPreview(createEmptyComposerPreview());
     setPickerBaseDirectory(snapshot?.session.worktreePath ?? "");
     setComposerCaret(0);
-    const closedWorkspacePathMatchState = buildClosedWorkspacePathMatchState();
-    setWorkspacePathMatches(closedWorkspacePathMatchState.workspacePathMatches);
-    setActiveWorkspacePathMatchIndex(closedWorkspacePathMatchState.activeWorkspacePathMatchIndex);
+    applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
     setIsComposerImeComposing(false);
     setIsRetryDraftReplacePending(false);
-  }, [snapshot?.session.id]);
+  }, [applyWorkspacePathMatchState, snapshot?.session.id]);
 
   useEffect(() => {
     activeAuxiliarySessionRef.current = activeAuxiliarySession;
@@ -1418,9 +1415,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
     const { draft: nextDraft, caret: nextCaret } = insertion;
     setComposerCaret(nextCaret);
-    const closedWorkspacePathMatchState = buildClosedWorkspacePathMatchState();
-    setWorkspacePathMatches(closedWorkspacePathMatchState.workspacePathMatches);
-    setActiveWorkspacePathMatchIndex(closedWorkspacePathMatchState.activeWorkspacePathMatchIndex);
+    applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
     if (activeAuxiliarySession) {
       void handleAuxiliaryDraftChange(nextDraft, nextCaret);
     } else {
@@ -1452,8 +1447,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     const { draft: nextDraft, caret: nextCaret } = insertionState;
 
     setComposerCaret(nextCaret);
-    setWorkspacePathMatches(insertionState.workspacePathMatches);
-    setActiveWorkspacePathMatchIndex(insertionState.activeWorkspacePathMatchIndex);
+    applyWorkspacePathMatchState(insertionState);
     if (activeAuxiliarySession) {
       void handleAuxiliaryDraftChange(nextDraft, nextCaret);
     } else {
@@ -1604,8 +1598,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
     const { draft: nextDraft, caret: nextCaret } = nextState;
     setComposerCaret(nextCaret);
-    setWorkspacePathMatches(nextState.workspacePathMatches);
-    setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
+    applyWorkspacePathMatchState(nextState);
     if (activeAuxiliarySession) {
       void handleAuxiliaryDraftChange(nextDraft, nextCaret);
     } else {
@@ -1623,8 +1616,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     const { draft: nextDraft, caret: nextCaret } = nextState;
 
     setComposerCaret(nextCaret);
-    setWorkspacePathMatches(nextState.workspacePathMatches);
-    setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
+    applyWorkspacePathMatchState(nextState);
     if (activeAuxiliarySession) {
       void handleAuxiliaryDraftChange(nextDraft, nextCaret);
     } else {
@@ -2603,8 +2595,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setIsActionDockPinnedExpanded(nextRestoreState.isActionDockPinnedExpanded);
     setComposerText(nextRestoreState.draft);
     setComposerCaret(nextRestoreState.caret);
-    setWorkspacePathMatches(nextRestoreState.workspacePathMatches);
-    setActiveWorkspacePathMatchIndex(nextRestoreState.activeWorkspacePathMatchIndex);
+    applyWorkspacePathMatchState(nextRestoreState);
     setIsRetryDraftReplacePending(nextRestoreState.isRetryDraftReplacePending);
 
     restoreComposerTextareaFocusAndCaret(textarea, nextRestoreState.caret);
@@ -2729,9 +2720,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         if (pathMatchNavigation.shouldPreventDefault) {
           event.preventDefault();
         }
-        const closedWorkspacePathMatchState = buildClosedWorkspacePathMatchState();
-        setWorkspacePathMatches(closedWorkspacePathMatchState.workspacePathMatches);
-        setActiveWorkspacePathMatchIndex(closedWorkspacePathMatchState.activeWorkspacePathMatchIndex);
+        applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
         return;
       }
 

@@ -344,7 +344,6 @@ export default function AgentSessionWindowApp() {
   const {
     workspacePathMatches,
     activeWorkspacePathMatchIndex,
-    setWorkspacePathMatches,
     setActiveWorkspacePathMatchIndex,
     applyWorkspacePathMatchState,
     workspacePathMatchItems,
@@ -911,9 +910,7 @@ export default function AgentSessionWindowApp() {
     setPickerBaseDirectory(selectedSession?.workspacePath ?? "");
     setComposerCaret(0);
     mainComposerCaretRef.current = 0;
-    const closedWorkspacePathMatchState = buildClosedWorkspacePathMatchState();
-    setWorkspacePathMatches(closedWorkspacePathMatchState.workspacePathMatches);
-    setActiveWorkspacePathMatchIndex(closedWorkspacePathMatchState.activeWorkspacePathMatchIndex);
+    applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
     setIsComposerImeComposing(false);
     setIsActivityMonitorFollowing(true);
     setHasActivityMonitorUnread(false);
@@ -932,7 +929,7 @@ export default function AgentSessionWindowApp() {
     setElicitationActionRequestId(null);
     setIsHeaderExpanded(false);
     setIsActionDockPinnedExpanded(false);
-  }, [selectedSession?.provider, selectedSessionId]);
+  }, [applyWorkspacePathMatchState, selectedSession?.provider, selectedSessionId]);
 
   useEffect(() => {
     setApprovalActionRequestId(null);
@@ -1813,9 +1810,7 @@ export default function AgentSessionWindowApp() {
         if (pathMatchNavigation.shouldPreventDefault) {
           event.preventDefault();
         }
-        const closedWorkspacePathMatchState = buildClosedWorkspacePathMatchState();
-        setWorkspacePathMatches(closedWorkspacePathMatchState.workspacePathMatches);
-        setActiveWorkspacePathMatchIndex(closedWorkspacePathMatchState.activeWorkspacePathMatchIndex);
+        applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
         return;
       }
 
@@ -1876,8 +1871,7 @@ export default function AgentSessionWindowApp() {
       setDraft(nextDraft);
       mainComposerCaretRef.current = nextCaret;
     }
-    setWorkspacePathMatches(nextState.workspacePathMatches);
-    setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
+    applyWorkspacePathMatchState(nextState);
 
     restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
@@ -2196,8 +2190,7 @@ export default function AgentSessionWindowApp() {
     setDraft(nextRestoreState.draft);
     setComposerCaret(nextRestoreState.caret);
     mainComposerCaretRef.current = nextRestoreState.caret;
-    setWorkspacePathMatches(nextRestoreState.workspacePathMatches);
-    setActiveWorkspacePathMatchIndex(nextRestoreState.activeWorkspacePathMatchIndex);
+    applyWorkspacePathMatchState(nextRestoreState);
     setIsRetryDraftReplacePending(nextRestoreState.isRetryDraftReplacePending);
 
     restoreComposerTextareaFocusAndCaret(textarea, nextRestoreState.caret);
@@ -2536,9 +2529,7 @@ export default function AgentSessionWindowApp() {
     if (!activeAuxiliarySession) {
       setComposerCaret(nextCaret);
     }
-    const closedWorkspacePathMatchState = buildClosedWorkspacePathMatchState();
-    setWorkspacePathMatches(closedWorkspacePathMatchState.workspacePathMatches);
-    setActiveWorkspacePathMatchIndex(closedWorkspacePathMatchState.activeWorkspacePathMatchIndex);
+    applyWorkspacePathMatchState(buildClosedWorkspacePathMatchState());
 
     restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
@@ -2612,8 +2603,7 @@ export default function AgentSessionWindowApp() {
       mainComposerCaretRef.current = nextCaret;
     }
     setComposerCaret(nextCaret);
-    setWorkspacePathMatches(insertionState.workspacePathMatches);
-    setActiveWorkspacePathMatchIndex(insertionState.activeWorkspacePathMatchIndex);
+    applyWorkspacePathMatchState(insertionState);
 
     restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
@@ -2638,8 +2628,7 @@ export default function AgentSessionWindowApp() {
       mainComposerCaretRef.current = nextCaret;
     }
     setComposerCaret(nextCaret);
-    setWorkspacePathMatches(nextState.workspacePathMatches);
-    setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
+    applyWorkspacePathMatchState(nextState);
   };
 
   const pickAndInsertPath = async (kind: ComposerPathPickerKind) => {
