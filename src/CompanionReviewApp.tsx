@@ -151,10 +151,9 @@ import {
   buildOnDraftSelectHandler,
 } from "./chat/composer-draft-handlers.js";
 import {
-  COMPOSER_PREVIEW_DEBOUNCE_MS,
-  COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS,
   createEmptyComposerPreview,
 } from "./composer-preview-config.js";
+import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolution.js";
 import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
 import { useWorkspacePathMatchSearch } from "./chat/use-workspace-path-match-search.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
@@ -927,62 +926,25 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     caret: composerCaret,
     isEnabled: Boolean(snapshot),
   });
-  useEffect(() => {
-    let active = true;
-    const withmateApi = getWithMateApi();
+  const previewComposerInput = useMemo(() => {
     const sessionId = activeRunSessionId;
-    if (!withmateApi || !sessionId || isMergeView) {
-      setComposerPreview(createEmptyComposerPreview());
-      return () => {
-        active = false;
-      };
+    if (!withmateApi || !sessionId) {
+      return null;
     }
-
-    if (!hasPreviewPathReferenceCandidates) {
-      setComposerPreview(createEmptyComposerPreview());
-      return () => {
-        active = false;
-      };
-    }
-
-    if (isComposerImeComposing) {
-      return () => {
-        active = false;
-      };
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      const previewRequest = activeAuxiliarySession
-        ? withmateApi.previewComposerInput(sessionId, previewUserMessage)
-        : withmateApi.previewCompanionComposerInput(sessionId, previewUserMessage);
-      void previewRequest.then((preview) => {
-        if (active) {
-          setComposerPreview(preview);
-        }
-      }).catch((error) => {
-        if (active) {
-          setComposerPreview({
-            attachments: [],
-            errors: [error instanceof Error ? error.message : "添付の解決に失敗したよ。"],
-          });
-        }
-      });
-    }, isEditingPathReference ? COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS : COMPOSER_PREVIEW_DEBOUNCE_MS);
-
-    return () => {
-      active = false;
-      window.clearTimeout(timeoutId);
-    };
-  }, [
+    return activeAuxiliarySession
+      ? (message: string) => withmateApi.previewComposerInput(sessionId, message)
+      : (message: string) => withmateApi.previewCompanionComposerInput(sessionId, message);
+  }, [activeAuxiliarySession, activeRunSessionId, withmateApi]);
+  useComposerPreviewResolution({
     hasPreviewPathReferenceCandidates,
     isComposerImeComposing,
     isEditingPathReference,
-    isMergeView,
+    isPreviewBlocked: isMergeView,
+    onComposerPreviewChange: setComposerPreview,
+    previewRequest: previewComposerInput,
     previewPathReferenceSignature,
     previewUserMessage,
-    activeAuxiliarySession,
-    activeRunSessionId,
-  ]);
+  });
   const searchWorkspacePathMatches = useMemo(() => {
     const sessionId = snapshot?.session.id ?? null;
     if (!withmateApi || !sessionId) {

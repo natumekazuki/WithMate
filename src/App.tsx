@@ -107,8 +107,6 @@ import {
   buildOnDraftSelectHandler,
 } from "./chat/composer-draft-handlers.js";
 import {
-  COMPOSER_PREVIEW_DEBOUNCE_MS,
-  COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS,
   createEmptyComposerPreview,
 } from "./composer-preview-config.js";
 import {
@@ -126,6 +124,7 @@ import { buildCompanionGroupMonitorEntries } from "./home/home-session-projectio
 import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import type { AuxiliarySession } from "./auxiliary-session-state.js";
+import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolution.js";
 import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
 import { useWorkspacePathMatchSearch } from "./chat/use-workspace-path-match-search.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
@@ -1119,55 +1118,22 @@ export default function AgentSessionWindowApp() {
     };
   }, [activeRunSessionId, displayedSession?.provider, withmateApi]);
 
-  useEffect(() => {
-    let active = true;
+  const previewComposerInput = useMemo(() => {
     if (!withmateApi || !activeRunSessionId) {
-      setComposerPreview(createEmptyComposerPreview());
-      return () => {
-        active = false;
-      };
+      return null;
     }
-
-    if (!hasPreviewPathReferenceCandidates) {
-      setComposerPreview(createEmptyComposerPreview());
-      return () => {
-        active = false;
-      };
-    }
-
-    if (isComposerImeComposing) {
-      return () => {
-        active = false;
-      };
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      void withmateApi.previewComposerInput(activeRunSessionId, previewUserMessage).then((preview) => {
-        if (active) {
-          setComposerPreview(preview);
-        }
-      }).catch((error) => {
-        if (active) {
-          setComposerPreview({
-            attachments: [],
-            errors: [error instanceof Error ? error.message : "添付の解決に失敗したよ。"],
-          });
-        }
-      });
-    }, isEditingPathReference ? COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS : COMPOSER_PREVIEW_DEBOUNCE_MS);
-
-    return () => {
-      active = false;
-      window.clearTimeout(timeoutId);
-    };
-  }, [
+    return (message: string) => withmateApi.previewComposerInput(activeRunSessionId, message);
+  }, [activeRunSessionId, withmateApi]);
+  useComposerPreviewResolution({
     hasPreviewPathReferenceCandidates,
     isComposerImeComposing,
     isEditingPathReference,
+    isPreviewBlocked: false,
+    onComposerPreviewChange: setComposerPreview,
+    previewRequest: previewComposerInput,
     previewPathReferenceSignature,
     previewUserMessage,
-    activeRunSessionId,
-  ]);
+  });
   const searchWorkspacePathMatches = useMemo(() => {
     if (!withmateApi || !selectedSessionId) {
       return null;
