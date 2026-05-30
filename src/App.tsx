@@ -57,6 +57,8 @@ import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import {
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   buildAuxiliaryLaunchProviderItems,
+  resolveAuxiliaryLaunchCloseState,
+  resolveAuxiliaryLaunchProviderSelectionState,
   resolveAuxiliaryLaunchInitialState,
 } from "./chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
@@ -2433,13 +2435,15 @@ export default function AgentSessionWindowApp() {
       return;
     }
 
-    setAuxiliaryLaunchDialogOpen(false);
-    setAuxiliaryLaunchFeedback("");
+    const state = resolveAuxiliaryLaunchCloseState();
+    setAuxiliaryLaunchDialogOpen(state.open);
+    setAuxiliaryLaunchFeedback(state.feedback);
   };
 
   const handleSelectAuxiliaryLaunchProvider = (providerId: string) => {
-    setAuxiliaryLaunchProviderId(providerId);
-    setAuxiliaryLaunchFeedback("");
+    const state = resolveAuxiliaryLaunchProviderSelectionState(providerId);
+    setAuxiliaryLaunchProviderId(state.providerId);
+    setAuxiliaryLaunchFeedback(state.feedback);
   };
 
   const handleStartAuxiliarySession = async () => {

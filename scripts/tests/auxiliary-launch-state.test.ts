@@ -6,6 +6,8 @@ import {
   AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK,
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   buildAuxiliaryLaunchProviderItems,
+  resolveAuxiliaryLaunchCloseState,
+  resolveAuxiliaryLaunchProviderSelectionState,
   resolveAuxiliaryLaunchInitialState,
   resolveAuxiliaryLaunchProviderId,
 } from "../../src/chat/auxiliary-launch-state.js";
@@ -69,6 +71,20 @@ describe("auxiliary-launch-state", () => {
     });
     assert.deepEqual(resolveAuxiliaryLaunchInitialState(items, "missing"), {
       providerId: "b",
+      feedback: "",
+    });
+  });
+
+  it("close state は dialog close と feedback empty を返す", () => {
+    assert.deepEqual(resolveAuxiliaryLaunchCloseState(), {
+      open: false,
+      feedback: "",
+    });
+  });
+
+  it("provider 選択 state は providerId を引き継ぎ feedback empty を返す", () => {
+    assert.deepEqual(resolveAuxiliaryLaunchProviderSelectionState("selected-id"), {
+      providerId: "selected-id",
       feedback: "",
     });
   });

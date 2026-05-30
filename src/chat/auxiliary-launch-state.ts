@@ -29,6 +29,22 @@ export type AuxiliaryLaunchInitialState = {
   feedback: string;
 };
 
+export function resolveAuxiliaryLaunchCloseState(): { open: false; feedback: string } {
+  return {
+    open: false,
+    feedback: "",
+  };
+}
+
+export function resolveAuxiliaryLaunchProviderSelectionState(
+  providerId: string | null,
+): { providerId: string | null; feedback: string } {
+  return {
+    providerId,
+    feedback: "",
+  };
+}
+
 export function resolveAuxiliaryLaunchInitialState(
   providers: readonly AuxiliaryLaunchProviderItem[],
   selectedProviderId: string | null | undefined,

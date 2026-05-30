@@ -79,6 +79,8 @@ import {
 import {
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   buildAuxiliaryLaunchProviderItems,
+  resolveAuxiliaryLaunchCloseState,
+  resolveAuxiliaryLaunchProviderSelectionState,
   resolveAuxiliaryLaunchInitialState,
 } from "./chat/auxiliary-launch-state.js";
 import {
@@ -1900,13 +1902,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return;
     }
 
-    setAuxiliaryLaunchDialogOpen(false);
-    setAuxiliaryLaunchFeedback("");
+    const state = resolveAuxiliaryLaunchCloseState();
+    setAuxiliaryLaunchDialogOpen(state.open);
+    setAuxiliaryLaunchFeedback(state.feedback);
   }
 
   function handleSelectAuxiliaryLaunchProvider(providerId: string): void {
-    setAuxiliaryLaunchProviderId(providerId);
-    setAuxiliaryLaunchFeedback("");
+    const state = resolveAuxiliaryLaunchProviderSelectionState(providerId);
+    setAuxiliaryLaunchProviderId(state.providerId);
+    setAuxiliaryLaunchFeedback(state.feedback);
   }
 
   async function handleStartAuxiliarySession(): Promise<void> {
