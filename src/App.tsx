@@ -39,6 +39,7 @@ import {
   type ModelCatalogSnapshot,
 } from "./model-catalog.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
+import { buildAuxiliaryAwareSendOrCancelHandler } from "./chat/send-or-cancel.js";
 import {
   approvalModeLabel,
 } from "./ui-utils.js";
@@ -3388,13 +3389,16 @@ export default function AgentSessionWindowApp() {
             mainComposerCaretRef.current = selectionStart;
           }
         },
-        onSendOrCancel: () => void (
-          activeAuxiliarySession?.runState === "running"
-            ? handleCancelAuxiliaryRun()
-            : renderedSession.runState === "running"
-              ? handleCancelRun()
-              : handleSend()
-        ),
+        onSendOrCancel: buildAuxiliaryAwareSendOrCancelHandler({
+          shouldSendAuxiliary: !!activeAuxiliarySession,
+          isAuxiliarySessionRunning: activeAuxiliarySession?.runState === "running",
+          isSelectedSessionRunning,
+          preferAuxiliarySendOverSelectedCancel: true,
+          onCancelAuxiliaryRun: handleCancelAuxiliaryRun,
+          onSendAuxiliary: handleSend,
+          onCancelSelectedSessionRun: handleCancelRun,
+          onSendSelectedSession: handleSend,
+        }),
         onExpandActionDock: () => handleExpandActionDock({ focusComposer: renderedSession.runState !== "running" }),
         onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
         onActivateWorkspacePathMatch: setActiveWorkspacePathMatchIndex,

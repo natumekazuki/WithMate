@@ -80,6 +80,7 @@ import {
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
   buildAuxiliaryLaunchProviderItems,
 } from "./chat/auxiliary-launch-state.js";
+import { buildAuxiliaryAwareSendOrCancelHandler } from "./chat/send-or-cancel.js";
 import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
 import {
   buildCustomAgentMatchDisplay,
@@ -3177,15 +3178,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           setIsComposerImeComposing(false);
           setComposerCaret(composerTextareaRef.current?.selectionStart ?? activeComposerText.length);
         },
-        onSendOrCancel: () => void (
-          activeAuxiliarySession?.runState === "running"
-            ? cancelAuxiliaryRun()
-            : isSelectedSessionRunning
-              ? cancelCompanionTurn()
-              : activeAuxiliarySession
-                ? sendAuxiliaryMessage(activeAuxiliarySession.composerDraft)
-                : sendCompanionTurn()
-        ),
+        onSendOrCancel: buildAuxiliaryAwareSendOrCancelHandler({
+          shouldSendAuxiliary: !!activeAuxiliarySession,
+          isAuxiliarySessionRunning: activeAuxiliarySession?.runState === "running",
+          isSelectedSessionRunning,
+          onCancelAuxiliaryRun: cancelAuxiliaryRun,
+          onSendAuxiliary: () => sendAuxiliaryMessage(activeAuxiliarySession?.composerDraft ?? ""),
+          onCancelSelectedSessionRun: cancelCompanionTurn,
+          onSendSelectedSession: sendCompanionTurn,
+        }),
         onExpandActionDock: () => handleExpandActionDock({ focusComposer: !isSelectedSessionRunning }),
         onSelectWorkspacePathMatch: handleSelectWorkspacePathMatch,
         onActivateWorkspacePathMatch: setActiveWorkspacePathMatchIndex,

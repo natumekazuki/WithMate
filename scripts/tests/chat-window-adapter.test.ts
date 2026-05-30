@@ -27,6 +27,7 @@ import {
   staticTextChatRuntimeComposerCapabilityDefaults,
   toConversationMessages,
 } from "../../src/chat/chat-window-adapter.js";
+import { buildAuxiliaryAwareSendOrCancelHandler } from "../../src/chat/send-or-cancel.js";
 import type { ChatWindowProps } from "../../src/chat/chat-window.js";
 import { buildLiveSessionWindowShellProps } from "../../src/chat/live-session-window-props.js";
 import { createSessionFilesActions } from "../../src/chat/session-files-actions.js";
@@ -64,6 +65,152 @@ test("resolveAuxiliaryModeLabel は Auxiliary mode だけ label を返す", () =
   assert.equal(resolveAuxiliaryModeLabel(true), "Auxiliary");
   assert.equal(resolveAuxiliaryModeLabel(false), undefined);
   assert.equal(resolveAuxiliaryModeLabel(undefined), undefined);
+});
+
+test("buildAuxiliaryAwareSendOrCancelHandler は auxiliary が running のときに優先 cancel する", () => {
+  const calls: string[] = [];
+  const handler = buildAuxiliaryAwareSendOrCancelHandler({
+    shouldSendAuxiliary: true,
+    isAuxiliarySessionRunning: true,
+    isSelectedSessionRunning: true,
+    preferAuxiliarySendOverSelectedCancel: true,
+    onCancelAuxiliaryRun: () => {
+      calls.push("cancel-aux");
+    },
+    onSendAuxiliary: () => {
+      calls.push("send-aux");
+    },
+    onCancelSelectedSessionRun: () => {
+      calls.push("cancel-main");
+    },
+    onSendSelectedSession: () => {
+      calls.push("send-main");
+    },
+  });
+
+  handler();
+  assert.deepEqual(calls, ["cancel-aux"]);
+});
+
+test("buildAuxiliaryAwareSendOrCancelHandler は auxiliary 優先なら selected running より auxiliary send を使う", () => {
+  const calls: string[] = [];
+  const handler = buildAuxiliaryAwareSendOrCancelHandler({
+    shouldSendAuxiliary: true,
+    isAuxiliarySessionRunning: false,
+    isSelectedSessionRunning: true,
+    preferAuxiliarySendOverSelectedCancel: true,
+    onCancelAuxiliaryRun: () => {
+      calls.push("cancel-aux");
+    },
+    onSendAuxiliary: () => {
+      calls.push("send-aux");
+    },
+    onCancelSelectedSessionRun: () => {
+      calls.push("cancel-main");
+    },
+    onSendSelectedSession: () => {
+      calls.push("send-main");
+    },
+  });
+
+  handler();
+  assert.deepEqual(calls, ["send-aux"]);
+});
+
+test("buildAuxiliaryAwareSendOrCancelHandler は selected running 優先なら auxiliary send より selected cancel を使う", () => {
+  const calls: string[] = [];
+  const handler = buildAuxiliaryAwareSendOrCancelHandler({
+    shouldSendAuxiliary: true,
+    isAuxiliarySessionRunning: false,
+    isSelectedSessionRunning: true,
+    onCancelAuxiliaryRun: () => {
+      calls.push("cancel-aux");
+    },
+    onSendAuxiliary: () => {
+      calls.push("send-aux");
+    },
+    onCancelSelectedSessionRun: () => {
+      calls.push("cancel-main");
+    },
+    onSendSelectedSession: () => {
+      calls.push("send-main");
+    },
+  });
+
+  handler();
+  assert.deepEqual(calls, ["cancel-main"]);
+});
+
+test("buildAuxiliaryAwareSendOrCancelHandler は selected idle なら auxiliary send を使う", () => {
+  const calls: string[] = [];
+  const handler = buildAuxiliaryAwareSendOrCancelHandler({
+    shouldSendAuxiliary: true,
+    isAuxiliarySessionRunning: false,
+    isSelectedSessionRunning: false,
+    onCancelAuxiliaryRun: () => {
+      calls.push("cancel-aux");
+    },
+    onSendAuxiliary: () => {
+      calls.push("send-aux");
+    },
+    onCancelSelectedSessionRun: () => {
+      calls.push("cancel-main");
+    },
+    onSendSelectedSession: () => {
+      calls.push("send-main");
+    },
+  });
+
+  handler();
+  assert.deepEqual(calls, ["send-aux"]);
+});
+
+test("buildAuxiliaryAwareSendOrCancelHandler は auxiliary がなく main running のとき main cancel を使う", () => {
+  const calls: string[] = [];
+  const handler = buildAuxiliaryAwareSendOrCancelHandler({
+    shouldSendAuxiliary: false,
+    isAuxiliarySessionRunning: false,
+    isSelectedSessionRunning: true,
+    onCancelAuxiliaryRun: () => {
+      calls.push("cancel-aux");
+    },
+    onSendAuxiliary: () => {
+      calls.push("send-aux");
+    },
+    onCancelSelectedSessionRun: () => {
+      calls.push("cancel-main");
+    },
+    onSendSelectedSession: () => {
+      calls.push("send-main");
+    },
+  });
+
+  handler();
+  assert.deepEqual(calls, ["cancel-main"]);
+});
+
+test("buildAuxiliaryAwareSendOrCancelHandler は auxiliary/main どちらもないとき main send を使う", () => {
+  const calls: string[] = [];
+  const handler = buildAuxiliaryAwareSendOrCancelHandler({
+    shouldSendAuxiliary: false,
+    isAuxiliarySessionRunning: false,
+    isSelectedSessionRunning: false,
+    onCancelAuxiliaryRun: () => {
+      calls.push("cancel-aux");
+    },
+    onSendAuxiliary: () => {
+      calls.push("send-aux");
+    },
+    onCancelSelectedSessionRun: () => {
+      calls.push("cancel-main");
+    },
+    onSendSelectedSession: () => {
+      calls.push("send-main");
+    },
+  });
+
+  handler();
+  assert.deepEqual(calls, ["send-main"]);
 });
 
 function createCharacter(): ChatWindowProps["messageColumnProps"]["character"] {
