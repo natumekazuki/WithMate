@@ -105,7 +105,6 @@ import {
   buildAdditionalDirectoryItems,
   buildClosedWorkspacePathMatchState,
   buildComposerAttachmentItems,
-  buildComposerPathReferencePreviewState,
   buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildWorkspacePathMatchSelectionState,
@@ -156,9 +155,9 @@ import {
   COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS,
   createEmptyComposerPreview,
 } from "./composer-preview-config.js";
+import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
 import { useWorkspacePathMatchSearch } from "./chat/use-workspace-path-match-search.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
-import { buildTextReferenceCandidateState } from "./path-reference.js";
 import { hasSameAuxiliaryDraftSaveContext } from "./auxiliary-draft-save-context.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
@@ -914,28 +913,20 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     () => companionSessionAuditLogs.find((entry) => isTerminalAuditLogPhase(entry.phase)) ?? null,
     [companionSessionAuditLogs],
   );
-  const pathReferencePreview = useMemo(
-    () => buildComposerPathReferencePreviewState({
-      draft: activeComposerText,
-      caret: composerCaret,
-      isEnabled: Boolean(snapshot),
-    }),
-    [activeComposerText, composerCaret, snapshot],
-  );
   const {
     activePathReference,
+    hasPreviewPathReferenceCandidates,
     isEditingPathReference,
     normalizedActivePathQuery,
+    previewPathReferenceCandidates,
+    previewPathReferenceSignature,
     previewDraft,
     previewUserMessage,
-  } = pathReferencePreview;
-  const previewPathReferenceCandidateState = useMemo(
-    () => buildTextReferenceCandidateState(previewDraft),
-    [previewDraft],
-  );
-  const previewPathReferenceCandidates = previewPathReferenceCandidateState.candidates;
-  const hasPreviewPathReferenceCandidates = previewPathReferenceCandidateState.hasCandidates;
-  const previewPathReferenceSignature = previewPathReferenceCandidateState.signature;
+  } = useComposerPathReferencePreview({
+    draft: activeComposerText,
+    caret: composerCaret,
+    isEnabled: Boolean(snapshot),
+  });
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();

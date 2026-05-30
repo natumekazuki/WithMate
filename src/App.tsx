@@ -90,7 +90,6 @@ import {
   buildAdditionalDirectoryItems,
   buildClosedWorkspacePathMatchState,
   buildComposerAttachmentItems,
-  buildComposerPathReferencePreviewState,
   buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildWorkspacePathMatchSelectionState,
@@ -126,8 +125,8 @@ import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
-import { buildTextReferenceCandidateState } from "./path-reference.js";
 import type { AuxiliarySession } from "./auxiliary-session-state.js";
+import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
 import { useWorkspacePathMatchSearch } from "./chat/use-workspace-path-match-search.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
 import {
@@ -604,28 +603,20 @@ export default function AgentSessionWindowApp() {
     [activeRunSessionId, sessionContextTelemetryState.ownerSessionId, sessionContextTelemetryState.telemetry],
   );
   const activeComposerDraft = activeAuxiliarySession?.composerDraft ?? draft;
-  const pathReferencePreview = useMemo(
-    () => buildComposerPathReferencePreviewState({
-      draft: activeComposerDraft,
-      caret: composerCaret,
-      isEnabled: Boolean(selectedSessionId),
-    }),
-    [activeComposerDraft, composerCaret, selectedSessionId],
-  );
   const {
     activePathReference,
+    hasPreviewPathReferenceCandidates,
     isEditingPathReference,
     normalizedActivePathQuery,
+    previewPathReferenceCandidates,
+    previewPathReferenceSignature,
     previewDraft,
     previewUserMessage,
-  } = pathReferencePreview;
-  const previewPathReferenceCandidateState = useMemo(
-    () => buildTextReferenceCandidateState(previewDraft),
-    [previewDraft],
-  );
-  const previewPathReferenceCandidates = previewPathReferenceCandidateState.candidates;
-  const hasPreviewPathReferenceCandidates = previewPathReferenceCandidateState.hasCandidates;
-  const previewPathReferenceSignature = previewPathReferenceCandidateState.signature;
+  } = useComposerPathReferencePreview({
+    draft: activeComposerDraft,
+    caret: composerCaret,
+    isEnabled: Boolean(selectedSessionId),
+  });
   const selectedSessionRunState: Session["runState"] | null = selectedSession?.runState
     ?? (selectedSessionLiveRun ? "running" : null);
 
