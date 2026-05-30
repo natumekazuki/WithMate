@@ -129,6 +129,7 @@ import {
   resolveAvailableContextPaneTabs,
   type ContextPaneTabKey,
 } from "./session-ui-projection.js";
+import { buildAuxiliaryRuntimeSessionProjection } from "./auxiliary-runtime-projection.js";
 import { buildCharacterThemeStyle } from "./theme-utils.js";
 import { fileKindLabel } from "./ui-utils.js";
 import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
@@ -154,24 +155,7 @@ const MERGE_PANE_MIN_PERCENT = 30;
 const MERGE_PANE_MAX_PERCENT = 70;
 
 function buildAuxiliaryCompanionSession(parent: CompanionSession, auxiliary: AuxiliarySession): CompanionSession {
-  return {
-    ...parent,
-    id: auxiliary.id,
-    taskTitle: auxiliary.title,
-    status: "active",
-    runState: auxiliary.runState,
-    provider: auxiliary.provider,
-    catalogRevision: auxiliary.catalogRevision,
-    model: auxiliary.model,
-    reasoningEffort: auxiliary.reasoningEffort,
-    customAgentName: auxiliary.customAgentName,
-    approvalMode: auxiliary.approvalMode,
-    codexSandboxMode: auxiliary.codexSandboxMode,
-    allowedAdditionalDirectories: [...auxiliary.allowedAdditionalDirectories],
-    threadId: auxiliary.threadId,
-    messages: auxiliary.messages,
-    updatedAt: auxiliary.updatedAt,
-  };
+  return buildAuxiliaryRuntimeSessionProjection("companion", parent, auxiliary);
 }
 
 function areStringArraysEqual(left: string[], right: string[]): boolean {

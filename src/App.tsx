@@ -59,6 +59,7 @@ import {
   type ContextPaneTabKey,
   resolveAvailableContextPaneTabs,
 } from "./session-ui-projection.js";
+import { buildAuxiliaryRuntimeSessionProjection } from "./auxiliary-runtime-projection.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
 import {
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
@@ -155,25 +156,7 @@ const WORKSPACE_PATH_QUERY_MIN_LENGTH = 2;
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
 
 function buildAuxiliaryRuntimeSession(parent: Session, auxiliary: AuxiliarySession): Session {
-  return {
-    ...parent,
-    id: auxiliary.id,
-    taskTitle: parent.taskTitle,
-    status: auxiliary.runState === "running" ? "running" : "idle",
-    updatedAt: auxiliary.updatedAt,
-    provider: auxiliary.provider,
-    catalogRevision: auxiliary.catalogRevision,
-    runState: auxiliary.runState,
-    approvalMode: auxiliary.approvalMode,
-    codexSandboxMode: auxiliary.codexSandboxMode,
-    model: auxiliary.model,
-    reasoningEffort: auxiliary.reasoningEffort,
-    customAgentName: auxiliary.customAgentName,
-    allowedAdditionalDirectories: auxiliary.allowedAdditionalDirectories,
-    threadId: auxiliary.threadId,
-    messages: auxiliary.messages,
-    stream: [],
-  };
+  return buildAuxiliaryRuntimeSessionProjection("main", parent, auxiliary);
 }
 
 function liveRunStepBucketPriority(status: string): number {
