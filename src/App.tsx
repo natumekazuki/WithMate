@@ -126,6 +126,7 @@ import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import type { AuxiliarySession } from "./auxiliary-session-state.js";
 import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolution.js";
 import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
+import { useWorkspacePathMatchSearchRequest } from "./chat/use-workspace-path-match-search-request.js";
 import { useWorkspacePathMatchSearch } from "./chat/use-workspace-path-match-search.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
 import {
@@ -1134,12 +1135,11 @@ export default function AgentSessionWindowApp() {
     previewPathReferenceSignature,
     previewUserMessage,
   });
-  const searchWorkspacePathMatches = useMemo(() => {
-    if (!withmateApi || !selectedSessionId) {
-      return null;
-    }
-    return (query: string) => withmateApi.searchWorkspaceFiles(selectedSessionId, query);
-  }, [selectedSessionId, withmateApi]);
+  const searchWorkspacePathMatches = useWorkspacePathMatchSearchRequest({
+    searchSource: "session",
+    sessionId: selectedSessionId,
+    withmateApi,
+  });
   useWorkspacePathMatchSearch({
     searchWorkspacePathMatches,
     isSearchBlocked: selectedSessionRunState === "running" || !!composerBlockedReason,

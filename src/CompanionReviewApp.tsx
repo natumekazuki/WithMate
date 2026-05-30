@@ -155,6 +155,7 @@ import {
 } from "./composer-preview-config.js";
 import { useComposerPreviewResolution } from "./chat/use-composer-preview-resolution.js";
 import { useComposerPathReferencePreview } from "./chat/use-composer-path-reference-preview.js";
+import { useWorkspacePathMatchSearchRequest } from "./chat/use-workspace-path-match-search-request.js";
 import { useWorkspacePathMatchSearch } from "./chat/use-workspace-path-match-search.js";
 import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
 import { hasSameAuxiliaryDraftSaveContext } from "./auxiliary-draft-save-context.js";
@@ -945,13 +946,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     previewPathReferenceSignature,
     previewUserMessage,
   });
-  const searchWorkspacePathMatches = useMemo(() => {
-    const sessionId = snapshot?.session.id ?? null;
-    if (!withmateApi || !sessionId) {
-      return null;
-    }
-    return (query: string) => withmateApi.searchCompanionWorkspaceFiles(sessionId, query);
-  }, [snapshot?.session.id, withmateApi]);
+  const searchWorkspacePathMatches = useWorkspacePathMatchSearchRequest({
+    searchSource: "companion",
+    sessionId: snapshot?.session.id ?? null,
+    withmateApi,
+  });
   useWorkspacePathMatchSearch({
     searchWorkspacePathMatches,
     isSearchBlocked: isMergeView || selectedSessionRunState === "running" || snapshot?.session.status !== "active",
