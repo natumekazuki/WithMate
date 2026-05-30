@@ -129,7 +129,7 @@ import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
-import { extractTextReferenceCandidates } from "./path-reference.js";
+import { buildTextReferenceCandidateState } from "./path-reference.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import type { AuxiliarySession } from "./auxiliary-session-state.js";
 import {
@@ -616,15 +616,13 @@ export default function AgentSessionWindowApp() {
     previewDraft,
     previewUserMessage,
   } = pathReferencePreview;
-  const previewPathReferenceCandidates = useMemo(
-    () => extractTextReferenceCandidates(previewDraft),
+  const previewPathReferenceCandidateState = useMemo(
+    () => buildTextReferenceCandidateState(previewDraft),
     [previewDraft],
   );
-  const hasPreviewPathReferenceCandidates = previewPathReferenceCandidates.length > 0;
-  const previewPathReferenceSignature = useMemo(
-    () => previewPathReferenceCandidates.join("\u001f"),
-    [previewPathReferenceCandidates],
-  );
+  const previewPathReferenceCandidates = previewPathReferenceCandidateState.candidates;
+  const hasPreviewPathReferenceCandidates = previewPathReferenceCandidateState.hasCandidates;
+  const previewPathReferenceSignature = previewPathReferenceCandidateState.signature;
   const selectedSessionRunState: Session["runState"] | null = selectedSession?.runState
     ?? (selectedSessionLiveRun ? "running" : null);
 

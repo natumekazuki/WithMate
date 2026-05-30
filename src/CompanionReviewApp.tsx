@@ -159,7 +159,7 @@ import {
   WORKSPACE_PATH_QUERY_MIN_LENGTH,
   WORKSPACE_PATH_SEARCH_DEBOUNCE_MS,
 } from "./composer-preview-config.js";
-import { extractTextReferenceCandidates } from "./path-reference.js";
+import { buildTextReferenceCandidateState } from "./path-reference.js";
 import { hasSameAuxiliaryDraftSaveContext } from "./auxiliary-draft-save-context.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
@@ -927,15 +927,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     previewDraft,
     previewUserMessage,
   } = pathReferencePreview;
-  const previewPathReferenceCandidates = useMemo(
-    () => extractTextReferenceCandidates(previewDraft),
+  const previewPathReferenceCandidateState = useMemo(
+    () => buildTextReferenceCandidateState(previewDraft),
     [previewDraft],
   );
-  const hasPreviewPathReferenceCandidates = previewPathReferenceCandidates.length > 0;
-  const previewPathReferenceSignature = useMemo(
-    () => previewPathReferenceCandidates.join("\u001f"),
-    [previewPathReferenceCandidates],
-  );
+  const previewPathReferenceCandidates = previewPathReferenceCandidateState.candidates;
+  const hasPreviewPathReferenceCandidates = previewPathReferenceCandidateState.hasCandidates;
+  const previewPathReferenceSignature = previewPathReferenceCandidateState.signature;
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
