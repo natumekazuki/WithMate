@@ -93,8 +93,10 @@ import {
   formatPathReference,
   getActivePathReference,
   normalizePathForReference,
+  pickComposerReferencePath,
   removeActivePathReference,
   resolvePickedPathBaseDirectory,
+  type ComposerPathPickerKind,
   toDirectoryPath,
   toWorkspaceRelativeReference,
 } from "./session-composer-paths.js";
@@ -2699,48 +2701,22 @@ export default function AgentSessionWindowApp() {
     setActiveWorkspacePathMatchIndex(-1);
   };
 
-  const handlePickFile = async () => {
+  const pickAndInsertPath = async (kind: ComposerPathPickerKind) => {
     if (!withmateApi || isSelectedSessionReadOnly) {
       return;
     }
 
     setIsSkillPickerOpen(false);
-    const selectedPath = await withmateApi.pickFile(pickerBaseDirectory || selectedSession?.workspacePath || null);
+    const selectedPath = await pickComposerReferencePath(
+      kind,
+      pickerBaseDirectory || selectedSession?.workspacePath || null,
+      withmateApi,
+    );
     if (!selectedPath) {
       return;
     }
 
-    setPickerBaseDirectory(resolvePickedPathBaseDirectory("file", selectedPath));
-    insertReferencePath(selectedPath);
-  };
-
-  const handlePickFolder = async () => {
-    if (!withmateApi || isSelectedSessionReadOnly) {
-      return;
-    }
-
-    setIsSkillPickerOpen(false);
-    const selectedPath = await withmateApi.pickDirectory(pickerBaseDirectory || selectedSession?.workspacePath || null);
-    if (!selectedPath) {
-      return;
-    }
-
-    setPickerBaseDirectory(resolvePickedPathBaseDirectory("folder", selectedPath));
-    insertReferencePath(selectedPath);
-  };
-
-  const handlePickImage = async () => {
-    if (!withmateApi || isSelectedSessionReadOnly) {
-      return;
-    }
-
-    setIsSkillPickerOpen(false);
-    const selectedPath = await withmateApi.pickImageFile(pickerBaseDirectory || selectedSession?.workspacePath || null);
-    if (!selectedPath) {
-      return;
-    }
-
-    setPickerBaseDirectory(resolvePickedPathBaseDirectory("image", selectedPath));
+    setPickerBaseDirectory(resolvePickedPathBaseDirectory(kind, selectedPath));
     insertReferencePath(selectedPath);
   };
 
@@ -3232,9 +3208,9 @@ export default function AgentSessionWindowApp() {
         onEditLastMessage: handleEditLastMessage,
         onConfirmRetryDraftReplace: handleConfirmRetryDraftReplace,
         onCancelRetryDraftReplace: handleCancelRetryDraftReplace,
-        onPickFile: () => void handlePickFile(),
-        onPickFolder: () => void handlePickFolder(),
-        onPickImage: () => void handlePickImage(),
+        onPickFile: () => void pickAndInsertPath("file"),
+        onPickFolder: () => void pickAndInsertPath("folder"),
+        onPickImage: () => void pickAndInsertPath("image"),
         onAddToSessionFiles: () => void handleAddToSessionFiles(),
         onPickSessionFiles: () => void handlePickSessionFiles(),
         onToggleAgentPicker: handleToggleAgentPicker,

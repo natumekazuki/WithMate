@@ -30,6 +30,12 @@ export type AdditionalDirectoryDisplay = {
 
 export type ComposerPathPickerKind = "file" | "folder" | "image";
 
+export type ComposerReferencePathPicker = {
+  pickDirectory(initialPath?: string | null): Promise<string | null>;
+  pickFile(initialPath?: string | null): Promise<string | null>;
+  pickImageFile(initialPath?: string | null): Promise<string | null>;
+};
+
 export function getActivePathReference(value: string, caret: number): ActivePathReference | null {
   const prefix = value.slice(0, caret);
   const match = /(^|[\s(])@(?:"([^"\r\n]*)|([^\s@"\r\n]*))$/.exec(prefix);
@@ -176,4 +182,20 @@ export function toDirectoryPath(selectedPath: string): string {
 
 export function resolvePickedPathBaseDirectory(kind: ComposerPathPickerKind, selectedPath: string): string {
   return kind === "folder" ? selectedPath : toDirectoryPath(selectedPath);
+}
+
+export async function pickComposerReferencePath(
+  kind: ComposerPathPickerKind,
+  initialPath: string | null,
+  picker: ComposerReferencePathPicker,
+): Promise<string | null> {
+  switch (kind) {
+    case "folder":
+      return await picker.pickDirectory(initialPath);
+    case "image":
+      return await picker.pickImageFile(initialPath);
+    case "file":
+    default:
+      return await picker.pickFile(initialPath);
+  }
 }

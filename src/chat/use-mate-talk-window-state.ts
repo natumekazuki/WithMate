@@ -15,7 +15,10 @@ import {
   compactPathForDisplay,
   formatPathReference,
   normalizePathForReference,
+  pickComposerReferencePath,
+  resolvePickedPathBaseDirectory,
   splitPathForDisplay,
+  type ComposerPathPickerKind,
   toDirectoryPath,
 } from "../session-composer-paths.js";
 import { buildCharacterThemeStyle } from "../theme-utils.js";
@@ -230,7 +233,7 @@ export function useMateTalkWindowState({
     });
   };
 
-  const insertReferencePaths = (selectedPaths: string[], kind: "file" | "folder" | "image") => {
+  const insertReferencePaths = (selectedPaths: string[], kind: ComposerPathPickerKind) => {
     if (selectedPaths.length === 0) {
       return;
     }
@@ -269,26 +272,22 @@ export function useMateTalkWindowState({
     });
   };
 
-  const insertReferencePath = (selectedPath: string, kind: "file" | "folder" | "image") => {
+  const insertReferencePath = (selectedPath: string, kind: ComposerPathPickerKind) => {
     insertReferencePaths([selectedPath], kind);
   };
 
-  const pickAndInsertPath = async (kind: "file" | "folder" | "image") => {
+  const pickAndInsertPath = async (kind: ComposerPathPickerKind) => {
     if (!withmateApi) {
       return;
     }
 
     const initialPath = pickerBaseDirectory || null;
-    const selectedPath = kind === "folder"
-      ? await withmateApi.pickDirectory(initialPath)
-      : kind === "image"
-        ? await withmateApi.pickImageFile(initialPath)
-        : await withmateApi.pickFile(initialPath);
+    const selectedPath = await pickComposerReferencePath(kind, initialPath, withmateApi);
     if (!selectedPath) {
       return;
     }
 
-    setPickerBaseDirectory(kind === "folder" ? selectedPath : toDirectoryPath(selectedPath));
+    setPickerBaseDirectory(resolvePickedPathBaseDirectory(kind, selectedPath));
     insertReferencePath(selectedPath, kind);
   };
 

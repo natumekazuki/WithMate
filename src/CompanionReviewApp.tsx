@@ -108,8 +108,10 @@ import {
   formatPathReference,
   getActivePathReference,
   normalizePathForReference,
+  pickComposerReferencePath,
   removeActivePathReference,
   resolvePickedPathBaseDirectory,
+  type ComposerPathPickerKind,
   toDirectoryPath,
   toWorkspaceRelativeReference,
 } from "./session-composer-paths.js";
@@ -1529,17 +1531,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     insertReferencePaths([selectedPath]);
   }
 
-  async function pickAndInsertPath(kind: "file" | "folder" | "image"): Promise<void> {
+  async function pickAndInsertPath(kind: ComposerPathPickerKind): Promise<void> {
     const withmateApi = getWithMateApi();
     if (!withmateApi || !snapshot || runDisabled) {
       return;
     }
     const basePath = pickerBaseDirectory || snapshot.session.worktreePath || snapshot.session.repoRoot;
-    const selectedPath = kind === "folder"
-      ? await withmateApi.pickDirectory(basePath)
-      : kind === "image"
-        ? await withmateApi.pickImageFile(basePath)
-        : await withmateApi.pickFile(basePath);
+    const selectedPath = await pickComposerReferencePath(kind, basePath, withmateApi);
     if (selectedPath) {
       setPickerBaseDirectory(resolvePickedPathBaseDirectory(kind, selectedPath));
       insertReferencePath(selectedPath);
