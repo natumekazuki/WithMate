@@ -8,6 +8,7 @@ import {
   buildComposerAttachmentItems,
   buildPathReferenceAttachmentItems,
   buildPathReferenceInsertionState,
+  buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildPathReferenceReplacementState,
@@ -63,6 +64,22 @@ test("buildPathReferenceInsertionState は空白を含む path reference を quo
 
 test("buildPathReferenceInsertionState は reference path が空なら null を返す", () => {
   assert.equal(buildPathReferenceInsertionState("draft", 0, []), null);
+});
+
+test("buildPathReferenceInsertionWithClosedWorkspaceMatchesState は挿入後に候補を閉じる", () => {
+  assert.deepEqual(
+    buildPathReferenceInsertionWithClosedWorkspaceMatchesState("確認 ", "確認 ".length, ["src/App.tsx"]),
+    {
+      draft: "確認 @src/App.tsx",
+      caret: "確認 @src/App.tsx".length,
+      workspacePathMatches: [],
+      activeWorkspacePathMatchIndex: -1,
+    },
+  );
+  assert.equal(
+    buildPathReferenceInsertionWithClosedWorkspaceMatchesState("確認 ", "確認 ".length, []),
+    null,
+  );
 });
 
 test("buildComposerAttachmentItems は attachment display と remove targets を作る", () => {

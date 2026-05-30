@@ -89,7 +89,7 @@ import {
 import {
   buildAdditionalDirectoryItems,
   buildComposerAttachmentItems,
-  buildPathReferenceInsertionState,
+  buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchItems,
@@ -2626,7 +2626,11 @@ export default function AgentSessionWindowApp() {
       selectedSession?.workspacePath ?? null,
     );
     const currentCaret = textarea?.selectionStart ?? composerCaret;
-    const insertionState = buildPathReferenceInsertionState(currentDraft, currentCaret, referencePaths);
+    const insertionState = buildPathReferenceInsertionWithClosedWorkspaceMatchesState(
+      currentDraft,
+      currentCaret,
+      referencePaths,
+    );
     if (!insertionState) {
       return;
     }
@@ -2639,8 +2643,8 @@ export default function AgentSessionWindowApp() {
       mainComposerCaretRef.current = nextCaret;
     }
     setComposerCaret(nextCaret);
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
+    setWorkspacePathMatches(insertionState.workspacePathMatches);
+    setActiveWorkspacePathMatchIndex(insertionState.activeWorkspacePathMatchIndex);
 
     restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };

@@ -134,6 +134,21 @@ export function buildPathReferenceInsertionState(
   };
 }
 
+export function buildPathReferenceInsertionWithClosedWorkspaceMatchesState(
+  draft: string,
+  caret: number,
+  referencePaths: readonly string[],
+): WorkspacePathMatchSelectionState | null {
+  const nextState = buildPathReferenceInsertionState(draft, caret, referencePaths);
+  return nextState
+    ? {
+        ...nextState,
+        workspacePathMatches: [],
+        activeWorkspacePathMatchIndex: -1,
+      }
+    : null;
+}
+
 export function buildPathReferenceReplacementState(
   draft: string,
   activeReference: ActivePathReference,

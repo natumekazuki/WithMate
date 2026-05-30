@@ -104,7 +104,7 @@ import {
 import {
   buildAdditionalDirectoryItems,
   buildComposerAttachmentItems,
-  buildPathReferenceInsertionState,
+  buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchItems,
@@ -1475,15 +1475,19 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       selectedPaths,
       snapshot?.session.worktreePath ?? null,
     );
-    const insertionState = buildPathReferenceInsertionState(activeComposerText, currentCaret, referencePaths);
+    const insertionState = buildPathReferenceInsertionWithClosedWorkspaceMatchesState(
+      activeComposerText,
+      currentCaret,
+      referencePaths,
+    );
     if (!insertionState) {
       return;
     }
     const { draft: nextDraft, caret: nextCaret } = insertionState;
 
     setComposerCaret(nextCaret);
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
+    setWorkspacePathMatches(insertionState.workspacePathMatches);
+    setActiveWorkspacePathMatchIndex(insertionState.activeWorkspacePathMatchIndex);
     if (activeAuxiliarySession) {
       void handleAuxiliaryDraftChange(nextDraft, nextCaret);
     } else {
