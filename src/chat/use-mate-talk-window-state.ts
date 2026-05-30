@@ -18,6 +18,7 @@ import {
   buildPathReferenceInsertionState,
   buildPathReferenceRemovalState,
   pickComposerReferencePath,
+  removeAdditionalDirectoryPath,
   removePathReferenceAttachments,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
@@ -531,7 +532,7 @@ export function useMateTalkWindowState({
     onToggleAdditionalDirectoryList: () => setIsAdditionalDirectoryListOpen((current) => !current),
     onRemoveAttachment: removePathReference,
     onRemoveAdditionalDirectory: (directoryPath: string) => {
-      setAdditionalDirectories((current) => current.filter((entry) => entry !== directoryPath));
+      setAdditionalDirectories((current) => removeAdditionalDirectoryPath(current, directoryPath));
     },
     onDraftFocus: () => {},
     onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleDraftPaste(event),

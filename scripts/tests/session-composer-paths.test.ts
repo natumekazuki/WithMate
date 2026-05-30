@@ -16,6 +16,7 @@ import {
   getNextWorkspacePathMatchIndex,
   getPreviousWorkspacePathMatchIndex,
   pickComposerReferencePath,
+  removeAdditionalDirectoryPath,
   removePathReferenceAttachments,
   removePathReferenceTokensFromDraft,
   resolveActiveWorkspacePathMatch,
@@ -349,6 +350,16 @@ test("appendAdditionalDirectoryPath は additional directory を正規化して�
   assert.deepEqual(
     appendAdditionalDirectoryPath(["C:/workspace/external"], "D:\\assets"),
     ["C:/workspace/external", "D:/assets"],
+  );
+});
+
+test("removeAdditionalDirectoryPath は additional directory を正規化して削除する", () => {
+  assert.deepEqual(
+    removeAdditionalDirectoryPath(
+      ["C:\\workspace\\external", "D:/assets"],
+      "C:/workspace/external",
+    ),
+    ["D:/assets"],
   );
 });
 
