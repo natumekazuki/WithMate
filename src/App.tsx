@@ -110,6 +110,7 @@ import {
 import {
   createOptimisticRunningSessionState,
   createOwnedPendingLiveSessionRunState,
+  replaceLiveRunAfterResolvedRequest,
 } from "./session-live-run-state.js";
 import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
@@ -1782,16 +1783,12 @@ export default function AgentSessionWindowApp() {
     try {
       await withmateApi.resolveLiveApproval(sessionId, request.requestId, decision);
       const latestLiveRun = await withmateApi.getLiveSessionRun(sessionId);
-      setLiveRunState((current) => {
-        if (
-          current.ownerSessionId !== sessionId
-          || current.state?.approvalRequest?.requestId !== request.requestId
-        ) {
-          return current;
-        }
-
-        return { ownerSessionId: sessionId, state: latestLiveRun };
-      });
+      setLiveRunState((current) => replaceLiveRunAfterResolvedRequest(current, {
+        sessionId,
+        requestId: request.requestId,
+        requestKind: "approval",
+        latestLiveRun,
+      }));
       setApprovalActionRequestId(null);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "承認要求の処理に失敗したよ。");
@@ -1812,16 +1809,12 @@ export default function AgentSessionWindowApp() {
     try {
       await withmateApi.resolveLiveElicitation(sessionId, request.requestId, response);
       const latestLiveRun = await withmateApi.getLiveSessionRun(sessionId);
-      setLiveRunState((current) => {
-        if (
-          current.ownerSessionId !== sessionId
-          || current.state?.elicitationRequest?.requestId !== request.requestId
-        ) {
-          return current;
-        }
-
-        return { ownerSessionId: sessionId, state: latestLiveRun };
-      });
+      setLiveRunState((current) => replaceLiveRunAfterResolvedRequest(current, {
+        sessionId,
+        requestId: request.requestId,
+        requestKind: "elicitation",
+        latestLiveRun,
+      }));
       setElicitationActionRequestId(null);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "入力要求の処理に失敗したよ。");

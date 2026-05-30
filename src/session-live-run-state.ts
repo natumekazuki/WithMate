@@ -60,3 +60,29 @@ export function createOwnedPendingLiveSessionRunState(
     state: createPendingLiveSessionRunState(session, previousState),
   };
 }
+
+export function replaceLiveRunAfterResolvedRequest(
+  current: OwnedLiveSessionRunState,
+  options: {
+    sessionId: string;
+    requestId: string;
+    requestKind: "approval" | "elicitation";
+    latestLiveRun: LiveSessionRunState | null;
+  },
+): OwnedLiveSessionRunState {
+  const currentRequest = options.requestKind === "approval"
+    ? current.state?.approvalRequest
+    : current.state?.elicitationRequest;
+
+  if (
+    current.ownerSessionId !== options.sessionId
+    || currentRequest?.requestId !== options.requestId
+  ) {
+    return current;
+  }
+
+  return {
+    ownerSessionId: options.sessionId,
+    state: options.latestLiveRun,
+  };
+}
