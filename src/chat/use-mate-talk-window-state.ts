@@ -2,6 +2,7 @@ import { type ClipboardEvent, useEffect, useMemo, useRef, useState } from "react
 
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from "../approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE, normalizeCodexSandboxMode, type CodexSandboxMode } from "../codex-sandbox-mode.js";
+import { restoreComposerTextareaFocusAndCaret } from "../composer-textarea-focus.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { MateTalkPathReference } from "../mate/mate-state.js";
 import type { ModelCatalogSnapshot, ModelReasoningEffort } from "../model-catalog.js";
@@ -228,14 +229,7 @@ export function useMateTalkWindowState({
     setInputCaret(nextCaret);
     setFeedback("");
 
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
+    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
 
   const insertReferencePaths = (selectedPaths: string[], kind: ComposerPathPickerKind) => {
@@ -257,14 +251,7 @@ export function useMateTalkWindowState({
     setFeedback("");
     setPathReferences((current) => appendMissingPathReferenceAttachments(current, normalizedPaths, kind));
 
-    window.requestAnimationFrame(() => {
-      if (!textarea) {
-        return;
-      }
-
-      textarea.focus();
-      textarea.setSelectionRange(nextCaret, nextCaret);
-    });
+    restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };
 
   const insertReferencePath = (selectedPath: string, kind: ComposerPathPickerKind) => {
