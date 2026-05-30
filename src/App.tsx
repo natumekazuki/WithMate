@@ -91,7 +91,7 @@ import {
   buildComposerAttachmentDisplay,
   buildPathReferenceInsertionState,
   buildPathReferenceReplacementState,
-  buildWorkspacePathMatchDisplay,
+  buildWorkspacePathMatchItems,
   getActivePathReference,
   normalizePathForReference,
   pickComposerReferencePath,
@@ -1619,20 +1619,7 @@ export default function AgentSessionWindowApp() {
     [displayedSession],
   );
   const workspacePathMatchItems = useMemo(
-    () =>
-      workspacePathMatches.map((match, index) => {
-        const matchDisplay = buildWorkspacePathMatchDisplay(match);
-        return {
-          key: `${match.kind}:${match.path}`,
-          path: match.path,
-          kind: match.kind,
-          kindLabel: matchDisplay.kindLabel,
-          primaryLabel: matchDisplay.primaryLabel,
-          secondaryLabel: matchDisplay.secondaryLabel,
-          title: matchDisplay.title,
-          isActive: index === activeWorkspacePathMatchIndex,
-        };
-      }),
+    () => buildWorkspacePathMatchItems(workspacePathMatches, activeWorkspacePathMatchIndex),
     [activeWorkspacePathMatchIndex, workspacePathMatches],
   );
   const isSessionHeaderExpanded = isHeaderExpanded || isEditingTitle;

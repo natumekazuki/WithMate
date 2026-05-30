@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildPathReferenceInsertionState,
   buildPathReferenceReplacementState,
+  buildWorkspacePathMatchItems,
   pickComposerReferencePath,
   removePathReferenceTokensFromDraft,
   resolvePickedPathBaseDirectory,
@@ -42,6 +43,40 @@ test("buildPathReferenceInsertionState は空白を含む path reference を quo
 
 test("buildPathReferenceInsertionState は reference path が空なら null を返す", () => {
   assert.equal(buildPathReferenceInsertionState("draft", 0, []), null);
+});
+
+test("buildWorkspacePathMatchItems は path match display と active state を作る", () => {
+  assert.deepEqual(
+    buildWorkspacePathMatchItems(
+      [
+        { kind: "file", path: "C:\\workspace\\src\\App.tsx" },
+        { kind: "folder", path: "C:/workspace/docs" },
+      ],
+      1,
+    ),
+    [
+      {
+        key: "file:C:\\workspace\\src\\App.tsx",
+        path: "C:\\workspace\\src\\App.tsx",
+        kind: "file",
+        kindLabel: "File",
+        primaryLabel: "App.tsx",
+        secondaryLabel: "C:/workspace/src",
+        title: "C:/workspace/src/App.tsx",
+        isActive: false,
+      },
+      {
+        key: "folder:C:/workspace/docs",
+        path: "C:/workspace/docs",
+        kind: "folder",
+        kindLabel: "Dir",
+        primaryLabel: "docs",
+        secondaryLabel: "C:/workspace",
+        title: "C:/workspace/docs",
+        isActive: true,
+      },
+    ],
+  );
 });
 
 test("buildPathReferenceReplacementState は active path reference を置換する", () => {

@@ -22,6 +22,13 @@ export type WorkspacePathMatchDisplay = {
   title: string;
 };
 
+export type WorkspacePathMatchItem = WorkspacePathMatchDisplay & {
+  isActive: boolean;
+  key: string;
+  kind: WorkspacePathCandidateKind;
+  path: string;
+};
+
 export type AdditionalDirectoryDisplay = {
   primaryLabel: string;
   secondaryLabel: string;
@@ -207,6 +214,25 @@ export function buildWorkspacePathMatchDisplay(pathMatch: WorkspacePathCandidate
     secondaryLabel: parentPath ? compactPathForDisplay(parentPath, 42) : "ワークスペース直下",
     title: normalizedPath,
   };
+}
+
+export function buildWorkspacePathMatchItems(
+  pathMatches: readonly WorkspacePathCandidate[],
+  activeIndex: number,
+): WorkspacePathMatchItem[] {
+  return pathMatches.map((match, index) => {
+    const matchDisplay = buildWorkspacePathMatchDisplay(match);
+    return {
+      key: `${match.kind}:${match.path}`,
+      path: match.path,
+      kind: match.kind,
+      kindLabel: matchDisplay.kindLabel,
+      primaryLabel: matchDisplay.primaryLabel,
+      secondaryLabel: matchDisplay.secondaryLabel,
+      title: matchDisplay.title,
+      isActive: index === activeIndex,
+    };
+  });
 }
 
 export function buildAdditionalDirectoryDisplay(directoryPath: string): AdditionalDirectoryDisplay {
