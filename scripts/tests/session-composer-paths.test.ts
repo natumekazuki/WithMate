@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  appendMissingPathReferenceAttachments,
   buildAdditionalDirectoryItems,
   buildComposerAttachmentItems,
   buildPathReferenceAttachmentItems,
@@ -142,6 +143,24 @@ test("buildPathReferenceAttachmentItems は MateTalk path reference item を作�
         title: "assets/cover image.png",
         removeTargets: ["assets/cover image.png"],
       },
+    ],
+  );
+});
+
+test("appendMissingPathReferenceAttachments は既存にない path reference を追加する", () => {
+  assert.deepEqual(
+    appendMissingPathReferenceAttachments(
+      [
+        { path: "src/App.tsx", kind: "file" },
+        { path: "docs", kind: "folder" },
+      ],
+      ["src/App.tsx", "assets/cover.png"],
+      "image",
+    ),
+    [
+      { path: "src/App.tsx", kind: "file" },
+      { path: "docs", kind: "folder" },
+      { path: "assets/cover.png", kind: "image" },
     ],
   );
 });

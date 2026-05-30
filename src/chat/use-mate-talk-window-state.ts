@@ -11,6 +11,7 @@ import {
   type AppSettings,
 } from "../provider-settings-state.js";
 import {
+  appendMissingPathReferenceAttachments,
   buildAdditionalDirectoryItems,
   buildPathReferenceAttachmentItems,
   buildPathReferenceInsertionState,
@@ -251,16 +252,7 @@ export function useMateTalkWindowState({
     setInput(nextInput);
     setInputCaret(nextCaret);
     setFeedback("");
-    setPathReferences((current) => {
-      const existing = new Set(current.map((entry) => entry.path));
-      const next = [...current];
-      for (const normalizedPath of normalizedPaths) {
-        if (!existing.has(normalizedPath)) {
-          next.push({ path: normalizedPath, kind });
-        }
-      }
-      return next;
-    });
+    setPathReferences((current) => appendMissingPathReferenceAttachments(current, normalizedPaths, kind));
 
     window.requestAnimationFrame(() => {
       if (!textarea) {

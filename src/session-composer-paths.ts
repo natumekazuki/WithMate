@@ -282,6 +282,21 @@ export function buildPathReferenceAttachmentItems(
   });
 }
 
+export function appendMissingPathReferenceAttachments(
+  current: readonly PathReferenceAttachmentInput[],
+  referencePaths: readonly string[],
+  kind: ComposerAttachment["kind"],
+): PathReferenceAttachmentInput[] {
+  const existing = new Set(current.map((entry) => entry.path));
+  const next = [...current];
+  for (const referencePath of referencePaths) {
+    if (!existing.has(referencePath)) {
+      next.push({ path: referencePath, kind });
+    }
+  }
+  return next;
+}
+
 function workspacePathCandidateKindLabel(kind: WorkspacePathCandidateKind): string {
   return kind === "folder" ? "Dir" : "File";
 }
