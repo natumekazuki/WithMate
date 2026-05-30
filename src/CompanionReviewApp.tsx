@@ -106,7 +106,7 @@ import {
   buildComposerAttachmentItems,
   buildPathReferenceInsertionState,
   buildPathReferenceRemovalState,
-  buildPathReferenceReplacementState,
+  buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchItems,
   getActivePathReference,
   getInitialWorkspacePathMatchIndex,
@@ -1619,19 +1619,23 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   function handleSelectWorkspacePathMatch(match: string): void {
     const textarea = composerTextareaRef.current;
-    const activeReference = getActivePathReference(activeComposerText, composerCaret);
-    if (!textarea || !activeReference) {
+    if (!textarea) {
       return;
     }
 
-    const { draft: nextDraft, caret: nextCaret } = buildPathReferenceReplacementState(
+    const nextState = buildWorkspacePathMatchSelectionState(
       activeComposerText,
-      activeReference,
+      composerCaret,
       match,
     );
+    if (!nextState) {
+      return;
+    }
+
+    const { draft: nextDraft, caret: nextCaret } = nextState;
     setComposerCaret(nextCaret);
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
+    setWorkspacePathMatches(nextState.workspacePathMatches);
+    setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
     if (activeAuxiliarySession) {
       void handleAuxiliaryDraftChange(nextDraft, nextCaret);
     } else {

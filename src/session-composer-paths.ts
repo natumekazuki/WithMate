@@ -69,6 +69,11 @@ export type PathReferenceInsertionState = {
   draft: string;
 };
 
+export type WorkspacePathMatchSelectionState = PathReferenceInsertionState & {
+  activeWorkspacePathMatchIndex: -1;
+  workspacePathMatches: WorkspacePathCandidate[];
+};
+
 export type ComposerPathPickerKind = "file" | "folder" | "image";
 
 export type ComposerReferencePathPicker = {
@@ -138,6 +143,24 @@ export function buildPathReferenceReplacementState(
   return {
     draft: `${draft.slice(0, activeReference.start)}${replacement}${draft.slice(activeReference.end)}`,
     caret: activeReference.start + replacement.length,
+  };
+}
+
+export function buildWorkspacePathMatchSelectionState(
+  draft: string,
+  caret: number,
+  matchPath: string,
+): WorkspacePathMatchSelectionState | null {
+  const activeReference = getActivePathReference(draft, caret);
+  if (!activeReference) {
+    return null;
+  }
+
+  const nextState = buildPathReferenceReplacementState(draft, activeReference, matchPath);
+  return {
+    ...nextState,
+    workspacePathMatches: [],
+    activeWorkspacePathMatchIndex: -1,
   };
 }
 

@@ -91,7 +91,7 @@ import {
   buildComposerAttachmentItems,
   buildPathReferenceInsertionState,
   buildPathReferenceRemovalState,
-  buildPathReferenceReplacementState,
+  buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchItems,
   getActivePathReference,
   getInitialWorkspacePathMatchIndex,
@@ -1887,16 +1887,20 @@ export default function AgentSessionWindowApp() {
 
   const handleSelectWorkspacePathMatch = (match: string) => {
     const textarea = composerTextareaRef.current;
-    const activeReference = getActivePathReference(activeComposerDraft, composerCaret);
-    if (!textarea || !activeReference) {
+    if (!textarea) {
       return;
     }
 
-    const { draft: nextDraft, caret: nextCaret } = buildPathReferenceReplacementState(
+    const nextState = buildWorkspacePathMatchSelectionState(
       activeComposerDraft,
-      activeReference,
+      composerCaret,
       match,
     );
+    if (!nextState) {
+      return;
+    }
+
+    const { draft: nextDraft, caret: nextCaret } = nextState;
     setComposerCaret(nextCaret);
     if (activeAuxiliarySession) {
       void handleAuxiliaryDraftChange(nextDraft, nextCaret);
@@ -1904,8 +1908,8 @@ export default function AgentSessionWindowApp() {
       setDraft(nextDraft);
       mainComposerCaretRef.current = nextCaret;
     }
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
+    setWorkspacePathMatches(nextState.workspacePathMatches);
+    setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
 
     restoreComposerTextareaFocusAndCaret(textarea, nextCaret);
   };

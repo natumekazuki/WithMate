@@ -10,6 +10,7 @@ import {
   buildPathReferenceInsertionState,
   buildPathReferenceRemovalState,
   buildPathReferenceReplacementState,
+  buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchItems,
   canNavigateWorkspacePathMatches,
   getInitialWorkspacePathMatchIndex,
@@ -499,6 +500,25 @@ test("buildPathReferenceReplacementState は空白を含む path を quote す�
       draft: "確認 @\"docs/my note.md\" して",
       caret: "確認 @\"docs/my note.md\"".length,
     },
+  );
+});
+
+test("buildWorkspacePathMatchSelectionState は active path reference を置換して候補を閉じる", () => {
+  assert.deepEqual(
+    buildWorkspacePathMatchSelectionState("確認 @src/ して", "確認 @src/".length, "src/App.tsx"),
+    {
+      draft: "確認 @src/App.tsx して",
+      caret: "確認 @src/App.tsx".length,
+      workspacePathMatches: [],
+      activeWorkspacePathMatchIndex: -1,
+    },
+  );
+});
+
+test("buildWorkspacePathMatchSelectionState は active path reference がなければ null を返す", () => {
+  assert.equal(
+    buildWorkspacePathMatchSelectionState("確認 src/ して", "確認 src/".length, "src/App.tsx"),
+    null,
   );
 });
 
