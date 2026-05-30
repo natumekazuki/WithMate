@@ -195,6 +195,18 @@ export function buildPathReferenceRemovalState(
   };
 }
 
+export function buildPathReferenceRemovalWithClosedWorkspaceMatchesState(
+  draft: string,
+  referencePaths: readonly string[],
+): WorkspacePathMatchSelectionState {
+  const nextState = buildPathReferenceRemovalState(draft, referencePaths);
+  return {
+    ...nextState,
+    workspacePathMatches: [],
+    activeWorkspacePathMatchIndex: -1,
+  };
+}
+
 export function normalizePathForReference(filePath: string): string {
   return filePath.replace(/\\/g, "/");
 }

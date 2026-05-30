@@ -9,6 +9,7 @@ import {
   buildPathReferenceAttachmentItems,
   buildPathReferenceInsertionState,
   buildPathReferenceRemovalState,
+  buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildPathReferenceReplacementState,
   buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchItems,
@@ -559,6 +560,18 @@ test("buildPathReferenceRemovalState は path reference 削除後の draft と�
     {
       draft: "確認 して",
       caret: "確認 して".length,
+    },
+  );
+});
+
+test("buildPathReferenceRemovalWithClosedWorkspaceMatchesState は削除後に候補を閉じる", () => {
+  assert.deepEqual(
+    buildPathReferenceRemovalWithClosedWorkspaceMatchesState("確認 @src/App.tsx して", ["src/App.tsx"]),
+    {
+      draft: "確認 して",
+      caret: "確認 して".length,
+      workspacePathMatches: [],
+      activeWorkspacePathMatchIndex: -1,
     },
   );
 });

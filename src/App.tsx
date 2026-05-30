@@ -90,7 +90,7 @@ import {
   buildAdditionalDirectoryItems,
   buildComposerAttachmentItems,
   buildPathReferenceInsertionState,
-  buildPathReferenceRemovalState,
+  buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchItems,
   getActivePathReference,
@@ -2652,10 +2652,11 @@ export default function AgentSessionWindowApp() {
   const handleRemoveAttachmentReference = (attachmentPathCandidates: string[]) => {
     const targetAuxiliarySession = activeAuxiliarySession;
     const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
-    const { draft: nextDraft, caret: nextCaret } = buildPathReferenceRemovalState(
+    const nextState = buildPathReferenceRemovalWithClosedWorkspaceMatchesState(
       currentDraft,
       attachmentPathCandidates,
     );
+    const { draft: nextDraft, caret: nextCaret } = nextState;
 
     if (targetAuxiliarySession) {
       void handleAuxiliaryDraftChange(nextDraft, nextCaret);
@@ -2664,8 +2665,8 @@ export default function AgentSessionWindowApp() {
       mainComposerCaretRef.current = nextCaret;
     }
     setComposerCaret(nextCaret);
-    setWorkspacePathMatches([]);
-    setActiveWorkspacePathMatchIndex(-1);
+    setWorkspacePathMatches(nextState.workspacePathMatches);
+    setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
   };
 
   const pickAndInsertPath = async (kind: ComposerPathPickerKind) => {
