@@ -1,5 +1,4 @@
 import {
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -110,14 +109,12 @@ import {
   buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildWorkspacePathMatchSelectionState,
-  buildWorkspacePathMatchItems,
   getWorkspacePathMatchNavigationIndex,
   pickComposerReferencePath,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   resolveWorkspacePathMatchNavigation,
   type ComposerPathPickerKind,
-  type WorkspacePathMatchState,
   toDirectoryPath,
 } from "./session-composer-paths.js";
 import {
@@ -160,9 +157,9 @@ import {
   createEmptyComposerPreview,
 } from "./composer-preview-config.js";
 import { useWorkspacePathMatchSearch } from "./chat/use-workspace-path-match-search.js";
+import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
 import { buildTextReferenceCandidateState } from "./path-reference.js";
 import { hasSameAuxiliaryDraftSaveContext } from "./auxiliary-draft-save-context.js";
-import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
 function pickInitialFile(files: ChangedFile[]): ChangedFile | null {
@@ -351,8 +348,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [isAgentPickerOpen, setIsAgentPickerOpen] = useState(false);
   const [isSkillPickerOpen, setIsSkillPickerOpen] = useState(false);
   const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
-  const [workspacePathMatches, setWorkspacePathMatches] = useState<WorkspacePathCandidate[]>([]);
-  const [activeWorkspacePathMatchIndex, setActiveWorkspacePathMatchIndex] = useState(-1);
+  const {
+    workspacePathMatches,
+    activeWorkspacePathMatchIndex,
+    setWorkspacePathMatches,
+    setActiveWorkspacePathMatchIndex,
+    applyWorkspacePathMatchState,
+    workspacePathMatchItems,
+  } = useWorkspacePathMatchState();
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
   const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
@@ -992,10 +995,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     activeAuxiliarySession,
     activeRunSessionId,
   ]);
-  const applyWorkspacePathMatchState = useCallback((nextState: WorkspacePathMatchState) => {
-    setWorkspacePathMatches(nextState.workspacePathMatches);
-    setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
-  }, []);
   const searchWorkspacePathMatches = useMemo(() => {
     const sessionId = snapshot?.session.id ?? null;
     if (!withmateApi || !sessionId) {
@@ -1298,10 +1297,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     () =>
       buildComposerAttachmentItems(composerPreview.attachments, { trimRemoveTargets: false }),
     [composerPreview.attachments],
-  );
-  const workspacePathMatchItems = useMemo(
-    () => buildWorkspacePathMatchItems(workspacePathMatches, activeWorkspacePathMatchIndex),
-    [activeWorkspacePathMatchIndex, workspacePathMatches],
   );
   const selectedProviderQuotaTelemetry =
     displayedSession?.provider && providerQuotaTelemetryState.ownerProviderId === displayedSession.provider

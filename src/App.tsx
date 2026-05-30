@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
 
 import {
   type ComposerPreview,
@@ -94,14 +94,12 @@ import {
   buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildWorkspacePathMatchSelectionState,
-  buildWorkspacePathMatchItems,
   getWorkspacePathMatchNavigationIndex,
   pickComposerReferencePath,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   resolveWorkspacePathMatchNavigation,
   type ComposerPathPickerKind,
-  type WorkspacePathMatchState,
   toDirectoryPath,
 } from "./session-composer-paths.js";
 import {
@@ -129,9 +127,9 @@ import { buildCompanionGroupMonitorEntries } from "./home/home-session-projectio
 import { resolveLastUsedSessionSelection } from "./home/home-launch-state.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import { buildTextReferenceCandidateState } from "./path-reference.js";
-import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import type { AuxiliarySession } from "./auxiliary-session-state.js";
 import { useWorkspacePathMatchSearch } from "./chat/use-workspace-path-match-search.js";
+import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-state.js";
 import {
   copyMessageTextToClipboard,
   createQuotedMessageInsertion,
@@ -343,8 +341,14 @@ export default function AgentSessionWindowApp() {
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [composerCaret, setComposerCaret] = useState(0);
-  const [workspacePathMatches, setWorkspacePathMatches] = useState<WorkspacePathCandidate[]>([]);
-  const [activeWorkspacePathMatchIndex, setActiveWorkspacePathMatchIndex] = useState(-1);
+  const {
+    workspacePathMatches,
+    activeWorkspacePathMatchIndex,
+    setWorkspacePathMatches,
+    setActiveWorkspacePathMatchIndex,
+    applyWorkspacePathMatchState,
+    workspacePathMatchItems,
+  } = useWorkspacePathMatchState();
   const [availableSkills, setAvailableSkills] = useState<DiscoveredSkill[]>([]);
   const [availableCustomAgents, setAvailableCustomAgents] = useState<DiscoveredCustomAgent[]>([]);
   const [isAgentPickerOpen, setIsAgentPickerOpen] = useState(false);
@@ -1176,10 +1180,6 @@ export default function AgentSessionWindowApp() {
     previewUserMessage,
     activeRunSessionId,
   ]);
-  const applyWorkspacePathMatchState = useCallback((nextState: WorkspacePathMatchState) => {
-    setWorkspacePathMatches(nextState.workspacePathMatches);
-    setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
-  }, []);
   const searchWorkspacePathMatches = useMemo(() => {
     if (!withmateApi || !selectedSessionId) {
       return null;
@@ -1571,10 +1571,6 @@ export default function AgentSessionWindowApp() {
           )
         : [],
     [displayedSession],
-  );
-  const workspacePathMatchItems = useMemo(
-    () => buildWorkspacePathMatchItems(workspacePathMatches, activeWorkspacePathMatchIndex),
-    [activeWorkspacePathMatchIndex, workspacePathMatches],
   );
   const isSessionHeaderExpanded = isHeaderExpanded || isEditingTitle;
   const actionDockCompactPreview = useMemo(
