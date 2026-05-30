@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
 
 import {
-  type AuditLogSummary,
   type ComposerPreview,
   currentTimestampLabel,
   type DiscoveredCustomAgent,
@@ -118,6 +117,7 @@ import {
   createQuotedMessageInsertion,
   insertComposerTextAtCaret,
 } from "./chat/message-text-actions.js";
+import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 import {
   buildRetryStopSummary,
   defaultRetryBannerDetailsOpen,
@@ -259,17 +259,6 @@ function buildDisplayedMessagesScrollSignature(messages: Message[]): string {
       return [message.role, message.accent ? "1" : "0", message.text, artifact].join("\u001d");
     })
     .join("\u001c");
-}
-
-function isTerminalAuditLogPhase(phase: AuditLogSummary["phase"]): boolean {
-  return (
-    phase === "completed"
-    || phase === "failed"
-    || phase === "canceled"
-    || phase === "background-completed"
-    || phase === "background-failed"
-    || phase === "background-canceled"
-  );
 }
 
 function displayApprovalValue(value: string): string {

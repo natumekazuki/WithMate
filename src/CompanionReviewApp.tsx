@@ -33,7 +33,7 @@ import {
   type CompanionSessionWindowView,
   getCompanionWindowViewFromSearch,
 } from "./companion-session-mode-adapter.js";
-import type { AuditLogSummary, ChangedFile, DiscoveredCustomAgent, DiscoveredSkill } from "./runtime-state.js";
+import type { ChangedFile, DiscoveredCustomAgent, DiscoveredSkill } from "./runtime-state.js";
 import type {
   CompanionMergeReadinessIssue,
   CompanionReviewSnapshot,
@@ -141,6 +141,7 @@ import {
 import { extractTextReferenceCandidates } from "./path-reference.js";
 import { hasSameAuxiliaryDraftSaveContext } from "./auxiliary-draft-save-context.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
+import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 
 function pickInitialFile(files: ChangedFile[]): ChangedFile | null {
   return files[0] ?? null;
@@ -157,17 +158,6 @@ const MERGE_PANE_MAX_PERCENT = 70;
 
 function buildAuxiliaryCompanionSession(parent: CompanionSession, auxiliary: AuxiliarySession): CompanionSession {
   return buildAuxiliaryRuntimeSessionProjection("companion", parent, auxiliary);
-}
-
-function isTerminalAuditLogPhase(phase: AuditLogSummary["phase"]): boolean {
-  return (
-    phase === "completed"
-    || phase === "failed"
-    || phase === "canceled"
-    || phase === "background-completed"
-    || phase === "background-failed"
-    || phase === "background-canceled"
-  );
 }
 
 type ChangedFileTreeAction = "stage" | "unstage";
