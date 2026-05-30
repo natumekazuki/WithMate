@@ -17,6 +17,7 @@ import {
   buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchState,
   buildWorkspacePathMatchItems,
+  canSearchWorkspacePathMatches,
   canNavigateWorkspacePathMatches,
   getInitialWorkspacePathMatchIndex,
   getNextWorkspacePathMatchIndex,
@@ -316,6 +317,23 @@ test("buildWorkspacePathMatchState は候補と初期 active index を返す", (
     workspacePathMatches: [],
     activeWorkspacePathMatchIndex: -1,
   });
+});
+
+test("canSearchWorkspacePathMatches は検索 block と composer 状態から検索可否を返す", () => {
+  const baseInput = {
+    isSearchBlocked: false,
+    isComposerImeComposing: false,
+    isEditingPathReference: true,
+    normalizedActivePathQuery: "src",
+    minQueryLength: 2,
+  };
+
+  assert.equal(canSearchWorkspacePathMatches(baseInput), true);
+  assert.equal(canSearchWorkspacePathMatches({ ...baseInput, isSearchBlocked: true }), false);
+  assert.equal(canSearchWorkspacePathMatches({ ...baseInput, isComposerImeComposing: true }), false);
+  assert.equal(canSearchWorkspacePathMatches({ ...baseInput, isEditingPathReference: false }), false);
+  assert.equal(canSearchWorkspacePathMatches({ ...baseInput, normalizedActivePathQuery: "s" }), false);
+  assert.equal(canSearchWorkspacePathMatches({ ...baseInput, normalizedActivePathQuery: "sr" }), true);
 });
 
 test("resolveActiveWorkspacePathMatch は active index の候補または先頭候補を返す", () => {

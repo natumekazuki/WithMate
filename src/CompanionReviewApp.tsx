@@ -111,6 +111,7 @@ import {
   buildWorkspacePathMatchState,
   buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchItems,
+  canSearchWorkspacePathMatches,
   getWorkspacePathMatchNavigationIndex,
   pickComposerReferencePath,
   resolveReferencePathsForInsertion,
@@ -997,15 +998,22 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     const withmateApi = getWithMateApi();
     const sessionId = snapshot?.session.id ?? null;
 
+    const isWorkspacePathMatchSearchBlocked = (
+      isMergeView ||
+      selectedSessionRunState === "running" ||
+      snapshot?.session.status !== "active"
+    );
+
     if (
       !withmateApi ||
       !sessionId ||
-      isMergeView ||
-      selectedSessionRunState === "running" ||
-      snapshot?.session.status !== "active" ||
-      isComposerImeComposing ||
-      !isEditingPathReference ||
-      normalizedActivePathQuery.length < WORKSPACE_PATH_QUERY_MIN_LENGTH
+      !canSearchWorkspacePathMatches({
+        isSearchBlocked: isWorkspacePathMatchSearchBlocked,
+        isComposerImeComposing,
+        isEditingPathReference,
+        normalizedActivePathQuery,
+        minQueryLength: WORKSPACE_PATH_QUERY_MIN_LENGTH,
+      })
     ) {
       const nextState = buildWorkspacePathMatchState([]);
       setWorkspacePathMatches(nextState.workspacePathMatches);

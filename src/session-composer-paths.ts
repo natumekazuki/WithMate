@@ -450,6 +450,21 @@ export function buildWorkspacePathMatchState(
   };
 }
 
+export function canSearchWorkspacePathMatches(input: {
+  isComposerImeComposing: boolean;
+  isEditingPathReference: boolean;
+  isSearchBlocked: boolean;
+  minQueryLength: number;
+  normalizedActivePathQuery: string;
+}): boolean {
+  return (
+    !input.isSearchBlocked
+    && !input.isComposerImeComposing
+    && input.isEditingPathReference
+    && input.normalizedActivePathQuery.length >= input.minQueryLength
+  );
+}
+
 export function getNextWorkspacePathMatchIndex(currentIndex: number, matchCount: number): number {
   return Math.min(currentIndex + 1, matchCount - 1);
 }

@@ -96,6 +96,7 @@ import {
   buildWorkspacePathMatchState,
   buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchItems,
+  canSearchWorkspacePathMatches,
   getWorkspacePathMatchNavigationIndex,
   pickComposerReferencePath,
   resolveReferencePathsForInsertion,
@@ -1180,14 +1181,21 @@ export default function AgentSessionWindowApp() {
   useEffect(() => {
     let active = true;
 
+    const isWorkspacePathMatchSearchBlocked = (
+      selectedSessionRunState === "running"
+      || !!composerBlockedReason
+    );
+
     if (
       !withmateApi
       || !selectedSessionId
-      || selectedSessionRunState === "running"
-      || !!composerBlockedReason
-      || isComposerImeComposing
-      || !isEditingPathReference
-      || normalizedActivePathQuery.length < WORKSPACE_PATH_QUERY_MIN_LENGTH
+      || !canSearchWorkspacePathMatches({
+        isSearchBlocked: isWorkspacePathMatchSearchBlocked,
+        isComposerImeComposing,
+        isEditingPathReference,
+        normalizedActivePathQuery,
+        minQueryLength: WORKSPACE_PATH_QUERY_MIN_LENGTH,
+      })
     ) {
       const nextState = buildWorkspacePathMatchState([]);
       setWorkspacePathMatches(nextState.workspacePathMatches);
