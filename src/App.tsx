@@ -97,6 +97,13 @@ import {
   buildOnDraftSelectHandler,
 } from "./chat/composer-draft-handlers.js";
 import {
+  COMPOSER_PREVIEW_DEBOUNCE_MS,
+  COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS,
+  createEmptyComposerPreview,
+  WORKSPACE_PATH_QUERY_MIN_LENGTH,
+  WORKSPACE_PATH_SEARCH_DEBOUNCE_MS,
+} from "./composer-preview-config.js";
+import {
   useSessionContextRail,
   useSessionMessageListFollowing,
 } from "./session-chat-layout-hooks.js";
@@ -150,10 +157,6 @@ type SessionOwnedContextTelemetry = {
   telemetry: SessionContextTelemetry | null;
 };
 
-const EMPTY_COMPOSER_PREVIEW: ComposerPreview = { attachments: [], errors: [] };
-const COMPOSER_PREVIEW_DEBOUNCE_MS = 120;
-const COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS = 280;
-const WORKSPACE_PATH_QUERY_MIN_LENGTH = 2;
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
 
 function liveRunStepBucketPriority(status: string): number {
@@ -323,7 +326,7 @@ export default function AgentSessionWindowApp() {
   });
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
-  const [composerPreview, setComposerPreview] = useState<ComposerPreview>({ attachments: [], errors: [] });
+  const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [composerCaret, setComposerCaret] = useState(0);
   const [workspacePathMatches, setWorkspacePathMatches] = useState<WorkspacePathCandidate[]>([]);
@@ -887,7 +890,7 @@ export default function AgentSessionWindowApp() {
 
   useEffect(() => {
     setDraft("");
-    setComposerPreview(EMPTY_COMPOSER_PREVIEW);
+    setComposerPreview(createEmptyComposerPreview());
     setPickerBaseDirectory(selectedSession?.workspacePath ?? "");
     setComposerCaret(0);
     mainComposerCaretRef.current = 0;
@@ -1113,14 +1116,14 @@ export default function AgentSessionWindowApp() {
   useEffect(() => {
     let active = true;
     if (!withmateApi || !activeRunSessionId) {
-      setComposerPreview(EMPTY_COMPOSER_PREVIEW);
+      setComposerPreview(createEmptyComposerPreview());
       return () => {
         active = false;
       };
     }
 
     if (!hasPreviewPathReferenceCandidates) {
-      setComposerPreview(EMPTY_COMPOSER_PREVIEW);
+      setComposerPreview(createEmptyComposerPreview());
       return () => {
         active = false;
       };
@@ -1187,7 +1190,7 @@ export default function AgentSessionWindowApp() {
           setWorkspacePathMatches([]);
         }
       });
-    }, 100);
+    }, WORKSPACE_PATH_SEARCH_DEBOUNCE_MS);
 
     return () => {
       active = false;

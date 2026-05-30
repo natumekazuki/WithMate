@@ -138,6 +138,13 @@ import {
   buildOnDraftCompositionStartHandler,
   buildOnDraftSelectHandler,
 } from "./chat/composer-draft-handlers.js";
+import {
+  COMPOSER_PREVIEW_DEBOUNCE_MS,
+  COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS,
+  createEmptyComposerPreview,
+  WORKSPACE_PATH_QUERY_MIN_LENGTH,
+  WORKSPACE_PATH_SEARCH_DEBOUNCE_MS,
+} from "./composer-preview-config.js";
 import { extractTextReferenceCandidates } from "./path-reference.js";
 import { hasSameAuxiliaryDraftSaveContext } from "./auxiliary-draft-save-context.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
@@ -147,10 +154,6 @@ function pickInitialFile(files: ChangedFile[]): ChangedFile | null {
   return files[0] ?? null;
 }
 
-const EMPTY_COMPOSER_PREVIEW: ComposerPreview = { attachments: [], errors: [] };
-const COMPOSER_PREVIEW_DEBOUNCE_MS = 120;
-const COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS = 280;
-const WORKSPACE_PATH_QUERY_MIN_LENGTH = 2;
 const MERGE_FILE_LIST_DEFAULT_PERCENT = 32;
 const MERGE_STAGE_DEFAULT_PERCENT = 50;
 const MERGE_PANE_MIN_PERCENT = 30;
@@ -306,7 +309,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [turnRunning, setTurnRunning] = useState(false);
   const [composerText, setComposerText] = useState("");
   const [forceComposerBlockedFeedback, setForceComposerBlockedFeedback] = useState(false);
-  const [composerPreview, setComposerPreview] = useState<ComposerPreview>(EMPTY_COMPOSER_PREVIEW);
+  const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
@@ -422,7 +425,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   useEffect(() => {
     setComposerText("");
-    setComposerPreview(EMPTY_COMPOSER_PREVIEW);
+    setComposerPreview(createEmptyComposerPreview());
     setPickerBaseDirectory(snapshot?.session.worktreePath ?? "");
     setComposerCaret(0);
     setWorkspacePathMatches([]);
@@ -923,14 +926,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     const withmateApi = getWithMateApi();
     const sessionId = activeRunSessionId;
     if (!withmateApi || !sessionId || isMergeView) {
-      setComposerPreview(EMPTY_COMPOSER_PREVIEW);
+      setComposerPreview(createEmptyComposerPreview());
       return () => {
         active = false;
       };
     }
 
     if (!hasPreviewPathReferenceCandidates) {
-      setComposerPreview(EMPTY_COMPOSER_PREVIEW);
+      setComposerPreview(createEmptyComposerPreview());
       return () => {
         active = false;
       };
@@ -1005,7 +1008,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           setWorkspacePathMatches([]);
         }
       });
-    }, 100);
+    }, WORKSPACE_PATH_SEARCH_DEBOUNCE_MS);
 
     return () => {
       active = false;
