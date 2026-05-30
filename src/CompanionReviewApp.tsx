@@ -85,6 +85,7 @@ import { buildActionDockCompactPreview } from "./action-dock-preview.js";
 import {
   buildActionDockCollapseState,
   buildActionDockExpandState,
+  buildActionDockRuntimeState,
 } from "./action-dock-state.js";
 import {
   AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK,
@@ -1206,16 +1207,22 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   );
   const isCompanionSendDisabled = companionComposerSendability.isSendDisabled || operationRunning || isAuxiliaryActionPending;
   const companionSendButtonTitle = getComposerSendButtonTitle(companionComposerSendability);
-  const shouldForceActionDockExpanded =
-    isAgentPickerOpen ||
-    isSkillPickerOpen ||
-    isAdditionalDirectoryListOpen ||
-    workspacePathMatches.length > 0 ||
-    isRetryDraftReplacePending ||
-    !!retryBanner ||
-    companionComposerSendability.shouldShowFeedback;
-  const isActionDockExpanded = isActionDockPinnedExpanded || shouldForceActionDockExpanded;
-  const canCollapseActionDock = !shouldForceActionDockExpanded;
+  const actionDockRuntimeState = buildActionDockRuntimeState({
+    isActionDockPinnedExpanded,
+    forceReasons: [
+      isAgentPickerOpen,
+      isSkillPickerOpen,
+      isAdditionalDirectoryListOpen,
+      workspacePathMatches.length > 0,
+      isRetryDraftReplacePending,
+      !!retryBanner,
+      companionComposerSendability.shouldShowFeedback,
+    ],
+  });
+  const {
+    isActionDockExpanded,
+    canCollapseActionDock,
+  } = actionDockRuntimeState;
   const retryBannerIdentity = useMemo(() => {
     if (!retryBanner || !snapshot || !lastUserMessage) {
       return null;

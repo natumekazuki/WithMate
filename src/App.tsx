@@ -77,6 +77,7 @@ import { buildActionDockCompactPreview } from "./action-dock-preview.js";
 import {
   buildActionDockCollapseState,
   buildActionDockExpandState,
+  buildActionDockRuntimeState,
 } from "./action-dock-state.js";
 import {
   buildCustomAgentMatchDisplay,
@@ -1468,13 +1469,21 @@ export default function AgentSessionWindowApp() {
     runState: selectedSession?.runState,
   });
   const isRetryEditDisabled = isRetryActionDisabled || isComposerDisabled;
-  const shouldForceActionDockExpanded =
-    isAgentPickerOpen
-    || isSkillPickerOpen
-    || workspacePathMatches.length > 0
-    || isRetryDraftReplacePending
-    || (!!retryBanner && !activeAuxiliarySession)
-    || composerSendability.feedbackTone === "blocked";
+  const actionDockRuntimeState = buildActionDockRuntimeState({
+    isActionDockPinnedExpanded,
+    forceReasons: [
+      isAgentPickerOpen,
+      isSkillPickerOpen,
+      workspacePathMatches.length > 0,
+      isRetryDraftReplacePending,
+      !!retryBanner && !activeAuxiliarySession,
+      composerSendability.feedbackTone === "blocked",
+    ],
+  });
+  const {
+    isActionDockExpanded,
+    canCollapseActionDock,
+  } = actionDockRuntimeState;
   const renderedCustomAgentName = displayedSession?.customAgentName ?? "";
   const selectedCustomAgent = useMemo(() => {
     if (!renderedCustomAgentName.trim()) {
@@ -1620,8 +1629,6 @@ export default function AgentSessionWindowApp() {
       }),
     [activeWorkspacePathMatchIndex, workspacePathMatches],
   );
-  const isActionDockExpanded = isActionDockPinnedExpanded || shouldForceActionDockExpanded;
-  const canCollapseActionDock = !shouldForceActionDockExpanded;
   const isSessionHeaderExpanded = isHeaderExpanded || isEditingTitle;
   const actionDockCompactPreview = useMemo(
     () =>
