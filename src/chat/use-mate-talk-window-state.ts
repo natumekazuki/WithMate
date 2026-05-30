@@ -13,10 +13,10 @@ import {
 import {
   buildAdditionalDirectoryItems,
   buildPathReferenceInsertionState,
+  buildPathReferenceRemovalState,
   compactPathForDisplay,
   normalizePathForReference,
   pickComposerReferencePath,
-  removePathReferenceTokensFromDraft,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   splitPathForDisplay,
@@ -368,9 +368,12 @@ export function useMateTalkWindowState({
 
   const removePathReference = (targets: string[]) => {
     const normalizedTargets = new Set(targets.map((target) => normalizePathForReference(target)));
-    const nextInput = removePathReferenceTokensFromDraft(input, Array.from(normalizedTargets));
+    const { draft: nextInput, caret: nextCaret } = buildPathReferenceRemovalState(
+      input,
+      Array.from(normalizedTargets),
+    );
     setInput(nextInput);
-    setInputCaret(nextInput.length);
+    setInputCaret(nextCaret);
     setPathReferences((current) => current.filter((entry) => !normalizedTargets.has(entry.path)));
   };
 

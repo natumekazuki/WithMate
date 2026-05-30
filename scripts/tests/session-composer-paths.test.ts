@@ -5,6 +5,7 @@ import {
   buildAdditionalDirectoryItems,
   buildComposerAttachmentItems,
   buildPathReferenceInsertionState,
+  buildPathReferenceRemovalState,
   buildPathReferenceReplacementState,
   buildWorkspacePathMatchItems,
   canNavigateWorkspacePathMatches,
@@ -340,6 +341,16 @@ test("removePathReferenceTokensFromDraft は複数 token と句読点境界を�
       ["src/App.tsx", "docs/my note.md"],
     ),
     "確認 (), !",
+  );
+});
+
+test("buildPathReferenceRemovalState は path reference 削除後の draft と末尾 caret を返す", () => {
+  assert.deepEqual(
+    buildPathReferenceRemovalState("確認 @src/App.tsx して", ["src/App.tsx"]),
+    {
+      draft: "確認 して",
+      caret: "確認 して".length,
+    },
   );
 });
 

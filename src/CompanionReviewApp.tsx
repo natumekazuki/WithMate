@@ -105,6 +105,7 @@ import {
   buildAdditionalDirectoryItems,
   buildComposerAttachmentItems,
   buildPathReferenceInsertionState,
+  buildPathReferenceRemovalState,
   buildPathReferenceReplacementState,
   buildWorkspacePathMatchItems,
   canNavigateWorkspacePathMatches,
@@ -114,7 +115,6 @@ import {
   getPreviousWorkspacePathMatchIndex,
   pickComposerReferencePath,
   removeActivePathReference,
-  removePathReferenceTokensFromDraft,
   resolveActiveWorkspacePathMatch,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
@@ -1645,13 +1645,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   function handleRemoveAttachmentReference(attachmentPathCandidates: string[]): void {
-    const nextDraft = removePathReferenceTokensFromDraft(activeComposerText, attachmentPathCandidates);
+    const { draft: nextDraft, caret: nextCaret } = buildPathReferenceRemovalState(
+      activeComposerText,
+      attachmentPathCandidates,
+    );
 
-    setComposerCaret(nextDraft.length);
+    setComposerCaret(nextCaret);
     setWorkspacePathMatches([]);
     setActiveWorkspacePathMatchIndex(-1);
     if (activeAuxiliarySession) {
-      void handleAuxiliaryDraftChange(nextDraft, nextDraft.length);
+      void handleAuxiliaryDraftChange(nextDraft, nextCaret);
     } else {
       setComposerText(nextDraft);
     }

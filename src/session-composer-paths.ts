@@ -150,6 +150,17 @@ export function removePathReferenceTokensFromDraft(
     .replace(/\n{3,}/g, "\n\n");
 }
 
+export function buildPathReferenceRemovalState(
+  draft: string,
+  referencePaths: readonly string[],
+): PathReferenceInsertionState {
+  const nextDraft = removePathReferenceTokensFromDraft(draft, referencePaths);
+  return {
+    draft: nextDraft,
+    caret: nextDraft.length,
+  };
+}
+
 export function normalizePathForReference(filePath: string): string {
   return filePath.replace(/\\/g, "/");
 }

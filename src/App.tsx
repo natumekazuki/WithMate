@@ -90,6 +90,7 @@ import {
   buildAdditionalDirectoryItems,
   buildComposerAttachmentItems,
   buildPathReferenceInsertionState,
+  buildPathReferenceRemovalState,
   buildPathReferenceReplacementState,
   buildWorkspacePathMatchItems,
   canNavigateWorkspacePathMatches,
@@ -99,7 +100,6 @@ import {
   getPreviousWorkspacePathMatchIndex,
   pickComposerReferencePath,
   removeActivePathReference,
-  removePathReferenceTokensFromDraft,
   resolveActiveWorkspacePathMatch,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
@@ -2648,15 +2648,18 @@ export default function AgentSessionWindowApp() {
   const handleRemoveAttachmentReference = (attachmentPathCandidates: string[]) => {
     const targetAuxiliarySession = activeAuxiliarySession;
     const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
-    const nextDraft = removePathReferenceTokensFromDraft(currentDraft, attachmentPathCandidates);
+    const { draft: nextDraft, caret: nextCaret } = buildPathReferenceRemovalState(
+      currentDraft,
+      attachmentPathCandidates,
+    );
 
     if (targetAuxiliarySession) {
-      void handleAuxiliaryDraftChange(nextDraft, nextDraft.length);
+      void handleAuxiliaryDraftChange(nextDraft, nextCaret);
     } else {
       setDraft(nextDraft);
-      mainComposerCaretRef.current = nextDraft.length;
+      mainComposerCaretRef.current = nextCaret;
     }
-    setComposerCaret(nextDraft.length);
+    setComposerCaret(nextCaret);
     setWorkspacePathMatches([]);
     setActiveWorkspacePathMatchIndex(-1);
   };
