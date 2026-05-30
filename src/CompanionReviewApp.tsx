@@ -74,7 +74,6 @@ import {
 import {
   copyMessageTextToClipboardWithFailureHandler,
   createQuotedMessageInsertionFromComposer,
-  insertComposerTextAtCaret,
 } from "./chat/message-text-actions.js";
 import {
   buildComposerSendabilityState,

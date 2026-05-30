@@ -129,7 +129,6 @@ import { handleWorkspacePathMatchKeyboardNavigation } from "./chat/workspace-pat
 import {
   copyMessageTextToClipboardWithFailureHandler,
   createQuotedMessageInsertionFromComposer,
-  insertComposerTextAtCaret,
 } from "./chat/message-text-actions.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 import {

@@ -33,7 +33,6 @@ import type { WithMateWindowApi } from "../withmate-window-api.js";
 import {
   copyMessageTextToClipboardWithFailureHandler,
   createQuotedMessageInsertionFromComposer,
-  insertComposerTextAtCaret,
 } from "./message-text-actions.js";
 import type { MateTalkMessage } from "./mate-talk-chat-projection.js";
 import {
