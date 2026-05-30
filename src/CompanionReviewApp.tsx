@@ -122,7 +122,7 @@ import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   buildContextPaneProjection,
   buildCopilotQuotaProjection,
-  buildLatestCommandView,
+  buildLatestCommandProjection,
   buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
   cycleContextPaneTab,
@@ -1361,20 +1361,14 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const selectedCopilotQuotaProjection = buildCopilotQuotaProjection(selectedProviderQuotaTelemetry);
   const selectedSessionContextTelemetryProjection =
     buildSessionContextTelemetryProjection(selectedSessionContextTelemetry);
-  const latestLiveCommandStep = (() => {
-    const steps = selectedSessionLiveRun?.steps ?? [];
-    for (let index = steps.length - 1; index >= 0; index -= 1) {
-      if (steps[index]?.type === "command_execution") {
-        return steps[index] ?? null;
-      }
-    }
-    return null;
-  })();
-  const latestCommandView = buildLatestCommandView({
-    latestLiveCommandStep,
-    latestAuditCommandOperation: null,
-    latestTerminalAuditPhase: null,
+  const latestCommandProjection = buildLatestCommandProjection({
+    liveSteps: selectedSessionLiveRun?.steps ?? [],
+    auditOperations: latestTerminalAuditLog?.operations ?? [],
+    latestTerminalAuditPhase: latestTerminalAuditLog?.phase,
+    auditFallbackEnabled: !activeAuxiliarySession,
   });
+  const latestLiveCommandStep = latestCommandProjection.latestLiveCommandStep;
+  const latestCommandView = latestCommandProjection.latestCommandView;
   const orderedLiveRunSteps = useMemo(
     () => (selectedSessionLiveRun?.steps ?? [])
       .map((step, index) => ({ step, index }))

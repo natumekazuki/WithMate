@@ -51,7 +51,7 @@ import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
 import {
   buildContextPaneProjection,
   buildCopilotQuotaProjection,
-  buildLatestCommandView,
+  buildLatestCommandProjection,
   buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
   cycleContextPaneTab,
@@ -1267,34 +1267,16 @@ export default function AgentSessionWindowApp() {
     () => selectedSessionAuditLogs.find((entry) => isTerminalAuditLogPhase(entry.phase)) ?? null,
     [selectedSessionAuditLogs],
   );
-  const latestLiveCommandStep = useMemo(() => {
-    const steps = selectedSessionLiveRun?.steps ?? [];
-    for (let index = steps.length - 1; index >= 0; index -= 1) {
-      if (steps[index]?.type === "command_execution") {
-        return steps[index];
-      }
-    }
-
-    return null;
-  }, [selectedSessionLiveRun?.steps]);
-  const latestAuditCommandOperation = useMemo(() => {
-    const operations = latestTerminalAuditLog?.operations ?? [];
-    for (let index = operations.length - 1; index >= 0; index -= 1) {
-      if (operations[index]?.type === "command_execution") {
-        return operations[index];
-      }
-    }
-
-    return null;
-  }, [latestTerminalAuditLog]);
-  const latestCommandView = useMemo(
-    () => buildLatestCommandView({
-      latestLiveCommandStep,
-      latestAuditCommandOperation,
+  const latestCommandProjection = useMemo(
+    () => buildLatestCommandProjection({
+      liveSteps: selectedSessionLiveRun?.steps ?? [],
+      auditOperations: latestTerminalAuditLog?.operations ?? [],
       latestTerminalAuditPhase: latestTerminalAuditLog?.phase,
     }),
-    [latestAuditCommandOperation, latestLiveCommandStep, latestTerminalAuditLog?.phase],
+    [latestTerminalAuditLog?.operations, latestTerminalAuditLog?.phase, selectedSessionLiveRun?.steps],
   );
+  const latestLiveCommandStep = latestCommandProjection.latestLiveCommandStep;
+  const latestCommandView = latestCommandProjection.latestCommandView;
   const orderedLiveRunSteps = useMemo(
     () =>
       (selectedSessionLiveRun?.steps ?? [])

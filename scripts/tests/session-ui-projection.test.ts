@@ -4,15 +4,19 @@ import { describe, it } from "node:test";
 import type {
   AuditLogOperation,
   LiveBackgroundTask,
+  LiveRunStep,
   ProviderQuotaTelemetry,
 } from "../../src/app-state.js";
 import {
   buildContextPaneProjection,
   buildCopilotQuotaProjection,
+  buildLatestCommandProjection,
   buildLatestCommandView,
   buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
   cycleContextPaneTab,
+  findLatestAuditCommandOperation,
+  findLatestLiveCommandStep,
   resolveAvailableContextPaneTabs,
 } from "../../src/session-ui-projection.js";
 
@@ -24,6 +28,139 @@ function makeBackgroundTask(partial: Partial<LiveBackgroundTask> & Pick<LiveBack
 }
 
 describe("session-ui-projection", () => {
+  it("latest command helpers は末尾の command_execution を拾う", () => {
+    const liveSteps: LiveRunStep[] = [
+      {
+        id: "cmd-old",
+        type: "command_execution",
+        summary: "npm test",
+        status: "completed",
+      },
+      {
+        id: "reasoning-1",
+        type: "reasoning",
+        summary: "考慮中",
+        status: "completed",
+      },
+      {
+        id: "cmd-new",
+        type: "command_execution",
+        summary: "npm run build",
+        status: "in_progress",
+      },
+    ];
+    const auditOperations: AuditLogOperation[] = [
+      {
+        type: "command_execution",
+        summary: "git status",
+      },
+      {
+        type: "response_item",
+        summary: "assistant text",
+      },
+      {
+        type: "command_execution",
+        summary: "npm test",
+      },
+    ];
+
+    assert.equal(findLatestLiveCommandStep(liveSteps)?.id, "cmd-new");
+    assert.equal(findLatestAuditCommandOperation(auditOperations)?.summary, "npm test");
+  });
+
+  it("latest command helpers は command_execution がなければ null を返す", () => {
+    assert.equal(
+      findLatestLiveCommandStep([
+        {
+          id: "reasoning-1",
+          type: "reasoning",
+          summary: "考慮中",
+          status: "completed",
+        },
+      ]),
+      null,
+    );
+    assert.equal(
+      findLatestAuditCommandOperation([
+        {
+          type: "response_item",
+          summary: "assistant text",
+        },
+      ]),
+      null,
+    );
+  });
+
+  it("LatestCommand projection は live がなければ audit fallback を使う", () => {
+    const projection = buildLatestCommandProjection({
+      liveSteps: [],
+      auditOperations: [
+        {
+          type: "command_execution",
+          summary: "npm test",
+          details: "ok",
+        },
+      ],
+      latestTerminalAuditPhase: "completed",
+    });
+
+    assert.equal(projection.latestLiveCommandStep, null);
+    assert.deepEqual(projection.latestCommandView, {
+      status: "completed",
+      summary: "npm test",
+      details: "ok",
+      sourceLabel: "latest run",
+      riskLabels: [],
+    });
+  });
+
+  it("LatestCommand projection は audit fallback を無効化できる", () => {
+    const projection = buildLatestCommandProjection({
+      liveSteps: [],
+      auditOperations: [
+        {
+          type: "command_execution",
+          summary: "npm test",
+        },
+      ],
+      latestTerminalAuditPhase: "completed",
+      auditFallbackEnabled: false,
+    });
+
+    assert.equal(projection.latestLiveCommandStep, null);
+    assert.equal(projection.latestCommandView, null);
+  });
+
+  it("LatestCommand projection は audit fallback 無効中でも live command を優先する", () => {
+    const projection = buildLatestCommandProjection({
+      liveSteps: [
+        {
+          id: "cmd-live",
+          type: "command_execution",
+          summary: "npm run build",
+          status: "in_progress",
+        },
+      ],
+      auditOperations: [
+        {
+          type: "command_execution",
+          summary: "npm test",
+        },
+      ],
+      latestTerminalAuditPhase: "completed",
+      auditFallbackEnabled: false,
+    });
+
+    assert.equal(projection.latestLiveCommandStep?.id, "cmd-live");
+    assert.deepEqual(projection.latestCommandView, {
+      status: "in_progress",
+      summary: "npm run build",
+      details: undefined,
+      sourceLabel: "live",
+      riskLabels: [],
+    });
+  });
+
   it("live command があれば latest run より優先して LatestCommand view を作る", () => {
     const latestAuditCommandOperation: AuditLogOperation = {
       type: "command_execution",
