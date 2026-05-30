@@ -108,17 +108,14 @@ import {
   buildPathReferenceRemovalState,
   buildPathReferenceReplacementState,
   buildWorkspacePathMatchItems,
-  canNavigateWorkspacePathMatches,
   getActivePathReference,
   getInitialWorkspacePathMatchIndex,
-  getNextWorkspacePathMatchIndex,
-  getPreviousWorkspacePathMatchIndex,
+  getWorkspacePathMatchNavigationIndex,
   pickComposerReferencePath,
   removeActivePathReference,
-  resolveActiveWorkspacePathMatch,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
-  resolveWorkspacePathMatchKeyAction,
+  resolveWorkspacePathMatchNavigation,
   type ComposerPathPickerKind,
   toDirectoryPath,
 } from "./session-composer-paths.js";
@@ -2718,34 +2715,43 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   const handleCompanionDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (event) => {
-    const canNavigatePathMatches = canNavigateWorkspacePathMatches({
-      matchCount: workspacePathMatches.length,
+    const pathMatchNavigation = resolveWorkspacePathMatchNavigation({
+      pathMatches: workspacePathMatches,
+      activeIndex: activeWorkspacePathMatchIndex,
+      key: event.key,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
       isComposerImeComposing,
       isNativeComposing: event.nativeEvent.isComposing,
     });
 
-    if (canNavigatePathMatches) {
-      const pathMatchKeyAction = resolveWorkspacePathMatchKeyAction({
-        key: event.key,
-        ctrlKey: event.ctrlKey,
-        metaKey: event.metaKey,
-      });
-      if (pathMatchKeyAction?.kind === "next") {
+    if (pathMatchNavigation) {
+      if (pathMatchNavigation.kind === "next") {
         event.preventDefault();
         setActiveWorkspacePathMatchIndex((current) => (
-          getNextWorkspacePathMatchIndex(current, workspacePathMatches.length)
+          getWorkspacePathMatchNavigationIndex(
+            pathMatchNavigation,
+            current,
+            workspacePathMatches.length,
+          )
         ));
         return;
       }
 
-      if (pathMatchKeyAction?.kind === "previous") {
+      if (pathMatchNavigation.kind === "previous") {
         event.preventDefault();
-        setActiveWorkspacePathMatchIndex(getPreviousWorkspacePathMatchIndex);
+        setActiveWorkspacePathMatchIndex((current) => (
+          getWorkspacePathMatchNavigationIndex(
+            pathMatchNavigation,
+            current,
+            workspacePathMatches.length,
+          )
+        ));
         return;
       }
 
-      if (pathMatchKeyAction?.kind === "dismiss") {
-        if (pathMatchKeyAction.shouldPreventDefault) {
+      if (pathMatchNavigation.kind === "dismiss") {
+        if (pathMatchNavigation.shouldPreventDefault) {
           event.preventDefault();
         }
         setWorkspacePathMatches([]);
@@ -2753,16 +2759,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         return;
       }
 
-      if (pathMatchKeyAction?.kind === "select") {
-        const activeMatch = resolveActiveWorkspacePathMatch(
-          workspacePathMatches,
-          activeWorkspacePathMatchIndex,
-        );
-        if (activeMatch) {
-          event.preventDefault();
-          handleSelectWorkspacePathMatch(activeMatch.path);
-          return;
-        }
+      if (pathMatchNavigation.kind === "select") {
+        event.preventDefault();
+        handleSelectWorkspacePathMatch(pathMatchNavigation.match.path);
+        return;
       }
     }
 

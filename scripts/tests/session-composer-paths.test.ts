@@ -15,6 +15,7 @@ import {
   getInitialWorkspacePathMatchIndex,
   getNextWorkspacePathMatchIndex,
   getPreviousWorkspacePathMatchIndex,
+  getWorkspacePathMatchNavigationIndex,
   pickComposerReferencePath,
   removeAdditionalDirectoryPath,
   removePathReferenceAttachments,
@@ -24,6 +25,7 @@ import {
   resolvePickedPathBaseDirectory,
   resolvePathReferenceRemovalTargets,
   resolveWorkspacePathMatchKeyAction,
+  resolveWorkspacePathMatchNavigation,
   type ComposerPathPickerKind,
 } from "../../src/session-composer-paths.js";
 
@@ -305,6 +307,85 @@ test("resolveWorkspacePathMatchKeyAction は path match navigation key を actio
   assert.equal(resolveWorkspacePathMatchKeyAction({ key: "Enter", ctrlKey: true, metaKey: false }), null);
   assert.equal(resolveWorkspacePathMatchKeyAction({ key: "Enter", ctrlKey: false, metaKey: true }), null);
   assert.equal(resolveWorkspacePathMatchKeyAction({ key: "a", ctrlKey: false, metaKey: false }), null);
+});
+
+test("resolveWorkspacePathMatchNavigation は key action と候補状態から navigation 結果を返す", () => {
+  const pathMatches = [
+    { kind: "file" as const, path: "src/App.tsx" },
+    { kind: "folder" as const, path: "src" },
+  ];
+  const baseInput = {
+    pathMatches,
+    activeIndex: 0,
+    ctrlKey: false,
+    metaKey: false,
+    isComposerImeComposing: false,
+    isNativeComposing: false,
+  };
+
+  assert.deepEqual(
+    resolveWorkspacePathMatchNavigation({ ...baseInput, key: "ArrowDown" }),
+    { kind: "next", shouldPreventDefault: true },
+  );
+  assert.deepEqual(
+    resolveWorkspacePathMatchNavigation({ ...baseInput, activeIndex: 1, key: "ArrowUp" }),
+    { kind: "previous", shouldPreventDefault: true },
+  );
+  assert.deepEqual(
+    resolveWorkspacePathMatchNavigation({ ...baseInput, key: "Tab" }),
+    { kind: "dismiss", shouldPreventDefault: false },
+  );
+  assert.deepEqual(
+    resolveWorkspacePathMatchNavigation({ ...baseInput, key: "Escape" }),
+    { kind: "dismiss", shouldPreventDefault: true },
+  );
+  assert.deepEqual(
+    resolveWorkspacePathMatchNavigation({ ...baseInput, activeIndex: 9, key: "Enter" }),
+    { kind: "select", match: pathMatches[0], shouldPreventDefault: true },
+  );
+  assert.equal(
+    resolveWorkspacePathMatchNavigation({
+      ...baseInput,
+      key: "ArrowDown",
+      isComposerImeComposing: true,
+    }),
+    null,
+  );
+  assert.equal(
+    resolveWorkspacePathMatchNavigation({ ...baseInput, key: "Enter", ctrlKey: true }),
+    null,
+  );
+  assert.equal(
+    resolveWorkspacePathMatchNavigation({ ...baseInput, key: "ArrowDown", pathMatches: [] }),
+    null,
+  );
+});
+
+test("getWorkspacePathMatchNavigationIndex は最新 active index から次の index を返す", () => {
+  assert.equal(
+    getWorkspacePathMatchNavigationIndex(
+      { kind: "next", shouldPreventDefault: true },
+      1,
+      3,
+    ),
+    2,
+  );
+  assert.equal(
+    getWorkspacePathMatchNavigationIndex(
+      { kind: "previous", shouldPreventDefault: true },
+      2,
+      3,
+    ),
+    1,
+  );
+  assert.equal(
+    getWorkspacePathMatchNavigationIndex(
+      { kind: "dismiss", shouldPreventDefault: false },
+      2,
+      3,
+    ),
+    2,
+  );
 });
 
 test("buildAdditionalDirectoryItems は additional directory display と remove state を作る", () => {

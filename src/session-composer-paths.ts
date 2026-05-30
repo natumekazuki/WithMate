@@ -46,6 +46,12 @@ export type WorkspacePathMatchKeyAction =
   | { kind: "previous"; shouldPreventDefault: true }
   | { kind: "select"; shouldPreventDefault: true };
 
+export type WorkspacePathMatchNavigationResult =
+  | { kind: "dismiss"; shouldPreventDefault: boolean }
+  | { kind: "next"; shouldPreventDefault: true }
+  | { kind: "previous"; shouldPreventDefault: true }
+  | { kind: "select"; match: WorkspacePathCandidate; shouldPreventDefault: true };
+
 export type AdditionalDirectoryDisplay = {
   primaryLabel: string;
   secondaryLabel: string;
@@ -391,6 +397,70 @@ export function resolveWorkspacePathMatchKeyAction(input: {
     default:
       return null;
   }
+}
+
+export function resolveWorkspacePathMatchNavigation(input: {
+  activeIndex: number;
+  ctrlKey: boolean;
+  isComposerImeComposing: boolean;
+  isNativeComposing: boolean;
+  key: string;
+  metaKey: boolean;
+  pathMatches: readonly WorkspacePathCandidate[];
+}): WorkspacePathMatchNavigationResult | null {
+  if (!canNavigateWorkspacePathMatches({
+    matchCount: input.pathMatches.length,
+    isComposerImeComposing: input.isComposerImeComposing,
+    isNativeComposing: input.isNativeComposing,
+  })) {
+    return null;
+  }
+
+  const action = resolveWorkspacePathMatchKeyAction({
+    key: input.key,
+    ctrlKey: input.ctrlKey,
+    metaKey: input.metaKey,
+  });
+  switch (action?.kind) {
+    case "next":
+      return {
+        kind: "next",
+        shouldPreventDefault: action.shouldPreventDefault,
+      };
+    case "previous":
+      return {
+        kind: "previous",
+        shouldPreventDefault: action.shouldPreventDefault,
+      };
+    case "dismiss":
+      return action;
+    case "select": {
+      const match = resolveActiveWorkspacePathMatch(input.pathMatches, input.activeIndex);
+      return match
+        ? {
+            kind: "select",
+            match,
+            shouldPreventDefault: action.shouldPreventDefault,
+          }
+        : null;
+    }
+    default:
+      return null;
+  }
+}
+
+export function getWorkspacePathMatchNavigationIndex(
+  navigation: WorkspacePathMatchNavigationResult,
+  currentIndex: number,
+  matchCount: number,
+): number {
+  if (navigation.kind === "next") {
+    return getNextWorkspacePathMatchIndex(currentIndex, matchCount);
+  }
+  if (navigation.kind === "previous") {
+    return getPreviousWorkspacePathMatchIndex(currentIndex);
+  }
+  return currentIndex;
 }
 
 export function buildAdditionalDirectoryDisplay(directoryPath: string): AdditionalDirectoryDisplay {
