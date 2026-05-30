@@ -74,6 +74,14 @@ export type WorkspacePathMatchSelectionState = PathReferenceInsertionState & {
   workspacePathMatches: WorkspacePathCandidate[];
 };
 
+export type ComposerPathReferencePreviewState = {
+  activePathReference: ActivePathReference | null;
+  isEditingPathReference: boolean;
+  normalizedActivePathQuery: string;
+  previewDraft: string;
+  previewUserMessage: string;
+};
+
 export type ComposerPathPickerKind = "file" | "folder" | "image";
 
 export type ComposerReferencePathPicker = {
@@ -105,6 +113,25 @@ export function removeActivePathReference(value: string, activeReference: Active
   }
 
   return `${value.slice(0, activeReference.start)}${value.slice(activeReference.end)}`;
+}
+
+export function buildComposerPathReferencePreviewState(input: {
+  caret: number;
+  draft: string;
+  isEnabled: boolean;
+}): ComposerPathReferencePreviewState {
+  const activePathReference = input.isEnabled
+    ? getActivePathReference(input.draft, input.caret)
+    : null;
+  const isEditingPathReference = activePathReference !== null;
+  const previewDraft = removeActivePathReference(input.draft, activePathReference);
+  return {
+    activePathReference,
+    isEditingPathReference,
+    normalizedActivePathQuery: activePathReference?.query.trim() ?? "",
+    previewDraft,
+    previewUserMessage: isEditingPathReference ? previewDraft : input.draft,
+  };
 }
 
 export function formatPathReference(path: string): string {

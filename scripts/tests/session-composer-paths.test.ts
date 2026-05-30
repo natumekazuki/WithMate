@@ -6,6 +6,7 @@ import {
   appendMissingPathReferenceAttachments,
   buildAdditionalDirectoryItems,
   buildComposerAttachmentItems,
+  buildComposerPathReferencePreviewState,
   buildPathReferenceAttachmentItems,
   buildPathReferenceInsertionState,
   buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
@@ -64,6 +65,44 @@ test("buildPathReferenceInsertionState は空白を含む path reference を quo
 
 test("buildPathReferenceInsertionState は reference path が空なら null を返す", () => {
   assert.equal(buildPathReferenceInsertionState("draft", 0, []), null);
+});
+
+test("buildComposerPathReferencePreviewState は active path reference の preview を返す", () => {
+  assert.deepEqual(
+    buildComposerPathReferencePreviewState({
+      draft: "確認 @src/ して",
+      caret: "確認 @src/".length,
+      isEnabled: true,
+    }),
+    {
+      activePathReference: {
+        query: "src/",
+        start: "確認 ".length,
+        end: "確認 @src/".length,
+      },
+      isEditingPathReference: true,
+      normalizedActivePathQuery: "src/",
+      previewDraft: "確認  して",
+      previewUserMessage: "確認  して",
+    },
+  );
+});
+
+test("buildComposerPathReferencePreviewState は無効時に draft をそのまま preview に使う", () => {
+  assert.deepEqual(
+    buildComposerPathReferencePreviewState({
+      draft: "確認 @src/",
+      caret: "確認 @src/".length,
+      isEnabled: false,
+    }),
+    {
+      activePathReference: null,
+      isEditingPathReference: false,
+      normalizedActivePathQuery: "",
+      previewDraft: "確認 @src/",
+      previewUserMessage: "確認 @src/",
+    },
+  );
 });
 
 test("buildPathReferenceInsertionWithClosedWorkspaceMatchesState は挿入後に候補を閉じる", () => {

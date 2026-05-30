@@ -104,15 +104,14 @@ import {
 import {
   buildAdditionalDirectoryItems,
   buildComposerAttachmentItems,
+  buildComposerPathReferencePreviewState,
   buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchItems,
-  getActivePathReference,
   getInitialWorkspacePathMatchIndex,
   getWorkspacePathMatchNavigationIndex,
   pickComposerReferencePath,
-  removeActivePathReference,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   resolveWorkspacePathMatchNavigation,
@@ -913,20 +912,21 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     () => companionSessionAuditLogs.find((entry) => isTerminalAuditLogPhase(entry.phase)) ?? null,
     [companionSessionAuditLogs],
   );
-  const activePathReference = useMemo(
-    () => (snapshot ? getActivePathReference(activeComposerText, composerCaret) : null),
+  const pathReferencePreview = useMemo(
+    () => buildComposerPathReferencePreviewState({
+      draft: activeComposerText,
+      caret: composerCaret,
+      isEnabled: Boolean(snapshot),
+    }),
     [activeComposerText, composerCaret, snapshot],
   );
-  const isEditingPathReference = activePathReference !== null;
-  const normalizedActivePathQuery = activePathReference?.query.trim() ?? "";
-  const previewDraft = useMemo(
-    () => removeActivePathReference(activeComposerText, activePathReference),
-    [activeComposerText, activePathReference],
-  );
-  const previewUserMessage = useMemo(
-    () => (isEditingPathReference ? previewDraft : activeComposerText),
-    [activeComposerText, isEditingPathReference, previewDraft],
-  );
+  const {
+    activePathReference,
+    isEditingPathReference,
+    normalizedActivePathQuery,
+    previewDraft,
+    previewUserMessage,
+  } = pathReferencePreview;
   const previewPathReferenceCandidates = useMemo(
     () => extractTextReferenceCandidates(previewDraft),
     [previewDraft],

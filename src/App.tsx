@@ -89,15 +89,14 @@ import {
 import {
   buildAdditionalDirectoryItems,
   buildComposerAttachmentItems,
+  buildComposerPathReferencePreviewState,
   buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
   buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchItems,
-  getActivePathReference,
   getInitialWorkspacePathMatchIndex,
   getWorkspacePathMatchNavigationIndex,
   pickComposerReferencePath,
-  removeActivePathReference,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   resolveWorkspacePathMatchNavigation,
@@ -602,20 +601,21 @@ export default function AgentSessionWindowApp() {
     [activeRunSessionId, sessionContextTelemetryState.ownerSessionId, sessionContextTelemetryState.telemetry],
   );
   const activeComposerDraft = activeAuxiliarySession?.composerDraft ?? draft;
-  const activePathReference = useMemo(
-    () => (selectedSessionId ? getActivePathReference(activeComposerDraft, composerCaret) : null),
+  const pathReferencePreview = useMemo(
+    () => buildComposerPathReferencePreviewState({
+      draft: activeComposerDraft,
+      caret: composerCaret,
+      isEnabled: Boolean(selectedSessionId),
+    }),
     [activeComposerDraft, composerCaret, selectedSessionId],
   );
-  const isEditingPathReference = activePathReference !== null;
-  const normalizedActivePathQuery = activePathReference?.query.trim() ?? "";
-  const previewDraft = useMemo(
-    () => removeActivePathReference(activeComposerDraft, activePathReference),
-    [activeComposerDraft, activePathReference],
-  );
-  const previewUserMessage = useMemo(
-    () => (isEditingPathReference ? previewDraft : activeComposerDraft),
-    [activeComposerDraft, isEditingPathReference, previewDraft],
-  );
+  const {
+    activePathReference,
+    isEditingPathReference,
+    normalizedActivePathQuery,
+    previewDraft,
+    previewUserMessage,
+  } = pathReferencePreview;
   const previewPathReferenceCandidates = useMemo(
     () => extractTextReferenceCandidates(previewDraft),
     [previewDraft],
