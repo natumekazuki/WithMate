@@ -108,6 +108,9 @@ import {
   buildPathReferenceReplacementState,
   buildWorkspacePathMatchItems,
   getActivePathReference,
+  getInitialWorkspacePathMatchIndex,
+  getNextWorkspacePathMatchIndex,
+  getPreviousWorkspacePathMatchIndex,
   normalizePathForReference,
   pickComposerReferencePath,
   removeActivePathReference,
@@ -1037,7 +1040,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     snapshot?.session.status,
   ]);
   useEffect(() => {
-    setActiveWorkspacePathMatchIndex(workspacePathMatches.length > 0 ? 0 : -1);
+    setActiveWorkspacePathMatchIndex(getInitialWorkspacePathMatchIndex(workspacePathMatches.length));
   }, [workspacePathMatches]);
   const {
     sessionWorkbenchRef,
@@ -2734,13 +2737,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     if (canNavigatePathMatches) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        setActiveWorkspacePathMatchIndex((current) => Math.min(current + 1, workspacePathMatches.length - 1));
+        setActiveWorkspacePathMatchIndex((current) => (
+          getNextWorkspacePathMatchIndex(current, workspacePathMatches.length)
+        ));
         return;
       }
 
       if (event.key === "ArrowUp") {
         event.preventDefault();
-        setActiveWorkspacePathMatchIndex((current) => Math.max(current - 1, 0));
+        setActiveWorkspacePathMatchIndex(getPreviousWorkspacePathMatchIndex);
         return;
       }
 

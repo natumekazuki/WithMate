@@ -241,6 +241,18 @@ export function buildWorkspacePathMatchItems(
   });
 }
 
+export function getInitialWorkspacePathMatchIndex(matchCount: number): number {
+  return matchCount > 0 ? 0 : -1;
+}
+
+export function getNextWorkspacePathMatchIndex(currentIndex: number, matchCount: number): number {
+  return Math.min(currentIndex + 1, matchCount - 1);
+}
+
+export function getPreviousWorkspacePathMatchIndex(currentIndex: number): number {
+  return Math.max(currentIndex - 1, 0);
+}
+
 export function buildAdditionalDirectoryDisplay(directoryPath: string): AdditionalDirectoryDisplay {
   const normalizedPath = normalizePathForReference(directoryPath).replace(/\/+$/, "");
   const { basename, parentPath } = splitPathForDisplay(normalizedPath);

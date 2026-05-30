@@ -6,6 +6,9 @@ import {
   buildPathReferenceInsertionState,
   buildPathReferenceReplacementState,
   buildWorkspacePathMatchItems,
+  getInitialWorkspacePathMatchIndex,
+  getNextWorkspacePathMatchIndex,
+  getPreviousWorkspacePathMatchIndex,
   pickComposerReferencePath,
   removePathReferenceTokensFromDraft,
   resolveReferencePathsForInsertion,
@@ -79,6 +82,16 @@ test("buildWorkspacePathMatchItems は path match display と active state を�
       },
     ],
   );
+});
+
+test("workspace path match index helpers は初期値と上下移動を clamp する", () => {
+  assert.equal(getInitialWorkspacePathMatchIndex(0), -1);
+  assert.equal(getInitialWorkspacePathMatchIndex(2), 0);
+  assert.equal(getNextWorkspacePathMatchIndex(-1, 3), 0);
+  assert.equal(getNextWorkspacePathMatchIndex(1, 3), 2);
+  assert.equal(getNextWorkspacePathMatchIndex(2, 3), 2);
+  assert.equal(getPreviousWorkspacePathMatchIndex(0), 0);
+  assert.equal(getPreviousWorkspacePathMatchIndex(2), 1);
 });
 
 test("buildAdditionalDirectoryItems は additional directory display と remove state を作る", () => {
