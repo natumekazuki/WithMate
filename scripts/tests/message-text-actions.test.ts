@@ -5,6 +5,7 @@ import {
   copyMessageTextToClipboard,
   copyMessageTextToClipboardWithFailureHandler,
   createQuotedMessageInsertion,
+  createQuotedMessageInsertionFromComposer,
   formatMarkdownQuote,
   normalizeMessageTextForCopy,
 } from "../../src/chat/message-text-actions.js";
@@ -64,4 +65,31 @@ test("createQuotedMessageInsertion は quote を caret 位置へ挿入する", (
     caret: 17,
   });
   assert.equal(createQuotedMessageInsertion("   ", "before", 0), null);
+});
+
+test("createQuotedMessageInsertionFromComposer は textarea selection を優先する", () => {
+  assert.deepEqual(
+    createQuotedMessageInsertionFromComposer({
+      messageText: "quote",
+      draft: "before after",
+      fallbackCaret: "before after".length,
+      textarea: { selectionStart: "before".length },
+    }),
+    {
+      draft: "before\n\n> quote\n\n\n after",
+      caret: "before\n\n> quote\n\n\n".length,
+    },
+  );
+  assert.deepEqual(
+    createQuotedMessageInsertionFromComposer({
+      messageText: "quote",
+      draft: "before",
+      fallbackCaret: "before".length,
+      textarea: null,
+    }),
+    {
+      draft: "before\n\n> quote\n\n",
+      caret: "before\n\n> quote\n\n".length,
+    },
+  );
 });

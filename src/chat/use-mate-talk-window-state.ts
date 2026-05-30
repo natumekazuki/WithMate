@@ -32,7 +32,7 @@ import { currentTimestampLabel } from "../time-state.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import {
   copyMessageTextToClipboardWithFailureHandler,
-  createQuotedMessageInsertion,
+  createQuotedMessageInsertionFromComposer,
   insertComposerTextAtCaret,
 } from "./message-text-actions.js";
 import type { MateTalkMessage } from "./mate-talk-chat-projection.js";
@@ -217,11 +217,12 @@ export function useMateTalkWindowState({
     }
 
     const textarea = composerTextareaRef.current;
-    const insertion = createQuotedMessageInsertion(
-      text,
-      input,
-      textarea?.selectionStart ?? inputCaret,
-    );
+    const insertion = createQuotedMessageInsertionFromComposer({
+      messageText: text,
+      draft: input,
+      fallbackCaret: inputCaret,
+      textarea,
+    });
     if (!insertion) {
       return;
     }

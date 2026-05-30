@@ -73,7 +73,7 @@ import {
 } from "./chat/retry-state.js";
 import {
   copyMessageTextToClipboardWithFailureHandler,
-  createQuotedMessageInsertion,
+  createQuotedMessageInsertionFromComposer,
   insertComposerTextAtCaret,
 } from "./chat/message-text-actions.js";
 import {
@@ -1352,11 +1352,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
 
     const textarea = composerTextareaRef.current;
-    const insertion = createQuotedMessageInsertion(
-      text,
-      activeComposerText,
-      textarea?.selectionStart ?? composerCaret,
-    );
+    const insertion = createQuotedMessageInsertionFromComposer({
+      messageText: text,
+      draft: activeComposerText,
+      fallbackCaret: composerCaret,
+      textarea,
+    });
     if (!insertion) {
       return;
     }

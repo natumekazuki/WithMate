@@ -128,7 +128,7 @@ import { useWorkspacePathMatchState } from "./chat/use-workspace-path-match-stat
 import { handleWorkspacePathMatchKeyboardNavigation } from "./chat/workspace-path-match-keyboard.js";
 import {
   copyMessageTextToClipboardWithFailureHandler,
-  createQuotedMessageInsertion,
+  createQuotedMessageInsertionFromComposer,
   insertComposerTextAtCaret,
 } from "./chat/message-text-actions.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
@@ -2428,11 +2428,12 @@ export default function AgentSessionWindowApp() {
     }
 
     const textarea = activeAuxiliarySession ? null : composerTextareaRef.current;
-    const insertion = createQuotedMessageInsertion(
+    const insertion = createQuotedMessageInsertionFromComposer({
       messageText,
       draft,
-      textarea?.selectionStart ?? mainComposerCaretRef.current,
-    );
+      fallbackCaret: mainComposerCaretRef.current,
+      textarea,
+    });
     if (!insertion) {
       return;
     }
@@ -2454,11 +2455,12 @@ export default function AgentSessionWindowApp() {
     }
 
     const textarea = composerTextareaRef.current;
-    const insertion = createQuotedMessageInsertion(
+    const insertion = createQuotedMessageInsertionFromComposer({
       messageText,
-      activeAuxiliarySession.composerDraft,
-      textarea?.selectionStart ?? composerCaret,
-    );
+      draft: activeAuxiliarySession.composerDraft,
+      fallbackCaret: composerCaret,
+      textarea,
+    });
     if (!insertion) {
       return;
     }

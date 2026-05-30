@@ -50,6 +50,19 @@ export function createQuotedMessageInsertion(
   return insertComposerTextAtCaret(draft, quote, caret);
 }
 
+export function createQuotedMessageInsertionFromComposer(input: {
+  draft: string;
+  fallbackCaret: number;
+  messageText: string;
+  textarea: Pick<HTMLTextAreaElement, "selectionStart"> | null;
+}): { draft: string; caret: number } | null {
+  return createQuotedMessageInsertion(
+    input.messageText,
+    input.draft,
+    input.textarea?.selectionStart ?? input.fallbackCaret,
+  );
+}
+
 export function insertComposerTextAtCaret(
   draft: string,
   text: string,
