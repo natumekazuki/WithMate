@@ -253,6 +253,13 @@ export function getPreviousWorkspacePathMatchIndex(currentIndex: number): number
   return Math.max(currentIndex - 1, 0);
 }
 
+export function resolveActiveWorkspacePathMatch(
+  pathMatches: readonly WorkspacePathCandidate[],
+  activeIndex: number,
+): WorkspacePathCandidate | null {
+  return pathMatches[activeIndex] ?? pathMatches[0] ?? null;
+}
+
 export function buildAdditionalDirectoryDisplay(directoryPath: string): AdditionalDirectoryDisplay {
   const normalizedPath = normalizePathForReference(directoryPath).replace(/\/+$/, "");
   const { basename, parentPath } = splitPathForDisplay(normalizedPath);

@@ -115,6 +115,7 @@ import {
   pickComposerReferencePath,
   removeActivePathReference,
   removePathReferenceTokensFromDraft,
+  resolveActiveWorkspacePathMatch,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
@@ -2763,8 +2764,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       }
 
       if (event.key === "Enter" && !event.ctrlKey && !event.metaKey) {
-        const activeMatch =
-          workspacePathMatches[activeWorkspacePathMatchIndex] ?? workspacePathMatches[0] ?? null;
+        const activeMatch = resolveActiveWorkspacePathMatch(
+          workspacePathMatches,
+          activeWorkspacePathMatchIndex,
+        );
         if (activeMatch) {
           event.preventDefault();
           handleSelectWorkspacePathMatch(activeMatch.path);

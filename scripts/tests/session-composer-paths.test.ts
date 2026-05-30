@@ -11,6 +11,7 @@ import {
   getPreviousWorkspacePathMatchIndex,
   pickComposerReferencePath,
   removePathReferenceTokensFromDraft,
+  resolveActiveWorkspacePathMatch,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   type ComposerPathPickerKind,
@@ -92,6 +93,18 @@ test("workspace path match index helpers は初期値と上下移動を clamp �
   assert.equal(getNextWorkspacePathMatchIndex(2, 3), 2);
   assert.equal(getPreviousWorkspacePathMatchIndex(0), 0);
   assert.equal(getPreviousWorkspacePathMatchIndex(2), 1);
+});
+
+test("resolveActiveWorkspacePathMatch は active index の候補または先頭候補を返す", () => {
+  const pathMatches = [
+    { kind: "file" as const, path: "src/App.tsx" },
+    { kind: "folder" as const, path: "src" },
+  ];
+
+  assert.deepEqual(resolveActiveWorkspacePathMatch(pathMatches, 1), pathMatches[1]);
+  assert.deepEqual(resolveActiveWorkspacePathMatch(pathMatches, -1), pathMatches[0]);
+  assert.deepEqual(resolveActiveWorkspacePathMatch(pathMatches, 9), pathMatches[0]);
+  assert.equal(resolveActiveWorkspacePathMatch([], 0), null);
 });
 
 test("buildAdditionalDirectoryItems は additional directory display と remove state を作る", () => {
