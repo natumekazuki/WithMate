@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
 
 import {
   type ComposerPreview,
@@ -93,16 +93,15 @@ import {
   buildComposerPathReferencePreviewState,
   buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
-  buildWorkspacePathMatchState,
   buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchItems,
-  canSearchWorkspacePathMatches,
   getWorkspacePathMatchNavigationIndex,
   pickComposerReferencePath,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   resolveWorkspacePathMatchNavigation,
   type ComposerPathPickerKind,
+  type WorkspacePathMatchState,
   toDirectoryPath,
 } from "./session-composer-paths.js";
 import {
@@ -114,8 +113,6 @@ import {
   COMPOSER_PREVIEW_DEBOUNCE_MS,
   COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS,
   createEmptyComposerPreview,
-  WORKSPACE_PATH_QUERY_MIN_LENGTH,
-  WORKSPACE_PATH_SEARCH_DEBOUNCE_MS,
 } from "./composer-preview-config.js";
 import {
   useSessionContextRail,
@@ -134,6 +131,7 @@ import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import { buildTextReferenceCandidateState } from "./path-reference.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
 import type { AuxiliarySession } from "./auxiliary-session-state.js";
+import { useWorkspacePathMatchSearch } from "./chat/use-workspace-path-match-search.js";
 import {
   copyMessageTextToClipboard,
   createQuotedMessageInsertion,
@@ -1178,61 +1176,24 @@ export default function AgentSessionWindowApp() {
     previewUserMessage,
     activeRunSessionId,
   ]);
-  useEffect(() => {
-    let active = true;
-
-    const isWorkspacePathMatchSearchBlocked = (
-      selectedSessionRunState === "running"
-      || !!composerBlockedReason
-    );
-
-    if (
-      !withmateApi
-      || !selectedSessionId
-      || !canSearchWorkspacePathMatches({
-        isSearchBlocked: isWorkspacePathMatchSearchBlocked,
-        isComposerImeComposing,
-        isEditingPathReference,
-        normalizedActivePathQuery,
-        minQueryLength: WORKSPACE_PATH_QUERY_MIN_LENGTH,
-      })
-    ) {
-      const nextState = buildWorkspacePathMatchState([]);
-      setWorkspacePathMatches(nextState.workspacePathMatches);
-      setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
-      return () => {
-        active = false;
-      };
+  const applyWorkspacePathMatchState = useCallback((nextState: WorkspacePathMatchState) => {
+    setWorkspacePathMatches(nextState.workspacePathMatches);
+    setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
+  }, []);
+  const searchWorkspacePathMatches = useMemo(() => {
+    if (!withmateApi || !selectedSessionId) {
+      return null;
     }
-
-    const timeoutId = window.setTimeout(() => {
-      void withmateApi.searchWorkspaceFiles(selectedSessionId, normalizedActivePathQuery).then((matches) => {
-        if (active) {
-          const nextState = buildWorkspacePathMatchState(matches);
-          setWorkspacePathMatches(nextState.workspacePathMatches);
-          setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
-        }
-      }).catch(() => {
-        if (active) {
-          const nextState = buildWorkspacePathMatchState([]);
-          setWorkspacePathMatches(nextState.workspacePathMatches);
-          setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
-        }
-      });
-    }, WORKSPACE_PATH_SEARCH_DEBOUNCE_MS);
-
-    return () => {
-      active = false;
-      window.clearTimeout(timeoutId);
-    };
-  }, [
-    composerBlockedReason,
+    return (query: string) => withmateApi.searchWorkspaceFiles(selectedSessionId, query);
+  }, [selectedSessionId, withmateApi]);
+  useWorkspacePathMatchSearch({
+    searchWorkspacePathMatches,
+    isSearchBlocked: selectedSessionRunState === "running" || !!composerBlockedReason,
     isComposerImeComposing,
     isEditingPathReference,
     normalizedActivePathQuery,
-    selectedSessionId,
-    selectedSessionRunState,
-  ]);
+    onWorkspacePathMatchStateChange: applyWorkspacePathMatchState,
+  });
   const selectedProviderCatalog = useMemo(
     () => (modelCatalog && displayedSession ? getProviderCatalog(modelCatalog.providers, displayedSession.provider) : null),
     [displayedSession, modelCatalog],

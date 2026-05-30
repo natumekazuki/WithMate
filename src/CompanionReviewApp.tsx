@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -108,16 +109,15 @@ import {
   buildComposerPathReferencePreviewState,
   buildPathReferenceInsertionWithClosedWorkspaceMatchesState,
   buildPathReferenceRemovalWithClosedWorkspaceMatchesState,
-  buildWorkspacePathMatchState,
   buildWorkspacePathMatchSelectionState,
   buildWorkspacePathMatchItems,
-  canSearchWorkspacePathMatches,
   getWorkspacePathMatchNavigationIndex,
   pickComposerReferencePath,
   resolveReferencePathsForInsertion,
   resolvePickedPathBaseDirectory,
   resolveWorkspacePathMatchNavigation,
   type ComposerPathPickerKind,
+  type WorkspacePathMatchState,
   toDirectoryPath,
 } from "./session-composer-paths.js";
 import {
@@ -158,9 +158,8 @@ import {
   COMPOSER_PREVIEW_DEBOUNCE_MS,
   COMPOSER_PREVIEW_PATH_EDIT_DEBOUNCE_MS,
   createEmptyComposerPreview,
-  WORKSPACE_PATH_QUERY_MIN_LENGTH,
-  WORKSPACE_PATH_SEARCH_DEBOUNCE_MS,
 } from "./composer-preview-config.js";
+import { useWorkspacePathMatchSearch } from "./chat/use-workspace-path-match-search.js";
 import { buildTextReferenceCandidateState } from "./path-reference.js";
 import { hasSameAuxiliaryDraftSaveContext } from "./auxiliary-draft-save-context.js";
 import type { WorkspacePathCandidate } from "./workspace-path-candidate.js";
@@ -993,65 +992,25 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     activeAuxiliarySession,
     activeRunSessionId,
   ]);
-  useEffect(() => {
-    let active = true;
-    const withmateApi = getWithMateApi();
+  const applyWorkspacePathMatchState = useCallback((nextState: WorkspacePathMatchState) => {
+    setWorkspacePathMatches(nextState.workspacePathMatches);
+    setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
+  }, []);
+  const searchWorkspacePathMatches = useMemo(() => {
     const sessionId = snapshot?.session.id ?? null;
-
-    const isWorkspacePathMatchSearchBlocked = (
-      isMergeView ||
-      selectedSessionRunState === "running" ||
-      snapshot?.session.status !== "active"
-    );
-
-    if (
-      !withmateApi ||
-      !sessionId ||
-      !canSearchWorkspacePathMatches({
-        isSearchBlocked: isWorkspacePathMatchSearchBlocked,
-        isComposerImeComposing,
-        isEditingPathReference,
-        normalizedActivePathQuery,
-        minQueryLength: WORKSPACE_PATH_QUERY_MIN_LENGTH,
-      })
-    ) {
-      const nextState = buildWorkspacePathMatchState([]);
-      setWorkspacePathMatches(nextState.workspacePathMatches);
-      setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
-      return () => {
-        active = false;
-      };
+    if (!withmateApi || !sessionId) {
+      return null;
     }
-
-    const timeoutId = window.setTimeout(() => {
-      void withmateApi.searchCompanionWorkspaceFiles(sessionId, normalizedActivePathQuery).then((matches) => {
-        if (active) {
-          const nextState = buildWorkspacePathMatchState(matches);
-          setWorkspacePathMatches(nextState.workspacePathMatches);
-          setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
-        }
-      }).catch(() => {
-        if (active) {
-          const nextState = buildWorkspacePathMatchState([]);
-          setWorkspacePathMatches(nextState.workspacePathMatches);
-          setActiveWorkspacePathMatchIndex(nextState.activeWorkspacePathMatchIndex);
-        }
-      });
-    }, WORKSPACE_PATH_SEARCH_DEBOUNCE_MS);
-
-    return () => {
-      active = false;
-      window.clearTimeout(timeoutId);
-    };
-  }, [
+    return (query: string) => withmateApi.searchCompanionWorkspaceFiles(sessionId, query);
+  }, [snapshot?.session.id, withmateApi]);
+  useWorkspacePathMatchSearch({
+    searchWorkspacePathMatches,
+    isSearchBlocked: isMergeView || selectedSessionRunState === "running" || snapshot?.session.status !== "active",
     isComposerImeComposing,
     isEditingPathReference,
-    isMergeView,
     normalizedActivePathQuery,
-    selectedSessionRunState,
-    snapshot?.session.id,
-    snapshot?.session.status,
-  ]);
+    onWorkspacePathMatchStateChange: applyWorkspacePathMatchState,
+  });
   const {
     sessionWorkbenchRef,
     sessionWorkbenchStyle,
