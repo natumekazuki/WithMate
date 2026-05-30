@@ -12,7 +12,7 @@ import {
 } from "react";
 
 import type { ApprovalMode } from "./approval-mode.js";
-import type { AuxiliarySession } from "./auxiliary-session-state.js";
+import { applyAuxiliarySessionPatch, type AuxiliarySession } from "./auxiliary-session-state.js";
 import type {
   ComposerPreview,
   DiffPreviewPayload,
@@ -1907,19 +1907,15 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   async function handleChangeAuxiliaryApproval(approvalMode: ApprovalMode): Promise<void> {
-    await updateActiveAuxiliarySession((current) => ({
-      ...current,
-      approvalMode,
-      updatedAt: currentTimestampLabel(),
-    }));
+    await updateActiveAuxiliarySession((current) => (
+      applyAuxiliarySessionPatch(current, { approvalMode }, currentTimestampLabel())
+    ));
   }
 
   async function handleChangeAuxiliarySandboxMode(codexSandboxMode: CodexSandboxMode): Promise<void> {
-    await updateActiveAuxiliarySession((current) => ({
-      ...current,
-      codexSandboxMode,
-      updatedAt: currentTimestampLabel(),
-    }));
+    await updateActiveAuxiliarySession((current) => (
+      applyAuxiliarySessionPatch(current, { codexSandboxMode }, currentTimestampLabel())
+    ));
   }
 
   async function handleChangeAuxiliaryModel(model: string): Promise<void> {

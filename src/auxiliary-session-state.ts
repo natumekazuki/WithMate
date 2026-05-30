@@ -38,6 +38,18 @@ export type AuxiliarySession = {
 
 export type AuxiliarySessionSummary = Omit<AuxiliarySession, "messages" | "composerDraft">;
 
+export function applyAuxiliarySessionPatch(
+  session: AuxiliarySession,
+  patch: Partial<Omit<AuxiliarySession, "id" | "parentSessionId" | "createdAt" | "updatedAt">>,
+  updatedAt: string,
+): AuxiliarySession {
+  return {
+    ...session,
+    ...patch,
+    updatedAt,
+  };
+}
+
 export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | null {
   if (!value || typeof value !== "object") {
     return null;
