@@ -11,12 +11,12 @@ import {
   type AppSettings,
 } from "../provider-settings-state.js";
 import {
+  appendAdditionalDirectoryPath,
   appendMissingPathReferenceAttachments,
   buildAdditionalDirectoryItems,
   buildPathReferenceAttachmentItems,
   buildPathReferenceInsertionState,
   buildPathReferenceRemovalState,
-  normalizePathForReference,
   pickComposerReferencePath,
   removePathReferenceAttachments,
   resolveReferencePathsForInsertion,
@@ -380,9 +380,8 @@ export function useMateTalkWindowState({
       return;
     }
 
-    const normalizedPath = normalizePathForReference(selectedPath);
     setPickerBaseDirectory(selectedPath);
-    setAdditionalDirectories((current) => Array.from(new Set([...current, normalizedPath])));
+    setAdditionalDirectories((current) => appendAdditionalDirectoryPath(current, selectedPath));
     setIsAdditionalDirectoryListOpen(true);
   };
 
